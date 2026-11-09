@@ -1429,15 +1429,17 @@ From a `main` checkout (formats and keys no release had):
   its out-of-network relationships: by how many retrieved entities the outside endpoint links, then by rank (rank
   alone before), after the edges between two retrieved entities (#619).
 - The fixed reply to a query retrieval found nothing for (and to a decline that left no text) is written in the
-  question's language, one sentence per supported language told by its script and function words (English, the
-  0.2.3 reply, or the index language when they do not tell); the script is the one most of the question's letters
-  are in, weighed by what a letter carries ("What does 계약 mean?" gets the English reply, a Japanese question
-  quoting a Korean word the Japanese one, an Arabic or Chinese one quoting Latin names the Arabic or Chinese one,
-  the function words inside a quoted name not counted: "Bank of America和…" is Chinese); among Latin-script
-  languages, Spanish and Portuguese with their "how many" words, an elision only one of them writes ("dell'", "qu'"; not
-  "d'", French and Italian) counts with the function words, and a tie the index language is not in goes to the
-  language whose own articles occur ("Qual è il prezzo?" is Italian, not English); evaluation counts a decline by
-  `metadata.abstained` alone, no longer by the English text (#619).
+  question's language, one sentence per supported language told by its script and function words (English, the 0.2.3
+  reply, or the index language when they do not tell); the script is the one most of the question's letters are in,
+  weighed by what a letter carries ("What does 계약 mean?" gets the English reply, a Japanese question quoting a Korean
+  word the Japanese one, an Arabic or Chinese one quoting Latin names the Arabic or Chinese one, the function words
+  inside a quoted name not counted: "Bank of America和…" is Chinese, and no function word opening one: "Why did Orion
+  Labs drop 한빛전자?" is English; one or two runs of another script beside a Latin function word are a quoted name however
+  much its letters carry: "Who is the CEO of 한빛전자?" is English); among Latin-script languages, Spanish and Portuguese
+  with their "how many" words, an elision only one of them writes ("dell'", "qu'"; not "d'", French and Italian) counts
+  with the function words, and a tie the index language is not in goes to the language whose own articles occur ("Qual è
+  il prezzo?" is Italian, not English); evaluation counts a decline by `metadata.abstained` alone, no longer by the
+  English text (#619).
 - `run-eval` writes each invocation into a run subdirectory of its own of the outputs directory, `run_<timestamp>_<id>`
   (the manifest's `run_id`; `evaluation.run_subdirectories: false` for the flat layout), and `--from-results` /
   `--baseline-results` read a directory with its run subdirectories. They no longer pool unrelated runs silently: the

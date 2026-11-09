@@ -78,12 +78,25 @@ def words_of(text: str) -> list[str]:
     return [w.group().lower() for i, w in enumerate(words) if i not in names]
 
 
+# The function words and articles of the Latin-script languages: a
+# capitalised one opens no name ("Why", "Wie", "Quién"), but an article
+# directly before a capitalised word opens the name it belongs to ("The Walt
+# Disney Company", "the United Nations", "der Rhein").
+_LATIN_PROFILES = [p for p in PROFILES.values() if p.script == "latin"]
+_LATIN_ARTICLES = frozenset().union(*(p.articles for p in _LATIN_PROFILES))
+_LATIN_FUNCTION_WORDS = _LATIN_ARTICLES.union(
+    *(p.function_words for p in _LATIN_PROFILES)
+)
+
+
 def _name_words(text: str, words: list[re.Match[str]]) -> set[int]:
     """The indexes of ``words`` (Latin words in order) inside a name: a run
     of two or more of them with spaces alone between, opening and closing
     on a capitalised word, with the lowercase words inside it ("Bank of
     America", "Procter and Gamble", "The Walt Disney Company"); a
-    capitalised word alone (a question's first word) is no name."""
+    capitalised word alone (a question's first word, a German noun) is no
+    name, and nor does a function word open one (:func:`_opens_name`: "Why
+    did Orion Labs drop" holds the name "Orion Labs")."""
     names: set[int] = set()
     run: list[int] = []
 
@@ -95,14 +108,31 @@ def _name_words(text: str, words: list[re.Match[str]]) -> set[int]:
         run.clear()
 
     for i, word in enumerate(words):
-        joined = bool(run) and not text[words[run[-1]].end() : word.start()].strip()
+        joined = bool(run) and _adjacent(text, words[run[-1]], word)
         if not joined:
             close()
-            if not word.group()[0].isupper():
+            if not _opens_name(text, words, i):
                 continue
         run.append(i)
     close()
     return names
+
+
+def _adjacent(text: str, word: re.Match[str], following: re.Match[str]) -> bool:
+    """Whether only spaces stand between ``word`` and ``following``."""
+    return not text[word.end() : following.start()].strip()
+
+
+def _opens_name(text: str, words: list[re.Match[str]], i: int) -> bool:
+    """Whether ``words[i]`` may open a name: a capitalised word that is no
+    Latin-script language's function word, or an article (in either case)
+    directly before a capitalised word."""
+    word = words[i].group()
+    if word.lower() in _LATIN_ARTICLES and i + 1 < len(words):
+        following = words[i + 1]
+        if following.group()[0].isupper() and _adjacent(text, words[i], following):
+            return True
+    return word[0].isupper() and word.lower() not in _LATIN_FUNCTION_WORDS
 
 
 def _signals(
@@ -160,10 +190,16 @@ def script_language(
     tied, else the one of them whose own articles occur most, else none.
     A script none of whose languages' words occur is names the text quotes
     in another script ("Microsoft Corporation和OpenAI是什么关系？", "ما علاقة
-    Microsoft Corporation بـ OpenAI؟"): the next script decides."""
+    Microsoft Corporation بـ OpenAI؟"): the next script decides; and so is
+    a script of one or two runs (``ScriptCounts.runs``) beside a Latin-script
+    language's function words: "Who is the CEO of 한빛전자?" is English,
+    however much a Hangul letter carries."""
     words = list(words)
     quoted: set[str] = set()
     while (script := counts.dominant(without=quoted)) is not None:
+        if script != "latin" and _quoted_in_latin(counts, script, words):
+            quoted.add(script)
+            continue
         if script == "dense":
             return dense_language(counts, fallback)
         candidates = _candidates(script)
@@ -184,6 +220,24 @@ def script_language(
             tied = _by_articles(tied, words)
         return tied[0].code if len(tied) == 1 else None
     return None
+
+
+# The most runs of letters of another script (a word, or a stretch written
+# without spaces) a Latin-script question quotes as names: "Compare 한빛전자
+# and 아크미" quotes two.
+_QUOTED_RUNS = 2
+
+
+def _quoted_in_latin(counts: ScriptCounts, script: str, words: list[str]) -> bool:
+    """Whether the letters of ``script`` (a group ``counts.dominant`` names)
+    are names a Latin-script text quotes: at most :data:`_QUOTED_RUNS` runs
+    of them, and a function word or owned elision of a Latin-script
+    language among ``words``."""
+    runs = (counts.runs or {}).get(script)
+    if runs is None or runs > _QUOTED_RUNS:
+        return False
+    shared = _shared_elisions(_LATIN_PROFILES)
+    return any(_signals(word, p, shared) for p in _LATIN_PROFILES for word in words)
 
 
 def _by_articles(

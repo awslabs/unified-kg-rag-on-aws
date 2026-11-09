@@ -26,6 +26,7 @@ is the language registry's question (``domain.languages``).
 from __future__ import annotations
 
 import re
+import unicodedata
 from bisect import bisect_right
 from collections import Counter
 from collections.abc import Collection, Iterable, Mapping
@@ -257,9 +258,13 @@ OTHER_LETTERS = "other"
 @dataclass(frozen=True)
 class ScriptCounts:
     """How many letters of each script a text holds, by script name
-    (:data:`OTHER_LETTERS` for letters of no listed script)."""
+    (:data:`OTHER_LETTERS` for letters of no listed script), and in how
+    many runs (words, or stretches of a script written without spaces) by
+    the group :meth:`dominant` weighs them in (``"dense"`` for Han, Hangul
+    and Kana together), where counted."""
 
     by_script: Mapping[str, int] = field(default_factory=dict)
+    runs: Mapping[str, int] | None = None
 
     def __getitem__(self, name: str) -> int:
         return self.by_script.get(name, 0)
@@ -291,21 +296,24 @@ class ScriptCounts:
         another script quotes."""
         weights: dict[str, float] = {}
         for name, count in self.by_script.items():
+            group = _group(name)
             script = _BY_NAME.get(name)
-            if script is not None and script.spacing is Spacing.DENSE:
-                group, rate = "dense", script.chars_per_token
-            else:
-                group = name
-                rate = (
-                    script.chars_per_token
-                    if script is not None
-                    else LATIN_CHARS_PER_TOKEN
-                )
+            rate = (
+                script.chars_per_token if script is not None else LATIN_CHARS_PER_TOKEN
+            )
             if group not in without:
                 weights[group] = weights.get(group, 0.0) + count / rate
         if not weights:
             return None
         return max(weights, key=lambda group: (weights[group], group != "latin"))
+
+
+def _group(name: str) -> str:
+    """The group :meth:`ScriptCounts.dominant` weighs the letters of the
+    script ``name`` in: ``"dense"`` for Han, Hangul and Kana, else
+    ``name``."""
+    script = _BY_NAME.get(name)
+    return "dense" if script is not None and script.spacing is Spacing.DENSE else name
 
 
 def count_letters(
@@ -315,18 +323,27 @@ def count_letters(
     max_chars: int | None = None,
 ) -> ScriptCounts:
     """Count the letters of ``texts`` (the first ``max_chars`` characters of
-    each of the first ``max_texts``, when given) by script."""
+    each of the first ``max_texts``, when given) by script, and their runs
+    (``ScriptCounts.runs``: a combining mark continues a run, any other
+    character that is no letter ends it)."""
     counts: Counter[str] = Counter()
+    runs: Counter[str] = Counter()
     for i, text in enumerate(texts):
         if max_texts is not None and i >= max_texts:
             break
+        current: str | None = None
         for ch in text if max_chars is None else text[:max_chars]:
-            if (script := script_of(ch)) is not None:
-                if ch.isalpha():
-                    counts[script.name] += 1
-            elif ch.isalpha():
-                counts[OTHER_LETTERS] += 1
-    return ScriptCounts(dict(counts))
+            if not ch.isalpha():
+                if not unicodedata.category(ch).startswith("M"):
+                    current = None
+                continue
+            script = script_of(ch)
+            name = script.name if script is not None else OTHER_LETTERS
+            counts[name] += 1
+            if (group := _group(name)) != current:
+                runs[group] += 1
+                current = group
+    return ScriptCounts(dict(counts), dict(runs))
 
 
 def _class_body(ranges: Ranges) -> str:
