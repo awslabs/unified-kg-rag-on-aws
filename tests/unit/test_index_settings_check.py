@@ -256,22 +256,96 @@ def _japanese_indexer(
     )
 
 
-def test_an_index_built_with_the_old_default_analyzers_needs_a_reset(
-    mocker,
+def test_an_index_built_before_the_default_named_its_language_keeps_it(
+    mocker, caplog
 ) -> None:
     # A Japanese corpus indexed when ja had no default analyzer got
     # 'standard'; the default is 'cjk' now, which a live field cannot take.
+    # The default alone does not stop the run: the fields keep 'standard',
+    # and one WARNING names them.
     client = _FakeOpenSearchClient()
     _japanese_indexer(mocker, client, _EN_KO_ANALYZERS).upsert_text_units([_unit()])
+    caplog.clear()
+    mocker.patch.object(module, "_kept_analyzers_warned", set())
+
+    with caplog.at_level("WARNING", logger=module.__name__):
+        _japanese_indexer(mocker, client).check_index_settings("default")
+        # A run checks a suffix more than once (named, or None for the
+        # default): one WARNING all the same.
+        _japanese_indexer(mocker, client).check_index_settings(None)
+
+    warnings = [r.getMessage() for r in caplog.records if "analyzer" in r.getMessage()]
+    assert len(warnings) == 1
+    assert "'text' keeps 'standard' ('cjk')" in warnings[0]
+    assert "indexing.reset: true" in warnings[0]
+
+
+@pytest.mark.parametrize(
+    "language_analyzers",
+    [
+        # The map the user set names the language: it is followed.
+        {"en": "english", "ja": "cjk"},
+        # A map the user set, the default map's values: set all the same.
+        None,
+    ],
+    ids=["names-it", "copied-default"],
+)
+def test_an_analyzer_the_user_set_stops_an_index_built_otherwise(
+    mocker, language_analyzers: dict[str, str] | None
+) -> None:
+    from unified_kg_rag.domain.models.config._indexing import (
+        DEFAULT_LANGUAGE_ANALYZERS,
+    )
+
+    client = _FakeOpenSearchClient()
+    _japanese_indexer(mocker, client, _EN_KO_ANALYZERS).upsert_text_units([_unit()])
+    explicit = language_analyzers or dict(DEFAULT_LANGUAGE_ANALYZERS)
 
     with pytest.raises(
         ConfigurationError, match="'text' uses 'standard' \\(needs 'cjk'\\)"
     ) as raised:
-        _japanese_indexer(mocker, client).check_index_settings("default")
+        _japanese_indexer(mocker, client, explicit).check_index_settings("default")
     message = str(raised.value)
     assert "other language settings" in message
     assert "indexing.reset: true" in message
     assert "indexing.opensearch.language_analyzers" in message
+
+
+def test_a_default_analyzer_keeps_no_field_of_another_language(mocker) -> None:
+    # The stored analyzer is another language's ('english' of an English
+    # corpus now Dutch): the index was built for other text, not before the
+    # default named the language, so the run stops as for any language
+    # change.
+    client = _FakeOpenSearchClient()
+    english = {"enabled": False, "source_language": "en", "target_language": "en"}
+    _indexer(mocker, client, translation=english).upsert_text_units([_unit()])
+    dutch = {"enabled": False, "source_language": "nl", "target_language": "nl"}
+
+    with pytest.raises(
+        ConfigurationError, match="'text' uses 'english' \\(needs 'dutch'\\)"
+    ):
+        _indexer(mocker, client, translation=dutch).check_index_settings("default")
+
+
+def test_a_newly_mapped_language_keeps_its_standard_fields(mocker, caplog) -> None:
+    # Dutch was analyzed by 'standard' before the default map gave it
+    # 'dutch' (BUILT_IN_ANALYZERS).
+    client = _FakeOpenSearchClient()
+    dutch = {"enabled": False, "source_language": "nl", "target_language": "nl"}
+    mocker.patch.object(module, "OpenSearchClient", return_value=client)
+    before = Config(
+        processing={"translation": dutch},
+        indexing={"opensearch": {"language_analyzers": {"en": "english"}}},
+    )
+    OpenSearchIndexer(
+        before, embedding_factory=HashingEmbeddingFactory(dimensions=8)
+    ).upsert_text_units([_unit()])
+    mocker.patch.object(module, "_kept_analyzers_warned", set())
+
+    with caplog.at_level("WARNING", logger=module.__name__):
+        _indexer(mocker, client, translation=dutch).check_index_settings("default")
+
+    assert "'text' keeps 'standard' ('dutch')" in caplog.text
 
 
 def test_an_engine_that_analyzes_both_alike_takes_the_old_index(mocker) -> None:

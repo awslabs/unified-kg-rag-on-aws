@@ -73,7 +73,11 @@ processing:
   프로필이 없는 코드는 WARNING을 한 번 남기고 기본값을 씁니다. 분석기는 OpenSearch에 그
   언어의 내장 분석기가 있으면 그것(`nl`: `dutch`, `sv`: `swedish`, `tr`: `turkish` 등,
   기본 `language_analyzers`에 있음), 없으면 `default_analyzer`이고, 거절 응답은 영어,
-  프롬프트는 언어를 코드로 부릅니다. 프로필
+  프롬프트는 언어를 코드로 부릅니다. `nn`(뉘노르스크)은 `norwegian`을 쓰는데, 이 분석기의
+  어간 추출과 불용어는 보크몰 기준입니다. 기본값에 언어가 들어가기 전에 만든 인덱스는 필드를
+  만들 때 쓴 `default_analyzer`를 `indexing.reset: true` 실행 전까지 유지합니다(실행마다
+  WARNING 한 번). `language_analyzers`를 직접 설정했다면 그 값을 따르며, 다르게 만든 필드가
+  있으면 실행이 멈춥니다. 프로필
   (`unified_kg_rag/domain/languages/profiles/`)은 모듈 하나로, 언어 이름, 문자 체계,
   분석기, 거절 응답, 답변을 읽는 데 쓰는 단어를 담습니다.
 - **분석기는 클러스터에 있어야** 하며, 없으면 인덱싱 단계가

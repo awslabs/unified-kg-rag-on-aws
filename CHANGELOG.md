@@ -478,9 +478,12 @@ From a `main` checkout (formats and keys no release had):
 - Stored items: an index built before #508 (seed properties unmapped; such an entities index is refused, exit 2),
   #562 (relationships store their type, else `Relationship: A -> B`) or #383/#410 (removals written ahead) needs the
   same reset; for a deleted document restored mid-removal, deleting its registry record is enough.
-- #574 analyzers: an OpenSearch namespace translating into `de`, `es`, `fr`, `it`, `ja`, `pt`, `ru` or `zh` stops
-  before any model call (exit 2, `was built for other language settings`) until one `indexing.reset: true` run, or
-  set `language_analyzers: {en: english, ko: nori}`.
+- Analyzers: a namespace indexed in a language before the default `language_analyzers` named it (`de`, `es`, `fr`,
+  `it`, `ja`, `pt`, `ru` and `zh` before #574; `nl`, `sv`, `tr` and the other built-in analyzers before #671) keeps
+  the `default_analyzer` its fields were built with, one WARNING per run naming them, until one `indexing.reset: true`
+  run gives them the language's stemming and stop words. With `language_analyzers` set, a field built otherwise stops
+  the run before any model call (exit 2, `was built for other language settings`): reset, or set the map to what the
+  fields hold.
 - #574 legal forms: entity `name_key` follows the larger table; reset with a new or no `--pipeline-id` to merge
   designator variants, or entities stored apart stay apart.
 - One reset covers all of these and the items below. On an index built with #565 or later it reuses the stored

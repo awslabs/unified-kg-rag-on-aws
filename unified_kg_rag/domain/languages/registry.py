@@ -39,6 +39,9 @@ __all__ = ["BUILT_IN_ANALYZERS", "PROFILES", "language_name", "profile", "profil
 # primary subtag): such a code's text fields get its language's stemming
 # and stop words instead of ``standard``. Regions are dropped before
 # (``pt-BR`` is ``pt``, a profile), so ``brazilian`` is not reached.
+# OpenSearch has one Norwegian analyzer, whose stemmer and stop words are
+# Bokmål's: Nynorsk (``nn``) takes it as the closest one OpenSearch has
+# (unmeasured against ``standard``; docs/guides/multilingual.md).
 BUILT_IN_ANALYZERS: Mapping[str, str] = MappingProxyType(
     {
         "bg": "bulgarian",
