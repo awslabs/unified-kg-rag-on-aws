@@ -813,7 +813,7 @@ max_tokens of the short-answer query calls
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `strategy_selection` | integer \| null (≥ 1) | `4096` | max_tokens of the auto router call (models.roles.strategy_selection), which answers one strategy name |
+| `strategy_selection` | integer \| null (≥ 1) | `1024` | max_tokens of the auto router call (models.roles.strategy_selection), which answers one strategy name (a few tokens; a reasoning model still gets its thinking budget plus 1,024) |
 | `query_extraction` | integer \| null (≥ 1) | `4096` | max_tokens of the query entity extraction (local, drift) and the dual-keyword extraction (mix, hybrid) |
 | `community_relevance` | integer \| null (≥ 1) | `4096` | max_tokens of each report rating of global search's dynamic selection (search.global_search.use_dynamic_selection), which answers one number |
 | `graph_query` | integer \| null (≥ 1) | `4096` | max_tokens of the structured strategy's plan call (models.roles.graph_query), which answers one JSON plan of a few hundred tokens |

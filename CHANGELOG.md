@@ -449,10 +449,10 @@ From 0.2.3; the sub-list after it is for a `main` checkout since. The runbook's
     process that runs threads (a lock another thread held could hang the worker). The console scripts and a
     notebook need nothing; what a custom pool task gets must pickle (#628).
 
-16. A `custom_prompts` override of `strategy_selection_*` should answer the JSON its built-in prompt now asks for
-    (`{"strategy": ...}`, *Changed*; a bare strategy name still reads): another answer costs one output-fixer call
-    per query. No stored data is re-keyed; the query-extraction cache keys on the prompts' text, so only its
-    in-memory entries of changed prompts are re-extracted.
+16. A `custom_prompts` override of `strategy_selection_*` should answer the strategy name alone, as the built-in
+    prompt does, or `{"strategy": ...}` (*Changed*): another answer costs one output-fixer call per query. No stored
+    data is re-keyed; the query-extraction cache keys on the prompts' text, so only its in-memory entries of changed
+    prompts are re-extracted.
 
 From a `main` checkout (formats and keys no release had):
 - Local mode: a `backend: local` config that relied on the preset for the stores gets the embedded SQLite stores; add
@@ -811,10 +811,10 @@ From a `main` checkout (formats and keys no release had):
   are checked against the fallback that would run too. A count of 0 or a "no" over a string
   value no vertex holds (misspelled or translated) is no answer (`unknown_value`); a failed planner or store call and a
   plan still no JSON after the repair (`unreadable_plan`, error type `ModelOutputError`) are a degradation of the
-  query (`metadata.degraded`, step `structured_query`), a designed fallback (`refused_plan`: a plan the checks still refuse) is not. A
-  stored name or a value starting with `~` (a Gremlin hidden token) is refused at validation with a WARNING, not as a
-  compiler bug; a type the sampled profile missed is refused saying so, and a count over a symmetric `both` pattern says
-  it counts each pair twice. Without a structured
+  query (`metadata.degraded`, step `structured_query`), a designed fallback (`refused_plan`: a plan the checks still
+  refuse) is not. A stored name or a value starting with `~` (a Gremlin hidden token) is refused at validation with a
+  WARNING, not as a compiler bug; a type the sampled profile missed is refused saying so, and a count over a symmetric
+  `both` pattern says it counts each pair twice. Without a structured
   answer the query runs `search.structured.fallback_strategy` (`local`) and records why in `metadata["structured"]`;
   `mode: augment` runs it beside the graph query. Served by every namespace holding the graph, on every graph store;
   `auto` routes to it only once it is in `search.auto_routable_strategies`. With the output guardrail on, the
@@ -1371,10 +1371,11 @@ From a `main` checkout (formats and keys no release had):
   still fails the query. A global map
   output that is not map JSON goes to the fixer, not to a second map call over its batch. A response cut inside
   its last object is not repaired.
-- The router, the query translation, the follow-up rewrite and the community relevance rating answer JSON:
-  `{"strategy": ...}` (a bare strategy name still reads), `{"translation": ...}`, `{"question": ...}`, and MS
-  GraphRAG's `{"reason": ..., "rating": 0-5}` (`rate_prompt.py`; the rating is divided by 5, so
-  `relevance_threshold: 0.2` is still a rating of 1 or more). A model that cannot translate or rewrite answers
+- The query translation, the follow-up rewrite and the community relevance rating answer JSON:
+  `{"translation": ...}`, `{"question": ...}`, and MS GraphRAG's `{"reason": ..., "rating": 0-5}` (`rate_prompt.py`;
+  the rating is divided by 5, so `relevance_threshold: 0.2` is still a rating of 1 or more). The router answers the
+  strategy name and reads any other answer as `{"strategy": ...}` (a JSON answer wrote 2.9 times the output tokens,
+  measured; its `max_tokens` is 1,024). A model that cannot translate or rewrite answers
   `[CANNOT_TRANSLATE]` or `[CANNOT_REWRITE]`, which replace the refusal phrase lists of four languages; the
   router no longer routes prose naming several strategies ("not global ... local") to the first one named, and a
   rating's reason in any language no longer reads as the rating ("Auf einer Skala von 1 bis 10: 8" was 1).
@@ -1394,8 +1395,8 @@ From a `main` checkout (formats and keys no release had):
   quoting a Korean word the Japanese one, an Arabic or Chinese one quoting Latin names without a Latin function word
   the Arabic or Chinese one); among Latin-script languages, an elision only one of them writes ("dell'", "qu'"; not
   "d'", French and Italian) counts with the function words, and a tie the index language is not in goes to the
-  language whose own articles occur ("Qual è il prezzo?" is Italian, not English); evaluation counts a decline by `metadata.abstained` alone, no longer by the English text
-  (#619).
+  language whose own articles occur ("Qual è il prezzo?" is Italian, not English); evaluation counts a decline by
+  `metadata.abstained` alone, no longer by the English text (#619).
 - `run-eval` writes each invocation into a run subdirectory of its own of the outputs directory, `run_<timestamp>_<id>`
   (the manifest's `run_id`; `evaluation.run_subdirectories: false` for the flat layout), and `--from-results` /
   `--baseline-results` read a directory with its run subdirectories. They no longer pool unrelated runs silently: the

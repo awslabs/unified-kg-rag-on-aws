@@ -1066,10 +1066,11 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         """The strategy the router's answer ``raw`` names, and whether it
         named a routable one (else the fallback, ``_fallback_strategy``).
 
-        The answer is ``{"strategy": "<name>"}`` (``StrategySelectionPrompt``),
-        read as every JSON answer is (one repair when it does not parse); an
-        answer that is one strategy name alone, as an older custom prompt
-        asks for, is read as that name. A name is matched whole: prose naming
+        The answer is the strategy name alone (``StrategySelectionPrompt``:
+        a JSON answer made the router write about three times the output
+        tokens, docs/concepts/defaults-and-evidence.md); any other answer is
+        read as ``{"strategy": "<name>"}``, as every JSON answer is (one
+        repair when it does not parse). A name is matched whole: prose naming
         several ("not global ... local") is not guessed from.
         """
         name = raw.strip().strip("\"'`.").casefold()

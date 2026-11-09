@@ -487,7 +487,8 @@ async def test_an_auto_query_reserves_at_most_30k_output_tokens() -> None:
     assert state["resolved_strategy"] is SearchStrategy.LOCAL
     assert len(requested) == 4
     assert sum(requested) <= 30000
-    assert sorted(requested) == [4096, 4096, 4096, 16384]
+    # The router answers a name: 1,024 (v23: the cap of a few-token answer).
+    assert sorted(requested) == [1024, 4096, 4096, 16384]
 
 
 def test_the_relevance_rating_and_answer_span_get_their_ceilings(mocker) -> None:

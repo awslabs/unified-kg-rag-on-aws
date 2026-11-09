@@ -504,9 +504,17 @@ repeated the comparison and measured the routing:
 
 So `iterative` stays routable and the router's guidance stands; route a
 sample of your own questions with `run-eval --search-strategy auto` before
-relying on it. Both runs predate the router's JSON answer
-(`{"strategy": ...}`, the same candidates and guide entries); its agreement
-with these routes has not been measured yet. To keep `auto` off it, list the strategies without
+relying on it. Both runs routed with the router answering the strategy name
+alone, as it does. A JSON answer (`{"strategy": ...}`, the same candidates
+and guide entries; the router still reads one) was measured on 2026-11-08
+(Claude Haiku 5.5, the router call alone, two passes): it agreed with the
+name answer on 194 and 195 of the 200 MuSiQue routes and 46 and 47 of the 50
+sensemaking ones (the name answer agreed with itself on 197 and 50), every
+answer was readable either way, but it wrote 2.9 times the output tokens
+(59.9k against 20.7k over 500 calls) and took 1.59 s at the median against
+1.12 s, so the router answers the name; its `max_tokens`
+(`search.output_ceilings.strategy_selection`) is 1,024, plus the thinking
+budget on a reasoning model. To keep `auto` off it, list the strategies without
 `iterative`:
 
 ```yaml
