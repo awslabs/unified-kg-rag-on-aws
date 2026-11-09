@@ -364,3 +364,34 @@ def test_read_head_reads_the_first_bytes_of_an_uploaded_file(
     assert manager.uri("run-1", "visualization/data.json") == (
         f"s3://{_BUCKET}/cache/run-1/visualization/data.json"
     )
+
+
+def test_read_head_closes_its_body_and_reads_any_failure_as_none(
+    s3_setup, tmp_path: Path, mocker
+) -> None:
+    # Regression: the body was never closed (its connection held until
+    # collected), and an error outside botocore's propagated, so the run
+    # reported no export rather than writing it again.
+    config, session = s3_setup
+    manager = _manager(config, session)
+    cache_dir = tmp_path / "run-1"
+    export = cache_dir / "visualization" / "data.json"
+    export.parent.mkdir(parents=True)
+    export.write_text('{"namespace": "default"}')
+    manager.upload_file("run-1", cache_dir, export)
+    real = manager.s3_client.get_object
+    bodies = []
+
+    def get_object(**kwargs):  # noqa: ANN003, ANN202
+        response = real(**kwargs)
+        bodies.append(mocker.spy(response["Body"], "close"))
+        return response
+
+    mocker.patch.object(manager.s3_client, "get_object", side_effect=get_object)
+    assert manager.read_head("run-1", "visualization/data.json", 32) is not None
+    assert bodies and bodies[0].call_count == 1
+
+    mocker.patch.object(
+        manager.s3_client, "get_object", side_effect=ValueError("bad range")
+    )
+    assert manager.read_head("run-1", "visualization/data.json", 32) is None

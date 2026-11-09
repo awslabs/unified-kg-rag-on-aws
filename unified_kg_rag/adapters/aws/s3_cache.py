@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
+from contextlib import closing
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 
@@ -251,15 +252,16 @@ class S3CacheManager:
     def read_head(self, pipeline_id: str, relative_path: str, size: int) -> str | None:
         """The first ``size`` bytes of the pipeline's uploaded file at
         ``relative_path`` (one ranged GET), as text; ``None`` when there is
-        none or it cannot be read (logged at DEBUG: the caller writes the
-        file again)."""
+        none or it cannot be read, for any reason (logged at DEBUG: the
+        caller writes the file again). The body is closed once read."""
         s3_key = f"{self._get_base_prefix(pipeline_id)}/{relative_path}"
         try:
             response = self.s3_client.get_object(
                 Bucket=str(self.bucket_name), Key=s3_key, Range=f"bytes=0-{size - 1}"
             )
-            head = response["Body"].read(size)
-        except (ClientError, BotoCoreError) as e:
+            with closing(response["Body"]) as body:
+                head = body.read(size)
+        except Exception as e:  # noqa: BLE001 - a probe: None writes it again
             logger.debug("No readable 's3://%s/%s': %s", self.bucket_name, s3_key, e)
             return None
         return head.decode("utf-8", errors="ignore")
