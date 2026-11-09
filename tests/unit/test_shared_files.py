@@ -41,7 +41,7 @@ def test_a_failed_rename_keeps_the_old_file_and_no_temporary(
     assert sorted(p.name for p in tmp_path.iterdir()) == ["state.json"]
 
 
-def test_fsync_flushes_before_the_rename(
+def test_fsync_flushes_the_data_before_the_rename_and_the_directory_after(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     calls: list[str] = []
@@ -55,7 +55,9 @@ def test_fsync_flushes_before_the_rename(
         lambda a, b: (calls.append("replace"), real_replace(a, b))[1],
     )
     atomic_write_text(tmp_path / "a", "x", fsync=True)
-    assert calls == ["fsync", "replace"]
+    # The data before the rename; the directory after it, so the rename
+    # itself survives a power loss.
+    assert calls == ["fsync", "replace", "fsync"]
     calls.clear()
     atomic_write_text(tmp_path / "b", "x")
     assert calls == ["replace"]
@@ -121,3 +123,51 @@ def test_a_stream_replaces_the_file_whole_or_not_at_all(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         with files.atomic_open(path, "a"):
             pass
+
+
+def test_a_symlinked_target_updates_the_file_it_points_to(tmp_path: Path) -> None:
+    # A config.yaml linked from elsewhere stays a link: the file it names
+    # gets the text, and no copy shadows it.
+    real = tmp_path / "real.yaml"
+    real.write_text("a")
+    link = tmp_path / "config.yaml"
+    link.symlink_to(real.name)
+    atomic_write_text(link, "b")
+    assert link.is_symlink() and real.read_text() == "b"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["config.yaml", "real.yaml"]
+    # A dangling link creates the file it names.
+    dangling = tmp_path / "next.yaml"
+    dangling.symlink_to("made.yaml")
+    atomic_write_text(dangling, "c")
+    assert dangling.is_symlink() and (tmp_path / "made.yaml").read_text() == "c"
+
+
+def test_the_replaced_file_keeps_its_mode(tmp_path: Path) -> None:
+    path = tmp_path / "secret.json"
+    path.write_text("old")
+    path.chmod(0o600)
+    atomic_write_text(path, "new")
+    assert path.stat().st_mode & 0o777 == 0o600
+    # A new file gets the umask's mode, as open() gives it.
+    fresh = tmp_path / "fresh.json"
+    atomic_write_text(fresh, "x")
+    umask = os.umask(0)
+    os.umask(umask)
+    assert fresh.stat().st_mode & 0o777 == 0o666 & ~umask
+
+
+def test_a_fifo_or_device_target_is_written_in_place(tmp_path: Path) -> None:
+    # /dev/stdout or a fifo has no sibling to rename over it (creating
+    # /dev/.stdout.<uuid>.tmp fails): the stream goes to it as it is.
+    fifo = tmp_path / "pipe"
+    os.mkfifo(fifo)
+    read_fd = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
+    try:
+        with files.atomic_open(fifo, "wb") as out:
+            out.write(b"streamed")
+        assert os.read(read_fd, 64) == b"streamed"
+    finally:
+        os.close(read_fd)
+    assert fifo.is_fifo()
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["pipe"]
+    atomic_write_text(Path(os.devnull), "discarded")
