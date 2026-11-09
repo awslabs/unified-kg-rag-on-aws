@@ -344,11 +344,16 @@ def _a_script_bound(cp: int, floor: int = _LATIN_1) -> bool:
     return bool(_bounded_scripts(cp, floor))
 
 
-def _one_scripts_bounds(bounds: list[int]) -> bool:
-    """Whether every one of ``bounds`` bounds the same script's letters: a
-    script range's ends are one script's (``0xAC00 <= cp <= 0xD7A3``), while
-    two round numbers each near some block are a number range (``1024 <=
-    port <= 49151``, ``1000 <= year <= 2999``)."""
+def _script_bounds(bounds: list[int], of_characters: bool) -> bool:
+    """Whether ``bounds`` are a script range's ends. Bounds a character is
+    held to are, when each bounds some script's letters, though not one
+    script's (``0x3040 <= ord(ch) <= 0x9FFF``, kana to Han: the "is it
+    CJK" check). Bare numbers must each bound the same script's: a script
+    range's ends are one script's (``0xAC00 <= cp <= 0xD7A3``), while two
+    round numbers each near some block are a number range (``1024 <= port
+    <= 49151``, ``1000 <= year <= 2999``)."""
+    if of_characters:
+        return all(map(_a_script_bound, bounds))
     return bool(frozenset.intersection(*map(_bounded_scripts, bounds)))
 
 
@@ -387,9 +392,10 @@ def _a_character(node: ast.AST, source: Source) -> bool:
 
 def _code_point_range(node: ast.AST, source: Source) -> bool:
     """A script range spelled in code: a comparison, a pair or a
-    ``range(...)`` whose bounds both bound one script's letters (``0xAC00 <=
-    cp <= 0xD7A3``, ``(12352, 12447)``, ``range(44032, 55204)``, ``chr(0x3040)
-    <= ch``), or a character compared with one such bound
+    ``range(...)`` whose bounds are a script range's ends
+    (:func:`_script_bounds`: ``0xAC00 <= cp <= 0xD7A3``, ``(12352, 12447)``,
+    ``range(44032, 55204)``, ``chr(0x3040) <= ch``, ``0x3040 <= ord(ch) <=
+    0x9FFF``), or a character compared with one script bound
     (``0xAC00 <= ord(ch)``, ``ch >= "\\u3040"``)."""
     if isinstance(node, ast.Compare):
         if not all(
@@ -402,7 +408,9 @@ def _code_point_range(node: ast.AST, source: Source) -> bool:
             return _a_script_bound(bounds[0]) and any(
                 _a_character(s, source) for s in sides if _code_point(s, source) is None
             )
-        return len(bounds) > 1 and _one_scripts_bounds(bounds)
+        return len(bounds) > 1 and _script_bounds(
+            bounds, any(_a_character(s, source) for s in sides)
+        )
     if isinstance(node, ast.Tuple | ast.List) and len(node.elts) >= 2:
         # A block's bounds first: ``(0x3040, 0x309F)``, ``(1024, 1327, "cyrillic")``.
         pair = node.elts[:2]
@@ -416,7 +424,10 @@ def _code_point_range(node: ast.AST, source: Source) -> bool:
         return False
     lo, hi = (_code_point(end, source) for end in pair)
     return (
-        lo is not None and hi is not None and lo < hi and _one_scripts_bounds([lo, hi])
+        lo is not None
+        and hi is not None
+        and lo < hi
+        and _script_bounds([lo, hi], any(_a_character(e, source) for e in pair))
     )
 
 
@@ -556,28 +567,52 @@ def _counted_into(node: ast.AST, source: Source) -> bool:
 
 _SCRIPT_READERS = (f"{_SCRIPTS}.script_of", f"{_SCRIPTS}.letter_class")
 # The decoders of a string into data (G2, G10): a denylist of the modules
-# that decode, whole, and of the decoding members of the two that also
-# encode (``json``, ``ast``). Any use of one in a guarded directory is a
-# copy or an allowlist entry; the list names decoders, not the forms a
-# call of one takes, so it grows only with a new decoding library.
+# that only decode, whole, and of the decoding members of those that also
+# encode, so a dump, an exception type or an annotation is no decoder
+# (``yaml.safe_dump``, ``json.decoder.JSONDecodeError``, ``yaml.Node``).
+# Any use of one in a guarded directory is a copy or an allowlist entry;
+# the list names decoders, not the forms a call of one takes, so it grows
+# only with a new decoding library.
 _DECODERS = (
     "json.loads",
     "json.JSONDecoder",
-    "json.decoder",
+    *(
+        f"json.decoder.{name}"
+        for name in (
+            "JSONDecoder",
+            "JSONObject",
+            "JSONArray",
+            "scanstring",
+            "py_scanstring",
+        )
+    ),
     "json.scanner",
     "ast.literal_eval",
-    "orjson",
-    "ujson",
-    "simplejson",
-    "rapidjson",
-    "msgspec",
-    "json5",
-    "hjson",
-    "demjson3",
+    *(
+        f"yaml.{kind}load{every}"
+        for kind in ("", "safe_", "full_", "unsafe_")
+        for every in ("", "_all")
+    ),
+    # ruamel's decoder is the round-trip object's ``.load``: a method no
+    # dotted name reaches, so the object it is a member of.
+    "ruamel.yaml.YAML",
+    "orjson.loads",
+    "ujson.loads",
+    "ujson.load",
+    "simplejson.loads",
+    "simplejson.JSONDecoder",
+    "rapidjson.loads",
+    "rapidjson.Decoder",
+    *(
+        f"msgspec.{form}.{name}"
+        for form in ("json", "yaml")
+        for name in ("decode", "Decoder")
+    ),
+    "json5.loads",
+    "hjson.loads",
+    "demjson3.decode",
     "json_repair",
-    "yaml",
-    "ruamel",
-    "pydantic_core",
+    "pydantic_core.from_json",
     "langchain_core.output_parsers.json",
     "langchain_core.output_parsers.pydantic",
     "langchain_core.output_parsers.JsonOutputParser",
@@ -678,10 +713,6 @@ GUARDS = [
                 "the dataset file, hashed by content",
             ),
             "evaluation/saved_results.py::_read": (1, "saved result files"),
-            "application/prompts/tuner.py::SchemaDraft.to_yaml": (
-                1,
-                "encodes a schema draft (yaml.safe_dump); decodes nothing",
-            ),
         },
     ),
     SourceGuard(
@@ -993,6 +1024,26 @@ _G4 = next(g for g in GUARDS if g.name.startswith("G4 ")).find
         (_DECODING, "import yaml\nyaml.safe_load(s)\n", ["yaml.safe_load"]),
         (_DECODING, "TypeAdapter(list[int]).validate_json(s)\n", 1),
         (_DECODING, "import json\njson.dumps(v)\njson.load(fp)\n", []),
+        # A module that also encodes: its decoders, not its encoders,
+        # exception types or annotations.
+        (_DECODING, "import yaml\nyaml.load(s, Loader=L)\nyaml.full_load_all(s)\n", 2),
+        (_DECODING, "import msgspec\nmsgspec.json.decode(b)\n", 1),
+        (_DECODING, "from pydantic_core import from_json\nfrom_json(s)\n", 1),
+        (
+            _DECODING,
+            "import yaml, orjson, msgspec, pydantic_core\n"
+            "yaml.safe_dump(d)\norjson.dumps(v)\nmsgspec.json.encode(v)\n"
+            "pydantic_core.to_json(v)\ndef g(n: yaml.Node) -> None: ...\n"
+            "try:\n    pass\nexcept yaml.YAMLError:\n    pass\n",
+            [],
+        ),
+        (
+            _DECODING,
+            "from json.decoder import JSONDecodeError\n"
+            "from pydantic_core import PydanticUndefined, ValidationError\n"
+            "x = (JSONDecodeError, PydanticUndefined, ValidationError)\n",
+            [],
+        ),
         (calls("os.replace"), "import os\nos.replace(a, b)\n", ["os.replace"]),
         (calls("os.replace"), "from os import replace\nreplace(a, b)\n", 1),
         (calls("shutil.move"), "import shutil\nshutil.move(a, b)\n", 1),
@@ -1049,6 +1100,12 @@ _G4 = next(g for g in GUARDS if g.name.startswith("G4 ")).find
         (_G4, "S = ((0x0E00, 0x0E7F),)\n", 1),
         (_G4, "ok = 0xAC00 <= ord(ch) <= 0xD7A3\n", 1),
         (_G4, 'ok = "\\u3040" <= ch <= "\\u309f"\n', 1),
+        # A character held to two scripts' bounds (kana to Han, Greek to
+        # Cyrillic): the usual "is it CJK" range, not a number range.
+        (_G4, "ok = 0x3040 <= ord(ch) <= 0x9FFF\n", 1),
+        (_G4, 'ok = "\\u3040" <= ch <= "\\u9fff"\n', 1),
+        (_G4, "ok = 0x0370 <= ord(ch) <= 0x052F\n", 1),
+        (_G4, 'r = range(ord("\\u3040"), ord("\\u9fff"))\n', 1),
         (_G4, 'C = "[\\x00-\\x1f\\x7f]"\nok = ord(ch) < 128 and ch <= "z"\n', []),
         # Round numbers each near some script's block, not one script's
         # ends: a number range.
