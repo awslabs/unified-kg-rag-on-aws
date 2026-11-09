@@ -159,6 +159,16 @@ class TextUnitRemoval:
             **m._vector_citing(prefixes.entities_index_prefix, text_unit_ids, suffix),
             **(found or {}),
         }
+        # A vector copy the graph search missed may be stale (its write
+        # was rejected) while its graph copy cites other units too (an
+        # interrupted strip of these units rewrote it): the entity is
+        # shared then, not vector-only, so its graph copy's units count.
+        unfound = sorted(set(cited) - set(found)) if found is not None else []
+        if unfound and _reads_back(graph):
+            for entity in graph.read_entities(unfound, suffix=suffix):
+                cited[entity.id] = sorted(
+                    set(cited[entity.id]) | set(entity.text_unit_ids or [])
+                )
         edges = self._graph_edges_citing(suffix, text_unit_ids, cited)
         relationships = {
             **m._vector_citing(
