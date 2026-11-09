@@ -581,6 +581,20 @@ jobs:
         # dependency or a broken entrypoint fails here, not at deploy time.
         run: docker run --rm unified-kg-rag:ci
 
+      - name: Check the image holds this checkout's package
+        # uv's build cache keys the project's own wheel by its version, so a
+        # warm cache once installed an earlier commit's package: the build
+        # checks the installed package against the copied source and bakes
+        # the digest in; it must be this checkout's, and so must the
+        # installed files, digested again here (scripts/package_digest.py).
+        run: |
+          expected=$(python3 -I scripts/package_digest.py unified_kg_rag)
+          baked=$(docker run --rm --entrypoint cat unified-kg-rag:ci /app/.venv/unified-kg-rag-source.sha256)
+          installed=$(docker run --rm -v "$PWD/scripts/package_digest.py:/tmp/package_digest.py:ro" \
+            --entrypoint /app/.venv/bin/python unified-kg-rag:ci -I /tmp/package_digest.py --installed)
+          echo "checkout $expected, baked $baked, installed $installed"
+          [ "$expected" = "$baked" ] && [ "$expected" = "$installed" ]
+
       - name: Check the image leaves the eval extra out
         # run-eval's default evaluators are LLM-free; the ragas judge's eval
         # extra (about 390 MB) is opt-in (UV_EXTRAS, the docker-unstructured

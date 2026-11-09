@@ -1925,7 +1925,10 @@ Deployment (CDK).
 - The data-plane image drops the AWS CLI (the entrypoint syncs the corpus with `docker/s3_sync.py`, on boto3) and
   uv, is built on Python 3.12.16, and keeps the venv read-only to the app user: 939 MB instead of 1.98 GB, and no
   HIGH or CRITICAL finding with a fix. CI scans both images with Trivy (pinned by digest) and fails on such a
-  finding (`.trivyignore.yaml` lists accepted ones with their reason and expiry) (#617).
+  finding (`.trivyignore.yaml` lists accepted ones with their reason and expiry) (#617). The build reinstalls the
+  package from the copied source and fails unless the installed files are that source (uv's cache keys the project's
+  wheel by its version, so a warm cache had put an earlier commit's code in an image); the image keeps the digest
+  (`/app/.venv/unified-kg-rag-source.sha256`, `scripts/package_digest.py`), which the CI docker job checks.
 - Releases attach SHA-256 checksums and a CycloneDX SBOM of the locked dependencies, with a signed build provenance
   attestation of the distributions (`gh attestation verify`) (#617).
 - IaC: the ingestion role cannot change OpenSearch cluster settings or plugin configuration (writes under
