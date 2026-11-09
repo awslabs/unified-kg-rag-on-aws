@@ -461,8 +461,10 @@ class PendingWrites:
         id). A full build over those units gives the endpoint an entity
         citing them (every endpoint cites its edges' units), so one citing
         none is another entity of the key (a spelling of another type), not
-        the endpoint. An endpoint with none keeps its id. Those ``known``
-        are not returned (the delta holds them)."""
+        the endpoint. An endpoint with none keeps its id; no pipeline run is
+        known to reach that case, which breaks the same invariant (every
+        endpoint cites its edges' units). Those ``known`` are not returned
+        (the delta holds them)."""
         named: dict[str, str] = {}
         units: dict[str, set[str]] = defaultdict(set)
         for rel in noted:
