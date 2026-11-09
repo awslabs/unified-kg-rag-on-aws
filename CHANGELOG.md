@@ -582,12 +582,14 @@ From a `main` checkout (formats and keys no release had):
   `0.67-0.91x`, `0.91-1.1x`, `1.1-1.5x`, `>=1.5x`). `prepare-benchmark musique --unanswerable` without `--data-path`
   now also downloads the answerable split and draws the answerable questions from it (labelled `musique`); prepare
   again for that sample. Nothing else re-runs.
-- Evaluation results of German, Spanish, French, Italian or Portuguese datasets saved before the per-language answer
-  normalization scored exact match, token F1 and containment with English articles only: rescore them
-  (`run-eval --from-results DIR --rescore`, no answer call; a span call per answer with `answer_span: extracted`)
-  before comparing them with new runs. Saved `--arm` runs record no `arm.aa`, so a rebuilt comparison adjusts and gates
-  an earlier A/A arm with the others; differential pairwise results judged before both answer slots favour the
-  candidate (re-judge with `--from-results DIR --pairwise-judge`, two fast and four judge calls per pair).
+- #656 answer normalization: evaluation results of German, Spanish, French, Italian or Portuguese datasets saved
+  before it scored exact match, token F1 and containment with English articles only: rescore them (`run-eval
+  --from-results DIR --rescore`, no answer call; a span call per answer with `answer_span: extracted`) before
+  comparing them with new runs.
+- #656 A/A arms: `--arm` runs saved before it record no `arm.aa`, so a comparison rebuilt from them adjusts and
+  gates an A/A arm with the others; run the arm again to mark it.
+- #656 pairwise slots: differential pairwise results judged before it, in one answer order, favour the candidate:
+  re-judge with `--from-results DIR --pairwise-judge` (two fast and four judge calls per pair).
 - #607 rerank metering: a query's usage counts its rerank requests (`rerank_calls`, `rerank_search_units` under the
   `rerank` role and the rerank model's id), so `run-eval` with `evaluation.prices` gives no USD estimate until the
   rerank model has a price (`per_thousand_rerank_search_units`; 0 for a local cross-encoder). A price entry sets
@@ -782,6 +784,7 @@ From a `main` checkout (formats and keys no release had):
   `mcp.max_*` bounds limit what a call may ask and costs (`mcp.strategies` binds the chain's new
   `allowed_strategies`: `auto` routes, and falls back, only within it, and is refused before any model call when the
   namespace serves none of it); every call runs under `search.query_timeout_seconds` and returns its model `usage`.
+  `kg_get_entity` matches a name folded as local search's seeds are.
   The graph tools read the stores through the chain's retrievers and make no model call; they look names, IRIs and
   ids up in NFC (and a name again in NFKC), as search composes a query. Over HTTP only POST is served (405
   otherwise), and on any loopback address the `Host` and `Origin` headers must name it or a loopback name (421/403).
@@ -798,7 +801,8 @@ From a `main` checkout (formats and keys no release had):
   call with the refusal), links the names it mentions through the hybrid entity search (a name without a name match
   needs a lexical hit whose name holds every word of it, legal forms aside, Han, Hangul and Kana by character pairs
   and a word spelled alike past `processing.similarity_threshold`, so an absent entity that shares one word with a
-  stored one links nothing and falls back), compiles it to Gremlin bytecode (Neptune,
+  stored one links nothing and falls back; names compare folded at query time as local search's seeds do), compiles
+  it to Gremlin bytecode (Neptune,
   Gremlin Server; each branch of a hop range ends in its own `simplePath()`, since Neptune ignores one after a
   `union`, and a fixed length walks one chain without a `union`, whose one-branch form Neptune rejects) or
   parameterised SQL (the embedded graph) scoped to the query's suffix label, checks the compiled
@@ -992,6 +996,11 @@ From a `main` checkout (formats and keys no release had):
   in descriptions, misled the router and hid the `[NO_ANSWER]` token. An Ollama model whose `/api/show` lists
   `thinking` is built with `reasoning=True`, and an OpenAI-compatible server's `reasoning_content` is kept beside
   the answer. See [local mode](docs/guides/local-mode.md).
+- Filter keys for a document's metadata, `attr_<key>`, on every index and graph store, and for an entity's own
+  extracted attribute, `attributes.<key>` (the entities index's key), strictly on every store: a graph store no
+  longer matches `attr_<key>` against an entity's own attribute (`attr_category:finance` dropped an entity of a
+  finance document whose extracted `category` was `hardware`) (#446, #661). See
+  [filters](docs/reference/filters.md).
 - Documents from memory: `DataIngestionPipeline.insert_documents([InputDocument(id=..., text=..., filters=...)])`
   adds or updates documents, `delete_documents(ids)` deletes them, through the incremental path of `run` (one run
   each, under the namespace lease); the source scope's other documents are kept (`DocumentDelta.kept`). Needs the
@@ -1017,8 +1026,18 @@ From a `main` checkout (formats and keys no release had):
   [observability](docs/guides/observability.md).
 - Incremental indexing: the extraction-settings fingerprint (#224, #332); `indexing.max_document_failures` with
   own-error accounting and `documents_retrying` (#175, #431); source scopes and `--retire-source-scope` (#134,
-  #192); the namespace write lease and quarantine (`indexing.max_document_attempts`) (#331, #346). See [incremental
-  indexing](docs/guides/incremental.md) and [scopes and namespaces](docs/concepts/scopes-and-namespaces.md).
+  #192), a scope's first run into a namespace that holds other scopes' documents recorded as the incremental build it
+  is (#640); the namespace write lease and quarantine (`indexing.max_document_attempts`) (#331, #346); the commit's
+  note (`pending-commit`), which lists the old ids its derivation retires, so when a write fails, or the run dies,
+  the next commit derives the items still stored under them again and deletes the old copies of those it re-keyed
+  (another spelling took over their name) or dropped; the failed commit already deletes the old ids no failed write
+  touches, so a hub whose write keeps failing holds back only the re-keys at it (a note keeps only the old ids still
+  stored), and a suffix whose stored reports could not be pointed at the new ids keeps its old ids until a later run
+  does both. A note over 1 MiB is split into parts, each its own record, under a store's request limit (10 MiB on
+  small OpenSearch instances). A noted edge the delta states again takes the endpoints the delta resolves, and a noted
+  claim derived again resolves its unit's statements against every stored spelling of their names (`Acme Inc` beside
+  `Acme`), as the full build does. See [incremental indexing](docs/guides/incremental.md) and [scopes and
+  namespaces](docs/concepts/scopes-and-namespaces.md).
 - Deletion guard: an incremental run that would delete more than `indexing.max_deletion_share` of a scope of 10 or
   more documents (seed shards and retired scopes not counted) stops at `document_loading` unless confirmed
   (`--confirm-deletions`, `UKR_CONFIRM_DELETIONS=1`, `--yes`, the prompt, or
@@ -1134,7 +1153,8 @@ From a `main` checkout (formats and keys no release had):
   cap left it the first passages of long chunks), a round follows at most five bridge entities, a deadline that
   cancels the round an insufficient verdict started reports it (`insufficiency_reason: deadline`), and the follow-up
   queries and bridge entities in `metadata["iterative"]` are screened by the output guardrail with `check_output`
-  (#607). See [query](docs/guides/query.md#follow-up-rounds-for-multi-hop-questions).
+  (#607); bridge entities are told apart by names folded as local search's seeds are. See
+  [query](docs/guides/query.md#follow-up-rounds-for-multi-hop-questions).
 - LLM usage accounting, tracing or not: calls, input and output tokens, prompt-cache reads and writes, resent and
   failed requests and cache hits per model role and id, in `RAGOutput` / `SearchOutput.metadata["usage"]`,
   `EvaluationResult.usage`, `run-ingestion`'s JSON `token_usage` and per-stage EMF metrics on the CDK dashboard. A
@@ -1358,11 +1378,6 @@ From a `main` checkout (formats and keys no release had):
 - `run-eval` exits 2 for a filter key no index declares, as `run-rag` does, and `run-rag` exits by the class of a
   failure `processing.ignore_errors` absorbed (2 for a `--suffix` nothing was ingested under; it exited 1).
 - Global search on a namespace without community reports declines with `abstention_reason: no_reports`.
-- A graph store filters an entity by its own attribute as `attributes.<key>`, the entities index's key, strictly;
-  `attr_<key>` is a document filter on every store. A graph matched `attr_<key>` against the entity's own attribute
-  where the vertex held one, so `attr_category:finance` dropped an entity of a finance document whose extracted
-  `category` was `hardware`, and `attributes.<key>` was left to the entities index. Write `attributes.role`, not
-  `attr_role`, for an extracted attribute.
 - A `name` filter matches an entity's whole name exactly on every store (`name.keyword` on the entities index):
   OpenSearch matched it against one analyzed token (`name:Acme` matched nothing, `name:가나다` matched
   `가나다 상사`), a graph the whole name. A filter on analyzed text (`description`, `text`, `summary`, the
@@ -1515,8 +1530,8 @@ From a `main` checkout (formats and keys no release had):
 - The splitter cuts a paragraph longer than a chunk after a Latin or Korean sentence end (".", "!", "?" or "…"
   before a space) before it falls back to its last space (#608).
 - The `graph_analysis` stage no longer computes the average clustering coefficient (about 10 s at 80,000 entities)
-  or the diameter, which no stage read: `graph.analysis.statistics.calculate_average_clustering` and
-  `calculate_diameter` load with a WARNING and are ignored (#608, #628).
+  or the diameter, which no stage read: `graph.analysis.statistics.calculate_clustering` and `calculate_diameter`
+  load with a WARNING and are ignored (#608, #628).
 - Embedding requests in flight are bounded by `processing.max_concurrency` too (at most 16 as before) (#608);
   `processing.embedding_concurrency` (16) and `processing.embedding_batch_size` (50 texts per request) set them.
 - Stage cache keys cover the whole configuration and the package version (#332).
@@ -1613,12 +1628,12 @@ Queries and retrieval.
   top hit when that scores at least `search.local_search.seed_score_ratio` (0.6) of the best hit, read at equal
   hybrid weights; one lookup of the joined names seeded a wrong neighbour beside every right seed (#517, #530). A top
   hit sharing one word with the name and covering neither way (an absent "Zorblax Supplies" for "Acme Supplies")
-  seeds nothing; semantic and alias hits ("NYC" for "New York City") seed as before. Local seeds and the structured
-  strategy's mentions compare names folded at query time (stored keys unchanged): a middle dot between kana, Han or
-  Hangul letters ("オリオン・ラボ" for "オリオンラボ"), Arabic short vowels, tatweel, alef with or without hamza, alef
-  maksura, Russian "ё" for "е" and a leading "شركة" no longer keep a name from linking, nor Latin accents a name from
-  covering ("Cafe" for "Café"); an entity written as asked links alone ("شركة النور", not also "النور"). The MCP
-  entity lookup, iterative's bridge dedupe and `graph_aware`'s retrieved coverage compare names the same way.
+  seeds nothing; semantic and alias hits ("NYC" for "New York City") seed as before. Local seeds compare names folded
+  at query time (stored keys unchanged): a middle dot between kana, Han or Hangul letters ("オリオン・ラボ" for
+  "オリオンラボ"), Arabic short vowels, tatweel, alef with or without hamza, alef maksura, Russian "ё" for "е" and a
+  leading "شركة" no longer keep a name from linking, nor Latin accents a name from covering ("Cafe" for "Café"); an
+  entity written as asked links alone ("شركة النور", not also "النور"). `graph_aware`'s retrieved coverage compares
+  names the same way.
 - Local search orders its candidate text units by one shared rule (`domain/retrieval/lineage.py`, also the
   structured query result's lineage): the units most expanded entities cite, then the best-scored citing entity's,
   then first seen; an entity citing a unit twice counts once, and a lineage a graph store returns as its JSON text
@@ -1701,9 +1716,6 @@ Ingestion and incremental indexing.
 - An incremental run, and a run into a namespace that holds other source scopes' documents, export the whole
   namespace's graph, read from its stores, not only its own delta or corpus (or none, or `Communities must be
   detected before exporting`), so the console's graph and `run-visualization` show what queries read (#640).
-- A source scope's first run into a namespace that holds other scopes' documents is recorded as the incremental
-  build it is: the build record kept only that run's documents and artifacts as a full build, restarted the
-  community counters and dropped the full build it was applied on (#640).
 - With description summaries on, an incremental run no longer extends a stored summary with a delta edge's
   description when the derivation moved part of it to another edge (a delta that resolved `Vendor Inc` into `Vendor`
   where the stored graph keeps them apart): the summary held a line the edge no longer states, unlike a full
@@ -1761,16 +1773,7 @@ Ingestion and incremental indexing.
 - A rejected entity, relationship, claim, community or report write (under `indexing.max_failure_rate`) no longer
   records the documents owning it `FAILED`: the item is noted in the extraction store (`pending-writes`) and the next
   run writes it again without extracting anything. Re-extracting the owners re-extracted every document a hub entity
-  cites, on every run its write kept failing. Only a failed text-unit write fails its document. The commit's note
-  (`pending-commit`) lists the old ids its derivation retires, so when a write fails, or the run dies, the next commit
-  derives the items still stored under them again and deletes the old copies of those it re-keyed (another spelling
-  took over their name) or dropped; the failed commit already deletes the old ids no failed write touches, so a hub
-  whose write keeps failing holds back only the re-keys at it (a note keeps only the old ids still stored). A suffix
-  whose stored reports could not be pointed at the new ids keeps its old ids until a later run does both. A note over
-  1 MiB is split into parts, each its own record, under a store's request limit (10 MiB on small OpenSearch
-  instances). A noted edge the delta states again takes the endpoints the delta resolves, and a noted claim derived
-  again resolves its unit's statements against every stored spelling of their names (`Acme Inc` beside `Acme`), as the
-  full build does.
+  cites, on every run its write kept failing. Only a failed text-unit write fails its document.
 - Deleting a document under a non-default suffix strips it from shared claims, a deletion-only run checks the
   configured suffix, and a run whose new documents name no entity still commits them (#248, #252, #256).
 - `indexing.reset` reusing a pipeline id rebuilds from the whole corpus, fails when the registry cannot be cleared,

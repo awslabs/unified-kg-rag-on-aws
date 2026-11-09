@@ -12,15 +12,24 @@ wrapped line), a shorter fragment of an entry kept twice in it (the old and
 the new tail of one sentence, the second starting a line), two entries of a
 subsection that contradict each other ("no longer exports X" beside
 "exports X", sharing a quoted message), a line a conflict resolution
-joined unwrapped, and an extra the install instructions do not name.
+joined unwrapped, an extra the install instructions do not name, and a
+*Fixed* or *Changed* entry (a change a 0.2.3 user compares with what they
+run) that names a config key 0.2.3 did not have: a feature no release had
+belongs in its *Added* entry.
 """
 
 from __future__ import annotations
 
+import importlib
 import re
+import subprocess  # nosec B404 - fixed argv, no shell
+import sys
 import tomllib
+import typing
+from pathlib import Path
 
 import pytest
+from pydantic import BaseModel
 
 from tests.fixtures.docs_check import REPO_ROOT
 
@@ -211,6 +220,92 @@ def _long_lines(section: str) -> list[tuple[int, int]]:
     ]
 
 
+# The last release, its commit and its config keys (dotted, every nested
+# field), read from that commit's config models by
+# ``config_keys_at`` (the CI checkout is shallow, so the list is kept).
+RELEASE = "0.2.3"
+RELEASE_COMMIT = "81ea4987"
+RELEASE_KEYS = REPO_ROOT / "tests/fixtures/config_keys_0_2_3.txt"
+# Keys a Fixed or Changed entry may name although 0.2.3 had none: the knob
+# the change itself added to tune or undo it, or the new name of a 0.2.3 key
+# (*Breaking changes* lists the renames). Each must still be named.
+NEW_KEYS_IN_CHANGES = {
+    "evaluation.answer_span_output_ceiling": "the short-answer ceiling it added",
+    "evaluation.repeat_extractions": "how repeats extract, which the change added",
+    "evaluation.run_order": "keeps the earlier, sequential order",
+    "evaluation.run_subdirectories": "keeps the flat layout",
+    "custom_prompts.text_chunking_": "the chunker prompt it made overridable",
+    "custom_prompts.text_translation_": "the translation prompt it made overridable",
+    "graph.community_detection.max_cluster_size": "the leaf bound the change added",
+    "indexing.neptune.deterministic_order": "keeps the store's edge order",
+    "models.embedding.dimension": "indexing.opensearch.embedding_dimension, renamed",
+    "models.roles.fixing": "fixing.model_id, renamed",
+    "processing.embedding_batch_size": "the bound the change added",
+    "processing.embedding_concurrency": "the bound the change added",
+    "search.auto_routable_strategies": "how auto opts out of a strategy",
+    "search.local_search.seed_score_ratio": "the seed threshold the fix added",
+    "search.output_ceilings": "the short-answer ceilings it added",
+    "search.query_extraction_cache_size": "the cache the change added",
+    "search.store_timeout_seconds": "the store timeout the fix added",
+}
+_CONFIG_KEY = re.compile(r"[a-z_]+(?:\.[a-z0-9_]+)+")
+
+
+def config_keys_at(commit: str, root: Path) -> set[str]:
+    """Every dotted config key of ``commit``'s ``Config``: its config models
+    (``domain/models/config.py`` with the two modules it imports, read with
+    ``git show``) imported in a package of their own."""
+    package = root / "release_models"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    for name in ("config", "evaluation", "retrieval"):
+        source = subprocess.run(  # nosec B603 B607 - fixed argv, no shell
+            ["git", "show", f"{commit}:unified_kg_rag/domain/models/{name}.py"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        (package / f"{name}.py").write_text(source)
+    sys.path.insert(0, str(root))
+    try:
+        config = importlib.import_module("release_models.config").Config
+    finally:
+        sys.path.remove(str(root))
+        for module in [m for m in sys.modules if m.startswith("release_models")]:
+            del sys.modules[module]
+
+    def models(annotation: object) -> list[type[BaseModel]]:
+        if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+            return [annotation]
+        return [m for arg in typing.get_args(annotation) for m in models(arg)]
+
+    keys: set[str] = set()
+
+    def walk(model: type[BaseModel], prefix: str) -> None:
+        for name, field in model.model_fields.items():
+            keys.add(f"{prefix}{name}")
+            for nested in models(field.annotation):
+                walk(nested, f"{prefix}{name}.")
+
+    walk(config, "")
+    return keys
+
+
+def _new_config_keys(section: str, known: set[str], top: set[str]) -> list[str]:
+    """``<subsection>: <key>`` of each config key (a backticked dotted name
+    under a top-level section) a Fixed or Changed entry names that is not in
+    ``known``."""
+    found = []
+    for title in ("Changed", "Fixed"):
+        for span in re.findall(r"`([^`]+)`", _subsection(section, title)):
+            match = _CONFIG_KEY.match(span)
+            if match and match.group(0).split(".")[0] in top:
+                if match.group(0) not in known:
+                    found.append(f"{title}: {match.group(0)}")
+    return found
+
+
 def _extras() -> list[str]:
     with (REPO_ROOT / "pyproject.toml").open("rb") as file:
         return list(tomllib.load(file)["project"]["optional-dependencies"])
@@ -264,6 +359,46 @@ def test_every_extra_is_named_where_the_section_lists_them() -> None:
     for extra in _extras():
         assert f"`{extra}`" in extras_entry, f"Breaking extras omit `{extra}`"
         assert f"`{extra}`" in step_one, f"Upgrading step 1 omits `{extra}`"
+
+
+def test_fixed_and_changed_entries_name_only_keys_the_release_had() -> None:
+    from unified_kg_rag.domain.models import Config
+
+    known = set(RELEASE_KEYS.read_text(encoding="utf-8").split())
+    new = _new_config_keys(SECTION, known, set(Config.model_fields))
+    unexplained = sorted(
+        {n for n in new if n.split(": ", 1)[1] not in NEW_KEYS_IN_CHANGES}
+    )
+    assert unexplained == [], f"a key {RELEASE} had not: move it to Added"
+    named = {n.split(": ", 1)[1] for n in new}
+    assert sorted(set(NEW_KEYS_IN_CHANGES) - named) == [], "drop these entries"
+
+
+def test_the_release_keys_are_its_commit_s(tmp_path: Path) -> None:
+    has = subprocess.run(  # nosec B603 B607 - fixed argv, no shell
+        ["git", "cat-file", "-e", f"{RELEASE_COMMIT}^{{commit}}"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        check=False,
+    )
+    if has.returncode:
+        pytest.skip(f"a shallow checkout without {RELEASE_COMMIT}")
+    keys = config_keys_at(RELEASE_COMMIT, tmp_path)
+    assert {"search.local_search", "processing.chunking.chunk_overlap"} <= keys
+    assert keys == set(RELEASE_KEYS.read_text(encoding="utf-8").split())
+
+
+def test_the_new_key_scan() -> None:
+    section = (
+        "\n### Changed\n- `search.top_k` is 10; `search.new_knob: 3` sets it, "
+        "`run-eval` and `metadata.degraded` are no keys.\n"
+        "### Fixed\n- `indexing.old.thing` reads.\n### Security\n- `search.x`\n"
+    )
+    known = {"search", "search.top_k", "indexing", "indexing.old"}
+    assert _new_config_keys(section, known, {"search", "indexing"}) == [
+        "Changed: search.new_knob",
+        "Fixed: indexing.old.thing",
+    ]
 
 
 @pytest.mark.parametrize(
