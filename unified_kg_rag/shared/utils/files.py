@@ -27,12 +27,17 @@ NAME_MAX = 255
 
 def name_max(directory: Path) -> int:
     """The longest file name, in bytes, ``directory`` holds (143 on
-    eCryptfs), or :data:`NAME_MAX` where it does not say (Windows, a
-    directory not made yet)."""
+    eCryptfs), or :data:`NAME_MAX` where it does not say (Windows, a file
+    system saying no limit: -1 or 0). A directory not made yet holds what
+    its nearest existing parent does, the file system it is made on."""
+    for existing in (directory, *directory.parents):
+        if os.path.lexists(existing):
+            break
     try:
-        return os.pathconf(directory, "PC_NAME_MAX")
+        limit = os.pathconf(existing, "PC_NAME_MAX")
     except (AttributeError, OSError, ValueError):
         return NAME_MAX
+    return limit if limit > 0 else NAME_MAX
 
 
 def temporary_sibling(path: Path) -> Path:
@@ -47,7 +52,7 @@ def temporary_sibling(path: Path) -> Path:
     unique = f".{uuid.uuid4().hex}.tmp"
     room = name_max(path.parent) - 1 - len(unique)
     name = path.name
-    while len(os.fsencode(name)) > room:
+    while name and len(os.fsencode(name)) > room:
         name = name[:-1]
     return path.with_name(f".{name}{unique}")
 

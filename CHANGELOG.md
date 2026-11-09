@@ -1898,7 +1898,7 @@ Evaluation, visualization and tuning.
   begun (a full disk) keeps the staged file and names it in the error, and `fsync` flushes the copy too; a write
   that asks for `fsync` flushes the directory after the rename where it may. A valid name of 218-255 bytes (about
   73 or more Korean or Japanese characters, a console upload's too) is written atomically: its temporary name is
-  cut to fit the directory's name limit (255 bytes, 143 on eCryptfs).
+  cut to fit the directory's name limit (255 bytes, 143 on eCryptfs, 255 where the file system says none).
 - `graph_aware` matches a word through its possessive and finds a Latin word or number inside Chinese or Japanese
   text (`AWS` in `答案是AWS公司`) (#516, #563).
 - `run-visualization` rejects unknown `--renderers` and invalid data (exit 2), lays out only the drawn nodes, keeps

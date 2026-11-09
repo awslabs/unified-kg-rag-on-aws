@@ -571,6 +571,42 @@ def test_the_temporary_name_fits_the_directory_s_name_limit(
     assert len(os.fsencode(temporary.name)) == files.NAME_MAX
 
 
+@pytest.mark.parametrize("said", [-1, 0])
+@pytest.mark.timeout(10)
+def test_a_file_system_saying_no_name_limit_gets_the_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, said: int
+) -> None:
+    # POSIX lets pathconf return -1 for "no limit" (CPython does not raise),
+    # and a file system may report 0: the default limit, not a negative room
+    # the name is cut toward forever.
+    monkeypatch.setattr(files.os, "pathconf", lambda *_: said)
+    assert files.name_max(tmp_path) == files.NAME_MAX
+    temporary = temporary_sibling(tmp_path / ("a" * 255))
+    assert len(os.fsencode(temporary.name)) == files.NAME_MAX
+
+
+@pytest.mark.timeout(10)
+def test_a_limit_shorter_than_the_unique_part_ends_the_cut(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(files.os, "pathconf", lambda *_: 20)
+    assert temporary_sibling(tmp_path / "name.json").name.endswith(".tmp")
+
+
+def test_a_directory_not_made_yet_has_its_parent_s_name_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    asked: list[Path] = []
+
+    def limit(directory: Any, _: str) -> int:
+        asked.append(Path(directory))
+        return 143
+
+    monkeypatch.setattr(files.os, "pathconf", limit)
+    assert files.name_max(tmp_path / "new" / "deeper") == 143
+    assert asked == [tmp_path]
+
+
 def test_a_read_only_descriptor_s_alias_names_the_path(tmp_path: Path) -> None:
     (tmp_path / "f").write_text("kept")
     fd = os.open(tmp_path / "f", os.O_RDONLY)
