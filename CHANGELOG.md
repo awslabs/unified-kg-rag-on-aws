@@ -1894,11 +1894,13 @@ Evaluation, visualization and tuning.
   is written through its descriptor, so `--output-path /dev/stdout > out.txt` (or `>>`) keeps what else the run
   prints (a file open to update ends where the write does; one open read-only is refused with its path). A file
   its directory will not let be replaced (read-only, on a read-only file system, a bind-mounted file) is staged in
-  a temporary file and copied in once written, so a failed export still leaves it whole, a copy that fails once
-  begun (a full disk) keeps the staged file and names it in the error, and `fsync` flushes the copy too; a write
+  a temporary file and copied in once written, so a failed export still leaves it whole; a file that would refuse
+  the copy too (read-only itself) fails before the export streams, with its own error and path. A copy that fails
+  once begun (a full disk) keeps the staged file and names it in the error, and `fsync` flushes the copy too; a write
   that asks for `fsync` flushes the directory after the rename where it may. A valid name of 218-255 bytes (about
   73 or more Korean or Japanese characters, a console upload's too) is written atomically: its temporary name is
-  cut to fit the directory's name limit (255 bytes, 143 on eCryptfs).
+  cut to fit the directory's name limit (255 bytes, 143 on eCryptfs, 255 where the file system says none), and a
+  console upload's name past its folder's limit is refused up front (`path_refused`), not when it is renamed.
 - `graph_aware` matches a word through its possessive and finds a Latin word or number inside Chinese or Japanese
   text (`AWS` in `答案是AWS公司`) (#516, #563).
 - `run-visualization` rejects unknown `--renderers` and invalid data (exit 2), lays out only the drawn nodes, keeps
@@ -1952,7 +1954,8 @@ Deployment (CDK).
 ### Security
 - An atomic write's temporary file (beside the file, or staged in the shared temp directory) is created 0600 and
   given the file's mode only at the rename, so other local users cannot read a private file's new text while an
-  export streams; it was 0644 under the default umask.
+  export streams; it was 0644 under the default umask. A console upload's are made the same way, and a re-upload
+  keeps the replaced file's mode, where a 0600 file came back 0644.
 - The image upgrades `zlib1g` to the Debian security release fixing CVE-2026-76844 and CVE-2026-85091 (HIGH),
   which the base image still carries, so the image scan passes (#632).
 - Pinned floors for advisories: pypdf 6.21.4 (seven high-severity denial-of-service advisories, e.g.

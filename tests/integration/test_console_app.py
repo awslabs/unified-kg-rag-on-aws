@@ -450,6 +450,47 @@ def test_an_upload_with_a_long_korean_name_lands_and_a_too_long_one_is_refused(
     assert [p.name for p in folder.iterdir()] == [fits]
 
 
+def test_an_upload_name_must_fit_the_folder_s_own_name_limit(
+    client: Any, workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # eCryptfs holds 143 bytes, not 255: a longer name is refused up front
+    # (path_refused), not by a rename failing ENAMETOOLONG once written.
+    from unified_kg_rag.shared.utils import files
+
+    monkeypatch.setattr(files.os, "pathconf", lambda *_: 143)
+    for name, relative in (("short", "가" * 48 + ".txt"), ("가" * 48, "a.txt")):
+        refused = _upload(client, name, {relative: "Vendor ships to Buyer."})
+        assert refused.status_code == 403, refused.text
+        assert refused.json()["code"] == "path_refused"
+        assert "longer than 143 bytes" in refused.text
+    assert not (workspace / "uploads" / ("가" * 48)).exists()
+    assert not (workspace / "uploads" / "short").exists()
+    assert _upload(client, "short", {"가" * 40 + ".txt": "x"}).status_code == 200
+
+
+def test_an_upload_over_a_file_keeps_its_mode(client: Any, workspace: Path) -> None:
+    # A re-upload replaces the file through the shared atomic write: the
+    # file keeps its permission bits (0600 stays 0600), and a path named
+    # twice in one upload lands once, its last copy, with no stray sibling.
+    folder = workspace / "uploads" / "modes"
+    folder.mkdir(parents=True)
+    (folder / "private.txt").write_text("old")
+    (folder / "private.txt").chmod(0o600)
+    upload = client.post(
+        "/api/uploads",
+        data={"name": "modes"},
+        files=[
+            ("files", ("private.txt", b"first", "text/plain")),
+            ("files", ("private.txt", b"second", "text/plain")),
+        ],
+        headers=HEADERS,
+    )
+    assert upload.status_code == 200, upload.text
+    assert (folder / "private.txt").read_text() == "second"
+    assert (folder / "private.txt").stat().st_mode & 0o777 == 0o600
+    assert [p.name for p in folder.iterdir()] == ["private.txt"]
+
+
 def test_a_refused_upload_leaves_the_folder_as_it_was(
     client: Any, workspace: Path
 ) -> None:
