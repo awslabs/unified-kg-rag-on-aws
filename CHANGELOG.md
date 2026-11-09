@@ -1862,8 +1862,10 @@ Evaluation, visualization and tuning.
   `run-prompt-tuning` outputs, static charts and `Document.to_json_file` are written atomically: a run stopped
   mid-write left a truncated file (a JSON file a later `--from-results` refused, a tuned-prompts file over the
   previous one). A symlinked file stays a link (the file it points to is replaced), a replaced file keeps its
-  permission bits, `/dev/stdout` or a fifo is written in place, and a write that asks for `fsync` flushes the
-  directory after the rename too.
+  permission bits, a fifo is written in place, and `/dev/stdout` (`/dev/fd/N`, `/proc/self/fd/N`, a link to one)
+  is written through its descriptor, so `--output-path /dev/stdout > out.txt` (or `>>`) keeps what else the run
+  prints. A file its directory will not let be replaced (read-only, a bind-mounted file) is written in place, not
+  atomically, and a write that asks for `fsync` flushes the directory after the rename too where it may.
 - `graph_aware` matches a word through its possessive and finds a Latin word or number inside Chinese or Japanese
   text (`AWS` in `答案是AWS公司`) (#516, #563).
 - `run-visualization` rejects unknown `--renderers` and invalid data (exit 2), lays out only the drawn nodes, keeps

@@ -5,7 +5,11 @@ failed write leaves neither a torn file nor a temporary one behind."""
 
 from __future__ import annotations
 
+import errno
 import os
+import shlex
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -171,3 +175,119 @@ def test_a_fifo_or_device_target_is_written_in_place(tmp_path: Path) -> None:
     assert fifo.is_fifo()
     assert sorted(p.name for p in tmp_path.iterdir()) == ["pipe"]
     atomic_write_text(Path(os.devnull), "discarded")
+
+
+_PRINT_AROUND_AN_EXPORT = (
+    "import sys\n"
+    "from pathlib import Path\n"
+    "from unified_kg_rag.shared.utils.files import atomic_write_text\n"
+    "print('before')\n"
+    "atomic_write_text(Path(sys.argv[1]), 'EXPORT\\n')\n"
+    "print('after')\n"
+)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="shell redirects and /dev/fd")
+@pytest.mark.parametrize("alias", ["/dev/stdout", "/dev/fd/1", "/proc/self/fd/1"])
+@pytest.mark.parametrize("redirect", [">", ">>"])
+def test_stdout_redirected_to_a_file_is_written_through_not_replaced(
+    tmp_path: Path, alias: str, redirect: str
+) -> None:
+    # `run-describe --output-path /dev/stdout > out.txt`: /dev/stdout names
+    # the regular file the shell opened. Renaming a sibling over it unlinked
+    # the file the shell still writes to, so the lines printed around the
+    # export (and, with >>, what the file held) were lost.
+    if not Path(alias).exists():
+        pytest.skip(f"no {alias} here")
+    out = tmp_path / "out.txt"
+    out.write_text("first\n")
+    script = tmp_path / "export.py"
+    script.write_text(_PRINT_AROUND_AN_EXPORT)
+    subprocess.run(
+        f"{shlex.quote(sys.executable)} {shlex.quote(str(script))} {alias}"
+        f" {redirect} {shlex.quote(str(out))}",
+        shell=True,
+        check=True,
+        cwd=Path(__file__).parents[2],
+    )
+    kept = "first\n" if redirect == ">>" else ""
+    assert out.read_text() == f"{kept}before\nEXPORT\nafter\n"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["export.py", "out.txt"]
+
+
+def test_a_symlink_to_an_fd_alias_is_written_through(tmp_path: Path) -> None:
+    # A link to /dev/stdout (or into /proc/self/fd) aliases the descriptor:
+    # the write goes to what the descriptor is open on, at its offset.
+    out = tmp_path / "out.txt"
+    with out.open("w") as held:
+        held.write("held\n")
+        held.flush()
+        link = tmp_path / "link"
+        link.symlink_to(f"/proc/self/fd/{held.fileno()}")
+        if not link.exists():
+            pytest.skip("no /proc/self/fd here")
+        atomic_write_text(link, "through\n")
+        held.write("more\n")
+    assert out.read_text() == "held\nthrough\nmore\n"
+    assert link.is_symlink()
+
+
+_ROOT = hasattr(os, "geteuid") and os.geteuid() == 0
+
+
+@pytest.mark.skipif(_ROOT or os.name != "posix", reason="root reads any directory")
+def test_a_directory_it_cannot_flush_does_not_fail_a_made_write(
+    tmp_path: Path,
+) -> None:
+    # -wx: the sibling is made and renamed, only the directory flush is
+    # refused; the write is done, so the call says so.
+    folder = tmp_path / "wx"
+    folder.mkdir()
+    folder.chmod(0o333)
+    try:
+        atomic_write_text(folder / "state.json", "new", fsync=True)
+    finally:
+        folder.chmod(0o755)
+    assert (folder / "state.json").read_text() == "new"
+
+
+@pytest.mark.skipif(_ROOT, reason="root writes into a read-only directory")
+def test_a_writable_file_in_a_read_only_directory_is_written_in_place(
+    tmp_path: Path,
+) -> None:
+    folder = tmp_path / "ro"
+    folder.mkdir()
+    path = folder / "settings.yaml"
+    path.write_text("old")
+    folder.chmod(0o555)
+    try:
+        atomic_write_text(path, "new")
+        assert path.read_text() == "new"
+        assert sorted(p.name for p in folder.iterdir()) == ["settings.yaml"]
+        # No file yet: nothing to write in place, the directory's refusal.
+        with pytest.raises(PermissionError):
+            atomic_write_text(folder / "fresh.yaml", "x")
+    finally:
+        folder.chmod(0o755)
+
+
+@pytest.mark.parametrize("code", [errno.EBUSY, errno.EPERM, errno.EACCES])
+def test_a_file_it_cannot_rename_over_is_written_in_place(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: int
+) -> None:
+    # A bind-mounted file (EBUSY) or another user's in a sticky directory:
+    # the rename is refused, a write into the file is not.
+    path = tmp_path / "mounted.json"
+    path.write_text("old")
+
+    def refuse(*_: Any) -> None:
+        raise OSError(code, os.strerror(code))
+
+    monkeypatch.setattr(files.os, "replace", refuse)
+    atomic_write_text(path, "new")
+    assert path.read_text() == "new"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["mounted.json"]
+    # A file that is not there yet has none to write into.
+    with pytest.raises(OSError):
+        atomic_write_text(tmp_path / "fresh.json", "x")
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["mounted.json"]
