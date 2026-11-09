@@ -11,7 +11,7 @@ import stat
 import sys
 import tempfile
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from typing import IO, Any
@@ -203,8 +203,8 @@ def _created(temp: Path, private: bool) -> int:
 
 def open_temporary(path: Path) -> tuple[Path, IO[bytes]]:
     """A new :func:`temporary_sibling` of ``path`` open to write bytes, for
-    a write moved into place later by :func:`replace_keeping_mode` (files
-    staged to be moved in together, all or none): private (0600) while
+    a write moved into place later by :func:`replace_together` (files
+    staged to be moved in together): private (0600) while
     ``path`` exists, as :func:`atomic_open`'s temporary file is."""
     temporary = temporary_sibling(path)
     fd = _created(temporary, path.exists())
@@ -215,15 +215,22 @@ def open_temporary(path: Path) -> tuple[Path, IO[bytes]]:
         raise
 
 
-def replace_keeping_mode(temporary: Path, path: Path) -> None:
-    """Rename :func:`open_temporary`'s ``temporary`` over ``path``, giving
-    it ``path``'s permission bits first when ``path`` exists (a file gone
-    since the temporary was made keeps its private 0600)."""
-    try:
-        os.chmod(temporary, stat.S_IMODE(path.stat().st_mode))
-    except FileNotFoundError:
-        pass
-    os.replace(temporary, path)
+def replace_together(staged: Mapping[Path, Path]) -> None:
+    """Rename each of :func:`open_temporary`'s temporaries over its file
+    (``staged`` maps a file to its temporary), giving it the file's
+    permission bits first when the file exists (a file gone since the
+    temporary was made keeps its private 0600). Every mode is set before
+    the first rename, so a file whose mode cannot be read or given moves
+    none in. A rename is not undone: one refused because its path changed
+    meanwhile (made a folder, its folder made read-only) raises, the files
+    renamed before it moved in and the rest still staged."""
+    for path, temporary in staged.items():
+        try:
+            os.chmod(temporary, stat.S_IMODE(path.stat().st_mode))
+        except FileNotFoundError:
+            pass
+    for path, temporary in staged.items():
+        os.replace(temporary, path)
 
 
 def _open_in_place(target: Path) -> int:

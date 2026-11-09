@@ -775,6 +775,32 @@ def test_a_temporary_opened_to_move_in_later_is_private_and_keeps_the_mode(
     with out:
         out.write(b"new")
     assert temporary.stat().st_mode & 0o777 == 0o600
-    files.replace_keeping_mode(temporary, path)
+    files.replace_together({path: temporary})
     assert path.read_text() == "new" and path.stat().st_mode & 0o777 == 0o640
     assert [p.name for p in tmp_path.iterdir()] == ["f.txt"]
+
+
+def test_files_moved_in_together_move_none_when_a_mode_cannot_be_given(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Every file's mode is set before the first rename: a failure there
+    # (the second file's mode refused) leaves the first file's old text.
+    paths = [tmp_path / "a.txt", tmp_path / "b.txt"]
+    staged = {}
+    for path in paths:
+        path.write_text("old")
+        temporary, out = files.open_temporary(path)
+        with out:
+            out.write(b"new")
+        staged[path] = temporary
+    real = os.chmod
+
+    def refuse_second(target: Any, mode: int) -> None:
+        if Path(target) == staged[paths[1]]:
+            raise PermissionError(errno.EPERM, os.strerror(errno.EPERM))
+        real(target, mode)
+
+    monkeypatch.setattr(files.os, "chmod", refuse_second)
+    with pytest.raises(PermissionError):
+        files.replace_together(staged)
+    assert [p.read_text() for p in paths] == ["old", "old"]
