@@ -39,6 +39,7 @@ from unified_kg_rag.adapters.aws.bedrock_retry import (
 )
 from unified_kg_rag.adapters.aws.token_counter import BedrockTokenCounter
 from unified_kg_rag.adapters.llm.langchain import with_callback
+from unified_kg_rag.adapters.llm.reachability import is_unreachable_error
 from unified_kg_rag.adapters.llm.retry import call_with_transient_retry
 from unified_kg_rag.adapters.observability.usage_callback import UsageCallbackHandler
 from unified_kg_rag.domain.models import (
@@ -69,6 +70,7 @@ from unified_kg_rag.shared import (
     get_logger,
     observability,
 )
+from unified_kg_rag.shared.exceptions import ModelUnreachableError
 from unified_kg_rag.shared.genai import (
     GEN_AI_PROVIDER_NAME,
     GEN_AI_REQUEST_MODEL,
@@ -321,6 +323,11 @@ class BedrockCrossRegionModelHelper:
     # when enable_global_profile) — once per model creation across the whole
     # pipeline. The set is process-stable, so fetch it once per region.
     _profiles_by_region: ClassVar[dict[str, set[str]]] = {}
+    # The connection error of a region whose control plane could not be
+    # reached while resolving (a region Bedrock is not offered in, no
+    # network path): a model that needs a profile is then unreachable,
+    # not a missing grant.
+    _unreachable_by_region: ClassVar[dict[str, BaseException]] = {}
 
     @staticmethod
     def get_cross_region_model_id(
@@ -373,6 +380,10 @@ class BedrockCrossRegionModelHelper:
             return model_id
         except Exception as e:  # noqa: BLE001 - uses the base model id
             cause = e.__cause__ if isinstance(e, AWSServiceError) else e
+            if cause is not None and is_unreachable_error(cause):
+                BedrockCrossRegionModelHelper._unreachable_by_region[region_name] = (
+                    cause
+                )
             if cause is not None and _is_credential_error(cause):
                 raise AWSServiceError(
                     f"No valid AWS credentials for Amazon Bedrock in region "
@@ -385,6 +396,31 @@ class BedrockCrossRegionModelHelper:
                 e,
             )
             return model_id
+
+    @classmethod
+    def unresolved_profile_error(
+        cls,
+        model_id: str,
+        region_name: str,
+        error_class: type[LanguageModelError] | type[EmbeddingModelError],
+        message: str,
+    ) -> Exception:
+        """The error of ``model_id``, which needs a cross-region inference
+        profile none resolved for in ``region_name``: ``message`` (a grant,
+        a setting) as ``error_class``, or a ``ModelUnreachableError`` naming
+        the region when its control plane could not be reached."""
+        unreachable = cls._unreachable_by_region.get(region_name)
+        if unreachable is None:
+            return error_class(message)
+        error = ModelUnreachableError(
+            f"Amazon Bedrock in region '{region_name}' could not be reached "
+            f"({type(unreachable).__name__}) to resolve the inference profile "
+            f"of model '{model_id}'. Check aws.bedrock_region (a region Bedrock "
+            "is offered in) and the network path to Bedrock (a VPC endpoint for "
+            "bedrock as well as bedrock-runtime, a proxy)."
+        )
+        error.__cause__ = unreachable
+        return error
 
     @staticmethod
     def _build_cross_region_model_id(
@@ -413,6 +449,7 @@ class BedrockCrossRegionModelHelper:
                 profile["inferenceProfileId"]
                 for profile in response.get("inferenceProfileSummaries", [])
             }
+            cls._unreachable_by_region.pop(region_name, None)
         except Exception as e:
             raise AWSServiceError(
                 f"Failed to check cross-region model availability: {e}"
@@ -558,12 +595,15 @@ class BedrockEmbeddingModelFactory(
             enable_global_profile=self.config.aws.bedrock.enable_global_profile,
         )
         if resolved == catalog_id.value:
-            raise EmbeddingModelError(
+            raise BedrockCrossRegionModelHelper.unresolved_profile_error(
+                catalog_id.value,
+                region,
+                EmbeddingModelError,
                 f"Embedding model '{catalog_id.value}' has no on-demand "
                 f"throughput in region '{region}' and no cross-region inference "
                 f"profile resolved for it. Enable aws.bedrock.enable_global_profile, "
                 f"grant bedrock:ListInferenceProfiles, or choose a region where "
-                f"the model is offered in-region."
+                f"the model is offered in-region.",
             )
         return resolved
 
@@ -678,12 +718,15 @@ class BedrockLanguageModelFactory(
             # so the bare model id is not invocable. Resolution silently falls
             # back to it, which would surface later as an opaque Bedrock error —
             # fail here with the actual remedy instead.
-            raise LanguageModelError(
+            raise BedrockCrossRegionModelHelper.unresolved_profile_error(
+                model_id,
+                self.region_name or "",
+                LanguageModelError,
                 f"Model '{model_id}' is only available through a "
                 f"cross-region inference profile, but none resolved in region "
                 f"'{self.region_name}'. Enable aws.bedrock.enable_global_profile, "
                 f"grant bedrock:ListInferenceProfiles, or choose a region where "
-                f"a profile for this model exists."
+                f"a profile for this model exists.",
             )
         # ChatBedrock speaks the Anthropic InvokeModel body; every other provider
         # (and every inference profile) goes through the provider-neutral

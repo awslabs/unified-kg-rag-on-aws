@@ -499,6 +499,41 @@ def test_get_cross_region_model_id_surfaces_credential_errors(
         )
 
 
+def test_an_unreachable_control_plane_is_named_as_such(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression (v23 B7): a region Bedrock is not offered in failed
+    # ListInferenceProfiles with EndpointConnectionError, and a profile-only
+    # model was refused with advice to grant the call or enable profiles.
+    from botocore.exceptions import EndpointConnectionError
+
+    from unified_kg_rag.shared.exceptions import ModelUnreachableError
+
+    monkeypatch.setattr(BedrockCrossRegionModelHelper, "_profiles_by_region", {})
+    monkeypatch.setattr(BedrockCrossRegionModelHelper, "_unreachable_by_region", {})
+    down = EndpointConnectionError(
+        endpoint_url="https://bedrock.us-west-9.amazonaws.com/"
+    )
+    out = BedrockCrossRegionModelHelper.get_cross_region_model_id(
+        _RaisingBedrockSession(down), LanguageModelId.CLAUDE_V5_SONNET, "us-west-9"
+    )
+    # An on-demand model still gets its bare id, as before.
+    assert out == LanguageModelId.CLAUDE_V5_SONNET.value
+    error = BedrockCrossRegionModelHelper.unresolved_profile_error(
+        out, "us-west-9", LanguageModelError, "grant bedrock:ListInferenceProfiles"
+    )
+    assert isinstance(error, ModelUnreachableError)
+    assert "region 'us-west-9' could not be reached" in str(error)
+    assert "aws.bedrock_region" in str(error) and "ListInferenceProfiles" not in str(
+        error
+    )
+    # Another region, or one that answered: the remedy as before.
+    other = BedrockCrossRegionModelHelper.unresolved_profile_error(
+        out, "us-east-1", LanguageModelError, "grant bedrock:ListInferenceProfiles"
+    )
+    assert type(other) is LanguageModelError
+
+
 def test_get_cross_region_model_id_falls_back_on_access_denied() -> None:
     # A missing bedrock:ListInferenceProfiles grant is not fatal: an on-demand
     # model still works with its bare id.

@@ -690,7 +690,10 @@ From a `main` checkout (formats and keys no release had):
   document holds them).
 - `ModelUnreachableError`: a model server that cannot be reached is named with its provider kind, `base_url` and how
   to start it (`ollama serve`, the models to pull), the one server the failed connection was made to when its
-  transport says which. `run-ingestion` raises it at its embedding probe, before any extraction (it retried for
+  transport says which; a bedrock one by its region's endpoint (not a `base_url` the local preset left), and a model
+  that needs an inference profile in a region whose Bedrock control plane cannot be reached (one Bedrock is not
+  offered in) is refused with it, naming the region, not with advice to grant ListInferenceProfiles. `run-ingestion`
+  raises it at its embedding probe, before any extraction (it retried for
   minutes and ended with "produced 0 outputs"); a query raises it at once, without the transient retries' backoff
   (the error answer under `ignore_errors`, which no fallback absorbs), and `run-rag` exits 1 without a traceback.
   `ErrorClass` and `classify_error` name the class of a failure, which every surface maps: the CLIs' exit codes, the
