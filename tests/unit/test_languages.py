@@ -241,6 +241,16 @@ def test_only_an_owned_elision_tells_french_from_italian(
         ("Microsoft Corporation和OpenAI是什么关系？", LanguageCode.ZH),
         ("Microsoft Corporation กับ OpenAI เกี่ยวข้องกันอย่างไร", LanguageCode.TH),
         ("Acme Robotics International Holdings 계약", LanguageCode.KO),
+        # Regression (rv10 query M6): a function word inside the quoted
+        # name ("of", "The", "and") read the question as English.
+        ("Bank of America和The Walt Disney Company是什么关系？", LanguageCode.ZH),
+        ("University of Tokyo在哪里？", LanguageCode.ZH),
+        ("Procter and Gamble的CEO是谁？", LanguageCode.ZH),
+        ("ما علاقة Bank of America بـ The Walt Disney Company؟", LanguageCode.AR),
+        ("Bank of America와 The Walt Disney Company의 관계는?", LanguageCode.KO),
+        ("Bank of AmericaとThe Walt Disney Companyの関係は？", LanguageCode.JA),
+        ("Bank of America का CEO कौन है?", LanguageCode.HI),
+        ("Orion Robotics and Zortal Holdings 비교", LanguageCode.KO),
         # Latin function words: an English question quoting a name.
         ("Who is 김철수 at Orion Labs?", LanguageCode.EN),
         ("What did 华为 sign with Acme Robotics in 2023?", LanguageCode.EN),
@@ -250,6 +260,25 @@ def test_latin_names_quoted_in_another_script(
     question: str, language: LanguageCode
 ) -> None:
     assert text_language(question, LanguageCode.EN) is language
+
+
+@pytest.mark.parametrize(
+    ("question", "language"),
+    [
+        # Regression (rv10 query M6): Spanish and Portuguese had no "how
+        # many" words, so a count question read as English.
+        ("¿Cuántos proveedores tiene Acme?", LanguageCode.ES),
+        ("¿Cuantas fábricas hay?", LanguageCode.ES),
+        ("Quantos fornecedores a Acme tem?", LanguageCode.PT),
+        # An all-Latin question keeps its capitalised function words.
+        ("What Acme Robotics sells?", LanguageCode.EN),
+    ],
+)
+@pytest.mark.parametrize("fallback", [LanguageCode.EN, LanguageCode.KO])
+def test_count_questions_in_spanish_and_portuguese(
+    question: str, language: LanguageCode, fallback: LanguageCode
+) -> None:
+    assert text_language(question, fallback) is language
 
 
 def test_the_count_numerals_are_the_profiles() -> None:

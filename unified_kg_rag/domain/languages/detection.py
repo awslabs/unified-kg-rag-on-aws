@@ -21,7 +21,11 @@ from collections.abc import Iterable
 from unified_kg_rag.domain.languages.codes import LanguageCode
 from unified_kg_rag.domain.languages.profile import LanguageProfile
 from unified_kg_rag.domain.languages.registry import PROFILES
-from unified_kg_rag.shared.utils.scripts import ScriptCounts, count_letters
+from unified_kg_rag.shared.utils.scripts import (
+    ScriptCounts,
+    count_letters,
+    letter_class,
+)
 
 __all__ = ["dense_language", "script_language", "text_language", "words_of"]
 
@@ -53,12 +57,52 @@ def dense_language(
 
 
 _WORD = re.compile(r"[^\W\d_]+(?:'[^\W\d_]+)*")
+_LATIN_LETTER = f"[{letter_class('latin')}]"
+_LATIN_WORD = re.compile(rf"{_LATIN_LETTER}+(?:'{_LATIN_LETTER}+)*")
 
 
 def words_of(text: str) -> list[str]:
     """The lowercased words of ``text`` function words are counted in (an
-    elided word kept with its apostrophe: "dell'accordo")."""
-    return _WORD.findall(text.lower().replace("\u2019", "'"))
+    elided word kept with its apostrophe: "dell'accordo").
+
+    In a text with letters of another script, its Latin words only (the
+    function words and elisions are Latin-script languages'), and of them
+    none of a Latin name it quotes (:func:`_name_words`): "Bank of
+    America和The Walt Disney Company是什么关系？" holds no English
+    function word."""
+    text = text.replace("\u2019", "'")
+    if not any(ch.isalpha() for ch in _LATIN_WORD.sub("", text)):
+        return _WORD.findall(text.lower())
+    words = list(_LATIN_WORD.finditer(text))
+    names = _name_words(text, words)
+    return [w.group().lower() for i, w in enumerate(words) if i not in names]
+
+
+def _name_words(text: str, words: list[re.Match[str]]) -> set[int]:
+    """The indexes of ``words`` (Latin words in order) inside a name: a run
+    of two or more of them with spaces alone between, opening and closing
+    on a capitalised word, with the lowercase words inside it ("Bank of
+    America", "Procter and Gamble", "The Walt Disney Company"); a
+    capitalised word alone (a question's first word) is no name."""
+    names: set[int] = set()
+    run: list[int] = []
+
+    def close() -> None:
+        while run and not words[run[-1]].group()[0].isupper():
+            run.pop()
+        if len(run) > 1:
+            names.update(run)
+        run.clear()
+
+    for i, word in enumerate(words):
+        joined = bool(run) and not text[words[run[-1]].end() : word.start()].strip()
+        if not joined:
+            close()
+            if not word.group()[0].isupper():
+                continue
+        run.append(i)
+    close()
+    return names
 
 
 def _signals(

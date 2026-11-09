@@ -1428,8 +1428,9 @@ From a `main` checkout (formats and keys no release had):
   question's language, one sentence per supported language told by its script and function words (English, the
   0.2.3 reply, or the index language when they do not tell); the script is the one most of the question's letters
   are in, weighed by what a letter carries ("What does 계약 mean?" gets the English reply, a Japanese question
-  quoting a Korean word the Japanese one, an Arabic or Chinese one quoting Latin names without a Latin function word
-  the Arabic or Chinese one); among Latin-script languages, an elision only one of them writes ("dell'", "qu'"; not
+  quoting a Korean word the Japanese one, an Arabic or Chinese one quoting Latin names the Arabic or Chinese one,
+  the function words inside a quoted name not counted: "Bank of America和…" is Chinese); among Latin-script
+  languages, Spanish and Portuguese with their "how many" words, an elision only one of them writes ("dell'", "qu'"; not
   "d'", French and Italian) counts with the function words, and a tie the index language is not in goes to the
   language whose own articles occur ("Qual è il prezzo?" is Italian, not English); evaluation counts a decline by
   `metadata.abstained` alone, no longer by the English text (#619).

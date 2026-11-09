@@ -15,7 +15,8 @@ PROFILE = LanguageProfile(
         "responder a esta pregunta."
     ),
     function_words=frozenset(
-        "el los las qué quién cuál cómo cuándo dónde es fue y del".split()
+        "el los las qué quién cuál cómo cuándo dónde es fue y del cuánto cuántos "
+        "cuánta cuántas cuanto cuantos cuanta cuantas tiene hay".split()
     ),
     no_value_words=("desconocido", "ninguno"),
     articles=frozenset("el la los las un una unos unas".split()),
