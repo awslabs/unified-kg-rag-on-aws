@@ -292,6 +292,7 @@ def stored_artifacts_shown(
     documents: Mapping[str, int | None],
     *,
     graph_holds: bool | None,
+    graph_edges: bool | None,
     tree: bool,
 ) -> frozenset[IndexArtifact]:
     """The artifacts of ``artifacts_to_build`` the stores show they hold,
@@ -301,9 +302,10 @@ def stored_artifacts_shown(
     ``documents`` counts the documents each vector-store kind's index holds
     (``ARTIFACT_KINDS``); ``graph_holds`` is whether the graph holds an item
     (``None`` when it cannot tell: the config's graph artifacts are taken);
-    ``tree`` whether the summary tree's record is stored. Communities are
-    held with their reports; where the config builds no reports, the
-    stores cannot tell, so they are held with the graph.
+    ``graph_edges`` whether it holds a relationship (``None``: it cannot
+    tell); ``tree`` whether the summary tree's record is stored.
+    Communities are held with their reports; where the config builds no
+    reports, the stores cannot tell, so they are held with the graph.
 
     An index is held when it holds a document, except claims and
     relationship vectors beside held text units and graph: a build that
@@ -311,6 +313,9 @@ def stored_artifacts_shown(
     or relationship, as a build without them, so their emptiness tells
     nothing apart. Taking them for missing rebuilds the namespace (or
     refuses LightRAG); taking them for held costs a query an empty index.
+    The graph tells the relationship vectors apart: beside a stored edge,
+    an empty relationships index was never built, so they are held empty
+    only when the graph holds no edge (or cannot tell).
     """
     building = artifacts_to_build(config)
     held = {a for a, kind in ARTIFACT_KINDS.items() if documents.get(kind)}
@@ -318,7 +323,9 @@ def stored_artifacts_shown(
     if graph:
         held |= {_A.GRAPH, _A.RELATIONSHIPS}
         if _A.TEXT_UNITS in held:
-            held |= {_A.CLAIMS, _A.RELATIONSHIP_VECTORS}
+            held.add(_A.CLAIMS)
+            if graph_edges is not True:
+                held.add(_A.RELATIONSHIP_VECTORS)
     if _A.COMMUNITY_REPORTS in held or (graph and _A.COMMUNITY_REPORTS not in building):
         held.add(_A.COMMUNITIES)
     if tree:

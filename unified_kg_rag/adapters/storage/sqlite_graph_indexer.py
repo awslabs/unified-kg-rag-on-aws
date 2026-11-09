@@ -547,6 +547,15 @@ class SQLiteGraphIndexer(GraphIndexer):
             ).fetchone()
         return row is not None
 
+    def holds_any_relationship(self, suffix: str | None = None) -> bool:
+        """Whether the label holds an edge (see the port)."""
+        with self.store.read("holds any relationship") as connection:
+            row = connection.execute(
+                "SELECT 1 FROM edges WHERE label = ? LIMIT 1",
+                (self._entity_label(suffix),),
+            ).fetchone()
+        return row is not None
+
     def read_neighbor_ids(
         self,
         entity_ids: list[str],

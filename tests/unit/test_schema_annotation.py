@@ -938,6 +938,12 @@ def test_the_ports_default_probe_lists_the_items(kind: str) -> None:
         {"read_schema_annotations": lambda self, k, suffix=None: {}},
     )
     assert GraphIndexer.holds_any_item(empty(Config())) is False
+    # A relationship is an edge listed; an entity alone is none.
+    assert GraphIndexer.holds_any_relationship(graph) is None
+    assert GraphIndexer.holds_any_relationship(listing(Config())) is (
+        kind == "relationships"
+    )
+    assert GraphIndexer.holds_any_relationship(empty(Config())) is False
 
 
 class _LostLease:

@@ -1243,7 +1243,7 @@ def test_stored_artifacts_shown_names_only_what_the_stores_hold() -> None:
     config.indexing.methodologies = [Methodology.GRAPHRAG, Methodology.LIGHTRAG]
     lightrag_build = {"text_units": 3, "entities": 4, "relationships": 2}
     shown = mp.stored_artifacts_shown(
-        config, lightrag_build, graph_holds=True, tree=False
+        config, lightrag_build, graph_holds=True, graph_edges=True, tree=False
     )
     assert shown == {
         IndexArtifact.TEXT_UNITS,
@@ -1253,22 +1253,24 @@ def test_stored_artifacts_shown_names_only_what_the_stores_hold() -> None:
         IndexArtifact.RELATIONSHIPS,
     }
     with_reports = {**lightrag_build, "community_reports": 1, "claims": None}
-    shown = mp.stored_artifacts_shown(config, with_reports, graph_holds=True, tree=True)
+    shown = mp.stored_artifacts_shown(
+        config, with_reports, graph_holds=True, graph_edges=None, tree=True
+    )
     assert {IndexArtifact.COMMUNITIES, IndexArtifact.COMMUNITY_REPORTS} <= shown
     # Neither the tree (raptor is not selected) nor claims (not extracted).
     assert not {IndexArtifact.SUMMARY_TREE, IndexArtifact.CLAIMS} & shown
     # An empty graph holds no graph artifact; one that cannot tell, the
     # config's.
     assert IndexArtifact.GRAPH not in mp.stored_artifacts_shown(
-        config, lightrag_build, graph_holds=False, tree=False
+        config, lightrag_build, graph_holds=False, graph_edges=None, tree=False
     )
     assert IndexArtifact.GRAPH in mp.stored_artifacts_shown(
-        config, lightrag_build, graph_holds=None, tree=False
+        config, lightrag_build, graph_holds=None, graph_edges=None, tree=False
     )
     # Without reports to show them, communities are held with the graph.
     config.graph.community_detection.report_generation.enabled = False
     assert IndexArtifact.COMMUNITIES in mp.stored_artifacts_shown(
-        config, lightrag_build, graph_holds=True, tree=False
+        config, lightrag_build, graph_holds=True, graph_edges=None, tree=False
     )
 
 
@@ -1282,17 +1284,28 @@ def test_stored_artifacts_shown_holds_the_empty_artifacts_of_a_held_graph() -> N
     config.indexing.methodologies = [Methodology.GRAPHRAG, Methodology.LIGHTRAG]
     config.processing.claim_extraction.enabled = True
     empty = {"text_units": 3, "entities": 4, "relationships": 0, "claims": None}
-    shown = mp.stored_artifacts_shown(config, empty, graph_holds=True, tree=False)
-    assert {IndexArtifact.CLAIMS, IndexArtifact.RELATIONSHIP_VECTORS} <= shown
-    assert Methodology.LIGHTRAG in methodologies_holding(shown)
+    for edges in (False, None):
+        shown = mp.stored_artifacts_shown(
+            config, empty, graph_holds=True, graph_edges=edges, tree=False
+        )
+        assert {IndexArtifact.CLAIMS, IndexArtifact.RELATIONSHIP_VECTORS} <= shown
+        assert Methodology.LIGHTRAG in methodologies_holding(shown)
+    # Beside a stored edge, an empty relationships index was never built
+    # (a build with build_relationship_vector_index off): only the claims.
+    shown = mp.stored_artifacts_shown(
+        config, empty, graph_holds=True, graph_edges=True, tree=False
+    )
+    assert IndexArtifact.CLAIMS in shown
+    assert IndexArtifact.RELATIONSHIP_VECTORS not in shown
+    assert Methodology.LIGHTRAG not in methodologies_holding(shown)
     # Not what the config does not build, nor without the text units or graph.
     config.processing.claim_extraction.enabled = False
     assert IndexArtifact.CLAIMS not in mp.stored_artifacts_shown(
-        config, empty, graph_holds=True, tree=False
+        config, empty, graph_holds=True, graph_edges=None, tree=False
     )
     config.processing.claim_extraction.enabled = True
     for documents, graph in (({**empty, "text_units": 0}, True), (empty, False)):
         shown = mp.stored_artifacts_shown(
-            config, documents, graph_holds=graph, tree=False
+            config, documents, graph_holds=graph, graph_edges=None, tree=False
         )
         assert not {IndexArtifact.CLAIMS, IndexArtifact.RELATIONSHIP_VECTORS} & shown

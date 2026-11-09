@@ -137,8 +137,9 @@ unless noted.
    when the configured suffix has none: a full record of the build the
    stores hold, naming the artifacts they show (a non-empty index, a graph
    item, the tree's record; claims and relationship vectors with held text
-   units and graph, which a corpus stating none leaves empty) that the
-   config builds, the documents the
+   units and graph, which a corpus stating none leaves empty, but not the
+   relationship vectors beside a stored edge, which a build that made them
+   indexes) that the config builds, the documents the
    registry records and community counters started from the stored
    reports; later incremental records carry it as their `full_build`.
    `failure_count` counts

@@ -688,6 +688,33 @@ class NeptuneIndexer(GraphIndexer):
             raise AWSServiceError(f"Neptune holds_any_item failed: {e}") from e
         return bool(found)
 
+    def holds_any_relationship(self, suffix: str | None = None) -> bool:
+        """Whether the label holds an edge between two of its vertices (see
+        the port; an older build's MemberOf edges lead to communities): one
+        bounded read.
+
+        Raises:
+            AWSServiceError: The read failed.
+        """
+        label = self._label(self.neptune_config.entity_label_prefix, suffix)
+        try:
+            found = self._execute_with_retries(
+                lambda g: g.V()
+                .hasLabel(label)
+                .outE()
+                .where(__.inV().hasLabel(label))
+                .limit(1)
+                .id_(),
+                "holds_any_relationship",
+                results=True,
+                fenced=False,
+            )
+        except NamespaceLeaseError:
+            raise
+        except Exception as e:
+            raise AWSServiceError(f"Neptune holds_any_relationship failed: {e}") from e
+        return bool(found)
+
     def write_schema_annotations(
         self,
         kind: AnnotatedKind,

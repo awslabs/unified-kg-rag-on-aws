@@ -974,8 +974,10 @@ From a `main` checkout (formats and keys no release had):
   records its documents, so a first build or reset killed between the two leaves it (the next run found nothing to
   index and wrote none, and queries took the namespace to hold what the config builds). A record any index rejected
   is written again once the documents are recorded, and a run with nothing to index writes a missing one: a full
-  record naming only the artifacts the stores hold (claims and relationship vectors with the text units and graph:
-  a corpus stating none leaves them empty), the documents the registry records and community counters from
+  record naming only the artifacts the stores hold (claims with the text units and graph: a corpus stating none
+  leaves them empty; relationship vectors too unless the graph holds an edge, `GraphIndexer.holds_any_relationship`,
+  as a build with `build_relationship_vector_index: false` leaves it), the documents the registry records and
+  community counters from
   the stored reports (a WARNING says what queries assume until one is written; the run result's `build_record` and
   `run-describe` say whether one is stored). With
   `graph.community_detection.report_generation.enabled: false` a run builds no reports, so an incremental run no
