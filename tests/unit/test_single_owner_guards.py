@@ -44,6 +44,7 @@ from tests.fixtures.source_guards import (
     resolved,
     string_literals,
     string_values,
+    uses,
 )
 from unified_kg_rag.shared.utils.scripts import SCRIPTS
 
@@ -321,13 +322,32 @@ def _sources_read(node: ast.AST) -> bool:
 # status < 500``): only a character spells a code point there.
 _LATIN_1 = 0xFF
 _SMALL_NUMBERS = 0x2FF
-_LETTER_BLOCKS = tuple(block for script in SCRIPTS for block in script.ranges)
+
+
+def _bounded_scripts(cp: int, floor: int = _LATIN_1) -> frozenset[str]:
+    """The scripts whose letters ``cp`` bounds: in one of the script's
+    blocks, or one before or past it (``< 0xD7A4``, ``> 0xABFF``), and past
+    ``floor``."""
+    if cp <= floor:
+        return frozenset()
+    return frozenset(
+        script.name
+        for script in SCRIPTS
+        if any(lo - 1 <= cp <= hi + 1 for lo, hi in script.ranges)
+    )
 
 
 def _a_script_bound(cp: int, floor: int = _LATIN_1) -> bool:
-    """Whether ``cp`` bounds a script's letters: in a block of the table, or
-    one before or past it (``< 0xD7A4``, ``> 0xABFF``), and past ``floor``."""
-    return cp > floor and any(lo - 1 <= cp <= hi + 1 for lo, hi in _LETTER_BLOCKS)
+    """Whether ``cp`` bounds a script's letters (:func:`_bounded_scripts`)."""
+    return bool(_bounded_scripts(cp, floor))
+
+
+def _one_scripts_bounds(bounds: list[int]) -> bool:
+    """Whether every one of ``bounds`` bounds the same script's letters: a
+    script range's ends are one script's (``0xAC00 <= cp <= 0xD7A3``), while
+    two round numbers each near some block are a number range (``1024 <=
+    port <= 49151``, ``1000 <= year <= 2999``)."""
+    return bool(frozenset.intersection(*map(_bounded_scripts, bounds)))
 
 
 def _code_point(node: ast.AST, source: Source) -> int | None:
@@ -365,7 +385,7 @@ def _a_character(node: ast.AST, source: Source) -> bool:
 
 def _code_point_range(node: ast.AST, source: Source) -> bool:
     """A script range spelled in code: a comparison, a pair or a
-    ``range(...)`` whose bounds both bound a script's letters (``0xAC00 <=
+    ``range(...)`` whose bounds both bound one script's letters (``0xAC00 <=
     cp <= 0xD7A3``, ``(12352, 12447)``, ``range(44032, 55204)``, ``chr(0x3040)
     <= ch``), or a character compared with one such bound
     (``0xAC00 <= ord(ch)``, ``ch >= "\\u3040"``)."""
@@ -380,7 +400,7 @@ def _code_point_range(node: ast.AST, source: Source) -> bool:
             return _a_script_bound(bounds[0]) and any(
                 _a_character(s, source) for s in sides if _code_point(s, source) is None
             )
-        return len(bounds) > 1 and all(map(_a_script_bound, bounds))
+        return len(bounds) > 1 and _one_scripts_bounds(bounds)
     if isinstance(node, ast.Tuple | ast.List) and len(node.elts) >= 2:
         # A block's bounds first: ``(0x3040, 0x309F)``, ``(1024, 1327, "cyrillic")``.
         pair = node.elts[:2]
@@ -394,11 +414,7 @@ def _code_point_range(node: ast.AST, source: Source) -> bool:
         return False
     lo, hi = (_code_point(end, source) for end in pair)
     return (
-        lo is not None
-        and hi is not None
-        and lo < hi
-        and _a_script_bound(lo)
-        and _a_script_bound(hi)
+        lo is not None and hi is not None and lo < hi and _one_scripts_bounds([lo, hi])
     )
 
 
@@ -537,12 +553,44 @@ def _counted_into(node: ast.AST, source: Source) -> bool:
 
 
 _SCRIPT_READERS = (f"{_SCRIPTS}.script_of", f"{_SCRIPTS}.letter_class")
-# What a decoder of a stored or model-written JSON string calls.
-_JSON_DECODERS = (
+# The decoders of a string into data (G2, G10): a denylist of the modules
+# that decode, whole, and of the decoding members of the two that also
+# encode (``json``, ``ast``). Any use of one in a guarded directory is a
+# copy or an allowlist entry; the list names decoders, not the forms a
+# call of one takes, so it grows only with a new decoding library.
+_DECODERS = (
     "json.loads",
     "json.JSONDecoder",
-    "pydantic_core.from_json",
+    "json.decoder",
+    "json.scanner",
     "ast.literal_eval",
+    "orjson",
+    "ujson",
+    "simplejson",
+    "rapidjson",
+    "msgspec",
+    "json5",
+    "hjson",
+    "demjson3",
+    "json_repair",
+    "yaml",
+    "ruamel",
+    "pydantic_core",
+    "langchain_core.output_parsers.json",
+    "langchain_core.output_parsers.pydantic",
+    "langchain_core.output_parsers.JsonOutputParser",
+    "langchain_core.output_parsers.SimpleJsonOutputParser",
+    "langchain_core.output_parsers.PydanticOutputParser",
+    "langchain_core.utils.json",
+    "langchain.output_parsers",
+)
+# Pydantic's decoders of a JSON string, called on a model or an adapter.
+_DECODER_METHODS = ("model_validate_json", "validate_json", "parse_raw")
+_DECODING = any_of(
+    uses(*_DECODERS),
+    # json.load reads a file; over a string wrapped as one, a decoder.
+    calls_mentioning(("json.load",), "io.StringIO", "io.BytesIO"),
+    method_calls(*_DECODER_METHODS),
 )
 
 
@@ -573,12 +621,7 @@ GUARDS = [
         use="shared.utils.model_output.parse_model_object (or the chain's "
         "json parser, which wraps it)",
         owners=("shared/utils/model_output.py",),
-        find=any_of(
-            calls(*_JSON_DECODERS, "yaml.safe_load", "yaml.load"),
-            # json.load reads a file; over a string wrapped as one, a decoder.
-            calls_mentioning(("json.load",), "io.StringIO", "io.BytesIO"),
-            method_calls("model_validate_json"),
-        ),
+        find=_DECODING,
         within=(
             "adapters/search_strategies",
             "adapters/retrieval",
@@ -633,6 +676,10 @@ GUARDS = [
                 "the dataset file, hashed by content",
             ),
             "evaluation/saved_results.py::_read": (1, "saved result files"),
+            "application/prompts/tuner.py::SchemaDraft.to_yaml": (
+                1,
+                "encodes a schema draft (yaml.safe_dump); decodes nothing",
+            ),
         },
     ),
     SourceGuard(
@@ -820,7 +867,7 @@ GUARDS = [
             "adapters/storage/neptune_codec.py",
             "domain/retrieval/source_fields.py",
         ),
-        find=calls(*_JSON_DECODERS),
+        find=_DECODING,
         within=(
             "adapters/retrievers",
             "adapters/search_strategies",
@@ -936,6 +983,14 @@ _G4 = next(g for g in GUARDS if g.name.startswith("G4 ")).find
         (calls("json.loads"), "import json\njson.loads(s)\n", ["json.loads"]),
         (calls("json.loads"), "import json as j\nj.loads(s)\n", ["j.loads"]),
         (calls("json.loads"), "from json import loads as l\nl(s)\n", ["l"]),
+        # Any decoder of the denylist, however it is reached; once a chain.
+        (_DECODING, "import orjson\norjson.loads(s)\n", ["orjson.loads"]),
+        (_DECODING, "from json_repair import repair_json as r\nr(s)\n", ["r"]),
+        (_DECODING, "from json.decoder import JSONDecoder\nJSONDecoder()\n", 1),
+        (_DECODING, "import json\nmap(json.loads, rows)\n", ["json.loads"]),
+        (_DECODING, "import yaml\nyaml.safe_load(s)\n", ["yaml.safe_load"]),
+        (_DECODING, "TypeAdapter(list[int]).validate_json(s)\n", 1),
+        (_DECODING, "import json\njson.dumps(v)\njson.load(fp)\n", []),
         (calls("os.replace"), "import os\nos.replace(a, b)\n", ["os.replace"]),
         (calls("os.replace"), "from os import replace\nreplace(a, b)\n", 1),
         (calls("shutil.move"), "import shutil\nshutil.move(a, b)\n", 1),
@@ -993,6 +1048,11 @@ _G4 = next(g for g in GUARDS if g.name.startswith("G4 ")).find
         (_G4, "ok = 0xAC00 <= ord(ch) <= 0xD7A3\n", 1),
         (_G4, 'ok = "\\u3040" <= ch <= "\\u309f"\n', 1),
         (_G4, 'C = "[\\x00-\\x1f\\x7f]"\nok = ord(ch) < 128 and ch <= "z"\n', []),
+        # Round numbers each near some script's block, not one script's
+        # ends: a number range.
+        (_G4, "ok = 1024 <= port <= 49151\nok = 1000 <= year <= 2999\n", []),
+        (_G4, "T = (1000, 30000)\nr = range(1000, 5000, 1000)\n", []),
+        (_G4, "S = range(0x3040, 0x30A0)\nok = 0x0400 <= cp <= 0x04FF\n", 2),
         (
             calls_mentioning(("collections.Counter",), f"{_SCRIPTS}.script_of"),
             f"from collections import Counter as C\nfrom {_SCRIPTS} import script_of"

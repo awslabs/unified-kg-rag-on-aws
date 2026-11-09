@@ -397,6 +397,33 @@ def references(*names: str) -> Finder:
     return find
 
 
+def uses(*names: str) -> Finder:
+    """A use of one of the dotted ``names`` or of anything under one: a
+    denylist of modules and their members (``yaml`` matches
+    ``yaml.safe_load(s)``, ``json.loads`` matches it called, passed as a
+    callback or bound to a name), however the module imported it. A
+    chain is matched once, at its outermost use (``yaml.safe_load``, not
+    ``yaml`` in it too)."""
+    wanted = tuple(names)
+
+    def denied(node: ast.AST, source: Source) -> bool:
+        name = resolved(node, source)
+        return name is not None and any(
+            name == w or name.startswith(w + ".") for w in wanted
+        )
+
+    def find(source: Source) -> Iterator[tuple[int, str]]:
+        inner: set[int] = set()
+        for node in _all_nodes(source.tree):
+            if id(node) in inner or not isinstance(node, ast.Name | ast.Attribute):
+                continue
+            if isinstance(node.ctx, ast.Load) and denied(node, source):
+                inner.update(id(n) for n in ast.walk(node))
+                yield node.lineno, ast.unparse(node)[:80]
+
+    return find
+
+
 def calls(*names: str) -> Finder:
     """A call of one of the dotted ``names`` (``json.loads``,
     ``os.replace``), however the module imported it."""
