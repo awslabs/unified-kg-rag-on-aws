@@ -144,6 +144,14 @@ holds:
     `indexing.max_document_failures` consecutive runs unchanged, at the same
     extraction settings (a settings change starts the count over); also in
     the summary.
+
+  And `build_record`, the suffix's build record after the run: `written`,
+  `kept` (the run wrote nothing; the stored one stands), `failed` (no index
+  took it; the next run writes it again), `missing` (none stored, none
+  written), `unsupported` (a vector store without index metadata), or
+  `null` when the indexing stage did not run. Until a record is stored,
+  queries take the namespace to hold what their config builds; a run that
+  exits `0` with `failed` or `missing` also says so in its summary.
 - **`run-eval`**: the `output_directory`, `upload_error`, each run's summary
   (`runs`), the `comparison`, the failure-budget breaches
   (`failure_budget_breaches`) and the failed gates (`gate_failures`); a
@@ -152,7 +160,8 @@ holds:
   the `failed_renderers` (each failed renderer's error); an empty list
   (nothing rendered) or a failed renderer exits `1`.
 - **`run-describe`**: the namespace's description (`suffix`, `namespace`,
-  `build`, `artifacts`, `methodologies`, `strategies`, `auto_routes`,
+  `build`, `build_record` (`present` or `missing`: then `artifacts` are
+  what the config builds), `artifacts`, `methodologies`, `strategies`, `auto_routes`,
   `indices`, `registry`) and `export` (its `path`, `counts`, `truncated`
   and `missing` kinds, or `null` without `--output-path`); a namespace that
   holds no index exits `2`

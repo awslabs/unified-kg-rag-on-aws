@@ -2607,9 +2607,11 @@ class IndexingStage(_RegistryStage):
         # documents when the registry is on (see IncrementalIndexer.record):
         # a run killed after the registry write leaves it.
         counters: dict[str, CommunityCounters] | None = None
+        # What became of the record (the run result's ``build_record``).
+        record_state = "failed"
 
         def record_build(results: Mapping[str, IndexingStats]) -> None:
-            nonlocal counters
+            nonlocal counters, record_state
             write = self._build_record_write(context, results)
             if write is None:
                 return
@@ -2621,6 +2623,8 @@ class IndexingStage(_RegistryStage):
                     tree_pruned=_tree_pruned(results),
                     rewrite=write == "rewrite",
                 )
+                if counters is not None:
+                    record_state = "written"
             except NamespaceLeaseError:
                 raise
             except Exception as e:  # noqa: BLE001 - written again after the registry
@@ -2776,7 +2780,9 @@ class IndexingStage(_RegistryStage):
                     tree_pruned=_tree_pruned(indexing_results),
                     rewrite=write == "rewrite",
                 )
-                if counters is None:
+                if counters is not None:
+                    record_state = "written"
+                else:
                     logger.warning(
                         "The build record was not written on every index: until "
                         "a run writes it, queries read the namespace as holding "
@@ -2786,6 +2792,7 @@ class IndexingStage(_RegistryStage):
                     )
             else:
                 self._record_removed_artifacts(text_units, delta)
+                record_state = self._held_record_state()
 
         metrics = {
             "indexing_results": {k: v.to_dict() for k, v in indexing_results.items()},
@@ -2800,6 +2807,15 @@ class IndexingStage(_RegistryStage):
             # Documents gone from the corpus (or of a retired scope) whose
             # exclusive content and records this incremental run removed.
             "documents_deleted": documents_deleted,
+            # The suffix's build record after the run: "written" by it,
+            # "kept" (it wrote nothing; the stored one stands), "failed" (no
+            # index took it), "missing" (none stored, none written), or
+            # "unsupported" (a vector store without index metadata).
+            "build_record": (
+                record_state
+                if keeps_build_records(self.indexing_manager.vector_indexer)
+                else "unsupported"
+            ),
             "success_rate": (
                 total_indexed / (total_indexed + total_failed)
                 if (total_indexed + total_failed) > 0
@@ -2877,6 +2893,15 @@ class IndexingStage(_RegistryStage):
         ):
             return "rewrite"
         return None
+
+    def _held_record_state(self) -> str:
+        """The build record of a run that wrote none: ``"kept"`` when the
+        configured suffix holds one, else ``"missing"``."""
+        vector_indexer = self.indexing_manager.vector_indexer
+        if not keeps_build_records(vector_indexer):
+            return "missing"
+        held = vector_indexer.read_build_record(resolve_namespace(self.config, None))
+        return "kept" if held is not None else "missing"
 
     def _artifacts_held(
         self, suffix: str

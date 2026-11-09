@@ -23,7 +23,9 @@ from tests.fixtures.fakes.model_servers import FakeOllama
 from tests.integration import test_embedded_e2e as e2e
 from tests.integration.test_embedded_e2e import no_aws  # noqa: F401 - a fixture
 from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
+from unified_kg_rag.application.cli.run_ingestion_pipeline import _build_record
 from unified_kg_rag.application.ingestion.incremental import IncrementalIndexer
+from unified_kg_rag.application.storage.inspection import describe_namespace
 from unified_kg_rag.domain.models import Methodology, PipelineStageStatus
 
 pytestmark = pytest.mark.integration
@@ -145,8 +147,11 @@ def test_a_missing_record_is_written_by_a_run_with_nothing_to_index(
     assert want is not None
     config, providers, source = _setup(tmp_path)
     _failing_record_writes(mocker, attempts=1000)
-    e2e._ingest(config, providers, source, tmp_path / "run-1")
+    context = e2e._ingest(config, providers, source, tmp_path / "run-1")
     assert _record(config, providers) is None
+    # Visible to automation: the run result and run-describe say so.
+    assert _build_record(context) == "failed"
+    assert describe_namespace(config, providers=providers).build_record == "missing"
     mocker.stopall()
 
     context = e2e._ingest(config, providers, source, tmp_path / "run-2")
@@ -154,8 +159,13 @@ def test_a_missing_record_is_written_by_a_run_with_nothing_to_index(
     assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
     assert context.incremental_delta is not None
     assert context.incremental_delta.to_process == []
+    assert _build_record(context) == "written"
+    assert describe_namespace(config, providers=providers).build_record == "present"
     record = _record(config, providers)
     assert record is not None
+    assert _build_record(e2e._ingest(config, providers, source, tmp_path / "r3")) == (
+        "kept"
+    )
     assert record["methodologies"] == want["methodologies"] == ["lightrag", "hipporag"]
     assert record["artifacts"] == want["artifacts"]
     # Written by a delta that indexed nothing: the build the stores hold,

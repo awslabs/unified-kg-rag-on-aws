@@ -93,6 +93,11 @@ class NamespaceDescription(BaseModel):
         description="The build record of the last ingestion run that wrote it "
         "(pipeline id, mode, build time, documents, settings, artifacts)"
     )
+    build_record: Literal["present", "missing"] = Field(
+        description="Whether it holds a build record: without one (a store "
+        "rejected it, or a build from before records) queries take it to "
+        "hold what their config builds",
+    )
     artifacts: list[str] = Field(description="The index artifacts it holds")
     artifacts_from: Literal["build_record", "config"] = Field(
         description="Where artifacts comes from: the build record, or, without "
@@ -194,6 +199,7 @@ def describe_namespace(
         namespace=namespace,
         exists=any(index.index for index in indices),
         build=record,
+        build_record="present" if record is not None else "missing",
         artifacts=sorted(a.value for a in artifacts),
         artifacts_from="config" if stored_artifacts(record) is None else "build_record",
         methodologies=[m.value for m in held],

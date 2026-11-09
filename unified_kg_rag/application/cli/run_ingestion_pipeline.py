@@ -182,6 +182,16 @@ def apply_namespace_arguments(config: Config, args: argparse.Namespace) -> Confi
     return updated
 
 
+def _build_record(context: PipelineContext) -> str | None:
+    """What became of the suffix's build record in the run's indexing stage
+    (its ``build_record`` metric), ``None`` when the stage did not run."""
+    for result in reversed(context.stage_results):
+        if result.stage_name == PipelineStageType.INDEXING.value:
+            state = (result.metrics or {}).get("build_record")
+            return state if isinstance(state, str) else None
+    return None
+
+
 class CommandLineInterface:
     def __init__(self) -> None:
         self.parser = self._setup_arguments()
@@ -811,6 +821,12 @@ class IngestionPipelineRunner:
                         "Graph for run-visualization: "
                         f"{markup_safe(context.visualization_data_path)}"
                     )
+                if _build_record(context) in ("failed", "missing"):
+                    console.print(
+                        "[yellow]The namespace holds no build record: queries "
+                        "take it to hold what their config builds until a run "
+                        "writes one (the next run tries again).[/yellow]"
+                    )
         finally:
             # Release the indexers' Neptune/OpenSearch connections so a finished
             # ingest run does not leak websockets/HTTP pools until interpreter
@@ -883,6 +899,9 @@ class IngestionPipelineRunner:
             "duration_seconds": context.duration_seconds,
             # The namespace's graph for run-visualization (None: not written).
             "visualization_data": context.visualization_data_path,
+            # The suffix's build record after the run (written, kept, failed,
+            # missing, unsupported; None: the indexing stage did not run).
+            "build_record": _build_record(context),
             "failed_documents": len(context.recorded_failed_doc_ids),
             # Text units a stage failed on: counted in a full build too,
             # which records no document FAILED.

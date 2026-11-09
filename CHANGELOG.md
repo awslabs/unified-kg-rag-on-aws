@@ -968,7 +968,8 @@ From a `main` checkout (formats and keys no release had):
   index and wrote none, and queries took the namespace to hold what the config builds). A record the store rejected
   is written again once the documents are recorded, and a run with nothing to index writes a missing one: a full
   record naming only the artifacts the stores hold, the documents the registry records and community counters from
-  the stored reports (a WARNING says what queries assume until one is written). With
+  the stored reports (a WARNING says what queries assume until one is written; the run result's `build_record` and
+  `run-describe` say whether one is stored). With
   `graph.community_detection.report_generation.enabled: false` a run builds no reports, so an incremental run no
   longer takes them for missing and rebuilds the namespace, and the namespace holds `graphrag` for `local` while
   `global` and `drift`, which declare the reports among their artifacts, are refused naming the switch (a WARNING at
