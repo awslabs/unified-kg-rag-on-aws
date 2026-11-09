@@ -7,8 +7,7 @@ from __future__ import annotations
 
 import errno
 import os
-import shlex
-import subprocess
+import subprocess  # nosec B404 - fixed argv, no shell
 import sys
 from pathlib import Path
 from typing import Any
@@ -203,13 +202,14 @@ def test_stdout_redirected_to_a_file_is_written_through_not_replaced(
     out.write_text("first\n")
     script = tmp_path / "export.py"
     script.write_text(_PRINT_AROUND_AN_EXPORT)
-    subprocess.run(
-        f"{shlex.quote(sys.executable)} {shlex.quote(str(script))} {alias}"
-        f" {redirect} {shlex.quote(str(out))}",
-        shell=True,
-        check=True,
-        cwd=Path(__file__).parents[2],
-    )
+    # The descriptor a shell's > (truncate) or >> (append) hands the run.
+    with out.open("w" if redirect == ">" else "a") as redirected:
+        subprocess.run(  # nosec B603 - fixed argv, no shell
+            [sys.executable, str(script), alias],
+            stdout=redirected,
+            check=True,
+            cwd=Path(__file__).parents[2],
+        )
     kept = "first\n" if redirect == ">>" else ""
     assert out.read_text() == f"{kept}before\nEXPORT\nafter\n"
     assert sorted(p.name for p in tmp_path.iterdir()) == ["export.py", "out.txt"]
