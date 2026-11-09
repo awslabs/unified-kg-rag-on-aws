@@ -87,6 +87,7 @@ PROFILE = LanguageProfile(
     zero_words=("nenhum", "nenhuma"),
     absence_phrases=("não há", "não tem", "não têm", "não existe", "não existem"),
     comparatives=("mais de", "menos de", "mais que", "menos que"),
+    clause_conjunctions=("mas", "porém", "embora", "de que"),
     year_words=("em", "desde", "até", "antes de", "depois de", "a partir de"),
     partitive_words=("dos", "das", "destes", "destas", "entre os", "entre as"),
     partitive_anaphors=("deles", "delas", "dos quais", "das quais"),

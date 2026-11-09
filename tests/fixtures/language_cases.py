@@ -137,6 +137,18 @@ SCALE_DIGITS = (
     "counter read without the scale (pre-existing; rv11 query low, outside "
     "this change)."
 )
+INNER_WORDS = (
+    'Words between a phrase of absence and a comparative ("non ha mai avuto '
+    'più di tre") read as the absent noun and its preposition ("non ci sono '
+    'fornitori con più di 50"): no rule without word classes tells an adverb '
+    "and a participle from them (rv13 query 2)."
+)
+POSTPOSED = (
+    "A number before a phrase of absence written after its noun "
+    '("Поставщиков в лоте 7 нет") reads first, as a count before one does '
+    '("3 vendors do not have any contracts"); only one after a comparative '
+    "is a condition there (rv13 query 2)."
+)
 WORD_GAPS = (
     'A word the profiles do not hold ("dozen", the article "un" for one, '
     '"neuf" read as nine, "No." as a label, "ou"/"o" alternatives; '
@@ -981,7 +993,13 @@ NUMBERS: tuple[Case, ...] = (
         "rv12 query 2/4",
     ),
     Case("Non ha senso: sono tre.", 3, "it", "rv12 query 2/4"),
-    Case("Non ha mai avuto più di tre fornitori.", 3, "it", "rv12 query 2/4"),
+    Case(
+        "Non ha mai avuto più di tre fornitori.",
+        3,
+        "it",
+        "rv12 query 2/4",
+        Tradeoff(0.0, INNER_WORDS),
+    ),
     Case("Non ci sono dubbi: tre fornitori.", 3, "it", "rv12 query 2/4"),
     Case("Non ci sono fornitori.", 0, "it", "rv12 query 2/4"),
     Case("Acme ha tre fornitori, non ha altri partner.", 3, "it", "rv12 query 2/4"),
@@ -1345,6 +1363,76 @@ NUMBERS: tuple[Case, ...] = (
     Case("Нет. Три поставщика.", 3, "ru", "rv12 fix (yes/no word)"),
     Case("No hay.", 0, "es", "rv12 fix (yes/no word)"),
     Case("No hay más de una docena.", None, "es", "rv12 query 2 (comparative)"),
+    # A number in the absent thing's own phrase is no count (rv13 query 2).
+    Case(
+        "There are not any vendors with more than 100 employees.",
+        0,
+        "en",
+        "rv13 query 2",
+    ),
+    Case("Acme does not have any plants in Zone 2.", 0, "en", "rv13 query 2"),
+    Case("Acme doesn't have any suppliers for project 7.", 0, "en", "rv13 query 2"),
+    Case("There aren't any suppliers in the top 10.", 0, "en", "rv13 query 2"),
+    Case(
+        "Acme does not have any contracts worth over 5 million.",
+        0,
+        "en",
+        "rv13 query 2",
+    ),
+    Case("No hay proveedores en el lote 7.", 0, "es", "rv13 query 2"),
+    Case("No hay proveedores con más de 50 empleados.", 0, "es", "rv13 query 2"),
+    Case("Non ci sono fornitori con più di 50 dipendenti.", 0, "it", "rv13 query 2"),
+    Case("Non ci sono fornitori nel lotto 7.", 0, "it", "rv13 query 2"),
+    Case("Il n'y a pas de fournisseur dans le lot 7.", 0, "fr", "rv13 query 2"),
+    Case(
+        "Il n'y a pas de fournisseur avec plus de 50 salariés.", 0, "fr", "rv13 query 2"
+    ),
+    Case("Não há fornecedores no lote 7.", 0, "pt", "rv13 query 2"),
+    Case("Não há fornecedores com mais de 50 funcionários.", 0, "pt", "rv13 query 2"),
+    Case("Поставщиков с более чем 50 сотрудниками нет.", 0, "ru", "rv13 query 2"),
+    Case(
+        "Поставщиков в лоте 7 нет.", 0, "ru", "rv13 query 2", Tradeoff(7.0, POSTPOSED)
+    ),
+    Case("Не более пяти поставщиков, точно нет шести.", 5, "ru", "rv13 query 2"),
+    Case("3 vendors do not have any contracts.", 3, "en", "rv13 query 2"),
+    Case("No hay datos de 2019. En 2020 tenía 3 plantas.", 0, "es", "rv13 query 2"),
+    Case("No hay uno sino tres.", 3, "es", "rv13 query 2"),
+    Case("No hay más detalles.", 0, "es", "rv13 query 5"),
+    Case("Não há mais detalhes.", 0, "pt", "rv13 query 5"),
+    Case(
+        "I could not find any other details; but Acme has 3 suppliers.",
+        3,
+        "en",
+        "rv13 query 2",
+    ),
+    Case(
+        "Acme does not have any suppliers; it uses 3 internal plants.",
+        0,
+        "en",
+        "rv13 query 2",
+    ),
+    # A comparative ends at a word boundary; a one-word one compares only
+    # before a number (rv13 query 5).
+    Case("No hay proveedores; no hay más detalles.", 0, "es", "rv13 query 5"),
+    Case("No hay proveedores ni menos derechos.", 0, "es", "rv13 query 5"),
+    Case("Non ci sono fornitori, è il caso più diffuso.", 0, "it", "rv13 query 5"),
+    Case("Não há fornecedores nem mais detalhes.", 0, "pt", "rv13 query 5"),
+    Case(
+        "Il n'y a pas de fournisseur, plus des détails suivront.",
+        0,
+        "fr",
+        "rv13 query 5",
+    ),
+    Case("Поставщиков нет, больше данных нет.", 0, "ru", "rv13 query 5"),
+    Case("Поставщиков нет — по большему счёту.", 0, "ru", "rv13 query 5"),
+    Case(
+        "Acme does not have any suppliers, more thanks to the audit.",
+        0,
+        "en",
+        "rv13 query 5",
+    ),
+    Case("There are not any vendors, less thankfully.", 0, "en", "rv13 query 5"),
+    Case("Нет больше поставщиков.", 0, "ru", "rv13 query 5"),
 )
 
 ROUTER: tuple[Case, ...] = (

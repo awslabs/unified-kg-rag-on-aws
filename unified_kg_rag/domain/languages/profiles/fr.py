@@ -86,6 +86,7 @@ PROFILE = LanguageProfile(
         "plus que",
         "moins que",
     ),
+    clause_conjunctions=("mais", "bien que", "cependant"),
     ordinal_words=frozenset(
         "unième deuxième troisième quatrième cinquième sixième septième "
         "huitième neuvième dixième onzième douzième treizième quatorzième "

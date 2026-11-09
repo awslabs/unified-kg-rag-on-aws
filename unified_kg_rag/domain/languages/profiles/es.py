@@ -94,6 +94,7 @@ PROFILE = LanguageProfile(
     zero_words=("ningún", "ninguno", "ninguna", "ningun"),
     absence_phrases=("no hay", "no tiene", "no tienen", "no existe", "no existen"),
     comparatives=("más de", "menos de", "más que", "menos que"),
+    clause_conjunctions=("pero", "sino", "aunque", "de que"),
     year_words=("en", "desde", "hasta", "antes de", "después de", "a partir de"),
     partitive_words=(
         "de los",

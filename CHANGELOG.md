@@ -1193,8 +1193,9 @@ From a `main` checkout (formats and keys no release had):
   question's language, `answer_language` in each report) drops that language's articles, splits a French or Italian
   elided word from the next ("d'Avignon" is "d avignon", not "davignon") and reads its written numbers
   ("vingt-quatre", "treinta y dos", "vierundzwanzig", "три тысячи") and its words and phrases for none ("aucun",
-  "kein", "ни одного", "no hay", "il n'y a pas de", "Поставщиков нет", as English's "not ... any"; none in a sentence
-  that states a count or holds a comparative: "No hay duda de que son tres", "No hay más de tres") in place of
+  "kein", "ни одного", "no hay", "il n'y a pas de", "Поставщиков нет", as English's "not ... any"; none a comparative
+  directly follows, "No hay más de tres", or a count follows after a clause break, "No hay duda de que son tres", a
+  number in the absent thing's own clause no count: "No hay proveedores en el lote 7" is 0) in place of
   English's (Spanish and Portuguese "no" is no 0), its words of time, partitives and ordinals telling a number that
   counts nothing ("seit 2019", "De los tres proveedores", "один из них", "vingt-troisième") (#324, #516, #606, #613).
 - Strategy comparison: `run-eval --search-strategy a,b --repeats N` with bootstrap intervals, `deltas_by_category`,

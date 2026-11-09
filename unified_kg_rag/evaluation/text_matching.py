@@ -1072,44 +1072,132 @@ def _absence_pattern(language: LanguageProfile) -> re.Pattern[str] | None:
     return re.compile("|".join(map(phrase, phrases)), re.IGNORECASE)
 
 
-# The phrases of absence by language, and the comparatives after which one
-# states no zero: English's for an answer in a language whose numbers the
-# reader does not know in words.
+# The phrases of absence by language, its comparatives and the words that
+# open a clause inside a sentence: English's for an answer in a language
+# whose numbers the reader does not know in words.
 _ABSENCES = {
     language.code.value: pattern
     for language in profiles()
     if (pattern := _absence_pattern(language)) is not None
 }
-_COMPARATIVES = {
-    language.code.value: re.compile(
-        rf"(?<!\w){_phrases(language.comparatives)}", re.IGNORECASE
+
+
+def _comparative_pattern(words: Iterable[str]) -> re.Pattern[str]:
+    """``words`` as whole words: a comparative ends at a word boundary
+    ("más de", not "más detalles"; an elided one at its apostrophe:
+    "plus d'")."""
+    alternatives = "|".join(
+        _phrases([word]) + ("" if word.endswith("'") else r"(?!\w)")
+        for word in sorted(words, key=len, reverse=True)
     )
+    return re.compile(rf"(?<!\w)(?:{alternatives})", re.IGNORECASE)
+
+
+_COMPARATIVES = {
+    language.code.value: _comparative_pattern(language.comparatives)
     for language in profiles()
     if language.comparatives
 }
+# A clause break inside a sentence: a comma, a colon or a dash (any
+# language's), or one of the language's ``clause_conjunctions``. A
+# semicolon is none: the clause after it states a fact of its own ("does
+# not have any suppliers; it uses 3 plants").
+_CLAUSE_MARK = r"[,:\u2013\u2014\uff0c\uff1a\u3001]|\s-\s"
+_CLAUSE_BREAKS = {
+    language.code.value: re.compile(
+        _CLAUSE_MARK
+        + (
+            rf"|(?<!\w){_phrases(language.clause_conjunctions)}(?!\w)"
+            if language.clause_conjunctions
+            else ""
+        ),
+        re.IGNORECASE,
+    )
+    for language in profiles()
+    if language.absence_phrases
+}
 
 
-def _absence(body: str, language: str) -> re.Match[str] | None:
-    """The first phrase of absence of ``language`` in ``body`` that states
-    a count of 0: not one in a sentence that states a count ("No hay duda
-    de que son tres", "Нет, три") or holds a comparative ("No hay más de
-    tres", "Не менее трёх, нет точных данных"), nor a one-word one opening a line before a comma or a stop
-    ("Нет."), which answers a yes/no question."""
+def _absence(body: str, language: str) -> int | None:
+    """Where ``body`` first states a count of 0 by a phrase of absence of
+    ``language`` (``LanguageProfile.absence_phrases``), or ``None``: not
+    where a comparative directly follows the phrase ("No hay más de tres"),
+    nor where a count follows it after a clause break in its sentence ("No
+    hay duda de que son tres", "Нет сомнений, их три"), nor a one-word phrase opening a line
+    before a comma or a stop ("Нет."), which answers a yes/no question. A
+    number in the phrase's own clause is the absent thing's ("No hay
+    proveedores en el lote 7", "with more than 100 employees"): the zero is
+    read where the clause opens when a number before the phrase follows a
+    comparative ("Поставщиков с более чем 50 сотрудниками нет")."""
     pattern = _ABSENCES.get(language)
-    comparative = _COMPARATIVES.get(language)
+    breaks = _CLAUSE_BREAKS.get(language, _CLAUSE_BREAKS["en"])
     for match in pattern.finditer(body) if pattern is not None else ():
-        start, end = _sentence_around(body, match.start())
         if (
             not re.search(r"\s", match.group())
             and _opens_line(body, match.start())
             and _NO_POLARITY.match(body, match.end())
         ):
             continue
-        if comparative is not None and comparative.search(body, start, end):
+        start, end = _sentence_around(body, match.start())
+        if _comparative_at(body, match.end(), end, language) is not None:
             continue
-        if _leading_number(body[start:end], language, absences=False) is None:
-            return match
+        clause_start = max(
+            (m.end() for m in breaks.finditer(body, start, match.start())),
+            default=start,
+        )
+        after = breaks.search(body, match.end(), end)
+        if (
+            after is not None
+            and _leading_number(body[after.start() : end], language, absences=False)
+            is not None
+        ):
+            continue
+        return _zero_offset(body, clause_start, match.start(), language)
     return None
+
+
+def _comparative_at(
+    body: str, start: int, end: int, language: str
+) -> re.Match[str] | None:
+    """The comparative of ``language`` that opens ``body[start:end]`` after
+    spaces, or ``None``."""
+    comparative = _COMPARATIVES.get(language)
+    if comparative is None:
+        return None
+    rest = body[start:end]
+    match = comparative.match(body, start + len(rest) - len(rest.lstrip()), end)
+    return (
+        match if match is not None and _compares(body, match, end, language) else None
+    )
+
+
+def _compares(body: str, match: re.Match[str], end: int, language: str) -> bool:
+    """Whether the comparative ``match`` compares: a one-word one
+    ("больше") only before a number ("больше трёх", not "больше
+    данных")."""
+    if re.search(r"\s", match.group()):
+        return True
+    word = body[match.end() : end].split(maxsplit=1)[:1]
+    return bool(word) and _leading_number(word[0], language, absences=False) is not None
+
+
+def _zero_offset(body: str, clause_start: int, phrase: int, language: str) -> int:
+    """Where the zero of a phrase of absence at ``phrase`` is read: where
+    its clause opens when every number before the phrase in it follows a
+    comparative (a condition of the absent thing), else at the phrase (a
+    count before it is read first)."""
+    comparative = _COMPARATIVES.get(language)
+    matches = comparative.finditer(body, clause_start, phrase) if comparative else ()
+    first = next((m for m in matches if _compares(body, m, phrase, language)), None)
+    if (
+        first is not None
+        and _leading_number(
+            body[clause_start : first.start()], language, absences=False
+        )
+        is None
+    ):
+        return clause_start
+    return phrase
 
 
 def _sentence_around(body: str, index: int) -> tuple[int, int]:
@@ -1208,7 +1296,6 @@ def _leading_number(
     zeros = [
         _KOREAN_NONE.search(body),
         _CJK_NONE.search(body),
-        _absence(body, (language or "") if grammar else "en") if absences else None,
     ]
     if grammar is None:
         first(_ENGLISH_NUMBER.finditer(body), _english_value)
@@ -1230,6 +1317,12 @@ def _leading_number(
     for zero in zeros:
         if zero is not None:
             found.append((zero.start(), 0.0))
+    if (
+        absences
+        and (absent := _absence(body, (language or "") if grammar else "en"))
+        is not None
+    ):
+        found.append((absent, 0.0))
     return min(found)[1] if found else None
 
 

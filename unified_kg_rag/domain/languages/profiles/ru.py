@@ -33,12 +33,19 @@ PROFILE = LanguageProfile(
         "девять": 9,
         "десять": 10,
         "одну": 1,
-        # The genitive a count takes after "около", "не менее" or "из".
+        # The genitive a count takes after "около", "не менее" or "из"
+        # (two to ten).
         "двух": 2,
         "трёх": 3,
         "трех": 3,
         "четырёх": 4,
         "четырех": 4,
+        "пяти": 5,
+        "шести": 6,
+        "семи": 7,
+        "восьми": 8,
+        "девяти": 9,
+        "десяти": 10,
         "одиннадцать": 11,
         "двенадцать": 12,
         "тринадцать": 13,
@@ -70,7 +77,17 @@ PROFILE = LanguageProfile(
     },
     zero_words=("ни одного", "ни одной", "ни один", "ни одна", "ни одно"),
     absence_phrases=("нет",),
-    comparatives=("более", "менее", "больше", "меньше"),
+    comparatives=(
+        "более чем",
+        "менее чем",
+        "больше чем",
+        "меньше чем",
+        "более",
+        "менее",
+        "больше",
+        "меньше",
+    ),
+    clause_conjunctions=("но", "однако", "хотя"),
     # Masculine, feminine and neuter.
     ordinal_words=frozenset(
         f"{stem}{ending}"

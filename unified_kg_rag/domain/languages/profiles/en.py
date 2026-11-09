@@ -61,6 +61,7 @@ PROFILE = LanguageProfile(
     zero_words=("none", "no"),
     absence_phrases=("not … any", "-n't … any"),
     comparatives=("more than", "fewer than", "less than"),
+    clause_conjunctions=("but", "although", "though", "however"),
     number_conjunctions=("and",),
     ordinal_words=frozenset(
         "first second third fourth fifth sixth seventh eighth ninth".split()
