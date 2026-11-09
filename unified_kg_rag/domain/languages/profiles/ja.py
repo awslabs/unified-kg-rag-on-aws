@@ -79,6 +79,8 @@ PROFILE = LanguageProfile(
         "カ所",
         "ヶ所",
         "台",
+        # A sum of money ("一億円").
+        "円",
     ),
     polarity_words={"はい": "yes", "いいえ": "no"},
     quote_pairs=(("「", "」"), ("『", "』")),

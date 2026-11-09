@@ -23,7 +23,11 @@ from unified_kg_rag.adapters.llm.chain_factory import (
 )
 from unified_kg_rag.adapters.llm.langchain import LLMJsonOutputParser
 from unified_kg_rag.shared import ModelOutputError
-from unified_kg_rag.shared.utils import parse_model_object, strip_leading_reasoning
+from unified_kg_rag.shared.utils import (
+    named_choice,
+    parse_model_object,
+    strip_leading_reasoning,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -202,3 +206,25 @@ async def test_a_cut_off_answer_is_not_repaired() -> None:
     assert factory.calls == 0
     assert await parser.aparse("sufficient: yes") == {"sufficient": True}
     assert factory.calls == 1
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("local", "local"),
+        ("**Local**", "local"),
+        ("Strategy: local.", "local"),
+        ("local\n\nReason: global would read every report.", "local"),
+        ("<think>global or local?</think>\n\nlocal", "local"),
+        ('{"strategy": "global"}', "global"),
+        ("\n\n  mix  ", "mix"),
+        # Several names, none, or an unclosed reasoning block: not guessed.
+        ("Not global; local fits", None),
+        ("I cannot tell", None),
+        ("<think>local, surely", None),
+        ("localized", None),
+        ("", None),
+    ],
+)
+def test_named_choice(text: str, expected: str | None) -> None:
+    assert named_choice(text, {"local", "global", "mix"}) == expected

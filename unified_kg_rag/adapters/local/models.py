@@ -336,9 +336,15 @@ class _LocalLanguageModelFactory:
             ),
             info.max_output_tokens,
         )
-        # A short-answer query prompt caps it (search.output_ceilings); these
-        # servers report no reasoning controls, so no thinking budget is kept.
-        if not kwargs.get("max_tokens") and (ceiling := kwargs.get("output_ceiling")):
+        # A short-answer query prompt caps it (search.output_ceilings), but
+        # not a model that may reason: these servers take no thinking budget
+        # to leave room for, so a ceiling would cut it off in its reasoning
+        # (qwen3, deepseek-r1), and the model keeps its whole cap.
+        if (
+            not kwargs.get("max_tokens")
+            and (ceiling := kwargs.get("output_ceiling"))
+            and not self.may_reason(model_id)
+        ):
             max_tokens = ceiled_output_tokens(max_tokens, int(ceiling), 0)
         temperature = kwargs.get("temperature", self.settings.temperature)
         purpose = ModelPurpose(kwargs.get("model_purpose", ModelPurpose.QUERY))
@@ -359,6 +365,11 @@ class _LocalLanguageModelFactory:
             max_tokens,
         )
         return model
+
+    def may_reason(self, model_id: str) -> bool:
+        """Whether ``model_id`` may reason before it answers: an
+        OpenAI-compatible server does not say, so it may."""
+        return True
 
     def _build(
         self,
@@ -498,6 +509,11 @@ class OllamaLanguageModelFactory(_LocalLanguageModelFactory):
     def transient_retry(self) -> TransientRetryConfig:
         """The retry policy ``setup_chain`` applies to query chains."""
         return local_transient_retry(self.config)
+
+    def may_reason(self, model_id: str) -> bool:
+        """Whether the server lists ``thinking`` among ``model_id``'s
+        capabilities (:meth:`thinks`)."""
+        return self.thinks(model_id)
 
     def thinks(self, model_id: str) -> bool:
         """Whether the server lists ``thinking`` among ``model_id``'s

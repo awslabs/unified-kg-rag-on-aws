@@ -13,6 +13,8 @@ Arabic, Hebrew, Devanagari, Thai). Costs are counted in twelfths of a token
 
 import math
 import re
+from collections.abc import Iterable
+from functools import cache
 
 from unified_kg_rag.domain.languages import LanguageCode, profile, text_language
 from unified_kg_rag.shared.utils.scripts import (
@@ -20,6 +22,7 @@ from unified_kg_rag.shared.utils.scripts import (
     LATIN_CHARS_PER_TOKEN,
     SCRIPTS,
     Spacing,
+    script_named,
 )
 
 # What a token is counted in: every rate of the script table is a whole
@@ -36,10 +39,13 @@ def _units(chars_per_token: float) -> int:
     return int(units)
 
 
+def _body(ranges: Iterable[tuple[int, int]]) -> str:
+    """``ranges`` as the body of a regex character class."""
+    return "".join(f"\\U{lo:08X}-\\U{hi:08X}" for lo, hi in sorted(ranges))
+
+
 def _class(ranges: list[tuple[int, int]]) -> re.Pattern[str]:
-    return re.compile(
-        "[" + "".join(f"\\U{lo:08X}-\\U{hi:08X}" for lo, hi in sorted(ranges)) + "]"
-    )
+    return re.compile(f"[{_body(ranges)}]")
 
 
 def _cost_classes() -> tuple[tuple[int, re.Pattern[str]], ...]:
@@ -110,28 +116,54 @@ BUDGET_MARGIN = 1.1
 _LANGUAGE_SAMPLE_CHARS = 2000
 
 
+@cache
+def _script_letters(script: str) -> tuple[re.Pattern[str], re.Pattern[str]]:
+    """The letters of ``script`` (a ``LanguageProfile.script``), and the
+    other letters and digits: a dense script's letters are Han, Hangul and
+    Kana alike (Korean and Japanese write Han, and CJK punctuation and
+    full-width forms go with them), as its measured rate counted them."""
+    named = script_named(script)
+    ranges = (
+        DENSE_SCRIPT_TOKEN_RANGES if named.spacing is Spacing.DENSE else named.ranges
+    )
+    body = _body(ranges)
+    return re.compile(f"[{body}]"), re.compile(f"[^\\W_{body}]")
+
+
 def budget_token_count(
     text: str, tokenizer: str | None = None, multiplier: float = 1.0
 ) -> int:
     """The tokens a budget counts ``text`` as for a model without a
     counting API: the script estimate (:func:`estimate_token_count`) times
-    ``multiplier``, and for a model of ``tokenizer`` at least the text's
-    length at the characters per token measured for its language
+    ``multiplier``, and for a model of ``tokenizer`` at least what the
+    characters per token measured for the text's language
     (``LanguageProfile.chars_per_token``, the language told from the text's
-    first characters), :data:`BUDGET_MARGIN` over. The script rates are a
-    BPE vocabulary's, which counts German or Vietnamese text in about half
-    the tokens Claude's tokenizer does (docs/concepts/defaults-and-evidence.md
-    #token-estimate). Chunking keeps the script estimate (stored chunks)."""
+    first characters) count it as, :data:`BUDGET_MARGIN` over. That rate
+    counts the letters of the language's script; other letters and digits
+    (the Latin names, ids and numbers of a Korean text) count at English's,
+    and spaces and punctuation at each side's share of the letters. The
+    script rates are a BPE vocabulary's, which counts German or Vietnamese
+    text in about half the tokens Claude's tokenizer does
+    (docs/concepts/defaults-and-evidence.md#token-estimate). Chunking keeps
+    the script estimate (stored chunks)."""
     estimate = estimate_token_count(text)
     if multiplier != 1.0:
         estimate = math.ceil(estimate * multiplier)
     if tokenizer is None or not text:
         return estimate
-    language = text_language(text[:_LANGUAGE_SAMPLE_CHARS], LanguageCode.EN)
-    rate = profile(language).chars_per_token.get(tokenizer)
+    language = profile(text_language(text[:_LANGUAGE_SAMPLE_CHARS], LanguageCode.EN))
+    rate = language.chars_per_token.get(tokenizer)
     if rate is None:
         return estimate
-    return max(estimate, math.ceil(len(text) * BUDGET_MARGIN / rate))
+    other_rate = profile(LanguageCode.EN).chars_per_token.get(tokenizer, rate)
+    own_letters, other_letters = _script_letters(language.script)
+    own = len(own_letters.findall(text))
+    other = len(other_letters.findall(text))
+    # Spaces and punctuation, shared as the letters are.
+    rest = len(text) - own - other
+    share = own / (own + other) if own + other else 1.0
+    tokens = (own + rest * share) / rate + (other + rest * (1 - share)) / other_rate
+    return max(estimate, math.ceil(tokens * BUDGET_MARGIN))
 
 
 def truncate_to_estimate(text: str, max_tokens: int) -> str:

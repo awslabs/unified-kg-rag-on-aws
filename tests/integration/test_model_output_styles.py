@@ -196,7 +196,8 @@ def test_every_strategy_answers_in_every_style(
             "unreadable_plan",
         }, (case, metadata)
     if strategy is SearchStrategy.AUTO:
-        # think: the router read the first strategy its reasoning named.
+        # The router's name answer is read in every style (after the
+        # reasoning block in think), without a repair call.
         assert metadata["routing"]["decided_by"] == "router", case
 
 

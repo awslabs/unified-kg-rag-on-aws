@@ -86,7 +86,8 @@ PROFILE = LanguageProfile(
         "亿": 10**8,
         "億": 10**8,
     },
-    counters=("家", "个", "個", "件", "人", "名", "台"),
+    # And a sum of money ("三千万元").
+    counters=("家", "个", "個", "件", "人", "名", "台", "元"),
     polarity_words={
         "是": "yes",
         "是的": "yes",

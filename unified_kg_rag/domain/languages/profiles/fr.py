@@ -69,6 +69,15 @@ PROFILE = LanguageProfile(
     },
     number_conjunctions=("et",),
     compound_ones=("un", "une"),
+    zero_words=("aucun", "aucune"),
+    ordinal_words=frozenset(
+        "unième deuxième troisième quatrième cinquième sixième septième "
+        "huitième neuvième dixième onzième douzième treizième quatorzième "
+        "quinzième seizième".split()
+    ),
+    year_words=("en", "depuis", "dès", "avant", "après", "jusqu'en", "vers"),
+    partitive_words=("des", "parmi les", "parmi ces", "sur les"),
+    partitive_anaphors=("d'entre eux", "d'entre elles", "d'entre nous"),
     month_words={
         "January": ("janvier", "janv"),
         "February": ("février", "févr", "fevrier"),

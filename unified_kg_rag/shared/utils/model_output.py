@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Reading model output: one leading reasoning block and one JSON object.
+"""Reading model output: one leading reasoning block, one JSON object, and
+one name of a closed set.
 
 Pure helpers (no LangChain, no provider): the adapters' chain normalizer and
 JSON output parser call them, so every prompt of every strategy reads model
@@ -53,6 +54,23 @@ def strip_leading_reasoning(text: str) -> str:
     if _OPENS_REASONING.match(text):
         return ""
     return text
+
+
+_NAME_WORD = re.compile(r"\w+")
+
+
+def named_choice(text: str, names: Collection[str]) -> str | None:
+    """The one of ``names`` (casefolded words) an answer that should be a
+    name alone names, or ``None``: its first non-empty line after any
+    leading reasoning block (:func:`strip_leading_reasoning`) has exactly
+    one of them as a whole word, case, markdown and punctuation aside
+    ("local", "**Local**", "Strategy: local", "`local`", "local\\n\\nReason:
+    ..."). A line naming several ("not global but local") or none is
+    ``None``: not guessed from."""
+    answer = strip_leading_reasoning(text)
+    line = next((line for line in answer.splitlines() if line.strip()), "")
+    named = {word.casefold() for word in _NAME_WORD.findall(line)} & set(names)
+    return named.pop() if len(named) == 1 else None
 
 
 def may_open_reasoning(text: str) -> bool:

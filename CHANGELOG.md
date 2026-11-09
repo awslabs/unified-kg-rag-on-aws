@@ -842,8 +842,8 @@ From a `main` checkout (formats and keys no release had):
   repair, truncation and exact rates), per arm under a comparison
   ([guide](docs/guides/benchmarks.md#structural-benchmark)). Its items say how `answer_match` reads them:
   `metadata.answer_type: number` compares the answer's leading number (digits, English words with their scale
-  words, Korean native, Sino-Korean and Han numerals with their multipliers (十二, 一万二千, 만 이천; 1만 2천 and 3万 for
-  digits), 两 and 兩 among them, before a counter such as 곳, 군데, 가지, 개사, 대, 社 or 台; list
+  words, Korean native, Sino-Korean and Han numerals with their multipliers (十二, 一万二千, 만 이천, 一千零一; 1만 2천,
+  3万, 1.5万 and 3,000万 for digits), 两 and 兩 among them, before a counter such as 곳, 군데, 가지, 개사, 대, 社, 台 or 円; list
   enumerators, citation markers, years, ordinals such as 두 번째, 三つ目 and 第三, negated numbers such as "not one
   but three", 一つではなく and 不是一家, and the whole of a partitive, so "only one of the three", 三家中只有一家, 세 곳 중
   한 곳 and 三社のうち一社 are 1, count nothing; "not ... any", "not one", "not a single", 한 곳도, 一社も, 没有 and
@@ -1184,7 +1184,10 @@ From a `main` checkout (formats and keys no release had):
   Korean answers get partial credit, and a German, Spanish, French, Italian, Portuguese or Russian answer (the
   question's language, `answer_language` in each report) drops that language's articles, splits a French or Italian
   elided word from the next ("d'Avignon" is "d avignon", not "davignon") and reads its written numbers
-  ("vingt-quatre", "treinta y dos", "vierundzwanzig", "три тысячи") (#324, #516, #606, #613).
+  ("vingt-quatre", "treinta y dos", "vierundzwanzig", "три тысячи") and its words for none ("aucun", "kein", "ни
+  одного") in place of English's (Spanish and Portuguese "no" is no 0), its words of time, partitives and ordinals
+  telling a number that counts nothing ("seit 2019", "De los tres proveedores", "один из них", "vingt-troisième")
+  (#324, #516, #606, #613).
 - Strategy comparison: `run-eval --search-strategy a,b --repeats N` with bootstrap intervals, `deltas_by_category`,
   a `--pairwise-judge` (LightRAG's verdicts with `evaluation.pairwise_overall`, `position_consistency`, a win-rate
   interval, `--judge-model`) and `prepare-benchmark musique` (#324, #516, #536). See
@@ -1404,8 +1407,10 @@ From a `main` checkout (formats and keys no release had):
 - The query translation, the follow-up rewrite and the community relevance rating answer JSON:
   `{"translation": ...}`, `{"question": ...}`, and MS GraphRAG's `{"reason": ..., "rating": 0-5}` (`rate_prompt.py`;
   the rating is divided by 5, so `relevance_threshold: 0.2` is still a rating of 1 or more). The router answers the
-  strategy name and reads any other answer as `{"strategy": ...}` (a JSON answer wrote 2.9 times the output tokens,
-  measured; its `max_tokens` is 1,024). A model that cannot translate or rewrite answers
+  strategy name, read as the one name on its first line (a reasoning block, markdown, a label and case aside), and
+  reads any other answer as `{"strategy": ...}` (a JSON answer wrote 2.9 times the output tokens, measured; its
+  `max_tokens` is 1,024, a local model that may reason keeping its cap). A model that cannot translate or rewrite
+  answers
   `[CANNOT_TRANSLATE]` or `[CANNOT_REWRITE]`, which replace the refusal phrase lists of four languages; the
   router no longer routes prose naming several strategies ("not global ... local") to the first one named, and a
   rating's reason in any language no longer reads as the rating ("Auf einer Skala von 1 bis 10: 8" was 1).
@@ -1418,6 +1423,8 @@ From a `main` checkout (formats and keys no release had):
   at least at its language's characters per Claude token, measured on Bedrock (`LanguageProfile.chars_per_token`,
   `LanguageModelInfo.tokenizer`), 10% over: the script estimate times 1.3 counted German and Vietnamese at 0.67 and
   0.57 of their tokens and overfilled the window ([evidence](docs/concepts/defaults-and-evidence.md#token-estimate)).
+  The rate counts its script's letters; other letters and digits (a Korean text's Latin names and ids) count at
+  English's.
 - Local search's incident relationships that leave the retrieved entities are ordered as MS GraphRAG local orders
   its out-of-network relationships: by how many retrieved entities the outside endpoint links, then by rank (rank
   alone before), after the edges between two retrieved entities (#619).
@@ -1425,8 +1432,9 @@ From a `main` checkout (formats and keys no release had):
   question's language, one sentence per supported language told by its script and function words (English, the
   0.2.3 reply, or the index language when they do not tell); the script is the one most of the question's letters
   are in, weighed by what a letter carries ("What does 계약 mean?" gets the English reply, a Japanese question
-  quoting a Korean word the Japanese one, an Arabic or Chinese one quoting Latin names without a Latin function word
-  the Arabic or Chinese one); among Latin-script languages, an elision only one of them writes ("dell'", "qu'"; not
+  quoting a Korean word the Japanese one, an Arabic or Chinese one quoting Latin names the Arabic or Chinese one,
+  the function words inside a quoted name not counted: "Bank of America和…" is Chinese); among Latin-script
+  languages, Spanish and Portuguese with their "how many" words, an elision only one of them writes ("dell'", "qu'"; not
   "d'", French and Italian) counts with the function words, and a tie the index language is not in goes to the
   language whose own articles occur ("Qual è il prezzo?" is Italian, not English); evaluation counts a decline by
   `metadata.abstained` alone, no longer by the English text (#619).
@@ -1635,8 +1643,9 @@ Queries and retrieval.
   seeds nothing; semantic and alias hits ("NYC" for "New York City") seed as before. Local seeds compare names folded
   at query time (stored keys unchanged): a middle dot between kana, Han or Hangul letters ("オリオン・ラボ" for
   "オリオンラボ"), Arabic short vowels, tatweel, alef with or without hamza, alef maksura, Russian "ё" for "е" and a
-  leading "شركة" no longer keep a name from linking, nor Latin accents a name from covering ("Cafe" for "Café"); an
-  entity written as asked links alone ("شركة النور", not also "النور"). `graph_aware`'s retrieved coverage compares
+  leading "شركة" no longer keep a name from linking, nor Latin accents a name from covering or seeding ("Cafe" for
+  "Café", "Nguyen Van An" for "Nguyễn Văn An"); an entity written as asked links alone ("شركة النور", not also
+  "النور"). `graph_aware`'s retrieved coverage compares
   names the same way.
 - Local search orders its candidate text units by one shared rule (`domain/retrieval/lineage.py`, also the
   structured query result's lineage): the units most expanded entities cite, then the best-scored citing entity's,

@@ -86,6 +86,12 @@ PROFILE = LanguageProfile(
         "miliardi": 10**9,
     },
     compound_ones=("un", "uno", "una"),
+    # "e" joins the parts of a written number ("mille e cinquecento").
+    number_conjunctions=("e",),
+    zero_words=("nessun", "nessuno", "nessuna"),
+    year_words=("nel", "dal", "fino al", "entro il", "prima del", "dopo il", "in"),
+    partitive_words=("dei", "delle", "degli", "tra i", "tra le", "fra i", "fra le"),
+    partitive_anaphors=("di loro", "di essi", "di esse", "dei quali", "delle quali"),
     month_words={
         "January": ("gennaio", "gen"),
         "February": ("febbraio",),

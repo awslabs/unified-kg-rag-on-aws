@@ -60,6 +60,36 @@ PROFILE = LanguageProfile(
     },
     zero_words=("none", "no"),
     number_conjunctions=("and",),
+    ordinal_words=frozenset(
+        "first second third fourth fifth sixth seventh eighth ninth".split()
+    ),
+    # Also the words that place a year in its course ("in mid-2024").
+    year_words=(
+        "in",
+        "as of",
+        "since",
+        "until",
+        "till",
+        "from",
+        "before",
+        "after",
+        "during",
+        "circa",
+        "early",
+        "mid",
+        "late",
+    ),
+    partitive_words=("of the", "of these", "of those", "of all"),
+    partitive_anaphors=(
+        "of them",
+        "of these",
+        "of those",
+        "of which",
+        "of whom",
+        "of us",
+        "of its",
+        "of their",
+    ),
     open_date_words=("tbd", "ongoing", "present"),
     # strptime reads the English month names itself.
     legal_forms={

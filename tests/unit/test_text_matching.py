@@ -294,6 +294,21 @@ class TestLeadingNumber:
             ("1만 2천 대", 12000),
             ("3万社", 30000),
             ("1천만 명", 10**7),
+            # Regression (rv10 query M2): a decimal or thousands separator
+            # before a multiplier dropped the number (and the next was
+            # read); 零 holds an empty place.
+            ("约1.5万人", 15000),
+            ("1.5万人です", 15000),
+            ("3,000万円", 30_000_000),
+            ("1.5억 원", 150_000_000),
+            ("1,200만 명", 12_000_000),
+            ("약 1.5만 명의 직원과 3개 공장", 15000),
+            ("一千零一家", 1001),
+            ("两千零二十四家", 2024),
+            ("三千零五十家", 3050),
+            # Low: 円 (and 元) count a sum.
+            ("一億円", 100_000_000),
+            ("三千万元", 30_000_000),
         ],
     )
     def test_cjk_counters_and_multipliers(self, text: str, number: float) -> None:

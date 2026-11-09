@@ -381,8 +381,8 @@ def respond(system: str, human: str) -> tuple[str, bool]:
     if "rewrite the latest user message" in system:
         return json.dumps({"question": rewrite(human)}, ensure_ascii=False), False
     if "search strategy selector" in system:
-        strategy = route(_between(human, 'Query: "', '"') or human)
-        return json.dumps({"strategy": strategy}), False
+        # The name alone, as the prompt asks.
+        return route(_between(human, 'Query: "', '"') or human), False
     if "professional technical translator" in system:
         query = _between(human, "<query>\n", "\n</query>")
         return json.dumps({"translation": query}, ensure_ascii=False), False

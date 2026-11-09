@@ -411,12 +411,67 @@ class TestLanguageNormalization:
             assert not answer_match_evaluator.number_matches(answer, str(number))
 
     @pytest.mark.parametrize(
-        ("language", "answer"),
-        [("fr", "deux trois"), ("de", "zwei und drei"), ("es", "un proveedor")],
+        ("language", "answer", "number"),
+        [
+            # Regression (rv10 query M1): English "no" read as 0 in every
+            # language, before the language's own number.
+            ("pt", "No total, são três fornecedores.", 3),
+            ("pt", "No contrato, a Acme tem 3 fornecedores.", 3),
+            ("es", "Según el informe, que no detalla fechas, hay 3 proveedores.", 3),
+            ("es", "No uno sino tres proveedores.", 3),
+            # Each language's own words for none.
+            ("fr", "Aucun fournisseur.", 0),
+            ("de", "Kein Lieferant.", 0),
+            ("de", "Acme hat keine Lieferanten.", 0),
+            ("es", "Ningún proveedor.", 0),
+            ("pt", "Nenhum fornecedor.", 0),
+            ("it", "Nessun fornitore.", 0),
+            ("ru", "Ни одного поставщика.", 0),
+            # Regression (rv10 query M7): a year, the whole of a partitive
+            # and "one of them" in the language's own words.
+            ("de", "Seit 2019 drei Lieferanten.", 3),
+            ("fr", "Depuis 2019, trois fournisseurs.", 3),
+            ("es", "En 2019 firmó con tres proveedores.", 3),
+            ("es", "En marzo de 2019 firmó con tres proveedores.", 3),
+            ("pt", "Desde 2019, dois fornecedores.", 2),
+            ("it", "Nel 2019 tre fornitori.", 3),
+            ("ru", "В 2019 году три поставщика.", 3),
+            ("es", "De los tres proveedores, solo dos firmaron.", 2),
+            ("pt", "Dos três fornecedores, só dois assinaram.", 2),
+            ("it", "Dei tre fornitori, solo due hanno firmato.", 2),
+            ("ru", "Один из них подписал; всего три поставщика.", 3),
+            # Low: Italian joins a number with "e", French writes
+            # quatre-vingts with a space too.
+            ("it", "Mille e cinquecento unità.", 1500),
+            ("fr", "Quatre vingts fournisseurs.", 80),
+            ("fr", "Quatre vingt dix fournisseurs.", 90),
+        ],
     )
-    def test_two_numbers_side_by_side_are_no_count(
-        self, language: str, answer: str
+    def test_the_languages_own_words_around_a_number(
+        self, language: str, answer: str, number: int
     ) -> None:
+        assert text_matching.leading_number(answer, language) == number
+
+    @pytest.mark.parametrize(
+        ("language", "answer"),
+        [
+            ("fr", "deux trois"),
+            ("de", "zwei und drei"),
+            ("es", "un proveedor"),
+            # Low (rv10 query): only German writes the ones before the tens.
+            ("fr", "deux vingt"),
+            ("es", "tres veinte"),
+            ("ru", "два двадцать"),
+            # Ordinals: their tens count nothing.
+            ("fr", "Il est arrivé vingt-troisième."),
+            ("ru", "двадцать первый"),
+            ("en", "the twenty-first vendor"),
+            # A partitive's whole, and "one of them".
+            ("de", "Von den drei Lieferanten hat nur einer unterschrieben."),
+            ("ru", "один из них"),
+        ],
+    )
+    def test_words_that_state_no_count(self, language: str, answer: str) -> None:
         assert text_matching.leading_number(answer, language) is None
 
     def test_the_evaluator_normalizes_in_the_questions_language(

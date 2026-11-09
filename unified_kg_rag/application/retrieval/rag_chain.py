@@ -194,6 +194,7 @@ from unified_kg_rag.shared.usage import usage_scope
 from unified_kg_rag.shared.utils import (
     configure_event_loop,
     error_digest,
+    named_choice,
     strip_embedding_fields,
     strip_invisible,
     text_digest,
@@ -1068,13 +1069,16 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
 
         The answer is the strategy name alone (``StrategySelectionPrompt``:
         a JSON answer made the router write about three times the output
-        tokens, docs/concepts/defaults-and-evidence.md); any other answer is
-        read as ``{"strategy": "<name>"}``, as every JSON answer is (one
-        repair when it does not parse). A name is matched whole: prose naming
-        several ("not global ... local") is not guessed from.
+        tokens, docs/concepts/defaults-and-evidence.md), read as the one
+        name its first line holds (``named_choice``: a reasoning block,
+        markdown, punctuation and case aside, so "**Local**" or "Strategy:
+        local" cost no repair call); any other answer is read as
+        ``{"strategy": "<name>"}``, as every JSON answer is (one repair when
+        it does not parse). A name is matched whole: prose naming several
+        ("not global ... local") is not guessed from.
         """
-        name = raw.strip().strip("\"'`.").casefold()
-        if name not in _STRATEGY_NAMES:
+        name = named_choice(raw, _STRATEGY_NAMES) or ""
+        if not name:
             try:
                 answer = await self._json_parser(
                     StrategySelectionPrompt, schema=_RouteAnswer

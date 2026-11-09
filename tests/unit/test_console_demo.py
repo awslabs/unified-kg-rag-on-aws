@@ -119,12 +119,13 @@ def test_the_fake_models_answer_every_prompt_kind() -> None:
     assert "케스트럴 창고" in summary
     assert fake.route("What are the overall themes?") == "global"
     assert fake.route("How are Acme Robotics and Globex Sensors related?") == "mix"
-    # The router, the rewrite, the translation and the rating answer JSON.
+    # The router answers the name alone, as its prompt asks; the rewrite,
+    # the translation and the rating answer JSON.
     routed, _ = fake.respond(
         "You are an expert search strategy selector",
         'Query: "What are the overall themes?"',
     )
-    assert json.loads(routed) == {"strategy": "global"}
+    assert routed == "global"
     rating, _ = fake.respond(
         "You are a helpful assistant responsible for deciding whether the provided "
         "information is useful",

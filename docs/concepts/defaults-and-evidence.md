@@ -519,7 +519,9 @@ answer was readable either way, but it wrote 2.9 times the output tokens
 (59.9k against 20.7k over 500 calls) and took 1.59 s at the median against
 1.12 s, so the router answers the name; its `max_tokens`
 (`search.output_ceilings.strategy_selection`) is 1,024, plus the thinking
-budget on a reasoning model. To keep `auto` off it, list the strategies without
+budget on a reasoning model (a local model that may reason, which takes no
+thinking budget, keeps `providers.llm.max_output_tokens`). To keep `auto` off
+it, list the strategies without
 `iterative`:
 
 ```yaml
@@ -1011,7 +1013,13 @@ each language's rate is in the registry (`LanguageProfile.chars_per_token`
 for the tokenizer `claude-opus-4.7`), and a budget for those models counts
 the larger of the scaled estimate and the text's length at its language's
 rate, 10% over: every language above is then counted at 1.10 to 1.26 times
-its Claude tokens. French, Italian and Portuguese were not measured and keep
+its Claude tokens. The rate counts the letters of the language's script (Han,
+Hangul and Kana together for Korean, Japanese and Chinese); other letters and
+digits in the text (the Latin names, ids and numbers of a Korean row) count
+at the English rate, and spaces and punctuation at each side's share of the
+letters, so a text in two scripts costs about what its parts do. The
+sentences above were single-language: mixed-script sections were not
+measured. French, Italian and Portuguese were not measured and keep
 the scaled estimate (Spanish, the nearest, was at 0.92). Chunking keeps the
 script estimate (stored chunks, and chunk sizes in the BPE tokens MS GraphRAG
 sizes them in). Titan Text Embeddings v2 counted differently again (script
