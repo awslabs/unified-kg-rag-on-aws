@@ -1642,7 +1642,8 @@ Queries and retrieval.
   at query time (stored keys unchanged): a middle dot between kana, Han or Hangul letters ("オリオン・ラボ" for
   "オリオンラボ"), Arabic short vowels, tatweel, alef with or without hamza, alef maksura, Russian "ё" for "е" and a
   leading "شركة" no longer keep a name from linking, nor Latin accents a name from covering or seeding ("Cafe" for
-  "Café", "Nguyen Van An" for "Nguyễn Văn An"); an entity written as asked links alone ("شركة النور", not also "النور"). `graph_aware`'s retrieved coverage compares
+  "Café", "Nguyen Van An" for "Nguyễn Văn An"); an entity written as asked links alone ("شركة النور", not also
+  "النور"). `graph_aware`'s retrieved coverage compares
   names the same way.
 - Local search orders its candidate text units by one shared rule (`domain/retrieval/lineage.py`, also the
   structured query result's lineage): the units most expanded entities cite, then the best-scored citing entity's,
