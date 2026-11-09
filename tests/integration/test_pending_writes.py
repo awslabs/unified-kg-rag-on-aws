@@ -719,3 +719,38 @@ def test_a_hub_over_the_graph_property_cap_converges(hub: str) -> None:
     assert harness.state() == expected_state(corpus, config)
     assert harness.registry_problems(corpus) == []
     assert _note(harness) is None
+
+
+@pytest.mark.parametrize(
+    "hub", ["Acme", "주식회사 한빛", "株式会社ひかり"], ids=["en", "ko", "ja"]
+)
+def test_an_edge_over_the_graph_property_cap_keeps_its_whole_vector_copy(
+    hub: str,
+) -> None:
+    # One edge stated in many documents: its description is over the
+    # graph's property cap, so only the vector copy holds the whole of it
+    # (state() compares that copy too); through additions, a rejected edge
+    # write and a removal killed in its writes it stays the full build's.
+    config = Config()
+    config.indexing.max_failure_rate = 0.95
+    config.processing.graph_extraction.description_summarization.enabled = False
+    corpus: Corpus = {
+        f"/corpus/d{i:03d}.txt": [[("Vendor", hub, 2)]] for i in range(170)
+    }
+    (edge,) = extract(corpus, config).relationships
+    assert len(edge.description or "") > config.indexing.neptune.property_max_length
+    harness = IncrementalRun(FakeDocStatusStore(), config)
+    harness.run(corpus)
+    assert harness.state() == expected_state(corpus, config)
+
+    corpus = {"/corpus/a.txt": [[("Vendor", hub, 1), ("Carrier", hub, 3)]], **corpus}
+    harness.run(corpus, fail=_rejecting("vector.upsert_relationships", edge.id))
+    assert _note(harness) is not None
+    corpus = {k: v for k, v in corpus.items() if k != "/corpus/d005.txt"}
+    corpus["/corpus/z.txt"] = [[("Vendor", hub, 2)]]
+    assert harness.run(corpus, interrupt="mid_removal", k=1)
+    harness.run(corpus)
+    harness.run(corpus)
+
+    assert harness.state() == expected_state(corpus, config)
+    assert _note(harness) is None

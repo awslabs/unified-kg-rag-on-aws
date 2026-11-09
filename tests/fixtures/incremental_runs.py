@@ -363,6 +363,9 @@ def expected_state(corpus: Corpus, config: Config | None = None) -> dict[str, An
         "entity_content": {e.id: entity_state(graph_copy(e)) for e in built.entities},
         "edge_content": {r.id: edge_state(graph_copy(r)) for r in built.relationships},
         "vector_entity_content": {e.id: entity_state(e) for e in built.entities},
+        "vector_relationship_content": {
+            r.id: edge_state(r) for r in built.relationships
+        },
         "claims": {c.id: claim_state(c) for c in built.claims},
     }
 
@@ -628,6 +631,10 @@ class IncrementalRun:
             "vector_entity_content": {
                 e.id: entity_state(e)
                 for e in self.vector.data.get("entities", {}).values()
+            },
+            "vector_relationship_content": {
+                r.id: edge_state(r)
+                for r in self.vector.data.get("relationships", {}).values()
             },
             "claims": {
                 c.id: claim_state(c)
