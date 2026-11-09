@@ -626,3 +626,84 @@ def test_the_claims_about_a_noted_entity_that_keeps_its_id_are_not_rewritten(
     assert claims_read == []
     assert claims_written == set()
     assert harness.state() == expected_state(corpus, harness.config)
+
+
+@pytest.mark.parametrize(
+    "spellings",
+    [
+        ("Acme Inc", "Acme", "Globex Corp", "Globex"),
+        ("주식회사 한빛", "한빛", "주식회사 누리", "누리"),
+        ("株式会社ひかり", "ひかり", "株式会社みどり", "みどり"),
+        ("주식회사 한빛", "한빛", "株式会社ひかり", "ひかり"),
+        ("株式会社ひかり", "ひかり", "주식회사 한빛", "한빛"),
+    ],
+    ids=["en", "ko", "ja", "mix", "mix-reversed"],
+)
+def test_a_rejected_claim_re_derived_alone_keeps_its_own_entity(
+    spellings: tuple[str, str, str, str],
+) -> None:
+    # The claim about the second company's first spelling is rejected; the
+    # removal of b.txt re-derives it from d.txt alone, where the third
+    # spelling merges both of the second company's. No resolved claim has
+    # its id, so the statement of d.txt about the same names is its claim:
+    # it took the statement winning a tie-break by id instead, a claim
+    # about the first company's entity, which no store holds under that
+    # spelling, and no later run touched it again.
+    first, first_short, second, second_short = spellings
+    mid: Corpus = {
+        "/corpus/b.txt": [[(_C, second, 1)]],
+        "/corpus/c.txt": [[(_C, first_short, 1)], [(_B, first_short, 1)]],
+        "/corpus/d.txt": [[(_C, first, 3), (_C, second, 1), (_C, second_short, 3)]],
+    }
+    after = {path: content for path, content in mid.items() if path != "/corpus/b.txt"}
+    rejected = [c.id for c in extract(mid).claims if c.object_name == second]
+    assert rejected
+    harness = _harness()
+    harness.config.indexing.max_failure_rate = 0.95
+    harness.run(mid, fail=_rejecting("vector.upsert_claims", *rejected))
+    assert _note(harness) is not None
+
+    harness.run(after)
+    harness.run(after)
+
+    assert harness.state() == expected_state(after, harness.config)
+    entities = set(harness.graph.ids("entities"))
+    claims = harness.vector.data.get("claims", {}).values()
+    assert claims and all(c.object_id in entities for c in claims)
+
+
+@pytest.mark.parametrize(
+    "hub", ["Acme", "주식회사 한빛", "株式会社ひかり"], ids=["en", "ko", "ja"]
+)
+def test_a_hub_over_the_graph_property_cap_converges(hub: str) -> None:
+    # With the summaries off, a hub's description over many documents is
+    # longer than the graph's property cap (indexing.neptune
+    # .property_max_length): the graph copy is the full build's cut there,
+    # the vector copy the whole of it, through additions that sort first
+    # and last, a rejected hub write, a removal killed in its writes, and
+    # clean runs.
+    config = Config()
+    config.indexing.max_failure_rate = 0.95
+    config.processing.graph_extraction.description_summarization.enabled = False
+    corpus: Corpus = {
+        f"/corpus/d{i:03d}.txt": [[(f"Vendor{i}", hub, 3)]] for i in range(160)
+    }
+    (hub_id,) = [e.id for e in extract(corpus, config).entities if e.name == hub]
+    harness = IncrementalRun(FakeDocStatusStore(), config)
+    harness.run(corpus)
+    (stored,) = [e for e in harness.vector.data["entities"].values() if e.id == hub_id]
+    assert len(stored.description or "") > config.indexing.neptune.property_max_length
+    assert harness.state() == expected_state(corpus, config)
+
+    corpus = {"/corpus/a.txt": [[("Carrier", hub, 1)]], **corpus}
+    harness.run(corpus, fail=_rejecting("vector.upsert_entities", hub_id))
+    assert _note(harness) is not None
+    corpus = {k: v for k, v in corpus.items() if k != "/corpus/d005.txt"}
+    corpus["/corpus/z.txt"] = [[("Buyer", hub, 2)]]
+    assert harness.run(corpus, interrupt="mid_index_delta", k=2)
+    harness.run(corpus)
+    harness.run(corpus)
+
+    assert harness.state() == expected_state(corpus, config)
+    assert harness.registry_problems(corpus) == []
+    assert _note(harness) is None
