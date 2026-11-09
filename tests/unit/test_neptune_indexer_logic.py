@@ -931,9 +931,15 @@ def test_holds_any_relationship_reads_one_edge_of_the_label(indexer, mocker) -> 
     assert indexer.holds_any_relationship("ns") is False
     calls: list = []
     execute.call_args.args[0](RecordingTraversal(calls, with_args=True))
-    # Between the label's vertices only, one edge at most.
+    # Between the label's vertices only, one edge at most: an older build's
+    # MemberOf edges (to community vertices) are not relationships.
     assert calls[:3] == [("V", ()), ("hasLabel", ("Entity-ns",)), ("outE", ())]
-    assert ("limit", (1,)) in calls
+    (where,) = [args for name, args in calls if name == "where"]
+    assert [list(step) for step in where[0].bytecode.step_instructions] == [
+        ["inV"],
+        ["hasLabel", "Entity-ns"],
+    ]
+    assert calls.index(("limit", (1,))) > calls.index(("where", where))
     execute.return_value = ["e1"]
     assert indexer.holds_any_relationship("ns") is True
     execute.side_effect = RuntimeError("timeout")
