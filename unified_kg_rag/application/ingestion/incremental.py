@@ -32,6 +32,7 @@ from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple
 
+from unified_kg_rag.application.storage.pending_writes import failed_writes
 from unified_kg_rag.domain.ingestion.attempts import (
     closed_attempt,
     opened_attempt,
@@ -67,6 +68,7 @@ from unified_kg_rag.domain.ingestion.document_identity import (
     SOURCE_DIGEST_KEY,
     compute_doc_id,
     config_registry_namespace,
+    doc_id_namespace,
     is_unparsed,
     normalize_source_path,
     normalize_source_scope,
@@ -831,7 +833,11 @@ class IncrementalIndexer:
         PROCESSED. A doc owning an artifact whose failure is not
         noted (its own text unit, or any when the note cannot be written or
         ``written`` is not given) is recorded FAILED (see
-        :meth:`_documents_with_failed_writes`), so the next run rewrites it.
+        :meth:`_documents_with_failed_writes`), so the next run rewrites it;
+        so is, over the rate too, a registry document outside the run
+        owning a text unit of such an item (:meth:`_record_outside_owners`):
+        the commit rewrote what its merge derived for it, which retrying the
+        run's documents does not write again.
         The run's extraction settings are recorded for the scope with them,
         or without a document when ``settings_changed``.
 
@@ -846,15 +852,17 @@ class IncrementalIndexer:
         if succeeded and before_registry is not None:
             before_registry(results)
         noted = (
-            self.indexing_manager.note_pending_writes(results, written)
+            self.indexing_manager.note_pending_writes(
+                results, written, recorded=succeeded
+            )
             if written is not None
             else set()
         )
+        unnoted = {key: stats for key, stats in results.items() if key not in noted}
+        outside = self._record_outside_owners(lineages, unnoted, written or [])
         if succeeded:
             write_failed = self._documents_with_failed_writes(
-                lineages,
-                {key: stats for key, stats in results.items() if key not in noted},
-                owners or {},
+                lineages, unnoted, {**(owners or {}), **outside}
             )
             self._record_processed(
                 lineages,
@@ -934,6 +942,73 @@ class IncrementalIndexer:
                 if failure_rate > max_failure_rate:
                     return False
         return True
+
+    def _record_outside_owners(
+        self,
+        lineages: Sequence[DocumentLineage],
+        results: Mapping[str, IndexingStats],
+        written: Sequence[Any],
+    ) -> dict[str, set[str]]:
+        """Record FAILED the registry's documents outside the run owning a
+        text unit of the ``written`` items whose failed write ``results``
+        name (``failed_writes``; unnoted ones, the note having failed), and
+        return ``{item id: their doc ids}``.
+
+        The commit rewrote what its merge derived for them (an edge the
+        removal re-pointed at a changed document's entity): when that write
+        fails and is not noted, their records are the only way the next run
+        writes it again. Reads the run's registry partition once, only when
+        such an item cites a unit no document of the run lists.
+        """
+        items = [i for group in failed_writes(results, written).values() for i in group]
+        run_units = {u for lineage in lineages for u in lineage.text_unit_ids}
+        units = {
+            u for i in items for u in getattr(i, "text_unit_ids", None) or []
+        } - run_units
+        if not units:
+            return {}
+        run_docs = {lineage.doc_id for lineage in lineages} | set(self._pending)
+        namespace = (scope_namespace(self.scope) if self.scope else None) or (
+            doc_id_namespace(lineages[0].doc_id) if lineages else DEFAULT_NAMESPACE
+        )
+        owner_of_unit = {
+            unit: record
+            for record in _namespace_records(
+                lambda: self.doc_status, namespace, "the owners of failed writes"
+            )
+            if record.doc_id not in run_docs and record.status is DocStatus.PROCESSED
+            for unit in record.text_unit_ids
+            if unit in units
+        }
+        owners: dict[str, set[str]] = defaultdict(set)
+        for item in items:
+            for unit in getattr(item, "text_unit_ids", None) or []:
+                if (record := owner_of_unit.get(unit)) is not None:
+                    owners[item.id].add(record.doc_id)
+        records = {r.doc_id: r for r in owner_of_unit.values()}
+        if not records:
+            return {}
+        logger.warning(
+            "%d failed writes the next run cannot write from a note cite %d "
+            "documents outside this run; recording them FAILED so the next "
+            "run rewrites them",
+            len(owners),
+            len(records),
+        )
+        check_write_fence()
+        self._put(
+            [
+                record.model_copy(
+                    update={
+                        "status": DocStatus.FAILED,
+                        "error_info": _WRITE_FAILED,
+                        "retry_count": earlier_retries(record, record.content_hash) + 1,
+                    }
+                )
+                for _, record in sorted(records.items())
+            ]
+        )
+        return dict(owners)
 
     @staticmethod
     def _documents_with_failed_writes(

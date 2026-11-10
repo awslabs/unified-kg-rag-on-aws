@@ -94,7 +94,7 @@ def _note(harness: IncrementalRun) -> dict | None:
     ["graph.upsert_entities", "vector.upsert_entities", "graph.upsert_relationships"],
 )
 def test_a_rejected_hub_write_is_written_next_run_without_extraction(
-    where: str,
+    where: str, caplog: pytest.LogCaptureFixture
 ) -> None:
     harness = _harness()
     hub = _id(_V)
@@ -105,6 +105,8 @@ def test_a_rejected_hub_write_is_written_next_run_without_extraction(
     # The documents are indexed: only the store failed, and its items are
     # noted for the next commit.
     assert set(_statuses(harness).values()) == {DocStatus.PROCESSED}
+    (warned,) = [r.message for r in caplog.records if "noted for the next" in r.message]
+    assert "their documents stay indexed" in warned
     note = _note(harness)
     assert note is not None
     noted = {i["id"] for kind in note.values() for i in kind}
@@ -767,7 +769,7 @@ def test_an_edge_over_the_graph_property_cap_keeps_its_whole_vector_copy(
     ids=["en", "ko", "ja", "mix"],
 )
 def test_a_kept_edge_whose_write_failed_over_the_rate_survives_a_removal(
-    spellings: tuple[str, str, str],
+    spellings: tuple[str, str, str], caplog: pytest.LogCaptureFixture
 ) -> None:
     # a.txt and b.txt state one edge at the long spelling, c.txt the short
     # one with the same type, so the build folds them. a.txt changes to type
@@ -798,6 +800,9 @@ def test_a_kept_edge_whose_write_failed_over_the_rate_survives_a_removal(
     note = _note(harness)
     assert note is not None
     assert kept.id in {r["id"] for r in note.get("relationships", [])}
+    # Over the rate the run's documents are not recorded: the warning says so.
+    (noted,) = [r.message for r in caplog.records if "noted for the next" in r.message]
+    assert "documents are not recorded" in noted
 
     harness.run(after)
     harness.run(after)
@@ -807,6 +812,64 @@ def test_a_kept_edge_whose_write_failed_over_the_rate_survives_a_removal(
     assert harness.state() == expected_state(after, harness.config)
     assert harness.registry_problems(after) == []
     assert _note(harness) is None
+
+
+@pytest.mark.parametrize("rate", ["over", "under"])
+@pytest.mark.parametrize(
+    "spellings",
+    [
+        ("Acme Inc", "Acme", _D),
+        ("주식회사 한빛", "한빛", _D),
+        ("株式会社ひかり", "ひかり", _D),
+        ("주식회사 한빛", "한빛", "株式会社ひかり"),
+    ],
+    ids=["en", "ko", "ja", "mix"],
+)
+def test_a_kept_edge_whose_write_and_note_failed_fails_its_document(
+    spellings: tuple[str, str, str], rate: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The case above with the note's write failing too: nothing notes the
+    # kept edge b.txt states, and retrying the run's documents does not
+    # write it again. b.txt, outside the run, owns its text unit: it is
+    # recorded FAILED, so the next run extracts it again.
+    long, short, other = spellings
+    before: Corpus = {
+        "/corpus/a.txt": [[(other, long, 1)]],
+        "/corpus/b.txt": [[(other, long, 1)]],
+        "/corpus/c.txt": [[(short, _B, 1)], [(short, _B, 2)]],
+    }
+    mid = {**before, "/corpus/a.txt": [[(short, _B, 2)]]}
+    after = {"/corpus/b.txt": before["/corpus/b.txt"]}
+    (kept,) = extract(after).relationships
+    harness = _harness()
+    harness.config.indexing.max_failure_rate = 0.95
+    harness.run(before)
+    write = harness.vector.write_extraction_records
+
+    def no_note(records, suffix=None):  # noqa: ANN001, ANN202
+        if NOTE not in records:
+            return write(records, suffix=suffix)
+        stats = IndexingStats(total_items=1)
+        stats.add_error("store down", ids=[NOTE])
+        return stats
+
+    monkeypatch.setattr(harness.vector, "write_extraction_records", no_note)
+    rejected = {"over": None, "under": kept.id}[rate]
+    harness.run(
+        mid,
+        fail=lambda at, i: at == "graph.upsert_relationships" and rejected in (None, i),
+        fail_removal=False,
+    )
+    monkeypatch.undo()
+
+    assert _note(harness) is None
+    assert _statuses(harness)["/corpus/b.txt"] is DocStatus.FAILED
+    harness.run(after)
+    harness.run(after)
+
+    assert kept.id in harness.graph.ids("relationships")
+    assert harness.state() == expected_state(after, harness.config)
+    assert harness.registry_problems(after) == []
 
 
 @pytest.mark.parametrize(

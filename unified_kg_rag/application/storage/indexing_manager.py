@@ -1070,13 +1070,17 @@ class IndexingManager:
         )
 
     def note_pending_writes(
-        self, results: Mapping[str, IndexingStats], written: Iterable[Any]
+        self,
+        results: Mapping[str, IndexingStats],
+        written: Iterable[Any],
+        *,
+        recorded: bool = True,
     ) -> set[str]:
         """Note the ``written`` items whose write failed (``results``) for the
         next commit, and delete the read notes nothing is left in. Returns
         the result keys whose failures are noted (none when a note cannot
-        be written)."""
-        return self._pending_writes.note(results, written)
+        be written). ``recorded``: whether the commit records its documents."""
+        return self._pending_writes.note(results, written, recorded=recorded)
 
     def clear_pending_commit(self) -> None:
         """Delete the commit notes of the suffixes this run noted or read

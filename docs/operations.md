@@ -1013,7 +1013,8 @@ A document is recorded `FAILED` in five cases:
   `--continue-on-error` run, which records every document of the run `FAILED`;
 - writing one of its text units to the stores failed (another artifact's
   failed write is noted and written by the next run instead, see *Write
-  failures* below; it fails its owners only when the note cannot be written);
+  failures* below; it fails the documents owning its text units, in the run
+  or not, only when the note cannot be written);
 - the extraction record of one of its text units could not be written to the
   extraction store (`records_not_stored` in graph resolution and claim
   extraction).
@@ -1094,9 +1095,12 @@ classification and output parsing: [Design Doc §5.1](./design/incremental.md#51
   (`pending-writes` in the extraction store) and the next run writes them
   again; below it, without extracting their documents, which stay
   `PROCESSED` (a WARNING names how many were noted); a document whose own text units failed
-  to write is `FAILED` (all of the run's when the backend names no item, or
-  when the note cannot be written), retried by the next run without counting
-  toward the retry limit. The `IndexingFailures` and
+  to write is `FAILED` (all of the run's when the backend names no item),
+  retried by the next run without counting toward the retry limit. When the
+  note cannot be written, the documents owning the failed items' text units
+  are `FAILED` instead, over the rate too, also those outside the run (a
+  kept document whose edge the commit rewrote; found in one read of the
+  namespace's registry records). The `IndexingFailures` and
   `ExtractionFailures` [alarms](#alarms) report both.
 
 ### Quarantined documents
