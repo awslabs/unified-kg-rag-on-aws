@@ -418,7 +418,9 @@ def _check_rounds(stores: Stores, rounds: list[dict[str, Any]]) -> None:
         assert {
             e.id: entity_state(e) for e in stores.vector_entities()
         } == expected_entities
-        assert stores.vector_ids("relationships") == set(expected_edges)
+        assert {
+            r.id: edge_state(r) for r in stores.vector_relationships()
+        } == expected_edges
 
 
 @pytest.mark.slow
@@ -490,9 +492,9 @@ def test_two_namespaces_over_one_store_converge_apart(rounds_a, rounds_b) -> Non
                     state = rounds[min(step, len(rounds) - 1)]
                     corpus = {path: c for path, c in state.items() if c}
                     assert _stores_state(stores) == _expected_state(corpus)
-                    assert stores.vector_ids("relationships") == set(
-                        _expected_state(corpus)[1]
-                    )
+                    assert {
+                        r.id: edge_state(r) for r in stores.vector_relationships()
+                    } == _expected_state(corpus)[1]
 
 
 def _manager(stores: Stores) -> IndexingManager:

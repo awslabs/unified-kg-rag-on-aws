@@ -75,6 +75,28 @@ class Stores:
             for source in (hit["_source"],)
         ]
 
+    def vector_relationships(self) -> list[Relationship]:
+        """The vector store's relationship copies (the fields a state
+        compares)."""
+        if self.kind == "fake":
+            return list(self.vector.data.get("relationships", {}).values())
+        prefix = self.config.indexing.opensearch.relationships_index_prefix
+        return [
+            Relationship(
+                id=hit["_id"],
+                source_id=source.get("source_id") or "",
+                target_id=source.get("target_id") or "",
+                source_name=source.get("source_name") or None,
+                target_name=source.get("target_name") or None,
+                description=source.get("description") or None,
+                rank=source.get("rank"),
+                weight=source.get("weight"),
+                text_unit_ids=list(source.get("text_unit_ids") or []),
+            )
+            for hit in self._hits(prefix)
+            for source in (hit["_source"],)
+        ]
+
     def vector_ids(self, kind: str) -> set[str]:
         """Ids of the vector store's ``kind`` documents (``text_units``,
         ``entities``, ``relationships``, ``claims``)."""
