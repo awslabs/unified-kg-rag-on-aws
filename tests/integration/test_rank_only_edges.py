@@ -454,3 +454,53 @@ def test_a_strip_write_rejected_still_writes_the_other_copies(lang: str) -> None
 
     assert harness.state() == expected_state(after, config)
     assert harness.registry_problems(after) == []
+
+
+@pytest.mark.parametrize(
+    "spellings",
+    [
+        ("Acme", "Acme Inc", "Acme Corp"),
+        ("한빛", "주식회사 한빛", "(주)한빛"),
+        ("ひかり", "株式会社ひかり", "ひかり株式会社"),
+    ],
+    ids=["en", "ko", "ja"],
+)
+def test_a_failed_removal_commits_none_of_its_runs_new_documents(
+    spellings: tuple[str, str, str],
+) -> None:
+    # Deleting g0.txt changes the rank of k0.txt's Depot edge; n0.txt, added
+    # in the same run, states two longer spellings of k0.txt's entity. The
+    # strip's rank update of the edge is rejected, so the kept entities
+    # still cite g0.txt's unit. Committed in the same run, the merge of
+    # n0.txt took their stale counts and dropped an edge of n0.txt that no
+    # later run wrote (Korean). The run stops before the commit instead.
+    short, long_1, long_2 = spellings
+    kept: Corpus = {"/corpus/k0.txt": [[("Depot", short, 1)]]}
+    before: Corpus = {
+        **kept,
+        "/corpus/g0.txt": [[("Depot", "Buyer", 1), (short, "Depot", 1)]],
+    }
+    after: Corpus = {
+        **kept,
+        "/corpus/n0.txt": [[(long_1, "Buyer", 1), (long_2, "Buyer", 2)]],
+    }
+    config = Config()
+    config.indexing.max_failure_rate = 0.95
+    harness = IncrementalRun(FakeDocStatusStore(), config)
+    harness.run(before)
+
+    harness.run(after, fail=lambda at, _: at == "graph.update_relationship_ranks")
+
+    assert harness.extracted == ["/corpus/n0.txt"]
+    assert not any(
+        "/corpus/n0.txt" in (e.description or "") for e in _entities(harness)
+    )
+    harness.run(after)
+    harness.run(after)
+
+    assert harness.state() == expected_state(after, config)
+    assert harness.registry_problems(after) == []
+
+
+def _entities(harness: IncrementalRun) -> list[Any]:
+    return harness.graph.read_entities(sorted(harness.graph.ids("entities")))

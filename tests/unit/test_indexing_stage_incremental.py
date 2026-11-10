@@ -341,7 +341,7 @@ def test_deletion_only_run_checks_the_configured_suffix(mocker) -> None:
     assert store.get(compute_doc_id(_DELETED)) is None
 
 
-def test_failed_deleted_doc_removal_keeps_its_row_and_fails_the_stage(
+def test_failed_deleted_doc_removal_keeps_its_row_and_commits_nothing(
     mocker,
 ) -> None:
     store = FakeDocStatusStore()
@@ -354,17 +354,23 @@ def test_failed_deleted_doc_removal_keeps_its_row_and_fails_the_stage(
         [_document("run-changed", _CHANGED)],
     )
 
-    with pytest.raises(PipelineStageError, match="deleted documents"):
+    with pytest.raises(PipelineStageError, match="not committing"):
         _run(stage, ctx, text_units, entities)
 
     # Removal reported a failure, so the row stays for a retry next run instead
     # of orphaning still-live artifacts, and the stage fails so the run (and
-    # the IndexingFailures alarm) reports it. The delta itself was still
-    # committed: a failed deletion does not hold back new documents.
+    # the IndexingFailures alarm) reports it. The delta is not committed: a
+    # failed strip leaves kept items citing the removed text units, and a
+    # commit would merge the new documents into them (an edge it drops
+    # against their stale counts is written by no later run). So a deleted
+    # document whose removal keeps failing holds back new documents, as a
+    # changed one does.
     assert store.get(compute_doc_id(_DELETED)) is not None
-    assert [name for name, _ in manager.calls][-1] == "index_delta"
+    assert "index_delta" not in [name for name, _ in manager.calls]
+    # The run's document keeps its write-ahead record, so the next run
+    # indexes it again.
     changed = store.get(compute_doc_id(_CHANGED))
-    assert changed is not None and changed.content_hash == "hash-v2"
+    assert changed is not None and changed.status is DocStatus.PENDING
 
 
 def test_failed_joint_removal_commits_nothing_and_keeps_both_rows(mocker) -> None:

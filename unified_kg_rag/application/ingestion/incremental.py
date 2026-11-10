@@ -3098,16 +3098,16 @@ def index_delta(
 
     # Drop the stale artifacts of changed and deleted docs in ONE removal
     # plan (before re-upsert): planning them separately keeps whatever a
-    # changed and a deleted doc share, orphaning it. A failed removal must
-    # stop the run before commit when docs changed: committing would
-    # overwrite their lineage and orphan the stale artifacts. A failure
-    # that only concerns deleted docs keeps their registry rows for a
-    # retry and need not hold back the delta, so it fails the stage only
-    # after the commit.
+    # changed and a deleted doc share, orphaning it. A failed removal stops
+    # the run before the commit: committing would overwrite a changed doc's
+    # lineage and orphan its stale artifacts, and would merge the delta
+    # into kept items the failed strip left citing the removed text units
+    # (their stale mention counts decide the merge, and an item the retry
+    # does not write again stays wrong). Deleted docs keep their registry
+    # rows, and the delta its PENDING records, for the next run's retry.
     # A shared item the delta derives again is summarized by the commit only.
     indexing_manager.expect_delta(entities, relationships)
-    removed = incremental.remove_changed_and_deleted(delta)
-    if not removed and delta.changed:
+    if not incremental.remove_changed_and_deleted(delta):
         raise PipelineStageError(
             "Removing stale artifacts of changed or deleted documents "
             "failed; not committing the delta so the registry keeps their "
@@ -3155,9 +3155,4 @@ def index_delta(
         context.record_failed_documents(incremental.recorded_failed_doc_ids)
         context.record_retrying_documents(incremental.retrying_doc_ids)
         context.record_claims_missing_documents(incremental.claims_missing_doc_ids)
-    if not removed:
-        raise PipelineStageError(
-            "Removing the artifacts of deleted documents failed; their "
-            "registry records are kept so the next run retries the removal"
-        )
     return results, incremental.community_drift

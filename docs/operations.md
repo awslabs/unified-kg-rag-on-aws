@@ -1102,6 +1102,15 @@ classification and output parsing: [Design Doc §5.1](./design/incremental.md#51
   kept document whose edge the commit rewrote; found in one read of the
   namespace's registry records). The `IndexingFailures` and
   `ExtractionFailures` [alarms](#alarms) report both.
+- **Failed removals.** When removing the artifacts of a changed or deleted
+  document fails (a store rejects a write of the removal, or a read fails),
+  indexing fails before anything of the delta is committed (`Removing stale
+  artifacts of changed or deleted documents failed; not committing the
+  delta`): the deleted documents keep their registry records, the new and
+  changed ones stay `PENDING`, and the next run retries the removal first.
+  A deleted document whose removal keeps failing so holds back the new and
+  changed documents: fix the store (see the run's ERROR lines for the
+  rejected writes) and re-run.
 
 ### Quarantined documents
 

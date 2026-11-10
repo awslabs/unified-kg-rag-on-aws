@@ -411,8 +411,8 @@ class IncrementalRun:
         as the indexers report a rejected bulk item): ``where`` is
         ``graph.<method>`` or ``vector.<method>``, a store's ``upsert_*`` or
         ``update_*`` (a lineage or rank set in place). A removal that fails
-        stops the run before the commit when documents changed, as the
-        indexing stage does (``PipelineStageError``). Without
+        stops the run before the commit, as the indexing stage does
+        (``PipelineStageError``). Without
         ``fail_removal`` only the commit's writes are rejected.
         """
         # A run is a new process: nothing an interrupted one held in memory
@@ -491,9 +491,9 @@ class IncrementalRun:
         if not inc.remove_changed_and_deleted(delta):
             if not failing:
                 raise AssertionError("the fake stores never fail a removal")
-            if delta.changed:
-                close_attempts(inc.doc_status, delta, fingerprints)
-                return
+            # The indexing stage stops before the commit.
+            close_attempts(inc.doc_status, delta, fingerprints)
+            return
         inc.commit(
             lineages=lineages,
             fingerprints=fingerprints,

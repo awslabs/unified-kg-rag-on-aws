@@ -160,7 +160,12 @@ unless noted.
    converges with a full build.
    A community or report goes once none of its text units is stored. A failed
    removal keeps the deleted documents' records for a retry and fails the
-   stage (before the commit when the delta has changed documents).
+   stage before the commit: committed, the delta would overwrite a changed
+   document's lineage, and merge into the kept items the failed strip left
+   citing the removed text units (their stale counts dropped a new edge
+   that no later run wrote again). The delta stays `PENDING` for the retry,
+   so a deleted document whose removal keeps failing holds back new
+   documents too.
 6. **Registry update** (`commit`). The `PENDING` records are replaced, in one
    batched write, by `PROCESSED` or `FAILED` records with each document's text
    units, scope and relative path (the five causes of `FAILED`:
