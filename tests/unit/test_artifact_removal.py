@@ -19,7 +19,6 @@ from unified_kg_rag.adapters.ingestion.description_summarizer import (
     SUMMARIZED_FROM_ATTRIBUTE,
 )
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
-from unified_kg_rag.application.storage.removal import _held_back
 from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
 from unified_kg_rag.domain.ingestion.delta_detector import (
     assign_document_identity,
@@ -642,9 +641,12 @@ def test_a_stripped_entity_that_gains_units_is_written_before_its_edges(
     mocker,
 ) -> None:
     # Another spelling's statement merged into a stripped entity: the
-    # re-pointed edges hang on it, so it is written with the re-keyed ones,
-    # before them (written last, a run killed in between left the edges on
-    # a vertex citing only removed units).
+    # re-pointed edges hang on it, so it is written before them (written
+    # last, a run killed in between left the edges on a vertex citing only
+    # removed units). In its own phase after the new vertices: a split's
+    # origin gains a unit too, and its stored copy is the only one holding
+    # a part's lines until the part is written (a rejected part stops the
+    # strip before the origin is overwritten).
     from unified_kg_rag.domain.ingestion.derivation import Derived
 
     manager, graph, vector = _manager()
@@ -660,9 +662,17 @@ def test_a_stripped_entity_that_gains_units_is_written_before_its_edges(
         "default", entity_ids=["e"], relationship_ids=[], text_unit_ids=["t0"]
     )
 
-    (first,) = phases.call_args_list[0].args[0]
-    assert first.key == "graph_rekeyed_entities"
-    assert [e.id for e in first.args[0]] == ["e"]
+    keys = [[t.key for t in call.args[0]] for call in phases.call_args_list]
+    assert keys[:3] == [
+        ["graph_new_entities"],
+        ["graph_gaining_entities"],
+        ["graph_relationships"],
+    ]
+    assert keys[-1] == ["graph_entities"]
+    new_vertices, gaining = (phases.call_args_list[i].args[0][0] for i in (0, 1))
+    assert new_vertices.args[0] == []
+    assert [e.id for e in gaining.args[0]] == ["e"]
+    assert phases.call_args_list[-1].args[0][0].args[0] == []
 
 
 def test_only_a_deleted_communitys_id_leaves_a_stripped_entity() -> None:
@@ -1075,29 +1085,70 @@ def test_a_rewritten_stored_edge_is_ranked_without_a_dropped_link(mocker) -> Non
     assert {r.id: r.rank for r in relationships}.get("r-ac") == 2
 
 
-def _rejected(*ids: str, unnamed: int = 0) -> IndexingStats:
-    stats = IndexingStats(total_items=len(ids) + unnamed)
-    if ids:
-        stats.add_error("rejected", count=len(ids), ids=list(ids))
-    if unnamed:
-        stats.add_error("rejected", count=unnamed)
-    return stats
+def test_a_rejected_strip_write_stops_the_strip(mocker) -> None:
+    # The new vertex's graph write is rejected: no later phase runs, so the
+    # stored copies (the kept entity still citing the removed unit) stay as
+    # they were and the retry derives the strip again.
+    from unified_kg_rag.domain.ingestion.derivation import Derived
 
+    manager, graph, vector = _manager()
+    vector.upsert_text_units(
+        [TextUnit(id=unit, text="...", document_ids=["d"]) for unit in ("t0", "t1")]
+    )
+    graph.upsert_entities([Entity(id="e", name="E", text_unit_ids=["t0", "t1"])])
+    derived = [
+        Entity(id="n", name="N", text_unit_ids=["t1"]),
+        Entity(id="e", name="E", text_unit_ids=["t1"]),
+    ]
+    mocker.patch.object(manager, "derive", return_value=Derived(entities=derived))
+    rejected = IndexingStats(total_items=1)
+    rejected.add_error("rejected", ids=["n"])
+    mocker.patch.object(graph, "upsert_entities", return_value=rejected)
+    phases = mocker.spy(manager, "_run_indexing_phase")
 
-def test_a_strip_holds_back_the_entities_at_its_rejected_items() -> None:
-    # A rejected entity, the endpoints of a rejected edge and the entities
-    # parts were split off are held back; a failure the strip cannot place
-    # (no id, or a claim's) holds back every kept entity.
-    entities = [Entity(id=i, name=i.upper(), type="org") for i in "abcde"]
-    edge = Relationship(
-        id="r1", source_id="b", target_id="c", source_name="B", target_name="C"
+    results = manager.remove_text_units_from_shared(
+        "default", entity_ids=["e"], relationship_ids=[], text_unit_ids=["t0"]
     )
 
-    assert _held_back([_rejected("a", "r1")], entities, [edge], {"e"}) == {
-        "a",
-        "b",
-        "c",
-        "e",
-    }
-    assert _held_back([_rejected(unnamed=1)], entities, [edge], ()) is None
-    assert _held_back([_rejected("claim-1")], entities, [edge], ()) is None
+    assert [t.key for call in phases.call_args_list for t in call.args[0]] == [
+        "graph_new_entities"
+    ]
+    assert results["graph_new_entities"].failed_ids == ["n"]
+    (stored,) = graph.read_entities(["e"])
+    assert stored.text_unit_ids == ["t0", "t1"]
+
+
+def test_a_rejected_claim_write_stops_the_strip_before_its_entities(mocker) -> None:
+    # The claims are the strip's first phase: a rejected claim write stops
+    # it like any other, so no entity or edge is written (one rule for every
+    # phase; the retry derives the claims and the entities again).
+    from unified_kg_rag.domain.ingestion.derivation import Derived
+
+    manager, graph, vector = _manager()
+    vector.upsert_text_units(
+        [TextUnit(id=unit, text="...", document_ids=["d"]) for unit in ("t0", "t1")]
+    )
+    graph.upsert_entities([Entity(id="e", name="E", text_unit_ids=["t0", "t1"])])
+    stripped = Entity(id="e", name="E", text_unit_ids=["t1"])
+    mocker.patch.object(manager, "derive", return_value=Derived(entities=[stripped]))
+    rejected = IndexingStats(total_items=1)
+    rejected.add_error("rejected", ids=["c"])
+    mocker.patch.object(
+        manager._removal,
+        "_remove_text_units_from_claims",
+        return_value={"vector_claim_content_default": rejected},
+    )
+    phases = mocker.spy(manager, "_run_indexing_phase")
+
+    results = manager.remove_text_units_from_shared(
+        "default",
+        entity_ids=["e"],
+        relationship_ids=[],
+        text_unit_ids=["t0"],
+        claim_ids=["c"],
+    )
+
+    assert phases.call_args_list == []
+    assert results["vector_claim_content_default"].failed_ids == ["c"]
+    (stored,) = graph.read_entities(["e"])
+    assert stored.text_unit_ids == ["t0", "t1"]

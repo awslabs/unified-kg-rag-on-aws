@@ -94,15 +94,21 @@ unless noted.
    again, and the vector copy kept a rank no full build has. The next run
    derives those endpoints again: the killed commit's documents are not
    recorded, a killed strip's removal resumes, and a commit's rejected
-   write is noted (`pending-writes`, below). A strip writes the graph
-   copies of the kept entities, by which a retry finds it, last; after a
-   rejected write (which fails the removal, retried by the next run) all
-   but those at a rejected item: the entity, an edge's endpoints and the
-   entities a part was split off (every one for a failure it cannot
-   place). Rewritten, the retry would derive nothing there; held back
-   all, a write the store keeps rejecting left the removed text in every
-   one. Its other writes still go on, so each copy written is the derived
-   one.
+   write is noted (`pending-writes`, below). A strip (item 5) is all or
+   retry: it writes in phases, each after those it depends on (the claims
+   under new ids, the stored claims; the new vertices, the stored entities
+   gaining a unit, the graph edges, the vector edges, the vector entities
+   and, last, the graph copies of the kept entities, by which a retry finds
+   it), and the first phase with a rejected write stops it (the removal
+   fails, retried by the next run). What it did not write keeps its stored
+   copy, which cites the removed text units or is in the `pending-strip`
+   note, so the retry derives it again, as after a run killed between two
+   phases. Writing on past a rejection lost kept documents' items: a split's
+   origin, or the claim a claim was split off, was overwritten while it held
+   the rejected new item's lines, and a copy written stripped no longer led
+   the retry to what the rejected write left. While a store keeps rejecting
+   a write, the strip so strips nothing: the kept items state the removed
+   text until the write succeeds.
    A stored edge a derivation would rewrite for its rank alone whose vector
    copy cites a text unit its graph copy does not (written to one store
    only) is left to the removal or the documents retried, which derive it

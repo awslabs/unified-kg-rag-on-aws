@@ -1,6 +1,26 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Removal of text units (removed or changed documents) from both stores."""
+"""Removal of text units (removed or changed documents) from both stores.
+
+What only the removed text units state is deleted; what other text units
+state too is stripped of them and derived again (the *strip*).
+
+A strip is all or retry. It writes in phases, each after the ones it
+depends on: the claims under new ids, then the stored claims; the new
+vertices (a re-keyed entity's, a split's part), the stored entities gaining
+a unit, the graph edges, the vector edges, the vector entities and, last,
+the kept entities' graph copies. The first phase with a rejected write stops
+the strip, and the removal fails (the next run retries it). What the strip
+did not write keeps its stored copy, which still cites the removed text
+units (the kept entities, a split's origin, a re-keyed entity's old vertex)
+or is in the pending-strip note written before the first write (the other
+side of a merge, a re-keyed or re-pointed edge, a claim under a new id, a
+split's claims): the retry finds it there and derives it again, as after a
+run killed between two phases. Written on past a rejection, a copy
+it wrote no longer led a retry to what the rejected write left, and a stored
+copy holding a rejected new item's lines (a split's origin, the claim a
+claim was split off) was overwritten without them.
+"""
 
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from functools import partial
@@ -106,7 +126,7 @@ class TextUnitRemoval:
         summaries = m.vector_indexer.delete_summary_nodes_citing(text_unit_ids, suffix)
         if summaries.total_items or summaries.failed_items:
             results[f"vector_summary_nodes_{suffix}"] = summaries
-        if any(stats.failed_items for stats in results.values() if stats):
+        if _rejected(results):
             # Strip nothing until the removed text units are gone: a retry
             # tells a removal that got further by their missing copies.
             return results
@@ -132,9 +152,7 @@ class TextUnitRemoval:
                     earlier_note=citing.note,
                 )
             )
-        elif citing.note is not None and not any(
-            s.failed_items for s in results.values() if s
-        ):
+        elif citing.note is not None and not _rejected(results):
             # The noted items are gone: the earlier strip is finished.
             self._clear_pending_strip(suffix)
         return results
@@ -333,13 +351,11 @@ class TextUnitRemoval:
             earlier_note=earlier_note,
         )
         # A note is kept until the old ids are deleted (a retry needs it).
-        if any(stats.failed_items for stats in results.values() if stats):
+        if _rejected(results):
             m.discard_retired_ids()
             return results
         results = {**results, **m.delete_retired_ids()}
-        if (noted or earlier_note is not None) and not any(
-            s.failed_items for s in results.values() if s
-        ):
+        if (noted or earlier_note is not None) and not _rejected(results):
             self._clear_pending_strip(suffix)
         return results
 
@@ -395,7 +411,8 @@ class TextUnitRemoval:
         note's ids (:meth:`_strip_note_ids`) and the claims that follow
         (:meth:`_claims_to_strip`) are found, the claims are stripped, the
         note is written (once, before the first write: :class:`_StripNote`)
-        and the items are written (:meth:`_write_stripped`)."""
+        and the items are written (:meth:`_write_stripped`). A rejected
+        write stops it (all or retry, see the module docstring)."""
         results: dict[str, IndexingStats] = {}
         note = _StripNote(self, suffix, earlier_note)
         doing = "Reading shared artifacts"
@@ -428,6 +445,8 @@ class TextUnitRemoval:
                     suffix, list(claim_ids), text_unit_ids, note=note
                 )
             )
+            if _rejected(results):
+                return results, note.noted
         try:
             note(set())
         except Exception as e:  # noqa: BLE001 - reported as failed items
@@ -459,7 +478,6 @@ class TextUnitRemoval:
             new_entities,
             new_relationships,
             results,
-            split_origins=set(derived.split_from.values()),
         )
         return results, note.noted
 
@@ -728,12 +746,11 @@ class TextUnitRemoval:
         new_entities: list[Entity],
         new_relationships: list[Relationship],
         results: dict[str, IndexingStats],
-        split_origins: Collection[str] = (),
     ) -> None:
-        """Write a strip's derived items, in the order that keeps a killed
-        run retryable, into ``results`` (``entities`` and ``relationships``:
-        the stored copies read back; ``split_origins``: the stored entities
-        a part was split off)."""
+        """Write a strip's derived items into ``results`` (``entities`` and
+        ``relationships``: the stored copies read back), phase by phase in
+        the order each depends on the one before; a phase with a rejected
+        write stops the strip (see the module's *all or retry*)."""
         m = self._m
         # The vector store re-embeds only what changed: compared with the
         # vector copies themselves (name, type, confidence or endpoints, and
@@ -761,38 +778,33 @@ class TextUnitRemoval:
                 and (stored.get("description") or None) == (item.description or None)
             )
 
-        # Written so an interruption never hides an edge still citing a
-        # removed text unit: a retry finds the edges through the entities
-        # that cite it, so those are rewritten last (or, on a resumed
-        # removal, by text unit). A re-keyed entity's new vertex comes first
-        # (its edges are re-pointed at it); its old vertex still cites the
-        # text units until it is deleted.
-        # A kept entity that now cites a text unit its graph copy does not
-        # (another spelling's statement merged in) comes first too, before
-        # the edges re-pointed at it: written last, a run killed in between
-        # left an edge citing a kept unit on a vertex citing only removed
-        # ones, which the next removal deleted with the edge.
+        # The new vertices (a re-keyed entity's, a split's part) come first:
+        # the edges are re-pointed at them, and the stored copies they are
+        # derived from (a re-keyed entity's old vertex, a split's origin)
+        # still hold their lines until they are written.
+        # Then the stored entities that gain a unit their graph copy does
+        # not cite (another spelling's statement merged in, a split's origin
+        # may), before the edges re-pointed at them: written after them, a
+        # run killed in between left an edge citing a kept unit on a vertex
+        # citing only removed ones, which the next removal deleted with the
+        # edge.
         stored_units = {e.id: set(e.text_unit_ids or []) for e in entities}
-        first = {
-            e.id
+        new_vertices = [e for e in new_entities if e.id not in graph_copy]
+        gaining = [
+            e
             for e in new_entities
-            if e.id not in graph_copy
-            or set(e.text_unit_ids or []) - stored_units.get(e.id, set())
-        }
-        rekeyed = [e for e in new_entities if e.id in first]
-        kept = [e for e in new_entities if e.id not in first]
+            if e.id in graph_copy
+            and set(e.text_unit_ids or []) - stored_units.get(e.id, set())
+        ]
+        written_first = {e.id for e in (*new_vertices, *gaining)}
+        # The graph copies of the kept entities are what a retry finds the
+        # strip by: written last.
+        kept = [e for e in new_entities if e.id not in written_first]
         # The graph copies of the edges come before their vector copies: a
         # run killed in between leaves no vector edge without a graph edge,
         # and a vector copy behind is rewritten (``unchanged``, ``_finish``).
         # A stored edge rewritten for its rank alone has it set in place,
         # as a commit does (read before the vector write takes them).
-        graph_edge_tasks = [
-            IndexingTask(
-                partial(m._upsert_graph_relationships, set(m._rank_only)),
-                [new_relationships],
-                "graph_relationships",
-            )
-        ]
         relationship_tasks: list[IndexingTask] = []
         if m.config.indexing.opensearch.build_relationship_vector_index:
             relationship_tasks += [
@@ -811,11 +823,24 @@ class TextUnitRemoval:
             [
                 IndexingTask(
                     m.graph_indexer.upsert_entities,
-                    [rekeyed],
-                    "graph_rekeyed_entities",
+                    [new_vertices],
+                    "graph_new_entities",
                 )
             ],
-            graph_edge_tasks,
+            [
+                IndexingTask(
+                    m.graph_indexer.upsert_entities,
+                    [gaining],
+                    "graph_gaining_entities",
+                )
+            ],
+            [
+                IndexingTask(
+                    partial(m._upsert_graph_relationships, set(m._rank_only)),
+                    [new_relationships],
+                    "graph_relationships",
+                )
+            ],
             relationship_tasks,
             [
                 IndexingTask(
@@ -829,34 +854,14 @@ class TextUnitRemoval:
                     "vector_entities",
                 ),
             ],
+            [IndexingTask(m.graph_indexer.upsert_entities, [kept], "graph_entities")],
         ]
         for phase in phases:
             check_write_fence()
-            results.update(m._run_indexing_phase(phase))
-        # The graph copies of the kept entities are what a retry finds the
-        # strip by: written last, and after a rejected write only those not
-        # at a rejected item (_held_back). Rewritten, the retry derived
-        # nothing there, and what the rejected write left (a rank or an
-        # endpoint's name the rejected copy kept) stayed; held back
-        # all, a write the store kept rejecting left the removed document's
-        # text in every one. The other writes still go on: each copy written
-        # is the derived one (a graph edge stripped beside a vector copy
-        # that was not kept the removed text in a description the graph
-        # caps).
-        failed = [stats for stats in results.values() if stats and stats.failed_items]
-        if failed:
-            held = _held_back(failed, new_entities, new_relationships, split_origins)
-            kept = [e for e in kept if held is not None and e.id not in held]
-        check_write_fence()
-        results.update(
-            m._run_indexing_phase(
-                [
-                    IndexingTask(
-                        m.graph_indexer.upsert_entities, [kept], "graph_entities"
-                    )
-                ]
-            )
-        )
+            done = m._run_indexing_phase(phase)
+            results.update(done)
+            if _rejected(done):
+                return
 
     def _remove_text_units_from_claims(
         self,
@@ -892,8 +897,17 @@ class TextUnitRemoval:
             if d.id in before and _claim_text(d) == _claim_text(before[d.id])
         ]
         kept = {d.id for d in lineage_only}
-        changed = [d for d in derived if d.id not in kept]
+        changed = [d for d in derived if d.id in before and d.id not in kept]
         results: dict[str, IndexingStats] = {}
+        # The claims under new ids first: the stored claims they are derived
+        # from (a split's) hold their lines until those are written.
+        new_claims = [d for d in derived if d.id not in before]
+        if new_claims:
+            results[f"vector_new_claims_{suffix}"] = m.vector_indexer.upsert_claims(
+                new_claims
+            )
+            if _rejected(results):
+                return results
         if lineage_only:
             results[f"vector_claims_{suffix}"] = m.vector_indexer.update_claim_lineage(
                 lineage_only
@@ -1082,32 +1096,6 @@ class _StripNote:
         self.noted = True
 
 
-def _held_back(
-    failed: Sequence[IndexingStats],
-    entities: Sequence[Entity],
-    relationships: Sequence[Relationship],
-    split_origins: Collection[str],
-) -> set[str] | None:
-    """The ids of the entities a strip whose ``failed`` writes were
-    rejected does not write (``entities`` and ``relationships``: what it
-    derived; ``None``: none of them), so they still cite the removed text
-    units and a retry finds the rejected items through them: a rejected
-    entity, the endpoints of a rejected edge and the entities parts were
-    split off (only their stored copy holds a part's lines). A failure that
-    names no item, or one that is neither (a claim), holds back every one."""
-    ids = {i for stats in failed for i in stats.failed_ids}
-    edges = {r.id: r for r in relationships}
-    entity_ids = {e.id for e in entities}
-    if any(stats.unattributed_failures for stats in failed) or (
-        ids - entity_ids - edges.keys()
-    ):
-        return None
-    return (
-        set(split_origins)
-        | (ids & entity_ids)
-        | {
-            end
-            for i in ids & edges.keys()
-            for end in (edges[i].source_id, edges[i].target_id)
-        }
-    )
+def _rejected(results: Mapping[str, IndexingStats]) -> bool:
+    """Whether a store rejected a write (or a read failed) of ``results``."""
+    return any(stats.failed_items for stats in results.values() if stats)

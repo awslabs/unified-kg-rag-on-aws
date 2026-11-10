@@ -515,14 +515,17 @@ def _entities(harness: IncrementalRun) -> list[Any]:
     ],
 )
 @pytest.mark.parametrize("lang", list(_NAMES))
-def test_a_strip_write_the_store_keeps_rejecting_strips_the_other_entities(
+def test_a_strip_write_the_store_keeps_rejecting_strips_nothing_until_it_succeeds(
     lang: str, where: str
 ) -> None:
     # Deleting b.txt strips its lines from four kept entities. One write of
-    # the strip (an entity's or an edge's) is rejected on every run. Only the
-    # entities at the rejected item keep b.txt's text, as the way a retry
-    # finds it; the others are written stripped (held back too, each kept
-    # stating b.txt for as long as the store rejected the write).
+    # the strip (an entity's or an edge's) is rejected on every run. The
+    # rejection stops the strip before the kept entities' graph copies, so
+    # all four keep b.txt's text, by which the retry finds the strip, for as
+    # long as the store rejects the write: written on past a rejection, the
+    # retry derived nothing at the copies written, and each narrowing of
+    # what was written lost a kept document's item (a split part, an edge
+    # re-pointed at a rejected entity). The first clean run strips them.
     v, d, x, b = _NAMES[lang]
     c = {"en": "Carrier", "ko": "운송사", "ja": "運送会社"}[lang]
     before: Corpus = {
@@ -545,7 +548,7 @@ def test_a_strip_write_the_store_keeps_rejecting_strips_the_other_entities(
     stating = sorted(
         e.name for e in _entities(harness) if "b.txt" in (e.description or "")
     )
-    assert stating == ([x] if on_entity else sorted([d, x]))
+    assert stating == sorted([v, d, x, c])
     harness.run(after)
     assert harness.state() == expected_state(after)
     assert harness.registry_problems(after) == []
