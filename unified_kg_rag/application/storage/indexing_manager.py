@@ -1031,8 +1031,8 @@ class IndexingManager:
     ) -> NotedWrites:
         """The items an earlier commit of ``suffixes`` failed to write, noted
         for this one (see :mod:`.pending_writes`), cut to the text units
-        still stored or written by the delta (``text_units``). A failed read
-        raises."""
+        still stored that the delta (``text_units``) does not write again.
+        A failed read raises."""
         return self._pending_writes.read(suffixes, text_units)
 
     def join_pending_writes(

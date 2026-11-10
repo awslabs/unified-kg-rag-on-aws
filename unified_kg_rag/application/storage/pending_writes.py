@@ -240,10 +240,13 @@ class PendingWrites:
         self, suffixes: Iterable[str], text_units: Sequence[TextUnit] = ()
     ) -> NotedWrites:
         """The noted items of ``suffixes``. Each keeps only the text units
-        the vector store still holds or the delta writes (``text_units``):
-        a document removed or changed since the note was written takes its
-        units out of them, as its removal did of the stored copies. An item
-        left citing none is dropped (its removal deleted any stored copy).
+        the vector store still holds and the delta does not write
+        (``text_units``): a document removed or changed since the note was
+        written takes its units out of them, as its removal did of the
+        stored copies, and the delta states what its own units state (a
+        document retried unchanged, under the same unit ids: kept in the
+        noted item, they were written again as resolved when it was noted,
+        beside the delta's item). An item left citing none is dropped.
         A failed read raises, before the commit writes anything."""
         noted = NotedWrites()
         delta_units = {u.id for u in text_units}
@@ -284,7 +287,7 @@ class PendingWrites:
         self, suffix: str, delta_units: Collection[str]
     ) -> dict[str, list[Any]] | None:
         """The items of the note of ``suffix`` by kind, cut to the text units
-        the vector store still holds or in ``delta_units`` (see
+        the vector store still holds and not in ``delta_units`` (see
         :meth:`read`); None when there is no note."""
         note = self._m.vector_indexer.read_extraction_records(
             [_PENDING_WRITES], suffix=suffix
@@ -292,17 +295,16 @@ class PendingWrites:
         if note is None:
             return None
         items = self._parse(self._whole(note, suffix), suffix)
-        cited = sorted(
-            {
-                u
-                for group in items.values()
-                for item in group
-                for u in getattr(item, "text_unit_ids", None) or []
-            }
-            - set(delta_units)
-        )
-        held = self._m.vector_indexer.read_text_unit_ids(cited, suffix=suffix)
-        gone = set() if held is None else set(cited) - set(held)
+        cited = {
+            u
+            for group in items.values()
+            for item in group
+            for u in getattr(item, "text_unit_ids", None) or []
+        }
+        rewritten = cited & set(delta_units)
+        stored = sorted(cited - rewritten)
+        held = self._m.vector_indexer.read_text_unit_ids(stored, suffix=suffix)
+        gone = rewritten | (set() if held is None else set(stored) - set(held))
         return self._without_units(items, gone)
 
     def _whole(self, note: Mapping[str, Any], suffix: str) -> Mapping[str, Any]:

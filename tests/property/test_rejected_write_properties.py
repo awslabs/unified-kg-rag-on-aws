@@ -375,6 +375,48 @@ _REMOVAL_POINTS = [
     k=1,
     salt=2,
 )
+# Every graph edge write of a.txt's change is rejected (over the rate:
+# a.txt is not recorded, and nothing was noted). Its removal had folded
+# 주식회사 한빛 into 한빛 and re-pointed b.txt's edge at it, the commit split
+# them again: the edge's graph copy was left at 한빛, which only a.txt and
+# c.txt state, and removing them deleted it with 한빛 from both stores.
+@example(
+    corpora=(
+        {
+            "/corpus/a.txt": [
+                [("Depot", "Buyer", 3), ("Depot", "Acme Corp", 2)],
+                [("株式会社ひかり", "주식회사 한빛", 1)],
+            ],
+            "/corpus/c.txt": [
+                [("株式会社ひかり", "Acme Corp", 1), ("한빛", "Buyer", 3)],
+                [("Depot", "Acme Corp", 2), ("ひかり", "한빛", 2)],
+            ],
+            "/corpus/d.txt": [[("Depot", "ひかり株式会社", 1)]],
+            "/corpus/b.txt": [
+                [("Depot", "Buyer", 3), ("Depot", "Acme Corp", 2)],
+                [("株式会社ひかり", "주식회사 한빛", 1)],
+            ],
+        },
+        {
+            "/corpus/a.txt": [[("한빛", "ひかり", 2)]],
+            "/corpus/c.txt": [
+                [("株式会社ひかり", "Acme Corp", 1), ("한빛", "Buyer", 3)],
+                [("Depot", "Acme Corp", 2), ("ひかり", "한빛", 2)],
+            ],
+            "/corpus/d.txt": [[("Depot", "ひかり株式会社", 1)]],
+            "/corpus/b.txt": [
+                [("Depot", "Buyer", 3), ("Depot", "Acme Corp", 2)],
+                [("株式会社ひかり", "주식회사 한빛", 1)],
+            ],
+        },
+    ),
+    gone={"/corpus/a.txt", "/corpus/c.txt"},
+    where="graph.upsert_relationships",
+    again=None,
+    point=None,
+    k=1,
+    salt=953,
+)
 def test_a_removal_after_rejected_writes_converges_when_interrupted(
     corpora: tuple[Corpus, Corpus],
     gone: set[str],

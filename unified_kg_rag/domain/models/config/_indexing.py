@@ -801,10 +801,11 @@ class IndexingConfig(BaseModel):
         description=(
             "Per-index-type write failure rate above which the indexing stage "
             "fails, and share of communities without a report above which "
-            "community detection fails; below it the failed items are noted "
-            "and written again by the next run (a document whose own text "
-            "units failed is recorded FAILED and retried). A fully failed index type always "
-            "fails the stage. 1.0 disables the partial-failure gate."
+            "community detection fails, recording no document; the failed "
+            "items are noted and written again by the next run (below it, a "
+            "document whose own text units failed is recorded FAILED and "
+            "retried). A fully failed index type always fails the stage. 1.0 "
+            "disables the partial-failure gate."
         ),
     )
     max_document_failures: int = Field(

@@ -754,3 +754,104 @@ def test_an_edge_over_the_graph_property_cap_keeps_its_whole_vector_copy(
 
     assert harness.state() == expected_state(corpus, config)
     assert _note(harness) is None
+
+
+@pytest.mark.parametrize(
+    "spellings",
+    [
+        ("Acme Inc", "Acme", _D),
+        ("주식회사 한빛", "한빛", _D),
+        ("株式会社ひかり", "ひかり", _D),
+        ("주식회사 한빛", "한빛", "株式会社ひかり"),
+    ],
+    ids=["en", "ko", "ja", "mix"],
+)
+def test_a_kept_edge_whose_write_failed_over_the_rate_survives_a_removal(
+    spellings: tuple[str, str, str],
+) -> None:
+    # a.txt and b.txt state one edge at the long spelling, c.txt the short
+    # one with the same type, so the build folds them. a.txt changes to type
+    # the short one otherwise: its removal folds the stored entities into
+    # the short spelling and re-points b.txt's edge at it, the commit splits
+    # them again, and every graph edge write is rejected (over the rate, so
+    # a.txt is not recorded). b.txt's edge is left at the short spelling,
+    # which only a.txt and c.txt state: removing them deleted it with that
+    # entity, and nothing noted it for the commit, so it was lost.
+    long, short, other = spellings
+    before: Corpus = {
+        "/corpus/a.txt": [[(other, long, 1)]],
+        "/corpus/b.txt": [[(other, long, 1)]],
+        "/corpus/c.txt": [[(short, _B, 1)], [(short, _B, 2)]],
+    }
+    mid = {**before, "/corpus/a.txt": [[(short, _B, 2)]]}
+    after = {"/corpus/b.txt": before["/corpus/b.txt"]}
+    (kept,) = extract(after).relationships
+    harness = _harness()
+    harness.config.indexing.max_failure_rate = 0.95
+    harness.run(before)
+
+    harness.run(mid, fail=lambda at, _: at == "graph.upsert_relationships")
+
+    assert _statuses(harness)["/corpus/a.txt"] is DocStatus.PENDING
+    note = _note(harness)
+    assert note is not None
+    assert kept.id in {r["id"] for r in note.get("relationships", [])}
+
+    harness.run(after)
+    harness.run(after)
+
+    assert kept.id in harness.graph.ids("relationships")
+    assert kept.id in harness.vector.ids("relationships")
+    assert harness.state() == expected_state(after, harness.config)
+    assert harness.registry_problems(after) == []
+    assert _note(harness) is None
+
+
+@pytest.mark.parametrize(
+    "spellings",
+    [
+        ("Acme", "Acme Corp", "Acme Inc", "ACME"),
+        ("주식회사 한빛", "한빛", "한빛 주식회사", "(주)한빛"),
+        ("株式会社ひかり", "ひかり", "ひかり株式会社", "(株)ひかり"),
+        ("株式会社ひかり", "주식회사 한빛", "한빛", "ひかり"),
+    ],
+    ids=["en", "ko", "ja", "mix"],
+)
+def test_a_noted_edge_a_retried_document_states_again_is_written_once(
+    spellings: tuple[str, str, str, str],
+) -> None:
+    # Every vector edge write of the run adding c.txt is rejected (over the
+    # rate: c.txt is not recorded, and the edges are noted). a.txt's
+    # Buyer -> second spelling now cites c.txt's second unit too, which
+    # states Buyer and the third spelling (one key). The next run removes
+    # a.txt and extracts c.txt again: the noted edge kept c.txt's unit, so
+    # it was written beside the delta's Buyer -> third spelling at the
+    # second one's entity, which a.txt's removal deleted, and its graph
+    # write failed on every later run. The delta states that unit again:
+    # the noted items are cut to the units it does not write.
+    first, second, third, fourth = spellings
+    before: Corpus = {
+        "/corpus/d.txt": [[(_V, fourth, 3)]],
+        "/corpus/a.txt": [[(_B, second, 2), (_D, first, 3)]],
+    }
+    mid = {
+        **before,
+        "/corpus/c.txt": [[(_V, fourth, 3), (first, _B, 2)], [(_B, third, 2)]],
+    }
+    after = {path: content for path, content in mid.items() if path != "/corpus/a.txt"}
+    harness = _harness()
+    harness.config.indexing.max_failure_rate = 0.2
+    harness.run(before)
+
+    harness.run(mid, fail=lambda at, _: at == "vector.upsert_relationships")
+
+    assert _statuses(harness)["/corpus/c.txt"] is DocStatus.PENDING
+    assert _note(harness) is not None
+
+    harness.run(after)
+
+    assert harness.extracted == ["/corpus/c.txt"]
+    assert set(_statuses(harness).values()) == {DocStatus.PROCESSED}
+    assert harness.state() == expected_state(after, harness.config)
+    assert harness.registry_problems(after) == []
+    assert _note(harness) is None
