@@ -382,3 +382,36 @@ def test_a_rank_only_edges_vector_copy_is_read_once(
     assert set(harness.graph.rank_updates) == stored
     assert harness.state() == expected_state(after)
     assert harness.registry_problems(after) == []
+
+
+@pytest.mark.parametrize("lang", list(_NAMES))
+def test_a_vector_copy_a_rejected_strip_left_behind_is_not_set_rank_only(
+    lang: str,
+) -> None:
+    # Deleting d.txt strips its line from Vendor -> Depot, which a.txt
+    # states too; c.txt, added in the same run, gives Depot an edge, so the
+    # commit rewrites Vendor -> Depot for its rank alone. The strip's vector
+    # write of the edge is rejected: its vector copy keeps d.txt's line, and
+    # setting its lineage and rank in place kept the line for good (nothing
+    # cites d.txt's unit any more). The commit writes it whole instead.
+    v, d, x, b = _NAMES[lang]
+    before: Corpus = {
+        "/corpus/a.txt": [[(v, d, 2)]],
+        "/corpus/d.txt": [[(v, d, 3)]],
+    }
+    after: Corpus = {
+        "/corpus/a.txt": before["/corpus/a.txt"],
+        "/corpus/c.txt": [[(d, x, 1)]],
+    }
+    edge = _edge_id(before, v, d)
+    harness = IncrementalRun(FakeDocStatusStore())
+    harness.run(before)
+
+    harness.run(
+        after, fail=lambda at, i: at == "vector.upsert_relationships" and i == edge
+    )
+    harness.run(after)
+    harness.run(after)
+
+    assert harness.state() == expected_state(after)
+    assert harness.registry_problems(after) == []

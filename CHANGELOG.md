@@ -1049,7 +1049,8 @@ From a `main` checkout (formats and keys no release had):
   back to the graph copy. A strip stops at its first step with a rejected write, and writes the graph copies of the
   kept entities, by which a retry finds it, after every other copy: the later steps rewrote them, so a retry derived
   nothing and the copy whose write was rejected (or an entity's vector copy, killed before it) kept its rank. The
-  write of an edge whose rank alone changed compares the vector copies the derivation read, not read again.
+  write of an edge whose rank alone changed compares the vector copies the derivation read, not read again, and
+  writes one holding another description whole: a strip whose vector write was rejected left the removed line in it.
   A write note (`pending-writes`) over 1 MiB is split into parts, each its own record,
   under a store's request limit (10 MiB on
   small OpenSearch instances). A noted edge the delta states again takes the endpoints the delta resolves, one whose
