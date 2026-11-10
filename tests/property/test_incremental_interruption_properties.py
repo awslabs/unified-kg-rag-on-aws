@@ -101,7 +101,9 @@ def _case(interrupted: Corpus, point: str, k: int) -> dict:
 
 
 _FIRING_CASES = [
-    *(_case(_CHANGED_AND_REMOVED, point, 1) for point in POINTS),
+    # Its writes update nothing in place: mid_update fires in the rank
+    # cases below.
+    *(_case(_CHANGED_AND_REMOVED, p, 1) for p in POINTS if p != "mid_update"),
     _case(_CHANGED_AND_REMOVED, "mid_record_deletes", 2),
     _case(_ONE_CHANGED, "mid_record_deletes", 3),
     _case(_ONE_CHANGED, "after_removal", 1),
@@ -150,6 +152,28 @@ _FIRING_CASES = [
         "k": 1,
         "follow": "same",
     },
+    # Changing a.txt strips the edge to the shared entity, so its other
+    # edge's rank drops (3 -> 2). The strip writes the graph edges before
+    # their vector copies: killed in between, the retry derived the edge's
+    # graph rank and the vector copy kept 3 for good. In English, Korean and
+    # Japanese.
+    *(
+        {
+            "before": {
+                "/corpus/b.txt": [[(_D, shared, 1)]],
+                "/corpus/a.txt": [[(_V, shared, 3)]],
+            },
+            "interrupted": {
+                "/corpus/b.txt": [[(_D, shared, 1)]],
+                "/corpus/a.txt": [[(_B, _V, 3)]],
+            },
+            "point": "mid_update",
+            "k": 1,
+            "follow": follow,
+        }
+        for shared in (_C, "주식회사 한빛", "株式会社トヨダ")
+        for follow in ("same", "new_docs_removed")
+    ),
 ]
 
 
