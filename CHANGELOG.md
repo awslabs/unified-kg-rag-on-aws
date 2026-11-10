@@ -1045,7 +1045,10 @@ From a `main` checkout (formats and keys no release had):
   vector copies' rank too, and one that differs is set in place in both stores: a commit writes the vector copy
   first, a strip the graph copy, so a run killed in between, or one whose graph write of an endpoint was rejected
   (its edges held back), left a rank the other copy did not have, kept for good once a later run derived the edge
-  back to the graph copy. A write note (`pending-writes`) over 1 MiB is split into parts, each its own record,
+  back to the graph copy. A strip stops at its first step with a rejected write, and writes the graph copies of the
+  kept entities, by which a retry finds it, after every other copy: the later steps rewrote them, so a retry derived
+  nothing and the copy whose write was rejected (or an entity's vector copy, killed before it) kept its rank.
+  A write note (`pending-writes`) over 1 MiB is split into parts, each its own record,
   under a store's request limit (10 MiB on
   small OpenSearch instances). A noted edge the delta states again takes the endpoints the delta resolves, one whose
   endpoint a later removal re-keyed takes the stored spelling of its name its units state, and a noted

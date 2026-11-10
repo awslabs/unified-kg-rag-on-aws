@@ -400,16 +400,20 @@ class IncrementalRun:
         interrupt: str | None = None,
         k: int = 1,
         fail: Callable[[str, str], bool] | None = None,
+        fail_removal: bool = True,
     ) -> bool:
         """Index ``corpus``; return whether the ``interrupt`` point fired.
 
         ``k`` picks which call of a counted point (the k-th store write of
         the removal or the delta, the k-th registry record or delete) fires.
         ``fail(where, item id)`` names the item writes the stores reject
-        during the run's commit (reported as failed items by id, as the
-        indexers report a rejected bulk item): ``where`` is
+        during the run's removal and commit (reported as failed items by id,
+        as the indexers report a rejected bulk item): ``where`` is
         ``graph.<method>`` or ``vector.<method>``, a store's ``upsert_*`` or
-        ``update_*`` (a lineage or rank set in place).
+        ``update_*`` (a lineage or rank set in place). A removal that fails
+        stops the run before the commit when documents changed, as the
+        indexing stage does (``PipelineStageError``). Without
+        ``fail_removal`` only the commit's writes are rejected.
         """
         # A run is a new process: nothing an interrupted one held in memory
         # survives it.
@@ -419,21 +423,12 @@ class IncrementalRun:
         fired = False
         try:
             if fail is not None:
-                commit = inc.commit
-
-                def rejecting_commit(*args: Any, **kwargs: Any) -> Any:
-                    undo: list[Callable[[], None]] = []
-                    self._reject(fail, undo)
-                    try:
-                        return commit(*args, **kwargs)
-                    finally:
-                        for step in reversed(undo):
-                            step()
-
-                inc.commit = rejecting_commit  # type: ignore[method-assign]
+                rejecting = ("remove_changed_and_deleted",) if fail_removal else ()
+                for name in (*rejecting, "commit"):
+                    setattr(inc, name, self._rejecting(getattr(inc, name), fail))
             if interrupt is not None:
                 self._install(interrupt, k, inc, restore)
-            self._run(inc, corpus)
+            self._run(inc, corpus, failing=fail is not None)
         except Killed:
             fired = True
         finally:
@@ -441,7 +436,26 @@ class IncrementalRun:
                 undo()
         return fired
 
-    def _run(self, inc: IncrementalIndexer, corpus: Corpus) -> None:
+    def _rejecting(
+        self, write: Callable[..., Any], fail: Callable[[str, str], bool]
+    ) -> Callable[..., Any]:
+        """``write`` with the stores rejecting the item writes ``fail``
+        names while it runs (:meth:`_reject`)."""
+
+        def rejecting(*args: Any, **kwargs: Any) -> Any:
+            undo: list[Callable[[], None]] = []
+            self._reject(fail, undo)
+            try:
+                return write(*args, **kwargs)
+            finally:
+                for step in reversed(undo):
+                    step()
+
+        return rejecting
+
+    def _run(
+        self, inc: IncrementalIndexer, corpus: Corpus, failing: bool = False
+    ) -> None:
         documents = [document(path, content) for path, content in corpus.items()]
         delta, fingerprints = detect_delta(
             documents,
@@ -475,7 +489,11 @@ class IncrementalRun:
         lineages = build_document_lineage(documents=extracted, text_units=units)
         inc.write_ahead(delta, lineages)
         if not inc.remove_changed_and_deleted(delta):
-            raise AssertionError("the fake stores never fail a removal")
+            if not failing:
+                raise AssertionError("the fake stores never fail a removal")
+            if delta.changed:
+                close_attempts(inc.doc_status, delta, fingerprints)
+                return
         inc.commit(
             lineages=lineages,
             fingerprints=fingerprints,

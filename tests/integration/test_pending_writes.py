@@ -773,10 +773,10 @@ def test_a_kept_edge_whose_write_failed_over_the_rate_survives_a_removal(
     # one with the same type, so the build folds them. a.txt changes to type
     # the short one otherwise: its removal folds the stored entities into
     # the short spelling and re-points b.txt's edge at it, the commit splits
-    # them again, and every graph edge write is rejected (over the rate, so
-    # a.txt is not recorded). b.txt's edge is left at the short spelling,
-    # which only a.txt and c.txt state: removing them deleted it with that
-    # entity, and nothing noted it for the commit, so it was lost.
+    # them again, and every graph edge write of the commit is rejected (over
+    # the rate, so a.txt is not recorded). b.txt's edge is left at the short
+    # spelling, which only a.txt and c.txt state: removing them deleted it
+    # with that entity, and nothing noted it for the commit, so it was lost.
     long, short, other = spellings
     before: Corpus = {
         "/corpus/a.txt": [[(other, long, 1)]],
@@ -790,7 +790,9 @@ def test_a_kept_edge_whose_write_failed_over_the_rate_survives_a_removal(
     harness.config.indexing.max_failure_rate = 0.95
     harness.run(before)
 
-    harness.run(mid, fail=lambda at, _: at == "graph.upsert_relationships")
+    harness.run(
+        mid, fail=lambda at, _: at == "graph.upsert_relationships", fail_removal=False
+    )
 
     assert _statuses(harness)["/corpus/a.txt"] is DocStatus.PENDING
     note = _note(harness)

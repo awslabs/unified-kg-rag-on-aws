@@ -220,3 +220,105 @@ def test_a_rank_a_killed_strip_left_behind_is_set_in_place(
     assert edge not in written.get("upsert_relationships", [])
     assert harness.state() == expected_state(after)
     assert harness.registry_problems(after) == []
+
+
+_NAMES = {
+    "en": ("Vendor", "Depot", "Acme", "Buyer"),
+    "ko": ("공급사", "창고", "한빛", "구매자"),
+    "ja": ("仕入先", "倉庫", "ひかり", "買い手"),
+}
+
+
+def _strip_shapes(v: str, d: str, x: str, b: str) -> dict[str, tuple[Corpus, Corpus]]:
+    """Before and after corpora whose removal strips a stored item."""
+    kept: Corpus = {"/corpus/b.txt": [[(d, x, 1)]]}
+    return {
+        # a.txt changes: the stored Depot-Acme edge changes rank only.
+        "rank-only edge": (
+            {**kept, "/corpus/a.txt": [[(v, x, 3)]]},
+            {**kept, "/corpus/a.txt": [[(b, v, 3)]]},
+        ),
+        # a.txt is deleted: the edge both state loses a.txt's text unit.
+        "lineage edge": ({**kept, "/corpus/a.txt": [[(d, x, 2), (v, b, 1)]]}, kept),
+        # a.txt is deleted: Acme loses an edge, so do its edges' ranks.
+        "entity rank": (
+            {
+                "/corpus/b.txt": [[(d, x, 1), (d, v, 1)]],
+                "/corpus/a.txt": [[(x, b, 2)]],
+            },
+            {"/corpus/b.txt": [[(d, x, 1), (d, v, 1)]]},
+        ),
+    }
+
+
+@pytest.mark.parametrize(
+    "where",
+    [
+        "vector.update_relationship_lineage",
+        "vector.update_entity_lineage",
+        "graph.upsert_relationships",
+        "graph.update_relationship_ranks",
+        "graph.upsert_entities",
+    ],
+)
+@pytest.mark.parametrize("shape", ["rank-only edge", "lineage edge", "entity rank"])
+@pytest.mark.parametrize("lang", list(_NAMES))
+def test_a_strip_write_the_store_rejects_is_repaired_by_the_next_run(
+    lang: str, shape: str, where: str
+) -> None:
+    # A strip phase whose write is rejected stops the strip: the later
+    # phases would rewrite the graph entities a retry finds it by, and the
+    # rank the rejected copy kept would stay (no full build has it).
+    before, after = _strip_shapes(*_NAMES[lang])[shape]
+    harness = IncrementalRun(FakeDocStatusStore())
+    harness.run(before)
+
+    harness.run(after, fail=lambda at, _: at == where)
+    harness.run(after)
+
+    assert harness.state() == expected_state(after)
+    assert harness.registry_problems(after) == []
+
+
+@pytest.mark.parametrize(
+    "spellings",
+    [
+        ("ACME", "Acme Corp", "Acme"),
+        ("한빛 주식회사", "한빛", "(주)한빛"),
+        ("(株)ひかり", "ひかり", "ひかり株式会社"),
+    ],
+    ids=["en", "ko", "ja"],
+)
+def test_a_strip_killed_before_its_vector_entity_writes_is_repaired(
+    spellings: tuple[str, str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Deleting d.txt changes Depot's rank. The graph copies of the kept
+    # entities are written after their vector copies: a run killed in
+    # between leaves them citing d.txt's units, so the retry derives Depot
+    # again and sets the vector copy's rank.
+    upper, corp, inc = spellings
+    kept: Corpus = {
+        "/corpus/c.txt": [
+            [("Vendor", "Depot", 2)],
+            [(upper, "Depot", 3), (corp, "Depot", 2), (inc, "Depot", 3)],
+        ]
+    }
+    before: Corpus = {
+        **kept,
+        "/corpus/d.txt": [
+            [(upper, "Buyer", 3), ("Vendor", inc, 2), (corp, "Buyer", 3)]
+        ],
+    }
+    harness = IncrementalRun(FakeDocStatusStore())
+    harness.run(before)
+
+    def killed(*_args: object, **_kwargs: object) -> None:
+        raise Killed("update_entity_lineage")
+
+    with monkeypatch.context() as patched:
+        patched.setattr(harness.vector, "update_entity_lineage", killed)
+        harness.run(kept)
+    harness.run(kept)
+
+    assert harness.state() == expected_state(kept)
+    assert harness.registry_problems(kept) == []
