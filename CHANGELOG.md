@@ -1046,12 +1046,14 @@ From a `main` checkout (formats and keys no release had):
   vector copies' rank too, and one that differs is set in place in both stores: a commit writes the vector copy
   first, a strip the graph copy, so a run killed in between, or one whose graph write of an endpoint was rejected
   (its edges held back), left a rank the other copy did not have, kept for good once a later run derived the edge
-  back to the graph copy. A strip writes the graph copies of the kept entities, by which a retry finds it, last and
-  only when every other write succeeded: rewritten after a rejected one, a retry derived nothing and the copy whose
-  write was rejected (or an entity's vector copy, killed before it) kept its rank. A failed removal stops the run
-  before the commit, a deleted document's too: the delta merged into the entities a failed strip left citing the
-  removed text units, and dropped a new edge no later run wrote. A deleted document whose removal keeps failing so
-  holds back the new documents, as a changed one does. The
+  back to the graph copy. A strip writes the graph copies of the kept entities, by which a retry finds it, last;
+  after a rejected write, all but those at a rejected item (the entity, an edge's endpoints, the entities a part was
+  split off; every one for a failure it cannot place): rewritten, a retry derived nothing and the copy whose write
+  was rejected (or an entity's vector copy, killed before it) kept its rank or an endpoint's old name; held back
+  all, a write the store kept rejecting left the removed document's text in every one. A failed removal stops the
+  run before the commit, a deleted document's too: the delta merged into the entities a failed strip left citing
+  the removed text units, and dropped a new edge no later run wrote. A deleted document whose removal keeps failing
+  so holds back the new documents, as a changed one does. The
   write of an edge whose rank alone changed compares the vector copies the derivation read, not read again, and
   leaves one whose vector copy cites a text unit its graph copy does not (written to one store only: a strip whose
   vector write was rejected) to the removal's retry: rewritten from those copies, it kept the removed document's

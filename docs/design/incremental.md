@@ -95,10 +95,14 @@ unless noted.
    derives those endpoints again: the killed commit's documents are not
    recorded, a killed strip's removal resumes, and a commit's rejected
    write is noted (`pending-writes`, below). A strip writes the graph
-   copies of the kept entities, by which a retry finds it, last and only
-   when every other write succeeded (a rejected one fails the removal,
-   which is retried): rewritten after it, the retry would derive nothing.
-   Its other writes still go on, so each copy written is the derived one.
+   copies of the kept entities, by which a retry finds it, last; after a
+   rejected write (which fails the removal, retried by the next run) all
+   but those at a rejected item: the entity, an edge's endpoints and the
+   entities a part was split off (every one for a failure it cannot
+   place). Rewritten, the retry would derive nothing there; held back
+   all, a write the store keeps rejecting left the removed text in every
+   one. Its other writes still go on, so each copy written is the derived
+   one.
    A stored edge a derivation would rewrite for its rank alone whose vector
    copy cites a text unit its graph copy does not (written to one store
    only) is left to the removal or the documents retried, which derive it

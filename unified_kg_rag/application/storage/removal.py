@@ -453,7 +453,13 @@ class TextUnitRemoval:
             suffix,
         )
         self._write_stripped(
-            suffix, entities, relationships, new_entities, new_relationships, results
+            suffix,
+            entities,
+            relationships,
+            new_entities,
+            new_relationships,
+            results,
+            split_origins=set(derived.split_from.values()),
         )
         return results, note.noted
 
@@ -722,10 +728,12 @@ class TextUnitRemoval:
         new_entities: list[Entity],
         new_relationships: list[Relationship],
         results: dict[str, IndexingStats],
+        split_origins: Collection[str] = (),
     ) -> None:
         """Write a strip's derived items, in the order that keeps a killed
         run retryable, into ``results`` (``entities`` and ``relationships``:
-        the stored copies read back)."""
+        the stored copies read back; ``split_origins``: the stored entities
+        a part was split off)."""
         m = self._m
         # The vector store re-embeds only what changed: compared with the
         # vector copies themselves (name, type, confidence or endpoints, and
@@ -826,14 +834,19 @@ class TextUnitRemoval:
             check_write_fence()
             results.update(m._run_indexing_phase(phase))
         # The graph copies of the kept entities are what a retry finds the
-        # strip by: written last, and only when every other write succeeded.
-        # Rewritten after a failed one, the retry derived nothing, and what
-        # the rejected write left (a rank the rejected copy kept) stayed.
-        # The other writes still go on: each copy written is the derived one
-        # (a graph edge stripped beside a vector copy that was not kept the
-        # removed text in a description the graph caps).
-        if any(stats.failed_items for stats in results.values() if stats):
-            return
+        # strip by: written last, and after a rejected write only those not
+        # at a rejected item (_held_back). Rewritten, the retry derived
+        # nothing there, and what the rejected write left (a rank or an
+        # endpoint's name the rejected copy kept) stayed; held back
+        # all, a write the store kept rejecting left the removed document's
+        # text in every one. The other writes still go on: each copy written
+        # is the derived one (a graph edge stripped beside a vector copy
+        # that was not kept the removed text in a description the graph
+        # caps).
+        failed = [stats for stats in results.values() if stats and stats.failed_items]
+        if failed:
+            held = _held_back(failed, new_entities, new_relationships, split_origins)
+            kept = [e for e in kept if held is not None and e.id not in held]
         check_write_fence()
         results.update(
             m._run_indexing_phase(
@@ -1067,3 +1080,34 @@ class _StripNote:
             sorted(claims_ | new_claims | _note_ids(earlier, "claim_ids")),
         )
         self.noted = True
+
+
+def _held_back(
+    failed: Sequence[IndexingStats],
+    entities: Sequence[Entity],
+    relationships: Sequence[Relationship],
+    split_origins: Collection[str],
+) -> set[str] | None:
+    """The ids of the entities a strip whose ``failed`` writes were
+    rejected does not write (``entities`` and ``relationships``: what it
+    derived; ``None``: none of them), so they still cite the removed text
+    units and a retry finds the rejected items through them: a rejected
+    entity, the endpoints of a rejected edge and the entities parts were
+    split off (only their stored copy holds a part's lines). A failure that
+    names no item, or one that is neither (a claim), holds back every one."""
+    ids = {i for stats in failed for i in stats.failed_ids}
+    edges = {r.id: r for r in relationships}
+    entity_ids = {e.id for e in entities}
+    if any(stats.unattributed_failures for stats in failed) or (
+        ids - entity_ids - edges.keys()
+    ):
+        return None
+    return (
+        set(split_origins)
+        | (ids & entity_ids)
+        | {
+            end
+            for i in ids & edges.keys()
+            for end in (edges[i].source_id, edges[i].target_id)
+        }
+    )

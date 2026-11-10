@@ -504,3 +504,132 @@ def test_a_failed_removal_commits_none_of_its_runs_new_documents(
 
 def _entities(harness: IncrementalRun) -> list[Any]:
     return harness.graph.read_entities(sorted(harness.graph.ids("entities")))
+
+
+@pytest.mark.parametrize(
+    "where",
+    [
+        "vector.upsert_entities",
+        "vector.upsert_relationships",
+        "graph.upsert_relationships",
+    ],
+)
+@pytest.mark.parametrize("lang", list(_NAMES))
+def test_a_strip_write_the_store_keeps_rejecting_strips_the_other_entities(
+    lang: str, where: str
+) -> None:
+    # Deleting b.txt strips its lines from four kept entities. One write of
+    # the strip (an entity's or an edge's) is rejected on every run. Only the
+    # entities at the rejected item keep b.txt's text, as the way a retry
+    # finds it; the others are written stripped (held back too, each kept
+    # stating b.txt for as long as the store rejected the write).
+    v, d, x, b = _NAMES[lang]
+    c = {"en": "Carrier", "ko": "운송사", "ja": "運送会社"}[lang]
+    before: Corpus = {
+        "/corpus/a.txt": [[(v, d, 1), (d, x, 1), (c, v, 1)]],
+        "/corpus/b.txt": [[(v, d, 2), (d, x, 3), (c, v, 2), (x, b, 1)]],
+    }
+    after = {"/corpus/a.txt": before["/corpus/a.txt"]}
+    on_entity = where.endswith("entities")
+    victim = (
+        next(e.id for e in extract(before).entities if e.name == x)
+        if on_entity
+        else _edge_id(before, d, x)
+    )
+    harness = IncrementalRun(FakeDocStatusStore())
+    harness.run(before)
+
+    for _ in range(3):
+        harness.run(after, fail=lambda at, i: at == where and i == victim)
+
+    stating = sorted(
+        e.name for e in _entities(harness) if "b.txt" in (e.description or "")
+    )
+    assert stating == ([x] if on_entity else sorted([d, x]))
+    harness.run(after)
+    assert harness.state() == expected_state(after)
+    assert harness.registry_problems(after) == []
+
+
+@pytest.mark.parametrize(
+    "spellings",
+    [
+        ("Acme Inc", "Acme Corp"),
+        ("주식회사 한빛", "(주)한빛"),
+        ("株式会社ひかり", "ひかり株式会社"),
+    ],
+    ids=["en", "ko", "ja"],
+)
+def test_a_rejected_split_part_is_split_off_its_origin_again(
+    spellings: tuple[str, str],
+) -> None:
+    # The build folds both spellings into one entity; deleting g0.txt splits
+    # the first off again (k0.txt types them apart). The strip's graph write
+    # of the part is rejected: its origin's graph copy is the only one
+    # holding the part's lines, so it is not written stripped, and the
+    # retry splits the part off it again.
+    part, origin = spellings
+    kept: Corpus = {
+        "/corpus/k0.txt": [
+            [("Depot", part, 2), ("Depot", origin, 1)],
+            [("Depot", origin, 1)],
+        ]
+    }
+    before: Corpus = {**kept, "/corpus/g0.txt": [[("Depot", part, 1)]]}
+    after: Corpus = {**kept, "/corpus/n0.txt": [[("Depot", "Buyer", 1)]]}
+    split = next(e.id for e in extract(after).entities if e.name == part)
+    config = Config()
+    config.indexing.max_failure_rate = 0.95
+    harness = IncrementalRun(FakeDocStatusStore(), config)
+    harness.run(before)
+    assert split not in harness.graph.ids("entities")
+
+    harness.run(after, fail=lambda at, i: at == "graph.upsert_entities" and i == split)
+    harness.run(after)
+    harness.run(after)
+
+    assert harness.state() == expected_state(after, config)
+    assert harness.registry_problems(after) == []
+
+
+@pytest.mark.parametrize(
+    "spellings",
+    [("ACME", "Acme"), ("(주)한빛", "주식회사 한빛"), ("(株)ひかり", "株式会社ひかり")],
+    ids=["en", "ko", "ja"],
+)
+def test_a_rejected_edge_at_a_renamed_entity_is_renamed_by_the_retry(
+    spellings: tuple[str, str],
+) -> None:
+    # The build names the entity both spellings fold into after the second;
+    # deleting g0.txt and g1.txt renames it after the first. The strip's
+    # vector write of k0.txt's edge at it (renamed, citing no removed text
+    # unit) is rejected: the entity's graph copy keeps the stored name, so
+    # the retry finds the rename and writes the edge's vector copy again.
+    first, second = spellings
+    kept: Corpus = {
+        "/corpus/k0.txt": [[(first, "Depot", 3), ("Depot", "Buyer", 2)]],
+        "/corpus/k1.txt": [
+            [("Depot", second, 1)],
+            [(first, "Depot", 3), ("Depot", "Buyer", 2)],
+        ],
+    }
+    before: Corpus = {
+        **kept,
+        "/corpus/g0.txt": [[("Depot", second, 1)]],
+        "/corpus/g1.txt": [[("Depot", "Vendor", 1)], [("Vendor", second, 1)]],
+    }
+    after: Corpus = {**kept, "/corpus/n0.txt": [[("Depot", second, 1)]]}
+    edge = _edge_id(after, first, "Depot")
+    config = Config()
+    config.indexing.max_failure_rate = 0.95
+    harness = IncrementalRun(FakeDocStatusStore(), config)
+    harness.run(before)
+
+    harness.run(
+        after, fail=lambda at, i: at == "vector.upsert_relationships" and i == edge
+    )
+    harness.run(after)
+    harness.run(after)
+
+    assert harness.state() == expected_state(after, config)
+    assert harness.registry_problems(after) == []
