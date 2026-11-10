@@ -1278,6 +1278,26 @@ class CrossRunMerge:
             for r in extra
             if before[r.id][:4] == shown(r)[:4] and r.id not in stale
         }
+        # One whose vector copy cites a text unit its graph copy does not was
+        # written to one store only (a strip whose vector write was rejected,
+        # a commit killed between its stores): the removal or the documents
+        # retried derive it again from the records. Rewritten from these
+        # copies now, it kept the vector copy's description (which the graph
+        # caps), removed text included, and no longer cited the removed unit
+        # the retry finds it by.
+        if vector_copy is not None:
+            one_store = {
+                r.id
+                for r in extra
+                if r.id in rank_only
+                and r.id in vector_copy
+                and set(vector_copy[r.id].get("text_unit_ids") or ())
+                - set(r.text_unit_ids or ())
+            }
+            rank_only -= one_store
+            extra = [r for r in extra if r.id not in one_store]
+            if not extra:
+                return []
         m._rank_only.update(rank_only)
         if vector_copy is not None:
             m._rank_only_copies.update(

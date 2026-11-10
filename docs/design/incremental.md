@@ -99,6 +99,11 @@ unless noted.
    when every other write succeeded (a rejected one fails the removal,
    which is retried): rewritten after it, the retry would derive nothing.
    Its other writes still go on, so each copy written is the derived one.
+   A stored edge a derivation would rewrite for its rank alone whose vector
+   copy cites a text unit its graph copy does not (written to one store
+   only) is left to the removal or the documents retried, which derive it
+   from the records: rewritten from the copies, it kept the vector copy's
+   description, removed text included, where the graph caps it.
    An item write a store rejects (an entity, relationship, claim, community
    or report; an edge held back for a rejected endpoint) does not fail the
    documents owning it: the commit notes the rejected items as written in

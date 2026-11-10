@@ -712,16 +712,12 @@ class IndexingManager:
                 stored |= vector.read_vector_copies(
                     "relationships", unread, suffix=suffix
                 )
-        # A copy whose schema annotations differ is written in full too, and
-        # so is one whose description does (a strip whose vector write was
-        # rejected left the removed text in it, and setting the lineage
-        # alone kept it for good).
+        # A copy whose schema annotations differ is written in full too.
         partial = [
             r
             for r in candidates
             if r.id in stored
             and all(stored[r.id].get(k) == v for k, v in _annotations(r).items())
-            and (stored[r.id].get("description") or None) == (r.description or None)
         ]
         kept = {r.id for r in partial}
         full = [r for r in relationships if r.id not in kept]

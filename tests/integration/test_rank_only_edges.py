@@ -384,16 +384,19 @@ def test_a_rank_only_edges_vector_copy_is_read_once(
     assert harness.registry_problems(after) == []
 
 
+@pytest.mark.parametrize("cap", [None, 20], ids=["whole", "capped"])
 @pytest.mark.parametrize("lang", list(_NAMES))
 def test_a_vector_copy_a_rejected_strip_left_behind_is_not_set_rank_only(
-    lang: str,
+    lang: str, cap: int | None
 ) -> None:
     # Deleting d.txt strips its line from Vendor -> Depot, which a.txt
     # states too; c.txt, added in the same run, gives Depot an edge, so the
     # commit rewrites Vendor -> Depot for its rank alone. The strip's vector
-    # write of the edge is rejected: its vector copy keeps d.txt's line, and
-    # setting its lineage and rank in place kept the line for good (nothing
-    # cites d.txt's unit any more). The commit writes it whole instead.
+    # write of the edge is rejected: its vector copy keeps d.txt's line and
+    # unit. Setting its lineage and rank in place kept the line for good
+    # (nothing cites d.txt's unit any more), and so did writing it whole
+    # with the graph capping descriptions (the full one is read from the
+    # vector copy). The commit leaves it to the removal's retry.
     v, d, x, b = _NAMES[lang]
     before: Corpus = {
         "/corpus/a.txt": [[(v, d, 2)]],
@@ -403,8 +406,11 @@ def test_a_vector_copy_a_rejected_strip_left_behind_is_not_set_rank_only(
         "/corpus/a.txt": before["/corpus/a.txt"],
         "/corpus/c.txt": [[(d, x, 1)]],
     }
+    config = Config()
+    if cap is not None:
+        config.indexing.neptune.property_max_length = cap
     edge = _edge_id(before, v, d)
-    harness = IncrementalRun(FakeDocStatusStore())
+    harness = IncrementalRun(FakeDocStatusStore(), config)
     harness.run(before)
 
     harness.run(
@@ -413,7 +419,7 @@ def test_a_vector_copy_a_rejected_strip_left_behind_is_not_set_rank_only(
     harness.run(after)
     harness.run(after)
 
-    assert harness.state() == expected_state(after)
+    assert harness.state() == expected_state(after, config)
     assert harness.registry_problems(after) == []
 
 

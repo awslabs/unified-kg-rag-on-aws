@@ -866,8 +866,8 @@ class VectorIndexer(BaseIndexer):
         ``source_kinds`` and ``seed_properties`` (its
         ``attributes.seed_properties``) of an entity, ``source_id``,
         ``target_id``, ``source_name``, ``target_name``, ``description``,
-        ``rank``, ``in_schema``, ``predicate_iri`` and ``source_kinds`` of
-        a relationship (a field written ``None`` is absent). Incremental
+        ``rank``, ``text_unit_ids``, ``in_schema``, ``predicate_iri`` and
+        ``source_kinds`` of a relationship (a field written ``None`` is absent). Incremental
         writes compare them with the derived items, so a copy an
         interrupted run left behind or ahead of the graph copy is
         rewritten. Default ``{}`` (every item is
