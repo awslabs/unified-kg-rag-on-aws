@@ -59,6 +59,8 @@ from unified_kg_rag.application.cli.preflight import (  # noqa: E402
     missing_extras_error,
 )
 from unified_kg_rag.application.cli.run_console import (  # noqa: E402
+    MIN_TOKEN_LENGTH,
+    TOKEN_ENV,
     missing_extra,
     web_directory,
 )
@@ -317,6 +319,15 @@ def main(argv: list[str] | None = None) -> int:
             "index.html): cd console/web && npm ci && npm run build"
         )
 
+    # Nor with a token run-console refuses: the address printed would never
+    # open.
+    chosen = os.environ.get(TOKEN_ENV)
+    if not args.prepare_only and chosen is not None and len(chosen) < MIN_TOKEN_LENGTH:
+        raise SystemExit(
+            f"{TOKEN_ENV} must be at least {MIN_TOKEN_LENGTH} characters (unset "
+            "it for a random one)"
+        )
+
     # The fake and Ollama models run in local mode, whose providers come
     # with the local extra: checked before the corpus is written, as the
     # ingestion would fail on it.
@@ -379,7 +390,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         # The console's access token, chosen here so the address can be
         # printed below as well.
-        token = os.environ.get("UKR_CONSOLE_TOKEN") or secrets.token_urlsafe(24)
+        token = chosen or secrets.token_urlsafe(24)
         console = subprocess.Popen(
             [
                 _script("run-console"),
@@ -393,7 +404,7 @@ def main(argv: list[str] | None = None) -> int:
                 str(args.port),
             ],
             cwd=workspace,
-            env={**os.environ, "UKR_CONSOLE_TOKEN": token},
+            env={**os.environ, TOKEN_ENV: token},
         )
         # A SIGTERM (a container stop, kill) stops the console too, as
         # Ctrl-C does, instead of leaving it running without the demo.

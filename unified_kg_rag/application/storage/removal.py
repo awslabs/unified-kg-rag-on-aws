@@ -3,6 +3,7 @@
 """Removal of text units (removed or changed documents) from both stores."""
 
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
+from functools import partial
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from unified_kg_rag.application.storage.stored_items import (
@@ -775,9 +776,11 @@ class TextUnitRemoval:
         # The graph copies of the edges come before their vector copies: a
         # run killed in between leaves no vector edge without a graph edge,
         # and a vector copy behind is rewritten (``unchanged``, ``_finish``).
+        # A stored edge rewritten for its rank alone has it set in place,
+        # as a commit does (read before the vector write takes them).
         graph_edge_tasks = [
             IndexingTask(
-                m.graph_indexer.upsert_relationships,
+                partial(m._upsert_graph_relationships, set(m._rank_only)),
                 [new_relationships],
                 "graph_relationships",
             )
@@ -807,7 +810,6 @@ class TextUnitRemoval:
             graph_edge_tasks,
             relationship_tasks,
             [
-                IndexingTask(m.graph_indexer.upsert_entities, [kept], "graph_entities"),
                 IndexingTask(
                     m.vector_indexer.update_entity_lineage,
                     [[e for e in new_entities if unchanged(e)]],
@@ -823,6 +825,25 @@ class TextUnitRemoval:
         for phase in phases:
             check_write_fence()
             results.update(m._run_indexing_phase(phase))
+        # The graph copies of the kept entities are what a retry finds the
+        # strip by: written last, and only when every other write succeeded.
+        # Rewritten after a failed one, the retry derived nothing, and what
+        # the rejected write left (a rank the rejected copy kept) stayed.
+        # The other writes still go on: each copy written is the derived one
+        # (a graph edge stripped beside a vector copy that was not kept the
+        # removed text in a description the graph caps).
+        if any(stats.failed_items for stats in results.values() if stats):
+            return
+        check_write_fence()
+        results.update(
+            m._run_indexing_phase(
+                [
+                    IndexingTask(
+                        m.graph_indexer.upsert_entities, [kept], "graph_entities"
+                    )
+                ]
+            )
+        )
 
     def _remove_text_units_from_claims(
         self,

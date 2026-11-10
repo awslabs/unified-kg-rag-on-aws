@@ -319,7 +319,7 @@ Then deploy and start runs as usual:
 | Stage checkpoints (local) | `<--cache-directory>/<pipeline_id>/` (default `cache/`) | Reused on resume |
 | Stage checkpoints (S3) | `s3://<bucket>/<--s3-prefix>/<pipeline_id>/` (default `pipeline-runs`) | With `--s3-sync`: uploaded after every stage and on SIGTERM, so a fresh task resumes from it. A failed download or final upload fails the run with `CacheSyncError`; a failed per-stage or on-stop upload only warns (the next upload retries it), and a stop after a lost lease skips the upload. Expired by the bucket lifecycle, not `cache.ttl_seconds` |
 | LLM response cache | `<stage checkpoint dir>/llm-cache/` | Reused by a re-run with the same pipeline id; `cache.llm_responses.enabled: false` turns it off, `--force-rebuild` ignores it |
-| Extraction store | `graphrag-extraction-records-<suffix>` (`indexing.opensearch.extraction_records_index_prefix`) | Per-chunk extraction results and the intelligent chunker's per-pre-chunk boundary answers, reused by later runs while a stored text unit names them, the community report answers of full builds, kept while a stored report names them (a full build drops the others), and the notes a removal (`pending-strip`, `stripped-summaries`) or a commit (`pending-commit`) keeps until it finished, which a resumed run needs. `clear` and `--force-rebuild` keep it; to drop it, delete the index only after a run that succeeded, or run `indexing.reset: true` next |
+| Extraction store | `graphrag-extraction-records-<suffix>` (`indexing.opensearch.extraction_records_index_prefix`) | Per-chunk extraction results and the intelligent chunker's per-pre-chunk boundary answers, reused by later runs while a stored text unit names them, the community report answers of full builds, kept while a stored report names them (a full build drops the others), the notes a removal (`pending-strip`, `stripped-summaries`) or a commit (`pending-commit`) keeps until it finished, which a resumed run needs, and the item writes a store rejected (`pending-writes`), kept until a later run wrote them. `clear` and `--force-rebuild` keep it; to drop it, delete the index only after a run that succeeded and noted no failed writes (no `noted for the next run` WARNING), or run `indexing.reset: true` next |
 | Visualization data | `<cache directory>/<pipeline_id>/visualization/` unless `graph.visualization.outputs_directory` is set | Synced with the stage cache (`.json` only); rendered by [`run-visualization`](./guides/visualize.md) |
 
 The CDK bucket expires `pipeline-runs/` after 30 days: keep the corpus under another prefix (`corpus/`), since an expired file
@@ -1013,7 +1013,8 @@ A document is recorded `FAILED` in five cases:
   `--continue-on-error` run, which records every document of the run `FAILED`;
 - writing one of its text units to the stores failed (another artifact's
   failed write is noted and written by the next run instead, see *Write
-  failures* below; it fails its owners only when the note cannot be written);
+  failures* below; it fails the documents owning its text units, in the run
+  or not, only when the note cannot be written);
 - the extraction record of one of its text units could not be written to the
   extraction store (`records_not_stored` in graph resolution and claim
   extraction).
@@ -1094,9 +1095,12 @@ classification and output parsing: [Design Doc §5.1](./design/incremental.md#51
   (`pending-writes` in the extraction store) and the next run writes them
   again; below it, without extracting their documents, which stay
   `PROCESSED` (a WARNING names how many were noted); a document whose own text units failed
-  to write is `FAILED` (all of the run's when the backend names no item, or
-  when the note cannot be written), retried by the next run without counting
-  toward the retry limit. The `IndexingFailures` and
+  to write is `FAILED` (all of the run's when the backend names no item),
+  retried by the next run without counting toward the retry limit. When the
+  note cannot be written, the documents owning the failed items' text units
+  are `FAILED` instead, over the rate too, also those outside the run (a
+  kept document whose edge the commit rewrote; found in one read of the
+  namespace's registry records). The `IndexingFailures` and
   `ExtractionFailures` [alarms](#alarms) report both.
 
 ### Quarantined documents

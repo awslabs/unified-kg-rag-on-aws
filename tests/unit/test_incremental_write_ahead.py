@@ -336,9 +336,9 @@ def test_retried_shared_strip_repairs_the_store_an_earlier_one_missed(
     outcome: str,
 ) -> None:
     """Deleting b strips its text unit from Vendor, which a also cites. When
-    only the graph copy got stripped (the vector write died or failed), the
-    retry reads the stripped graph copy back: it must still rewrite the
-    vector copy, which cites the removed text unit."""
+    the vector entity write dies or fails, the strip stops before the graph
+    copies of the kept entities, which still cite the removed text unit: the
+    retry finds the strip by them and rewrites the vector copy."""
     harness = IncrementalRun()
     before: Corpus = {
         "/c/a.txt": [[("Vendor", "Depot", 1)]],
@@ -355,8 +355,6 @@ def test_retried_shared_strip_repairs_the_store_an_earlier_one_missed(
 
         return upsert
 
-    # The entity writes of both stores are the last step of a strip (a
-    # retry finds the edges through the entities still citing the unit).
     originals = {
         name: getattr(harness.vector, name)
         for name in ("update_entity_lineage", "upsert_entities")
@@ -371,11 +369,10 @@ def test_retried_shared_strip_repairs_the_store_an_earlier_one_missed(
         pass
     for name, original in originals.items():
         setattr(harness.vector, name, original)
-    # The graph copy is stripped, the vector copy is not.
-    assert harness.state()["graph_entities"] == expected_state(after)["graph_entities"]
-    assert (
-        harness.state()["vector_entities"] != expected_state(after)["vector_entities"]
-    )
+    # Neither entity copy is stripped yet: the graph copy is written last.
+    state, expected = harness.state(), expected_state(after)
+    assert state["graph_entities"] != expected["graph_entities"]
+    assert state["vector_entities"] != expected["vector_entities"]
 
     harness.run(after)
 

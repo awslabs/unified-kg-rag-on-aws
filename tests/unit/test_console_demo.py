@@ -216,6 +216,26 @@ def test_without_the_console_extra_the_demo_stops_before_ingesting(
     )
 
 
+def test_a_token_run_console_refuses_stops_the_demo_before_ingesting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # It ingested and printed an address with a token run-console then
+    # refused (under 16 characters), so the address never opened.
+    demo = load("demo")
+    monkeypatch.setattr(demo, "missing_extra", lambda: [])
+    monkeypatch.setattr(demo, "missing_web_build", lambda: False)
+    monkeypatch.setattr(demo, "ingest", lambda *a: pytest.fail("ingested"))
+    monkeypatch.setenv("UKR_CONSOLE_TOKEN", "x" * 15)
+    workspace = tmp_path / "ws"
+    with pytest.raises(SystemExit, match="at least 16 characters"):
+        demo.main(["--models", "fake", "--workspace", str(workspace)])
+    assert not workspace.exists()
+    # --prepare-only starts no console: the token is not used.
+    assert (
+        demo.main(["--workspace", str(workspace), "--prepare-only", "--no-ingest"]) == 0
+    )
+
+
 @pytest.mark.parametrize("models", ["fake", "ollama"])
 def test_the_local_model_demos_name_the_local_extra_before_any_work(
     models: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

@@ -220,3 +220,237 @@ def test_a_rank_a_killed_strip_left_behind_is_set_in_place(
     assert edge not in written.get("upsert_relationships", [])
     assert harness.state() == expected_state(after)
     assert harness.registry_problems(after) == []
+
+
+_NAMES = {
+    "en": ("Vendor", "Depot", "Acme", "Buyer"),
+    "ko": ("공급사", "창고", "한빛", "구매자"),
+    "ja": ("仕入先", "倉庫", "ひかり", "買い手"),
+}
+
+
+def _strip_shapes(v: str, d: str, x: str, b: str) -> dict[str, tuple[Corpus, Corpus]]:
+    """Before and after corpora whose removal strips a stored item."""
+    kept: Corpus = {"/corpus/b.txt": [[(d, x, 1)]]}
+    return {
+        # a.txt changes: the stored Depot-Acme edge changes rank only.
+        "rank-only edge": (
+            {**kept, "/corpus/a.txt": [[(v, x, 3)]]},
+            {**kept, "/corpus/a.txt": [[(b, v, 3)]]},
+        ),
+        # a.txt is deleted: the edge both state loses a.txt's text unit.
+        "lineage edge": ({**kept, "/corpus/a.txt": [[(d, x, 2), (v, b, 1)]]}, kept),
+        # a.txt is deleted: Acme loses an edge, so do its edges' ranks.
+        "entity rank": (
+            {
+                "/corpus/b.txt": [[(d, x, 1), (d, v, 1)]],
+                "/corpus/a.txt": [[(x, b, 2)]],
+            },
+            {"/corpus/b.txt": [[(d, x, 1), (d, v, 1)]]},
+        ),
+    }
+
+
+@pytest.mark.parametrize(
+    "where",
+    [
+        "vector.update_relationship_lineage",
+        "vector.update_entity_lineage",
+        "graph.upsert_relationships",
+        "graph.update_relationship_ranks",
+        "graph.upsert_entities",
+    ],
+)
+@pytest.mark.parametrize("shape", ["rank-only edge", "lineage edge", "entity rank"])
+@pytest.mark.parametrize("lang", list(_NAMES))
+def test_a_strip_write_the_store_rejects_is_repaired_by_the_next_run(
+    lang: str, shape: str, where: str
+) -> None:
+    # A strip write the store rejects keeps the strip from rewriting the
+    # graph entities a retry finds it by: rewritten, the rank the rejected
+    # copy kept would stay (no full build has it).
+    before, after = _strip_shapes(*_NAMES[lang])[shape]
+    harness = IncrementalRun(FakeDocStatusStore())
+    harness.run(before)
+
+    harness.run(after, fail=lambda at, _: at == where)
+    harness.run(after)
+
+    assert harness.state() == expected_state(after)
+    assert harness.registry_problems(after) == []
+
+
+@pytest.mark.parametrize(
+    "spellings",
+    [
+        ("ACME", "Acme Corp", "Acme"),
+        ("한빛 주식회사", "한빛", "(주)한빛"),
+        ("(株)ひかり", "ひかり", "ひかり株式会社"),
+    ],
+    ids=["en", "ko", "ja"],
+)
+def test_a_strip_killed_before_its_vector_entity_writes_is_repaired(
+    spellings: tuple[str, str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Deleting d.txt changes Depot's rank. The graph copies of the kept
+    # entities are written after their vector copies: a run killed in
+    # between leaves them citing d.txt's units, so the retry derives Depot
+    # again and sets the vector copy's rank.
+    upper, corp, inc = spellings
+    kept: Corpus = {
+        "/corpus/c.txt": [
+            [("Vendor", "Depot", 2)],
+            [(upper, "Depot", 3), (corp, "Depot", 2), (inc, "Depot", 3)],
+        ]
+    }
+    before: Corpus = {
+        **kept,
+        "/corpus/d.txt": [
+            [(upper, "Buyer", 3), ("Vendor", inc, 2), (corp, "Buyer", 3)]
+        ],
+    }
+    harness = IncrementalRun(FakeDocStatusStore())
+    harness.run(before)
+
+    def killed(*_args: object, **_kwargs: object) -> None:
+        raise Killed("update_entity_lineage")
+
+    with monkeypatch.context() as patched:
+        patched.setattr(harness.vector, "update_entity_lineage", killed)
+        harness.run(kept)
+    harness.run(kept)
+
+    assert harness.state() == expected_state(kept)
+    assert harness.registry_problems(kept) == []
+
+
+def test_a_strip_sets_the_rank_of_a_hubs_edges_in_place(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Removing a.txt drops one of Hub's edges, so every other stored edge at
+    # Hub changes rank only: the strip sets it in place in the graph too,
+    # as the commit adding a.txt did, instead of writing the edges whole.
+    spokes: Corpus = {"/corpus/hub.txt": [[("Hub", f"Spoke{i}", 1) for i in range(6)]]}
+    with_a = {**spokes, "/corpus/a.txt": [[("Hub", "Depot", 2)]]}
+    harness = IncrementalRun(FakeDocStatusStore())
+    harness.run(with_a)
+    whole: list[str] = []
+    upsert = harness.graph.upsert_relationships
+
+    def recording(items: list[Any]) -> Any:
+        whole.extend(r.id for r in items)
+        return upsert(items)
+
+    monkeypatch.setattr(harness.graph, "upsert_relationships", recording)
+    harness.graph.rank_updates.clear()
+
+    harness.run(spokes)
+
+    hub_edges = {r.id for r in extract(spokes).relationships}
+    assert set(harness.graph.rank_updates) == hub_edges
+    assert not hub_edges & set(whole)
+    assert harness.state() == expected_state(spokes)
+    assert harness.registry_problems(spokes) == []
+
+
+def test_a_rank_only_edges_vector_copy_is_read_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A new spoke changes the rank of every stored edge at the hub. The
+    # derivation reads their vector copies to compare the rank; the write
+    # compares the same copies instead of reading them again.
+    spokes: Corpus = {
+        f"/corpus/s{i}.txt": [[("Hub", f"Spoke{i}", 1)]] for i in range(5)
+    }
+    harness = IncrementalRun(FakeDocStatusStore())
+    harness.run(spokes)
+    reads: list[str] = []
+    read = harness.vector.read_vector_copies
+
+    def recording(kind: str, ids: list[str], suffix: str | None = None) -> Any:
+        if kind == "relationships":
+            reads.extend(ids)
+        return read(kind, ids, suffix=suffix)
+
+    monkeypatch.setattr(harness.vector, "read_vector_copies", recording)
+    after = {**spokes, "/corpus/new.txt": [[("Hub", "Depot", 1)]]}
+
+    harness.run(after)
+
+    stored = {r.id for r in extract(spokes).relationships}
+    assert sorted(reads) == sorted(stored)
+    assert set(harness.graph.rank_updates) == stored
+    assert harness.state() == expected_state(after)
+    assert harness.registry_problems(after) == []
+
+
+@pytest.mark.parametrize("cap", [None, 20], ids=["whole", "capped"])
+@pytest.mark.parametrize("lang", list(_NAMES))
+def test_a_vector_copy_a_rejected_strip_left_behind_is_not_set_rank_only(
+    lang: str, cap: int | None
+) -> None:
+    # Deleting d.txt strips its line from Vendor -> Depot, which a.txt
+    # states too; c.txt, added in the same run, gives Depot an edge, so the
+    # commit rewrites Vendor -> Depot for its rank alone. The strip's vector
+    # write of the edge is rejected: its vector copy keeps d.txt's line and
+    # unit. Setting its lineage and rank in place kept the line for good
+    # (nothing cites d.txt's unit any more), and so did writing it whole
+    # with the graph capping descriptions (the full one is read from the
+    # vector copy). The commit leaves it to the removal's retry.
+    v, d, x, b = _NAMES[lang]
+    before: Corpus = {
+        "/corpus/a.txt": [[(v, d, 2)]],
+        "/corpus/d.txt": [[(v, d, 3)]],
+    }
+    after: Corpus = {
+        "/corpus/a.txt": before["/corpus/a.txt"],
+        "/corpus/c.txt": [[(d, x, 1)]],
+    }
+    config = Config()
+    if cap is not None:
+        config.indexing.neptune.property_max_length = cap
+    edge = _edge_id(before, v, d)
+    harness = IncrementalRun(FakeDocStatusStore(), config)
+    harness.run(before)
+
+    harness.run(
+        after, fail=lambda at, i: at == "vector.upsert_relationships" and i == edge
+    )
+    harness.run(after)
+    harness.run(after)
+
+    assert harness.state() == expected_state(after, config)
+    assert harness.registry_problems(after) == []
+
+
+@pytest.mark.parametrize("lang", list(_NAMES))
+def test_a_strip_write_rejected_still_writes_the_other_copies(lang: str) -> None:
+    # Deleting b.txt strips its lines from Vendor -> Depot and Vendor ->
+    # Buyer; c.txt, added in the same run, changes Vendor's degree. The
+    # strip's graph write of Vendor -> Buyer is rejected: had the strip
+    # stopped there, Vendor -> Depot's vector copy kept b.txt's line, which
+    # the graph (capping descriptions) reads back as the full description,
+    # and the commit then wrote it for good.
+    v, d, x, b = _NAMES[lang]
+    before: Corpus = {
+        "/corpus/a.txt": [[(v, d, 2), (v, b, 1)]],
+        "/corpus/b.txt": [[(v, d, 3), (v, b, 2)]],
+    }
+    after: Corpus = {
+        "/corpus/a.txt": before["/corpus/a.txt"],
+        "/corpus/c.txt": [[(v, x, 1)]],
+    }
+    config = Config()
+    config.indexing.neptune.property_max_length = 20
+    rejected = _edge_id(before, v, b)
+    harness = IncrementalRun(FakeDocStatusStore(), config)
+    harness.run(before)
+
+    harness.run(
+        after, fail=lambda at, i: at == "graph.upsert_relationships" and i == rejected
+    )
+    harness.run(after)
+    harness.run(after)
+
+    assert harness.state() == expected_state(after, config)
+    assert harness.registry_problems(after) == []

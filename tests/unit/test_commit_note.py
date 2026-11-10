@@ -186,6 +186,7 @@ def _with_run_state(manager: IndexingManager) -> IndexingManager:
         getattr(manager, field)["default"] = value
     for field in ("_fresh", "_rank_only", "_commit_note_suffixes", "outdated_reports"):
         getattr(manager, field).add("default")
+    manager._rank_only_copies[("default", "r1")] = {"rank": 2}
     return manager
 
 
@@ -200,6 +201,7 @@ _DECISIONS = (
     "_derived_entities",
     "_fresh",
     "_rank_only",
+    "_rank_only_copies",
 )
 
 

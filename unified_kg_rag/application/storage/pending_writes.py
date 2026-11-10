@@ -90,6 +90,33 @@ def _kind_of(item: Any) -> str | None:
     return None
 
 
+def failed_writes(
+    results: Mapping[str, IndexingStats], written: Iterable[Any]
+) -> dict[str, list[Any]]:
+    """By result key of ``RESULT_KINDS``, the ``written`` items whose write
+    failed: those of the ids the stats name, or every written item of the
+    kind for a failure that names none. A key naming an id no written item
+    of its kind has is left out (what failed is not known)."""
+    by_kind: dict[str, list[Any]] = defaultdict(list)
+    for item in written:
+        if (kind := _kind_of(item)) is not None:
+            by_kind[kind].append(item)
+    failed: dict[str, list[Any]] = {}
+    for key, stats in results.items():
+        kind = RESULT_KINDS.get(key)
+        if kind is None or not stats or not stats.failed_items:
+            continue
+        items = by_kind.get(kind, [])
+        if not stats.unattributed_failures:
+            ids = set(stats.failed_ids)
+            items = [item for item in items if item.id in ids]
+            if ids - {item.id for item in items}:
+                continue
+        if items:
+            failed[key] = items
+    return failed
+
+
 def _dump(item: BaseModel) -> dict[str, Any]:
     """``item`` as noted: without its embeddings (the write embeds again)."""
     return item.model_dump(
@@ -555,37 +582,27 @@ class PendingWrites:
         return [e for i, e in sorted(chosen.items()) if i not in known], moved
 
     def note(
-        self, results: Mapping[str, IndexingStats], written: Iterable[Any]
+        self,
+        results: Mapping[str, IndexingStats],
+        written: Iterable[Any],
+        *,
+        recorded: bool = True,
     ) -> set[str]:
-        """Note, per suffix, the ``written`` items whose write failed (the
-        ids in ``results``; every written item of the kind for a failure
-        that names none), and delete the notes this run read with nothing
-        left to note. Returns the result keys whose failures are noted: a
-        failed id no written item of its kind has is not, and a note that
-        cannot be written covers nothing (the caller then records the
-        documents owning the items FAILED, as before notes)."""
-        by_kind: dict[str, list[Any]] = defaultdict(list)
-        for item in written:
-            if (kind := _kind_of(item)) is not None:
-                by_kind[kind].append(item)
+        """Note, per suffix, the ``written`` items whose write failed
+        (:func:`failed_writes`), and delete the notes this run read with
+        nothing left to note. Returns the result keys whose failures are
+        noted: a failed id no written item of its kind has is not, and a
+        note that cannot be written covers nothing (the caller then records
+        the documents owning the items' text units FAILED, as before notes).
+        ``recorded``: whether the commit records its documents (under the
+        failure rate), which the warning says."""
         failed: dict[str, dict[str, dict[str, Any]]] = defaultdict(
             lambda: defaultdict(dict)
         )
         covered: set[str] = set()
-        for key, stats in results.items():
-            kind = RESULT_KINDS.get(key)
-            if kind is None or not stats or not stats.failed_items:
-                continue
-            items = by_kind.get(kind, [])
-            if not stats.unattributed_failures:
-                ids = set(stats.failed_ids)
-                items = [item for item in items if item.id in ids]
-                if ids - {item.id for item in items}:
-                    continue
-            if not items:
-                continue
+        for key, items in failed_writes(results, written).items():
             for item in items:
-                failed[BaseIndexer.get_suffix(item)][kind][item.id] = item
+                failed[BaseIndexer.get_suffix(item)][RESULT_KINDS[key]][item.id] = item
             covered.add(key)
         try:
             for suffix in sorted(failed):
@@ -597,9 +614,15 @@ class PendingWrites:
                 self._delete_parts(suffix)
                 logger.warning(
                     "%d item writes of '%s' failed; noted for the next run, "
-                    "which writes them again (their documents stay indexed)",
+                    "which writes them again (%s)",
                     sum(len(group) for group in failed[suffix].values()),
                     suffix,
+                    (
+                        "their documents stay indexed"
+                        if recorded
+                        else "this run's documents are not recorded and are "
+                        "indexed again"
+                    ),
                 )
         except NamespaceLeaseError:
             raise

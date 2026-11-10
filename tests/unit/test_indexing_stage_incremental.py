@@ -115,7 +115,9 @@ class _RecordingManager:
     def read_pending_writes(self, suffixes, text_units=()):  # noqa: ANN001, ANN201
         return NotedWrites()
 
-    def note_pending_writes(self, results, written) -> set[str]:  # noqa: ANN001
+    def note_pending_writes(  # noqa: ANN001
+        self, results, written, *, recorded=True
+    ) -> set[str]:
         return set()
 
     def merge_with_stored_claims(self, claims, text_units=()):

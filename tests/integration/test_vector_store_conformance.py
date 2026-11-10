@@ -449,6 +449,7 @@ def test_vector_copy_reads_hold_the_compared_fields(harness: StoreHarness) -> No
             "description": "Vendor ships widgets from Depot",
             # Written 1.0 for none, as the lineage update writes it.
             "rank": 1.0,
+            "text_unit_ids": ["t2"],
         }
     }
     assert indexer.read_vector_copies("entities", ["e-depot"]) == {}

@@ -1260,7 +1260,7 @@ class CrossRunMerge:
             return r.source_id, r.target_id, r.source_name, r.target_name, r.rank
 
         before = {r.id: shown(r) for r in stored_extra}
-        stale, rank_stale = self._stale_vector_copies(
+        stale, rank_stale, vector_copy = self._stale_vector_copies(
             suffix, extra, entities, stored_entities, rewired, split_from
         )
         extra = [
@@ -1273,11 +1273,36 @@ class CrossRunMerge:
         # Only the rank changed (a neighbour's degree), in either copy: the
         # vector copy is updated in place, not embedded again
         # (_upsert_vector_relationships).
-        m._rank_only.update(
+        rank_only = {
             r.id
             for r in extra
             if before[r.id][:4] == shown(r)[:4] and r.id not in stale
-        )
+        }
+        # One whose vector copy cites a text unit its graph copy does not was
+        # written to one store only (a strip whose vector write was rejected,
+        # a commit killed between its stores): the removal or the documents
+        # retried derive it again from the records. Rewritten from these
+        # copies now, it kept the vector copy's description (which the graph
+        # caps), removed text included, and no longer cited the removed unit
+        # the retry finds it by.
+        if vector_copy is not None:
+            one_store = {
+                r.id
+                for r in extra
+                if r.id in rank_only
+                and r.id in vector_copy
+                and set(vector_copy[r.id].get("text_unit_ids") or ())
+                - set(r.text_unit_ids or ())
+            }
+            rank_only -= one_store
+            extra = [r for r in extra if r.id not in one_store]
+            if not extra:
+                return []
+        m._rank_only.update(rank_only)
+        if vector_copy is not None:
+            m._rank_only_copies.update(
+                {(suffix, i): vector_copy.get(i) for i in rank_only}
+            )
         extra = m._with_full_descriptions(
             extra, m.vector_indexer.read_relationship_descriptions, suffix
         )
@@ -1291,10 +1316,11 @@ class CrossRunMerge:
         stored_entities: Sequence[Entity],
         rewired: Collection[str],
         split_from: Mapping[str, str] | None,
-    ) -> tuple[set[str], set[str]]:
+    ) -> tuple[set[str], set[str], dict[str, dict[str, Any]] | None]:
         """The ids of the stored edges ``extra`` whose vector copies are
-        stale (or missing, where an edge was re-pointed), and of those whose
-        vector copies hold another rank only.
+        stale (or missing, where an edge was re-pointed), of those whose
+        vector copies hold another rank only, and the copies read (None
+        without relationship vectors).
 
         Whether a stored edge is rewritten for its rank is decided against
         its graph copy, but the two copies are not written together: a
@@ -1325,7 +1351,7 @@ class CrossRunMerge:
         moved |= repointed
         vectors = m.config.indexing.opensearch.build_relationship_vector_index
         if not vectors:
-            return set(), set()
+            return set(), set(), None
         vector_copy = m.vector_indexer.read_vector_copies(
             "relationships", [r.id for r in extra], suffix=suffix
         )
@@ -1344,7 +1370,7 @@ class CrossRunMerge:
             for r in extra
             if r.id in vector_copy and _vector_rank_stale(r, vector_copy[r.id])
         }
-        return stale, rank_stale
+        return stale, rank_stale, vector_copy
 
     def _rank_with_stored_graph(
         self,

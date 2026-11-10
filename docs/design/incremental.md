@@ -84,7 +84,8 @@ unless noted.
    commit's or a removal's strip) are compared with both copies: their
    vector copies are read with the graph's (`read_vector_copies`, the
    `rank` too), and an edge whose vector rank differs from the derived one
-   has its rank set in place in both stores. A commit writes the vector
+   has its rank set in place in both stores (by a strip as by a commit:
+   `update_relationship_ranks` in the graph). A commit writes the vector
    copies in its first phase and the graph copies in its second, a strip
    the graph copies first, so a run killed in between, or a commit whose
    graph write of an endpoint is rejected (its edges are held back), leaves
@@ -92,8 +93,17 @@ unless noted.
    later derivation that gave the graph copy's rank did not write the edge
    again, and the vector copy kept a rank no full build has. The next run
    derives those endpoints again: the killed commit's documents are not
-   recorded, a killed strip's removal resumes, and a rejected write is
-   noted (`pending-writes`, below).
+   recorded, a killed strip's removal resumes, and a commit's rejected
+   write is noted (`pending-writes`, below). A strip writes the graph
+   copies of the kept entities, by which a retry finds it, last and only
+   when every other write succeeded (a rejected one fails the removal,
+   which is retried): rewritten after it, the retry would derive nothing.
+   Its other writes still go on, so each copy written is the derived one.
+   A stored edge a derivation would rewrite for its rank alone whose vector
+   copy cites a text unit its graph copy does not (written to one store
+   only) is left to the removal or the documents retried, which derive it
+   from the records: rewritten from the copies, it kept the vector copy's
+   description, removed text included, where the graph caps it.
    An item write a store rejects (an entity, relationship, claim, community
    or report; an edge held back for a rejected endpoint) does not fail the
    documents owning it: the commit notes the rejected items as written in

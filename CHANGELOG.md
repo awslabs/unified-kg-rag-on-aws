@@ -882,7 +882,8 @@ From a `main` checkout (formats and keys no release had):
   the formats the core install parses (multi-page PDFs, whose citations name their page, Markdown, HTML, CSV, JSON
   and text), a dataset and a config (kept on a restart, `--reset-config` to write it again) for fake, Ollama or
   Bedrock models, and stops before it writes anything without the `console` extra, the built web client, or the
-  `local` extra the fake and Ollama models need; a SIGTERM to it stops its console ([Console](docs/guides/console.md)).
+  `local` extra the fake and Ollama models need, or with a `UKR_CONSOLE_TOKEN` under 16 characters; a SIGTERM to it
+  stops its console ([Console](docs/guides/console.md)).
 - `run-ingestion --confirm-integrity` answers only the question of a run that resumes a pipeline id whose inputs
   changed (#631).
 - `GraphRAGChain.ainvoke(on_answer_chunk=...)` hands the answer's text chunks to a callback as the answer model
@@ -1045,7 +1046,14 @@ From a `main` checkout (formats and keys no release had):
   vector copies' rank too, and one that differs is set in place in both stores: a commit writes the vector copy
   first, a strip the graph copy, so a run killed in between, or one whose graph write of an endpoint was rejected
   (its edges held back), left a rank the other copy did not have, kept for good once a later run derived the edge
-  back to the graph copy. A write note (`pending-writes`) over 1 MiB is split into parts, each its own record,
+  back to the graph copy. A strip writes the graph copies of the kept entities, by which a retry finds it, last and
+  only when every other write succeeded: rewritten after a rejected one, a retry derived nothing and the copy whose
+  write was rejected (or an entity's vector copy, killed before it) kept its rank. The
+  write of an edge whose rank alone changed compares the vector copies the derivation read, not read again, and
+  leaves one whose vector copy cites a text unit its graph copy does not (written to one store only: a strip whose
+  vector write was rejected) to the removal's retry: rewritten from those copies, it kept the removed document's
+  line, which no later run found.
+  A write note (`pending-writes`) over 1 MiB is split into parts, each its own record,
   under a store's request limit (10 MiB on
   small OpenSearch instances). A noted edge the delta states again takes the endpoints the delta resolves, one whose
   endpoint a later removal re-keyed takes the stored spelling of its name its units state, and a noted
@@ -1562,8 +1570,10 @@ From a `main` checkout (formats and keys no release had):
   score, then the shorter name, then the smaller one) and never joins two stored ones until a reset (#564).
 - An incremental run sets the rank of a stored edge whose rank alone changed (a neighbour's degree changed) in place,
   batched, instead of dropping and adding the edge (`GraphIndexer.update_relationship_ranks`, whose default rewrites
-  it): most of a delta's edge writes at a hub, 0.15 ms against 10.6 ms per edge on a Gremlin Server. An id given
-  twice is one edge with its last rank, on every backend.
+  it): most of a delta's edge writes at a hub, 0.15 ms against 10.6 ms per edge on a Gremlin Server. A removal's
+  strip does too, where it wrote each such graph edge whole (the graph write of 2,000 hub edges on a Gremlin
+  Server: 0.3 to 1.0 s against 2.8 to 3.3 s, over four runs on a shared host). An id given twice is one edge with
+  its last rank, on every backend.
 - Re-runs reuse what is unchanged: vectors carry a digest of their text and model, so indexing embeds only changed
   texts; the `intelligent` chunker's boundary answers, the text units' translations and community report answers
   live in the extraction store; a full build keeps a stored summary of the same lines and settings; a no-op
@@ -1825,6 +1835,8 @@ Ingestion and incremental indexing.
   cites, on every run its write kept failing. Only a failed text-unit write fails its document. A commit over the rate
   notes its rejected items too, though its documents stay unrecorded: it also wrote what its merge derived for other
   documents, and removing an unrecorded document then deleted a kept one's edge left at the removed one's entity.
+  When the note itself cannot be written, the registry documents owning the failed items' text units are recorded
+  `FAILED`, over the rate too, those outside the run included (only the run's were, so that kept edge was lost).
   A noted item is cut to the units the next delta does not write again: a retried document's own units kept in it
   wrote it again as resolved when noted, beside the delta's item, at an entity a removal may have deleted since.
 - Deleting a document under a non-default suffix strips it from shared claims, a deletion-only run checks the
