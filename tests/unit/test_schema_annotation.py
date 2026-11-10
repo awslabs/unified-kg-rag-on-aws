@@ -412,6 +412,11 @@ def test_a_rank_only_edge_with_another_annotation_is_written_in_full() -> None:
     _, relationships = _items()
     vector.upsert_relationships(relationships)  # written with no schema
     manager._rank_only = {"ab"}
+    # With the vector copy the derivation read for it.
+    copies = {
+        ("default", "ab"): vector.read_vector_copies("relationships", ["ab"])["ab"]
+    }
+    manager._rank_only_copies = dict(copies)
     annotated = manager._annotator.relationships(relationships)
     updated: list[str] = []
     upserted: list[str] = []
@@ -435,6 +440,9 @@ def test_a_rank_only_edge_with_another_annotation_is_written_in_full() -> None:
 
     # Once the copy holds it, a rank-only edge is updated in place again.
     manager._rank_only = {"ab"}
+    manager._rank_only_copies = {
+        ("default", "ab"): vector.read_vector_copies("relationships", ["ab"])["ab"]
+    }
     upserted.clear()
     manager._upsert_vector_relationships(annotated)
     assert updated == ["ab"] and upserted == ["ba"]

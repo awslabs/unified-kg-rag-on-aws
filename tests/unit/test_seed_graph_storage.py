@@ -295,6 +295,9 @@ def test_a_rank_only_edge_is_written_in_full_only_when_its_kinds_change() -> Non
     vector.update_relationship_lineage = record_lineage  # type: ignore[method-assign]
     vector.upsert_relationships = record_upsert  # type: ignore[method-assign]
     manager._rank_only = {"r1", "r2"}
+    # With the vector copies the derivation read for them.
+    copies = vector.read_vector_copies("relationships", ["r1", "r2"])
+    manager._rank_only_copies = {("default", i): copies[i] for i in ("r1", "r2")}
     manager._upsert_vector_relationships(
         manager._annotated_relationships([plain, seeded])
     )

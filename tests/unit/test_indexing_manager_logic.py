@@ -475,6 +475,9 @@ def test_an_edge_rewritten_for_its_rank_only_is_not_embedded_again(
     vector.upsert_relationships([stored, blank])
     upsert = mocker.spy(vector, "upsert_relationships")
     mgr._rank_only = {"r-old", "r-blank", "r-gone"}
+    # With the vector copies the derivation read for them (none for r-gone).
+    copies = vector.read_vector_copies("relationships", sorted(mgr._rank_only))
+    mgr._rank_only_copies = {("default", i): copies.get(i) for i in mgr._rank_only}
     rels = [
         stored.model_copy(update={"rank": 5}),
         blank.model_copy(update={"rank": 4}),
