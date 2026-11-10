@@ -835,6 +835,20 @@ def test_a_number_item_reads_the_question(
     assert _values(report)["answer_contains"] == contains
 
 
+def test_a_number_gold_of_several_numbers_is_matched_as_a_phrase() -> None:
+    gold = "3 (as of 2024)"
+    # Not read as 3 (or 2024) anywhere in the answer: the phrase must appear.
+    assert (
+        answer_match_evaluator.number_matches("Acme has 3 suppliers as of 2024.", gold)
+        == 0.0
+    )
+    assert answer_match_evaluator.number_matches("2024", gold) == 0.0
+    assert (
+        answer_match_evaluator.number_matches("Acme has 3 (as of 2024).", gold) == 1.0
+    )
+    assert answer_match_evaluator.number_matches("Two suppliers.", "2 or 3") == 0.0
+
+
 def test_answer_contains_reads_through_a_possessive() -> None:
     assert answer_contains("Depot's crew stores the widgets.", "Depot") == 1.0
     assert answer_contains("Depots store the widgets.", "Depot") == 0.0

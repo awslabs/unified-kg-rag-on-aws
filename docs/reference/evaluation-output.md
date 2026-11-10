@@ -708,8 +708,8 @@ list, top level or under `metadata`, which wins), taking the maximum.
     number the question does not. The statements of none are `0`, a word
     for none (`none`, `no`, `aucun`, `kein`, `ни одного`), `not one`, `not
     a single`, a language's phrase of absence (`not ... any`, `no hay`, `il
-    n'y a pas de`, `Поставщиков нет`; Spanish and Portuguese `no` alone is
-    none), and `없습니다`, `한 곳도`, `一社も`, `一家也`, `没有` and
+    n'y a pas de`, `Поставщиков нет`; Spanish and Portuguese `no` alone
+    states no 0), and `없습니다`, `한 곳도`, `一社も`, `一家也`, `没有` and
     `いません`/`ありません` (not `問題ありません` or `ではありません`). So
     `No hay proveedores en el lote 7` asked `¿Cuántos proveedores hay en el
     lote 7?` is 0, but `No hay más de tres` and `Acme has 5 plants but no
@@ -717,6 +717,9 @@ list, top level or under `metadata`, which wins), taking the maximum.
   - Not a number: one inside a word (`Zortal13`, `3rd`), a list enumerator
     (`1. Acme`), a citation marker (`[2]`) and an ordinal (`두 번째`,
     `三つ目`, `第三`, `twenty-first`). A year is a number like any other.
+  - A gold that states no number or several (`1990-1995`, `2 or 3`, `3 (as
+    of 2024)`) is matched as a phrase: `Acme has 3 suppliers as of 2024`
+    does not match `3 (as of 2024)`.
   - Known limits: which number is the count is not read, so a line that
     also writes the gold as a condition, a comparison or another quantity
     matches (`3 suppliers have more than 4 plants` matches 4; `It has 5
@@ -725,7 +728,10 @@ list, top level or under `metadata`, which wins), taking the maximum.
     answer that declines in its own words is read like any other (`There
     is no information on lot 7` asked about lot 7 matches 0); one the
     pipeline marks `abstained` scores 0. These nuances are the LLM judges'
-    (`ragas`, `langchain`) in the same run.
+    (`ragas`, `langchain`) in the same run. A dot groups no thousands
+    (German `3.000` reads as 3), and a gold's digits before a scale word
+    are read without it (the gold `2 million` is 2, so `2 billion` matches
+    it).
 
   `set` scores 1.0 when every one of `metadata.answer_items` appears in the
   answer, in any order or layout (a numbered list too); with
