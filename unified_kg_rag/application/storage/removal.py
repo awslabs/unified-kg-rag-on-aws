@@ -3,6 +3,7 @@
 """Removal of text units (removed or changed documents) from both stores."""
 
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
+from functools import partial
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from unified_kg_rag.application.storage.stored_items import (
@@ -775,9 +776,11 @@ class TextUnitRemoval:
         # The graph copies of the edges come before their vector copies: a
         # run killed in between leaves no vector edge without a graph edge,
         # and a vector copy behind is rewritten (``unchanged``, ``_finish``).
+        # A stored edge rewritten for its rank alone has it set in place,
+        # as a commit does (read before the vector write takes them).
         graph_edge_tasks = [
             IndexingTask(
-                m.graph_indexer.upsert_relationships,
+                partial(m._upsert_graph_relationships, set(m._rank_only)),
                 [new_relationships],
                 "graph_relationships",
             )

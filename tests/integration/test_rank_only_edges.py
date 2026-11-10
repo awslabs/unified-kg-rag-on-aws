@@ -322,3 +322,32 @@ def test_a_strip_killed_before_its_vector_entity_writes_is_repaired(
 
     assert harness.state() == expected_state(kept)
     assert harness.registry_problems(kept) == []
+
+
+def test_a_strip_sets_the_rank_of_a_hubs_edges_in_place(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Removing a.txt drops one of Hub's edges, so every other stored edge at
+    # Hub changes rank only: the strip sets it in place in the graph too,
+    # as the commit adding a.txt did, instead of writing the edges whole.
+    spokes: Corpus = {"/corpus/hub.txt": [[("Hub", f"Spoke{i}", 1) for i in range(6)]]}
+    with_a = {**spokes, "/corpus/a.txt": [[("Hub", "Depot", 2)]]}
+    harness = IncrementalRun(FakeDocStatusStore())
+    harness.run(with_a)
+    whole: list[str] = []
+    upsert = harness.graph.upsert_relationships
+
+    def recording(items: list[Any]) -> Any:
+        whole.extend(r.id for r in items)
+        return upsert(items)
+
+    monkeypatch.setattr(harness.graph, "upsert_relationships", recording)
+    harness.graph.rank_updates.clear()
+
+    harness.run(spokes)
+
+    hub_edges = {r.id for r in extract(spokes).relationships}
+    assert set(harness.graph.rank_updates) == hub_edges
+    assert not hub_edges & set(whole)
+    assert harness.state() == expected_state(spokes)
+    assert harness.registry_problems(spokes) == []

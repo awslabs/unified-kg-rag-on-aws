@@ -1565,8 +1565,9 @@ From a `main` checkout (formats and keys no release had):
   score, then the shorter name, then the smaller one) and never joins two stored ones until a reset (#564).
 - An incremental run sets the rank of a stored edge whose rank alone changed (a neighbour's degree changed) in place,
   batched, instead of dropping and adding the edge (`GraphIndexer.update_relationship_ranks`, whose default rewrites
-  it): most of a delta's edge writes at a hub, 0.15 ms against 10.6 ms per edge on a Gremlin Server. An id given
-  twice is one edge with its last rank, on every backend.
+  it): most of a delta's edge writes at a hub, 0.15 ms against 10.6 ms per edge on a Gremlin Server. A removal's
+  strip does too, where it wrote each such graph edge whole (the graph write of 2,000 hub edges: 0.27 s against
+  2.8 s). An id given twice is one edge with its last rank, on every backend.
 - Re-runs reuse what is unchanged: vectors carry a digest of their text and model, so indexing embeds only changed
   texts; the `intelligent` chunker's boundary answers, the text units' translations and community report answers
   live in the extraction store; a full build keeps a stored summary of the same lines and settings; a no-op
