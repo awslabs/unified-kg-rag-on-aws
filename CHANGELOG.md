@@ -1051,9 +1051,9 @@ From a `main` checkout (formats and keys no release had):
   it deleted an entity a kept document states, with that document's edges. A removal's strip notes the edges it
   re-points (at an entity split off another, say), so a retry after a kill folds a stored duplicate there as the
   strip does; it stayed under its old id. A stored claim no statement of its units has the id of takes the one about
-  its own names (by their compact keys), then the one in most of its units: it took the one an id tie-break gave, so
-  a rejected claim derived again after a removal could be about another company's entity no store holds. See
-  [incremental indexing](docs/guides/incremental.md) and
+  its own names (by their compact keys) and of its type and dates, then the one in most of its units: it took the
+  one an id tie-break gave, so a rejected claim derived again after a removal could be about another company's
+  entity no store holds. See [incremental indexing](docs/guides/incremental.md) and
   [scopes and namespaces](docs/concepts/scopes-and-namespaces.md).
 - Deletion guard: an incremental run that would delete more than `indexing.max_deletion_share` of a scope of 10 or
   more documents (seed shards and retired scopes not counted) stops at `document_loading` unless confirmed
@@ -1887,8 +1887,9 @@ Evaluation, visualization and tuning.
   its directory will not let be replaced (read-only, on a read-only file system, a bind-mounted file) is staged in
   a temporary file and copied in once written, so a failed export still leaves it whole; a file that would refuse
   the copy too (read-only itself) fails before the export streams, with its own error and path. A copy that fails
-  once begun (a full disk) keeps the staged file and names it in the error, and `fsync` flushes the copy too; a write
-  that asks for `fsync` flushes the directory after the rename where it may. A valid name of 218-255 bytes (about
+  once begun (a full disk), or is refused because another writer replaced or removed the file meanwhile, keeps the
+  staged file and names it in the error, and `fsync` flushes the copy too; a write that asks for `fsync` flushes
+  the directory after the rename where it may. A valid name of 218-255 bytes (about
   73 or more Korean or Japanese characters, a console upload's too) is written atomically: its temporary name is
   cut to fit the directory's name limit (255 bytes, 143 on eCryptfs, 255 where the file system says none), and a
   console upload's name past its folder's limit is refused up front (`path_refused`), not when it is renamed.

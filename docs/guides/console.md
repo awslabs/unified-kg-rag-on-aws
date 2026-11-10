@@ -192,7 +192,9 @@ of up to 500 files or 100 MiB; the server takes up to 10,000 files and
 or `__pycache__`), and the server refuses a request that holds one, or that
 names one path as a file and as a folder (`upload_conflict`); a request is
 written all or none, so a refused one leaves the folder as it was, without
-a folder it created.
+a folder it created (only a folder changed by something else while the
+files move in, a path made a folder, can stop the moves partway; those
+moved before stay).
 
 **Evaluate.** Pick a dataset (its questions, the unanswerable ones and
 which evaluators it feeds are shown), the strategies (the first is the

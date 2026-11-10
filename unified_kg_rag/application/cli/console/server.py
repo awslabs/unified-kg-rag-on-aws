@@ -88,7 +88,7 @@ from unified_kg_rag.shared.exceptions import (
     classify,
 )
 from unified_kg_rag.shared.utils import event_loop
-from unified_kg_rag.shared.utils.files import open_temporary, replace_keeping_mode
+from unified_kg_rag.shared.utils.files import open_temporary, replace_together
 
 logger = get_logger(__name__)
 
@@ -617,7 +617,10 @@ def create_app(
         refused whole before parsing when over the size limit, every name
         and type checked before a byte is written, and each file written
         beside its target and moved into place only once all are written,
-        so a refused upload leaves the folder as it was."""
+        so a refused upload leaves the folder as it was. The moves are not
+        undone: if the folder changes under the request while they run (a
+        path made a folder), the files moved in before the refused one
+        stay (:func:`replace_together`)."""
         length = request.headers.get("content-length")
         if length is None or not length.isdigit():
             raise UploadTooLarge("an upload needs its Content-Length")
@@ -695,8 +698,7 @@ def create_app(
                                 f"an upload takes at most {MAX_UPLOAD_BYTES // 2**20} MiB"
                             )
                         out.write(chunk)
-            for path, temporary in staged.items():
-                replace_keeping_mode(temporary, path)
+            replace_together(staged)
             staged_count = len(staged)
             staged = {}
         except BaseException:
