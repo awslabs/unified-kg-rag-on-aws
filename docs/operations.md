@@ -1089,11 +1089,11 @@ classification and output parsing: [Design Doc §5.1](./design/incremental.md#51
   429, 502, 503 or 504 up to four times with backoff, every Neptune request up
   to `retry.graph_store_max_attempts` (default `4`) over a new connection. If
   more than `indexing.max_failure_rate` (default `0.2`) of one artifact type's
-  writes still fail, indexing fails and records no document. Below it, the
+  writes still fail, indexing fails and records no document. Either way the
   failed entities, relationships, claims, communities and reports are noted
   (`pending-writes` in the extraction store) and the next run writes them
-  again without extracting their documents, which stay `PROCESSED` (a
-  WARNING names how many were noted); a document whose own text units failed
+  again; below it, without extracting their documents, which stay
+  `PROCESSED` (a WARNING names how many were noted); a document whose own text units failed
   to write is `FAILED` (all of the run's when the backend names no item, or
   when the note cannot be written), retried by the next run without counting
   toward the retry limit. The `IndexingFailures` and

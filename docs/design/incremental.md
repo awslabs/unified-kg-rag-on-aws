@@ -100,7 +100,8 @@ unless noted.
    the suffix's extraction store (`pending-writes`,
    `unified_kg_rag/application/storage/pending_writes.py`), and the next commit of the
    suffix, every run's, adds them to its delta, cut to the text units still
-   stored. They merge with what is stored and are derived from their records
+   stored that the delta does not write again (a retried document's own
+   units: the delta states them itself). They merge with what is stored and are derived from their records
    like any delta item (summarized from their lines, not by extending a
    stored summary), and the endpoints of a noted edge are written with it, so
    their edges' ranks follow; an endpoint the graph no longer holds (a later
@@ -111,7 +112,12 @@ unless noted.
    stored ones are: a removal before the commit resolves the claims it
    derives against them too, and the commit derives the stored claims about
    them again (it may merge one into another spelling). The note is replaced
-   by what still fails, or deleted. Recording the owners `FAILED` instead re-extracted every document
+   by what still fails, or deleted. A commit over `max_failure_rate` notes
+   its rejected items too, though it records no document: it wrote items of
+   documents outside its delta (what its merge derived again), which retrying
+   its own does not write again: removing an unrecorded document deleted a
+   kept document's edge whose rejected write left it at an endpoint only the
+   removed document states, and no run wrote it again. Recording the owners `FAILED` instead re-extracted every document
    a hub entity cites, on every run its write kept failing. A note that cannot
    be written falls back to that.
 5. **Deletion propagation** (`IndexingManager.remove_text_units`). The stores

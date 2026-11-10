@@ -821,11 +821,14 @@ class IncrementalIndexer:
         missing artifacts never re-indexed. Returns whether the docs were
         recorded.
 
-        Under the tolerated failure rate the docs are recorded. The items of
-        ``written`` (what the run wrote) whose write failed are noted for
-        the next commit, which writes them again
-        (``IndexingManager.note_pending_writes``): their documents are
-        recorded PROCESSED. A doc owning an artifact whose failure is not
+        The items of ``written`` (what the run wrote) whose write failed
+        are noted for the next commit, which writes them again
+        (``IndexingManager.note_pending_writes``), over the tolerated
+        failure rate too: the commit wrote what its merge derived again for
+        documents outside the delta, which retrying the delta's documents
+        does not write again (a removal of one may delete the stored copy).
+        Under the rate the docs are recorded, those owning a noted item
+        PROCESSED. A doc owning an artifact whose failure is not
         noted (its own text unit, or any when the note cannot be written or
         ``written`` is not given) is recorded FAILED (see
         :meth:`_documents_with_failed_writes`), so the next run rewrites it.
@@ -839,14 +842,15 @@ class IncrementalIndexer:
         nothing to index, writes none).
         """
         check_write_fence()
-        if self._delta_writes_succeeded(results):
-            if before_registry is not None:
-                before_registry(results)
-            noted = (
-                self.indexing_manager.note_pending_writes(results, written)
-                if written is not None
-                else set()
-            )
+        succeeded = self._delta_writes_succeeded(results)
+        if succeeded and before_registry is not None:
+            before_registry(results)
+        noted = (
+            self.indexing_manager.note_pending_writes(results, written)
+            if written is not None
+            else set()
+        )
+        if succeeded:
             write_failed = self._documents_with_failed_writes(
                 lineages,
                 {key: stats for key, stats in results.items() if key not in noted},
