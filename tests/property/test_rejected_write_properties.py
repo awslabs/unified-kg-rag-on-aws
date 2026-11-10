@@ -302,6 +302,47 @@ _REMOVAL_POINTS = [
     k=1,
     salt=10,
 )
+# Vendor's graph write is rejected, so its edges are held back, but the
+# vector copy of c.txt's Vendor -> Depot already has the rank d.txt's new
+# Depot edge gave it. The removal of d.txt derives the rank back to the
+# graph copy's: the edge was not written again, and its vector copy kept
+# the rejected run's rank.
+@example(
+    corpora=(
+        {
+            "/corpus/c.txt": [[("Vendor", "ひかり", 2), ("Vendor", "Depot", 2)]],
+            "/corpus/d.txt": [[("Vendor", "ひかり", 2), ("Vendor", "Depot", 2)]],
+            "/corpus/a.txt": [
+                [("Vendor", "ひかり株式会社", 1)],
+                [
+                    ("Vendor", "Buyer", 3),
+                    ("Vendor", "ひかり", 3),
+                    ("ひかり株式会社", "Vendor", 3),
+                ],
+            ],
+        },
+        {
+            "/corpus/c.txt": [[("Vendor", "ひかり", 2), ("Vendor", "Depot", 2)]],
+            "/corpus/d.txt": [
+                [("Vendor", "ひかり", 1), ("株式会社ひかり", "Depot", 2)]
+            ],
+            "/corpus/a.txt": [
+                [("Vendor", "ひかり株式会社", 1)],
+                [
+                    ("Vendor", "Buyer", 3),
+                    ("Vendor", "ひかり", 3),
+                    ("ひかり株式会社", "Vendor", 3),
+                ],
+            ],
+        },
+    ),
+    gone={"/corpus/d.txt"},
+    where="graph.upsert_entities",
+    again=None,
+    point=None,
+    k=1,
+    salt=2,
+)
 def test_a_removal_after_rejected_writes_converges_when_interrupted(
     corpora: tuple[Corpus, Corpus],
     gone: set[str],

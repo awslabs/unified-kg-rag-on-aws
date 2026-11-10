@@ -92,7 +92,8 @@ def atomic_open(
     own error and path. That opened file, not the path, is what the copy
     goes into: one another writer renamed a file over or removed while the
     block ran is no longer at the path, so the copy is refused (the text
-    would land in a file no path names). A file whose directory takes a
+    would land in a file no path names; checked just before the copy, so a
+    rename in that instant still goes unseen). A file whose directory takes a
     sibling is not opened first (a read-only file is replaced, not
     written), so a read-only file bind-mounted into a writable directory
     fails only once the block has ended and the rename is refused. A block
@@ -245,10 +246,12 @@ def _copy_in(staged: Path, target: Path, *, fsync: bool, held: int | None) -> No
     on when the write was staged (opened now when None), flushed to disk
     with ``fsync``, and remove ``staged``: the finished text of a file that
     cannot be renamed over. The descriptor pins the file, not the path: a
-    file renamed over ``target`` or removed since it was opened is not
-    written. That refusal, or a failure once ``target`` is emptied, keeps
-    ``staged``, the one whole copy of the new text, and names it in the
-    error."""
+    file renamed over ``target`` or removed since it was opened (checked
+    just before the copy) is not written, nor one removed before it is
+    opened now. That refusal, or a failure once ``target`` is emptied,
+    keeps ``staged``, the one whole copy of the new text, and names it in
+    the error."""
+    out: IO[bytes] | None = None
     try:
         try:
             source = staged.open("rb")
@@ -258,6 +261,8 @@ def _copy_in(staged: Path, target: Path, *, fsync: bool, held: int | None) -> No
             raise
         try:
             out = open(_open_in_place(target) if held is None else held, "wb")
+        except FileNotFoundError:  # removed since the rename over it was refused
+            source.close()
         except BaseException:
             source.close()
             raise
@@ -265,6 +270,8 @@ def _copy_in(staged: Path, target: Path, *, fsync: bool, held: int | None) -> No
         staged.unlink(missing_ok=True)
         raise
     try:
+        if out is None:
+            raise OSError(errno.ENOENT, "it was removed while its text was staged")
         with source, out:
             if not _still_named(out.fileno(), target):
                 raise OSError(

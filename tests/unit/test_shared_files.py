@@ -382,6 +382,28 @@ def test_a_file_it_cannot_rename_over_is_written_in_place(
     assert sorted(p.name for p in tmp_path.iterdir()) == ["mounted.json"]
 
 
+def test_a_file_removed_after_its_rename_was_refused_keeps_the_staged_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Another user's file in a sticky directory: the rename over it is
+    # refused, and its owner removes it before it is opened to be written
+    # in place. The staged text is the one copy left: kept, and named.
+    path = tmp_path / "theirs.json"
+    path.write_text("old")
+
+    def refuse(*_: Any) -> None:
+        path.unlink()
+        raise OSError(errno.EPERM, os.strerror(errno.EPERM))
+
+    monkeypatch.setattr(files.os, "replace", refuse)
+    with pytest.raises(OSError) as raised:
+        atomic_write_text(path, "new")
+    (staged,) = tmp_path.iterdir()
+    assert staged.read_text() == "new"
+    assert raised.value.errno == errno.ENOENT
+    assert raised.value.filename == str(path) and str(staged) in str(raised.value)
+
+
 def test_a_descriptor_open_on_a_file_for_update_drops_the_old_tail(
     tmp_path: Path,
 ) -> None:
