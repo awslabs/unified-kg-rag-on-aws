@@ -344,6 +344,11 @@ class CrossRunMerge:
             # A commit killed between its vector and graph edge writes left
             # the vector copies of a split part's edges ahead of the graph's.
             split_from=derived.split_from,
+            # And those of the edges an earlier commit's note names.
+            compared=m._noted_edge_ends.get(suffix, set()),
+        )
+        self._note_rewritten_edges(
+            suffix, derived.relationships, merged_entities, merged_relationships
         )
         # A delta id the merge folded into a stored item of another id has no
         # graph copy (the stored one of that id would have been merged), but
@@ -603,6 +608,36 @@ class CrossRunMerge:
         }
         if decided:
             m._commit_entities.setdefault(suffix, set()).update(decided)
+
+    def _note_rewritten_edges(
+        self,
+        suffix: str,
+        derived: Sequence[Relationship],
+        entities: Sequence[Entity],
+        relationships: Sequence[Relationship],
+    ) -> None:
+        """Record the entities whose stored edges the commit rewrites (the
+        ``relationships`` written that the derivation did not give, see
+        :meth:`_finish`), for its write-ahead note.
+
+        Whether such an edge is written is decided against its graph copy,
+        and its vector copy is written before its graph copy (the first and
+        second phase of ``IndexingManager._write_artifacts``): a run killed
+        in between, or one whose graph write of an endpoint was rejected
+        (its edges are held back), leaves the vector copy ahead of the graph
+        copy, its rank for one. A removal before the retry can derive the
+        edge back to the graph copy, which then is not written again. The
+        next commit rewrites the stored edges of the noted entities in both
+        stores (a rank in place, see :meth:`_stored_edges_to_rewrite`)."""
+        given = {r.id for r in derived}
+        ends = {
+            i
+            for r in relationships
+            if r.id not in given
+            for i in (r.source_id, r.target_id)
+        } & {e.id for e in entities}
+        if ends:
+            self._m._rewritten_edge_ends.setdefault(suffix, set()).update(ends)
 
     def _extend_stored_summaries(
         self,
@@ -1055,6 +1090,7 @@ class CrossRunMerge:
         split_from: Mapping[str, str] | None = None,
         unsummarized: Collection[str] = (),
         made: set[str] | None = None,
+        compared: Collection[str] = (),
     ) -> tuple[list[Entity], list[Relationship]]:
         """Summarize, rank and complete derived items for writing.
 
@@ -1073,7 +1109,9 @@ class CrossRunMerge:
         ``relationships``: their stored links do not count. The stored edges
         at them and at a split's parts (``split_from``, see
         ``Derived.split_from``; the entities they split from are among
-        ``rewired``) are compared with their vector copies too.
+        ``rewired``) are compared with their vector copies too, and so are
+        the stored edges at the ``compared`` entities, rewritten when they
+        differ although the entities are not derived.
         """
         m = self._m
         rekey = rekey or {}
@@ -1098,7 +1136,10 @@ class CrossRunMerge:
         extra_ids = sorted(
             set(
                 m.graph_indexer.find_incident_relationship_ids(
-                    _with_old_ids([e.id for e in entities], rekey), suffix=suffix
+                    sorted(
+                        {*_with_old_ids([e.id for e in entities], rekey), *compared}
+                    ),
+                    suffix=suffix,
                 )
             )
             - written
@@ -1115,6 +1156,7 @@ class CrossRunMerge:
             rewired=rewired,
             split_from=split_from,
             dropped_links=dropped_links,
+            compared=compared,
         )
         if not extra:
             return entities, relationships
@@ -1199,6 +1241,7 @@ class CrossRunMerge:
         rewired: Collection[str],
         split_from: Mapping[str, str] | None,
         dropped_links: Collection[frozenset[str]],
+        compared: Collection[str] = (),
     ) -> list[Relationship]:
         """The stored edges ``extra_ids`` of the touched ``entities`` whose
         names or ranks now differ, or whose vector copies are stale, as they
@@ -1260,9 +1303,17 @@ class CrossRunMerge:
 
         before = {r.id: shown(r) for r in stored_extra}
         stale = self._stale_vector_copies(
-            suffix, extra, entities, stored_entities, rewired, split_from
+            suffix, extra, entities, stored_entities, rewired, split_from, compared
         )
-        extra = [r for r in extra if before[r.id] != shown(r) or r.id in stale]
+        # The vector copies at the ``compared`` entities may hold a rank the
+        # graph copy does not (read_vector_copies holds none): rewritten.
+        extra = [
+            r
+            for r in extra
+            if before[r.id] != shown(r)
+            or r.id in stale
+            or {r.source_id, r.target_id} & set(compared)
+        ]
         if not extra:
             return []
         # Only the rank changed (a neighbour's degree): the vector copy is
@@ -1285,9 +1336,12 @@ class CrossRunMerge:
         stored_entities: Sequence[Entity],
         rewired: Collection[str],
         split_from: Mapping[str, str] | None,
+        compared: Collection[str] = (),
     ) -> set[str]:
         """The ids of the stored edges ``extra`` whose vector copies are
-        stale (or missing, where an edge was re-pointed)."""
+        stale (or missing, where an edge was re-pointed); those at the
+        ``compared`` entities are read too, so one written whole is not
+        only given its rank (see :meth:`_note_rewritten_edges`)."""
         m = self._m
         # And with their vector copies, where an endpoint's name or id
         # changed: a commit killed between its vector and graph edge writes
@@ -1305,7 +1359,7 @@ class CrossRunMerge:
         # copies behind, or missing (an edge under a new id, written when
         # its endpoints are re-pointed): a missing one is written.
         repointed = {*rewired, *(split_from or {})}
-        moved |= repointed
+        moved |= repointed | set(compared)
         vectors = m.config.indexing.opensearch.build_relationship_vector_index
         vector_copy = (
             m.vector_indexer.read_vector_copies(
@@ -1518,6 +1572,11 @@ class CrossRunMerge:
         retired = _note_ids(note, "retired_ids")
         if retired:
             m._noted_retired.setdefault(suffix, set()).update(retired)
+        # The entities whose stored edges it rewrote: their edges' vector
+        # copies may be ahead of the graph copies (_note_rewritten_edges).
+        ends = _note_ids(note, "edge_entity_ids")
+        if ends:
+            m._noted_edge_ends.setdefault(suffix, set()).update(ends)
         return ids | retired
 
     def _match_stored_names(

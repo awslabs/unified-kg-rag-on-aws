@@ -80,6 +80,14 @@ unless noted.
    noted old ids with the noted entities and derives them again: the
    derivation re-keys or drops what a full build does not have, and those
    ids are deleted with its own.
+   It lists the entities whose stored edges the commit rewrites (for a rank
+   or a name) as well. Their vector copies are written in the first phase,
+   the graph copies in the second, so a commit killed in between, or one
+   whose graph write of an endpoint is rejected (its edges are held back),
+   leaves a vector copy ahead of its graph copy. Whether an edge is written
+   is decided against the graph copy, so a removal that derived the edge
+   back to it left the vector copy's rank for good: the next commit rewrites
+   the stored edges at the noted entities in both stores (a rank in place).
    An item write a store rejects (an entity, relationship, claim, community
    or report; an edge held back for a rejected endpoint) does not fail the
    documents owning it: the commit notes the rejected items as written in

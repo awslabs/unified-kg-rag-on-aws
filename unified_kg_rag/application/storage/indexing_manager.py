@@ -207,6 +207,11 @@ class IndexingManager:
         # wrote or read (clear_pending_commit deletes those).
         self._noted_commit_entities: dict[str, set[str]] = {}
         self._commit_note_suffixes: set[str] = set()
+        # Per suffix: the entities whose stored edges a commit's derivation
+        # rewrites, for its write-ahead note; and those an earlier commit's
+        # note names, whose edges are compared with their vector copies.
+        self._rewritten_edge_ends: dict[str, set[str]] = {}
+        self._noted_edge_ends: dict[str, set[str]] = {}
         # Per suffix: the old ids an earlier commit's note retires (re-keyed
         # away or dropped) and may not have deleted (a write failed, or it
         # was killed): this commit derives the items stored under them again.
@@ -985,12 +990,18 @@ class IndexingManager:
         entities and the items stored under the old ids again
         (:meth:`_merge_suffix`). An earlier note's old id no store holds any
         more (a commit deleted it) is left out, so a note does not grow for
-        as long as a write keeps failing. Raises when a write or a read
-        fails, before anything is written."""
+        as long as a write keeps failing. The entities whose stored edges
+        the commit rewrites are noted too (``edge_entity_ids``): the next
+        commit rewrites those edges in both stores, as this one may leave
+        their vector copies ahead of the graph's (see
+        ``CrossRunMerge._note_rewritten_edges``). Raises when a write or a
+        read fails, before anything is written."""
         retired = self._retired_ids()
         for suffix in sorted(
             self._commit_entities.keys()
             | self._noted_commit_entities.keys()
+            | self._rewritten_edge_ends.keys()
+            | self._noted_edge_ends.keys()
             | retired.keys()
             | self._noted_retired.keys()
         ):
@@ -1005,11 +1016,17 @@ class IndexingManager:
                 *retired.get(suffix, []),
                 *(self._still_stored(sorted(earlier), suffix) if earlier else ()),
             }
-            if not ids and not old_ids:
+            ends = {
+                *self._rewritten_edge_ends.get(suffix, set()),
+                *self._noted_edge_ends.get(suffix, set()),
+            }
+            if not ids and not old_ids and not ends:
                 continue
             note: dict[str, Any] = {"entity_ids": sorted(ids)}
             if old_ids:
                 note["retired_ids"] = sorted(old_ids)
+            if ends:
+                note["edge_entity_ids"] = sorted(ends)
             self._write_note(_PENDING_COMMIT, suffix, note)
             self._commit_note_suffixes.add(suffix)
 
@@ -1135,6 +1152,8 @@ class IndexingManager:
             self._vector_only,
             self._commit_entities,
             self._noted_commit_entities,
+            self._rewritten_edge_ends,
+            self._noted_edge_ends,
             self._noted_retired,
             self._split_from,
             self._renamed,
