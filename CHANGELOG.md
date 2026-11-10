@@ -882,7 +882,8 @@ From a `main` checkout (formats and keys no release had):
   the formats the core install parses (multi-page PDFs, whose citations name their page, Markdown, HTML, CSV, JSON
   and text), a dataset and a config (kept on a restart, `--reset-config` to write it again) for fake, Ollama or
   Bedrock models, and stops before it writes anything without the `console` extra, the built web client, or the
-  `local` extra the fake and Ollama models need; a SIGTERM to it stops its console ([Console](docs/guides/console.md)).
+  `local` extra the fake and Ollama models need, or with a `UKR_CONSOLE_TOKEN` under 16 characters; a SIGTERM to it
+  stops its console ([Console](docs/guides/console.md)).
 - `run-ingestion --confirm-integrity` answers only the question of a run that resumes a pipeline id whose inputs
   changed (#631).
 - `GraphRAGChain.ainvoke(on_answer_chunk=...)` hands the answer's text chunks to a callback as the answer model
