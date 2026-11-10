@@ -1029,9 +1029,13 @@ def stated_numbers(text: str, language: str | None = None) -> frozenset[float]:
     Korean, Japanese and Chinese ones read in every language (없습니다, 한
     곳도, 一社も, 没有, いません/ありません). Spanish and Portuguese "no" is
     no 0. A year is a number like any other ("2019")."""
+    # A minus sign starting a number is ASCII "-", as ``normalize_answer``
+    # folds it ("\u22125" is -5).
     body = "\n".join(
         line
-        for line in unicodedata.normalize("NFKC", text).splitlines()
+        for line in _LEADING_MINUS.sub(
+            "-", unicodedata.normalize("NFKC", text)
+        ).splitlines()
         if not re.match(r"\s*#{1,6}(?:\s|$)", line)
     )
     grammar = _LANGUAGE_NUMBERS.get(language or "")

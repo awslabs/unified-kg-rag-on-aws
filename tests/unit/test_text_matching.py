@@ -10,6 +10,7 @@ import pytest
 
 from unified_kg_rag.evaluation.text_matching import (
     is_spaceless_script,
+    number_value,
     phrase_in_text,
     stated_numbers,
     strip_possessives,
@@ -413,3 +414,38 @@ class TestStatedNumbers:
         assert stated_numbers("3-5 vendors") == {3, 5}
         assert stated_numbers("It fell to -5") == {-5}
         assert stated_numbers("A-1 grade") == set()
+
+    def test_a_unicode_minus_is_a_minus(self) -> None:
+        # U+2212, as normalize_answer folds it; a dash between two numbers
+        # still joins a range.
+        assert stated_numbers("It fell to \u22125") == {-5}
+        assert stated_numbers("(\u22125)") == {-5}
+        assert stated_numbers("1990\u20131995") == {1990, 1995}
+
+
+class TestNumberValue:
+    """``number_value``: the one number a gold states, else ``None``."""
+
+    @pytest.mark.parametrize(
+        ("gold", "value"),
+        [
+            # One number.
+            ("3", 3),
+            ("4,486", 4486),
+            ("three", 3),
+            ("none", 0),
+            ("0", 0),
+            ("-5", -5),
+            ("\u22125", -5),
+            # No number.
+            ("", None),
+            ("Acme", None),
+            # Several: the gold is a phrase, not its first or least number.
+            ("1990-1995", None),
+            ("2 or 3", None),
+            ("Jan 5, 2024", None),
+            ("3 (as of 2024)", None),
+        ],
+    )
+    def test_the_one_number_a_gold_states(self, gold: str, value: float | None) -> None:
+        assert number_value(gold) == value
