@@ -814,8 +814,7 @@ def test_a_kept_edge_whose_write_failed_over_the_rate_survives_a_removal(
     assert _note(harness) is None
 
 
-@pytest.mark.parametrize("rate", ["over", "under"])
-@pytest.mark.parametrize(
+_KEPT_EDGE_SPELLINGS = pytest.mark.parametrize(
     "spellings",
     [
         ("Acme Inc", "Acme", _D),
@@ -825,13 +824,19 @@ def test_a_kept_edge_whose_write_failed_over_the_rate_survives_a_removal(
     ],
     ids=["en", "ko", "ja", "mix"],
 )
-def test_a_kept_edge_whose_write_and_note_failed_fails_its_document(
-    spellings: tuple[str, str, str], rate: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # The case above with the note's write failing too: nothing notes the
-    # kept edge b.txt states, and retrying the run's documents does not
-    # write it again. b.txt, outside the run, owns its text unit: it is
-    # recorded FAILED, so the next run extracts it again.
+
+
+def _reject_a_kept_edge_and_its_note(
+    spellings: tuple[str, str, str],
+    rate: str,
+    monkeypatch: pytest.MonkeyPatch,
+    quarantine: bool = False,
+) -> tuple[IncrementalRun, Corpus]:
+    """The case of the test above with the note's write failing too: the
+    commit's graph write of b.txt's kept edge is rejected (``rate``: with
+    every other graph edge write, or alone) and nothing notes it. Returns
+    the harness and the corpus after a.txt and c.txt are gone
+    (``quarantine``: b.txt's record is QUARANTINED before the run)."""
     long, short, other = spellings
     before: Corpus = {
         "/corpus/a.txt": [[(other, long, 1)]],
@@ -844,6 +849,17 @@ def test_a_kept_edge_whose_write_and_note_failed_fails_its_document(
     harness = _harness()
     harness.config.indexing.max_failure_rate = 0.95
     harness.run(before)
+    if quarantine:
+        (record,) = [
+            r for r in all_records(harness.store) if r.file_path == "/corpus/b.txt"
+        ]
+        # Quarantined at the attempt limit: the run does not release it.
+        limit = harness.config.indexing.max_document_attempts
+        harness.store.put(
+            record.model_copy(
+                update={"status": DocStatus.QUARANTINED, "attempt_count": limit}
+            )
+        )
     write = harness.vector.write_extraction_records
 
     def no_note(records, suffix=None):  # noqa: ANN001, ANN202
@@ -861,15 +877,47 @@ def test_a_kept_edge_whose_write_and_note_failed_fails_its_document(
         fail_removal=False,
     )
     monkeypatch.undo()
-
     assert _note(harness) is None
-    assert _statuses(harness)["/corpus/b.txt"] is DocStatus.FAILED
+    return harness, after
+
+
+@pytest.mark.parametrize("rate", ["over", "under"])
+@_KEPT_EDGE_SPELLINGS
+def test_a_kept_edge_whose_write_and_note_failed_fails_its_document(
+    spellings: tuple[str, str, str], rate: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Nothing notes the kept edge b.txt states, and retrying the run's
+    # documents does not write it again. b.txt, outside the run, owns its
+    # text unit: it is recorded FAILED, so the next run extracts it again,
+    # one retry more (its first).
+    harness, after = _reject_a_kept_edge_and_its_note(spellings, rate, monkeypatch)
+    (kept,) = extract(after).relationships
+
+    (record,) = [
+        r for r in all_records(harness.store) if r.file_path == "/corpus/b.txt"
+    ]
+    assert record.status is DocStatus.FAILED
+    assert record.retry_count == 1
     harness.run(after)
     harness.run(after)
 
     assert kept.id in harness.graph.ids("relationships")
     assert harness.state() == expected_state(after, harness.config)
     assert harness.registry_problems(after) == []
+
+
+@_KEPT_EDGE_SPELLINGS
+def test_a_quarantined_owner_of_a_failed_unnoted_write_stays_quarantined(
+    spellings: tuple[str, str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Only PROCESSED owners are recorded FAILED: a QUARANTINED document
+    # keeps its indexed version and stays out of the runs until released
+    # (recorded FAILED, the next run would extract it again).
+    harness, _ = _reject_a_kept_edge_and_its_note(
+        spellings, "under", monkeypatch, quarantine=True
+    )
+
+    assert _statuses(harness)["/corpus/b.txt"] is DocStatus.QUARANTINED
 
 
 @pytest.mark.parametrize(

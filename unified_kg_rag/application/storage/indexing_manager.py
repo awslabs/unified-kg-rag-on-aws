@@ -693,25 +693,20 @@ class IndexingManager:
         """Delta upsert of the relationship vectors. An edge this run rewrites
         for its rank only is updated in place (no embedding), unless its
         vector copy is missing (an interrupted write): that one is upserted.
-        The copies the derivation read are compared, the others read."""
+        The copies compared are those the derivation read: it reads one for
+        every edge it finds rank-only (``CrossRunMerge``), except without
+        relationship vectors, where no run writes them."""
         rank_only, self._rank_only = self._rank_only, set()
         copies, self._rank_only_copies = self._rank_only_copies, {}
         vector = self.vector_indexer
         candidates = [r for r in relationships if r.id in rank_only]
         if not candidates:
             return vector.upsert_relationships(relationships)
-        stored: dict[str, Mapping[str, Any]] = {}
-        for suffix, group in self._group_by_suffix(candidates).items():
-            unread = [r.id for r in group if (suffix, r.id) not in copies]
-            stored |= {
-                r.id: copy
-                for r in group
-                if (copy := copies.get((suffix, r.id))) is not None
-            }
-            if unread:
-                stored |= vector.read_vector_copies(
-                    "relationships", unread, suffix=suffix
-                )
+        stored = {
+            r.id: copy
+            for r in candidates
+            if (copy := copies.get((BaseIndexer.get_suffix(r), r.id))) is not None
+        }
         # A copy whose schema annotations differ is written in full too.
         partial = [
             r

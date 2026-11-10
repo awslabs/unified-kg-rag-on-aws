@@ -19,6 +19,7 @@ from unified_kg_rag.adapters.ingestion.description_summarizer import (
     SUMMARIZED_FROM_ATTRIBUTE,
 )
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
+from unified_kg_rag.application.storage.removal import _held_back
 from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
 from unified_kg_rag.domain.ingestion.delta_detector import (
     assign_document_identity,
@@ -33,6 +34,7 @@ from unified_kg_rag.domain.models import (
     Relationship,
     TextUnit,
 )
+from unified_kg_rag.ports.indexer import IndexingStats
 from unified_kg_rag.shared.utils import compute_hash
 
 pytestmark = pytest.mark.unit
@@ -1071,3 +1073,31 @@ def test_a_rewritten_stored_edge_is_ranked_without_a_dropped_link(mocker) -> Non
         dropped=[dropped.id],
     )
     assert {r.id: r.rank for r in relationships}.get("r-ac") == 2
+
+
+def _rejected(*ids: str, unnamed: int = 0) -> IndexingStats:
+    stats = IndexingStats(total_items=len(ids) + unnamed)
+    if ids:
+        stats.add_error("rejected", count=len(ids), ids=list(ids))
+    if unnamed:
+        stats.add_error("rejected", count=unnamed)
+    return stats
+
+
+def test_a_strip_holds_back_the_entities_at_its_rejected_items() -> None:
+    # A rejected entity, the endpoints of a rejected edge and the entities
+    # parts were split off are held back; a failure the strip cannot place
+    # (no id, or a claim's) holds back every kept entity.
+    entities = [Entity(id=i, name=i.upper(), type="org") for i in "abcde"]
+    edge = Relationship(
+        id="r1", source_id="b", target_id="c", source_name="B", target_name="C"
+    )
+
+    assert _held_back([_rejected("a", "r1")], entities, [edge], {"e"}) == {
+        "a",
+        "b",
+        "c",
+        "e",
+    }
+    assert _held_back([_rejected(unnamed=1)], entities, [edge], ()) is None
+    assert _held_back([_rejected("claim-1")], entities, [edge], ()) is None
