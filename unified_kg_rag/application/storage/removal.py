@@ -821,20 +821,29 @@ class TextUnitRemoval:
                     "vector_entities",
                 ),
             ],
-            # The graph copies of the kept entities are what a retry finds
-            # the strip by: last, after every other copy is written.
-            [IndexingTask(m.graph_indexer.upsert_entities, [kept], "graph_entities")],
         ]
-        # A phase with failures stops the strip: the later ones would
-        # rewrite the entities a retry finds it by, and the retry would
-        # derive nothing to repair what the failed writes left (a rank the
-        # rejected copy kept).
         for phase in phases:
             check_write_fence()
-            phase_results = m._run_indexing_phase(phase)
-            results.update(phase_results)
-            if any(stats.failed_items for stats in phase_results.values() if stats):
-                return
+            results.update(m._run_indexing_phase(phase))
+        # The graph copies of the kept entities are what a retry finds the
+        # strip by: written last, and only when every other write succeeded.
+        # Rewritten after a failed one, the retry derived nothing, and what
+        # the rejected write left (a rank the rejected copy kept) stayed.
+        # The other writes still go on: each copy written is the derived one
+        # (a graph edge stripped beside a vector copy that was not kept the
+        # removed text in a description the graph caps).
+        if any(stats.failed_items for stats in results.values() if stats):
+            return
+        check_write_fence()
+        results.update(
+            m._run_indexing_phase(
+                [
+                    IndexingTask(
+                        m.graph_indexer.upsert_entities, [kept], "graph_entities"
+                    )
+                ]
+            )
+        )
 
     def _remove_text_units_from_claims(
         self,

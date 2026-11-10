@@ -266,9 +266,9 @@ def _strip_shapes(v: str, d: str, x: str, b: str) -> dict[str, tuple[Corpus, Cor
 def test_a_strip_write_the_store_rejects_is_repaired_by_the_next_run(
     lang: str, shape: str, where: str
 ) -> None:
-    # A strip phase whose write is rejected stops the strip: the later
-    # phases would rewrite the graph entities a retry finds it by, and the
-    # rank the rejected copy kept would stay (no full build has it).
+    # A strip write the store rejects keeps the strip from rewriting the
+    # graph entities a retry finds it by: rewritten, the rank the rejected
+    # copy kept would stay (no full build has it).
     before, after = _strip_shapes(*_NAMES[lang])[shape]
     harness = IncrementalRun(FakeDocStatusStore())
     harness.run(before)
@@ -414,4 +414,37 @@ def test_a_vector_copy_a_rejected_strip_left_behind_is_not_set_rank_only(
     harness.run(after)
 
     assert harness.state() == expected_state(after)
+    assert harness.registry_problems(after) == []
+
+
+@pytest.mark.parametrize("lang", list(_NAMES))
+def test_a_strip_write_rejected_still_writes_the_other_copies(lang: str) -> None:
+    # Deleting b.txt strips its lines from Vendor -> Depot and Vendor ->
+    # Buyer; c.txt, added in the same run, changes Vendor's degree. The
+    # strip's graph write of Vendor -> Buyer is rejected: had the strip
+    # stopped there, Vendor -> Depot's vector copy kept b.txt's line, which
+    # the graph (capping descriptions) reads back as the full description,
+    # and the commit then wrote it for good.
+    v, d, x, b = _NAMES[lang]
+    before: Corpus = {
+        "/corpus/a.txt": [[(v, d, 2), (v, b, 1)]],
+        "/corpus/b.txt": [[(v, d, 3), (v, b, 2)]],
+    }
+    after: Corpus = {
+        "/corpus/a.txt": before["/corpus/a.txt"],
+        "/corpus/c.txt": [[(v, x, 1)]],
+    }
+    config = Config()
+    config.indexing.neptune.property_max_length = 20
+    rejected = _edge_id(before, v, b)
+    harness = IncrementalRun(FakeDocStatusStore(), config)
+    harness.run(before)
+
+    harness.run(
+        after, fail=lambda at, i: at == "graph.upsert_relationships" and i == rejected
+    )
+    harness.run(after)
+    harness.run(after)
+
+    assert harness.state() == expected_state(after, config)
     assert harness.registry_problems(after) == []

@@ -1046,9 +1046,9 @@ From a `main` checkout (formats and keys no release had):
   vector copies' rank too, and one that differs is set in place in both stores: a commit writes the vector copy
   first, a strip the graph copy, so a run killed in between, or one whose graph write of an endpoint was rejected
   (its edges held back), left a rank the other copy did not have, kept for good once a later run derived the edge
-  back to the graph copy. A strip stops at its first step with a rejected write, and writes the graph copies of the
-  kept entities, by which a retry finds it, after every other copy: the later steps rewrote them, so a retry derived
-  nothing and the copy whose write was rejected (or an entity's vector copy, killed before it) kept its rank. The
+  back to the graph copy. A strip writes the graph copies of the kept entities, by which a retry finds it, last and
+  only when every other write succeeded: rewritten after a rejected one, a retry derived nothing and the copy whose
+  write was rejected (or an entity's vector copy, killed before it) kept its rank. The
   write of an edge whose rank alone changed compares the vector copies the derivation read, not read again, and
   writes one holding another description whole: a strip whose vector write was rejected left the removed line in it.
   A write note (`pending-writes`) over 1 MiB is split into parts, each its own record,

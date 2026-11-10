@@ -94,10 +94,11 @@ unless noted.
    again, and the vector copy kept a rank no full build has. The next run
    derives those endpoints again: the killed commit's documents are not
    recorded, a killed strip's removal resumes, and a commit's rejected
-   write is noted (`pending-writes`, below). A strip stops at its first
-   step with a rejected write (the removal fails and is retried) and writes
-   the graph copies of the kept entities, by which a retry finds it, after
-   every other copy: had it gone on, the retry would derive nothing.
+   write is noted (`pending-writes`, below). A strip writes the graph
+   copies of the kept entities, by which a retry finds it, last and only
+   when every other write succeeded (a rejected one fails the removal,
+   which is retried): rewritten after it, the retry would derive nothing.
+   Its other writes still go on, so each copy written is the derived one.
    An item write a store rejects (an entity, relationship, claim, community
    or report; an edge held back for a rejected endpoint) does not fail the
    documents owning it: the commit notes the rejected items as written in
