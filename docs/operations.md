@@ -1108,9 +1108,10 @@ classification and output parsing: [Design Doc §5.1](./design/incremental.md#51
   artifacts of changed or deleted documents failed; not committing the
   delta`): the deleted documents keep their registry records, the new and
   changed ones stay `PENDING`, and the next run retries the removal first.
-  A deleted document whose removal keeps failing so holds back the new and
-  changed documents: fix the store (see the run's ERROR lines for the
-  rejected writes) and re-run.
+  The error names the changed and deleted documents. A deleted document
+  whose removal keeps failing so holds back the new and changed documents:
+  fix the store (the run's WARNING lines report the rejected writes by kind
+  and error, its ERROR lines a failed read) and re-run.
 
 ### Quarantined documents
 

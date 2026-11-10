@@ -381,9 +381,13 @@ def test_failed_joint_removal_commits_nothing_and_keeps_both_rows(mocker) -> Non
     text_units, entities = _delta_inputs()
     ctx = _context(_full_delta(), [_document("run-changed", _CHANGED)])
 
-    with pytest.raises(PipelineStageError, match="not committing"):
+    with pytest.raises(PipelineStageError, match="not committing") as failed:
         _run(stage, ctx, text_units, entities)
 
+    # The error names the documents whose removal failed.
+    assert str(failed.value).endswith(
+        ": " + ", ".join(sorted([_CHANGED, compute_doc_id(_DELETED)]))
+    )
     # The changed doc keeps its old lineage (in its write-ahead PENDING
     # record) and the deleted doc its row, so the next run retries the whole
     # removal.
