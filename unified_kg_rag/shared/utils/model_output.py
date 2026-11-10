@@ -13,6 +13,7 @@ from __future__ import annotations
 import ast
 import json
 import re
+import unicodedata
 from collections.abc import Collection
 from typing import Any, TypeVar, overload
 
@@ -85,7 +86,9 @@ def named_choice(text: str, names: Collection[str]) -> str | None:
 
 def _line_name(line: str, names: Collection[str]) -> str | None:
     """The one of ``names`` ``line`` is (the name alone) or labels (at most
-    :data:`_LABEL_WORDS` words that name none, a colon, the name)."""
+    :data:`_LABEL_WORDS` words that name none, a colon, the name), read
+    NFKC-normalized: a full-width colon ("戦略：local") is a colon."""
+    line = unicodedata.normalize("NFKC", line)
     spans = list(_NAME_WORD.finditer(line))
     if not spans or len(spans) > _LABEL_WORDS + 1:
         return None

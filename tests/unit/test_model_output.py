@@ -232,6 +232,12 @@ async def test_a_cut_off_answer_is_not_repaired() -> None:
         ('{\n  "strategy": "local",\n  "fallback": "global"\n}', None),
         ("local\n- global: no\n- mix: no", "local"),
         ("Selected strategy: `mix`", "mix"),
+        # Regression (rv17 integration 3): a full-width colon, as Japanese
+        # and Chinese answers (and an English label typed with a CJK input
+        # method) write it, labels the name as an ASCII one does.
+        ("戦略\uff1alocal", "local"),
+        ("策略\uff1aglobal", "global"),
+        ("Strategy\uff1alocal", "local"),
         # Regression (rv11 query M2): prose whose words hold one name was
         # routed to it ("simple", "local", "global" are English words).
         ("This is a simple factual lookup.", None),

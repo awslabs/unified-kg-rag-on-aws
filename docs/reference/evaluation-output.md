@@ -696,7 +696,8 @@ list, top level or under `metadata`, which wins), taking the maximum.
   is no heading (its extracted span, with `extracted`) and scores 1.0 on
   this rule only:
   - A gold other than 0 matches when that line writes it as a number,
-    anywhere: digits (`−5`, a Unicode minus, is -5), number words of the
+    anywhere: digits (`−5`, a Unicode minus or en-dash, is -5; an
+    em-dash is no minus: `3 vendors —2` writes 2), number words of the
     answer's language (English's for a language without them), a Korean
     native numeral before a counter (`세 곳`, `열두 개사`) or a Han or
     Sino-Korean numeral with its

@@ -61,6 +61,9 @@ class TestNormalization:
             ("2,000", "2000"),
             ("a 5-year term", "5 year term"),
             ("3.5%", "3.5 %"),
+            # An em-dash or horizontal bar is punctuation, never a minus.
+            ("\u20145", "5"),
+            ("\u20155", "5"),
         ],
     )
     def test_squad_equivalences(self, prediction: str, reference: str) -> None:
@@ -826,6 +829,9 @@ class TestHotpotQARule:
         # Only the first line is read: the support below it is not.
         ("How many suppliers?", "The context does not say.\n\n- Lot 3 [1].", "3", 0.0),
         ("How many suppliers?", "# Answer\nThree suppliers.\n- 5 plants", "3", 1.0),
+        # An em-dash before a number sets it off; it is no minus.
+        ("How many suppliers are in Seoul?", "3 vendors \u20142 in Seoul", "2", 1.0),
+        ("How many suppliers?", "Total: \u20154.", "4", 1.0),
     ],
 )
 def test_a_number_item_reads_the_question(
