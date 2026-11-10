@@ -415,6 +415,13 @@ class TestStatedNumbers:
         assert stated_numbers("It fell to -5") == {-5}
         assert stated_numbers("A-1 grade") == set()
 
+    def test_a_unicode_minus_is_a_minus(self) -> None:
+        # U+2212, as normalize_answer folds it; a dash between two numbers
+        # still joins a range.
+        assert stated_numbers("It fell to \u22125") == {-5}
+        assert stated_numbers("(\u22125)") == {-5}
+        assert stated_numbers("1990\u20131995") == {1990, 1995}
+
 
 class TestNumberValue:
     """``number_value``: the one number a gold states, else ``None``."""
@@ -429,6 +436,7 @@ class TestNumberValue:
             ("none", 0),
             ("0", 0),
             ("-5", -5),
+            ("\u22125", -5),
             # No number.
             ("", None),
             ("Acme", None),

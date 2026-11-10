@@ -696,9 +696,10 @@ list, top level or under `metadata`, which wins), taking the maximum.
   is no heading (its extracted span, with `extracted`) and scores 1.0 on
   this rule only:
   - A gold other than 0 matches when that line writes it as a number,
-    anywhere: digits, number words of the answer's language (English's for
-    a language without them), a Korean native numeral before a counter
-    (`세 곳`, `열두 개사`) or a Han or Sino-Korean numeral with its
+    anywhere: digits (`−5`, a Unicode minus, is -5), number words of the
+    answer's language (English's for a language without them), a Korean
+    native numeral before a counter (`세 곳`, `열두 개사`) or a Han or
+    Sino-Korean numeral with its
     multipliers (`三社`, `十二台`, `一万二千台`, `만 이천 대`; digits a
     multiplier scales: `1만 2천`, `3万`; `两`/`兩` is 2, and a space may
     stand before a Han counter: `三 社`). `Three: Acme, Beta and Gamma`,
