@@ -1434,13 +1434,13 @@ From a `main` checkout (formats and keys no release had):
   `{"question": ...}`, and MS GraphRAG's `{"reason": ..., "rating": 0-5}` (`rate_prompt.py`; the rating is divided by
   5, so `relevance_threshold: 0.2` is still a rating of 1 or more). The router answers the strategy name, read from
   the lines that are the name alone or a short label and the name when they all name one (a reasoning block, a
-  preamble line, markdown and case aside; an answer listing alternatives or a fallback after it goes to the JSON
-  reader, one-line and multi-line JSON alike), and reads any other answer as `{"strategy": ...}` (a JSON answer wrote
-  2.9 times the output tokens, measured; its `max_tokens` is 1,024, a local model that may reason keeping its cap). A
-  model that cannot translate or rewrite answers `[CANNOT_TRANSLATE]` or `[CANNOT_REWRITE]`, which replace the refusal
-  phrase lists of four languages; the router no longer routes prose to a strategy one of its words names ("not global
-  ... local", "a simple lookup"), and a rating's reason in any language no longer reads as the rating ("Auf einer
-  Skala von 1 bis 10: 8" was 1).
+  preamble line, markdown, case and a full-width colon aside: "戦略：local"; an answer listing alternatives or a
+  fallback after it goes to the JSON reader, one-line and multi-line JSON alike), and reads any other answer as
+  `{"strategy": ...}` (a JSON answer wrote 2.9 times the output tokens, measured; its `max_tokens` is 1,024, a local
+  model that may reason keeping its cap). A model that cannot translate or rewrite answers `[CANNOT_TRANSLATE]` or
+  `[CANNOT_REWRITE]`, which replace the refusal phrase lists of four languages; the router no longer routes prose to
+  a strategy one of its words names ("not global ... local", "a simple lookup"), and a rating's reason in any
+  language no longer reads as the rating ("Auf einer Skala von 1 bis 10: 8" was 1).
 - The local token estimate (models without CountTokens, embedding truncation, `length_unit: tokens`) counts each
   script at its rate: Cyrillic 2.4 characters a token, Arabic 2, Greek, Hebrew, Devanagari and Thai 1.5 (the
   geometric mean of the cl100k and o200k counts over a sample), where it counted 4, a quarter to a half of the Hindi,

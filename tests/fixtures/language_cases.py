@@ -2376,6 +2376,9 @@ ROUTER: tuple[Case, ...] = (
     ),
     Case("local\n\nReason: entity lookup.", "local", None, "rv10 query 4"),
     Case('{"strategy": "local"}', "local", None, "rv10 query 4"),
+    Case("戦略\uff1alocal", "local", None, "rv17 integration 3"),
+    Case("策略\uff1aglobal", "global", None, "rv17 integration 3"),
+    Case("Strategy\uff1alocal", "local", None, "rv17 integration 3"),
 )
 
 COVERS: tuple[Case, ...] = (
