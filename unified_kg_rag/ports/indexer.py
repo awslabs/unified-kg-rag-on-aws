@@ -859,18 +859,18 @@ class VectorIndexer(BaseIndexer):
         ids: list[str],
         suffix: str | None = None,
     ) -> dict[str, dict[str, Any]]:
-        """What the stored vector copies of ``kind`` hold besides lineage and
-        rank, by id (scoped to ``suffix``; an id not stored is absent):
-        ``name``, ``type``, ``confidence``, ``description``, the schema
-        annotations ``in_schema`` and ``type_iri`` and the seed-graph fields
-        ``iri``, ``source_kinds`` and ``seed_properties`` (its
+        """What the stored vector copies of ``kind`` hold besides lineage,
+        by id (scoped to ``suffix``; an id not stored is absent): ``name``,
+        ``type``, ``confidence``, ``description``, the schema annotations
+        ``in_schema`` and ``type_iri`` and the seed-graph fields ``iri``,
+        ``source_kinds`` and ``seed_properties`` (its
         ``attributes.seed_properties``) of an entity, ``source_id``,
         ``target_id``, ``source_name``, ``target_name``, ``description``,
-        ``in_schema``, ``predicate_iri`` and ``source_kinds`` of a
-        relationship (a field written ``None`` is absent). Incremental
-        writes compare them
-        with the derived items, so a copy an interrupted run left behind or
-        ahead of the graph copy is rewritten. Default ``{}`` (every item is
+        ``rank``, ``in_schema``, ``predicate_iri`` and ``source_kinds`` of
+        a relationship (a field written ``None`` is absent). Incremental
+        writes compare them with the derived items, so a copy an
+        interrupted run left behind or ahead of the graph copy is
+        rewritten. Default ``{}`` (every item is
         written in full); adapters that override it raise when a read fails.
         """
         return {}

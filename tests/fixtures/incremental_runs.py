@@ -101,6 +101,9 @@ POINTS = (
     # The merge's re-key and split decisions are noted, nothing written.
     "after_commit_note",
     "mid_index_delta",
+    # An in-place update of stored items (a strip's lineage, a commit's
+    # ranks), in either store: one store's copy written, the other's not.
+    "mid_update",
     # The delta is written, the re-keyed items' old ids still stored.
     "before_retired_deletes",
     "before_record",
@@ -406,7 +409,7 @@ class IncrementalRun:
         during the run's commit (reported as failed items by id, as the
         indexers report a rejected bulk item): ``where`` is
         ``graph.<method>`` or ``vector.<method>``, a store's ``upsert_*`` or
-        ``update_*_lineage``.
+        ``update_*`` (a lineage or rank set in place).
         """
         # A run is a new process: nothing an interrupted one held in memory
         # survives it.
@@ -491,10 +494,7 @@ class IncrementalRun:
         :meth:`run`): the others are written, the rejected ones reported."""
         for name, store in (("graph", self.graph), ("vector", self.vector)):
             for method in dir(store):
-                if not (
-                    method.startswith("upsert_")
-                    or (method.startswith("update_") and method.endswith("_lineage"))
-                ):
+                if not method.startswith(("upsert_", "update_")):
                     continue
                 original = getattr(store, method)
 
@@ -574,6 +574,11 @@ class IncrementalRun:
             for store in (self.graph, self.vector):
                 for name in dir(store):
                     if name.startswith("upsert_"):
+                        patch(store, name, on_kth)
+        elif point == "mid_update":
+            for store in (self.graph, self.vector):
+                for name in dir(store):
+                    if name.startswith("update_"):
                         patch(store, name, on_kth)
         elif point == "before_record":
             patch(inc, "record", kill)

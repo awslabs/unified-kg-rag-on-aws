@@ -66,6 +66,7 @@ _corpus = st.fixed_dictionaries({path: st.none() | _content for path in _PATHS})
 _WRITES = [
     "graph.upsert_entities",
     "graph.upsert_relationships",
+    "graph.update_relationship_ranks",
     "vector.upsert_entities",
     "vector.upsert_relationships",
     "vector.update_entity_lineage",
@@ -108,6 +109,36 @@ def _rejects(where: str, salt: int):  # noqa: ANN202
     },
     where="vector.upsert_claims",
     salt=1,
+)
+# A new document raises the shared entity's degree, so its stored edge is
+# given its rank in place (update_relationship_ranks): the rejected update
+# is written by the next run, in English, Korean and Japanese.
+@example(
+    before={"/corpus/b.txt": [[("Depot", "Acme", 1)]]},
+    after={
+        "/corpus/b.txt": [[("Depot", "Acme", 1)]],
+        "/corpus/a.txt": [[("Vendor", "Acme", 3)]],
+    },
+    where="graph.update_relationship_ranks",
+    salt=0,
+)
+@example(
+    before={"/corpus/b.txt": [[("창고", "한빛", 1)]]},
+    after={
+        "/corpus/b.txt": [[("창고", "한빛", 1)]],
+        "/corpus/a.txt": [[("공급사", "한빛", 3)]],
+    },
+    where="graph.update_relationship_ranks",
+    salt=1,
+)
+@example(
+    before={"/corpus/b.txt": [[("倉庫", "トヨダ", 1)]]},
+    after={
+        "/corpus/b.txt": [[("倉庫", "トヨダ", 1)]],
+        "/corpus/a.txt": [[("仕入先", "トヨダ", 3)]],
+    },
+    where="graph.update_relationship_ranks",
+    salt=3,
 )
 def test_rejected_writes_are_written_by_the_next_run(
     before: Corpus, after: Corpus, where: str, salt: int
@@ -244,6 +275,7 @@ _REMOVAL_POINTS = [
     "in_merge",
     "after_commit_note",
     "mid_index_delta",
+    "mid_update",
     "before_retired_deletes",
     "after_write_note",
     "before_record",

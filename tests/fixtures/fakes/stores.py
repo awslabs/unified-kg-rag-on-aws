@@ -909,6 +909,7 @@ class FakeVectorStore(_Recorder):
                     "target_id": item.target_id,
                     "source_name": item.source_name or "",
                     "target_name": item.target_name or "",
+                    "rank": item.rank if item.rank is not None else 1.0,
                 }
                 annotations = {
                     "in_schema": item.in_schema,

@@ -156,6 +156,14 @@ def _vector_stale(item: Entity | Relationship, stored: Mapping[str, Any]) -> boo
     return any(stored.get(k) != v for k, v in _vector_content(item).items())
 
 
+def _vector_rank_stale(item: Relationship, stored: Mapping[str, Any]) -> bool:
+    """Whether the stored vector copy of ``item`` holds another rank (as
+    the adapter writes it: ``1.0`` for none). Not in :func:`_vector_content`:
+    a rank is set in place with the lineage, so one that differs alone is
+    no reason to embed the item again."""
+    return stored.get("rank") != (item.rank if item.rank is not None else 1.0)
+
+
 def _claim_text(claim: Claim) -> tuple[Any, ...]:
     """What a claim states beyond its lineage: its text and the names of the
     entities it is about (a renamed entity renames them)."""
