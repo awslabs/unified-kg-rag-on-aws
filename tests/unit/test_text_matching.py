@@ -421,6 +421,14 @@ class TestStatedNumbers:
         assert stated_numbers("It fell to \u22125") == {-5}
         assert stated_numbers("(\u22125)") == {-5}
         assert stated_numbers("1990\u20131995") == {1990, 1995}
+        assert stated_numbers("It fell to \u20135") == {-5}
+
+    @pytest.mark.parametrize("dash", ["\u2014", "\u2015"])
+    def test_a_dash_never_written_as_a_minus_is_none(self, dash: str) -> None:
+        # An em-dash or horizontal bar sets a number off ("3 vendors —2 in
+        # Seoul"); it is no minus sign.
+        assert stated_numbers(f"3 vendors {dash}2 in Seoul") == {3, 2}
+        assert stated_numbers(f"({dash}5)") == {5}
 
 
 class TestNumberValue:

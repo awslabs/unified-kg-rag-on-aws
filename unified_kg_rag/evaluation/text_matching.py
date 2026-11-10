@@ -62,8 +62,11 @@ _DASHES = "\u002d\u2010\u2011\u2012\u2013\u2014\u2015\u2212"
 # A dash between two word characters separates them: a range ("1990-1995"
 # is two numbers) or a compound ("5-year" equals "5 year").
 _JOINING_DASH = re.compile(rf"(?<=\w)[{_DASHES}](?=\w)")
+# The dashes written as a minus sign: all but the em-dash and the horizontal
+# bar, which set a number off ("3 vendors —2 in Seoul") and are punctuation.
+_MINUS_SIGNS = _DASHES.replace("\u2014", "").replace("\u2015", "")
 # A minus sign starting a number ("-5", "(−5)"); folded to ASCII "-".
-_LEADING_MINUS = re.compile(rf"(?<!\w)[{_DASHES}](?=\d)")
+_LEADING_MINUS = re.compile(rf"(?<!\w)[{_MINUS_SIGNS}](?=\d)")
 # Punctuation that carries meaning and is kept: a leading minus ("-5" is not
 # "5"), a decimal point or comma between digits ("1.5" is not "15"), a percent
 # sign after a number ("3.5%" is not "3.5") and "+"/"#" ending a word ("C++",
