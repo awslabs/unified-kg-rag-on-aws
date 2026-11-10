@@ -1055,9 +1055,9 @@ From a `main` checkout (formats and keys no release had):
   edge after two failed removals in a row. The note lists the edges the strip writes under new ids too: a strip
   stopped (or killed) after an edge's graph copy left no vector copy, and the next one rewrote the edge from its
   graph copy, description cut at the graph's limit. While a store keeps rejecting a write, the strip strips nothing. A
-  failed removal stops the run before the commit, a deleted document's too: the delta merged into the entities a
-  failed strip left citing the removed text units, and dropped a new edge no later run wrote. A deleted document whose
-  removal keeps failing so holds back the new documents, as a changed one does. The
+  failed removal stops the run before the commit, a deleted document's too, with an error naming the documents: the
+  delta merged into the entities a failed strip left citing the removed text units, and dropped a new edge no later
+  run wrote. A deleted document whose removal keeps failing so holds back the new documents, as a changed one does. The
   write of an edge whose rank alone changed compares the vector copies the derivation read, not read again, and
   leaves one whose vector copy cites a text unit its graph copy does not (written to one store only: a strip whose
   vector write was rejected) to the removal's retry: rewritten from those copies, it kept the removed document's

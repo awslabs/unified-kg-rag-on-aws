@@ -3108,11 +3108,19 @@ def index_delta(
     # A shared item the delta derives again is summarized by the commit only.
     indexing_manager.expect_delta(entities, relationships)
     if not incremental.remove_changed_and_deleted(delta):
+        removed = sorted(
+            record.file_path or record.doc_id
+            for record in incremental.doc_status.get_many(
+                [*delta.changed, *delta.deleted]
+            ).values()
+        )
         raise PipelineStageError(
             "Removing stale artifacts of changed or deleted documents "
             "failed; not committing the delta so the registry keeps their "
             "PENDING records (old + planned lineage) and the next run "
-            "retries the removal"
+            "retries the removal: "
+            + ", ".join(removed[:10])
+            + (", ..." if len(removed) > 10 else "")
         )
 
     if reannotate:
