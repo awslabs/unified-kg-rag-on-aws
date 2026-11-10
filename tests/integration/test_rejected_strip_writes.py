@@ -19,6 +19,7 @@ from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.incremental_runs import (
     Corpus,
     IncrementalRun,
+    Killed,
     expected_state,
     extract,
 )
@@ -190,5 +191,60 @@ def test_a_rejected_split_off_claim_keeps_the_claim_it_was_split_from(
     harness.run(
         kept, fail=lambda at, i: at == "vector.upsert_claims" and i in split_off
     )
+
+    _converges(harness, kept, config)
+
+
+@pytest.mark.parametrize("stop", ["rejected", "killed"])
+@pytest.mark.parametrize(
+    "spellings",
+    [
+        ("ACME", "Acme Inc", "Acme Corp"),
+        ("(주)한빛", "주식회사 한빛", "한빛 주식회사"),
+        ("(株)ひかり", "株式会社ひかり", "ひかり株式会社"),
+        ("(株)ひかり", "株式会社ひかり", "ひかり 주식회사"),
+    ],
+    ids=["en", "ko", "ja", "mix"],
+)
+def test_an_edge_under_a_new_id_stopped_before_its_vector_copy_is_derived_again(
+    spellings: tuple[str, str, str], stop: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Deleting g0.txt re-keys k0.txt's and k1.txt's edge; the strip writes
+    # its graph copy, its description cut at the graph's limit, and stops
+    # before the vector copy (rejected, or the run dies). No copy of the new
+    # edge cites a removed unit: unnoted, the next strip rewrote it from the
+    # graph copy, the cut description included.
+    short, long1, long2 = spellings
+    kept: Corpus = {
+        f"/corpus/k{i}.txt": [[("Vendor", short, 3), ("Buyer", short, 2)]]
+        for i in range(2)
+    }
+    shared: Corpus = {
+        **kept,
+        "/corpus/h0.txt": [[(short, "Vendor", 1), ("Buyer", long2, 2)]],
+    }
+    config = _config()
+    config.indexing.neptune.property_max_length = 40
+    harness = IncrementalRun(FakeDocStatusStore(), config)
+    harness.run(
+        {
+            **shared,
+            "/corpus/g0.txt": [
+                [("Depot", long1, 2), (long2, "Depot", 1)],
+                [(long2, "Buyer", 1)],
+            ],
+        }
+    )
+
+    if stop == "rejected":
+        harness.run(shared, fail=lambda at, _i: at == "vector.upsert_relationships")
+    else:
+
+        def killed(*_args: object, **_kwargs: object) -> None:
+            raise Killed("between the strip's graph and vector edge writes")
+
+        with monkeypatch.context() as patched:
+            patched.setattr(harness.vector, "upsert_relationships", killed)
+            assert harness.run(shared)
 
     _converges(harness, kept, config)

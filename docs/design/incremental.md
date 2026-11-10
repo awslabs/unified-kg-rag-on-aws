@@ -155,8 +155,11 @@ unless noted.
    A strip that merges or re-keys items (another spelling of a stripped
    entity's name, which need not cite the removed text units), or derives
    claims under new ids, notes before its first write the entities on both
-   sides of the merge, the edges it re-keyed or dropped, the claims about a
-   split's entities and the new claim ids, in one record of the
+   sides of the merge, the edges it re-keyed, re-pointed or dropped, the
+   edges and claims under new ids (no copy of one cites a removed text unit:
+   a strip stopped after an edge's graph copy left no vector copy to complete
+   a description the graph caps) and the claims about a split's entities, in
+   one record of the
    suffix's extraction store (`pending-strip`, with those of a note a retry
    finishes) and deletes it once their old ids are gone; every removal reads
    it, so a resumed one strips them again. The claims about the other stored

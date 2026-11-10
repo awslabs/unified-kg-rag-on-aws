@@ -14,9 +14,9 @@ the strip, and the removal fails (the next run retries it). What the strip
 did not write keeps its stored copy, which still cites the removed text
 units (the kept entities, a split's origin, a re-keyed entity's old vertex)
 or is in the pending-strip note written before the first write (the other
-side of a merge, a re-keyed or re-pointed edge, a claim under a new id, a
-split's claims): the retry finds it there and derives it again, as after a
-run killed between two phases. Written on past a rejection, a copy
+side of a merge, a re-keyed or re-pointed edge, an edge or claim under a new
+id, a split's claims): the retry finds it there and derives it again, as
+after a run killed between two phases. Written on past a rejection, a copy
 it wrote no longer led a retry to what the rejected write left, and a stored
 copy holding a rejected new item's lines (a split's origin, the claim a
 claim was split off) was overwritten without them.
@@ -640,8 +640,12 @@ class TextUnitRemoval:
         # stored edge there may be the same edge under another id, which
         # the strip folds once it writes this one (CrossRunMerge._finish).
         # A retry reaches the edge through the entities it left no more, so
-        # without the note the duplicate stayed.
-        retired_edges |= self._repointed_edges(suffix, derived, relationships)
+        # without the note the duplicate stayed. And the edges under a new
+        # id, as the claims (_StripNote): no copy of one cites a removed
+        # unit, and a strip stopped or killed after its graph copy left no
+        # vector copy, so a retry rewrote it from the graph copy, its
+        # description cut at the graph's limit.
+        retired_edges |= self._unfindable_edges(suffix, derived, relationships)
         # The stored claims about a split's part and origin: a retry
         # cannot tell them (the split kept the stored id).
         split_claims = (
@@ -666,15 +670,17 @@ class TextUnitRemoval:
             return (merged, retired_edges, split_claims), split_claims
         return None, split_claims
 
-    def _repointed_edges(
+    def _unfindable_edges(
         self,
         suffix: str,
         derived: Derived,
         relationships: Sequence[Relationship],
     ) -> set[str]:
-        """The ids of the stored edges ``derived`` keeps under their id with
-        other endpoints (``relationships``: the stored copies read; the
-        edges the derivation reached beyond them are read here)."""
+        """The ids of the edges ``derived`` writes that a retry would not
+        find by the removed text units: the stored ones it keeps under their
+        id with other endpoints, and those the graph does not hold
+        (``relationships``: the stored copies read; the edges the derivation
+        reached beyond them are read here)."""
         stored = {r.id: r for r in relationships}
         reached = [r.id for r in derived.relationships if r.id not in stored]
         if reached:
@@ -687,8 +693,8 @@ class TextUnitRemoval:
         return {
             r.id
             for r in derived.relationships
-            if r.id in stored
-            and (r.source_id, r.target_id)
+            if r.id not in stored
+            or (r.source_id, r.target_id)
             != (stored[r.id].source_id, stored[r.id].target_id)
         }
 

@@ -1052,7 +1052,9 @@ From a `main` checkout (formats and keys no release had):
   cites the removed text units or is in the `pending-strip` note and the retry derives it again. Writing on past a
   rejection lost a kept document's item for good (a split's origin, or the claim a claim was split off, overwritten
   while it held the rejected part's lines; an edge re-pointed at a rejected merge target), or kept a stale vector
-  edge after two failed removals in a row. While a store keeps rejecting a write, the strip strips nothing. A
+  edge after two failed removals in a row. The note lists the edges the strip writes under new ids too: a strip
+  stopped (or killed) after an edge's graph copy left no vector copy, and the next one rewrote the edge from its
+  graph copy, description cut at the graph's limit. While a store keeps rejecting a write, the strip strips nothing. A
   failed removal stops the run before the commit, a deleted document's too: the delta merged into the entities a
   failed strip left citing the removed text units, and dropped a new edge no later run wrote. A deleted document whose
   removal keeps failing so holds back the new documents, as a changed one does. The
