@@ -2132,7 +2132,7 @@ class TestStopsInTheLoop:
         import time
 
         async def run() -> int:
-            await asyncio.sleep(5)
+            await asyncio.sleep(60)
             return 0
 
         @exits_on_sigterm
@@ -2144,8 +2144,8 @@ class TestStopsInTheLoop:
         with pytest.raises(SystemExit) as exc:
             main()
         assert exc.value.code == 143
-        # Under load a prompt cancel took 3.65 s; waiting out the sleep, 5 s.
-        assert time.monotonic() - started < 4.5
+        # Under load a prompt cancel took 3.65 s; waiting out the sleep, 60 s.
+        assert time.monotonic() - started < 30
 
     def test_a_second_stop_does_not_cancel_the_cleanup(self) -> None:
         # In the process, a second Ctrl-C leaves the task's finally awaits

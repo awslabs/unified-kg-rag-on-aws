@@ -11,6 +11,7 @@ again. Runs on the embedded stores with the fake model server
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -266,18 +267,24 @@ def test_a_slow_first_parse_of_a_file_type_starts_no_pool(
     for i in range(20):
         (source / f"doc_{i:02d}.txt").write_text(f"Vendor {i} ships.", encoding="utf-8")
     parse_here = source_parsing.SourceFileParser._parse_here
+    # The parser's clock, advanced only by the parses below: each costs what
+    # it is given here, whatever the host's load (a stall on a busy CI runner
+    # must not read as a slow file type).
+    now = [0.0]
+    monkeypatch.setattr(
+        source_parsing, "time", SimpleNamespace(perf_counter=lambda: now[0])
+    )
     calls: list[int] = []
 
     def slow_first(self, path):  # noqa: ANN001, ANN202
         calls.append(1)
-        if len(calls) == 1:
-            import time
-
-            time.sleep(0.2)
+        # The first file alone would outlast a pool's start; the other 19
+        # together take about a tenth of that start.
+        cost = 2 * source_parsing._POOL_START_SECONDS
+        now[0] += cost if len(calls) == 1 else cost / 400
         return parse_here(self, path)
 
     monkeypatch.setattr(source_parsing.SourceFileParser, "_parse_here", slow_first)
-    monkeypatch.setattr(source_parsing, "_POOL_START_SECONDS", 0.1)
     monkeypatch.setattr(source_parsing, "default_max_workers", lambda: 2)
     pooled: list[int] = []
     monkeypatch.setattr(
