@@ -188,8 +188,12 @@ class IndexingManager:
         # Stored entities a derivation of this run renamed under their id (a
         # case or spelling variant won): their claims name them anew.
         self._renamed: dict[str, set[str]] = {}
-        # Ids of the stored edges this run rewrites for their rank only.
+        # Ids of the stored edges this run rewrites for their rank only, and
+        # by (suffix, id) the vector copies of those the derivation read
+        # (None: none stored), which the write compares instead of reading
+        # them again.
         self._rank_only: set[str] = set()
+        self._rank_only_copies: dict[tuple[str, str], Mapping[str, Any] | None] = {}
         # The suffixes whose graph merge found nothing stored.
         self._fresh: set[str] = set()
         # By suffix, the stored items a full build does not have (edges
@@ -688,17 +692,26 @@ class IndexingManager:
     ) -> IndexingStats:
         """Delta upsert of the relationship vectors. An edge this run rewrites
         for its rank only is updated in place (no embedding), unless its
-        vector copy is missing (an interrupted write): that one is upserted."""
+        vector copy is missing (an interrupted write): that one is upserted.
+        The copies the derivation read are compared, the others read."""
         rank_only, self._rank_only = self._rank_only, set()
+        copies, self._rank_only_copies = self._rank_only_copies, {}
         vector = self.vector_indexer
         candidates = [r for r in relationships if r.id in rank_only]
         if not candidates:
             return vector.upsert_relationships(relationships)
         stored: dict[str, Mapping[str, Any]] = {}
         for suffix, group in self._group_by_suffix(candidates).items():
-            stored |= vector.read_vector_copies(
-                "relationships", [r.id for r in group], suffix=suffix
-            )
+            unread = [r.id for r in group if (suffix, r.id) not in copies]
+            stored |= {
+                r.id: copy
+                for r in group
+                if (copy := copies.get((suffix, r.id))) is not None
+            }
+            if unread:
+                stored |= vector.read_vector_copies(
+                    "relationships", unread, suffix=suffix
+                )
         # A copy whose schema annotations differ is written in full too.
         partial = [
             r
@@ -1140,6 +1153,7 @@ class IndexingManager:
             self._renamed,
             self._fresh,
             self._rank_only,
+            self._rank_only_copies,
             self._derived_entities,
         ):
             state.clear()

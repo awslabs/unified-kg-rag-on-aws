@@ -351,3 +351,34 @@ def test_a_strip_sets_the_rank_of_a_hubs_edges_in_place(
     assert not hub_edges & set(whole)
     assert harness.state() == expected_state(spokes)
     assert harness.registry_problems(spokes) == []
+
+
+def test_a_rank_only_edges_vector_copy_is_read_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A new spoke changes the rank of every stored edge at the hub. The
+    # derivation reads their vector copies to compare the rank; the write
+    # compares the same copies instead of reading them again.
+    spokes: Corpus = {
+        f"/corpus/s{i}.txt": [[("Hub", f"Spoke{i}", 1)]] for i in range(5)
+    }
+    harness = IncrementalRun(FakeDocStatusStore())
+    harness.run(spokes)
+    reads: list[str] = []
+    read = harness.vector.read_vector_copies
+
+    def recording(kind: str, ids: list[str], suffix: str | None = None) -> Any:
+        if kind == "relationships":
+            reads.extend(ids)
+        return read(kind, ids, suffix=suffix)
+
+    monkeypatch.setattr(harness.vector, "read_vector_copies", recording)
+    after = {**spokes, "/corpus/new.txt": [[("Hub", "Depot", 1)]]}
+
+    harness.run(after)
+
+    stored = {r.id for r in extract(spokes).relationships}
+    assert sorted(reads) == sorted(stored)
+    assert set(harness.graph.rank_updates) == stored
+    assert harness.state() == expected_state(after)
+    assert harness.registry_problems(after) == []
