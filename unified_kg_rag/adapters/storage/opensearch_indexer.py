@@ -135,6 +135,7 @@ _VECTOR_COPY_FIELDS = {
             "source_name",
             "target_name",
             "description",
+            "rank",
             "in_schema",
             "predicate_iri",
             "source_kinds",

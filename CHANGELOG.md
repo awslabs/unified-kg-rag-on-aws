@@ -488,6 +488,9 @@ From a `main` checkout (formats and keys no release had):
   language set to the same analyzer, `af: dutch` beside `nl`, keeps them too). A language it gives another analyzer
   than its fields hold stops the run before any model call (exit 2, `was built for other language settings`): reset,
   or set the map to what the fields hold.
+- Stored edge ranks: a vector copy's rank a run killed between the stores left (before the rank was compared) is set
+  by the next run deriving one of the edge's endpoints, or by a reset; a `pending-commit` note's `edge_entity_ids`
+  (#694) is ignored.
 - #574 legal forms: entity `name_key` follows the larger table; reset with a new or no `--pipeline-id` to merge
   designator variants, or entities stored apart stay apart.
 - One reset covers all of these and the items below. On an index built with #565 or later it reuses the stored
@@ -1038,11 +1041,12 @@ From a `main` checkout (formats and keys no release had):
   (another spelling took over their name) or dropped; the failed commit already deletes the old ids no failed write
   touches, so a hub whose write keeps failing holds back only the re-keys at it (a note keeps only the old ids still
   stored), and a suffix whose stored reports could not be pointed at the new ids keeps its old ids until a later run
-  does both. The note also lists the entities whose stored edges the commit rewrites (a neighbour's degree changed
-  their rank), and the next commit rewrites those edges in both stores: their vector copies are written first, so
-  a run killed before the graph's, or one whose graph write of an endpoint was rejected (its edges held back), left
-  a rank the graph copy did not have, kept for good once a removal derived the edge back to the graph copy. A note
-  over 1 MiB is split into parts, each its own record, under a store's request limit (10 MiB on
+  does both. The stored edges a commit or a removal's strip reads at the entities it derives are compared with their
+  vector copies' rank too, and one that differs is set in place in both stores: a commit writes the vector copy
+  first, a strip the graph copy, so a run killed in between, or one whose graph write of an endpoint was rejected
+  (its edges held back), left a rank the other copy did not have, kept for good once a later run derived the edge
+  back to the graph copy. A write note (`pending-writes`) over 1 MiB is split into parts, each its own record,
+  under a store's request limit (10 MiB on
   small OpenSearch instances). A noted edge the delta states again takes the endpoints the delta resolves, one whose
   endpoint a later removal re-keyed takes the stored spelling of its name its units state, and a noted
   claim derived again resolves its unit's statements against every stored spelling of their names (`Acme Inc` beside

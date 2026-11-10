@@ -80,14 +80,20 @@ unless noted.
    noted old ids with the noted entities and derives them again: the
    derivation re-keys or drops what a full build does not have, and those
    ids are deleted with its own.
-   It lists the entities whose stored edges the commit rewrites (for a rank
-   or a name) as well. Their vector copies are written in the first phase,
-   the graph copies in the second, so a commit killed in between, or one
-   whose graph write of an endpoint is rejected (its edges are held back),
-   leaves a vector copy ahead of its graph copy. Whether an edge is written
-   is decided against the graph copy, so a removal that derived the edge
-   back to it left the vector copy's rank for good: the next commit rewrites
-   the stored edges at the noted entities in both stores (a rank in place).
+   The stored edges a derivation reads at the entities it touches (a
+   commit's or a removal's strip) are compared with both copies: their
+   vector copies are read with the graph's (`read_vector_copies`, the
+   `rank` too), and an edge whose vector rank differs from the derived one
+   has its rank set in place in both stores. A commit writes the vector
+   copies in its first phase and the graph copies in its second, a strip
+   the graph copies first, so a run killed in between, or a commit whose
+   graph write of an endpoint is rejected (its edges are held back), leaves
+   the vector rank ahead or behind; compared with the graph copy alone, a
+   later derivation that gave the graph copy's rank did not write the edge
+   again, and the vector copy kept a rank no full build has. The next run
+   derives those endpoints again: the killed commit's documents are not
+   recorded, a killed strip's removal resumes, and a rejected write is
+   noted (`pending-writes`, below).
    An item write a store rejects (an entity, relationship, claim, community
    or report; an edge held back for a rejected endpoint) does not fail the
    documents owning it: the commit notes the rejected items as written in

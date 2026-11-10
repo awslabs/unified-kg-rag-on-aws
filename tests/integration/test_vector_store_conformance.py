@@ -447,9 +447,18 @@ def test_vector_copy_reads_hold_the_compared_fields(harness: StoreHarness) -> No
             "source_name": "Vendor",
             "target_name": "Depot",
             "description": "Vendor ships widgets from Depot",
+            # Written 1.0 for none, as the lineage update writes it.
+            "rank": 1.0,
         }
     }
     assert indexer.read_vector_copies("entities", ["e-depot"]) == {}
+    # The rank a lineage update sets in place is read back: a copy whose
+    # rank an interrupted run left behind or ahead is rewritten.
+    ships = _relationships(tenant)[1].model_copy(update={"rank": 3})
+    stats = indexer.update_relationship_lineage([ships])
+    assert stats.failed_items == 0, stats.errors
+    copies = indexer.read_vector_copies("relationships", ["r-ships"], suffix=tenant)
+    assert copies["r-ships"]["rank"] == 3
 
 
 def test_vector_copy_reads_hold_the_schema_annotations(harness: StoreHarness) -> None:
