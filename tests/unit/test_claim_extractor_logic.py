@@ -585,3 +585,22 @@ def test_a_claim_without_an_object_is_kept_with_none(
     assert claim is not None and reference is not None
     assert claim.object_name == "NONE"
     assert claim.id == reference.id
+
+
+def test_the_claim_prompt_takes_reported_allegations_as_disputed() -> None:
+    # MS GraphRAG's claim prompt is built around the allegations and
+    # suspicions a text reports (SUSPECTED, "Person C was suspected of ...");
+    # the prompt used to leave out all speculative content, so a reported
+    # suspicion was no claim at all. Now: a DISPUTED claim, the author's own
+    # opinions still left out.
+    from unified_kg_rag.domain.prompts import ClaimExtractionPrompt
+
+    resolved = ClaimExtractionPrompt.resolve()
+    text = resolved.system_prompt_template + resolved.human_prompt_template
+    assert "speculat" not in text
+    assert "allegation" in text and "suspicion" in text
+    assert "author's own opinions" in text
+    disputed = next(
+        line for line in text.splitlines() if line.startswith("- **DISPUTED**")
+    )
+    assert "alleged" in disputed and "suspected" in disputed

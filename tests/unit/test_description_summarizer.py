@@ -120,6 +120,18 @@ class TestPrompt:
         (inputs,) = DescriptionSummarizer(config)._build_inputs(["仓库"], ["d"])
         assert inputs["target_language"] == "Chinese"
 
+    def test_the_summary_names_its_entity_and_settles_contradictions(self) -> None:
+        # As GraphRAG's summarize_descriptions prompt asks: third person, the
+        # entity names included, contradictions resolved (one undecided by
+        # the inputs is stated, not decided). The prompt used to forbid the
+        # entity name.
+        resolved = DescriptionSummarizationPrompt.resolve()
+        text = resolved.system_prompt_template + resolved.human_prompt_template
+        assert "the entity name" not in text
+        assert "third person" in text
+        assert "both entities of a relationship" in text
+        assert "contradict" in text and "state both" in text
+
     def test_custom_override_respected(self) -> None:
         from unified_kg_rag.domain.models.config import CustomPromptConfig
 
