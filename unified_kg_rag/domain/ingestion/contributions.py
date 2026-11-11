@@ -27,6 +27,7 @@ from unified_kg_rag.domain.ingestion.base_processor import (
 from unified_kg_rag.domain.ingestion.descriptions import (
     merge_descriptions,
 )
+from unified_kg_rag.domain.ingestion.names import display_name_order
 from unified_kg_rag.domain.ingestion.relationship_endpoints import (
     cite_relationship_endpoints,
 )
@@ -73,9 +74,10 @@ def merge_entity_contributions(entities: list[Entity]) -> list[Entity]:
 
     Descriptions are unioned line by line, text units and document filters
     unioned, the confidence is the max (monotonic in evidence), and the type
-    and the name (the ids' names differ in case only) the most frequent of
-    the statements (the smallest on a tie, whatever the order of the
-    statements). The IRI is the smallest one given.
+    and the name (the ids' names differ only in what their key folds: case,
+    quote marks, dashes) the most frequent of the statements (on a tie, the
+    smallest type and the name of ``display_name_order``, whatever the order
+    of the statements). The IRI is the smallest one given.
 
     Documents first: the type, name and confidence come from the statements
     of document units when there are any (the type, when one of them gives
@@ -116,7 +118,7 @@ def merge_entity_contributions(entities: list[Entity]) -> list[Entity]:
             continue
         names = Counter(name for name, _ in deciding[entity.id] if name)
         if names:
-            entity.name = min(names, key=lambda n: (-names[n], n))
+            entity.name = min(names, key=lambda n: (-names[n], display_name_order(n)))
         if len(deciding[entity.id]) < len(group):
             # Documents decide: the seed statements' confidence is left out.
             entity.confidence = merged_confidence(

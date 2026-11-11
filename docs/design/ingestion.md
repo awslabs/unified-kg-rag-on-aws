@@ -67,24 +67,27 @@ gets its models and stores from the run's `Providers` bundle.
   extraction did not list is dropped (the prompt says so, and a unit whose
   record lists no entity is not asked), and an object not listed there is
   kept as the literal name the claim states (`object_id` empty), though
-  another document states that entity. Statements of one claim whose
-  statuses disagree merge into `disputed` (`merge_claim_statuses`); a
-  model's status is read into the prompt's four (`claim_status`: `true`,
-  `false`, `disputed`, `unknown`, as stored) at extraction and in each merge:
-  the prompt's words, MS GraphRAG's `SUSPECTED` (`disputed`) and a few plain
-  synonyms, each in English, Korean, Japanese and Chinese: `confirmed` and
-  `verified` are `true` and `denied` and `refuted` `false` (MS GraphRAG's
-  TRUE is "the claim is confirmed"), `uncertain` and `unverified` (`불확실`,
-  `未確認`) `disputed` (the prompt's DISPUTED is "reported as alleged,
-  suspected or not verified, or contested by conflicting information", MS
-  GraphRAG's SUSPECTED "not verified"); any other
-  word is `unknown`, counted in `total_unrecognised_claim_statuses`. Each unit's statement is resolved
+  another document states that entity. Statements of one claim merge
+  their statuses (`merge_claim_statuses`): `disputed` when one says so or
+  they state it both `true` and `false`, else `true` or `false` when one
+  states it (which settles a `suspected` claim), else `suspected`, and
+  `unknown` only when nothing else is stated; the merge is order-free and
+  associative, so an incremental merge agrees with a full build. A model's
+  status is read into the prompt's five (`claim_status`: `true`, `false`,
+  `suspected`, `disputed`, `unknown`, as stored) at extraction and in each
+  merge: the prompt's words and a few plain synonyms, each in English,
+  Korean, Japanese and Chinese: `confirmed` and `verified` are `true` and
+  `denied` and `refuted` `false` (MS GraphRAG's TRUE is "the claim is
+  confirmed"), `uncertain` and `unverified` (`불확실`, `未確認`) `suspected`
+  (MS GraphRAG's SUSPECTED is "not verified"; the prompt's DISPUTED is
+  "conflicting information"); any other word is `unknown`, counted in
+  `total_unrecognised_claim_statuses`. Each unit's statement is resolved
   on its own, and resolution merges the statements that resolve to one
   claim id. As MS GraphRAG's `extract_claims` prompt, built around the
   allegations a text reports ("Person C was suspected of ..."), the claim
   prompt asks for the facts a text states and the allegations and
-  suspicions it reports (as `DISPUTED`, saying who alleges them), and leaves
-  out only the author's own opinions.
+  suspicions it reports (as `SUSPECTED`, saying who alleges them), and
+  leaves out only the author's own opinions.
 - **The extraction store** keeps each record, keyed by
   `<fingerprint>:<SHA-256 of the processed text>`, in the vector store's
   extraction-records index. The fingerprint
@@ -204,8 +207,12 @@ gets its models and stores from the run's `Providers` bundle.
   KG` / `S.A. de C.V.`, a leading `ООО` or `Công ty TNHH`, ...) and without
   spaces next to Han, Hangul or Kana, so "(주)가나다", "가나다 상사" /
   "가나다상사", "Acme Inc" / "Acme" and "ООО «Ромашка»" / "Ромашка" merge. A
-  merged group takes the name cited by the most text units (ties: the
-  smallest), so the result does not depend on input order. The list is
+  form is read as written or without all its accents, never a word without
+  its own ("Marcelo Sá" keeps "Sá"), and one that is also a unit symbol
+  (`LanguageProfile.unit_like_legal_forms`: "kg") not after a number. A
+  merged group takes the name cited by the most text units (ties: the one
+  its key folds least, then the smallest: `display_name_order`), so the
+  result does not depend on input order. The list is
   applied whatever the entity's type: entity types are the user's
   vocabulary, so no type rule tells a company from a place, and a place
   written with a region code that is also a designator ("Springfield, CO")

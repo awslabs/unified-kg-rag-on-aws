@@ -35,6 +35,8 @@ from enum import Enum
 from functools import cache
 
 __all__ = [
+    "APOSTROPHE_STAND_INS",
+    "INVISIBLE_FORMAT_CHARS",
     "OTHER_LETTERS",
     "DENSE_SCRIPT_LETTERS",
     "DENSE_SCRIPT_TOKEN_RANGES",
@@ -95,6 +97,9 @@ class Script:
     so text compared for identity may drop them. ``letter_variants`` are
     letters its writers use for one another (an Arabic alef with or
     without its hamza), each with the letter a search reads it as.
+    ``middle_dot_stand_ins`` are letters its writers type for a middle dot,
+    each with the letters between which it is one (Korean writes the
+    archaic vowel "ㆍ" for "·" between two syllables: "한ㆍ미").
     """
 
     name: str
@@ -103,8 +108,11 @@ class Script:
     chars_per_token: float = LATIN_CHARS_PER_TOKEN
     optional_marks: Ranges = field(default=())
     letter_variants: Mapping[str, str] = field(default_factory=dict)
+    middle_dot_stand_ins: Mapping[str, Ranges] = field(default_factory=dict)
 
 
+# The precomposed Hangul syllables (가-힣).
+_HANGUL_SYLLABLES: Ranges = ((0xAC00, 0xD7A3),)
 # Han, Hangul and Kana blocks.
 _HANGUL: Ranges = (
     (0x1100, 0x11FF),  # Hangul Jamo
@@ -227,7 +235,14 @@ SCRIPTS: tuple[Script, ...] = (
         ),
         Spacing.SPACELESS,
     ),
-    Script("hangul", _HANGUL, Spacing.DENSE, 1.0),
+    Script(
+        "hangul",
+        _HANGUL,
+        Spacing.DENSE,
+        1.0,
+        # The compatibility araea "ㆍ" and the jamo NFKC reads it as.
+        middle_dot_stand_ins={"\u318d": _HANGUL_SYLLABLES, "\u119e": _HANGUL_SYLLABLES},
+    ),
     Script("kana", _KANA, Spacing.DENSE, 1.0),
     Script("han", _HAN, Spacing.DENSE, 1.0),
 )
@@ -461,16 +476,45 @@ def without_latin_accents(text: str) -> str:
 # A middle dot (Latin, hyphenation point, katakana and its half-width form)
 # between two Han, Hangul or Kana letters, where it separates the words of
 # one name ("オリオン・ラボ").
+# The middle dots (Latin, hyphenation point, katakana and its half-width
+# form) and the letters a script types for one (``Script.middle_dot_stand_ins``).
+_MIDDLE_DOTS = "\u00b7\u2027\u30fb\uff65"
+_DOTS = re.escape(
+    _MIDDLE_DOTS
+    + "".join(dot for script in SCRIPTS for dot in script.middle_dot_stand_ins)
+)
+
+
+def _between(letters: str, dots: str) -> str:
+    """One of ``dots`` between two of ``letters`` (each a character class
+    body) that are no dots: the katakana middle dot is in the Kana block,
+    and a dot beside another stays, so a text joined once is joined."""
+    return f"(?<=[{letters}])(?<![{_DOTS}])[{dots}](?=[{letters}])(?![{_DOTS}])"
+
+
+# A middle dot between two Han, Hangul or Kana letters, where it separates
+# the words of one name ("オリオン・ラボ"), and a letter a script types for
+# one between the letters it stands as one between.
 _DENSE_MIDDLE_DOT = re.compile(
-    f"(?<=[{DENSE_SCRIPT_LETTERS}])[\u00b7\u2027\u30fb\uff65]"
-    f"(?=[{DENSE_SCRIPT_LETTERS}])"
+    "|".join(
+        [
+            _between(DENSE_SCRIPT_LETTERS, re.escape(_MIDDLE_DOTS)),
+            *(
+                _between(_class_body(ranges), re.escape(dot))
+                for script in SCRIPTS
+                for dot, ranges in script.middle_dot_stand_ins.items()
+            ),
+        ]
+    )
 )
 
 
 def join_dense_middle_dots(text: str) -> str:
     """``text`` without the middle dots between Han, Hangul or Kana letters:
     "オリオン・ラボ" is "オリオンラボ", as those scripts write a name's words
-    with a dot, a space or nothing between them; a dot elsewhere stays."""
+    with a dot, a space or nothing between them, nor the letters a script
+    types for one where they are one (``Script.middle_dot_stand_ins``:
+    "한ㆍ미" is "한미"); a dot elsewhere stays."""
     return _DENSE_MIDDLE_DOT.sub("", text)
 
 
@@ -507,6 +551,25 @@ WORD_DASHES = (
         lambda ch: unicodedata.category(ch) == "Pd" and ch not in "\u301c\u3030"
     )
     + "\u2212"
+)
+
+
+# What a writer types for an apostrophe: the acute accent "´", the modifier
+# letter apostrophe "ʼ" and the prime "′" ("McDonald´s"). Not the ʻokina
+# "ʻ", a Hawaiian letter. NFKC reads "´" as a space and an accent, so a key
+# folds these before it.
+APOSTROPHE_STAND_INS = "\u00b4\u02bc\u2032"
+# The format characters that show nothing and carry no letter: the soft
+# hyphen, the zero-width space, the word joiner and the invisible operators,
+# the byte-order mark and the direction marks, embeddings, overrides and
+# isolates. Not the zero-width joiner and non-joiner, which shape the
+# letters of Indic and Arabic scripts and of emoji.
+INVISIBLE_FORMAT_CHARS = (
+    "\u00ad\u061c\u200b\u200e\u200f"
+    + "".join(map(chr, range(0x202A, 0x202F)))
+    + "".join(map(chr, range(0x2060, 0x2065)))
+    + "".join(map(chr, range(0x2066, 0x206A)))
+    + "\ufeff"
 )
 
 

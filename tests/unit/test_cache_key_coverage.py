@@ -474,19 +474,69 @@ def test_an_edited_builtin_prompt_rekeys_its_stage_and_those_after(
     # resumed pipeline does not serve what the earlier prompt produced.
     from unified_kg_rag.domain import prompts
 
+    config = Config()  # every stage on that asks a prompt
+    config.processing.claim_extraction.enabled = True
     order = list(PipelineStageType)
-    before = {s: stage_input_fingerprint(Config(), s) for s in order}
+    before = {s: stage_input_fingerprint(config, s) for s in order}
     prompt_class = getattr(prompts, prompt)
     monkeypatch.setattr(
         prompt_class,
         "system_prompt_template",
         prompt_class.system_prompt_template + " Edited.",
     )
-    cache_keys._builtin_prompts.cache_clear()
-    try:
-        after = {s: stage_input_fingerprint(Config(), s) for s in order}
-    finally:
-        monkeypatch.undo()
-        cache_keys._builtin_prompts.cache_clear()
+    after = {s: stage_input_fingerprint(config, s) for s in order}
     changed = [s for s in order if before[s] != after[s]]
     assert changed == order[order.index(stage) :]
+
+
+def _claims_off() -> Config:
+    config = Config()
+    config.processing.claim_extraction.enabled = False
+    return config
+
+
+def test_only_the_prompts_in_effect_key_a_stage(monkeypatch) -> None:
+    # With claims off the claim prompt is asked by no stage: an edit of it
+    # re-keyed every stage after claim extraction all the same.
+    from unified_kg_rag.domain import prompts
+
+    order = list(PipelineStageType)
+    before = {s: stage_input_fingerprint(_claims_off(), s) for s in order}
+    prompt = prompts.ClaimExtractionPrompt
+    monkeypatch.setattr(
+        prompt, "system_prompt_template", prompt.system_prompt_template + " Edited."
+    )
+    assert {s: stage_input_fingerprint(_claims_off(), s) for s in order} == before
+
+
+def test_an_override_keys_a_stage_in_place_of_the_builtin_prompt(monkeypatch) -> None:
+    # The override is what the stage asks: an edit of the built-in template
+    # it replaces shapes nothing.
+    from unified_kg_rag.domain import prompts
+
+    config = Config()
+    config.custom_prompts.graph_extraction_system = "Custom {input_text}"
+    stage = PipelineStageType.GRAPH_EXTRACTION
+    before = stage_input_fingerprint(config, stage)
+    prompt = prompts.GraphExtractionPrompt
+    monkeypatch.setattr(
+        prompt, "system_prompt_template", prompt.system_prompt_template + " Edited."
+    )
+    assert stage_input_fingerprint(config, stage) == before
+
+
+@pytest.mark.parametrize("text", ["DEFAULT_RELATIONSHIP_TYPES", "ANY_ENTITY_TYPES"])
+def test_the_fixed_text_a_slot_renders_to_keys_its_stage(monkeypatch, text) -> None:
+    # Without declared types the extraction prompt's slots are fixed text
+    # (code): the template alone left an edit of it unkeyed. Read without
+    # the schema, which a stage key may be asked for before it is loaded.
+    from unified_kg_rag.domain.prompts import graph_extraction
+
+    order = list(PipelineStageType)
+    before = {s: stage_input_fingerprint(Config(), s) for s in order}
+    monkeypatch.setattr(
+        graph_extraction, text, getattr(graph_extraction, text) + "\n- **OTHER**"
+    )
+    after = {s: stage_input_fingerprint(Config(), s) for s in order}
+    changed = [s for s in order if before[s] != after[s]]
+    assert changed == order[order.index(PipelineStageType.GRAPH_EXTRACTION) :]

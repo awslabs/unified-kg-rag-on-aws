@@ -71,6 +71,7 @@ pytestmark = pytest.mark.unit
         "Acme Pvt. Ltd.",
         "Acme Private Limited",
         "Acme प्राइवेट लिमिटेड",
+        "Acme, S.A.B. de C.V.",
     ],
 )
 def test_latin_designators_are_stripped(name: str) -> None:
@@ -115,6 +116,18 @@ def test_dense_script_designators_are_stripped(name: str, bare: str) -> None:
         ("شركة المورد ذ.م.م", "المورد"),
         ('בית הספק בע"מ', "בית הספק"),
         ("บริษัท เอซีเอ็มอี จำกัด", "เอซีเอ็มอี"),
+        # The accent-free spelling of a form is the form.
+        ("Cong ty TNHH Acme", "Acme"),
+        ("Cong ty Acme", "Acme"),
+        ("Công ty Acme", "Acme"),
+        # After a number as after a word, but for a unit symbol ("500 kg").
+        ("Channel 4 Ltd", "Channel 4"),
+        ("Formula 1 GmbH", "Formula 1"),
+        ("FC Schalke 04 e.V.", "FC Schalke 04"),
+        ("1. FSV Mainz 05 e.V.", "1. FSV Mainz 05"),
+        # What a removed form leaves ends as a key does.
+        ("Müller & Co. KG", "Müller & Co KG"),
+        ("บริษัท ปตท. จำกัด (มหาชน)", "ปตท."),
     ],
 )
 def test_designators_of_other_scripts_are_stripped(name: str, bare: str) -> None:
@@ -135,6 +148,15 @@ def test_designators_of_other_scripts_are_stripped(name: str, bare: str) -> None
         "股份有限公司",
         "Acme Inc (Korea)",  # not at the end
         "Payload 500 kg",  # a unit after a number
+        "500 kg",
+        # A word is not read without its accents: no "SA", "Co" or "AG".
+        "Marcelo Sá",
+        "Mem de Sá",
+        "Khu Phố Cổ",
+        "Ngô Văn Cô",
+        "Hữu Cơ",
+        "Nagy Ág",
+        "Hotel Sapa",  # S.a.p.A. only with its dots
         "Acme ev",  # e.V. only with its dots
         "Mercedes SL",  # S.L. only with its dots
         "iPhone SE",  # an edition, not a Societas Europaea
@@ -163,6 +185,11 @@ def test_designators_alone_keep_the_first() -> None:
         ("l.l.c.", "llc"),
         ("s.p.a.", "spa"),
         ("spa", None),
+        ("sapa", None),
+        ("s.a.p.a.", "sapa"),
+        ("sá", None),
+        ("ág", None),
+        ("cổ", None),
         ("acme", None),
     ],
 )

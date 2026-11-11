@@ -766,7 +766,7 @@ def test_a_written_cjk_or_dotted_date_reads_as_a_calendar_date() -> None:
         (" True ", "true"),
         ("FALSE", "false"),
         ("**False**", "false"),
-        ("Suspected", "disputed"),  # MS GraphRAG's word
+        ("Suspected", "suspected"),  # MS GraphRAG's word
         ("DISPUTED", "disputed"),
         ("UNKNOWN", "unknown"),
         ("N/A", "unknown"),
@@ -781,19 +781,24 @@ def test_a_written_cjk_or_dotted_date_reads_as_a_calendar_date() -> None:
         ("虚假", "false"),
         ("有争议", "disputed"),
         ("ＴＲＵＥ", "true"),  # full-width
-        # Uncertain and unverified: disputed in every language (the prompt's
-        # DISPUTED covers "uncertainty indicated", MS GraphRAG's SUSPECTED
-        # "not verified"); Korean read them as unrecognised.
-        ("Uncertain", "disputed"),
-        ("unverified", "disputed"),
-        ("불확실", "disputed"),
-        ("미확인", "disputed"),
-        ("未確認", "disputed"),
-        ("不确定", "disputed"),
-        # Suspected in every language.
-        ("의심", "disputed"),
-        ("疑い", "disputed"),
-        ("涉嫌", "disputed"),
+        # Uncertain and unverified: suspected in every language (MS
+        # GraphRAG's SUSPECTED is "not verified"); Korean read them as
+        # unrecognised.
+        ("Uncertain", "suspected"),
+        ("unverified", "suspected"),
+        ("불확실", "suspected"),
+        ("미확인", "suspected"),
+        ("未確認", "suspected"),
+        ("不确定", "suspected"),
+        # Suspected in every language, its own status.
+        ("SUSPECTED", "suspected"),
+        ("의심", "suspected"),
+        ("疑い", "suspected"),
+        ("涉嫌", "suspected"),
+        # Disputed: conflicting information.
+        ("Disputed", "disputed"),
+        ("논란", "disputed"),
+        ("係争", "disputed"),
         # MS GraphRAG's wording of its TRUE and FALSE: confirmed and
         # verified, denied and refuted, in every language.
         ("Confirmed", "true"),
@@ -839,3 +844,23 @@ def test_off_vocabulary_statuses_merge_as_the_status_they_name() -> None:
     assert merge_claim_statuses(["Suspected", "disputed"]) == "disputed"
     assert merge_claim_statuses(["n/a", "false"]) == "false"
     assert merge_claim_statuses([None, ""]) is None
+
+
+def test_claim_statuses_merge_as_a_join() -> None:
+    # SUSPECTED is its own status (MS GraphRAG's "not verified"): TRUE or
+    # FALSE settles it, TRUE and FALSE together dispute the claim, and the
+    # merge is the same whatever the grouping or order of the statements, so
+    # an incremental merge of a stored status agrees with a full build.
+    from itertools import product
+
+    statuses = ["TRUE", "FALSE", "SUSPECTED", "DISPUTED", "UNKNOWN"]
+    assert merge_claim_statuses(["SUSPECTED"]) == "suspected"
+    assert merge_claim_statuses(["SUSPECTED", "TRUE"]) == "true"
+    assert merge_claim_statuses(["FALSE", "SUSPECTED"]) == "false"
+    assert merge_claim_statuses(["TRUE", "SUSPECTED", "FALSE"]) == "disputed"
+    assert merge_claim_statuses(["DISPUTED", "SUSPECTED"]) == "disputed"
+    assert merge_claim_statuses(["UNKNOWN", "SUSPECTED"]) == "suspected"
+    for a, b, c in product(statuses, repeat=3):
+        whole = merge_claim_statuses([a, b, c])
+        assert merge_claim_statuses([merge_claim_statuses([a, b]), c]) == whole
+        assert merge_claim_statuses([a, merge_claim_statuses([c, b])]) == whole

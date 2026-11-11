@@ -15,7 +15,10 @@ from unified_kg_rag.domain.ingestion.base_processor import (
 )
 from unified_kg_rag.domain.ingestion.base_resolver import BaseResolver, FuzzyMatcher
 from unified_kg_rag.domain.ingestion.graph_rank import with_graph_ranks
-from unified_kg_rag.domain.ingestion.names import normalize_entity_type
+from unified_kg_rag.domain.ingestion.names import (
+    display_name_order,
+    normalize_entity_type,
+)
 from unified_kg_rag.domain.ingestion.relationship_endpoints import (
     sync_relationship_endpoint_names,
 )
@@ -373,7 +376,7 @@ class EntityResolver(BaseResolver):
     @staticmethod
     def _best_supported_name(entities: list[Entity]) -> str:
         """The group name cited by the most document text units, then by the
-        most seed units (ties: smallest name).
+        most seed units (ties: ``display_name_order``).
 
         Extraction already merges one name's mentions into one entity, so
         counting entities would leave every name at one and make the
@@ -385,9 +388,9 @@ class EntityResolver(BaseResolver):
         for entity in entities:
             support[entity.name].update(entity.text_unit_ids or ())
 
-        def key(name: str) -> tuple[int, int, str]:
+        def key(name: str) -> tuple[int, int, tuple[int, str]]:
             seeds = sum(map(is_seed_unit, support[name]))
-            return -(len(support[name]) - seeds), -seeds, name
+            return -(len(support[name]) - seeds), -seeds, display_name_order(name)
 
         return min(support, key=key)
 

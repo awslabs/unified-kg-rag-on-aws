@@ -63,6 +63,10 @@ class LanguageProfile:
     leading_legal_forms: Mapping[str, str] = field(default_factory=dict)
     # Legal-form designators in Han, Hangul or Kana, leading or trailing.
     dense_legal_forms: tuple[str, ...] = ()
+    # Its legal forms that are also unit symbols, read as a unit after a
+    # number ("500 kg" is a weight; another form follows a number as it
+    # follows a word: "Formula 1 GmbH").
+    unit_like_legal_forms: tuple[str, ...] = ()
     # Its articles, which answer normalization drops ("der Rhein" is
     # "Rhein").
     articles: frozenset[str] = frozenset()

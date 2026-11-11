@@ -256,14 +256,19 @@ See [exit codes and JSON output](docs/reference/exit-codes-and-json.md) and the
 - Entity resolution merges only names equal after normalization, legal-form removal and dense-script spacing (fuzzy
   matching is opt-in). Legal forms (the language profiles, `domain/languages/legal_forms.py`): trailing Inc, Corp,
   Co, Ltd, LLC, LLP, LP, PLC, Pty, Pvt, Pte, GmbH, AG, KG, UG, SA, SAS, SARL, S.L., SRL, S.p.A., Ltda, S/A, BV,
-  NV and KK in any dotting or accents, forms of several words (`GmbH & Co. KG`, `S.A. de C.V.`, `Private Limited`),
-  Russian, Arabic, Hebrew, Hindi and Thai forms, those written before the name (`ООО`, `Công ty TNHH`, `شركة`,
-  `บริษัท`) and the Korean, Japanese and Chinese company forms leading or trailing ("(주)", "合同会社", "股份有限公司"),
-  so "Acme GmbH" and "Acme" of one type are one entity; not after "&"/"and", an article alone or a number ("500 kg").
-  Entity keys, which ids hash, drop the quote marks of every script («», „“, 「」, 《》), read every dash and the minus
-  sign as a space, and drop a middle dot between Han, Hangul or Kana letters and the Arabic and Hebrew vowel marks
-  ("ジョン・スミス" is "ジョンスミス"). Entity and relationship `rank` come from node degree, and a relationship's weight
-  sums its strengths per text unit (#189, #214, #574).
+  NV and KK in any dotting, as written or without all their accents ("Cong ty" is "Công ty"; a word is not read
+  without its own: "Marcelo Sá", "Khu Phố Cổ" keep it), forms of several words (`GmbH & Co. KG`, `S.A. de C.V.`,
+  `S.A.B. de C.V.`, `Private Limited`), Russian, Arabic, Hebrew, Hindi and Thai forms, those written before the name
+  (`ООО`, `Công ty TNHH`, `شركة`, `บริษัท`) and the Korean, Japanese and Chinese company forms leading or trailing
+  ("(주)", "合同会社", "股份有限公司"), so "Acme GmbH" and "Acme" of one type are one entity; not after "&"/"and" nor an
+  article alone, and a form that is also a unit symbol not after a number ("500 kg"; "Channel 4 Ltd" is "Channel 4").
+  Entity keys, which ids hash, drop the quote marks of every script («», „“, 「」, 《》), what is typed for an apostrophe
+  (´, ʼ, ′; not the ʻokina) and the invisible format characters (soft hyphen, zero-width space, direction marks; not
+  the joiners), read every dash as a space but a minus sign opening the name ("−40 °C" is not "40 °C"), drop a middle
+  dot between Han, Hangul or Kana letters (and Korean's "ㆍ" between syllables), the Arabic and Hebrew vowel marks and
+  a trailing "。" ("ジョン・スミス" is "ジョンスミス"); a key is its own key. Of spellings with one key, the one its key folds
+  least names the entity on a tie ("토지", not "「토지」"). Entity and relationship `rank` come from node degree, and a
+  relationship's weight sums its strengths per text unit (#189, #214, #574).
 - Entities have no `MemberOf` edges to communities; an entity lists its `community_ids` (#348).
 - Hidden files and files under a hidden or `__pycache__` directory of the corpus are not parsed (#213).
 
@@ -496,16 +501,17 @@ From a `main` checkout (formats and keys no release had):
 - Stored edge ranks: a vector copy's rank a run killed between the stores left (before the rank was compared) is set
   by the next run deriving one of the edge's endpoints, or by a reset; a `pending-commit` note's `edge_entity_ids`
   (#694) is ignored.
-- Re-keyed once before 0.3.0: entity ids and name keys fold quotes, dashes, dense-script middle dots and Arabic and
-  Hebrew marks and strip more legal forms (*Stored data and reindexing*); the description summary and claim prompts
-  changed (*Fixed*); stage-cache keys hold the built-in prompts (a pipeline id resumed across a prompt change starts
-  over); extraction records under earlier keys (other description summary settings, #541-#556) and claims under an
-  earlier reading of their dates (#612, #624) are no longer looked up. Run one reset (`indexing.reset: true`) with a
-  new or no `--pipeline-id`: incremental runs keep stored entities under their earlier ids beside the new ones. It
-  reuses the stored graph extraction and gleaning records (a record a build before #556 stored under other summary
-  settings or `models` tiers is extracted again) and asks one summary per entity or relationship over the summary
-  threshold, the reports of the communities whose input changed (most of them) and, with claim extraction on, every
-  unit's claims (one call per unit that states an entity).
+- Re-keyed once before 0.3.0: entity ids and name keys fold quotes, apostrophes, invisible characters, dashes (not a
+  leading minus), dense-script middle dots and Arabic and Hebrew marks and strip more legal forms (*Stored data and
+  reindexing*); the description summary and claim prompts changed and claims keep a `suspected` status (*Fixed*);
+  stage-cache keys hold the prompts in effect (a pipeline id resumed across a prompt change starts over); extraction
+  records under earlier keys (other description summary settings, #541-#556) and claims under an earlier reading of
+  their dates (#612, #624) are no longer looked up. Run one reset (`indexing.reset: true`) with a new or no
+  `--pipeline-id`: incremental runs keep stored entities under their earlier ids beside the new ones. It reuses the
+  stored graph extraction and gleaning records (a record a build before #556 stored under other summary settings or
+  `models` tiers is extracted again) and asks one summary per entity or relationship over the summary threshold, the
+  reports of the communities whose input changed (most of them) and, with claim extraction on, every unit's claims
+  (one call per unit that states an entity).
 - One reset covers all of these and the items below. On an index built with #565 or later it reuses the stored
   extraction records and vectors: beyond what the items below name, the model is asked only for the reports of the
   communities that cluster differently and a summary and embedding per newly merged entity over the threshold. On
@@ -1834,16 +1840,16 @@ Ingestion and incremental indexing.
   is not asked (its claims could resolve to nothing); and a claim whose statements disagree (`TRUE` and `FALSE`) is
   `disputed`, in a full build and incrementally, where a majority vote read a tie as `FALSE` and an incremental run
   kept the stored status whatever the new documents said (#624). A status is read into the prompt's vocabulary
-  (`true`, `false`, `disputed`, `unknown`, as stored: `True.` is `true`, MS GraphRAG's `SUSPECTED` is `disputed`, an
-  unrecognised word `unknown`) at extraction and in every merge, so a stored off-vocabulary status no longer
-  disputes the same one (#640). The words read are the prompt's, `SUSPECTED` and a few plain synonyms, the same in
-  English, Korean, Japanese and Chinese (#644): `confirmed` and `verified` are `true`, `denied` and `refuted`
-  `false`, and `uncertain` and `unverified` (`불확실`, `未確認`) `disputed`, as the prompt's DISPUTED ("alleged,
-  suspected or not verified") and MS GraphRAG's SUSPECTED ("not verified") say (Korean read them as unrecognised);
-  the claims whose status is none of them are counted in the `total_unrecognised_claim_statuses` metric (#644). As
-  MS GraphRAG's claim prompt, built around the allegations a text reports, the prompt takes an allegation or
-  suspicion the text reports as a `DISPUTED` claim saying who alleges it, where it left out all speculation; only the
-  author's own opinions are left out.
+  (`true`, `false`, `suspected`, `disputed`, `unknown`, as stored: `True.` is `true`, an unrecognised word `unknown`)
+  at extraction and in every merge, so a stored off-vocabulary status no longer disputes the same one (#640). The
+  words read are the prompt's and a few plain synonyms, the same in English, Korean, Japanese and Chinese (#644):
+  `confirmed` and `verified` are `true`, `denied` and `refuted` `false`, and `uncertain` and `unverified` (`불확실`,
+  `未確認`) `suspected`, as MS GraphRAG's SUSPECTED ("not verified") says (Korean read them as unrecognised); the
+  claims whose status is none of them are counted in the `total_unrecognised_claim_statuses` metric (#644). As MS
+  GraphRAG's claim prompt, built around the allegations a text reports, the prompt takes an allegation or suspicion
+  the text reports as a `SUSPECTED` claim saying who alleges it, where it left out all speculation, and keeps
+  `DISPUTED` for conflicting information; only the author's own opinions are left out. A `true` or `false` statement
+  settles a `suspected` claim, `true` and `false` together dispute it.
 - An entity without relationships no longer adds a level to the community hierarchy: it made a single root over
   the other communities read as a partition, so global search's cut depths depended on it (#608).
 - A model answer that corrects itself is parsed by its last complete answer (each XML section keeps its last closed

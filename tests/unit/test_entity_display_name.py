@@ -81,6 +81,32 @@ def _entity(processor: BaseProcessor, unit: TextUnit, name: str) -> Entity:
         ("שָׁלוֹם", "שלום"),
         # A wave dash is a range, not a hyphen.
         ("第1〜3条", "第1〜3条"),
+        # A minus sign opening the name is a sign, not a hyphen.
+        ("−40 °C", "-40 °c"),
+        ("-5%", "-5%"),
+        ("«–40»", "-40"),
+        ("Acme−40", "acme 40"),
+        # What a writer types for an apostrophe is one; the ʻokina a letter.
+        ("McDonald´s", "mcdonalds"),
+        ("McDonaldʼs", "mcdonalds"),
+        ("O′Brien", "obrien"),
+        ("Hawaiʻi", "hawaiʻi"),
+        # Invisible format characters carry nothing; the joiners shape letters.
+        ("Wi\u00adFi", "wifi"),
+        ("Ven\u200bdor", "vendor"),
+        ("\ufeffVendor\u2060", "vendor"),
+        ("\u200f\u202bשלום\u202c", "שלום"),
+        ("क्\u200dष", "क्\u200dष"),
+        ("می\u200cخواهم", "می\u200cخواهم"),
+        # Korean writes "ㆍ" for a middle dot between syllables.
+        ("한ㆍ미 FTA", "한미 fta"),
+        ("ㆍ미", "ᆞ미"),
+        # The ideographic full stop ends a name as "." does.
+        ("「君の名は。」", "君の名は"),
+        # Quotes go before the dots are joined: a key is its own key.
+        ("漢・》漢", "漢漢"),
+        # A dot beside another stays: the katakana one is in the Kana block.
+        ("가・·漢", "가・·漢"),
     ],
 )
 def test_entity_key(name: str, key: str) -> None:
@@ -190,3 +216,37 @@ def test_gleaner_duplicate_merge_uses_identity_key() -> None:
     )
     GraphGleaner._add_to_record(record, [Entity(id="d", name="ACME Corp.")], [])
     assert sorted(e.id for e in record.entities) == ["a", "b", "c"]
+
+
+# --------------------------------------------------------------------------- #
+# Display name of spellings that tie
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    ("spellings", "shown"),
+    [
+        (["「토지」", "토지"], "토지"),
+        (["Ｗｉ－Ｆｉ", "Wi-Fi"], "Wi-Fi"),
+        (["“Vendor”", "Vendor"], "Vendor"),
+    ],
+)
+def test_a_tie_shows_the_spelling_its_key_writes_as_it_is(
+    spellings: list[str], shown: str
+) -> None:
+    # One id, one text unit each: the smallest name alone put a quote mark
+    # or a full-width letter first. Either order gives one name.
+    from unified_kg_rag.domain.ingestion.contributions import (
+        merge_entity_contributions,
+    )
+
+    key = entity_key(shown)
+    assert {entity_key(s) for s in spellings} == {key}
+    for order in (spellings, spellings[::-1]):
+        entities = [
+            Entity(id=key, name=s, type="CONCEPT", text_unit_ids=[f"t{i}"])
+            for i, s in enumerate(order)
+        ]
+        assert EntityResolver._best_supported_name(entities) == shown
+        (merged,) = merge_entity_contributions(entities)
+        assert merged.name == shown

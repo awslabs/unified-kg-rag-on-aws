@@ -13,6 +13,7 @@ from unified_kg_rag.domain.ingestion.descriptions import merge_descriptions
 from unified_kg_rag.domain.ingestion.names import (
     compact_name_key,
     discriminator_tokens,
+    display_name_order,
     entity_types_compatible,
     head_character,
     normalize_entity_type,
@@ -29,6 +30,7 @@ __all__ = [
     "FuzzyMatcher",
     "compact_name_key",
     "discriminator_tokens",
+    "display_name_order",
     "entity_types_compatible",
     "head_character",
     "normalize_entity_type",

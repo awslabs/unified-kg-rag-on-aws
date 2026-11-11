@@ -258,6 +258,14 @@ def test_coverage_leaves_latin_accents_out() -> None:
     assert link_key("Café") != link_key("Cafe")
 
 
+def test_a_word_is_no_legal_form_without_its_accents() -> None:
+    # "Sá" read without its accent was the form "SA" and left out of the
+    # terms, so the person "Marcelo" covered "Marcelo Sá".
+    assert name_terms("Marcelo Sá") == {"marcelo", "sa"}
+    assert not covers("Marcelo", "Marcelo Sá")
+    assert name_terms("Acme S.A.") == {"acme"}
+
+
 @pytest.mark.parametrize(
     ("mention", "name"),
     [

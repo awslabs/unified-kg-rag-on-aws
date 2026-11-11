@@ -180,6 +180,16 @@ class BasePrompt:
         return {}
 
     @classmethod
+    def code_slots(cls) -> dict[str, str]:
+        """``{variable: value}`` of the slots rendered from the configuration,
+        as they render when it declares nothing: the fixed text (code) they
+        hold then. A stage-cache key hashes a template with these filled in,
+        so an edit of that text re-keys the stages it shapes, without
+        reading a schema not loaded yet (the declared values are keyed as
+        settings)."""
+        return {}
+
+    @classmethod
     def validate_templates(cls) -> None:
         """Raise ``ValueError`` when a declared input variable appears in
         neither shipped template."""

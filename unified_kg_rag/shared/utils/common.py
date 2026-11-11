@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 from .scripts import (
+    APOSTROPHE_STAND_INS,
+    INVISIBLE_FORMAT_CHARS,
     QUOTE_MARKS,
     WORD_DASHES,
     drop_optional_marks,
@@ -236,13 +238,39 @@ def normalize_name(name: str | None) -> str:
 # them: the apostrophe, the grave accent, the comma and every quote mark
 # (``QUOTE_MARKS``).
 _RE_KEY_DROP_CHARS = re.compile(f"[{re.escape(QUOTE_MARKS)}'`,]")
+# Read before NFKC: what a writer types for an apostrophe as one
+# (``APOSTROPHE_STAND_INS``), and the invisible format characters dropped
+# (``INVISIBLE_FORMAT_CHARS``: "Wi\u00adFi" is "WiFi").
+_KEY_BEFORE_NFKC = str.maketrans(
+    {
+        **dict.fromkeys(APOSTROPHE_STAND_INS, "'"),
+        **dict.fromkeys(INVISIBLE_FORMAT_CHARS),
+    }
+)
 # Dashes join words as "-" does, so entity_key reads them as spaces
-# (``WORD_DASHES``), as it reads "_".
-_RE_KEY_DASHES = re.compile(f"[{re.escape(WORD_DASHES)}_]")
+# (``WORD_DASHES``), as it reads "_", except a dash opening the name before a
+# digit, a minus sign ("−40 °C" is not "40 °C"), read as "-". Only opening
+# the name: after a space, a dense-script name's optional spacing would make
+# one dash a sign or a hyphen ("영하 -40" and "영하-40").
+_RE_KEY_DASHES = re.compile(
+    f"(?P<sign>^\\s*[{re.escape(WORD_DASHES)}](?=\\d))|[{re.escape(WORD_DASHES)}_]"
+)
 # Sentence punctuation the LLM sometimes leaves on the end of a name
-# ("Acme Corp." vs "Acme Corp"). Only stripped at the end, so "4.2", ".NET"
-# and "C++" keep their symbols.
-_RE_KEY_TRAILING_PUNCT = re.compile(r"[.;:!?]+$")
+# ("Acme Corp." vs "Acme Corp"), and the ideographic full stop ("君の名は。",
+# as the query entity list strips it). Only stripped at the end, so "4.2",
+# ".NET" and "C++" keep their symbols.
+_RE_KEY_TRAILING_PUNCT = re.compile(r"[\s.;:!?\u3002]+$")
+
+
+def _key_dash(match: re.Match[str]) -> str:
+    return "-" if match["sign"] is not None else " "
+
+
+def strip_trailing_punctuation(key: str) -> str:
+    """``key`` without the sentence punctuation and whitespace at its end
+    (:func:`entity_key`'s last step): what a key keeps of a name it was cut
+    from (a legal form after "Co.") ends as a key does."""
+    return _RE_KEY_TRAILING_PUNCT.sub("", key)
 
 
 def clean_display_name(name: str | None) -> str:
@@ -261,13 +289,18 @@ def clean_display_name(name: str | None) -> str:
 def entity_key(name: str | None) -> str:
     """Return the identity key of an entity name (used for ids and exact match).
 
-    NFKC + casefold, ``_``, every dash and the minus sign treated as spaces,
-    quote marks of every script and commas removed, the marks a script
-    writes at will dropped (Arabic short vowels and tatweel, Hebrew points:
-    ``drop_optional_marks``), a middle dot between Han, Hangul or Kana
-    letters removed ("ジョン・スミス" is "ジョンスミス":
-    ``join_dense_middle_dots``), whitespace collapsed, and trailing sentence
-    punctuation stripped.
+    The invisible format characters dropped (a soft hyphen, a zero-width
+    space, direction marks: ``INVISIBLE_FORMAT_CHARS``) and an acute accent,
+    modifier apostrophe or prime read as an apostrophe
+    (``APOSTROPHE_STAND_INS``), then NFKC + casefold, quote marks of every
+    script, apostrophes and commas removed, the marks a script writes at
+    will dropped (Arabic short vowels and tatweel, Hebrew points:
+    ``drop_optional_marks``), ``_`` and every dash treated as spaces but a
+    minus sign opening the name before a digit ("−40" is "-40"), a middle dot between Han,
+    Hangul or Kana letters removed ("ジョン・スミス" is "ジョンスミス",
+    "한ㆍ미" "한미": ``join_dense_middle_dots``), whitespace collapsed, and
+    trailing sentence punctuation stripped (an ideographic full stop too).
+    A key is its own key.
     Unlike :func:`normalize_name` it keeps every other symbol, so names that
     differ only in meaningful punctuation get distinct keys ("C++" vs "C#",
     "Section 4.2" vs "Section 42") while case/whitespace/quote variants of one
@@ -279,12 +312,18 @@ def entity_key(name: str | None) -> str:
     """
     if not name:
         return ""
-    folded = unicodedata.normalize("NFKC", name).casefold()
-    key = _RE_KEY_DASHES.sub(" ", drop_optional_marks(folded))
-    key = _RE_KEY_DROP_CHARS.sub("", join_dense_middle_dots(key))
-    key = " ".join(key.split())
-    key = _RE_KEY_TRAILING_PUNCT.sub("", key).rstrip()
-    return key or folded.strip()
+    # Normalized again after casefolding, which can leave a decomposed
+    # sequence ("ß" + U+0301 folds to "ss" + U+0301), so a key is its own key.
+    folded = unicodedata.normalize(
+        "NFKC",
+        unicodedata.normalize("NFKC", name.translate(_KEY_BEFORE_NFKC)).casefold(),
+    )
+    key = _RE_KEY_DROP_CHARS.sub("", drop_optional_marks(folded))
+    key = join_dense_middle_dots(_RE_KEY_DASHES.sub(_key_dash, key))
+    key = strip_trailing_punctuation(" ".join(key.split()))
+    # A name of what a key drops keys as itself folded, or (only invisible
+    # characters) as written.
+    return key or folded.strip() or unicodedata.normalize("NFKC", name).strip()
 
 
 def safe_float_parse(value: Any, default_value: float | None = None) -> float | None:

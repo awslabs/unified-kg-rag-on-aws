@@ -484,7 +484,7 @@ every write and check that the next run converges to a fresh full build.
 |---|---|---|
 | Entity | id, else identity key | description lines unioned; `text_unit_ids` and `community_ids` unioned; max confidence and rank; attributes unioned (delta wins) except `filters`, whose values are unioned per key; the stored name and type are kept (the derivation then sets what a full build would) |
 | Relationship | id, else (source, target, type) | as entities; weight = sum of the strengths per supporting text unit (`attributes.text_unit_weights`), so the result equals a full build over the union; endpoint names re-derived from the merged entities |
-| Claim | id | full-build `ClaimResolver` rules: descriptions and source texts unioned, `text_unit_ids` unioned, the status both state or `disputed` when they disagree (`unknown` adds nothing) |
+| Claim | id | full-build `ClaimResolver` rules: descriptions and source texts unioned, `text_unit_ids` unioned, the statuses merged as in a full build (`merge_claim_statuses`: `true` and `false` dispute a claim, either settles a `suspected` one, `unknown` adds nothing) |
 | Community | content-derived id | appended (§5.5) |
 
 ### 5.5 Communities on delta runs

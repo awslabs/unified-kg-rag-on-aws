@@ -339,18 +339,27 @@ degree (§4.5), so with no seed graph the rank is the plain degree.
 - `Entity.name` keeps the display form the source used, only trimmed and
   whitespace-collapsed (`clean_display_name`), so context and reports quote
   "$1,000 penalty" or "C++" verbatim.
-- Ids hash `entity_key(name)` (`shared/utils/common.py`): NFKC, casefold, `_`,
-  dashes and the minus sign as spaces (`WORD_DASHES`, not the wave dash of a
-  range), the quote marks of every script (`QUOTE_MARKS`: Unicode's initial,
-  final and other quotation marks, corner brackets, CJK title marks and the
-  Hebrew geresh and gershayim; both in `shared/utils/scripts.py`) and commas
-  dropped, Arabic short vowels and Hebrew points dropped, a middle dot
-  between Han, Hangul or Kana letters dropped, whitespace collapsed,
-  trailing sentence punctuation stripped, **every other symbol and the
-  letters and digits of all scripts kept**. "ACME  Corp." and "Acme Corp"
-  share an id; "C++" and "C#" do not; a non-empty name never yields an empty
-  key. Every exact-name match (extraction, gleaning, claim resolution,
-  incremental merges) and the fuzzy matcher's shingles use the same key.
+- Ids hash `entity_key(name)` (`shared/utils/common.py`): the invisible
+  format characters dropped (`INVISIBLE_FORMAT_CHARS`: soft hyphen,
+  zero-width space, direction marks; not the joiners) and what is typed for
+  an apostrophe read as one (`APOSTROPHE_STAND_INS`: ´ ʼ ′), NFKC, casefold,
+  the quote marks of every script (`QUOTE_MARKS`: Unicode's initial, final
+  and other quotation marks, corner brackets, CJK title marks and the Hebrew
+  geresh and gershayim), apostrophes and commas dropped, Arabic short vowels
+  and Hebrew points dropped, `_` and dashes as spaces (`WORD_DASHES`, not the
+  wave dash of a range) but a minus sign opening the name before a digit, a
+  middle dot between Han, Hangul or Kana letters dropped (and the letter a
+  script types for one: Korean's "ㆍ" between syllables,
+  `Script.middle_dot_stand_ins`; all in `shared/utils/scripts.py`),
+  whitespace collapsed, trailing sentence punctuation and "。" stripped,
+  **every other symbol and the letters and digits of all scripts kept**.
+  "ACME  Corp." and "Acme Corp" share an id; "C++" and "C#" do not, nor
+  "−40 °C" and "40 °C"; a non-empty name never yields an empty key, and a key
+  is its own key (`tests/property/test_name_key_properties.py`, for the
+  compact and link keys too). Every exact-name match (extraction, gleaning,
+  claim resolution, incremental merges) and the fuzzy matcher's shingles use
+  the same key. Of spellings with one key, the one its key folds least names
+  the entity on a tie (`names.display_name_order`).
 - **Changing the key changes every id**, so it requires a full re-index (one
   `indexing.reset: true` run, which reuses the stored extraction records).
 

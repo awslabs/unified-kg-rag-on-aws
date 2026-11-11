@@ -166,7 +166,7 @@ def test_deleting_a_document_strips_its_text_units_from_a_shared_claim(
 
 def test_merge_claims_is_idempotent_and_disputes_disagreeing_statuses() -> None:
     # A stored status used to stay whatever the delta stated.
-    stored = _claim("a.txt").model_copy(update={"status": "SUSPECTED"})
+    stored = _claim("a.txt").model_copy(update={"status": "FALSE"})
     delta = _claim("b.txt")
 
     (once,) = merge_claims([stored], [delta])
