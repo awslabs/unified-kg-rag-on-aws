@@ -11,8 +11,8 @@ unchanged, so its key carries a fingerprint of those inputs:
   whose output it shapes, or :class:`Unkeyed` with the reason it shapes none
   (a throughput knob, a connection setting, a query-time setting). A stage's
   key hashes every keyed field of it and of every upstream stage (a stage
-  consumes its predecessors' output), the built-in prompt templates of
-  those stages, the package version and a stage format version (parsing
+  consumes its predecessors' output), the prompt templates those stages
+  ask (``prompt_digest``), the package version and a stage format version (parsing
   rules and name keys are code) and the corpus manifest. A field the
   table does not cover counts from the first stage, and
   ``tests/unit/test_cache_key_coverage.py`` fails until it is classified.
@@ -769,6 +769,26 @@ def _digest(payload: Any) -> str:
     )
 
 
+def prompt_digest(
+    config: Config, prompt: Any, slots: dict[str, str] | None = None
+) -> str:
+    """The digest of ``prompt`` (a ``BasePrompt`` class) as a run under
+    ``config`` asks it: its ``custom_prompts`` override where one is set,
+    else the built-in template (code), with ``slots`` (its ``inlined_slots``
+    by default) filled in, so editing the fixed text a slot renders to
+    (``DEFAULT_RELATIONSHIP_TYPES``) re-keys what it shaped, and turning
+    fixed text into such a slot does not."""
+    from unified_kg_rag.domain.prompts.base import fill_slots
+
+    resolved = prompt.resolve(config.custom_prompts)
+    return compute_hash(
+        fill_slots(
+            resolved.system_prompt_template + "\n" + resolved.human_prompt_template,
+            prompt.inlined_slots(config) if slots is None else slots,
+        )
+    )
+
+
 _HASH_READ_BYTES = 1 << 20
 
 
@@ -1046,7 +1066,6 @@ def _unit_record_fingerprint(
         GraphExtractionPrompt,
         GraphRefinementPrompt,
     )
-    from unified_kg_rag.domain.prompts.base import fill_slots
 
     stages = {_P.GRAPH_EXTRACTION}
     prompts: list[Any] = [GraphExtractionPrompt]
@@ -1071,20 +1090,7 @@ def _unit_record_fingerprint(
             # under its old name, so a corpus whose index language is its
             # target language keeps its records.
             "target_language": index_language(config),
-            "prompts": [
-                compute_hash(
-                    fill_slots(
-                        resolved.system_prompt_template
-                        + "\n"
-                        + resolved.human_prompt_template,
-                        prompt.inlined_slots(config),
-                    )
-                )
-                for prompt, resolved in (
-                    (prompt, prompt.resolve(config.custom_prompts))
-                    for prompt in prompts
-                )
-            ],
+            "prompts": [prompt_digest(config, prompt) for prompt in prompts],
         }
     )
 
@@ -1105,27 +1111,18 @@ def chunk_boundary_fingerprint(config: Config) -> str:
     to the model again (a reset, an edited document's untouched part).
     """
     from unified_kg_rag.domain.prompts import TextChunkingPrompt
-    from unified_kg_rag.domain.prompts.base import fill_slots
 
     settings = _settings(
         config,
         lambda rule: rule.per_document
         and (rule.stage is None or rule.stage is _P.TEXT_CHUNKING),
     )
-    resolved = TextChunkingPrompt.resolve(config.custom_prompts)
     return _digest(
         {
             "record": "chunk_boundaries",
             "version": _BOUNDARY_FORMAT_VERSION,
             "settings": settings,
-            "prompt": compute_hash(
-                fill_slots(
-                    resolved.system_prompt_template
-                    + "\n"
-                    + resolved.human_prompt_template,
-                    TextChunkingPrompt.inlined_slots(config),
-                )
-            ),
+            "prompt": prompt_digest(config, TextChunkingPrompt),
         }
     )
 
@@ -1165,7 +1162,6 @@ def translation_fingerprint(config: Config) -> str:
         ).items()
         if not path.startswith("processing.translation.")
     }
-    resolved = TextTranslationPrompt.resolve(config.custom_prompts)
     return _digest(
         {
             "record": "translation",
@@ -1173,9 +1169,7 @@ def translation_fingerprint(config: Config) -> str:
             "settings": settings,
             "source_language": translation.source_language.value,
             "languages": translation.translated_languages,
-            "prompt": compute_hash(
-                resolved.system_prompt_template + "\n" + resolved.human_prompt_template
-            ),
+            "prompt": prompt_digest(config, TextTranslationPrompt),
         }
     )
 
@@ -1189,15 +1183,12 @@ def _answer_fingerprint(
     when the input text holds all of it the answer depends on), the index
     language (``index_language``) and ``prompt`` (code, or its
     ``custom_prompts`` override)."""
-    from unified_kg_rag.domain.prompts.base import fill_slots
-
     keyed: dict[str, Any] = {}
     if section is not None:
         node: Any = config
         for name in section.split("."):
             node = getattr(node, name)
         keyed["section"] = to_jsonable_python(node)
-    resolved = prompt.resolve(config.custom_prompts)
     return _digest(
         {
             "record": record,
@@ -1208,14 +1199,7 @@ def _answer_fingerprint(
             "model": to_jsonable_python(config.model_id(role)),
             **keyed,
             "target_language": index_language(config),
-            "prompt": compute_hash(
-                fill_slots(
-                    resolved.system_prompt_template
-                    + "\n"
-                    + resolved.human_prompt_template,
-                    prompt.inlined_slots(config),
-                )
-            ),
+            "prompt": prompt_digest(config, prompt),
         }
     )
 
@@ -1307,9 +1291,7 @@ def tree_summary_fingerprint(config: Config) -> str:
     node records the digest of its input under it (``input_key``), so a
     rebuild reuses a summary only when it was made the same way."""
     from unified_kg_rag.domain.prompts import TreeSummaryPrompt
-    from unified_kg_rag.domain.prompts.base import fill_slots
 
-    resolved = TreeSummaryPrompt.resolve(config.custom_prompts)
     return _digest(
         {
             "record": "tree_summary",
@@ -1324,14 +1306,7 @@ def tree_summary_fingerprint(config: Config) -> str:
             # cut mid-sentence).
             "length": 2,
             "language": index_language(config),
-            "prompt": compute_hash(
-                fill_slots(
-                    resolved.system_prompt_template
-                    + "\n"
-                    + resolved.human_prompt_template,
-                    TreeSummaryPrompt.inlined_slots(config),
-                )
-            ),
+            "prompt": prompt_digest(config, TreeSummaryPrompt),
         }
     )
 
@@ -1365,30 +1340,46 @@ def summary_tree_fingerprint(config: Config) -> str:
 # change finds no stage-cache entry. (Built-in prompts are keyed below.)
 # 2: entity keys drop every quote mark and dense-script middle dot, read every
 # dash as a space and compact keys strip more legal forms.
-_STAGE_FORMAT_VERSION = 2
+# 3: entity keys keep a leading minus sign, fold apostrophe stand-ins,
+# invisible characters and Korean's "ㆍ"; legal forms are read as written;
+# claims keep the suspected status.
+_STAGE_FORMAT_VERSION = 3
 
 
 @functools.cache
-def _builtin_prompts(stage_type: PipelineStageType) -> dict[str, str]:
-    """``{prompt class: digest}`` of the built-in templates of every prompt
-    ``stage_type`` or an upstream stage asks (those whose
-    ``custom_prompts`` overrides it keys: ``CONFIG_KEYING``): a dev build
-    shares its package version with the build before, so an edited prompt
-    re-keys the stages whose output it shapes. Overrides are keyed as
-    settings."""
+def _stage_prompt_classes() -> tuple[tuple[str, Any, str, Keyed], ...]:
+    """``(name, prompt class, override path, its rule)`` of every prompt a
+    stage asks: those whose ``custom_prompts`` override keys a stage
+    (``CONFIG_KEYING``)."""
     from unified_kg_rag.domain import prompts
 
-    upstream = _upstream_of(stage_type)
-    digests: dict[str, str] = {}
+    found: list[tuple[str, Any, str, Keyed]] = []
     for name in sorted(prompts.__all__):
         prompt = getattr(prompts, name)
         key = getattr(prompt, "prompt_key", None)
-        rule = CONFIG_KEYING.get(f"custom_prompts.{key}_system") if key else None
-        if isinstance(rule, Keyed) and rule.stage is not None and upstream(rule):
-            digests[name] = compute_hash(
-                f"{prompt.system_prompt_template}\0{prompt.human_prompt_template}"
-            )
-    return digests
+        path = f"custom_prompts.{key}_system"
+        rule = CONFIG_KEYING.get(path) if key else None
+        if isinstance(rule, Keyed) and rule.stage is not None:
+            found.append((name, prompt, path, rule))
+    return tuple(found)
+
+
+def _stage_prompts(config: Config, stage_type: PipelineStageType) -> dict[str, str]:
+    """``{prompt class: prompt_digest}`` of every prompt in effect that
+    ``stage_type`` or an upstream stage asks: a dev build shares its package
+    version with the build before, so an edited prompt re-keys the stages
+    whose output it shapes. A prompt counts while its stage runs, as its
+    override does (``_IN_EFFECT_WHEN``: with claims off, not the claim
+    prompt), and as the run asks it (an override in place of the built-in
+    template), its slots filled with the fixed text they render to
+    (``code_slots``: the schema they render otherwise is keyed as settings,
+    and may not be loaded yet)."""
+    upstream = _upstream_of(stage_type)
+    return {
+        name: prompt_digest(config, prompt, prompt.code_slots())
+        for name, prompt, path, rule in _stage_prompt_classes()
+        if upstream(rule) and _in_effect(config, path, False)
+    }
 
 
 def stage_input_fingerprint(
@@ -1399,8 +1390,8 @@ def stage_input_fingerprint(
     """Fingerprint the inputs that determine ``stage_type``'s output.
 
     The keyed settings in effect of the stage and every upstream stage
-    (``CONFIG_KEYING``), the built-in prompts they ask
-    (:func:`_builtin_prompts`), the package version and stage format
+    (``CONFIG_KEYING``), the prompts in effect they ask
+    (:func:`_stage_prompts`), the package version and stage format
     (``_STAGE_FORMAT_VERSION``), and the corpus.
 
     Args:
@@ -1428,7 +1419,7 @@ def stage_input_fingerprint(
         "settings": _settings(config, _upstream_of(stage_type)),
         "package_version": __version__,
         "format": _STAGE_FORMAT_VERSION,
-        "prompts": _builtin_prompts(stage_type),
+        "prompts": _stage_prompts(config, stage_type),
         "corpus_manifest": corpus_fingerprint,
     }
     if _STAGE_ORDER.index(stage_type) >= _STAGE_ORDER.index(_P.TRANSLATION):

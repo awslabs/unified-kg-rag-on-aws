@@ -331,6 +331,13 @@ class GraphExtractionPrompt(BasePrompt):
         }
 
     @classmethod
+    def code_slots(cls) -> dict[str, str]:
+        return {
+            "entity_types": format_entity_types(()),
+            "relationship_types": format_relationship_types(ExtractionSchema()),
+        }
+
+    @classmethod
     def inlined_slots(cls, config: "Config") -> dict[str, str]:
         # The declared types when there are any: the fingerprint then hashes
         # them too (the config keys them already).
@@ -545,6 +552,10 @@ class GraphRefinementPrompt(BasePrompt):
     def config_variables(cls, config: "Config") -> dict[str, str]:
         """The type blocks, rendered from ``config`` as for extraction."""
         return GraphExtractionPrompt.config_variables(config)
+
+    @classmethod
+    def code_slots(cls) -> dict[str, str]:
+        return GraphExtractionPrompt.code_slots()
 
     system_prompt_template = """You are an expert knowledge graph refinement specialist. Analyze existing extractions
 against source text and identify specific, high-impact improvements.
