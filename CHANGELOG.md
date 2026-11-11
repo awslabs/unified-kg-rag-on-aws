@@ -1047,14 +1047,16 @@ From a `main` checkout (formats and keys no release had):
   both stores: a commit writes the vector copy first, a strip the graph copy, so a run killed in between, or one whose
   graph write of an endpoint was rejected (its edges held back), left a rank the other copy did not have, kept for good
   once a later run derived the edge back to the graph copy. A removal's strip is all or retry: it writes in dependency
-  order (claims under new ids, stored claims; new vertices, stored entities gaining a unit, graph edges, vector edges,
-  vector entities, the kept entities' graph copies last), and the first phase with a rejected write stops it, so what it
-  did not write still cites the removed text units or is in the `pending-strip` note and the retry derives it again.
-  Writing on past a rejection lost a kept document's item for good (a split's origin, or the claim a claim was split
-  off, overwritten while it held the rejected part's lines; an edge re-pointed at a rejected merge target; a stored
-  neighbour of a split, which the strip had not read back, written with the new vertices and ranked with the rejected
-  part's edge), or kept a stale vector edge after two failed removals in a row (also when they renamed an entity and
-  back: its graph copy held the name derived again, so the edge looked current and kept the other name in its vector
+  order (claims under new ids, stored claims; new vertices, stored entities gaining a unit or a name key, graph edges,
+  vector edges, vector entities, the kept entities' graph copies last), and the first phase with a rejected write stops
+  it, so what it did not write still cites the removed text units or is in the `pending-strip` note and the retry
+  derives it again. Writing on past a rejection lost a kept document's item for good (a split's origin, or the claim a
+  claim was split off, overwritten while it held the rejected part's lines; an edge re-pointed at a rejected merge
+  target; a stored neighbour of a split, which the strip had not read back, written with the new vertices and ranked
+  with the rejected part's edge; a stored entity gaining another's name key but no unit, written with the kept ones
+  after the entity that lost the key, which a later removal deleted with the key), or kept a stale vector edge after two
+  failed removals in a row (also when they renamed an entity and back: its graph copy held the name derived again, so
+  the edge looked current and kept the other name in its vector
   copy). The note lists the edges the strip writes under new ids too, and the stored edges that gain a unit (a strip
   stopped after the graph copy left the vector copy without the merged-in line, and no copy cited a removed unit): a
   strip stopped (or killed) after an edge's graph copy left no vector copy, and the next one rewrote the edge from its

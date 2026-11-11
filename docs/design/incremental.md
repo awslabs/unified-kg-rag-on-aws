@@ -102,7 +102,8 @@ unless noted.
    under new ids, the stored claims; the new vertices (ids the graph does
    not hold: a derived entity the strip did not read back is looked up, so
    a stored neighbour whose rank changed is not one), the stored entities
-   gaining a unit, the graph edges, the vector edges, the vector entities
+   gaining a unit or a name key, the graph edges, the vector edges, the
+   vector entities
    and, last, the graph copies of the kept entities, by which a retry finds
    it), and the first phase with a rejected write stops it (the removal
    fails, retried by the next run). What it did not write keeps its stored

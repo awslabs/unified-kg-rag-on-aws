@@ -45,6 +45,7 @@ from unified_kg_rag.domain.ingestion.contributions import (
     attribute_record_keys,
 )
 from unified_kg_rag.domain.ingestion.derivation import Derived
+from unified_kg_rag.domain.ingestion.graph_resolver import entity_keys
 from unified_kg_rag.domain.ingestion.merge import (
     remove_claim_text_units,
     remove_text_units,
@@ -795,11 +796,14 @@ class TextUnitRemoval:
         # still hold their lines until they are written.
         # Then the stored entities that gain a unit their graph copy does
         # not cite (another spelling's statement merged in, a split's origin
-        # may), before the edges re-pointed at them: written after them, a
+        # may) or a name key (a spelling another stored entity held, stated
+        # in a unit they cite: the derivation finds the spelling by it), before
+        # the edges re-pointed at them: written after them, a
         # run killed in between left an edge citing a kept unit on a vertex
         # citing only removed ones, which the next removal deleted with the
         # edge.
         stored_units = {e.id: set(e.text_unit_ids or []) for e in entities}
+        stored_keys = {e.id: entity_keys(e) for e in entities}
         # A derived entity the strip did not read back may still be stored
         # (a neighbour of a split, its rank changed): not a new vertex.
         # Written first with the rejected part's edges in its rank, it kept
@@ -809,12 +813,16 @@ class TextUnitRemoval:
             held = m.graph_indexer.read_entities(unread, suffix=suffix)
             graph_copy |= {e.id for e in held}
             stored_units |= {e.id: set(e.text_unit_ids or []) for e in held}
+            stored_keys |= {e.id: entity_keys(e) for e in held}
         new_vertices = [e for e in new_entities if e.id not in graph_copy]
         gaining = [
             e
             for e in new_entities
             if e.id in graph_copy
-            and set(e.text_unit_ids or []) - stored_units.get(e.id, set())
+            and (
+                set(e.text_unit_ids or []) - stored_units.get(e.id, set())
+                or entity_keys(e) - stored_keys.get(e.id, set())
+            )
         ]
         written_first = {e.id for e in (*new_vertices, *gaining)}
         # The graph copies of the kept entities are what a retry finds the

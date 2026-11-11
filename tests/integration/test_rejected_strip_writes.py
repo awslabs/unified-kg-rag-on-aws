@@ -527,3 +527,53 @@ def test_a_stored_edge_that_gains_a_unit_is_noted_before_its_vector_copy(
             assert harness.run(final)
 
     _converges(harness, final, config)
+
+
+@pytest.mark.parametrize(
+    "names",
+    [
+        ("Acme", "Acme Inc", "Acme Corp", "Buyer", "Vendor"),
+        ("한빛", "주식회사 한빛", "(주)한빛", "구매자", "공급사"),
+        ("ひかり", "株式会社ひかり", "(株)ひかり", "買い手", "仕入先"),
+        ("ひかり", "株式会社ひかり", "(株)ひかり", "구매자", "공급사"),
+    ],
+    ids=["en", "ko", "ja", "mix"],
+)
+def test_a_rejected_entity_gaining_a_name_key_keeps_the_spelling_it_takes(
+    names: tuple[str, str, str, str, str],
+) -> None:
+    # Deleting g0.txt and g1.txt moves the third spelling (stated in
+    # k0.txt's unit, which the second already cites) from the first
+    # spelling's entity to the second's: the second gains its name key, not
+    # a unit, and its graph write is rejected. Written on, the first lost
+    # the key; deleting h0.txt then deleted it, and the derivation, finding
+    # no stored entity of the third spelling's key, dropped k0.txt's edge
+    # from it.
+    first, second, third, buyer, vendor = names
+    kept: Corpus = {"/corpus/k0.txt": [[(second, buyer, 1), (third, vendor, 2)]]}
+    other: Corpus = {
+        "/corpus/h0.txt": [
+            [(third, buyer, 1), (buyer, second, 1)],
+            [(first, vendor, 2), (buyer, second, 3)],
+        ]
+    }
+    before: Corpus = {
+        **kept,
+        **other,
+        "/corpus/g0.txt": [[(buyer, third, 2), (first, vendor, 3)]],
+        "/corpus/g1.txt": [
+            [(first, buyer, 2)],
+            [(vendor, second, 3), (first, vendor, 2)],
+        ],
+    }
+    taker = {e.id for e in extract(before).entities if e.name == second}
+    config = _config()
+    harness = IncrementalRun(FakeDocStatusStore(), config)
+    harness.run(before)
+
+    harness.run(
+        {**kept, **other},
+        fail=lambda at, i: at == "graph.upsert_entities" and i in taker,
+    )
+
+    _converges(harness, kept, config)
