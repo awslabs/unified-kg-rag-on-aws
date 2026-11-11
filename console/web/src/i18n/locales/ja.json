@@ -511,7 +511,7 @@
   "dashboard.refused": "拒否",
   "dashboard.cost": "コスト",
   "dashboard.noPricesTitle": "コストの表示には料金が必要です",
-  "dashboard.noPrices": "設定の evaluation.prices にモデルの料金を追加すると、USD でコストが表示されます。それまではトークンのみを集計します。",
+  "dashboard.noPrices": "設定の models.prices にモデルの料金を追加すると、USD でコストが表示されます。それまではトークンのみを集計します。",
   "dashboard.unpricedTitle": "料金が未設定のモデルがあります",
   "dashboard.unpriced": "料金未設定: {{models}}。コストには含まれません。",
   "dashboard.perDay": "1 日あたりの質問数",

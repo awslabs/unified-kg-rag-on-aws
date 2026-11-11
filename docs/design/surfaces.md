@@ -415,7 +415,7 @@ VPC.
 
 **Cost.** The console adds no model call: a question costs what the same
 `run-rag` query costs, and a job what its CLI run costs. The dashboard
-prices recorded usage with `evaluation.prices` (`answer_cost_usd`); without
+prices recorded usage with `models.prices` (`domain.pricing.usage_cost_usd`); without
 prices it shows tokens only, as `run-eval` does.
 
 **Failure modes.** A missing extra exits 2 before binding. A config that

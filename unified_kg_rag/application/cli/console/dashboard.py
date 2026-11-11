@@ -3,7 +3,7 @@
 """The dashboard: usage, cost and latency of the questions asked through
 the console and of the jobs it ran, per strategy, model and role.
 
-Costs are priced with ``evaluation.prices`` (``answer_cost_usd``); a model
+Costs are priced with ``models.prices`` (``domain.pricing``); a model
 without a price leaves the cost out (``unpriced_models``) rather than
 counting it as free.
 """
@@ -19,7 +19,7 @@ from typing import Any
 
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.domain.models.usage import LLMUsage, LLMUsageCounts
-from unified_kg_rag.evaluation.comparison import answer_cost_usd
+from unified_kg_rag.domain.pricing import price_of, usage_cost_usd
 from unified_kg_rag.shared.utils.stats import quantile
 
 _COUNTERS = (
@@ -65,10 +65,10 @@ def _latency(query: Mapping[str, Any]) -> float | None:
 
 
 def _model_cost(model: str, counts: Mapping[str, Any], config: Config) -> float | None:
-    if model not in config.evaluation.prices:
+    if price_of(config.models.prices, model) is None:
         return None
     usage = LLMUsage(by_model={model: LLMUsageCounts.model_validate(dict(counts))})
-    usd, _ = answer_cost_usd(usage, config.evaluation.prices)
+    usd, _ = usage_cost_usd(usage, config.models.prices)
     return usd
 
 
@@ -125,9 +125,9 @@ def summarize(
             priced_queries += 1
         for model, counts in (usage.get("by_model") or {}).items():
             _add(by_model[model], counts)
-            if (
-                counts.get("llm_calls") or counts.get("rerank_calls")
-            ) and model not in config.evaluation.prices:
+            if (counts.get("llm_calls") or counts.get("rerank_calls")) and price_of(
+                config.models.prices, model
+            ) is None:
                 unpriced.add(model)
         for role, counts in (usage.get("by_role") or {}).items():
             _add(by_role[role], counts)
@@ -216,7 +216,7 @@ def summarize(
         "timeline": timeline,
         "jobs": job_rows,
         "unpriced_models": sorted(unpriced),
-        "prices_configured": bool(config.evaluation.prices),
+        "prices_configured": bool(config.models.prices),
     }
 
 

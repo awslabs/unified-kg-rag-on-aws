@@ -100,7 +100,7 @@ pricing before you reuse a dollar figure.
 | Cohere Rerank 3.5 | $2.00 per 1,000 search units | — | — | — |
 
 An in-Region inference profile lists Sonnet 5.5 about 10% higher. To price
-your own runs, give `run-eval` your prices (`evaluation.prices`,
+your own runs, give `run-eval` your prices (`models.prices`,
 [Evaluation: Comparing strategies](../guides/evaluate.md#comparing-strategies)): the package
 ships no price table, because one would go stale.
 

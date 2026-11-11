@@ -3,6 +3,8 @@
 """The root ``Config`` and ``PipelineConfig``."""
 
 import copy
+import functools
+import logging
 from collections.abc import Collection, Mapping
 from pathlib import Path
 from typing import Annotated, Any
@@ -46,7 +48,13 @@ from ._graph import GraphConfig
 from ._indexing import IndexingConfig
 from ._mcp import McpServerConfig
 from ._merge import _changes, _plain, merge_over
-from ._migration import _defined_keys_only, moved_keys, unknown_keys
+from ._migration import (
+    DEPRECATED_KEYS,
+    _defined_keys_only,
+    migrate_deprecated_keys,
+    moved_keys,
+    unknown_keys,
+)
 from ._models import (
     DEFAULT_MODEL_ID,
     FAST_MODEL_ID,
@@ -58,12 +66,25 @@ from ._models import (
     ModelsConfig,
     ModelTier,
     RerankModelId,
-    _bare_model_id,
+    bare_model_id,
 )
 from ._processing import _CHUNK_SIZE_FIELDS, ChunkingConfig, ProcessingConfig
 from ._prompts import CustomPromptConfig
 from ._runtime import CacheConfig, LoggingConfig, MemoryConfig, ObservabilityConfig
 from ._search import SearchConfig
+
+# One stdlib logger for every module of the config package, named as the
+# package (one module before the split): a filter on it sees them all.
+_logger = logging.getLogger("unified_kg_rag.domain.models.config")
+
+
+@functools.cache
+def _warn_deprecated(old: str) -> None:
+    _logger.warning(
+        "Config key %s is deprecated: it loads into %s; set that key instead",
+        old,
+        DEPRECATED_KEYS[old],
+    )
 
 
 class Config(_AssignmentChecked):
@@ -142,10 +163,15 @@ class Config(_AssignmentChecked):
     def _apply_backend_preset(
         cls, data: Any, handler: ModelWrapValidatorHandler["Config"]
     ) -> "Config":
-        """Refuse the moved and unknown keys, fill in the ``backend`` preset
-        under the keys the config sets, and keep the input it was given."""
+        """Load the deprecated keys into their replacements, refuse the moved
+        and unknown keys, fill in the ``backend`` preset under the keys the
+        config sets, and keep the input it was given (with the deprecated
+        keys moved: what it validates as)."""
         if not isinstance(data, dict):
             return handler(data)
+        data, deprecated = migrate_deprecated_keys(data)
+        for old in deprecated:
+            _warn_deprecated(old)
         if moved := moved_keys(data):
             raise ValueError("settings moved; replace " + "; ".join(moved))
         if unknown := unknown_keys(data, cls):
@@ -381,14 +407,14 @@ class Config(_AssignmentChecked):
             return self.tier_model_id("default"), "the default tier (not Bedrock)"
         if answer_models is None:
             answer_models = [self.model_id(ModelRole.ANSWER_GENERATION)]
-        answers = {_bare_model_id(model) for model in answer_models}
-        if _bare_model_id(JUDGE_MODEL_ID) not in answers:
+        answers = {bare_model_id(model) for model in answer_models}
+        if bare_model_id(JUDGE_MODEL_ID) not in answers:
             return JUDGE_MODEL_ID, "the default judge, not the answer model"
         for candidate in (
             self.tier_model_id("default"),
             LanguageModelId.CLAUDE_V5_5_SONNET.value,
         ):
-            if _bare_model_id(candidate) not in answers:
+            if bare_model_id(candidate) not in answers:
                 return candidate, (
                     f"the default judge {JUDGE_MODEL_ID} is the answer model"
                 )

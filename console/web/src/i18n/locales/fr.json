@@ -555,7 +555,7 @@
   "dashboard.refused": "Refusées",
   "dashboard.cost": "Coût",
   "dashboard.noPricesTitle": "Les coûts nécessitent des prix",
-  "dashboard.noPrices": "Ajoutez les prix des modèles sous evaluation.prices dans les paramètres pour voir les coûts en USD ; d’ici là, le tableau de bord ne compte que les jetons.",
+  "dashboard.noPrices": "Ajoutez les prix des modèles sous models.prices dans les paramètres pour voir les coûts en USD ; d’ici là, le tableau de bord ne compte que les jetons.",
   "dashboard.unpricedTitle": "Certains modèles n’ont pas de prix",
   "dashboard.unpriced": "Sans prix : {{models}}. Les coûts ne les incluent pas.",
   "dashboard.perDay": "Questions par jour",

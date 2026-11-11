@@ -2311,7 +2311,7 @@ class EvaluationRunner:
                 f"--fail-if needs two strategies to compare; the runs hold "
                 f"{', '.join(runs) or 'none'}"
             )
-        prices = self.config.evaluation.prices
+        prices = self.config.models.prices
         # Runs saved before their usage counted rerank requests.
         unmetered = rerank_unmetered(manifests)
         names = list(runs)

@@ -33,7 +33,6 @@ from ._common import (
 from ._evaluation import (
     REMOVED_EVALUATORS,
     EvaluationConfig,
-    ModelPrice,
 )
 from ._fusion import (
     DEFAULT_ANSWER_PROMPT_STYLES,
@@ -72,9 +71,11 @@ from ._indexing import (
 from ._mcp import MCP_TOOLS, McpServerConfig, McpToolName
 from ._merge import merge_over
 from ._migration import (
+    DEPRECATED_KEYS,
     MOVED_KEY_NOTES,
     MOVED_KEYS,
     REMOVED_KEYS,
+    migrate_deprecated_keys,
     moved_key_hint,
     moved_keys,
     nested_model,
@@ -94,6 +95,7 @@ from ._models import (
     EmbeddingModelId,
     EmbeddingModelRef,
     LanguageModelId,
+    ModelPrice,
     ModelPurpose,
     ModelRole,
     ModelsConfig,
@@ -101,6 +103,7 @@ from ._models import (
     RerankModelId,
     RerankModelRef,
     RoleModelsConfig,
+    bare_model_id,
     model_id_value,
 )
 from ._processing import (
@@ -180,6 +183,7 @@ __all__ = [
     "DEFAULT_LANGUAGE_ANALYZERS",
     "DEFAULT_VECTOR_SEARCH",
     "DEFAULT_MODEL_ID",
+    "DEPRECATED_KEYS",
     "DescriptionSummarizationConfig",
     "DocumentParsingConfig",
     "DriftSearchConfig",
@@ -225,6 +229,8 @@ __all__ = [
     "ModelRole",
     "ModelsConfig",
     "ModelTier",
+    "bare_model_id",
+    "migrate_deprecated_keys",
     "moved_key_hint",
     "MOVED_KEY_NOTES",
     "MOVED_KEYS",

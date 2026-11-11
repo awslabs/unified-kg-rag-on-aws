@@ -511,7 +511,7 @@
   "dashboard.refused": "已拒绝",
   "dashboard.cost": "费用",
   "dashboard.noPricesTitle": "计算费用需要价格",
-  "dashboard.noPrices": "在设置的 evaluation.prices 下添加模型价格，即可查看以 USD 计的费用；在此之前，仪表板只统计 Token。",
+  "dashboard.noPrices": "在设置的 models.prices 下添加模型价格，即可查看以 USD 计的费用；在此之前，仪表板只统计 Token。",
   "dashboard.unpricedTitle": "部分模型未设置价格",
   "dashboard.unpriced": "未设置价格：{{models}}。费用中不包含它们。",
   "dashboard.perDay": "每日问题数",

@@ -12,9 +12,78 @@ from pydantic import (
     Field,
     StringConstraints,
     field_validator,
+    model_validator,
 )
 
 from ._common import ConfigSection
+
+
+class ModelPrice(ConfigSection):
+    """A model's on-demand price (``models.prices``): a language model's
+    token prices, or a rerank model's search-unit price."""
+
+    input_per_million_tokens: float | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "USD per million input tokens (a language model's; set with "
+            "output_per_million_tokens)."
+        ),
+    )
+    output_per_million_tokens: float | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "USD per million output tokens (a language model's; set with "
+            "input_per_million_tokens)."
+        ),
+    )
+    per_thousand_rerank_search_units: float | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "A rerank model's USD per thousand search units (usage "
+            "rerank_search_units: one per rerank request of up to 100 "
+            "documents, a document of more than 500 estimated tokens with "
+            "the query counting as several; Amazon Bedrock's price per "
+            "1,000 queries). An entry "
+            "sets this, the two token prices, or both."
+        ),
+    )
+    cache_read_per_million_tokens: float | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "USD per million input tokens read from the prompt cache "
+            "(usage cache_read_input_tokens; Claude on Bedrock: a tenth of "
+            "the input price). null = the input price, an upper bound."
+        ),
+    )
+    cache_write_per_million_tokens: float | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "USD per million input tokens written to the prompt cache "
+            "(usage cache_write_input_tokens; Claude on Bedrock: 1.25 x the "
+            "input price for the 5-minute cache). null = the input price."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _priced(self) -> "ModelPrice":
+        tokens = (self.input_per_million_tokens, self.output_per_million_tokens)
+        if (tokens[0] is None) != (tokens[1] is None):
+            raise ValueError(
+                "a model price sets both input_per_million_tokens and "
+                "output_per_million_tokens, or neither (a rerank model's)"
+            )
+        if tokens[0] is None and self.per_thousand_rerank_search_units is None:
+            raise ValueError(
+                "a model price sets input_per_million_tokens and "
+                "output_per_million_tokens (a language model), or "
+                "per_thousand_rerank_search_units (a rerank model)"
+            )
+        return self
 
 
 class EmbeddingModelId(str, Enum):
@@ -118,7 +187,7 @@ JUDGE_MODEL_ID: str = LanguageModelId.CLAUDE_V5_5_OPUS.value
 _PROFILE_PREFIX = re.compile(r"^(?:global|us|us-gov|eu|apac|jp|au|ca)\.")
 
 
-def _bare_model_id(model_id: str) -> str:
+def bare_model_id(model_id: str) -> str:
     """``model_id`` without an inference-profile prefix, for comparing two
     configured models."""
     return _PROFILE_PREFIX.sub("", str(model_id).strip())
@@ -422,6 +491,27 @@ class ModelsConfig(ConfigSection):
             "Rerank model. Bedrock: one of the RerankModelId values, null = "
             "cohere.rerank-v3-5:0. cross_encoder: a sentence-transformers "
             "model name, required. Ignored with providers.rerank.kind none."
+        ),
+    )
+    prices: dict[str, ModelPrice] = Field(
+        default_factory=dict,
+        description=(
+            "USD prices per model id, for every USD figure the package "
+            "computes: the run-eval comparison's cost estimate "
+            "(cost.strategies.<s>.usd_per_query), the console's per-answer "
+            "cost and dashboard, processing.max_run_usd and run-ingestion "
+            "--estimate. Keyed as the usage records name the model "
+            "(usage.by_model: the id the model factory resolved, an "
+            "inference profile id included); a model without its own entry "
+            "takes the price its entries under other inference-profile "
+            "prefixes (or none) agree on. Empty (default): no USD figure, "
+            "token counts only. No prices ship with the package: fill in "
+            "the current Amazon Bedrock on-demand prices of your region. "
+            "input_tokens includes the cache reads and writes; each is "
+            "priced at its own rate when the model's price sets one. The "
+            "rerank model is priced too (per_thousand_rerank_search_units; "
+            "a local cross-encoder at 0): an answer with an unpriced model "
+            "that was called, reranker included, has no USD estimate."
         ),
     )
     default_max_output_tokens: int | None = Field(

@@ -533,7 +533,7 @@
   "dashboard.refused": "Abgewiesen",
   "dashboard.cost": "Kosten",
   "dashboard.noPricesTitle": "Kosten brauchen Preise",
-  "dashboard.noPrices": "Tragen Sie die Modellpreise in den Einstellungen unter evaluation.prices ein, um Kosten in USD zu sehen; bis dahin zählt das Dashboard nur Token.",
+  "dashboard.noPrices": "Tragen Sie die Modellpreise in den Einstellungen unter models.prices ein, um Kosten in USD zu sehen; bis dahin zählt das Dashboard nur Token.",
   "dashboard.unpricedTitle": "Einige Modelle haben keinen Preis",
   "dashboard.unpriced": "Ohne Preis: {{models}}. Die Kosten lassen sie außen vor.",
   "dashboard.perDay": "Fragen pro Tag",

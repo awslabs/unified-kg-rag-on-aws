@@ -301,7 +301,9 @@ No model prices ship with the package. For a USD estimate, fill in the
 current [Amazon Bedrock prices](https://aws.amazon.com/bedrock/pricing/) of
 your region, per million tokens, keyed by the model id the usage records
 name (`usage.by_model`; an inference profile id such as `global.<model>` when
-the factory resolved one). Answers that used a model without a price get no
+the factory resolved one; a bare id, or one profile's entry, prices every
+profile of the model). The same `models.prices` prices the console's answers
+and dashboard. Answers that used a model without a price get no
 estimate, and the comparison warns. `input_tokens` includes the prompt-cache
 reads and writes; give their rates (`cache_read_per_million_tokens`,
 `cache_write_per_million_tokens`) and they are priced apart, otherwise at
@@ -314,7 +316,7 @@ three; the tokens are the script-aware estimate, so the count can differ from
 the bill by a unit; set 0 for a local cross-encoder):
 
 ```yaml
-evaluation:
+models:
   prices:
     "global.<answer-model-id>":
       input_per_million_tokens: 0.0
@@ -426,7 +428,7 @@ changes a default until a measured experiment decides
    evaluation model (`models.roles.evaluation`) three to four times per data
    question plus once per cluster and per activity question, and embeds at
    most `--max-units` text units; it prints the calls and tokens it spent
-   (and a USD estimate with `evaluation.prices`). The questions and
+   (and a USD estimate with `models.prices`). The questions and
    assertions are in `--language` (default
    `processing.translation.source_language`). The same seed and the same
    model replies give the same files. A failed call drops its item (counted

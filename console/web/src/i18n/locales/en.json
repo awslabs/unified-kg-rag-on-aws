@@ -533,7 +533,7 @@
   "dashboard.refused": "Refused",
   "dashboard.cost": "Cost",
   "dashboard.noPricesTitle": "Costs need prices",
-  "dashboard.noPrices": "Add the models' prices under evaluation.prices in Settings to see costs in USD; until then the dashboard counts tokens only.",
+  "dashboard.noPrices": "Add the models' prices under models.prices in Settings to see costs in USD; until then the dashboard counts tokens only.",
   "dashboard.unpricedTitle": "Some models have no price",
   "dashboard.unpriced": "Not priced: {{models}}. Costs leave them out.",
   "dashboard.perDay": "Questions per day",

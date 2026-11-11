@@ -134,7 +134,7 @@ final answer then replaces it (it is the one a decline or the output
 guardrail decided). Under it: for `auto`, the strategy it chose and how
 (the router named it, it was the only candidate under the filters, or the
 router failed and it fell back), and a line with the strategy, the time,
-the tokens in and out, the model calls, the cost (when `evaluation.prices`
+the tokens in and out, the model calls, the cost (when `models.prices`
 prices the models), the rerank status and the trace link. A declined
 answer says why (no context, the model's `[NO_ANSWER]`, an insufficient
 context under the decline policy); a blocked one says the guardrail
@@ -276,7 +276,7 @@ strategy's) and the cost (a failed question is left out of the decline rate
 too: it could not decline);
 questions and median time per day; per
 strategy, model and role the calls, tokens and cost; and the jobs with
-their duration, calls, tokens and cost. Costs need `evaluation.prices`
+their duration, calls, tokens and cost. Costs need `models.prices`
 ([Cost and prices](./evaluate.md#comparing-strategies)); a model without a
 price is listed and left out instead of counted as free. Clear question
 history deletes the recorded questions.

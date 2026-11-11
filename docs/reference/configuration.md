@@ -133,6 +133,7 @@ Which model serves each role, on the providers above
 | `default` | string \| null (min length 1) | `null` | Model of the 'default' tier (extraction, gleaning, claims, community reports, output fixing, query entity/keyword extraction, answer generation; evaluation with another provider than Bedrock, see roles.evaluation). null = anthropic.claude-sonnet-5-5 on Bedrock; required with another provider. |
 | `fast` | string \| null (min length 1) | `null` | Model of the 'fast' tier (chunking, translation, description summarization, global/DRIFT search steps, query translation, rewriting and routing). null = anthropic.claude-haiku-5-5 on Bedrock, the default tier's model with another provider. |
 | `rerank` | `"amazon.rerank-v1:0"` \| `"cohere.rerank-v3-5:0"` \| string \| null | `null` | Rerank model. Bedrock: one of the RerankModelId values, null = cohere.rerank-v3-5:0. cross_encoder: a sentence-transformers model name, required. Ignored with providers.rerank.kind none. |
+| `prices` | dict[string, ModelPrice] | `{}` | USD prices per model id, for every USD figure the package computes: the run-eval comparison's cost estimate (cost.strategies.<s>.usd_per_query), the console's per-answer cost and dashboard, processing.max_run_usd and run-ingestion --estimate. Keyed as the usage records name the model (usage.by_model: the id the model factory resolved, an inference profile id included); a model without its own entry takes the price its entries under other inference-profile prefixes (or none) agree on. Empty (default): no USD figure, token counts only. No prices ship with the package: fill in the current Amazon Bedrock on-demand prices of your region. input_tokens includes the cache reads and writes; each is priced at its own rate when the model's price sets one. The rerank model is priced too (per_thousand_rerank_search_units; a local cross-encoder at 0): an answer with an unpriced model that was called, reranker included, has no USD estimate. |
 | `default_max_output_tokens` | integer \| null (≥ 1) | `16384` | max_tokens sent with each LLM request, clamped to the model's maximum (providers.llm.max_output_tokens for a non-Bedrock model). Bedrock reserves input + max_tokens against the tokens-per-minute quota when a request starts, so sending the model maximum (128K on Claude 5.x) throttles concurrent calls long before real usage does. Thinking tokens count toward it. Prompts with long outputs (graph/claim extraction, gleaning, community reports, document translation) declare a higher floor that wins over this value. Raise it if answers are cut off (stopReason max_tokens); null sends the model maximum. |
 
 ### `models.roles`
@@ -943,7 +944,6 @@ Evaluation configuration
 | `repeat_extractions` | `"resample"` \| `"reuse"` | `"resample"` | Whether the run-eval --repeats of a strategy extract the query's entities and keywords again (run-eval --repeat-extractions overrides it). 'resample' (default) gives each repeat its own query extraction cache scope, so repeat_stdev includes the extraction's run-to-run variance; the arms of one repeat still share their extractions. It costs the fast-model extraction calls of a query once per repeat instead of once. 'reuse' shares them across repeats (the behaviour before), so the repeats only resample the answer. No effect with one repeat or search.query_extraction_cache_size 0. |
 | `primary_metric` | string \| null | `null` | The <evaluator>/<metric> a run-eval comparison declares in advance as its primary metric (run-eval --primary-metric overrides it): its paired delta is adjusted only over the compared strategies, every other metric is Holm-adjusted over all of them (deltas_vs_baseline.<s>.<metric>.adjusted_p_value, adjusted_ci_low/high), so reading many metrics does not multiply the chance of a difference on noise. null = answer_match/answer_contains when the comparison scored it, else no primary metric. |
 | `resamples` | integer (≥ 100) | `2000` | Resamples of a run-eval comparison's paired bootstrap intervals and Monte Carlo sign-flip p-values (comparison bootstrap.resamples). The Holm-adjusted families read at least 20 x tests / alpha of them (multiplicity.families.<f>.resamples: 42,000 for 105 tests at 0.05), so a large family is not held above alpha by the p-value's floor 1 / (1 + resamples); raise it for more stable unadjusted intervals, at a cost linear in it. |
-| `prices` | dict[string, ModelPrice] | `{}` | USD prices per model id, as the usage records name them (usage.by_model: the id the model factory resolved, an inference profile id included), for the comparison's cost estimate (cost.strategies.<s>.usd_per_query). Empty (default): no USD estimate, token counts only. No prices ship with the package: fill in the current Amazon Bedrock on-demand prices of your region. input_tokens includes the cache reads and writes; each is priced at its own rate when the model's price sets one. The rerank model is priced too (per_thousand_rerank_search_units; a local cross-encoder at 0): an answer with an unpriced model that was called, reranker included, has no USD estimate. |
 
 ## `custom_prompts`
 
@@ -1219,6 +1219,14 @@ Each takes the value of the key it replaces, except:
 - `processing.max_retries`: it had no effect; each model call made 5 attempts, the retry.max_attempts default.
 - `indexing.neptune.max_retries`: it counted retries, so max_retries N is graph_store_max_attempts N+1.
 - `processing.batch_size`: it counted the items of one batch, not calls in flight; max_concurrency caps the calls.
+
+## Deprecated keys
+
+These keys still load, into the key that replaces them, with a WARNING.
+
+| Deprecated key | Loads into |
+|---|---|
+| `evaluation.prices` | `models.prices` |
 
 ## Removed keys
 

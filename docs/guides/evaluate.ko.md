@@ -255,7 +255,7 @@ p값과 함께 안내만 남깁니다. 재순위화가 꺼져 있거나 만들 �
 패키지에는 모델 가격이 들어 있지 않습니다. USD 추정치가 필요하면 사용하는 리전의 현재
 [Amazon Bedrock 가격](https://aws.amazon.com/bedrock/pricing/)을 100만 토큰 단위로,
 사용량 기록이 쓰는 모델 ID(`usage.by_model`. 팩터리가 추론 프로필을 확정했으면
-`global.<model>` 같은 프로필 ID)를 키로 채우세요. 가격이 없는 모델을 쓴 답변은 추정치가
+`global.<model>` 같은 프로필 ID)를 키로 채우세요. 기본 ID나 한 프로필의 항목은 그 모델의 모든 프로필에 적용됩니다. 같은 `models.prices`로 콘솔의 답변과 대시보드 비용도 계산합니다. 가격이 없는 모델을 쓴 답변은 추정치가
 없고 비교가 경고합니다. `input_tokens`에는 프롬프트 캐시 읽기·쓰기 토큰이 들어 있습니다.
 그 단가(`cache_read_per_million_tokens`, `cache_write_per_million_tokens`)를 주면 따로
 계산하고, 없으면 입력 단가로 계산합니다(Claude에서 캐시 읽기는 입력의 10분의 1이므로 상한값).
@@ -266,7 +266,7 @@ p값과 함께 안내만 남깁니다. 재순위화가 꺼져 있거나 만들 �
 문자 체계를 고려한 추정치라 청구서와 1단위쯤 다를 수 있습니다. 로컬 크로스 인코더는 0).
 
 ```yaml
-evaluation:
+models:
   prices:
     "global.<answer-model-id>":
       input_per_million_tokens: 0.0
@@ -357,7 +357,7 @@ run-eval --data-path eval.json --search-strategy local,mix --repeats 2 \
    단언문을 검토하세요), `generation_report.json`(시드, 모델, 버린 항목, 사용량)을 씁니다.
    평가 모델(`models.roles.evaluation`)을 데이터 질문마다 3~4번, 그리고 클러스터와 활동
    질문마다 한 번 부르고, 텍스트 단위를 최대 `--max-units`개 임베딩하며, 쓴 호출과 토큰을
-   출력합니다(`evaluation.prices`가 있으면 USD 추정치도). 질문과 단언문은 `--language`
+   출력합니다(`models.prices`가 있으면 USD 추정치도). 질문과 단언문은 `--language`
    (기본값 `processing.translation.source_language`)로 씁니다. 같은 시드와 같은 모델 응답이면
    같은 파일이 나옵니다. 실패한 호출은 그 항목만 버리고 보고서에 셉니다. 질문을 하나도 만들지
    못하면 아무것도 쓰지 않고 버린 항목을 밝히며 1로 종료하고, 모델 서버에 연결할 수 없으면 바로

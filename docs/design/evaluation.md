@@ -87,7 +87,7 @@ choices:
   spent (its own scope and timer), so failing cannot make a strategy look
   cheaper or faster by dropping out of the cost; an answer without a measure
   fails a cost gate rather than leaving the delta to the others. Prices are user-supplied
-  (`evaluation.prices`): a shipped table would be stale. Input tokens
+  (`models.prices`, owned by `domain/pricing.py`): a shipped table would be stale. Input tokens
   include the prompt-cache reads and writes, also counted apart
   (`cache_read_input_tokens`, `cache_write_input_tokens`) and priced at
   their own rates when a price gives them; the reranker's requests count
@@ -414,7 +414,7 @@ the seed and the corpus, so a run with the same models' replies writes the
 same files (tested with scripted models); the model replies themselves are
 not deterministic. A failed or malformed call drops the item it was for and
 is counted in the report. Cost is printed from the usage records (with a USD
-estimate under `evaluation.prices`); a typical run (20 clusters, 10 questions
+estimate under `models.prices`); a typical run (20 clusters, 10 questions
 per class, 3 to 4 calls per data question) is a few hundred thousand input
 tokens.
 

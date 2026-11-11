@@ -30,12 +30,11 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.domain.models.config import (
     DEFAULT_MODEL_ID,
     JUDGE_MODEL_ID,
-    ModelPrice,
 )
+from unified_kg_rag.domain.pricing import ModelPrice, usage_cost_usd
 from unified_kg_rag.evaluation import gates as gates_module
 from unified_kg_rag.evaluation.comparison import (
     adjust_for_multiplicity,
-    answer_cost_usd,
     cost_comparison,
     paired_comparison,
 )
@@ -156,7 +155,7 @@ class TestCostBlock:
         assert cost["strategies"]["mix"]["usd_total"] is None
         assert "usage/cost_usd" not in cost["deltas_vs_baseline"]["mix"]
         (warning,) = cost["warnings"]
-        assert "m-b" in warning and "evaluation.prices" in warning
+        assert "m-b" in warning and "models.prices" in warning
         assert cost["prices"]["m-a"]["input_per_million_tokens"] == 3.0
 
     def test_cache_tokens_are_priced_at_their_own_rates(self) -> None:
@@ -178,11 +177,11 @@ class TestCostBlock:
             cache_read_per_million_tokens=0.2,
             cache_write_per_million_tokens=2.5,
         )
-        usd, unpriced = answer_cost_usd(used, {"m-a": cached})
+        usd, unpriced = usage_cost_usd(used, {"m-a": cached})
         assert unpriced == set()
         assert usd == pytest.approx(0.3 * 2.0 + 0.6 * 0.2 + 0.1 * 2.5 + 0.1 * 10.0)
         # Without cache rates every input token is priced as input, as before.
-        plain, _ = answer_cost_usd(used, {"m-a": ModelPrice(**rates)})
+        plain, _ = usage_cost_usd(used, {"m-a": ModelPrice(**rates)})
         assert plain == pytest.approx(1.0 * 2.0 + 0.1 * 10.0)
 
     def test_rerank_search_units_are_priced_and_an_unpriced_reranker_named(
@@ -196,7 +195,7 @@ class TestCostBlock:
         llm_price = ModelPrice(
             input_per_million_tokens=2.0, output_per_million_tokens=10.0
         )
-        usd, unpriced = answer_cost_usd(
+        usd, unpriced = usage_cost_usd(
             used,
             {
                 "m-a": llm_price,
@@ -206,7 +205,7 @@ class TestCostBlock:
         assert unpriced == set()
         assert usd == pytest.approx(2.0 + 4 * 2.0 / 1000)
         # A reranker without a price leaves the answer unpriced, as a model.
-        assert answer_cost_usd(used, {"m-a": llm_price}) == (None, {"reranker"})
+        assert usage_cost_usd(used, {"m-a": llm_price}) == (None, {"reranker"})
 
     def test_no_usd_delta_against_a_run_that_metered_no_rerank(self) -> None:
         """Regression: a baseline saved before rerank requests were metered
@@ -277,7 +276,7 @@ class TestCostBlock:
         llm = {"llm_calls": 1, "input_tokens": 10, "output_tokens": 1}
         used = LLMUsage(**llm, by_model={"m-a": llm})
         rerank_only = {"m-a": ModelPrice(per_thousand_rerank_search_units=2.0)}
-        assert answer_cost_usd(used, rerank_only) == (None, {"m-a"})
+        assert usage_cost_usd(used, rerank_only) == (None, {"m-a"})
 
     def test_results_saved_before_usage_have_latency_only(self) -> None:
         comparison = paired_comparison(

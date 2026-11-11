@@ -57,7 +57,7 @@ paired comparison per pair, merged into one result of the same shape;
 scores: per strategy the calls, tokens and latency per query (mean, p50,
 p95 over every answer, a failed one with what it spent before it failed)
 and, against the baseline, their paired per-query deltas with the same
-bootstrap interval; with ``evaluation.prices`` a USD estimate. The comparison is a function of the saved results and reports
+bootstrap interval; with ``models.prices`` a USD estimate. The comparison is a function of the saved results and reports
 alone, so ``run-eval --from-results`` rebuilds it without a model call.
 """
 
@@ -76,11 +76,9 @@ from unified_kg_rag.domain.models import (
     EvaluationReport,
     EvaluationResult,
     EvaluatorType,
-    LLMUsage,
-    LLMUsageCounts,
     RerankStatus,
 )
-from unified_kg_rag.domain.models.config import ModelPrice
+from unified_kg_rag.domain.pricing import ModelPrice, usage_cost_usd
 from unified_kg_rag.shared import get_logger
 
 from .answer_match_evaluator import ANSWER_SPAN_KEY, SPAN_FALLBACK_KEY
@@ -1028,61 +1026,6 @@ USD_MEASURE = "usage/cost_usd"
 USAGE_SCHEMA = 3
 
 
-def answer_cost_usd(
-    usage: LLMUsage, prices: Mapping[str, ModelPrice]
-) -> tuple[float | None, set[str]]:
-    """The USD cost of one answer's model calls, and the models without a
-    price (the cost is then ``None``)."""
-    unpriced = {
-        model
-        for model, counts in usage.by_model.items()
-        if (counts.llm_calls and _token_rates(prices.get(model)) is None)
-        or (
-            counts.rerank_calls
-            and (
-                model not in prices
-                or prices[model].per_thousand_rerank_search_units is None
-            )
-        )
-    }
-    if unpriced:
-        return None, unpriced
-    usd = sum(
-        _counts_usd(counts, prices[model])
-        for model, counts in usage.by_model.items()
-        if model in prices
-    )
-    return float(usd), set()
-
-
-def _counts_usd(counts: LLMUsageCounts, price: ModelPrice) -> float:
-    """The USD of one model's counts: ``input_tokens`` includes the cache
-    reads and writes, each priced at its own rate when ``price`` has one;
-    a rerank model's search units at their own price."""
-    cached = counts.cache_read_input_tokens + counts.cache_write_input_tokens
-    rate, output = _token_rates(price) or (0.0, 0.0)
-    read = price.cache_read_per_million_tokens
-    write = price.cache_write_per_million_tokens
-    units = price.per_thousand_rerank_search_units or 0.0
-    return (
-        max(0, counts.input_tokens - cached) * rate
-        + counts.cache_read_input_tokens * (rate if read is None else read)
-        + counts.cache_write_input_tokens * (rate if write is None else write)
-        + counts.output_tokens * output
-    ) / 1e6 + counts.rerank_search_units * units / 1e3
-
-
-def _token_rates(price: ModelPrice | None) -> tuple[float, float] | None:
-    """A price's (input, output) USD per million tokens; ``None`` when it
-    has none (a rerank model's, or no price)."""
-    if price is None:
-        return None
-    rates = (price.input_per_million_tokens, price.output_per_million_tokens)
-    if rates[0] is None or rates[1] is None:
-        return None
-    return rates[0], rates[1]
-
-
 def _distribution(values: Sequence[float]) -> dict[str, float] | None:
     if not values:
         return None
@@ -1104,7 +1047,7 @@ def _answer_measures(
         for key, name in _USAGE_MEASURES.items():
             measures[key] = float(getattr(result.usage, name))
         if prices:
-            usd, unpriced = answer_cost_usd(result.usage, prices)
+            usd, unpriced = usage_cost_usd(result.usage, prices)
             if usd is not None:
                 measures[USD_MEASURE] = usd
     if result.response_time is not None:
@@ -1250,7 +1193,7 @@ def cost_comparison(
     warnings.extend(_cache_warnings(strategies, names))
     if unpriced:
         warnings.append(
-            "evaluation.prices has no price for "
+            "models.prices has no price for "
             f"{', '.join(sorted(unpriced))}: the answers that used them have "
             "no USD estimate."
         )

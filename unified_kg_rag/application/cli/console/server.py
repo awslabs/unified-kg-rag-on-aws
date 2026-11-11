@@ -666,7 +666,7 @@ def create_app(
                 if config
                 else None
             ),
-            "prices_configured": bool(config.evaluation.prices) if config else False,
+            "prices_configured": bool(config.models.prices) if config else False,
             # The largest top_k the Ask request takes.
             "max_top_k": MAX_SERVED_TOP_K,
             "jobs": state.jobs.active(),

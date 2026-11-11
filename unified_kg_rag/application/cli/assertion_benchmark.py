@@ -31,6 +31,7 @@ from unified_kg_rag.application.cli.provider_args import (
 )
 from unified_kg_rag.application.cli.query_args import positive_int
 from unified_kg_rag.domain.models import LanguageCode, LLMUsage
+from unified_kg_rag.domain.pricing import usage_cost_usd
 from unified_kg_rag.evaluation.benchmarks import QUESTION_CLASSES
 from unified_kg_rag.shared import EvaluationException
 from unified_kg_rag.shared.exceptions import with_own_text
@@ -134,9 +135,7 @@ def _usage_lines(report: dict[str, Any], prices: dict[str, Any]) -> list[str]:
     total = LLMUsage.model_validate(merge_usage(list(usage.values())) if usage else {})
     cost = ""
     if prices:
-        from unified_kg_rag.evaluation.comparison import answer_cost_usd
-
-        usd, unpriced = answer_cost_usd(total, prices)
+        usd, unpriced = usage_cost_usd(total, prices)
         cost = (
             f", about ${usd:.2f}"
             if usd is not None
@@ -210,7 +209,7 @@ def run_assertion_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         f"'{markup_safe(args.output_directory)}'.[/green]\n"
         f"{autoq.LICENSE_NOTE}\nModel use:"
     )
-    for line in _usage_lines(report, config.evaluation.prices):
+    for line in _usage_lines(report, config.models.prices):
         console.print(markup_safe(line))
     if report["dropped"]:
         console.print(

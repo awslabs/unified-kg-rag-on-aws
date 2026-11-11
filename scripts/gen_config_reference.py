@@ -30,6 +30,7 @@ from pydantic.fields import FieldInfo
 
 from unified_kg_rag.application.config import AWS_ENV_FALLBACKS, ENV_PREFIX
 from unified_kg_rag.domain.models.config import (
+    DEPRECATED_KEYS,
     MOVED_KEY_NOTES,
     MOVED_KEYS,
     REMOVED_KEYS,
@@ -290,6 +291,14 @@ def render() -> str:
         "Each takes the value of the key it replaces, except:",
         "",
         *[f"- `{old}`: {_cell(note)}." for old, note in MOVED_KEY_NOTES.items()],
+        "",
+        "## Deprecated keys",
+        "",
+        "These keys still load, into the key that replaces them, with a WARNING.",
+        "",
+        "| Deprecated key | Loads into |",
+        "|---|---|",
+        *[f"| `{old}` | `{new}` |" for old, new in DEPRECATED_KEYS.items()],
         "",
         "## Removed keys",
         "",
