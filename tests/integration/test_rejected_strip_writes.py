@@ -383,3 +383,27 @@ def test_a_retried_claim_re_key_leaves_no_claim_at_a_retired_entity(
         assert harness.run(final, interrupt="mid_index_delta")
 
     _converges(harness, final, config)
+
+
+def test_a_rejected_strip_write_is_logged_with_the_item_ids(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # A rejection that depends on the item (its size, a mapping conflict)
+    # blocks the namespace until it is written or the namespace is reset:
+    # the WARNING names the items, not only how many.
+    kept: Corpus = {"/corpus/k0.txt": [[("Buyer", "Acme Inc", 1)]]}
+    shared: Corpus = {**kept, "/corpus/h0.txt": [[("Acme Corp", "Depot", 2)]]}
+    before: Corpus = {**shared, "/corpus/g0.txt": [[("Depot", "Acme Corp", 2)]]}
+    depot = next(e.id for e in extract(before).entities if e.name == "Depot")
+    harness = IncrementalRun(FakeDocStatusStore(), _config())
+    harness.run(before)
+
+    with caplog.at_level("WARNING"):
+        harness.run(
+            shared, fail=lambda at, i: at == "graph.upsert_entities" and i == depot
+        )
+
+    assert any(
+        record.levelname == "WARNING" and depot in record.getMessage()
+        for record in caplog.records
+    )

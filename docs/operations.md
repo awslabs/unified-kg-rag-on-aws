@@ -1105,13 +1105,22 @@ classification and output parsing: [Design Doc §5.1](./design/incremental.md#51
 - **Failed removals.** When removing the artifacts of a changed or deleted
   document fails (a store rejects a write of the removal, or a read fails),
   indexing fails before anything of the delta is committed (`Removing stale
-  artifacts of changed or deleted documents failed; not committing the
-  delta`): the deleted documents keep their registry records, the new and
-  changed ones stay `PENDING`, and the next run retries the removal first.
-  The error names the changed and deleted documents. A deleted document
-  whose removal keeps failing so holds back the new and changed documents:
-  fix the store (the run's WARNING lines report the rejected writes by kind
-  and error, its ERROR lines a failed read) and re-run.
+  artifacts of changed, deleted or quarantined documents failed; not
+  committing the delta`): the deleted documents keep their registry
+  records, the new and changed ones stay `PENDING`, and the next run
+  retries the removal first. The error names the documents the removal
+  removes (changed, deleted, and quarantined ones it removes in the same
+  pass). A deleted document whose removal keeps failing so holds back the
+  new and changed documents, and the kept items it shares still state the
+  removed text. The run's WARNING lines (`Removal write ... failed`) name
+  each rejected write by result key, error and item ids, its ERROR lines a
+  failed read. A store-wide cause (throttling, an unreachable domain, a full
+  disk): fix the store and re-run. A rejection that depends on the item
+  (the same ids every run: its size, a mapping conflict) does not go away
+  on a retry: run once with `indexing.reset: true`
+  ([Rebuild](./guides/incremental.md#rebuild-indexingreset)), a full build
+  of the current corpus with no strip to retry, then set it back to
+  `false`.
 
 ### Quarantined documents
 

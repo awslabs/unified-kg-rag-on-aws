@@ -1059,10 +1059,11 @@ From a `main` checkout (formats and keys no release had):
   rejecting a write, the strip writes only the phases before it (the claims come first), and the kept items it did not
   write state the removed text until the write succeeds. The commit writes its claims in the same order, those
   overwriting a stored claim only after those under new ids (held back and noted when one of those fails): a run killed
-  between two slices of its claim write lost a kept document's claim whose id another document's claim took. A
-  failed removal stops the run before the commit, a deleted document's too, with an error naming the documents: the
-  delta merged into the entities a failed strip left citing the removed text units, and dropped a new edge no later
-  run wrote. A deleted document whose removal keeps failing so holds back the new documents, as a changed one does. The
+  between two slices of its claim write lost a kept document's claim whose id another document's claim took. A failed
+  removal stops the run before the commit, a deleted document's too, with an error naming the documents (a quarantined
+  one it removes in the same pass too) and WARNING lines naming the rejected writes' items by id: the delta merged into
+  the entities a failed strip left citing the removed text units, and dropped a new edge no later run wrote. A deleted
+  document whose removal keeps failing so holds back the new documents, as a changed one does. The
   write of an edge whose rank alone changed compares the vector copies the derivation read, not read again, and
   leaves one whose vector copy cites a text unit its graph copy does not (written to one store only: a strip whose
   vector write was rejected) to the removal's retry: rewritten from those copies, it kept the removed document's
