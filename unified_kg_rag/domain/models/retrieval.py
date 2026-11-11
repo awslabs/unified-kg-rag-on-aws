@@ -108,6 +108,11 @@ class StrategyTraits:
     # Why ``search.auto_routable_strategies`` refuses it; None: it may list
     # it.
     not_routable_reason: str | None = None
+    # The evidence it was left out of the default routable strategies on:
+    # a config that lists it loads with a WARNING citing this
+    # (docs/concepts/defaults-and-evidence.md), since routing to it is the
+    # operator's call, not a setting that cannot work. None: no warning.
+    route_warning: str | None = None
     # Its place among the general-purpose strategies a query falls back to
     # (``GENERAL_FALLBACKS``: auto's when routing fails or nothing configured
     # is served, structured's when its fallback is not served); None: not
@@ -132,14 +137,17 @@ STRATEGY_TRAITS: dict[SearchStrategy, StrategyTraits] = {
     SearchStrategy.NAIVE: StrategyTraits(),
     SearchStrategy.ITERATIVE: StrategyTraits(),
     SearchStrategy.PPR: StrategyTraits(
-        not_routable_reason="it is opt-in until a measurement shows where it "
-        "wins (docs/design.md §6.4); select it explicitly"
+        route_warning="on 200 MuSiQue questions it answered within the noise "
+        "of local (answer_contains -2.0 [-7.5, +3.5]) at 2.4x lower cost, "
+        "weaker on 4-hop chains, and the router was not measured choosing it "
+        "(docs/concepts/defaults-and-evidence.md#the-ppr-strategy)"
     ),
     SearchStrategy.TREE: StrategyTraits(
-        not_routable_reason="it is opt-in (it answered better than naive but "
-        "well below the graph strategies, docs/concepts/"
-        "defaults-and-evidence.md#raptor-summary-tree), so the router does "
-        "not pick it; select it explicitly"
+        route_warning="on 100 MuSiQue questions it scored answer_contains "
+        "+8.0 [+3.0, +14.0] over naive where mix and local scored +19 and "
+        "+18, and on sensemaking questions it matched them against global; "
+        "the router was not measured choosing it "
+        "(docs/concepts/defaults-and-evidence.md#raptor-summary-tree)"
     ),
     # Routable once listed (not by default: docs/design.md §6.6).
     SearchStrategy.STRUCTURED: StrategyTraits(),

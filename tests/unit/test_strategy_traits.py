@@ -28,9 +28,15 @@ def test_every_routable_strategy_has_a_router_guide() -> None:
     assert routable <= set(STRATEGY_ROUTING_GUIDE)
     assert {s for s in SearchStrategy if not STRATEGY_TRAITS[s].auto_routable} == {
         SearchStrategy.AUTO,
-        SearchStrategy.PPR,
-        SearchStrategy.TREE,
     }
+
+
+def test_the_routes_that_warn_are_left_out_of_the_default() -> None:
+    # A strategy measured below the default candidates loads with a WARNING
+    # (route_warning) and is not listed by default.
+    warned = {s for s, t in STRATEGY_TRAITS.items() if t.route_warning is not None}
+    assert warned == {SearchStrategy.PPR, SearchStrategy.TREE}
+    assert not warned & set(Config().search.auto_routable_strategies)
 
 
 def test_the_default_routable_strategies_are_allowed() -> None:

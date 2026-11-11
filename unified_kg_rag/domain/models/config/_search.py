@@ -77,13 +77,14 @@ class SearchConfig(ConfigSection):
             "when nothing is left local, else mix, else the first strategy "
             "of a held methodology is used (tree on a raptor-only "
             "namespace); with one strategy left no router call is "
-            "made. auto itself is rejected, and so are ppr until a "
-            "measurement shows where it wins and tree, which answered "
-            "better than naive but well below the graph strategies on one "
-            "corpus (docs/concepts/defaults-and-evidence.md"
-            "#raptor-summary-tree); "
-            "every strategy stays selectable explicitly, and one reading "
-            "what the namespace does not hold is refused."
+            "made. auto itself is rejected; ppr and tree load with a "
+            "WARNING citing their evidence (ppr: within the noise of local "
+            "at a third of the cost, weaker on long chains; tree: +8 points "
+            "over naive, below mix and local on multi-hop questions; "
+            "docs/concepts/defaults-and-evidence.md), as the router was not "
+            "measured choosing them. Every strategy stays selectable "
+            "explicitly, and one reading what the namespace does not hold is "
+            "refused."
         ),
     )
     hybrid: HybridConfig = Field(

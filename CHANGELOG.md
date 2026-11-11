@@ -19,6 +19,12 @@ Bugs present in 0.3.0.
 - A saved result (an evaluation report, a failed metric's reason) names an error whose whole message is the package's
   own by its type and the error it was raised from (`LanguageModelError from ConnectionRefusedError [Errno 111]
   Connection refused`) when that message does not name it; it named the type alone.
+### Changed
+
+- `search.auto_routable_strategies` accepts `ppr` and `tree`, loading with a WARNING that cites the measurement they
+  were left out of the default on (`ppr`: within the noise of `local` at a third of its cost, weaker on long chains;
+  `tree`: +8 points of `answer_contains` over `naive`, below `mix` and `local`). It refused them, which made routing
+  to them a code change rather than the operator's call.
 
 ## [0.3.0] - 2026-11-14
 
