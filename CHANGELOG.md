@@ -501,16 +501,17 @@ From a `main` checkout (formats and keys no release had):
 - Stored edge ranks: a vector copy's rank a run killed between the stores left (before the rank was compared) is set
   by the next run deriving one of the edge's endpoints, or by a reset; a `pending-commit` note's `edge_entity_ids`
   (#694) is ignored.
-- Re-keyed once before 0.3.0: entity ids and name keys fold quotes, dashes, dense-script middle dots and Arabic and
-  Hebrew marks and strip more legal forms (*Stored data and reindexing*); the description summary and claim prompts
-  changed (*Fixed*); stage-cache keys hold the built-in prompts (a pipeline id resumed across a prompt change starts
-  over); extraction records under earlier keys (other description summary settings, #541-#556) and claims under an
-  earlier reading of their dates (#612, #624) are no longer looked up. Run one reset (`indexing.reset: true`) with a
-  new or no `--pipeline-id`: incremental runs keep stored entities under their earlier ids beside the new ones. It
-  reuses the stored graph extraction and gleaning records (a record a build before #556 stored under other summary
-  settings or `models` tiers is extracted again) and asks one summary per entity or relationship over the summary
-  threshold, the reports of the communities whose input changed (most of them) and, with claim extraction on, every
-  unit's claims (one call per unit that states an entity).
+- Re-keyed once before 0.3.0: entity ids and name keys fold quotes, apostrophes, invisible characters, dashes (not a
+  leading minus), dense-script middle dots and Arabic and Hebrew marks and strip more legal forms (*Stored data and
+  reindexing*); the description summary and claim prompts changed and claims keep a `suspected` status (*Fixed*);
+  stage-cache keys hold the prompts in effect (a pipeline id resumed across a prompt change starts over); extraction
+  records under earlier keys (other description summary settings, #541-#556) and claims under an earlier reading of
+  their dates (#612, #624) are no longer looked up. Run one reset (`indexing.reset: true`) with a new or no
+  `--pipeline-id`: incremental runs keep stored entities under their earlier ids beside the new ones. It reuses the
+  stored graph extraction and gleaning records (a record a build before #556 stored under other summary settings or
+  `models` tiers is extracted again) and asks one summary per entity or relationship over the summary threshold, the
+  reports of the communities whose input changed (most of them) and, with claim extraction on, every unit's claims
+  (one call per unit that states an entity).
 - One reset covers all of these and the items below. On an index built with #565 or later it reuses the stored
   extraction records and vectors: beyond what the items below name, the model is asked only for the reports of the
   communities that cluster differently and a summary and embedding per newly merged entity over the threshold. On
