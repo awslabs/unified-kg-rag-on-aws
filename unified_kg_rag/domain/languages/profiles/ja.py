@@ -18,7 +18,8 @@ PROFILE = LanguageProfile(
     claim_statuses={
         "true": ("真", "真実", "事実", "確認済み", "検証済み"),
         "false": ("偽", "虚偽", "否定", "否認"),
-        "disputed": ("係争", "争い", "疑い", "不確か", "不確実", "未確認"),
+        "suspected": ("疑い", "不確か", "不確実", "未確認"),
+        "disputed": ("係争", "争い"),
         "unknown": ("不明", "なし"),
     },
     no_value_words=(

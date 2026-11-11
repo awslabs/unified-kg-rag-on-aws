@@ -18,12 +18,13 @@ PROFILE = LanguageProfile(
         "the what which who whom whose how why when where is are were does did "
         "has have had can could would should of and with from this that".split()
     ),
-    # The claim prompt's words, MS GraphRAG's SUSPECTED, and the few words
-    # that state the same status plainly.
+    # The claim prompt's words (SUSPECTED as MS GraphRAG's), and the few
+    # words that state the same status plainly.
     claim_statuses={
         "true": ("true", "fact", "factual", "confirmed", "verified"),
         "false": ("false", "untrue", "denied", "refuted"),
-        "disputed": ("disputed", "suspected", "uncertain", "unverified"),
+        "suspected": ("suspected", "uncertain", "unverified"),
+        "disputed": ("disputed",),
         "unknown": ("unknown", "none", "na"),
     },
     no_value_words=(

@@ -57,10 +57,22 @@ def test_a_name_is_its_most_frequent_spelling_the_smallest_on_a_tie(
     assert merged.name == ("Acme" if len(names) == 3 else "ACME")
 
 
-@pytest.mark.parametrize("order", [("TRUE", "SUSPECTED"), ("SUSPECTED", "TRUE")])
-def test_disagreeing_claim_statuses_merge_into_disputed(order: tuple[str, str]) -> None:
+@pytest.mark.parametrize(
+    ("statuses", "status"),
+    [
+        (("TRUE", "FALSE"), "disputed"),
+        # A statement that it is true or false settles a suspicion.
+        (("TRUE", "SUSPECTED"), "true"),
+        (("SUSPECTED", "FALSE"), "false"),
+    ],
+)
+@pytest.mark.parametrize("reverse", [False, True])
+def test_claim_statuses_merge_whatever_their_order(
+    statuses: tuple[str, str], status: str, reverse: bool
+) -> None:
     from unified_kg_rag.domain.ingestion.claim_resolver import ClaimResolver
 
+    order = statuses[::-1] if reverse else statuses
     claims = [
         Claim(
             id="c",
@@ -76,7 +88,7 @@ def test_disagreeing_claim_statuses_merge_into_disputed(order: tuple[str, str]) 
 
     merged = object.__new__(ClaimResolver)._merge_claims(claims)
 
-    assert merged.status == "disputed"
+    assert merged.status == status
 
 
 def _claim_statements(order: tuple[int, ...]) -> list[Claim]:

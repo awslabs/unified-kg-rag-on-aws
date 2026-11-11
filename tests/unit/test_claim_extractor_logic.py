@@ -50,7 +50,7 @@ def text_unit() -> TextUnit:
 class TestParseClaimData:
     @pytest.mark.parametrize(
         ("raw", "status"),
-        [("Suspected", "disputed"), ("true.", "true"), (None, "unknown")],
+        [("Suspected", "suspected"), ("true.", "true"), (None, "unknown")],
     )
     def test_the_status_is_read_into_the_prompts_vocabulary(
         self, extractor, text_unit, raw: str | None, status: str
@@ -587,12 +587,13 @@ def test_a_claim_without_an_object_is_kept_with_none(
     assert claim.id == reference.id
 
 
-def test_the_claim_prompt_takes_reported_allegations_as_disputed() -> None:
+def test_the_claim_prompt_takes_reported_allegations_as_suspected() -> None:
     # MS GraphRAG's claim prompt is built around the allegations and
     # suspicions a text reports (SUSPECTED, "Person C was suspected of ...");
     # the prompt used to leave out all speculative content, so a reported
-    # suspicion was no claim at all. Now: a DISPUTED claim, the author's own
-    # opinions still left out.
+    # suspicion was no claim at all, then took it as DISPUTED, which also
+    # meant conflicting information. Now: a SUSPECTED claim, as MS GraphRAG
+    # has it, the author's own opinions still left out.
     from unified_kg_rag.domain.prompts import ClaimExtractionPrompt
 
     resolved = ClaimExtractionPrompt.resolve()
@@ -600,7 +601,9 @@ def test_the_claim_prompt_takes_reported_allegations_as_disputed() -> None:
     assert "speculat" not in text
     assert "allegation" in text and "suspicion" in text
     assert "author's own opinions" in text
-    disputed = next(
-        line for line in text.splitlines() if line.startswith("- **DISPUTED**")
-    )
-    assert "alleged" in disputed and "suspected" in disputed
+    lines = text.splitlines()
+    suspected = next(line for line in lines if line.startswith("- **SUSPECTED**"))
+    disputed = next(line for line in lines if line.startswith("- **DISPUTED**"))
+    assert "alleged" in suspected and "suspected" in suspected
+    assert "conflicting" in disputed and "suspected" not in disputed
+    assert "TRUE|FALSE|SUSPECTED|DISPUTED|UNKNOWN" in text

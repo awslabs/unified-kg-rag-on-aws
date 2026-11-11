@@ -283,26 +283,35 @@ def _cjk_date_value(text: str, *, end: bool) -> str | None:
         return None
 
 
-# The claim prompt's statuses (TRUE, FALSE, DISPUTED, UNKNOWN), lowercase
-# as claims are stored. A claim whose statements disagree is disputed;
+# The claim prompt's statuses (TRUE, FALSE, SUSPECTED, DISPUTED, UNKNOWN),
+# lowercase as claims are stored. SUSPECTED is MS GraphRAG's ("the claim is
+# not verified"): an allegation a text reports, which a statement that it is
+# true or false settles. A claim stated both true and false is disputed;
 # unknown states nothing about the claim's truth (the prompt's
 # "insufficient information"): it never disagrees with another.
 TRUE_STATUS = "true"
 FALSE_STATUS = "false"
+SUSPECTED_STATUS = "suspected"
 DISPUTED_STATUS = "disputed"
 UNKNOWN_STATUS = "unknown"
-CLAIM_STATUSES = (TRUE_STATUS, FALSE_STATUS, DISPUTED_STATUS, UNKNOWN_STATUS)
+CLAIM_STATUSES = (
+    TRUE_STATUS,
+    FALSE_STATUS,
+    SUSPECTED_STATUS,
+    DISPUTED_STATUS,
+    UNKNOWN_STATUS,
+)
 
 # What a model writes for a status, in every language of the registry
 # (``LanguageProfile.claim_statuses``; a model answering in the index
-# language may translate the status): the prompt's words, MS GraphRAG's
-# SUSPECTED, and the few words that state the same status plainly,
-# casefolded and stripped of punctuation and spaces. MS GraphRAG's prompt
-# defines TRUE as "the claim is confirmed" and SUSPECTED as "the claim is
-# not verified", and ours DISPUTED as "conflicting information or
-# uncertainty indicated": "confirmed" and "verified" are true, "denied" and
-# "refuted" false, "uncertain" and "unverified" disputed, in every language.
-# Any other word is read as unknown and counted (``claim_status_recognised``).
+# language may translate the status): the prompt's words and the few words
+# that state the same status plainly, casefolded and stripped of punctuation
+# and spaces. MS GraphRAG's prompt defines TRUE as "the claim is confirmed"
+# and SUSPECTED as "the claim is not verified", and ours DISPUTED as
+# "contested by conflicting information": "confirmed" and "verified" are
+# true, "denied" and "refuted" false, "uncertain" and "unverified"
+# suspected, in every language. Any other word is read as unknown and
+# counted (``claim_status_recognised``).
 _STATUS_BY_WORD = {
     word: status
     for language in profiles()
@@ -318,11 +327,11 @@ def _status_word(raw: str | None) -> str:
 
 def claim_status(raw: str | None) -> str:
     """The stored claim status (one of ``CLAIM_STATUSES``) a model's
-    ``raw`` status names: the prompt's ``TRUE``, ``FALSE``, ``DISPUTED`` or
-    ``UNKNOWN``, read case-, punctuation- and space-insensitively
-    (``"True."`` is ``true``, MS GraphRAG's ``SUSPECTED`` is ``disputed``,
-    ``"참"`` is ``true``, ``"불확실"`` is ``unknown``, see ``_STATUS_BY_WORD``);
-    ``unknown`` for a missing or unrecognised one."""
+    ``raw`` status names: the prompt's ``TRUE``, ``FALSE``, ``SUSPECTED``,
+    ``DISPUTED`` or ``UNKNOWN``, read case-, punctuation- and
+    space-insensitively (``"True."`` is ``true``, ``"Suspected"`` is
+    ``suspected``, ``"참"`` is ``true``, ``"불확실"`` is ``suspected``, see
+    ``_STATUS_BY_WORD``); ``unknown`` for a missing or unrecognised one."""
     return _STATUS_BY_WORD.get(_status_word(raw), UNKNOWN_STATUS)
 
 
@@ -336,10 +345,12 @@ def claim_status_recognised(raw: str | None) -> bool:
 
 def merge_claim_statuses(statuses: Iterable[str | None]) -> str | None:
     """The status of one claim stated with ``statuses`` (each read with
-    :func:`claim_status`): the status they all state, ``disputed`` when two
-    of them disagree (``true`` and ``false``, say), and ``unknown`` only
-    when nothing else is stated (None when no status is given). An
-    ``unknown`` status adds nothing to a known one.
+    :func:`claim_status`): ``disputed`` when one says ``disputed`` or they
+    state it both ``true`` and ``false``; else ``true`` or ``false`` when
+    one states it, which settles a ``suspected`` claim; ``suspected`` when
+    one says so; and ``unknown`` only when nothing else is stated (None
+    when no status is given). An ``unknown`` status adds nothing to a
+    known one.
 
     Independent of the statements' order and associative: merging a merged
     claim's status with more statements' gives what merging every statement
@@ -349,10 +360,12 @@ def merge_claim_statuses(statuses: Iterable[str | None]) -> str | None:
     present = {claim_status(s) for s in statuses if s}
     if not present:
         return None
-    known = present - {UNKNOWN_STATUS}
-    if len(known) > 1:
+    if DISPUTED_STATUS in present or {TRUE_STATUS, FALSE_STATUS} <= present:
         return DISPUTED_STATUS
-    return next(iter(known)) if known else UNKNOWN_STATUS
+    for status in (TRUE_STATUS, FALSE_STATUS, SUSPECTED_STATUS):
+        if status in present:
+            return status
+    return UNKNOWN_STATUS
 
 
 def _cjk_year(found: re.Match[str]) -> int:

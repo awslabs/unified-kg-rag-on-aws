@@ -392,10 +392,11 @@ class ClaimExtractionPrompt(BasePrompt):
     """Extract the claims a text unit states about its entities (covariates).
 
     As MS GraphRAG's ``extract_claims`` prompt, which is built around the
-    allegations and suspicions a text reports (its SUSPECTED status), a claim
-    is a fact the text states or an allegation it reports, the latter as
-    DISPUTED; the author's own opinions are left out. The output is XML with
-    a fixed type list rather than GraphRAG's delimited tuples."""
+    allegations and suspicions a text reports, a claim is a fact the text
+    states or an allegation it reports, the latter SUSPECTED as there; the
+    author's own opinions are left out. DISPUTED (conflicting information)
+    and UNKNOWN are ours. The output is XML with a fixed type list rather
+    than GraphRAG's delimited tuples."""
 
     prompt_key = "claim_extraction"
     model_role = ModelRole.CLAIM_EXTRACTION
@@ -422,7 +423,8 @@ hypotheses.
 ## Claim Status (REQUIRED for each claim):
 - **TRUE**: Presented as established or confirmed in the text
 - **FALSE**: Explicitly contradicted, negated or found to be false
-- **DISPUTED**: Reported as alleged, suspected or not verified, or contested by conflicting information
+- **SUSPECTED**: Reported as alleged or suspected, not verified
+- **DISPUTED**: Contested: the text reports conflicting information about it
 - **UNKNOWN**: Insufficient information to determine status
 
 ## Temporal Information (REQUIRED for each claim):
@@ -449,7 +451,7 @@ hypotheses.
 <subject>PRIMARY_ENTITY_NAME</subject>
 <object>SECONDARY_ENTITY_OR_VALUE</object>
 <claim_type>SPECIFIC_CLAIM_TYPE</claim_type>
-<claim_status>TRUE|FALSE|DISPUTED|UNKNOWN</claim_status>
+<claim_status>TRUE|FALSE|SUSPECTED|DISPUTED|UNKNOWN</claim_status>
 <start_date>YYYY-MM-DD or UNKNOWN</start_date>
 <end_date>YYYY-MM-DD or UNKNOWN</end_date>
 <description>Precise description of the assertion.</description>
@@ -467,7 +469,7 @@ hypotheses.
 5. Include exact source text quotations for each claim
 6. Assign appropriate claim types from the specified list
 7. Provide accurate temporal information when available
-8. Focus on concrete statements; an allegation or suspicion is a DISPUTED claim, not a TRUE one
+8. Focus on concrete statements; an allegation or suspicion is a SUSPECTED claim, not a TRUE one
 
 # QUALITY REQUIREMENTS:
 ✓ One distinct assertion per claim

@@ -1839,16 +1839,16 @@ Ingestion and incremental indexing.
   is not asked (its claims could resolve to nothing); and a claim whose statements disagree (`TRUE` and `FALSE`) is
   `disputed`, in a full build and incrementally, where a majority vote read a tie as `FALSE` and an incremental run
   kept the stored status whatever the new documents said (#624). A status is read into the prompt's vocabulary
-  (`true`, `false`, `disputed`, `unknown`, as stored: `True.` is `true`, MS GraphRAG's `SUSPECTED` is `disputed`, an
-  unrecognised word `unknown`) at extraction and in every merge, so a stored off-vocabulary status no longer
-  disputes the same one (#640). The words read are the prompt's, `SUSPECTED` and a few plain synonyms, the same in
-  English, Korean, Japanese and Chinese (#644): `confirmed` and `verified` are `true`, `denied` and `refuted`
-  `false`, and `uncertain` and `unverified` (`불확실`, `未確認`) `disputed`, as the prompt's DISPUTED ("alleged,
-  suspected or not verified") and MS GraphRAG's SUSPECTED ("not verified") say (Korean read them as unrecognised);
-  the claims whose status is none of them are counted in the `total_unrecognised_claim_statuses` metric (#644). As
-  MS GraphRAG's claim prompt, built around the allegations a text reports, the prompt takes an allegation or
-  suspicion the text reports as a `DISPUTED` claim saying who alleges it, where it left out all speculation; only the
-  author's own opinions are left out.
+  (`true`, `false`, `suspected`, `disputed`, `unknown`, as stored: `True.` is `true`, an unrecognised word `unknown`)
+  at extraction and in every merge, so a stored off-vocabulary status no longer disputes the same one (#640). The
+  words read are the prompt's and a few plain synonyms, the same in English, Korean, Japanese and Chinese (#644):
+  `confirmed` and `verified` are `true`, `denied` and `refuted` `false`, and `uncertain` and `unverified` (`불확실`,
+  `未確認`) `suspected`, as MS GraphRAG's SUSPECTED ("not verified") says (Korean read them as unrecognised); the
+  claims whose status is none of them are counted in the `total_unrecognised_claim_statuses` metric (#644). As MS
+  GraphRAG's claim prompt, built around the allegations a text reports, the prompt takes an allegation or suspicion
+  the text reports as a `SUSPECTED` claim saying who alleges it, where it left out all speculation, and keeps
+  `DISPUTED` for conflicting information; only the author's own opinions are left out. A `true` or `false` statement
+  settles a `suspected` claim, `true` and `false` together dispute it.
 - An entity without relationships no longer adds a level to the community hierarchy: it made a single root over
   the other communities read as a partition, so global search's cut depths depended on it (#608).
 - A model answer that corrects itself is parsed by its last complete answer (each XML section keeps its last closed

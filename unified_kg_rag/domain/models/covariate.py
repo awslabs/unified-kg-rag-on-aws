@@ -26,7 +26,9 @@ class Claim(Covariate):
     )
     type: str = Field(..., description="The claim type")
     status: str | None = Field(
-        None, description="The claim status (e.g., TRUE, FALSE, DISPUTED, UNKNOWN)"
+        None,
+        description="The claim status as stored (claim_resolver.claim_status): "
+        "true, false, suspected, disputed or unknown",
     )
     start_date: str | None = Field(
         None, description="The start date of the claim (YYYY-MM-DD format)"
