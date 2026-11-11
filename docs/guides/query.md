@@ -223,6 +223,29 @@ chain.invoke(RAGInput(query="...", limits=QueryLimits(max_model_calls=6, deadlin
 The MCP tools `kg_search` and `kg_answer` take the same `limits` argument
 ([MCP server](./mcp.md)).
 
+### Reasoning effort
+
+`RAGInput.effort` (`low`, `medium`, `high`, `xhigh`, `max`) sets how hard
+one query's answer model reasons, in place of its tier's configured
+`aws.bedrock.default_effort` / `fast_effort`
+([Models](../reference/models.md)). It turns reasoning on for a model that
+opts in, and the answer's output ceiling (`search.output_ceilings`) leaves
+room for that level's reasoning. Only the answer call takes it; the router,
+the query processing and the strategies' own calls keep their tier's. An
+older Claude model (4.5 and before), which takes a thinking budget, not a
+level, thinks on that level's budget (`low` 2,048 tokens up to `max` 32,768).
+An effort the answer model cannot apply is refused before any model call
+(`InvalidArgumentError`, error class `invalid_argument`): a level it does not
+take, or any level on a model that does not reason (a local server's, or a
+Bedrock model without thinking), which would otherwise drop it. Unset,
+nothing changes.
+`RAGInput.enable_thinking` is deprecated (a `DeprecationWarning`): it turns
+reasoning on at the tier's effort.
+
+```python
+chain.invoke(RAGInput(query="...", effort="low"))
+```
+
 ## Streaming
 
 `GraphRAGChain.aquery_events` (sync: `query_events`) runs the query `ainvoke` runs (its deadline,

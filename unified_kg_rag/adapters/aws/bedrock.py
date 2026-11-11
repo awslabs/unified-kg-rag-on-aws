@@ -58,6 +58,7 @@ from unified_kg_rag.domain.models.config import (
     TransientRetryConfig,
 )
 from unified_kg_rag.ports.model_factory import (
+    CEILING_ANSWER_TOKENS,
     EmbeddingModelInfo,
     LanguageModelInfo,
     RerankModelInfo,
@@ -805,11 +806,26 @@ class BedrockLanguageModelFactory(
         )
         # A short-answer query prompt caps it (search.output_ceilings), with
         # room left for the request's reasoning.
+        thinking_tokens = self._thinking_tokens(model_info, **kwargs)
         if not kwargs.get("max_tokens") and (ceiling := kwargs.get("output_ceiling")):
             final_max_tokens = ceiled_output_tokens(
+                final_max_tokens, int(ceiling), thinking_tokens
+            )
+        if (
+            not kwargs.get("max_tokens")
+            and thinking_tokens
+            and not model_info.uses_adaptive_thinking
+            and model_info.provider == "anthropic"
+        ):
+            # A manual budget must be below max_tokens (Bedrock refuses it
+            # otherwise): an effort's budget raises the default cap to leave
+            # the answer its floor, never past the model's maximum.
+            final_max_tokens = max(
                 final_max_tokens,
-                int(ceiling),
-                self._thinking_tokens(model_info, **kwargs),
+                min(
+                    thinking_tokens + CEILING_ANSWER_TOKENS,
+                    model_info.max_output_tokens,
+                ),
             )
         config = self._build_base_config(
             resolved_model_id, is_cross_region, model_info, **kwargs
@@ -960,9 +976,7 @@ class BedrockLanguageModelFactory(
             logger.debug("Applied OpenAI reasoning (reasoning.effort='%s')", effort)
             return {"reasoning": {"effort": effort}}
         if not model_info.uses_adaptive_thinking:
-            budget = kwargs.get(
-                "thinking_budget_tokens", self.DEFAULT_THINKING_BUDGET_TOKENS
-            )
+            budget = self._thinking_budget(model_info, **kwargs)
             logger.debug("Applied extended thinking (budget_tokens=%d)", budget)
             return {"thinking": {"type": "enabled", "budget_tokens": budget}}
         effort = self._resolve_effort(model_info, **kwargs)
@@ -983,9 +997,18 @@ class BedrockLanguageModelFactory(
             return 0
         if model_info.provider == "openai" or model_info.uses_adaptive_thinking:
             return EFFORT_THINKING_TOKENS[self._resolve_effort(model_info, **kwargs)]
-        return int(
-            kwargs.get("thinking_budget_tokens", self.DEFAULT_THINKING_BUDGET_TOKENS)
-        )
+        return self._thinking_budget(model_info, **kwargs)
+
+    def _thinking_budget(self, model_info: LanguageModelInfo, **kwargs: Any) -> int:
+        """The manual ``budget_tokens`` of an older Claude model, which
+        takes no effort: ``thinking_budget_tokens`` when given, else the
+        per-call ``effort``'s ``EFFORT_THINKING_TOKENS`` (a query's
+        ``RAGInput.effort``), else ``DEFAULT_THINKING_BUDGET_TOKENS``."""
+        if (budget := kwargs.get("thinking_budget_tokens")) is not None:
+            return int(budget)
+        if kwargs.get("effort"):
+            return EFFORT_THINKING_TOKENS[self._resolve_effort(model_info, **kwargs)]
+        return self.DEFAULT_THINKING_BUDGET_TOKENS
 
     def _resolve_effort(self, model_info: LanguageModelInfo, **kwargs: Any) -> str:
         """Pick the effort level and validate it.

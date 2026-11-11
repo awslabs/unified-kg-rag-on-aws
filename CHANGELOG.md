@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking changes
 
+- `EvaluationResult.enable_thinking` is gone: nothing recorded it (it was always false). A saved result that holds
+  it still loads.
 - `config.evaluation.prices` is gone from the Python surface: read and set `config.models.prices`
   (`EvaluationConfig(prices=...)` is refused as an unknown field; a config file or `UKR__` variable that sets
   `evaluation.prices` still loads, with a WARNING). `unified_kg_rag.evaluation.comparison.answer_cost_usd` is
@@ -51,6 +53,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `answer_fingerprints` (the full build's report and summary settings, kept by incremental records); a record
   written earlier names none. A run logs a WARNING per reason only `indexing.reset: true` applies and lists them by
   suffix in its JSON result (`rebuild_due`).
+- `RAGInput.effort` (`low` to `max`) sets one query's answer reasoning effort in place of its tier's
+  `aws.bedrock.default_effort` / `fast_effort`: it turns reasoning on for a model that opts in, leaves that level's
+  reasoning room under the answer's output ceiling and, on an older Claude model (4.5 and before), sizes its thinking
+  budget; unset, nothing changes. An effort the answer model cannot apply (a level it does not take, or a model that
+  does not reason, as a local server's) is refused before any model call (`InvalidArgumentError`).
 - An ingestion run's budget and cost estimate. `processing.max_run_model_calls` and `processing.max_run_usd` (off by
   default; USD priced by `models.prices`) refuse the model call that would pass them and stop the run once the calls
   already sent have answered (`RunBudgetExhausted`, exported, error class `limit_exceeded`, exit 1): its finished stages
@@ -79,6 +86,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `GraphRAGChain.ainvoke(on_answer_chunk=...)` warns (`DeprecationWarning`): read the `AnswerChunk` events of
   `aquery_events()`. Until it is removed it is one more reader of those events, so it now also streams an answer read
   for `[NO_ANSWER]` (`search.abstention`), the token held back and stripped.
+- `RAGInput.enable_thinking` warns (`DeprecationWarning`): set `RAGInput.effort`. Until it is removed it turns the
+  answer model's reasoning on at its tier's effort, as before.
 
 ### Fixed
 Bugs present in 0.3.0.

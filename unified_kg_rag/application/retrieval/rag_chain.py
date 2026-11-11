@@ -24,7 +24,7 @@ from collections.abc import (
     MutableMapping,
 )
 from contextlib import AbstractContextManager, aclosing, contextmanager, nullcontext
-from typing import Annotated, Any, Literal, Self, TypeVar, cast
+from typing import Annotated, Any, Literal, Self, TypeVar, cast, get_args
 
 from langchain_core.exceptions import OutputParserException
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
@@ -149,6 +149,7 @@ from unified_kg_rag.domain.models import (
     Source,
     validate_safe_name,
 )
+from unified_kg_rag.domain.models.config import EffortLevel
 from unified_kg_rag.domain.prompts import (
     BasePrompt,
     QueryRewritePrompt,
@@ -507,9 +508,25 @@ class RAGInput(BaseModel):
         description="Suffix for multi-tenant or versioned indices; None reads "
         "the config's processing.document_parsing.index_value, else 'default'",
     )
+    effort: EffortLevel | None = Field(
+        default=None,
+        description="Reasoning effort of this query's answer (low, medium, "
+        "high, xhigh, max): the answer model reasons at this level "
+        "(output_config.effort on Anthropic adaptive-thinking models, "
+        "reasoning.effort on OpenAI GPT, that level's thinking budget on "
+        "older Claude models), with room for it left under its output "
+        "ceiling. Refused before any model call (InvalidArgumentError) when "
+        "the answer model does not take the level or does not reason (a "
+        "local server's model, a Bedrock model without thinking). None: the "
+        "configured effort of the answer model's tier "
+        "(aws.bedrock.default_effort / fast_effort), on a model that always "
+        "reasons",
+    )
     enable_thinking: bool = Field(
         default=False,
-        description="Enable thinking mode for language model reasoning and step-by-step problem solving",
+        description="Deprecated (a DeprecationWarning): set effort instead. "
+        "True turns the answer model's reasoning on at the configured effort "
+        "of its tier, for a model that opts in",
     )
     search_strategy: SearchStrategy = Field(
         default=SearchStrategy.AUTO,
@@ -599,6 +616,19 @@ class RAGInput(BaseModel):
             # from and searched for.
             raise ValueError("The query is empty.")
         return query
+
+    @field_validator("enable_thinking")
+    @classmethod
+    def _deprecated_thinking(cls, enable: bool) -> bool:
+        if enable:
+            warnings.warn(
+                "RAGInput.enable_thinking is deprecated: set RAGInput.effort "
+                "(low, medium, high, xhigh, max), which turns reasoning on at "
+                "that level",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        return enable
 
     @model_validator(mode="after")
     def _one_conversation_source(self) -> "RAGInput":
@@ -2007,14 +2037,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         if self._context_is_empty(state):
             return RunnableLambda(lambda s: self._no_context_answer(s))
 
-        enable_thinking = state.get("enable_thinking", False)
         # Only passed when set, so the default answer chain (and its cache
         # key) is that of earlier releases.
         instructions = self._answer_instructions(state)
         answer_chain = self._get_chain_for_prompt(
             self._answer_prompt(state.get("resolved_strategy")),
             StrOutputParser(),
-            enable_thinking=enable_thinking,
+            **_answer_reasoning(state),
             **({"system_suffix": instructions} if instructions else {}),
         )
         # The answer reads the standalone question: the conversation history
@@ -3561,6 +3590,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         query gives. A refused strategy or filter still raises: a usage
         error, not a failed query."""
         rag_input, input_dict = self._prepare_invoke(inputs)
+        self._check_effort(rag_input)
         rag_input.suffix = input_dict["suffix"] = resolve_namespace(
             self.config, rag_input.suffix
         )
@@ -3571,6 +3601,37 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             input_dict["held_artifacts"] = frozenset()
             input_dict[_MISSING_NAMESPACE] = e
         return rag_input, input_dict
+
+    def _check_effort(self, rag_input: RAGInput) -> None:
+        """Refuse an ``effort`` the answer model cannot apply, before any
+        model call: one that does not reason (a local server's, a Bedrock
+        model without thinking), which would drop it without a word, or a
+        level it does not take (``LanguageModelInfo.supported_efforts``).
+
+        Raises:
+            InvalidArgumentError: Naming the model and what it takes.
+        """
+        effort = rag_input.effort
+        if effort is None:
+            return
+        model_id = self.config.model_id(ModelRole.ANSWER_GENERATION)
+        info = self.factory.get_model_info(model_id)
+        if not info.supports_thinking:
+            raise InvalidArgumentError(
+                f"effort '{effort}' cannot apply: the answer model "
+                f"'{model_id}' does not reason (it would answer at no effort "
+                "at all); unset effort, or answer with a model that reasons "
+                "(models.roles.answer_generation)"
+            )
+        allowed = info.supported_efforts
+        if allowed is not None and effort not in allowed:
+            raise InvalidArgumentError(
+                f"effort '{effort}' is not a level the answer model "
+                f"'{model_id}' takes: "
+                + ", ".join(
+                    level for level in get_args(EffortLevel) if level in allowed
+                )
+            )
 
     async def _check_holdings(
         self, rag_input: RAGInput, input_dict: dict[str, Any]
@@ -4180,6 +4241,19 @@ def _streamed_to(
         return "".join(parts)
 
     return RunnableLambda(run)
+
+
+def _answer_reasoning(state: dict[str, Any]) -> dict[str, Any]:
+    """The answer model's reasoning arguments of a query (``RAGInput.effort``,
+    or the deprecated ``enable_thinking``): thinking on at the query's
+    effort, which the model factory sends and sizes the output ceiling's
+    reasoning room by (``LLMFactoryPort.get_model``'s ``effort``); else at
+    the tier's configured effort when thinking is asked for; else off (a
+    model that always reasons still does, at the tier's effort)."""
+    effort = state.get("effort")
+    if effort is not None:
+        return {"enable_thinking": True, "effort": effort}
+    return {"enable_thinking": bool(state.get("enable_thinking", False))}
 
 
 def _conversation_key(

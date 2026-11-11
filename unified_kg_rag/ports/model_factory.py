@@ -318,7 +318,15 @@ class ModelFactoryPort(Protocol[ModelIdT, ModelT, InfoT]):
     ``search.model_timeout_seconds``. A factory that does not use it ignores
     it. A language-model ``get_model`` may also receive ``output_ceiling``
     (an int): the short-answer query prompts' cap on max_tokens, which the
-    built-in factories apply through :func:`ceiled_output_tokens`.
+    built-in factories apply through :func:`ceiled_output_tokens`, and
+    ``enable_thinking`` (a bool) and ``effort`` (an ``EffortLevel``, a
+    query's ``RAGInput.effort``): the Bedrock factory turns the model's
+    reasoning on and sends that effort in place of its tier's (an older
+    Claude model's thinking budget sized by it). The chain sends an effort
+    only to a model whose ``get_model_info`` record reasons
+    (``supports_thinking``) and takes the level (``supported_efforts``),
+    and refuses the query otherwise, so a factory whose models do not reason
+    (the local ones) never receives one.
 
     Parameterized over the id enum, the model type and the record type, so a
     custom backend adapter can annotate

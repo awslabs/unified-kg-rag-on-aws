@@ -898,7 +898,6 @@ class EvaluationManager:
                         **self._extract_source_details(raw_result),
                         cited_source_ids=cited_source_ids(raw_result),
                         cited_section_types=cited_section_types(raw_result),
-                        enable_thinking=rag_metadata.get("enable_thinking", False),
                         search_strategy=rag_metadata.get("search_strategy"),
                         response_time=_response_time(
                             rag_metadata.get("processing_time"), record
