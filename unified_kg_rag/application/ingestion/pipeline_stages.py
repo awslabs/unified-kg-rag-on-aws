@@ -774,7 +774,10 @@ class DocumentLoadingStage(_RegistryStage):
                     self.loader.source_directory,
                 )
             documents = self.loader.deduplicate_documents(
-                documents, keep=keep, avoid=avoid
+                documents,
+                threshold=self.config.processing.deduplicate_similarity_threshold,
+                keep=keep,
+                avoid=avoid,
             )
         # After deduplication: a seed shard is no copy of a file.
         seeds = self._seed_documents()

@@ -255,6 +255,7 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
     **_keyed_at(
         _P.DOCUMENT_LOADING,
         "processing.deduplicate",
+        "processing.deduplicate_similarity_threshold",
         "indexing.reset",
         "indexing.retire_source_scopes",
         "indexing.max_document_failures",
@@ -511,7 +512,8 @@ _KEYED_ONCE_SET = frozenset(
         # as latin-1).
         "processing.document_parsing.encoding",
         # Unset, minhash resolution keeps similarity_threshold, as before
-        # the field.
+        # the field; deduplication keeps its former fixed 0.9.
+        "processing.deduplicate_similarity_threshold",
         "processing.minhash_similarity_threshold",
         # Overrides of the chunker's and the translator's prompts, added
         # after them: unset, the prompts are the ones keyed before.
@@ -580,6 +582,7 @@ def _block_on(config: Config, path: str) -> bool:
 # Path prefix -> whether the settings under it are in effect. Their switch
 # fields (``kind``, ``enabled``) count either way.
 _IN_EFFECT_WHEN: dict[str, Callable[[Config], bool]] = {
+    "processing.deduplicate_similarity_threshold": lambda c: c.processing.deduplicate,
     # A role's model counts while the stage it serves runs.
     **{
         f"models.roles.{role}": functools.partial(_block_on, path=block)

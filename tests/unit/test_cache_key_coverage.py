@@ -81,6 +81,7 @@ _KEYED_ONCE_SET = frozenset(
         "memory.max_history_tokens",
         "processing.document_parsing.encoding",
         "processing.minhash_similarity_threshold",
+        "processing.deduplicate_similarity_threshold",
         # The raptor methodology's (docs/design.md#65-raptor-summary-tree-raptor-tree-opt-in).
         "indexing.opensearch.summary_nodes_index_prefix",
         "models.roles.summary_tree",

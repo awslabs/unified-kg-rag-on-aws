@@ -228,6 +228,7 @@ ALLOWED: dict[str, str] = {
     **_reason(
         PRESENTATION,
         "adapters/llm/langchain.py:_EXCERPT_CHARS",
+        "adapters/ingestion/loader.py:_DROPPED_NAMED",
         "adapters/aws/opensearch.py:_DELETE_REPORT_NAMES",
         "adapters/renderers/static.py:TOP_CENTRALITY_NODES",
         "adapters/renderers/static.py:_NODE_LABEL_WIDTH",
@@ -278,7 +279,6 @@ ALLOWED: dict[str, str] = {
         UNMEASURED,
         "adapters/ingestion/description_summarizer.py:MAX_INPUT_TOKENS",
         "adapters/ingestion/description_summarizer.py:_MIN_INPUT_TOKENS",
-        "adapters/ingestion/loader.py:DEDUP_SIMILARITY_THRESHOLD",
         "adapters/ingestion/loader.py:DEDUP_MINHASH_PERMUTATIONS",
         "adapters/ingestion/loader.py:DEDUP_N_GRAMS",
         "adapters/llm/langchain.py:_NOTHING_MARKER_TOKENS",

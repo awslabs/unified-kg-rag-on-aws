@@ -82,6 +82,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `processing.minhash_similarity_threshold`: the threshold of `resolution_method: minhash`, a Jaccard similarity of
   character 3-grams that reads lower than the `sequence_matcher` ratio of the same pair; unset, it is
   `similarity_threshold`, as before (and keys no stage cache).
+- `processing.deduplicate_similarity_threshold` (default 0.9, the fixed value before): the 3-gram similarity at which
+  `processing.deduplicate` reads two documents as copies.
 
 ### Changed
 
@@ -140,6 +142,11 @@ Bugs present in 0.3.0.
   of 16 rows at 0.85) proposed a pair at the threshold 46% of the time, so a typo of a name never matched, and the
   MinHash estimate, off by a few hundredths, decided the rest. The index now proposes 99% of the pairs at the
   threshold (16 bands of 8 rows) and their exact 3-gram Jaccard similarity decides.
+- `processing.deduplicate` dropped template documents: two contracts of one form, with other amounts, dates and ids
+  in a long shared text, read as copies at its fixed 0.9 3-gram similarity, and one went unindexed without a word.
+  A near-duplicate now also holds the same numbers (in any script and order), a document is dropped only as a copy
+  of one that is kept (not of another dropped copy), and a WARNING names each dropped document and the one it
+  copies.
 
 ## [0.3.0] - 2026-11-14
 

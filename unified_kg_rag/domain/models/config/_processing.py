@@ -849,14 +849,27 @@ class ProcessingConfig(ConfigSection):
     deduplicate: bool = Field(
         default=False,
         description=(
-            "Drop near-duplicate documents before extraction. "
-            "Two documents are near-duplicates when the Jaccard"
-            " similarity of their character 3-gram sets, "
-            "estimated with a 128-permutation MinHash, is at "
-            "least 0.9 (fixed parameters); of each pair the "
-            "first is kept, and an incremental run keeps the "
-            "already-indexed copy."
+            "Drop near-duplicate documents before extraction. Two documents "
+            "are near-duplicates when the Jaccard similarity of their "
+            "character 3-gram sets, estimated with a 128-permutation MinHash, "
+            "is at least deduplicate_similarity_threshold and they hold the "
+            "same numbers (amounts, dates, ids, in any order), so two filled-in "
+            "copies of one form are both kept; of each pair the first is kept, "
+            "an incremental run keeps the already-indexed copy, and a WARNING "
+            "names every dropped document and the one it copies."
         ),
+    )
+    deduplicate_similarity_threshold: float = Field(
+        default=0.9,
+        gt=0.0,
+        le=1.0,
+        description=(
+            "The 3-gram similarity at which deduplicate reads two documents "
+            "with the same numbers as copies. Documents that differ only in "
+            "names (two parties of one template) still read as copies above "
+            "it: raise it, or leave deduplicate off, for such a corpus."
+        ),
+        json_schema_extra=evidence("unmeasured"),
     )
     resolution_method: ResolutionMethod = Field(
         default=ResolutionMethod.MINHASH,

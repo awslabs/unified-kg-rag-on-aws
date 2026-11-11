@@ -19,6 +19,7 @@ from unified_kg_rag.adapters.ingestion.loader import (
     DirectoryLoader,
     compute_minhash,
 )
+from unified_kg_rag.domain.models import Document
 from unified_kg_rag.shared.exceptions import ConfigurationError
 
 pytestmark = pytest.mark.unit
@@ -181,7 +182,7 @@ def test_duplicate_documents_collapse(tmp_path: Path) -> None:
         tmp_path / "c.json", "id-c", "an entirely unrelated paragraph about ships"
     )
     loader = DirectoryLoader(tmp_path)
-    docs = loader.deduplicate_documents(loader.load())
+    docs = loader.deduplicate_documents(loader.load(), threshold=0.9)
     ids = {d.document_id for d in docs}
     # One of the two identical docs is dropped; the distinct one stays.
     assert len(docs) == 2
@@ -191,7 +192,7 @@ def test_duplicate_documents_collapse(tmp_path: Path) -> None:
 def test_dedup_noop_with_single_document(tmp_path: Path) -> None:
     _write_json_doc(tmp_path / "only.json", "id-only", "solitary content here")
     loader = DirectoryLoader(tmp_path)
-    docs = loader.deduplicate_documents(loader.load())
+    docs = loader.deduplicate_documents(loader.load(), threshold=0.9)
     assert len(docs) == 1
 
 
@@ -199,7 +200,7 @@ def test_dedup_keeps_all_when_distinct(tmp_path: Path) -> None:
     _write_json_doc(tmp_path / "a.json", "id-a", "alpha topic about astronomy stars")
     _write_json_doc(tmp_path / "b.json", "id-b", "beta topic regarding cooking recipes")
     loader = DirectoryLoader(tmp_path)
-    docs = loader.deduplicate_documents(loader.load())
+    docs = loader.deduplicate_documents(loader.load(), threshold=0.9)
     assert {d.document_id for d in docs} == {"id-a", "id-b"}
 
 
@@ -233,14 +234,89 @@ def test_dedup_keeps_the_preferred_copy(tmp_path: Path) -> None:
     docs = loader.load()
     assert [d.document_id for d in docs] == ["id-copy", "id-original"]
 
-    kept = loader.deduplicate_documents(docs)
+    kept = loader.deduplicate_documents(docs, threshold=0.9)
     assert [d.document_id for d in kept] == ["id-copy"]
     kept = loader.deduplicate_documents(
-        docs, keep=lambda d: d.document_id == "id-original"
+        docs, threshold=0.9, keep=lambda d: d.document_id == "id-original"
     )
     assert [d.document_id for d in kept] == ["id-original"]
     # An avoided document (its indexing failed) loses to its copy.
     kept = loader.deduplicate_documents(
-        docs, avoid=lambda d: d.document_id == "id-copy"
+        docs, threshold=0.9, avoid=lambda d: d.document_id == "id-copy"
     )
     assert [d.document_id for d in kept] == ["id-original"]
+
+
+# --------------------------------------------------------------------------- #
+# Near-duplicates: template documents are not copies
+# --------------------------------------------------------------------------- #
+def _clause(i: int) -> str:
+    n, word = (i + 1) * 104729, ""
+    while n:
+        n, letter = divmod(n, 26)
+        word += chr(97 + letter)
+    return f"Clause {word}: the Vendor and the Buyer keep the {word} terms."
+
+
+# A long form whose numbers are a small part of its text.
+_TEMPLATE = (
+    "SUPPLY AGREEMENT {number}, made on {date}. The Buyer shall pay {amount} "
+    "USD within forty-five days of delivery. " + " ".join(_clause(i) for i in range(40))
+)
+
+
+def _template(document_id: str, **fields: str) -> Document:
+    return Document(
+        page_content=_TEMPLATE.format(**fields),
+        document_id=document_id,
+        file_name=f"{document_id}.txt",
+        file_path=f"/corpus/{document_id}.txt",
+    )
+
+
+def test_a_template_filled_in_twice_keeps_both_documents(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    first = _template("a", number="1001", date="2020-01-15", amount="12,500")
+    second = _template("b", number="1002", date="2021-03-02", amount="48,000")
+    copy = _template("c", number="1001", date="2020-01-15", amount="12,500")
+    loader = DirectoryLoader("/")
+    loader.max_workers = 1
+    with caplog.at_level("WARNING"):
+        kept = loader.deduplicate_documents([first, second, copy], threshold=0.9)
+    # The two contracts differ in a few numbers of a long shared text, which
+    # read as copies at 0.9; the copy of the first holds its numbers.
+    assert [d.document_id for d in kept] == ["a", "b"]
+    assert "'c.txt' (of 'a.txt', similarity 1.00)" in caplog.text
+
+
+def test_numbers_match_in_any_script_and_order() -> None:
+    from unified_kg_rag.adapters.ingestion.loader import numbers_digest
+
+    assert numbers_digest("계약 금액 １２,５００원, 2020년") == numbers_digest(
+        "2020년 계약 금액 12,500원"
+    )
+    assert numbers_digest("금액 12,500원") != numbers_digest("금액 12,600원")
+
+
+def test_the_dedup_threshold_is_the_configured_one() -> None:
+    def word(i: int) -> str:
+        return "".join(chr(97 + (i * k + k * k) % 26) for k in range(1, 7))
+
+    base = " ".join(
+        f"The {word(i)} crate leaves the {word(i + 40)} depot." for i in range(30)
+    )
+    # Two words replaced: a 3-gram similarity of 0.91.
+    edited = base.replace(word(3), "zzzzzz").replace(word(7), "yyyyyy")
+    documents = [
+        Document(
+            page_content=base, document_id="a", file_name="a.txt", file_path="a.txt"
+        ),
+        Document(
+            page_content=edited, document_id="b", file_name="b.txt", file_path="b.txt"
+        ),
+    ]
+    loader = DirectoryLoader("/")
+    loader.max_workers = 1
+    assert len(loader.deduplicate_documents(documents, threshold=0.85)) == 1
+    assert len(loader.deduplicate_documents(documents, threshold=0.97)) == 2
