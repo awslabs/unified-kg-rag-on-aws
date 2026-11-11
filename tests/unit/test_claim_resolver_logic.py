@@ -20,12 +20,10 @@ from unified_kg_rag.domain.ingestion.claim_resolver import (
     claim_date_value,
     claim_identity_suffix,
     claim_status,
-    earlier_claim_ids,
     merge_claim_statuses,
     resolved_claim_id,
 )
 from unified_kg_rag.domain.models import Claim, Config, Entity
-from unified_kg_rag.shared.utils import generate_stable_id
 
 pytestmark = pytest.mark.unit
 
@@ -639,31 +637,6 @@ def _resolved_from(statement: Claim, object_id: str = "e-buyer") -> Claim:
     )
 
 
-@pytest.mark.parametrize(
-    "update",
-    [{"start_date": "1900-01-01"}, {"end_date": "June 1900"}, {"type": "PAYMENT"}],
-)
-def test_earlier_claim_ids_count_only_statements_of_its_type_and_dates(
-    update: dict[str, str],
-) -> None:
-    statement = _coarse_statement()
-    claim = _resolved_from(statement)
-    assert earlier_claim_ids(claim, [statement])
-    assert earlier_claim_ids(claim, [statement.model_copy(update=update)]) == set()
-
-
-@pytest.mark.parametrize("object_id", ["e-buyer", ""])
-def test_an_earlier_reading_id_is_the_id_resolved_claim_id_gave_it(
-    object_id: str,
-) -> None:
-    # A literal object (no object entity) keys on its name, as in
-    # resolved_claim_id: the end-as-first-day id is found either way.
-    statement = _coarse_statement(start_date="2024-03-01")
-    claim = _resolved_from(statement, object_id)
-    stale = resolved_claim_id(claim.model_copy(update={"end_date": "2025-01-01"}))
-    assert stale in earlier_claim_ids(claim, [statement])
-
-
 @pytest.mark.parametrize("text", ["15 January, 2024", "15 Jan, 2024", "15 Jan., 2024"])
 def test_a_day_month_date_with_a_comma_is_a_calendar_date(text: str) -> None:
     assert claim_date_value(text) == "2024-01-15"
@@ -774,26 +747,15 @@ def test_a_placeholder_in_the_corpus_language_is_an_unknown_date(text: str) -> N
     assert claim_identity_suffix(text, text) == ""
 
 
-def test_a_claim_keyed_by_its_written_cjk_date_is_found_under_it() -> None:
-    # An earlier build kept "2024年3月" as written: the claim's id then is
-    # among its earlier ids, so an incremental run replaces it.
+def test_a_written_cjk_or_dotted_date_reads_as_a_calendar_date() -> None:
     statement = _coarse_statement(start_date="2024年3月", end_date="不明")
     claim = _resolved_from(statement)
     assert (claim.start_date, claim.end_date) == ("2024-03-01", None)
-    stale = generate_stable_id(
-        "claim:e-vendor:e-buyer:obligation:" + "2024年3月:不明".casefold()
-    )
-    assert stale in earlier_claim_ids(claim, [statement])
-    # So is one dated with a form read as a date since (the Korean dotted
-    # one, a weekday after the day).
+    # The Korean dotted form and a weekday after the day.
     for written in ("2024. 3. 15.", "2024年3月15日(金)"):
         statement = _coarse_statement(start_date=written, end_date="不明")
         claim = _resolved_from(statement)
         assert claim.start_date == "2024-03-15"
-        stale = generate_stable_id(
-            "claim:e-vendor:e-buyer:obligation:" + f"{written}:不明".casefold()
-        )
-        assert stale in earlier_claim_ids(claim, [statement])
 
 
 @pytest.mark.parametrize(

@@ -1009,37 +1009,14 @@ def _summary_settings(config: Config) -> dict[str, Any]:
     }
 
 
-def _summary_settings_as_keyed_before(config: Config) -> dict[str, Any]:
-    """:func:`_summary_settings` at their defaults, the summary model
-    resolved through the run's tiers: how a record's fingerprint held them
-    from the release that stopped keying graph extraction with them until
-    the current key (:func:`_summary_key`) left the tiers out, so a tier
-    only the summary model reads re-keyed every record. A record stored
-    under this form is found under it (:func:`legacy_unit_record_fingerprints`)."""
-    baseline = config.model_copy(deep=True)
-    default = _default_config()
-    for path in _SUMMARY_SETTINGS:
-        *parents, name = path.split(".")
-        target, source = baseline, default
-        for part in parents:
-            target, source = getattr(target, part), getattr(source, part)
-        value = getattr(source, name)
-        if isinstance(value, BaseModel):
-            value = value.model_copy(deep=True)
-        setattr(target, name, value)
-    return _summary_settings(baseline)
-
-
 @functools.cache
 def _summary_key() -> dict[str, Any]:
     """The summary part of every record's fingerprint: :func:`_summary_settings`
     of the default configuration, a constant. A record stored under the
     default summary settings, when they were keyed at graph extraction,
     keeps its key, and no summary setting, nor a tier only the summary model
-    reads, asks a unit again. A record stored otherwise is found under its
-    earlier key (:func:`legacy_unit_record_fingerprints`). (A document's
-    extraction settings leave them out: ``changed_settings`` ignores them in
-    an earlier record.)"""
+    reads, asks a unit again. (A document's extraction settings leave them
+    out: ``changed_settings`` ignores them in an earlier record.)"""
     return _summary_settings(_default_config())
 
 
@@ -1059,34 +1036,6 @@ def unit_record_fingerprint(
     (``domain.ingestion.contributions.record_key``).
     """
     return _unit_record_fingerprint(config, gleaned, claims, _summary_key())
-
-
-def legacy_unit_record_fingerprints(
-    config: Config, *, gleaned: bool, claims: bool = False
-) -> list[str]:
-    """The fingerprints an earlier version stored the same record under,
-    where they differ from :func:`unit_record_fingerprint`, in the order
-    to look them up.
-
-    While the description summary settings keyed graph extraction, a
-    record's fingerprint held them at the run's values; then at their
-    defaults resolved through the run's tiers
-    (:func:`_summary_settings_as_keyed_before`); it holds them at the
-    default configuration's now. A record stored under either earlier form
-    is looked up under the fingerprint it was stored under too
-    (``ExtractionStore.load``, which stores what it finds there under the
-    current key).
-    """
-    current = unit_record_fingerprint(config, gleaned=gleaned, claims=claims)
-    legacy: list[str] = []
-    for summary in (
-        _summary_settings_as_keyed_before(config),
-        _summary_settings(config),
-    ):
-        key = _unit_record_fingerprint(config, gleaned, claims, summary)
-        if key != current and key not in legacy:
-            legacy.append(key)
-    return legacy
 
 
 def _unit_record_fingerprint(

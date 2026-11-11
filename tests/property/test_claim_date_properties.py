@@ -1,13 +1,10 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Property-based tests for claim dates (``claim_date_value``) and the ids
-an earlier reading of them gave a claim (``earlier_claim_ids``).
+"""Property-based tests for claim dates (``claim_date_value``).
 
 A coarse period reads as its first day as a start date and as its last day
 as an end date; both are calendar dates a range filter orders, the end never
-before the start, and a stored value reads (and keys) as itself. A claim
-stored under an earlier reading of its dates is found under the ids
-``earlier_claim_ids`` lists, whichever the reading.
+before the start, and a stored value reads (and keys) as itself.
 """
 
 from __future__ import annotations
@@ -22,11 +19,7 @@ from hypothesis import strategies as st
 from unified_kg_rag.domain.ingestion.claim_resolver import (
     claim_date_key,
     claim_date_value,
-    earlier_claim_ids,
-    resolved_claim_id,
 )
-from unified_kg_rag.domain.models import Claim
-from unified_kg_rag.shared.utils import generate_stable_id
 
 pytestmark = pytest.mark.property
 
@@ -117,53 +110,3 @@ def test_an_iso_week_with_its_weekday_is_that_day_in_either_mode(
     day = date.fromisocalendar(year, week, weekday).isoformat()
     text = f"{year}-W{week:02d}-{weekday}"
     assert claim_date_value(text) == claim_date_value(text, end=True) == day
-
-
-@settings(max_examples=500, deadline=None)
-@given(_periods(), _periods(), st.sampled_from(["as written", "end first day"]))
-@example(_YEAR_1950, _JAN_1950, "end first day")
-@example(_YEAR_1950, _JAN_1950, "as written")
-def test_a_claim_stored_under_an_earlier_reading_is_found(
-    start: tuple[str, date, date],
-    end: tuple[str, date, date],
-    reading: str,
-) -> None:
-    # The statement as extracted, and the claim it resolves to now.
-    statement = Claim(
-        id="raw",
-        subject_id="",
-        subject_name="Vendor",
-        object_name="Buyer",
-        type="OBLIGATION",
-        start_date=start[0],
-        end_date=end[0],
-    )
-    claim = statement.model_copy(
-        update={
-            "subject_id": "e-vendor",
-            "object_id": "e-buyer",
-            "type": "obligation",
-            "start_date": claim_date_value(start[0]),
-            "end_date": claim_date_value(end[0], end=True),
-        }
-    )
-    current = resolved_claim_id(claim)
-
-    # The id an earlier build keyed it on: its dates as written (casefolded),
-    # or its end date as its first day.
-    def keyed(start_key: str, end_key: str) -> str:
-        return generate_stable_id(
-            f"claim:e-vendor:e-buyer:obligation:{start_key}:{end_key}"
-        )
-
-    earlier = (
-        keyed(" ".join(start[0].split()).casefold(), end[0].casefold())
-        if reading == "as written"
-        else keyed(start[1].isoformat(), end[1].isoformat())
-    )
-    found = earlier_claim_ids(claim, [statement])
-    assert current not in found
-    assert earlier in found
-    # Only the statements of its dates count: one of other dates adds none.
-    other = statement.model_copy(update={"start_date": "1900-01-01"})
-    assert earlier_claim_ids(claim, [other]) == set()

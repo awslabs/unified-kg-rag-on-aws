@@ -398,42 +398,6 @@ def test_a_scope_recorded_with_the_summary_settings_reads_unchanged(
     assert cache_keys.changed_settings(recorded, now) == []
 
 
-@pytest.mark.parametrize("kind", ["prompt", "threshold", "model", "off"])
-def test_a_record_stored_under_other_summary_settings_is_found_by_its_old_key(
-    kind: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # The current key holds the summary settings at their defaults, so a
-    # record stored under others while they keyed graph extraction is looked
-    # up under the key it was stored under (a reset re-extracted it all).
-    config = _summarized_otherwise(kind)
-    combinations = [(g, c) for g in (False, True) for c in (False, True)]
-    legacy = {
-        combo: cache_keys.legacy_unit_record_fingerprints(
-            config, gleaned=combo[0], claims=combo[1]
-        )
-        for combo in combinations
-    }
-    with monkeypatch.context() as patched:
-        _keyed_as_before(patched)
-        stored = {
-            combo: cache_keys.unit_record_fingerprint(
-                config, gleaned=combo[0], claims=combo[1]
-            )
-            for combo in combinations
-        }
-    assert legacy == {combo: [stored[combo]] for combo in combinations}
-
-
-def test_default_summary_settings_need_no_old_key() -> None:
-    for gleaned in (False, True):
-        assert (
-            cache_keys.legacy_unit_record_fingerprints(
-                Config(), gleaned=gleaned, claims=True
-            )
-            == []
-        )
-
-
 @pytest.mark.parametrize(
     "configure",
     [
@@ -469,25 +433,6 @@ def _fast_tier(c: Config) -> None:
     c.models.fast = "vendor.fast-v9"
 
 
-def _fast_tier_and_threshold(c: Config) -> None:
-    _fast_tier(c)
-    c.processing.graph_extraction.description_summarization.force_summary_threshold_tokens = (
-        77
-    )
-
-
-def _fast_tier_and_model(c: Config) -> None:
-    _fast_tier(c)
-    c.models.roles.description_summary = "vendor.small-v1"
-
-
-_TIER_CASES = pytest.mark.parametrize(
-    "configure",
-    [_fast_tier, _fast_tier_and_threshold, _fast_tier_and_model],
-    ids=["fast", "fast-threshold", "fast-model"],
-)
-
-
 def _simple_chunks() -> Config:
     # Nothing else a document's extraction reads goes through the tiers.
     config = Config()
@@ -511,64 +456,6 @@ def test_a_tier_only_the_summary_model_reads_keeps_the_record_keys() -> None:
         assert cache_keys.unit_record_fingerprint(
             config, gleaned=gleaned, claims=claims
         ) == cache_keys.unit_record_fingerprint(base, gleaned=gleaned, claims=claims)
-
-
-def _summary_as_the_previous_release_keyed_it(config: Config) -> dict[str, Any]:
-    """The previous release's summary part: the summary settings at their
-    defaults, resolved through the run's tiers."""
-    baseline = config.model_copy(deep=True)
-    default = Config()
-    baseline.processing.graph_extraction.description_summarization = (
-        default.processing.graph_extraction.description_summarization.model_copy(
-            deep=True
-        )
-    )
-    baseline.models.roles.description_summary = default.models.roles.description_summary
-    baseline.custom_prompts.description_summarization_system = (
-        default.custom_prompts.description_summarization_system
-    )
-    baseline.custom_prompts.description_summarization_human = (
-        default.custom_prompts.description_summarization_human
-    )
-    return cache_keys._summary_settings(baseline)
-
-
-@_TIER_CASES
-def test_a_record_the_previous_release_stored_under_a_tier_is_found(
-    configure: Any,
-) -> None:
-    config = _simple_chunks()
-    configure(config)
-    for gleaned in (False, True):
-        for claims in (False, True):
-            stored = cache_keys._unit_record_fingerprint(
-                config,
-                gleaned,
-                claims,
-                _summary_as_the_previous_release_keyed_it(config),
-            )
-            current = cache_keys.unit_record_fingerprint(
-                config, gleaned=gleaned, claims=claims
-            )
-            legacy = cache_keys.legacy_unit_record_fingerprints(
-                config, gleaned=gleaned, claims=claims
-            )
-            assert stored != current
-            assert stored in legacy
-            assert current not in legacy and len(set(legacy)) == len(legacy)
-
-
-@_TIER_CASES
-def test_a_record_stored_under_a_tier_while_summaries_keyed_extraction_is_found(
-    configure: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    config = _simple_chunks()
-    configure(config)
-    legacy = cache_keys.legacy_unit_record_fingerprints(config, gleaned=True)
-    with monkeypatch.context() as patched:
-        _keyed_as_before(patched)
-        stored = cache_keys.unit_record_fingerprint(config, gleaned=True)
-    assert stored in legacy
 
 
 @pytest.mark.parametrize(

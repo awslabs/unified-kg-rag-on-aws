@@ -384,61 +384,13 @@ def test_a_report_budget_change_asks_only_the_reports_whose_input_changed(
     assert server.reports == reports
 
 
-def test_a_reset_reuses_records_stored_under_the_earlier_summary_keying(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_aws
-) -> None:
-    # Records stored while the summary settings keyed graph extraction, with
-    # a summary threshold of its own: the first reset after the upgrade
-    # re-extracted every unit (their keys held the threshold, the current
-    # ones its default). They are found under their earlier key and stored
-    # under the current one, which the second reset finds.
-    from tests.unit.test_cache_key_coverage import _keyed_as_before
-
-    config = e2e._config(tmp_path / "stores", tmp_path / "viz")
-    summarization = config.processing.graph_extraction.description_summarization
-    summarization.force_summary_threshold_tokens = 40
-    providers = e2e._providers(config, _Server(), e2e.FakeCrossEncoder("rerank"))
-    source = tmp_path / "corpus"
-    source.mkdir()
-    for name in ("a", "b", "c"):
-        (source / f"{name}.txt").write_text(f"{_DOCUMENT}\n{name.upper()} closes.")
-
-    def extraction(name: str) -> dict:
-        context = e2e._ingest(config, providers, source, tmp_path / name)
-        assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
-        (result,) = [
-            r
-            for r in context.stage_results
-            if r.stage_name == PipelineStageType.GRAPH_EXTRACTION.value
-        ]
-        return result.metrics
-
-    with monkeypatch.context() as earlier:
-        _keyed_as_before(earlier)
-        first = extraction("run-1")
-    units = first["text_units_processed"]
-    assert units > 0 and first["text_units_reused"] == 0
-
-    config.indexing.reset = True
-    for name in ("run-2", "run-3"):
-        metrics = extraction(name)
-        assert (metrics["text_units_reused"], metrics["llm_usage"]["llm_calls"]) == (
-            units,
-            0,
-        ), name
-
-
 def test_a_reset_reuses_records_whatever_tier_the_summary_model_reads(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_aws
+    tmp_path: Path, no_aws
 ) -> None:
-    # Records the previous release stored, its keys holding the summary
-    # settings at their defaults, the model resolved through the run's tier
-    # (none holding the run's own threshold), are found by the next reset;
-    # a reset after a change of that tier, which nothing else this corpus's
-    # extraction reads (the simple chunker, no translation), extracted every
-    # unit again: it reuses them all.
-    from unified_kg_rag.domain.ingestion import cache_keys
-
+    # A reset after a change of the tier the summary model reads, which
+    # nothing else this corpus's extraction reads (the simple chunker, no
+    # translation), extracted every unit again: it reuses them all, also
+    # with a summary threshold of the run's own.
     config = e2e._config(tmp_path / "stores", tmp_path / "viz")
     summarization = config.processing.graph_extraction.description_summarization
     summarization.force_summary_threshold_tokens = 40
@@ -458,13 +410,7 @@ def test_a_reset_reuses_records_whatever_tier_the_summary_model_reads(
         ]
         return result.metrics
 
-    with monkeypatch.context() as previous:
-        previous.setattr(
-            cache_keys,
-            "_summary_key",
-            lambda: cache_keys._summary_settings_as_keyed_before(config),
-        )
-        first = extraction("run-1")
+    first = extraction("run-1")
     units = first["text_units_processed"]
     assert units > 0 and first["text_units_reused"] == 0
 
