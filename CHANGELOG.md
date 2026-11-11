@@ -1086,7 +1086,10 @@ From a `main` checkout (formats and keys no release had):
   write of an edge whose rank alone changed compares the vector copies the derivation read, not read again, and
   leaves one whose vector copy cites a text unit its graph copy does not (written to one store only: a strip whose
   vector write was rejected) to the removal's retry: rewritten from those copies, it kept the removed document's
-  line, which no later run found.
+  line, which no later run found. An entity citing only removed text units with an edge citing a kept one at it is
+  stripped, and retired once the edge is re-pointed, not deleted: a strip stopped before re-pointing the edge (the
+  vertex it was at written first, without the edge's units) left it there, and deleting the vertex with a later
+  removal deleted a kept document's edge for good.
   A write note (`pending-writes`) over 1 MiB is split into parts, each its own record,
   under a store's request limit (10 MiB on
   small OpenSearch instances). A noted edge the delta states again takes the endpoints the delta resolves, one whose

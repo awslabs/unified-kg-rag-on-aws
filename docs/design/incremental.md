@@ -171,6 +171,14 @@ unless noted.
    delete through the graph, so an interrupted run leaves a graph copy, not
    an orphaned vector copy); one citing others too is stripped of them, its
    weight recomputed and its content derived again from the text units left.
+   An entity citing only removed text units with an edge citing a kept one
+   at it is stripped, not deleted: a strip stopped before re-pointing the
+   edge (the vertex it was at was written first, without the edge's units)
+   left it there, and deleting the vertex deleted the edge with it, for
+   good. The strip re-points the edge and retires the entity, which it
+   leaves citing no text unit, with the ids it re-keys away (deleted once
+   its writes succeed). The edges at the entities whose every unit is
+   removed are read for this in either case.
    A strip that merges or re-keys items (another spelling of a stripped
    entity's name, which need not cite the removed text units), or derives
    claims under new ids, notes before its first write the entities on both
