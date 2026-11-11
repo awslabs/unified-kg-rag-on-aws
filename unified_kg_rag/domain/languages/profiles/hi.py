@@ -15,5 +15,10 @@ PROFILE = LanguageProfile(
     ),
     # "unknown", "none", "not applicable".
     no_value_words=("अज्ञात", "कोईनहीं", "लागूनहीं"),
+    legal_forms={
+        "प्राइवेट लिमिटेड": "pvt ltd",
+        "लिमिटेड": "ltd",
+    },
+    quote_pairs=(("“", "”"),),
     chars_per_token={CLAUDE_TOKENIZER: 1.35},
 )

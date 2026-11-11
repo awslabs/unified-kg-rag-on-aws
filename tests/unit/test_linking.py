@@ -227,6 +227,25 @@ def test_a_name_written_as_asked_links_alone(policy: str) -> None:
     assert [h.source for h in linked] == ["e0"]
 
 
+@pytest.mark.parametrize("policy", ["cover", "rank"])
+@pytest.mark.parametrize(
+    ("mention", "names"),
+    [
+        ("Acme GmbH", ("Acme", "Acme GmbH")),
+        ("ООО «Ромашка»", ("Ромашка", "ООО Ромашка")),
+        ("(주)가나다", ("가나다", "㈜가나다")),
+    ],
+)
+def test_the_most_literal_key_that_finds_a_hit_links(
+    mention: str, names: tuple[str, str], policy: str
+) -> None:
+    # Two entities stored apart whose compact keys are one (another type
+    # kept them apart): the one written as asked links alone.
+    hits = [_hit(names[0], 0.9, "e0"), _hit(names[1], 0.5, "e1")]
+    linked = choose_links(mention, hits, policy=policy)  # type: ignore[arg-type]
+    assert [h.source for h in linked] == ["e1"]
+
+
 def test_coverage_leaves_latin_accents_out() -> None:
     # Regression (rv9 query L6): "Cafe" never covered "Café".
     assert covers("Café Central Wien", "Cafe Central")

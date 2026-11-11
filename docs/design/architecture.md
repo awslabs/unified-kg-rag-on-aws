@@ -339,14 +339,20 @@ degree (§4.5), so with no seed graph the rank is the plain degree.
 - `Entity.name` keeps the display form the source used, only trimmed and
   whitespace-collapsed (`clean_display_name`), so context and reports quote
   "$1,000 penalty" or "C++" verbatim.
-- Ids hash `entity_key(name)` (`shared/utils/common.py`): NFKC, casefold, `_`
-  and `-` as spaces, quote marks and commas dropped, whitespace collapsed,
+- Ids hash `entity_key(name)` (`shared/utils/common.py`): NFKC, casefold, `_`,
+  dashes and the minus sign as spaces (`WORD_DASHES`, not the wave dash of a
+  range), the quote marks of every script (`QUOTE_MARKS`: Unicode's initial,
+  final and other quotation marks, corner brackets, CJK title marks and the
+  Hebrew geresh and gershayim; both in `shared/utils/scripts.py`) and commas
+  dropped, Arabic short vowels and Hebrew points dropped, a middle dot
+  between Han, Hangul or Kana letters dropped, whitespace collapsed,
   trailing sentence punctuation stripped, **every other symbol and the
   letters and digits of all scripts kept**. "ACME  Corp." and "Acme Corp"
   share an id; "C++" and "C#" do not; a non-empty name never yields an empty
   key. Every exact-name match (extraction, gleaning, claim resolution,
   incremental merges) and the fuzzy matcher's shingles use the same key.
-- **Changing the key changes every id**, so it requires a full re-index.
+- **Changing the key changes every id**, so it requires a full re-index (one
+  `indexing.reset: true` run, which reuses the stored extraction records).
 
 ---
 

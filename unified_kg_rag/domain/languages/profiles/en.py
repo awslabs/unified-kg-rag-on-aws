@@ -81,6 +81,9 @@ PROFILE = LanguageProfile(
         "plc": "plc",
         "pty": "pty",
         "pte": "pte",
+        # India's private limited company ("Pvt. Ltd.").
+        "pvt": "pvt",
+        "private limited": "pvt ltd",
         # Dutch and Belgian forms, which English text writes unchanged.
         "bv": "bv",
         "nv": "nv",

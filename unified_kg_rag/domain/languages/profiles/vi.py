@@ -22,5 +22,14 @@ PROFILE = LanguageProfile(
     ),
     # "unknown", "none", "not specified".
     no_value_words=("khôngrõ", "khôngcó", "khôngxácđịnh"),
+    # Limited liability and joint-stock companies ("Công ty TNHH Acme").
+    leading_legal_forms={
+        "công ty tnhh": "tnhh",
+        "công ty cổ phần": "cp",
+        "công ty": "cty",
+        "cty": "cty",
+        "tnhh": "tnhh",
+    },
+    quote_pairs=(("“", "”"),),
     chars_per_token={CLAUDE_TOKENIZER: 1.75},
 )

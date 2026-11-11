@@ -15,5 +15,9 @@ PROFILE = LanguageProfile(
     decline="ไม่พบข้อมูลที่เกี่ยวข้องในข้อมูลที่มีอยู่เพื่อตอบคำถามนี้",
     # "unknown", "none", "not specified".
     no_value_words=("ไม่ทราบ", "ไม่มี", "ไม่ระบุ"),
+    # "Company ... Limited" (public: "จำกัด (มหาชน)").
+    legal_forms={"จำกัด": "จำกัด", "จำกัด (มหาชน)": "จำกัด (มหาชน)"},
+    leading_legal_forms={"บริษัท": "บริษัท"},
+    quote_pairs=(("“", "”"),),
     chars_per_token={CLAUDE_TOKENIZER: 1.09},
 )

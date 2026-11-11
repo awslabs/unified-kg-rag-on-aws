@@ -15,5 +15,8 @@ PROFILE = LanguageProfile(
     decline="לא מצאתי מידע רלוונטי בנתונים הזמינים כדי לענות על שאלה זו.",
     # "unknown", "none", "not specified".
     no_value_words=("לאידוע", "אין", "לאצוין"),
+    # Limited company (בע"מ, its quote mark dropped as entity keys drop it).
+    legal_forms={"בעמ": "בעמ"},
+    quote_pairs=(("„", "”"), ('"', '"')),
     chars_per_token={CLAUDE_TOKENIZER: 1.54},
 )

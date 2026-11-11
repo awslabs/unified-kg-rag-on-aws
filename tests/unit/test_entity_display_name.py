@@ -57,6 +57,30 @@ def _entity(processor: BaseProcessor, unit: TextUnit, name: str) -> Entity:
         ("follow-up_task", "follow up task"),
         ("가나 상사", "가나 상사"),
         ("...", "..."),  # never collapses to an empty key
+        # Quote marks of every script carry no identity.
+        ("ООО «Ромашка»", "ооо ромашка"),
+        ("„Vendor“ GmbH", "vendor gmbh"),
+        ("「供給者」", "供給者"),
+        ("《民法典》", "民法典"),  # a Chinese title mark
+        ("〈가나다〉", "가나다"),
+        ('בע"מ', "בעמ"),
+        ("בע״מ", "בעמ"),  # the gershayim written for '"'
+        # Every dash joins words as "-" does.
+        ("E‐Mail–Vendor", "e mail vendor"),
+        ("A−B", "a b"),
+        ("가나-다라", "가나 다라"),
+        ("エー゠ビー", "エー ビー"),
+        # A middle dot between dense letters separates the words of a name.
+        ("ジョン・スミス", "ジョンスミス"),
+        ("ｼﾞｮﾝ･ｽﾐｽ", "ジョンスミス"),  # half-width, as NFKC reads it
+        ("한·미 협정", "한미 협정"),
+        ("中·美", "中美"),
+        ("l·l", "l·l"),
+        # Arabic short vowels and Hebrew points are written at will.
+        ("مُحَمَّد", "محمد"),
+        ("שָׁלוֹם", "שלום"),
+        # A wave dash is a range, not a hyphen.
+        ("第1〜3条", "第1〜3条"),
     ],
 )
 def test_entity_key(name: str, key: str) -> None:

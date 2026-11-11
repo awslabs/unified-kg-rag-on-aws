@@ -112,5 +112,6 @@ PROFILE = LanguageProfile(
         "December": ("dicembre", "dic"),
     },
     # S.p.A. counts only with its dots (legal_forms), since "spa" is a word.
-    legal_forms={"srl": "srl", "spa": "spa"},
+    legal_forms={"srl": "srl", "spa": "spa", "snc": "snc", "sapa": "sapa"},
+    quote_pairs=(("«", "»"),),
 )

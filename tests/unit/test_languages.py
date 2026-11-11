@@ -148,6 +148,7 @@ _FACETS = (
     "open_date_words",
     "month_words",
     "legal_forms",
+    "leading_legal_forms",
     "articles",
     "number_words",
     "zero_words",
@@ -165,10 +166,9 @@ _GAPS: dict[str, set[str]] = {
     "open_date_words": {"de", "es", "fr", "it", "pt", "ru"} | _NEW,
     # English month names are strptime's own; CJK dates are in digits.
     "month_words": {"en"} | _DIGIT_DATES | _NEW,
-    # Dense-script legal forms are in dense_legal_forms.
-    "legal_forms": {"ko", "ru", "zh"} | _NEW,
+    # Korean and Chinese forms are in dense_legal_forms, Vietnamese ones lead.
+    "legal_forms": {"ko", "vi", "zh"},
     "polarity_words": {"de", "es", "fr", "it", "pt", "ru"} | _NEW,
-    "quote_pairs": {"de", "es", "fr", "it", "ko", "pt", "ru"} | _NEW,
     # Articles: the languages that write them (ru and the scripts without
     # articles wait).
     "articles": {"ja", "ko", "ru", "zh"} | _NEW,
@@ -180,6 +180,9 @@ _GAPS: dict[str, set[str]] = {
     "zero_words": {"ja", "ko", "zh"} | _NEW,
     # German states it with its words for none ("Es gibt keine").
     "absence_phrases": {"de", "ja", "ko", "zh"} | _NEW,
+    # Most languages write the designator after the name only.
+    "leading_legal_forms": {"de", "en", "es", "fr", "he", "hi", "it", "ja", "ko", "pt"}
+    | {"zh"},
 }
 
 

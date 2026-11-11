@@ -193,10 +193,12 @@ gets its models and stores from the run's `Providers` bundle.
   relationship. With entity grounding on, gleaning drops a relationship naming
   an entity rejected as ungrounded for its chunk, so no stub brings it back.
 - **Entity merging.** Two names merge when their `compact_name_key` is equal:
-  `entity_key` without a short, fixed list of legal-form designators (`(주)`,
-  `주식회사`, `株式会社`, `有限公司`, a trailing `Inc` / `Ltd` / `LLC` / `Co` /
-  `Corp`, ...) and without spaces next to Han, Hangul or Kana, so
-  "(주)가나다", "가나다 상사" / "가나다상사" and "Acme Inc" / "Acme" merge. A
+  `entity_key` without the legal-form designators of the language profiles
+  (`domain/languages/legal_forms.py`: `(주)`, `주식회사`, `株式会社`,
+  `有限公司`, a trailing `Inc` / `Ltd` / `LLC` / `Co` / `Corp` / `GmbH & Co.
+  KG` / `S.A. de C.V.`, a leading `ООО` or `Công ty TNHH`, ...) and without
+  spaces next to Han, Hangul or Kana, so "(주)가나다", "가나다 상사" /
+  "가나다상사", "Acme Inc" / "Acme" and "ООО «Ромашка»" / "Ромашка" merge. A
   merged group takes the name cited by the most text units (ties: the
   smallest), so the result does not depend on input order. The list is
   applied whatever the entity's type: entity types are the user's

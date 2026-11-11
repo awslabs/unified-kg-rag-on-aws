@@ -57,6 +57,20 @@ pytestmark = pytest.mark.unit
         "Acme N.V.",
         "Acme K.K.",
         "ＡＣＭＥ　ＧｍｂＨ",
+        # Forms of several words, and those the first table lacked.
+        "Acme GmbH & Co. KG",
+        "Acme KG",
+        "Acme OHG",
+        "Acme UG",
+        "Acme e.V.",
+        "Acme S.L.",
+        "Acme S.A. de C.V.",
+        "Acme S. de R.L.",
+        "Acme S/A",
+        "Acme SASU",
+        "Acme Pvt. Ltd.",
+        "Acme Private Limited",
+        "Acme प्राइवेट लिमिटेड",
     ],
 )
 def test_latin_designators_are_stripped(name: str) -> None:
@@ -90,6 +104,24 @@ def test_dense_script_designators_are_stripped(name: str, bare: str) -> None:
 
 
 @pytest.mark.parametrize(
+    ("name", "bare"),
+    [
+        # Russian forms lead (or trail), Vietnamese, Arabic and Thai ones lead.
+        ("ООО «Ромашка»", "Ромашка"),
+        ("ПАО Ромашка", "Ромашка"),
+        ("Ромашка, АО", "Ромашка"),
+        ("Công ty TNHH Acme", "Acme"),
+        ("Công ty Cổ phần Acme", "Acme"),
+        ("شركة المورد ذ.م.م", "المورد"),
+        ('בית הספק בע"מ', "בית הספק"),
+        ("บริษัท เอซีเอ็มอี จำกัด", "เอซีเอ็มอี"),
+    ],
+)
+def test_designators_of_other_scripts_are_stripped(name: str, bare: str) -> None:
+    assert compact_name_key(name) == compact_name_key(bare)
+
+
+@pytest.mark.parametrize(
     "name",
     [
         "Taco",  # a designator is a whole word
@@ -102,6 +134,11 @@ def test_dense_script_designators_are_stripped(name: str, bare: str) -> None:
         "주식회사",
         "股份有限公司",
         "Acme Inc (Korea)",  # not at the end
+        "Payload 500 kg",  # a unit after a number
+        "Acme ev",  # e.V. only with its dots
+        "Mercedes SL",  # S.L. only with its dots
+        "iPhone SE",  # an edition, not a Societas Europaea
+        "ООО",  # never stripped to nothing
     ],
 )
 def test_names_that_keep_their_designator(name: str) -> None:

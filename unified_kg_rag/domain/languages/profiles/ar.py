@@ -17,7 +17,10 @@ PROFILE = LanguageProfile(
     # "unknown", "none", "not specified" (without spaces, as placeholders
     # are compared).
     no_value_words=("غيرمعروف", "لايوجد", "غيرمحدد"),
+    # Limited liability and joint-stock companies (dot-free: "ذ.م.م").
+    legal_forms={"ذمم": "ذمم", "شمم": "شمم", "شمع": "شمع"},
     # "Company", written before the name ("شركة النور").
     leading_legal_forms={"شركة": "شركة"},
+    quote_pairs=(("«", "»"),),
     chars_per_token={CLAUDE_TOKENIZER: 1.75},
 )
