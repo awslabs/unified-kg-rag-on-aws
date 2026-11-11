@@ -152,6 +152,50 @@ def test_two_failed_removals_leave_no_stale_vector_edge(
     _converges(harness, kept, config)
 
 
+@pytest.mark.parametrize("capped", [False, True], ids=["full", "capped"])
+@pytest.mark.parametrize(
+    "spellings",
+    [
+        ("ACME", "Acme"),
+        ("한빛  물산", "한빛 물산"),
+        ("ひかり  物産", "ひかり 物産"),
+        ("ACME ひかり", "Acme ひかり"),
+    ],
+    ids=["en", "ko", "ja", "mix"],
+)
+def test_a_rename_and_back_leaves_no_stale_endpoint_name_on_a_vector_edge(
+    spellings: tuple[str, str], capped: bool
+) -> None:
+    # Two spellings of one id. Deleting g0.txt names the entity after
+    # h0.txt; its vector write is rejected, so its graph copy keeps the
+    # first name while k0.txt's edge is renamed in both stores. Deleting
+    # h0.txt and h1.txt names it back; its graph edge is written, its vector
+    # edge rejected. The retry found the entity's graph copy under the name
+    # it derives, saw no rename, and updated the edge's lineage only: its
+    # vector copy kept the second name for good.
+    first, second = spellings
+    kept: Corpus = {"/corpus/k0.txt": [[(first, "Buyer", 1)]]}
+    other: Corpus = {
+        "/corpus/h0.txt": [[(second, "Vendor", 3)]],
+        "/corpus/h1.txt": [[("Depot", second, 1)]],
+    }
+    before: Corpus = {**kept, "/corpus/g0.txt": [[(first, "Vendor", 3)]], **other}
+    entity = next(e.id for e in extract(before).entities if e.name in spellings)
+    config = _config()
+    if capped:
+        config.indexing.neptune.property_max_length = 40
+    harness = IncrementalRun(FakeDocStatusStore(), config)
+    harness.run(before)
+
+    harness.run(
+        {**kept, **other},
+        fail=lambda at, i: at == "vector.upsert_entities" and i == entity,
+    )
+    harness.run(kept, fail=lambda at, _i: at == "vector.upsert_relationships")
+
+    _converges(harness, kept, config)
+
+
 @pytest.mark.parametrize(
     "spellings",
     [

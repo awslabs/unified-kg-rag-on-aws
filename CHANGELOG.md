@@ -1043,18 +1043,20 @@ From a `main` checkout (formats and keys no release had):
   touches, so a hub whose write keeps failing holds back only the re-keys at it (a note keeps only the old ids still
   stored), and a suffix whose stored reports could not be pointed at the new ids keeps its old ids until a later run
   does both. The stored edges a commit or a removal's strip reads at the entities it derives are compared with their
-  vector copies' rank too, and one that differs is set in place in both stores: a commit writes the vector copy
-  first, a strip the graph copy, so a run killed in between, or one whose graph write of an endpoint was rejected
-  (its edges held back), left a rank the other copy did not have, kept for good once a later run derived the edge
-  back to the graph copy. A removal's strip is all or retry: it writes in dependency order (claims under new ids,
-  stored claims; new vertices, stored entities gaining a unit, graph edges, vector edges, vector entities, the kept
-  entities' graph copies last), and the first phase with a rejected write stops it, so what it did not write still
-  cites the removed text units or is in the `pending-strip` note and the retry derives it again. Writing on past a
-  rejection lost a kept document's item for good (a split's origin, or the claim a claim was split off, overwritten
-  while it held the rejected part's lines; an edge re-pointed at a rejected merge target), or kept a stale vector
-  edge after two failed removals in a row. The note lists the edges the strip writes under new ids too: a strip
-  stopped (or killed) after an edge's graph copy left no vector copy, and the next one rewrote the edge from its
-  graph copy, description cut at the graph's limit. While a store keeps rejecting a write, the strip strips nothing. A
+  vector copies' rank and endpoint names too, at every edge read, and one whose rank alone differs is set in place in
+  both stores: a commit writes the vector copy first, a strip the graph copy, so a run killed in between, or one whose
+  graph write of an endpoint was rejected (its edges held back), left a rank the other copy did not have, kept for good
+  once a later run derived the edge back to the graph copy. A removal's strip is all or retry: it writes in dependency
+  order (claims under new ids, stored claims; new vertices, stored entities gaining a unit, graph edges, vector edges,
+  vector entities, the kept entities' graph copies last), and the first phase with a rejected write stops it, so what it
+  did not write still cites the removed text units or is in the `pending-strip` note and the retry derives it again.
+  Writing on past a rejection lost a kept document's item for good (a split's origin, or the claim a claim was split
+  off, overwritten while it held the rejected part's lines; an edge re-pointed at a rejected merge target), or kept a
+  stale vector edge after two failed removals in a row (also when they renamed an entity and back: its graph copy held
+  the name derived again, so the edge looked current and kept the other name in its vector copy). The note lists the
+  edges the strip writes under new ids too: a strip stopped (or killed) after an edge's graph copy left no vector copy,
+  and the next one rewrote the edge from its graph copy, description cut at the graph's limit. While a store keeps
+  rejecting a write, the strip strips nothing. A
   failed removal stops the run before the commit, a deleted document's too, with an error naming the documents: the
   delta merged into the entities a failed strip left citing the removed text units, and dropped a new edge no later
   run wrote. A deleted document whose removal keeps failing so holds back the new documents, as a changed one does. The

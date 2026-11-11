@@ -83,8 +83,11 @@ unless noted.
    The stored edges a derivation reads at the entities it touches (a
    commit's or a removal's strip) are compared with both copies: their
    vector copies are read with the graph's (`read_vector_copies`, the
-   `rank` too), and an edge whose vector rank differs from the derived one
-   has its rank set in place in both stores (by a strip as by a commit:
+   `rank` too), an edge whose vector copy names an endpoint otherwise is
+   written (whether or not the derivation renamed the endpoint: two failed
+   removals that renamed it and back leave the graph copy current and the
+   vector copy behind), and an edge whose vector rank differs from the
+   derived one has its rank set in place in both stores (by a strip as by a commit:
    `update_relationship_ranks` in the graph). A commit writes the vector
    copies in its first phase and the graph copies in its second, a strip
    the graph copies first, so a run killed in between, or a commit whose
