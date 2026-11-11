@@ -27,6 +27,7 @@ from unified_kg_rag.application.ingestion.extraction_store import (
     with_record_keys,
 )
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
+from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
 from unified_kg_rag.domain.ingestion.cache_keys import (
     community_report_fingerprint,
     unit_record_fingerprint,
@@ -145,6 +146,52 @@ class TestPayload:
             "index": "tenant-b",
             "text_unit_weights": [4.0],
         }
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "Acme–Werke",
+            "〈한빛〉",
+            "ジョン・スミス",
+            "«Ромашка»",
+            "〈한빛〉 Acme–Werke",
+        ],
+        ids=["en", "ko", "ja", "ru", "mix"],
+    )
+    def test_a_record_takes_the_ids_its_names_key_to_now(self, name: str) -> None:
+        # A record stored under an earlier entity_key holds the ids it
+        # minted: reused by a reset, it rebuilt the entity under its old id
+        # beside the one a new document's statement takes.
+        unit = _unit("t1")
+        buyer = BaseProcessor._generate_entity_id("Buyer")
+        stated = Entity(id="stale", name=name, type="ORG", text_unit_ids=["t1"])
+        edge = Relationship(
+            id="stale-edge",
+            source_id="stale",
+            target_id=buyer,
+            source_name=name,
+            target_name="Buyer",
+            type="SUPPLIES",
+            text_unit_ids=["t1"],
+        )
+        payload = record_payload(
+            TextUnitExtraction(
+                text_unit_id="t1", entities=[stated], relationships=[edge]
+            )
+        )
+
+        record = record_from_payload(payload, unit)
+
+        entity_id = BaseProcessor._generate_entity_id(name)
+        assert [(e.id, e.short_id) for e in record.entities] == [
+            (entity_id, entity_id[:8])
+        ]
+        (restored,) = record.relationships
+        assert (restored.id, restored.source_id, restored.target_id) == (
+            BaseProcessor._generate_relationship_id(name, "Buyer", "SUPPLIES"),
+            entity_id,
+            buyer,
+        )
 
     def test_claims_are_stored_without_their_unit(self) -> None:
         claim = Claim(

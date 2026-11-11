@@ -1640,7 +1640,7 @@ def test_a_stripped_member_the_derivation_lacks_keeps_its_description(
 @pytest.mark.parametrize(
     "payload",
     [
-        {"entities": [{"name": "Vendor"}]},  # no id: a ValueError
+        {"entities": [{"id": "vendor"}]},  # no name: a ValueError
         {"entities": [], "rejected": 5},  # not a mapping: a TypeError
     ],
 )

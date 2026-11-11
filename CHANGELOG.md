@@ -509,8 +509,9 @@ From a `main` checkout (formats and keys no release had):
   records under earlier keys (other description summary settings, #541-#556) and claims under an earlier reading of
   their dates (#612, #624) are no longer looked up. Run one reset (`indexing.reset: true`) with a new or no
   `--pipeline-id`: incremental runs keep stored entities under their earlier ids beside the new ones. It reuses the
-  stored graph extraction and gleaning records (a record a build before #556 stored under other summary settings or
-  `models` tiers is extracted again) and asks one summary per entity or relationship over the summary threshold, the
+  stored graph extraction and gleaning records, their entity and relationship ids minted again from the names as
+  extraction mints them (a record a build before #556 stored under other summary settings or `models` tiers is
+  extracted again), and asks one summary per entity or relationship over the summary threshold, the
   reports of the communities whose input changed (most of them) and, with claim extraction on, every unit's claims
   (one call per unit that states an entity).
 - One reset covers all of these and the items below. On an index built with #565 or later it reuses the stored

@@ -95,7 +95,11 @@ gets its models and stores from the run's `Providers` bundle.
   gleaning or claim settings, the target language and the prompt templates in
   effect. A unit whose text and settings have a stored record takes it
   instead of an LLM call, so an edited document re-extracts only its changed
-  chunks, and identical chunks elsewhere or in a rebuild reuse theirs.
+  chunks, and identical chunks elsewhere or in a rebuild reuse theirs. A
+  record holds what the unit states: its entity and relationship ids are
+  minted again from the names when it is read
+  (`contributions.record_from_payload`), so a record stored under an earlier
+  `entity_key` gives the ids a fresh extraction gives.
   `--force-rebuild` re-extracts and refreshes every record; an unreadable
   store is logged and the run re-extracts. A record that cannot be written
   fails its unit (`records_not_stored`), so its document is recorded `FAILED`

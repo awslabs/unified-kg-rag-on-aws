@@ -294,14 +294,45 @@ def _stamp(item: dict[str, Any], unit: TextUnit) -> dict[str, Any]:
     return {**item, "text_unit_ids": [unit.id], "attributes": attributes or None}
 
 
+def _entity_ids(item: dict[str, Any]) -> dict[str, Any]:
+    """``item`` (a stored entity) under the id its name keys to now."""
+    if not item.get("name"):
+        return item
+    entity_id = BaseProcessor._generate_entity_id(item["name"])
+    return {**item, "id": entity_id, "short_id": entity_id[:8]}
+
+
+def _relationship_ids(item: dict[str, Any]) -> dict[str, Any]:
+    """``item`` (a stored relationship) under the ids its endpoint names and
+    type key to now."""
+    source, target = item.get("source_name"), item.get("target_name")
+    if not source or not target:
+        return item
+    rel_id = BaseProcessor._generate_relationship_id(
+        source, target, item.get("type") or ""
+    )
+    return {
+        **item,
+        "id": rel_id,
+        "short_id": rel_id[:8],
+        "source_id": BaseProcessor._generate_entity_id(source),
+        "target_id": BaseProcessor._generate_entity_id(target),
+    }
+
+
 def record_from_payload(payload: dict[str, Any], unit: TextUnit) -> TextUnitExtraction:
-    """A stored record re-stamped onto ``unit`` (its id and placement)."""
+    """A stored record re-stamped onto ``unit`` (its id and placement).
+
+    The entity and relationship ids are minted again from the names, as
+    extraction mints them (``BaseProcessor``): a record stored under an
+    earlier ``entity_key`` gives the ids a fresh extraction of its unit
+    gives, so a change of the name keys costs no model call."""
 
     def stamp(item: dict[str, Any]) -> dict[str, Any]:
         return _stamp(item, unit)
 
     relationships = [
-        Relationship.model_validate(stamp(item))
+        Relationship.model_validate(stamp(_relationship_ids(item)))
         for item in payload.get("relationships") or []
     ]
     for rel in relationships:
@@ -311,7 +342,8 @@ def record_from_payload(payload: dict[str, Any], unit: TextUnit) -> TextUnitExtr
     return TextUnitExtraction(
         text_unit_id=unit.id,
         entities=[
-            Entity.model_validate(stamp(item)) for item in payload.get("entities") or []
+            Entity.model_validate(stamp(_entity_ids(item)))
+            for item in payload.get("entities") or []
         ],
         relationships=relationships,
         rejected=dict(payload.get("rejected") or {}),
