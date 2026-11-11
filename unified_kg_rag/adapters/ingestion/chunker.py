@@ -818,7 +818,86 @@ def _document_suffix(doc: Document) -> str | None:
         return None
 
 
-class IntelligentTextChunker(BaseChunker):
+class PreChunker(BaseChunker):
+    """The intelligent chunker's half that calls no model: a document's
+    pre-chunks, which of them a boundary call is asked for, and the chunks
+    of a pre-chunk no boundary answer cut (split by size, as a failed
+    call's). Chunking with it alone cuts every pre-chunk so:
+    ``run-ingestion --estimate`` reads it for the units and boundary calls
+    of an intelligent chunking."""
+
+    def __init__(self, config: Config, show_progress: bool = True) -> None:
+        super().__init__(config, show_progress=show_progress)
+        self.pre_splitter = self._create_splitter(
+            self.chunking_config.pre_chunk_size,
+            self.chunking_config.pre_chunk_overlap,
+            length_unit=self.length_unit,
+        )
+
+    def pre_chunks_of(self, doc: Document) -> list[str]:
+        content = doc.page_content
+        return self._create_pre_chunks(content) if content else []
+
+    def needs_boundary_call(self, pre_chunk: str) -> bool:
+        """Whether a pre-chunk is worth a boundary call.
+
+        Any split of a pre-chunk shorter than 2 * min_chunk_size leaves at
+        least one piece under min_chunk_size, and merge_small_chunks folds it
+        back, so the result is the pre-chunk itself (unless it is oversized
+        and must be split anyway). A pre-chunk of fewer than two non-blank
+        lines has no line to cut at: the model can only answer no cut, or
+        lines that do not exist (a fallback), so it is split by size without
+        a call (``_process_pre_chunks``), and not counted as a failed call.
+        """
+        if sum(1 for line in pre_chunk.split("\n") if line.strip()) < 2:
+            return False
+        processor = self.chunk_processor
+        size = self.length_function(pre_chunk)
+        return size >= 2 * processor.min_chunk_size or size > processor.max_chunk_size
+
+    def _create_pre_chunks(self, content: str) -> list[str]:
+        try:
+            return self.pre_splitter.split_text(content)
+        except Exception as e:  # noqa: BLE001 - the document stays one pre-chunk
+            log_failure(
+                logger,
+                logging.WARNING,
+                "Failed to create pre-chunks: %s",
+                error=e,
+            )
+            return [content] if content else []
+
+    def _create_fallback_chunks(self, pre_chunk: str) -> list[str]:
+        chunks = (
+            self.fallback_splitter.split_text(pre_chunk)
+            if self.fallback_splitter
+            else [pre_chunk]
+        )
+        return self.chunk_processor.merge_small_chunks(chunks, source=pre_chunk)
+
+    def _unanswered_chunks(self, pre_chunk: str) -> list[str]:
+        """``pre_chunk``'s chunks without a boundary answer: split by size
+        when it was worth a call or is oversized, else itself."""
+        if (
+            self.needs_boundary_call(pre_chunk)
+            or self.length_function(pre_chunk) > self.chunking_config.max_chunk_size
+        ):
+            return self._create_fallback_chunks(pre_chunk)
+        return [pre_chunk]
+
+    def _chunk_single_document(self, doc: Document) -> list[TextUnit]:
+        chunks = [
+            chunk
+            for pre_chunk in self.pre_chunks_of(doc)
+            for chunk in self._unanswered_chunks(pre_chunk)
+        ]
+        return [
+            self._create_text_unit(chunk, doc, i + 1, len(chunks), "fallback", i + 1)
+            for i, chunk in enumerate(chunks)
+        ]
+
+
+class IntelligentTextChunker(PreChunker):
     def __init__(
         self,
         config: Config,
@@ -860,11 +939,6 @@ class IntelligentTextChunker(BaseChunker):
             custom_prompts=self.config.custom_prompts,
         )
 
-        self.pre_splitter = self._create_splitter(
-            self.chunking_config.pre_chunk_size,
-            self.chunking_config.pre_chunk_overlap,
-            length_unit=self.length_unit,
-        )
         self.line_boundary_processor = LineBasedBoundaryProcessor(
             max_line_miss_rate=self.chunking_config.max_marker_miss_rate,
         )
@@ -888,7 +962,7 @@ class IntelligentTextChunker(BaseChunker):
         suffixes: list[str | None] = []
         for doc in documents:
             if not doc.is_error:
-                planned[id(doc)] = self._pre_chunks_of(doc)
+                planned[id(doc)] = self.pre_chunks_of(doc)
                 suffixes.append(_document_suffix(doc))
         responses, record_keys = self._request_boundaries(
             list(planned.values()), "all documents", suffixes
@@ -904,15 +978,11 @@ class IntelligentTextChunker(BaseChunker):
         finally:
             self._planned = {}
 
-    def _pre_chunks_of(self, doc: Document) -> list[str]:
-        content = doc.page_content
-        return self._create_pre_chunks(content) if content else []
-
     def _chunk_single_document(self, doc: Document) -> list[TextUnit]:
         try:
             plan = self._planned.get(id(doc))
             pre_chunks, responses, record_keys = (
-                plan if plan is not None else (self._pre_chunks_of(doc), None, {})
+                plan if plan is not None else (self.pre_chunks_of(doc), None, {})
             )
             if not pre_chunks:
                 return []
@@ -954,23 +1024,6 @@ class IntelligentTextChunker(BaseChunker):
             raise DataProcessingError.caused_by(
                 f"Failed to chunk single document '{doc.file_name}'", e
             ) from e
-
-    def _needs_llm(self, pre_chunk: str) -> bool:
-        """Whether a pre-chunk is worth a boundary call.
-
-        Any split of a pre-chunk shorter than 2 * min_chunk_size leaves at
-        least one piece under min_chunk_size, and merge_small_chunks folds it
-        back, so the result is the pre-chunk itself (unless it is oversized
-        and must be split anyway). A pre-chunk of fewer than two non-blank
-        lines has no line to cut at: the model can only answer no cut, or
-        lines that do not exist (a fallback), so it is split by size without
-        a call (``_process_pre_chunks``), and not counted as a failed call.
-        """
-        if sum(1 for line in pre_chunk.split("\n") if line.strip()) < 2:
-            return False
-        processor = self.chunk_processor
-        size = self.length_function(pre_chunk)
-        return size >= 2 * processor.min_chunk_size or size > processor.max_chunk_size
 
     def boundary_key(self, pre_chunk: str) -> str:
         """The record key of ``pre_chunk``'s boundary answer: its text under
@@ -1018,7 +1071,7 @@ class IntelligentTextChunker(BaseChunker):
             (n, i)
             for n, pre_chunks in enumerate(pre_chunk_lists)
             for i, pre_chunk in enumerate(pre_chunks)
-            if self._needs_llm(pre_chunk)
+            if self.needs_boundary_call(pre_chunk)
         ]
         answers: list[dict[int, Any]] = [{} for _ in pre_chunk_lists]
         record_keys: list[dict[int, str]] = [{} for _ in pre_chunk_lists]
@@ -1116,7 +1169,7 @@ class IntelligentTextChunker(BaseChunker):
         final_chunks: list[tuple[str, str, int]] = []
         for i, pre_chunk in enumerate(pre_chunks):
             if i not in responses:
-                # Not asked (_needs_llm). An oversized one has a single line:
+                # Not asked (needs_boundary_call). An oversized one has a single line:
                 # it is split by size, as a failed call's is, but no call
                 # failed.
                 if (
@@ -1259,26 +1312,6 @@ class IntelligentTextChunker(BaseChunker):
 
         # Line-boundary slices are disjoint: allow no overlap between them.
         return self.chunk_processor.merge_small_chunks(chunks, source=text, overlap=0)
-
-    def _create_pre_chunks(self, content: str) -> list[str]:
-        try:
-            return self.pre_splitter.split_text(content)
-        except Exception as e:  # noqa: BLE001 - the document stays one pre-chunk
-            log_failure(
-                logger,
-                logging.WARNING,
-                "Failed to create pre-chunks: %s",
-                error=e,
-            )
-            return [content] if content else []
-
-    def _create_fallback_chunks(self, pre_chunk: str) -> list[str]:
-        chunks = (
-            self.fallback_splitter.split_text(pre_chunk)
-            if self.fallback_splitter
-            else [pre_chunk]
-        )
-        return self.chunk_processor.merge_small_chunks(chunks, source=pre_chunk)
 
     def _create_chain_inputs(self, chunks: list[str]) -> list[dict[str, Any]]:
         inputs = []

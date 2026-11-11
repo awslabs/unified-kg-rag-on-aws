@@ -776,6 +776,34 @@ class ProcessingConfig(ConfigSection):
             "config.processing.io_workers) at startup."
         ),
     )
+    max_run_model_calls: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Model calls one ingestion run may make in all (every stage, the "
+            "output fixer's too), counted from each call's start. The call "
+            "that would pass it is not sent: the run stops as a signal stops "
+            "it (RunBudgetExhausted; run-ingestion exits 1), its finished "
+            "stages checkpointed and the responses it got kept in the LLM "
+            "response cache, so a re-run with the same pipeline id resumes "
+            "at the stage it stopped in and pays only for the calls not yet "
+            "answered (each run gets the budget anew). A response the cache "
+            "serves is no call. null (default): no cap. run-ingestion "
+            "--estimate prices a corpus before a run."
+        ),
+    )
+    max_run_usd: float | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "USD one ingestion run's model calls may cost, priced by "
+            "models.prices (the calls so far at the tokens they reported, "
+            "those in flight at their estimated input). Enforced as "
+            "max_run_model_calls; a model without a price stops the run at "
+            "its first call, naming it. Embedding requests are not counted. "
+            "null (default): no cap."
+        ),
+    )
     ignore_errors: bool = Field(
         default=False,
         description=(

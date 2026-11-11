@@ -2836,3 +2836,88 @@ def test_ingestion_json_result_counts_quarantined_and_deferred_documents() -> No
     assert (result["documents_quarantined"], result["documents_deferred"]) == (1, 2)
     failed, total = _document_failures(context)
     assert (failed, total) == (1, len(context.documents) + 1)
+
+
+def test_ingestion_stopped_at_its_budget_exits_1_naming_the_id(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A run stopped at processing.max_run_* is no signal's stop (not 130):
+    # it exits 1 with its error, the pipeline id to resume with in the
+    # status.
+    from types import SimpleNamespace
+
+    from unified_kg_rag.shared.exceptions import RunBudgetExhausted
+
+    monkeypatch.setattr(console, "stderr", console.stderr)
+    monkeypatch.setattr(
+        run_ingestion_pipeline, "load_cli_config", lambda _args: Config()
+    )
+
+    def _run(self: run_ingestion_pipeline.IngestionPipelineRunner) -> None:
+        self.pipeline = SimpleNamespace(  # type: ignore[assignment]
+            pipeline_id="run-8", next_run_writes_from=0.0
+        )
+        raise RunBudgetExhausted(
+            "the run reached processing.max_run_model_calls 5",
+            limit="processing.max_run_model_calls",
+            value=5,
+        )
+
+    monkeypatch.setattr(run_ingestion_pipeline.IngestionPipelineRunner, "run", _run)
+    src = tmp_path / "src"
+    src.mkdir()
+    argv = ["run-ingestion", "--source-directory", str(src), "--output-format", "json"]
+    monkeypatch.setattr(sys, "argv", [*argv, "--cache-directory", str(tmp_path / "c")])
+    with pytest.raises(SystemExit) as exc:
+        run_ingestion_pipeline.main()
+    assert exc.value.code == 1
+    status = json.loads(capsys.readouterr().out)
+    assert status["error_type"] == "RunBudgetExhausted"
+    # One class on every surface: the limit the run reached.
+    assert status["error_class"] == "limit_exceeded"
+    assert status["pipeline_id"] == "run-8"
+    assert "max_run_model_calls" in status["error"]
+
+
+def test_run_ingestion_estimate_prints_the_estimate_and_runs_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(console, "stderr", console.stderr)
+    config = Config()
+    config.processing.chunking.chunker_type = "simple"  # type: ignore[assignment]
+    monkeypatch.setattr(run_ingestion_pipeline, "load_cli_config", lambda _args: config)
+    monkeypatch.setattr(
+        run_ingestion_pipeline.IngestionPipelineRunner,
+        "_execute_pipeline",
+        lambda self: pytest.fail("ran the pipeline"),
+    )
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "contract.txt").write_text("Vendor supplies widgets to Buyer. " * 20)
+    cache = tmp_path / "cache"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run-ingestion",
+            "--source-directory",
+            str(src),
+            "--cache-directory",
+            str(cache),
+            "--estimate",
+            "--output-format",
+            "json",
+        ],
+    )
+    run_ingestion_pipeline.main()
+    estimate = json.loads(capsys.readouterr().out)
+    assert estimate["documents"] == 1 and estimate["text_units"] >= 1
+    assert [s["stage"] for s in estimate["stages"]] == ["graph_extraction", "gleaning"]
+    assert estimate["usd"] is None and estimate["unpriced_models"]
+    assert set(estimate["not_estimated"]) == {"graph_resolution", "community_detection"}
+    # An estimate writes nothing.
+    assert not cache.exists()

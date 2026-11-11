@@ -31,6 +31,13 @@ Bugs present in 0.3.0.
   left, and a query whose answer does not fit fails with `UsageLimitExceededError` (error class `limit_exceeded`, a
   caller's error: not counted in `query_failed`, `refused` on the console's dashboard, its message shown to an MCP
   caller; exit code 1, console HTTP 422).
+- An ingestion run's budget and cost estimate. `processing.max_run_model_calls` and `processing.max_run_usd` (off by
+  default; USD priced by `models.prices`) stop a run at the model call that would pass them, as a signal stops it
+  (`RunBudgetExhausted`, error class `limit_exceeded`, exit 1): its finished stages are checkpointed and its responses
+  kept in the LLM response cache, so a re-run with the same pipeline id resumes and pays only for what was not answered.
+  `run-ingestion --estimate` parses and chunks the corpus without a model call and prints each stage's calls, tokens and
+  USD for the stages the text units decide (extraction, gleaning, claims, translation, intelligent chunking), naming the
+  graph-dependent ones it cannot count.
 
 ### Changed
 

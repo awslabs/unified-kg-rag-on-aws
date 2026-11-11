@@ -303,7 +303,8 @@ your region, per million tokens, keyed by the model id the usage records
 name (`usage.by_model`; an inference profile id such as `global.<model>` when
 the factory resolved one; a bare id, or one profile's entry, prices every
 profile of the model). The same `models.prices` prices the console's answers
-and dashboard. Answers that used a model without a price get no
+and dashboard, and an ingestion run's estimate and budget
+([Ingest: Run budget](./ingest.md#run-budget-and-cost-estimate)). Answers that used a model without a price get no
 estimate, and the comparison warns. `input_tokens` includes the prompt-cache
 reads and writes; give their rates (`cache_read_per_million_tokens`,
 `cache_write_per_million_tokens`) and they are priced apart, otherwise at

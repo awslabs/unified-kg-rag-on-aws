@@ -222,6 +222,10 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
     "models.embedding": Unkeyed(_AT_INDEXING),
     "models.rerank": Unkeyed(_QUERY),
     "models.prices": _neutral("prices the usage in USD; changes no model call"),
+    "processing.max_run_model_calls": _neutral(
+        "stops a run, resumed later; changes no output"
+    ),
+    "processing.max_run_usd": _neutral("stops a run, resumed later; changes no output"),
     # --- the corpus, its identity and the registry it is diffed against ----
     "processing.document_parsing": Keyed(_P.DOCUMENT_PARSING, per_document=False),
     # The registry records the loading stage diffs the corpus against.

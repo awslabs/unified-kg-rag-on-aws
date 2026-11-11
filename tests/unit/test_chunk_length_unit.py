@@ -160,7 +160,9 @@ def _chunk_digests(config: Config, names: Any = _TEXTS) -> dict[str, str]:
         got[f"fallback:{name}"] = _digest(
             [intelligent._create_fallback_chunks(p) for p in pre]
         )
-        got[f"needs_llm:{name}"] = _digest([intelligent._needs_llm(p) for p in pre])
+        got[f"needs_llm:{name}"] = _digest(
+            [intelligent.needs_boundary_call(p) for p in pre]
+        )
         got[f"inputs:{name}"] = _digest(intelligent._create_chain_inputs(pre))
     return got
 
@@ -412,8 +414,8 @@ def test_intelligent_chunker_measures_in_tokens() -> None:
     chunker = _intelligent(_config(_TOKEN_SIZES))
     dense = "가" * 300 + "\n" + "가" * 300  # 600 tokens: >= 2 * min (250)
     latin = "word " * 120  # 600 characters, 120 tokens: below 2 * min
-    assert chunker._needs_llm(dense)
-    assert not chunker._needs_llm(latin)
+    assert chunker.needs_boundary_call(dense)
+    assert not chunker.needs_boundary_call(latin)
     # An LLM piece over max_chunk_size (2,000 tokens) is split by tokens.
     big = korean_text(6000, seed=5)
     assert estimate_token_count(big) > 2000
