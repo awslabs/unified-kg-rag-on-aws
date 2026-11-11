@@ -235,7 +235,10 @@ gets its models and stores from the run's `Providers` bundle.
 - **Fuzzy matching is opt-in** (`processing.fuzzy_entity_resolution`), because
   name similarity also joins different organizations that share most of their
   name ("Northfield University" / "Northfield University Hospital"). When it is
-  on, names link above `processing.similarity_threshold` only when their
+  on, names link above the threshold of `processing.resolution_method`
+  (`similarity_threshold` for the `sequence_matcher` ratio and, unless
+  `minhash_similarity_threshold` is set, for `minhash`'s Jaccard
+  similarity of character 3-grams) only when their
   *discriminator tokens* (the numerals of any script, Han numerals
   included, single letters, Roman numerals) are identical in the order the
   name writes them ("Version 1.2" and "Version 2.1" stay apart), their types are compatible, and, for names ending in Han,
@@ -257,6 +260,14 @@ gets its models and stores from the run's `Providers` bundle.
   into one group ("Northfield Medical Centre" between "... Center" and
   "... Centre Annex") merges with one of them only, until
   `indexing.reset: true` regroups the corpus.
+- **MinHash proposes, the exact similarity decides.** The `minhash` method's
+  LSH index splits its 128 permutations into the bands and rows that propose
+  at least 99% of the name pairs at the threshold and the fewest below it
+  (16 bands of 8 rows at 0.85); a proposed pair matches when the exact
+  Jaccard similarity of its 3-gram sets reaches the threshold.
+  datasketch's own split (8 bands of 16 rows at 0.85) proposed a pair at
+  the threshold 46% of the time, and a pair it missed, a typo of a claim's
+  subject say, never matched.
 - **Schema annotations are written, not extracted.** `IndexingManager`
   sets `in_schema` and `type_iri` on each entity and `in_schema` and
   `predicate_iri` on each relationship it writes, on every write path (full

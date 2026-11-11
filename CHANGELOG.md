@@ -79,6 +79,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (naming the original's value), `operational` or `unmeasured`. The configuration reference prints it in an Evidence
   column and lists the defaults no run compared; a unit test fails an untagged numeric default, and another a new
   numeric module constant not listed with its reason (`tests/fixtures/numeric_constants.py`).
+- `processing.minhash_similarity_threshold`: the threshold of `resolution_method: minhash`, a Jaccard similarity of
+  character 3-grams that reads lower than the `sequence_matcher` ratio of the same pair; unset, it is
+  `similarity_threshold`, as before (and keys no stage cache).
 
 ### Changed
 
@@ -132,6 +135,11 @@ Bugs present in 0.3.0.
 - A saved result (an evaluation report, a failed metric's reason) names an error whose whole message is the package's
   own by its type and the error it was raised from (`LanguageModelError from ConnectionRefusedError [Errno 111]
   Connection refused`) when that message does not name it; it named the type alone.
+- Name matching with `processing.resolution_method: minhash` (the default; claim subjects and objects always, entities
+  with fuzzy resolution on) missed most pairs near `processing.similarity_threshold`: datasketch's LSH split (8 bands
+  of 16 rows at 0.85) proposed a pair at the threshold 46% of the time, so a typo of a name never matched, and the
+  MinHash estimate, off by a few hundredths, decided the rest. The index now proposes 99% of the pairs at the
+  threshold (16 bands of 8 rows) and their exact 3-gram Jaccard similarity decides.
 
 ## [0.3.0] - 2026-11-14
 

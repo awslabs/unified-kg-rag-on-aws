@@ -13,7 +13,7 @@ from __future__ import annotations
 import pytest
 
 from unified_kg_rag.domain.ingestion.graph_resolver import EntityResolver
-from unified_kg_rag.domain.models import Config, Entity
+from unified_kg_rag.domain.models import Config, Entity, ResolutionMethod
 
 pytestmark = pytest.mark.unit
 
@@ -95,33 +95,43 @@ def test_matcher_passed_to_pool_via_initializer_not_per_task(mocker) -> None:
     )
 
 
-@pytest.mark.parametrize("threshold", [0.3, 0.5, 0.85])
+@pytest.mark.parametrize("threshold", [0.3, 0.5, 0.85, 0.95])
 @pytest.mark.parametrize("num_perm", [64, 128])
-def test_the_cached_lsh_layout_is_datasketchs_own(
+def test_the_lsh_layout_proposes_the_pairs_at_the_threshold(
     threshold: float, num_perm: int
 ) -> None:
+    # datasketch's own layout (8 bands of 16 rows at 0.85 and 128) proposed
+    # a pair at the threshold 46% of the time; the rest never matched.
     from datasketch import MinHashLSH
 
-    from unified_kg_rag.domain.ingestion.base_resolver import _lsh_params
+    from unified_kg_rag.domain.ingestion.base_resolver import (
+        LSH_RECALL_AT_THRESHOLD,
+        _candidate_probability,
+        _lsh_params,
+    )
 
-    lsh = MinHashLSH(threshold=threshold, num_perm=num_perm)
-    assert _lsh_params(threshold, num_perm) == (lsh.b, lsh.r)
+    bands, rows = _lsh_params(threshold, num_perm)
+    assert bands * rows <= num_perm
+    assert _candidate_probability(threshold, bands, rows) >= LSH_RECALL_AT_THRESHOLD
+    own = MinHashLSH(threshold=threshold, num_perm=num_perm)
+    assert _candidate_probability(threshold, bands, rows) >= _candidate_probability(
+        threshold, own.b, own.r
+    )
 
 
 def test_matchers_derive_the_lsh_layout_once(monkeypatch: pytest.MonkeyPatch) -> None:
-    # datasketch's layout search costs ~20 ms; every matcher repeated it.
-    from datasketch import lsh as lsh_module
-
+    # The layout search is cached per (threshold, permutations), not repeated
+    # by every matcher.
     from unified_kg_rag.domain.ingestion import base_resolver
 
     calls: list[tuple] = []
-    real = lsh_module._optimal_param
+    real = base_resolver._candidate_probability
 
     def counted(*args):  # type: ignore[no-untyped-def]
         calls.append(args)
         return real(*args)
 
-    monkeypatch.setattr(lsh_module, "_optimal_param", counted)
+    monkeypatch.setattr(base_resolver, "_candidate_probability", counted)
     base_resolver._lsh_params.cache_clear()
     try:
         for _ in range(3):
@@ -130,6 +140,64 @@ def test_matchers_derive_the_lsh_layout_once(monkeypatch: pytest.MonkeyPatch) ->
                 resolution_method=base_resolver.ResolutionMethod.MINHASH,
                 similarity_threshold=0.42,
             )
+        searched = len(calls)
+        for _ in range(3):
+            base_resolver.FuzzyMatcher(
+                ["Acme", "Acme Inc"],
+                resolution_method=base_resolver.ResolutionMethod.MINHASH,
+                similarity_threshold=0.42,
+            )
     finally:
         base_resolver._lsh_params.cache_clear()
-    assert len(calls) == 1
+    assert searched > 0
+    assert len(calls) == searched
+
+
+@pytest.mark.parametrize(
+    ("name", "variant"),
+    [
+        # Exact 3-gram Jaccard 0.90-0.91: datasketch's layout never proposed
+        # these pairs, so the variant never matched its entity.
+        ("northwind traders incorporated", "northwind tradders incorporated"),
+        ("contoso pharmaceuticals limited", "contoso pharmaceuticals limiteed"),
+        ("tailspin toys entertainment company", "tailspin toys entertainment companny"),
+    ],
+)
+def test_minhash_finds_a_pair_above_the_threshold(name: str, variant: str) -> None:
+    from unified_kg_rag.domain.ingestion import base_resolver
+
+    matcher = base_resolver.FuzzyMatcher(
+        [name], resolution_method=ResolutionMethod.MINHASH, similarity_threshold=0.85
+    )
+    assert [candidate for candidate, _ in matcher.find_all_matches(variant)] == [name]
+
+
+def test_minhash_matches_by_the_exact_jaccard_similarity() -> None:
+    from unified_kg_rag.domain.ingestion.base_resolver import (
+        FuzzyMatcher,
+        name_shingles,
+    )
+
+    name, variant = "northwind traders incorporated", "northwind tradders incorporated"
+    exact = len(name_shingles(name) & name_shingles(variant)) / len(
+        name_shingles(name) | name_shingles(variant)
+    )
+    at = FuzzyMatcher(
+        [name], resolution_method=ResolutionMethod.MINHASH, similarity_threshold=exact
+    )
+    above = FuzzyMatcher(
+        [name],
+        resolution_method=ResolutionMethod.MINHASH,
+        similarity_threshold=exact + 0.001,
+    )
+    assert at.find_all_matches(variant) == [(name, exact)]
+    assert above.find_all_matches(variant) == []
+
+
+def test_the_minhash_threshold_is_its_own_once_set() -> None:
+    processing = Config().processing
+    assert processing.resolution_threshold == processing.similarity_threshold == 0.85
+    processing.minhash_similarity_threshold = 0.7
+    assert processing.resolution_threshold == 0.7
+    processing.resolution_method = ResolutionMethod.SEQUENCE_MATCHER
+    assert processing.resolution_threshold == 0.85

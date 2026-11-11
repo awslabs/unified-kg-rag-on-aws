@@ -218,6 +218,13 @@ ALLOWED: dict[str, str] = {
         "domain/models/seed_graph.py:MAX_TYPE_CHARS",
         "domain/retrieval/citations.py:MAX_RANGE",
     ),
+    "domain/ingestion/base_resolver.py:LSH_RECALL_AT_THRESHOLD": (
+        "recall target: the share of name pairs at the threshold the LSH index "
+        "proposes; the exact Jaccard check decides every match"
+    ),
+    "domain/ingestion/base_resolver.py:_NAME_SHINGLE_CHARS": (
+        "format: the shingle length of a name's MinHash signature, as before"
+    ),
     **_reason(
         PRESENTATION,
         "adapters/llm/langchain.py:_EXCERPT_CHARS",

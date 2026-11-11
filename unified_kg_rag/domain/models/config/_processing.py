@@ -883,13 +883,28 @@ class ProcessingConfig(ConfigSection):
         ge=0.0,
         le=1.0,
         description=(
-            "Similarity threshold for fuzzy entity resolution "
-            "(fuzzy_entity_resolution), for matching claim subjects and "
-            "objects to entity names, and for a word of a name a structured "
-            "query gives to stand for a word of a stored entity's name. Raise "
-            "it if distinct entities merge."
+            "Similarity two names need to match, as the sequence_matcher "
+            "ratio (difflib) measures it: in fuzzy entity resolution "
+            "(fuzzy_entity_resolution) and claim subject and object matching "
+            "with resolution_method sequence_matcher, in both with minhash "
+            "unless minhash_similarity_threshold is set, and for a word of a "
+            "name a structured query gives to stand for a word of a stored "
+            "entity's name. Raise it if distinct entities merge."
         ),
         json_schema_extra=evidence("unmeasured"),
+    )
+    minhash_similarity_threshold: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Similarity two names need to match with resolution_method "
+            "minhash: the Jaccard similarity of their character 3-gram sets, "
+            "which reads lower than the sequence_matcher ratio of the same "
+            "pair. null: similarity_threshold. The MinHash index proposes "
+            "the candidates (99% of the pairs at the threshold) and their "
+            "exact Jaccard similarity decides."
+        ),
     )
     document_parsing: DocumentParsingConfig = Field(
         default_factory=DocumentParsingConfig,
@@ -940,3 +955,13 @@ class ProcessingConfig(ConfigSection):
                 "appear more than once"
             )
         return value
+
+    @property
+    def resolution_threshold(self) -> float:
+        """The similarity threshold of ``resolution_method``."""
+        if (
+            self.resolution_method == ResolutionMethod.MINHASH
+            and self.minhash_similarity_threshold is not None
+        ):
+            return self.minhash_similarity_threshold
+        return self.similarity_threshold

@@ -323,6 +323,7 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
         _P.GRAPH_RESOLUTION,
         "processing.resolution_method",
         "processing.similarity_threshold",
+        "processing.minhash_similarity_threshold",
         "processing.fuzzy_entity_resolution",
     ),
     **_keyed_at(
@@ -509,6 +510,9 @@ _KEYED_ONCE_SET = frozenset(
         # as before (one detected as none now fails instead of being read
         # as latin-1).
         "processing.document_parsing.encoding",
+        # Unset, minhash resolution keeps similarity_threshold, as before
+        # the field.
+        "processing.minhash_similarity_threshold",
         # Overrides of the chunker's and the translator's prompts, added
         # after them: unset, the prompts are the ones keyed before.
         "custom_prompts.text_chunking_system",

@@ -51,15 +51,44 @@ def _minhash_scheme() -> Any:
     return MinHash().scheme
 
 
+# The share of name pairs at the threshold the LSH index must propose. Its
+# candidates are checked against the exact Jaccard similarity, so a wider
+# net costs comparisons, never a wrong match.
+LSH_RECALL_AT_THRESHOLD = 0.99
+
+
+def _candidate_probability(similarity: float, bands: int, rows: int) -> float:
+    """The chance that ``bands`` bands of ``rows`` rows propose a pair of
+    Jaccard ``similarity``: ``1 - (1 - s^rows)^bands``."""
+    return 1.0 - (1.0 - similarity**rows) ** bands
+
+
 @lru_cache(maxsize=8)
 def _lsh_params(threshold: float, num_perm: int) -> tuple[int, int]:
-    """The ``(bands, rows)`` datasketch picks for ``threshold`` and
-    ``num_perm``: a numerical optimisation of about 20 ms that every
-    ``MinHashLSH`` otherwise repeats, once per matcher (per resolution)."""
-    from datasketch import MinHashLSH
+    """The ``(bands, rows)`` of the LSH index: of the splits of ``num_perm``
+    permutations that propose a pair at ``threshold`` with at least
+    :data:`LSH_RECALL_AT_THRESHOLD`, the one that proposes the fewest pairs
+    below it (the least area under its candidate curve below ``threshold``).
 
-    lsh = MinHashLSH(threshold=threshold, num_perm=num_perm)
-    return lsh.b, lsh.r
+    datasketch's own choice weighs missed pairs and false candidates alike:
+    at 0.85 and 128 permutations (8 bands of 16 rows) it proposed a pair at
+    the threshold 46% of the time, and a missed pair never matched.
+    """
+    steps = 100
+    best: tuple[float, int, int] | None = None
+    for rows in range(1, num_perm + 1):
+        bands = num_perm // rows
+        if _candidate_probability(threshold, bands, rows) < LSH_RECALL_AT_THRESHOLD:
+            continue
+        below = sum(
+            _candidate_probability(threshold * i / steps, bands, rows)
+            for i in range(steps)
+        )
+        if best is None or below < best[0]:
+            best = (below, bands, rows)
+    if best is None:  # a threshold so low only one-row bands reach it
+        return num_perm, 1
+    return best[1], best[2]
 
 
 @lru_cache(maxsize=8)
@@ -73,6 +102,26 @@ def _minhash_permutations(num_perm: int) -> Any:
     from datasketch import MinHash
 
     return MinHash(num_perm=num_perm).permutations
+
+
+# Characters per shingle of a name's MinHash signature.
+_NAME_SHINGLE_CHARS = 3
+
+
+def name_shingles(name: str) -> frozenset[str]:
+    """The character 3-grams of ``name``'s ``entity_key`` (NFKC, casefold,
+    symbols kept), or the key itself when shorter: what the MinHash method
+    compares."""
+    key = entity_key(name)
+    n = _NAME_SHINGLE_CHARS
+    if len(key) < n:
+        return frozenset({key})
+    return frozenset(key[i : i + n] for i in range(len(key) - n + 1))
+
+
+def _jaccard(a: frozenset[str], b: frozenset[str]) -> float:
+    union = len(a | b)
+    return len(a & b) / union if union else 1.0
 
 
 class FuzzyMatcher:
@@ -132,8 +181,13 @@ class FuzzyMatcher:
             params=_lsh_params(self.similarity_threshold, self.minhash_permutations),
         )
         self.minhashes = {}
+        # The candidates' shingle sets: the LSH proposes, their exact
+        # Jaccard similarity decides.
+        self.shingles: dict[str, frozenset[str]] = {}
         for name in self.candidates:
-            minhash = self._create_minhash(name, self.minhash_permutations)
+            shingles = name_shingles(name)
+            self.shingles[name] = shingles
+            minhash = self._minhash_of(shingles, self.minhash_permutations)
             self.minhashes[name] = minhash
             self.lsh.insert(name, minhash)
 
@@ -148,9 +202,11 @@ class FuzzyMatcher:
         return self._create_minhash(query, self.minhash_permutations)
 
     @classmethod
-    def _create_minhash(
-        cls, text: str, minhash_permutations: int = 128, n_grams: int = 3
-    ) -> "MinHash":
+    def _create_minhash(cls, text: str, minhash_permutations: int = 128) -> "MinHash":
+        return cls._minhash_of(name_shingles(text), minhash_permutations)
+
+    @staticmethod
+    def _minhash_of(shingles: frozenset[str], minhash_permutations: int) -> "MinHash":
         from datasketch import MinHash
 
         minhash = MinHash(
@@ -158,16 +214,6 @@ class FuzzyMatcher:
             permutations=_minhash_permutations(minhash_permutations),
             scheme=_minhash_scheme(),
         )
-        normalized_text = entity_key(text)
-
-        if len(normalized_text) < n_grams:
-            shingles = {normalized_text}
-        else:
-            shingles = {
-                normalized_text[i : i + n_grams]
-                for i in range(len(normalized_text) - n_grams + 1)
-            }
-
         minhash.update_batch([shingle.encode("utf8") for shingle in shingles])
         return minhash
 
@@ -229,14 +275,18 @@ class FuzzyMatcher:
         return cached if cached is not None else head_character(candidate)
 
     def _find_all_lsh_matches(self, query: str) -> list[tuple[str, float]]:
-        # Called for the MINHASH method only (find_all_matches).
+        """The candidates the LSH index proposes for ``query`` whose exact
+        Jaccard similarity (of their :func:`name_shingles`) reaches the
+        threshold: the MinHash estimate errs by a few hundredths either way
+        at 128 permutations. Called for the MINHASH method only
+        (find_all_matches)."""
         query_minhash = self._query_minhash(query)
         similar_candidates = self.lsh.query(query_minhash)
         if not similar_candidates:
             return []
-
+        query_shingles = self.shingles.get(query) or name_shingles(query)
         matches = [
-            (str(candidate), query_minhash.jaccard(self.minhashes[str(candidate)]))
+            (str(candidate), _jaccard(query_shingles, self.shingles[str(candidate)]))
             for candidate in similar_candidates
         ]
         return [match for match in matches if match[1] >= self.similarity_threshold]
@@ -287,16 +337,17 @@ class BaseResolver(ABC):
     def _create_fuzzy_matcher(
         self, candidate_texts: list[str], **kwargs: Any
     ) -> FuzzyMatcher:
+        processing = self.config.processing
         logger.debug(
             "Creating FuzzyMatcher with %s candidates, method: '%s', threshold: %s",
             len(candidate_texts),
-            self.config.processing.resolution_method.value,
-            self.config.processing.similarity_threshold,
+            processing.resolution_method.value,
+            processing.resolution_threshold,
         )
         return FuzzyMatcher(
             candidate_texts,
-            resolution_method=self.config.processing.resolution_method,
-            similarity_threshold=self.config.processing.similarity_threshold,
+            resolution_method=processing.resolution_method,
+            similarity_threshold=processing.resolution_threshold,
             **kwargs,
         )
 

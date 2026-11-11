@@ -593,7 +593,7 @@ class ClaimResolver(BaseResolver):
         # The guarded similarity step stays on whatever
         # processing.fuzzy_entity_resolution says: that flag decides which
         # entities merge, while a claim only points at an existing entity
-        # (bounded by processing.similarity_threshold).
+        # (bounded by processing.resolution_threshold).
         fuzzy_matcher = self._create_fuzzy_matcher(
             candidate_texts=list(names_by_key.values())
         )
