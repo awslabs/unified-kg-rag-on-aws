@@ -34,6 +34,7 @@ from unified_kg_rag.application.storage.stored_items import (
     _with_sources,
     stripped_descriptions,
     unit_records,
+    write_claims_new_ids_first,
 )
 from unified_kg_rag.domain.ingestion.cache_keys import unbuilt_record_prefixes
 from unified_kg_rag.domain.ingestion.community_hierarchy import attach_report_hierarchy
@@ -194,6 +195,10 @@ class IndexingManager:
         # them again.
         self._rank_only: set[str] = set()
         self._rank_only_copies: dict[tuple[str, str], Mapping[str, Any] | None] = {}
+        # By (suffix, id), the stored claims the claim merge read: the
+        # commit writes the derived claims under other ids first
+        # (write_claims_new_ids_first).
+        self._stored_claim_ids: set[tuple[str, str]] = set()
         # The suffixes whose graph merge found nothing stored.
         self._fresh: set[str] = set()
         # By suffix, the stored items a full build does not have (edges
@@ -552,7 +557,7 @@ class IndexingManager:
                 community_reports,
                 "vector_community_reports",
             ),
-            (vector.index_claims, vector.upsert_claims, claims, "vector_claims"),
+            (vector.index_claims, self._upsert_claims, claims, "vector_claims"),
             (graph.index_entities, graph.upsert_entities, entities, "graph_entities"),
         ]
         # The OpenSearch relationship VECTOR index: written when the run
@@ -686,6 +691,17 @@ class IndexingManager:
             stats.merge(graph.upsert_relationships(whole))
         stats.total_items = len(relationships)
         return stats
+
+    def _upsert_claims(self, claims: list[Claim]) -> IndexingStats:
+        """Delta upsert of the claims, those under new ids before those
+        overwriting a stored claim the merge read
+        (:func:`write_claims_new_ids_first`)."""
+        stored, self._stored_claim_ids = self._stored_claim_ids, set()
+        return write_claims_new_ids_first(
+            self.vector_indexer,
+            claims,
+            {c.id for c in claims if (BaseIndexer.get_suffix(c), c.id) in stored},
+        )
 
     def _upsert_vector_relationships(
         self, relationships: list[Relationship]
@@ -1153,6 +1169,7 @@ class IndexingManager:
             self._fresh,
             self._rank_only,
             self._rank_only_copies,
+            self._stored_claim_ids,
             self._derived_entities,
         ):
             state.clear()

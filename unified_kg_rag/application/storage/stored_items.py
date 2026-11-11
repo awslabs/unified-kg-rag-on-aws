@@ -29,7 +29,7 @@ from unified_kg_rag.domain.models import (
     TextUnit,
     TextUnitExtraction,
 )
-from unified_kg_rag.ports.indexer import GraphIndexer, VectorIndexer
+from unified_kg_rag.ports.indexer import GraphIndexer, IndexingStats, VectorIndexer
 from unified_kg_rag.shared import get_logger
 
 logger = get_logger(__name__)
@@ -175,6 +175,46 @@ def _claim_text(claim: Claim) -> tuple[Any, ...]:
         claim.subject_name,
         claim.object_name,
     )
+
+
+def write_claims_new_ids_first(
+    vector: VectorIndexer,
+    claims: Sequence[Claim],
+    stored: Collection[str],
+    lineage_only: Collection[str] = (),
+) -> IndexingStats:
+    """Write derived ``claims``: those under new ids first, then those of
+    the ``stored`` ids (the ``lineage_only`` ones have their lineage set in
+    place, no embedding), only if every first write succeeded.
+
+    A stored claim the derivation overwrites with another statement (its
+    id now another's) holds its own lines until the claim they moved to,
+    under a new id, is written: a commit or a strip that died (or whose
+    write was rejected) after the overwrite and before the new claim lost
+    them, and no later run derived them again. The stored claims held back
+    count as failed, by id (a commit notes them, a strip is retried)."""
+    stats = IndexingStats()
+    new = [c for c in claims if c.id not in stored]
+    rest = [c for c in claims if c.id in stored]
+    if new:
+        stats.merge(vector.upsert_claims(new))
+    if rest and stats.failed_items:
+        held = IndexingStats(total_items=len(rest))
+        held.add_error(
+            "not written: a claim under a new id failed",
+            len(rest),
+            [c.id for c in rest],
+        )
+        stats.merge(held)
+    elif rest:
+        in_place = [c for c in rest if c.id in lineage_only]
+        whole = [c for c in rest if c.id not in lineage_only]
+        if in_place:
+            stats.merge(vector.update_claim_lineage(in_place))
+        if whole:
+            stats.merge(vector.upsert_claims(whole))
+    stats.total_items = len(claims)
+    return stats
 
 
 def _other_spellings(

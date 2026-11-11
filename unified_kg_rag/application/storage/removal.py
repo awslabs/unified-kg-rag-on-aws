@@ -36,6 +36,7 @@ from unified_kg_rag.application.storage.stored_items import (
     _other_spellings_of_parts,
     _reads_back,
     _vector_stale,
+    write_claims_new_ids_first,
 )
 from unified_kg_rag.domain.ingestion.cache_keys import unbuilt_record_prefixes
 from unified_kg_rag.domain.ingestion.contributions import (
@@ -897,32 +898,18 @@ class TextUnitRemoval:
             stats.add_error(str(e), count=len(claim_ids), ids=claim_ids)
             return {f"vector_read_claims_{suffix}": stats}
         before = {c.id: c for c in claims}
-        lineage_only = [
-            d
-            for d in derived
-            if d.id in before and _claim_text(d) == _claim_text(before[d.id])
-        ]
-        kept = {d.id for d in lineage_only}
-        changed = [d for d in derived if d.id in before and d.id not in kept]
-        results: dict[str, IndexingStats] = {}
         # The claims under new ids first: the stored claims they are derived
         # from (a split's) hold their lines until those are written.
-        new_claims = [d for d in derived if d.id not in before]
-        if new_claims:
-            results[f"vector_new_claims_{suffix}"] = m.vector_indexer.upsert_claims(
-                new_claims
+        lineage_only = {
+            d.id
+            for d in derived
+            if d.id in before and _claim_text(d) == _claim_text(before[d.id])
+        }
+        return {
+            f"vector_claims_{suffix}": write_claims_new_ids_first(
+                m.vector_indexer, derived, before, lineage_only
             )
-            if _rejected(results):
-                return results
-        if lineage_only:
-            results[f"vector_claims_{suffix}"] = m.vector_indexer.update_claim_lineage(
-                lineage_only
-            )
-        if changed:
-            results[f"vector_claim_content_{suffix}"] = m.vector_indexer.upsert_claims(
-                changed
-            )
-        return results
+        }
 
     def collect_extraction_records(self) -> dict[str, IndexingStats]:
         """See :meth:`IndexingManager.collect_extraction_records`."""

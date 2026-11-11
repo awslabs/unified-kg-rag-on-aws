@@ -110,8 +110,15 @@ unless noted.
    origin, or the claim a claim was split off, was overwritten while it held
    the rejected new item's lines, and a copy written stripped no longer led
    the retry to what the rejected write left. While a store keeps rejecting
-   a write, the strip so strips nothing: the kept items state the removed
-   text until the write succeeds.
+   a write, the strip so writes only the phases before it (the claims come
+   first): the kept items it did not write state the removed text until the
+   write succeeds. The commit writes its claims in the same order
+   (`write_claims_new_ids_first`): those overwriting a stored claim the
+   claim merge read only after those under new ids, and not at all (held
+   back, noted as rejected) when one of those fails. A stored claim whose
+   id the derivation gave another document's statement holds its own lines
+   until the claim they moved to is written; a store writes a call in
+   slices, and a run killed after the slice that overwrote it lost them.
    A stored edge a derivation would rewrite for its rank alone whose vector
    copy cites a text unit its graph copy does not (written to one store
    only) is left to the removal or the documents retried, which derive it

@@ -20,6 +20,9 @@ from unified_kg_rag.application.ingestion.incremental import (
     build_document_lineage,
 )
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
+from unified_kg_rag.application.storage.stored_items import (
+    write_claims_new_ids_first,
+)
 from unified_kg_rag.domain.ingestion.claim_resolver import (
     ClaimResolver,
     resolved_claim_id,
@@ -41,6 +44,7 @@ from unified_kg_rag.domain.models import (
     Entity,
     TextUnit,
 )
+from unified_kg_rag.ports.indexer import IndexingStats
 
 pytestmark = pytest.mark.unit
 
@@ -285,3 +289,44 @@ def test_remapped_report_findings_cite_the_ids_the_merge_kept() -> None:
     # Another suffix's remap only applies to its own items.
     assert untouched.findings == report.findings
     assert report.findings[0].entity_ids[0] == "e-acme-2"  # not mutated
+
+
+def _claim_of(claim_id: str) -> Claim:
+    return _claim("/c/a.txt").model_copy(update={"id": claim_id})
+
+
+@pytest.mark.parametrize("rejected", [False, True])
+def test_a_claim_overwriting_a_stored_one_waits_for_the_claims_under_new_ids(
+    mocker, rejected: bool
+) -> None:
+    # A stored claim overwritten with another statement holds its own lines
+    # until the claim they moved to (under a new id) is written: a rejected
+    # write of that one holds the overwrite back, counted failed by id.
+    vector = FakeVectorStore()
+    put = vector.upsert_claims
+
+    def upsert(claims: list[Claim]) -> IndexingStats:
+        if rejected and any(c.id == "new" for c in claims):
+            stats = IndexingStats(total_items=len(claims))
+            stats.add_error("rejected", len(claims), [c.id for c in claims])
+            return stats
+        return put(claims)
+
+    writes = mocker.patch.object(vector, "upsert_claims", side_effect=upsert)
+    in_place = mocker.spy(vector, "update_claim_lineage")
+    claims = [_claim_of("stored"), _claim_of("new"), _claim_of("same")]
+
+    stats = write_claims_new_ids_first(
+        vector, claims, stored={"stored", "same"}, lineage_only={"same"}
+    )
+
+    written = [[c.id for c in call.args[0]] for call in writes.call_args_list]
+    assert stats.total_items == 3
+    if rejected:
+        assert written == [["new"]]
+        assert in_place.call_count == 0
+        assert sorted(stats.failed_ids) == ["new", "same", "stored"]
+    else:
+        assert written == [["new"], ["stored"]]
+        assert [c.id for c in in_place.call_args.args[0]] == ["same"]
+        assert stats.failed_items == 0

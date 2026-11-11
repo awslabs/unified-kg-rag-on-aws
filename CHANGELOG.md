@@ -1056,7 +1056,10 @@ From a `main` checkout (formats and keys no release had):
   the name derived again, so the edge looked current and kept the other name in its vector copy). The note lists the
   edges the strip writes under new ids too: a strip stopped (or killed) after an edge's graph copy left no vector copy,
   and the next one rewrote the edge from its graph copy, description cut at the graph's limit. While a store keeps
-  rejecting a write, the strip strips nothing. A
+  rejecting a write, the strip writes only the phases before it (the claims come first), and the kept items it did not
+  write state the removed text until the write succeeds. The commit writes its claims in the same order, those
+  overwriting a stored claim only after those under new ids (held back and noted when one of those fails): a run killed
+  between two slices of its claim write lost a kept document's claim whose id another document's claim took. A
   failed removal stops the run before the commit, a deleted document's too, with an error naming the documents: the
   delta merged into the entities a failed strip left citing the removed text units, and dropped a new edge no later
   run wrote. A deleted document whose removal keeps failing so holds back the new documents, as a changed one does. The

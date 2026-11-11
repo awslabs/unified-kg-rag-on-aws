@@ -217,7 +217,9 @@ class CrossRunMerge:
                 )
                 - {c.id for c in group}
             )
-            group += m._read_stored_claims(about, suffix)
+            about_claims = m._read_stored_claims(about, suffix)
+            group += about_claims
+            read = [*stored, *about_claims]
             if not group:
                 continue
             if not stored and not about and suffix in m._fresh:
@@ -253,8 +255,13 @@ class CrossRunMerge:
                 else set()
             )
             if overlapping:
-                group += m._read_stored_claims(sorted(overlapping), suffix)
+                more = m._read_stored_claims(sorted(overlapping), suffix)
+                group += more
+                read += more
                 derived = self._derive_claims(suffix, group, units)
+            # The commit writes the derived claims under other ids before
+            # those overwriting these (write_claims_new_ids_first).
+            m._stored_claim_ids.update((suffix, c.id) for c in read)
             merged.extend(derived)
         return merged if claims is not None or merged else claims
 
