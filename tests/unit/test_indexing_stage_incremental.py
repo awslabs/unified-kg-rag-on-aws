@@ -396,6 +396,37 @@ def test_failed_joint_removal_commits_nothing_and_keeps_both_rows(mocker) -> Non
     assert store.get(compute_doc_id(_DELETED)) is not None
 
 
+def test_failed_removal_of_a_quarantined_doc_names_it(mocker) -> None:
+    # A quarantined document whose attempts reached the indexing stage is
+    # removed in the same pass: the error names it too, and a pass that
+    # removes only it does not end the message with a bare colon.
+    store = FakeDocStatusStore()
+    quarantined = "/corpus/stuck.txt"
+    store.put(
+        DocStatusRecord(
+            doc_id=compute_doc_id(quarantined),
+            content_hash=PENDING_CONTENT_HASH,
+            status=DocStatus.PENDING,
+            file_path=quarantined,
+            suffix="default",
+            text_unit_ids=["t-stuck"],
+        )
+    )
+    manager = _RecordingManager(delete_failures=1)
+    stage = _stage(mocker, store, manager)
+    text_units, entities = _delta_inputs()
+    ctx = _context(
+        DocumentDelta(quarantined=[compute_doc_id(quarantined)]),
+        [_document("run-changed", _CHANGED)],
+    )
+
+    with pytest.raises(PipelineStageError, match="not committing") as failed:
+        _run(stage, ctx, text_units, entities)
+
+    assert str(failed.value).endswith("retries the removal: " + quarantined)
+    assert "index_delta" not in [name for name, _ in manager.calls]
+
+
 def test_failed_prune_does_not_record_changed_doc_as_processed(mocker) -> None:
     store = FakeDocStatusStore()
     _seed_registry(store)

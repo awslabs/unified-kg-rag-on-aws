@@ -152,6 +152,50 @@ def test_two_failed_removals_leave_no_stale_vector_edge(
     _converges(harness, kept, config)
 
 
+@pytest.mark.parametrize("capped", [False, True], ids=["full", "capped"])
+@pytest.mark.parametrize(
+    "spellings",
+    [
+        ("ACME", "Acme"),
+        ("한빛  물산", "한빛 물산"),
+        ("ひかり  物産", "ひかり 物産"),
+        ("ACME ひかり", "Acme ひかり"),
+    ],
+    ids=["en", "ko", "ja", "mix"],
+)
+def test_a_rename_and_back_leaves_no_stale_endpoint_name_on_a_vector_edge(
+    spellings: tuple[str, str], capped: bool
+) -> None:
+    # Two spellings of one id. Deleting g0.txt names the entity after
+    # h0.txt; its vector write is rejected, so its graph copy keeps the
+    # first name while k0.txt's edge is renamed in both stores. Deleting
+    # h0.txt and h1.txt names it back; its graph edge is written, its vector
+    # edge rejected. The retry found the entity's graph copy under the name
+    # it derives, saw no rename, and updated the edge's lineage only: its
+    # vector copy kept the second name for good.
+    first, second = spellings
+    kept: Corpus = {"/corpus/k0.txt": [[(first, "Buyer", 1)]]}
+    other: Corpus = {
+        "/corpus/h0.txt": [[(second, "Vendor", 3)]],
+        "/corpus/h1.txt": [[("Depot", second, 1)]],
+    }
+    before: Corpus = {**kept, "/corpus/g0.txt": [[(first, "Vendor", 3)]], **other}
+    entity = next(e.id for e in extract(before).entities if e.name in spellings)
+    config = _config()
+    if capped:
+        config.indexing.neptune.property_max_length = 40
+    harness = IncrementalRun(FakeDocStatusStore(), config)
+    harness.run(before)
+
+    harness.run(
+        {**kept, **other},
+        fail=lambda at, i: at == "vector.upsert_entities" and i == entity,
+    )
+    harness.run(kept, fail=lambda at, _i: at == "vector.upsert_relationships")
+
+    _converges(harness, kept, config)
+
+
 @pytest.mark.parametrize(
     "spellings",
     [
@@ -246,5 +290,290 @@ def test_an_edge_under_a_new_id_stopped_before_its_vector_copy_is_derived_again(
         with monkeypatch.context() as patched:
             patched.setattr(harness.vector, "upsert_relationships", killed)
             assert harness.run(shared)
+
+    _converges(harness, kept, config)
+
+
+@pytest.mark.parametrize("stop", ["rejected", "killed"])
+@pytest.mark.parametrize(
+    "names",
+    [
+        ("Acme", "ACME", "Acme Corp", "Acme Inc", "Depot", "Vendor", "Buyer"),
+        (
+            "한빛",
+            "(주)한빛",
+            "한빛 주식회사",
+            "주식회사 한빛",
+            "창고",
+            "공급사",
+            "구매자",
+        ),
+        (
+            "ひかり",
+            "(株)ひかり",
+            "ひかり株式会社",
+            "株式会社ひかり",
+            "倉庫",
+            "仕入先",
+            "買い手",
+        ),
+        (
+            "ひかり",
+            "(株)ひかり",
+            "ひかり株式会社",
+            "株式会社ひかり",
+            "창고",
+            "공급사",
+            "구매자",
+        ),
+    ],
+    ids=["en", "ko", "ja", "mix"],
+)
+def test_a_retried_claim_re_key_leaves_no_claim_at_a_retired_entity(
+    names: tuple[str, ...], stop: str
+) -> None:
+    # The commit adding n0.txt and n1.txt has the graph write of the short
+    # spelling rejected (noted). Deleting h0.txt folds the "Corp" spelling
+    # into it and re-keys n0.txt's claim about it; the strip stops after
+    # deriving the claims (a later phase rejected, or killed at its first
+    # write). The retry gave the claim derivation the folded entity's stored
+    # copy, still stored, found by its name key; derived as itself, it held
+    # the claim at its old id, beside the one the re-key gave it, about an
+    # entity the run deleted.
+    short, upper, corp, inc, depot, vendor, buyer = names
+    kept: Corpus = {
+        "/corpus/k0.txt": [[(depot, vendor, 3)]],
+        "/corpus/k1.txt": [[(depot, inc, 1)]],
+    }
+    added: Corpus = {
+        "/corpus/n0.txt": [
+            [(buyer, corp, 3), (vendor, short, 3), (depot, short, 3)],
+            [(short, vendor, 2)],
+        ],
+        "/corpus/n1.txt": [[(buyer, depot, 2), (depot, upper, 2), (short, buyer, 2)]],
+    }
+    gone: Corpus = {"/corpus/h0.txt": [[(corp, depot, 3)]]}
+    final: Corpus = {
+        **kept,
+        **added,
+        "/corpus/m0.txt": [[(inc, depot, 1), (buyer, short, 3)]],
+    }
+    config = _config()
+    harness = IncrementalRun(FakeDocStatusStore(), config)
+    harness.run(
+        {
+            **kept,
+            **gone,
+            "/corpus/g0.txt": [
+                [(vendor, depot, 1), (upper, depot, 1), (corp, buyer, 3)]
+            ],
+        }
+    )
+    noted = {
+        e.id for e in extract({**kept, **gone, **added}).entities if e.name == short
+    }
+    harness.run(
+        {**kept, **gone, **added},
+        fail=lambda at, i: at == "graph.upsert_entities" and i in noted,
+    )
+
+    if stop == "rejected":
+        harness.run(final, fail=lambda at, _i: at == "vector.upsert_relationships")
+    else:
+        assert harness.run(final, interrupt="mid_index_delta")
+
+    _converges(harness, final, config)
+
+
+def test_a_rejected_strip_write_is_logged_with_the_item_ids(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # A rejection that depends on the item (its size, a mapping conflict)
+    # blocks the namespace until it is written or the namespace is reset:
+    # the WARNING names the items, not only how many.
+    kept: Corpus = {"/corpus/k0.txt": [[("Buyer", "Acme Inc", 1)]]}
+    shared: Corpus = {**kept, "/corpus/h0.txt": [[("Acme Corp", "Depot", 2)]]}
+    before: Corpus = {**shared, "/corpus/g0.txt": [[("Depot", "Acme Corp", 2)]]}
+    depot = next(e.id for e in extract(before).entities if e.name == "Depot")
+    harness = IncrementalRun(FakeDocStatusStore(), _config())
+    harness.run(before)
+
+    with caplog.at_level("WARNING"):
+        harness.run(
+            shared, fail=lambda at, i: at == "graph.upsert_entities" and i == depot
+        )
+
+    assert any(
+        record.levelname == "WARNING" and depot in record.getMessage()
+        for record in caplog.records
+    )
+
+
+@pytest.mark.parametrize(
+    "names",
+    [
+        ("Acme Co", "Acme Corp", "Depot", "Vendor", "Buyer"),
+        ("주식회사 한빛", "한빛 주식회사", "창고", "공급사", "구매자"),
+        ("ひかり", "株式会社ひかり", "倉庫", "仕入先", "買い手"),
+        ("ひかり", "株式会社ひかり", "창고", "공급사", "구매자"),
+    ],
+    ids=["en", "ko", "ja", "mix"],
+)
+def test_a_rejected_split_part_leaves_its_neighbours_rank(
+    names: tuple[str, str, str, str, str],
+) -> None:
+    # Deleting g0.txt and g1.txt splits the second spelling off the first;
+    # the part's new vertex is rejected. The derivation also gives the
+    # stored neighbour both spellings link (not read back by the strip),
+    # ranked with the part's edge: taken for a new vertex, it was written
+    # with the rejected part, and kept that rank once the retry (h0.txt
+    # deleted too) folded the spellings back.
+    first, second, depot, vendor, buyer = names
+    kept: Corpus = {"/corpus/k0.txt": [[(depot, first, 2)], [(depot, second, 2)]]}
+    other: Corpus = {"/corpus/h0.txt": [[(vendor, first, 1)]]}
+    config = _config()
+    harness = IncrementalRun(FakeDocStatusStore(), config)
+    harness.run(
+        {
+            **kept,
+            **other,
+            "/corpus/g0.txt": [[(vendor, buyer, 1)]],
+            "/corpus/g1.txt": [[(second, vendor, 1)]],
+        }
+    )
+    part = {e.id for e in extract({**kept, **other}).entities if e.name == second}
+    rejected: list[str] = []
+
+    def fail(at: str, item_id: str) -> bool:
+        if at == "graph.upsert_entities" and item_id in part:
+            rejected.append(item_id)
+            return True
+        return False
+
+    harness.run({**kept, **other}, fail=fail)
+
+    assert rejected
+    _converges(harness, kept, config)
+
+
+@pytest.mark.parametrize(
+    "names",
+    [
+        ("Acme", "Acme Co", "ACME Inc.", "Acme Corp", "Buyer", "Depot", "Vendor"),
+        (
+            "한빛",
+            "주식회사 한빛",
+            "(주)한빛",
+            "한빛 주식회사",
+            "구매자",
+            "창고",
+            "공급사",
+        ),
+        (
+            "株式会社ひかり",
+            "ひかり",
+            "ひかり株式会社",
+            "(株)ひかり",
+            "買い手",
+            "倉庫",
+            "仕入先",
+        ),
+        (
+            "株式会社ひかり",
+            "ひかり",
+            "ひかり株式会社",
+            "(株)ひかり",
+            "구매자",
+            "창고",
+            "공급사",
+        ),
+    ],
+    ids=["en", "ko", "ja", "mix"],
+)
+@pytest.mark.parametrize("stop", ["rejected", "killed"])
+def test_a_stored_edge_that_gains_a_unit_is_noted_before_its_vector_copy(
+    names: tuple[str, ...], stop: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Deleting i0.txt changes which spelling the short name resolves to,
+    # and k0.txt's edge from the buyer merges into a stored edge of
+    # m0.txt's under its id: its graph copy gains k0.txt's unit, and its
+    # vector write is rejected (or the run dies before it). No copy of that
+    # edge cites a removed unit, so the retry did not find it: its vector
+    # copy lacked k0.txt's line for good.
+    short, long1, paren, long2, buyer, depot, vendor = names
+    final: Corpus = {
+        "/corpus/k0.txt": [
+            [(short, buyer, 2)],
+            [(buyer, short, 1), (depot, long1, 1), (paren, depot, 1)],
+        ],
+        "/corpus/k1.txt": [[(paren, depot, 2)]],
+        "/corpus/n0.txt": [[(long2, vendor, 1)]],
+        "/corpus/m0.txt": [[(short, depot, 2), (buyer, long2, 3)], [(buyer, paren, 2)]],
+    }
+    config = _config()
+    harness = IncrementalRun(FakeDocStatusStore(), config)
+    harness.run({**final, "/corpus/i0.txt": [[(short, depot, 3)]]})
+
+    if stop == "rejected":
+        harness.run(final, fail=lambda at, _i: at == "vector.upsert_relationships")
+    else:
+
+        def killed(*_args: object, **_kwargs: object) -> None:
+            raise Killed("between the strip's graph and vector edge writes")
+
+        with monkeypatch.context() as patched:
+            patched.setattr(harness.vector, "upsert_relationships", killed)
+            patched.setattr(harness.vector, "update_relationship_lineage", killed)
+            assert harness.run(final)
+
+    _converges(harness, final, config)
+
+
+@pytest.mark.parametrize(
+    "names",
+    [
+        ("Acme", "Acme Inc", "Acme Corp", "Buyer", "Vendor"),
+        ("한빛", "주식회사 한빛", "(주)한빛", "구매자", "공급사"),
+        ("ひかり", "株式会社ひかり", "(株)ひかり", "買い手", "仕入先"),
+        ("ひかり", "株式会社ひかり", "(株)ひかり", "구매자", "공급사"),
+    ],
+    ids=["en", "ko", "ja", "mix"],
+)
+def test_a_rejected_entity_gaining_a_name_key_keeps_the_spelling_it_takes(
+    names: tuple[str, str, str, str, str],
+) -> None:
+    # Deleting g0.txt and g1.txt moves the third spelling (stated in
+    # k0.txt's unit, which the second already cites) from the first
+    # spelling's entity to the second's: the second gains its name key, not
+    # a unit, and its graph write is rejected. Written on, the first lost
+    # the key; deleting h0.txt then deleted it, and the derivation, finding
+    # no stored entity of the third spelling's key, dropped k0.txt's edge
+    # from it.
+    first, second, third, buyer, vendor = names
+    kept: Corpus = {"/corpus/k0.txt": [[(second, buyer, 1), (third, vendor, 2)]]}
+    other: Corpus = {
+        "/corpus/h0.txt": [
+            [(third, buyer, 1), (buyer, second, 1)],
+            [(first, vendor, 2), (buyer, second, 3)],
+        ]
+    }
+    before: Corpus = {
+        **kept,
+        **other,
+        "/corpus/g0.txt": [[(buyer, third, 2), (first, vendor, 3)]],
+        "/corpus/g1.txt": [
+            [(first, buyer, 2)],
+            [(vendor, second, 3), (first, vendor, 2)],
+        ],
+    }
+    taker = {e.id for e in extract(before).entities if e.name == second}
+    config = _config()
+    harness = IncrementalRun(FakeDocStatusStore(), config)
+    harness.run(before)
+
+    harness.run(
+        {**kept, **other},
+        fail=lambda at, i: at == "graph.upsert_entities" and i in taker,
+    )
 
     _converges(harness, kept, config)

@@ -217,7 +217,9 @@ class CrossRunMerge:
                 )
                 - {c.id for c in group}
             )
-            group += m._read_stored_claims(about, suffix)
+            about_claims = m._read_stored_claims(about, suffix)
+            group += about_claims
+            read = [*stored, *about_claims]
             if not group:
                 continue
             if not stored and not about and suffix in m._fresh:
@@ -253,8 +255,13 @@ class CrossRunMerge:
                 else set()
             )
             if overlapping:
-                group += m._read_stored_claims(sorted(overlapping), suffix)
+                more = m._read_stored_claims(sorted(overlapping), suffix)
+                group += more
+                read += more
                 derived = self._derive_claims(suffix, group, units)
+            # The commit writes the derived claims under other ids before
+            # those overwriting these (write_claims_new_ids_first).
+            m._stored_claim_ids.update((suffix, c.id) for c in read)
             merged.extend(derived)
         return merged if claims is not None or merged else claims
 
@@ -1072,9 +1079,10 @@ class CrossRunMerge:
         of a re-keyed entity at its new id. The stored edges of the
         ``rewired`` entities (``Derived.rewired``) are all among
         ``relationships``: their stored links do not count. The stored edges
-        at them and at a split's parts (``split_from``, see
-        ``Derived.split_from``; the entities they split from are among
-        ``rewired``) are compared with their vector copies too.
+        are compared with their vector copies too; one at them or at a
+        split's parts (``split_from``, see ``Derived.split_from``; the
+        entities they split from are among ``rewired``) without a vector
+        copy is written.
         """
         m = self._m
         rekey = rekey or {}
@@ -1111,7 +1119,6 @@ class CrossRunMerge:
             entities,
             relationships,
             extra_ids,
-            stored_entities=stored_entities,
             rekey=rekey,
             rewired=rewired,
             split_from=split_from,
@@ -1195,7 +1202,6 @@ class CrossRunMerge:
         relationships: list[Relationship],
         extra_ids: list[str],
         *,
-        stored_entities: Sequence[Entity],
         rekey: Mapping[str, str],
         rewired: Collection[str],
         split_from: Mapping[str, str] | None,
@@ -1261,7 +1267,7 @@ class CrossRunMerge:
 
         before = {r.id: shown(r) for r in stored_extra}
         stale, rank_stale, vector_copy = self._stale_vector_copies(
-            suffix, extra, entities, stored_entities, rewired, split_from
+            suffix, extra, rewired, split_from
         )
         extra = [
             r
@@ -1312,8 +1318,6 @@ class CrossRunMerge:
         self,
         suffix: str,
         extra: Sequence[Relationship],
-        entities: Sequence[Entity],
-        stored_entities: Sequence[Entity],
         rewired: Collection[str],
         split_from: Mapping[str, str] | None,
     ) -> tuple[set[str], set[str], dict[str, dict[str, Any]] | None]:
@@ -1322,44 +1326,32 @@ class CrossRunMerge:
         vector copies hold another rank only, and the copies read (None
         without relationship vectors).
 
-        Whether a stored edge is rewritten for its rank is decided against
-        its graph copy, but the two copies are not written together: a
-        commit writes the vector copy first, a removal's strip the graph
-        copy first. A run killed in between (or whose graph write of an
-        endpoint was rejected, its edges held back) leaves the vector rank
-        ahead or behind, and a later derivation that gives the graph copy's
-        rank does not rewrite the edge: the vector copy kept a rank no full
-        build has. So the vector copies of all of ``extra`` are read (one
-        bulk read, beside the graph's) and their rank is compared too."""
+        Whether a stored edge is rewritten is decided against its graph
+        copy, but the two copies are not written together: a commit writes
+        the vector copy first, a removal's strip the graph copy first. A run
+        killed in between (or whose write to one store was rejected) leaves
+        the vector copy ahead or behind: in its rank, or in an endpoint's
+        name, also after the graph copy is back to the name a derivation
+        gives (two failed removals that renamed an entity and back). So the
+        vector copies of all of ``extra`` are read (one bulk read, beside
+        the graph's) and each is compared with what the write would store."""
         m = self._m
-        # And with their vector copies, where an endpoint's name or id
-        # changed: a commit killed between its vector and graph edge writes
-        # (or a strip before the graph edges came first) left the vector
-        # copies ahead, and a derivation back to the graph copy's names must
-        # still rewrite them.
-        stored_names: dict[str | None, str | None] = {}
-        for e in stored_entities:  # the stored copy, before a delta's of its id
-            stored_names.setdefault(e.id, e.name)
-        moved = {e.id for e in entities if stored_names.get(e.id) != e.name}
-        # And where the derivation re-pointed edges (rewired, and the parts
+        if not m.config.indexing.opensearch.build_relationship_vector_index:
+            return set(), set(), None
+        # Where the derivation re-pointed edges (rewired, and the parts
         # split off; the entities they split from are rewired): a strip
         # writes the graph edges before their vector copies, so a retry after
         # a kill in between finds the graph copies current and the vector
-        # copies behind, or missing (an edge under a new id, written when
-        # its endpoints are re-pointed): a missing one is written.
+        # copies missing (an edge under a new id, written when its endpoints
+        # are re-pointed): a missing one is written.
         repointed = {*rewired, *(split_from or {})}
-        moved |= repointed
-        vectors = m.config.indexing.opensearch.build_relationship_vector_index
-        if not vectors:
-            return set(), set(), None
         vector_copy = m.vector_indexer.read_vector_copies(
             "relationships", [r.id for r in extra], suffix=suffix
         )
         stale = {
             r.id
             for r in extra
-            if {r.source_id, r.target_id} & moved
-            and (
+            if (
                 _vector_stale(r, vector_copy[r.id])
                 if r.id in vector_copy
                 else bool({r.source_id, r.target_id} & repointed)
@@ -1656,7 +1648,10 @@ class CrossRunMerge:
         # whose own entities are not in the delta (a noted write joined
         # alone) re-derives every statement of its units: one naming a
         # stored spelling (Acme Inc beside Acme) resolves to it only when it
-        # is among them, as the full build resolves it.
+        # is among them, as the full build resolves it. Not the stored copy
+        # of one this run re-keyed away (still stored until the old ids are
+        # deleted): derived as itself, it held a claim about it at its old
+        # id beside the one the re-key gave it.
         keys = (
             {compact_name_key(e.name) for e in entities}
             | {
@@ -1668,7 +1663,9 @@ class CrossRunMerge:
         )
         family = set(
             m.graph_indexer.find_entity_ids_by_name_key(sorted(keys), suffix) or []
-        ) - (entity_ids | set(derived_entities) | {e.id for e in entities})
+        ) - (
+            entity_ids | set(derived_entities) | {e.id for e in entities} | set(rekeyed)
+        )
         if family:
             entities += m.graph_indexer.read_entities(sorted(family), suffix=suffix)
         # And the noted entities of those keys (an earlier commit's write of

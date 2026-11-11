@@ -83,8 +83,11 @@ unless noted.
    The stored edges a derivation reads at the entities it touches (a
    commit's or a removal's strip) are compared with both copies: their
    vector copies are read with the graph's (`read_vector_copies`, the
-   `rank` too), and an edge whose vector rank differs from the derived one
-   has its rank set in place in both stores (by a strip as by a commit:
+   `rank` too), an edge whose vector copy names an endpoint otherwise is
+   written (whether or not the derivation renamed the endpoint: two failed
+   removals that renamed it and back leave the graph copy current and the
+   vector copy behind), and an edge whose vector rank differs from the
+   derived one has its rank set in place in both stores (by a strip as by a commit:
    `update_relationship_ranks` in the graph). A commit writes the vector
    copies in its first phase and the graph copies in its second, a strip
    the graph copies first, so a run killed in between, or a commit whose
@@ -96,8 +99,11 @@ unless noted.
    recorded, a killed strip's removal resumes, and a commit's rejected
    write is noted (`pending-writes`, below). A strip (item 5) is all or
    retry: it writes in phases, each after those it depends on (the claims
-   under new ids, the stored claims; the new vertices, the stored entities
-   gaining a unit, the graph edges, the vector edges, the vector entities
+   under new ids, the stored claims; the new vertices (ids the graph does
+   not hold: a derived entity the strip did not read back is looked up, so
+   a stored neighbour whose rank changed is not one), the stored entities
+   gaining a unit or a name key, the graph edges, the vector edges, the
+   vector entities
    and, last, the graph copies of the kept entities, by which a retry finds
    it), and the first phase with a rejected write stops it (the removal
    fails, retried by the next run). What it did not write keeps its stored
@@ -107,8 +113,15 @@ unless noted.
    origin, or the claim a claim was split off, was overwritten while it held
    the rejected new item's lines, and a copy written stripped no longer led
    the retry to what the rejected write left. While a store keeps rejecting
-   a write, the strip so strips nothing: the kept items state the removed
-   text until the write succeeds.
+   a write, the strip so writes only the phases before it (the claims come
+   first): the kept items it did not write state the removed text until the
+   write succeeds. The commit writes its claims in the same order
+   (`write_claims_new_ids_first`): those overwriting a stored claim the
+   claim merge read only after those under new ids, and not at all (held
+   back, noted as rejected) when one of those fails. A stored claim whose
+   id the derivation gave another document's statement holds its own lines
+   until the claim they moved to is written; a store writes a call in
+   slices, and a run killed after the slice that overwrote it lost them.
    A stored edge a derivation would rewrite for its rank alone whose vector
    copy cites a text unit its graph copy does not (written to one store
    only) is left to the removal or the documents retried, which derive it
@@ -131,7 +144,13 @@ unless noted.
    build cites each endpoint's edges' units). The noted entities are held as
    stored ones are: a removal before the commit resolves the claims it
    derives against them too, and the commit derives the stored claims about
-   them again (it may merge one into another spelling). The note is replaced
+   them again (it may merge one into another spelling). The stored copy of
+   an entity the run re-keyed away is not among the entities a claim is
+   derived against, though it is still stored until its old id is deleted,
+   and a claim endpoint none of them takes follows the run's re-key: a
+   retried strip derived that copy as itself and kept the claim at its old
+   id, about an entity the run deleted, beside the one the re-key gave it.
+   The note is replaced
    by what still fails, or deleted. A commit over `max_failure_rate` notes
    its rejected items too, though it records no document: it wrote items of
    documents outside its delta (what its merge derived again), which retrying
@@ -158,7 +177,9 @@ unless noted.
    sides of the merge, the edges it re-keyed, re-pointed or dropped, the
    edges and claims under new ids (no copy of one cites a removed text unit:
    a strip stopped after an edge's graph copy left no vector copy to complete
-   a description the graph caps) and the claims about a split's entities, in
+   a description the graph caps), the stored edges that gain a unit (one
+   stopped there left a vector copy without the merged-in line) and the
+   claims about a split's entities, in
    one record of the
    suffix's extraction store (`pending-strip`, with those of a note a retry
    finishes) and deletes it once their old ids are gone; every removal reads

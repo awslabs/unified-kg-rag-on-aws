@@ -561,7 +561,7 @@ class IncrementalIndexer:
             )
             if record is not None:
                 units_by_suffix[record.suffix].update(record.text_unit_ids)
-        results: list[IndexingStats] = []
+        failed = 0
         for suffix, unit_ids in sorted(units_by_suffix.items()):
             if not unit_ids:
                 continue
@@ -571,12 +571,23 @@ class IncrementalIndexer:
                 len(doc_ids),
                 suffix,
             )
-            results.extend(
-                self.indexing_manager.remove_text_units(
-                    suffix, sorted(unit_ids)
-                ).values()
-            )
-        failed = sum(s.failed_items for s in results if s is not None)
+            results = self.indexing_manager.remove_text_units(suffix, sorted(unit_ids))
+            for key, stats in sorted(results.items()):
+                if stats is None or not stats.failed_items:
+                    continue
+                failed += stats.failed_items
+                # By id: a rejection that depends on the item (its size, a
+                # mapping conflict) is not fixed by fixing the store.
+                logger.warning(
+                    "Removal write '%s' in '%s' failed for %d items (%s); ids: %s",
+                    key,
+                    suffix,
+                    stats.failed_items,
+                    "; ".join(stats.errors[:2]),
+                    ", ".join(stats.failed_ids[:10])
+                    + (", ..." if len(stats.failed_ids) > 10 else "")
+                    or "not reported",
+                )
         if failed:
             logger.warning(
                 "Artifact removal for obsolete docs had %d failures; caller "
@@ -1074,6 +1085,25 @@ class IncrementalIndexer:
         for doc_id in doc_ids:
             self.doc_status.delete(doc_id)
 
+    def documents_to_remove(self, delta: DocumentDelta) -> tuple[list[str], set[str]]:
+        """The documents :meth:`remove_changed_and_deleted` removes (the
+        changed, the deleted and the quarantined ones whose attempts reached
+        the indexing stage), and the quarantined ones it keeps."""
+        held = self.doc_status.get_many(delta.quarantined) if delta.quarantined else {}
+        kept = {
+            doc_id
+            for doc_id, record in held.items()
+            if record.status is not DocStatus.PENDING and record.text_unit_ids
+        }
+        doc_ids = list(
+            dict.fromkeys(
+                delta.changed
+                + delta.deleted
+                + [doc_id for doc_id in delta.quarantined if doc_id not in kept]
+            )
+        )
+        return doc_ids, kept
+
     def remove_changed_and_deleted(self, delta: DocumentDelta) -> bool:
         """Remove the stale artifacts of changed AND deleted docs in one pass.
 
@@ -1104,19 +1134,7 @@ class IncrementalIndexer:
         record is still the indexed version's) keeps that version: nothing of
         the new one was written.
         """
-        held = self.doc_status.get_many(delta.quarantined) if delta.quarantined else {}
-        kept = {
-            doc_id
-            for doc_id, record in held.items()
-            if record.status is not DocStatus.PENDING and record.text_unit_ids
-        }
-        doc_ids = list(
-            dict.fromkeys(
-                delta.changed
-                + delta.deleted
-                + [doc_id for doc_id in delta.quarantined if doc_id not in kept]
-            )
-        )
+        doc_ids, kept = self.documents_to_remove(delta)
         if not doc_ids:
             check_write_fence()
             self._record_quarantined(delta.quarantined, kept)
@@ -3108,19 +3126,17 @@ def index_delta(
     # A shared item the delta derives again is summarized by the commit only.
     indexing_manager.expect_delta(entities, relationships)
     if not incremental.remove_changed_and_deleted(delta):
+        doc_ids, _ = incremental.documents_to_remove(delta)
         removed = sorted(
             record.file_path or record.doc_id
-            for record in incremental.doc_status.get_many(
-                [*delta.changed, *delta.deleted]
-            ).values()
+            for record in incremental.doc_status.get_many(doc_ids).values()
         )
+        named = ", ".join(removed[:10]) + (", ..." if len(removed) > 10 else "")
         raise PipelineStageError(
-            "Removing stale artifacts of changed or deleted documents "
-            "failed; not committing the delta so the registry keeps their "
-            "PENDING records (old + planned lineage) and the next run "
-            "retries the removal: "
-            + ", ".join(removed[:10])
-            + (", ..." if len(removed) > 10 else "")
+            "Removing stale artifacts of changed, deleted or quarantined "
+            "documents failed; not committing the delta so the registry keeps "
+            "their PENDING records (old + planned lineage) and the next run "
+            "retries the removal" + (f": {named}" if named else "")
         )
 
     if reannotate:

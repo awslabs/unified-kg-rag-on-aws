@@ -36,6 +36,7 @@ from unified_kg_rag.application.storage.stored_items import (
     _other_spellings_of_parts,
     _reads_back,
     _vector_stale,
+    write_claims_new_ids_first,
 )
 from unified_kg_rag.domain.ingestion.cache_keys import unbuilt_record_prefixes
 from unified_kg_rag.domain.ingestion.contributions import (
@@ -44,6 +45,7 @@ from unified_kg_rag.domain.ingestion.contributions import (
     attribute_record_keys,
 )
 from unified_kg_rag.domain.ingestion.derivation import Derived
+from unified_kg_rag.domain.ingestion.graph_resolver import entity_keys
 from unified_kg_rag.domain.ingestion.merge import (
     remove_claim_text_units,
     remove_text_units,
@@ -644,7 +646,10 @@ class TextUnitRemoval:
         # id, as the claims (_StripNote): no copy of one cites a removed
         # unit, and a strip stopped or killed after its graph copy left no
         # vector copy, so a retry rewrote it from the graph copy, its
-        # description cut at the graph's limit.
+        # description cut at the graph's limit. And a stored edge that
+        # gains a unit (another spelling's statement merged in): a strip
+        # stopped after its graph copy left the vector copy without that
+        # line, and no copy cited a removed unit.
         retired_edges |= self._unfindable_edges(suffix, derived, relationships)
         # The stored claims about a split's part and origin: a retry
         # cannot tell them (the split kept the stored id).
@@ -678,9 +683,9 @@ class TextUnitRemoval:
     ) -> set[str]:
         """The ids of the edges ``derived`` writes that a retry would not
         find by the removed text units: the stored ones it keeps under their
-        id with other endpoints, and those the graph does not hold
-        (``relationships``: the stored copies read; the edges the derivation
-        reached beyond them are read here)."""
+        id with other endpoints or that gain a text unit, and those the
+        graph does not hold (``relationships``: the stored copies read; the
+        edges the derivation reached beyond them are read here)."""
         stored = {r.id: r for r in relationships}
         reached = [r.id for r in derived.relationships if r.id not in stored]
         if reached:
@@ -696,6 +701,7 @@ class TextUnitRemoval:
             if r.id not in stored
             or (r.source_id, r.target_id)
             != (stored[r.id].source_id, stored[r.id].target_id)
+            or set(r.text_unit_ids or []) - set(stored[r.id].text_unit_ids or [])
         }
 
     def _claims_to_strip(
@@ -790,17 +796,33 @@ class TextUnitRemoval:
         # still hold their lines until they are written.
         # Then the stored entities that gain a unit their graph copy does
         # not cite (another spelling's statement merged in, a split's origin
-        # may), before the edges re-pointed at them: written after them, a
+        # may) or a name key (a spelling another stored entity held, stated
+        # in a unit they cite: the derivation finds the spelling by it), before
+        # the edges re-pointed at them: written after them, a
         # run killed in between left an edge citing a kept unit on a vertex
         # citing only removed ones, which the next removal deleted with the
         # edge.
         stored_units = {e.id: set(e.text_unit_ids or []) for e in entities}
+        stored_keys = {e.id: entity_keys(e) for e in entities}
+        # A derived entity the strip did not read back may still be stored
+        # (a neighbour of a split, its rank changed): not a new vertex.
+        # Written first with the rejected part's edges in its rank, it kept
+        # that rank once the retry no longer derived the split.
+        unread = [e.id for e in new_entities if e.id not in graph_copy]
+        if unread and _reads_back(m.graph_indexer):
+            held = m.graph_indexer.read_entities(unread, suffix=suffix)
+            graph_copy |= {e.id for e in held}
+            stored_units |= {e.id: set(e.text_unit_ids or []) for e in held}
+            stored_keys |= {e.id: entity_keys(e) for e in held}
         new_vertices = [e for e in new_entities if e.id not in graph_copy]
         gaining = [
             e
             for e in new_entities
             if e.id in graph_copy
-            and set(e.text_unit_ids or []) - stored_units.get(e.id, set())
+            and (
+                set(e.text_unit_ids or []) - stored_units.get(e.id, set())
+                or entity_keys(e) - stored_keys.get(e.id, set())
+            )
         ]
         written_first = {e.id for e in (*new_vertices, *gaining)}
         # The graph copies of the kept entities are what a retry finds the
@@ -897,32 +919,18 @@ class TextUnitRemoval:
             stats.add_error(str(e), count=len(claim_ids), ids=claim_ids)
             return {f"vector_read_claims_{suffix}": stats}
         before = {c.id: c for c in claims}
-        lineage_only = [
-            d
-            for d in derived
-            if d.id in before and _claim_text(d) == _claim_text(before[d.id])
-        ]
-        kept = {d.id for d in lineage_only}
-        changed = [d for d in derived if d.id in before and d.id not in kept]
-        results: dict[str, IndexingStats] = {}
         # The claims under new ids first: the stored claims they are derived
         # from (a split's) hold their lines until those are written.
-        new_claims = [d for d in derived if d.id not in before]
-        if new_claims:
-            results[f"vector_new_claims_{suffix}"] = m.vector_indexer.upsert_claims(
-                new_claims
+        lineage_only = {
+            d.id
+            for d in derived
+            if d.id in before and _claim_text(d) == _claim_text(before[d.id])
+        }
+        return {
+            f"vector_claims_{suffix}": write_claims_new_ids_first(
+                m.vector_indexer, derived, before, lineage_only
             )
-            if _rejected(results):
-                return results
-        if lineage_only:
-            results[f"vector_claims_{suffix}"] = m.vector_indexer.update_claim_lineage(
-                lineage_only
-            )
-        if changed:
-            results[f"vector_claim_content_{suffix}"] = m.vector_indexer.upsert_claims(
-                changed
-            )
-        return results
+        }
 
     def collect_extraction_records(self) -> dict[str, IndexingStats]:
         """See :meth:`IndexingManager.collect_extraction_records`."""

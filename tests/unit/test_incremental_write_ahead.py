@@ -13,6 +13,8 @@ point below must converge to a fresh full build of the follow-up corpus.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from tests.fixtures.doc_status_records import all_records
@@ -187,6 +189,52 @@ def test_crash_mid_commit_leaves_the_rest_pending(k: int) -> None:
     harness.run(R1)
     assert sorted(harness.extracted) == sorted(pending)
     _assert_converged(harness, R1)
+
+
+@pytest.mark.parametrize("cut", [1, 2])
+@pytest.mark.parametrize(
+    "spellings",
+    [
+        ("Acme", "ACME Inc."),
+        ("한빛", "(주)한빛"),
+        ("ひかり", "(株)ひかり"),
+        ("ひかり", "(주)ひかり"),
+    ],
+    ids=["en", "ko", "ja", "mix"],
+)
+def test_a_commit_killed_between_claim_write_slices_converges(
+    spellings: tuple[str, str], cut: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Adding n1.txt gives its claim the id k1.txt's claim had and moves
+    # k1.txt's to a new id. A store writes a call in slices; the run died
+    # after the slice overwriting the stored claim and before the new one:
+    # k1.txt's statement was in no store, and no run derived it again.
+    short, long_ = spellings
+    before: Corpus = {
+        "/c/k0.txt": [[("Depot", short, 2)], [(long_, "Depot", 3)]],
+        "/c/k1.txt": [[(long_, "Vendor", 1)], [(short, "Buyer", 3)]],
+    }
+    after: Corpus = {
+        **before,
+        "/c/n0.txt": [[("Depot", short, 2)]],
+        "/c/n1.txt": [[(long_, "Buyer", 3)]],
+    }
+    harness = IncrementalRun()
+    harness.run(before)
+    write = harness.vector.upsert_claims
+
+    def dies_mid_call(claims: list[Any]) -> Any:
+        if len(claims) < 2:
+            return write(claims)
+        write(claims[: min(cut, len(claims) - 1)])
+        raise Killed("between two slices of the claim write")
+
+    with monkeypatch.context() as patched:
+        patched.setattr(harness.vector, "upsert_claims", dies_mid_call)
+        assert harness.run(after)
+    harness.run(after)
+
+    _assert_converged(harness, after)
 
 
 def test_write_ahead_record_holds_old_and_planned_lineage() -> None:
