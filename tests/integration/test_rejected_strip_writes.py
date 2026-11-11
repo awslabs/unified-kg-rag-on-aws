@@ -292,3 +292,94 @@ def test_an_edge_under_a_new_id_stopped_before_its_vector_copy_is_derived_again(
             assert harness.run(shared)
 
     _converges(harness, kept, config)
+
+
+@pytest.mark.parametrize("stop", ["rejected", "killed"])
+@pytest.mark.parametrize(
+    "names",
+    [
+        ("Acme", "ACME", "Acme Corp", "Acme Inc", "Depot", "Vendor", "Buyer"),
+        (
+            "한빛",
+            "(주)한빛",
+            "한빛 주식회사",
+            "주식회사 한빛",
+            "창고",
+            "공급사",
+            "구매자",
+        ),
+        (
+            "ひかり",
+            "(株)ひかり",
+            "ひかり株式会社",
+            "株式会社ひかり",
+            "倉庫",
+            "仕入先",
+            "買い手",
+        ),
+        (
+            "ひかり",
+            "(株)ひかり",
+            "ひかり株式会社",
+            "株式会社ひかり",
+            "창고",
+            "공급사",
+            "구매자",
+        ),
+    ],
+    ids=["en", "ko", "ja", "mix"],
+)
+def test_a_retried_claim_re_key_leaves_no_claim_at_a_retired_entity(
+    names: tuple[str, ...], stop: str
+) -> None:
+    # The commit adding n0.txt and n1.txt has the graph write of the short
+    # spelling rejected (noted). Deleting h0.txt folds the "Corp" spelling
+    # into it and re-keys n0.txt's claim about it; the strip stops after
+    # deriving the claims (a later phase rejected, or killed at its first
+    # write). The retry gave the claim derivation the folded entity's stored
+    # copy, still stored, found by its name key; derived as itself, it held
+    # the claim at its old id, beside the one the re-key gave it, about an
+    # entity the run deleted.
+    short, upper, corp, inc, depot, vendor, buyer = names
+    kept: Corpus = {
+        "/corpus/k0.txt": [[(depot, vendor, 3)]],
+        "/corpus/k1.txt": [[(depot, inc, 1)]],
+    }
+    added: Corpus = {
+        "/corpus/n0.txt": [
+            [(buyer, corp, 3), (vendor, short, 3), (depot, short, 3)],
+            [(short, vendor, 2)],
+        ],
+        "/corpus/n1.txt": [[(buyer, depot, 2), (depot, upper, 2), (short, buyer, 2)]],
+    }
+    gone: Corpus = {"/corpus/h0.txt": [[(corp, depot, 3)]]}
+    final: Corpus = {
+        **kept,
+        **added,
+        "/corpus/m0.txt": [[(inc, depot, 1), (buyer, short, 3)]],
+    }
+    config = _config()
+    harness = IncrementalRun(FakeDocStatusStore(), config)
+    harness.run(
+        {
+            **kept,
+            **gone,
+            "/corpus/g0.txt": [
+                [(vendor, depot, 1), (upper, depot, 1), (corp, buyer, 3)]
+            ],
+        }
+    )
+    noted = {
+        e.id for e in extract({**kept, **gone, **added}).entities if e.name == short
+    }
+    harness.run(
+        {**kept, **gone, **added},
+        fail=lambda at, i: at == "graph.upsert_entities" and i in noted,
+    )
+
+    if stop == "rejected":
+        harness.run(final, fail=lambda at, _i: at == "vector.upsert_relationships")
+    else:
+        assert harness.run(final, interrupt="mid_index_delta")
+
+    _converges(harness, final, config)

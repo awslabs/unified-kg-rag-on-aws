@@ -1074,9 +1074,12 @@ From a `main` checkout (formats and keys no release had):
   claim derived again resolves its unit's statements against every stored spelling of their names (`Acme Inc` beside
   `Acme`), as the full build does. A removal resolves the claims it derives against the noted entities too (a
   rejected write of `Acme`): it pointed a claim about `Acme Corp` at an entity no store holds, and no later run
-  touched it again. The stored claims about a noted entity are derived again when the commit merges it into another
-  spelling (one kept a claim at its old id), and only then: one written again under its own id keeps them, where a
-  hub whose write kept failing had each claim about it read and rewritten on every run. A removal counts the text
+  touched it again. Not against the stored copy of an entity the run re-keyed away, though (it is still stored until its
+  old id is deleted), and a claim endpoint none of the entities it derives takes follows the run's re-key: a retried
+  strip derived that copy as itself and kept a claim about `Acme Corp` at its old id, beside the re-keyed one, about an
+  entity the run then deleted. The stored claims about a noted entity are derived again when the commit merges it into
+  another spelling (one kept a claim at its old id), and only then: one written again under its own id keeps them, where
+  a hub whose write kept failing had each claim about it read and rewritten on every run. A removal counts the text
   units of an entity's graph copy beside its vector copy, which a rejected write left stale: retried after a kill,
   it deleted an entity a kept document states, with that document's edges. A removal's strip notes the edges it
   re-points (at an entity split off another, say), so a retry after a kill folds a stored duplicate there as the

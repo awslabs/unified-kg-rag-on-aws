@@ -846,6 +846,17 @@ def _derive_claims(
             kept_for.append(derived_claims[-1])
             continue
         match_claim = with_entity_ids(match_claim, derived_of)
+        # An endpoint no given entity derives to that an earlier derivation
+        # of this run re-keyed follows it.
+        moved = {
+            key: entity_id(value)
+            for key in ("subject_id", "object_id")
+            if (value := getattr(match_claim, key))
+            and value not in derived_ids
+            and entity_id(value) != value
+        }
+        if moved:
+            match_claim = match_claim.model_copy(update=moved)
         # An endpoint whose stored entity could not be derived (one of its
         # text units has no record) resolved from the claim's units alone
         # to an entity no derived or stored item is: keep the stored one.

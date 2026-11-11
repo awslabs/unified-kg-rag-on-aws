@@ -1648,7 +1648,10 @@ class CrossRunMerge:
         # whose own entities are not in the delta (a noted write joined
         # alone) re-derives every statement of its units: one naming a
         # stored spelling (Acme Inc beside Acme) resolves to it only when it
-        # is among them, as the full build resolves it.
+        # is among them, as the full build resolves it. Not the stored copy
+        # of one this run re-keyed away (still stored until the old ids are
+        # deleted): derived as itself, it held a claim about it at its old
+        # id beside the one the re-key gave it.
         keys = (
             {compact_name_key(e.name) for e in entities}
             | {
@@ -1660,7 +1663,9 @@ class CrossRunMerge:
         )
         family = set(
             m.graph_indexer.find_entity_ids_by_name_key(sorted(keys), suffix) or []
-        ) - (entity_ids | set(derived_entities) | {e.id for e in entities})
+        ) - (
+            entity_ids | set(derived_entities) | {e.id for e in entities} | set(rekeyed)
+        )
         if family:
             entities += m.graph_indexer.read_entities(sorted(family), suffix=suffix)
         # And the noted entities of those keys (an earlier commit's write of

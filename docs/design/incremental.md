@@ -141,7 +141,13 @@ unless noted.
    build cites each endpoint's edges' units). The noted entities are held as
    stored ones are: a removal before the commit resolves the claims it
    derives against them too, and the commit derives the stored claims about
-   them again (it may merge one into another spelling). The note is replaced
+   them again (it may merge one into another spelling). The stored copy of
+   an entity the run re-keyed away is not among the entities a claim is
+   derived against, though it is still stored until its old id is deleted,
+   and a claim endpoint none of them takes follows the run's re-key: a
+   retried strip derived that copy as itself and kept the claim at its old
+   id, about an entity the run deleted, beside the one the re-key gave it.
+   The note is replaced
    by what still fails, or deleted. A commit over `max_failure_rate` notes
    its rejected items too, though it records no document: it wrote items of
    documents outside its delta (what its merge derived again), which retrying
