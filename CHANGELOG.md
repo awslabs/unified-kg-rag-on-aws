@@ -1051,11 +1051,13 @@ From a `main` checkout (formats and keys no release had):
   vector entities, the kept entities' graph copies last), and the first phase with a rejected write stops it, so what it
   did not write still cites the removed text units or is in the `pending-strip` note and the retry derives it again.
   Writing on past a rejection lost a kept document's item for good (a split's origin, or the claim a claim was split
-  off, overwritten while it held the rejected part's lines; an edge re-pointed at a rejected merge target), or kept a
-  stale vector edge after two failed removals in a row (also when they renamed an entity and back: its graph copy held
-  the name derived again, so the edge looked current and kept the other name in its vector copy). The note lists the
-  edges the strip writes under new ids too: a strip stopped (or killed) after an edge's graph copy left no vector copy,
-  and the next one rewrote the edge from its graph copy, description cut at the graph's limit. While a store keeps
+  off, overwritten while it held the rejected part's lines; an edge re-pointed at a rejected merge target; a stored
+  neighbour of a split, which the strip had not read back, written with the new vertices and ranked with the rejected
+  part's edge), or kept a stale vector edge after two failed removals in a row (also when they renamed an entity and
+  back: its graph copy held the name derived again, so the edge looked current and kept the other name in its vector
+  copy). The note lists the edges the strip writes under new ids too: a strip stopped (or killed) after an edge's graph
+  copy left no vector copy, and the next one rewrote the edge from its graph copy, description cut at the graph's limit.
+  While a store keeps
   rejecting a write, the strip writes only the phases before it (the claims come first), and the kept items it did not
   write state the removed text until the write succeeds. The commit writes its claims in the same order, those
   overwriting a stored claim only after those under new ids (held back and noted when one of those fails): a run killed

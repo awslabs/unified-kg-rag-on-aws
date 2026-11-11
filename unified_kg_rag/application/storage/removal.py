@@ -796,6 +796,15 @@ class TextUnitRemoval:
         # citing only removed ones, which the next removal deleted with the
         # edge.
         stored_units = {e.id: set(e.text_unit_ids or []) for e in entities}
+        # A derived entity the strip did not read back may still be stored
+        # (a neighbour of a split, its rank changed): not a new vertex.
+        # Written first with the rejected part's edges in its rank, it kept
+        # that rank once the retry no longer derived the split.
+        unread = [e.id for e in new_entities if e.id not in graph_copy]
+        if unread and _reads_back(m.graph_indexer):
+            held = m.graph_indexer.read_entities(unread, suffix=suffix)
+            graph_copy |= {e.id for e in held}
+            stored_units |= {e.id: set(e.text_unit_ids or []) for e in held}
         new_vertices = [e for e in new_entities if e.id not in graph_copy]
         gaining = [
             e

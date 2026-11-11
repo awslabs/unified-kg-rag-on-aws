@@ -407,3 +407,50 @@ def test_a_rejected_strip_write_is_logged_with_the_item_ids(
         record.levelname == "WARNING" and depot in record.getMessage()
         for record in caplog.records
     )
+
+
+@pytest.mark.parametrize(
+    "names",
+    [
+        ("Acme Co", "Acme Corp", "Depot", "Vendor", "Buyer"),
+        ("주식회사 한빛", "한빛 주식회사", "창고", "공급사", "구매자"),
+        ("ひかり", "株式会社ひかり", "倉庫", "仕入先", "買い手"),
+        ("ひかり", "株式会社ひかり", "창고", "공급사", "구매자"),
+    ],
+    ids=["en", "ko", "ja", "mix"],
+)
+def test_a_rejected_split_part_leaves_its_neighbours_rank(
+    names: tuple[str, str, str, str, str],
+) -> None:
+    # Deleting g0.txt and g1.txt splits the second spelling off the first;
+    # the part's new vertex is rejected. The derivation also gives the
+    # stored neighbour both spellings link (not read back by the strip),
+    # ranked with the part's edge: taken for a new vertex, it was written
+    # with the rejected part, and kept that rank once the retry (h0.txt
+    # deleted too) folded the spellings back.
+    first, second, depot, vendor, buyer = names
+    kept: Corpus = {"/corpus/k0.txt": [[(depot, first, 2)], [(depot, second, 2)]]}
+    other: Corpus = {"/corpus/h0.txt": [[(vendor, first, 1)]]}
+    config = _config()
+    harness = IncrementalRun(FakeDocStatusStore(), config)
+    harness.run(
+        {
+            **kept,
+            **other,
+            "/corpus/g0.txt": [[(vendor, buyer, 1)]],
+            "/corpus/g1.txt": [[(second, vendor, 1)]],
+        }
+    )
+    part = {e.id for e in extract({**kept, **other}).entities if e.name == second}
+    rejected: list[str] = []
+
+    def fail(at: str, item_id: str) -> bool:
+        if at == "graph.upsert_entities" and item_id in part:
+            rejected.append(item_id)
+            return True
+        return False
+
+    harness.run({**kept, **other}, fail=fail)
+
+    assert rejected
+    _converges(harness, kept, config)

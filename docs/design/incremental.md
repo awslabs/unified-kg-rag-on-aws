@@ -99,7 +99,9 @@ unless noted.
    recorded, a killed strip's removal resumes, and a commit's rejected
    write is noted (`pending-writes`, below). A strip (item 5) is all or
    retry: it writes in phases, each after those it depends on (the claims
-   under new ids, the stored claims; the new vertices, the stored entities
+   under new ids, the stored claims; the new vertices (ids the graph does
+   not hold: a derived entity the strip did not read back is looked up, so
+   a stored neighbour whose rank changed is not one), the stored entities
    gaining a unit, the graph edges, the vector edges, the vector entities
    and, last, the graph copies of the kept entities, by which a retry finds
    it), and the first phase with a rejected write stops it (the removal
