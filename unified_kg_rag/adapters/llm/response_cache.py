@@ -103,7 +103,7 @@ class LLMResponseCache(BaseCache):
     pipeline opens it once the run's cache directory is in place.
     """
 
-    def __init__(self, flush_every: int = 100) -> None:
+    def __init__(self, *, flush_every: int) -> None:
         self.flush_every = flush_every
         # Re-entrant: a stop requested during a flush flushes again (no-op).
         self._lock = threading.RLock()

@@ -69,7 +69,8 @@ def test_the_summary_and_the_comparison_carry_it() -> None:
     summary = manager._generate_summary(queries, results, [], now, now)
     assert summary.iterative_statistics["max_rounds_rate"] == 0.5
     comparison = paired_comparison(
-        {"local": [([], [_result("q0", None)])], "iterative": [([], results)]}
+        {"local": [([], [_result("q0", None)])], "iterative": [([], results)]},
+        resamples=2000,
     )
     assert comparison["strategies"]["iterative"]["iterative_statistics"]["queries"] == 4
     assert comparison["strategies"]["local"]["iterative_statistics"] == {}

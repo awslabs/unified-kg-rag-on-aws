@@ -450,7 +450,7 @@ def _precision_delta(
 def paired_comparison(
     runs: Mapping[str, Sequence[Run]],
     *,
-    resamples: int = 2000,
+    resamples: int,
     confidence: float = 0.95,
     seed: int = 0,
     categories: Mapping[str, str] | None = None,
@@ -488,7 +488,7 @@ def baseline_comparison(
     runs: Mapping[str, Sequence[Run]],
     pairs: Mapping[str, str],
     *,
-    resamples: int = 2000,
+    resamples: int,
     confidence: float = 0.95,
     seed: int = 0,
     categories: Mapping[str, str] | None = None,
@@ -1064,7 +1064,7 @@ def cost_comparison(
     *,
     prices: Mapping[str, ModelPrice] | None = None,
     unmetered_rerank: Collection[str] = (),
-    resamples: int = 2000,
+    resamples: int,
     confidence: float = 0.95,
     seed: int = 0,
 ) -> dict[str, Any]:

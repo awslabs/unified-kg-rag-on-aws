@@ -117,12 +117,12 @@ def test_a_cached_response_is_a_cache_hit_not_a_call(tmp_path: Path) -> None:
             "chat-a", model_purpose=ModelPurpose.INGESTION
         )
 
-    first = LLMResponseCache()
+    first = LLMResponseCache(flush_every=100)
     first.open(tmp_path)
     with usage.usage_scope() as run_one:
         _model(first).invoke([HumanMessage(content="extract")])
     first.close()
-    second = LLMResponseCache()
+    second = LLMResponseCache(flush_every=100)
     second.open(tmp_path)
     with usage.usage_scope() as run_two:
         _model(second).invoke([HumanMessage(content="extract")])

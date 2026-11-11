@@ -478,7 +478,7 @@ def test_the_known_good_request_bypasses_the_response_cache(tmp_path: Path) -> N
     # A response an earlier run cached for the known-good request would pass
     # for a model that now rejects the setting: it is neither served nor
     # stored while the request is made.
-    cache = LLMResponseCache()
+    cache = LLMResponseCache(flush_every=100)
     cache.open(tmp_path)
     cache.update("prompt", "llm", [Generation(text="cached")])
     cache.flush()

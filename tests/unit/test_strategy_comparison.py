@@ -79,7 +79,8 @@ class TestPairedComparison:
             {
                 "local": [_run({"a": 0.2, "b": 0.4, "c": 1.0})],
                 "mix": [_run({"a": 0.6, "b": 0.4}, "mix")],
-            }
+            },
+            resamples=2000,
         )
         delta = out["deltas_vs_baseline"]["mix"]["answer_match/token_f1"]
         assert delta["pairs"] == 2
@@ -109,7 +110,9 @@ class TestPairedComparison:
         local[0].extend(
             reports[-1].model_copy(update={"query_id": qid}) for qid in ("easy", "hard")
         )
-        out = paired_comparison({"local": [local], "mix": [(reports, results)]})
+        out = paired_comparison(
+            {"local": [local], "mix": [(reports, results)]}, resamples=2000
+        )
         mix = out["strategies"]["mix"]
         assert mix["metrics"]["answer_match/token_f1"]["mean"] == 0.5
         assert (mix["failed_answers"], mix["failed_queries"]) == (1, ["hard"])
@@ -128,7 +131,8 @@ class TestPairedComparison:
         reports, results = _run({"a": 1.0, "b": 0.0}, "mix")
         results[1].guardrail_blocked = "output"
         out = paired_comparison(
-            {"local": [_run({"a": 1.0, "b": 1.0})], "mix": [(reports, results)]}
+            {"local": [_run({"a": 1.0, "b": 1.0})], "mix": [(reports, results)]},
+            resamples=2000,
         )
         assert out["strategies"]["mix"]["guardrail_blocked_counts"] == {"output": 1}
         assert out["strategies"]["local"]["guardrail_blocked_counts"] == {}
@@ -140,7 +144,7 @@ class TestPairedComparison:
 
     def test_equal_failure_counts_raise_no_warning(self) -> None:
         out = paired_comparison(
-            {"local": [_run({"a": 1.0})], "mix": [_run({"a": 0.0})]}
+            {"local": [_run({"a": 1.0})], "mix": [_run({"a": 0.0})]}, resamples=2000
         )
         assert out["warnings"] == []
 
@@ -149,7 +153,8 @@ class TestPairedComparison:
             {
                 "local": [_run({"a": 0.0}), _run({"a": 1.0})],
                 "mix": [_run({"a": 1.0}, "mix"), _run({"a": 1.0}, "mix")],
-            }
+            },
+            resamples=2000,
         )
         local = out["strategies"]["local"]["metrics"]["answer_match/token_f1"]
         assert local["mean"] == 0.5
@@ -673,7 +678,7 @@ class TestFailedAnswerZeroFill:
     def test_a_metric_the_strategy_never_scores_is_not_filled(self) -> None:
         # Before, "global" failing on "b" scored 0 on retrieved coverage it
         # never measures: a significant -1.0 delta out of nothing.
-        out = paired_comparison(self._runs())
+        out = paired_comparison(self._runs(), resamples=2000)
         deltas = out["deltas_vs_baseline"]["global"]
         assert "graph_aware/retrieved_entity_coverage" not in deltas
         assert "graph_aware/retrieved_entity_coverage" not in (
@@ -684,7 +689,9 @@ class TestFailedAnswerZeroFill:
         assert (f1["pairs"], f1["mean_delta"]) == (2, -0.5)
 
     def test_a_strategy_that_scored_nothing_is_filled_on_everything(self) -> None:
-        out = paired_comparison(self._runs(global_scores_anything=False))
+        out = paired_comparison(
+            self._runs(global_scores_anything=False), resamples=2000
+        )
         deltas = out["deltas_vs_baseline"]["global"]
         assert deltas["graph_aware/retrieved_entity_coverage"]["per_query"] == {
             "b": -1.0
@@ -700,6 +707,7 @@ class TestCategoryDeltas:
                 "mix": [_run({"a": 1.0, "b": 1.0, "c": 0.0}, "mix")],
             },
             categories={"a": "1hop", "b": "1hop", "c": "2hop"},
+            resamples=2000,
         )
         by_category = out["deltas_by_category"]["mix"]
         one, two = (by_category[c]["answer_match/token_f1"] for c in ("1hop", "2hop"))
@@ -711,7 +719,7 @@ class TestCategoryDeltas:
 
     def test_no_categories_no_block(self) -> None:
         out = paired_comparison(
-            {"local": [_run({"a": 0.0})], "mix": [_run({"a": 1.0})]}
+            {"local": [_run({"a": 0.0})], "mix": [_run({"a": 1.0})]}, resamples=2000
         )
         assert "deltas_by_category" not in out
 
@@ -730,11 +738,13 @@ def test_runs_scored_on_different_spans_are_warned() -> None:
         return reports, _run({"a": 0.5}, strategy)[1]
 
     same = paired_comparison(
-        {"local": [run("first_line", "local")], "mix": [run("first_line", "mix")]}
+        {"local": [run("first_line", "local")], "mix": [run("first_line", "mix")]},
+        resamples=2000,
     )
     assert same["warnings"] == []
     mixed = paired_comparison(
-        {"local": [run("full", "local")], "mix": [run("first_line", "mix")]}
+        {"local": [run("full", "local")], "mix": [run("first_line", "mix")]},
+        resamples=2000,
     )
     (warning,) = mixed["warnings"]
     assert "first_line: mix; full: local" in warning
@@ -785,7 +795,8 @@ class TestAbstentionDeltas:
 
     def test_recall_and_precision_are_paired_deltas(self) -> None:
         comparison = paired_comparison(
-            {"base": [_decline_run(8, 4)], "mark": [_decline_run(16, 0)]}
+            {"base": [_decline_run(8, 4)], "mark": [_decline_run(16, 0)]},
+            resamples=2000,
         )
         means = comparison["strategies"]
         assert means["base"]["metrics"]["abstention/recall"]["mean"] == 0.4
@@ -810,7 +821,8 @@ class TestAbstentionDeltas:
                 "base": [_decline_run(16, 0)],
                 # Fails 10 and declines the other 10 unanswerable items.
                 "crash": [_decline_run(10, 0, failed_unanswerable=10)],
-            }
+            },
+            resamples=2000,
         )
         metrics = comparison["strategies"]["crash"]["metrics"]
         assert metrics["abstention/recall"]["mean"] == 0.5
@@ -819,7 +831,8 @@ class TestAbstentionDeltas:
 
     def test_gates_read_the_decline_deltas(self) -> None:
         comparison = paired_comparison(
-            {"base": [_decline_run(16, 0)], "worse": [_decline_run(6, 6)]}
+            {"base": [_decline_run(16, 0)], "worse": [_decline_run(6, 6)]},
+            resamples=2000,
         )
         breaches = gate_breaches(
             comparison,
@@ -833,7 +846,7 @@ class TestAbstentionDeltas:
 
     def test_no_unanswerable_items_no_decline_measures(self) -> None:
         comparison = paired_comparison(
-            {"a": [_run({"q1": 1.0})], "b": [_run({"q1": 0.5})]}
+            {"a": [_run({"q1": 1.0})], "b": [_run({"q1": 0.5})]}, resamples=2000
         )
         assert not any(
             key.startswith("abstention/")
