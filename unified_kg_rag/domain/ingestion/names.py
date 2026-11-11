@@ -11,17 +11,20 @@ and SciPy).
 """
 
 import re
+from difflib import SequenceMatcher
 
 from unified_kg_rag.domain.languages.legal_forms import strip_legal_forms
 from unified_kg_rag.shared.utils import entity_key, normalize_name
 from unified_kg_rag.shared.utils.scripts import (
     drop_dense_script_spaces,
     is_dense_script_char,
+    join_dense_middle_dots,
 )
 
 __all__ = [
     "compact_name_key",
     "discriminator_tokens",
+    "display_name_order",
     "entity_types_compatible",
     "head_character",
     "normalize_entity_type",
@@ -48,7 +51,23 @@ def compact_name_key(name: str | None) -> str:
     matcher links them with score 1.0.
     This is a matching key only: entity ids keep using ``entity_key``.
     """
-    return drop_dense_script_spaces(strip_legal_forms(entity_key(name)))
+    # A dot the dropped spaces put between two letters is joined as
+    # entity_key joins one, so a compact key is its own compact key.
+    return join_dense_middle_dots(
+        drop_dense_script_spaces(strip_legal_forms(entity_key(name)))
+    )
+
+
+def display_name_order(name: str) -> tuple[int, str]:
+    """The order in which spellings of one entity tie for its display name:
+    the fewest characters its ``entity_key`` folds away or reads otherwise
+    first (case and spacing aside: "토지" before "「토지」", "Wi-Fi" before
+    "Ｗｉ－Ｆｉ"), then the smallest name. A spelling its key writes as it is
+    wins; the smallest name alone put a quote mark or a full-width letter
+    first whenever it sorted first."""
+    written = " ".join(name.casefold().split())
+    kept = SequenceMatcher(None, written, entity_key(name), autojunk=False)
+    return len(written) - sum(b.size for b in kept.get_matching_blocks()), name
 
 
 def head_character(name: str | None) -> str:

@@ -256,14 +256,19 @@ See [exit codes and JSON output](docs/reference/exit-codes-and-json.md) and the
 - Entity resolution merges only names equal after normalization, legal-form removal and dense-script spacing (fuzzy
   matching is opt-in). Legal forms (the language profiles, `domain/languages/legal_forms.py`): trailing Inc, Corp,
   Co, Ltd, LLC, LLP, LP, PLC, Pty, Pvt, Pte, GmbH, AG, KG, UG, SA, SAS, SARL, S.L., SRL, S.p.A., Ltda, S/A, BV,
-  NV and KK in any dotting or accents, forms of several words (`GmbH & Co. KG`, `S.A. de C.V.`, `Private Limited`),
-  Russian, Arabic, Hebrew, Hindi and Thai forms, those written before the name (`ООО`, `Công ty TNHH`, `شركة`,
-  `บริษัท`) and the Korean, Japanese and Chinese company forms leading or trailing ("(주)", "合同会社", "股份有限公司"),
-  so "Acme GmbH" and "Acme" of one type are one entity; not after "&"/"and", an article alone or a number ("500 kg").
-  Entity keys, which ids hash, drop the quote marks of every script («», „“, 「」, 《》), read every dash and the minus
-  sign as a space, and drop a middle dot between Han, Hangul or Kana letters and the Arabic and Hebrew vowel marks
-  ("ジョン・スミス" is "ジョンスミス"). Entity and relationship `rank` come from node degree, and a relationship's weight
-  sums its strengths per text unit (#189, #214, #574).
+  NV and KK in any dotting, as written or without all their accents ("Cong ty" is "Công ty"; a word is not read
+  without its own: "Marcelo Sá", "Khu Phố Cổ" keep it), forms of several words (`GmbH & Co. KG`, `S.A. de C.V.`,
+  `S.A.B. de C.V.`, `Private Limited`), Russian, Arabic, Hebrew, Hindi and Thai forms, those written before the name
+  (`ООО`, `Công ty TNHH`, `شركة`, `บริษัท`) and the Korean, Japanese and Chinese company forms leading or trailing
+  ("(주)", "合同会社", "股份有限公司"), so "Acme GmbH" and "Acme" of one type are one entity; not after "&"/"and" nor an
+  article alone, and a form that is also a unit symbol not after a number ("500 kg"; "Channel 4 Ltd" is "Channel 4").
+  Entity keys, which ids hash, drop the quote marks of every script («», „“, 「」, 《》), what is typed for an apostrophe
+  (´, ʼ, ′; not the ʻokina) and the invisible format characters (soft hyphen, zero-width space, direction marks; not
+  the joiners), read every dash as a space but a minus sign opening the name ("−40 °C" is not "40 °C"), drop a middle
+  dot between Han, Hangul or Kana letters (and Korean's "ㆍ" between syllables), the Arabic and Hebrew vowel marks and
+  a trailing "。" ("ジョン・スミス" is "ジョンスミス"); a key is its own key. Of spellings with one key, the one its key folds
+  least names the entity on a tie ("토지", not "「토지」"). Entity and relationship `rank` come from node degree, and a
+  relationship's weight sums its strengths per text unit (#189, #214, #574).
 - Entities have no `MemberOf` edges to communities; an entity lists its `community_ids` (#348).
 - Hidden files and files under a hidden or `__pycache__` directory of the corpus are not parsed (#213).
 

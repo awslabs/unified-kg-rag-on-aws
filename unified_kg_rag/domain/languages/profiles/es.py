@@ -115,6 +115,7 @@ PROFILE = LanguageProfile(
         "slu": "slu",
         # Mexico's variable-capital forms.
         "sa de cv": "sa de cv",
+        "sab de cv": "sab de cv",
         "s de rl": "s de rl",
         "s de rl de cv": "s de rl de cv",
     },

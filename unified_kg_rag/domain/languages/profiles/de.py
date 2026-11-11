@@ -93,6 +93,8 @@ PROFILE = LanguageProfile(
         "ag & co kg": "ag & co kg",
         "ug & co kg": "ug & co kg",
     },
+    # "kg" is also the kilogram ("500 kg").
+    unit_like_legal_forms=("kg",),
     quote_pairs=(("„", "“"), ("‚", "‘"), ("»", "«")),
     chars_per_token={CLAUDE_TOKENIZER: 2.05},
 )

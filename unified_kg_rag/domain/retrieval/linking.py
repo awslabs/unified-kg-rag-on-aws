@@ -94,9 +94,10 @@ def name_terms(name: str) -> frozenset[str]:
     "İ" is an "i" and a combining dot, which would split "İzmir" ("Izmir"
     covers it)."""
     terms: set[str] = set()
-    for word in _WORD.findall(without_latin_accents(link_key(name))):
-        if latin_legal_form(word) is not None:
-            continue
+    # A legal form is read as written, before the accents go ("Sá" is no
+    # "SA", as ``latin_legal_form`` reads it).
+    written = (w for w in link_key(name).split() if latin_legal_form(w) is None)
+    for word in _WORD.findall(without_latin_accents(" ".join(written))):
         for run in _DENSE_RUN.findall(word):
             terms.update(run[i : i + 2] for i in range(max(1, len(run) - 1)))
         terms.update(_DENSE_RUN.sub(" ", word).split())

@@ -204,8 +204,12 @@ gets its models and stores from the run's `Providers` bundle.
   KG` / `S.A. de C.V.`, a leading `ООО` or `Công ty TNHH`, ...) and without
   spaces next to Han, Hangul or Kana, so "(주)가나다", "가나다 상사" /
   "가나다상사", "Acme Inc" / "Acme" and "ООО «Ромашка»" / "Ромашка" merge. A
-  merged group takes the name cited by the most text units (ties: the
-  smallest), so the result does not depend on input order. The list is
+  form is read as written or without all its accents, never a word without
+  its own ("Marcelo Sá" keeps "Sá"), and one that is also a unit symbol
+  (`LanguageProfile.unit_like_legal_forms`: "kg") not after a number. A
+  merged group takes the name cited by the most text units (ties: the one
+  its key folds least, then the smallest: `display_name_order`), so the
+  result does not depend on input order. The list is
   applied whatever the entity's type: entity types are the user's
   vocabulary, so no type rule tells a company from a place, and a place
   written with a region code that is also a designator ("Springfield, CO")

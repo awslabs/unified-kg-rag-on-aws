@@ -16,6 +16,7 @@ from .common import (
     safe_float_parse,
     strip_embedding_fields,
     strip_invisible,
+    strip_trailing_punctuation,
     text_digest,
 )
 from .concurrency import ContextThreadPoolExecutor
@@ -50,5 +51,6 @@ __all__ = [
     "strip_embedding_fields",
     "strip_invisible",
     "strip_leading_reasoning",
+    "strip_trailing_punctuation",
     "text_digest",
 ]
