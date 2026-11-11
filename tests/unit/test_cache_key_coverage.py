@@ -569,3 +569,37 @@ def test_a_record_stored_under_a_tier_while_summaries_keyed_extraction_is_found(
         _keyed_as_before(patched)
         stored = cache_keys.unit_record_fingerprint(config, gleaned=True)
     assert stored in legacy
+
+
+@pytest.mark.parametrize(
+    ("prompt", "stage"),
+    [
+        ("DescriptionSummarizationPrompt", PipelineStageType.GRAPH_RESOLUTION),
+        ("ClaimExtractionPrompt", PipelineStageType.CLAIM_EXTRACTION),
+        ("GraphExtractionPrompt", PipelineStageType.GRAPH_EXTRACTION),
+    ],
+)
+def test_an_edited_builtin_prompt_rekeys_its_stage_and_those_after(
+    monkeypatch, prompt: str, stage: PipelineStageType
+) -> None:
+    # A dev build shares its package version with the build before: a
+    # prompt edited between them re-keys the stages its answers shape, so a
+    # resumed pipeline does not serve what the earlier prompt produced.
+    from unified_kg_rag.domain import prompts
+
+    order = list(PipelineStageType)
+    before = {s: stage_input_fingerprint(Config(), s) for s in order}
+    prompt_class = getattr(prompts, prompt)
+    monkeypatch.setattr(
+        prompt_class,
+        "system_prompt_template",
+        prompt_class.system_prompt_template + " Edited.",
+    )
+    cache_keys._builtin_prompts.cache_clear()
+    try:
+        after = {s: stage_input_fingerprint(Config(), s) for s in order}
+    finally:
+        monkeypatch.undo()
+        cache_keys._builtin_prompts.cache_clear()
+    changed = [s for s in order if before[s] != after[s]]
+    assert changed == order[order.index(stage) :]
