@@ -19,6 +19,19 @@ Bugs present in 0.3.0.
 - A saved result (an evaluation report, a failed metric's reason) names an error whose whole message is the package's
   own by its type and the error it was raised from (`LanguageModelError from ConnectionRefusedError [Errno 111]
   Connection refused`) when that message does not name it; it named the type alone.
+### Added
+
+- Query limits beside the deadline: `search.query_max_model_calls` and `search.query_max_input_tokens` (off by
+  default) bound one query's model calls and their input tokens, and `RAGInput.limits` (`QueryLimits`, exported; the
+  MCP tools' `limits`) lowers them and the deadline for one query, never raising them. A call past a limit is refused
+  before it is sent: the usage callback now raises its refusal (LangChain swallowed a handler's error) and logs any
+  other error of its own. `global`, `drift` and `iterative` start only the calls that fit beside the answer and list
+  the rest in `metadata.degraded` (reason `query_limit`), `auto` routes only to strategies whose fewest calls fit
+  (`metadata.routing.over_limits`) and starts no speculative extraction, the answer's context is cut to the tokens
+  left, and a query whose answer does not fit fails with `UsageLimitExceededError` (error class `limit_exceeded`, a
+  caller's error: not counted in `query_failed`, `refused` on the console's dashboard, its message shown to an MCP
+  caller; exit code 1, console HTTP 422).
+
 ### Changed
 
 - `search.auto_routable_strategies` accepts `ppr` and `tree`, loading with a WARNING that cites the measurement they

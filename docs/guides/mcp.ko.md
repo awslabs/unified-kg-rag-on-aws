@@ -52,6 +52,13 @@ extra가 없으면 `run-mcp-server`는 extra 이름을 알려 주고 종료 코�
 | `kg_neighbors` | 한 엔터티에서 `max_hops` 안에 있는 엔터티와 그 사이의 관계 | 없음 |
 | `kg_describe_schema` | 네임스페이스가 가진 방법론과 전략, 마지막 빌드, 추출 스키마의 타입과 패턴, 필터 키, 서버 한도. 아무것도 수집하지 않은 네임스페이스는 `exists: false`(방법론과 전략 없음) | 없음 |
 
+`kg_search`와 `kg_answer`는 `limits`도 받습니다. `deadline_seconds`, `max_model_calls`,
+`max_input_tokens`는 그 호출에 한해 서버의 질의 한도(`search.query_timeout_seconds`,
+`search.query_max_model_calls`, `search.query_max_input_tokens`)를 낮추기만 하고 올리지는
+않습니다. 한도를 넘는 호출은 한도 이름이 들어간 메시지와 함께 `limit_exceeded`로 실패하거나,
+들어가지 못한 단계를 빼고 답하며 그 단계를 `degraded`에 남깁니다
+([질의 한도](./query.ko.md#모델-호출-수와-입력-토큰-한도)).
+
 모든 도구에는 읽기 전용, 멱등(idempotent) 표시가 붙어 있습니다. 먼저
 `kg_describe_schema`를 호출하세요. 네임스페이스가 실행할 수 있는 전략(`strategies`, 가지지 않은
 전략은 `run-rag`처럼 거부됨), 그중 `auto`가 고르는 전략(`auto_routes`), 검색에 쓸 수 있는

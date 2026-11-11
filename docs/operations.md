@@ -1602,6 +1602,7 @@ attempts, bounded by `BatchProcessor`'s 300 s call timeout.
 | `drift`, or `global` over many reports, fails with `QueryTimeoutError` | Raise `search.query_timeout_seconds` (DRIFT makes up to 27 LLM calls); if those calls are throttled, lower `search.max_concurrency` instead |
 | `drift` runs with the comprehensive answer (`search.answer_prompt_style: {drift: comprehensive}`) | Raise `search.query_timeout_seconds` to about 300 s first (see [*DRIFT near the deadline*](#drift-near-the-deadline) below) |
 | A serving layer must answer or fail fast | Lower `search.query_timeout_seconds` to its own request timeout, minus the time it needs to respond |
+| One query must not cost more than a set number of model calls or input tokens (a public endpoint, an agent's tool calls) | Set `search.query_max_model_calls` / `search.query_max_input_tokens`; a caller may lower them per query (`RAGInput.limits`, the MCP tools' `limits`). `global`, `drift` and `iterative` then answer from what fits (`metadata.degraded`, reason `query_limit`) ([Query limits](./guides/query.md#model-call-and-input-token-limits)) |
 | `run-eval` reports queries failed with `QueryTimeoutError` | Throttling, usually: see below |
 
 **Why these defaults.** A non-streamed answer can spend most of a query in

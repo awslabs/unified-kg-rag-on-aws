@@ -282,3 +282,49 @@ def test_the_mcp_server_publishes_query_metrics_on_stderr(
     # stdout is the stdio protocol's: the EMF record goes to stderr.
     assert out.out == ""
     assert '"query_latency_ms": 5.0' in out.err
+
+
+@requires_mcp
+def test_the_query_tools_pass_a_callers_limits_through(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A caller (an agent) may lower the server's query limits for one call,
+    # never raise them (QueryLimits.lowered_by); a limit it cannot take is
+    # refused by the protocol's schema.
+    import asyncio
+
+    from mcp import Client
+
+    from tests.unit.test_mcp_tools import FakeChain
+    from unified_kg_rag.application.retrieval import graph_lookup
+    from unified_kg_rag.domain.models import QueryLimits
+
+    async def names(
+        chain: object, suffix: object, units: list[str], **_: object
+    ) -> dict:
+        return {}
+
+    monkeypatch.setattr(graph_lookup, "text_unit_file_names", names)
+    chain = FakeChain()
+    server = build_mcp_server(chain)  # type: ignore[arg-type]
+    limits = {"max_model_calls": 3, "deadline_seconds": 20}
+
+    async def run() -> tuple[dict, dict, bool]:
+        async with Client(server, mode="legacy") as client:
+            tools = {t.name: t for t in (await client.list_tools()).tools}
+            for tool in ("kg_search", "kg_answer"):
+                done = await client.call_tool(tool, {"query": "q", "limits": limits})
+                assert not done.is_error, done.content
+            refused = await client.call_tool(
+                "kg_answer", {"query": "q", "limits": {"max_model_calls": 0}}
+            )
+            return (
+                tools["kg_answer"].input_schema["properties"],
+                tools["kg_search"].input_schema["properties"],
+                refused.is_error,
+            )
+
+    answer_schema, search_schema, refused = asyncio.run(run())
+    assert "limits" in answer_schema and "limits" in search_schema
+    assert refused
+    assert [i.limits for i in chain.inputs] == [QueryLimits(**limits)] * 2

@@ -253,6 +253,11 @@ class StructuredSearchStrategy(BaseSearchStrategy):
     # decides what serves it: graphrag, lightrag and hipporag namespaces).
     methodology = Methodology.GRAPHRAG
 
+    @classmethod
+    def fewest_model_calls(cls, config: Config) -> int:
+        # The planner.
+        return 1
+
     def __init__(
         self,
         config: Config,

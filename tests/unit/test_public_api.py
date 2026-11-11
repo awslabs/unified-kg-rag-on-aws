@@ -51,6 +51,7 @@ PUBLIC_API = sorted(
         "PipelineStageStatus",
         "PipelineStageType",
         "ProcessedQuery",
+        "QueryLimits",
         "RAGInput",
         "RAGOutput",
         "SearchOutput",
@@ -88,6 +89,7 @@ PUBLIC_API = sorted(
         "SeedGraphError",
         "StoreConnectionError",
         "StoreRequestRejectedError",
+        "UsageLimitExceededError",
         "classify_error",
         # Extending it
         "BaseGraphRAGRetriever",

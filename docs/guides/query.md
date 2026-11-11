@@ -172,6 +172,42 @@ measured query times on real AWS
 Tuning is in the
 [Operator Runbook](../operations.md#query-deadlines-and-model-timeouts).
 
+### Model-call and input-token limits
+
+The deadline is one of a query's limits (`QueryLimits`). Two more are off by
+default: `search.query_max_model_calls` (every model call of the query: the
+router, the query processing, the strategy's own calls and the answer) and
+`search.query_max_input_tokens` (the input tokens of those calls, each
+counted at its start at the local estimate of its prompt). A call past one
+is refused before its request is sent:
+
+- `global` rates and maps, `drift` expands, primes and follows up, and
+  `iterative` judges only what fits beside the answer's call. What did not
+  fit is left out and listed in `metadata.degraded` (reason `query_limit`):
+  global maps its most relevant report batches, DRIFT its best follow-ups,
+  iterative stops its rounds (`stop_reason: query_limit`).
+- `auto` routes only to strategies whose fewest calls (`fewest_model_calls`
+  and the answer) fit after its router call, and starts no speculative
+  extraction; `metadata.routing.over_limits` names those it left out.
+- The answer's context is cut to the input tokens left, less
+  `search.token_manager.context_window_headroom_ratio` of them for the
+  prompt.
+- A query whose answer call does not fit fails with
+  `UsageLimitExceededError` (exported from `unified_kg_rag`; error class
+  `limit_exceeded`, exit code `1`), or returns the error answer under
+  `processing.ignore_errors`.
+
+A caller lowers any of the three for one query, never raises them:
+
+```python
+from unified_kg_rag import QueryLimits, RAGInput
+
+chain.invoke(RAGInput(query="...", limits=QueryLimits(max_model_calls=6, deadline_seconds=60)))
+```
+
+The MCP tools `kg_search` and `kg_answer` take the same `limits` argument
+([MCP server](./mcp.md)).
+
 ## Citations
 
 Answers cite the documents they rest on (`search.citations`): those of every

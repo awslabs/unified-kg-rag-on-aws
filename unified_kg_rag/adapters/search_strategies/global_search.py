@@ -180,6 +180,12 @@ def _unparsed_shape(raw: str) -> str:
 class GlobalSearchStrategy(BaseSearchStrategy):
     methodology = Methodology.GRAPHRAG
 
+    @classmethod
+    def fewest_model_calls(cls, config: Config) -> int:
+        # One map call, after one rating call of dynamic selection.
+        settings = config.search.global_search
+        return int(settings.enable_map_reduce) + int(settings.use_dynamic_selection)
+
     def __init__(
         self,
         config: Config,
@@ -560,6 +566,23 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                 query, {"depth": 0}, "Root community reports", stats
             )
             while queue:
+                # Under the query's limits: the ratings that fit beside one
+                # map call and the answer, the most relevant level last.
+                fit = self._calls_within_limits(
+                    CommunityRelevancePrompt,
+                    [r.content for r in queue],
+                    reserve_calls=2,
+                    reserve_tokens=self._answer_reserve()
+                    + self.global_search_config.map_context_tokens,
+                )
+                limited = fit < len(queue)
+                if limited:
+                    self._record_limit_stop(
+                        DegradationStep.COMMUNITY_RATING, fit, len(queue)
+                    )
+                    queue = queue[:fit]
+                    if not queue:
+                        break
                 scores = await asyncio.gather(
                     *(
                         self._rate_report(r, query, semaphore, config=config)
@@ -617,7 +640,11 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                     if parent := metadata.get("parent_community_id"):
                         relevant.pop(str(parent), None)
                 depth += 1
-                if children:
+                if limited:
+                    # A cut level ends the descent: its unrated reports'
+                    # children would be rated without them.
+                    queue = []
+                elif children:
                     queue = await self._fetch_reports(
                         query,
                         {"community_id": list(dict.fromkeys(children))},
@@ -810,6 +837,19 @@ class GlobalSearchStrategy(BaseSearchStrategy):
 
         # Counting can be one CountTokens request per report: off the loop.
         batches, report_tokens = await asyncio.to_thread(self._map_batches, reports)
+        # Under the query's limits: the leading (most relevant) batches that
+        # fit beside the answer; the others are not mapped.
+        fit = self._calls_within_limits(
+            GlobalMapPrompt,
+            [self._format_reports(batch) for batch in batches],
+            reserve_tokens=self._answer_reserve(),
+        )
+        if fit < len(batches):
+            self._record_limit_stop(DegradationStep.GLOBAL_MAP, fit, len(batches))
+            if not fit:
+                return results
+            batches = batches[:fit]
+            reports = [r for batch in batches for r in batch]
         stats["global_mapped_report_count"] = len(reports)
         stats["global_map_call_count"] = len(batches)
         stats["global_map_report_tokens"] = report_tokens
@@ -870,6 +910,13 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             evidence = await asyncio.to_thread(self._cap_evidence, evidence)
             stats["global_evidence_reports"] = len(evidence)
         return self._reduce_from_points(packed_points, evidence, batches, lineages)
+
+    def _answer_reserve(self) -> int:
+        """The input tokens kept for the answer under the query's limits:
+        the key points it reads (``max_map_reduce_tokens``) and the cited
+        reports (``evidence_tokens``)."""
+        settings = self.global_search_config
+        return settings.max_map_reduce_tokens + (settings.evidence_tokens or 0)
 
     def _map_batches(
         self, reports: list[RetrievalResult]

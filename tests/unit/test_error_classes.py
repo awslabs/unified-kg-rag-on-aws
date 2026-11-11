@@ -50,6 +50,12 @@ _CASES: list[tuple[BaseException, x.ErrorClass, int, bool]] = [
     (x.SchemaSourceError("s"), x.ErrorClass.CONFIGURATION, 2, False),
     (x.StoreAccessDeniedError("denied"), x.ErrorClass.CONFIGURATION, 2, False),
     (x.QueryTimeoutError("t", timeout_seconds=1), x.ErrorClass.TIMEOUT, 1, True),
+    (
+        x.UsageLimitExceededError("u", limit="max_model_calls", value=3),
+        x.ErrorClass.LIMIT_EXCEEDED,
+        1,
+        True,
+    ),
     (x.StoreConnectionError("down"), x.ErrorClass.STORE_UNREACHABLE, 1, False),
     (x.StoreTimeoutError("slow"), x.ErrorClass.STORE_UNREACHABLE, 1, False),
     (x.ModelUnreachableError("m"), x.ErrorClass.MODEL_UNREACHABLE, 1, False),

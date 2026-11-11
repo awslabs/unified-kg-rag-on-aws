@@ -97,6 +97,7 @@
   "ask.error.not_indexed": "Questo indice non contiene ciò che la strategia legge",
   "ask.error.index_not_found": "Questo namespace non ha ancora un indice: acquisisci prima un corpus",
   "ask.error.timeout": "La query ha superato il tempo limite",
+  "ask.error.limit_exceeded": "La query ha raggiunto il limite di chiamate al modello o di token di input",
   "ask.error.store_unreachable": "Un archivio non è raggiungibile",
   "ask.error.model_unreachable": "Un server di modelli non è raggiungibile: avvialo o controlla la sua base_url",
   "ask.error.invalid_argument": "La richiesta è stata rifiutata: un argomento va cambiato",

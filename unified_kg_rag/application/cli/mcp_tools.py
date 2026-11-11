@@ -43,6 +43,7 @@ from unified_kg_rag.application.retrieval.rag_chain import (
 )
 from unified_kg_rag.domain.models import (
     GraphEdge,
+    QueryLimits,
     RetrievalResult,
     SearchStrategy,
     SearchType,
@@ -772,6 +773,7 @@ class KnowledgeGraphTools:
         filters: dict[str, Any] | None,
         namespace: str | None,
         history: list[ConversationTurn] | None = None,
+        limits: QueryLimits | dict[str, Any] | None = None,
     ) -> RAGInput:
         try:
             kind = SearchType(search_type)
@@ -790,6 +792,8 @@ class KnowledgeGraphTools:
             # caller passes its own conversation as history.
             use_memory=False,
             history=history,
+            # Lowers the server's own (search.query_*); never raises them.
+            limits=limits,
         )
 
     def _from_result(self, rank: int, result: RetrievalResult) -> SupportingContent:
@@ -855,13 +859,14 @@ class KnowledgeGraphTools:
         top_k: int | None = None,
         filters: dict[str, Any] | None = None,
         namespace: str | None = None,
+        limits: QueryLimits | dict[str, Any] | None = None,
     ) -> SearchToolResult:
         """``kg_search``: the ranked supporting content for ``query``, no
-        answer."""
+        answer. ``limits`` lowers the server's query limits for this call."""
 
         async def run() -> SearchToolResult:
             rag_input = self._rag_input(
-                query, strategy, search_type, top_k, filters, namespace
+                query, strategy, search_type, top_k, filters, namespace, limits=limits
             )
             output = await self.chain.asearch(rag_input)
             outcome = self._checked(output)
@@ -897,6 +902,7 @@ class KnowledgeGraphTools:
         namespace: str | None = None,
         history: list[ConversationTurn] | list[dict[str, Any]] | None = None,
         records: AnswerRecords = "cited",
+        limits: QueryLimits | dict[str, Any] | None = None,
     ) -> AnswerToolResult:
         """``kg_answer``: the chain's answer to ``query``, then the records
         of what it rests on: ``records`` ``cited`` (the default: the sources
@@ -905,7 +911,8 @@ class KnowledgeGraphTools:
         (every source the answer model saw, after the model-written
         sections) or ``none``. ``history`` is the caller's conversation so
         far, oldest turn first (``RAGInput.history``): a follow-up such as
-        "and its price?" is rewritten from it into a standalone question."""
+        "and its price?" is rewritten from it into a standalone question.
+        ``limits`` lowers the server's query limits for this call."""
 
         started = time.monotonic()
         # Whether the chain returned its answer (and recorded its metrics).
@@ -936,6 +943,7 @@ class KnowledgeGraphTools:
                 filters,
                 namespace,
                 self._history(history),
+                limits=limits,
             )
             output = await self.chain.ainvoke(rag_input)
             answered = True

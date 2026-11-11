@@ -95,6 +95,7 @@
   "ask.error.not_indexed": "このインデックスには、戦略が読むデータがありません",
   "ask.error.index_not_found": "この名前空間にはまだインデックスがありません。先にコーパスを取り込んでください",
   "ask.error.timeout": "クエリが期限を超えました",
+  "ask.error.limit_exceeded": "クエリがモデル呼び出し数または入力トークンの上限に達しました",
   "ask.error.store_unreachable": "ストアに接続できませんでした",
   "ask.error.model_unreachable": "モデルサーバーに接続できませんでした。サーバーを起動するか、base_url を確認してください",
   "ask.error.invalid_argument": "リクエストが拒否されました。引数を変更してください",

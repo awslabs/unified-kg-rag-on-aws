@@ -56,6 +56,14 @@ Ctrl-C.
 | `kg_neighbors` | The entities within `max_hops` of one entity and the relationships among them | None |
 | `kg_describe_schema` | The methodologies and strategies the namespace holds, its last build, the extraction schema's types and patterns, the filter keys and the server's limits; `exists: false` (and no methodology or strategy) for a namespace nothing was ingested under | None |
 
+`kg_search` and `kg_answer` take `limits` too: `deadline_seconds`,
+`max_model_calls` and `max_input_tokens`, each lowering the server's own
+query limit for that call (`search.query_timeout_seconds`,
+`search.query_max_model_calls`, `search.query_max_input_tokens`), never
+raising it. A call past one fails with `limit_exceeded`, whose message names
+the limit, or is answered without the steps that did not fit, listed in
+`degraded` ([Query limits](./query.md#model-call-and-input-token-limits)).
+
 Every tool is annotated read-only and idempotent. Call
 `kg_describe_schema` first: it says which strategies the namespace can
 run (`strategies`; a strategy it does not hold is refused, as in

@@ -96,6 +96,7 @@
   "ask.error.not_indexed": "Dieser Index enthält nicht, was die Strategie liest",
   "ask.error.index_not_found": "Dieser Namespace hat noch keinen Index: Nehmen Sie zuerst ein Korpus darin auf",
   "ask.error.timeout": "Die Abfrage hat ihr Zeitlimit überschritten",
+  "ask.error.limit_exceeded": "Die Abfrage hat ihr Limit für Modellaufrufe oder Eingabe-Tokens erreicht",
   "ask.error.store_unreachable": "Ein Speicher war nicht erreichbar",
   "ask.error.model_unreachable": "Ein Modellserver war nicht erreichbar: Starten Sie ihn oder prüfen Sie seine base_url",
   "ask.error.invalid_argument": "Die Anfrage wurde abgelehnt: ein Argument ist zu ändern",

@@ -15,6 +15,7 @@ from pydantic import (
 )
 
 from ..retrieval import (
+    QueryLimits,
     SearchStrategy,
 )
 from ._common import ConfigSection
@@ -183,6 +184,37 @@ class SearchConfig(ConfigSection):
             "its admission too. null disables both deadlines."
         ),
     )
+    query_max_model_calls: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Model calls one query may make in all: the router, the query "
+            "processing calls, the strategy's own and the answer. A call past "
+            "it is refused before it is sent. global's rating and map calls, "
+            "DRIFT's primer and follow-ups and iterative's rounds start only "
+            "the calls that fit beside the answer, the rest recorded in "
+            "metadata.degraded (reason query_limit); auto routes only to "
+            "the strategies whose fewest calls fit and starts no speculative "
+            "extraction; a query whose answer call does not fit fails with "
+            "UsageLimitExceededError (error class limit_exceeded). "
+            "RAGInput.limits.max_model_calls lowers it for one query. null "
+            "(default): no cap."
+        ),
+    )
+    query_max_input_tokens: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Input tokens one query's model calls may read in all, each "
+            "call counted at its start at the local estimate of its prompt "
+            "(then at what the model reports). Enforced as "
+            "query_max_model_calls; the answer's context is also cut to "
+            "what is left, less search.token_manager."
+            "context_window_headroom_ratio of it for the prompt. "
+            "RAGInput.limits.max_input_tokens lowers it for one query. null "
+            "(default): no cap."
+        ),
+    )
     model_timeout_seconds: float = Field(
         default=90.0,
         gt=0,
@@ -288,6 +320,15 @@ class SearchConfig(ConfigSection):
         """A query-time model-server request timeout: ``configured`` (the
         provider's own), capped at ``model_timeout_seconds``."""
         return min(configured, self.model_timeout_seconds)
+
+    def query_limits(self) -> QueryLimits:
+        """What every query may spend: ``query_timeout_seconds``,
+        ``query_max_model_calls`` and ``query_max_input_tokens``."""
+        return QueryLimits(
+            deadline_seconds=self.query_timeout_seconds,
+            max_model_calls=self.query_max_model_calls,
+            max_input_tokens=self.query_max_input_tokens,
+        )
 
     @model_validator(mode="after")
     def _check_seed_floor(self) -> "SearchConfig":

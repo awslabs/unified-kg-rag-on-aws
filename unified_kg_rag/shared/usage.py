@@ -43,6 +43,14 @@ request as it comes back, in
 (``cache_read_input_tokens`` / ``cache_write_input_tokens``) since they are
 billed at other rates.
 
+A scope may carry limits (:class:`UsageLimits`: model calls, input tokens,
+a cost): a call that would take what the scope counted past one is refused
+at its start (``start_llm_call`` raises), before its request is sent; a
+query's limits (``search.query_max_*``) and an ingestion run's budget
+(``processing.max_run_*``) are such limits. :func:`remaining` and
+:func:`calls_that_fit` let a step with optional calls (a strategy's
+fan-out) start only what fits.
+
 The scope is a ``contextvars`` value, so it follows the code into the tasks
 and threads it hands its context to (``asyncio`` tasks, ``to_thread``, the
 package's ``ContextThreadPoolExecutor``), and concurrent queries, each in its
@@ -52,18 +60,23 @@ own task, keep separate counts.
 from __future__ import annotations
 
 import threading
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any
+
+from unified_kg_rag.shared.exceptions import UsageLimitExceededError
 
 __all__ = [
     "CACHED_RESPONSE_KEY",
     "COUNT_FIELDS",
     "RERANK_DOCUMENTS_PER_UNIT",
     "LLMCall",
+    "Remaining",
+    "UsageLimits",
     "UsageMeter",
+    "calls_that_fit",
     "current_meter",
     "merge_usage",
     "metering",
@@ -71,6 +84,7 @@ __all__ = [
     "record_llm_call",
     "record_rerank_call",
     "record_request",
+    "remaining",
     "rerank_search_units",
     "start_llm_call",
     "usage_scope",
@@ -131,6 +145,103 @@ class _Counts:
         return {name: getattr(self, name) for name in COUNT_FIELDS}
 
 
+# What a limit refusal is built from: the limit's name, its value, and what
+# the scope would count with the refused call.
+LimitRefusal = Callable[[str, float, float], BaseException]
+
+
+def _refused(limit: str, value: float, would: float) -> BaseException:
+    return UsageLimitExceededError(
+        f"A model call would take {limit} to {would:g}, past its limit {value:g}; "
+        "it was not sent",
+        limit=limit,
+        value=value,
+    )
+
+
+@dataclass(frozen=True)
+class UsageLimits:
+    """Caps on what the model calls counted in one scope may spend
+    (``usage_scope(limits=...)``); ``None`` caps nothing.
+
+    A call is checked when it starts, at its estimated input tokens, against
+    what the scope counted so far (calls still running at their estimates):
+    one that would take ``llm_calls`` past ``max_llm_calls``,
+    ``input_tokens`` past ``max_input_tokens``, or ``cost`` past
+    ``max_cost`` is refused, raising what ``refuse`` builds from the
+    limit's name (``names``), its value and what the scope would count.
+    ``cost`` prices the scope's counts by model (each a
+    :data:`COUNT_FIELDS` mapping, the refused call's estimate included) and
+    may raise itself (a model it has no price for); it runs under the
+    module's lock, so it must not read a meter.
+    """
+
+    max_llm_calls: int | None = None
+    max_input_tokens: int | None = None
+    max_cost: float | None = None
+    cost: Callable[[Mapping[str, Mapping[str, int]]], float] | None = None
+    refuse: LimitRefusal = _refused
+    # The name each limit is reported by (the setting that sets it).
+    names: Mapping[str, str] = field(
+        default_factory=lambda: {
+            "max_llm_calls": "max_llm_calls",
+            "max_input_tokens": "max_input_tokens",
+            "max_cost": "max_cost",
+        }
+    )
+
+    def __post_init__(self) -> None:
+        if self.max_cost is not None and self.cost is None:
+            raise ValueError("UsageLimits.max_cost needs a cost function")
+
+    def _check(
+        self, meter: UsageMeter, model: str, call: _Counts
+    ) -> BaseException | None:
+        """The refusal of ``call`` (on ``model``) in ``meter``, if any."""
+        total = meter.total
+        if (
+            self.max_llm_calls is not None
+            and total.llm_calls + call.llm_calls > self.max_llm_calls
+        ):
+            return self.refuse(
+                self.names.get("max_llm_calls", "max_llm_calls"),
+                self.max_llm_calls,
+                total.llm_calls + call.llm_calls,
+            )
+        if (
+            self.max_input_tokens is not None
+            and total.input_tokens + call.input_tokens > self.max_input_tokens
+        ):
+            return self.refuse(
+                self.names.get("max_input_tokens", "max_input_tokens"),
+                self.max_input_tokens,
+                total.input_tokens + call.input_tokens,
+            )
+        if self.max_cost is not None and self.cost is not None:
+            by_model = {name: c.as_dict() for name, c in meter.by_model.items()}
+            pending = _Counts(**by_model.get(model, {}))
+            pending.add(call)
+            by_model[model] = pending.as_dict()
+            try:
+                cost = self.cost(by_model)
+            except Exception as e:  # noqa: BLE001 - the refusal names it
+                return e
+            if cost > self.max_cost:
+                return self.refuse(
+                    self.names.get("max_cost", "max_cost"), self.max_cost, cost
+                )
+        return None
+
+
+@dataclass(frozen=True)
+class Remaining:
+    """What the limits of the open scopes leave (:func:`remaining`):
+    ``None`` where none caps it."""
+
+    llm_calls: int | None = None
+    input_tokens: int | None = None
+
+
 @dataclass
 class UsageMeter:
     """The usage recorded in one scope (and the scopes it encloses)."""
@@ -139,6 +250,7 @@ class UsageMeter:
     total: _Counts = field(default_factory=_Counts)
     by_role: dict[str, _Counts] = field(default_factory=dict)
     by_model: dict[str, _Counts] = field(default_factory=dict)
+    limits: UsageLimits | None = None
 
     def _add(self, role: str, model: str, counts: _Counts) -> None:
         self.total.add(counts)
@@ -160,10 +272,10 @@ _CURRENT: ContextVar[UsageMeter | None] = ContextVar("llm_usage_meter", default=
 
 
 @contextmanager
-def usage_scope() -> Iterator[UsageMeter]:
+def usage_scope(limits: UsageLimits | None = None) -> Iterator[UsageMeter]:
     """Count the model calls made in this context into a new meter (and the
-    enclosing scopes' meters)."""
-    meter = UsageMeter(parent=_CURRENT.get())
+    enclosing scopes' meters), refusing those past ``limits``."""
+    meter = UsageMeter(parent=_CURRENT.get(), limits=limits)
     token = _CURRENT.set(meter)
     try:
         yield meter
@@ -200,6 +312,67 @@ def _add_to(meter: UsageMeter | None, role: str, model: str, counts: _Counts) ->
             meter = meter.parent
 
 
+def _admit(meter: UsageMeter | None, role: str, model: str, counts: _Counts) -> None:
+    """Add ``counts`` (a call starting) to ``meter`` and its parents, unless
+    the limits of one of them refuse it: then raise the refusal and add
+    nothing."""
+    refusal: BaseException | None = None
+    with _LOCK:
+        node = meter
+        while node is not None and refusal is None:
+            if node.limits is not None:
+                refusal = node.limits._check(node, model, counts)
+            node = node.parent
+        if refusal is None:
+            node = meter
+            while node is not None:
+                node._add(role, model, counts)
+                node = node.parent
+    if refusal is not None:
+        raise refusal
+
+
+def remaining() -> Remaining:
+    """What the limits of the scopes open here leave: the fewest calls and
+    input tokens any of them still allows (``None`` where none caps it)."""
+    calls: int | None = None
+    tokens: int | None = None
+    with _LOCK:
+        node = _CURRENT.get()
+        while node is not None:
+            limits = node.limits
+            if limits is not None and limits.max_llm_calls is not None:
+                left = max(0, limits.max_llm_calls - node.total.llm_calls)
+                calls = left if calls is None else min(calls, left)
+            if limits is not None and limits.max_input_tokens is not None:
+                left = max(0, limits.max_input_tokens - node.total.input_tokens)
+                tokens = left if tokens is None else min(tokens, left)
+            node = node.parent
+    return Remaining(llm_calls=calls, input_tokens=tokens)
+
+
+def calls_that_fit(
+    input_tokens: Sequence[int], *, reserve_calls: int = 0, reserve_tokens: int = 0
+) -> int:
+    """How many of the leading calls (one each, of ``input_tokens``
+    estimated input) the open scopes' limits leave room for, after
+    ``reserve_calls`` and ``reserve_tokens`` kept for what must follow
+    (the answer). All of them without limits."""
+    left = remaining()
+    fit = len(input_tokens)
+    if left.llm_calls is not None:
+        fit = min(fit, max(0, left.llm_calls - reserve_calls))
+    if left.input_tokens is not None:
+        room = left.input_tokens - reserve_tokens
+        used = 0
+        for index, cost in enumerate(input_tokens[:fit]):
+            used += max(0, cost)
+            if used > room:
+                fit = index
+                break
+    return fit
+
+
 class LLMCall:
     """One model call counted from its start (:func:`start_llm_call`), until
     it is settled: :meth:`finish`, :meth:`served_from_cache` or :meth:`fail`.
@@ -217,7 +390,7 @@ class LLMCall:
         self._model = model
         self._estimate = estimate
         self._settled = False
-        _add_to(meter, role, model, self._pending())
+        _admit(meter, role, model, self._pending())
 
     @property
     def estimated_input_tokens(self) -> int:
@@ -290,7 +463,13 @@ class LLMCall:
 
 def start_llm_call(role: str, model: str, *, estimated_input_tokens: int) -> LLMCall:
     """Count a model call that is starting, in the open scopes (see
-    :class:`LLMCall`)."""
+    :class:`LLMCall`).
+
+    Raises:
+        BaseException: What a scope's :class:`UsageLimits` raise for a call
+            past them (``UsageLimitExceededError`` by default); nothing is
+            counted then.
+    """
     return LLMCall(_CURRENT.get(), role, model, estimated_input_tokens)
 
 

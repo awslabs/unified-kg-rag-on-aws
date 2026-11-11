@@ -390,3 +390,17 @@ async def test_a_call_the_deadline_cancels_is_counted(
     assert out.answer == DEFAULT_ERROR_MESSAGE
     usage = out.metadata["usage"]
     assert (usage["llm_calls"], usage["estimated_calls"]) == (3, 1)
+
+
+async def test_a_call_limit_starts_no_speculative_extraction() -> None:
+    # Under search.query_max_model_calls an extraction the route does not
+    # read would spend a call the query may need: auto routes first.
+    from unified_kg_rag import QueryLimits
+
+    model = _ThreadedChat()
+    chain = _chain(model)
+    query = _auto().model_copy(update={"limits": QueryLimits(max_model_calls=5)})
+    out = await asyncio.wait_for(chain.ainvoke(query), 30)
+    assert out.metadata["search_strategy"] == "simple"
+    assert model.started == ["router", "answer"]
+    assert out.metadata["usage"]["llm_calls"] == 2

@@ -106,6 +106,11 @@ def _follow_ups(payload: dict[str, Any]) -> list[str]:
 class DriftSearchStrategy(BaseSearchStrategy):
     methodology = Methodology.GRAPHRAG
 
+    @classmethod
+    def fewest_model_calls(cls, config: Config) -> int:
+        # The query expansion, a primer call per fold and one action.
+        return 1 + config.search.drift_search.primer_folds + 1
+
     def __init__(
         self,
         config: Config,
@@ -204,12 +209,28 @@ class DriftSearchStrategy(BaseSearchStrategy):
 
         actions = 0
         depth = 0
-        # Whether any action ran without an error.
+        # Whether any action ran without an error, and whether the query's
+        # limits cut a round (the last one).
         acted = False
+        limited = False
         while queue and depth < self.drift_config.n_depth:
             queue.sort(key=lambda item: (-item[0], item[1]))
             batch = [q for _, _, q in queue[: self.drift_config.k_followups]]
-            del queue[: self.drift_config.k_followups]
+            # Under the query's limits: the best follow-ups whose actions
+            # (each reading up to local_context_tokens) fit beside the
+            # answer; the rounds end with them.
+            fit = self._calls_within_limits(
+                DriftActionPrompt,
+                [self.drift_config.local_context_tokens] * len(batch),
+                reserve_tokens=self.drift_config.max_answer_tokens,
+            )
+            if fit < len(batch):
+                self._record_limit_stop(DegradationStep.DRIFT_ACTION, fit, len(batch))
+                batch = batch[:fit]
+                limited = True
+            if not batch:
+                break
+            del queue[: len(batch)]
             with observability.span(
                 "kg_rag.drift.actions", depth=depth, actions=len(batch)
             ):
@@ -223,6 +244,8 @@ class DriftSearchStrategy(BaseSearchStrategy):
             for answer in done:
                 answers.append(answer)
                 enqueue(answer)
+            if limited:
+                break
             if failed and len(failed) == len(done):
                 # Every action of the round failed: the model is not answering
                 # (throttled past its retries, timing out), so another round
@@ -339,12 +362,41 @@ class DriftSearchStrategy(BaseSearchStrategy):
         if not template:
             return []
         expanded = query.query
+        # Under the query's limits: the expansion only beside a primer call,
+        # an action and the answer (else the question finds the reports).
+        if not self._calls_within_limits(
+            DriftHydePrompt,
+            [template[0].content],
+            reserve_calls=3,
+            reserve_tokens=self._limit_reserve(),
+        ):
+            self._record_limit_stop(DegradationStep.DRIFT_EXPANSION, 0, 1)
+        else:
+            expanded = await self._expand(query, template[0].content, stats, config)
+        return await self._safe_aretrieve(
+            retriever,
+            self._reports_query(
+                query, query=expanded, top_k=self.drift_config.k_followups
+            ),
+            "DRIFT primer reports",
+        )
+
+    async def _expand(
+        self,
+        query: SearchQuery,
+        template: str,
+        stats: dict[str, Any],
+        config: RunnableConfig | None,
+    ) -> str:
+        """The question expanded into a hypothetical report shaped like
+        ``template`` (HyDE); the question itself when the call failed."""
+        expanded = query.query
         try:
             stats["drift_llm_calls"] += 1
             hypothetical = await self.hyde.ainvoke(
                 {
                     "query": query.query,
-                    "template": template[0].content,
+                    "template": template,
                     # The reports' language (the index's), not a requested
                     # answer language: the hypothetical report only finds
                     # reports.
@@ -357,13 +409,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
             if not self.ignore_errors:
                 raise
             self._degrade(DegradationStep.DRIFT_EXPANSION, "DRIFT query expansion", e)
-        return await self._safe_aretrieve(
-            retriever,
-            self._reports_query(
-                query, query=expanded, top_k=self.drift_config.k_followups
-            ),
-            "DRIFT primer reports",
-        )
+        return expanded
 
     async def _prime(
         self,
@@ -377,6 +423,17 @@ class DriftSearchStrategy(BaseSearchStrategy):
         ``search.max_concurrency`` folds at a time (as the actions), each
         citing its fold's reports."""
         folds = self._folds(reports, self.drift_config.primer_folds)
+        # Under the query's limits: the folds that fit beside an action and
+        # the answer.
+        fit = self._calls_within_limits(
+            DriftPrimerPrompt,
+            ["\n\n".join(r.content for r in fold) for fold in folds],
+            reserve_calls=2,
+            reserve_tokens=self._limit_reserve(),
+        )
+        if fit < len(folds):
+            self._record_limit_stop(DegradationStep.DRIFT_PRIMER, fit, len(folds))
+            folds = folds[:fit]
 
         async def prime(fold: list[RetrievalResult]) -> _Answer | Exception | None:
             stats["drift_llm_calls"] += 1
@@ -519,6 +576,12 @@ class DriftSearchStrategy(BaseSearchStrategy):
         answer.score = parse_llm_score(payload.get("score", 0))
         answer.follow_ups = _follow_ups(payload)
         return answer
+
+    def _limit_reserve(self) -> int:
+        """The input tokens kept, under the query's limits, for one action
+        (``local_context_tokens``) and the answer (``max_answer_tokens``)."""
+        settings = self.drift_config
+        return settings.local_context_tokens + settings.max_answer_tokens
 
     def _degrade(self, step: str, label: str, error: Exception) -> None:
         """Record ``step``'s failure (``label``) in the query's degradation

@@ -246,8 +246,10 @@ def _tracing_callbacks(
         UsageCallbackHandler,
     )
 
+    # First: a call past a usage limit is refused before any other handler
+    # (the tracing one) sees it start.
     callbacks = with_callback(
-        callbacks, UsageCallbackHandler(model_id, role=purpose.value)
+        callbacks, UsageCallbackHandler(model_id, role=purpose.value), first=True
     )
     if not observability.is_enabled():
         return callbacks

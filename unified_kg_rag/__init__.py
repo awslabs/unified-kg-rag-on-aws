@@ -37,6 +37,8 @@ output file that exists) to fix, not failures to retry; a
  store, a :class:`ModelUnreachableError` a model server that could not be
  reached (named with its provider kind and ``base_url``), a
  :class:`QueryTimeoutError` a query past its deadline, a
+ :class:`UsageLimitExceededError` one whose model call would pass its call
+ or input-token limit (``QueryLimits``), a
  :class:`ModelError` a model call that failed (a :class:`LanguageModelError`,
  an :class:`EmbeddingModelError` or a :class:`RerankModelError`), an
 :class:`IndexNotFoundError` a suffix with no index (not ingested,
@@ -89,6 +91,7 @@ _EXPORTS: dict[str, str] = {
     "SearchOutput": "unified_kg_rag.application.retrieval.rag_chain",
     "ProcessedQuery": "unified_kg_rag.application.retrieval.rag_chain",
     "ConversationTurn": "unified_kg_rag.application.retrieval.rag_chain",
+    "QueryLimits": "unified_kg_rag.domain.models",
     "Citation": "unified_kg_rag.domain.models",
     "CitedDocument": "unified_kg_rag.domain.models",
     "CitationMarkerScanner": "unified_kg_rag.domain.retrieval.citations",
@@ -119,6 +122,7 @@ _EXPORTS: dict[str, str] = {
     "StoreConnectionError": "unified_kg_rag.shared.exceptions",
     "ModelUnreachableError": "unified_kg_rag.shared.exceptions",
     "QueryTimeoutError": "unified_kg_rag.shared.exceptions",
+    "UsageLimitExceededError": "unified_kg_rag.shared.exceptions",
     "ModelError": "unified_kg_rag.shared.exceptions",
     "LanguageModelError": "unified_kg_rag.shared.exceptions",
     "EmbeddingModelError": "unified_kg_rag.shared.exceptions",
@@ -284,6 +288,7 @@ if TYPE_CHECKING:
         PipelineContext,
         PipelineStageStatus,
         PipelineStageType,
+        QueryLimits,
         Relationship,
         RetrievalResult,
         RetrieverRole,
@@ -348,6 +353,7 @@ if TYPE_CHECKING:
         SeedGraphError,
         StoreConnectionError,
         StoreRequestRejectedError,
+        UsageLimitExceededError,
         classify_error,
     )
     from unified_kg_rag.shared.logging import setup_logging

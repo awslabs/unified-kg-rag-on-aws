@@ -1502,8 +1502,12 @@ class LLMJsonOutputParser(BaseOutputParser[Any]):
 # any adapter dependency (hexagonal dependency rule). Import them from there.
 
 
-def with_callback(callbacks: Any, handler: BaseCallbackHandler) -> Any:
-    """``callbacks`` (None, a handler list or a manager) plus ``handler``.
+def with_callback(
+    callbacks: Any, handler: BaseCallbackHandler, *, first: bool = False
+) -> Any:
+    """``callbacks`` (None, a handler list or a manager) plus ``handler``,
+    after the others or, ``first``, before them (a handler that may refuse
+    the call, so that no other one sees it start).
 
     Never mutates the caller's value: a manager is caller-owned and may be
     shared by other models, which must not pick up this model's handler.
@@ -1512,6 +1516,10 @@ def with_callback(callbacks: Any, handler: BaseCallbackHandler) -> Any:
         return [handler]
     if isinstance(callbacks, BaseCallbackManager):
         manager = callbacks.copy()
-        manager.add_handler(handler, inherit=False)
+        if first:
+            # copy() copied the lists: the caller's manager keeps its own.
+            manager.handlers = [handler, *manager.handlers]
+        else:
+            manager.add_handler(handler, inherit=False)
         return manager
-    return [*callbacks, handler]
+    return [handler, *callbacks] if first else [*callbacks, handler]

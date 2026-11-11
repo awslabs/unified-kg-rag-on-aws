@@ -152,6 +152,38 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
 정했습니다([근거](../concepts/defaults-and-evidence.md#query-deadlines-and-model-timeouts), 영문).
 조정 방법은 [운영 런북](../operations.md#query-deadlines-and-model-timeouts)(영문)에 있습니다.
 
+### 모델 호출 수와 입력 토큰 한도
+
+제한 시간은 질의 한도(`QueryLimits`) 가운데 하나입니다. 기본으로 꺼져 있는 한도가 둘 더
+있습니다. `search.query_max_model_calls`는 질의의 모든 모델 호출(라우터, 질의 처리, 전략
+자체의 호출, 답변) 수를, `search.query_max_input_tokens`는 그 호출들의 입력 토큰을
+제한합니다. 입력 토큰은 호출이 시작될 때 프롬프트의 로컬 추정치로 셉니다. 한도를 넘는
+호출은 요청을 보내기 전에 거부됩니다.
+
+- `global`의 평가·맵 호출, `drift`의 확장·초안·후속 호출, `iterative`의 판정 호출은 답변
+  호출을 남길 수 있는 만큼만 실행합니다. 들어가지 못한 호출은 빼고
+  `metadata.degraded`(사유 `query_limit`)에 기록합니다. global은 관련성이 높은 보고서 묶음부터,
+  DRIFT는 점수가 높은 후속 질의부터 실행하고, iterative는 라운드를 멈춥니다
+  (`stop_reason: query_limit`).
+- `auto`는 라우터 호출 뒤에 남은 호출 수 안에 최소 호출 수(`fewest_model_calls`와 답변)가
+  들어가는 전략으로만 분기하고, 미리 시작하는 추출은 하지 않습니다. 제외한 전략은
+  `metadata.routing.over_limits`에 남습니다.
+- 답변 컨텍스트는 남은 입력 토큰에서 프롬프트 몫인
+  `search.token_manager.context_window_headroom_ratio`를 뺀 만큼으로 줄입니다.
+- 답변 호출이 들어가지 못하는 질의는 `UsageLimitExceededError`(`unified_kg_rag`에서 내보냄,
+  오류 분류 `limit_exceeded`, 종료 코드 `1`)로 실패하고, `processing.ignore_errors`를 켜면
+  오류 답변을 돌려줍니다.
+
+호출하는 쪽은 질의 하나에 대해 세 한도를 낮출 수만 있고 올릴 수는 없습니다.
+
+```python
+from unified_kg_rag import QueryLimits, RAGInput
+
+chain.invoke(RAGInput(query="...", limits=QueryLimits(max_model_calls=6, deadline_seconds=60)))
+```
+
+MCP 도구 `kg_search`와 `kg_answer`도 같은 `limits` 인수를 받습니다([MCP 서버](./mcp.ko.md)).
+
 ## 인용
 
 답변은 근거가 된 문서를 인용합니다(`search.citations`). 기본값으로는 `global`과 `drift`를 뺀

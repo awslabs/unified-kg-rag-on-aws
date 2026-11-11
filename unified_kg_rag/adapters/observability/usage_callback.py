@@ -17,16 +17,25 @@ from its text). LangChain
 reports no end or error for a call whose task was cancelled, so such a call
 is let go when its task ends. Outside a scope a call costs one
 context-variable read.
+
+A call past a scope's limits (``shared.usage.UsageLimits``: a query's
+``search.query_max_*``, an ingestion run's ``processing.max_run_*``) is
+refused at its start: the handler raises the refusal (``raise_error``), so
+LangChain sends no request. Nothing else it does raises: an error of its
+own accounting is logged, as LangChain logs a handler's error, and the
+call goes on.
 """
 
 from __future__ import annotations
 
 import asyncio
+import functools
+import logging
 import threading
 from collections import OrderedDict
 from collections.abc import Callable
 from functools import partial
-from typing import Any, ClassVar
+from typing import Any, ClassVar, ParamSpec
 from uuid import UUID
 
 from langchain_core.callbacks import BaseCallbackHandler
@@ -40,7 +49,7 @@ from unified_kg_rag.adapters.observability.langchain_callback import (
     response_token_usage,
 )
 from unified_kg_rag.shared import get_logger, usage
-from unified_kg_rag.shared.logging import warn_once
+from unified_kg_rag.shared.logging import log_failure, warn_once
 
 logger = get_logger(__name__)
 
@@ -68,6 +77,29 @@ def _estimated_output_tokens(response: LLMResult) -> int:
     )
 
 
+_P = ParamSpec("_P")
+
+
+def _logged(hook: Callable[_P, None]) -> Callable[_P, None]:
+    """``hook`` with its errors logged, never raised: the handler raises
+    only a limit's refusal (``raise_error`` would raise any)."""
+
+    @functools.wraps(hook)
+    def run(*args: _P.args, **kwargs: _P.kwargs) -> None:
+        try:
+            hook(*args, **kwargs)
+        except Exception as e:  # noqa: BLE001 - accounting never fails a call
+            log_failure(
+                logger,
+                logging.WARNING,
+                "Error in UsageCallbackHandler.%s callback: %s",
+                hook.__name__,
+                error=e,
+            )
+
+    return run
+
+
 def _current_task() -> asyncio.Future[Any] | None:
     """The task running here, if any."""
     try:
@@ -82,6 +114,10 @@ class UsageCallbackHandler(BaseCallbackHandler):
 
     # In the caller's context, where its usage scope is open.
     run_inline = True
+    # A call past a scope's limits must not be sent: LangChain raises what a
+    # handler raises only with this set. Every hook but the refusal logs its
+    # own errors (_logged).
+    raise_error = True
 
     # Calls kept unsettled per handler: a call whose task never ends, or
     # one started outside a task, may never settle, so past this the oldest
@@ -142,11 +178,24 @@ class UsageCallbackHandler(BaseCallbackHandler):
     def _start(self, run_id: UUID, texts: list[str]) -> None:
         if usage.current_meter() is None:
             return
+        try:
+            estimate = sum(map(estimate_token_count, texts))
+        except Exception as e:  # noqa: BLE001 - accounting never fails a call
+            log_failure(
+                logger,
+                logging.WARNING,
+                "Error estimating a model call's input tokens: %s",
+                error=e,
+            )
+            estimate = 0
+        # Raises a limit's refusal: the call is not sent.
         call = usage.start_llm_call(
-            self.role,
-            self.model_id,
-            estimated_input_tokens=sum(map(estimate_token_count, texts)),
+            self.role, self.model_id, estimated_input_tokens=estimate
         )
+        self._track(run_id, call)
+
+    @_logged
+    def _track(self, run_id: UUID, call: usage.LLMCall) -> None:
         task = _current_task()
         with self._lock:
             self._calls[run_id] = call
@@ -248,9 +297,11 @@ class UsageCallbackHandler(BaseCallbackHandler):
     ) -> None:
         self._start(run_id, list(prompts))
 
+    @_logged
     def on_llm_end(self, response: LLMResult, *, run_id: UUID, **kwargs: Any) -> None:
         self._record(run_id, response)
 
+    @_logged
     def on_llm_error(
         self, error: BaseException, *, run_id: UUID, **kwargs: Any
     ) -> None:

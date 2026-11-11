@@ -33,6 +33,7 @@ from unified_kg_rag.adapters.llm.chain_factory import (
     FixingJsonOutputParser,
     create_json_output_parser,
 )
+from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.hybrid_scorer import HybridScorer, RerankTrace
 from unified_kg_rag.adapters.retrieval.strategy_registry import citations_enabled
@@ -65,6 +66,7 @@ from unified_kg_rag.domain.models import (
     SectionType,
 )
 from unified_kg_rag.domain.models.config import language_name
+from unified_kg_rag.domain.prompts import BasePrompt
 from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.degradation import (
     DegradationLedger,
@@ -83,8 +85,8 @@ from unified_kg_rag.domain.retrieval.index_prefixes import (
 from unified_kg_rag.domain.retrieval.lineage import merge as merge_lineages
 from unified_kg_rag.domain.retrieval.ppr import cap_edges_per_vertex
 from unified_kg_rag.domain.retrieval.store_names import graph_label, store_name
-from unified_kg_rag.shared import get_logger, observability
-from unified_kg_rag.shared.exceptions import InvalidFilterError
+from unified_kg_rag.shared import get_logger, observability, usage
+from unified_kg_rag.shared.exceptions import InvalidFilterError, UsageLimitExceededError
 from unified_kg_rag.shared.logging import log_error, warn_once
 from unified_kg_rag.shared.utils.common import compute_hash, safe_float_parse
 from unified_kg_rag.shared.utils.concurrency import (
@@ -670,6 +672,15 @@ class BaseSearchStrategy(ABC):
     # before the rest share it (``TokenManager.optimize_context``).
     spare_context_budget_first: ClassVar[tuple[SectionType, ...]] = ()
 
+    @classmethod
+    def fewest_model_calls(cls, config: Config) -> int:
+        """The model calls of its own one search makes at least when it does
+        its work (its query extractions and the answer apart): ``auto``
+        under a call limit (``search.query_max_model_calls``) routes only to
+        strategies whose fewest calls fit. None for a search that retrieves
+        only."""
+        return 0
+
     def __init_subclass__(cls, **kwargs: Any) -> None:
         # Every strategy's search reports what it answered without
         # (``metadata["degraded"]``, ``degraded_error``) from one ledger,
@@ -703,6 +714,55 @@ class BaseSearchStrategy(ABC):
         self.providers = Providers.resolve(config, providers)
         self.hybrid_scorer = HybridScorer(self.config, providers=self.providers)
         self.token_manager = TokenManager(self.config, providers=self.providers)
+
+    def _calls_within_limits(
+        self,
+        prompt_class: type[BasePrompt],
+        inputs: Sequence[str | int],
+        *,
+        reserve_calls: int = 1,
+        reserve_tokens: int = 0,
+    ) -> int:
+        """How many of the leading calls of ``prompt_class``, one per input
+        (the text it fills the prompt with, or its estimated tokens), the
+        query's limits (``search.query_max_model_calls``,
+        ``search.query_max_input_tokens``) leave room for, after
+        ``reserve_calls`` and ``reserve_tokens`` kept for what must follow
+        (the answer's call by default). Each call is estimated as the usage
+        meter counts it at its start: its prompt's templates and its input
+        by the local estimate. All of them without a limit."""
+        left = usage.remaining()
+        if left.llm_calls is None and left.input_tokens is None:
+            return len(inputs)
+        resolved = prompt_class.resolve(custom_prompts=self.config.custom_prompts)
+        overhead = estimate_token_count(
+            resolved.system_prompt_template + resolved.human_prompt_template
+        )
+        return usage.calls_that_fit(
+            [
+                overhead
+                + (item if isinstance(item, int) else estimate_token_count(item))
+                for item in inputs
+            ],
+            reserve_calls=reserve_calls,
+            reserve_tokens=reserve_tokens,
+        )
+
+    @staticmethod
+    def _record_limit_stop(step: str, started: int, planned: int) -> None:
+        """Record that ``step`` started ``started`` of its ``planned`` calls,
+        the rest left out for the query's limits (reason ``query_limit``)."""
+        logger.warning(
+            "%s: the query's limits leave room for %s of %s model calls",
+            step,
+            started,
+            planned,
+        )
+        record_degradation(
+            step,
+            f"query_limit: {planned - started} of {planned} calls not started",
+            UsageLimitExceededError.__name__,
+        )
 
     @final
     def json_answers(
