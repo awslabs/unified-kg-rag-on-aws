@@ -39,12 +39,15 @@ cp config-template.yaml config.yaml
 
 재시도는 `retry` 섹션 하나에서 호출자별 프로필로 설정합니다. `model`(Bedrock 임베딩과
 질의 시점 호출), `ingestion_item`(수집 LLM 항목), `model_server`(OpenAI 호환 서버나
-Ollama), `graph_store`(Neptune·Gremlin 인덱서 요청), `query_store`(OpenSearch 질의),
+Ollama), `graph_store`(Neptune·Gremlin 인덱서 요청), `query_store`(OpenSearch·Neptune·Gremlin 질의 읽기),
 `bulk_item`(OpenSearch 벌크 항목), `registry_batch`(DynamoDB 문서 상태 배치)가 있습니다.
 프로필마다 `max_attempts`, 백오프(`base_delay_seconds`, `max_delay_seconds`, `jitter`)와
 실행 시간 한도(`max_total_seconds`)를 정하고, 지정하지 않은 키는 그 프로필의 기본값을
 유지합니다. `judge_max_attempts`는 RAGAS 평가 모델의 시도 횟수입니다. 시도 횟수는 모두 첫
-시도를 포함하며, `1`이면 재시도하지 않습니다.
+시도를 포함하며, `1`이면 재시도하지 않습니다. 이전 설정의 평면 키(`retry.max_attempts`,
+`retry.base_delay_seconds`, ...)는 지원 중단(deprecation) WARNING과 함께 각 키가 맡던 모든 프로필에
+그대로 적용됩니다([Deprecated keys](../reference/configuration.md#deprecated-keys), 영문). 프로필 키로
+바꾸세요.
 
 ```yaml
 retry:

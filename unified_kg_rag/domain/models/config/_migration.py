@@ -82,15 +82,6 @@ MOVED_KEYS: dict[str, str] = {
             "deterministic_order",
         )
     },
-    # The flat retry keys before the profiles: one value fed several callers,
-    # now each caller's profile (MOVED_KEY_NOTES names the others).
-    "retry.max_attempts": "retry.model.max_attempts",
-    "retry.base_delay_seconds": "retry.model.base_delay_seconds",
-    "retry.max_delay_seconds": "retry.model.max_delay_seconds",
-    "retry.max_total_seconds": "retry.model.max_total_seconds",
-    "retry.model_server_max_attempts": "retry.model_server.max_attempts",
-    "retry.graph_store_max_attempts": "retry.graph_store.max_attempts",
-    "retry.query_store_max_attempts": "retry.query_store.max_attempts",
 }
 
 # Moved key -> what to know when converting its value (a key whose
@@ -103,23 +94,6 @@ MOVED_KEY_NOTES: dict[str, str] = {
     "indexing.neptune.max_retries": (
         "it counted retries, so max_retries N is retry.graph_store.max_attempts N+1"
     ),
-    "retry.max_attempts": (
-        "it also counted each ingestion LLM item's attempts: set "
-        "retry.ingestion_item.max_attempts too"
-    ),
-    "retry.base_delay_seconds": (
-        "it also set the model-server and graph-store backoff: set "
-        "retry.model_server.base_delay_seconds and "
-        "retry.graph_store.base_delay_seconds too"
-    ),
-    "retry.max_delay_seconds": (
-        "it also bounded the model-server waits: set "
-        "retry.model_server.max_delay_seconds too"
-    ),
-    "retry.max_total_seconds": (
-        "it also budgeted the model-server retries: set "
-        "retry.model_server.max_total_seconds too"
-    ),
     "processing.batch_size": (
         "it counted the items of one batch, not calls in flight; "
         "max_concurrency caps the calls"
@@ -127,12 +101,40 @@ MOVED_KEY_NOTES: dict[str, str] = {
 }
 
 
-# Deprecated settings -> the key that replaces each. A config that sets one
-# still loads: its value is moved into the replacement before validation
-# (:func:`migrate_deprecated_keys`), with a WARNING naming it.
-DEPRECATED_KEYS: dict[str, str] = {
+# Deprecated settings -> the key, or keys, that replace each. A config that
+# sets one still loads: its value is moved into every replacement before
+# validation (:func:`migrate_deprecated_keys`), with a WARNING naming it.
+DEPRECATED_KEYS: dict[str, str | tuple[str, ...]] = {
     "evaluation.prices": "models.prices",
+    # The flat retry keys of 0.3.0, before the per-caller profiles: each
+    # governed the callers whose profiles it maps to.
+    "retry.max_attempts": (
+        "retry.model.max_attempts",
+        "retry.ingestion_item.max_attempts",
+    ),
+    "retry.base_delay_seconds": (
+        "retry.model.base_delay_seconds",
+        "retry.model_server.base_delay_seconds",
+        "retry.graph_store.base_delay_seconds",
+    ),
+    "retry.max_delay_seconds": (
+        "retry.model.max_delay_seconds",
+        "retry.model_server.max_delay_seconds",
+    ),
+    "retry.max_total_seconds": (
+        "retry.model.max_total_seconds",
+        "retry.model_server.max_total_seconds",
+    ),
+    "retry.model_server_max_attempts": "retry.model_server.max_attempts",
+    "retry.graph_store_max_attempts": "retry.graph_store.max_attempts",
+    "retry.query_store_max_attempts": "retry.query_store.max_attempts",
 }
+
+
+def deprecated_targets(old: str) -> tuple[str, ...]:
+    """The keys the deprecated ``old`` loads into."""
+    new = DEPRECATED_KEYS[old]
+    return (new,) if isinstance(new, str) else new
 
 
 # Removed settings -> why they are gone. A config that sets one, or a key
@@ -256,32 +258,33 @@ def _sets(data: Any, path: str) -> bool:
 
 
 def migrate_deprecated_keys(data: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
-    """``data`` with every deprecated key it sets moved into the key that
-    replaces it (copied where it changes), and those deprecated keys. A
-    replacement ``data`` sets too keeps its value: a mapping (``models.prices``)
-    keeps its own entries, whole, over the deprecated key's, any
-    other value set otherwise disagrees.
+    """``data`` with every deprecated key it sets moved into each key that
+    replaces it (:func:`deprecated_targets`; copied where it changes), and
+    those deprecated keys. A replacement ``data`` sets too keeps its value: a
+    mapping (``models.prices``) keeps its own entries, whole, over the
+    deprecated key's, any other value set otherwise disagrees.
 
     Raises:
-        ValueError: A deprecated key and its replacement are both set, to
+        ValueError: A deprecated key and a replacement are both set, to
             different values (naming both).
     """
     migrated: list[str] = []
     conflicts: list[str] = []
-    for old, new in DEPRECATED_KEYS.items():
+    for old in DEPRECATED_KEYS:
         if not _sets(data, old):
             continue
         if not migrated:
             data = copy.deepcopy(data)
         value = _pop(data, old)
         migrated.append(old)
-        current = _get(data, new)
-        if current is _ABSENT:
-            _put(data, new, value)
-        elif isinstance(current, dict) and isinstance(value, dict):
-            _put(data, new, {**value, **current})
-        elif current != value:
-            conflicts.append(f"{old} and {new} are both set, to different values")
+        for new in deprecated_targets(old):
+            current = _get(data, new)
+            if current is _ABSENT:
+                _put(data, new, copy.deepcopy(value))
+            elif isinstance(current, dict) and isinstance(value, dict):
+                _put(data, new, {**value, **current})
+            elif current != value:
+                conflicts.append(f"{old} and {new} are both set, to different values")
     if conflicts:
         raise ValueError(
             "deprecated settings disagree with their replacements: "

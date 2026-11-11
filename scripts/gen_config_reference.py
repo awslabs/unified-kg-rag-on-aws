@@ -35,6 +35,7 @@ from unified_kg_rag.domain.models.config import (
     MOVED_KEYS,
     REMOVED_KEYS,
     Config,
+    deprecated_targets,
 )
 from unified_kg_rag.domain.models.evidence import EVIDENCE_KINDS, EVIDENCE_MEANINGS
 
@@ -349,11 +350,16 @@ def render() -> str:
         "",
         "## Deprecated keys",
         "",
-        "These keys still load, into the key that replaces them, with a WARNING.",
+        "These keys still load, into the key or keys that replace them, with a "
+        "WARNING. A key that governed several callers loads into each; one set "
+        "beside a replacement to another value fails the load, naming both.",
         "",
         "| Deprecated key | Loads into |",
         "|---|---|",
-        *[f"| `{old}` | `{new}` |" for old, new in DEPRECATED_KEYS.items()],
+        *[
+            f"| `{old}` | {', '.join(f'`{key}`' for key in deprecated_targets(old))} |"
+            for old in DEPRECATED_KEYS
+        ],
         "",
         "## Removed keys",
         "",

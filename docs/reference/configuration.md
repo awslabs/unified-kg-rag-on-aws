@@ -1392,31 +1392,27 @@ These keys are refused at load with the key that replaced them.
 | `indexing.neptune.entity_importance_source` | `search.graph_expansion.entity_importance_source` |
 | `indexing.neptune.traversal_fetch_multiplier` | `search.graph_expansion.traversal_fetch_multiplier` |
 | `indexing.neptune.deterministic_order` | `search.graph_expansion.deterministic_order` |
-| `retry.max_attempts` | `retry.model.max_attempts` |
-| `retry.base_delay_seconds` | `retry.model.base_delay_seconds` |
-| `retry.max_delay_seconds` | `retry.model.max_delay_seconds` |
-| `retry.max_total_seconds` | `retry.model.max_total_seconds` |
-| `retry.model_server_max_attempts` | `retry.model_server.max_attempts` |
-| `retry.graph_store_max_attempts` | `retry.graph_store.max_attempts` |
-| `retry.query_store_max_attempts` | `retry.query_store.max_attempts` |
 
 Each takes the value of the key it replaces, except:
 
 - `processing.max_retries`: it had no effect; each model call made 5 attempts, the retry.ingestion_item.max_attempts default.
 - `indexing.neptune.max_retries`: it counted retries, so max_retries N is retry.graph_store.max_attempts N+1.
-- `retry.max_attempts`: it also counted each ingestion LLM item's attempts: set retry.ingestion_item.max_attempts too.
-- `retry.base_delay_seconds`: it also set the model-server and graph-store backoff: set retry.model_server.base_delay_seconds and retry.graph_store.base_delay_seconds too.
-- `retry.max_delay_seconds`: it also bounded the model-server waits: set retry.model_server.max_delay_seconds too.
-- `retry.max_total_seconds`: it also budgeted the model-server retries: set retry.model_server.max_total_seconds too.
 - `processing.batch_size`: it counted the items of one batch, not calls in flight; max_concurrency caps the calls.
 
 ## Deprecated keys
 
-These keys still load, into the key that replaces them, with a WARNING.
+These keys still load, into the key or keys that replace them, with a WARNING. A key that governed several callers loads into each; one set beside a replacement to another value fails the load, naming both.
 
 | Deprecated key | Loads into |
 |---|---|
 | `evaluation.prices` | `models.prices` |
+| `retry.max_attempts` | `retry.model.max_attempts`, `retry.ingestion_item.max_attempts` |
+| `retry.base_delay_seconds` | `retry.model.base_delay_seconds`, `retry.model_server.base_delay_seconds`, `retry.graph_store.base_delay_seconds` |
+| `retry.max_delay_seconds` | `retry.model.max_delay_seconds`, `retry.model_server.max_delay_seconds` |
+| `retry.max_total_seconds` | `retry.model.max_total_seconds`, `retry.model_server.max_total_seconds` |
+| `retry.model_server_max_attempts` | `retry.model_server.max_attempts` |
+| `retry.graph_store_max_attempts` | `retry.graph_store.max_attempts` |
+| `retry.query_store_max_attempts` | `retry.query_store.max_attempts` |
 
 ## Removed keys
 

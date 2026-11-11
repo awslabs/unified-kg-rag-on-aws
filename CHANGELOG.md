@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`EvaluationConfig(prices=...)` is refused as an unknown field; a config file or `UKR__` variable that sets
   `evaluation.prices` still loads, with a WARNING). `unified_kg_rag.evaluation.comparison.answer_cost_usd` is
   `unified_kg_rag.domain.pricing.usage_cost_usd`.
+- `config.retry.max_attempts` and the other flat retry fields are gone from the Python surface, and
+  `RetryConfig.transient_policy()` with them: read and set the profiles (`config.retry.model.max_attempts`,
+  `config.retry.ingestion_item`, ...). Configs that set the flat keys still load (*Deprecated*).
 
 ### Added
 
@@ -89,6 +92,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   estimated over the embedding model's input or the reranker's document limit, which read only their start; nothing
   else changes. `Providers.embedding_model_info()` and `rerank_model_info()` (their `EmbeddingModelInfo` and
   `RerankModelInfo` now exported) read those limits from the Bedrock catalog without building a client.
+- The `retry` section has one profile per caller, each a `RetryPolicy` (`max_attempts`, `base_delay_seconds`,
+  `max_delay_seconds`, `max_total_seconds`, `jitter`; exported, `TransientRetryConfig` its 0.3.0 name): `model`,
+  `ingestion_item`, `model_server`, `graph_store`, `query_store` (OpenSearch and graph-store query reads), `bulk_item`
+  and `registry_batch`, beside `judge_max_attempts` (the flat keys are deprecated, see *Deprecated*). Each profile
+  defaults to its caller's 0.3.0 values, so nothing waits otherwise; the ingestion item backoff (30 s doubling to 120 s,
+  which ignored the section), the OpenSearch and Neptune query, bulk-item and DynamoDB batch backoffs, fixed in code
+  before, are set there now, and every caller draws its waits with one backoff function. A profile set in part keeps its
+  own defaults.
 
 ### Changed
 
@@ -102,16 +113,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   were left out of the default on (`ppr`: within the noise of `local` at 2.4 times less cost, weaker on long chains;
   `tree`: +8 points of `answer_contains` over `naive`, below `mix` and `local`). It refused them, which made routing to
   them a code change rather than the operator's call.
-- The `retry` section has one profile per caller, each a `RetryPolicy` (`max_attempts`, `base_delay_seconds`,
-  `max_delay_seconds`, `max_total_seconds`, `jitter`; exported, `TransientRetryConfig` its 0.3.0 name):
-  `model`, `ingestion_item`, `model_server`, `graph_store`, `query_store` (OpenSearch and graph-store query reads),
-  `bulk_item` and `registry_batch`, beside `judge_max_attempts`. The flat `retry.max_attempts`, `base_delay_seconds`,
-  `max_delay_seconds`, `max_total_seconds`, `model_server_max_attempts`, `graph_store_max_attempts` and
-  `query_store_max_attempts` moved into them and fail the load naming their profile (a flat key that fed several
-  callers names the others). Each profile defaults to its caller's 0.3.0 values, so nothing waits otherwise; the
-  ingestion item backoff (30 s doubling to 120 s, which ignored the section), the OpenSearch and Neptune query,
-  bulk-item and DynamoDB batch backoffs, fixed in code before, are set there now, and every caller draws its waits
-  with one backoff function. A profile set in part keeps its own defaults.
 
 ### Deprecated
 
@@ -120,6 +121,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for `[NO_ANSWER]` (`search.abstention`), the token held back and stripped.
 - `RAGInput.enable_thinking` warns (`DeprecationWarning`): set `RAGInput.effort`. Until it is removed it turns the
   answer model's reasoning on at its tier's effort, as before.
+- The flat `retry` keys (`retry.max_attempts`, `base_delay_seconds`, `max_delay_seconds`, `max_total_seconds`,
+  `model_server_max_attempts`, `graph_store_max_attempts`, `query_store_max_attempts`) load, from a file or a `UKR__`
+  variable, into every profile each one governed in 0.3.0 (`max_attempts` into `retry.model` and
+  `retry.ingestion_item`, `base_delay_seconds` into `model`, `model_server` and `graph_store`, ...), with a WARNING
+  naming them; one set beside a profile key to another value fails the load, naming both. `DEPRECATED_KEYS` maps a
+  key to one replacement or several. `TransientRetryConfig` is `RetryPolicy`'s 0.3.0 name, kept as an alias.
 
 ### Fixed
 Bugs present in 0.3.0.

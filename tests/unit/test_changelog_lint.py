@@ -230,7 +230,10 @@ RELEASE_KEYS = REPO_ROOT / "tests/fixtures/config_keys_0_3_0.txt"
 # Keys a Fixed or Changed entry may name although 0.3.0 had none: the knob
 # the change itself added to tune or undo it, or the new name of a 0.3.0 key
 # (*Breaking changes* lists the renames). Each must still be named.
-NEW_KEYS_IN_CHANGES: dict[str, str] = {}
+NEW_KEYS_IN_CHANGES: dict[str, str] = {
+    "retry.ingestion_item": "a profile a deprecated flat retry key loads into",
+    "retry.model": "a profile a deprecated flat retry key loads into",
+}
 # A backticked config key, bare, set (``search.top_k=20``, ``search.top_k:
 # 20``) or a family (``custom_prompts.text_chunking_*``); a call
 # (``export_data()``) or a file is none.

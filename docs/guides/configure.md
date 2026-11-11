@@ -46,13 +46,17 @@ Retries are configured in one section, `retry`, with one profile per
 caller: `model` (Bedrock embeddings and query-time calls), `ingestion_item`
 (each ingestion LLM item), `model_server` (an OpenAI-compatible or Ollama
 server), `graph_store` (Neptune and Gremlin indexer requests), `query_store`
-(OpenSearch queries), `bulk_item` (OpenSearch bulk items) and
+(OpenSearch, Neptune and Gremlin query reads), `bulk_item` (OpenSearch bulk items) and
 `registry_batch` (DynamoDB doc-status batches). Each profile sets
 `max_attempts`, the backoff (`base_delay_seconds`, `max_delay_seconds`,
 `jitter`) and a wall-clock budget (`max_total_seconds`), and keeps its own
 defaults for the keys it leaves out; `judge_max_attempts` counts the RAGAS
 judge's attempts. Every attempt count includes the first attempt; `1`
-disables the retry.
+disables the retry. The flat keys of earlier configs (`retry.max_attempts`,
+`retry.base_delay_seconds`, ...) still load, with a WARNING, into every
+profile each one governed
+([Deprecated keys](../reference/configuration.md#deprecated-keys)); set the
+profile keys instead.
 
 ```yaml
 retry:
