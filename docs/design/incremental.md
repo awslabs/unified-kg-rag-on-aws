@@ -117,11 +117,16 @@ unless noted.
    first): the kept items it did not write state the removed text until the
    write succeeds. The commit writes its claims in the same order
    (`write_claims_new_ids_first`): those overwriting a stored claim the
-   claim merge read only after those under new ids, and not at all (held
-   back, noted as rejected) when one of those fails. A stored claim whose
-   id the derivation gave another document's statement holds its own lines
-   until the claim they moved to is written; a store writes a call in
-   slices, and a run killed after the slice that overwrote it lost them.
+   claim merge read only after those under new ids, and when one of those
+   fails, not those dropping a text unit or line of their stored copy (held
+   back, noted as rejected). A stored claim whose id the derivation gave
+   another document's statement holds its own lines until the claim they
+   moved to is written; a store writes a call in slices, and a run killed
+   after the slice that overwrote it lost them. A claim keeping every unit
+   and line of its stored copy (restated by another document) loses
+   nothing and is written: held back too, one rejected new claim failed a
+   commit with ten restated ones (11 of 11 over `max_failure_rate`), and no
+   document was recorded while the rejection lasted.
    A stored edge a derivation would rewrite for its rank alone whose vector
    copy cites a text unit its graph copy does not (written to one store
    only) is left to the removal or the documents retried, which derive it

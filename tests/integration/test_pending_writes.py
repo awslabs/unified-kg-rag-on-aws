@@ -687,6 +687,55 @@ def test_a_rejected_claim_re_derived_alone_keeps_its_own_entity(
 
 
 @pytest.mark.parametrize(
+    "names",
+    [
+        ("Hub", "Vendor", "Xeno"),
+        ("한빛", "공급사", "제노"),
+        ("ひかり", "仕入先", "ゼノ"),
+        ("Hub", "공급사", "ゼノ"),
+    ],
+    ids=["en", "ko", "ja", "mix"],
+)
+def test_one_rejected_new_claim_does_not_fail_the_commit(
+    names: tuple[str, str, str],
+) -> None:
+    # n0.txt restates the ten stored claims about the hub and states one
+    # new one, whose write is rejected. The restated claims keep every line
+    # of their stored copies: held back with the rejected one, they counted
+    # failed too (11 of 11, over the default rate), and no document was
+    # recorded, m0.txt with no claim at the hub included, on every run the
+    # rejection lasted.
+    hub, vendor, new_name = names
+    kept: Corpus = {
+        f"/corpus/k{i}.txt": [[(hub, f"{vendor}{i}", 3)]] for i in range(10)
+    }
+    final: Corpus = {
+        **kept,
+        "/corpus/n0.txt": [
+            [(hub, new_name, 3)],
+            [(hub, f"{vendor}{i}", 3) for i in range(10)],
+        ],
+        "/corpus/m0.txt": [[(_D, _B, 1)]],
+    }
+    rejected = sorted(
+        {c.id for c in extract(final).claims} - {c.id for c in extract(kept).claims}
+    )
+    assert len(rejected) == 1
+    config = Config()
+    harness = IncrementalRun(FakeDocStatusStore(), config)
+    harness.run(kept)
+
+    harness.run(final, fail=_rejecting("vector.upsert_claims", *rejected))
+
+    assert set(_statuses(harness).values()) == {DocStatus.PROCESSED}
+    note = _note(harness)
+    assert note is not None and rejected[0] in str(note)
+    harness.run(final)
+    assert harness.state() == expected_state(final, config)
+    assert harness.registry_problems(final) == []
+
+
+@pytest.mark.parametrize(
     "hub", ["Acme", "주식회사 한빛", "株式会社ひかり"], ids=["en", "ko", "ja"]
 )
 def test_a_hub_over_the_graph_property_cap_converges(hub: str) -> None:

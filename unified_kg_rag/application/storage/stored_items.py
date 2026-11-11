@@ -177,42 +177,62 @@ def _claim_text(claim: Claim) -> tuple[Any, ...]:
     )
 
 
+def _keeps(derived: Claim, stored: Claim) -> bool:
+    """Whether ``derived`` holds every text unit and line of the ``stored``
+    copy it overwrites (none moved to another id)."""
+
+    def lines(text: str | None) -> set[str]:
+        return set((text or "").split("\n")) - {""}
+
+    return (
+        set(stored.text_unit_ids or []) <= set(derived.text_unit_ids or [])
+        and lines(stored.description) <= lines(derived.description)
+        and lines(stored.source_text) <= lines(derived.source_text)
+    )
+
+
 def write_claims_new_ids_first(
     vector: VectorIndexer,
     claims: Sequence[Claim],
-    stored: Collection[str],
+    stored: Mapping[str, Claim],
     lineage_only: Collection[str] = (),
 ) -> IndexingStats:
-    """Write derived ``claims``: those under new ids first, then those of
-    the ``stored`` ids (the ``lineage_only`` ones have their lineage set in
-    place, no embedding), only if every first write succeeded.
+    """Write derived ``claims``: those under new ids first, then those
+    overwriting a ``stored`` copy (by id; the ``lineage_only`` ones have
+    their lineage set in place, no embedding). When a first write fails, an
+    overwrite that drops a text unit or line of its stored copy is held
+    back.
 
     A stored claim the derivation overwrites with another statement (its
     id now another's) holds its own lines until the claim they moved to,
     under a new id, is written: a commit or a strip that died (or whose
     write was rejected) after the overwrite and before the new claim lost
     them, and no later run derived them again. The stored claims held back
-    count as failed, by id (a commit notes them, a strip is retried)."""
+    count as failed, by id (a commit notes them, a strip is retried). One
+    that keeps every unit and line of its stored copy (a claim restated by
+    another document) loses nothing and is written: holding it back too
+    failed a commit whose one new claim was rejected, as every restated
+    claim counted failed."""
     stats = IndexingStats()
     new = [c for c in claims if c.id not in stored]
     rest = [c for c in claims if c.id in stored]
     if new:
         stats.merge(vector.upsert_claims(new))
-    if rest and stats.failed_items:
-        held = IndexingStats(total_items=len(rest))
-        held.add_error(
-            "not written: a claim under a new id failed",
-            len(rest),
-            [c.id for c in rest],
-        )
-        stats.merge(held)
-    elif rest:
-        in_place = [c for c in rest if c.id in lineage_only]
-        whole = [c for c in rest if c.id not in lineage_only]
-        if in_place:
-            stats.merge(vector.update_claim_lineage(in_place))
-        if whole:
-            stats.merge(vector.upsert_claims(whole))
+    if stats.failed_items:
+        held = sorted(c.id for c in rest if not _keeps(c, stored[c.id]))
+        if held:
+            held_stats = IndexingStats(total_items=len(held))
+            held_stats.add_error(
+                "not written: a claim under a new id failed", len(held), held
+            )
+            stats.merge(held_stats)
+        rest = [c for c in rest if c.id not in set(held)]
+    in_place = [c for c in rest if c.id in lineage_only]
+    whole = [c for c in rest if c.id not in lineage_only]
+    if in_place:
+        stats.merge(vector.update_claim_lineage(in_place))
+    if whole:
+        stats.merge(vector.upsert_claims(whole))
     stats.total_items = len(claims)
     return stats
 
