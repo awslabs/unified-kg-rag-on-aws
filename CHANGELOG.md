@@ -266,9 +266,10 @@ See [exit codes and JSON output](docs/reference/exit-codes-and-json.md) and the
   (´, ʼ, ′; not the ʻokina) and the invisible format characters (soft hyphen, zero-width space, direction marks; not
   the joiners), read every dash as a space but a minus sign opening the name ("−40 °C" is not "40 °C"), drop a middle
   dot between Han, Hangul or Kana letters (and Korean's "ㆍ" between syllables), the Arabic and Hebrew vowel marks and
-  a trailing "。" ("ジョン・スミス" is "ジョンスミス"); a key is its own key. Of spellings with one key, the one its key folds
-  least names the entity on a tie ("토지", not "「토지」"). Entity and relationship `rank` come from node degree, and a
-  relationship's weight sums its strengths per text unit (#189, #214, #574).
+  a trailing "。" ("ジョン・スミス" is "ジョンスミス"); a key is its own key, and the fuzzy matcher reads a name's identifier
+  tokens from it as its compact key (a dotted "한·빛" has none, as "한빛"). Of spellings with one key, the one its key
+  folds least names the entity on a tie ("토지", not "「토지」"). Entity and relationship `rank` come from node degree,
+  and a relationship's weight sums its strengths per text unit (#189, #214, #574).
 - Entities have no `MemberOf` edges to communities; an entity lists its `community_ids` (#348).
 - Hidden files and files under a hidden or `__pycache__` directory of the corpus are not parsed (#213).
 

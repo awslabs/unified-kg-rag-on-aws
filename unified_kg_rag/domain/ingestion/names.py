@@ -108,10 +108,15 @@ def discriminator_tokens(name: str | None) -> frozenset[str]:
     that only one side spells with an initial ("J. Smith" vs "Smith") stays a
     separate entity rather than risking a wrong merge.
 
-    Legal-form designators are removed first (:func:`strip_legal_forms`), so
-    the "주" of "(주)가나다" does not count as an identifier.
+    The tokens are those of the name's ``entity_key``, legal-form
+    designators removed (:func:`strip_legal_forms`, so the "주" of
+    "(주)가나다" does not count as an identifier): spellings of one entity
+    (one id) have the same tokens, as they have one :func:`compact_name_key`
+    ("한·빛" and "한빛" none, where the middle dot split one).
     """
-    tokens = normalize_name(strip_legal_forms(name) if name else name).split()
+    tokens = normalize_name(
+        strip_legal_forms(entity_key(name)) if name else name
+    ).split()
     return frozenset(
         token
         for token in tokens
