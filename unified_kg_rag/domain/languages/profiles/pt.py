@@ -101,5 +101,6 @@ PROFILE = LanguageProfile(
         "December": ("dezembro", "dez"),
     },
     date_fillers=("de",),
-    legal_forms={"ltda": "ltda", "sa": "sa"},
+    legal_forms={"ltda": "ltda", "sa": "sa", "s/a": "sa", "eireli": "eireli"},
+    quote_pairs=(("«", "»"),),
 )

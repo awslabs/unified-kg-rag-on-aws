@@ -54,11 +54,12 @@ class LanguageProfile:
     month_words: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     # Words a written-out date carries around its parts ("15 de marzo").
     date_fillers: tuple[str, ...] = ()
-    # Legal-form designators written as words, dot-free, each with the
-    # canonical short form its spellings share ("corporation" -> "corp").
+    # Legal-form designators written as words after the name, dot-free and
+    # casefolded, each with the canonical short form its spellings share
+    # ("corporation" -> "corp"); a key of several words is one designator
+    # ("gmbh & co kg").
     legal_forms: Mapping[str, str] = field(default_factory=dict)
-    # Those written as words before the name ("شركة"), which linking a
-    # query's name reads (``domain.retrieval.linking``).
+    # Those written as words before the name ("ооо", "công ty tnhh").
     leading_legal_forms: Mapping[str, str] = field(default_factory=dict)
     # Legal-form designators in Han, Hangul or Kana, leading or trailing.
     dense_legal_forms: tuple[str, ...] = ()

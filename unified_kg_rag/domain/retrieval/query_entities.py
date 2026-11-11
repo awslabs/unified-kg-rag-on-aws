@@ -13,30 +13,33 @@ from __future__ import annotations
 import re
 
 from unified_kg_rag.domain.languages import profiles
+from unified_kg_rag.shared.utils.scripts import QUOTE_MARKS
 
 # Item separators: ASCII, fullwidth, ideographic and Arabic commas, ASCII,
 # fullwidth and Arabic semicolons, and line breaks.
 _SEPARATORS = frozenset(",，、،;；؛\n\r")
 # Quote pairs a model wraps an item (or the whole list) in, every
 # language's (``LanguageProfile.quote_pairs``).
-_QUOTES = {
-    opening: closing
-    for language in profiles()
-    for opening, closing in language.quote_pairs
-}
+# An opening quote may close otherwise in two languages ("„" closes with "“"
+# in German, "”" in Hebrew).
+_QUOTES: dict[str, frozenset[str]] = {}
+for _language in profiles():
+    for _opening, _closing in _language.quote_pairs:
+        _QUOTES[_opening] = _QUOTES.get(_opening, frozenset()) | {_closing}
 _OPENING_QUOTES = frozenset(_QUOTES)
-_CLOSING_QUOTES = frozenset(_QUOTES.values())
+_CLOSING_QUOTES = frozenset().union(*_QUOTES.values())
 # A list marker opening a line ("- ", "* ", "• ", "1. ", "2) ").
 _LIST_MARKER = re.compile(r"^(?:[-*•・]|\d{1,3}[.)])\s+")
-# What an item loses at its ends: whitespace, quotes and an ideographic
-# full stop.
-_ITEM_EDGES = re.compile(r"^[\s\"'“”‘’「」『』。]+|[\s\"'“”‘’「」『』。]+$")
+# What an item loses at its ends: whitespace, quotes of every script (as
+# entity keys drop them: ``QUOTE_MARKS``) and an ideographic full stop.
+_EDGE_CHARS = re.escape(QUOTE_MARKS + "'。")
+_ITEM_EDGES = re.compile(f"^[\\s{_EDGE_CHARS}]+|[\\s{_EDGE_CHARS}]+$")
 
 
 def _unwrapped(text: str) -> str:
     """``text`` without one pair of quotes around all of it (the prompt's
     example shows the list quoted), when no other quote is inside."""
-    if len(text) >= 2 and _QUOTES.get(text[0]) == text[-1]:
+    if len(text) >= 2 and text[-1] in _QUOTES.get(text[0], ()):
         inner = text[1:-1]
         if not any(c in _OPENING_QUOTES or c in _CLOSING_QUOTES for c in inner):
             return inner
@@ -48,10 +51,10 @@ def _items(text: str) -> list[str]:
     except an ASCII comma between two digits (``1,000``)."""
     items: list[str] = []
     current: list[str] = []
-    closing: str | None = None
+    closing: frozenset[str] | None = None
     for index, char in enumerate(text):
         if closing is not None:
-            if char == closing:
+            if char in closing:
                 closing = None
             current.append(char)
             continue

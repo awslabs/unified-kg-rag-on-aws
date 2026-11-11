@@ -403,66 +403,6 @@ def resolved_claim_id(claim: Claim) -> str:
     )
 
 
-def _earlier_date_keys(value: str | None, *, end: bool = False) -> set[str]:
-    """The keys a claim date had in earlier builds as well as its current
-    one: as written, casefolded (earlier builds read fewer forms as
-    calendar dates: a written-out date or a period coarser than a day), and
-    an end date as its period's first day (as a start date reads)."""
-    keys = {claim_date_key(value, end=end), " ".join((value or "").split()).casefold()}
-    if end:
-        keys.add(claim_date_key(value))
-    return keys
-
-
-@functools.lru_cache(maxsize=1 << 16)
-def _has_earlier_key(value: str | None, *, end: bool = False) -> bool:
-    return len(_earlier_date_keys(value, end=end)) > 1
-
-
-def has_earlier_date_reading(statement: Claim) -> bool:
-    """Whether an earlier build may have keyed a date of ``statement``
-    otherwise than it keys now (``_earlier_date_keys``). A claim none of
-    whose statements has one has no ``earlier_claim_ids`` (an ISO date
-    reads the same in every build)."""
-    return _has_earlier_key(statement.start_date) or _has_earlier_key(
-        statement.end_date, end=True
-    )
-
-
-def earlier_claim_ids(claim: Claim, statements: Iterable[Claim]) -> set[str]:
-    """Ids an earlier build may have stored ``claim`` (resolved) under: the
-    ids its subject, object and type give with the earlier keys
-    (``_earlier_date_keys``) of the dates of ``statements`` (its text
-    units' raw claims) of its type that read as its dates now. A claim
-    id keys on its dates, so a claim stored before their reading changed
-    keeps the id of the old reading; each of these ids is the same fact
-    under the current one. Empty when every such date reads the same in
-    both (an ISO date, say). Excludes the claim's own id."""
-    claim_type = (claim.type or "").casefold()
-    start, end = claim_date_key(claim.start_date), claim_date_key(
-        claim.end_date, end=True
-    )
-    starts, ends = {start}, {end}
-    for statement in statements:
-        if (
-            (statement.type or "").casefold() == claim_type
-            and claim_date_key(statement.start_date) == start
-            and claim_date_key(statement.end_date, end=True) == end
-        ):
-            starts |= _earlier_date_keys(statement.start_date)
-            ends |= _earlier_date_keys(statement.end_date, end=True)
-    if len(starts) == len(ends) == 1:
-        return set()
-    object_key = claim.object_id or f"literal:{entity_key(claim.object_name)}"
-    stem = f"claim:{claim.subject_id}:{object_key}:{claim_type}"
-    ids = {
-        generate_stable_id(f"{stem}:{s}:{e}" if s or e else stem)
-        for s in starts
-        for e in ends
-    }
-    return ids - {resolved_claim_id(claim)}
-
-
 def resolve_entity_reference(
     entity_reference: str,
     names_by_key: dict[str, str],

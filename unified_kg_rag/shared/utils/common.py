@@ -13,7 +13,12 @@ from multiprocessing import cpu_count
 from pathlib import Path
 from typing import Any, TypeVar
 
-from .scripts import drop_optional_marks
+from .scripts import (
+    QUOTE_MARKS,
+    WORD_DASHES,
+    drop_optional_marks,
+    join_dense_middle_dots,
+)
 
 _T = TypeVar("_T")
 
@@ -227,8 +232,13 @@ def normalize_name(name: str | None) -> str:
 
 
 # Quote marks and thousands separators carry no identity ("McDonald's" vs
-# "McDonalds", "1,000" vs "1000"), so entity_key drops them.
-_RE_KEY_DROP_CHARS = re.compile("[\"'`\u2018\u2019\u201c\u201d,]")
+# "McDonalds", "1,000" vs "1000", «Ромашка» vs Ромашка), so entity_key drops
+# them: the apostrophe, the grave accent, the comma and every quote mark
+# (``QUOTE_MARKS``).
+_RE_KEY_DROP_CHARS = re.compile(f"[{re.escape(QUOTE_MARKS)}'`,]")
+# Dashes join words as "-" does, so entity_key reads them as spaces
+# (``WORD_DASHES``), as it reads "_".
+_RE_KEY_DASHES = re.compile(f"[{re.escape(WORD_DASHES)}_]")
 # Sentence punctuation the LLM sometimes leaves on the end of a name
 # ("Acme Corp." vs "Acme Corp"). Only stripped at the end, so "4.2", ".NET"
 # and "C++" keep their symbols.
@@ -251,8 +261,13 @@ def clean_display_name(name: str | None) -> str:
 def entity_key(name: str | None) -> str:
     """Return the identity key of an entity name (used for ids and exact match).
 
-    NFKC + casefold, ``_``/``-`` treated as spaces, quote marks and commas
-    removed, whitespace collapsed, and trailing sentence punctuation stripped.
+    NFKC + casefold, ``_``, every dash and the minus sign treated as spaces,
+    quote marks of every script and commas removed, the marks a script
+    writes at will dropped (Arabic short vowels and tatweel, Hebrew points:
+    ``drop_optional_marks``), a middle dot between Han, Hangul or Kana
+    letters removed ("ジョン・スミス" is "ジョンスミス":
+    ``join_dense_middle_dots``), whitespace collapsed, and trailing sentence
+    punctuation stripped.
     Unlike :func:`normalize_name` it keeps every other symbol, so names that
     differ only in meaningful punctuation get distinct keys ("C++" vs "C#",
     "Section 4.2" vs "Section 42") while case/whitespace/quote variants of one
@@ -265,8 +280,8 @@ def entity_key(name: str | None) -> str:
     if not name:
         return ""
     folded = unicodedata.normalize("NFKC", name).casefold()
-    key = folded.replace("_", " ").replace("-", " ")
-    key = _RE_KEY_DROP_CHARS.sub("", key)
+    key = _RE_KEY_DASHES.sub(" ", drop_optional_marks(folded))
+    key = _RE_KEY_DROP_CHARS.sub("", join_dense_middle_dots(key))
     key = " ".join(key.split())
     key = _RE_KEY_TRAILING_PUNCT.sub("", key).rstrip()
     return key or folded.strip()

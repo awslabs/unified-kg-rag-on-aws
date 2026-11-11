@@ -11,8 +11,9 @@ unchanged, so its key carries a fingerprint of those inputs:
   whose output it shapes, or :class:`Unkeyed` with the reason it shapes none
   (a throughput knob, a connection setting, a query-time setting). A stage's
   key hashes every keyed field of it and of every upstream stage (a stage
-  consumes its predecessors' output), the package version (built-in prompt
-  templates and parsing rules are code) and the corpus manifest. A field the
+  consumes its predecessors' output), the built-in prompt templates of
+  those stages, the package version and a stage format version (parsing
+  rules and name keys are code) and the corpus manifest. A field the
   table does not cover counts from the first stage, and
   ``tests/unit/test_cache_key_coverage.py`` fails until it is classified.
 * **Only settings in effect count.** A block switched off (``enabled:
@@ -1008,37 +1009,14 @@ def _summary_settings(config: Config) -> dict[str, Any]:
     }
 
 
-def _summary_settings_as_keyed_before(config: Config) -> dict[str, Any]:
-    """:func:`_summary_settings` at their defaults, the summary model
-    resolved through the run's tiers: how a record's fingerprint held them
-    from the release that stopped keying graph extraction with them until
-    the current key (:func:`_summary_key`) left the tiers out, so a tier
-    only the summary model reads re-keyed every record. A record stored
-    under this form is found under it (:func:`legacy_unit_record_fingerprints`)."""
-    baseline = config.model_copy(deep=True)
-    default = _default_config()
-    for path in _SUMMARY_SETTINGS:
-        *parents, name = path.split(".")
-        target, source = baseline, default
-        for part in parents:
-            target, source = getattr(target, part), getattr(source, part)
-        value = getattr(source, name)
-        if isinstance(value, BaseModel):
-            value = value.model_copy(deep=True)
-        setattr(target, name, value)
-    return _summary_settings(baseline)
-
-
 @functools.cache
 def _summary_key() -> dict[str, Any]:
     """The summary part of every record's fingerprint: :func:`_summary_settings`
     of the default configuration, a constant. A record stored under the
     default summary settings, when they were keyed at graph extraction,
     keeps its key, and no summary setting, nor a tier only the summary model
-    reads, asks a unit again. A record stored otherwise is found under its
-    earlier key (:func:`legacy_unit_record_fingerprints`). (A document's
-    extraction settings leave them out: ``changed_settings`` ignores them in
-    an earlier record.)"""
+    reads, asks a unit again. (A document's extraction settings leave them
+    out: ``changed_settings`` ignores them in an earlier record.)"""
     return _summary_settings(_default_config())
 
 
@@ -1058,34 +1036,6 @@ def unit_record_fingerprint(
     (``domain.ingestion.contributions.record_key``).
     """
     return _unit_record_fingerprint(config, gleaned, claims, _summary_key())
-
-
-def legacy_unit_record_fingerprints(
-    config: Config, *, gleaned: bool, claims: bool = False
-) -> list[str]:
-    """The fingerprints an earlier version stored the same record under,
-    where they differ from :func:`unit_record_fingerprint`, in the order
-    to look them up.
-
-    While the description summary settings keyed graph extraction, a
-    record's fingerprint held them at the run's values; then at their
-    defaults resolved through the run's tiers
-    (:func:`_summary_settings_as_keyed_before`); it holds them at the
-    default configuration's now. A record stored under either earlier form
-    is looked up under the fingerprint it was stored under too
-    (``ExtractionStore.load``, which stores what it finds there under the
-    current key).
-    """
-    current = unit_record_fingerprint(config, gleaned=gleaned, claims=claims)
-    legacy: list[str] = []
-    for summary in (
-        _summary_settings_as_keyed_before(config),
-        _summary_settings(config),
-    ):
-        key = _unit_record_fingerprint(config, gleaned, claims, summary)
-        if key != current and key not in legacy:
-            legacy.append(key)
-    return legacy
 
 
 def _unit_record_fingerprint(
@@ -1409,6 +1359,37 @@ def summary_tree_fingerprint(config: Config) -> str:
 
 # --- stage cache keys --------------------------------------------------------
 
+# The format of a stage's cached output: bump it when the code that derives
+# a stage's output changes what it holds within one package version (the
+# name keys entity ids hash, a parsing rule), so a run resumed across the
+# change finds no stage-cache entry. (Built-in prompts are keyed below.)
+# 2: entity keys drop every quote mark and dense-script middle dot, read every
+# dash as a space and compact keys strip more legal forms.
+_STAGE_FORMAT_VERSION = 2
+
+
+@functools.cache
+def _builtin_prompts(stage_type: PipelineStageType) -> dict[str, str]:
+    """``{prompt class: digest}`` of the built-in templates of every prompt
+    ``stage_type`` or an upstream stage asks (those whose
+    ``custom_prompts`` overrides it keys: ``CONFIG_KEYING``): a dev build
+    shares its package version with the build before, so an edited prompt
+    re-keys the stages whose output it shapes. Overrides are keyed as
+    settings."""
+    from unified_kg_rag.domain import prompts
+
+    upstream = _upstream_of(stage_type)
+    digests: dict[str, str] = {}
+    for name in sorted(prompts.__all__):
+        prompt = getattr(prompts, name)
+        key = getattr(prompt, "prompt_key", None)
+        rule = CONFIG_KEYING.get(f"custom_prompts.{key}_system") if key else None
+        if isinstance(rule, Keyed) and rule.stage is not None and upstream(rule):
+            digests[name] = compute_hash(
+                f"{prompt.system_prompt_template}\0{prompt.human_prompt_template}"
+            )
+    return digests
+
 
 def stage_input_fingerprint(
     config: Config,
@@ -1418,7 +1399,9 @@ def stage_input_fingerprint(
     """Fingerprint the inputs that determine ``stage_type``'s output.
 
     The keyed settings in effect of the stage and every upstream stage
-    (``CONFIG_KEYING``), the package version, and the corpus.
+    (``CONFIG_KEYING``), the built-in prompts they ask
+    (:func:`_builtin_prompts`), the package version and stage format
+    (``_STAGE_FORMAT_VERSION``), and the corpus.
 
     Args:
         config: The active framework configuration.
@@ -1444,6 +1427,8 @@ def stage_input_fingerprint(
     payload: dict[str, Any] = {
         "settings": _settings(config, _upstream_of(stage_type)),
         "package_version": __version__,
+        "format": _STAGE_FORMAT_VERSION,
+        "prompts": _builtin_prompts(stage_type),
         "corpus_manifest": corpus_fingerprint,
     }
     if _STAGE_ORDER.index(stage_type) >= _STAGE_ORDER.index(_P.TRANSLATION):

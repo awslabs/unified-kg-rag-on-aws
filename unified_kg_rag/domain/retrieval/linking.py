@@ -5,11 +5,11 @@
 One rule for every strategy that turns a name into graph entities (local
 search's focus seeds, the structured strategy's mention nodes, the MCP
 entity lookup): :func:`choose_links` keeps the hits that *are* the name
-(:func:`exact_links`: the same ``compact_name_key``, else the same
-:func:`link_key`), else follows its policy: ``cover`` (structured)
-keeps the hits whose name covers every term of it; ``rank`` (local, whose
-seeding is measured) keeps the top hit above a score floor unless it is a
-one-word lookalike.
+(:func:`exact_links`: the same ``entity_key``, else the same
+``compact_name_key``, else the same :func:`link_key`), else follows its
+policy: ``cover`` (structured) keeps the hits whose name covers every term
+of it; ``rank`` (local, whose seeding is measured) keeps the top hit above
+a score floor unless it is a one-word lookalike.
 
 A search returns its nearest entities for any text (a kNN search always
 does, and BM25 matches one shared word), so a score alone cannot tell
@@ -24,15 +24,13 @@ Supplies"). Terms are the words of the name's :func:`link_key`
 bigrams, since those scripts write compounds without spaces ("东芝" is
 covered by "东芝电子", "라마바상사" is not by "가나다상사").
 
-:func:`link_key` is the ``compact_name_key`` folded further for the
-comparison alone (stored keys and ids are as they were): the marks a script
-writes at will dropped (Arabic short vowels and tatweel, Hebrew points), a
-middle dot between Han, Hangul or Kana letters removed ("オリオン・ラボ" is
-"オリオンラボ"), the letters a script writes
-for one another folded (``Script.letter_variants``: "أ", "إ", "آ" as "ا",
-"ى" as "ي", Russian "ё" as "е") and a designator written before the name
-dropped. Coverage also leaves Latin accents out ("Cafe" covers "Café",
-"Dang" "Đặng": ``shared.utils.scripts.without_latin_accents``).
+:func:`link_key` is the ``compact_name_key`` (which already drops the
+marks a script writes at will, a middle dot between Han, Hangul or Kana
+letters and leading and trailing designators) with the letters a script
+writes for one another folded, for the comparison alone (stored keys and
+ids keep them: ``Script.letter_variants``: "أ", "إ", "آ" as "ا", "ى" as
+"ي", Russian "ё" as "е"). Coverage also leaves Latin accents out ("Cafe"
+covers "Café", "Dang" "Đặng": ``shared.utils.scripts.without_latin_accents``).
 """
 
 from __future__ import annotations
@@ -43,16 +41,12 @@ from difflib import SequenceMatcher
 from typing import Literal
 
 from unified_kg_rag.domain.ingestion.names import compact_name_key
-from unified_kg_rag.domain.languages.legal_forms import (
-    latin_legal_form,
-    leading_legal_form,
-)
+from unified_kg_rag.domain.languages.legal_forms import latin_legal_form
 from unified_kg_rag.domain.models import RetrievalResult
+from unified_kg_rag.shared.utils import entity_key
 from unified_kg_rag.shared.utils.scripts import (
     DENSE_SCRIPT_LETTERS,
-    drop_optional_marks,
     fold_letter_variants,
-    join_dense_middle_dots,
     without_latin_accents,
 )
 
@@ -77,20 +71,16 @@ def hit_name(hit: RetrievalResult) -> str:
 
 def link_key(name: str) -> str:
     """The key two names that are one are linked by (module docstring)."""
-    key = compact_name_key(name)
-    key = fold_letter_variants(join_dense_middle_dots(drop_optional_marks(key)))
-    first, _, rest = key.partition(" ")
-    if rest and leading_legal_form(first) is not None:
-        return rest
-    return key
+    return fold_letter_variants(compact_name_key(name))
 
 
 def exact_links(mention: str, hits: Sequence[RetrievalResult]) -> list[RetrievalResult]:
     """The ``hits`` whose stored name is ``mention``: those with its
-    ``compact_name_key``, else (none) those with its :func:`link_key`, so
-    a folding the comparison adds links no other entity when one is
-    written as asked ("شركة النور" is the company, not "النور")."""
-    for key_of in (compact_name_key, link_key):
+    ``entity_key``, else (none) those with its ``compact_name_key``, else
+    those with its :func:`link_key`, so a folding a later key adds links
+    no other entity when one is written as asked ("شركة النور" is the
+    company, not "النور")."""
+    for key_of in (entity_key, compact_name_key, link_key):
         key = key_of(mention)
         exact = [h for h in hits if key and key_of(hit_name(h)) == key]
         if exact:

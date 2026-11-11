@@ -97,5 +97,13 @@ PROFILE = LanguageProfile(
         "November": ("novembre",),
         "December": ("décembre", "déc", "decembre"),
     },
-    legal_forms={"sa": "sa", "sas": "sas", "sarl": "sarl"},
+    legal_forms={
+        "sa": "sa",
+        "sas": "sas",
+        "sasu": "sasu",
+        "sarl": "sarl",
+        "eurl": "eurl",
+        "snc": "snc",
+    },
+    quote_pairs=(("«", "»"), ("‹", "›")),
 )

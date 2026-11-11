@@ -185,5 +185,23 @@ PROFILE = LanguageProfile(
     },
     # The year mark: "2024 г.", "2024 года".
     date_fillers=("г", "года", "год"),
+    # Limited liability, joint-stock (open, closed, public) and sole
+    # proprietor forms, written before the name ("ООО «Ромашка»") or after.
+    legal_forms={
+        "ооо": "ооо",
+        "оао": "оао",
+        "зао": "зао",
+        "пао": "пао",
+        "ао": "ао",
+    },
+    leading_legal_forms={
+        "ооо": "ооо",
+        "оао": "оао",
+        "зао": "зао",
+        "пао": "пао",
+        "ао": "ао",
+        "ип": "ип",
+    },
+    quote_pairs=(("«", "»"), ("„", "“")),
     chars_per_token={CLAUDE_TOKENIZER: 2.45},
 )

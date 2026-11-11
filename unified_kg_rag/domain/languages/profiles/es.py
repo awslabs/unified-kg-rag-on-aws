@@ -109,6 +109,15 @@ PROFILE = LanguageProfile(
     },
     # "15 de marzo de 2024".
     date_fillers=("de", "del"),
-    legal_forms={"sa": "sa"},
+    legal_forms={
+        "sa": "sa",
+        "sl": "sl",
+        "slu": "slu",
+        # Mexico's variable-capital forms.
+        "sa de cv": "sa de cv",
+        "s de rl": "s de rl",
+        "s de rl de cv": "s de rl de cv",
+    },
+    quote_pairs=(("«", "»"),),
     chars_per_token={CLAUDE_TOKENIZER: 2.84},
 )

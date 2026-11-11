@@ -12,7 +12,6 @@ records a full build names when asked to.
 
 from __future__ import annotations
 
-import logging
 from types import SimpleNamespace
 from typing import Any
 
@@ -378,89 +377,6 @@ class TestExtractionStore:
 
         vectors.write_extraction_records = unattributed  # type: ignore[method-assign]
         assert store.save([(_unit("t1"), {}), (other, {})], "fp") == {"t1", "t2"}
-
-    def test_a_record_under_an_earlier_key_is_found_and_stored_again(
-        self, caplog
-    ) -> None:
-        # A record an earlier version keyed otherwise is found under that key
-        # and stored under the current one, the key its unit will name.
-        caplog.set_level(logging.INFO)
-        vectors = FakeVectorStore()
-        store = ExtractionStore(Config(), lambda: vectors)
-        store.save([(_unit("t1", "a"), {"p": 1})], "old-fp")
-        other = TextUnit(id="t2", text="Buyer pays Vendor.", attributes={"index": "a"})
-        store.save([(other, {"p": 2})], "fp")
-
-        found = store.load(
-            [_unit("t9", "a"), other, _unit("t8", "b")], "fp", _raw, ["old-fp"]
-        )
-
-        assert found == {"t9": {"p": 1}, "t2": {"p": 2}}
-        assert vectors.extraction_records[("a", record_key("fp", TEXT))] == {"p": 1}
-        assert "1 text units reused from records stored under an earlier key" in (
-            caplog.text
-        )
-        # Without the earlier key: not found.
-        assert store.load([_unit("t7", "c")], "fp", _raw, ["old-fp"]) == {}
-
-    def test_records_under_several_earlier_keys_are_each_found(self) -> None:
-        # Two earlier releases keyed records otherwise: each unit is found
-        # under whichever key it was stored under, the first key listed
-        # winning when both hold it, and every one is stored under the
-        # current key.
-        vectors = FakeVectorStore()
-        store = ExtractionStore(Config(), lambda: vectors)
-        newer = TextUnit(id="t1", text="Vendor ships.", attributes={"index": "a"})
-        older = TextUnit(id="t2", text="Buyer pays.", attributes={"index": "a"})
-        store.save([(newer, {"p": 1}), (older, {"p": 0})], "newer-fp")
-        store.save([(older, {"p": 2})], "older-fp")
-
-        found = store.load([newer, older], "fp", _raw, ["older-fp", "newer-fp"])
-
-        assert found == {"t2": {"p": 2}, "t1": {"p": 1}}
-        assert vectors.extraction_records[("a", record_key("fp", older.text))] == {
-            "p": 2
-        }
-        assert vectors.extraction_records[("a", record_key("fp", newer.text))] == {
-            "p": 1
-        }
-
-    @pytest.mark.parametrize("failure", ["raise", "rejected", "unattributed"])
-    def test_an_earlier_record_not_stored_again_is_extracted(
-        self, failure: str
-    ) -> None:
-        # The unit would name a key that holds nothing: it is extracted (and
-        # stored) instead.
-        vectors = FakeVectorStore()
-        store = ExtractionStore(Config(), lambda: vectors)
-        store.save([(_unit("t1"), {"p": 1})], "old-fp")
-
-        def write(records, suffix=None):
-            if failure == "raise":
-                raise RuntimeError("store down")
-            stats = IndexingStats(total_items=len(records))
-            if failure == "rejected":
-                stats.add_error("rejected", ids=[record_key("fp", TEXT)])
-            else:
-                stats.failed_items = 1
-            return stats
-
-        vectors.write_extraction_records = write  # type: ignore[method-assign]
-        assert store.load([_unit("t9")], "fp", _raw, ["old-fp"]) == {}
-
-    def test_a_lost_lease_stops_the_copy_of_an_earlier_record(self) -> None:
-        from unified_kg_rag.shared import NamespaceLeaseError
-
-        vectors = FakeVectorStore()
-        store = ExtractionStore(Config(), lambda: vectors)
-        store.save([(_unit("t1"), {"p": 1})], "old-fp")
-
-        def lost(records, suffix=None):
-            raise NamespaceLeaseError("another run took the namespace")
-
-        vectors.write_extraction_records = lost  # type: ignore[method-assign]
-        with pytest.raises(NamespaceLeaseError):
-            store.load([_unit("t9")], "fp", _raw, ["old-fp"])
 
 
 class TestRecordKeys:

@@ -68,7 +68,6 @@ from unified_kg_rag.application.storage.indexing_manager import (
 from unified_kg_rag.domain.ingestion.cache_keys import (
     extraction_settings,
     is_excluded_source_path,
-    legacy_unit_record_fingerprints,
     unit_record_fingerprint,
 )
 from unified_kg_rag.domain.ingestion.claim_resolver import ClaimResolver
@@ -1320,7 +1319,6 @@ class GraphExtractionStage(PipelineStage):
             document_units,
             unit_record_fingerprint(self.config, gleaned=gleaned),
             record_from_payload,
-            legacy_unit_record_fingerprints(self.config, gleaned=gleaned),
         )
         # A seed unit's record is its parsed text (no model call), stored
         # under the seed fingerprint like any record (graph resolution).
@@ -1676,9 +1674,6 @@ class ClaimExtractionStage(PipelineStage):
                     units,
                     unit_record_fingerprint(self.config, gleaned=gleaned, claims=True),
                     claims_from_payload,
-                    legacy_unit_record_fingerprints(
-                        self.config, gleaned=gleaned, claims=True
-                    ),
                 )
             )
         reused = len(per_unit)

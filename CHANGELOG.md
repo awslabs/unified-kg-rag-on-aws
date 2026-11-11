@@ -255,10 +255,15 @@ See [exit codes and JSON output](docs/reference/exit-codes-and-json.md) and the
   schema is rejected at first use (#327).
 - Entity resolution merges only names equal after normalization, legal-form removal and dense-script spacing (fuzzy
   matching is opt-in). Legal forms (the language profiles, `domain/languages/legal_forms.py`): trailing Inc, Corp,
-  Co, Ltd, LLC, LLP, LP, PLC, Pty, Pte, GmbH, AG, SA, SAS, SARL, SRL, S.p.A., Ltda, BV, NV and KK in any dotting,
-  and the Korean, Japanese and Chinese company forms leading or trailing ("(주)", "合同会社", "股份有限公司"), so "Acme GmbH"
-  and "Acme" of one type are one entity; not after "&"/"and" nor after an article alone. Entity and relationship
-  `rank` come from node degree, and a relationship's weight sums its strengths per text unit (#189, #214, #574).
+  Co, Ltd, LLC, LLP, LP, PLC, Pty, Pvt, Pte, GmbH, AG, KG, UG, SA, SAS, SARL, S.L., SRL, S.p.A., Ltda, S/A, BV,
+  NV and KK in any dotting or accents, forms of several words (`GmbH & Co. KG`, `S.A. de C.V.`, `Private Limited`),
+  Russian, Arabic, Hebrew, Hindi and Thai forms, those written before the name (`ООО`, `Công ty TNHH`, `شركة`,
+  `บริษัท`) and the Korean, Japanese and Chinese company forms leading or trailing ("(주)", "合同会社", "股份有限公司"),
+  so "Acme GmbH" and "Acme" of one type are one entity; not after "&"/"and", an article alone or a number ("500 kg").
+  Entity keys, which ids hash, drop the quote marks of every script («», „“, 「」, 《》), read every dash and the minus
+  sign as a space, and drop a middle dot between Han, Hangul or Kana letters and the Arabic and Hebrew vowel marks
+  ("ジョン・スミス" is "ジョンスミス"). Entity and relationship `rank` come from node degree, and a relationship's weight
+  sums its strengths per text unit (#189, #214, #574).
 - Entities have no `MemberOf` edges to communities; an entity lists its `community_ids` (#348).
 - Hidden files and files under a hidden or `__pycache__` directory of the corpus are not parsed (#213).
 
@@ -491,8 +496,16 @@ From a `main` checkout (formats and keys no release had):
 - Stored edge ranks: a vector copy's rank a run killed between the stores left (before the rank was compared) is set
   by the next run deriving one of the edge's endpoints, or by a reset; a `pending-commit` note's `edge_entity_ids`
   (#694) is ignored.
-- #574 legal forms: entity `name_key` follows the larger table; reset with a new or no `--pipeline-id` to merge
-  designator variants, or entities stored apart stay apart.
+- Re-keyed once before 0.3.0: entity ids and name keys fold quotes, dashes, dense-script middle dots and Arabic and
+  Hebrew marks and strip more legal forms (*Stored data and reindexing*); the description summary and claim prompts
+  changed (*Fixed*); stage-cache keys hold the built-in prompts (a pipeline id resumed across a prompt change starts
+  over); extraction records under earlier keys (other description summary settings, #541-#556) and claims under an
+  earlier reading of their dates (#612, #624) are no longer looked up. Run one reset (`indexing.reset: true`) with a
+  new or no `--pipeline-id`: incremental runs keep stored entities under their earlier ids beside the new ones. It
+  reuses the stored graph extraction and gleaning records (a record a build before #556 stored under other summary
+  settings or `models` tiers is extracted again) and asks one summary per entity or relationship over the summary
+  threshold, the reports of the communities whose input changed (most of them) and, with claim extraction on, every
+  unit's claims (one call per unit that states an entity).
 - One reset covers all of these and the items below. On an index built with #565 or later it reuses the stored
   extraction records and vectors: beyond what the items below name, the model is asked only for the reports of the
   communities that cluster differently and a summary and embedding per newly merged entity over the threshold. On
@@ -520,9 +533,6 @@ From a `main` checkout (formats and keys no release had):
   claims too): a reset translates, extracts and gleans every unit again, the cost of a first build; incremental runs
   use the new prompts for new and changed documents only. A reset also types untyped merges and re-cuts one-line
   `intelligent` pre-chunks.
-- Extraction records stored under non-default description summary settings are found under their earlier key only
-  when the run's summary settings and `models` tiers match those they were stored under: run once with them after
-  upgrading, then change them (#541, #545, #556).
 - An index built before vector digests embeds its items once more on its next incremental run (#527); a build record
   written earlier has no community counters until the next full build (#540); the first incremental run of each
   namespace reads its stores once to record their schema annotations, with no model call (#488).
@@ -569,9 +579,7 @@ From a `main` checkout (formats and keys no release had):
   `--pipeline-id` does not resume from its stage caches either. Run one `indexing.reset: true`, which costs a first
   build (every unit extracted and gleaned again, every summary, report and vector made again). Any other configuration
   keeps its extraction records and indices; the community report prompt now names its language, so the next full build
-  asks every report once more (one call per community), and later builds reuse them. A claim stored under a date
-  written as `2024年3月` (or `2024. 3. 15.`, #612, or a form read as a date since, #624) is found under it, so nothing
-  else re-runs.
+  asks every report once more (one call per community), and later builds reuse them.
 - `intelligent` chunking (the default) cuts a model chunk over `max_chunk_size` without pieces under
   `min_chunk_size` (#624): a reset re-cuts only the documents that had one, whose changed text units are extracted
   again (the boundary answers are kept); incremental runs cut new and changed documents so.
@@ -1708,14 +1716,15 @@ Queries and retrieval.
   top hit when that scores at least `search.local_search.seed_score_ratio` (0.6) of the best hit, read at equal hybrid
   weights; one lookup of the joined names seeded a wrong neighbour beside every right seed (#517, #530). A top hit
   sharing one word with the name and covering neither way (an absent "Zorblax Supplies" for "Acme Supplies") seeds
-  nothing; semantic and alias hits ("NYC" for "New York City") seed as before. Local seeds compare names folded at
-  query time (stored keys unchanged): a middle dot between kana, Han or Hangul letters ("オリオン・ラボ" for "オリオンラボ"),
-  Arabic short vowels, tatweel, alef with or without hamza, alef maksura, Russian "ё" for "е" and a leading "شركة" no
-  longer keep a name from linking, nor Latin accents a name from covering or seeding ("Cafe" for "Café", "Nguyen Van
-  An" for "Nguyễn Văn An", and the letters with a stroke, a ligature or no dot: "Dang" for "Đặng", "Lodz" for "Łódź",
-  "Yildiz" for "Yıldız", "Gudmundsson" for "Guðmundsson", "Izmir" for "İzmir"); an entity written as asked links alone
-  ("شركة النور", not also "النور"). `graph_aware`'s retrieved coverage compares names the same way, and entity
-  grounding folds those letters as it folds accents.
+  nothing; semantic and alias hits ("NYC" for "New York City") seed as before. Local seeds compare names as entity
+  keys fold them (*Stored data and reindexing*) and further at query time: a middle dot between kana, Han or Hangul
+  letters ("オリオン・ラボ" for "オリオンラボ"), Arabic short vowels, tatweel, alef with or without hamza, alef maksura, Russian
+  "ё" for "е" and a leading "شركة" no longer keep a name from linking, nor Latin accents a name from covering or
+  seeding ("Cafe" for "Café", "Nguyen Van An" for "Nguyễn Văn An", and the letters with a stroke, a ligature or no
+  dot: "Dang" for "Đặng", "Lodz" for "Łódź", "Yildiz" for "Yıldız", "Gudmundsson" for "Guðmundsson", "Izmir" for
+  "İzmir"); an entity written as asked links alone ("شركة النور", not also "النور"; "Acme GmbH", not also "Acme").
+  `graph_aware`'s retrieved coverage compares names the same way, and entity grounding folds those letters as it folds
+  accents.
 - Local search orders its candidate text units by one shared rule (`domain/retrieval/lineage.py`, also the
   structured query result's lineage): the units most expanded entities cite, then the best-scored citing entity's,
   then first seen; an entity citing a unit twice counts once, and a lineage a graph store returns as its JSON text
@@ -1829,9 +1838,12 @@ Ingestion and incremental indexing.
   unrecognised word `unknown`) at extraction and in every merge, so a stored off-vocabulary status no longer
   disputes the same one (#640). The words read are the prompt's, `SUSPECTED` and a few plain synonyms, the same in
   English, Korean, Japanese and Chinese (#644): `confirmed` and `verified` are `true`, `denied` and `refuted`
-  `false`, and `uncertain` and `unverified` (`불확실`, `未確認`) `disputed`, as the prompt's DISPUTED ("uncertainty
-  indicated") and MS GraphRAG's SUSPECTED ("not verified") say (Korean read them as unrecognised); the claims whose
-  status is none of them are counted in the `total_unrecognised_claim_statuses` metric (#644).
+  `false`, and `uncertain` and `unverified` (`불확실`, `未確認`) `disputed`, as the prompt's DISPUTED ("alleged,
+  suspected or not verified") and MS GraphRAG's SUSPECTED ("not verified") say (Korean read them as unrecognised);
+  the claims whose status is none of them are counted in the `total_unrecognised_claim_statuses` metric (#644). As
+  MS GraphRAG's claim prompt, built around the allegations a text reports, the prompt takes an allegation or
+  suspicion the text reports as a `DISPUTED` claim saying who alleges it, where it left out all speculation; only the
+  author's own opinions are left out.
 - An entity without relationships no longer adds a level to the community hierarchy: it made a single root over
   the other communities read as a partition, so global search's cut depths depended on it (#608).
 - A model answer that corrects itself is parsed by its last complete answer (each XML section keeps its last closed
@@ -1896,7 +1908,9 @@ Ingestion and incremental indexing.
 - `entity_confidence_threshold` applies per chunk, and `entity_grounding.action: penalize` applies to gleaning
   additions (#250, #291).
 - Descriptions: an over-long one is re-summarized map-reduce (#250); a summary over the threshold is not summarized
-  again (#523); the translation and summary prompts name the language ("Korean", not `LanguageCode.KO`) (#565).
+  again (#523); the translation and summary prompts name the language ("Korean", not `LanguageCode.KO`) (#565). The
+  summary prompt follows MS GraphRAG's: it names the entity (both ends of a relationship) in the third person, where
+  it forbade the name, and resolves contradictions, stating one the descriptions do not settle.
 - Unresolved claims are not indexed, an entity named only in a relationship gets its suffix and filters, and
   deduplication prefers an indexed copy (#220).
 - Chunking and translation errors are no longer swallowed, a chunk-boundary error falls back to a size split with a

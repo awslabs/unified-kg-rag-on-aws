@@ -1148,7 +1148,7 @@ def _store(mocker, loaded: dict[str, dict[str, Any]] | None = None) -> Any:
     store = mocker.patch.object(ps, "ExtractionStore", autospec=True).return_value
     loaded = {} if loaded is None else loaded
 
-    def load(units, fingerprint, parse, legacy_fingerprints=()):
+    def load(units, fingerprint, parse):
         return {
             unit.id: parse(loaded[fingerprint], unit)
             for unit in units

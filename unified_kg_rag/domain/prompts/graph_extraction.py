@@ -389,6 +389,14 @@ Begin extraction now:"""
 
 
 class ClaimExtractionPrompt(BasePrompt):
+    """Extract the claims a text unit states about its entities (covariates).
+
+    As MS GraphRAG's ``extract_claims`` prompt, which is built around the
+    allegations and suspicions a text reports (its SUSPECTED status), a claim
+    is a fact the text states or an allegation it reports, the latter as
+    DISPUTED; the author's own opinions are left out. The output is XML with
+    a fixed type list rather than GraphRAG's delimited tuples."""
+
     prompt_key = "claim_extraction"
     model_role = ModelRole.CLAIM_EXTRACTION
     input_variables = ["input_text", "entity_specs", "target_language"]
@@ -401,19 +409,20 @@ class ClaimExtractionPrompt(BasePrompt):
         return chunk_output_floor(config, role or cls.model_role, copies=2)
 
     system_prompt_template = """You are an expert claim extraction specialist focused on identifying and structuring all
-factual assertions from text with maximum precision and completeness.
+assertions from text, stated or reported, with maximum precision and completeness.
 
-MISSION: Extract ALL verifiable factual claims from text using the exact XML format specified.
+MISSION: Extract ALL claims about the specified entities from text using the exact XML format specified.
 
 # CLAIM DEFINITION
 
-A claim is a specific, factual assertion that can be verified independently. Extract only concrete, factual statements -
-NOT opinions, hypotheses, or speculative content.
+A claim is a specific assertion the text makes about an entity: a fact it states, or an allegation, accusation or
+suspicion it reports (say in the <description> who alleges or suspects it). Leave out the author's own opinions and
+hypotheses.
 
 ## Claim Status (REQUIRED for each claim):
-- **TRUE**: Presented as established fact in the text
-- **FALSE**: Explicitly contradicted or negated
-- **DISPUTED**: Conflicting information or uncertainty indicated
+- **TRUE**: Presented as established or confirmed in the text
+- **FALSE**: Explicitly contradicted, negated or found to be false
+- **DISPUTED**: Reported as alleged, suspected or not verified, or contested by conflicting information
 - **UNKNOWN**: Insufficient information to determine status
 
 ## Temporal Information (REQUIRED for each claim):
@@ -443,14 +452,14 @@ NOT opinions, hypotheses, or speculative content.
 <claim_status>TRUE|FALSE|DISPUTED|UNKNOWN</claim_status>
 <start_date>YYYY-MM-DD or UNKNOWN</start_date>
 <end_date>YYYY-MM-DD or UNKNOWN</end_date>
-<description>Precise description of the factual assertion.</description>
+<description>Precise description of the assertion.</description>
 <source_text>Exact verbatim text from source supporting this claim</source_text>
 </claim>
 </claims>
 
 # EXTRACTION RULES:
-1. Extract ONLY factual claims directly stated in the text
-2. Each claim must represent ONE atomic factual assertion
+1. Extract ONLY claims the text itself states or reports
+2. Each claim must represent ONE atomic assertion
 3. The <subject> is the entity the claim is about: one of the entities in the entity specifications, named exactly as
    listed there (an entity the text names when none are listed). A statement whose subject is no such entity is not a
    claim: leave it out
@@ -458,7 +467,7 @@ NOT opinions, hypotheses, or speculative content.
 5. Include exact source text quotations for each claim
 6. Assign appropriate claim types from the specified list
 7. Provide accurate temporal information when available
-8. Focus on verifiable, concrete statements only
+8. Focus on concrete statements; an allegation or suspicion is a DISPUTED claim, not a TRUE one
 
 # QUALITY REQUIREMENTS:
 ✓ One distinct assertion per claim
@@ -468,7 +477,7 @@ NOT opinions, hypotheses, or speculative content.
 ✓ Proper claim type classification
 ✓ Correct claim status assignment"""
 
-    human_prompt_template = """Extract all factual claims from the following text with maximum precision.
+    human_prompt_template = """Extract all claims from the following text with maximum precision.
 
 ## SOURCE TEXT:
 <input_text>
@@ -486,7 +495,7 @@ Write every <description> in the language with code '{target_language}'. Keep en
 spans exactly as they appear in the source text.
 
 ## EXTRACTION REQUIREMENTS:
-1. Identify ALL factual assertions in the text
+1. Identify ALL assertions the text makes or reports about the entities
 2. Structure each claim with complete information (subject, object, type, status, dates)
 3. Use entity names exactly as specified when provided
 4. Include exact source text quotes for each claim
@@ -494,7 +503,7 @@ spans exactly as they appear in the source text.
 6. Provide temporal information when available
 
 ## STEP-BY-STEP PROCESS:
-1. Read text thoroughly for all factual statements
+1. Read text thoroughly for all statements, allegations and suspicions about the entities
 2. Identify subject-object relationships for each assertion
 3. Classify each claim using the specified types
 4. Determine claim status based on text presentation
@@ -503,7 +512,7 @@ spans exactly as they appear in the source text.
 7. Format using the mandatory XML structure
 
 ## CRITICAL REMINDERS:
-- Extract ONLY factual claims, not opinions or speculation
+- Extract the facts and the allegations or suspicions the text reports, not the author's own opinions
 - Use the exact XML format provided
 - Include all required fields for each claim
 - Ensure entity name consistency with specifications

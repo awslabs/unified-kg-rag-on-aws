@@ -339,14 +339,20 @@ degree (§4.5), so with no seed graph the rank is the plain degree.
 - `Entity.name` keeps the display form the source used, only trimmed and
   whitespace-collapsed (`clean_display_name`), so context and reports quote
   "$1,000 penalty" or "C++" verbatim.
-- Ids hash `entity_key(name)` (`shared/utils/common.py`): NFKC, casefold, `_`
-  and `-` as spaces, quote marks and commas dropped, whitespace collapsed,
+- Ids hash `entity_key(name)` (`shared/utils/common.py`): NFKC, casefold, `_`,
+  dashes and the minus sign as spaces (`WORD_DASHES`, not the wave dash of a
+  range), the quote marks of every script (`QUOTE_MARKS`: Unicode's initial,
+  final and other quotation marks, corner brackets, CJK title marks and the
+  Hebrew geresh and gershayim; both in `shared/utils/scripts.py`) and commas
+  dropped, Arabic short vowels and Hebrew points dropped, a middle dot
+  between Han, Hangul or Kana letters dropped, whitespace collapsed,
   trailing sentence punctuation stripped, **every other symbol and the
   letters and digits of all scripts kept**. "ACME  Corp." and "Acme Corp"
   share an id; "C++" and "C#" do not; a non-empty name never yields an empty
   key. Every exact-name match (extraction, gleaning, claim resolution,
   incremental merges) and the fuzzy matcher's shingles use the same key.
-- **Changing the key changes every id**, so it requires a full re-index.
+- **Changing the key changes every id**, so it requires a full re-index (one
+  `indexing.reset: true` run, which reuses the stored extraction records).
 
 ---
 
@@ -404,16 +410,9 @@ checks that its values are the defaults and each key is in the reference).
   descriptions, in no unit's record, and a summary records them in
   `summarized_with`). A unit record's key holds them as the default
   configuration has them (`_summary_key`, the same whatever the run's
-  `models` tiers), and a unit without a record under it is looked up under
-  the keys earlier `main` builds stored it under too (no release stored
-  the extraction store; `legacy_unit_record_fingerprints`: them at their
-  defaults resolved through the run's tiers, and at the run's values, the
-  key of a record stored while they keyed graph extraction):
-  `ExtractionStore.load` stores a record found there under the current
-  key, the one its unit names. `changed_settings` ignores them in a
-  scope's earlier record. So stored records are found, documents read as
-  unchanged, and a summary change asks no unit again. The lookup is
-  kept until the first release after 0.2.3 and removed in it.
+  `models` tiers). `changed_settings` ignores them in a
+  scope's earlier record. So documents read as unchanged and a summary
+  change asks no unit again.
   The schema keys count as extraction sees them
   (`cache_keys._as_extracted`): a type by its label and description (a
   string item as written, a mapping as the string that reads back the

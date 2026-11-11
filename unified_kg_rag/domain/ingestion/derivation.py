@@ -40,8 +40,6 @@ from pydantic import BaseModel, ConfigDict, Field
 from unified_kg_rag.domain.ingestion.claim_resolver import (
     ClaimResolver,
     claim_identity_suffix,
-    earlier_claim_ids,
-    has_earlier_date_reading,
     resolved_claim_id,
 )
 from unified_kg_rag.domain.ingestion.contributions import (
@@ -94,11 +92,6 @@ class Derived(BaseModel):
     # entity (they were re-keyed or split): the caller derives those edges
     # with them.
     rewired: list[str] = Field(default_factory=list)
-    # Id an earlier build may have stored a derived claim under (its dates
-    # read otherwise then, see ``earlier_claim_ids``) -> the derived claim's
-    # id: the caller derives the stored claims of these ids with the given
-    # ones, and a given claim of such an id is that claim.
-    earlier_claim_ids: dict[str, str] = Field(default_factory=dict)
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -219,7 +212,6 @@ class _ClaimDerivation:
     """The derived claims, and what deriving them adds to ``Derived``."""
 
     claims: list[Claim] = field(default_factory=list)
-    earlier_claim_ids: dict[str, str] = field(default_factory=dict)
     underived: list[str] = field(default_factory=list)
     dropped: list[str] = field(default_factory=list)
     id_remap: dict[str, str] = field(default_factory=dict)
@@ -325,7 +317,6 @@ def derive(
     )
     derived_entities = entity_derivation.entities
     derived_claims = claim_derivation.claims
-    earlier = claim_derivation.earlier_claim_ids
     parted_from = entity_derivation.parted_from
     split_members = entity_derivation.split_members
     underived.extend(claim_derivation.underived)
@@ -346,7 +337,6 @@ def derive(
         id_remap=id_remap,
         split_from=parted_from,
         dropped=dropped,
-        earlier_claim_ids=earlier,
         rewired=sorted(
             {
                 *split_members,
@@ -749,7 +739,6 @@ def _derive_claims(
     underived: list[str] = []
     dropped: list[str] = []
     derived_claims: list[Claim] = []
-    earlier: dict[str, str] = {}
 
     claim_records = claim_records or {}
     statements = [
@@ -779,32 +768,6 @@ def _derive_claims(
                     update={"subject_id": subject, "object_id": obj}
                 )
                 by_id.setdefault(resolved_claim_id(stated), claim)
-    # And by the ids an earlier reading of their dates gave them: a
-    # claim stored before it changed is the claim its dates read as now.
-    # Only a unit with a statement whose dates an earlier build keyed
-    # otherwise gives one; a claim stated in none is skipped.
-    reread = {
-        unit_id
-        for unit_id, unit_claims in claim_records.items()
-        if any(has_earlier_date_reading(s) for s in unit_claims)
-    }
-    for claim in resolved_claims:
-        if reread.isdisjoint(claim.text_unit_ids or ()):
-            continue
-        stated_by = [
-            statement
-            for unit_id in dict.fromkeys(claim.text_unit_ids or [])
-            for statement in claim_records.get(unit_id, [])
-        ]
-        exact = with_entity_ids(claim, derived_of)
-        current_id = resolved_claim_id(exact)
-        # Under the stored entity ids too, as above.
-        for stale_id in sorted(
-            earlier_claim_ids(exact, stated_by) | earlier_claim_ids(claim, stated_by)
-        ):
-            if stale_id not in by_id:
-                by_id[stale_id] = claim
-                earlier[stale_id] = current_id
     # The derived claim of each given one (None: dropped), in order.
     kept_for: list[Claim | None] = []
     for claim in claims:
@@ -967,7 +930,6 @@ def _derive_claims(
     derived_claims = _merge_same_claims(derived_claims)
     return _ClaimDerivation(
         claims=derived_claims,
-        earlier_claim_ids=earlier,
         underived=underived,
         dropped=dropped,
         id_remap=claim_remap,

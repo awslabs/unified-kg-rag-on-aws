@@ -29,7 +29,7 @@ import re
 import unicodedata
 from bisect import bisect_right
 from collections import Counter
-from collections.abc import Collection, Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import cache
@@ -39,11 +39,13 @@ __all__ = [
     "DENSE_SCRIPT_LETTERS",
     "DENSE_SCRIPT_TOKEN_RANGES",
     "LATIN_CHARS_PER_TOKEN",
+    "QUOTE_MARKS",
     "SCRIPTS",
     "SPACELESS_SCRIPT_LETTERS",
     "Script",
     "ScriptCounts",
     "Spacing",
+    "WORD_DASHES",
     "count_letters",
     "drop_optional_marks",
     "drop_dense_script_spaces",
@@ -470,6 +472,42 @@ def join_dense_middle_dots(text: str) -> str:
     "オリオン・ラボ" is "オリオンラボ", as those scripts write a name's words
     with a dot, a space or nothing between them; a dot elsewhere stays."""
     return _DENSE_MIDDLE_DOT.sub("", text)
+
+
+def _punctuation(test: Callable[[str], bool]) -> str:
+    """The characters ``test`` takes of the blocks every Unicode quote mark
+    and dash is in: up to U+3100 (Latin to CJK punctuation) and from U+FE00
+    (vertical, small and full-width forms)."""
+    return "".join(
+        ch for ch in map(chr, (*range(0x3100), *range(0xFE00, 0x10000))) if test(ch)
+    )
+
+
+def _is_quote_mark(ch: str) -> bool:
+    return (
+        unicodedata.category(ch) in ("Pi", "Pf")
+        or "QUOTATION MARK" in (name := unicodedata.name(ch, ""))
+        or "CORNER BRACKET" in name
+        or ch in "\u3008\u3009\u300a\u300b\u05f3\u05f4"
+    )
+
+
+# Every script's quote marks: the initial and final quotes (Unicode Pi, Pf:
+# « », “ ”, ‘ ’, ‹ ›), the other characters Unicode names a quotation mark
+# (the straight one, the low ones „ ‚ of German and Russian, 〝 〞 〟), the
+# corner brackets 「 」『 』 Japanese and Chinese quote with, the title marks
+# 《 》〈 〉 Chinese and Korean write a title in, and the Hebrew geresh and
+# gershayim ׳ ״, written for ' and ".
+QUOTE_MARKS = _punctuation(_is_quote_mark)
+# The dashes that join words as "-" does: every Unicode dash (Pd: "‐", "–",
+# "—", the Hebrew maqaf "־", the double hyphen "゠") and the minus sign "−",
+# but the wave dashes "〜" and "〰", which write a range ("第1〜3条").
+WORD_DASHES = (
+    _punctuation(
+        lambda ch: unicodedata.category(ch) == "Pd" and ch not in "\u301c\u3030"
+    )
+    + "\u2212"
+)
 
 
 # One compiled class: the per-character range scan these tests replaced held

@@ -11,24 +11,26 @@ one table here.
 
 Spelling variants are folded rather than listed: text is NFKC-normalized and
 casefolded first ("㈜" is "(주)", "Ｉｎｃ" is "inc"), a Latin designator is
-compared without its dots ("L.L.C." is "llc", "S.A." is "sa") and a
+compared without its dots ("L.L.C." is "llc", "S.A." is "sa") and its
+Latin accents ("Cong ty" is "Công ty"), and a
 parenthesized one with any spaces inside the parentheses ("( 주 )").
 
 To avoid merging different names, a designator is stripped only
 
-- at the end of a name for a Latin form, as a whole word after another word
-  that is neither "&" / "and" ("Smith & Co" is a firm's name, not "Smith")
-  nor only an article ("The Company" is a defined party, not "The");
+- at the end of a name for a form written as words, as whole words after
+  another word that is neither "&" / "and" ("Smith & Co" is a firm's name,
+  not "Smith"), nor only an article ("The Company" is a defined party, not
+  "The"), nor a number ("500 kg" is a weight); a designator may span words
+  ("GmbH & Co. KG", "S.A. de C.V.", "Private Limited");
+- at the start of a name for a form its language writes there ("ООО
+  Ромашка", "Công ty TNHH Acme"), before another word;
 - at the start or the end for a Han, Hangul or Kana form, with or without a
   space, as written in those scripts;
 - never down to nothing: a name that is only designators keeps the first
   ("Inc." stays "inc.", "Pty Ltd" becomes "pty").
 
-``S.p.A.`` counts only with its dots, since "spa" is a word.
-
-A form written before the name (Arabic "شركة", ``leading_legal_form``) is
-read by query-time linking (``domain.retrieval.linking``) only, so stored
-name keys are as they were.
+``S.p.A.``, ``e.V.`` and ``S.L.`` count only with their dots, since "spa"
+and "ev" are words and "SL" a model name.
 """
 
 from __future__ import annotations
@@ -37,25 +39,44 @@ import re
 import unicodedata
 
 from unified_kg_rag.domain.languages.registry import profiles
+from unified_kg_rag.shared.utils.scripts import without_latin_accents
 
-__all__ = ["latin_legal_form", "leading_legal_form", "strip_legal_forms"]
+__all__ = ["latin_legal_form", "strip_legal_forms"]
 
-# Designators written as words, dot-free and casefolded, each with the
-# canonical short form its spellings share, from every language's profile
-# (``LanguageProfile.legal_forms``).
+
+def _folded(form: str) -> str:
+    """``form`` as designators are compared: NFKC-casefolded (Thai "ำ" is
+    "ํา"), without its Latin accents ("Công ty" is "cong ty", as text
+    without accents writes it)."""
+    return without_latin_accents(
+        unicodedata.normalize("NFKC", unicodedata.normalize("NFKC", form).casefold())
+    )
+
+
+# Designators written as words after the name, dot-free and casefolded, each
+# with the canonical short form its spellings share, from every language's
+# profile (``LanguageProfile.legal_forms``).
 _LATIN_LEGAL_FORMS: dict[str, str] = {
-    form: short
+    _folded(form): short
     for language in profiles()
     for form, short in language.legal_forms.items()
 }
 # Those written before the name (``LanguageProfile.leading_legal_forms``).
 _LEADING_LEGAL_FORMS: dict[str, str] = {
-    unicodedata.normalize("NFKC", form).casefold(): short
+    _folded(form): short
     for language in profiles()
     for form, short in language.leading_legal_forms.items()
 }
-# Designators that are also words: a designator only when spelled with dots.
-_DOTTED_ONLY = frozenset({"spa"})
+# The most words one designator spans ("gmbh & co kg").
+_MAX_WORDS = max(len(form.split()) for form in _LATIN_LEGAL_FORMS)
+_MAX_LEADING_WORDS = max(
+    (len(form.split()) for form in _LEADING_LEGAL_FORMS), default=0
+)
+# Designators that are also words or model names ("spa", "ev", Mercedes-Benz
+# "SL"): a designator only when spelled with dots.
+_DOTTED_ONLY = frozenset({"spa", "ev", "sl"})
+# A number: what a unit, not a designator, follows ("500 kg").
+_NUMBER = re.compile(r"[\d.,]+")
 # What a Latin designator may not follow alone or directly.
 _ARTICLES = frozenset({"the", "a", "an"})
 _CONJUNCTIONS = frozenset({"&", "and"})
@@ -64,7 +85,7 @@ _CONJUNCTIONS = frozenset({"&", "and"})
 # (``LanguageProfile.dense_legal_forms``).
 _DENSE_LEGAL_FORMS = tuple(
     dict.fromkeys(
-        form for language in profiles() for form in language.dense_legal_forms
+        _folded(form) for language in profiles() for form in language.dense_legal_forms
     )
 )
 
@@ -91,27 +112,49 @@ def latin_legal_form(token: str) -> str | None:
     "llc"), and spellings of one form share their short form ("corporation"
     and "corp" are "corp").
     """
-    bare = token.replace(".", "")
+    bare = without_latin_accents(token.replace(".", ""))
     if bare in _DOTTED_ONLY and "." not in token:
         return None
     return _LATIN_LEGAL_FORMS.get(bare)
 
 
-def leading_legal_form(token: str) -> str | None:
-    """The canonical short form of ``token`` (one casefolded word, its dots
-    ignored) when it is a designator its language writes before the name
-    ("شركة"), else ``None``."""
-    return _LEADING_LEGAL_FORMS.get(token.replace(".", ""))
+def _form_key(words: list[str]) -> str:
+    """Words as a designator key: dot-free, without trailing commas and
+    Latin accents."""
+    return without_latin_accents(
+        " ".join(word.rstrip(",").replace(".", "") for word in words)
+    )
 
 
 def _strip_trailing_latin(text: str) -> str:
-    head, _, last = text.rpartition(" ")
-    if not head or latin_legal_form(last.rstrip(",")) is None:
+    words = text.split()
+    for n in range(min(_MAX_WORDS, len(words) - 1), 0, -1):
+        tail = words[-n:]
+        if n == 1:
+            found = latin_legal_form(tail[0].rstrip(",")) is not None
+        else:
+            found = _form_key(tail) in _LATIN_LEGAL_FORMS
+        if found:
+            break
+    else:
         return text
-    words = head.rstrip(" ,").split()
-    if not words or words[-1] in _CONJUNCTIONS or set(words) <= _ARTICLES:
+    head = " ".join(words[:-n]).rstrip(" ,").split()
+    if (
+        not head
+        or head[-1] in _CONJUNCTIONS
+        or set(head) <= _ARTICLES
+        or _NUMBER.fullmatch(head[-1])
+    ):
         return text
-    return " ".join(words)
+    return " ".join(head)
+
+
+def _strip_leading_words(text: str) -> str:
+    words = text.split()
+    for n in range(min(_MAX_LEADING_WORDS, len(words) - 1), 0, -1):
+        if _form_key(words[:n]) in _LEADING_LEGAL_FORMS:
+            return " ".join(words[n:]).lstrip(" ,")
+    return text
 
 
 def _strip_leading_dense(text: str) -> str:
@@ -122,7 +165,12 @@ def _strip_trailing_dense(text: str) -> str:
     return _RE_TRAILING_DENSE.sub("", text)
 
 
-_STEPS = (_strip_leading_dense, _strip_trailing_dense, _strip_trailing_latin)
+_STEPS = (
+    _strip_leading_dense,
+    _strip_trailing_dense,
+    _strip_leading_words,
+    _strip_trailing_latin,
+)
 
 
 def strip_legal_forms(name: str) -> str:

@@ -79,6 +79,20 @@ PROFILE = LanguageProfile(
         "October": ("oktober", "okt"),
         "December": ("dezember", "dez"),
     },
-    legal_forms={"gmbh": "gmbh", "ag": "ag"},
+    legal_forms={
+        "gmbh": "gmbh",
+        "ag": "ag",
+        "kg": "kg",
+        "ohg": "ohg",
+        "ug": "ug",
+        # Not SE (Societas Europaea): written without dots, it also names a
+        # product's edition ("iPhone SE", "Java SE").
+        "ev": "ev",
+        # A limited partnership whose general partner is a company.
+        "gmbh & co kg": "gmbh & co kg",
+        "ag & co kg": "ag & co kg",
+        "ug & co kg": "ug & co kg",
+    },
+    quote_pairs=(("„", "“"), ("‚", "‘"), ("»", "«")),
     chars_per_token={CLAUDE_TOKENIZER: 2.05},
 )

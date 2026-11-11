@@ -67,5 +67,6 @@ PROFILE = LanguageProfile(
         "아니오": "no",
         "아닙니다": "no",
     },
+    quote_pairs=(("「", "」"), ("『", "』")),
     chars_per_token={CLAUDE_TOKENIZER: 1.0},
 )
