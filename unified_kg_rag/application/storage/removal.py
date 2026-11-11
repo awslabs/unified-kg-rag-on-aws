@@ -645,7 +645,10 @@ class TextUnitRemoval:
         # id, as the claims (_StripNote): no copy of one cites a removed
         # unit, and a strip stopped or killed after its graph copy left no
         # vector copy, so a retry rewrote it from the graph copy, its
-        # description cut at the graph's limit.
+        # description cut at the graph's limit. And a stored edge that
+        # gains a unit (another spelling's statement merged in): a strip
+        # stopped after its graph copy left the vector copy without that
+        # line, and no copy cited a removed unit.
         retired_edges |= self._unfindable_edges(suffix, derived, relationships)
         # The stored claims about a split's part and origin: a retry
         # cannot tell them (the split kept the stored id).
@@ -679,9 +682,9 @@ class TextUnitRemoval:
     ) -> set[str]:
         """The ids of the edges ``derived`` writes that a retry would not
         find by the removed text units: the stored ones it keeps under their
-        id with other endpoints, and those the graph does not hold
-        (``relationships``: the stored copies read; the edges the derivation
-        reached beyond them are read here)."""
+        id with other endpoints or that gain a text unit, and those the
+        graph does not hold (``relationships``: the stored copies read; the
+        edges the derivation reached beyond them are read here)."""
         stored = {r.id: r for r in relationships}
         reached = [r.id for r in derived.relationships if r.id not in stored]
         if reached:
@@ -697,6 +700,7 @@ class TextUnitRemoval:
             if r.id not in stored
             or (r.source_id, r.target_id)
             != (stored[r.id].source_id, stored[r.id].target_id)
+            or set(r.text_unit_ids or []) - set(stored[r.id].text_unit_ids or [])
         }
 
     def _claims_to_strip(

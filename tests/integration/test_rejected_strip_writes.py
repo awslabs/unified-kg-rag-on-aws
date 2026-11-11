@@ -454,3 +454,76 @@ def test_a_rejected_split_part_leaves_its_neighbours_rank(
 
     assert rejected
     _converges(harness, kept, config)
+
+
+@pytest.mark.parametrize(
+    "names",
+    [
+        ("Acme", "Acme Co", "ACME Inc.", "Acme Corp", "Buyer", "Depot", "Vendor"),
+        (
+            "한빛",
+            "주식회사 한빛",
+            "(주)한빛",
+            "한빛 주식회사",
+            "구매자",
+            "창고",
+            "공급사",
+        ),
+        (
+            "株式会社ひかり",
+            "ひかり",
+            "ひかり株式会社",
+            "(株)ひかり",
+            "買い手",
+            "倉庫",
+            "仕入先",
+        ),
+        (
+            "株式会社ひかり",
+            "ひかり",
+            "ひかり株式会社",
+            "(株)ひかり",
+            "구매자",
+            "창고",
+            "공급사",
+        ),
+    ],
+    ids=["en", "ko", "ja", "mix"],
+)
+@pytest.mark.parametrize("stop", ["rejected", "killed"])
+def test_a_stored_edge_that_gains_a_unit_is_noted_before_its_vector_copy(
+    names: tuple[str, ...], stop: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Deleting i0.txt changes which spelling the short name resolves to,
+    # and k0.txt's edge from the buyer merges into a stored edge of
+    # m0.txt's under its id: its graph copy gains k0.txt's unit, and its
+    # vector write is rejected (or the run dies before it). No copy of that
+    # edge cites a removed unit, so the retry did not find it: its vector
+    # copy lacked k0.txt's line for good.
+    short, long1, paren, long2, buyer, depot, vendor = names
+    final: Corpus = {
+        "/corpus/k0.txt": [
+            [(short, buyer, 2)],
+            [(buyer, short, 1), (depot, long1, 1), (paren, depot, 1)],
+        ],
+        "/corpus/k1.txt": [[(paren, depot, 2)]],
+        "/corpus/n0.txt": [[(long2, vendor, 1)]],
+        "/corpus/m0.txt": [[(short, depot, 2), (buyer, long2, 3)], [(buyer, paren, 2)]],
+    }
+    config = _config()
+    harness = IncrementalRun(FakeDocStatusStore(), config)
+    harness.run({**final, "/corpus/i0.txt": [[(short, depot, 3)]]})
+
+    if stop == "rejected":
+        harness.run(final, fail=lambda at, _i: at == "vector.upsert_relationships")
+    else:
+
+        def killed(*_args: object, **_kwargs: object) -> None:
+            raise Killed("between the strip's graph and vector edge writes")
+
+        with monkeypatch.context() as patched:
+            patched.setattr(harness.vector, "upsert_relationships", killed)
+            patched.setattr(harness.vector, "update_relationship_lineage", killed)
+            assert harness.run(final)
+
+    _converges(harness, final, config)
