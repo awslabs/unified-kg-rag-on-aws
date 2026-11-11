@@ -141,7 +141,7 @@ class TestSavedKeyTracksInputs:
         # produces, so retuning them must not discard an expensive cache.
         retuned = Config()
         retuned.processing.max_concurrency += 7
-        retuned.retry.max_attempts += 1
+        retuned.retry.ingestion_item.max_attempts += 1
         assert _save_and_list_keys(Config(), tmp_path / "base") == _save_and_list_keys(
             retuned, tmp_path / "retuned"
         )

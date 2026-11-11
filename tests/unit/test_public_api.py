@@ -160,6 +160,7 @@ PUBLIC_API = sorted(
         "Relationship",
         "RenderContext",
         "RetrievalResult",
+        "RetryPolicy",
         "SearchQuery",
         "StoredAnnotation",
         "SummaryNode",

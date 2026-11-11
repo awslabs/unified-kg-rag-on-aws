@@ -56,7 +56,7 @@ from unified_kg_rag.domain.models import (
     SectionType,
     model_id_value,
 )
-from unified_kg_rag.domain.models.config import REMOVED_EVALUATORS
+from unified_kg_rag.domain.models.config import REMOVED_EVALUATORS, RetryPolicy
 from unified_kg_rag.domain.models.evaluation import JUDGE_EVALUATORS
 from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.abstention import (
@@ -337,7 +337,8 @@ class EvaluationManager:
         # would only re-run deterministic failures (invalid filter, validation)
         # with minutes of backoff.
         self.batch_processor = BatchProcessor(
-            max_attempts=1, max_concurrency=config.processing.max_concurrency
+            retry=RetryPolicy(max_attempts=1),
+            max_concurrency=config.processing.max_concurrency,
         )
 
     @staticmethod

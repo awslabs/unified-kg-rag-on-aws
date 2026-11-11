@@ -40,6 +40,7 @@ from unified_kg_rag.adapters.local.models import (
     OpenAICompatibleLanguageModelFactory,
 )
 from unified_kg_rag.domain.models import Config, TextUnit, TextUnitExtraction
+from unified_kg_rag.domain.models.config import RetryPolicy
 from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
 
 openai = pytest.importorskip("openai")
@@ -547,7 +548,7 @@ def _processor(
     ``error`` (see :class:`_Rejecting`)."""
     config.processing.ignore_errors = True
     # Output errors are retried: one attempt keeps the backoff out.
-    config.retry.max_attempts = 1
+    config.retry.ingestion_item.max_attempts = 1
     module, cls = _STAGES[stage]
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(
@@ -696,8 +697,9 @@ def test_graph_output_with_no_named_entity_is_cut_off_output(
     # Not retried: as a parse failure, each unit was asked max_attempts
     # times with backoff, about 165 s a unit at the default 5.
     processor = _processor("graph", config, _TOO_LONG)
-    processor.batch_processor.max_attempts = 3
-    processor.batch_processor.retry_multiplier = 0.001
+    processor.batch_processor.retry = RetryPolicy(
+        max_attempts=3, base_delay_seconds=0.001
+    )
     cut = processor.graph_extractor = _Cut(known_good_answered)
     records, stats = processor.extract_units(_two_documents()[:1])
     assert cut.calls == 1 + (0 if known_good_answered else 1)
@@ -741,7 +743,9 @@ def test_a_known_good_request_is_answered_unless_the_call_fails(
             raise error
         return {}
 
-    processor = BatchProcessor(max_attempts=1, is_transient_error=lambda _: False)
+    processor = BatchProcessor(
+        retry=RetryPolicy(max_attempts=1), is_transient_error=lambda _: False
+    )
     assert (
         processor.answered(known_good_unit(), lambda units: [{}], call, "t") is answered
     )

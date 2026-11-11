@@ -55,7 +55,7 @@ from unified_kg_rag.domain.models.config import (
     EFFORT_LEVELS,
     EFFORT_THINKING_TOKENS,
     ModelTier,
-    TransientRetryConfig,
+    RetryPolicy,
 )
 from unified_kg_rag.ports.model_factory import (
     CEILING_ANSWER_TOKENS,
@@ -498,8 +498,8 @@ class BedrockEmbeddingsWrapper(BaseBedrockWrapper, BedrockEmbeddings):
     # ModelErrorException) that botocore's retry modes do not cover. Applied
     # per InvokeModel call, so every sync/async embed path benefits and a
     # failure mid-batch does not restart the already-embedded texts. The
-    # factory sets it from the retry section (RetryConfig.transient_policy).
-    transient_retry: TransientRetryConfig = Field(default_factory=TransientRetryConfig)
+    # factory sets it from the retry section (retry.model).
+    transient_retry: RetryPolicy = Field(default_factory=RetryPolicy)
 
     def _invoke_model(self, input_body: dict[str, Any] | None = None) -> dict[str, Any]:
         # Single choke point for every embedding request in langchain-aws
@@ -678,7 +678,7 @@ class BedrockEmbeddingModelFactory(
             model_kwargs=model_kwargs,
             max_sequence_length=model_info.max_sequence_length,
             max_sequence_tokens=model_info.max_sequence_tokens,
-            transient_retry=self.config.retry.transient_policy(),
+            transient_retry=self.config.retry.model,
             # Accepted by BaseBedrockWrapper.__init__; pydantic's generated
             # __init__ signature hides it from mypy.
             token_counter=token_counter,  # type: ignore[call-arg]
@@ -705,9 +705,9 @@ class BedrockLanguageModelFactory(
     is_item_error = staticmethod(is_bedrock_item_error)
 
     @property
-    def transient_retry(self) -> TransientRetryConfig:
+    def transient_retry(self) -> RetryPolicy:
         """The retry policy ``setup_chain`` applies to query chains."""
-        return self.config.retry.transient_policy()
+        return self.config.retry.model
 
     @property
     def query_prompt_cache_ttl(self) -> str:

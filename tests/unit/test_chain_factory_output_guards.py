@@ -38,6 +38,7 @@ from unified_kg_rag.adapters.llm.langchain import (
     RobustXMLOutputParser,
 )
 from unified_kg_rag.domain.models import ModelPurpose
+from unified_kg_rag.domain.models.config import RetryPolicy
 from unified_kg_rag.domain.prompts import GraphExtractionPrompt
 from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
 
@@ -171,7 +172,7 @@ def test_complete_response_parses(metadata) -> None:
 
 def test_truncated_item_is_a_batch_failure() -> None:
     chain = _chain(_PARTIAL, {"stopReason": "max_tokens"})
-    results = BatchProcessor(max_attempts=1).execute_with_fallback(
+    results = BatchProcessor(retry=RetryPolicy(max_attempts=1)).execute_with_fallback(
         items_to_process=[_INPUT],
         prepare_inputs_func=lambda items: list(items),
         sequential_func=chain.invoke,
@@ -219,7 +220,7 @@ def test_truncated_item_is_called_once() -> None:
         return chain.invoke(single)
 
     results = BatchProcessor(
-        retry_multiplier=1.0, retry_max_wait=0
+        retry=RetryPolicy(base_delay_seconds=1.0, max_delay_seconds=0),
     ).execute_with_fallback(
         items_to_process=[_INPUT, good],
         prepare_inputs_func=lambda items: list(items),
@@ -235,7 +236,7 @@ def test_truncated_item_is_called_once() -> None:
 async def test_truncated_item_is_called_once_async() -> None:
     chain = _counting_chain()
     results = await BatchProcessor(
-        retry_multiplier=1.0, retry_max_wait=0
+        retry=RetryPolicy(base_delay_seconds=1.0, max_delay_seconds=0),
     ).aexecute_with_fallback(
         items_to_process=[_INPUT],
         prepare_inputs_func=lambda items: list(items),

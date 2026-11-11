@@ -27,6 +27,7 @@ from langchain_core.runnables import RunnableLambda
 
 from unified_kg_rag.adapters.aws.bedrock import BaseBedrockModelFactory
 from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED, BatchProcessor
+from unified_kg_rag.domain.models.config import RetryPolicy
 
 pytestmark = pytest.mark.unit
 
@@ -88,8 +89,7 @@ def test_one_slow_item_times_out_alone(release_hung_calls) -> None:
     fake = _SlowFirstCall(slow=3, release=release_hung_calls)
     bp = BatchProcessor(
         call_timeout_seconds=1,
-        retry_multiplier=1.0,
-        retry_max_wait=0,
+        retry=RetryPolicy(base_delay_seconds=1.0, max_delay_seconds=0),
     )
     results = bp.execute_with_fallback(
         items_to_process=list(range(10)),
@@ -118,9 +118,7 @@ def test_item_slow_on_every_attempt_fails_in_place(release_hung_calls) -> None:
 
     bp = BatchProcessor(
         call_timeout_seconds=1,
-        max_attempts=2,
-        retry_multiplier=1.0,
-        retry_max_wait=0,
+        retry=RetryPolicy(max_attempts=2, base_delay_seconds=1.0, max_delay_seconds=0),
     )
     results = bp.execute_with_fallback(
         items_to_process=[0, 1, 2],
@@ -272,7 +270,7 @@ async def test_async_slow_item_does_not_hold_back_the_other_slots() -> None:
         return item["v"]
 
     runnable = RunnableLambda(call)
-    bp = BatchProcessor(max_concurrency=2, max_attempts=1)
+    bp = BatchProcessor(max_concurrency=2, retry=RetryPolicy(max_attempts=1))
     results = await bp.aexecute_with_fallback(
         items_to_process=list(range(n)),
         prepare_inputs_func=lambda items: [{"v": i} for i in items],
@@ -344,7 +342,7 @@ async def test_an_async_item_that_failed_names_its_ids_and_keeps_its_error(
         return item["id"]
 
     errors: dict[int, BaseException] = {}
-    bp = BatchProcessor(max_concurrency=2, max_attempts=1)
+    bp = BatchProcessor(max_concurrency=2, retry=RetryPolicy(max_attempts=1))
     with caplog.at_level("INFO"):
         results = await bp.aexecute_with_fallback(
             items_to_process=["q1", "q2"],

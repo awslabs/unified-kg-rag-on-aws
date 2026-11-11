@@ -65,7 +65,7 @@ from unified_kg_rag.domain.models import (
     SearchStrategy,
     SectionType,
 )
-from unified_kg_rag.domain.models.config import TransientRetryConfig
+from unified_kg_rag.domain.models.config import RetryPolicy
 from unified_kg_rag.evaluation import EvaluationManager
 
 pytestmark = pytest.mark.unit
@@ -491,7 +491,7 @@ async def test_run_rag_reports_a_timeout_without_a_traceback(
 
 
 def test_no_transient_retry_starts_past_the_query_deadline() -> None:
-    policy = TransientRetryConfig(base_delay_seconds=0.0, max_total_seconds=600)
+    policy = RetryPolicy(base_delay_seconds=0.0, max_total_seconds=600)
     error = ConnectionError("stalled")
 
     def delay() -> float | None:
@@ -664,7 +664,7 @@ def _stall_config() -> Config:
         query_timeout_seconds=5.0, model_timeout_seconds=1.0, model_max_attempts=2
     )
     # Retry at once, so the query-chain retry runs into the deadline.
-    config.retry.base_delay_seconds = 0.0
+    config.retry.model.base_delay_seconds = 0.0
     return config
 
 

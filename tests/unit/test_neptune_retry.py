@@ -7,7 +7,8 @@ Neptune ``ConcurrentModificationException`` seen under concurrent index writes.
 These tests pin the behaviors that matter: it returns on a later-attempt
 success, it re-raises after ``max_attempts`` total attempts, it sleeps once per
 failed attempt, and it fails fast on errors a retry cannot fix. The module's
-``_sleep``/``_jitter`` seams are patched (never the process-global
+``_sleep`` seam and the jitter draw of the shared backoff
+(``adapters.llm.retry._jitter_rng``) are patched (never the process-global
 ``time.sleep``/``random.uniform``, which other threads share) so the tests are
 fast and deterministic.
 """
@@ -15,13 +16,13 @@ fast and deterministic.
 from __future__ import annotations
 
 import json
-import random
 
 import aiohttp
 import pytest
 from gremlin_python.driver.protocol import GremlinServerError
 
 from unified_kg_rag.adapters.aws.neptune import is_permanent_neptune_error
+from unified_kg_rag.adapters.llm import retry as llm_retry
 from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.ports.indexer import IndexingStats
@@ -76,15 +77,12 @@ def indexer(mocker):
 def _no_sleep(mocker):
     # Keep retries instant and deterministic.
     mocker.patch(_MOD + "._sleep", return_value=None)
-    mocker.patch(
-        _MOD + "._jitter",
-        return_value=0.0,
-    )
+    mocker.patch.object(llm_retry._jitter_rng, "uniform", return_value=0.0)
 
 
 def test_returns_after_transient_failures_then_success(indexer, mocker) -> None:
-    indexer.config.retry.graph_store_max_attempts = 4
-    indexer.config.retry.base_delay_seconds = 1
+    indexer.config.retry.graph_store.max_attempts = 4
+    indexer.config.retry.graph_store.base_delay_seconds = 1
     sleep = mocker.patch(_MOD + "._sleep", return_value=None)
     # Fails twice (ConcurrentModificationException), succeeds on the 3rd attempt.
     traversal = _FlakyTraversal(fail_times=2, exc=_CME)
@@ -94,8 +92,8 @@ def test_returns_after_transient_failures_then_success(indexer, mocker) -> None:
 
 
 def test_reraises_after_max_attempts(indexer) -> None:
-    indexer.config.retry.graph_store_max_attempts = 3
-    indexer.config.retry.base_delay_seconds = 1
+    indexer.config.retry.graph_store.max_attempts = 3
+    indexer.config.retry.graph_store.base_delay_seconds = 1
     traversal = _FlakyTraversal(fail_times=99, exc=_CME)
     with pytest.raises(GremlinServerError, match="ConcurrentModification"):
         indexer._execute_with_retries(lambda _g: traversal, "upsert entities")
@@ -103,7 +101,7 @@ def test_reraises_after_max_attempts(indexer) -> None:
 
 
 def test_permanent_error_fails_on_first_attempt(indexer, mocker) -> None:
-    indexer.config.retry.graph_store_max_attempts = 4
+    indexer.config.retry.graph_store.max_attempts = 4
     sleep = mocker.patch(_MOD + "._sleep", return_value=None)
     traversal = _FlakyTraversal(
         fail_times=99, exc=_neptune_error("MalformedQueryException")
@@ -115,8 +113,8 @@ def test_permanent_error_fails_on_first_attempt(indexer, mocker) -> None:
 
 
 def test_succeeds_on_first_attempt_does_not_sleep(indexer, mocker) -> None:
-    indexer.config.retry.graph_store_max_attempts = 4
-    indexer.config.retry.base_delay_seconds = 1
+    indexer.config.retry.graph_store.max_attempts = 4
+    indexer.config.retry.graph_store.base_delay_seconds = 1
     sleep = mocker.patch(_MOD + "._sleep", return_value=None)
     traversal = _FlakyTraversal(fail_times=0, exc=Exception("never raised"))
     indexer._execute_with_retries(lambda _g: traversal, "upsert entities")
@@ -128,9 +126,11 @@ def test_zero_retry_delay_is_accepted_and_retries_at_once(mocker) -> None:
     # base_delay_seconds is ge=0 and documented "0 retries at once"; a
     # validator used to reject 0 whenever max_attempts > 1 (the default 4).
     mocker.patch(_MOD + ".NeptuneClient")
-    config = Config(retry={"base_delay_seconds": 0})
+    config = Config(retry={"graph_store": {"base_delay_seconds": 0}})
     indexer = NeptuneIndexer(config=config)
-    jitter = mocker.patch(_MOD + "._jitter", side_effect=lambda lo, hi: hi)
+    jitter = mocker.patch.object(
+        llm_retry._jitter_rng, "uniform", side_effect=lambda lo, hi: hi
+    )
     traversal = _FlakyTraversal(fail_times=2, exc=_CME)
     indexer._execute_with_retries(lambda _g: traversal, "upsert entities")
     assert traversal.calls == 3
@@ -139,7 +139,7 @@ def test_zero_retry_delay_is_accepted_and_retries_at_once(mocker) -> None:
 
 def test_single_attempt_raises_immediately(indexer) -> None:
     # max_attempts = 1 -> a single attempt, no retry.
-    indexer.config.retry.graph_store_max_attempts = 1
+    indexer.config.retry.graph_store.max_attempts = 1
     traversal = _FlakyTraversal(fail_times=99, exc=_CME)
     with pytest.raises(GremlinServerError):
         indexer._execute_with_retries(lambda _g: traversal, "upsert entities")
@@ -147,14 +147,16 @@ def test_single_attempt_raises_immediately(indexer) -> None:
 
 
 def test_backoff_is_full_jitter_over_exponential_window(indexer, mocker) -> None:
-    indexer.config.retry.graph_store_max_attempts = 4
-    indexer.config.retry.base_delay_seconds = 2
-    jitter = mocker.patch(_MOD + "._jitter", side_effect=lambda lo, hi: hi / 2)
+    indexer.config.retry.graph_store.max_attempts = 4
+    indexer.config.retry.graph_store.base_delay_seconds = 2
+    jitter = mocker.patch.object(
+        llm_retry._jitter_rng, "uniform", side_effect=lambda lo, hi: hi / 2
+    )
     sleep = mocker.patch(_MOD + "._sleep", return_value=None)
     traversal = _FlakyTraversal(fail_times=3, exc=_neptune_error("ThrottlingException"))
     indexer._execute_with_retries(lambda _g: traversal, "upsert entities")
     # Window doubles per attempt: [0, 2], [0, 4], [0, 8]; sleep uses the draw.
-    assert [c.args for c in jitter.call_args_list] == [(0, 2), (0, 4), (0, 8)]
+    assert [c.args for c in jitter.call_args_list] == [(0, 2.0), (0, 4.0), (0, 8.0)]
     assert [c.args[0] for c in sleep.call_args_list] == [1, 2, 4]
 
 
@@ -190,7 +192,7 @@ def test_permanent_errors_fail_fast(exc: BaseException) -> None:
 
 
 def test_results_mode_returns_the_traversal_results(indexer) -> None:
-    indexer.config.retry.graph_store_max_attempts = 3
+    indexer.config.retry.graph_store.max_attempts = 3
     traversal = _ResultTraversal(fail_times=1, exc=_CME, result=["r1"])
     assert indexer._execute_with_retries(
         lambda _g: traversal, "edge", results=True
@@ -248,7 +250,7 @@ def test_a_lost_connection_is_replaced_before_the_retry(monkeypatch) -> None:
     )
     config = Config()
     config.aws.neptune.endpoint = "neptune.example.invalid"
-    config.retry.graph_store_max_attempts = 3
+    config.retry.graph_store.max_attempts = 3
     indexer = NeptuneIndexer(config=config)
     lost = RuntimeError("Connection was already closed.")
     built_on: list[_Source] = []
@@ -277,7 +279,7 @@ def test_a_failed_batch_the_fallback_indexes_logs_no_error(
         return []
 
     mocker.patch(_MOD + ".run_traversal", side_effect=fake_run)
-    indexer.config.retry.graph_store_max_attempts = 1
+    indexer.config.retry.graph_store.max_attempts = 1
     stats = IndexingStats(total_items=2)
     with caplog.at_level(logging.WARNING):
         indexer._execute_single_batch(
@@ -296,7 +298,7 @@ def test_an_item_the_fallback_cannot_index_logs_an_error(
     import logging
 
     mocker.patch(_MOD + ".run_traversal", side_effect=_CME)
-    indexer.config.retry.graph_store_max_attempts = 1
+    indexer.config.retry.graph_store.max_attempts = 1
     stats = IndexingStats(total_items=2)
     with caplog.at_level(logging.WARNING):
         indexer._execute_single_batch(
@@ -307,9 +309,10 @@ def test_an_item_the_fallback_cannot_index_logs_an_error(
     assert levels == [logging.WARNING, logging.ERROR, logging.ERROR]
 
 
-def test_jitter_is_not_the_seedable_module_prng(mocker) -> None:
-    # SAST flags random.uniform (CWE-338); the jitter draws from the OS.
-    from unified_kg_rag.adapters.storage import neptune_indexer
-
-    mocker.stopall()  # undo the autouse _jitter stub
-    assert isinstance(neptune_indexer._jitter.__self__, random.SystemRandom)
+def test_the_graph_store_default_is_full_jitter_without_a_cap() -> None:
+    # The backoff the loop had before retry profiles: a draw from [0, 2 s x
+    # 2^(n-1)], no upper bound, no time budget.
+    policy = Config().retry.graph_store
+    assert (policy.max_attempts, policy.base_delay_seconds) == (4, 2.0)
+    assert (policy.max_delay_seconds, policy.max_total_seconds) == (None, None)
+    assert policy.jitter == "full"

@@ -37,7 +37,7 @@ from unified_kg_rag.adapters.local.models import (
     tls_context,
 )
 from unified_kg_rag.domain.models import Config, ModelPurpose, model_id_value
-from unified_kg_rag.domain.models.config import TransientRetryConfig
+from unified_kg_rag.domain.models.config import RetryPolicy
 from unified_kg_rag.domain.models.provider_config import EmbeddingProviderConfig
 from unified_kg_rag.ports.model_factory import EmbeddingModelInfo
 from unified_kg_rag.shared import EmbeddingModelError, get_logger
@@ -63,7 +63,7 @@ class TracedEmbeddings(Embeddings):
         model_id: str,
         provider_name: str,
         max_input_tokens: int,
-        retry: TransientRetryConfig | None = None,
+        retry: RetryPolicy | None = None,
     ) -> None:
         self.inner = inner
         self.model_id = model_id
@@ -183,7 +183,7 @@ class OpenAICompatibleEmbeddingFactory(_LocalEmbeddingFactory):
     """Embeddings from an OpenAI-compatible ``/v1/embeddings`` endpoint.
 
     Transient errors are retried by the OpenAI client
-    (``retry.model_server_max_attempts``).
+    (``retry.model_server.max_attempts``).
     """
 
     provider_name = "openai"
@@ -214,7 +214,7 @@ class OpenAICompatibleEmbeddingFactory(_LocalEmbeddingFactory):
             api_key=api_key_value(self.settings),
             timeout=timeout,
             # The OpenAI client counts retries after the first attempt.
-            max_retries=self.config.retry.model_server_max_attempts - 1,
+            max_retries=self.config.retry.model_server.max_attempts - 1,
             # Send text, not tiktoken ids: only OpenAI's own servers accept
             # pre-tokenized input, and the estimate already truncated it.
             check_embedding_ctx_length=False,
@@ -227,7 +227,7 @@ class OllamaEmbeddingFactory(_LocalEmbeddingFactory):
     """Embeddings from an Ollama server (``/api/embed``).
 
     The Ollama client never retries, so each embed call is retried here on
-    transient errors (``retry.model_server_max_attempts`` attempts).
+    transient errors (``retry.model_server.max_attempts`` attempts).
     """
 
     provider_name = "ollama"

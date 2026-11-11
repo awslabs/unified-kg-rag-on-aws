@@ -62,6 +62,7 @@ from unified_kg_rag.domain.models import (
     SearchQuery,
     SearchStrategy,
 )
+from unified_kg_rag.domain.models.config import RetryPolicy
 from unified_kg_rag.evaluation import EvaluationManager
 from unified_kg_rag.evaluation.evaluation_manager import GraphAwareEvaluator
 from unified_kg_rag.shared import ConfigurationError, PipelineInterrupted, observability
@@ -469,7 +470,9 @@ def _failing_items_stage(error: Exception, *, known_good_failed: bool = False):
         def call(_: dict[str, int]) -> Any:
             raise error
 
-        BatchProcessor(max_concurrency=2, max_attempts=1).execute_with_fallback(
+        BatchProcessor(
+            max_concurrency=2, retry=RetryPolicy(max_attempts=1)
+        ).execute_with_fallback(
             [1, 2, 3],
             lambda items: [{"x": i} for i in items],
             call,
@@ -590,7 +593,9 @@ def test_a_failed_batch_item_logs_its_error_digest_not_its_text(
         raise RuntimeError("cannot process: Vendor Corp confidential terms")
 
     with caplog.at_level("ERROR"):
-        BatchProcessor(max_concurrency=1, max_attempts=1).execute_with_fallback(
+        BatchProcessor(
+            max_concurrency=1, retry=RetryPolicy(max_attempts=1)
+        ).execute_with_fallback(
             [1], lambda items: [{"x": i} for i in items], call, "t", show_progress=False
         )
     assert "Item failed" in caplog.text
@@ -744,7 +749,7 @@ def test_ingestion_run_and_stage_spans(tracing: Tracing) -> None:
 
 def test_batch_span_parents_the_calls_on_worker_threads(tracing: Tracing) -> None:
     exporter = tracing()
-    processor = BatchProcessor(max_concurrency=2, max_attempts=1)
+    processor = BatchProcessor(max_concurrency=2, retry=RetryPolicy(max_attempts=1))
 
     def call(item: dict[str, int]) -> int:
         with observability.span("kg_rag.test.item"):

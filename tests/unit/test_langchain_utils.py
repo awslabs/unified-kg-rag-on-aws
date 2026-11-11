@@ -33,13 +33,14 @@ from unified_kg_rag.adapters.llm.langchain import (
     RobustXMLOutputParser,
 )
 from unified_kg_rag.domain.models import Config
+from unified_kg_rag.domain.models.config import RetryPolicy
 from unified_kg_rag.shared.utils import ensure_list
 
 pytestmark = pytest.mark.unit
 
 # Retries still run, but without the production backoff (30s multiplier, 120s
 # cap) that made the failure-path tests sleep for minutes.
-_NO_BACKOFF: dict[str, Any] = {"retry_multiplier": 1.0, "retry_max_wait": 0}
+_NO_BACKOFF: dict[str, Any] = {"retry": RetryPolicy(base_delay_seconds=0.0)}
 
 
 class _TransientError(Exception):
@@ -114,9 +115,15 @@ class TestExecuteWithFallback:
         assert max_in_flight == 2
 
     def test_from_config_takes_the_concurrency_and_retry_settings(self) -> None:
-        config = Config(processing={"max_concurrency": 3}, retry={"max_attempts": 2})
+        config = Config(
+            processing={"max_concurrency": 3},
+            retry={"ingestion_item": {"max_attempts": 2}},
+        )
         bp = BatchProcessor.from_config(config, call_timeout_seconds=0)
-        assert (bp.max_concurrency, bp.max_attempts) == (3, 2)
+        assert (bp.max_concurrency, bp.retry.max_attempts) == (3, 2)
+        # The rest of the profile keeps its defaults, not RetryPolicy's.
+        assert bp.retry.base_delay_seconds == 30.0
+        assert bp.retry.jitter == "full"
         assert bp.call_timeout_seconds == 0
         # The inputs are prepared once, for all items.
         prepared_sizes = []
@@ -202,7 +209,11 @@ class TestExecuteWithFallback:
 class TestRetryDecorator:
     def test_retries_then_succeeds(self) -> None:
         # multiplier tiny so backoff sleep is negligible; succeeds on 3rd call.
-        bp = BatchProcessor(max_attempts=5, retry_multiplier=1.0, retry_max_wait=0)
+        bp = BatchProcessor(
+            retry=RetryPolicy(
+                max_attempts=5, base_delay_seconds=1.0, max_delay_seconds=0
+            ),
+        )
         decorator = bp._create_retry_decorator("op")
         attempts = {"n": 0}
 
@@ -217,7 +228,11 @@ class TestRetryDecorator:
         assert attempts["n"] == 3
 
     def test_reraises_after_exhausting_attempts(self) -> None:
-        bp = BatchProcessor(max_attempts=2, retry_multiplier=1.0, retry_max_wait=0)
+        bp = BatchProcessor(
+            retry=RetryPolicy(
+                max_attempts=2, base_delay_seconds=1.0, max_delay_seconds=0
+            ),
+        )
         decorator = bp._create_retry_decorator("op")
         attempts = {"n": 0}
 
@@ -244,9 +259,8 @@ class TestRetryDecorator:
         self, error: Exception, attempts_made: int
     ) -> None:
         bp = BatchProcessor(
-            max_attempts=3,
+            retry=RetryPolicy(max_attempts=3, base_delay_seconds=0.0),
             is_transient_error=lambda e: isinstance(e, _TransientError),
-            **_NO_BACKOFF,
         )
         attempts = {"n": 0}
 
@@ -380,10 +394,9 @@ class _CountingRunnable:
         return self._call(item)
 
 
-def _fast_bp(**kwargs: Any) -> BatchProcessor:
+def _fast_bp(max_attempts: int = 5, **kwargs: Any) -> BatchProcessor:
     return BatchProcessor(
-        retry_multiplier=1.0,
-        retry_max_wait=0,
+        retry=RetryPolicy(max_attempts=max_attempts, base_delay_seconds=0.0),
         call_timeout_seconds=0,
         **kwargs,
     )
@@ -456,9 +469,9 @@ class TestRetryFailedItemsOnly:
         fake = _CountingRunnable(fail_first={2: 1, 9: 1, 13: 1})
         bp = BatchProcessor(
             max_concurrency=4,
-            max_attempts=3,
-            retry_multiplier=1.0,
-            retry_max_wait=0,
+            retry=RetryPolicy(
+                max_attempts=3, base_delay_seconds=1.0, max_delay_seconds=0
+            ),
             call_timeout_seconds=0,
         )
         out = bp.execute_with_fallback(
@@ -1079,9 +1092,7 @@ def test_concurrent_retries_of_one_batch_do_not_share_retry_state() -> None:
         return single_input["v"]
 
     bp = BatchProcessor(
-        max_attempts=3,
-        retry_multiplier=1.0,
-        retry_max_wait=0,
+        retry=RetryPolicy(max_attempts=3, base_delay_seconds=1.0, max_delay_seconds=0),
         max_concurrency=16,
         call_timeout_seconds=0,
     )
@@ -1109,7 +1120,9 @@ def test_batch_errors_name_each_failed_item() -> None:
             self.status_code = status_code
 
     processor = BatchProcessor(
-        max_attempts=1, call_timeout_seconds=0, is_transient_error=looks_transient
+        retry=RetryPolicy(max_attempts=1),
+        call_timeout_seconds=0,
+        is_transient_error=looks_transient,
     )
     raised = {1: _Status(400), 2: _Status(503), 3: OutputParserException("bad")}
 

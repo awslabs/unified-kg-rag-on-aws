@@ -33,6 +33,7 @@ from unified_kg_rag.adapters.local.models import (
 )
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import Config
+from unified_kg_rag.domain.models.config import RetryPolicy
 
 openai = pytest.importorskip("openai")
 ollama = pytest.importorskip("ollama")
@@ -171,7 +172,7 @@ def test_stage_batch_retries_follow_the_llm_factory(
         Config(), providers=Providers(Config(), llm_factory=factory)
     )
     processor: BatchProcessor = stage.batch_processor.model_copy(
-        update={"max_attempts": 3, "retry_multiplier": 1.0, "retry_max_wait": 0}
+        update={"retry": RetryPolicy(max_attempts=3, base_delay_seconds=0.0)}
     )
     calls = {"n": 0}
 

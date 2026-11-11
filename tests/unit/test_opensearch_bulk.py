@@ -19,6 +19,7 @@ from opensearchpy.exceptions import TransportError
 
 import unified_kg_rag.adapters.aws.opensearch as opensearch_mod
 from unified_kg_rag.adapters.aws.opensearch import OpenSearchClient
+from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import StoreConnectionError
 from unified_kg_rag.shared.exceptions import StoreRequestRejectedError
 
@@ -28,6 +29,7 @@ pytestmark = pytest.mark.unit
 def _client() -> OpenSearchClient:
     client = OpenSearchClient.__new__(OpenSearchClient)
     client._client = MagicMock()  # backing for the `client` property
+    client.config = Config()
     return client
 
 
@@ -123,7 +125,7 @@ def test_bulk_index_does_not_resend_permanent_item_errors(mocker) -> None:
 
 def test_bulk_index_reports_items_still_rejected_after_the_retries(mocker) -> None:
     calls: list[list[str]] = []
-    retries = OpenSearchClient.BULK_ITEM_MAX_RETRIES
+    retries = Config().retry.bulk_item.max_attempts - 1
     mocker.patch.object(
         opensearch_mod,
         "streaming_bulk",
@@ -226,7 +228,7 @@ def test_a_bulk_request_still_rejected_raises_a_typed_error(
     # bulk ... failed.") that dropped the status. The error and its ERROR
     # line name it by type and status, as each round's warning does: a bulk
     # request's reason may quote a rejected item, so it is logged at DEBUG.
-    retries = OpenSearchClient.BULK_ITEM_MAX_RETRIES
+    retries = Config().retry.bulk_item.max_attempts - 1
     calls: list[list[str]] = []
     mocker.patch.object(
         opensearch_mod,

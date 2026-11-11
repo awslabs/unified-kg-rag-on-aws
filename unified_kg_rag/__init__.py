@@ -216,6 +216,7 @@ _EXPORTS: dict[str, str] = {
     "GraphQueryResult": "unified_kg_rag.domain.models.graph_query",
     "GroundingContext": "unified_kg_rag.ports.guardrail",
     "LanguageModelInfo": "unified_kg_rag.ports.model_factory",
+    "RetryPolicy": "unified_kg_rag.domain.models.config",
     "TransientRetryConfig": "unified_kg_rag.domain.models.config",
     "RenderContext": "unified_kg_rag.adapters.renderers.base",
 }
@@ -325,7 +326,7 @@ if TYPE_CHECKING:
         SummaryNode,
         TextUnit,
     )
-    from unified_kg_rag.domain.models.config import TransientRetryConfig
+    from unified_kg_rag.domain.models.config import RetryPolicy, TransientRetryConfig
     from unified_kg_rag.domain.models.graph_query import (
         GraphProfile,
         GraphQueryRequest,

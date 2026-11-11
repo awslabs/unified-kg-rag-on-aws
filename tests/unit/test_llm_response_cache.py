@@ -22,6 +22,7 @@ from unified_kg_rag.adapters.llm.response_cache import (
     LLMResponseCache,
 )
 from unified_kg_rag.domain.models import ModelPurpose
+from unified_kg_rag.domain.models.config import RetryPolicy
 
 pytestmark = pytest.mark.unit
 
@@ -220,7 +221,9 @@ def _batch(
     """Ask ``model`` each of ``texts`` as one item of a batch, its answer
     checked by ``parse`` (raising fails the item)."""
     return BatchProcessor(
-        max_attempts=max_attempts, retry_multiplier=1.0, retry_max_wait=0
+        retry=RetryPolicy(
+            max_attempts=max_attempts, base_delay_seconds=1.0, max_delay_seconds=0
+        ),
     ).execute_with_fallback(
         texts,
         lambda items: [{"text": text} for text in items],
@@ -322,7 +325,8 @@ def test_a_timed_out_attempt_s_late_answer_is_not_stored(
     cache.open(tmp_path)
     model = _model(cache, respond)
     results = BatchProcessor(
-        max_attempts=2, retry_multiplier=1.0, retry_max_wait=0, call_timeout_seconds=1
+        retry=RetryPolicy(max_attempts=2, base_delay_seconds=1.0, max_delay_seconds=0),
+        call_timeout_seconds=1,
     ).execute_with_fallback(
         ["q"],
         lambda items: [{"text": text} for text in items],
@@ -423,7 +427,7 @@ def test_an_answered_item_s_responses_are_dropped_when_its_caller_rejects_it(
     first.open(tmp_path)
     model = _model(first, respond)
     discards: dict[int, Any] = {}
-    results = BatchProcessor(max_attempts=1).execute_with_fallback(
+    results = BatchProcessor(retry=RetryPolicy(max_attempts=1)).execute_with_fallback(
         ["good", "rejected"],
         lambda items: [{"text": text} for text in items],
         lambda request: _ask(model, request["text"]),
@@ -450,7 +454,7 @@ def test_a_failed_item_gets_no_discard_to_call() -> None:
     def fail(request: dict[str, Any]) -> str:
         raise OutputParserException("cannot parse")
 
-    results = BatchProcessor(max_attempts=1).execute_with_fallback(
+    results = BatchProcessor(retry=RetryPolicy(max_attempts=1)).execute_with_fallback(
         ["bad"],
         lambda items: [{"text": text} for text in items],
         fail,
@@ -474,7 +478,7 @@ def test_a_served_response_its_caller_rejects_is_dropped(tmp_path: Path) -> None
     second.open(tmp_path)
     model = _model(second, respond)
     discards: dict[int, Any] = {}
-    BatchProcessor(max_attempts=1).execute_with_fallback(
+    BatchProcessor(retry=RetryPolicy(max_attempts=1)).execute_with_fallback(
         ["rejected"],
         lambda items: [{"text": text} for text in items],
         lambda request: _ask(model, request["text"]),

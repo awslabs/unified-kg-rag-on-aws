@@ -47,7 +47,7 @@ from unified_kg_rag.domain.models import (
     SearchResult,
     SearchStrategy,
 )
-from unified_kg_rag.domain.models.config import EvaluationConfig
+from unified_kg_rag.domain.models.config import EvaluationConfig, RetryPolicy
 from unified_kg_rag.evaluation import EvaluationManager
 from unified_kg_rag.evaluation.evaluation_manager import (
     _WARM_UP_QUESTION,
@@ -734,8 +734,9 @@ class TestAnswerSpend:
         chain = self._chain(fail_attempts=1, sleep=0.02)
         config.evaluation.enabled_evaluators = [EvaluatorType.ANSWER_MATCH]
         manager = EvaluationManager(config, rag_chain=chain)
-        manager.batch_processor.max_attempts = 2
-        manager.batch_processor.retry_multiplier = 0
+        manager.batch_processor.retry = RetryPolicy(
+            max_attempts=2, base_delay_seconds=0.0
+        )
         results, _, _ = await manager.evaluate_dataset(
             [EvaluationQuery(query_id="q1", question="Who ships?")],
             [EvaluationGroundTruth(query_id="q1", ground_truth="Vendor")],
@@ -922,7 +923,7 @@ class TestErroredQueries:
                 raise ValueError("invalid filter")  # deterministic, not transient
 
         manager = EvaluationManager(config, rag_chain=_FailingChain())
-        assert manager.batch_processor.max_attempts == 1
+        assert manager.batch_processor.retry.max_attempts == 1
         assert manager.batch_processor.max_concurrency == 3
         results, _, _ = await manager.evaluate_dataset(
             [EvaluationQuery(query_id="q1", question="Who ships?")],

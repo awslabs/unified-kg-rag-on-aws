@@ -92,7 +92,7 @@ def _summarizer(
     config.processing.translation.enabled = False
     config.processing.translation.source_language = language
     config.indexing.summary_tree.max_summary_tokens = max_summary_tokens
-    config.retry.max_attempts = 1
+    config.retry.ingestion_item.max_attempts = 1
     providers = Providers(
         config,
         None,

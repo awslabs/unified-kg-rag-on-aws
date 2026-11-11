@@ -22,6 +22,7 @@ import boto3
 from botocore.config import Config as BotoConfig
 from botocore.exceptions import BotoCoreError, ClientError
 
+from unified_kg_rag.adapters.llm.retry import backoff_delay
 from unified_kg_rag.domain.ingestion.delta_detector import scope_namespace
 from unified_kg_rag.domain.ingestion.document_identity import doc_id_namespace
 from unified_kg_rag.domain.models import (
@@ -31,6 +32,7 @@ from unified_kg_rag.domain.models import (
     ExtractionSettings,
     StoredDocument,
 )
+from unified_kg_rag.domain.models.config import RetryPolicy
 from unified_kg_rag.domain.retrieval.store_names import namespace_suffix
 from unified_kg_rag.shared import (
     DataProcessingError,
@@ -99,15 +101,10 @@ _LEASE_CONFIG = BotoConfig(
     read_timeout=10,
     retries={"mode": "standard", "total_max_attempts": 3},
 )
-# BatchGetItem reads at most 100 keys per request. Keys it returns unprocessed
-# (throttling, or the 16 MB response limit) are re-requested with exponential
-# backoff, up to this many requests per batch.
+# BatchGetItem reads at most 100 keys per request, BatchWriteItem writes at
+# most 25 items. Keys and items either returns unprocessed (throttling, or the
+# 16 MB response limit) are sent again under the retry.registry_batch profile.
 _BATCH_GET_SIZE = 100
-_BATCH_GET_MAX_ATTEMPTS = 8
-_BATCH_GET_BASE_DELAY = 0.05
-_BATCH_GET_MAX_DELAY = 2.0
-# BatchWriteItem writes at most 25 items per request; unprocessed items are
-# re-sent with the same backoff and attempt limit as BatchGetItem.
 _BATCH_WRITE_SIZE = 25
 # The backoff's sleep, a name of this module so a test can stub it without
 # stubbing every thread's time.sleep.
@@ -301,7 +298,7 @@ class DynamoDBDocStatusStore:
 
         Keys DynamoDB returns as ``UnprocessedKeys`` are re-requested with
         exponential backoff; keys still unprocessed after
-        ``_BATCH_GET_MAX_ATTEMPTS`` requests raise
+        ``retry.registry_batch.max_attempts`` requests raise
         :class:`DocStatusRegistryError` rather than reading as absent (an
         absent record means a new document).
         """
@@ -317,8 +314,9 @@ class DynamoDBDocStatusStore:
     def _batch_get(self, keys: list[str]) -> list[dict[str, Any]]:
         request: dict[str, Any] = {self.table_name: {"Keys": [_key(k) for k in keys]}}
         items: list[dict[str, Any]] = []
-        for attempt in range(_BATCH_GET_MAX_ATTEMPTS):
-            _backoff_before(attempt)
+        policy = self.config.retry.registry_batch
+        for attempt in range(policy.max_attempts):
+            _backoff_before(attempt, policy)
             with self._registry_errors("read records"):
                 response = self.client.batch_get_item(RequestItems=request)
             items.extend(response.get("Responses", {}).get(self.table_name, []))
@@ -329,7 +327,7 @@ class DynamoDBDocStatusStore:
         raise DocStatusRegistryError(
             f"Doc-status registry: DynamoDB table '{self.table_name}' left "
             f"{remaining} of {len(keys)} keys unprocessed after "
-            f"{_BATCH_GET_MAX_ATTEMPTS} BatchGetItem requests. Raise the table's "
+            f"{policy.max_attempts} BatchGetItem requests. Raise the table's "
             "capacity or switch it to on-demand billing, then re-run."
         )
 
@@ -351,8 +349,8 @@ class DynamoDBDocStatusStore:
         Every record is size-checked before the first request, so an
         oversized one (see :meth:`put`) fails the call without writing any.
         Items returned as ``UnprocessedItems`` are re-sent with exponential
-        backoff; items still unprocessed after ``_BATCH_GET_MAX_ATTEMPTS``
-        requests raise :class:`DocStatusRegistryError`.
+        backoff; items still unprocessed after
+        ``retry.registry_batch.max_attempts`` requests raise :class:`DocStatusRegistryError`.
         """
         unique = {record.doc_id: record for record in records}
         items = [self._sized_item(record) for record in unique.values()]
@@ -363,8 +361,9 @@ class DynamoDBDocStatusStore:
         request: dict[str, Any] = {
             self.table_name: [{"PutRequest": {"Item": item}} for item in items]
         }
-        for attempt in range(_BATCH_GET_MAX_ATTEMPTS):
-            _backoff_before(attempt)
+        policy = self.config.retry.registry_batch
+        for attempt in range(policy.max_attempts):
+            _backoff_before(attempt, policy)
             with self._registry_errors("write records"):
                 response = self.client.batch_write_item(RequestItems=request)
             request = dict(response.get("UnprocessedItems") or {})
@@ -374,7 +373,7 @@ class DynamoDBDocStatusStore:
         raise DocStatusRegistryError(
             f"Doc-status registry: DynamoDB table '{self.table_name}' left "
             f"{remaining} of {len(items)} items unprocessed after "
-            f"{_BATCH_GET_MAX_ATTEMPTS} BatchWriteItem requests. Raise the "
+            f"{policy.max_attempts} BatchWriteItem requests. Raise the "
             "table's capacity or switch it to on-demand billing, then re-run."
         )
 
@@ -703,11 +702,11 @@ class DynamoDBDocStatusStore:
         )
 
 
-def _backoff_before(attempt: int) -> None:
+def _backoff_before(attempt: int, policy: RetryPolicy) -> None:
     """Wait before re-sending a batch's unprocessed items (none before the
-    first request)."""
+    first request, ``attempt`` 0)."""
     if attempt:
-        _sleep(min(_BATCH_GET_MAX_DELAY, _BATCH_GET_BASE_DELAY * 2**attempt))
+        _sleep(backoff_delay(attempt, policy))
 
 
 def _key(doc_id: str) -> dict[str, Any]:

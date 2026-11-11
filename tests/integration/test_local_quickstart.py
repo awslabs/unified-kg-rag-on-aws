@@ -200,7 +200,8 @@ def test_the_local_quickstart_runs_as_written(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("AWS_EC2_METADATA_DISABLED", "true")
     # A prompt the fake cannot answer fails at once instead of backing off.
-    monkeypatch.setenv("UKR__RETRY__MAX_ATTEMPTS", "1")
+    monkeypatch.setenv("UKR__RETRY__MODEL__MAX_ATTEMPTS", "1")
+    monkeypatch.setenv("UKR__RETRY__INGESTION_ITEM__MAX_ATTEMPTS", "1")
     ran: list[str] = []
     for command in commands:
         words = shlex.split(command.split("\n", 1)[0])

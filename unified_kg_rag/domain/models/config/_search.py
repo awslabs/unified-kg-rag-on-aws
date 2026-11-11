@@ -35,10 +35,10 @@ from ._fusion import (
     _reject_auto_strategy,
     _reject_auto_style,
 )
+from ._graph_expansion import GraphExpansionConfig
 from ._strategies import (
     DriftSearchConfig,
     GlobalSearchConfig,
-    GraphExpansionConfig,
     IterativeSearchConfig,
     LightRAGSearchConfig,
     LocalSearchConfig,
@@ -245,7 +245,7 @@ class SearchConfig(ConfigSection):
             " stalled call to about model_max_attempts x "
             "model_timeout_seconds. Throttling and model errors past it are "
             "retried with backoff within the retry section's budget "
-            "(retry.max_total_seconds)."
+            "(retry.model.max_total_seconds)."
         ),
         json_schema_extra=evidence(
             "operational", "#query-deadlines-and-model-timeouts"

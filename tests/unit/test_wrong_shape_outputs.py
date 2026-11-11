@@ -68,7 +68,7 @@ def _providers(config: Config, answer: str, fixed: str, calls: list[str]) -> Pro
 @pytest.fixture
 def config() -> Config:
     config = Config()
-    config.retry.max_attempts = 1
+    config.retry.ingestion_item.max_attempts = 1
     config.processing.graph_extraction.entity_grounding.enabled = False
     return config
 

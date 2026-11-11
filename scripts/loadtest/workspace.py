@@ -124,10 +124,13 @@ def write_workspace(
     # Retries on, as a real deployment has them (the chaos runs inject the
     # faults retries absorb: 429, 503, dropped connections), with a short
     # backoff so a run under faults takes seconds, not minutes.
+    # Ingestion items keep their own backoff (retry.ingestion_item).
+    fast = {"max_attempts": 3, "base_delay_seconds": 0.2, "max_delay_seconds": 2.0}
     config["retry"] = {
-        "max_attempts": 3,
-        "base_delay_seconds": 0.2,
-        "max_delay_seconds": 2.0,
+        "model": dict(fast),
+        "model_server": dict(fast),
+        "ingestion_item": {"max_attempts": 3},
+        "graph_store": {"base_delay_seconds": 0.2},
     }
     if all_methodologies:
         config.setdefault("indexing", {})["methodologies"] = ALL_METHODOLOGIES

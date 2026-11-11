@@ -612,7 +612,7 @@ Search configuration
 | `query_max_model_calls` | integer \| null (≥ 1) | `null` |  | Model calls one query may make in all: the router, the query processing calls, the strategy's own and the answer. A call past it is refused before it is sent. global's rating and map calls, DRIFT's primer and follow-ups and iterative's rounds start only the calls that fit beside the answer, the rest recorded in metadata.degraded (reason query_limit); auto routes only to the strategies whose fewest calls fit and starts no speculative extraction; a query whose answer call does not fit fails with UsageLimitExceededError (error class limit_exceeded). RAGInput.limits.max_model_calls lowers it for one query. null (default): no cap. |
 | `query_max_input_tokens` | integer \| null (≥ 1) | `null` |  | Input tokens one query's model calls may read in all, each call counted at its start at the local estimate of its prompt (then at what the model reports). Enforced as query_max_model_calls (auto starts no speculative extraction under it either); the fan-out keeps the answer prompt's own tokens for the answer, and the answer's context is cut to what is left after that prompt and the question, less search.token_manager.context_window_headroom_ratio of it. RAGInput.limits.max_input_tokens lowers it for one query. null (default): no cap. |
 | `model_timeout_seconds` | number (> 0) | `90.0` | [measured](../concepts/defaults-and-evidence.md#query-deadlines-and-model-timeouts) | Read timeout of the model clients a query calls (answer and query-time LLM calls, query embeddings, Bedrock rerank): how long one request may wait for the server's next bytes, which for a non-streamed call is its whole generation. Ingestion and evaluation-judge calls keep the 330 s Bedrock read timeout. On an OpenAI-compatible or Ollama server it caps providers.llm.timeout_seconds and providers.embedding.timeout_seconds for query calls. |
-| `model_max_attempts` | integer (≥ 1) | `2` | [operational](../concepts/defaults-and-evidence.md#query-deadlines-and-model-timeouts) | Attempts, including the first, that botocore makes for one query-time Bedrock request (read timeouts, throttling, 5xx); ingestion clients make 6. With model_timeout_seconds it bounds a stalled call to about model_max_attempts x model_timeout_seconds. Throttling and model errors past it are retried with backoff within the retry section's budget (retry.max_total_seconds). |
+| `model_max_attempts` | integer (≥ 1) | `2` | [operational](../concepts/defaults-and-evidence.md#query-deadlines-and-model-timeouts) | Attempts, including the first, that botocore makes for one query-time Bedrock request (read timeouts, throttling, 5xx); ingestion clients make 6. With model_timeout_seconds it bounds a stalled call to about model_max_attempts x model_timeout_seconds. Throttling and model errors past it are retried with backoff within the retry section's budget (retry.model.max_total_seconds). |
 | `auto_speculative_extraction` | boolean | `true` |  | For an auto query, start the query entity and keyword extractions that the routable strategies read, and the query translation, at the same time as the router call instead of after it: auto then costs the latency of the strategy it routes to plus nothing. The router prompt and its decision are unchanged. An extraction the chosen strategy does not read keeps running in the background: the query does not wait for it, its call is in the query's usage from its start (estimated_calls until it answers), its result fills the query_extraction_cache_size cache, and it is cancelled at query_timeout_seconds or when the chain closes. With the default routable strategies that is one fast-model extraction call per auto query (two when it routes to global), paid whatever the route. false runs them after the router, only for the strategy it picked. |
 | `query_extraction_cache_size` | integer (≥ 0) | `1024` | operational | Query entity and keyword extractions a chain keeps in memory, keyed by the question, the target language, the model, the prompt text (a custom_prompts override is a new key) and the index namespace (no namespace reads by a cache hit what another was asked; a run-eval run's arms share across namespaces), least recently used dropped first. A repeated question (run-eval --repeats, the arms of a strategy comparison, a retry) reuses the extraction instead of calling the model again, so every arm searches with the same entities and keywords. A failed extraction is not kept. 0 disables it. |
 | `answer_prompt_style` | dict[`"auto"` \| `"drift"` \| `"global"` \| `"local"` \| `"simple"` \| `"mix"` \| `"hybrid"` \| `"naive"` \| `"iterative"` \| `"ppr"` \| `"tree"` \| `"structured"`, `"concise"` \| `"comprehensive"`] | `{"global": "comprehensive"}` |  | Answer prompt per strategy: concise (a one-sentence direct answer and brief support, custom_prompts.answer_generation_*) or comprehensive (a multi-paragraph markdown answer that explains every key point, modelled on MS GraphRAG's global reduce prompt, custom_prompts.comprehensive_answer_*). The map is merged over the default {global: comprehensive}; every other strategy is concise unless named. On sensemaking questions, comprehensive global answers won comprehensiveness, diversity and empowerment against concise ones, also with a judge that compares only what each answer adds, at a higher cost per query, and lost directness (docs/concepts/defaults-and-evidence.md#answer-style). drift stays concise: comprehensive drift won the same way, but its p95 latency came close to the 180 s query_timeout_seconds, so raise that with {drift: comprehensive}. {global: concise} restores the earlier default. An auto query uses the style of the strategy it routes to. |
@@ -890,18 +890,95 @@ Ingestion LLM response cache
 
 ## `retry`
 
-Retries on transient errors, for every caller
+Retries on errors a new attempt can fix: one profile per caller
 
 | Key | Type | Default | Evidence | Description |
 |---|---|---|---|---|
-| `max_attempts` | integer (≥ 1) | `5` | operational | Attempts per model call: each ingestion LLM item (transient errors, call timeouts and unparseable output), and each Bedrock embedding request and query-time call (transient errors botocore does not retry, such as HTTP 424). |
-| `base_delay_seconds` | number (≥ 0.0) | `2.0` | operational | Backoff base in seconds. A Bedrock embedding or query-time call, and an Ollama call, waits up to this before its first retry, doubling per attempt (equal jitter); a graph-store indexer request waits a random 0 to base_delay_seconds * 2^(n-1) after attempt n (full jitter). 0 retries at once. |
-| `max_delay_seconds` | number (≥ 0.0) | `16.0` | operational | Upper bound on one backoff delay of a Bedrock embedding or query-time call or an Ollama call, in seconds. |
-| `max_total_seconds` | number (≥ 0.0) | `60.0` | operational | Wall-clock retry budget per Bedrock embedding or query-time call or Ollama call: no retry starts once the next backoff would cross it. |
-| `model_server_max_attempts` | integer (≥ 1) | `3` | operational | Attempts per request to an OpenAI-compatible or Ollama model server (providers.llm, providers.embedding) on transient errors. The OpenAI client retries itself; on Ollama, whose client does not, query chains and embedding calls are retried by the framework (ingestion items keep max_attempts). |
-| `graph_store_max_attempts` | integer (≥ 1) | `4` | operational | Attempts per Neptune or Gremlin indexer request (writes, read-backs, drops and label clears), with full-jitter backoff from base_delay_seconds. Errors a retry cannot fix (malformed query, access denied, bad parameter, read-only violation) fail on the first attempt. |
-| `query_store_max_attempts` | integer (≥ 1) | `3` | operational | Attempts of one OpenSearch query request that timed out, could not connect or got a 429/502/503/504, with a jittered backoff between them (0.25-0.5 s, then 0.5-1 s, doubling up to 2-4 s), so a short throttling burst is waited out. A hung cluster fails a query after about query_store_max_attempts x search.store_timeout_seconds. A Neptune or Gremlin query read that failed leaving the store usable (throttling, a memory limit) is retried alike; one stopped at its time limit, a timeout and a lost connection are not. |
-| `judge_max_attempts` | integer (≥ 1) | `3` | operational | Attempts per RAGAS judge call (passed as RAGAS RunConfig.max_retries, which RAGAS applies as stop_after_attempt, with exponential backoff). Attempts count against evaluation.ragas_timeout. |
+| `judge_max_attempts` | integer (≥ 1) | `3` | operational | Attempts per RAGAS judge call (passed as RAGAS RunConfig.max_retries, which RAGAS applies as stop_after_attempt, with its own exponential backoff). Attempts count against evaluation.ragas_timeout. |
+
+### `retry.model`
+
+Bedrock embedding requests and query-time model calls: the transient errors botocore does not retry (such as HTTP 424), after botocore's own attempts.
+
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `max_attempts` | integer (≥ 1) | `5` | operational | Attempts per call, including the first. 1 disables the retry. |
+| `base_delay_seconds` | number (≥ 0.0) | `2.0` | operational | Ceiling of the wait before the first retry, in seconds; it doubles per retry. 0 retries at once. |
+| `max_delay_seconds` | number \| null (≥ 0.0) | `16.0` | operational | Upper bound on one wait's ceiling, in seconds. null: none. |
+| `max_total_seconds` | number \| null (≥ 0.0) | `60.0` | operational | Wall-clock retry budget per call, in seconds: no retry starts once the next wait would cross it. null: none (the deadline of the query a call is made for still stops a model or query-store retry). |
+| `jitter` | `"equal"` \| `"full"` \| `"none"` | `"equal"` |  | How a wait is drawn under its ceiling: 'equal' between half the ceiling and the ceiling, 'full' between 0 and the ceiling (spreads concurrent workers the most), 'none' the ceiling itself. |
+
+### `retry.ingestion_item`
+
+Each ingestion LLM item (extraction, gleaning, claims, summaries, reports, chunking, translation): transient errors, call timeouts and output that does not parse. The long waits let a throttled Bedrock quota recover under processing.max_concurrency items.
+
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `max_attempts` | integer (≥ 1) | `5` | operational | Attempts per call, including the first. 1 disables the retry. |
+| `base_delay_seconds` | number (≥ 0.0) | `30.0` | operational | Ceiling of the wait before the first retry, in seconds; it doubles per retry. 0 retries at once. |
+| `max_delay_seconds` | number \| null (≥ 0.0) | `120.0` | operational | Upper bound on one wait's ceiling, in seconds. null: none. |
+| `max_total_seconds` | number \| null (≥ 0.0) | `null` | operational | Wall-clock retry budget per call, in seconds: no retry starts once the next wait would cross it. null: none (the deadline of the query a call is made for still stops a model or query-store retry). |
+| `jitter` | `"equal"` \| `"full"` \| `"none"` | `"full"` |  | How a wait is drawn under its ceiling: 'equal' between half the ceiling and the ceiling, 'full' between 0 and the ceiling (spreads concurrent workers the most), 'none' the ceiling itself. |
+
+### `retry.model_server`
+
+Requests to an OpenAI-compatible or Ollama model server (providers.llm, providers.embedding) on transient errors. The OpenAI client retries itself, max_attempts times; on Ollama, whose client does not, query chains and embedding calls are retried by the framework (ingestion items keep ingestion_item).
+
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `max_attempts` | integer (≥ 1) | `3` | operational | Attempts per call, including the first. 1 disables the retry. |
+| `base_delay_seconds` | number (≥ 0.0) | `2.0` | operational | Ceiling of the wait before the first retry, in seconds; it doubles per retry. 0 retries at once. |
+| `max_delay_seconds` | number \| null (≥ 0.0) | `16.0` | operational | Upper bound on one wait's ceiling, in seconds. null: none. |
+| `max_total_seconds` | number \| null (≥ 0.0) | `60.0` | operational | Wall-clock retry budget per call, in seconds: no retry starts once the next wait would cross it. null: none (the deadline of the query a call is made for still stops a model or query-store retry). |
+| `jitter` | `"equal"` \| `"full"` \| `"none"` | `"equal"` |  | How a wait is drawn under its ceiling: 'equal' between half the ceiling and the ceiling, 'full' between 0 and the ceiling (spreads concurrent workers the most), 'none' the ceiling itself. |
+
+### `retry.graph_store`
+
+Each Neptune or Gremlin indexer request (writes, read-backs, drops and label clears), over a new connection after a lost one. Errors a retry cannot fix (malformed query, access denied, bad parameter, read-only violation) fail on the first attempt.
+
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `max_attempts` | integer (≥ 1) | `4` | operational | Attempts per call, including the first. 1 disables the retry. |
+| `base_delay_seconds` | number (≥ 0.0) | `2.0` | operational | Ceiling of the wait before the first retry, in seconds; it doubles per retry. 0 retries at once. |
+| `max_delay_seconds` | number \| null (≥ 0.0) | `null` | operational | Upper bound on one wait's ceiling, in seconds. null: none. |
+| `max_total_seconds` | number \| null (≥ 0.0) | `null` | operational | Wall-clock retry budget per call, in seconds: no retry starts once the next wait would cross it. null: none (the deadline of the query a call is made for still stops a model or query-store retry). |
+| `jitter` | `"equal"` \| `"full"` \| `"none"` | `"full"` |  | How a wait is drawn under its ceiling: 'equal' between half the ceiling and the ceiling, 'full' between 0 and the ceiling (spreads concurrent workers the most), 'none' the ceiling itself. |
+
+### `retry.query_store`
+
+One OpenSearch, Neptune or Gremlin query request that failed leaving the store usable: an OpenSearch timeout, refused connection or 429/502/503/504, a graph-store read throttled or out of memory (one stopped at its time limit, a timeout and a lost connection are not retried), so a short throttling burst is waited out. A hung OpenSearch cluster fails a query after about max_attempts x search.store_timeout_seconds.
+
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `max_attempts` | integer (≥ 1) | `3` | operational | Attempts per call, including the first. 1 disables the retry. |
+| `base_delay_seconds` | number (≥ 0.0) | `0.5` | operational | Ceiling of the wait before the first retry, in seconds; it doubles per retry. 0 retries at once. |
+| `max_delay_seconds` | number \| null (≥ 0.0) | `4.0` | operational | Upper bound on one wait's ceiling, in seconds. null: none. |
+| `max_total_seconds` | number \| null (≥ 0.0) | `null` | operational | Wall-clock retry budget per call, in seconds: no retry starts once the next wait would cross it. null: none (the deadline of the query a call is made for still stops a model or query-store retry). |
+| `jitter` | `"equal"` \| `"full"` \| `"none"` | `"equal"` |  | How a wait is drawn under its ceiling: 'equal' between half the ceiling and the ceiling, 'full' between 0 and the ceiling (spreads concurrent workers the most), 'none' the ceiling itself. |
+
+### `retry.bulk_item`
+
+OpenSearch bulk items the cluster rejected with 429/502/503/504, resent on their own (the bulk request itself answered 200).
+
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `max_attempts` | integer (≥ 1) | `5` | operational | Attempts per call, including the first. 1 disables the retry. |
+| `base_delay_seconds` | number (≥ 0.0) | `1.0` | operational | Ceiling of the wait before the first retry, in seconds; it doubles per retry. 0 retries at once. |
+| `max_delay_seconds` | number \| null (≥ 0.0) | `30.0` | operational | Upper bound on one wait's ceiling, in seconds. null: none. |
+| `max_total_seconds` | number \| null (≥ 0.0) | `null` | operational | Wall-clock retry budget per call, in seconds: no retry starts once the next wait would cross it. null: none (the deadline of the query a call is made for still stops a model or query-store retry). |
+| `jitter` | `"equal"` \| `"full"` \| `"none"` | `"equal"` |  | How a wait is drawn under its ceiling: 'equal' between half the ceiling and the ceiling, 'full' between 0 and the ceiling (spreads concurrent workers the most), 'none' the ceiling itself. |
+
+### `retry.registry_batch`
+
+DynamoDB doc-status batch reads and writes: the keys or items DynamoDB returned unprocessed (throttling, the 16 MB response limit) are sent again; any left after max_attempts requests fail the run rather than read as absent.
+
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `max_attempts` | integer (≥ 1) | `8` | operational | Attempts per call, including the first. 1 disables the retry. |
+| `base_delay_seconds` | number (≥ 0.0) | `0.1` | operational | Ceiling of the wait before the first retry, in seconds; it doubles per retry. 0 retries at once. |
+| `max_delay_seconds` | number \| null (≥ 0.0) | `2.0` | operational | Upper bound on one wait's ceiling, in seconds. null: none. |
+| `max_total_seconds` | number \| null (≥ 0.0) | `null` | operational | Wall-clock retry budget per call, in seconds: no retry starts once the next wait would cross it. null: none (the deadline of the query a call is made for still stops a model or query-store retry). |
+| `jitter` | `"equal"` \| `"full"` \| `"none"` | `"none"` |  | How a wait is drawn under its ceiling: 'equal' between half the ceiling and the ceiling, 'full' between 0 and the ceiling (spreads concurrent workers the most), 'none' the ceiling itself. |
 
 ## `logging`
 
@@ -1291,19 +1368,19 @@ These keys are refused at load with the key that replaced them.
 | `aws.dynamodb.enabled` | `providers.doc_status.enabled` |
 | `search.reranking.rerank_model_id` | `models.rerank` |
 | `aws.bedrock.default_max_output_tokens` | `models.default_max_output_tokens` |
-| `processing.max_attempts` | `retry.max_attempts` |
-| `aws.bedrock.transient_retry.max_attempts` | `retry.max_attempts` |
-| `aws.bedrock.transient_retry.base_delay_seconds` | `retry.base_delay_seconds` |
-| `aws.bedrock.transient_retry.max_delay_seconds` | `retry.max_delay_seconds` |
-| `aws.bedrock.transient_retry.max_total_seconds` | `retry.max_total_seconds` |
-| `providers.llm.max_attempts` | `retry.model_server_max_attempts` |
-| `providers.embedding.max_attempts` | `retry.model_server_max_attempts` |
-| `indexing.neptune.max_attempts` | `retry.graph_store_max_attempts` |
-| `indexing.neptune.retry_delay_seconds` | `retry.base_delay_seconds` |
-| `search.store_max_attempts` | `retry.query_store_max_attempts` |
+| `processing.max_attempts` | `retry.ingestion_item.max_attempts` |
+| `aws.bedrock.transient_retry.max_attempts` | `retry.model.max_attempts` |
+| `aws.bedrock.transient_retry.base_delay_seconds` | `retry.model.base_delay_seconds` |
+| `aws.bedrock.transient_retry.max_delay_seconds` | `retry.model.max_delay_seconds` |
+| `aws.bedrock.transient_retry.max_total_seconds` | `retry.model.max_total_seconds` |
+| `providers.llm.max_attempts` | `retry.model_server.max_attempts` |
+| `providers.embedding.max_attempts` | `retry.model_server.max_attempts` |
+| `indexing.neptune.max_attempts` | `retry.graph_store.max_attempts` |
+| `indexing.neptune.retry_delay_seconds` | `retry.graph_store.base_delay_seconds` |
+| `search.store_max_attempts` | `retry.query_store.max_attempts` |
 | `evaluation.ragas_max_attempts` | `retry.judge_max_attempts` |
-| `processing.max_retries` | `retry.max_attempts` |
-| `indexing.neptune.max_retries` | `retry.graph_store_max_attempts` |
+| `processing.max_retries` | `retry.ingestion_item.max_attempts` |
+| `indexing.neptune.max_retries` | `retry.graph_store.max_attempts` |
 | `processing.chunk_concurrency` | `processing.max_concurrency` |
 | `processing.batch_size` | `processing.max_concurrency` |
 | `indexing.cross_run_fuzzy_merge` | `processing.fuzzy_entity_resolution` |
@@ -1312,11 +1389,22 @@ These keys are refused at load with the key that replaced them.
 | `indexing.neptune.entity_importance_source` | `search.graph_expansion.entity_importance_source` |
 | `indexing.neptune.traversal_fetch_multiplier` | `search.graph_expansion.traversal_fetch_multiplier` |
 | `indexing.neptune.deterministic_order` | `search.graph_expansion.deterministic_order` |
+| `retry.max_attempts` | `retry.model.max_attempts` |
+| `retry.base_delay_seconds` | `retry.model.base_delay_seconds` |
+| `retry.max_delay_seconds` | `retry.model.max_delay_seconds` |
+| `retry.max_total_seconds` | `retry.model.max_total_seconds` |
+| `retry.model_server_max_attempts` | `retry.model_server.max_attempts` |
+| `retry.graph_store_max_attempts` | `retry.graph_store.max_attempts` |
+| `retry.query_store_max_attempts` | `retry.query_store.max_attempts` |
 
 Each takes the value of the key it replaces, except:
 
-- `processing.max_retries`: it had no effect; each model call made 5 attempts, the retry.max_attempts default.
-- `indexing.neptune.max_retries`: it counted retries, so max_retries N is graph_store_max_attempts N+1.
+- `processing.max_retries`: it had no effect; each model call made 5 attempts, the retry.ingestion_item.max_attempts default.
+- `indexing.neptune.max_retries`: it counted retries, so max_retries N is retry.graph_store.max_attempts N+1.
+- `retry.max_attempts`: it also counted each ingestion LLM item's attempts: set retry.ingestion_item.max_attempts too.
+- `retry.base_delay_seconds`: it also set the model-server and graph-store backoff: set retry.model_server.base_delay_seconds and retry.graph_store.base_delay_seconds too.
+- `retry.max_delay_seconds`: it also bounded the model-server waits: set retry.model_server.max_delay_seconds too.
+- `retry.max_total_seconds`: it also budgeted the model-server retries: set retry.model_server.max_total_seconds too.
 - `processing.batch_size`: it counted the items of one batch, not calls in flight; max_concurrency caps the calls.
 
 ## Deprecated keys

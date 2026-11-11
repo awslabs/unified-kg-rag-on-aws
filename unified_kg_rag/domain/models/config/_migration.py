@@ -50,23 +50,23 @@ MOVED_KEYS: dict[str, str] = {
     "aws.dynamodb.enabled": "providers.doc_status.enabled",
     "search.reranking.rerank_model_id": "models.rerank",
     "aws.bedrock.default_max_output_tokens": "models.default_max_output_tokens",
-    # Retries are configured in one section; each old key counts what its
-    # replacement counts, so a tuned value fails the load instead of
-    # silently reverting to the default.
-    "processing.max_attempts": "retry.max_attempts",
-    "aws.bedrock.transient_retry.max_attempts": "retry.max_attempts",
-    "aws.bedrock.transient_retry.base_delay_seconds": "retry.base_delay_seconds",
-    "aws.bedrock.transient_retry.max_delay_seconds": "retry.max_delay_seconds",
-    "aws.bedrock.transient_retry.max_total_seconds": "retry.max_total_seconds",
-    "providers.llm.max_attempts": "retry.model_server_max_attempts",
-    "providers.embedding.max_attempts": "retry.model_server_max_attempts",
-    "indexing.neptune.max_attempts": "retry.graph_store_max_attempts",
-    "indexing.neptune.retry_delay_seconds": "retry.base_delay_seconds",
-    "search.store_max_attempts": "retry.query_store_max_attempts",
+    # Retries are configured in one section, one profile per caller; each old
+    # key counts what its replacement counts, so a tuned value fails the load
+    # instead of silently reverting to the default.
+    "processing.max_attempts": "retry.ingestion_item.max_attempts",
+    "aws.bedrock.transient_retry.max_attempts": "retry.model.max_attempts",
+    "aws.bedrock.transient_retry.base_delay_seconds": "retry.model.base_delay_seconds",
+    "aws.bedrock.transient_retry.max_delay_seconds": "retry.model.max_delay_seconds",
+    "aws.bedrock.transient_retry.max_total_seconds": "retry.model.max_total_seconds",
+    "providers.llm.max_attempts": "retry.model_server.max_attempts",
+    "providers.embedding.max_attempts": "retry.model_server.max_attempts",
+    "indexing.neptune.max_attempts": "retry.graph_store.max_attempts",
+    "indexing.neptune.retry_delay_seconds": "retry.graph_store.base_delay_seconds",
+    "search.store_max_attempts": "retry.query_store.max_attempts",
     "evaluation.ragas_max_attempts": "retry.judge_max_attempts",
     # The 0.2.3 retry counts, which count otherwise (MOVED_KEY_NOTES).
-    "processing.max_retries": "retry.max_attempts",
-    "indexing.neptune.max_retries": "retry.graph_store_max_attempts",
+    "processing.max_retries": "retry.ingestion_item.max_attempts",
+    "indexing.neptune.max_retries": "retry.graph_store.max_attempts",
     # 0.2.3's call pools, one pool of in-flight calls now.
     "processing.chunk_concurrency": "processing.max_concurrency",
     "processing.batch_size": "processing.max_concurrency",
@@ -82,6 +82,15 @@ MOVED_KEYS: dict[str, str] = {
             "deterministic_order",
         )
     },
+    # The flat retry keys before the profiles: one value fed several callers,
+    # now each caller's profile (MOVED_KEY_NOTES names the others).
+    "retry.max_attempts": "retry.model.max_attempts",
+    "retry.base_delay_seconds": "retry.model.base_delay_seconds",
+    "retry.max_delay_seconds": "retry.model.max_delay_seconds",
+    "retry.max_total_seconds": "retry.model.max_total_seconds",
+    "retry.model_server_max_attempts": "retry.model_server.max_attempts",
+    "retry.graph_store_max_attempts": "retry.graph_store.max_attempts",
+    "retry.query_store_max_attempts": "retry.query_store.max_attempts",
 }
 
 # Moved key -> what to know when converting its value (a key whose
@@ -89,10 +98,27 @@ MOVED_KEYS: dict[str, str] = {
 MOVED_KEY_NOTES: dict[str, str] = {
     "processing.max_retries": (
         "it had no effect; each model call made 5 attempts, the "
-        "retry.max_attempts default"
+        "retry.ingestion_item.max_attempts default"
     ),
     "indexing.neptune.max_retries": (
-        "it counted retries, so max_retries N is graph_store_max_attempts N+1"
+        "it counted retries, so max_retries N is retry.graph_store.max_attempts N+1"
+    ),
+    "retry.max_attempts": (
+        "it also counted each ingestion LLM item's attempts: set "
+        "retry.ingestion_item.max_attempts too"
+    ),
+    "retry.base_delay_seconds": (
+        "it also set the model-server and graph-store backoff: set "
+        "retry.model_server.base_delay_seconds and "
+        "retry.graph_store.base_delay_seconds too"
+    ),
+    "retry.max_delay_seconds": (
+        "it also bounded the model-server waits: set "
+        "retry.model_server.max_delay_seconds too"
+    ),
+    "retry.max_total_seconds": (
+        "it also budgeted the model-server retries: set "
+        "retry.model_server.max_total_seconds too"
     ),
     "processing.batch_size": (
         "it counted the items of one batch, not calls in flight; "

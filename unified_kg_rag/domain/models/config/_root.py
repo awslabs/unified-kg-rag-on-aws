@@ -134,7 +134,7 @@ class Config(_AssignmentChecked):
     )
     retry: RetryConfig = Field(
         default_factory=RetryConfig,
-        description="Retries on transient errors, for every caller",
+        description="Retries on errors a new attempt can fix: one profile per caller",
     )
     logging: LoggingConfig = Field(
         default_factory=LoggingConfig, description="Logging system configuration"

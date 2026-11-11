@@ -139,133 +139,188 @@ class GuardrailConfig(ConfigSection):
             )
 
 
-class TransientRetryConfig(ConfigSection):
-    """Bounded retry policy on transient model errors (not a config section).
+RetryJitter = Literal["equal", "full", "none"]
 
-    botocore's retry modes do not retry Bedrock's HTTP 424
-    ``ModelErrorException`` (or ``ModelNotReadyException``), so without this a
-    single transient model fault fails a user query or drops an item from the
-    vector index. Applied to every embedding request and to query-time LLM
-    chains; ingestion LLM chains are retried by ``BatchProcessor`` instead.
-    Only transient errors are retried; validation and access errors still fail
-    fast. Built from the ``retry`` section (``RetryConfig.transient_policy``);
-    a custom LLM factory may return one as its ``transient_retry``.
+
+class RetryPolicy(ConfigSection):
+    """One caller's retry policy: attempts and backoff (a ``retry`` profile).
+
+    Only errors a new attempt can fix are retried, by every caller; the
+    others fail on the first attempt. The wait before retry ``n`` (1 for
+    the first) is drawn under a ceiling of ``base_delay_seconds * 2^(n-1)``,
+    at most ``max_delay_seconds`` (:meth:`ceiling`; the draw is
+    ``adapters.llm.retry.backoff_delay``). A custom LLM factory may return
+    one as its ``transient_retry``.
     """
 
     max_attempts: int = Field(
         default=5,
         ge=1,
-        description=(
-            "Attempts per call, including the first, for transient Bedrock "
-            "errors that botocore does not retry (such as HTTP 424), on "
-            "embeddings and query-time calls. 1 disables the retry."
-        ),
+        description="Attempts per call, including the first. 1 disables the retry.",
+        json_schema_extra=evidence("operational"),
     )
     base_delay_seconds: float = Field(
         default=2.0,
         ge=0.0,
-        description="Backoff ceiling for the first retry; doubles per attempt "
-        "with equal jitter",
+        description=(
+            "Ceiling of the wait before the first retry, in seconds; it doubles "
+            "per retry. 0 retries at once."
+        ),
+        json_schema_extra=evidence("operational"),
     )
-    max_delay_seconds: float = Field(
+    max_delay_seconds: float | None = Field(
         default=16.0,
         ge=0.0,
-        description="Upper bound on a single backoff delay in seconds",
+        description="Upper bound on one wait's ceiling, in seconds. null: none.",
+        json_schema_extra=evidence("operational"),
     )
-    max_total_seconds: float = Field(
+    max_total_seconds: float | None = Field(
         default=60.0,
         ge=0.0,
-        description="Wall-clock retry budget per call; no retry starts once the "
-        "next backoff would cross it",
+        description=(
+            "Wall-clock retry budget per call, in seconds: no retry starts "
+            "once the next wait would cross it. null: none (the deadline of "
+            "the query a call is made for still stops a model or query-store "
+            "retry)."
+        ),
+        json_schema_extra=evidence("operational"),
     )
+    jitter: RetryJitter = Field(
+        default="equal",
+        description=(
+            "How a wait is drawn under its ceiling: 'equal' between half the "
+            "ceiling and the ceiling, 'full' between 0 and the ceiling (spreads "
+            "concurrent workers the most), 'none' the ceiling itself."
+        ),
+    )
+
+    def ceiling(self, retry: int) -> float:
+        """The wait ceiling before retry ``retry`` (1-based)."""
+        ceiling = self.base_delay_seconds * 2.0 ** (retry - 1)
+        if self.max_delay_seconds is not None:
+            ceiling = min(ceiling, self.max_delay_seconds)
+        return ceiling
+
+
+# 0.3.0's name of the policy (exported then): deprecated, the same class.
+TransientRetryConfig = RetryPolicy
+
+
+# The profiles of the ``retry`` section and their defaults: each caller's
+# values before the section had profiles. A profile a config sets in part
+# keeps its own defaults for the rest (RetryConfig._profile_defaults).
+RETRY_PROFILES: dict[str, dict[str, Any]] = {
+    "model": {},
+    "ingestion_item": {
+        "base_delay_seconds": 30.0,
+        "max_delay_seconds": 120.0,
+        "max_total_seconds": None,
+        "jitter": "full",
+    },
+    "model_server": {"max_attempts": 3},
+    "graph_store": {
+        "max_attempts": 4,
+        "max_delay_seconds": None,
+        "max_total_seconds": None,
+        "jitter": "full",
+    },
+    "query_store": {
+        "max_attempts": 3,
+        "base_delay_seconds": 0.5,
+        "max_delay_seconds": 4.0,
+        "max_total_seconds": None,
+    },
+    "bulk_item": {
+        "base_delay_seconds": 1.0,
+        "max_delay_seconds": 30.0,
+        "max_total_seconds": None,
+    },
+    "registry_batch": {
+        "max_attempts": 8,
+        "base_delay_seconds": 0.1,
+        "max_delay_seconds": 2.0,
+        "max_total_seconds": None,
+        "jitter": "none",
+    },
+}
+
+
+def _profile(name: str) -> Any:
+    return lambda: RetryPolicy(**RETRY_PROFILES[name])
 
 
 class RetryConfig(ConfigSection):
-    """Retries on errors a new attempt can fix, for every caller (``retry``).
+    """Retries on errors a new attempt can fix, one profile per caller (``retry``).
 
-    Attempts include the first call, and 1 disables the retry. Errors a retry
-    cannot fix (validation, access denied, a malformed query) fail on the first
-    attempt everywhere. ``max_attempts`` and the backoff apply to the model
-    calls; the callers whose defaults differ have their own attempt count.
+    Each profile is a :class:`RetryPolicy` (attempts including the first,
+    the backoff and its budget). Errors a retry cannot fix (validation,
+    access denied, a malformed query) fail on the first attempt everywhere.
+    A profile set in part keeps its own defaults for the keys it leaves out.
     """
 
-    max_attempts: int = Field(
-        default=5,
-        ge=1,
+    model: RetryPolicy = Field(
+        default_factory=_profile("model"),
         description=(
-            "Attempts per model call: each ingestion LLM item (transient "
-            "errors, call timeouts and unparseable output), and each Bedrock "
-            "embedding request and query-time call (transient errors botocore "
-            "does not retry, such as HTTP 424)."
+            "Bedrock embedding requests and query-time model calls: the "
+            "transient errors botocore does not retry (such as HTTP 424), "
+            "after botocore's own attempts."
         ),
-        json_schema_extra=evidence("operational"),
     )
-    base_delay_seconds: float = Field(
-        default=2.0,
-        ge=0.0,
+    ingestion_item: RetryPolicy = Field(
+        default_factory=_profile("ingestion_item"),
         description=(
-            "Backoff base in seconds. A Bedrock embedding or query-time call, "
-            "and an Ollama call, waits up to this before its first retry, "
-            "doubling per attempt (equal jitter); a graph-store indexer "
-            "request waits a random 0 to base_delay_seconds * 2^(n-1) after "
-            "attempt n (full jitter). 0 retries at once."
+            "Each ingestion LLM item (extraction, gleaning, claims, summaries, "
+            "reports, chunking, translation): transient errors, call timeouts "
+            "and output that does not parse. The long waits let a throttled "
+            "Bedrock quota recover under processing.max_concurrency items."
         ),
-        json_schema_extra=evidence("operational"),
     )
-    max_delay_seconds: float = Field(
-        default=16.0,
-        ge=0.0,
-        description="Upper bound on one backoff delay of a Bedrock embedding or "
-        "query-time call or an Ollama call, in seconds.",
-        json_schema_extra=evidence("operational"),
-    )
-    max_total_seconds: float = Field(
-        default=60.0,
-        ge=0.0,
-        description="Wall-clock retry budget per Bedrock embedding or "
-        "query-time call or Ollama call: no retry starts once the next backoff "
-        "would cross it.",
-        json_schema_extra=evidence("operational"),
-    )
-    model_server_max_attempts: int = Field(
-        default=3,
-        ge=1,
+    model_server: RetryPolicy = Field(
+        default_factory=_profile("model_server"),
         description=(
-            "Attempts per request to an OpenAI-compatible or Ollama model "
-            "server (providers.llm, providers.embedding) on transient errors. "
-            "The OpenAI client retries itself; on Ollama, whose client does "
-            "not, query chains and embedding calls are retried by the "
-            "framework (ingestion items keep max_attempts)."
+            "Requests to an OpenAI-compatible or Ollama model server "
+            "(providers.llm, providers.embedding) on transient errors. The "
+            "OpenAI client retries itself, max_attempts times; on Ollama, "
+            "whose client does not, query chains and embedding calls are "
+            "retried by the framework (ingestion items keep ingestion_item)."
         ),
-        json_schema_extra=evidence("operational"),
     )
-    graph_store_max_attempts: int = Field(
-        default=4,
-        ge=1,
+    graph_store: RetryPolicy = Field(
+        default_factory=_profile("graph_store"),
         description=(
-            "Attempts per Neptune or Gremlin indexer request (writes, "
-            "read-backs, drops and label clears), with full-jitter backoff "
-            "from base_delay_seconds. Errors a retry cannot fix (malformed "
-            "query, access denied, bad parameter, read-only violation) fail "
-            "on the first attempt."
+            "Each Neptune or Gremlin indexer request (writes, read-backs, drops "
+            "and label clears), over a new connection after a lost one. "
+            "Errors a retry cannot fix (malformed query, access denied, bad "
+            "parameter, read-only violation) fail on the first attempt."
         ),
-        json_schema_extra=evidence("operational"),
     )
-    query_store_max_attempts: int = Field(
-        default=3,
-        ge=1,
+    query_store: RetryPolicy = Field(
+        default_factory=_profile("query_store"),
         description=(
-            "Attempts of one OpenSearch query request that timed out, could "
-            "not connect or got a 429/502/503/504, with a jittered backoff "
-            "between them (0.25-0.5 s, then 0.5-1 s, doubling up to 2-4 s), so"
-            " a short throttling burst is waited out. A hung cluster fails a "
-            "query after about query_store_max_attempts x "
-            "search.store_timeout_seconds. A Neptune or Gremlin query read "
-            "that failed leaving the store usable (throttling, a memory "
-            "limit) is retried alike; one stopped at its time limit, a "
-            "timeout and a lost connection are not."
+            "One OpenSearch, Neptune or Gremlin query request that failed "
+            "leaving the store usable: an OpenSearch timeout, refused "
+            "connection or 429/502/503/504, a graph-store read throttled or "
+            "out of memory (one stopped at its time limit, a timeout and a "
+            "lost connection are not retried), so a short throttling burst is "
+            "waited out. A hung OpenSearch cluster fails a query after about "
+            "max_attempts x search.store_timeout_seconds."
         ),
-        json_schema_extra=evidence("operational"),
+    )
+    bulk_item: RetryPolicy = Field(
+        default_factory=_profile("bulk_item"),
+        description=(
+            "OpenSearch bulk items the cluster rejected with 429/502/503/504, "
+            "resent on their own (the bulk request itself answered 200)."
+        ),
+    )
+    registry_batch: RetryPolicy = Field(
+        default_factory=_profile("registry_batch"),
+        description=(
+            "DynamoDB doc-status batch reads and writes: the keys or items "
+            "DynamoDB returned unprocessed (throttling, the 16 MB response "
+            "limit) are sent again; any left after max_attempts requests fail "
+            "the run rather than read as absent."
+        ),
     )
     judge_max_attempts: int = Field(
         default=3,
@@ -273,21 +328,27 @@ class RetryConfig(ConfigSection):
         description=(
             "Attempts per RAGAS judge call (passed as RAGAS RunConfig."
             "max_retries, which RAGAS applies as stop_after_attempt, with "
-            "exponential backoff). Attempts count against "
+            "its own exponential backoff). Attempts count against "
             "evaluation.ragas_timeout."
         ),
         json_schema_extra=evidence("operational"),
     )
 
-    def transient_policy(self, max_attempts: int | None = None) -> TransientRetryConfig:
-        """The model-call retry policy, with ``max_attempts`` attempts (default
-        this section's)."""
-        return TransientRetryConfig(
-            max_attempts=self.max_attempts if max_attempts is None else max_attempts,
-            base_delay_seconds=self.base_delay_seconds,
-            max_delay_seconds=self.max_delay_seconds,
-            max_total_seconds=self.max_total_seconds,
-        )
+    @model_validator(mode="before")
+    @classmethod
+    def _profile_defaults(cls, data: Any) -> Any:
+        """A profile given in part keeps its profile's defaults for the rest,
+        not :class:`RetryPolicy`'s."""
+        if not isinstance(data, dict):
+            return data
+        return {
+            key: (
+                {**RETRY_PROFILES[key], **value}
+                if key in RETRY_PROFILES and isinstance(value, dict)
+                else value
+            )
+            for key, value in data.items()
+        }
 
 
 class BedrockConfig(ConfigSection):

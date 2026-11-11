@@ -92,6 +92,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   were left out of the default on (`ppr`: within the noise of `local` at 2.4 times less cost, weaker on long chains;
   `tree`: +8 points of `answer_contains` over `naive`, below `mix` and `local`). It refused them, which made routing to
   them a code change rather than the operator's call.
+- The `retry` section has one profile per caller, each a `RetryPolicy` (`max_attempts`, `base_delay_seconds`,
+  `max_delay_seconds`, `max_total_seconds`, `jitter`; exported, `TransientRetryConfig` its 0.3.0 name):
+  `model`, `ingestion_item`, `model_server`, `graph_store`, `query_store` (OpenSearch and graph-store query reads),
+  `bulk_item` and `registry_batch`, beside `judge_max_attempts`. The flat `retry.max_attempts`, `base_delay_seconds`,
+  `max_delay_seconds`, `max_total_seconds`, `model_server_max_attempts`, `graph_store_max_attempts` and
+  `query_store_max_attempts` moved into them and fail the load naming their profile (a flat key that fed several
+  callers names the others). Each profile defaults to its caller's 0.3.0 values, so nothing waits otherwise; the
+  ingestion item backoff (30 s doubling to 120 s, which ignored the section), the OpenSearch and Neptune query,
+  bulk-item and DynamoDB batch backoffs, fixed in code before, are set there now, and every caller draws its waits
+  with one backoff function. A profile set in part keeps its own defaults.
 
 ### Deprecated
 

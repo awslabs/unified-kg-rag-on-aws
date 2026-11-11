@@ -15,6 +15,7 @@ from langchain_core.exceptions import OutputParserException
 
 from unified_kg_rag.adapters.llm import langchain as langchain_utils
 from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED, BatchProcessor
+from unified_kg_rag.domain.models.config import RetryPolicy
 
 pytestmark = pytest.mark.unit
 
@@ -70,9 +71,13 @@ def test_an_abandoned_batch_makes_no_further_attempt(monkeypatch) -> None:  # ty
 
     processor = BatchProcessor(
         max_concurrency=1,
-        max_attempts=4,
-        retry_multiplier=1.0,
-        retry_max_wait=1,
+        retry=RetryPolicy(
+            max_attempts=4,
+            base_delay_seconds=1.0,
+            max_delay_seconds=1,
+            max_total_seconds=None,
+            jitter="full",
+        ),
         call_timeout_seconds=0,
     )
     with pytest.raises(KeyboardInterrupt):
@@ -93,7 +98,8 @@ def test_a_batch_that_is_not_abandoned_still_retries() -> None:
         raise OutputParserException("malformed")
 
     processor = BatchProcessor(
-        max_concurrency=1, max_attempts=3, retry_multiplier=1.0, retry_max_wait=0
+        max_concurrency=1,
+        retry=RetryPolicy(max_attempts=3, base_delay_seconds=1.0, max_delay_seconds=0),
     )
     results = processor.execute_with_fallback(
         [{"x": 1}], lambda items: items, flaky, "task", show_progress=False
@@ -134,9 +140,13 @@ def test_an_abandoned_batch_cuts_a_backoff_wait_short(
 
     processor = BatchProcessor(
         max_concurrency=1,
-        max_attempts=3,
-        retry_multiplier=60.0,
-        retry_max_wait=60,
+        retry=RetryPolicy(
+            max_attempts=3,
+            base_delay_seconds=60.0,
+            max_delay_seconds=60,
+            max_total_seconds=None,
+            jitter="full",
+        ),
         call_timeout_seconds=0,
     )
     threading.Thread(target=interrupt_during_the_backoff).start()

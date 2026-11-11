@@ -3,7 +3,6 @@
 import asyncio
 import json
 import logging
-import math
 import re
 import time
 from collections.abc import Awaitable, Callable
@@ -29,7 +28,6 @@ from opensearchpy.helpers import streaming_bulk
 
 from unified_kg_rag.adapters.llm.retry import acall_with_transient_retry, backoff_delay
 from unified_kg_rag.domain.models import Config
-from unified_kg_rag.domain.models.config import TransientRetryConfig
 from unified_kg_rag.shared import (
     AWSServiceError,
     GraphRAGException,
@@ -68,7 +66,7 @@ RETRYABLE_STATUSES = frozenset({429, 502, 503, 504})
 
 # Transport retries of the sync (indexing) client, whose per-request timeout
 # is INDEXING_REQUEST_TIMEOUT_SECONDS. The async client serves queries and
-# takes search.store_timeout_seconds and retry.query_store_max_attempts instead: a
+# takes search.store_timeout_seconds and retry.query_store instead: a
 # hung cluster blocked a query for 6 x 180 s before it answered from no
 # context.
 _CLIENT_MAX_RETRIES = 5
@@ -77,11 +75,6 @@ _CLIENT_MAX_RETRIES = 5
 # but never answers failed it after 6 x INDEXING_REQUEST_TIMEOUT_SECONDS
 # (18 minutes), now after about a minute.
 _PING_TIMEOUT_SECONDS = 10.0
-# Backoff between the attempts of one query request (see
-# OpenSearchClient._aquery). opensearch-py retries back to back, so a 429
-# burst of a few milliseconds used up every attempt.
-_QUERY_RETRY_BASE_DELAY_SECONDS = 0.5
-_QUERY_RETRY_MAX_DELAY_SECONDS = 4.0
 # aiohttp connection limit of the async (query) client. opensearch-py's default
 # of 10 queues every request past the tenth, and the wait counts against
 # search.store_timeout_seconds: a query sends up to three searches at once
@@ -414,11 +407,6 @@ def _retryable_query_error(exc: BaseException) -> bool:
 
 
 class OpenSearchClient:
-    # Resends of bulk items rejected with a retryable status (see
-    # RETRYABLE_STATUSES), with exponential backoff between rounds.
-    BULK_ITEM_MAX_RETRIES = 4
-    BULK_ITEM_BASE_DELAY_SECONDS = 1.0
-    BULK_ITEM_MAX_DELAY_SECONDS = 30.0
     BULK_CHUNK_SIZE = 100
 
     def __init__(self, config: Config, boto_session: "boto3.Session | None" = None):
@@ -816,7 +804,8 @@ class OpenSearchClient:
         ``streaming_bulk`` (``raise_on_error=False``) yields one result per
         action, in order, so each failed result maps back to its action. Items
         that failed with a status in :data:`RETRYABLE_STATUSES` are
-        resent up to :attr:`BULK_ITEM_MAX_RETRIES` times with backoff; other
+        resent with backoff, in up to ``retry.bulk_item.max_attempts``
+        rounds in all (``retry.bulk_item``); other
         failures are final. A whole bulk request the cluster still answers with
         such a status after the client's own retries (which do not back off)
         makes its items and the ones after it pending in the same way; when the
@@ -831,19 +820,16 @@ class OpenSearchClient:
         failures: list[dict[str, Any]] = []
         retry_results: list[dict[str, Any]] = []
         pending = actions
-        for attempt in range(self.BULK_ITEM_MAX_RETRIES + 1):
+        policy = self.config.retry.bulk_item
+        for attempt in range(policy.max_attempts):
             if attempt:
-                delay = backoff_delay(
-                    attempt,
-                    self.BULK_ITEM_BASE_DELAY_SECONDS,
-                    self.BULK_ITEM_MAX_DELAY_SECONDS,
-                )
+                delay = backoff_delay(attempt, policy)
                 logger.warning(
                     "Resending %s bulk item(s) rejected with a retryable status "
                     "(retry %s/%s) in %.1fs",
                     len(pending),
                     attempt,
-                    self.BULK_ITEM_MAX_RETRIES,
+                    policy.max_attempts - 1,
                     delay,
                 )
                 _sleep(delay)
@@ -869,7 +855,7 @@ class OpenSearchClient:
             except TransportError as e:
                 if (
                     e.status_code not in RETRYABLE_STATUSES
-                    or attempt == self.BULK_ITEM_MAX_RETRIES
+                    or attempt == policy.max_attempts - 1
                 ):
                     raise
                 # The failed request's items and the unsent ones after it.
@@ -885,7 +871,7 @@ class OpenSearchClient:
         logger.warning(
             "%s bulk item(s) still rejected after %s retries",
             len(retry_results),
-            self.BULK_ITEM_MAX_RETRIES,
+            policy.max_attempts - 1,
         )
         return success_count, failures + retry_results
 
@@ -1038,24 +1024,20 @@ class OpenSearchClient:
         return dict(result)
 
     async def _aquery(self, request: Callable[[], Awaitable[Any]]) -> Any:
-        """``request()`` in up to ``retry.query_store_max_attempts`` attempts.
+        """``request()`` under the ``retry.query_store`` profile.
 
         A timeout, a connection failure and a 429/502/503/504 are retried
-        after an exponential backoff (``acall_with_transient_retry``); the
-        last attempt's error, or any other, propagates. No time budget of its
-        own: no retry starts past the deadline of the query the call is made
-        for (``retry_deadline``, which ``GraphRAGChain`` sets).
+        after an exponential backoff (``acall_with_transient_retry``;
+        opensearch-py retries back to back, so a 429 burst of a few
+        milliseconds used up every attempt); the last attempt's error, or any
+        other, propagates. No retry starts past the deadline of the query the
+        call is made for (``retry_deadline``, which ``GraphRAGChain`` sets).
         """
         return await acall_with_transient_retry(
             request,
             is_transient=_retryable_query_error,
             operation="OpenSearch query",
-            policy=TransientRetryConfig(
-                max_attempts=self.config.retry.query_store_max_attempts,
-                base_delay_seconds=_QUERY_RETRY_BASE_DELAY_SECONDS,
-                max_delay_seconds=_QUERY_RETRY_MAX_DELAY_SECONDS,
-                max_total_seconds=math.inf,
-            ),
+            policy=self.config.retry.query_store,
         )
 
     @_handle_async_opensearch_errors

@@ -56,7 +56,7 @@ def _extractor(config: Config, mocker, **answers: list[str]) -> GraphExtractor:
     mocker.patch.object(ge_module, "setup_chain")
     extractor = GraphExtractor(config)
     extractor.extraction_config.entity_confidence_threshold = 0.0
-    extractor.batch_processor.retry_max_wait = 0
+    extractor.batch_processor.retry.max_delay_seconds = 0
     parser = _extraction_parser()
     replies = {text: iter(texts) for text, texts in answers.items()}
     extractor.graph_extractor.invoke = mocker.Mock(
@@ -96,7 +96,7 @@ class TestXMLSelfCorrection:
     ) -> None:
         # Its sections are closed, so it was not cut off: a new attempt can
         # answer (the E2E's units with this error all succeeded on a re-run).
-        config.retry.max_attempts = 2
+        config.retry.ingestion_item.max_attempts = 2
         extractor = _extractor(
             config,
             mocker,
@@ -118,7 +118,7 @@ class TestXMLSelfCorrection:
         )
 
     def test_cut_off_output_is_not_retried(self, config: Config, mocker) -> None:
-        config.retry.max_attempts = 2
+        config.retry.ingestion_item.max_attempts = 2
         extractor = _extractor(
             config,
             mocker,
