@@ -25,6 +25,7 @@ from typing import Annotated, Any, Literal
 from pydantic import Field, SecretStr, StringConstraints
 
 from unified_kg_rag.domain.models.config._common import ConfigSection
+from unified_kg_rag.domain.models.evidence import evidence
 
 ProviderKind = Annotated[
     str, StringConstraints(strip_whitespace=True, to_lower=True, min_length=1)
@@ -73,6 +74,7 @@ class EndpointConfig(ConfigSection):
         default=300.0,
         gt=0,
         description="HTTP timeout per request to the model server, in seconds.",
+        json_schema_extra=evidence("operational"),
     )
 
 
@@ -89,6 +91,7 @@ class LLMProviderConfig(EndpointConfig):
             "retrieval context budget and is sent to Ollama as num_ctx. Bedrock "
             "models take theirs from the capability catalog."
         ),
+        json_schema_extra=evidence("operational"),
     )
     max_output_tokens: int = Field(
         default=8192,
@@ -98,12 +101,14 @@ class LLMProviderConfig(EndpointConfig):
             "models.default_max_output_tokens (or a prompt's own floor), "
             "clamped to this."
         ),
+        json_schema_extra=evidence("operational"),
     )
     temperature: float = Field(
         default=0.0,
         ge=0.0,
         le=2.0,
         description="Sampling temperature for the non-Bedrock models.",
+        json_schema_extra=evidence("upstream", "MS GraphRAG's model temperature, 0"),
     )
     tokenizer: Literal["estimate", "tiktoken"] = Field(
         default="estimate",
@@ -133,6 +138,7 @@ class EmbeddingProviderConfig(EndpointConfig):
             "Longest input the non-Bedrock embedding model accepts, in tokens; "
             "longer texts are truncated (by the estimate) before embedding."
         ),
+        json_schema_extra=evidence("operational"),
     )
 
 
@@ -154,9 +160,13 @@ class RerankProviderConfig(ConfigSection):
         default=512,
         ge=16,
         description="Longest query + passage pair the cross-encoder scores, in tokens.",
+        json_schema_extra=evidence("operational"),
     )
     batch_size: int = Field(
-        default=16, ge=1, description="Pairs scored per cross-encoder batch."
+        default=16,
+        ge=1,
+        description="Pairs scored per cross-encoder batch.",
+        json_schema_extra=evidence("operational"),
     )
 
 

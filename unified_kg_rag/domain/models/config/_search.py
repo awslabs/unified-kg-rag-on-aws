@@ -14,6 +14,8 @@ from pydantic import (
     model_validator,
 )
 
+from unified_kg_rag.domain.models.evidence import evidence
+
 from ..retrieval import (
     QueryLimits,
     SearchStrategy,
@@ -152,6 +154,7 @@ class SearchConfig(ConfigSection):
             "keeps processing.max_concurrency of them in flight) multiply it; "
             "lower it if a query's calls are throttled."
         ),
+        json_schema_extra=evidence("operational"),
     )
     store_timeout_seconds: float = Field(
         default=30.0,
@@ -163,6 +166,7 @@ class SearchConfig(ConfigSection):
             "does not answer fails the query instead of answering from no "
             "context. Ingestion keeps its own, longer limits."
         ),
+        json_schema_extra=evidence("operational"),
     )
     query_timeout_seconds: float | None = Field(
         default=180.0,
@@ -181,6 +185,7 @@ class SearchConfig(ConfigSection):
             "returns the error answer instead, a deadline that passes during "
             "its admission too. null disables both deadlines."
         ),
+        json_schema_extra=evidence("measured", "#query-deadlines-and-model-timeouts"),
     )
     query_max_model_calls: int | None = Field(
         default=None,
@@ -228,6 +233,7 @@ class SearchConfig(ConfigSection):
             "providers.llm.timeout_seconds and providers.embedding."
             "timeout_seconds for query calls."
         ),
+        json_schema_extra=evidence("measured", "#query-deadlines-and-model-timeouts"),
     )
     model_max_attempts: int = Field(
         default=2,
@@ -240,6 +246,9 @@ class SearchConfig(ConfigSection):
             "model_timeout_seconds. Throttling and model errors past it are "
             "retried with backoff within the retry section's budget "
             "(retry.max_total_seconds)."
+        ),
+        json_schema_extra=evidence(
+            "operational", "#query-deadlines-and-model-timeouts"
         ),
     )
     auto_speculative_extraction: bool = Field(
@@ -277,6 +286,7 @@ class SearchConfig(ConfigSection):
             "arm searches with the same entities and keywords. A failed "
             "extraction is not kept. 0 disables it."
         ),
+        json_schema_extra=evidence("operational"),
     )
     answer_prompt_style: Annotated[
         dict[SearchStrategy, AnswerPromptStyle],

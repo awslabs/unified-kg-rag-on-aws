@@ -9,6 +9,8 @@ from pydantic import (
     model_validator,
 )
 
+from unified_kg_rag.domain.models.evidence import evidence
+
 from ._common import ConfigSection
 
 
@@ -31,12 +33,17 @@ class CentralityConfig(ConfigSection):
         description="Calculate PageRank centrality to rank node importance",
     )
     pagerank_alpha: float = Field(
-        default=0.85, ge=0.0, le=1.0, description="PageRank damping factor"
+        default=0.85,
+        ge=0.0,
+        le=1.0,
+        description="PageRank damping factor",
+        json_schema_extra=evidence("upstream", "NetworkX's PageRank alpha, 0.85"),
     )
     pagerank_max_iter: int = Field(
         default=100,
         ge=1,
         description="Maximum iterations for PageRank convergence",
+        json_schema_extra=evidence("operational"),
     )
     betweenness_k: int | None = Field(
         default=None,
@@ -52,12 +59,14 @@ class CentralityConfig(ConfigSection):
         "shortest paths. Exact betweenness is O(V*E) and stalls on large real "
         "graphs; sampling keeps the analysis phase bounded. Raise this to force "
         "exact computation on larger graphs.",
+        json_schema_extra=evidence("operational"),
     )
     betweenness_seed: int = Field(
         default=42,
         description="Random seed for sampled betweenness (only used when "
         "betweenness_k is set). Fixed for reproducibility — sampled betweenness "
         "picks random pivots, so without a seed centrality is non-deterministic.",
+        json_schema_extra=evidence("operational"),
     )
 
 
@@ -73,7 +82,10 @@ class ReportGenerationConfig(ConfigSection):
         ),
     )
     max_entities_per_report: int = Field(
-        default=50, ge=1, description="Maximum entities per community report"
+        default=50,
+        ge=1,
+        description="Maximum entities per community report",
+        json_schema_extra=evidence("operational"),
     )
     max_report_context_tokens: int = Field(
         default=4000,
@@ -87,6 +99,9 @@ class ReportGenerationConfig(ConfigSection):
         "an additional upper bound on entity count. MS GraphRAG's default is "
         "8000 with max_cluster_size 10: raise this (more report input tokens "
         "per call) when reports of large communities keep few relationships.",
+        json_schema_extra=evidence(
+            "deviation", "MS GraphRAG's community report max_input_length: 8000"
+        ),
     )
     content_length: str = Field(
         default="medium",
@@ -128,27 +143,34 @@ class CommunityDetectionConfig(ConfigSection):
             "communities (and more report calls); lower gives fewer, larger "
             "ones."
         ),
+        json_schema_extra=evidence("upstream", "MS GraphRAG's Leiden resolution, 1.0"),
     )
     random_state: int = Field(
         default=42,
         ge=1,
         description="Leiden random seed (a positive integer; the native Leiden "
         "rejects 0). The same graph and seed give the same communities.",
+        json_schema_extra=evidence("operational"),
     )
     max_levels: int = Field(
-        default=5, ge=1, description=("Maximum depth of the " "community hierarchy.")
+        default=5,
+        ge=1,
+        description=("Maximum depth of the " "community hierarchy."),
+        json_schema_extra=evidence("unmeasured"),
     )
     trials: int = Field(
         default=3,
         ge=1,
         description="Number of independent Leiden runs to find best partition "
         "(MS GraphRAG runs 1).",
+        json_schema_extra=evidence("deviation", "MS GraphRAG runs 1"),
     )
     extra_forced_iterations: int = Field(
         default=2,
         ge=0,
         description="Additional optimization iterations after convergence "
         "(MS GraphRAG runs 0).",
+        json_schema_extra=evidence("deviation", "MS GraphRAG runs 0"),
     )
     max_cluster_size: int = Field(
         default=20,
@@ -165,6 +187,7 @@ class CommunityDetectionConfig(ConfigSection):
         "is 10 with a larger report budget; 20 typically keeps a leaf's "
         "entities and relationships, or a parent's child summaries, within the "
         "default 4000-token report context.",
+        json_schema_extra=evidence("deviation", "MS GraphRAG's max_cluster_size: 10"),
     )
     min_community_size: int = Field(
         default=3,
@@ -176,6 +199,7 @@ class CommunityDetectionConfig(ConfigSection):
             "entities (an isolated entity, a pair) has no neighbour and gets "
             "no community or report. 1 = cluster every component."
         ),
+        json_schema_extra=evidence("unmeasured"),
     )
     report_generation: ReportGenerationConfig = Field(
         default_factory=ReportGenerationConfig,
@@ -205,20 +229,36 @@ class InteractiveGraphSettings(ConfigSection):
     )
     background_color: str = Field(default="#f8fafc", description="Canvas colour.")
     font_family: str = Field(default="Arial", description="Label font.")
-    tooltip_delay: int = Field(default=200, ge=0, description="Tooltip delay (ms).")
+    tooltip_delay: int = Field(
+        default=200,
+        ge=0,
+        description="Tooltip delay (ms).",
+        json_schema_extra=evidence("operational"),
+    )
     max_nodes: int | None = Field(
         default=2000,
         ge=0,
         description="Keep the top-N nodes by degree; 0 or null disables the cap "
         "(a browser cannot lay out tens of thousands of nodes).",
+        json_schema_extra=evidence("operational"),
     )
 
 
 class StaticChartSettings(ConfigSection):
     """The static charts (dependency-free HTML with inline SVG)."""
 
-    figure_width: int = Field(default=900, ge=100, description="Chart width (px).")
-    figure_height: int = Field(default=600, ge=100, description="Chart height (px).")
+    figure_width: int = Field(
+        default=900,
+        ge=100,
+        description="Chart width (px).",
+        json_schema_extra=evidence("operational"),
+    )
+    figure_height: int = Field(
+        default=600,
+        ge=100,
+        description="Chart height (px).",
+        json_schema_extra=evidence("operational"),
+    )
     font: str = Field(default="Arial, sans-serif", description="Chart font.")
     background_color: str = Field(default="#fdfdfd", description="Chart background.")
     log_scale_x: bool = Field(

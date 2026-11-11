@@ -12,6 +12,8 @@ from pydantic import (
     model_validator,
 )
 
+from unified_kg_rag.domain.models.evidence import evidence
+
 from ..retrieval import (
     validate_safe_name,
 )
@@ -134,6 +136,7 @@ class SeedGraphConfig(ConfigSection):
             "wins). An item a document also states takes the document's "
             "confidence."
         ),
+        json_schema_extra=evidence("operational"),
     )
     shards: int = Field(
         default=16,
@@ -144,6 +147,7 @@ class SeedGraphConfig(ConfigSection):
             "hash of each node's id: an edit re-indexes only the shards it "
             "touches. Changing the value re-indexes the whole seed."
         ),
+        json_schema_extra=evidence("operational"),
     )
     max_items_per_unit: int = Field(
         default=50,
@@ -153,16 +157,19 @@ class SeedGraphConfig(ConfigSection):
             "Node and edge statements per text unit (the unit of lineage: "
             "what a removed statement re-derives)."
         ),
+        json_schema_extra=evidence("operational"),
     )
     max_nodes: int = Field(
         default=100_000,
         ge=1,
         description="Fail the import above this many nodes (never truncated).",
+        json_schema_extra=evidence("operational"),
     )
     max_edges: int = Field(
         default=500_000,
         ge=1,
         description="Fail the import above this many edges (never truncated).",
+        json_schema_extra=evidence("operational"),
     )
     max_bytes: int = Field(
         default=SEED_MAX_BYTES,
@@ -177,6 +184,7 @@ class SeedGraphConfig(ConfigSection):
             "it ('jsonl' and 'csv' stop at those caps "
             "while reading)."
         ),
+        json_schema_extra=evidence("operational", "#ontology-and-rdf-parse-cost"),
     )
     max_property_keys: int = Field(
         default=64,
@@ -186,6 +194,7 @@ class SeedGraphConfig(ConfigSection):
             "Fail the import when the seed uses more distinct property keys "
             "(the keys of attributes.seed_properties, stored but not indexed)."
         ),
+        json_schema_extra=evidence("operational"),
     )
     max_description_chars: int = Field(
         default=1000,
@@ -195,6 +204,7 @@ class SeedGraphConfig(ConfigSection):
             "boundary, so a seed-only item never needs the description "
             "summarizer."
         ),
+        json_schema_extra=evidence("operational"),
     )
 
     @model_validator(mode="before")

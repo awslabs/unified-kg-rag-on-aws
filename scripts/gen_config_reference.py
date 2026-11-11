@@ -36,10 +36,15 @@ from unified_kg_rag.domain.models.config import (
     REMOVED_KEYS,
     Config,
 )
+from unified_kg_rag.domain.models.evidence import EVIDENCE_KINDS, EVIDENCE_MEANINGS
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = REPO_ROOT / "docs" / "reference" / "configuration.md"
 MAX_DEFAULT_CHARS = 60
+# The evidence page, as linked from the reference.
+EVIDENCE_LINK = "../concepts/defaults-and-evidence.md"
+# The evidence tags of the defaults no run compared, in the order listed.
+UNCOMPARED = ("deviation", "unmeasured")
 
 HEADER = f"""\
 # Configuration Reference
@@ -64,6 +69,10 @@ the keys most deployments set.
   upper case with `__` between the segments, for example
   `{ENV_PREFIX}AWS__NEPTUNE__ENDPOINT` for `aws.neptune.endpoint`; a list or
   mapping value takes JSON. {{aws_fallbacks}}
+- **Evidence.** Every numeric default says what it rests on:
+{{evidence_kinds}}
+  The defaults a run never compared are listed in
+  [Defaults no run compared](#defaults-no-run-compared).
 - **Unknown keys** fail the load (`--allow-unknown-keys` turns that into a
   warning). Keys that moved are refused with their new place; see
   [Moved keys](#moved-keys). Removed keys load with a warning and are
@@ -155,6 +164,42 @@ def _cell(text: str) -> str:
     return " ".join(text.split()).replace("|", "\\|")
 
 
+def _evidence(field: FieldInfo) -> tuple[str | None, str | None]:
+    """A field's evidence tag and its ref (``domain.models.evidence``)."""
+    extra = field.json_schema_extra
+    if not isinstance(extra, dict):
+        return None, None
+    kind, ref = extra.get("evidence"), extra.get("ref")
+    return (
+        kind if isinstance(kind, str) else None,
+        ref if isinstance(ref, str) else None,
+    )
+
+
+def _evidence_cell(field: FieldInfo) -> str:
+    """The Evidence cell: the tag, linked to its section of the evidence page
+    or followed by its ref."""
+    kind, ref = _evidence(field)
+    if kind is None:
+        return ""
+    if ref and ref.startswith("#"):
+        return f"[{kind}]({EVIDENCE_LINK}{ref})"
+    return f"{kind}: {_cell(ref)}" if ref else kind
+
+
+def _row(name: str, type_cell: str, default: str, field: FieldInfo) -> str:
+    return (
+        f"| `{name}` | {type_cell} | {default} | {_evidence_cell(field)} | "
+        f"{_cell(field.description or '')} |"
+    )
+
+
+TABLE_HEAD = [
+    "| Key | Type | Default | Evidence | Description |",
+    "|---|---|---|---|---|",
+]
+
+
 def _intro(cls: type[BaseModel], field: FieldInfo | None) -> str:
     """A section's introduction: its field description, else its docstring."""
     if field is not None and field.description:
@@ -169,12 +214,13 @@ def _section(
     value: BaseModel | None,
     field: FieldInfo | None,
     long_defaults: dict[str, Any],
+    uncompared: list[tuple[str, str, FieldInfo]],
 ) -> list[str]:
     """The tables of one section and, recursively, of its sub-sections.
 
     ``value`` None: the section of a list's items (``path`` ends in
     ``[]``), whose defaults are the fields' own and whose required fields
-    say so."""
+    say so. A default no run compared goes to ``uncompared``."""
     rows: list[str] = []
     children: list[tuple[str, type[BaseModel], BaseModel | None, FieldInfo | None]]
     children = []
@@ -201,10 +247,9 @@ def _section(
             if value is None and info.is_required()
             else _default(current, key, long_defaults)
         )
-        rows.append(
-            f"| `{name}` | {type_cell} | {default} | "
-            f"{_cell(info.description or '')} |"
-        )
+        rows.append(_row(name, type_cell, default, info))
+        if _evidence(info)[0] in UNCOMPARED:
+            uncompared.append((key, default, info))
         if (item := _item_model(info.annotation)) is not None:
             children.append((f"{key}[]", item, None, None))
     lines = [f"{'#' * min(2 + path.count('.'), 4)} `{path}`", ""]
@@ -212,14 +257,9 @@ def _section(
     if intro:
         lines += [intro, ""]
     if rows:
-        lines += [
-            "| Key | Type | Default | Description |",
-            "|---|---|---|---|",
-            *rows,
-            "",
-        ]
+        lines += [*TABLE_HEAD, *rows, ""]
     for key, sub, current, info in children:
-        lines += _section(key, sub, current, info, long_defaults)
+        lines += _section(key, sub, current, info, long_defaults, uncompared)
     return lines
 
 
@@ -229,7 +269,10 @@ def render() -> str:
     fallbacks = ", ".join(
         f"`{name}` fills `{'.'.join(path)}`" for name, path in AWS_ENV_FALLBACKS.items()
     )
-    header = HEADER.replace(
+    kinds = "\n".join(
+        f"  - *{kind}*: {EVIDENCE_MEANINGS[kind]};" for kind in EVIDENCE_KINDS
+    )
+    header = HEADER.replace("{evidence_kinds}", kinds.rstrip(";") + ".").replace(
         "{aws_fallbacks}",
         (
             f"The standard AWS variables also apply when nothing else sets the key: "
@@ -241,16 +284,16 @@ def render() -> str:
     lines = [header, "## Contents", ""]
     sections, top_rows = [], []
     long_defaults: dict[str, Any] = {}
+    uncompared: list[tuple[str, str, FieldInfo]] = []
     for name, info in Config.model_fields.items():
         sub = _model_in(info.annotation)
         if sub is None:
             bounds = _constraints(info)
             type_cell = _type_name(info.annotation) + (f" ({bounds})" if bounds else "")
             default = _default(getattr(config, name), name, long_defaults)
-            top_rows.append(
-                f"| `{name}` | {type_cell} | {default} | "
-                f"{_cell(info.description or '')} |"
-            )
+            top_rows.append(_row(name, type_cell, default, info))
+            if _evidence(info)[0] in UNCOMPARED:
+                uncompared.append((name, default, info))
             continue
         sections.append((name, sub, getattr(config, name), info))
     if top_rows:
@@ -258,28 +301,40 @@ def render() -> str:
     lines += [f"- [`{name}`](#{name})" for name, *_ in sections]
     lines += [
         "- [Long defaults](#long-defaults)",
+        "- [Defaults no run compared](#defaults-no-run-compared)",
         "- [Moved keys](#moved-keys)",
         "- [Removed keys](#removed-keys)",
         "",
     ]
     if top_rows:
-        lines += [
-            "## Top-level keys",
-            "",
-            "| Key | Type | Default | Description |",
-            "|---|---|---|---|",
-            *top_rows,
-            "",
-        ]
+        lines += ["## Top-level keys", "", *TABLE_HEAD, *top_rows, ""]
     for name, sub, value, info in sections:
-        lines += _section(name, sub, value, info, long_defaults)
+        lines += _section(name, sub, value, info, long_defaults, uncompared)
     lines += ["## Long defaults", "", "The defaults too long for their table.", ""]
     for key, value in long_defaults.items():
         dumped = yaml.safe_dump(
             {key.rsplit(".", 1)[-1]: value}, allow_unicode=True, sort_keys=False
         )
         lines += [f"### `{key}`", "", "```yaml", dumped.rstrip(), "```", ""]
+    order = {kind: rank for rank, kind in enumerate(UNCOMPARED)}
+    uncompared.sort(key=lambda row: order[_evidence(row[2])[0] or ""])
     lines += [
+        "## Defaults no run compared",
+        "",
+        "The numeric defaults that change what is retrieved or answered and "
+        "that no run compared with another value: the departures from the "
+        "original algorithm first, then the rest. They keep the values they "
+        f"were written with. [Defaults and evidence]({EVIDENCE_LINK}) holds "
+        "the defaults a run measured and how to compare settings on your own "
+        "corpus.",
+        "",
+        "| Key | Default | Evidence |",
+        "|---|---|---|",
+        *[
+            f"| `{key}` | {default} | {_evidence_cell(info)} |"
+            for key, default, info in uncompared
+        ],
+        "",
         "## Moved keys",
         "",
         "These keys are refused at load with the key that replaced them.",

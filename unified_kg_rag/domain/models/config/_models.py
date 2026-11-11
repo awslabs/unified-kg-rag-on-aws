@@ -15,6 +15,8 @@ from pydantic import (
     model_validator,
 )
 
+from unified_kg_rag.domain.models.evidence import evidence
+
 from ._common import ConfigSection
 
 
@@ -529,6 +531,7 @@ class ModelsConfig(ConfigSection):
             "that wins over this value. Raise it if answers are cut off "
             "(stopReason max_tokens); null sends the model maximum."
         ),
+        json_schema_extra=evidence("operational"),
     )
 
     @field_validator("default", "fast", mode="before")

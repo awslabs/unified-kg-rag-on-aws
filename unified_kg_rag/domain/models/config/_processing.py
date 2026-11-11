@@ -16,6 +16,7 @@ from pydantic import (
 )
 
 from unified_kg_rag.domain.languages import LanguageCode
+from unified_kg_rag.domain.models.evidence import evidence
 
 from ..retrieval import (
     validate_safe_name,
@@ -159,6 +160,7 @@ class ChunkingConfig(ConfigSection):
             "characters) keeps headings and short trailing paragraphs from "
             "becoming chunks of their own."
         ),
+        json_schema_extra=evidence("unmeasured"),
     )
     max_chunk_size: int = Field(
         default=2000,
@@ -173,6 +175,7 @@ class ChunkingConfig(ConfigSection):
             "characters per token and a Han/Hangul/Kana character ~1, so "
             "size CJK corpora by their characters."
         ),
+        json_schema_extra=evidence("unmeasured"),
     )
     chunk_overlap: int = Field(
         default=125,
@@ -184,6 +187,7 @@ class ChunkingConfig(ConfigSection):
             "intelligent chunker's model-chosen boundaries cut between lines "
             "and share no text."
         ),
+        json_schema_extra=evidence("unmeasured"),
     )
     pre_chunk_size: int = Field(
         default=12500,
@@ -194,11 +198,13 @@ class ChunkingConfig(ConfigSection):
             "LLM picks boundaries in. Not embedded itself (its chunks are capped "
             "by max_chunk_size), so it is sized for the chunking model's prompt."
         ),
+        json_schema_extra=evidence("operational"),
     )
     pre_chunk_overlap: int = Field(
         default=125,
         ge=0,
         description="Pre-chunk overlap (length_unit, tokens by default)",
+        json_schema_extra=evidence("operational"),
     )
     fallback_chunk_size: int = Field(
         default=1200,
@@ -213,12 +219,14 @@ class ChunkingConfig(ConfigSection):
             "characters) is the default chunk size of MS GraphRAG and "
             "LightRAG."
         ),
+        json_schema_extra=evidence("unmeasured"),
     )
     max_marker_miss_rate: float = Field(
         default=0.1,
         ge=0.0,
         le=1.0,
         description="Maximum allowed boundary marker miss rate",
+        json_schema_extra=evidence("operational"),
     )
 
     @model_validator(mode="after")
@@ -347,12 +355,16 @@ class DescriptionSummarizationConfig(ConfigSection):
         description="Re-summarize a merged description only when its estimated "
         "token count exceeds this threshold. Descriptions at or below it are left "
         "as-is, so cheap entities never incur an LLM call.",
+        json_schema_extra=evidence("unmeasured"),
     )
     max_summary_tokens: int = Field(
         default=256,
         ge=1,
         description="Target length (in tokens) of the produced summary; injected "
         "into the summarization prompt as the budget.",
+        json_schema_extra=evidence(
+            "deviation", "MS GraphRAG's summarize_descriptions max_length: 500"
+        ),
     )
 
 
@@ -397,6 +409,7 @@ class EntityGroundingConfig(ConfigSection):
         le=1.0,
         description="Confidence multiplier applied to ungrounded entities when "
         "action='penalize'.",
+        json_schema_extra=evidence("unmeasured"),
     )
     min_span_tokens: int = Field(
         default=4,
@@ -405,6 +418,7 @@ class EntityGroundingConfig(ConfigSection):
         "treated as grounded — too short to judge, so the gate never deletes "
         "short legitimate names on weak signal. A Han/Hangul/Kana character "
         "counts as one token.",
+        json_schema_extra=evidence("unmeasured"),
     )
     min_overlap_ratio: float = Field(
         default=0.6,
@@ -413,6 +427,7 @@ class EntityGroundingConfig(ConfigSection):
         description="When the span is not a verbatim substring, the fraction of "
         "its tokens that must appear in the chunk to still count as grounded "
         "(handles light paraphrase / whitespace edits).",
+        json_schema_extra=evidence("unmeasured"),
     )
 
 
@@ -504,9 +519,13 @@ class GraphExtractionConfig(ConfigSection):
             "per text chunk; it also sizes the extraction "
             "call's output-token floor."
         ),
+        json_schema_extra=evidence("unmeasured"),
     )
     max_relationships_per_chunk: int = Field(
-        default=50, ge=1, description="Maximum relationships per text chunk"
+        default=50,
+        ge=1,
+        description="Maximum relationships per text chunk",
+        json_schema_extra=evidence("unmeasured"),
     )
     entity_confidence_threshold: float = Field(
         default=0.0,
@@ -519,6 +538,7 @@ class GraphExtractionConfig(ConfigSection):
             "together). Compared against the normalized confidence: the "
             "prompt's 1-10 score / 10. 0.0 keeps everything."
         ),
+        json_schema_extra=evidence("unmeasured"),
     )
     entity_types: list[EntityTypeField] = Field(
         default_factory=lambda: list[EntityTypeItem](
@@ -691,14 +711,19 @@ class GleaningConfig(ConfigSection):
             "docs/concepts/defaults-and-evidence.md#gleaning-rounds). 1 is MS "
             "GraphRAG's default and the cost lever."
         ),
+        json_schema_extra=evidence("measured", "#gleaning-rounds"),
     )
     max_entities_per_prompt: int = Field(
-        default=100, ge=1, description="Maximum entities per gleaning prompt"
+        default=100,
+        ge=1,
+        description="Maximum entities per gleaning prompt",
+        json_schema_extra=evidence("unmeasured"),
     )
     max_relationships_per_prompt: int = Field(
         default=100,
         ge=1,
         description="Maximum relationships per gleaning prompt",
+        json_schema_extra=evidence("unmeasured"),
     )
 
 
@@ -720,6 +745,7 @@ class ClaimExtractionConfig(ConfigSection):
         default=100,
         ge=0,
         description="Maximum entities per claim extraction prompt",
+        json_schema_extra=evidence("unmeasured"),
     )
 
 
@@ -739,6 +765,7 @@ class ProcessingConfig(ConfigSection):
             " 20, since a local model server queues the calls it cannot run at"
             " once."
         ),
+        json_schema_extra=evidence("operational"),
     )
     embedding_concurrency: int = Field(
         default=16,
@@ -750,7 +777,7 @@ class ProcessingConfig(ConfigSection):
             "throttling; lower it if the logs show embedding "
             "ThrottlingException retries or a local embedding server queues."
         ),
-        json_schema_extra={"evidence": "operational"},
+        json_schema_extra=evidence("operational"),
     )
     embedding_batch_size: int = Field(
         default=50,
@@ -761,7 +788,7 @@ class ProcessingConfig(ConfigSection):
             "most 1,000, one read of their stored digests). Keep it within "
             "what the embedding endpoint takes per request."
         ),
-        json_schema_extra={"evidence": "operational"},
+        json_schema_extra=evidence("operational"),
     )
     io_workers: int = Field(
         default=64,
@@ -775,6 +802,7 @@ class ProcessingConfig(ConfigSection):
             "unified_kg_rag.configure_event_loop(asyncio.get_running_loop(), "
             "config.processing.io_workers) at startup."
         ),
+        json_schema_extra=evidence("operational"),
     )
     max_run_model_calls: int | None = Field(
         default=None,
@@ -861,6 +889,7 @@ class ProcessingConfig(ConfigSection):
             "query gives to stand for a word of a stored entity's name. Raise "
             "it if distinct entities merge."
         ),
+        json_schema_extra=evidence("unmeasured"),
     )
     document_parsing: DocumentParsingConfig = Field(
         default_factory=DocumentParsingConfig,

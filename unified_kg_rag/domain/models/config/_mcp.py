@@ -9,6 +9,8 @@ from pydantic import (
     field_validator,
 )
 
+from unified_kg_rag.domain.models.evidence import evidence
+
 from ..retrieval import (
     MAX_SERVED_TOP_K,
     SearchStrategy,
@@ -73,12 +75,14 @@ class McpServerConfig(ConfigSection):
         ge=1,
         le=MAX_SERVED_TOP_K,
         description="Largest top_k (and kg_get_entity limit) a call may ask",
+        json_schema_extra=evidence("operational"),
     )
     max_hops: int = Field(
         default=2,
         ge=1,
         le=3,
         description="Largest max_hops of a kg_neighbors call",
+        json_schema_extra=evidence("operational"),
     )
     max_neighbors: int = Field(
         default=50,
@@ -88,11 +92,13 @@ class McpServerConfig(ConfigSection):
             "Largest number of neighbours (and of relationships) one "
             "kg_neighbors call returns"
         ),
+        json_schema_extra=evidence("operational"),
     )
     max_query_chars: int = Field(
         default=2000,
         ge=1,
         description="Longest query (and entity name) a call may give, in characters",
+        json_schema_extra=evidence("operational"),
     )
     max_text_chars: int = Field(
         default=2000,
@@ -101,6 +107,7 @@ class McpServerConfig(ConfigSection):
             "Characters of text each returned record keeps (chunk text, a "
             "description); a longer one is cut and marked text_truncated"
         ),
+        json_schema_extra=evidence("operational"),
     )
     max_response_chars: int = Field(
         default=60000,
@@ -112,6 +119,7 @@ class McpServerConfig(ConfigSection):
             "JSON text) and JSON escaping lengthens non-ASCII text, so the "
             "message on the wire is up to about 2-4 times this"
         ),
+        json_schema_extra=evidence("operational"),
     )
     uncited_records: int = Field(
         default=5,
@@ -123,6 +131,7 @@ class McpServerConfig(ConfigSection):
             "default, or it wrote no [n] marker): the first ones, best first "
             "(records_kept: top); records=all returns every one"
         ),
+        json_schema_extra=evidence("operational"),
     )
     max_concurrent_calls: int = Field(
         default=4,
@@ -132,6 +141,7 @@ class McpServerConfig(ConfigSection):
             "wait counts toward the call's one deadline "
             "(search.query_timeout_seconds)"
         ),
+        json_schema_extra=evidence("operational"),
     )
 
     @field_validator("allowed_namespaces")

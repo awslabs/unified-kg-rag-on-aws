@@ -11,6 +11,8 @@ from pydantic import (
     model_validator,
 )
 
+from unified_kg_rag.domain.models.evidence import evidence
+
 from ._common import ConfigSection, S3EncryptionType
 from ._models import EffortLevel, ModelPurpose, ModelTier
 
@@ -196,6 +198,7 @@ class RetryConfig(ConfigSection):
             "embedding request and query-time call (transient errors botocore "
             "does not retry, such as HTTP 424)."
         ),
+        json_schema_extra=evidence("operational"),
     )
     base_delay_seconds: float = Field(
         default=2.0,
@@ -207,12 +210,14 @@ class RetryConfig(ConfigSection):
             "request waits a random 0 to base_delay_seconds * 2^(n-1) after "
             "attempt n (full jitter). 0 retries at once."
         ),
+        json_schema_extra=evidence("operational"),
     )
     max_delay_seconds: float = Field(
         default=16.0,
         ge=0.0,
         description="Upper bound on one backoff delay of a Bedrock embedding or "
         "query-time call or an Ollama call, in seconds.",
+        json_schema_extra=evidence("operational"),
     )
     max_total_seconds: float = Field(
         default=60.0,
@@ -220,6 +225,7 @@ class RetryConfig(ConfigSection):
         description="Wall-clock retry budget per Bedrock embedding or "
         "query-time call or Ollama call: no retry starts once the next backoff "
         "would cross it.",
+        json_schema_extra=evidence("operational"),
     )
     model_server_max_attempts: int = Field(
         default=3,
@@ -231,6 +237,7 @@ class RetryConfig(ConfigSection):
             "not, query chains and embedding calls are retried by the "
             "framework (ingestion items keep max_attempts)."
         ),
+        json_schema_extra=evidence("operational"),
     )
     graph_store_max_attempts: int = Field(
         default=4,
@@ -242,6 +249,7 @@ class RetryConfig(ConfigSection):
             "query, access denied, bad parameter, read-only violation) fail "
             "on the first attempt."
         ),
+        json_schema_extra=evidence("operational"),
     )
     query_store_max_attempts: int = Field(
         default=3,
@@ -257,6 +265,7 @@ class RetryConfig(ConfigSection):
             "limit) is retried alike; one stopped at its time limit, a "
             "timeout and a lost connection are not."
         ),
+        json_schema_extra=evidence("operational"),
     )
     judge_max_attempts: int = Field(
         default=3,
@@ -267,6 +276,7 @@ class RetryConfig(ConfigSection):
             "exponential backoff). Attempts count against "
             "evaluation.ragas_timeout."
         ),
+        json_schema_extra=evidence("operational"),
     )
 
     def transient_policy(self, max_attempts: int | None = None) -> TransientRetryConfig:
@@ -410,7 +420,11 @@ class NeptuneConfig(ConfigSection):
         ),
     )
     port: int = Field(
-        default=8182, ge=1, le=65535, description="Neptune database connection port"
+        default=8182,
+        ge=1,
+        le=65535,
+        description="Neptune database connection port",
+        json_schema_extra=evidence("upstream", "Neptune's port"),
     )
     use_iam: bool = Field(
         default=True,
@@ -437,6 +451,7 @@ class NeptuneConfig(ConfigSection):
             "in-flight requests only queue on the server, so raise it with the "
             "instance size."
         ),
+        json_schema_extra=evidence("operational"),
     )
 
 
@@ -450,7 +465,13 @@ class OpenSearchConfig(ConfigSection):
         ),
     )
     port: int = Field(
-        default=443, ge=1, le=65535, description="OpenSearch cluster connection port"
+        default=443,
+        ge=1,
+        le=65535,
+        description="OpenSearch cluster connection port",
+        json_schema_extra=evidence(
+            "upstream", "the HTTPS port of an OpenSearch Service domain"
+        ),
     )
     username: str | None = Field(
         default=None, description="OpenSearch authentication username"

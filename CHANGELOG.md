@@ -74,6 +74,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   decide (extraction, gleaning, claims, translation, intelligent chunking), naming the graph-dependent ones it cannot
   count. The console's Ingest page offers to resume a run stopped at its budget (its options without the forced
   recompute).
+- Every numeric configuration default says what it rests on: an evidence tag (`json_schema_extra=evidence(...)`,
+  `domain/models/evidence.py`) of `measured` (linked to its run in Defaults and evidence), `upstream` or `deviation`
+  (naming the original's value), `operational` or `unmeasured`. The configuration reference prints it in an Evidence
+  column and lists the defaults no run compared; a unit test fails an untagged numeric default, and another a new
+  numeric module constant not listed with its reason (`tests/fixtures/numeric_constants.py`).
 
 ### Changed
 

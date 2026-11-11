@@ -347,8 +347,13 @@ text when other pages link its fragment, or update every link to it in the same 
 unit test fails when a page is stale):
 
 - [docs/reference/configuration.md](./docs/reference/configuration.md): every configuration key has a user-facing
-  `Field(description=...)`. After changing a config field, run `uv run python scripts/gen_config_reference.py`. Add
-  a key to `config-template.yaml`, the short starting file, only when most deployments set it.
+  `Field(description=...)`, and every numeric default an evidence tag (`json_schema_extra=evidence(...)`,
+  `unified_kg_rag/domain/models/evidence.py`: measured, upstream, deviation, operational or unmeasured;
+  `tests/unit/test_config_evidence.py` fails an untagged one). A new numeric module constant needs an entry, with its
+  reason, in `tests/fixtures/numeric_constants.py` (`tests/unit/test_numeric_constants.py`); a number that tunes what
+  is retrieved or answered belongs in the configuration instead. After changing a config field, run
+  `uv run python scripts/gen_config_reference.py`. Add a key to `config-template.yaml`, the short starting file, only
+  when most deployments set it.
 - [docs/reference/cli.md](./docs/reference/cli.md): every CLI flag has a user-facing `help=`. After adding or
   changing a flag, run `uv run python scripts/gen_cli_reference.py`.
 
