@@ -36,6 +36,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whose answer does not fit fails with `UsageLimitExceededError` (error class `limit_exceeded`, a caller's error: not
   counted in `query_failed`, `refused` on the console's dashboard, its message shown to an MCP caller; exit code 1,
   console HTTP 422).
+- One streaming path: `GraphRAGChain.aquery_events()` (sync `query_events()`) yields typed events (`QueryEvent`,
+  exported with `QueryStart`, `QueryRouted`, `QuerySources`, `AnswerChunk` and `QueryResult`): the query `ainvoke`
+  runs, its deadline, query limits, guardrail, metrics and memory included, ending with its `RAGOutput`. LangChain's
+  `astream_events` is left as LangChain defines it. `astream` / `stream` yield the text of these events, so a
+  streamed answer now reads its citations' lineage, records its answer on the query span and is traced in the query's
+  trace, as an unstreamed one is. The query waits for its reader at each event: a reader that closes the iterator
+  ends it before it writes memory, counted as no failure. The console's Ask page reads the events.
 - An ingestion run's budget and cost estimate. `processing.max_run_model_calls` and `processing.max_run_usd` (off by
   default; USD priced by `models.prices`) refuse the model call that would pass them and stop the run once the calls
   already sent have answered (`RunBudgetExhausted`, exported, error class `limit_exceeded`, exit 1): its finished stages
@@ -52,6 +59,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   were left out of the default on (`ppr`: within the noise of `local` at 2.4 times less cost, weaker on long chains;
   `tree`: +8 points of `answer_contains` over `naive`, below `mix` and `local`). It refused them, which made routing to
   them a code change rather than the operator's call.
+
+### Deprecated
+
+- `GraphRAGChain.ainvoke(on_answer_chunk=...)` warns (`DeprecationWarning`): read the `AnswerChunk` events of
+  `aquery_events()`. Until it is removed it is one more reader of those events, so it now also streams an answer read
+  for `[NO_ANSWER]` (`search.abstention`), the token held back and stripped.
 
 ### Fixed
 Bugs present in 0.3.0.

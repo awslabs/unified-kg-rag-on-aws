@@ -194,6 +194,44 @@ chain.invoke(RAGInput(query="...", limits=QueryLimits(max_model_calls=6, deadlin
 
 MCP 도구 `kg_search`와 `kg_answer`도 같은 `limits` 인수를 받습니다([MCP 서버](./mcp.ko.md)).
 
+## 스트리밍
+
+`GraphRAGChain.aquery_events`(동기: `query_events`)는 `ainvoke`와 같은 질의(제한 시간, 한도, 가드레일, 메모리
+포함)를 실행하고, `kind`로 구분하는 타입이 있는 이벤트를 차례로 내보냅니다.
+
+| 이벤트 | `kind` | 시점 |
+|---|---|---|
+| `QueryStart` | `start` | 질의가 받아들여짐: `query_id`, 대화, 요청한 전략, 네임스페이스, 추적 ID |
+| `QueryRouted` | `routed` | 전략이 정해짐. `routing`은 `auto`가 고른 방법 |
+| `QuerySources` | `sources` | 답변 모델에 주는 출처. 첫 청크보다 먼저 |
+| `AnswerChunk` | `chunk` | 모델이 쓰는 대로 나오는 답변 텍스트 |
+| `QueryResult` | `result` | `ainvoke`가 돌려주는 `RAGOutput` |
+
+```python
+from unified_kg_rag import AnswerChunk, QueryResult, RAGInput
+
+async for event in chain.aquery_events(RAGInput(query="...")):
+    if isinstance(event, AnswerChunk):
+        print(event.text, end="", flush=True)
+    elif isinstance(event, QueryResult):
+        output = event.output  # 출처, 인용, 사용량, 메타데이터
+```
+
+- 청크는 미리 보기이고 기준은 `QueryResult`입니다. 출력 가드레일을 켜면 아무것도
+  스트리밍하지 않고(검사를 마친 답변만 보여 줌) 출처도 검사한 출력에서 결과 직전에
+  보냅니다. 답변 거절이나 빈 컨텍스트의 고정 문구는 결과에만 들어 있습니다.
+  `[NO_ANSWER]` 표식(`search.abstention`)은 판단이 설 때까지 보류하고 지웁니다.
+- 실패하면 그 전에 보낸 이벤트 뒤에 예외가 납니다. `processing.ignore_errors`를 켜면
+  결과에 오류 답변이 담깁니다.
+- 질의는 읽는 쪽이 이벤트를 하나씩 가져갈 때까지 기다립니다. 읽기를 멈추고 반복자를
+  닫으면(`aclose()`, 또는 `async with aclosing(...)` 안에서 `break`) 질의는 그 자리에서
+  끝나고 메모리에는 아무것도 저장하지 않습니다. 질의 지표는 이를 실패로 세지 않습니다.
+- 질의 지표, 로그와 오류의 `query_id`·네임스페이스, 추적은 `ainvoke`와 같습니다.
+- `astream` / `stream`은 답변 텍스트만 내보냅니다. 각 청크를, 보여 준 청크가 없으면 최종
+  답변을 한 번 내보냅니다. `ainvoke(on_answer_chunk=...)`는 더 이상 권장하지 않으며
+  (`DeprecationWarning`), `AnswerChunk` 이벤트를 읽으면 됩니다. LangChain 자체의
+  `astream_events`(콜백 이벤트)는 LangChain이 정의한 대로 둡니다.
+
 ## 인용
 
 답변은 근거가 된 문서를 인용합니다(`search.citations`). 기본값으로는 `global`과 `drift`를 뺀
@@ -229,8 +267,8 @@ MCP 도구 `kg_search`와 `kg_answer`도 같은 `limits` 인수를 받습니다(
 - PDF 본문 조각에는 페이지가 붙습니다. 이번 릴리스 전에 수집한 텍스트에는 문서를 다시
   수집하기 전까지 페이지와 상대 경로가 없습니다.
 - 스트리밍 답변에도 같은 표식이 들어 있습니다. `CitationMarkerScanner`로 청크에서 읽으면
-  청크 경계에서 잘린 표식은 닫힐 때까지 보류합니다. `astream`은 텍스트만, `ainvoke`는
-  인용까지 돌려줍니다.
+  청크 경계에서 잘린 표식은 닫힐 때까지 보류합니다. `astream`은 텍스트만 돌려주고,
+  `aquery_events`의 `QueryResult`와 `ainvoke`는 인용까지 돌려줍니다.
 - 가드레일이 차단한 답변에는 인용이 없고, 마스킹한 답변은 마스킹된 텍스트 기준으로 인용
   여부를 표시합니다. 거절한 답변은 출처와 마찬가지로 인용을 유지합니다.
 - 전략별 설정: `search.citations.strategies`는 기본값 `{global: false, drift: false}` 위에

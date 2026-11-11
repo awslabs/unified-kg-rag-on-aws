@@ -17,7 +17,7 @@ filters by it.
 | `kg_rag.batch` | stage, or root for `run-eval` answer generation | Item and failure counts; in `run-eval` the run's `kg_rag.eval.strategy` and `kg_rag.eval.repeat` (1-based), as on every span of the run |
 | `kg_rag.mcp.tool` | root | One per MCP tool call (`run-mcp-server`): `mcp.tool.name`, `kg_rag.records`; with `capture_content` the redacted arguments as `input.value`. A `kg_search` or `kg_answer` call's `kg_rag.query` span nests under it |
 | `kg_rag.console.ask` | root | One per console question: `kg_rag.search_strategy`, `kg_rag.query_id` (the id its `kg_rag.query` span's log lines and result carry); the query span nests under it |
-| `kg_rag.query` | root, the `run-eval` batch, an MCP tool call, or a console question | `session.id`, `user.id`, `kg_rag.blocked`, `kg_rag.degraded` (answered without a step), `kg_rag.error_class` (of an error answer under `processing.ignore_errors`); with `capture_content` the redacted query as `input.value` and (outside `stream` / `astream`) the answer as `output.value`. Its id and trace id are the result's `metadata.query_id` and `metadata.trace_id`, and its log lines carry `query_id` and `namespace` |
+| `kg_rag.query` | root, the `run-eval` batch, an MCP tool call, or a console question | `session.id`, `user.id`, `kg_rag.blocked`, `kg_rag.degraded` (answered without a step), `kg_rag.error_class` (of an error answer under `processing.ignore_errors`); with `capture_content` the redacted query as `input.value` and the answer as `output.value` (a streamed one too). Its id and trace id are the result's `metadata.query_id` and `metadata.trace_id`, and its log lines carry `query_id` and `namespace` |
 | `kg_rag.strategy` | query | `kg_rag.rerank_status` for the whole query |
 | `kg_rag.retrieve` | strategy | Hits per result type, up to 50 source ids |
 | `kg_rag.fusion` | strategy | In/out counts, the step's `kg_rag.rerank_status` |
@@ -51,9 +51,6 @@ and, with `capture_content`, `langfuse.observation.input` / `output`; Phoenix
 
 Known limits:
 
-- A streamed answer (`stream` / `astream`) is its own trace; its model span
-  takes `session.id` / `user.id` from the answer step's run metadata, so it
-  still groups with its session.
 - The async batch path records one span per batch, not per chunk.
 - A model call cancelled during `ainvoke` (its task cancelled, or the call cut
   off by `asyncio.wait_for` / `asyncio.timeout`, as RAGAS's `ragas_timeout`
@@ -116,4 +113,5 @@ one that answers later is settled in `run-eval`'s run usage. A call that
 answers without reporting usage (a local server that returns none, say)
 stays estimated the same way, rather than reading as free, with its output
 tokens estimated from its text and its resent requests counted.
-`stream` / `astream` yield text only and report no usage.
+`stream` / `astream` yield text only; the `QueryResult` of `aquery_events`
+carries the usage as `ainvoke`'s output does.

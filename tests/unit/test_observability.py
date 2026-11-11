@@ -1303,10 +1303,11 @@ async def test_captured_query_span_carries_redacted_query_and_answer(
     assert query["output.value"] == "Vendor ships [REDACTED]."
 
 
-async def test_streamed_query_span_carries_only_the_redacted_query(
+async def test_streamed_query_span_carries_the_redacted_query_and_answer(
     tracing: Tracing,
 ) -> None:
-    # The streamed answer is produced after the query span has ended.
+    # A streamed answer is produced inside the query span, as an unstreamed
+    # one: the span ends with it.
     exporter = tracing(capture_content=True, redact_patterns=["Vendor"])
     chain = _simple_chain()
     try:
@@ -1316,7 +1317,7 @@ async def test_streamed_query_span_carries_only_the_redacted_query(
     assert "".join(chunks) == "Vendor ships 120 units."
     query = _attrs(_one(exporter, "kg_rag.query"))
     assert query["input.value"] == "What does [REDACTED] supply?"
-    assert "output.value" not in query
+    assert query["output.value"] == "[REDACTED] ships 120 units."
 
 
 class _TracedModelFactory(_FakeModelFactory):

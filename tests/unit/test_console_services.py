@@ -13,6 +13,7 @@ import json
 import logging
 import sys
 import time
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
@@ -32,7 +33,12 @@ from unified_kg_rag.application.cli.console.jobs import (
 )
 from unified_kg_rag.application.cli.console.store import ConsoleStore
 from unified_kg_rag.application.ingestion.pipeline_manager import INTEGRITY_QUESTIONS
-from unified_kg_rag.application.retrieval.rag_chain import ProcessedQuery, RAGOutput
+from unified_kg_rag.application.retrieval.rag_chain import (
+    AnswerChunk,
+    ProcessedQuery,
+    QueryResult,
+    RAGOutput,
+)
 from unified_kg_rag.domain.models import (
     Config,
     Methodology,
@@ -355,10 +361,10 @@ class _Chain:
         self.gate = gate
         self.closed = 0
 
-    async def ainvoke(self, *_: Any, **__: Any) -> RAGOutput:
+    async def aquery_events(self, *_: Any, **__: Any) -> AsyncIterator[Any]:
         if self.gate is not None:
             await self.gate.wait()
-        return self.output
+        yield QueryResult(output=self.output)
 
     async def aclose(self) -> None:
         self.closed += 1
@@ -486,11 +492,11 @@ class _StreamingChain(_Chain):
         self.chunks = chunks
         self.inputs: list[Any] = []
 
-    async def ainvoke(self, rag_input: Any, *_: Any, **kwargs: Any) -> RAGOutput:
+    async def aquery_events(self, rag_input: Any, *_: Any, **__: Any) -> Any:
         self.inputs.append(rag_input)
         for chunk in self.chunks:
-            kwargs["on_answer_chunk"](chunk)
-        return self.output
+            yield AnswerChunk(text=chunk)
+        yield QueryResult(output=self.output)
 
 
 async def test_chunks_carry_the_markers_they_close(tmp_path: Path) -> None:
@@ -801,8 +807,9 @@ class _FailingChain(_Chain):
         super().__init__(_output())
         self.error = error
 
-    async def ainvoke(self, *_: Any, **__: Any) -> RAGOutput:
+    async def aquery_events(self, *_: Any, **__: Any) -> AsyncIterator[Any]:
         raise self.error
+        yield  # an async generator, as the chain's
 
 
 async def test_a_missing_index_is_reported_as_such(tmp_path: Path) -> None:

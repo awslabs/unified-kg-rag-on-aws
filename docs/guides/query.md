@@ -223,6 +223,49 @@ chain.invoke(RAGInput(query="...", limits=QueryLimits(max_model_calls=6, deadlin
 The MCP tools `kg_search` and `kg_answer` take the same `limits` argument
 ([MCP server](./mcp.md)).
 
+## Streaming
+
+`GraphRAGChain.aquery_events` (sync: `query_events`) runs the query `ainvoke` runs (its deadline,
+limits, guardrail and memory included) and yields typed events, told apart
+by `kind`:
+
+| Event | `kind` | When |
+|---|---|---|
+| `QueryStart` | `start` | The query was admitted: its `query_id`, conversation, requested strategy, namespace and trace id. |
+| `QueryRouted` | `routed` | Its strategy is resolved; `routing` says how `auto` chose. |
+| `QuerySources` | `sources` | The sources the answer model is given, before the first chunk. |
+| `AnswerChunk` | `chunk` | Answer text as the model writes it. |
+| `QueryResult` | `result` | The `RAGOutput` `ainvoke` returns. |
+
+```python
+from unified_kg_rag import AnswerChunk, QueryResult, RAGInput
+
+async for event in chain.aquery_events(RAGInput(query="...")):
+    if isinstance(event, AnswerChunk):
+        print(event.text, end="", flush=True)
+    elif isinstance(event, QueryResult):
+        output = event.output  # sources, citations, usage, metadata
+```
+
+- The chunks are a preview; `QueryResult` is authoritative. Under the output
+  guardrail nothing is streamed (the answer is shown only once screened) and
+  the sources arrive just before the result, from the screened output; a
+  decline's or an empty context's fixed reply comes only in the result. The
+  `[NO_ANSWER]` token (`search.abstention`) is held back and stripped.
+- A failure raises after the events sent before it; with
+  `processing.ignore_errors` the result carries the error answer.
+- The query waits for the reader to take each event: a reader that stops
+  and closes the iterator (`aclose()`, or `break` inside
+  `async with aclosing(...)`) ends it there; nothing is written to memory and
+  the query metrics count no failure.
+- Its query metrics, the `query_id` and namespace of its log lines and
+  errors, and its trace are `ainvoke`'s.
+- `astream` / `stream` yield the answer text alone: each chunk, or, when
+  none was shown, the final answer once. `ainvoke(on_answer_chunk=...)` is
+  deprecated (a `DeprecationWarning`): read the `AnswerChunk` events.
+  LangChain's own `astream_events` (callback events) is left as LangChain
+  defines it.
+
 ## Citations
 
 Answers cite the documents they rest on (`search.citations`): those of every
@@ -269,7 +312,8 @@ rewrite reads the earlier answers without their markers.
   pages or relative paths until its documents are ingested again.
 - A streamed answer carries the same markers: read them from the chunks with
   `CitationMarkerScanner` (a marker split across chunks is held back until it
-  closes). `astream` returns text only; `ainvoke` returns the citations.
+  closes). `astream` returns text only; the `QueryResult` of
+  `aquery_events`, as `ainvoke`, returns the citations.
 - A blocked answer has no citations; a masked one keeps them, flagged from
   the masked text; a declined answer keeps them like its sources.
 - Per strategy: `search.citations.strategies` is merged over its default

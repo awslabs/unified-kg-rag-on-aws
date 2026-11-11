@@ -1,17 +1,20 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""``GraphRAGChain.ainvoke(on_answer_chunk=...)`` and ``metadata["routing"]``.
+"""``GraphRAGChain.aquery_events`` / ``query_events`` and ``metadata["routing"]``.
 
-The answer step streams the answer model to the callback while ``ainvoke``
-still returns the whole ``RAGOutput``; nothing is streamed where the answer
-may not be shown before it is checked (the ``[NO_ANSWER]`` marker, the
-output guardrail) or no model is asked (an empty context). An ``auto``
-query reports how it chose its strategy. Fakes as in
+The query streams as typed events: its start, its route, its sources, the
+answer's chunks as the answer model writes them, then the ``RAGOutput``
+``ainvoke`` returns. Nothing is streamed where the answer may not be shown
+before it is checked (the output guardrail) or no model is asked (an empty
+context); the ``[NO_ANSWER]`` marker is held back and stripped. The
+deprecated ``ainvoke(on_answer_chunk=...)`` reads the same chunks. An
+``auto`` query reports how it chose its strategy. Fakes as in
 ``test_rag_chain_streaming``.
 """
 
 from __future__ import annotations
 
+import asyncio
 import itertools
 from typing import Any
 
@@ -26,40 +29,126 @@ from tests.unit.test_rag_chain_streaming import (
     _make_chain,
     _StreamingModelFactory,
 )
+from unified_kg_rag import (
+    AnswerChunk,
+    QueryResult,
+    QueryRouted,
+    QuerySources,
+    QueryStart,
+)
 from unified_kg_rag.application.retrieval.rag_chain import (
     DEFAULT_ERROR_MESSAGE,
     ROUTING_KEY,
+    GraphRAGChain,
+    RAGInput,
+    RAGOutput,
 )
 from unified_kg_rag.domain.models import Config, SearchStrategy
+from unified_kg_rag.domain.retrieval.abstention import ABSTENTION_MARKER
 from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
 
 pytestmark = pytest.mark.unit
 
 
-async def test_answer_chunks_stream_the_answer_ainvoke_returns(config: Config) -> None:
+async def _events(chain: GraphRAGChain, rag_input: RAGInput) -> list[Any]:
+    return [event async for event in chain.aquery_events(rag_input)]
+
+
+def _chunks(events: list[Any]) -> list[str]:
+    return [e.text for e in events if isinstance(e, AnswerChunk)]
+
+
+def _output(events: list[Any]) -> RAGOutput:
+    assert isinstance(events[-1], QueryResult)
+    return events[-1].output
+
+
+async def test_the_events_stream_the_query_ainvoke_answers(config: Config) -> None:
     chain, factory, _ = _make_chain(config)
+    events = await _events(chain, _input(conversation_id="c-1"))
+    kinds = [e.kind for e in events]
+    assert kinds[:3] == ["start", "routed", "sources"]
+    assert set(kinds[3:-1]) == {"chunk"} and len(kinds[3:-1]) > 1
+    assert kinds[-1] == "result"
+    start, routed, sources = events[:3]
+    assert isinstance(start, QueryStart) and len(start.query_id) == 12
+    assert start.conversation_id == "c-1"
+    assert start.requested_strategy is SearchStrategy.SIMPLE
+    assert isinstance(routed, QueryRouted)
+    assert routed.strategy is SearchStrategy.SIMPLE and routed.routing is None
+    output = _output(events)
+    assert "".join(_chunks(events)) == output.answer == _ANSWER
+    # The sources shown before the answer are the output's.
+    assert isinstance(sources, QuerySources)
+    assert sources.sources == output.sources and output.sources
+    assert factory.get_model_calls == 1
+    # The same output as an unstreamed query's.
+    unstreamed = await chain.ainvoke(_input())
+    assert unstreamed.answer == output.answer
+    assert unstreamed.sources == output.sources
+
+
+async def test_the_events_dump_as_json_by_kind(config: Config) -> None:
+    from pydantic import TypeAdapter
+
+    from unified_kg_rag import QueryEvent
+
+    chain, _, _ = _make_chain(config)
+    adapter: TypeAdapter[Any] = TypeAdapter(QueryEvent)
+    for event in await _events(chain, _input()):
+        assert adapter.validate_json(adapter.dump_json(event)) == event
+
+
+async def test_auto_s_route_is_an_event(config: Config) -> None:
+    config.search.auto_routable_strategies = [SearchStrategy.SIMPLE]
+    chain, _, _ = _make_chain(config)
+    events = await _events(chain, _input(search_strategy=SearchStrategy.AUTO))
+    routed = next(e for e in events if isinstance(e, QueryRouted))
+    assert routed.strategy is SearchStrategy.SIMPLE
+    assert routed.routing == _output(events).metadata[ROUTING_KEY]
+
+
+async def test_the_deprecated_callback_reads_the_chunks(config: Config) -> None:
+    chain, _, _ = _make_chain(config)
     chunks: list[str] = []
-    output = await chain.ainvoke(_input(), on_answer_chunk=chunks.append)
+    with pytest.warns(DeprecationWarning, match="aquery_events"):
+        output = await chain.ainvoke(_input(), on_answer_chunk=chunks.append)
     assert len(chunks) > 1
     assert "".join(chunks) == output.answer == _ANSWER
-    # Sources and metadata are those of an unstreamed answer.
     assert output.sources
-    assert factory.get_model_calls == 1
 
 
-async def test_without_a_callback_nothing_changes(config: Config) -> None:
+async def test_without_a_reader_nothing_changes(config: Config) -> None:
     chain, _, _ = _make_chain(config)
     output = await chain.ainvoke(_input())
     assert output.answer == _ANSWER
 
 
-async def test_an_answer_read_for_the_marker_is_not_streamed(config: Config) -> None:
+class _MarkedFactory(_StreamingModelFactory):
+    """Streams a decline: the marker, then the explanation."""
+
+    def get_model(self, model_id: Any, **kwargs: Any) -> Any:
+        self.get_model_calls += 1
+        return GenericFakeChatModel(
+            messages=itertools.repeat(
+                AIMessage(content=f"{ABSTENTION_MARKER} 공급업체 정보가 없습니다.")
+            )
+        )
+
+
+async def test_an_answer_read_for_the_marker_streams_without_it(
+    config: Config,
+) -> None:
     config.search.abstention.mode = "mark"
     chain, _, _ = _make_chain(config)
-    chunks: list[str] = []
-    output = await chain.ainvoke(_input(), on_answer_chunk=chunks.append)
-    assert chunks == []
-    assert output.answer == _ANSWER
+    events = await _events(chain, _input())
+    assert "".join(_chunks(events)) == _output(events).answer == _ANSWER
+    chain, _, _ = _make_chain(config.model_copy(deep=True), factory=_MarkedFactory())
+    events = await _events(chain, _input())
+    chunks = _chunks(events)
+    assert chunks and not any("NO_ANSWER" in c for c in chunks)
+    assert "".join(chunks) == _output(events).answer == "공급업체 정보가 없습니다."
+    assert _output(events).metadata["abstention_reason"] == "marker"
 
 
 def test_a_screened_answer_is_not_streamed(config: Config) -> None:
@@ -69,24 +158,113 @@ def test_a_screened_answer_is_not_streamed(config: Config) -> None:
 
     chain, _, _ = _make_chain(config)
     state = {"context": "Vendor and Buyer signed.", "query": "q"}
-    token = rag_chain._ANSWER_CHUNKS.set(lambda _text: None)
+    token = rag_chain._QUERY_EVENTS.set(rag_chain._ChunkCallback(lambda _t: None))
     try:
         streamed = chain._answer_generation_step(state)
         chain._screen_outputs = True  # what a configured output guardrail sets
         screened = chain._answer_generation_step(state)
     finally:
-        rag_chain._ANSWER_CHUNKS.reset(token)
+        rag_chain._QUERY_EVENTS.reset(token)
     assert isinstance(streamed, RunnableLambda)
     assert not isinstance(screened, RunnableLambda)
 
 
 async def test_an_empty_context_streams_nothing(config: Config) -> None:
     chain, factory, _ = _make_chain(config, empty=True)
-    chunks: list[str] = []
-    output = await chain.ainvoke(_input(), on_answer_chunk=chunks.append)
-    assert chunks == []
-    assert output.metadata.get("abstained") is True
+    events = await _events(chain, _input())
+    assert _chunks(events) == []
+    sources = [e for e in events if isinstance(e, QuerySources)]
+    assert [s.sources for s in sources] == [[]]
+    assert _output(events).metadata.get("abstained") is True
     assert factory.get_model_calls == 0
+
+
+async def test_a_failure_under_ignore_errors_ends_with_its_output(
+    config: Config,
+) -> None:
+    chain, _, _ = _make_chain(
+        config,
+        factory=_StreamingModelFactory(fail_mid_stream=True),
+        ignore_errors=True,
+    )
+    events = await _events(chain, _input())
+    kinds = [e.kind for e in events]
+    assert kinds[:3] == ["start", "routed", "sources"] and kinds[-1] == "result"
+    assert _chunks(events)  # shown before the failure
+    assert _output(events).answer == DEFAULT_ERROR_MESSAGE
+    assert _output(events).metadata["error"] is True and _output(events).sources == []
+    # One that fails before it is admitted: its (empty) sources and result.
+    chain, _, _ = _make_chain(
+        config.model_copy(deep=True), retrieval_error=True, ignore_errors=True
+    )
+    assert [e.kind for e in await _events(chain, _input())] == ["sources", "result"]
+
+
+async def test_a_failure_raises_after_the_events_before_it(config: Config) -> None:
+    chain, _, memory = _make_chain(
+        config, factory=_StreamingModelFactory(fail_mid_stream=True)
+    )
+    kinds: list[str] = []
+    with pytest.raises(RuntimeError, match="synthetic model failure"):
+        async for event in chain.aquery_events(
+            _input(use_memory=True, conversation_id="c-4")
+        ):
+            kinds.append(event.kind)
+    assert kinds[:3] == ["start", "routed", "sources"]
+    assert set(kinds[3:]) == {"chunk"}
+    assert memory.messages == []
+
+
+class _HeldModel(GenericFakeChatModel):
+    """Streams one chunk, then a second only after a long wait."""
+
+    async def _astream(self, *args: Any, **kwargs: Any) -> Any:  # type: ignore[override]
+        yield ChatGenerationChunk(message=AIMessageChunk(content="Vendor "))
+        await asyncio.sleep(600)
+        yield ChatGenerationChunk(message=AIMessageChunk(content="ships."))
+
+
+class _HeldFactory(_StreamingModelFactory):
+    def __init__(self) -> None:
+        super().__init__()
+        self.model = _HeldModel(messages=iter([]))
+
+    def get_model(self, model_id: Any, **kwargs: Any) -> Any:
+        self.get_model_calls += 1
+        return self.model
+
+
+async def test_a_reader_that_stops_cancels_the_query(config: Config) -> None:
+    factory = _HeldFactory()
+    chain, _, memory = _make_chain(config, factory=factory)
+    events = chain.aquery_events(_input(use_memory=True, conversation_id="c-2"))
+    async for event in events:
+        if isinstance(event, AnswerChunk):
+            break
+    await events.aclose()
+    # The query's task ended with the reader: none is left running.
+    assert not [t for t in asyncio.all_tasks() if t.get_name() == "kg-rag-query-events"]
+    # Abandoned: nothing is saved as a finished turn.
+    assert memory.messages == []
+
+
+async def test_a_reader_that_stops_after_the_answer_saves_nothing(
+    config: Config,
+) -> None:
+    # The query waits for its reader at each event: one that stops at the
+    # answer's last chunk leaves it waiting, never saving the turn.
+    chain, _, memory = _make_chain(config)
+    events = chain.aquery_events(_input(use_memory=True, conversation_id="c-3"))
+    text = ""
+    async for event in events:
+        if isinstance(event, AnswerChunk):
+            text += event.text
+            if text == _ANSWER:
+                break
+    # A reader that awaits something else before it closes the stream.
+    await asyncio.sleep(0.2)
+    await events.aclose()
+    assert memory.messages == []
 
 
 async def test_a_named_strategy_reports_no_routing(config: Config) -> None:
@@ -176,13 +354,21 @@ async def test_a_truncated_answer_fails_streamed_as_unstreamed(
             ignore_errors=ignore_errors,
         )
         chunks: list[str] = []
-        callback = chunks.append if stream else None
         if ignore_errors:
-            output = await chain.ainvoke(_input(), on_answer_chunk=callback)
+            if stream:
+                events = await _events(chain, _input())
+                chunks, output = _chunks(events), _output(events)
+            else:
+                output = await chain.ainvoke(_input())
             outcomes.append((output.answer, bool(output.metadata.get("error"))))
         else:
             with pytest.raises(LLMOutputTruncatedError):
-                await chain.ainvoke(_input(), on_answer_chunk=callback)
+                if stream:
+                    async for event in chain.aquery_events(_input()):
+                        if isinstance(event, AnswerChunk):
+                            chunks.append(event.text)
+                else:
+                    await chain.ainvoke(_input())
             outcomes.append("raised")
         if stream:
             assert chunks  # the preview was shown before the cut was seen
@@ -214,14 +400,11 @@ async def test_a_streamed_answer_has_the_citations_of_an_unstreamed_one(
     )
 
     assert config.search.citations.enabled
-    outputs = []
-    chunks: list[str] = []
-    for callback in (None, chunks.append):
-        chain, _, _ = _make_chain(
-            config.model_copy(deep=True), factory=_CitingFactory()
-        )
-        outputs.append(await chain.ainvoke(_input(), on_answer_chunk=callback))
-    unstreamed, streamed = outputs
+    chain, _, _ = _make_chain(config.model_copy(deep=True), factory=_CitingFactory())
+    unstreamed = await chain.ainvoke(_input())
+    chain, _, _ = _make_chain(config.model_copy(deep=True), factory=_CitingFactory())
+    events = await _events(chain, _input())
+    chunks, streamed = _chunks(events), _output(events)
     assert streamed.answer == unstreamed.answer == "".join(chunks) == _CITED_ANSWER
     assert streamed.citations == unstreamed.citations
     assert [c.marker for c in streamed.citations if c.cited] == [1]
@@ -238,3 +421,26 @@ async def test_a_streamed_answer_has_the_citations_of_an_unstreamed_one(
         scanner.feed(chunk)
     scanner.finish()
     assert scanner.markers == cited_markers(_CITED_ANSWER) == [1, 7]
+
+
+def test_the_sync_events_are_the_async_ones(config: Config) -> None:
+    chain, _, memory = _make_chain(config)
+    try:
+        events = list(chain.query_events(_input()))
+        assert [e.kind for e in events][:3] == ["start", "routed", "sources"]
+        assert "".join(_chunks(events)) == _output(events).answer == _ANSWER
+        # Closed early: the query is cancelled, no turn is saved.
+        stream = chain.query_events(_input(use_memory=True, conversation_id="c-5"))
+        next(e for e in stream if isinstance(e, AnswerChunk))
+        stream.close()
+        assert memory.messages == []
+    finally:
+        chain.close()
+
+
+def test_langchain_s_astream_events_is_left_as_it_is() -> None:
+    from langchain_core.runnables import Runnable
+
+    # LangChain tooling (LangServe, LangGraph) reads its callback events.
+    assert issubclass(GraphRAGChain, Runnable)
+    assert GraphRAGChain.astream_events is Runnable.astream_events

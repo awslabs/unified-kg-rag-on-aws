@@ -10,8 +10,8 @@ internal and may change in any release. Two groups:
   documents from memory as :class:`InputDocument`), inspect and export what
   an index namespace holds (:func:`describe_namespace`, :func:`export_graph`),
   query it (:class:`GraphRAGChain` with :class:`RAGInput`, answering with a
-  :class:`RAGOutput` and its :class:`Citation` records or, from ``search``, a
-  :class:`SearchOutput`) and evaluate it (:class:`EvaluationManager`), or
+  :class:`RAGOutput` and its :class:`Citation` records, streamed as
+  :data:`QueryEvent` events, or, from ``search``, a :class:`SearchOutput`) and evaluate it (:class:`EvaluationManager`), or
   serve it to agents as read-only MCP tools (:func:`build_mcp_server`,
   :func:`build_mcp_app`, the ``mcp`` extra).
 - **Extending it**: the ports a backend implements, the :class:`Providers`
@@ -93,6 +93,12 @@ _EXPORTS: dict[str, str] = {
     "SearchOutput": "unified_kg_rag.application.retrieval.rag_chain",
     "ProcessedQuery": "unified_kg_rag.application.retrieval.rag_chain",
     "ConversationTurn": "unified_kg_rag.application.retrieval.rag_chain",
+    "AnswerChunk": "unified_kg_rag.application.retrieval.rag_chain",
+    "QueryEvent": "unified_kg_rag.application.retrieval.rag_chain",
+    "QueryResult": "unified_kg_rag.application.retrieval.rag_chain",
+    "QueryRouted": "unified_kg_rag.application.retrieval.rag_chain",
+    "QuerySources": "unified_kg_rag.application.retrieval.rag_chain",
+    "QueryStart": "unified_kg_rag.application.retrieval.rag_chain",
     "QueryLimits": "unified_kg_rag.domain.models",
     "Citation": "unified_kg_rag.domain.models",
     "CitedDocument": "unified_kg_rag.domain.models",
@@ -258,9 +264,15 @@ if TYPE_CHECKING:
     from unified_kg_rag.application.config import get_config
     from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
     from unified_kg_rag.application.retrieval.rag_chain import (
+        AnswerChunk,
         ConversationTurn,
         GraphRAGChain,
         ProcessedQuery,
+        QueryEvent,
+        QueryResult,
+        QueryRouted,
+        QuerySources,
+        QueryStart,
         RAGInput,
         RAGOutput,
         SearchOutput,
