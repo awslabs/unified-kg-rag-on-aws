@@ -190,8 +190,9 @@ unless noted.
    sides of the merge, the edges it re-keyed, re-pointed or dropped, the
    edges and claims under new ids (no copy of one cites a removed text unit:
    a strip stopped after an edge's graph copy left no vector copy to complete
-   a description the graph caps), the stored edges that gain a unit (one
-   stopped there left a vector copy without the merged-in line) and the
+   a description the graph caps), the stored edges that gain a statement (a
+   unit, or another spelling's statement of a unit they cite: one stopped
+   there left a vector copy without the merged-in line) and the
    claims about a split's entities, in
    one record of the
    suffix's extraction store (`pending-strip`, with those of a note a retry

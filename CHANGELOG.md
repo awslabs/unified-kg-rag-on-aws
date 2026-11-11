@@ -1073,8 +1073,9 @@ From a `main` checkout (formats and keys no release had):
   after the entity that lost the key, which a later removal deleted with the key), or kept a stale vector edge after two
   failed removals in a row (also when they renamed an entity and back: its graph copy held the name derived again, so
   the edge looked current and kept the other name in its vector
-  copy). The note lists the edges the strip writes under new ids too, and the stored edges that gain a unit (a strip
-  stopped after the graph copy left the vector copy without the merged-in line, and no copy cited a removed unit): a
+  copy). The note lists the edges the strip writes under new ids too, and the stored edges that gain a statement (a
+  unit, or another spelling's statement of a unit they cite: a strip stopped after the graph copy left the vector copy
+  without the merged-in line and strength, and no copy cited a removed unit): a
   strip stopped (or killed) after an edge's graph copy left no vector copy, and the next one rewrote the edge from its
   graph copy, description cut at the graph's limit. While a store keeps rejecting a write, the strip writes only the
   phases before it (the claims come first), and the kept items it did not write state the removed text until the write

@@ -459,6 +459,55 @@ def test_a_rejected_split_part_leaves_its_neighbours_rank(
 @pytest.mark.parametrize(
     "names",
     [
+        ("“Acme”", "Acme Inc", "Acme Corp", "Buyer"),
+        ("「한빛」", "한빛 주식회사", "주식회사 「한빛」", "구매자"),
+        ("「ひかり」", "ひかり・株式会社", "株式会社「ひかり」", "買い手"),
+        ("「ひかり」", "ひかり・株式会社", "株式会社「ひかり」", "구매자"),
+    ],
+    ids=["en", "ko", "ja", "mix"],
+)
+@pytest.mark.parametrize("stop", ["rejected", "killed"])
+def test_a_stored_edge_that_gains_a_statement_of_its_unit_is_noted(
+    names: tuple[str, str, str, str], stop: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # k1.txt's first unit states the edge to the buyer under two spellings.
+    # Deleting i0.txt moves the first spelling's statement from the third
+    # spelling's edge to the second's, which cites that unit already: its
+    # graph copy gains a statement but no unit, and its vector write is
+    # rejected (or the run dies before it). No copy cites a removed unit,
+    # so the retry did not find it: its vector copy lacked the line and
+    # the strength for good.
+    first, second, third, buyer = names
+    final: Corpus = {
+        "/corpus/k0.txt": [[(buyer, first, 2), (buyer, second, 1)]],
+        "/corpus/k1.txt": [
+            [(second, buyer, 3), (first, buyer, 3)],
+            [(third, buyer, 2)],
+        ],
+        "/corpus/n0.txt": [[(third, buyer, 2)]],
+    }
+    config = _config()
+    harness = IncrementalRun(FakeDocStatusStore(), config)
+    harness.run({**final, "/corpus/i0.txt": [[(buyer, first, 2)]]})
+
+    if stop == "rejected":
+        harness.run(final, fail=lambda at, _i: at == "vector.upsert_relationships")
+    else:
+
+        def killed(*_args: object, **_kwargs: object) -> None:
+            raise Killed("between the strip's graph and vector edge writes")
+
+        with monkeypatch.context() as patched:
+            patched.setattr(harness.vector, "upsert_relationships", killed)
+            patched.setattr(harness.vector, "update_relationship_lineage", killed)
+            assert harness.run(final)
+
+    _converges(harness, final, config)
+
+
+@pytest.mark.parametrize(
+    "names",
+    [
         ("Acme", "Acme Co", "ACME Inc.", "Acme Corp", "Buyer", "Depot", "Vendor"),
         (
             "한빛",

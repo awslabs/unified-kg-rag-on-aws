@@ -56,6 +56,7 @@ from unified_kg_rag.domain.ingestion.merge import (
 )
 from unified_kg_rag.domain.ingestion.methodologies import artifacts_to_build
 from unified_kg_rag.domain.ingestion.names import compact_name_key
+from unified_kg_rag.domain.ingestion.relationship_weights import text_unit_weights
 from unified_kg_rag.domain.models import Entity, Relationship
 from unified_kg_rag.ports.indexer import IndexingStats
 from unified_kg_rag.shared import NamespaceLeaseError, get_logger
@@ -689,9 +690,9 @@ class TextUnitRemoval:
         # unit, and a strip stopped or killed after its graph copy left no
         # vector copy, so a retry rewrote it from the graph copy, its
         # description cut at the graph's limit. And a stored edge that
-        # gains a unit (another spelling's statement merged in): a strip
-        # stopped after its graph copy left the vector copy without that
-        # line, and no copy cited a removed unit.
+        # gains a statement (another spelling's merged in, from a unit it
+        # may cite already): a strip stopped after its graph copy left the
+        # vector copy without that line, and no copy cited a removed unit.
         retired_edges |= self._unfindable_edges(suffix, derived, relationships)
         # The stored claims about a split's part and origin: a retry
         # cannot tell them (the split kept the stored id).
@@ -725,9 +726,11 @@ class TextUnitRemoval:
     ) -> set[str]:
         """The ids of the edges ``derived`` writes that a retry would not
         find by the removed text units: the stored ones it keeps under their
-        id with other endpoints or that gain a text unit, and those the
-        graph does not hold (``relationships``: the stored copies read; the
-        edges the derivation reached beyond them are read here)."""
+        id with other endpoints or that gain a statement (a text unit, or
+        strength in one they cite: another spelling's statement in that unit
+        merged in), and those the graph does not hold
+        (``relationships``: the stored copies read; the edges the derivation
+        reached beyond them are read here)."""
         stored = {r.id: r for r in relationships}
         reached = [r.id for r in derived.relationships if r.id not in stored]
         if reached:
@@ -743,7 +746,7 @@ class TextUnitRemoval:
             if r.id not in stored
             or (r.source_id, r.target_id)
             != (stored[r.id].source_id, stored[r.id].target_id)
-            or set(r.text_unit_ids or []) - set(stored[r.id].text_unit_ids or [])
+            or _gains_a_statement(r, stored[r.id])
         }
 
     def _claims_to_strip(
@@ -1154,6 +1157,17 @@ class _StripNote:
             sorted(claims_ | new_claims | _note_ids(earlier, "claim_ids")),
         )
         self.noted = True
+
+
+def _gains_a_statement(derived: Relationship, stored: Relationship) -> bool:
+    """Whether ``derived`` holds a statement its ``stored`` copy lacks: a
+    text unit, or more strength in a unit it cites (a statement of that
+    unit merged in: the strengths of one unit's statements add up)."""
+    stored_weights = text_unit_weights(stored)
+    return any(
+        weight > stored_weights.get(unit, 0.0)
+        for unit, weight in text_unit_weights(derived).items()
+    ) or bool(set(derived.text_unit_ids or []) - set(stored.text_unit_ids or []))
 
 
 def _rejected(results: Mapping[str, IndexingStats]) -> bool:
