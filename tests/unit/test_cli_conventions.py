@@ -1231,6 +1231,21 @@ async def test_ingestion_json_result_counts_the_failed_documents() -> None:
     assert (result["documents_without_claims"], result["failed_documents"]) == (1, 2)
     # No indexing stage ran: nothing to say of the build record.
     assert result["build_record"] is None
+    assert result["rebuild_due"] == {}
+    # The indexing stage's reasons a reset applies, by suffix, as it
+    # recorded them: what the console's job card offers --reset on.
+    due = {"default": [{"kind": "communities", "remedy": "reset"}]}
+    context.stage_results = [
+        PipelineStageResult(
+            stage_name="indexing",
+            status=PipelineStageStatus.COMPLETED,
+            start_time=datetime.now(),
+            metrics={"build_record": "written", "rebuild_due": due},
+        )
+    ]
+    result = runner._json_result(context)
+    assert (result["build_record"], result["rebuild_due"]) == ("written", due)
+    context.stage_results = []
     # A file of a type no loader reads (a .docx without its extra) is no
     # excluded document: counted apart, it read as nothing skipped.
     assert result["files_skipped"] == 0

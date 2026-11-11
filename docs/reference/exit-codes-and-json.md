@@ -201,7 +201,11 @@ holds:
   written), `unsupported` (a vector store without index metadata), or
   `null` when the indexing stage did not run. Until a record is stored,
   queries take the namespace to hold what their config builds; a run that
-  exits `0` with `failed` or `missing` also says so in its summary.
+  exits `0` with `failed` or `missing` also says so in its summary. And
+  `rebuild_due`: by suffix, the reasons the records it wrote are due for a
+  rebuild only `indexing.reset: true` applies (each `kind`, `remedy`,
+  `detail` and `settings`, as `run-describe`'s `rebuild`), `{}` when none is
+  ([Incremental indexing: Rebuild due](../guides/incremental.md#rebuild-due)).
 - **`run-eval`**: the `output_directory`, `upload_error`, each run's summary
   (`runs`), the `comparison`, the failure-budget breaches
   (`failure_budget_breaches`) and the failed gates (`gate_failures`); a
@@ -214,7 +218,8 @@ holds:
 - **`run-describe`**: the namespace's description (`suffix`, `namespace`,
   `build`, `build_record` (`present` or `missing`: then `artifacts` are
   what the config builds), `artifacts`, `methodologies`, `strategies`, `auto_routes`,
-  `indices`, `registry`, `registry_unavailable` (why the registry could not
+  `indices`, `registry`, `rebuild` (each reason's `kind`, `remedy`, `detail`
+  and `settings`), `registry_unavailable` (why the registry could not
   be read, else `null`), `exists`, `artifacts_from` (`build_record` or
   `config`), with `--documents` the `documents` of those statuses, each with
   `doc_id`, `file_path`, `status`, `error_info`, `failure_count`,

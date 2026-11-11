@@ -1314,6 +1314,40 @@ def community_report_fingerprint(config: Config) -> str:
     )
 
 
+# The corpus-wide model answers a full build writes for every item and an
+# incremental run for its delta's alone (their names in _answer_fingerprint).
+COMMUNITY_REPORT_ANSWERS = "community_report"
+DESCRIPTION_SUMMARY_ANSWERS = "description_summary"
+
+
+def corpus_answer_fingerprints(
+    config: Config, building: Collection[IndexArtifact]
+) -> dict[str, str | None]:
+    """The settings fingerprints of the corpus-wide answers a run of
+    ``config`` building ``building`` writes: its community reports'
+    (``community_report_fingerprint``; None without ``COMMUNITY_REPORTS``)
+    and its description summaries' (``description_summary_fingerprint``;
+    None without entities or with summarization off). An incremental run
+    writes them for its delta alone and reuses a stored summary whatever
+    it was made with, so the build record keeps its full build's
+    (``IndexBuildRecord.answer_fingerprints``) and ``rebuild_due`` tells a
+    configuration that would write them otherwise."""
+    summarizes = (
+        IndexArtifact.ENTITIES in building
+        and config.processing.graph_extraction.description_summarization.enabled
+    )
+    return {
+        COMMUNITY_REPORT_ANSWERS: (
+            community_report_fingerprint(config)
+            if IndexArtifact.COMMUNITY_REPORTS in building
+            else None
+        ),
+        DESCRIPTION_SUMMARY_ANSWERS: (
+            description_summary_fingerprint(config) if summarizes else None
+        ),
+    }
+
+
 def unbuilt_record_prefixes(
     config: Config, building: Collection[IndexArtifact]
 ) -> list[str]:

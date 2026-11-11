@@ -40,6 +40,7 @@ from unified_kg_rag.application.cli.console.paths import PathRefused, walk_files
 from unified_kg_rag.application.cli.console.store import ConsoleStore
 from unified_kg_rag.application.ingestion.pipeline_manager import INTEGRITY_QUESTIONS
 from unified_kg_rag.domain.ingestion.methodologies import artifacts_to_build
+from unified_kg_rag.domain.ingestion.rebuild_due import RebuildRemedy
 from unified_kg_rag.domain.models import (
     Config,
     Methodology,
@@ -147,8 +148,9 @@ class Job:
     # and for the integrity question its reason (IntegrityReason).
     confirmation: str | None = None
     confirmation_reason: str | None = None
-    # The WARNING events of its log once it ended (_log_warnings): how many,
-    # the last ones, and whether one advises rebuilding the namespace.
+    # The WARNING events of its log once it ended (_log_warnings): how many
+    # and the last ones; and whether the run left its namespace due for a
+    # rebuild only indexing.reset: true applies (_reset_advised).
     warning_count: int = 0
     warnings: list[str] = field(default_factory=list)
     reset_advised: bool = False
@@ -712,9 +714,10 @@ class JobManager:
                     job.id,
                     error=e,
                 )
-        job.warning_count, job.warnings, job.reset_advised = await asyncio.to_thread(
+        job.warning_count, job.warnings = await asyncio.to_thread(
             _log_warnings, job.log_path
         )
+        job.reset_advised = _reset_advised(document)
         if job.status is JobStatus.FAILED:
             job.error = (document or {}).get("error") or _last_error(self.log_tail(job))
             job.confirmation, job.confirmation_reason = confirmation_needed(job.error)
@@ -972,30 +975,35 @@ def _log_event(line: str) -> dict[str, Any] | None:
     return None
 
 
-# How a run's warnings advise rebuilding the namespace (community drift,
-# re-clustering due, ...): the setting ``--reset`` sets for one run, which
-# the Ingest page offers as "Rebuild the namespace".
-RESET_ADVICE = "indexing.reset: true"
+def _reset_advised(document: dict[str, Any] | None) -> bool:
+    """Whether an ingestion's result says a record it wrote is due for a
+    rebuild only ``indexing.reset: true`` applies (its ``rebuild_due``,
+    ``rebuild_due.RebuildReason`` dumps by suffix): the run ``--reset``
+    makes, which the Ingest page offers as "Rebuild the namespace"."""
+    due = (document or {}).get("rebuild_due")
+    return isinstance(due, dict) and any(
+        isinstance(reason, dict) and reason.get("remedy") == RebuildRemedy.RESET.value
+        for reasons in due.values()
+        if isinstance(reasons, list)
+        for reason in reasons
+    )
 
 
-def _log_warnings(log_path: Path) -> tuple[int, list[str], bool]:
-    """How many WARNING events a job's log holds, the last
-    :data:`WARNING_LINES` of them (their messages), and whether any of them
-    advises a rebuild (:data:`RESET_ADVICE`)."""
-    count, last, reset_advised = 0, [], False
+def _log_warnings(log_path: Path) -> tuple[int, list[str]]:
+    """How many WARNING events a job's log holds and the last
+    :data:`WARNING_LINES` of them (their messages)."""
+    count, last = 0, []
     try:
         with log_path.open("r", encoding="utf-8", errors="replace") as handle:
             for line in handle:
                 event = _log_event(line)
                 if event is not None and event["level"] == "warning":
                     count += 1
-                    message = str(event.get("event", ""))
-                    reset_advised = reset_advised or RESET_ADVICE in message
-                    last.append(message)
+                    last.append(str(event.get("event", "")))
                     del last[:-WARNING_LINES]
     except OSError:
-        return 0, [], False
-    return count, last, reset_advised
+        return 0, []
+    return count, last
 
 
 def _last_error(lines: list[str]) -> str | None:

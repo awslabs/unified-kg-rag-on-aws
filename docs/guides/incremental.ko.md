@@ -141,9 +141,10 @@ ID는 전체 빌드와 같지만 순서는 다를 수 있습니다. 재구축할
 WARNING을 남깁니다.
 
 ```
-Communities of 'default' are due for re-clustering: 24 incremental runs since
-the last full clustering (max_runs_since_clustering: 20); 163 communities
-against the 10 it clustered, 16.3x (max_community_growth: 1.5). ...
+Index namespace 'default' is due for a rebuild: its communities are due for
+re-clustering: 24 incremental runs since the last full clustering
+(max_runs_since_clustering: 20); 163 communities against the 10 it clustered,
+16.3x (max_community_growth: 1.5). ...
 ```
 
 `community_growth_ratio`와 `runs_since_clustering` 지표에도 같은 수가 담깁니다(실행한
@@ -164,6 +165,27 @@ against the 10 it clustered, 16.3x (max_community_growth: 1.5). ...
 필요합니다. CDK 대시보드는 `community_rebuild_recommended`, `community_growth_ratio`,
 `runs_since_clustering`을 그래프로 보여 주지만 이를 감시하는 경보는 없습니다
 ([운영 런북: 경보](../operations.md#alarms)(영문)).
+
+### 재구축이 필요한 때
+
+`run-describe`, 콘솔의 수집 페이지, MCP `kg_describe_schema` 도구는 네임스페이스를 다시
+빌드해야 하는 이유(`rebuild`)를 빌드 레코드와 불러온 구성을 비교해 보여 줍니다. 다음 증분
+실행이 반영할 수 없는 것(`remedy: reset`, `indexing.reset: true`로 실행)과 비용을 들여
+반영하는 것(`remedy: next_run`)으로 나뉩니다.
+
+| `kind` | 조건 | `remedy` |
+|---|---|---|
+| `communities` | 커뮤니티 카운터가 `indexing.community_compaction` 임곗값을 넘음(위의 WARNING) | `reset` |
+| `answer_settings` | 마지막 전체 빌드가 쓴 커뮤니티 리포트나 설명 요약이 구성과 다른 설정(모델, 프롬프트, 언어, 요약 켜짐)으로 만들어짐. 증분 실행은 델타의 것만 씀 | `reset`: 리포트나 요약마다 모델 호출 하나 |
+| `extraction_settings` | 마지막 실행 이후 추출 설정이 바뀜(바뀐 경로는 `settings`) | `next_run`: 모든 문서를 다시 추출 |
+| `methodologies` | 구성이 네임스페이스에 없는 코퍼스 전체 산출물을 빌드함 | `next_run`: 저장된 추출 결과로 네임스페이스를 다시 빌드 |
+
+실행은 자신이 쓴 빌드 레코드의 `reset` 이유마다 WARNING을 하나씩 남기고
+(`Index namespace 'default' is due for a rebuild: ...`, 위의 커뮤니티 카운터 경고도 그중
+하나), `--output-format json` 결과에 접미사별로 담습니다(`rebuild_due`). 콘솔의 작업
+카드는 경고 문구가 아니라 이 값을 보고 다시 빌드를 제안합니다. 이전 버전이 쓴 빌드 레코드에는
+리포트와 요약의 설정이 없으므로, 다음 전체 빌드 전까지 `answer_settings` 이유가 나오지
+않습니다.
 
 ## 삭제 범위
 

@@ -41,6 +41,7 @@ from unified_kg_rag.application.retrieval.rag_chain import (
     caller_deadline,
     new_query_id,
 )
+from unified_kg_rag.domain.ingestion.rebuild_due import RebuildReason
 from unified_kg_rag.domain.models import (
     GraphEdge,
     QueryLimits,
@@ -356,6 +357,12 @@ class SchemaToolResult(BaseModel):
         description="The server's query limits (search.query_timeout_seconds, "
         "search.query_max_model_calls, search.query_max_input_tokens): the "
         "ceiling the limits argument of kg_search and kg_answer lowers"
+    )
+    rebuild: list[RebuildReason] = Field(
+        default_factory=list,
+        description="Why the namespace is due for a rebuild (stale "
+        "communities or reports, changed extraction settings, a methodology "
+        "it lacks); empty when it is not",
     )
 
 
@@ -1235,6 +1242,7 @@ class KnowledgeGraphTools:
                 extraction_schema=described.schema_,
                 schema_error=described.schema_error,
                 filter_keys=described.filter_keys,
+                rebuild=described.rebuild,
                 namespaces=self.namespaces,
                 limits={
                     "max_top_k": self.settings.max_top_k,

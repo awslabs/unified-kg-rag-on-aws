@@ -285,6 +285,18 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
                   </label>
                 </Notice>
               ) : null}
+              {held.data?.rebuild?.length ? (
+                <Notice tone="warn" title={t("ingest.rebuildTitle", { namespace: held.data.namespace })}>
+                  <ul style={{ margin: 0, paddingLeft: 18 }}>
+                    {held.data.rebuild.map((reason) => (
+                      <li key={`${reason.kind}-${reason.settings.join(",")}`} title={reason.detail}>
+                        {t(`ingest.rebuild.${reason.kind}`)} {t(`ingest.rebuildRemedy.${reason.remedy}`)}
+                        {reason.settings.length ? <span className="field-help"> {reason.settings.join(", ")}</span> : null}
+                      </li>
+                    ))}
+                  </ul>
+                </Notice>
+              ) : null}
               {error ? <Notice tone="bad">{errorMessage(t, error)}</Notice> : null}
               <div>
                 <button className="button button-primary" disabled={!corpus || !chosen.length || !!active || (dropped.length > 0 && !confirmNarrowing)} onClick={() => void start()}>

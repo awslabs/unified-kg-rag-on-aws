@@ -50,6 +50,7 @@ from unified_kg_rag.application.retrieval.rag_chain import (
     new_query_id,
 )
 from unified_kg_rag.domain.ingestion.methodologies import namespace_holdings
+from unified_kg_rag.domain.ingestion.rebuild_due import rebuild_reasons
 from unified_kg_rag.domain.models import (
     Config,
     SearchStrategy,
@@ -365,8 +366,9 @@ class AskService:
         built, or built before methodology profiles), and ``held`` then the
         methodologies the config builds, which queries are served by;
         ``indexed`` whether anything was ingested under it at all (a
-        question on it fails with ``index_not_found`` otherwise). A store
-        error raises."""
+        question on it fails with ``index_not_found`` otherwise); and why it
+        is due for a rebuild under the config (``rebuild``:
+        ``rebuild_due.rebuild_reasons``). A store error raises."""
         async with self._using() as (chain, config):
             record = await chain.aread_build_record(suffix)
             namespace = resolve_namespace(config, suffix)
@@ -384,6 +386,10 @@ class AskService:
             "recorded": holdings.source == "build_record",
             "held": [m.value for m in holdings.methodologies],
             "indexed": indexed,
+            "rebuild": [
+                reason.model_dump(mode="json")
+                for reason in rebuild_reasons(record, config)
+            ],
         }
 
     async def ask(self, request: AskRequest) -> AsyncIterator[dict[str, Any]]:

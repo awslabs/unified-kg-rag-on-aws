@@ -39,6 +39,10 @@ from unified_kg_rag.domain.ingestion.document_identity import (
 from unified_kg_rag.domain.ingestion.methodologies import (
     namespace_holdings,
 )
+from unified_kg_rag.domain.ingestion.rebuild_due import (
+    RebuildReason,
+    rebuild_reasons,
+)
 from unified_kg_rag.domain.models import (
     Config,
     DocStatus,
@@ -141,6 +145,14 @@ class NamespaceDescription(NamespaceSummary):
         default=None,
         description="The registry's documents of the statuses asked for "
         "(documents=), by file; None when none were asked for",
+    )
+    rebuild: list[RebuildReason] = Field(
+        default_factory=list,
+        description="Why it is due for a rebuild under the configuration: "
+        "what the next incremental run cannot apply (stale communities, "
+        "reports or summaries: a run with indexing.reset: true) or applies "
+        "at a cost (changed extraction settings, a methodology it lacks); "
+        "empty when nothing is, or without a build record",
     )
 
 
@@ -293,6 +305,7 @@ def describe_namespace(
         registry=registry,
         registry_unavailable=unavailable,
         documents=listed,
+        rebuild=rebuild_reasons(record, config),
     )
 
 

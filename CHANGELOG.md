@@ -43,6 +43,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   streamed answer now reads its citations' lineage, records its answer on the query span and is traced in the query's
   trace, as an unstreamed one is. The query waits for its reader at each event: a reader that closes the iterator
   ends it before it writes memory, counted as no failure. The console's Ask page reads the events.
+- Rebuild due: `run-describe` (`rebuild`, `Rebuild due (...)` lines), the console's Ingest page
+  (`/api/namespace/methodologies`) and the MCP `kg_describe_schema` tool say why a namespace is due for a rebuild
+  under the config, from one owner (`rebuild_due`): community counters past `indexing.community_compaction`, reports
+  or description summaries its full build made under other settings (a run with `indexing.reset: true`), changed
+  extraction settings or a methodology it lacks (applied by the next run). The build record gains
+  `answer_fingerprints` (the full build's report and summary settings, kept by incremental records); a record
+  written earlier names none. A run logs a WARNING per reason only `indexing.reset: true` applies and lists them by
+  suffix in its JSON result (`rebuild_due`).
 - An ingestion run's budget and cost estimate. `processing.max_run_model_calls` and `processing.max_run_usd` (off by
   default; USD priced by `models.prices`) refuse the model call that would pass them and stop the run once the calls
   already sent have answered (`RunBudgetExhausted`, exported, error class `limit_exceeded`, exit 1): its finished stages
@@ -55,6 +63,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The community-counter WARNING reads `Index namespace '<suffix>' is due for a rebuild: its communities are due for
+  re-clustering: ...` (it began `Communities of '<suffix>' are due for re-clustering`), one rule with the other
+  rebuild reasons. The console's job card offers "Rebuild the namespace" when the run's `rebuild_due` holds a reason
+  for it, not when a warning's text names `indexing.reset: true`: a warning hinting at the setting for another cause
+  no longer offers it, and the run's community drift offers it as it recommends it
+  (`indexing.community_compaction.on_drift_recommendation`).
 - `search.auto_routable_strategies` accepts `ppr` and `tree`, loading with a WARNING that cites the measurement they
   were left out of the default on (`ppr`: within the noise of `local` at 2.4 times less cost, weaker on long chains;
   `tree`: +8 points of `answer_contains` over `naive`, below `mix` and `local`). It refused them, which made routing to

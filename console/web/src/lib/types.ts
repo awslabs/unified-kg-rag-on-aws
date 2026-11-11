@@ -23,14 +23,26 @@ export interface Status {
  * build record names it (`recorded` false: no build record, as before the
  * first ingestion or one of an earlier release), whether anything was
  * ingested into it at all (`indexed` false: a question on it is refused),
- * and which of those an ingestion of the picked methodologies would no
+ * why it is due for a rebuild, and which of those an ingestion of the picked methodologies would no
  * longer serve. */
 export interface NamespaceHeld {
   namespace: string;
   recorded: boolean;
   indexed: boolean;
   held: string[];
+  // Why it is due for a rebuild under the config (rebuild_due).
+  rebuild: RebuildReason[];
   dropped: string[];
+}
+
+/** Why a namespace is due for a rebuild (`rebuild_due.RebuildReason`):
+ * `reset` for a run with indexing.reset: true, `next_run` for what the next
+ * ingestion applies. */
+export interface RebuildReason {
+  kind: "communities" | "answer_settings" | "extraction_settings" | "methodologies";
+  remedy: "reset" | "next_run";
+  detail: string;
+  settings: string[];
 }
 
 export interface StrategyInfo {

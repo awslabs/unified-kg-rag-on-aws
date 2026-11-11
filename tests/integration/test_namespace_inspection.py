@@ -73,6 +73,29 @@ def test_describe_names_what_the_namespace_holds(ingested) -> None:
     assert description.build is not None
     assert description.build["documents"] == 3
     assert description.registry == {"processed": 3}
+    assert description.rebuild == []
+
+
+def test_describe_says_when_the_namespace_is_due_for_a_rebuild(
+    ingested, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    config, providers = ingested
+    changed = config.model_copy(deep=True)
+    changed.models.roles.community_report = "synthetic-reporter"
+    changed.processing.chunking.max_chunk_size = 6000
+
+    description = describe_namespace(changed, providers=providers)
+
+    kinds = {(r.kind.value, r.remedy.value) for r in description.rebuild}
+    assert kinds == {("answer_settings", "reset"), ("extraction_settings", "next_run")}
+    monkeypatch.setattr(run_describe, "load_cli_config", lambda _args: changed)
+    monkeypatch.setattr(inspection, "build_providers", lambda _c: providers)
+    monkeypatch.setattr(sys, "argv", ["run-describe"])
+    assert run_describe.main() == 0
+    out = " ".join(capsys.readouterr().out.split())
+    assert "Rebuild due (answer_settings, rebuild with indexing.reset: true)" in out
+    assert "Rebuild due (extraction_settings, applied by the next run)" in out
+    assert "processing.chunking.max_chunk_size" in out
 
 
 def test_describe_a_namespace_that_holds_nothing(ingested) -> None:
@@ -418,6 +441,7 @@ def test_run_describe_prints_one_json_document(
 
     document = json.loads(capsys.readouterr().out)
     assert document["methodologies"] == ["graphrag", "lightrag", "hipporag"]
+    assert document["rebuild"] == []
     assert document["export"]["counts"]["entity"] == 3
     graph = document["export"]["graph"]
     assert graph["vertices"]["count"] == 3

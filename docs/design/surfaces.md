@@ -22,7 +22,7 @@ writes memory; no tool takes an index name, an endpoint or a file path.
 | `kg_answer` | `GraphRAGChain.ainvoke` (with the caller's `history`, if given) | the above plus the follow-up rewrite (with a `history`) and the answer | the answer first, `abstained`/`abstention_reason`, what it was given without (`degraded`, `degraded_error`, `citations_unresolved`), then the records it cites (`records`: `cited`, the first `mcp.uncited_records` of an answer that cites none; `all`; `none`), `usage`, `blocked`, the strategy run |
 | `kg_get_entity` | the entities index by `id`, `iri` or exact `name.keyword`; without an exact match, a lexical search of `name` | none | up to `limit` entities, how they matched |
 | `kg_neighbors` | the graph walk from one entity (`max_hops`, the configured per-hop budget) and its incident relationships | none | the neighbours (hop distance, path) and the relationships with their text units and documents |
-| `kg_describe_schema` | the namespace's build record and held artifacts, the resolved extraction schema | none (a schema source may read its file or S3 object once) | held methodologies, the strategies they serve, the build, entity and relationship types and patterns, the filter keys |
+| `kg_describe_schema` | the namespace's build record and held artifacts, the resolved extraction schema | none (a schema source may read its file or S3 object once) | held methodologies, the strategies they serve, the build, why it is due for a rebuild (`rebuild_due`), entity and relationship types and patterns, the filter keys |
 
 **Supporting-content record.** Every search hit, answer source, entity and
 relationship comes back in one chunk-oriented shape, mapped from the one

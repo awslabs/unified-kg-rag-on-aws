@@ -292,7 +292,9 @@ def test_the_namespace_s_methodologies_come_from_its_build_record(
     assert fresh["namespace"] == "never-built" and fresh["recorded"] is False
     assert set(status["methodologies"]) <= set(fresh["held"])
     assert fresh["dropped"] == []
+    assert fresh["rebuild"] == []
     assert held["dropped"] == []  # the config builds what it holds
+    assert held["rebuild"] == []  # nor anything the next runs cannot apply
     narrowed = client.get(
         "/api/namespace/methodologies", params={"methodologies": "lightrag"}
     ).json()

@@ -207,15 +207,15 @@ def test_a_record_without_counters_starts_them_at_the_next_full_build(
 def test_a_resumed_commit_is_counted_once(tmp_path, monkeypatch) -> None:
     harness = _Harness(tmp_path)
     # Killed once the record is written, before the stage completes.
-    check = ps.IndexingStage._check_community_counters
+    check = ps.IndexingStage._check_rebuild_due
     crash = {"armed": True}
 
-    def killed_once(self, counters, drift):
+    def killed_once(self, records, drift):
         if crash.pop("armed", False):
             raise _Died("killed after recording the build")
-        return check(self, counters, drift)
+        return check(self, records, drift)
 
-    monkeypatch.setattr(ps.IndexingStage, "_check_community_counters", killed_once)
+    monkeypatch.setattr(ps.IndexingStage, "_check_rebuild_due", killed_once)
     # The first run (a delta of new documents only) resumed: still none.
     with pytest.raises(_Died):
         harness.run("full")

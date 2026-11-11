@@ -1069,22 +1069,6 @@ async def test_an_ingestion_job_exports_no_graph_of_its_own(
     assert built == []
 
 
-def test_the_rebuild_warnings_advise_the_reset_the_console_offers() -> None:
-    """The warnings that ask for a rebuild (community drift, re-clustering
-    due) name it as the console reads it (jobs.RESET_ADVICE)."""
-    import inspect
-
-    from unified_kg_rag.application.ingestion.incremental import IncrementalIndexer
-    from unified_kg_rag.application.ingestion.pipeline_stages import IndexingStage
-
-    for advising in (
-        IncrementalIndexer._measure_drift,
-        IndexingStage._check_community_counters,
-    ):
-        source = " ".join(inspect.getsource(advising).split())
-        assert jobs_module.RESET_ADVICE in source.replace('" "', ""), advising
-
-
 def _event(level: str, text: str) -> str:
     return json.dumps({"event": text, "logger": "x", "level": level})
 
@@ -1111,21 +1095,32 @@ async def test_a_job_records_its_warnings_and_a_stopped_one_no_error(
 
     assert job.record()["warnings"]["reset_advised"] is False
 
-    # A warning that advises a rebuild, even one past the lines kept, points
-    # the page at "Rebuild the namespace" (--reset).
-    advised = _ingest_job(manager, tmp_path, '{"visualization_data": null}')
-    advised.log_path.write_text(
-        "\n".join(
-            [
-                _event("warning", "Community drift: ... indexing.reset: true."),
-                *log,
-            ]
-        )
-        + "\n",
+    # The run's result, not a warning's text, says it is due for a rebuild
+    # only --reset applies: the page then offers "Rebuild the namespace". A
+    # warning naming the setting (a hint of another kind) does not.
+    hinted = _ingest_job(manager, tmp_path, '{"visualization_data": null}')
+    hinted.log_path.write_text(
+        _event("warning", "Re-run with indexing.reset: true to re-index.") + "\n",
         encoding="utf-8",
     )
-    await manager._watch(advised)
-    assert advised.record()["warnings"]["reset_advised"] is True
+    await manager._watch(hinted)
+    assert hinted.record()["warnings"]["reset_advised"] is False
+    reason = {"kind": "communities", "remedy": "reset", "detail": "d", "settings": []}
+    later = {
+        "kind": "methodologies",
+        "remedy": "next_run",
+        "detail": "d",
+        "settings": [],
+    }
+    for due, advises in (({"default": [later]}, False), ({"default": [reason]}, True)):
+        advised = _ingest_job(
+            manager,
+            tmp_path,
+            json.dumps({"visualization_data": None, "rebuild_due": due}),
+        )
+        advised.log_path.write_text("\n".join(log) + "\n", encoding="utf-8")
+        await manager._watch(advised)
+        assert advised.record()["warnings"]["reset_advised"] is advises
 
     stopped = _ingest_job(manager, tmp_path, '{"status": "interrupted"}', code=143)
     stopped.log_path.write_text("\n".join(log) + "\n", encoding="utf-8")

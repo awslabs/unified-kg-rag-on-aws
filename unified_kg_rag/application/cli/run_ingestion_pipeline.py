@@ -193,14 +193,29 @@ def apply_namespace_arguments(config: Config, args: argparse.Namespace) -> Confi
     return updated
 
 
+def _indexing_metric(context: PipelineContext, name: str) -> Any:
+    """The run's indexing stage's metric ``name``, ``None`` when the stage
+    did not run (or recorded none)."""
+    for result in reversed(context.stage_results):
+        if result.stage_name == PipelineStageType.INDEXING.value:
+            return (result.metrics or {}).get(name)
+    return None
+
+
 def _build_record(context: PipelineContext) -> str | None:
     """What became of the suffix's build record in the run's indexing stage
     (its ``build_record`` metric), ``None`` when the stage did not run."""
-    for result in reversed(context.stage_results):
-        if result.stage_name == PipelineStageType.INDEXING.value:
-            state = (result.metrics or {}).get("build_record")
-            return state if isinstance(state, str) else None
-    return None
+    state = _indexing_metric(context, "build_record")
+    return state if isinstance(state, str) else None
+
+
+def _rebuild_due(context: PipelineContext) -> dict[str, list[dict[str, Any]]]:
+    """Why the records the run wrote leave their suffixes due for a rebuild
+    only ``indexing.reset: true`` applies (the indexing stage's
+    ``rebuild_due``: ``RebuildReason`` dumps by suffix); empty when none
+    is, or when the stage wrote no record."""
+    due = _indexing_metric(context, "rebuild_due")
+    return due if isinstance(due, dict) else {}
 
 
 class CommandLineInterface:
@@ -1070,6 +1085,10 @@ class IngestionPipelineRunner:
             # The suffix's build record after the run (written, kept, failed,
             # missing, unsupported; None: the indexing stage did not run).
             "build_record": _build_record(context),
+            # Why the records it wrote are due for a rebuild with
+            # indexing.reset: true, by suffix (rebuild_due); the console
+            # offers that run on it.
+            "rebuild_due": _rebuild_due(context),
             "failed_documents": len(context.recorded_failed_doc_ids),
             # Text units a stage failed on: counted in a full build too,
             # which records no document FAILED.
