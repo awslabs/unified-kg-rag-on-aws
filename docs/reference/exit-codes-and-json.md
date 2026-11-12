@@ -12,7 +12,7 @@ prints. Every flag: [CLI Reference](./cli.md); what an error message means:
 | Code | Meaning |
 |---|---|
 | `0` | Success |
-| `1` | The run failed: a failed stage or query (in `run-ingestion` also a `ConfigurationError` a stage meets, an unreachable store or an unreachable model server), a breached `--max-failure-rate`, a failed `run-eval --fail-if` gate, a failed upload, nothing rendered or a failed renderer |
+| `1` | The run failed: a failed stage or query (in `run-ingestion` also a `ConfigurationError` a stage meets, an unreachable store or an unreachable model server), a breached `--max-failure-rate` (`run-eval`, `run-ingestion`), a failed `run-eval --fail-if` gate, a failed upload, nothing rendered or a failed renderer |
 | `2` | Usage or configuration error, before any work or outside a stage ([exit code 2](#exit-code-2)) |
 | `130` | Interrupted with Ctrl-C (SIGINT) |
 | `143` | Stopped by SIGTERM (ECS `StopTask`, a Step Functions timeout); `run-ingestion` checkpoints its finished stages first, and `run-eval` uploads the finished runs' results to an `s3://` output (or keeps them locally and logs the path) |
@@ -29,7 +29,8 @@ Exit code `2` covers:
   methodology the index namespace does not hold
   ([methodology profiles](../concepts/overview.md#methodology-profiles));
   a missing or invalid input (a `run-eval` dataset, a `run-visualization`
-  data file, a `prepare-benchmark` data file).
+  data file, a `prepare-benchmark` data file); a `run-visualization`
+  namespace that holds no graph.
 - **Configuration**, all before any work: an invalid config file or
   override, an unset store endpoint, or a missing extra the selected
   providers need (`local`).
@@ -147,6 +148,23 @@ holds:
   - `files_skipped`: the corpus files of a type no loader reads (a `.docx`
     without the `docx` extra, a suffix no loader registers), which one
     WARNING names with the remedy.
+  - `files_failed`: the corpus files that failed to parse or load (an empty
+    or broken file, a binary file with a text suffix), not indexed; an
+    incremental run keeps what they indexed before.
+  - `documents_processed` and `entities_extracted`: the documents the run
+    processed and the distinct entities their extraction found (a run that
+    processed some and extracted none indexed no graph of them).
+  - `delta`: what the doc-status registry's diff found, `new`, `changed`,
+    `unchanged` and `deleted` documents (an `indexing.reset` run counts every
+    document new), or `null` with the registry off.
+
+  `--max-failure-rate RATE` (off by default) exits `1` when more than `RATE`
+  of the run's documents failed: `files_failed`, the documents recorded
+  `FAILED` and the documents indexed without the output of a stage that
+  failed one of their text units, over those and the documents the run
+  processed (a run all of whose documents failed breaches it at any value).
+  The document then also has the `error` and `exit_code`, and the stage
+  results stand: rerun to retry the failed documents.
 
   And `build_record`, the suffix's build record after the run: `written`,
   `kept` (the run wrote nothing; the stored one stands), `failed` (no index
@@ -159,7 +177,8 @@ holds:
   (`runs`), the `comparison`, the failure-budget breaches
   (`failure_budget_breaches`) and the failed gates (`gate_failures`); a
   breach, a failed gate or an upload error exits `1`.
-- **`run-visualization`**: the `output_directory`, the written `files`,
+- **`run-visualization`**: the `data_path` it rendered (an export, or the
+  file it built from the stores), the `output_directory`, the written `files`,
   the `failed_renderers` (each failed renderer's error) and the
   `skipped_renderers` (each default renderer left out for a missing extra,
   with why); an empty list (nothing rendered) or a failed renderer exits `1`.

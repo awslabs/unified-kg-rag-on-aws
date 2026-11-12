@@ -2,11 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """``visualization_data.json`` of an index namespace, read from its stores.
 
-Ingestion writes it at the end of every run that indexed
-(``graph.visualization.export_data``), so the file shows the namespace as
-queries see it: the whole graph after an incremental run, and every
-corpus of a namespace several share, where the run's own graph held only
-its delta or its corpus. The entities, claims and community reports come
+Ingestion writes it at the end of a full build
+(``graph.visualization.export_data``), and ``run-visualization`` when no
+export shows the build the stores hold (:func:`current_visualization_data`:
+after an incremental run, which exports nothing), so the file shows the
+namespace as queries see it: the whole graph, and every corpus of a
+namespace several share, where a run's own graph held only its delta or
+its corpus. The entities, claims and community reports come
 from the vector store's pages (``VectorIndexer.scan_items``), each entity's
 communities from the graph store (``GraphIndexer.read_entities``, which
 holds ``community_ids``), and the relationships from the vector store, or
@@ -214,3 +216,24 @@ def newest_export(
         if path.is_file() and (namespace is None or export_namespace(path) == namespace)
     ]
     return max(found, key=lambda path: path.stat().st_mtime, default=None)
+
+
+def current_visualization_data(
+    providers: Providers, suffix: str, directories: Iterable[Path], path: Path
+) -> tuple[Path, dict[str, int] | None]:
+    """An export that shows what the stores of the index namespace
+    ``suffix`` hold: the newest under ``directories`` or at ``path`` that
+    names the build its build record names, else one written to ``path``
+    from the stores (:func:`write_visualization_data`); with the counts
+    written, ``None`` for an export reused.
+
+    Raises:
+        ConfigurationError: The vector store cannot page its items.
+        StoreConnectionError: A store cannot be reached.
+    """
+    built_at, _ = stored_export(providers, suffix)
+    if built_at is not None:
+        found = newest_export([*directories, path.parent], suffix)
+        if found is not None and export_build_time(found) == built_at:
+            return found, None
+    return path, write_visualization_data(providers, suffix, path)

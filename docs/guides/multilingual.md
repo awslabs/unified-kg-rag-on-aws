@@ -84,10 +84,13 @@ unit holds any more are deleted by the next full build
   `processing.translation.source_language` when the sample disagrees with
   it: it reads as another language (it suggests that one's code), or few
   of its letters are in the setting's script (not when the sample still
-  reads as that language: a Korean document that is mostly code). The
-  sample reads as the language most of its documents read as, so one
-  Korean document among English ones does not make it Korean. Languages
-  of one script are told apart by their function words; the run goes on.
+  reads as that language). Each document votes for the script most of its
+  letters are in, and for a language only of that script, so an English
+  document quoting a Korean file name, or too terse to name a language,
+  is an English (Latin) one; the sample reads as the language of the
+  script most documents are in, so one Korean document among English ones
+  does not make it Korean. Languages of one script are told apart by their
+  function words; the run goes on.
 - **Unicode.** Text and queries are NFC-normalized, so decomposed Hangul (NFD)
   matches its composed form.
 - **Other languages.** `source_language` and `target_language` take the

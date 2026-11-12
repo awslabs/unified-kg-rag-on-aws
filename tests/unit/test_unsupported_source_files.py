@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import logging
+import random
 from datetime import datetime
 from pathlib import Path
 
@@ -89,6 +90,24 @@ def test_the_stage_reports_skipped_files_apart_from_failed_ones(
     assert (metrics["files_skipped"], metrics["files_failed"]) == (1, 0)
 
 
+def test_a_binary_file_with_a_text_suffix_counts_as_failed(tmp_path: Path) -> None:
+    # rv24 quality 3: it was decoded as latin-1 and indexed as garbage.
+    (tmp_path / "binary.txt").write_bytes(random.Random(7).randbytes(3072))
+    (tmp_path / "keep.txt").write_text("Vendor ships goods to Buyer.")
+    context = PipelineContext(
+        pipeline_id="p",
+        config={},
+        status=PipelineStageStatus.RUNNING,
+        start_time=datetime(2026, 1, 1),
+        source_directory=tmp_path,
+    )
+
+    _, _, metrics = _stage(tmp_path)._execute_core(context)
+
+    assert context.failed_source_files == [str(tmp_path / "binary.txt")]
+    assert metrics is not None and metrics["files_failed"] == 1
+
+
 def test_files_under_hidden_directories_are_neither_parsed_nor_fingerprinted(
     tmp_path: Path,
 ) -> None:
@@ -105,6 +124,45 @@ def test_files_under_hidden_directories_are_neither_parsed_nor_fingerprinted(
     before = corpus_manifest_fingerprint(tmp_path, [".txt"])
     hidden.write_text("Edited draft text.")
     assert corpus_manifest_fingerprint(tmp_path, [".txt"]) == before
+
+
+def test_symlinks_leading_out_of_the_corpus_are_skipped_with_a_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Regression (rv24 quality 7): a symlink to /etc/hostname was ingested,
+    # its text unit the host's name. One rule for discovery, the loader and
+    # the fingerprint; a symlink to another corpus file stays in.
+    root = tmp_path / "corpus"
+    (root / "sub").mkdir(parents=True)
+    (root / "keep.txt").write_text("Vendor ships goods to Buyer.")
+    outside = tmp_path / "secret.txt"
+    outside.write_text("Not corpus text.")
+    (root / "outside.txt").symlink_to(outside)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "note.txt").write_text("Not corpus text either.")
+    (root / "sub" / "linked").symlink_to(elsewhere, target_is_directory=True)
+    (root / "alias.txt").symlink_to(root / "keep.txt")
+
+    with caplog.at_level(logging.WARNING):
+        files, skipped = _stage(root)._discover_source_files()
+
+    assert sorted(f.name for f in files) == ["alias.txt", "keep.txt"]
+    assert skipped == []
+    (warning,) = [m for m in _skip_warnings(caplog) if "resolve outside" in m]
+    # rglob does not descend into the symlinked directory.
+    assert f"Skipping 1 file(s) in '{root}' that resolve outside it" in warning
+    assert str(root / "outside.txt") in warning
+    before = corpus_manifest_fingerprint(root, [".txt"])
+    outside.write_text("Edited.")
+    assert corpus_manifest_fingerprint(root, [".txt"]) == before
+    # A corpus reached through a symlinked root is the corpus.
+    linked_root = tmp_path / "linked-root"
+    linked_root.symlink_to(root, target_is_directory=True)
+    assert sorted(f.name for f in _stage(linked_root)._discover_source_files()[0]) == [
+        "alias.txt",
+        "keep.txt",
+    ]
 
 
 def test_hidden_corpus_root_is_not_excluded(tmp_path: Path) -> None:

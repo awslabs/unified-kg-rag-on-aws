@@ -5,8 +5,10 @@
 The crash tests elsewhere raise in-process; here an incremental run in a
 child process is killed with SIGKILL halfway through the indexing stage
 (nothing unwinds: no checkpoint upload, no lease release, no attempt
-closed). Its lease blocks the next run until it expires; then a rerun of
-the same pipeline id takes the lease over, resumes, and leaves the stores
+closed). Its lease, held as by another host's run (the SQLite registry
+hands this host's killed run's on at once), blocks the next run until it
+expires; then a rerun of the same pipeline id takes the lease over,
+resumes, and leaves the stores
 and the registry as a fresh build of the same corpus does.
 """
 
@@ -118,6 +120,14 @@ def test_a_killed_run_is_taken_over_once_its_lease_expires_and_converges(
         "freight.txt": e2e.DocStatus.PROCESSED,
         "logistics.txt": e2e.DocStatus.PROCESSED,
     }
+    holder = registry.lease_holder("default")
+    assert holder is not None and holder[1] > time.time()
+    # The SQLite registry hands a killed run's lease of this host on at once
+    # (tests/unit/test_processes.py); a holder on another host it cannot
+    # judge, whose lease runs to its expiry: as such a holder's.
+    assert registry.try_acquire_lease(
+        "default", "another-host:1:2:3:killed", holder[1] - time.time()
+    )
     holder = registry.lease_holder("default")
     assert holder is not None and holder[1] > time.time()
     # Its lease stops the next run before it reads or writes anything.

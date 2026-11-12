@@ -165,6 +165,25 @@ def test_a_question_streams_its_answer_then_the_result(client: Any) -> None:
     assert all(c["source_rank"] for c in cited)
 
 
+def test_the_tour_question_cites_one_pdf_page(client: Any) -> None:
+    # Regression (rv24 ux 7, algo-index 2): under the token default the
+    # demo's chunk sizes made each PDF one chunk, cited as "p. 1-3"; the
+    # guide promises the page the passage is on.
+    corpus = load("corpus")
+    events = _ask(client, query=corpus.SAMPLE_QUESTIONS[0])
+    result = events[-1]
+    pdf = [
+        document
+        for citation in result["citations"]
+        if citation["cited"]
+        for document in citation.get("documents") or []
+        if document["file_name"] == "supply-agreement.pdf"
+    ]
+    assert pdf, result["citations"]
+    assert all(d["page"] is not None and d["page"] == d["page_end"] for d in pdf)
+    assert {d["page"] for d in pdf} == {2}
+
+
 def test_a_structured_question_shows_its_graph_query_result(client: Any) -> None:
     found = {s["name"]: s for s in client.get("/api/strategies").json()["strategies"]}
     assert found["structured"]["available"]

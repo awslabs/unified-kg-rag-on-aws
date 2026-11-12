@@ -2523,6 +2523,20 @@ _JAPANESE_DOCUMENT = _document(
     "修理または交換しなければならない。"
 )
 
+# Technical English with few function words: no Latin language decides.
+_TERSE_ENGLISH_DOCUMENT = (
+    "Acme Robotics Q3 report: revenue 12M USD, EBITDA 2M USD, headcount 120. "
+    "Lidar unit shipments 4,000 units."
+)
+# English documents naming a file in another script: 8 Hangul (or Hebrew)
+# letters among 62.
+_QUOTING_KOREAN_NAME = (
+    "Umbra Freight delivers lidar units to Kestrel Depot.\nFile '한글문서.txt'.\n"
+)
+_QUOTING_HEBREW_NAME = (
+    "Umbra Freight delivers lidar units to Kestrel Depot.\nFile 'עברית-מסמך.txt'.\n"
+)
+
 
 def _corpus(*documents: tuple[str, int]) -> str:
     return DOCUMENT_BREAK.join(text for text, count in documents for _ in range(count))
@@ -2546,4 +2560,22 @@ CORPORA: tuple[Case, ...] = (
     Case(_corpus((_ENGLISH_DOCUMENT, 1), (_KOREAN_DOCUMENT, 1)), None, None, "rv23"),
     # ... unless the index language is one of those tied.
     Case(_corpus((_ENGLISH_DOCUMENT, 1), (_KOREAN_DOCUMENT, 1)), "ko", "ko", "rv23"),
+    # A Latin-dominant document votes Latin even when its words decide no
+    # language (terse technical English), and only for a language written in
+    # its dominant script: six terse English documents and a Korean one read
+    # as Korean, and an English document quoting a Korean or Hebrew file
+    # name as Korean or Hebrew (rv24 quality 2).
+    Case(
+        _corpus((_TERSE_ENGLISH_DOCUMENT, 6), (_KOREAN_DOCUMENT, 1)), "en", "en", "rv24"
+    ),
+    Case(
+        _corpus((_TERSE_ENGLISH_DOCUMENT, 6), (_KOREAN_DOCUMENT, 1)), None, None, "rv24"
+    ),
+    Case(_QUOTING_KOREAN_NAME, "en", "en", "rv24"),
+    Case(_QUOTING_HEBREW_NAME, "en", "en", "rv24"),
+    Case(_corpus((_QUOTING_KOREAN_NAME, 5), (_KOREAN_DOCUMENT, 1)), "en", "en", "rv24"),
+    # A Korean document quoting English terms still votes Korean.
+    Case(
+        _corpus((_KOREAN_DOCUMENT, 3), (_TERSE_ENGLISH_DOCUMENT, 1)), "ko", "en", "rv24"
+    ),
 )

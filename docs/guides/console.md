@@ -183,7 +183,9 @@ that question alone (`--confirm-integrity`, `--confirm-reset`,
 beforehand. The run's
 stages appear as a column of stations as they finish (from the pipeline's
 own metadata), with their time, outputs and model calls, each failed
-stage's error and failed files, and the log's tail. Stop sends the CLI
+stage's error and failed files, and the log's tail. A finished run counts
+the WARNINGs it logged and lists the last 20, and flags a run that
+processed documents but extracted no entity from them. Stop sends the CLI
 the stop it is built for: the finished stages are kept and the next run of
 the corpus resumes. A job a console left running when it stopped is shown
 as lost when the console starts again (its namespace is free; the
@@ -230,7 +232,8 @@ by outcome; a question opens the reference answer and every strategy's
 answer side by side. A job's gates show as passed or failed.
 
 **Graph.** A `visualization_data.json` the ingestion exported (the newest
-by default; every run that indexed writes the namespace's whole graph), drawn with a seeded layout per connected component: pan with a
+by default; a full build writes the namespace's whole graph, and after an
+incremental job the console builds it from the stores), drawn with a seeded layout per connected component: pan with a
 drag or the arrow keys, zoom with the wheel or `+`/`-`. Colour by community
 or by type (the eight largest groups, the rest grey, named in the legend).
 Find an entity by name; selecting one shows its type, description,
@@ -280,7 +283,9 @@ The next question and job use the saved file.
 
 - **Reads:** the workspace, the cache directory, the evaluation outputs and
   `graph.visualization.outputs_directory`. Every path the page names is
-  resolved (symlinks too) and must stay inside one of them.
+  resolved (symlinks too) and must stay inside one of them. Folder listings
+  skip symlinks, and an ingest job, like `run-ingestion`, skips a corpus
+  file that resolves outside its folder (a WARNING names it).
 - **Writes:** `uploads/` in the workspace, the cache directory (pipeline
   caches, `console/`), the evaluation outputs and the config file. The
   stores are written by the `run-ingestion` jobs, as the config says.

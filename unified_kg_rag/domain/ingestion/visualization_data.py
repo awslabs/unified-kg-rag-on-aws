@@ -2,11 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """The visualization-data JSON that ``run-visualization`` renders from.
 
-Ingestion writes it at the end of every run that indexed
-(``graph.visualization.export_data``), from what the index namespace's
-stores hold (:func:`stored_visualization_data`): the whole graph and the
-community hierarchy, also after an incremental run or beside another
-corpus's documents, built here in one pass over the nodes and edges (no
+Ingestion writes it at the end of a full build
+(``graph.visualization.export_data``), and ``run-visualization`` after an
+incremental run, from what the index namespace's stores hold
+(:func:`stored_visualization_data`): the whole graph and the community
+hierarchy, also beside another corpus's documents, built here in one pass over the nodes and edges (no
 embedding or model call, no centrality, no layout). ``run-visualization`` computes the layout and centrality when it
 renders; a file that carries them (written by an earlier release) is drawn
 with its own.

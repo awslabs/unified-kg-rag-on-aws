@@ -194,6 +194,8 @@ export interface JobRecord {
   plan: string[];
   total_runs: number;
   confirmation?: "integrity" | "reset" | "deletions" | null;
+  // The WARNING events of its log once it ended: how many, and the last ones.
+  warnings?: { count: number; lines: string[] };
   // An evaluation's answers so far (from its log) beside its saved runs.
   progress?: { stages?: StageProgress[]; done: number; total: number; answers?: { done: number; total: number } | null } | null;
   log?: string[];

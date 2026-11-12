@@ -6,12 +6,15 @@ Every run that ran the indexing stage exported the namespace's whole graph
 while it held the namespace's lease, a run that found nothing to index
 included: at 10k text units a no-change run went from 2 s to 41 s and
 rewrote (and uploaded) a 59 MB file. The export now runs once the lease is
-given up, and a run that wrote nothing keeps an export of the build the
-stores hold.
+given up, a run that wrote nothing keeps an export of the build the stores
+hold, and only a full build writes one (rv24 perf 2: a one-document
+incremental run spent 36% of its time exporting 3,200 entities);
+run-visualization builds it from the stores after an incremental run.
 """
 
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 
@@ -79,7 +82,7 @@ def test_a_run_that_wrote_nothing_keeps_the_export(tmp_path: Path, mocker) -> No
     assert context.visualization_data_path == str(path)
 
 
-def test_a_run_that_wrote_exports_again(tmp_path: Path, mocker) -> None:
+def test_an_incremental_run_that_wrote_exports_nothing(tmp_path: Path, mocker) -> None:
     config, providers, source = _setup(tmp_path)
     exports = _exports(mocker)
     e2e._ingest(config, providers, source, tmp_path / "run-1")
@@ -87,15 +90,33 @@ def test_a_run_that_wrote_exports_again(tmp_path: Path, mocker) -> None:
     first = export_build_time(path)
     (source / "carrier.txt").write_text("Carrier ships widgets for Depot.")
 
+    context = e2e._ingest(config, providers, source, tmp_path / "run-2")
+
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert exports == [path]
+    assert export_build_time(path) == first
+    assert context.visualization_data_path is None
+
+
+def test_a_reset_exports_again(tmp_path: Path, mocker) -> None:
+    config, providers, source = _setup(tmp_path)
+    exports = _exports(mocker)
+    e2e._ingest(config, providers, source, tmp_path / "run-1")
+    path = tmp_path / "viz" / VISUALIZATION_DATA_FILENAME
+    first = export_build_time(path)
+    (source / "carrier.txt").write_text("Carrier ships widgets for Depot.")
+    config.indexing.reset = True
+
     e2e._ingest(config, providers, source, tmp_path / "run-2")
 
     assert exports == [path, path]
     assert export_build_time(path) not in (None, first)
 
 
-def test_an_export_of_an_earlier_build_is_written_again(tmp_path: Path, mocker) -> None:
+def test_an_export_of_an_earlier_build_is_not_reported(tmp_path: Path, mocker) -> None:
     # Another run (another cache directory, say) wrote the namespace since
-    # this export: a run that writes nothing itself still exports again.
+    # this export: a run that writes nothing itself reports no export, and
+    # run-visualization builds one from the stores.
     config, providers, source = _setup(tmp_path)
     exports = _exports(mocker)
     e2e._ingest(config, providers, source, tmp_path / "run-1")
@@ -105,10 +126,10 @@ def test_an_export_of_an_earlier_build_is_written_again(tmp_path: Path, mocker) 
     assert stamp is not None
     path.write_text(text.replace(stamp, "2000-01-01T00:00:00Z", 1), encoding="utf-8")
 
-    e2e._ingest(config, providers, source, tmp_path / "run-2")
+    context = e2e._ingest(config, providers, source, tmp_path / "run-2")
 
-    assert exports == [path, path]
-    assert export_build_time(path) == stamp
+    assert exports == [path]
+    assert context.visualization_data_path is None
 
 
 def test_the_export_runs_once_the_lease_is_given_up(tmp_path: Path, mocker) -> None:
@@ -212,7 +233,8 @@ def test_a_new_task_on_an_empty_disk_keeps_the_uploaded_export(
     # A deployed task: a new pipeline id each run, an empty disk, the cache
     # synced to S3. The build record names the run whose upload shows the
     # stores, so a run that writes nothing finds it there (17 s and a 59 MB
-    # upload at 10k text units); an upload that is gone is written again.
+    # upload at 10k text units); an upload that is gone is not written again
+    # (an incremental run exports none).
     config, providers, source = _setup(tmp_path)
     config.graph.visualization.outputs_directory = None
     exports = _exports(mocker)
@@ -250,11 +272,38 @@ def test_a_new_task_on_an_empty_disk_keeps_the_uploaded_export(
     context = ingest("second")
 
     assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert len(exports) == 1
     if uploaded:
-        assert len(exports) == 1
         assert context.visualization_data_path == (
             f"s3://bucket/first/{relative.as_posix()}"
         )
     else:
-        assert len(exports) == 2
-        assert (bucket.root / "second" / relative).is_file()
+        # An incremental run writes none (run-visualization builds it).
+        assert context.visualization_data_path is None
+        assert not (bucket.root / "second" / relative).exists()
+
+
+def test_the_console_builds_the_graph_an_incremental_run_did_not_export(
+    tmp_path: Path, mocker
+) -> None:
+    from types import SimpleNamespace
+
+    from unified_kg_rag.application.cli.console import jobs as console_jobs
+
+    config, providers, source = _setup(tmp_path)
+    config.graph.visualization.outputs_directory = None
+    exports = _exports(mocker)
+    e2e._ingest(config, providers, source, tmp_path / "run-1")
+    (source / "carrier.txt").write_text("Carrier ships widgets for Depot.")
+    e2e._ingest(config, providers, source, tmp_path / "run-2")
+    job = SimpleNamespace(namespace="default", pipeline_id="console-2")
+    cache = tmp_path / "cache"
+
+    path = console_jobs._current_graph(config, job, cache)
+
+    assert path == cache / "console-2" / "visualization" / VISUALIZATION_DATA_FILENAME
+    names = {n["attributes"]["name"] for n in json.loads(path.read_text())["nodes"]}
+    assert "Carrier" in names and "Vendor" in names
+    # It shows the stores now: found again, not built.
+    assert console_jobs._current_graph(config, job, cache) == path
+    assert len(exports) == 1  # the full build's

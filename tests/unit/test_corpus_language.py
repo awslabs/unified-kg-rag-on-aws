@@ -124,10 +124,14 @@ def test_an_agreeing_or_undecidable_sample_is_not_reported(
     assert source_language_mismatch(corpus_sample([text]), source) is None
 
 
-def test_a_sample_read_as_the_setting_is_not_reported() -> None:
-    # Regression (rv13 query low): a Korean document that is mostly code
-    # holds few Hangul letters but reads as Korean; the warning told a
-    # source_language of 'ko' to be set to 'ko'.
+def test_a_mostly_english_sample_is_reported_with_the_language_it_reads_as() -> None:
+    # rv13 query low: a Korean document that is mostly code and English
+    # notes told a source_language of 'ko' to be set to 'ko'. Since rv24
+    # (quality 2) a document votes for the script group most of its letters
+    # are in, and for a language only of that group: this one is Latin, so
+    # the warning names English, never the setting itself. Trade-off: two
+    # Korean sentences in a document of English code and notes no longer
+    # outweigh its English.
     code = (
         "```python\n# List all of the buckets that the caller can access\n"
         "for bucket in s3.buckets.all():\n"
@@ -140,9 +144,14 @@ def test_a_sample_read_as_the_setting_is_not_reported() -> None:
         "로그인한 뒤 S3 페이지를 엽니다.\n"
     )
     sample = corpus_sample([korean + code] * 5)
-    assert corpus_language(sample, LanguageCode.KO) is LanguageCode.KO
+    assert corpus_language(sample, LanguageCode.KO) is LanguageCode.EN
     assert sample.counts.dense < 0.2 * sample.counts.letters
-    assert source_language_mismatch(sample, LanguageCode.KO) is None
+    reason = source_language_mismatch(sample, LanguageCode.KO)
+    assert reason is not None and "set it to 'en'" in reason
+    # Korean prose holding most of the letters still reads Korean.
+    prose = corpus_sample([korean * 8 + code] * 5)
+    assert corpus_language(prose, LanguageCode.KO) is LanguageCode.KO
+    assert source_language_mismatch(prose, LanguageCode.KO) is None
 
 
 def test_a_two_sentence_corpus_still_decides() -> None:

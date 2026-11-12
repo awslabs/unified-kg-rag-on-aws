@@ -9,7 +9,11 @@ With the doc-status registry on, a run diffs the corpus against the registry
 by content hash and processes only new, changed and failed documents. The
 registry lists each document's text units, and removal asks the stores what
 cites them. A write-ahead protocol lets the next run repair any
-interruption, and the result converges to a full build of the current corpus.
+interruption, and the result converges to a full build of the current corpus,
+up to the order of an item's `text_unit_ids` (the same ids, perhaps in
+another order) and to a description summary an addition extended (the
+stored summary plus the new lines, as LightRAG merges, where a full build
+summarizes every line once).
 How to use it: [Incremental indexing](../guides/incremental.md).
 
 ![Incremental indexing](../../assets/incremental-indexing.drawio.png)
@@ -469,6 +473,12 @@ every write and check that the next run converges to a fresh full build.
   (`Derived.id_remap`), its edges and claims following. An item citing a text
   unit without a stored record keeps its stored content (a WARNING and the
   indexing stage's `underived_items` metric).
+- **Cost of a hub.** Deriving an item reads the records of every text unit
+  it cites, and an entity's degree sets its edges' `rank`: a delta that
+  touches a hub entity reads the extraction records of the units citing it
+  and rewrites the rank of each of its edges in both stores, so a
+  one-document run costs in proportion to the hub's degree, not to the delta
+  (3,000 records and about 3,200 edge updates for a hub 3,000 units cite).
 - **Merges a full build undoes.** A stored entity may hold what a full build
   keeps apart (two spellings merged while their types agreed): every resolved
   entity sharing a name key and a text unit with it is derived, the best

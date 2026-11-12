@@ -127,6 +127,10 @@ class Job:
     answers: AnswerProgress | None = None
     # The question a failed ingestion stopped at, unanswered (its flag).
     confirmation: str | None = None
+    # The WARNING events of its log once it ended (_log_warnings): how many,
+    # and the last ones.
+    warning_count: int = 0
+    warnings: list[str] = field(default_factory=list)
     process: asyncio.subprocess.Process | None = None
     watcher: asyncio.Task[None] | None = None
 
@@ -152,6 +156,7 @@ class Job:
             "plan": self.plan,
             "total_runs": self.total_runs,
             "confirmation": self.confirmation,
+            "warnings": {"count": self.warning_count, "lines": self.warnings},
             "pid": self.process.pid if self.process is not None else None,
         }
 
@@ -636,9 +641,14 @@ class JobManager:
             job.status = JobStatus.STOPPED
         else:
             job.status = JobStatus.FAILED
-        if job.status is not JobStatus.SUCCEEDED:
+        job.warning_count, job.warnings = await asyncio.to_thread(
+            _log_warnings, job.log_path
+        )
+        if job.status is JobStatus.FAILED:
             job.error = (document or {}).get("error") or _last_error(self.log_tail(job))
             job.confirmation = confirmation_needed(job.error)
+        elif job.kind is JobKind.INGEST and document is not None:
+            await self._export_graph(job, document)
         self.store.save_job(job.record())
         logger.info(
             "%s job %s ended: %s (exit %s)",
@@ -652,6 +662,30 @@ class JobManager:
                 self.on_ingest_end()
             except Exception as e:  # noqa: BLE001 - a refresh must not fail the job
                 logger.warning("Refreshing after job %s failed: %s", job.id, e)
+
+    async def _export_graph(self, job: Job, document: dict[str, Any]) -> None:
+        """After an ingestion that exported no graph (an incremental run
+        writes none), the namespace's ``visualization_data.json`` for the
+        Graph page, as ``run-visualization`` builds it
+        (``current_visualization_data``: an export that shows the stores,
+        else one read from them), into ``document``'s ``visualization_data``.
+        Best effort: a failure is logged."""
+        if document.get("visualization_data") is not None:
+            return
+        try:
+            config = self.load_config()
+            if not config.graph.visualization.export_data:
+                return
+            path = await asyncio.to_thread(
+                _current_graph, config, job, self.cache_directory
+            )
+        except Exception as e:  # noqa: BLE001 - the Graph page is optional
+            logger.warning("Exporting the graph after job %s failed: %s", job.id, e)
+            return
+        document["visualization_data"] = str(path)
+        logger.info(
+            "Graph of namespace '%s' for the Graph page: %s", job.namespace, path
+        )
 
     # -- stopping ---------------------------------------------------------
 
@@ -863,6 +897,33 @@ def evaluation_progress(output: Path, total: int) -> dict[str, Any]:
     return {"done": min(done, total) if total else done, "total": total}
 
 
+def _current_graph(config: Config, job: Job, cache_directory: Path) -> Path:
+    """The visualization data of ``job``'s namespace that shows its stores,
+    where ingestion writes it (``graph.visualization.outputs_directory``,
+    else the job's cache directory)."""
+    from unified_kg_rag.application.bootstrap import build_providers
+    from unified_kg_rag.application.storage.visualization_export import (
+        current_visualization_data,
+    )
+    from unified_kg_rag.domain.ingestion.visualization_data import (
+        VISUALIZATION_DATA_FILENAME,
+    )
+
+    configured = config.graph.visualization.outputs_directory
+    directory = (
+        Path(configured)
+        if configured
+        else cache_directory / str(job.pipeline_id) / "visualization"
+    )
+    path, _ = current_visualization_data(
+        build_providers(config),
+        job.namespace,
+        [cache_directory, *([Path(configured)] if configured else [])],
+        directory / VISUALIZATION_DATA_FILENAME,
+    )
+    return path
+
+
 def _last_json(text: str) -> dict[str, Any] | None:
     """The JSON document a ``--output-format json`` run printed (the last
     one on stdout)."""
@@ -880,8 +941,58 @@ def _last_json(text: str) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
+# How many of a job's WARNING events its record keeps (the last ones).
+WARNING_LINES = 20
+# The characters the CLIs' banner and panels are drawn with.
+_BOX = frozenset("│╭╮╰╯─┃━┏┓┗┛")
+
+
+def _log_event(line: str) -> dict[str, Any] | None:
+    """The structured log event a log line holds (the CLIs log JSON lines
+    to their stderr, ``{"event": ..., "level": ...}``), or ``None``."""
+    line = line.strip()
+    if not line.startswith("{"):
+        return None
+    try:
+        event = json.loads(line)
+    except ValueError:
+        return None
+    if isinstance(event, dict) and isinstance(event.get("level"), str):
+        return event
+    return None
+
+
+def _log_warnings(log_path: Path) -> tuple[int, list[str]]:
+    """How many WARNING events a job's log holds, and the last
+    :data:`WARNING_LINES` of them (their messages)."""
+    count, last = 0, []
+    try:
+        with log_path.open("r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                event = _log_event(line)
+                if event is not None and event["level"] == "warning":
+                    count += 1
+                    last.append(str(event.get("event", "")))
+                    del last[:-WARNING_LINES]
+    except OSError:
+        return 0, []
+    return count, last
+
+
 def _last_error(lines: list[str]) -> str | None:
+    """A failed job's error, when its JSON status names none: the last
+    ERROR (or CRITICAL) event of its log, else of its lines outside the
+    banner's and panels' boxes and the structured events (a traceback's)
+    the last that names an error, else the last, else ``None``."""
     for line in reversed(lines):
-        if "error" in line.lower():
-            return line.strip()
-    return lines[-1].strip() if lines else None
+        event = _log_event(line)
+        if event is not None and event["level"] in ("error", "critical"):
+            return str(event.get("event", "")).strip() or None
+    plain = [
+        text
+        for line in lines
+        if (text := line.strip()) and text[0] not in _BOX and _log_event(line) is None
+    ]
+    named = [text for text in plain if "error" in text.lower()]
+    found = named or plain
+    return found[-1] if found else None

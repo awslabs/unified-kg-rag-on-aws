@@ -109,13 +109,13 @@ a local disk, not NFS, SMB or Amazon EFS
 
 ## Provider flags
 
-`run-ingestion`, `run-rag`, `run-eval` and `run-prompt-tuning` take the
-provider flags (`--backend`, `--llm-provider`,
+`run-ingestion`, `run-rag`, `run-eval`, `run-prompt-tuning`, `run-describe`
+and `run-visualization` take the provider flags (`--backend`, `--llm-provider`,
 `--llm-model`, `--embedding-provider`, `--embedding-model`,
 `--embedding-dimension`, `--rerank-provider`, `--model-base-url`). Each
 overrides its key of the loaded config, a key the file sets included; an
-omitted flag leaves the config as it is. `run-visualization` calls no model
-or store and takes none of them. The keys each flag sets are in the
+omitted flag leaves the config as it is (`run-visualization` reads only the
+stores, without `--data-path`). The keys each flag sets are in the
 [CLI Reference](../reference/cli.md#provider-flags).
 
 ## Local stores in containers

@@ -158,6 +158,11 @@ detect-secrets, which scans ASH's file list, finds nothing; it also skips every 
 checkout anywhere below one (`~/.claude/...`, `~/.cache/...`) is not scanned for secrets either. Run it from a clone
 or a worktree outside such directories (`git worktree add --detach /tmp/ash-scan HEAD`).
 
+GitLab's pipeline secret detection reads [`.gitlab/secret-detection-ruleset.toml`](./.gitlab/secret-detection-ruleset.toml):
+the default rules, with the made-up `user:password@` credentials of the URL redaction tests (each line also marked
+`# gitleaks:allow`) allowed for the "Password in URL" rule in `tests/unit/` alone. Keep a new fake credential to one
+of those pairs, or widen the exception there with its reason, never with a global disable.
+
 ### Pins Dependabot does not move
 
 [Dependabot](./.github/dependabot.yml) updates both uv locks, the console's npm lock (`console/web`), the SHA-pinned

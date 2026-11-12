@@ -139,13 +139,15 @@ stored is read again: follow *Upgrading* in order.
   `evaluation.ragas_metrics` takes only the five metrics ragas scores (`answer_correctness`, `answer_relevancy`,
   `context_precision`, `context_recall`, `faithfulness`); another fails the load instead of the evaluator.
 - Visualization: ingestion only writes `visualization_data.json` (`graph.visualization.export_data`, default
-  `true`), at the end of every run that indexed, from the namespace's stores once the run gave up the namespace's
-  lease, and prints its path; a run that wrote nothing keeps an export naming the build the stores hold (`built_at`),
-  local or uploaded by the S3 cache sync from the run the build record names (`visualization_export_run`; one that
-  cannot be read is written again), so a no-change run at 10k text units, a deployed task's on an empty disk too,
-  no longer rewrites a 59 MB file;
-  `run-visualization` renders it (without `--data-path` the newest export, of `--suffix`'s namespace when given)
-  with a seeded spring layout, and the embedding layouts (UMAP, t-SNE, PCA) are gone.
+  `true`), at the end of a full build, from the namespace's stores once the run gave up the namespace's lease, and
+  prints its path; an incremental run writes none (a scan of the whole graph per run: 36% of a one-document run at
+  3,200 entities), and any run that wrote nothing reports an export naming the build the stores hold (`built_at`),
+  local or uploaded by the S3 cache sync from the run the build record names (`visualization_export_run`), so a
+  no-change run at 10k text units, a deployed task's on an empty disk too, no longer rewrites a 59 MB file;
+  `run-visualization` renders it (without `--data-path` the namespace's newest export when it shows the build the
+  stores hold, else one it builds from the stores, as the console does after an ingestion that exported none; it
+  takes the provider flags again) with a seeded spring layout, and the embedding layouts (UMAP, t-SNE, PCA) are
+  gone.
   `graph.visualization.interactive` and `static` are typed sections: a misspelled setting is an unknown key (#344,
   #467). See [visualize](docs/guides/visualize.md).
 - Environment variables: `UKR__<SECTION>__<KEY>` sets any key (double underscores between segments, any case, JSON
@@ -281,7 +283,8 @@ See [exit codes and JSON output](docs/reference/exit-codes-and-json.md) and the
   one its key folds least names the entity on a tie ("토지", not "「토지」"). Entity and relationship `rank` come from
   node degree, and a relationship's weight sums its strengths per text unit (#189, #214, #574).
 - Entities have no `MemberOf` edges to communities; an entity lists its `community_ids` (#348).
-- Hidden files and files under a hidden or `__pycache__` directory of the corpus are not parsed (#213).
+- Hidden files, files under a hidden or `__pycache__` directory of the corpus (#213) and files that resolve outside it
+  (a symlink to `/etc/hostname`; a WARNING names them) are not parsed.
 
 #### Deployment (CDK)
 See [`iac/README.md`](iac/README.md).
@@ -519,7 +522,8 @@ From a `main` checkout (formats and keys no release had):
   spacing variants with a number and a letter run into a digit ("PO1002", "PO 1002") are one entity (*Stored data and
   reindexing*); the description summary and claim
   prompts changed, claims keep a `suspected` status and are keyed by their statement (*Fixed*); chunk sizes count
-  tokens (*Defaults*), which keeps English text units and re-chunks Korean, Japanese and Chinese ones; stage-cache keys
+  tokens (*Defaults*), which re-chunks Korean, Japanese and Chinese text units and English ones of short or long words
+  (most others are kept); stage-cache keys
   hold the prompts in effect (a pipeline id resumed across a prompt change starts over); extraction records under
   earlier keys (other description summary settings, #541-#556) and claims under an earlier reading of their dates
   (#612, #624) are no longer looked up. Run one reset (`indexing.reset: true`) with a new or no `--pipeline-id`:
@@ -688,9 +692,6 @@ From a `main` checkout (formats and keys no release had):
   call on a fast-tier role (`translation` by default) or under `aws.bedrock.ingestion_effort` asks for another
   `max_tokens`, so its LLM response-cache entries miss once and a re-run of that stage pays its model calls again;
   extraction-store records are reused (they are keyed by the effort, not by `max_tokens`).
-- #628 `run-visualization` no longer takes the provider flags (`--backend`, `--llm-provider`, `--llm-model`,
-  `--embedding-provider`, `--embedding-model`, `--embedding-dimension`): it renders exported data and calls no model,
-  so a script passing one exits 2 until it drops it.
 - A `custom_prompts` override of `query_rewrite_*` (#212) should answer `{"question": ...}`, or
   `{"question": "[CANNOT_REWRITE]"}` to keep the question as asked (*Changed*): another answer costs one
   output-fixer call per follow-up.
@@ -891,9 +892,9 @@ From a `main` checkout (formats and keys no release had):
   markers `[n]` linked to the sources they cite, follow-ups sent with the page's conversation (`RAGInput.history`),
   and each source the answer read on a provenance trace back to its passage, file, seed graph and IRI and into the
   graph; ingest a workspace folder or an upload with a methodology profile (starting from what the namespace's build
-  record holds; a run that would drop a
-  held methodology for every corpus in the namespace starts only once confirmed), with live stage progress and a stop
-  the pipeline checkpoints; run and compare evaluations (progress per answer; paired deltas called by their
+  record holds; a run that would drop a held methodology for every corpus in the namespace starts only once
+  confirmed), with live stage progress, the run's WARNINGs (a run that extracted no entity flagged) and a stop the
+  pipeline checkpoints; run and compare evaluations (progress per answer; paired deltas called by their
   Holm-adjusted p-value with the family's simultaneous interval and the primary metric marked, falling back to the
   interval for older comparisons; gates, cost, declines, win rates by answer length, each metric described on hover,
   and per question every strategy's primary-metric score, its win, tie or loss and the answers side by side) and open
@@ -1048,6 +1049,9 @@ From a `main` checkout (formats and keys no release had):
   longer matches `attr_<key>` against an entity's own attribute (`attr_category:finance` dropped an entity of a
   finance document whose extracted `category` was `hardware`) (#446, #661). See
   [filters](docs/reference/filters.md).
+- `processing.document_parsing.encoding`: the encoding the text formats that are not UTF-8 are read in instead of
+  the one detected (cp1252 for a French file detected as cp1250). See
+  [ingest](docs/guides/ingest.md#large-and-heterogeneous-corpora).
 - Documents from memory: `DataIngestionPipeline.insert_documents([InputDocument(id=..., text=..., filters=...)])`
   adds or updates documents, `delete_documents(ids)` deletes them, through the incremental path of `run` (one run
   each, under the namespace lease); the source scope's other documents are kept (`DocumentDelta.kept`). Needs the
@@ -1076,7 +1080,8 @@ From a `main` checkout (formats and keys no release had):
 - Incremental indexing: the extraction-settings fingerprint (#224, #332); `indexing.max_document_failures` with
   own-error accounting and `documents_retrying` (#175, #431); source scopes and `--retire-source-scope` (#134,
   #192), a scope's first run into a namespace that holds other scopes' documents recorded as the incremental build it
-  is (#640); the namespace write lease and quarantine (`indexing.max_document_attempts`) (#331, #346); the commit's
+  is (#640); the namespace write lease (with the SQLite registry, a killed run's lease is taken at once on its host)
+  and quarantine (`indexing.max_document_attempts`) (#331, #346); the commit's
   note (`pending-commit`), which lists the old ids its derivation retires, so when a write fails, or the run dies,
   the next commit derives the items still stored under them again and deletes the old copies of those it re-keyed
   (another spelling took over their name) or dropped; the failed commit already deletes the old ids no failed write
@@ -1275,9 +1280,13 @@ From a `main` checkout (formats and keys no release had):
   of one per 100 at 4,800-character chunks) (#626), priced by `evaluation.prices.<rerank
   model>.per_thousand_rerank_search_units` (#607); the run manifest records the usage schema (`usage_schema: 3`), and
   a comparison gives no USD delta against a run saved with an earlier one (#613, #626).
-- Corpus coverage: `run-ingestion`'s JSON `units_failed` and EMF metrics `total_units_failed`, `total_files_failed`,
-  `total_files_skipped`, `total_documents_excluded` / `_deleted` / `_failed` / `_retrying` and
-  `total_documents_without_claims`; a run with failed units ends with a WARNING naming them per stage (#518, #532).
+- Corpus coverage: `run-ingestion`'s JSON `units_failed`, `files_failed`, `documents_processed`,
+  `entities_extracted` and `delta` (`new`, `changed`, `unchanged`, `deleted`) and EMF metrics `total_units_failed`,
+  `total_files_failed`, `total_files_skipped`,
+  `total_documents_excluded` / `_deleted` / `_failed` / `_retrying` and `total_documents_without_claims`; a run with
+  failed units ends with a WARNING naming them per stage (#518, #532). `run-ingestion --max-failure-rate` (off by
+  default) exits 1 when more of its documents failed (files that failed to load, documents recorded `FAILED` or
+  indexed without a failed stage's output).
 - Evaluation: `retrieval` (hit@k, recall@k, MRR; the passages' files ranked before the lineage files of summaries,
   reports, entities, relationships and claims, so one high-ranked summary or report cannot fill the top k) and
   `answer_match` (exact match, token F1) evaluators, grouped statistics, the run manifest and index build record,
@@ -1403,13 +1412,14 @@ From a `main` checkout (formats and keys no release had):
 - The document loading stage samples the corpus (the first 2,000 characters of its first 20 documents) and WARNs,
   naming `processing.translation.source_language`, when the sample disagrees with the setting: a Korean, Japanese,
   Chinese, Russian, Thai, Arabic or German corpus under the default `en` was extracted with prompts asking for
-  English and analyzed as English without a word. Each sampled document's language is read by the rule a query's is
-  (its script, and a Latin-script one's function words), and the sample reads as the language most of them read as
-  (four English documents and one Korean one read as English); a sample that reads as the setting is not reported,
-  however few of its letters are in its script (a Korean document that is mostly code). `run-prompt-tuning` writes the
-  `source_language` the sample reads as into its output (#629). Han, Hangul and Kana text reads by one rule
-  (`domain.languages.dense_language`): Korean when a tenth or more of those letters are Hangul (and no fewer than
-  Kana), so Korean written with Hanja reads as Korean, else Japanese when a tenth are Kana, else Chinese.
+  English and analyzed as English without a word. Each sampled document votes for the script most of its letters are
+  in, and for the language it reads as by the rule a query's is (a Latin-script one by its function words) only when
+  that language is written in that script; the sample reads as the language of the script most documents are in (four
+  English documents and one Korean one, or English documents quoting Korean file names, read as English); a sample
+  that reads as the setting is not reported, however few of its letters are in its script. `run-prompt-tuning` writes
+  the `source_language` the sample reads as into its output (#629). Han, Hangul and Kana text reads by one rule
+  (`domain.languages.dense_language`): Korean when a tenth or more of those letters are Hangul (and no fewer than Kana),
+  so Korean written with Hanja reads as Korean, else Japanese when a tenth are Kana, else Chinese.
 - `backend: local`: the refusals and retrieval logs of the embedded vector store name it ("The embedded SQLite search
   engine index ...") instead of OpenSearch, and a query where nothing was ingested reads an empty store with a
   WARNING naming `providers.vector.sqlite_path` instead of creating an empty `vector.sqlite3` (in the working
@@ -1908,6 +1918,11 @@ Queries and retrieval.
   once no longer fails its item for good (#369, #378).
 
 Ingestion and incremental indexing.
+- A `.txt`, `.md`, `.csv`, `.json` or `.html` file that is not UTF-8 and whose encoding is not detected (a binary file
+  with a text suffix) fails to parse and counts as failed: it was decoded as latin-1 and indexed as text units of
+  garbage.
+- A chunk of whitespace only makes no text unit: a chunk size of a few characters or tokens (`fallback_chunk_size:
+  1`) cut the spaces between words into units of their own, and the run failed with `missing embeddings`.
 - An extraction, claims, gleaning, report-findings or chunk-boundary section that lists elements reads as empty when
   it holds a short "nothing here" marker, in any language (one line of at most three estimated tokens:
   `<relationships>없음</relationships>`, `なし`, `None.`, `Keine`): only `None`, `N/A`, `null`, `nil` and `-` did,
@@ -1915,9 +1930,9 @@ Ingestion and incremental indexing.
   as prose: it gets one output-fixer call, and a repair that still holds text only is read as empty, counted
   (`sections_read_empty_from_text` in the graph and claim extraction stats) and logged with the section and its
   length.
-- An incremental run, and a run into a namespace that holds other source scopes' documents, export the whole
-  namespace's graph, read from its stores, not only its own delta or corpus (or none, or `Communities must be
-  detected before exporting`), so the console's graph and `run-visualization` show what queries read (#640).
+- The graph `run-visualization` and the console show is the whole namespace's, read from its stores, not a run's
+  own delta or corpus (or none, or `Communities must be detected before exporting`): a full build into a namespace
+  that holds other source scopes' documents exports it, and after an incremental run they build it (#640).
 - With description summaries on, an incremental run no longer extends a stored summary with a delta edge's
   description when the derivation moved part of it to another edge (a delta that resolved `Vendor Inc` into `Vendor`
   where the stored graph keeps them apart): the summary held a line the edge no longer states, unlike a full

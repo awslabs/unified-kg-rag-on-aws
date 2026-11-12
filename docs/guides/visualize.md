@@ -32,10 +32,12 @@ Ingestion itself renders nothing. Another renderer plugs in through
 ## Input and output
 
 - **The input.** `run-ingestion` writes `visualization_data.json` at the end
-  of every run that indexed, read from the index namespace's stores, and
-  prints its path (`visualization_data` in its JSON result): the whole graph
-  as queries see it, also after an incremental run and in a namespace other
-  corpora share. The entities, claims and community reports are read a page
+  of a full build, read from the index namespace's stores, and prints its
+  path (`visualization_data` in its JSON result): the whole graph as queries
+  see it, also in a namespace other corpora share. An incremental run writes
+  none (the export reads the whole graph, a cost in proportion to the
+  namespace rather than to the delta): `run-visualization` builds it from
+  the stores when asked. The entities, claims and community reports are read a page
   at a time from the vector store, each entity's communities from the graph
   store, and the relationships from the vector store (the graph store
   without a relationships index); a namespace without community detection
@@ -50,11 +52,18 @@ Ingestion itself renders nothing. Another renderer plugs in through
   in the bucket (a deployed task starts on an empty disk: its first bytes
   are read to check the build), else the newest of the namespace where
   ingestion writes them (a run under a new pipeline id prints that one).
-  An export of an earlier build, or one that is gone, is written again.
-- **Which file.** `--data-path`, else the newest `visualization_data.json`
-  under `graph.visualization.outputs_directory`, `outputs/visualization` and
-  `--cache-directory` (default `cache`), of `--suffix`'s namespace when given
-  (exit 2 when there is none).
+  A full build writes an export of an earlier build, or one that is gone,
+  again.
+- **Which file.** `--data-path`, else the namespace's (`--suffix`, else the
+  config's `index_value`) newest `visualization_data.json` under
+  `graph.visualization.outputs_directory`, `outputs/visualization`,
+  `--cache-directory` (default `cache`) and `--output-directory` when it
+  names the build the stores hold, else one built from the stores into
+  `--output-directory` (one pass over the stored items; `--config-path` and
+  the provider flags name the stores). The JSON result's `data_path` names
+  it. With the stores unreachable or not configured, the newest export is
+  rendered with a WARNING (exit 1, or 2 for a missing setting, when there
+  is none); a namespace that holds no graph exits 2.
 - **Where.** `graph.visualization.outputs_directory`, by default
   `<cache directory>/<pipeline_id>/visualization/`. S3 cache sync uploads the
   `.json` only; re-render the HTML locally.

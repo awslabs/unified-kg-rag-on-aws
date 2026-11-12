@@ -50,6 +50,7 @@ from unified_kg_rag.application.cli.conventions import (
     add_removed_flag,
     exits_on_sigterm,
     failure_fields,
+    failure_rate,
     json_output,
     print_json,
     setup_cli_logging,
@@ -294,13 +295,6 @@ _STRATEGY_VALUES = frozenset(s.value for s in SearchStrategy)
 
 class InvalidDatasetError(DataProcessingError):
     """The evaluation dataset cannot be read or fails validation (exit 2)."""
-
-
-def _failure_rate(value: str) -> float:
-    rate = float(value)
-    if not 0.0 <= rate <= 1.0:
-        raise argparse.ArgumentTypeError("must be between 0.0 and 1.0")
-    return rate
 
 
 def _data_path(value: str) -> str | Path:
@@ -762,7 +756,7 @@ class CommandLineInterface:
         )
         parser.add_argument(
             "--max-failure-rate",
-            type=_failure_rate,
+            type=failure_rate,
             default=1.0,
             help=(
                 "Exit non-zero when the fraction of queries whose answer generation "

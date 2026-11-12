@@ -127,9 +127,11 @@ def demo_config(
         "processing": {
             # The demo's documents are a page or two: chunks of about a
             # page, cut at paragraphs without overlap, so a passage cited
-            # from a PDF names the one page it is on.
+            # from a PDF names the one page it is on. The sizes are in
+            # characters (the default, tokens, made each PDF one chunk).
             "chunking": {
                 "chunker_type": "simple",
+                "length_unit": "chars",
                 "min_chunk_size": 100,
                 "fallback_chunk_size": 600,
                 "max_chunk_size": 2000,

@@ -34,6 +34,7 @@ from unified_kg_rag.application.cli import (
     run_visualization,
 )
 from unified_kg_rag.application.cli.conventions import (
+    EXIT_FAILURE,
     exits_on_sigterm,
     interruptible,
     json_output,
@@ -45,6 +46,7 @@ from unified_kg_rag.domain.models import (
     Config,
     PipelineConfig,
     PipelineContext,
+    PipelineMetrics,
     PipelineStageResult,
     PipelineStageStatus,
 )
@@ -1065,6 +1067,7 @@ async def test_ingestion_json_result_counts_the_failed_documents() -> None:
         run_ingestion_pipeline.IngestionPipelineRunner
     )
     runner.pipeline = MagicMock(executed_stages=frozenset())
+    runner.args = argparse.Namespace(max_failure_rate=None)
     assert runner._json_result(context)["failed_documents"] == 1
     # Each recording adds to the run's; a document recorded twice counts once.
     context.record_failed_documents(["doc-c"])
@@ -1084,6 +1087,87 @@ async def test_ingestion_json_result_counts_the_failed_documents() -> None:
     context.skipped_source_files = ["src/report.docx"]
     result = runner._json_result(context)
     assert (result["files_skipped"], result["documents_excluded"]) == (1, 0)
+
+
+def _ingestion_runner(max_failure_rate: float | None) -> Any:
+    runner = run_ingestion_pipeline.IngestionPipelineRunner.__new__(
+        run_ingestion_pipeline.IngestionPipelineRunner
+    )
+    runner.pipeline = MagicMock(executed_stages=frozenset())
+    runner.args = argparse.Namespace(max_failure_rate=max_failure_rate)
+    return runner
+
+
+def _ingested(**fields: Any) -> PipelineContext:
+    from unified_kg_rag.domain.models import Document, TextUnit
+
+    documents = [
+        Document(page_content=t, document_id=t, file_name=t, file_path=t)
+        for t in ("a", "b", "c", "d")
+    ]
+    return PipelineContext(
+        pipeline_id="run-1",
+        config=PipelineConfig(),
+        status=PipelineStageStatus.COMPLETED,
+        start_time=datetime.now(),
+        documents=documents,
+        text_units=[
+            TextUnit(id=f"u{doc}", text="x", document_ids=[doc]) for doc in "abcd"
+        ],
+        source_directory=Path("src"),
+        **fields,
+    )
+
+
+def test_ingestion_json_result_counts_failed_files_and_the_delta() -> None:
+    # Regression (rv24 quality 5): two empty files and a broken PDF exited
+    # 0 with every counter 0, and an incremental run did not say what it
+    # found new, changed, unchanged or deleted.
+    from unified_kg_rag.domain.models import DocumentDelta
+
+    context = _ingested(failed_source_files=["src/empty.txt", "src/broken.pdf"])
+    result = _ingestion_runner(None)._json_result(context)
+    assert (result["files_failed"], result["delta"]) == (2, None)
+    assert "error" not in result
+    # rv24 ux 8: what the console flags a run that extracted nothing by.
+    assert (result["documents_processed"], result["entities_extracted"]) == (4, 0)
+    context.global_metrics = PipelineMetrics.model_construct(total_entities_extracted=7)
+    result = _ingestion_runner(None)._json_result(context)
+    assert result["entities_extracted"] == 7
+    context.incremental_delta = DocumentDelta(
+        new=["n1", "n2"], changed=["c1"], unchanged=["k1", "k2", "k3"], deleted=["x"]
+    )
+    assert _ingestion_runner(None)._json_result(context)["delta"] == {
+        "new": 2,
+        "changed": 1,
+        "unchanged": 3,
+        "deleted": 1,
+    }
+
+
+def test_ingestion_max_failure_rate_fails_a_run_over_it() -> None:
+    from unified_kg_rag.domain.ingestion.delta_detector import document_doc_id
+
+    # 1 file that failed to load, document a recorded FAILED and document
+    # b with a failed text unit (a full build records none FAILED): 3 of 5.
+    context = _ingested(
+        failed_source_files=["src/broken.pdf"],
+        failed_text_unit_ids={"graph_extraction": ["ub"]},
+    )
+    context.record_failed_documents([document_doc_id(context.documents[0])])
+    assert run_ingestion_pipeline._document_failures(context) == (3, 5)
+    assert _ingestion_runner(None)._failure_budget_breach(context) is None
+    assert _ingestion_runner(0.6)._failure_budget_breach(context) is None
+    breach = _ingestion_runner(0.5)._failure_budget_breach(context)
+    assert breach is not None and "3 of 5 documents failed (60%)" in breach
+    result = _ingestion_runner(0.5)._json_result(context)
+    assert (result["error"], result["exit_code"]) == (breach, EXIT_FAILURE)
+    # Every document failed: a breach at any value; none failed: none.
+    context.documents = context.documents[:2]
+    context.text_units = context.text_units[:2]
+    assert _ingestion_runner(1.0)._failure_budget_breach(context) is not None
+    clean = _ingested()
+    assert _ingestion_runner(0.0)._failure_budget_breach(clean) is None
 
 
 async def test_eval_json_output_is_the_only_stdout(
@@ -1149,6 +1233,7 @@ def test_visualization_json_output_names_the_written_files(
     # The result shows the failure with the keys of every failure document.
     assert "No visualization files were rendered" in result.pop("error")
     assert result == {
+        "data_path": str(data),
         "output_directory": str(tmp_path / "out"),
         "files": [],
         "failed_renderers": {},

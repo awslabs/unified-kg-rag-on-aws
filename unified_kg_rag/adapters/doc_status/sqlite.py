@@ -45,6 +45,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.retrieval.store_names import namespace_suffix
 from unified_kg_rag.shared import DocStatusRegistryError, get_logger
+from unified_kg_rag.shared.utils.processes import process_gone
 
 logger = get_logger(__name__)
 
@@ -246,13 +247,23 @@ class SQLiteDocStatusStore:
     # --- the namespace write lease -------------------------------------------
 
     def try_acquire_lease(self, namespace: str, owner: str, seconds: float) -> bool:
+        """Also takes a lease whose holder ran on this host and has exited
+        (``process_gone``: a run killed with SIGKILL renews it no more), at
+        once rather than when it expires: the registry is a local file, so
+        its holders are mostly this host's processes. (DynamoDB's lease
+        waits for its expiry: its holders run on other hosts.)"""
         now = time.time()
         with self._transaction("take the namespace lease") as connection:
             row = connection.execute(
                 "SELECT owner, expires_at FROM leases WHERE namespace = ?",
                 (namespace,),
             ).fetchone()
-            if row is not None and row[0] != owner and row[1] > now:
+            if (
+                row is not None
+                and row[0] != owner
+                and row[1] > now
+                and not process_gone(row[0])
+            ):
                 return False
             connection.execute(
                 "INSERT OR REPLACE INTO leases (namespace, owner, expires_at) "

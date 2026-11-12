@@ -9,6 +9,7 @@ ingestion that would narrow it."""
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from pathlib import Path
 from typing import Any
@@ -640,3 +641,128 @@ async def test_an_ingest_s_index_value_must_be_a_safe_namespace_name(
         await _manager(tmp_path).start_ingest(
             corpus=corpus, corpus_ref="workspace:corpus", index_value=index_value
         )
+
+
+class _Finished:
+    """A job's process that printed ``document`` and exited ``code``."""
+
+    def __init__(self, document: str, code: int = 0) -> None:
+        self.returncode = code
+        self.pid = 4242
+
+        class _Out:
+            async def read(self) -> bytes:
+                return document.encode()
+
+        self.stdout = _Out()
+
+    async def wait(self) -> int:
+        return self.returncode
+
+
+def _ingest_job(manager: JobManager, tmp_path: Path, document: str, code: int = 0):
+    job = jobs_module.Job(
+        id="j1",
+        kind=jobs_module.JobKind.INGEST,
+        namespace="default",
+        params={},
+        argv=["run-ingestion"],
+        env={},
+        work_dir=tmp_path,
+        log_path=tmp_path / "j1.log",
+        pipeline_id="console-p1",
+    )
+    job.process = _Finished(document, code)  # type: ignore[assignment]
+    manager.jobs[job.id] = job
+    return job
+
+
+async def test_an_ingestion_that_exported_no_graph_gets_one_from_the_stores(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An incremental run exports no graph (rv24 perf 2): the Graph page
+    # would show the namespace as an earlier full build left it.
+    manager = _manager(tmp_path)
+    built: list[tuple[str, str]] = []
+
+    def current(config: Config, job: Any, cache: Path) -> Path:
+        built.append((job.namespace, str(cache)))
+        return cache / str(job.pipeline_id) / "visualization" / "v.json"
+
+    monkeypatch.setattr(jobs_module, "_current_graph", current)
+    job = _ingest_job(
+        manager, tmp_path, '{"status": "completed", "visualization_data": null}'
+    )
+    await manager._watch(job)
+    assert built == [("default", str(tmp_path / "cache"))]
+    assert job.result is not None and job.result["visualization_data"] == str(
+        tmp_path / "cache" / "console-p1" / "visualization" / "v.json"
+    )
+    # Exported by the run, failed, or export_data off: nothing built.
+    exported = '{"status": "completed", "visualization_data": "x.json"}'
+    await manager._watch(_ingest_job(manager, tmp_path, exported))
+    await manager._watch(_ingest_job(manager, tmp_path, '{"error": "boom"}', code=1))
+    manager.load_config = lambda: Config.model_validate(
+        {"graph": {"visualization": {"export_data": False}}}
+    )
+    await manager._watch(_ingest_job(manager, tmp_path, '{"visualization_data": null}'))
+    assert len(built) == 1
+
+
+async def test_a_failed_graph_build_leaves_the_job_succeeded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = _manager(tmp_path)
+
+    def unreachable(*_args: Any) -> Path:
+        raise StoreConnectionError("graph store down")
+
+    monkeypatch.setattr(jobs_module, "_current_graph", unreachable)
+    job = _ingest_job(manager, tmp_path, '{"visualization_data": null}')
+    await manager._watch(job)
+    assert job.status is JobStatus.SUCCEEDED
+    assert job.result == {"visualization_data": None}
+
+
+def _event(level: str, text: str) -> str:
+    return json.dumps({"event": text, "logger": "x", "level": level})
+
+
+async def test_a_job_records_its_warnings_and_a_stopped_one_no_error(
+    tmp_path: Path,
+) -> None:
+    # rv24 ux 8 and quality 8: a run that logged WARNINGs showed a green
+    # "Finished" with nothing else, and a stopped job's error was a banner
+    # line ("│ Continue on Error: False │").
+    manager = _manager(tmp_path)
+    log = [
+        "╭──────────────────╮",
+        _event("info", "Starting"),
+        *(_event("warning", f"warning {i}") for i in range(25)),
+        "│ Continue on Error: False │",
+        "╰──────────────────╯",
+    ]
+    job = _ingest_job(manager, tmp_path, '{"visualization_data": "x.json"}')
+    job.log_path.write_text("\n".join(log) + "\n", encoding="utf-8")
+    await manager._watch(job)
+    assert job.record()["warnings"]["count"] == 25
+    assert job.record()["warnings"]["lines"] == [f"warning {i}" for i in range(5, 25)]
+
+    stopped = _ingest_job(manager, tmp_path, '{"status": "interrupted"}', code=143)
+    stopped.log_path.write_text("\n".join(log) + "\n", encoding="utf-8")
+    await manager._watch(stopped)
+    assert stopped.status is JobStatus.STOPPED and stopped.error is None
+
+
+def test_a_failed_job_s_error_is_its_last_error_event_not_a_banner() -> None:
+    banner = "│ Continue on Error: False │"
+    assert (
+        jobs_module._last_error(
+            [_event("error", "Stage failed: boom"), _event("info", "x"), banner]
+        )
+        == "Stage failed: boom"
+    )
+    # No error event: the last plain line (a traceback's), never the banner.
+    trace = "ValueError: bad value"
+    assert jobs_module._last_error([trace, banner, "╰────╯"]) == trace
+    assert jobs_module._last_error([_event("info", "x")]) is None

@@ -767,6 +767,7 @@ class SimpleTextChunker(BaseChunker):
 
             chunks = self.fallback_splitter.split_text(content)
             chunks = self.chunk_processor.merge_small_chunks(chunks, source=content)
+            chunks = [chunk for chunk in chunks if not _is_blank(chunk)]
 
             validation = self.quality_validator.validate_chunks(chunks)
             if not validation["is_valid"]:
@@ -784,6 +785,14 @@ class SimpleTextChunker(BaseChunker):
             raise DataProcessingError(
                 f"Failed to chunk single document '{doc.file_name}': {e}"
             ) from e
+
+
+def _is_blank(chunk: str) -> bool:
+    """Whether ``chunk`` holds only whitespace: a split at a size of a few
+    characters cuts the spaces and line breaks between words into chunks of
+    their own, which no model reads and no embedding can be made of (the run
+    failed with ``missing embeddings``), so no text unit is made of one."""
+    return not chunk.strip()
 
 
 def _document_suffix(doc: Document) -> str | None:
@@ -895,9 +904,13 @@ class IntelligentTextChunker(BaseChunker):
             if not pre_chunks:
                 return []
 
-            final_chunks_info = self._process_pre_chunks(
-                pre_chunks, doc.file_name, responses
-            )
+            final_chunks_info = [
+                info
+                for info in self._process_pre_chunks(
+                    pre_chunks, doc.file_name, responses
+                )
+                if not _is_blank(info[1])
+            ]
 
             chunks = [text for _, text, _ in final_chunks_info]
 

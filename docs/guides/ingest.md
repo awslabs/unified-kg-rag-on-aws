@@ -166,6 +166,14 @@ tokens, temperature and reasoning.
   large communities cover too few relationships, raise the budget (more input
   tokens per report call) or lower `max_cluster_size` (more, smaller
   communities and report calls).
+- **Files read:** every file under the source directory with a supported
+  suffix, except hidden files, files under a hidden or `__pycache__`
+  directory, and files that resolve outside the directory (a symlink leading
+  elsewhere; a WARNING names them). A text format (`.txt`, `.md`, `.csv`, `.json`, `.html`) is read
+  as UTF-8, else in the encoding charset-normalizer detects; a file whose
+  encoding is not detected (a binary file with a text suffix) fails to parse
+  and counts as failed. If detection picks a neighbouring encoding (cp1250
+  for a French cp1252 file), set `processing.document_parsing.encoding`.
 - **Multilingual:** see [Multilingual corpora](./multilingual.md).
 - **Heterogeneous domains:** tune `entity_types` to the union of the domains,
   or give each its own [index suffix](../concepts/scopes-and-namespaces.md#index-suffix).

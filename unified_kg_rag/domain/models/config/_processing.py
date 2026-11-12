@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """The ``processing`` section: parsing, chunking, translation and extraction."""
 
+import codecs
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -79,6 +80,31 @@ class DocumentParsingConfig(BaseModel):
             "are reproducible across paths and machines."
         ),
     )
+
+    encoding: str | None = Field(
+        default=None,
+        description=(
+            "Encoding of the text formats (.txt, .md, .csv, .json, .html) "
+            "that do not decode as UTF-8, e.g. cp1252 or cp949. null = "
+            "detect it per file (charset-normalizer); a file whose encoding "
+            "is not detected (a binary file with a text suffix) fails to "
+            "parse and counts as failed. Set it when detection picks a "
+            "neighbouring encoding (cp1250 for a French cp1252 file). A UTF-8 "
+            "file is read as UTF-8 either way."
+        ),
+    )
+
+    @field_validator("encoding")
+    @classmethod
+    def _check_encoding(cls, value: str | None) -> str | None:
+        # An unknown codec name fails at config load, not on the first
+        # non-UTF-8 file after the run started.
+        if value is None:
+            return value
+        try:
+            return codecs.lookup(value).name
+        except LookupError:
+            raise ValueError(f"unknown encoding '{value}'") from None
 
     @field_validator("source_directory", mode="before")
     @classmethod

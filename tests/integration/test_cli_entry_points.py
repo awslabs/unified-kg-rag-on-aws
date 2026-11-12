@@ -244,22 +244,37 @@ def _eval(workspace: Path) -> None:
 
 def _visualization(workspace: Path) -> None:
     assert list((workspace / "cache").glob("*/visualization/visualization_data.json"))
-    # Without --data-path: the newest export of the namespace, in the cache.
-    _ok(
+    # Without --data-path: the export of the namespace in the cache shows
+    # the build its stores hold.
+    shown = _json(
         _run(
             workspace,
             "run-visualization",
+            "--config-path",
+            "config.yaml",
             "--suffix",
             "default",
             "--output-directory",
             "viz",
             "--renderers",
             "static",
+            "--output-format",
+            "json",
         )
     )
     assert list((workspace / "viz").glob("*.html"))
-    missing = _run(workspace, "run-visualization", "--suffix", "nope")
-    assert missing.returncode == 2 and "of namespace 'nope'" in missing.stderr
+    assert Path(shown["data_path"]).parent.parent.parent.name == "cache"
+    # Without a config naming the stores: the newest export, with a warning.
+    _ok(_run(workspace, "run-visualization", "--output-directory", "viz2"))
+    missing = _run(
+        workspace,
+        "run-visualization",
+        "--config-path",
+        "config.yaml",
+        "--suffix",
+        "nope",
+    )
+    assert missing.returncode == 2 and "'nope' holds no graph" in missing.stderr
 
 
 def _prompt_tuning(workspace: Path) -> None:

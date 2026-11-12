@@ -1272,11 +1272,15 @@ the stores or writes anything:
 
 ```text
 NamespaceLeaseError: Index namespace '<namespace>' is being written by
-<host>:<pid>:<id> (its lease runs until <time> unless renewed) ...
+<host>:<pid>:<start>:<ns>:<id> (its lease runs until <time> unless renewed) ...
 ```
 
 Wait for that run and start again. A dead run's lease expires within
-`lease_seconds` of its last renewal; nothing needs cleaning up. A run whose
+`lease_seconds` of its last renewal; nothing needs cleaning up. The local
+SQLite registry also hands a lease on at once, as if it expired then, when its
+holder ran on the same host and pid namespace and its process has exited (its
+pid is free, or taken by a process started later): a run killed with `kill -9`
+does not lock the namespace for `lease_seconds`. DynamoDB waits for the expiry. A run whose
 renewals keep failing, or whose lease was taken, stops before its next write
 with `NamespaceLeaseError: This run lost the write lease ...`: re-run once the
 other run ended.

@@ -236,11 +236,13 @@ class VisualizationConfig(BaseModel):
         default=True,
         description="Write visualization_data.json (the index namespace's "
         "graph nodes, edges and community hierarchy, read from its stores) at "
-        "the end of every ingestion run that indexed, so run-visualization can "
-        "render it, once the run gave up the namespace's lease. One pass over "
-        "the stored items: no embedding or model call, no layout or centrality "
-        "(run-visualization computes them). A run that wrote nothing keeps an "
-        "export of the build the stores hold.",
+        "the end of a full build, so run-visualization can render it, once "
+        "the run gave up the namespace's lease. One pass over the stored "
+        "items: no embedding or model call, no layout or centrality "
+        "(run-visualization computes them). An incremental run writes none "
+        "(run-visualization and the console build it from the stores); a "
+        "run that wrote nothing keeps an export of the build the stores "
+        "hold.",
     )
     outputs_directory: str | Path | None = Field(
         default=None,

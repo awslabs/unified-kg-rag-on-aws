@@ -68,6 +68,7 @@ from unified_kg_rag.application.storage.indexing_manager import (
 from unified_kg_rag.domain.ingestion.cache_keys import (
     extraction_settings,
     is_excluded_source_path,
+    leaves_source_root,
     unit_record_fingerprint,
 )
 from unified_kg_rag.domain.ingestion.claim_resolver import ClaimResolver
@@ -181,6 +182,23 @@ def _resolved_claims(context: PipelineContext) -> list[Claim]:
     claims attached to no entity.
     """
     return [claim for claim in context.resolved_claims if claim.subject_id]
+
+
+def is_incremental_build(context: PipelineContext, config: Config) -> bool:
+    """Whether the run added its delta to what the namespace held (its
+    build record's ``mode`` ``incremental``). A delta of new documents only
+    into a namespace the registry held nothing of built the suffix from
+    nothing: a full build, as is a reset or a run without the registry. One
+    beside other source scopes' documents (``stored_scopes``) added to
+    them."""
+    delta = context.incremental_delta
+    return (
+        delta is not None
+        and not config.indexing.reset
+        and bool(
+            delta.changed or delta.unchanged or delta.deleted or delta.stored_scopes
+        )
+    )
 
 
 def _completed_stages(context: PipelineContext) -> set[PipelineStageType]:
@@ -1015,12 +1033,15 @@ class DocumentParsingStage(_RegistryStage):
         files = []
         skipped_files: list[str] = []
         skipped: Counter[str] = Counter()
+        outside: list[str] = []
         for file_path in self.source_directory.rglob("*"):
-            if (
-                not file_path.is_file()
-                or is_excluded_source_path(file_path, self.source_directory)
-                or any(file_path.resolve().is_relative_to(d) for d in owned_dirs)
-            ):
+            if not file_path.is_file():
+                continue
+            if is_excluded_source_path(file_path, self.source_directory):
+                if leaves_source_root(file_path, self.source_directory):
+                    outside.append(str(file_path))
+                continue
+            if any(file_path.resolve().is_relative_to(d) for d in owned_dirs):
                 continue
             suffix = file_path.suffix.lower()
             if suffix in self.supported_extensions:
@@ -1051,6 +1072,15 @@ class DocumentParsingStage(_RegistryStage):
                     f"{count} '{suffix}'" for suffix, count in sorted(skipped.items())
                 ),
                 "; ".join(remedies),
+            )
+        if outside:
+            logger.warning(
+                "Skipping %s file(s) in '%s' that resolve outside it (a symlink "
+                "leading elsewhere): they are not indexed (%s); copy them into "
+                "the source directory to ingest them",
+                len(outside),
+                self.source_directory,
+                ", ".join(sorted(outside)[:5]) + (", ..." if len(outside) > 5 else ""),
             )
         return sorted(files), sorted(skipped_files)
 
@@ -2961,16 +2991,7 @@ class IndexingStage(_RegistryStage):
         config would build.
         """
         delta = context.incremental_delta
-        # A delta of new documents only into a namespace the registry held
-        # nothing of built the suffix from nothing: a full build. One beside
-        # other source scopes' documents (stored_scopes) added to them.
-        incremental = (
-            delta is not None
-            and not self.config.indexing.reset
-            and bool(
-                delta.changed or delta.unchanged or delta.deleted or delta.stored_scopes
-            )
-        )
+        incremental = is_incremental_build(context, self.config)
         suffixes = {BaseIndexer.get_suffix(unit) for unit in text_units} or {
             resolve_namespace(self.config, None)
         }
@@ -3017,9 +3038,10 @@ class IndexingStage(_RegistryStage):
             extraction_settings=settings,
             package_version=package_version,
             source_scopes=recorded_source_scopes(context, self.config.indexing.reset),
+            # Only a full build exports (DataIngestionPipeline's export).
             visualization_export_run=(
                 context.pipeline_id
-                if self.config.graph.visualization.export_data
+                if self.config.graph.visualization.export_data and not incremental
                 else None
             ),
         ).with_artifacts(artifacts)

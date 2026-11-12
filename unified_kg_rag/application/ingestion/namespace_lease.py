@@ -15,6 +15,9 @@ lease from the registry before its first stage and holds it until it ends:
 - a heartbeat thread renews it every sixth of ``indexing.lease_seconds``, so
   a run that dies stops renewing and its lease expires (DynamoDB also drops
   the expired item, ``lease_expires_at`` being the table's TTL attribute);
+  the local SQLite registry hands it on at once when its holder ran on this
+  host and has exited (``shared.utils.processes``), which counts as an
+  expiry now;
 - the lease is a write fence of the run (``shared.write_fence``): every
   registry write of the incremental path, every indexing phase and every
   store request that may write (a Neptune batch, edge write or drop, an
@@ -52,9 +55,7 @@ longest request.
 from __future__ import annotations
 
 import functools
-import os
 import signal
-import socket
 import threading
 import time
 import uuid
@@ -67,6 +68,7 @@ from typing import TYPE_CHECKING
 
 from unified_kg_rag.shared import NamespaceLeaseError, get_logger, write_fence
 from unified_kg_rag.shared.utils.concurrency import is_stop
+from unified_kg_rag.shared.utils.processes import process_gone, process_identity
 from unified_kg_rag.shared.write_fence import (
     WriteFence,
     install_write_fence,
@@ -165,7 +167,9 @@ class NamespaceLease:
         # Before this time (epoch seconds) no write: a takeover of an
         # expired lease waits for the previous holder's late writes.
         self.writes_from = 0.0
-        self.owner = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
+        # Its process (process_identity), so a registry on this host can
+        # tell a holder that was killed (process_gone).
+        self.owner = f"{process_identity()}:{uuid.uuid4().hex[:8]}"
         self._renewed_at = 0.0
         self._lost: str | None = None
         self._stop = threading.Event()
@@ -217,13 +221,23 @@ class NamespaceLease:
             "Holding the write lease of namespace '%s' (%s)", self.namespace, self.owner
         )
         # A lease still live when read was released before the acquire (its
-        # run ended cleanly): no late writes to wait for.
+        # run ended cleanly): no late writes to wait for, unless its holder
+        # is gone (a local registry takes a killed run's lease at once): as
+        # if it expired now.
+        if (
+            previous is not None
+            and previous[0] != self.owner
+            and previous[1] > sent
+            and process_gone(previous[0])
+        ):
+            previous = (previous[0], sent)
         if previous is not None and previous[0] != self.owner and previous[1] <= sent:
             self._previous_expiry = previous[1]
             self.writes_from = previous[1] + self._late_write_seconds()
             if self.writes_from > sent:
                 logger.warning(
-                    "Took over the expired write lease of namespace '%s' from %s: "
+                    "Took over the expired (or abandoned) write lease of namespace "
+                    "'%s' from %s: "
                     "the first write waits until %s (%.0fs) for any write of that "
                     "run still in flight",
                     self.namespace,

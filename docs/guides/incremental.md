@@ -284,8 +284,9 @@ corpus), so the old content stays indexed. Either:
 
 A local run with the default scope and new documents logs a WARNING naming the
 other local source directories with records in its suffix (a document only a
-refused or failed run recorded counts as new); it deletes nothing. Set
-`source_scope` per corpus to silence it when they are separate corpora.
+refused or failed run recorded counts as new); it deletes nothing. Separate
+corpora (the console's folders) need nothing; a moved corpus needs one
+`--retire-source-scope` run. Set `source_scope` per corpus to silence it.
 
 ## Failed documents
 
@@ -343,7 +344,9 @@ reuse them.
 With the registry, a run holds its index namespace's write lease from its
 first stage to its end; a second run on the same namespace stops with
 `NamespaceLeaseError` before it reads the stores or writes anything. Wait for
-the other run and start again. Without the registry nothing locks, so do not
+the other run and start again. With the local SQLite registry, the next run
+takes at once the lease of a run on the same host that was killed (`kill -9`)
+instead of waiting for it to expire. Without the registry nothing locks, so do not
 run two ingestions on one index suffix. The lease, its renewal and takeover
 after a crash: [Operator Runbook: Concurrent runs](../operations.md#concurrent-runs).
 
