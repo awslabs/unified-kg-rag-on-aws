@@ -123,7 +123,9 @@ port can query the index, start jobs and edit the configuration.
 
 **Ask.** A question box with the strategy picker: `auto` and the strategies
 grouped by methodology, those the index namespace does not hold disabled
-with the reason. The answer streams in as the answer model writes it; the
+with the reason. A namespace nothing was ingested into yet (no build
+record) says so before the first question, with a way to Ingest, and a
+question to it names the same. The answer streams in as the answer model writes it; the
 final answer then replaces it (it is the one a decline or the output
 guardrail decided). Under it: for `auto`, the strategy it chose and how
 (the router named it, it was the only candidate under the filters, or the

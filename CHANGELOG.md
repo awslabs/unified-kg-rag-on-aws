@@ -885,10 +885,11 @@ From a `main` checkout (formats and keys no release had):
   counts carry 3곳 / 세 곳 and 3社 / 三社 aliases (#639, #645). `structural-config.yaml` sets
   `evaluation.answer_span: extracted` (EM and F1 on the short span: one fast-model call per scored answer) (#645).
 - A local web console, opt-in (the `console` extra, `run-console`; #631, #634): ask with a strategy picker (and how
-  `auto` chose), the answer streamed as the answer model writes it, its citation markers `[n]` linked to the sources
-  they cite, follow-ups sent with the page's conversation (`RAGInput.history`), and each source the answer read on a
-  provenance trace back to its passage, file, seed graph and IRI and into the graph; ingest a workspace folder or an
-  upload with a methodology profile (starting from what the namespace's build record holds; a run that would drop a
+  `auto` chose; an empty namespace leads to Ingest), the answer streamed as the answer model writes it, its citation
+  markers `[n]` linked to the sources they cite, follow-ups sent with the page's conversation (`RAGInput.history`),
+  and each source the answer read on a provenance trace back to its passage, file, seed graph and IRI and into the
+  graph; ingest a workspace folder or an upload with a methodology profile (starting from what the namespace's build
+  record holds; a run that would drop a
   held methodology for every corpus in the namespace starts only once confirmed), with live stage progress and a stop
   the pipeline checkpoints; run and compare evaluations (progress per answer; paired deltas called by their
   Holm-adjusted p-value with the family's simultaneous interval and the primary metric marked, falling back to the

@@ -17,6 +17,17 @@ export interface Status {
   sample_questions: string[];
 }
 
+/** `/api/namespace/methodologies`: what an index namespace holds, as its
+ * build record names it (`recorded` false: no build record, so nothing was
+ * ingested into it), and which of those an ingestion of the picked
+ * methodologies would no longer serve. */
+export interface NamespaceHeld {
+  namespace: string;
+  recorded: boolean;
+  held: string[];
+  dropped: string[];
+}
+
 export interface StrategyInfo {
   name: string;
   methodology: string | null;

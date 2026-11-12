@@ -61,7 +61,7 @@ export function GraphPage({ params }: { params: URLSearchParams }) {
           title={t("graph.noneTitle")}
           action={
             <button className="button" onClick={() => navigate("ingest")}>
-              {t("graph.goIngest")}
+              {t("common.goIngest")}
             </button>
           }
         >
