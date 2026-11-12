@@ -32,7 +32,6 @@ and caching as the GraphRAG strategies — only the retrieval algorithm differs.
 from __future__ import annotations
 
 import time
-from collections import Counter
 from typing import Any
 
 from langchain_core.runnables import RunnableConfig
@@ -621,14 +620,19 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
                 [uid for uid in lineage if uid not in excluded]
                 for lineage in self._lineages(results)
             ]
-            citing = Counter(uid for lineage in lineages for uid in lineage)
+            # The chunks more hits of the side cite first; a tie keeps the
+            # first-seen order, which within a hit's kept chunks is id order.
+            rank = {
+                uid: i
+                for i, uid in enumerate(merge_lineages(lineages, order="support"))
+            }
             deduped: list[list[str]] = []
             for lineage in lineages:
                 # Keep the chunk on its earliest (most important) citing hit
-                # only, the chunks more hits cite first (then by id).
+                # only.
                 keep = sorted(
                     (uid for uid in lineage if uid not in excluded),
-                    key=lambda uid: (-citing[uid], uid),
+                    key=rank.__getitem__,
                 )
                 excluded.update(keep)
                 if keep:
