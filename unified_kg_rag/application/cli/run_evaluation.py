@@ -94,6 +94,7 @@ from unified_kg_rag.domain.models import (
     model_id_value,
 )
 from unified_kg_rag.domain.models.config import REMOVED_EVALUATORS
+from unified_kg_rag.domain.models.evaluation import JUDGE_EVALUATORS
 from unified_kg_rag.shared import (
     AWSServiceError,
     ConfigurationError,
@@ -401,10 +402,6 @@ def with_pairwise_mode(config: Config, mode: str | None) -> Config:
         return config
     evaluation = config.evaluation.model_copy(update={"pairwise_mode": mode})
     return config.model_copy(update={"evaluation": evaluation})
-
-
-# The evaluators that call the LLM judge (models.roles.evaluation).
-_JUDGE_EVALUATORS = frozenset({EvaluatorType.RAGAS, EvaluatorType.ASSERTION})
 
 
 def failure_budget_breaches(
@@ -895,7 +892,7 @@ class EvaluationRunner:
             self.args, "pairwise_judge", False
         ):
             return []
-        if (self._from_results is None or self._rescoring) and _JUDGE_EVALUATORS & set(
+        if (self._from_results is None or self._rescoring) and JUDGE_EVALUATORS & set(
             self.config.evaluation.enabled_evaluators
         ):
             return []
@@ -928,7 +925,7 @@ class EvaluationRunner:
         if getattr(self.args, "pairwise_judge", False):
             return True
         return (self._from_results is None or self._rescoring) and bool(
-            _JUDGE_EVALUATORS & set(self.config.evaluation.enabled_evaluators)
+            JUDGE_EVALUATORS & set(self.config.evaluation.enabled_evaluators)
         )
 
     def _judge_choice(self) -> tuple[str, str]:

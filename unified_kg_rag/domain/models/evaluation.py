@@ -87,6 +87,10 @@ class EvaluatorType(str, Enum):
     ASSERTION = "assertion"
 
 
+# The evaluators that call the LLM judge (models.roles.evaluation).
+JUDGE_EVALUATORS = frozenset({EvaluatorType.RAGAS, EvaluatorType.ASSERTION})
+
+
 class EvaluationQuery(BaseModel):
     query_id: str = Field(description="Unique identifier for the evaluation query.")
     question: str = Field(description="The question text to be evaluated.")

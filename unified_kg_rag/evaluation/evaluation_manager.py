@@ -57,6 +57,7 @@ from unified_kg_rag.domain.models import (
     model_id_value,
 )
 from unified_kg_rag.domain.models.config import REMOVED_EVALUATORS
+from unified_kg_rag.domain.models.evaluation import JUDGE_EVALUATORS
 from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.abstention import (
     ABSTENTION_REASON_KEY,
@@ -1506,10 +1507,7 @@ class EvaluationManager:
             len(args.get("search_strategy") or ()) > 1
             or bool(args.get("baseline_results"))
         )
-        uses_judge = pairwise_judge or bool(
-            enabled
-            & {EvaluatorType.LANGCHAIN, EvaluatorType.RAGAS, EvaluatorType.ASSERTION}
-        )
+        uses_judge = pairwise_judge or bool(enabled & JUDGE_EVALUATORS)
         evaluation = self.config.evaluation
         answer_model = self.config.model_id(ModelRole.ANSWER_GENERATION)
         judge_model = self.config.model_id(ModelRole.EVALUATION)

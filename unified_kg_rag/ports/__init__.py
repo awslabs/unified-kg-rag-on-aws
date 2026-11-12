@@ -1,10 +1,13 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Ports layer — the abstract interfaces the domain depends on (hexagonal).
+"""Ports layer — the interfaces the application wires and the adapters
+implement (hexagonal).
 
-A *port* is an interface owned by the domain; *adapters* (under
-``unified_kg_rag.adapters``) are the concrete technology bindings. Domain and
-application code import ports from here and never import a concrete backend.
+A *port* is written in terms of the domain models; *adapters* (under
+``unified_kg_rag.adapters``) are the concrete technology bindings. The domain
+imports no port (code that reads a store declares the subset it needs as its
+own ``Protocol``), and the application imports ports from here and never a
+concrete backend (only the composition root and the CLIs do).
 
 Catalog:
 - ``DocStatusPort`` — document-status registry for incremental indexing
