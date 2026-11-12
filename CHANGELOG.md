@@ -518,27 +518,17 @@ From a `main` checkout (formats and keys no release had):
   prompts changed, claims keep a `suspected` status and are keyed by their statement (*Fixed*); chunk sizes count
   tokens (*Defaults*), which keeps English text units and re-chunks Korean, Japanese and Chinese ones; stage-cache keys
   hold the prompts in effect (a pipeline id resumed across a prompt change starts over); extraction records under
-  earlier keys (other description summary settings, #541-#556) and claims under an earlier reading of
-  their dates (#612, #624) are no longer looked up. Run one reset (`indexing.reset: true`) with a new or no
-  `--pipeline-id`: incremental runs keep stored entities under their earlier ids beside the new ones. That one reset
-  covers this item and every item below, and its cost depends on the index's age. On an index built with #565 or
-  later it reuses the stored graph extraction and gleaning records and the vectors (entity and relationship ids are
-  minted again from the names, as extraction mints them) and asks the model one summary, and one embedding, per entity
-  or relationship over the summary threshold, the reports of the communities whose input changed (most of them) and,
-  with claim extraction on, every unit's claims (one call per unit that states an entity). A record a build before
-  #556 stored under other summary settings or `models` tiers is extracted again, and on an index built before #565
-  the reset costs a first build (the #565 prompts below).
-  `--pipeline-id`: incremental runs keep stored entities under their earlier ids beside the new ones. It reuses the
-  stored graph extraction and gleaning records, their entity and relationship ids minted again from the names as
-  extraction mints them (a record a build before #556 stored under other summary settings or `models` tiers is
-  extracted again), and asks one summary per entity or relationship over the summary threshold, every community's
-  report (the report prompt cites sub-community reports now) and, with claim extraction on, every unit's claims
-  (one call per unit that states an entity); the `intelligent` chunker asks each pre-chunk's boundaries once more
-  (one fast-tier call each), and a Korean, Japanese or Chinese corpus's re-chunked units are extracted again.
-- One reset covers all of these and the items below. On an index built with #565 or later it reuses the stored
-  extraction records and vectors: beyond what the items below name, the model is asked only for the reports of the
-  communities that cluster differently and a summary and embedding per newly merged entity over the threshold. On
-  an index built before #565 it costs a first build (the #565 prompts below).
+  earlier keys (other description summary settings, #541-#556) and claims under an earlier reading of their dates
+  (#612, #624) are no longer looked up. Run one reset (`indexing.reset: true`) with a new or no `--pipeline-id`:
+  incremental runs keep stored entities under their earlier ids beside the new ones. That one reset covers this item
+  and every item below, and its cost depends on the index's age. On an index built with #565 or later it reuses the
+  stored graph extraction and gleaning records and the vectors (entity and relationship ids are minted again from the
+  names, as extraction mints them) and asks the model one summary, and one embedding, per entity or relationship over
+  the summary threshold, every community's report (the report prompt cites sub-community reports now), with claim
+  extraction on every unit's claims (one call per unit that states an entity), with the `intelligent` chunker each
+  pre-chunk's boundaries once more (one fast-tier call each), and the extraction of a Korean, Japanese or Chinese
+  corpus's re-chunked units. A record a build before #556 stored under other summary settings or `models` tiers is
+  extracted again, and on an index built before #565 the reset costs a first build (the #565 prompts below).
 - Stored communities keep positional names (`Level 0 Community 3`) until the next reset, which renames them and asks
   every report once more; later resets reuse the answers (#539).
 - #640 claim statuses: claims stored before it keep the status the model wrote (`True.`, `Suspected`) until the
@@ -1645,10 +1635,10 @@ From a `main` checkout (formats and keys no release had):
   findings cite (a parent's roll-up findings cited nothing, so `global` and `drift` attributed a parent report to the
   few members packed raw); a range `(1-4)` reads as 1 to 4 and `【Data: ...】` as `[Data: ...]`. A report is titled
   by its name alone (an English "Report for Level 0 Community ...:" was embedded with every report), and a rating
-  written beside its scale reads as the rating ("10점 만점에 7점" is 7, not 10). The report stores
-  them (an unindexed `findings` field): a retrieved report, and its source's metadata (each finding's ids, not its
-  text), name the records each finding cites (`report_cited_ids`), pointed at the ids an incremental merge kept, and
-  a stored report at the new id of a record a later run re-keys (found by its `findings_record_ids` list,
+  written beside its scale reads as the rating ("10점 만점에 7점" is 7, not 10). The report stores the cited ids (an
+  unindexed `findings` field): a retrieved report, and its source's metadata (each finding's ids, not its text),
+  name the records each finding cites (`report_cited_ids`), pointed at the ids an incremental merge kept, and a
+  stored report at the new id of a record a later run re-keys (found by its `findings_record_ids` list,
   `VectorIndexer.repoint_report_findings`); a removal leaves a removed record's id, which a query reading the records
   skips; a report stored before cites none until it is regenerated (#640, #643).
 - Claims resolve only against the entities of their own text units, and ties of names, types and statuses break
