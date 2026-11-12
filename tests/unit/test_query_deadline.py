@@ -443,23 +443,13 @@ async def test_run_rag_reports_a_timeout_without_a_traceback(
         interactive = False
         search_strategy = "simple"
 
-    class _Sink:
-        def __init__(self) -> None:
-            self.emitted: list[dict[str, float]] = []
-
-        def emit(self, namespace: str, metrics: dict[str, float], *_: Any) -> None:
-            self.emitted.append(metrics)
-
     class _TimedOut:
         async def ainvoke(self, _input: Any) -> Any:
             raise QueryTimeoutError("The query did not finish", timeout_seconds=1)
 
     runner.args = _Args()  # type: ignore[assignment]
     runner.rag_chain = _TimedOut()  # type: ignore[assignment]
-    runner.metrics_sink = sink = _Sink()  # type: ignore[assignment]
     result = await runner._run_query(_query())
-    # A timed-out query still records its latency (QueryLatencyHigh sees it).
-    assert [list(m) for m in sink.emitted] == [["query_latency_ms"]]
     assert result["success"] is False  # run() exits 1 on it
     assert "did not finish" in result["error"]
     assert not any(record.exc_info for record in caplog.records)

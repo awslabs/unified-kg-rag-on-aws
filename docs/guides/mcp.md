@@ -54,13 +54,24 @@ Ctrl-C.
 | `kg_answer` | The full RAG answer first, with the abstention fields (`abstained`, `abstention_reason`), then the records it rests on and `usage`. `records`: `cited` (the default: the sources and model-written sections the answer cites; when it cites none, as a `global` or `drift` answer, the first `mcp.uncited_records`, `records_kept: top`), `all` (every source the answer model saw, after the model-written sections it may cite: global search's key points, DRIFT's intermediate answers) or `none`; `records_kept` says which applied. `degraded` lists the steps the answer was given without (a partial answer: each `step`, `reason` and `error_type`), `citations_unresolved` the lineage reads that failed For a follow-up question, pass the conversation so far as `history` (below) | The above, the follow-up rewrite with a `history`, and the answer |
 | `kg_get_entity` | Entities by `id`, `iri` or `name` (exact first, as the strategies link a name: case, Arabic alef forms or `ё`/`е` aside; without one, the closest names, `match: search`) | None |
 | `kg_neighbors` | The entities within `max_hops` of one entity and the relationships among them | None |
-| `kg_describe_schema` | The methodologies and strategies the namespace holds, its last build, the extraction schema's types and patterns, the filter keys and the server's limits | None |
+| `kg_describe_schema` | The methodologies and strategies the namespace holds, its last build, the extraction schema's types and patterns, the filter keys and the server's limits; `exists: false` (and no methodology or strategy) for a namespace nothing was ingested under | None |
 
 Every tool is annotated read-only and idempotent. Call
 `kg_describe_schema` first: it says which strategies the namespace can
 run (`strategies`; a strategy it does not hold is refused, as in
 `run-rag`), which of them `auto` routes among (`auto_routes`) and which
 filter keys a search may give.
+
+A failed call's tool error names its
+[error class](../reference/exit-codes-and-json.md#exit-code-2) in brackets
+after the SDK's `Error executing tool <name>: `, the stable key to branch on: `[invalid_argument]`, `[invalid_filter]`,
+`[not_indexed]`, `[index_not_found]` and `[timeout]` carry a message for the
+caller (an argument to change, or a call to retry later); `[store_unreachable]`,
+`[model_unreachable]`, `[configuration]` and `[failure]` a generic one (the
+server log has the details), so an agent can tell an outage to retry from an
+error to report. An argument a tool does not take is refused
+(`[invalid_argument] depth: Extra inputs are not permitted`; every input
+schema says `additionalProperties: false`), not ignored.
 
 ## Supporting content
 

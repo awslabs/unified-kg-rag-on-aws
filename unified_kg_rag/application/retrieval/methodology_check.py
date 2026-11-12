@@ -272,6 +272,12 @@ class NamespaceSummary(BaseModel):
     surface describes it (``run-describe``'s ``describe_namespace``, the MCP
     server's ``kg_describe_schema``): ``summarize_namespace``'s fields."""
 
+    exists: bool = Field(
+        default=True,
+        description="Whether anything was ingested under it (an index of it "
+        "is live); one that does not exist holds nothing, whatever the config "
+        "builds",
+    )
     artifacts: list[str] = Field(description="The index artifacts it holds")
     artifacts_from: Literal["build_record", "config"] = Field(
         description="Where artifacts comes from: the build record, or, without "
@@ -290,13 +296,27 @@ class NamespaceSummary(BaseModel):
     )
 
 
-def summarize_namespace(holdings: NamespaceHoldings, config: Config) -> dict[str, Any]:
-    """``NamespaceSummary``'s fields for a namespace holding ``holdings``."""
+def summarize_namespace(
+    holdings: NamespaceHoldings, config: Config, *, exists: bool = True
+) -> dict[str, Any]:
+    """``NamespaceSummary``'s fields for a namespace holding ``holdings``;
+    one that does not ``exists`` holds no artifact, methodology or
+    strategy (not what a run of the config would build there)."""
+    if not exists:
+        return {
+            "exists": False,
+            "artifacts": [],
+            "artifacts_from": holdings.source,
+            "methodologies": [],
+            "strategies": [],
+            "auto_routes": [],
+        }
     try:
         routes = [s.value for s in routable_strategies(config, holdings.artifacts)]
     except MethodologyNotIndexedError:
         routes = []
     return {
+        "exists": True,
         "artifacts": sorted(a.value for a in holdings.artifacts),
         "artifacts_from": holdings.source,
         "methodologies": [m.value for m in holdings.methodologies],

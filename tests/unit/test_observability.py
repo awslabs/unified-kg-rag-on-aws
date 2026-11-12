@@ -346,6 +346,61 @@ def test_span_records_namespaced_attributes_and_escaping_errors(
     assert span.events[0].name == "exception"
 
 
+_MARKER = "corpus text: Vendor's secret price 4242"
+
+
+def _exported_text(span: ReadableSpan) -> str:
+    """Everything ``span`` exports: attributes, status, events."""
+    return json.dumps(
+        {
+            "attributes": dict(span.attributes or {}),
+            "status": span.status.description,
+            "events": [
+                {"name": e.name, "attributes": dict(e.attributes or {})}
+                for e in span.events
+            ],
+        },
+        default=str,
+    )
+
+
+def test_an_exception_reaches_a_span_by_its_type_not_its_text(
+    tracing: Tracing,
+) -> None:
+    # Regression (rv24): the SDK recorded an escaping error's message, stack
+    # and status description: a judge's OutputParserException quoting
+    # corpus text reached the trace with capture_content off.
+    exporter = tracing()
+    with pytest.raises(ValueError):
+        with observability.span("escaping"):
+            raise ValueError(_MARKER)
+    with observability.span("recorded") as handle:
+        handle.record_exception(ValueError(_MARKER))
+    for name in ("escaping", "recorded"):
+        span = _one(exporter, name)
+        assert _MARKER not in _exported_text(span), name
+        (event,) = span.events
+        assert event.attributes is not None
+        assert event.attributes["exception.type"] == "ValueError"
+        assert str(event.attributes["kg_rag.error_digest"]).startswith("ValueError (")
+    assert _one(exporter, "escaping").status.description == "ValueError"
+
+
+def test_capture_content_records_the_exception_text_redacted(
+    tracing: Tracing,
+) -> None:
+    exporter = tracing(capture_content=True, redact_patterns=[r"price \d+"])
+    with pytest.raises(ValueError):
+        with observability.span("escaping"):
+            raise ValueError(_MARKER)
+    (event,) = _one(exporter, "escaping").events
+    assert event.attributes is not None
+    assert event.attributes["exception.message"] == (
+        "corpus text: Vendor's secret [REDACTED]"
+    )
+    assert "4242" not in str(event.attributes["exception.stacktrace"])
+
+
 def test_trace_ids_reach_log_records(tracing: Tracing) -> None:
     assert add_trace_ids in _SHARED_PROCESSORS
     assert add_trace_ids(None, "info", {}) == {}
@@ -402,6 +457,74 @@ def _stage(
     return _Stage()
 
 
+def _failing_items_stage(error: Exception, *, known_good_failed: bool = False):
+    """A graph extraction stage whose every model call fails with ``error``
+    (through the batch processor, as the extractors call)."""
+    from unified_kg_rag.adapters.llm import retry
+
+    def _outcome() -> tuple[int, int]:
+        def call(_: dict[str, int]) -> Any:
+            raise error
+
+        BatchProcessor(max_concurrency=2, max_attempts=1).execute_with_fallback(
+            [1, 2, 3],
+            lambda items: [{"x": i} for i in items],
+            call,
+            "t",
+            show_progress=False,
+        )
+        if known_good_failed and (ledger := retry._LEDGER.get()) is not None:
+            ledger.model_failed = True
+        return 3, 0
+
+    return _stage(PipelineStageType.GRAPH_EXTRACTION, _outcome)
+
+
+def _empty_context() -> PipelineContext:
+    return PipelineContext(
+        pipeline_id="p-4",
+        config={},
+        status=PipelineStageStatus.RUNNING,
+        start_time=datetime(2026, 1, 1),
+        source_directory=Path("."),
+    )
+
+
+def test_a_stage_whose_model_server_is_down_fails_naming_it(tracing: Tracing) -> None:
+    # Regression (rv24): "Critical stage 'graph_extraction' processed 1
+    # inputs but produced 0 outputs. Check the stage configuration", class
+    # failure, although every call was refused by a server that was down.
+    import httpx
+
+    tracing()
+    result = _failing_items_stage(
+        httpx.ConnectError("All connection attempts failed")
+    ).execute(_empty_context())
+    assert result.status == PipelineStageStatus.FAILED
+    assert (result.error_class, result.error_type) == (
+        "model_unreachable",
+        "ModelUnreachableError",
+    )
+    assert "A model server could not be reached" in (result.error_message or "")
+    assert "Check the stage configuration" not in (result.error_message or "")
+
+
+def test_a_stage_the_model_refuses_alike_says_so(tracing: Tracing) -> None:
+    tracing()
+    refused = _failing_items_stage(
+        RuntimeError("HTTP 500 from the server"), known_good_failed=True
+    ).execute(_empty_context())
+    assert "a known-good request failed alike (RuntimeError)" in (
+        refused.error_message or ""
+    )
+    assert refused.error_class == "failure"
+    # Without a known-good request that failed, the documents may be at
+    # fault: the stage keeps its own error.
+    own = _failing_items_stage(RuntimeError("bad item")).execute(_empty_context())
+    assert "produced 0 outputs" in (own.error_message or "")
+    assert own.error_type == "PipelineStageError"
+
+
 @pytest.mark.parametrize("stop", [PipelineInterrupted(15), RuntimeError("boom")])
 def test_a_stopped_or_crashed_ingestion_run_span_names_its_pipeline(
     tracing: Tracing, stop: BaseException
@@ -412,6 +535,7 @@ def test_a_stopped_or_crashed_ingestion_run_span_names_its_pipeline(
 
     exporter = tracing()
     pipeline = object.__new__(DataIngestionPipeline)
+    pipeline.config = Config()
 
     def _run(*_: Any) -> PipelineContext:
         pipeline.pipeline_id = "p-2"
@@ -425,6 +549,35 @@ def test_a_stopped_or_crashed_ingestion_run_span_names_its_pipeline(
     assert run.status.status_code == StatusCode.ERROR
 
 
+def test_an_incremental_run_span_counts_its_delta(tracing: Tracing) -> None:
+    from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+    from unified_kg_rag.domain.models import DocumentDelta
+
+    exporter = tracing()
+    context = PipelineContext(
+        pipeline_id="p-3",
+        config={},
+        status=PipelineStageStatus.COMPLETED,
+        start_time=datetime(2026, 1, 1),
+        source_directory=Path("."),
+    )
+    context.incremental_delta = DocumentDelta(
+        new=["a", "b"], changed=["c"], deleted=["d", "e", "f"]
+    )
+    pipeline = object.__new__(DataIngestionPipeline)
+    pipeline.config = Config()
+    pipeline.config.processing.document_parsing.index_value = "tenant-a"
+    pipeline._run = lambda *_: context  # type: ignore[method-assign]
+    pipeline.run(".")
+    run = _attrs(_one(exporter, "kg_rag.ingestion.run"))
+    assert (run["kg_rag.mode"], run["kg_rag.namespace"]) == ("incremental", "tenant-a")
+    assert (
+        run["kg_rag.delta.new"],
+        run["kg_rag.delta.changed"],
+        run["kg_rag.delta.deleted"],
+    ) == (2, 1, 3)
+
+
 def test_a_reused_pipeline_does_not_name_its_last_run(tracing: Tracing) -> None:
     # A run that fails before it resolves its id must not report the id of
     # the pipeline's previous run (the CLI resumes a stopped run by it).
@@ -432,6 +585,7 @@ def test_a_reused_pipeline_does_not_name_its_last_run(tracing: Tracing) -> None:
 
     exporter = tracing()
     pipeline = object.__new__(DataIngestionPipeline)
+    pipeline.config = Config()
     ids = iter(["p-1", None])
 
     def _run(*_: Any) -> PipelineContext:
@@ -480,6 +634,7 @@ def test_ingestion_run_and_stage_spans(tracing: Tracing) -> None:
         return context
 
     pipeline = object.__new__(DataIngestionPipeline)
+    pipeline.config = Config()
     pipeline._run = _run  # type: ignore[method-assign]
     pipeline.run(".")
 
@@ -490,6 +645,13 @@ def test_ingestion_run_and_stage_spans(tracing: Tracing) -> None:
     }
     assert _attrs(run)["kg_rag.pipeline_id"] == "p-1"
     assert _attrs(run)["kg_rag.stages_completed"] == 1
+    # The namespace it writes, on every span of the run, and a full build.
+    assert all(
+        _attrs(span)["kg_rag.namespace"] == "default"
+        for span in exporter.get_finished_spans()
+    )
+    assert _attrs(run)["kg_rag.mode"] == "full"
+    assert "kg_rag.delta.new" not in _attrs(run)
     parsing = stages[PipelineStageType.DOCUMENT_PARSING.value]
     assert _is_child(parsing, run)
     assert _attrs(parsing)["kg_rag.input_count"] == 3
@@ -644,6 +806,133 @@ _SIMPLE_QUERY = RAGInput(
     search_strategy=SearchStrategy.SIMPLE,
     enable_query_processing=False,
 )
+
+
+class _RecordingSink:
+    def __init__(self) -> None:
+        self.emitted: list[tuple[str, dict[str, float], dict[str, str]]] = []
+
+    def emit(
+        self,
+        namespace: str,
+        metrics: dict[str, float],
+        dimensions: dict[str, str] | None = None,
+    ) -> None:
+        self.emitted.append((namespace, metrics, dict(dimensions or {})))
+
+
+class _ContextRetriever(_FakeRetriever):
+    """Records the log context its retrieval runs in."""
+
+    seen: list[dict[str, Any]] = []
+
+    async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+        from structlog.contextvars import get_contextvars
+
+        _ContextRetriever.seen.append(get_contextvars())
+        return await super().aretrieve(query)
+
+
+async def test_a_query_is_tied_to_its_namespace_logs_trace_and_metrics(
+    tracing: Tracing,
+) -> None:
+    # Regression (rv24): nothing named the namespace (the tenant boundary)
+    # on the query trace, its logs or its metrics, the query id was in the
+    # logs only, and only run-rag emitted query metrics (latency only).
+    from unified_kg_rag.shared import metrics
+
+    exporter = tracing()
+    chain = _simple_chain()
+    sink = _RecordingSink()
+    chain.providers.metrics_sink = sink
+    chain.providers._retriever_builders[RetrieverRole.DOCUMENT] = _ContextRetriever
+    _ContextRetriever.seen.clear()
+    try:
+        output = await chain.ainvoke(_SIMPLE_QUERY)
+    finally:
+        await chain.aclose()
+    query = _one(exporter, "kg_rag.query")
+    assert all(
+        _attrs(span)["kg_rag.namespace"] == "default"
+        for span in exporter.get_finished_spans()
+    )
+    query_id = output.metadata["query_id"]
+    assert len(query_id) == 12
+    assert output.metadata["trace_id"] == format(query.context.trace_id, "032x")
+    assert _ContextRetriever.seen
+    assert all(
+        (seen["query_id"], seen["namespace"]) == (query_id, "default")
+        for seen in _ContextRetriever.seen
+    )
+    ((namespace, values, dimensions),) = sink.emitted
+    assert namespace == metrics.QUERY_METRICS_NAMESPACE
+    assert values[metrics.QUERY_LATENCY_METRIC] > 0
+    assert [
+        values[name]
+        for name in (
+            metrics.QUERY_FAILED_METRIC,
+            metrics.QUERY_DEGRADED_METRIC,
+            metrics.QUERY_ABSTAINED_METRIC,
+        )
+    ] == [0.0, 0.0, 0.0]
+    assert dimensions == {"Strategy": "simple", "Namespace": "default"}
+
+
+async def test_a_failed_query_is_counted_and_a_search_is_not(
+    tracing: Tracing,
+) -> None:
+    from unified_kg_rag.shared import metrics
+
+    class _Down(GenericFakeChatModel):
+        def _generate(self, *args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError("model down")
+
+        async def _agenerate(self, *args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError("model down")
+
+    class _Failing(_FakeModelFactory):
+        def get_model(self, model_id: Any, **kwargs: Any) -> Any:
+            return _Down(messages=iter(()))
+
+    tracing()
+    chain = _simple_chain(model_factory=_Failing())
+    sink = _RecordingSink()
+    chain.providers.metrics_sink = sink
+    try:
+        with pytest.raises(RuntimeError, match="model down"):
+            await chain.ainvoke(_SIMPLE_QUERY)
+        await chain.asearch(_SIMPLE_QUERY)
+    finally:
+        await chain.aclose()
+    ((_, values, dimensions),) = sink.emitted
+    assert values[metrics.QUERY_FAILED_METRIC] == 1.0
+    assert dimensions["Strategy"] == "simple"
+
+
+async def test_a_model_clients_own_error_reaches_the_caller_as_a_model_error() -> None:
+    from unified_kg_rag.shared.exceptions import LanguageModelError
+
+    class ResponseError(Exception):  # Ollama's: an unknown model
+        status_code = 404
+
+    class _Refused(GenericFakeChatModel):
+        def _generate(self, *args: Any, **kwargs: Any) -> Any:
+            raise ResponseError("model 'x' not found")
+
+        async def _agenerate(self, *args: Any, **kwargs: Any) -> Any:
+            raise ResponseError("model 'x' not found")
+
+    class _Factory(_FakeModelFactory):
+        def get_model(self, model_id: Any, **kwargs: Any) -> Any:
+            return _Refused(messages=iter(()))
+
+    chain = _simple_chain(model_factory=_Factory())
+    try:
+        with pytest.raises(LanguageModelError, match="ResponseError") as raised:
+            await chain.ainvoke(_SIMPLE_QUERY)
+    finally:
+        await chain.aclose()
+    assert isinstance(raised.value.__cause__, ResponseError)
 
 
 async def test_captured_query_span_carries_redacted_query_and_answer(

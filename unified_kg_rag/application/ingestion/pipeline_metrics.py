@@ -18,6 +18,7 @@ from unified_kg_rag.domain.models import (
     PipelineMetrics,
     PipelineStageStatus,
 )
+from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.usage import merge_usage
 
@@ -271,7 +272,12 @@ def emit_metrics(
         pipeline.metrics_sink.emit(
             namespace="unified_kg_rag/ingestion",
             metrics=scalars,
-            dimensions={"pipeline_id": pipeline_id},
+            # Log properties (not metric dimensions, each a billed series):
+            # the run and the namespace it wrote, for Logs Insights.
+            dimensions={
+                "pipeline_id": pipeline_id,
+                "namespace": resolve_namespace(pipeline.config, None),
+            },
         )
     except Exception as e:  # noqa: BLE001 - metrics never break a run
         logger.warning("Metrics emission failed: %s", e)

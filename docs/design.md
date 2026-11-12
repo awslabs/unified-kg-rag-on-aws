@@ -349,6 +349,11 @@ The CI workflows, Dependabot and the security scans.
 The recipes for plugins (backends, renderers, parsers, schema and seed sources) and in-tree changes (strategies, evaluators).
 → [extend.md §15](./guides/extend.md#15-extension-guide)
 
+### Loading plugins
+
+How the CLIs, the MCP server and the console load a plugin (an entry point, or `UKR_PLUGINS`).
+→ [extend.md](./guides/extend.md#loading-plugins)
+
 ### Custom backends (run without AWS)
 
 The ports a custom backend implements and how to inject it.

@@ -41,7 +41,9 @@ pytestmark = pytest.mark.unit
 _CASES: list[tuple[BaseException, x.ErrorClass, int, bool]] = [
     # (error, class, CLI exit code, message for an MCP caller)
     (x.InvalidFilterError("f"), x.ErrorClass.INVALID_FILTER, 2, True),
-    (x.ToolArgumentError("a"), x.ErrorClass.INVALID_ARGUMENT, 2, True),
+    (x.InvalidArgumentError("a"), x.ErrorClass.INVALID_ARGUMENT, 2, True),
+    # A document id to fix, as an argument is (it was a failure, exit 1).
+    (x.DocumentNotFoundError("d"), x.ErrorClass.INVALID_ARGUMENT, 2, True),
     (x.MethodologyNotIndexedError("m"), x.ErrorClass.NOT_INDEXED, 2, True),
     (x.IndexNotFoundError("i"), x.ErrorClass.INDEX_NOT_FOUND, 2, True),
     (x.ConfigurationError("c"), x.ErrorClass.CONFIGURATION, 2, False),
@@ -67,12 +69,19 @@ def test_every_surface_reads_one_classification(
     assert x.classify(error) is error_class
     assert EXIT_CODES[error_class] == exit_code
     assert describe_error(error)[1] is callers
+    # The MCP message starts with the class, the stable key a caller reads.
+    message = describe_error(error)[0]
+    assert message.startswith(f"[{error_class.value}] ")
     if not callers:
-        assert describe_error(error)[0] == INTERNAL_ERROR_MESSAGE
+        assert message == f"[{error_class.value}] {INTERNAL_ERROR_MESSAGE}"
     # The console's kind is the class (its page names each).
     assert _error_kind(error if isinstance(error, Exception) else Exception()) == (
         error_class.value
     )
+
+
+def test_the_former_name_is_the_same_class() -> None:
+    assert x.ToolArgumentError is x.InvalidArgumentError
 
 
 def test_every_class_has_an_exit_code() -> None:
@@ -130,6 +139,32 @@ def test_an_unreachable_model_server_is_told_apart(
     assert is_unreachable_error(error) is unreachable
 
 
+def test_a_model_clients_own_error_is_named_a_language_model_error() -> None:
+    # Regression (rv24): ainvoke on a failing model raised Ollama's raw
+    # ResponseError or httpx's RemoteProtocolError / ReadTimeout, not the
+    # ModelError the API documents.
+    from unified_kg_rag.adapters.llm.reachability import named_model_error
+
+    class ResponseError(Exception):  # ollama's, with its status
+        status_code = 404
+
+    config = Config()
+    for raw in (
+        ResponseError("model 'x' not found"),
+        httpx.RemoteProtocolError("peer closed connection"),
+        httpx.ReadTimeout("timed out"),
+    ):
+        named = named_model_error(raw, config)
+        assert isinstance(named, x.LanguageModelError), raw
+        assert type(raw).__name__ in str(named)
+    assert isinstance(
+        named_model_error(httpx.ConnectError("refused"), config),
+        x.ModelUnreachableError,
+    )
+    for kept in (RuntimeError("a bug"), x.StoreConnectionError("down"), KeyError("k")):
+        assert named_model_error(kept, config) is kept
+
+
 def test_the_openai_clients_connection_error_is_unreachable_not_its_timeout() -> None:
     connection, timeout = _openai_errors()
     assert is_unreachable_error(connection)
@@ -164,6 +199,18 @@ def test_the_message_names_each_server_and_how_to_start_it() -> None:
         bedrock
     )
     assert "ollama" not in str(bedrock) and "aws.bedrock_region" in str(bedrock)
+
+
+def test_the_message_names_a_server_without_the_credentials_of_its_url() -> None:
+    # Regression (rv24): the message, logged, printed in run-rag's JSON,
+    # returned to MCP callers and sent in the failure notification, held
+    # the base_url's userinfo and query.
+    config = Config(backend="local", models={"default": "chat-m"})
+    config.providers.llm.kind = "openai_compatible"
+    config.providers.llm.base_url = "http://alice:S3cretTok@127.0.0.1:9/v1?api-key=QQQ"
+    message = str(model_unreachable_error(httpx.ConnectError("refused"), config))
+    assert "providers.llm (openai_compatible at http://127.0.0.1:9/v1)" in message
+    assert "S3cretTok" not in message and "QQQ" not in message
 
 
 def test_a_bedrock_server_is_named_by_its_endpoint_not_a_base_url() -> None:

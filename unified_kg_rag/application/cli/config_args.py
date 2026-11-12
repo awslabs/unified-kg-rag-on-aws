@@ -20,7 +20,7 @@ from unified_kg_rag.application.config import (
     warn_ineffective_settings,
 )
 from unified_kg_rag.domain.models import Config
-from unified_kg_rag.shared.exceptions import ConfigurationError
+from unified_kg_rag.shared.exceptions import ConfigurationError, ErrorClass
 
 
 def config_path_arg(value: str) -> str:
@@ -41,7 +41,7 @@ def exit_on_config_error() -> Iterator[None]:
     try:
         yield
     except (ConfigurationError, FileNotFoundError) as e:
-        usage_error(str(e), error_type=type(e).__name__)
+        usage_error(e, error_class=ErrorClass.CONFIGURATION)
 
 
 def add_config_arguments(
@@ -78,10 +78,15 @@ def load_cli_config(args: argparse.Namespace) -> Config:
 
     The settings nothing reads are warned of once the flags are applied: a
     ``base_url`` the file sets is read under ``--backend local``, not ignored.
+    The plugins are loaded first (``application.plugins``), so a kind or a
+    format a plugin registers is known to every step of the run.
     """
     # Imported here: the provider flags' module loads the composition root,
     # which --help and a refused command line do not need.
     from unified_kg_rag.application.cli.provider_args import apply_provider_arguments
+    from unified_kg_rag.application.plugins import load_plugins
+
+    load_plugins()
 
     path = getattr(args, "config_path", None)
     loaded = ConfigLoader(

@@ -636,12 +636,11 @@ def test_ingestion_task_ephemeral_storage_alarm() -> None:
 
 
 def test_query_latency_alarm_reads_the_run_rag_metric() -> None:
-    # The names the alarm reads are the ones run-rag emits.
-    source = (_PACKAGE / "application" / "cli" / "run_rag_chain.py").read_text(
-        encoding="utf-8"
-    )
+    # The names the alarm reads are the ones the chain emits (run-rag
+    # --metrics-sink cloudwatch hands it the sink).
+    source = (_PACKAGE / "shared" / "metrics.py").read_text(encoding="utf-8")
     assert f'QUERY_METRICS_NAMESPACE = "{QUERY_NAMESPACE}"' in source
-    assert f'{{"{QUERY_LATENCY_METRIC}": ' in source
+    assert f'QUERY_LATENCY_METRIC = "{QUERY_LATENCY_METRIC}"' in source
     for env, seconds in (("dev", 60), ("prod", 30)):
         context: dict[str, Any] = {"env_name": env}
         if seconds != 60:
@@ -906,11 +905,6 @@ def test_failed_queries_alarm_on_their_share() -> None:
         assert f'"{QUERY_NAMESPACE}", "{name}"' in body
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="no surface emits the query outcome metrics yet: once one does, "
-    "this passes and the mark goes",
-)
 def test_the_query_outcome_metrics_are_emitted() -> None:
     # The alarm and widget read names the package must emit: a drifted name
     # would leave the alarm on a series nobody publishes.

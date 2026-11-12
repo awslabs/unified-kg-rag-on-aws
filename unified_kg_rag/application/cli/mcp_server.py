@@ -19,7 +19,7 @@ import inspect
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Annotated, Any, Literal, cast
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, create_model
 
 from unified_kg_rag import __version__
 from unified_kg_rag.application.cli.mcp_tools import (
@@ -33,11 +33,14 @@ from unified_kg_rag.application.cli.mcp_tools import (
     SearchToolResult,
     describe_error,
 )
-from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
+from unified_kg_rag.application.retrieval.rag_chain import (
+    GraphRAGChain,
+    validation_message,
+)
 from unified_kg_rag.domain.models import SearchType
 from unified_kg_rag.domain.models.config import McpServerConfig
 from unified_kg_rag.shared import get_logger
-from unified_kg_rag.shared.exceptions import ConfigurationError
+from unified_kg_rag.shared.exceptions import ConfigurationError, ErrorClass
 from unified_kg_rag.shared.extras import extra_hint
 
 if TYPE_CHECKING:
@@ -193,11 +196,24 @@ def _tool_function(
     """An async function with the signature the SDK publishes as the
     tool's input schema, calling ``run``. A caller-correctable error keeps
     its message; any other is logged here with its traceback and reaches
-    the caller as a generic message (``describe_error``)."""
+    the caller as a generic message (``describe_error``).
+
+    It checks the arguments itself (``arguments_model``, which refuses an
+    unknown one: ``kg_neighbors`` with ``depth`` for ``max_hops`` ran with
+    the default), so a refused one is an ``[invalid_argument]`` naming each
+    field and why, not pydantic's text; :func:`_check_arguments_in_tool`
+    makes the SDK hand them over unchecked."""
+    checker = _arguments_metadata(name, parameters)
 
     async def tool(**arguments: Any) -> BaseModel:
         try:
-            return await run(**arguments)
+            checked = checker.validate_arguments(arguments)
+        except ValidationError as e:
+            raise tool_error(
+                f"[{ErrorClass.INVALID_ARGUMENT.value}] {validation_message(e)}"
+            ) from None
+        try:
+            return await run(**checked)
         except Exception as e:
             message, expected = describe_error(e)
             if not expected:
@@ -208,7 +224,52 @@ def _tool_function(
     tool.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
         parameters, return_annotation=returns
     )
+    tool.arguments_model = checker.arg_model  # type: ignore[attr-defined]
     return tool
+
+
+def _arguments_metadata(name: str, parameters: list[inspect.Parameter]) -> Any:
+    """The SDK's ``FuncMetadata`` (its JSON pre-parse of a list sent as a
+    string, its validation) over a model of ``parameters`` that refuses an
+    unknown argument."""
+    from mcp.server.mcpserver.utilities.func_metadata import (
+        ArgModelBase,
+        FuncMetadata,
+    )
+
+    class _Strict(ArgModelBase):
+        model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
+
+    fields: dict[str, Any] = {
+        p.name: (
+            p.annotation,
+            ... if p.default is inspect.Parameter.empty else p.default,
+        )
+        for p in parameters
+    }
+    model = create_model(f"{name}Arguments", __base__=_Strict, **fields)
+    return FuncMetadata(arg_model=model)
+
+
+def _check_arguments_in_tool(server: Any, name: str) -> None:
+    """Publish the tool ``name``'s input schema as its function checks it
+    (``additionalProperties: false``) and have the SDK pass the arguments
+    through unchecked: the SDK's own check ignores an unknown argument and
+    answers a wrong one with pydantic's text. The SDK has no public
+    accessor for a registered tool (``mcp`` is pinned below 3)."""
+    from mcp.server.mcpserver.utilities.func_metadata import ArgModelBase
+
+    class _Unchecked(ArgModelBase):
+        model_config = ConfigDict(extra="allow")
+
+        def model_dump_one_level(self) -> dict[str, Any]:
+            return dict(self.model_extra or {})
+
+    registered = server._tool_manager.get_tool(name)
+    registered.parameters = registered.fn.arguments_model.model_json_schema(
+        by_alias=True
+    )
+    registered.fn_metadata.arg_model = _Unchecked
 
 
 def _descriptions(tools: KnowledgeGraphTools) -> dict[str, str]:
@@ -499,4 +560,5 @@ def build_mcp_server(
             annotations=read_only,
             structured_output=True,
         )
+        _check_arguments_in_tool(server, name)
     return cast("MCPServer[Any]", server)

@@ -159,11 +159,17 @@ class MethodologyNotIndexedError(ConfigurationError):
     before any model call; ``run-rag`` exits 2."""
 
 
-class ToolArgumentError(GraphRAGException, ValueError):
-    """An argument outside what the serving surface allows: an MCP tool
-    call's bound, a namespace or a strategy the server does not serve, a
-    missing or conflicting argument, or a strategy outside a chain's
-    ``allowed_strategies``. Raised before any model call."""
+class InvalidArgumentError(GraphRAGException, ValueError):
+    """An argument outside what the caller may pass: an invalid query input
+    (an empty query, an unknown key or strategy), an MCP tool call's bound,
+    a namespace or a strategy the server does not serve, a missing or
+    conflicting argument, a strategy outside a chain's
+    ``allowed_strategies``, or an output file that exists. Raised before any
+    model call (error class ``invalid_argument``)."""
+
+
+# The name before 0.3.0 (MCP's), kept: the same class.
+ToolArgumentError = InvalidArgumentError
 
 
 class LanguageModelError(ModelError):
@@ -294,12 +300,12 @@ class StoreRequestRejectedError(StoreConfigurationError):
 
 
 class ErrorClass(StrEnum):
-    """What a failure means to the caller, the same on every surface: each
-    maps a class to what it reports (the CLIs' exit codes,
-    ``cli.conventions.EXIT_CODES``; the MCP server's caller messages; the
-    console's error kind, the value; docs/reference/exit-codes-and-json.md).
-    ``GraphRAGChain`` names the class of a failure it absorbed in
-    ``metadata["error_class"]``."""
+    """What a failure means to the caller, the same on every surface, which
+    names it by its value (the stable key: a value is never renamed): the
+    CLIs' JSON ``error_class`` and exit codes (``cli.conventions.EXIT_CODES``),
+    the MCP server's tool errors (``[value] message``), the console's
+    ``error_class``; docs/reference/exit-codes-and-json.md. ``GraphRAGChain``
+    names the class of a failure it absorbed in ``metadata["error_class"]``."""
 
     INVALID_FILTER = "invalid_filter"
     INVALID_ARGUMENT = "invalid_argument"
@@ -316,7 +322,8 @@ class ErrorClass(StrEnum):
 # a ModelUnreachableError and a StoreConnectionError ConnectionErrors.
 _CLASSES: tuple[tuple[type[BaseException], ErrorClass], ...] = (
     (InvalidFilterError, ErrorClass.INVALID_FILTER),
-    (ToolArgumentError, ErrorClass.INVALID_ARGUMENT),
+    (InvalidArgumentError, ErrorClass.INVALID_ARGUMENT),
+    (DocumentNotFoundError, ErrorClass.INVALID_ARGUMENT),
     (MethodologyNotIndexedError, ErrorClass.NOT_INDEXED),
     (IndexNotFoundError, ErrorClass.INDEX_NOT_FOUND),
     (QueryTimeoutError, ErrorClass.TIMEOUT),

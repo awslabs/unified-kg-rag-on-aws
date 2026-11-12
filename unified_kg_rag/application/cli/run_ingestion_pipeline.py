@@ -30,6 +30,7 @@ from unified_kg_rag.application.cli.conventions import (
     ArgumentParser,
     add_output_format_argument,
     exits_on_sigterm,
+    failure_fields,
     failure_rate,
     interrupted_fields,
     json_output,
@@ -62,6 +63,7 @@ from unified_kg_rag.domain.models import (
     Config,
     PipelineConfig,
     PipelineContext,
+    PipelineStageResult,
     PipelineStageStatus,
     PipelineStageType,
     RetrieverRole,
@@ -80,6 +82,7 @@ from unified_kg_rag.shared import (
     StoreConnectionError,
     get_logger,
 )
+from unified_kg_rag.shared.exceptions import ErrorClass
 from unified_kg_rag.shared.utils.validation import format_validation_errors
 
 if TYPE_CHECKING:
@@ -587,7 +590,11 @@ class IngestionPipelineRunner:
             if error := unneeded_stage_error(
                 self.config, [all_stages[name] for name in sorted(enabled_stages_set)]
             ):
-                usage_error(error, error_type=ConfigurationError.__name__)
+                usage_error(
+                    error,
+                    error_type=ConfigurationError.__name__,
+                    error_class=ErrorClass.CONFIGURATION,
+                )
         else:
             stages = dict.fromkeys(PipelineStageType, True)
 
@@ -870,6 +877,18 @@ class IngestionPipelineRunner:
         return error
 
     @staticmethod
+    def _failed_stage(context: PipelineContext) -> PipelineStageResult | None:
+        """The first stage of a failed run that names its error."""
+        return next(
+            (
+                r
+                for r in context.stage_results
+                if r.status == PipelineStageStatus.FAILED and r.error_message
+            ),
+            None,
+        )
+
+    @staticmethod
     def _next_step(context: PipelineContext) -> str:
         """What to do after a run a stage failed: the fix the error names
         (an embedding dimension the index refuses), then the resume."""
@@ -916,15 +935,23 @@ class IngestionPipelineRunner:
         _load_pipeline()
         error = self._stage_failure(context) or self._failure_budget_breach(context)
         delta = context.incremental_delta
+        # The first failed stage's class (its items' dominant cause: a model
+        # server down is model_unreachable) and type, as a raised one's.
+        stage = self._failed_stage(context)
         return {
             "pipeline_id": context.pipeline_id,
             "status": context.status.value,
             # The keys of every failure document (status stays the run's).
             **(
                 {
-                    "error": error,
-                    "exit_code": EXIT_FAILURE,
-                    "error_type": PipelineExecutionError.__name__,
+                    **failure_fields(
+                        EXIT_FAILURE,
+                        error,
+                        (stage.error_type if stage else None)
+                        or PipelineExecutionError.__name__,
+                        error_class=stage.error_class if stage else None,
+                    ),
+                    "status": context.status.value,
                 }
                 if error
                 else {}
@@ -982,6 +1009,7 @@ class IngestionPipelineRunner:
                             "input_count",
                             "output_count",
                             "error_message",
+                            "error_class",
                         },
                     ),
                     "executed": result.stage_name in self.pipeline.executed_stages,
@@ -1073,9 +1101,8 @@ def _print_failed(
     """The JSON status of a run that failed before it printed its result,
     with its error and, once resolved, its pipeline id."""
     pipeline_id = runner.pipeline.pipeline_id if runner and runner.pipeline else None
-    print_status(
-        exit_code, error, **({"pipeline_id": pipeline_id} if pipeline_id else {})
-    )
+    fields: dict[str, Any] = {"pipeline_id": pipeline_id} if pipeline_id else {}
+    print_status(exit_code, error, **fields)
 
 
 @exits_on_sigterm

@@ -29,7 +29,8 @@ import uuid
 from collections.abc import AsyncIterator, Callable
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from structlog.contextvars import bound_contextvars
 
 from unified_kg_rag.adapters.retrieval.strategy_registry import strategy_methodology
 from unified_kg_rag.application.cli.console.store import ConsoleStore
@@ -76,12 +77,16 @@ MAX_TURN_CHARACTERS = 100_000
 class AskTurn(BaseModel):
     """One earlier message of the page's conversation."""
 
+    model_config = ConfigDict(extra="forbid")
+
     role: Literal["user", "assistant"]
     content: str = Field(max_length=MAX_TURN_CHARACTERS)
 
 
 class AskRequest(BaseModel):
-    """One question from the Ask page."""
+    """One question from the Ask page (an unknown key is refused)."""
+
+    model_config = ConfigDict(extra="forbid")
 
     query: str = Field(min_length=1, max_length=MAX_QUESTION_CHARACTERS)
     search_strategy: SearchStrategy = SearchStrategy.AUTO
@@ -393,7 +398,12 @@ class AskService:
                     error=str(e), latency_seconds=time.perf_counter() - started
                 )
                 queue.put_nowait(
-                    {"kind": "error", "error_kind": kind, "message": str(e)}
+                    {
+                        "kind": "error",
+                        "error_kind": kind,
+                        "error_class": kind,
+                        "message": str(e),
+                    }
                 )
             finally:
                 with contextlib.suppress(Exception):
@@ -420,9 +430,17 @@ class AskService:
     ) -> tuple[RAGOutput, str | None]:
         """Answer ``request`` under the console's trace span, the start event
         and the answer's chunks put on ``queue``; the output and trace id."""
-        with observability.span(
-            "kg_rag.console.ask",
-            {"kg_rag.search_strategy": request.search_strategy.value},
+        with (
+            observability.span(
+                "kg_rag.console.ask",
+                {
+                    "kg_rag.search_strategy": request.search_strategy.value,
+                    "kg_rag.query_id": query_id,
+                },
+            ),
+            # The chain's log lines and its result's metadata carry the id
+            # the page and the history show (it reuses a bound one).
+            bound_contextvars(query_id=query_id),
         ):
             ids = observability.current_trace_ids()
             trace_id = ids[0] if ids else None

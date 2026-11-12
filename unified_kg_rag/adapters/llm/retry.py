@@ -15,7 +15,9 @@ import contextlib
 import contextvars
 import random
 import re
+import threading
 import time
+from collections import Counter
 from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -167,6 +169,62 @@ def _cause(exc: BaseException) -> tuple[str, str, int | None]:
     return type(exc).__name__, _error_code(exc), _http_status(exc)
 
 
+class FailureLedger:
+    """The errors one ingestion stage's model calls finally failed with
+    (after their retries), and whether a known-good request failed alike.
+
+    A stage that failed because its items did (a critical stage that
+    produced nothing) said only "check the stage configuration", although
+    its batch knew why. The stage opens one (:func:`failure_ledger`), the
+    batch processor records each item's last error (from its worker threads
+    too: the ledger is in the context they copy) and
+    :func:`item_failed_indices` marks a known-good request that failed; the
+    stage then fails with the dominant cause (:meth:`dominant`).
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.errors: list[BaseException] = []
+        self.model_failed = False
+
+    def record(self, error: BaseException) -> None:
+        with self._lock:
+            self.errors.append(error)
+
+    def dominant(self) -> BaseException | None:
+        """The first error of the most frequent cause (:func:`_cause`), or
+        ``None`` when no call failed."""
+        with self._lock:
+            errors = list(self.errors)
+        if not errors:
+            return None
+        counts = Counter(_cause(error) for error in errors)
+        cause = max(counts, key=counts.__getitem__)
+        return next(error for error in errors if _cause(error) == cause)
+
+
+_LEDGER: contextvars.ContextVar[FailureLedger | None] = contextvars.ContextVar(
+    "unified_kg_rag_failure_ledger", default=None
+)
+
+
+@contextlib.contextmanager
+def failure_ledger() -> Iterator[FailureLedger]:
+    """Record the failed model calls made inside the block (a stage's)."""
+    ledger = FailureLedger()
+    token = _LEDGER.set(ledger)
+    try:
+        yield ledger
+    finally:
+        _LEDGER.reset(token)
+
+
+def record_failure(error: BaseException) -> None:
+    """Record a call's final error in the open ledger (none: a no-op)."""
+    if (ledger := _LEDGER.get()) is not None:
+        ledger.record(error)
+
+
 # The text of the known-good request (``known_good_unit``): short, neutral,
 # and naming two entities and a relationship, so every extraction prompt
 # has something to answer.
@@ -263,6 +321,8 @@ def item_failed_indices(
                 task,
                 first,
             )
+            if (ledger := _LEDGER.get()) is not None:
+                ledger.model_failed = True
             return []
         logger.warning(
             "%s: every item failed alike (%s) but a known-good request was "

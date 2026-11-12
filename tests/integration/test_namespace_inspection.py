@@ -6,6 +6,7 @@ namespace the embedded stores hold (no container, no AWS)."""
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -21,7 +22,7 @@ from unified_kg_rag import describe_namespace, export_graph
 from unified_kg_rag.adapters.doc_status.dynamodb import DynamoDBDocStatusStore
 from unified_kg_rag.application.cli import run_describe
 from unified_kg_rag.application.storage import inspection
-from unified_kg_rag.shared.exceptions import ConfigurationError
+from unified_kg_rag.shared.exceptions import ConfigurationError, ToolArgumentError
 
 pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("no_aws")]
 
@@ -75,6 +76,9 @@ def test_describe_a_namespace_that_holds_nothing(ingested) -> None:
     description = describe_namespace(config, "tenant_x", providers=providers)
     assert not description.exists
     assert description.artifacts_from == "config"
+    # It holds nothing: not the methodologies the config builds.
+    assert (description.methodologies, description.strategies) == ([], [])
+    assert (description.artifacts, description.auto_routes) == ([], [])
     with pytest.raises(ConfigurationError, match="suffix"):
         describe_namespace(config, "../x", providers=providers)
 
@@ -357,3 +361,124 @@ def test_an_export_names_no_absolute_host_path() -> None:
     assert first["attributes"]["file_path"] == "legal/계약서.pdf"
     assert second["documents"] == ["memo.txt"]
     assert entity["documents"] == ["legal/계약서.pdf", "memo.txt"]
+
+
+def test_an_export_replaces_an_existing_file_only_when_asked(
+    ingested, tmp_path: Path
+) -> None:
+    config, providers = ingested
+    path = tmp_path / "graph.jsonl"
+    path.write_text("precious", encoding="utf-8")
+    with pytest.raises(ToolArgumentError, match="exists"):
+        export_graph(config, path, providers=providers)
+    assert path.read_text(encoding="utf-8") == "precious"
+    export_graph(config, path, providers=providers, overwrite=True)
+    assert path.read_text(encoding="utf-8").startswith("{")
+
+
+def test_run_describe_refuses_to_replace_a_file_without_force(
+    ingested, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    config, providers = ingested
+    monkeypatch.setattr(run_describe, "load_cli_config", lambda _args: config)
+    monkeypatch.setattr(inspection, "build_providers", lambda _c: providers)
+    out = tmp_path / "graph.jsonl"
+    out.write_text("precious", encoding="utf-8")
+    argv = ["run-describe", "--output-path", str(out)]
+    monkeypatch.setattr(sys, "argv", argv)
+    with pytest.raises(SystemExit) as exc:
+        run_describe.main()
+    assert exc.value.code == 2
+    assert "exists; pass --force" in capsys.readouterr().err
+    assert out.read_text(encoding="utf-8") == "precious"
+    monkeypatch.setattr(sys, "argv", [*argv, "--force"])
+    assert run_describe.main() == 0
+    assert out.read_text(encoding="utf-8").startswith("{")
+
+
+def test_run_describe_never_replaces_its_config_file(tmp_path: Path) -> None:
+    # It replaced config.yaml with the JSON Lines export, exit 0, --force or
+    # not: a process of its own, as a user runs it.
+    import subprocess
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("backend: local\n", encoding="utf-8")
+    for extra in ([], ["--force"]):
+        done = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "unified_kg_rag.application.cli.run_describe",
+                "--config-path",
+                str(config_file),
+                "--output-path",
+                str(config_file),
+                "--output-format",
+                "json",
+                *extra,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=100,
+            cwd=tmp_path,
+            env={**os.environ, "AWS_EC2_METADATA_DISABLED": "true"},
+        )
+        assert done.returncode == 2, done.stderr
+        assert "is the --config-path file" in json.loads(done.stdout)["error"]
+        assert config_file.read_text(encoding="utf-8") == "backend: local\n"
+
+
+def test_describe_lists_the_failed_and_quarantined_documents(
+    ingested, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    # The runbook said to inspect a failed document's error_info, with no
+    # way to read it short of querying the registry's store.
+    from unified_kg_rag.domain.models import DocStatus
+
+    config, providers = ingested
+    store = providers.build_doc_status()
+    namespace = describe_namespace(config, providers=providers).namespace
+    record = next(
+        r for r in store.list_namespace(namespace) if r.file_path == "ticket-1"
+    )
+    store.put_many(
+        [
+            record.model_copy(
+                update={
+                    "status": DocStatus.FAILED,
+                    "error_info": "ModelOutputError: cut off",
+                    "failure_count": 2,
+                }
+            )
+        ]
+    )
+    description = describe_namespace(
+        config, providers=providers, documents=[DocStatus.FAILED, DocStatus.QUARANTINED]
+    )
+    assert description.registry == {"failed": 1, "processed": 2}
+    (failed,) = description.documents or []
+    assert (failed.status, failed.error_info, failed.failure_count) == (
+        DocStatus.FAILED,
+        "ModelOutputError: cut off",
+        2,
+    )
+    assert describe_namespace(config, providers=providers).documents is None
+    monkeypatch.setattr(run_describe, "load_cli_config", lambda _args: config)
+    monkeypatch.setattr(inspection, "build_providers", lambda _c: providers)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run-describe",
+            "--documents",
+            "failed,quarantined",
+            "--output-format",
+            "json",
+        ],
+    )
+    assert run_describe.main() == 0
+    (listed,) = json.loads(capsys.readouterr().out)["documents"]
+    assert (
+        listed["status"] == "failed"
+        and listed["error_info"] == "ModelOutputError: cut off"
+    )

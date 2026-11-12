@@ -27,7 +27,6 @@ from unified_kg_rag.adapters.evaluators.base import (
     judge_effort,
 )
 from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED, BatchProcessor
-from unified_kg_rag.adapters.observability.endpoints import safe_url
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.strategy_registry import run_records
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
@@ -86,6 +85,7 @@ from unified_kg_rag.shared.usage import (
     metering,
     usage_scope,
 )
+from unified_kg_rag.shared.utils import safe_url
 from unified_kg_rag.shared.utils.files import atomic_write_text
 
 from .answer_match_evaluator import (
@@ -157,6 +157,15 @@ def _require_eval_extra(evaluator_type: EvaluatorType) -> None:
 # The warm-up query (EvaluationManager.warm_up): no dataset question, and the
 # query settings of the run it warms up.
 _WARM_UP_QUESTION = "What does the indexed collection cover?"
+
+
+def _rag_input_fields(metadata: dict[str, Any]) -> dict[str, Any]:
+    """The keys of an item's metadata the chain takes (``RAGInput``'s
+    fields); the rest (``answer_aliases``, ``answerable``, ...) is the
+    evaluation's own, and ``RAGInput`` refuses an unknown key."""
+    return {k: v for k, v in metadata.items() if k in RAGInput.model_fields}
+
+
 _WARM_UP_KEYS = (
     "suffix",
     "search_strategy",
@@ -534,9 +543,7 @@ class EvaluationManager:
             assertions = assertions_of({ASSERTIONS_KEY: item.get("assertions")})
         except EvaluationException as e:
             raise EvaluationException(f"{where}: 'assertions': {e}") from e
-        rag_fields = {
-            k: v for k, v in final_metadata.items() if k in RAGInput.model_fields
-        }
+        rag_fields = _rag_input_fields(final_metadata)
         try:
             # Validate what the RAG chain will receive now, not per query later.
             rag_input = RAGInput.model_validate({**rag_fields, "query": question})
@@ -777,7 +784,10 @@ class EvaluationManager:
             # The question wins over a ``query`` metadata key, as in load_data.
             for a, j in items:
                 query = arms[a].queries[j]
-                single_input = {**query.metadata, "query": query.question}
+                single_input = {
+                    **_rag_input_fields(query.metadata),
+                    "query": query.question,
+                }
                 arm_of[id(single_input)] = a
                 inputs.append(single_input)
             return inputs

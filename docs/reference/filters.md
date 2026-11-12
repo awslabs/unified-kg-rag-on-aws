@@ -2,7 +2,10 @@
 
 `--filters key:value ...` (or `RAGInput.filters`) narrows what retrieval ranks;
 a pair without a key, a `:` or a value, a key given twice and a key no index the
-strategy reads declares are usage errors (exit 2).
+strategy reads declares are usage errors (exit 2). A list (any of its values)
+or a range goes in `--filters-json`, one JSON object as `RAGInput.filters`
+takes it (`'{"start_date": {"gte": "2022-07-01"}, "category": ["a", "b"]}'`),
+checked the same way; with `--filters`, each key in one of the two.
 Filters compile to `term`/`terms`/`range` clauses on OpenSearch and the
 embedded engine, `has` steps on Neptune and Gremlin Server, and one vertex
 predicate on the SQLite graph; every store answers a filter alike. How to use them in a query:

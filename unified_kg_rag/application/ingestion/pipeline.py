@@ -14,7 +14,7 @@ from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, S
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from datetime import datetime
 from pathlib import Path
-from typing import Any, TypeVar, cast
+from typing import Any, Self, TypeVar, cast
 
 from pydantic import BaseModel
 from structlog.contextvars import bind_contextvars, reset_contextvars
@@ -660,8 +660,15 @@ class DataIngestionPipeline:
             )
         return True
 
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
+
     def close(self) -> None:
-        """Release backend clients owned by the pipeline's stages.
+        """Release backend clients owned by the pipeline's stages
+        (``with DataIngestionPipeline(...) as pipeline:`` calls it).
 
         Only the indexing stage holds long-lived Neptune/OpenSearch connections;
         every other stage's ``close`` is a no-op. Best-effort: never raises, so
@@ -715,10 +722,16 @@ class DataIngestionPipeline:
                 answered no, or nothing could answer it.
         """
         # The root span of an ingestion trace: stages, batches and model calls
-        # nest under it. A failure leaving the block is recorded on it.
-        with observability.span(
-            "kg_rag.ingestion.run", resume_from_stage=resume_from_stage
-        ) as span:
+        # nest under it, each tagged with the namespace it writes (the tenant
+        # boundary). A failure leaving the block is recorded on it.
+        with (
+            observability.bind_attributes(
+                namespace=resolve_namespace(self.config, None)
+            ),
+            observability.span(
+                "kg_rag.ingestion.run", resume_from_stage=resume_from_stage
+            ) as span,
+        ):
             self.pipeline_id = None
             try:
                 context = self._run(source_directory, pipeline_id, resume_from_stage)
@@ -727,6 +740,7 @@ class DataIngestionPipeline:
                 # (_run sets it; read past mypy's narrowing to None above).
                 if resolved := getattr(self, "pipeline_id", None):
                     span.set_attribute("kg_rag.pipeline_id", resolved)
+            delta = context.incremental_delta
             span.set_attributes(
                 {
                     "kg_rag.pipeline_id": context.pipeline_id,
@@ -735,11 +749,30 @@ class DataIngestionPipeline:
                         r.status == PipelineStageStatus.COMPLETED
                         for r in context.stage_results
                     ),
+                    # What the run applied: a full build, or a delta's counts.
+                    "kg_rag.mode": "incremental" if delta is not None else "full",
+                    **(
+                        {
+                            "kg_rag.delta.new": len(delta.new),
+                            "kg_rag.delta.changed": len(delta.changed),
+                            "kg_rag.delta.deleted": len(delta.deleted),
+                        }
+                        if delta is not None
+                        else {}
+                    ),
                 }
             )
             # _run reports a failed stage on the context instead of raising.
             if context.status == PipelineStageStatus.FAILED:
                 span.set_error(f"pipeline '{context.pipeline_id}' failed")
+                # The first failed stage's class (its items' dominant cause).
+                span.set_attribute(
+                    "kg_rag.error_class",
+                    next(
+                        (r.error_class for r in context.stage_results if r.error_class),
+                        None,
+                    ),
+                )
             return context
 
     def insert_documents(
@@ -1046,7 +1079,10 @@ class DataIngestionPipeline:
             # Every log line of the run, the S3 sync and the failure report
             # included, carries the id (also in worker threads, see
             # ContextThreadPoolExecutor).
-            log_context = bind_contextvars(pipeline_id=resolved_pipeline_id)
+            log_context = bind_contextvars(
+                pipeline_id=resolved_pipeline_id,
+                namespace=resolve_namespace(self.config, None),
+            )
             resolved_resume_stage = self.normalize_stage_name(
                 resume_from_stage or self.pipeline_config.resume_from_stage
             )
@@ -2654,10 +2690,19 @@ class DataIngestionPipeline:
                 "re-run extracts those units again, reusing the stored "
                 "extraction records of the others"
             )
+        indexed = any(
+            r.stage_name == PipelineStageType.INDEXING.value
+            and r.status == PipelineStageStatus.COMPLETED
+            for r in context.stage_results
+        )
         logger.warning(
-            "%d text units failed and are indexed without that stage's output "
-            "(units_failed): %s; %s",
+            "%d text units failed and %s (units_failed): %s; %s",
             len(failed),
+            (
+                "are indexed without that stage's output"
+                if indexed
+                else "are not indexed: the run stopped before indexing"
+            ),
             "; ".join(stages),
             retry,
         )

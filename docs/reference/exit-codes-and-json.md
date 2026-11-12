@@ -54,7 +54,7 @@ A query's failure maps to its code by its class (`ErrorClass`, the same for
 | Class | Raised as | Exit code |
 |---|---|---|
 | `invalid_filter` | `InvalidFilterError` | `2` |
-| `invalid_argument` | `ToolArgumentError` | `2` |
+| `invalid_argument` | `InvalidArgumentError` (`ToolArgumentError`), `DocumentNotFoundError`, a refused command line | `2` |
 | `not_indexed` | `MethodologyNotIndexedError` | `2` |
 | `index_not_found` | `IndexNotFoundError` | `2` |
 | `configuration` | `ConfigurationError` | `2` |
@@ -63,9 +63,14 @@ A query's failure maps to its code by its class (`ErrorClass`, the same for
 | `model_unreachable` | `ModelUnreachableError` | `1` |
 | `failure` | any other | `1` |
 
-The MCP server returns the message of the first four and `timeout` to the
-caller (a generic one for the rest, whose message may name an endpoint); the
-console's Ask page names the class. `run-rag`'s interactive session keeps
+The class is the stable key a caller branches on, on every surface: the
+CLIs' JSON `error_class` ([Failures and interruptions](#failures-and-interruptions)),
+the MCP server's tool error, which names it in brackets
+(`Error executing tool kg_search: [store_unreachable] ...`) and then carries the message of the first four
+and `timeout` (a generic one for the rest, whose message may name an
+endpoint), and the console's `error_class` (an HTTP error's, `invalid_argument`
+for a request it refuses, and an Ask stream's error event). A new class may
+be added; a value is never renamed. `run-rag`'s interactive session keeps
 going after any of them.
 
 `run-mcp-server` uses the same codes: `0` once the client closes stdio (or
@@ -108,7 +113,8 @@ are flushed first, and a process pool's workers are ended with it.
 
 `--output-format json` prints one JSON document to stdout and moves the
 banner, progress and logs to stderr, so the output pipes into `jq` (not with
-`--metrics-sink cloudwatch`, which also writes to stdout). The document
+`--metrics-sink cloudwatch`, which also writes to stdout). Every document
+starts with `version`, the package version that wrote it. The document
 holds:
 
 - **`run-rag`**: `success` and the answer or the search results; a failed
@@ -131,7 +137,8 @@ holds:
     records their documents, retried by the next run without counting toward
     `indexing.max_document_failures`.
   - `units_failed`: the text units a stage failed on, indexed without that
-    stage's output and extracted again by the next run. Counted in a full
+    stage's output (not indexed at all when the run stopped before its
+    indexing stage) and extracted again by the next run. Counted in a full
     build too, where no registry records a document `FAILED` and
     `failed_documents` stays 0; the run ends with a WARNING naming them by
     stage and cause.
@@ -156,7 +163,8 @@ holds:
     processed some and extracted none indexed no graph of them).
   - `delta`: what the doc-status registry's diff found, `new`, `changed`,
     `unchanged` and `deleted` documents (an `indexing.reset` run counts every
-    document new), or `null` with the registry off.
+    document new), or `null` with the registry off. The documents a run
+    deletes are named in one INFO line (the first 20).
 
   `--max-failure-rate RATE` (off by default) exits `1` when more than `RATE`
   of the run's documents failed: `files_failed`, the documents recorded
@@ -185,20 +193,38 @@ holds:
 - **`run-describe`**: the namespace's description (`suffix`, `namespace`,
   `build`, `build_record` (`present` or `missing`: then `artifacts` are
   what the config builds), `artifacts`, `methodologies`, `strategies`, `auto_routes`,
-  `indices`, `registry`) and `export` (its `path`, `counts`, `truncated`
-  and `missing` kinds, or `null` without `--output-path`); a namespace that
-  holds no index exits `2`
+  `indices`, `registry`, `registry_unavailable` (why the registry could not
+  be read, else `null`), `exists`, `artifacts_from` (`build_record` or
+  `config`), with `--documents` the `documents` of those statuses, each with
+  `doc_id`, `file_path`, `status`, `error_info`, `failure_count`,
+  `retry_count`, `attempt_count`, `written_by` and `updated_at`) and
+  `export` (its `path`, `counts`, `truncated` and `missing` kinds, or `null`
+  without `--output-path`); a namespace that holds no index exits `2`
   ([Inspect and export](../guides/inspect.md)).
 - **`run-prompt-tuning`**: the `output_path`, the `profile` and, with
   `--schema-out`, the `schema_path`.
-- **`prepare-benchmark`**: the `output_directory`, the `benchmark` label
-  and the counts written (`questions`, `paragraphs`); with `--hops`, the
+- **`prepare-benchmark musique`**: the `output_directory`, the `benchmark`
+  label and the counts written (`questions`, `paragraphs`); with `--hops`, the
   answerable questions per hop count (`hops`); with `--unanswerable`, the
   `answerable` and `unanswerable` counts and `unanswerable_filter`
   (`requested`, `kept`, `examined`, `excluded_twin`, `excluded_contaminated`,
   `excluded_no_twin`). Too few unanswerable questions passing the filters,
   `--unanswerable` with an answerable-only file, `--hops` quotas with
   `--limit` or above the questions of a hop count exit `2`.
+- **`prepare-benchmark structural`**: the `output_directory`, `benchmark`,
+  `seed`, `size`, and the counts written: `questions`, `documents` (corpus
+  files), `nodes` and `edges` (the seed graph) and `templates` (the
+  questions per question template).
+- **`prepare-benchmark assertions`**: the `output_directory` and the
+  generation report (also `generation_report.json`): `benchmark`, `license`,
+  `seed`, `settings`, `language`, `models` (`generation`, `embedding`),
+  `corpus` (`text_units`, `sampled_units`, `clusters`), `questions` (per
+  class), `assertions` (their total), `dropped` (per reason) and `usage`
+  (the model calls and tokens per step). A run that generated no question
+  exits `1`.
+
+A flag of another benchmark than the one named (`structural --limit`) exits
+`2`.
 
 ### Failures and interruptions
 
@@ -210,7 +236,8 @@ shows the failure:
 | `status` | `"failed"` (`"interrupted"` for a stopped run; a `run-ingestion` result keeps the run's own status) |
 | `exit_code` | The process's exit code |
 | `error` | The message, when there is one |
-| `error_type` | What failed: the exception's class name (`ConfigurationError`, `QueryTimeoutError`, `StoreConnectionError`, `ModelUnreachableError`, `PipelineExecutionError`, ...), `UsageError` for a refused command line, `FailureBudgetExceeded` or `RegressionGateFailed` for `run-eval`, `RunFailed` for a run that failed without an exception (nothing rendered), `Interrupted` for a stopped run |
+| `error_class` | The class of the failure ([`ErrorClass`](#exit-code-2): `invalid_argument` for a refused command line, `configuration` for a config that does not load, `failure` for a run that failed without an exception); the stable key to branch on. A stopped run has none |
+| `error_type` | Informational, may change between releases: the exception's class name (`ConfigurationError`, `QueryTimeoutError`, `StoreConnectionError`, `ModelUnreachableError`, `PipelineExecutionError`, ...), `UsageError` for a refused command line, `FailureBudgetExceeded` or `RegressionGateFailed` for `run-eval`, `RunFailed` for a run that failed without an exception (nothing rendered), `Interrupted` for a stopped run |
 
 A run that printed its result prints nothing more; the result shows the
 failure with these keys: a failed `run-rag` query (also with
@@ -223,14 +250,17 @@ instead:
   `{"status": "interrupted", "exit_code": 143, "error_type": "Interrupted"}`
   (`130` for Ctrl-C).
 - A run that fails before it printed prints
-  `{"status": "failed", "exit_code": 1, "error_type": ...}` (or `2`) with the
-  `error` it failed with, an argparse error included.
+  `{"status": "failed", "exit_code": 1, "error_class": ..., "error_type": ...}`
+  (or `2`) with the `error` it failed with, an argparse error included.
 - That holds from the first moment: a SIGTERM while the CLI still loads, or
   after it printed its result while the process exits, exits `143` too, and
   a Ctrl-C while it loads `130` (the status document only while loading; a
   SIGINT the parent ignores, as `nohup` does, stays ignored).
 - A `run-ingestion` result whose run a stage failed carries the same `error`,
-  `exit_code` and `error_type`. `run-ingestion` adds the `pipeline_id` to resume with
+  `exit_code`, `error_class` and `error_type`: the first failed stage's, its
+  items' dominant cause when they failed (`model_unreachable` and
+  `ModelUnreachableError`, naming the server, when every call was refused by
+  a model server that was down; each stage also has its `error_class`). `run-ingestion` adds the `pipeline_id` to resume with
   (once the run resolved it) and, when a stopped run's next run on the
   namespace must wait for writes possibly still in flight (this run's, or
   those of the run whose expired lease it took over),

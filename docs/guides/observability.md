@@ -255,9 +255,12 @@ these logs next to Bedrock's own invocation, token and latency metrics.
   `Observability exporter for backend '...'` shows the endpoint and header
   names, never values.
 
-Spans carry counts, ids, model names and token usage only.
-`capture_content: true` adds prompt and completion text to model spans, and
-the query and answer to the `kg_rag.query` span (after `redact_patterns`):
+Spans carry counts, ids, model names and token usage only; a failed
+span's `exception` event holds the error's type and `kg_rag.error_digest`
+(its message's length and hash), never its message or stack.
+`capture_content: true` adds prompt and completion text to model spans, the
+query and answer to the `kg_rag.query` span, and an error's message and
+stack to its `exception` event (after `redact_patterns`):
 enable it only where the trace backend may hold corpus data. With `otlp`,
 `langfuse` or `phoenix`, `redact_patterns` also applies at export to every
 string attribute, event attribute (an exception message can quote a query)

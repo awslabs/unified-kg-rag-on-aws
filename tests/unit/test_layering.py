@@ -187,6 +187,10 @@ _RUNTIME_NAMED_IMPORTS: dict[str, str] = {
         "import_optional: the [local]-extra module its caller names "
         "(langchain_ollama, langchain_openai, sentence_transformers)"
     ),
+    "application.plugins": (
+        "load_plugins: the plugin modules of other distributions that the "
+        "unified_kg_rag.plugins entry points or UKR_PLUGINS name"
+    ),
 }
 # What a dynamic import of a name the scan cannot read targets.
 _UNREAD = "<a name the scan cannot read>"

@@ -75,8 +75,13 @@ Without uv: create a virtual environment, activate it, and run
   belongs in the changelog only, not in `docs/` ([Documentation](#documentation)).
 - A **Breaking changes** entry covers what users depend on: the names exported from `unified_kg_rag` (pinned in
   `tests/unit/test_public_api.py`; changing that list is a deliberate API change), configuration keys, CLI flags and
-  exit codes, index and registry formats, and the CDK stack's inputs and outputs. Moving or renaming an internal module
-  is not a breaking change and needs no entry; neither does a change to code only reached through internal imports.
+  exit codes, the keys of every `--output-format json` document and their meaning
+  ([exit codes and JSON output](./docs/reference/exit-codes-and-json.md)), the `ErrorClass` values (`error_class`, the
+  stable key of a failure on every surface; a new value may be added, none renamed), the MCP server's tool names,
+  input schemas and result fields, index and registry formats, and the CDK stack's inputs and outputs. Moving or
+  renaming an internal module is not a breaking change and needs no entry; neither does a change to code only reached
+  through internal imports, nor to the console's `/api/*` routes, which are private to its web client, nor to an
+  `error_type` (informational) or a message's wording.
 - Entries compare with the last release. A fix to something not yet released amends that change's entry instead of
   adding a *Fixed* one, which lists only bugs a release had. Add a user's action as the next number of *Upgrading*
   (or to its *From a `main` checkout* list when only unreleased formats or keys need it), and link the docs page

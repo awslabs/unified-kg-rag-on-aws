@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import time
 from collections.abc import Iterator
@@ -299,6 +300,11 @@ def test_the_namespace_s_methodologies_come_from_its_build_record(
         assert bad.status_code == 400 and bad.json()["code"] == "invalid"
         bad = client.get("/api/strategies", params={"suffix": unsafe})
         assert bad.status_code == 400 and bad.json()["code"] == "invalid"
+    # A suffix nothing was ingested under serves no strategy (every one but
+    # tree read as available: what the config builds).
+    missing = client.get("/api/strategies", params={"suffix": "nosuch"}).json()
+    assert not any(s["available"] for s in missing["strategies"])
+    assert all("nosuch" in s["reason"] for s in missing["strategies"])
 
 
 def test_an_ingestion_that_narrows_the_namespace_is_refused_unconfirmed(
@@ -835,7 +841,10 @@ def test_one_job_per_namespace_and_stop_ends_it_as_the_cli_stops(
 
 
 def test_settings_show_validate_diff_and_save_the_file(
-    client: Any, workspace: Path, restore_config: None
+    client: Any,
+    workspace: Path,
+    restore_config: None,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     view = client.get("/api/config").json()
     assert view["path"] == str(workspace / "config.yaml")
@@ -863,12 +872,17 @@ def test_settings_show_validate_diff_and_save_the_file(
         headers=HEADERS,
     )
     assert stale.status_code == 400 and "changed on disk" in stale.json()["error"]
-    saved = client.post(
-        "/api/config/save",
-        json={"text": preview["text"], "base_sha": view["sha"]},
-        headers=HEADERS,
-    )
+    with caplog.at_level(logging.INFO, logger="unified_kg_rag"):
+        saved = client.post(
+            "/api/config/save",
+            json={"text": preview["text"], "base_sha": view["sha"]},
+            headers=HEADERS,
+        )
     assert saved.status_code == 200, saved.text
+    # What changed, when: a log line of the save (it wrote none).
+    assert any(
+        "Saved the config file 'config.yaml'" in r.getMessage() for r in caplog.records
+    )
     assert (
         yaml.safe_load((workspace / "config.yaml").read_text())["processing"][
             "ignore_errors"
@@ -1096,6 +1110,25 @@ def test_a_blank_question_is_an_invalid_argument(client: Any) -> None:
     assert events[-1]["kind"] == "error"
     assert events[-1]["error_kind"] == "invalid_argument"
     assert events[-1]["message"] == "query: The query is empty."
+    # One class for one error on every path: the stream's event and the
+    # HTTP refusal of an empty one ("code": "invalid") name it alike.
+    assert events[-1]["error_class"] == "invalid_argument"
+    empty = client.post("/api/ask", json={"query": ""}, headers=HEADERS)
+    assert empty.status_code == 422
+    assert (empty.json()["code"], empty.json()["error_class"]) == (
+        "invalid",
+        "invalid_argument",
+    )
+
+
+def test_a_question_with_an_unknown_key_is_refused(client: Any) -> None:
+    # MCP's name for the strategy ran auto at full model cost.
+    response = client.post(
+        "/api/ask", json={"query": "Who?", "strategy": "local"}, headers=HEADERS
+    )
+    assert response.status_code == 422
+    body = response.json()
+    assert body["error_class"] == "invalid_argument" and "strategy" in body["error"]
 
 
 def test_the_history_records_the_namespace_asked(client: Any) -> None:
@@ -1175,3 +1208,29 @@ def test_a_configuration_error_is_named_by_its_class(client: Any) -> None:
         answered = asyncio.run(handler(None, error))
         assert answered.status_code == 400
         assert json.loads(answered.body)["code"] == code
+
+
+def test_an_api_request_with_an_unknown_key_or_parameter_is_refused(
+    client: Any,
+) -> None:
+    # As RAGInput and the Ask request refuse an unknown key: a misspelled
+    # one is not silently ignored on any endpoint, the graph entity and
+    # per-question evaluation reads included.
+    for path, params in (
+        ("/api/graphs/entity", {"ref": "cache:x", "id": "e", "entity_id": "e"}),
+        ("/api/evaluations/questions", {"ref": "outputs:run", "run": "x"}),
+    ):
+        refused = client.get(path, params=params)
+        assert refused.status_code == 422, (path, refused.text)
+        body = refused.json()
+        assert body["error_class"] == "invalid_argument"
+        assert "Extra inputs are not permitted" in body["error"]
+    saved = client.post(
+        "/api/config/save",
+        json={"text": "", "base_sha": "0" * 64, "confirm": True},
+        headers=HEADERS,
+    )
+    assert saved.status_code == 422 and "confirm" in saved.json()["error"]
+    # A missing entity is still a caller error with its class.
+    missing = client.get("/api/evaluations/questions", params={"ref": "outputs:nope"})
+    assert missing.json()["error_class"] == "invalid_argument"

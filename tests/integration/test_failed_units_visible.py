@@ -83,7 +83,9 @@ def test_a_full_build_reports_its_failed_units_and_the_next_run_retries_them(
         r.getMessage() for r in caplog.records if "(units_failed)" in r.getMessage()
     ]
     assert len(summary) == 1, summary
-    assert "1 text units failed" in summary[0]
+    assert "1 text units failed and are indexed without that stage's output" in (
+        summary[0]
+    )
     assert "graph_extraction 1 (1 for an error of their own" in summary[0]
     assert "providers.doc_status.enabled" in summary[0]
     assert "Zorbix" not in e2e._entity_names(providers)
@@ -127,3 +129,29 @@ def test_an_incremental_run_records_the_documents_and_the_next_run_retries_them(
     assert state["asked"] == 2
     assert e2e._registry(providers)["fz.txt"] is DocStatus.PROCESSED
     assert "Zorbix" in e2e._entity_names(providers)
+
+
+def test_failed_units_of_a_run_that_stopped_before_indexing_are_not_indexed(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Regression (rv24): the summary said "indexed without that stage's
+    # output" of a run that failed before its indexing stage.
+    from datetime import datetime
+
+    from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+    from unified_kg_rag.domain.models import PipelineContext
+
+    pipeline = object.__new__(DataIngestionPipeline)
+    pipeline._doc_status = None
+    context = PipelineContext(
+        pipeline_id="p",
+        config={},
+        status=PipelineStageStatus.FAILED,
+        start_time=datetime(2026, 1, 1),
+        source_directory=Path("."),
+        failed_text_unit_ids={"graph_extraction": ["u1"]},
+    )
+    with caplog.at_level(logging.WARNING):
+        pipeline._warn_failed_units(context)
+    (summary,) = [r.getMessage() for r in caplog.records]
+    assert "are not indexed: the run stopped before indexing" in summary

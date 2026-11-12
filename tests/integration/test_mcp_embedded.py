@@ -140,6 +140,9 @@ async def test_kg_search_returns_chunks_with_their_documents(
         "Who stores the widgets for Vendor?", strategy="local", top_k=10
     )
     assert result.strategy == "local" and result.namespace == "default"
+    # The id the server's log lines of the call carry (no trace: tracing off).
+    assert result.query_id and len(result.query_id) == 12
+    assert result.trace_id is None
     texts = [r for r in result.records if r.kind == "text"]
     assert texts, [r.kind for r in result.records]
     assert {r.document_name for r in texts} <= set(DOCUMENTS)
@@ -246,6 +249,35 @@ async def test_kg_describe_schema_lists_what_the_namespace_holds(
     assert "name.keyword" in result.filter_keys
     assert result.extraction_schema is not None
     assert result.namespaces == ["default"]
+    assert result.exists
+
+
+async def test_kg_describe_schema_of_a_namespace_nothing_was_ingested_under(
+    index: Index, caplog: pytest.LogCaptureFixture
+) -> None:
+    # It listed the config's methodologies and 11 strategies for a typo'd
+    # namespace, with no exists field; a search on it is index_not_found.
+    import logging
+
+    from unified_kg_rag.shared.exceptions import IndexNotFoundError
+
+    config = index.config.model_copy(deep=True)
+    config.mcp.allowed_namespaces = ["nosuch"]
+    chain = GraphRAGChain(config, providers=index.providers)
+    try:
+        tools = KnowledgeGraphTools(chain)
+        result = await tools.describe_schema(namespace="nosuch")
+        # A graph tool checks the namespace first, as a query does: no
+        # retrieval failure is logged with its traceback for it.
+        with caplog.at_level(logging.ERROR):
+            with pytest.raises(IndexNotFoundError, match="nosuch"):
+                await tools.get_entity(name="Depot", namespace="nosuch")
+        assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+    finally:
+        await chain.aclose()
+    assert result.namespace == "nosuch" and not result.exists
+    assert (result.methodologies, result.artifacts, result.strategies) == ([], [], [])
+    assert result.auto_routes == []
 
 
 # --- the strategy allowlist ------------------------------------------------
@@ -383,6 +415,51 @@ async def test_the_tools_over_the_protocol(tools: KnowledgeGraphTools) -> None:
         assert searched.structured_content["records"]
         refused = await client.call_tool("kg_search", {"query": "x", "top_k": 1000})
         assert refused.is_error
+        # One line naming the field and its class, not pydantic's text.
+        text = refused.content[0].text  # type: ignore[union-attr]
+        assert text.startswith(
+            "Error executing tool kg_search: [invalid_argument] top_k: "
+        )
+        assert "pydantic" not in text and "kg_searchArguments" not in text
+        # A mapping sent as a JSON string still reads as the mapping: its
+        # key is checked as a filter key, not refused as a string.
+        as_text = await client.call_tool(
+            "kg_search",
+            {"query": "Depot", "strategy": "naive", "filters": '{"category": "x"}'},
+        )
+        assert "[invalid_filter] Unknown filter key(s): category" in (
+            as_text.content[0].text  # type: ignore[union-attr]
+        )
+
+
+@requires_mcp
+async def test_an_unknown_tool_argument_is_refused(tools: KnowledgeGraphTools) -> None:
+    # kg_neighbors {"depth": 99} ran with the default max_hops, and a
+    # copied RAGInput key ("search_strategy" for "strategy") ran auto.
+    from mcp import Client
+
+    from unified_kg_rag.application.cli.mcp_server import build_mcp_server
+
+    server = build_mcp_server(tools)
+    async with Client(server, mode="legacy") as client:
+        listed = await client.list_tools()
+        for tool in listed.tools:
+            assert tool.input_schema.get("additionalProperties") is False, tool.name
+        for name, arguments, unknown in (
+            ("kg_neighbors", {"name": "Depot", "depth": 99}, "depth"),
+            (
+                "kg_search",
+                {"query": "Depot", "search_strategy": "naive"},
+                "search_strategy",
+            ),
+            ("kg_describe_schema", {"suffix": "other"}, "suffix"),
+        ):
+            refused = await client.call_tool(name, arguments)
+            assert refused.is_error, name
+            text = refused.content[0].text  # type: ignore[union-attr]
+            assert text.startswith(
+                f"Error executing tool {name}: [invalid_argument] {unknown}: "
+            ), text
 
 
 @requires_mcp

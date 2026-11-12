@@ -28,13 +28,13 @@ from __future__ import annotations
 import base64
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from urllib.parse import urlsplit, urlunsplit
 
 from unified_kg_rag.domain.models.config import (
     ObservabilityBackend,
     ObservabilityConfig,
 )
 from unified_kg_rag.shared.exceptions import ConfigurationError
+from unified_kg_rag.shared.utils import safe_url
 
 OTLP_PROTOCOLS = ("http/protobuf", "grpc")
 
@@ -75,18 +75,6 @@ class ExportSettings:
         if self.headers is not None:
             kwargs["headers"] = dict(self.headers)
         return kwargs
-
-
-def safe_url(url: str) -> str:
-    """``url`` without userinfo, query or fragment (they may hold a key)."""
-    parts = urlsplit(url)
-    host = parts.hostname or ""
-    if ":" in host:
-        # An IPv6 literal keeps its brackets ("http://[::1]:4318").
-        host = f"[{host}]"
-    if parts.port:
-        host = f"{host}:{parts.port}"
-    return urlunsplit((parts.scheme, host, parts.path, "", ""))
 
 
 def _env(environ: Mapping[str, str], *names: str) -> str | None:

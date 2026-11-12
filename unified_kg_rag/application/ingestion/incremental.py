@@ -121,6 +121,9 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+# How many removed documents the deletion audit line names.
+_AUDIT_NAMES = 20
+
 
 def build_document_lineage(
     documents: list[Document],
@@ -553,6 +556,7 @@ class IncrementalIndexer:
             [doc_id for doc_id in doc_ids if doc_id not in self._in_flight]
         )
         units_by_suffix: dict[str, set[str]] = defaultdict(set)
+        names_by_suffix: dict[str, list[str]] = defaultdict(list)
         for doc_id in doc_ids:
             record = (
                 self._prior.get(doc_id)
@@ -561,15 +565,26 @@ class IncrementalIndexer:
             )
             if record is not None:
                 units_by_suffix[record.suffix].update(record.text_unit_ids)
+                names_by_suffix[record.suffix].append(record.file_path or doc_id)
         failed = 0
         for suffix, unit_ids in sorted(units_by_suffix.items()):
             if not unit_ids:
                 continue
+            # The audit line of a deletion: which documents (the registry
+            # record, which named them, is deleted next), as file names are
+            # logged at WARNING elsewhere.
+            names = sorted(names_by_suffix[suffix])
             logger.info(
-                "Removing the %d text units of %d obsolete documents from '%s'",
+                "Removing the %d text units of %d obsolete documents from " "'%s': %s",
                 len(unit_ids),
-                len(doc_ids),
+                len(names),
                 suffix,
+                ", ".join(names[:_AUDIT_NAMES])
+                + (
+                    f" and {len(names) - _AUDIT_NAMES} more"
+                    if len(names) > _AUDIT_NAMES
+                    else ""
+                ),
             )
             results = self.indexing_manager.remove_text_units(suffix, sorted(unit_ids))
             for key, stats in sorted(results.items()):

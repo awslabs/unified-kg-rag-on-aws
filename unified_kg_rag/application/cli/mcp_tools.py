@@ -55,8 +55,8 @@ from unified_kg_rag.shared.exceptions import (
     ConfigurationError,
     ErrorClass,
     GraphRAGException,
+    InvalidArgumentError,
     QueryTimeoutError,
-    ToolArgumentError,
     classify,
     error_class_of,
 )
@@ -235,6 +235,12 @@ class SearchToolResult(_Records, _Outcome):
         default_factory=list, description="The guardrail's interventions"
     )
     rerank: str | None = Field(default=None, description="The rerank status")
+    query_id: str | None = Field(
+        default=None, description="The id the server's log lines of the call carry"
+    )
+    trace_id: str | None = Field(
+        default=None, description="The call's trace id, when tracing is on"
+    )
 
 
 class _AnswerHead(BaseModel):
@@ -298,6 +304,11 @@ class SchemaToolResult(BaseModel):
     """``kg_describe_schema``'s result."""
 
     namespace: str = Field(description="The index namespace described")
+    exists: bool = Field(
+        default=True,
+        description="Whether anything was ingested under it; false: it holds "
+        "nothing and every search on it is refused (index_not_found)",
+    )
     methodologies: list[str] = Field(description="The methodologies it holds")
     artifacts: list[str] = Field(description="The index artifacts it holds")
     strategies: list[str] = Field(
@@ -357,16 +368,18 @@ INTERNAL_ERROR_MESSAGE = (
 
 
 def describe_error(exc: BaseException) -> tuple[str, bool]:
-    """The message a tool error carries for ``exc``, and whether it is one
-    the caller can act on. Any other error gets a generic message, so a
-    store endpoint or a stack frame never reaches the caller (the server
-    logs it)."""
+    """The message a tool error carries for ``exc``, prefixed with its
+    error class (``[store_unreachable] ...``, the :class:`ErrorClass` value
+    a caller branches on: retry a ``timeout`` or an unreachable store, fix
+    an argument), and whether it is one the caller can act on. Any other
+    error gets a generic message after its class, so a store endpoint or a
+    stack frame never reaches the caller (the server logs it)."""
     error_class = (
         exc.error_class if isinstance(exc, _AbsorbedQueryError) else classify(exc)
     )
     if error_class in _CALLER_CLASSES:
-        return str(exc), True
-    return INTERNAL_ERROR_MESSAGE, False
+        return f"[{error_class.value}] {exc}", True
+    return f"[{error_class.value}] {INTERNAL_ERROR_MESSAGE}", False
 
 
 def _cut(text: str, limit: int) -> tuple[str, bool]:
@@ -502,9 +515,9 @@ class KnowledgeGraphTools:
         try:
             validate_safe_name(namespace, "namespace")
         except ValueError as e:
-            raise ToolArgumentError(str(e)) from None
+            raise InvalidArgumentError(str(e)) from None
         if namespace not in self.namespaces:
-            raise ToolArgumentError(
+            raise InvalidArgumentError(
                 f"Namespace '{namespace}' is not served; this server serves "
                 f"{', '.join(self.namespaces)}."
             )
@@ -518,7 +531,7 @@ class KnowledgeGraphTools:
         except ValueError:
             chosen = None
         if chosen is None or chosen not in self.strategies:
-            raise ToolArgumentError(
+            raise InvalidArgumentError(
                 f"Strategy '{strategy}' is not offered; choose one of "
                 f"{', '.join(s.value for s in self.strategies)}."
             )
@@ -532,7 +545,7 @@ class KnowledgeGraphTools:
         if value is None:
             return min(default, high)
         if not low <= value <= high:
-            raise ToolArgumentError(f"{name} must be between {low} and {high}.")
+            raise InvalidArgumentError(f"{name} must be between {low} and {high}.")
         return value
 
     @property
@@ -550,7 +563,7 @@ class KnowledgeGraphTools:
         if not history:
             return None
         if len(history) > self.max_history_turns:
-            raise ToolArgumentError(
+            raise InvalidArgumentError(
                 f"history holds at most {self.max_history_turns} turns."
             )
         turns: list[ConversationTurn] = []
@@ -560,11 +573,11 @@ class KnowledgeGraphTools:
                     turn.model_dump() if isinstance(turn, BaseModel) else turn
                 )
             except ValueError:
-                raise ToolArgumentError(
+                raise InvalidArgumentError(
                     "Each history turn is {role: user or assistant, content}."
                 ) from None
             if len(parsed.content) > self.settings.max_response_chars:
-                raise ToolArgumentError(
+                raise InvalidArgumentError(
                     "A history turn is longer than "
                     f"{self.settings.max_response_chars} characters."
                 )
@@ -574,9 +587,9 @@ class KnowledgeGraphTools:
     def _text(self, name: str, value: str | None) -> str:
         text = strip_invisible(value or "")
         if not text:
-            raise ToolArgumentError(f"{name} is empty.")
+            raise InvalidArgumentError(f"{name} is empty.")
         if len(text) > self.settings.max_query_chars:
-            raise ToolArgumentError(
+            raise InvalidArgumentError(
                 f"{name} is longer than {self.settings.max_query_chars} characters."
             )
         return text
@@ -586,7 +599,7 @@ class KnowledgeGraphTools:
         if not filters:
             return None
         if len(filters) > MAX_FILTER_KEYS:
-            raise ToolArgumentError(f"Give at most {MAX_FILTER_KEYS} filter keys.")
+            raise InvalidArgumentError(f"Give at most {MAX_FILTER_KEYS} filter keys.")
         typed = GraphRAGChain.typed_filter_values(filters)
         GraphRAGChain.check_filter_values(typed)
         return typed
@@ -706,7 +719,7 @@ class KnowledgeGraphTools:
         try:
             kind = SearchType(search_type)
         except ValueError:
-            raise ToolArgumentError(
+            raise InvalidArgumentError(
                 f"search_type must be one of {', '.join(t.value for t in SearchType)}."
             ) from None
         return RAGInput.checked(
@@ -764,6 +777,8 @@ class KnowledgeGraphTools:
             "guardrail": list(metadata.get("guardrail") or []),
             "rerank": (str(rerank.get("status")) if isinstance(rerank, dict) else None),
             "usage": dict(metadata.get("usage") or {}),
+            "query_id": metadata.get("query_id"),
+            "trace_id": metadata.get("trace_id"),
         }
 
     async def search(
@@ -827,7 +842,7 @@ class KnowledgeGraphTools:
 
         async def run() -> AnswerToolResult:
             if records not in ANSWER_RECORDS:
-                raise ToolArgumentError(
+                raise InvalidArgumentError(
                     f"records must be one of {', '.join(ANSWER_RECORDS)}, "
                     f"not {records!r}"
                 )
@@ -910,7 +925,7 @@ class KnowledgeGraphTools:
             if value is not None and value.strip()
         }
         if len(given) != 1:
-            raise ToolArgumentError("Give exactly one of id, name and iri.")
+            raise InvalidArgumentError("Give exactly one of id, name and iri.")
         return given
 
     async def _find(
@@ -1077,6 +1092,7 @@ class KnowledgeGraphTools:
             offered = {s.value for s in self.strategies}
             return SchemaToolResult(
                 namespace=described.namespace,
+                exists=described.exists,
                 methodologies=described.methodologies,
                 artifacts=described.artifacts,
                 # auto first, when it has a strategy to route to.

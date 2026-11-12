@@ -17,6 +17,8 @@ def patch_chain(mocker: Any, **kwargs: Any) -> Any:
     Returns the mock class."""
     chain_cls = mocker.patch.object(run_rag_chain, "GraphRAGChain", **kwargs)
     chain_cls.typed_filter_values = GraphRAGChain.typed_filter_values
+    # The providers it is given (with the run's metrics sink) are not built.
+    mocker.patch.object(run_rag_chain, "build_providers", return_value=None)
     return chain_cls
 
 

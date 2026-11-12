@@ -855,6 +855,8 @@ def _chain(config: Config, records: _Records):
     chain.config = config
     chain._cache_lock = threading.RLock()
     chain._held_artifacts = {}
+    # The namespace check passes: the records hold no arequire_namespace.
+    chain._present_namespaces = set()
     chain._get_retriever = lambda role: records  # type: ignore[method-assign]
 
     # The check reads the registry: it never builds a strategy.

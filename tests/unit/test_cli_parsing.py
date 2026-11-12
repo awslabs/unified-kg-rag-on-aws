@@ -124,6 +124,62 @@ def test_rag_a_filter_key_repeated_across_filters_flags_is_a_usage_error(
     assert "--filters gives k more than once" in capsys.readouterr().err
 
 
+def test_rag_filters_json_gives_lists_and_ranges(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression (rv24): the CLI took scalar key:value pairs only, while the
+    # library, MCP and the console take lists and gte/lte ranges.
+    given = '{"start_date": {"gte": "2022-07-01"}, "category": ["a", "b"]}'
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run-rag",
+            "--query",
+            "q",
+            "--filters",
+            "in_schema:false",
+            "--filters-json",
+            given,
+        ],
+    )
+    args = run_rag_chain.CommandLineInterface().parse_args()
+    assert run_rag_chain.RAGChainRunner._parse_filters(
+        args.filters, args.filters_json
+    ) == {
+        "in_schema": False,
+        "start_date": {"gte": "2022-07-01"},
+        "category": ["a", "b"],
+    }
+
+
+@pytest.mark.parametrize(
+    ("given", "says"),
+    [
+        ("{not json", "invalid JSON"),
+        ("[1, 2]", "non-empty JSON object"),
+        ("{}", "non-empty JSON object"),
+        ('{"category": null}', "no value"),
+        ('{"k": "x"}', "k more than once"),
+    ],
+)
+def test_rag_filters_json_is_checked_before_any_query(
+    given: str,
+    says: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run-rag", "--query", "q", "--filters", "k:a", "--filters-json", given],
+    )
+    with pytest.raises(SystemExit) as exit_info:
+        run_rag_chain.CommandLineInterface().parse_args()
+    assert exit_info.value.code == 2
+    assert says in capsys.readouterr().err
+
+
 # --- run_rag_chain: RAGChainRunner validation ----------------------------
 
 
@@ -394,44 +450,17 @@ class _RecordingSink:
         self.records.append((namespace, metrics, dimensions))
 
 
-@pytest.mark.parametrize("fails", [False, True], ids=["answered", "raised"])
-async def test_rag_runner_records_each_query_latency(
-    config, mocker, fails: bool
-) -> None:
-    # The CDK stack's QueryLatencyHigh alarm reads query_latency_ms; a query
-    # that raised took its time too.
+async def test_rag_runner_hands_its_metrics_sink_to_the_chain(config, mocker) -> None:
+    # The chain emits the query metrics (latency and outcome, for every
+    # surface); run-rag only chooses the sink (--metrics-sink).
     mocker.patch.object(run_rag_chain, "load_cli_config", return_value=config)
-    runner = run_rag_chain.RAGChainRunner(
-        _rag_parser().parse_args(["-q", "hi", "--search-strategy", "local"])
-    )
+    runner = run_rag_chain.RAGChainRunner(_rag_parser().parse_args(["-q", "hi"]))
     sink = runner.metrics_sink = _RecordingSink()
-    runner.rag_chain = mocker.AsyncMock()
-    if fails:
-        runner.rag_chain.ainvoke.side_effect = RuntimeError("Neptune down")
-    else:
-        runner.rag_chain.ainvoke.return_value = MagicMock(
-            model_dump=MagicMock(return_value={"answer": "a"})
-        )
-    result = await runner._run_query(run_rag_chain.RAGInput(query="hi"))
-    assert result["success"] is not fails
-    ((namespace, metrics, dimensions),) = sink.records
-    assert namespace == run_rag_chain.QUERY_METRICS_NAMESPACE == "unified_kg_rag/query"
-    assert set(metrics) == {"query_latency_ms"} and metrics["query_latency_ms"] >= 0
-    assert dimensions == {"Strategy": "local"}
-
-
-async def test_rag_runner_records_no_latency_for_retrieval_only(config, mocker) -> None:
-    mocker.patch.object(run_rag_chain, "load_cli_config", return_value=config)
-    runner = run_rag_chain.RAGChainRunner(
-        _rag_parser().parse_args(["-q", "hi", "--mode", "search"])
-    )
-    sink = runner.metrics_sink = _RecordingSink()
-    runner.rag_chain = mocker.AsyncMock()
-    runner.rag_chain.asearch.return_value = MagicMock(
-        model_dump=MagicMock(return_value={})
-    )
-    await runner._run_query(run_rag_chain.RAGInput(query="hi"))
-    assert sink.records == []
+    chain = mocker.patch.object(run_rag_chain, "GraphRAGChain")
+    built = mocker.patch.object(run_rag_chain, "build_providers")
+    await runner._initialize_chain()
+    built.assert_called_once_with(config, metrics_sink=sink)
+    assert chain.call_args.kwargs["providers"] is built.return_value
 
 
 def test_rag_runner_builds_the_cloudwatch_sink_of_the_task(

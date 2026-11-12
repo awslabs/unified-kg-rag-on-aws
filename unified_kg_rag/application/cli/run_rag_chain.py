@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
 import sys
-import time
 import uuid
 from collections.abc import Callable
 from types import ModuleType
@@ -76,13 +76,15 @@ from unified_kg_rag.shared import (
 )
 from unified_kg_rag.shared.exceptions import (
     ErrorClass,
-    ToolArgumentError,
+    IndexNotFoundError,
+    InvalidArgumentError,
     classify,
     error_class_of,
 )
 from unified_kg_rag.shared.utils import event_loop
 
 if TYPE_CHECKING:
+    from unified_kg_rag.application.bootstrap import build_providers
     from unified_kg_rag.application.presentation.answer_view import (
         AnswerView,
         QueryOutcome,
@@ -110,6 +112,12 @@ def _view_module() -> ModuleType:
     return answer_view
 
 
+def _bootstrap_module() -> ModuleType:
+    from unified_kg_rag.application import bootstrap
+
+    return bootstrap
+
+
 # Imported on first use: --help and a refused command line load no chain.
 __getattr__, _load_chain = lazy_names(
     globals(),
@@ -121,13 +129,9 @@ __getattr__, _load_chain = lazy_names(
         "AnswerView": _view_module,
         "QueryOutcome": _view_module,
         "SourceView": _view_module,
+        "build_providers": _bootstrap_module,
     },
 )
-
-# --metrics-sink cloudwatch: query_latency_ms of each answered query, per
-# Environment and per Environment and Strategy (the CDK stack's
-# QueryLatencyHigh alarm and dashboard read them).
-QUERY_METRICS_NAMESPACE = "unified_kg_rag/query"
 
 
 def _rerank_line(rerank: dict[str, Any]) -> str:
@@ -218,6 +222,21 @@ def _filter_pair(item: str) -> str:
             f"invalid filter '{item}': expected 'key:value'"
         )
     return item
+
+
+def _filters_json(value: str) -> dict[str, Any]:
+    """argparse ``type`` of ``--filters-json``: a non-empty JSON object
+    (its values checked as a query checks them, in ``parse_args``)."""
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as e:
+        raise argparse.ArgumentTypeError(f"invalid JSON: {e.msg}") from None
+    if not isinstance(parsed, dict) or not parsed:
+        raise argparse.ArgumentTypeError(
+            "expected a non-empty JSON object of filters, e.g. "
+            '\'{"start_date": {"gte": "2022-07-01"}}\''
+        )
+    return parsed
 
 
 # The hits --mode search prints without --verbose, and the files the
@@ -331,16 +350,21 @@ class CommandLineInterface:
         self.parser = self._setup_arguments()
 
     @staticmethod
-    def _typed_filters(filter_args: list[str] | None) -> dict[str, Any]:
-        """``key:value`` pairs as a mapping, a boolean or numeric field's
-        value converted to its type (``in_schema:false`` is ``False``), as
-        the Python API would pass it.
+    def _typed_filters(
+        filter_args: list[str] | None, filters_json: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """``key:value`` pairs and the ``--filters-json`` object as one
+        mapping, a boolean or numeric field's value converted to its type
+        (``in_schema:false`` is ``False``), as the Python API would pass it.
 
         Raises:
-            InvalidFilterError: A value its field's type cannot take.
+            InvalidFilterError: A value its field's type cannot take, or one
+                a query refuses (a null, a nested list, an empty range).
         """
-        filters = dict(item.split(":", 1) for item in filter_args or [])
+        filters: dict[str, Any] = dict(item.split(":", 1) for item in filter_args or [])
+        filters.update(filters_json or {})
         _load_chain()
+        GraphRAGChain.check_filter_values(filters)
         return GraphRAGChain.typed_filter_values(filters) or {}
 
     @staticmethod
@@ -409,15 +433,26 @@ class CommandLineInterface:
             "repeated --filters adds its pairs); a boolean or numeric field "
             "takes its type's value (in_schema:false, rank:2)",
         )
+        parser.add_argument(
+            "--filters-json",
+            type=_filters_json,
+            metavar="JSON",
+            help="Filters as one JSON object, for the values a pair cannot "
+            "give: a list (any of its values) or a range with gt/gte/lt/lte "
+            '(\'{"start_date": {"gte": "2022-07-01"}, "category": ["a", "b"]}\'), '
+            "as the Python API and the MCP server take them; with --filters, "
+            "each key in one of the two",
+        )
         add_output_format_argument(parser)
         parser.add_argument(
             "--metrics-sink",
             choices=["none", "cloudwatch"],
             default="none",
             help="Where to send query metrics: 'none' (default) or 'cloudwatch' "
-            "(CloudWatch EMF to stdout: query_latency_ms of each --mode rag "
+            "(CloudWatch EMF to stdout: query_latency_ms and the outcome counts "
+            "query_failed, query_degraded and query_abstained of each --mode rag "
             "query under unified_kg_rag/query, with an Environment dimension "
-            "when UKR_METRICS_ENVIRONMENT is set and a Strategy dimension; not "
+            "when UKR_METRICS_ENVIRONMENT is set and the Strategy that ran; not "
             "with --output-format json)",
         )
         parser.add_argument(
@@ -443,7 +478,7 @@ class CommandLineInterface:
             _load_chain()
             try:
                 RAGInput.checked(query=args.query)
-            except ToolArgumentError as e:
+            except InvalidArgumentError as e:
                 self.parser.error(f"--query: {str(e).removeprefix('query: ')}")
         if args.interactive and args.mode != "rag":
             self.parser.error(
@@ -451,15 +486,16 @@ class CommandLineInterface:
                 "always generates answers; use --query for retrieval-only output"
             )
         keys = [pair.split(":", 1)[0] for pair in args.filters or []]
+        keys += list(args.filters_json or {})
         if repeated := sorted({key for key in keys if keys.count(key) > 1}):
             self.parser.error(
                 f"--filters gives {', '.join(repeated)} more than once; give "
-                "each key once"
+                "each key once (in --filters or --filters-json)"
             )
         try:
             # A value its field's type cannot take (in_schema:maybe) is a
             # usage error, not a filter matching nothing.
-            CommandLineInterface._typed_filters(args.filters)
+            CommandLineInterface._typed_filters(args.filters, args.filters_json)
         except InvalidFilterError as e:
             self.parser.error(f"--filters: {e}")
         if args.interactive and args.output_format == "json":
@@ -509,17 +545,6 @@ class RAGChainRunner:
             )
         return NullMetricsSink()
 
-    def _record_latency(self, started: float) -> None:
-        """Publish an answered query's latency (``--mode rag`` only, so a
-        retrieval-only run does not lower the answer latency)."""
-        if self.args.mode != "rag":
-            return
-        self.metrics_sink.emit(
-            QUERY_METRICS_NAMESPACE,
-            {"query_latency_ms": (time.perf_counter() - started) * 1000},
-            {"Strategy": str(self.args.search_strategy)},
-        )
-
     def _get_suffix_display(self) -> str:
         """The namespace line: what the store names end in, the index suffix
         queried plus ``indexing.additional_suffix`` (as run-ingestion names
@@ -562,7 +587,9 @@ class RAGChainRunner:
                     self.args.query,
                     conversation_id=self.args.conversation_id,
                     use_memory=False,
-                    filters=self._parse_filters(self.args.filters),
+                    filters=self._parse_filters(
+                        self.args.filters, self.args.filters_json
+                    ),
                 )
 
                 result = await self._run_query(rag_input)
@@ -587,7 +614,12 @@ class RAGChainRunner:
         console.print("[bold]Initializing RAG chain...[/bold]")
         _load_chain()
         try:
-            self.rag_chain = GraphRAGChain(config=self.config)
+            # The chain publishes each answer's latency and outcome through
+            # the sink of its providers (--metrics-sink).
+            self.rag_chain = GraphRAGChain(
+                config=self.config,
+                providers=build_providers(self.config, metrics_sink=self.metrics_sink),
+            )
             console.print("[green]Query chain initialized.[/green]")
         except Exception as e:
             # Classified as a query's error is (_run_query): a setting the
@@ -596,7 +628,7 @@ class RAGChainRunner:
             error_class = classify(e)
             exit_code = EXIT_CODES[error_class]
             if exit_code == EXIT_USAGE:
-                usage_error(str(e), error_type=type(e).__name__)
+                usage_error(e)
             if error_class is ErrorClass.FAILURE:
                 logger.exception("Failed to initialize RAG chain: %s", e)
             else:
@@ -614,7 +646,7 @@ class RAGChainRunner:
         )
         console.print("---")
 
-        filters = self._parse_filters(self.args.filters)
+        filters = self._parse_filters(self.args.filters, self.args.filters_json)
         # A strategy the namespace cannot serve failed every question too.
         if self.rag_chain is not None:
             try:
@@ -624,6 +656,8 @@ class RAGChainRunner:
                 )
             except MethodologyNotIndexedError as e:
                 usage_error(f"--search-strategy: {e}")
+            except IndexNotFoundError as e:
+                usage_error(e)
         # An undeclared key failed every question of the session.
         if filters and self.rag_chain is not None:
             try:
@@ -724,19 +758,13 @@ class RAGChainRunner:
                 f"[bold]Executing RAG query in '{self.args.mode}' mode...[/bold]",
                 "[dim]This may take some time depending on query complexity[/dim]",
             )
-            started = time.perf_counter()
-            try:
-                result = (
-                    await self.rag_chain.asearch(rag_input)
-                    if self.args.mode == "search"
-                    else await self.rag_chain.ainvoke(rag_input)
-                )
-            except Exception:
-                # A query that failed took its time too (a stopped one is
-                # not recorded).
-                self._record_latency(started)
-                raise
-            self._record_latency(started)
+            # The chain publishes an answer's latency and outcome through
+            # the metrics sink its providers hold (--metrics-sink).
+            result = (
+                await self.rag_chain.asearch(rag_input)
+                if self.args.mode == "search"
+                else await self.rag_chain.ainvoke(rag_input)
+            )
             dumped = result.model_dump()
             outcome, fields = self._view_fields(result, dumped)
             output = {**dumped, **fields}
@@ -748,7 +776,7 @@ class RAGChainRunner:
                 error_class = error_class_of(outcome.error_class)
                 if EXIT_CODES[error_class] == EXIT_USAGE and not self.args.interactive:
                     # As raised without ignore_errors (below).
-                    usage_error(error, error_type=error_type)
+                    usage_error(error, error_type=error_type, error_class=error_class)
                 console.print(
                     f"\n[bold red]Error executing query: {markup_safe(error)}"
                     "[/bold red]"
@@ -756,7 +784,9 @@ class RAGChainRunner:
                 return {
                     "success": False,
                     **output,
-                    **failure_fields(EXIT_FAILURE, error, error_type),
+                    **failure_fields(
+                        EXIT_FAILURE, error, error_type, error_class=error_class
+                    ),
                 }
             console.print("\n[bold green]Query executed successfully![/bold green]")
             return {"success": True, **output}
@@ -769,7 +799,7 @@ class RAGChainRunner:
                 # the index cannot serve (an embedding dimension it does not
                 # hold) or a --suffix nothing was ingested under: the command
                 # line or the configuration is wrong (exit 2).
-                usage_error(str(e), error_type=type(e).__name__)
+                usage_error(e)
             if error_class is ErrorClass.FAILURE:
                 logger.exception("Error during query execution: %s", e)
             else:
@@ -860,11 +890,14 @@ class RAGChainRunner:
         console.print(Panel.fit("\n".join(config_lines), border_style="blue"))
 
     @staticmethod
-    def _parse_filters(filter_args: list[str] | None) -> dict[str, Any]:
-        """``--filters`` as a mapping (each pair checked by ``_filter_pair``),
-        boolean and numeric fields typed (``CommandLineInterface.parse_args``
-        refused a value that is not one)."""
-        return CommandLineInterface._typed_filters(filter_args)
+    def _parse_filters(
+        filter_args: list[str] | None, filters_json: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """``--filters`` and ``--filters-json`` as one mapping (each pair
+        checked by ``_filter_pair``), boolean and numeric fields typed
+        (``CommandLineInterface.parse_args`` refused a value that is not
+        one)."""
+        return CommandLineInterface._typed_filters(filter_args, filters_json)
 
     @staticmethod
     def _print_result(result: dict[str, Any], verbose: bool = False) -> None:

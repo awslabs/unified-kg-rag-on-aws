@@ -30,7 +30,10 @@ is a setting to fix (a :class:`SchemaSourceError` a schema source that
 cannot be loaded, a :class:`SeedGraphError` a seed graph that cannot be
 imported, a :class:`MethodologyNotIndexedError` a query whose strategy
 reads a methodology its index namespace does not hold) and an
-:class:`InvalidFilterError` a search filter to fix, not failures to retry; a :class:`StoreConnectionError` is an unreachable
+:class:`InvalidFilterError` a search filter and an
+:class:`InvalidArgumentError` an argument (an invalid query input, an
+output file that exists) to fix, not failures to retry; a
+:class:`StoreConnectionError` is an unreachable
  store, a :class:`ModelUnreachableError` a model server that could not be
  reached (named with its provider kind and ``base_url``), a
  :class:`QueryTimeoutError` a query past its deadline, a
@@ -109,6 +112,7 @@ _EXPORTS: dict[str, str] = {
     "ConfirmationDeclinedError": "unified_kg_rag.shared.exceptions",
     "NamespaceLeaseError": "unified_kg_rag.shared.exceptions",
     "InvalidFilterError": "unified_kg_rag.shared.exceptions",
+    "InvalidArgumentError": "unified_kg_rag.shared.exceptions",
     "MethodologyNotIndexedError": "unified_kg_rag.shared.exceptions",
     "IndexNotFoundError": "unified_kg_rag.shared.exceptions",
     "DocumentNotFoundError": "unified_kg_rag.shared.exceptions",
@@ -328,6 +332,7 @@ if TYPE_CHECKING:
         ErrorClass,
         GraphRAGException,
         IndexNotFoundError,
+        InvalidArgumentError,
         InvalidFilterError,
         LanguageModelError,
         MethodologyNotIndexedError,

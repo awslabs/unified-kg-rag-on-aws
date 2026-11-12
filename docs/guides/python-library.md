@@ -60,7 +60,8 @@ guard.
   `search_type`, `top_k`, `suffix`
   ([index suffix](../concepts/scopes-and-namespaces.md#index-suffix)),
   `filters`, `conversation_id`, `use_memory`, `history`, `target_language`);
-  a plain dict works too. What each option does: [Querying](./query.md);
+  a plain dict works too. An unknown key is refused (a dict's with
+  `InvalidArgumentError`), not ignored. What each option does: [Querying](./query.md);
   `history` is the conversation of a caller that keeps it itself
   ([History from the caller](./query.md#history-from-the-caller)).
 - `output.citations` lists the numbered context sections the answer's `[n]`
@@ -134,7 +135,8 @@ if __name__ == "__main__":
 (methodologies, servable strategies, indices with their item counts and
 embedding model, the build record, the registry's records by status), and
 `export_graph(config, path, suffix=..., format="jsonl" | "graphml")`
-streams its graph with the provenance of every item to a file; both read
+streams its graph with the provenance of every item to a file (an existing
+file only with `overwrite=True`); both read
 the stores only. `run-describe` prints them
 ([Inspect and export](./inspect.md)).
 
@@ -144,7 +146,9 @@ the stores only. `run-describe` prints them
   rather than raising, so check it as above.
 - The errors to tell apart are exported from the package root:
   `ConfigurationError` (a setting to fix; `StoreRequestRejectedError` among
-  them), `InvalidFilterError`, `IndexNotFoundError`, `StoreConnectionError`,
+  them), `InvalidFilterError`, `InvalidArgumentError` (an invalid query
+  input or tool argument, an output file that exists; `ToolArgumentError`
+  is the same class), `IndexNotFoundError`, `StoreConnectionError`,
   `QueryTimeoutError`, `NamespaceLeaseError`, `DocumentNotFoundError`,
   `ModelError` (a model call that failed: `LanguageModelError`,
   `EmbeddingModelError` or `RerankModelError`), `PipelineExecutionError` and

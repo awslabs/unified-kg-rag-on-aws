@@ -38,7 +38,10 @@ from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.linking import exact_links
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.shared import get_logger
-from unified_kg_rag.shared.exceptions import MethodologyNotIndexedError
+from unified_kg_rag.shared.exceptions import (
+    IndexNotFoundError,
+    MethodologyNotIndexedError,
+)
 from unified_kg_rag.shared.utils import safe_float_parse
 
 if TYPE_CHECKING:
@@ -75,10 +78,9 @@ def _document_retriever(chain: GraphRAGChain) -> BaseGraphRAGRetriever:
 
 async def require_namespace(chain: GraphRAGChain, suffix: str | None) -> None:
     """Raise ``IndexNotFoundError`` when nothing was ingested under
-    ``suffix``: the check a query runs before its first model call."""
-    await _document_retriever(chain).arequire_namespace(
-        resolve_namespace(chain.config, suffix)
-    )
+    ``suffix``: the check a query runs before its first model call (the
+    chain's, which remembers a namespace found)."""
+    await chain._arequire_namespace(suffix)
 
 
 def _fetch(
@@ -122,8 +124,13 @@ async def find_entities(
     as the strategies link one (``linking.exact_links``: an Arabic alef
     without its hamza, ``ё`` as ``е``, a leading ``شركة``) is a ``name``
     match.
+
+    Raises:
+        IndexNotFoundError: Nothing was ingested under ``suffix`` (checked
+            first, as a query is: no retrieval logs its failure).
     """
     suffix = resolve_namespace(chain.config, suffix)
+    await require_namespace(chain, suffix)
     entity_id, iri, name = (
         unicodedata.normalize("NFC", v) if v else v for v in (entity_id, iri, name)
     )
@@ -363,10 +370,16 @@ async def describe_namespace(
     schema: tuple[ExtractionSchema | None, str | None] | None = None,
 ) -> NamespaceDescription:
     """What the namespace of ``suffix`` holds (its build record, else the
-    configured methodologies), the strategies that serves, its last build
+    configured methodologies; nothing when nothing was ingested under it:
+    ``exists`` false), the strategies that serves, its last build
     and the extraction schema the configuration resolves to (``schema``,
     :func:`resolve_schema`'s result, when the caller holds it)."""
     suffix = resolve_namespace(chain.config, suffix)
+    try:
+        await require_namespace(chain, suffix)
+        exists = True
+    except IndexNotFoundError:
+        exists = False
     # Read fresh: the last build it reports is the current one.
     holdings = await methodology_check.read_holdings(chain, suffix, refresh=True)
     record = holdings.record
@@ -374,7 +387,7 @@ async def describe_namespace(
     fields = _document_retriever(chain).filter_fields()
     return NamespaceDescription(
         namespace=suffix,
-        **methodology_check.summarize_namespace(holdings, chain.config),
+        **methodology_check.summarize_namespace(holdings, chain.config, exists=exists),
         build=(
             {k: record[k] for k in _BUILD_KEYS if k in record}
             if isinstance(record, dict)

@@ -61,7 +61,10 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
 
 `--filters key:value ...`(또는 `RAGInput.filters`)는 검색이 순위를 매길 대상을
 좁힙니다. 키·`:`·값 중 하나가 없는 쌍, 두 번 준 키, 전략이 읽는 어떤 인덱스도 선언하지
-않은 키는 사용법 오류(종료 코드 2)입니다.
+않은 키는 사용법 오류(종료 코드 2)입니다. 목록(값 중 하나와 일치)이나 범위는
+`--filters-json`에 `RAGInput.filters`와 같은 JSON 객체 하나로 줍니다
+(`'{"start_date": {"gte": "2022-07-01"}, "category": ["a", "b"]}'`). 검사 방식은 같고,
+`--filters`와 함께 주면 키마다 둘 중 한쪽에만 둡니다.
 
 - 필터는 해당 필드를 선언한 저장소에만 적용됩니다(`type:person`은 텍스트 단위를
   거르지 않음). 선택한 전략이 읽는 저장소 어디에도 선언되지 않은 키(예: `category`,

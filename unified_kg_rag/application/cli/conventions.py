@@ -54,7 +54,7 @@ from unified_kg_rag import __version__
 from unified_kg_rag.application.cli.display import console
 from unified_kg_rag.application.cli.launch import wants_json
 from unified_kg_rag.shared import observability, setup_logging
-from unified_kg_rag.shared.exceptions import ErrorClass
+from unified_kg_rag.shared.exceptions import ErrorClass, classify
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
@@ -119,12 +119,21 @@ RUN_FAILED = "RunFailed"
 INTERRUPTED = "Interrupted"
 
 
-def usage_error(message: str, error_type: str = USAGE_ERROR) -> NoReturn:
-    """Report a usage or configuration error as argparse does and exit 2
-    (``error_type`` names it in the JSON status: the exception's class when
-    one was refused, ``ConfigurationError``)."""
+def usage_error(
+    message: str | BaseException,
+    error_type: str | None = None,
+    *,
+    error_class: ErrorClass | None = None,
+) -> NoReturn:
+    """Report a usage or configuration error as argparse does and exit 2.
+
+    ``message`` is the text, or the exception the run refused, which then
+    names the ``error_type`` (its class) and the ``error_class``
+    (:func:`error_class_for`) of the JSON status unless they are given; a
+    text is a :data:`USAGE_ERROR` of class ``invalid_argument`` by
+    default."""
     print(f"{Path(sys.argv[0]).name}: error: {message}", file=sys.stderr)
-    print_status(EXIT_USAGE, message, error_type=error_type)
+    print_status(EXIT_USAGE, message, error_type=error_type, error_class=error_class)
     raise SystemExit(EXIT_USAGE)
 
 
@@ -136,16 +145,38 @@ def error_type_of(exit_code: int, error: BaseException | str | None) -> str:
     return USAGE_ERROR if exit_code == EXIT_USAGE else RUN_FAILED
 
 
+def error_class_for(exit_code: int, error: BaseException | str | None) -> ErrorClass:
+    """The ``error_class`` of a failure: the exception's (:func:`classify`),
+    else ``invalid_argument`` for exit 2 (a usage error) and ``failure``. An
+    exception of no other class that a CLI refused as a usage error (an
+    invalid input file) is ``invalid_argument`` too: the class agrees with
+    the exit code (:data:`EXIT_CODES`)."""
+    error_class = ErrorClass.FAILURE
+    if isinstance(error, BaseException) and not isinstance(error, SystemExit):
+        error_class = classify(error)
+    if error_class is ErrorClass.FAILURE and exit_code == EXIT_USAGE:
+        return ErrorClass.INVALID_ARGUMENT
+    return error_class
+
+
 def failure_fields(
-    exit_code: int, error: BaseException | str | None, error_type: str | None = None
+    exit_code: int,
+    error: BaseException | str | None,
+    error_type: str | None = None,
+    *,
+    error_class: ErrorClass | None = None,
 ) -> dict[str, Any]:
     """The keys every JSON failure document has: ``status`` ``failed``, the
-    ``exit_code``, the ``error`` message (when there is one) and its
-    ``error_type`` (:func:`error_type_of` unless given). A CLI whose result
-    document shows a failure merges them into it."""
+    ``exit_code``, the ``error`` message (when there is one), its
+    ``error_class`` (:class:`ErrorClass`, the stable key a caller branches
+    on: :func:`error_class_for` unless given) and ``error_type`` (the
+    exception's class name, informational: :func:`error_type_of` unless
+    given). A CLI whose result document shows a failure merges them into
+    it."""
     fields: dict[str, Any] = {"status": "failed", "exit_code": exit_code}
     if isinstance(error, str | Exception) and str(error):
         fields["error"] = str(error)
+    fields["error_class"] = (error_class or error_class_for(exit_code, error)).value
     fields["error_type"] = error_type or error_type_of(exit_code, error)
     return fields
 
@@ -173,6 +204,67 @@ def failure_rate(value: str) -> float:
     if not 0.0 <= rate <= 1.0:
         raise argparse.ArgumentTypeError("must be between 0.0 and 1.0")
     return rate
+
+
+def _same_file(a: Path, b: Path) -> bool:
+    if a.exists() and b.exists():
+        return a.samefile(b)
+    return a.resolve() == b.resolve()
+
+
+def _loaded_schema_file(config: Any) -> Path | None:
+    """The local file the config's extraction schema source names (a plain
+    path or a ``file://`` URL), or None for none, S3 or another scheme."""
+    from unified_kg_rag.adapters.source_files.locations import resolve_source_path
+    from unified_kg_rag.shared.exceptions import ConfigurationError
+
+    source = config.processing.graph_extraction.schema_source.path
+    if not source:
+        return None
+    try:
+        resolved = resolve_source_path(source, refusal="")
+    except ConfigurationError:
+        return None
+    return resolved if isinstance(resolved, Path) else None
+
+
+def refuse_overwrites(
+    outputs: list[tuple[str, Path | None]],
+    *,
+    force: bool,
+    config_path: str | None,
+    config: Any,
+    remedy: str = "write the output to another file",
+) -> None:
+    """Exit 2 (:func:`usage_error`) before a CLI writes anything when one of
+    its ``outputs`` (``(flag, path)``, a None path is not written) would
+    replace an input of the run, the ``--config-path`` file or the schema
+    file the config loads (always), names an existing file without
+    ``--force``, or when two outputs name one file (``remedy`` ends the
+    message of a refused input)."""
+    written = [(flag, path) for flag, path in outputs if path is not None]
+    inputs = [
+        (Path(config_path) if config_path else None, "the --config-path file"),
+        (
+            _loaded_schema_file(config),
+            "the schema file the config loads "
+            "(processing.graph_extraction.schema_source)",
+        ),
+    ]
+    for flag, path in written:
+        for source, name in inputs:
+            if source is not None and _same_file(path, source):
+                usage_error(f"{flag} '{path}' is {name}; {remedy}")
+    for i, (flag, path) in enumerate(written):
+        for other, other_path in written[i + 1 :]:
+            if _same_file(path, other_path):
+                usage_error(f"{flag} and {other} name one file: '{path}'")
+    for flag, path in written:
+        if path.exists() and not force:
+            usage_error(
+                f"{flag} '{path}' exists; pass --force to replace it, or name "
+                "another file"
+            )
 
 
 def is_loopback(host: str) -> bool:
@@ -509,7 +601,10 @@ def json_output(args: argparse.Namespace) -> bool:
 
 
 def print_json(result: Any) -> None:
-    """Print ``result`` as the run's one JSON document on stdout."""
+    """Print ``result`` as the run's one JSON document on stdout, with the
+    package ``version`` that wrote it (a key every document has)."""
+    if isinstance(result, dict):
+        result = {"version": __version__, **result}
     with _print_lock:
         _json["printed"] = True
         print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
@@ -520,6 +615,7 @@ def print_status(
     error: BaseException | str | None = None,
     *,
     error_type: str | None = None,
+    error_class: ErrorClass | None = None,
     **fields: Any,
 ) -> None:
     """Print the status document of a run that exits ``exit_code`` without
@@ -533,7 +629,9 @@ def print_status(
         if exit_code in (EXIT_INTERRUPTED, EXIT_TERMINATED):
             status: dict[str, Any] = interrupted_fields(exit_code)
         else:
-            status = failure_fields(exit_code, error, error_type)
+            status = failure_fields(
+                exit_code, error, error_type, error_class=error_class
+            )
         print_json({**status, **fields})
 
 

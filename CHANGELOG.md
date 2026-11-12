@@ -234,10 +234,12 @@ See [exit codes and JSON output](docs/reference/exit-codes-and-json.md) and the
 - `--output-format json` prints one JSON document on stdout (a status document on failure, argparse errors included)
   and everything else on stderr; `run-ingestion` rejects it with `--metrics-sink cloudwatch` (#333, #359, #366,
   #420).
-- JSON failures have one schema: `status` (`failed`, or `interrupted`), `exit_code`, `error` and a new `error_type`
-  (the exception's class, `UsageError`, `FailureBudgetExceeded`, `RegressionGateFailed`, `RunFailed` or
+- JSON failures have one schema: `status` (`failed`, or `interrupted`), `exit_code`, `error`, a new `error_class`
+  (the `ErrorClass` value, the stable key; a refused command line is `invalid_argument`) and `error_type`
+  (informational: the exception's class, `UsageError`, `FailureBudgetExceeded`, `RegressionGateFailed`, `RunFailed` or
   `Interrupted`), in a status document and in a result that shows a failure: a failed `run-rag` query adds them to
-  `success: false` (it had only `error`), and a failing `run-eval` or `run-visualization` result has them (#629).
+  `success: false` (it had only `error`), and a failing `run-eval`, `run-ingestion` or `run-visualization` result has
+  them (#629). Every JSON document starts with `version`, the package version that wrote it.
 - `run-rag --output-format json`: an answer's `search_results` leaves out `results`, which repeated its `sources`;
   `--verbose` keeps them (#629).
 - `run-eval --search-strategy` takes a list (`["auto"]` by default); with several strategies or `--repeats` it
@@ -368,6 +370,11 @@ See [`iac/README.md`](iac/README.md).
 - `Config` reads models through `model_id(ModelRole.X)`, `tier_model_id`, `model_tier`, `embedding_model_id`,
   `embedding_dimension` and `rerank_model_id`; `ModelRole.GLOBAL_REDUCE` is gone (#334, #577).
 - `PipelineContext.unit_extractions` replaces `entities`, `relationships` and `rejected_entities` (#322).
+- `RAGInput` and `PipelineConfig` refuse an unknown key instead of ignoring it, as `Config` does: a dict query with
+  MCP's `strategy` for `search_strategy` ran `auto` at full model cost, and `PipelineConfig(force_rebuld=True)` left
+  `force_rebuild` off. A dict query raises `InvalidArgumentError` before any model call; the console's API refuses
+  an unknown body key or query parameter too (422, `invalid_argument`), the Ask, graph and evaluation reads
+  included.
 
 #### Query behaviour
 - The guardrail no longer wraps every model call: it screens the user query and the final answer through
@@ -826,8 +833,11 @@ From a `main` checkout (formats and keys no release had):
   otherwise), and on any loopback address the `Host` and `Origin` headers must name it or a loopback name (421/403).
   `build_mcp_server` and `build_mcp_app` (package root; the latter the stateless ASGI application, its
   `Host`/`Origin` checks on with `allowed_hosts`) mount the same server in a host's application; neither changes the
-  chain given. Under `processing.ignore_errors` the error answer names its error in `metadata.error_type`. Guide:
-  [MCP server](docs/guides/mcp.md).
+  chain given. Under `processing.ignore_errors` the error answer names its error in `metadata.error_type`. A tool
+  error names its error class in brackets (`[store_unreachable] ...`), so an agent tells an outage to retry
+  from an argument to fix; an unknown argument is refused (`additionalProperties: false` in every input schema;
+  `kg_neighbors` with `depth` ran with the default `max_hops`), and a refused one is named on one line
+  (`[invalid_argument] top_k: ...`), not with pydantic's text. Guide: [MCP server](docs/guides/mcp.md).
 - Structured graph queries, opt-in and unmeasured (#630): the `structured` search strategy answers counts, rankings,
   lists, paths between two named entities and seed-entity properties from a query the graph store runs. One planner
   call (`models.roles.graph_query`, default tier; `custom_prompts.graph_query_*`;
@@ -908,7 +918,8 @@ From a `main` checkout (formats and keys no release had):
   file ingestion does not read (another type, or hidden) or naming one path as a file and a folder, writes an
   upload all or none (a refused one leaves no folder) and atomically (a temporary file 0600 until the rename, a
   re-upload keeping the replaced file's mode; a name past its folder's limit is refused up front, `path_refused`),
-  names an error by its class (`ErrorClass`), and loads
+  names an error by its class (`ErrorClass`; `error_class` in every API error and Ask error event, `invalid_argument`
+  for a request it refuses), and loads
   nothing from another host. The web client
   (`console/web/`, Vite, React, TypeScript) is in English and nine more languages, in a light and a dark theme (the
   system's unless one is chosen in the top bar), set in Pretendard (Pretendard JP for Japanese, JetBrains Mono for
@@ -1032,6 +1043,11 @@ From a `main` checkout (formats and keys no release had):
   that full build (a reset) also deletes the namespace's graph when a graph endpoint is configured (#612). See
   [methodology profiles](docs/concepts/overview.md#methodology-profiles) and [Design
   §4.6](docs/design.md#46-methodology-profiles).
+- Plugins for the CLIs, the MCP server and the console: the entry points of the `unified_kg_rag.plugins` group (or the
+  modules `UKR_PLUGINS` names instead) are imported once per process, before a CLI loads its config and in
+  `build_providers`, so a provider kind, schema or seed source, renderer or file loader a plugin registers is
+  selectable from the deployed image without a fork; one that cannot be loaded fails naming it. See [Loading
+  plugins](docs/guides/extend.md#loading-plugins).
 - Local mode: the `providers` section and provider registry (`@register_provider`), Ollama and OpenAI-compatible
   models, a sentence-transformers cross-encoder reranker, embedded SQLite graph and vector stores and registry, the
   `local` extra and an Ollama service in `docker/compose.local.yaml` (#154, #209, #271-#273). The cross-encoder is
@@ -1055,23 +1071,35 @@ From a `main` checkout (formats and keys no release had):
 - Documents from memory: `DataIngestionPipeline.insert_documents([InputDocument(id=..., text=..., filters=...)])`
   adds or updates documents, `delete_documents(ids)` deletes them, through the incremental path of `run` (one run
   each, under the namespace lease); the source scope's other documents are kept (`DocumentDelta.kept`). Needs the
-  doc-status registry; an id the registry does not hold raises the new `DocumentNotFoundError` before any write
-  (#628), unless the interrupted run of the same `pipeline_id` deleted it (a retry finishes the others), and a
-  methodology the namespace does not hold yet raises `ConfigurationError` before the run, naming the methodologies
-  held and the directory run that adds it (#640). See [Python
+  doc-status registry; an id the registry does not hold raises the new `DocumentNotFoundError` (error class
+  `invalid_argument`) before any write (#628), unless the interrupted run of the same `pipeline_id` deleted it (a
+  retry finishes the others), and a methodology the namespace does not hold yet raises `ConfigurationError` before the
+  run, naming the methodologies held and the directory run that adds it (#640). See [Python
   library](docs/guides/python-library.md#documents-from-memory).
 - `run-describe` (and `describe_namespace`, `export_graph`): what an index namespace holds (methodologies, the
   strategies it serves, each index's item count and embedding model, the build record, the registry's records), and
-  its graph streamed from the vector store as JSON Lines or GraphML with every item's text units and documents
-  (a document by its path relative to the corpus root, else its file name, never the indexing host's path;
+  its graph streamed from the vector store as JSON Lines or GraphML with every item's text units and documents (a
+  document by its path relative to the corpus root, else its file name, never the indexing host's path;
   `--output-path`, `--export-format`, `--max-items`; written atomically, so a failed export leaves the previous file
-  and no partial one); `VectorIndexer.describe_indices` and `scan_items` (#628). It, `kg_describe_schema` (which
-  adds `auto_routes`), the console and the chain's refusal read what a namespace holds by one rule
-  (`NamespaceHoldings`): without a build record the console shows what the config builds, as queries are served, not
-  nothing held. A registry the caller cannot read (the CDK query task's role has no DynamoDB access) is reported
-  unavailable, with the reason in `registry_unavailable` and a warning, and the rest is still described (#636). A
-  missing extra and a namespace that holds no index exit 2 with the error on stderr, and describing creates no store
-  file where nothing was ingested (#641). See [inspect and export](docs/guides/inspect.md).
+  and no partial one; an existing file is replaced only with `--force`, `export_graph(overwrite=True)`, and never the
+  `--config-path` file or the schema file the config loads, by the guard `run-prompt-tuning` shares);
+  `VectorIndexer.describe_indices` and `scan_items` (#628). It, `kg_describe_schema` (which adds `auto_routes`), the
+  console and the chain's refusal read what a namespace holds by one rule (`NamespaceHoldings`): without a build
+  record the console shows what the config builds, as queries are served, not nothing held; a namespace nothing was
+  ingested under holds nothing (`exists: false`, also in `kg_describe_schema`; `acheck_methodology` and a query raise
+  `IndexNotFoundError`, not a methodology refusal naming the config's). A registry the caller cannot read (the CDK
+  query task's role has no DynamoDB access) is reported unavailable, with the reason in `registry_unavailable` and a
+  warning, and the rest is still described (#636). A missing extra and a namespace that holds no index exit 2 with the
+  error on stderr, and describing creates no store file where nothing was ingested (#641). `--documents
+  failed,quarantined` (`describe_namespace(documents=...)`) lists the registry's documents of those statuses with their
+  `error_info`, counts, writer and time; a run names the documents it deletes in one INFO line. See
+  [inspect and
+  export](docs/guides/inspect.md).
+- Telemetry names the namespace (the tenant boundary) and ties a query to its logs: `kg_rag.namespace` on every span
+  of a query or ingestion run, `namespace` in their log context and an ingestion run's EMF properties; the
+  ingestion root span has `kg_rag.mode` and the delta counts, the query span `kg_rag.degraded` and
+  `kg_rag.error_class`; a result's `metadata.query_id` and `metadata.trace_id` (also MCP's `query_id` /
+  `trace_id`) are the ids of its log lines and trace, and a console question's log lines carry its id.
 - Observability: the `observability` section and `otel` extra, spans for runs, stages, batches and query steps,
   GenAI model-call spans, OTLP, Langfuse and Phoenix exporters with redacted content capture (an IPv6 endpoint keeps
   its brackets in the logged URL); CDK `enable_cloudwatch_tracing` with an ADOT sidecar (#207, #208, #211, #219,
@@ -1318,8 +1346,9 @@ From a `main` checkout (formats and keys no release had):
   single one." (0); "ni uno" and "nem um" are words for none (#324, #516, #606, #613).
 - Strategy comparison: `run-eval --search-strategy a,b --repeats N` with bootstrap intervals, `deltas_by_category`,
   a `--pairwise-judge` (LightRAG's verdicts with `evaluation.pairwise_overall`, `position_consistency`, a win-rate
-  interval, `--judge-model`) and `prepare-benchmark musique` (#324, #516, #536). See
-  [benchmarks](docs/guides/benchmarks.md).
+  interval, `--judge-model`) and `prepare-benchmark musique` (#324, #516, #536); each benchmark (`musique`,
+  `assertions`, `structural`) is a subcommand with its own flags, and another one's (`structural --limit`) exits 2
+  instead of being ignored. See [benchmarks](docs/guides/benchmarks.md).
 - Unanswerable questions and declines (opt-in; defaults unchanged): `prepare-benchmark musique --unanswerable N`
   adds MuSiQue-Full unanswerable questions (`metadata.answerable: false`, the full dev split downloaded at a pinned
   revision, SHA-256 checked), leaving out any whose answerable twin is sampled or whose removed supporting
@@ -1400,6 +1429,9 @@ From a `main` checkout (formats and keys no release had):
   switch, and a running query service follows it without a restart (#466, #470, #473, #474).
 - `indexing.opensearch.vector_mode` / `compression_level`: on-disk quantized vectors on OpenSearch 2.17+ (#461).
 - `run-prompt-tuning` reads every format ingestion parses; each `run-*` `--help` ends with an example (#121).
+- `run-rag --filters-json '{"start_date": {"gte": "2022-07-01"}, "category": ["a", "b"]}'`: the list and range
+  filters the library, the MCP server and the console take, checked as a query checks them, beside `--filters`
+  (each key in one of the two). See [filters](docs/reference/filters.md).
 - `run-rag` text output: `--mode search` prints each hit (type, file or name, score, the start of its text) where it
   printed a header alone, and an answer is followed by one line naming its source files and counting its graph
   elements; `--verbose` lists every source with its score and text, in `--interactive` mode too (which printed
@@ -1464,6 +1496,12 @@ From a `main` checkout (formats and keys no release had):
   `DocumentsNotIndexed`, and `QueryLatencyHigh` on `run-rag --metrics-sink cloudwatch`'s `query_latency_ms`, and
   `QueryFailures` on the failed share of queries (`query_failed`); each also notifies when it recovers, and the
   dashboard shows the stores' metrics and every alarm's state (#330, #519, #528).
+- IaC alarms: `BedrockThrottling`, `IngestionTaskMemory`, OpenSearch snapshot failures, blocked writes, thread-pool
+  rejections, a yellow multi-node cluster, an unusable KMS key, ephemeral storage, `DocumentsNotIndexed`, and
+  `QueryLatencyHigh` on `run-rag --metrics-sink cloudwatch`'s `query_latency_ms` (#330, #519, #528). The chain emits
+  the query metrics itself, through the new `Providers.metrics_sink`, so a library host, MCP app or console counts
+  too: per answer `query_latency_ms` and the outcome `query_failed`, `query_degraded`, `query_abstained` (0 or 1),
+  per `Strategy` that ran (`auto` queries no longer land under `auto`), with `Namespace` a log property.
 - The package ships a `py.typed` marker (#568). `main` reports `0.3.0.dev0`, and a `v<version>` tag runs a release
   workflow that publishes a GitHub release: the tag must be on `main`, the notes are the section's introduction,
   *Highlights*, *Breaking changes*, *Upgrading* and *Security* with a link to the version's heading for the rest, and
@@ -1799,7 +1837,8 @@ From a `main` checkout (formats and keys no release had):
   relationship's `A -> B`) and `[n]` alike; `run-rag` builds its text and JSON output from it, the model-written
   sections an answer may cite included (`written`; `--verbose` lists them), and names a passage's file once in its
   citation line. A query a surface builds that the chain refuses (a blank question) is an `invalid_argument`
-  (`RAGInput.checked`, `ToolArgumentError`): `run-rag` exits 2 before any model call, the console names it.
+  (`RAGInput.checked`, the new `InvalidArgumentError`, exported; `ToolArgumentError` is the same class): `run-rag`
+  exits 2 before any model call, the console names it.
 
 ### Fixed
 Bugs present in 0.2.3.
@@ -1923,6 +1962,11 @@ Ingestion and incremental indexing.
   garbage.
 - A chunk of whitespace only makes no text unit: a chunk size of a few characters or tokens (`fallback_chunk_size:
   1`) cut the spaces between words into units of their own, and the run failed with `missing embeddings`.
+- A stage that failed because its model calls did keeps their dominant cause: a model server that was down fails
+  it as the `ModelUnreachableError` naming the server (`error_class` `model_unreachable` on the stage result, the
+  `run-ingestion` JSON and the run span), a store as its `StoreConnectionError`, and a failure a known-good request
+  met too as the model's or a setting's; it said "produced 0 outputs. Check the stage configuration", class
+  `failure`. The failed-units summary of a run that stopped before indexing no longer says they were indexed.
 - An extraction, claims, gleaning, report-findings or chunk-boundary section that lists elements reads as empty when
   it holds a short "nothing here" marker, in any language (one line of at most three estimated tokens:
   `<relationships>없음</relationships>`, `なし`, `None.`, `Keine`): only `None`, `N/A`, `null`, `nil` and `-` did,
@@ -2119,6 +2163,12 @@ CLIs, configuration and library.
   handler gets the plain message, and importing the package configures no logging and leaves `sys.path` alone (#178,
   #245, #251, #255, #528).
 - `index_settings` keys reach the indices in either spelling (#260, #404).
+- A query whose model client fails with its own error after its retries (Ollama's `ResponseError`, httpx's
+  `RemoteProtocolError` or `ReadTimeout`) raises a `LanguageModelError` (a `ModelError`, as documented), the client's
+  error as its cause; it raised the raw error. `GraphRAGChain` and `DataIngestionPipeline` are context managers
+  (`with`, and `async with` for the chain, close them), and the console logs each config file save (the key paths of
+  the endpoints and directories it changed, never values). The MCP graph tools check the namespace first, as a
+  query does: one nothing was ingested under no longer logs a retrieval failure with its traceback per call.
 
 Deployment (CDK).
 - With a `bedrock_region` other than the deploy region the dashboard's Bedrock widgets read that region, where the
@@ -2176,6 +2226,11 @@ Deployment (CDK).
   when piped, and no relationship endpoints or output previews from gleaning; an evaluator or judge error is logged
   as its type and a digest, its text at DEBUG; a unit test fails on a new INFO+ log call that passes them (#156,
   #173, #245, #255, #606).
+- Spans carry an error's type and a digest of its message (`kg_rag.error_digest`), not its text or stack, unless
+  `observability.capture_content` (then through `redact_patterns`): a judge's or parser's error quoting corpus text
+  reached Langfuse or Phoenix with capture off. A model server that cannot be reached is named by its URL without
+  userinfo or query, which may hold a key (the message reaches logs, `run-rag` JSON, MCP callers and the failure
+  notification).
 - CLI output escapes the data it prints, and `run-rag` strips terminal control characters (#173, #408).
 - Prompts delimit corpus and retrieved text as data that cannot close its tags, the community report's claim lines
   included (#179, #182, #565); the LLM XML parser never resolves DOCTYPE entities (#578).
