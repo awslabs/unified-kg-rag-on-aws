@@ -17,7 +17,9 @@ Namespace**. Ingestion takes it from `processing.document_parsing.index_value`
 unless `run-ingestion --suffix` names another; `run-rag` and `run-eval`
 query the same `index_value` of their config unless `--suffix` names another,
 and in Python `RAGInput.suffix` selects it (`None`: the chain config's
-`index_value`). All default to `default`. Use one index suffix per
+`index_value`). All default to `default`. Two index prefixes, or the two label
+prefixes, that could name one store (equal, or one is the other followed by
+`-`, as `kg` and `kg-entities`) fail the load. Use one index suffix per
 tenant or corpus version (the same `--suffix`, or the same config file, for
 ingestion and queries), with the same `indexing.additional_suffix` on both
 sides; incremental indexing and deletion are scoped to it

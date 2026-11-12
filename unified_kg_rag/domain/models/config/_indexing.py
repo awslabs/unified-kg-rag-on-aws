@@ -24,6 +24,32 @@ from ..retrieval import (
 )
 
 
+def _check_distinct_prefixes(prefixes: dict[str, str], *, fold: bool = False) -> None:
+    """Refuse two store-name prefixes that can name the same store.
+
+    A store name is ``<prefix>-<suffix>`` (``store_names.store_name``), so
+    two equal prefixes share every store, and a prefix ``a-b`` names the
+    store of prefix ``a`` under the suffix ``b-<suffix>``: another
+    namespace's items would be written to it and read back as the wrong
+    kind. ``fold`` compares the lower-cased prefixes (the graph labels are
+    capitalized, ``store_names.graph_label``).
+    """
+    folded = {
+        field: value.lower() if fold else value for field, value in prefixes.items()
+    }
+    for field, value in folded.items():
+        for other, other_value in folded.items():
+            if field != other and (
+                value == other_value or other_value.startswith(f"{value}-")
+            ):
+                raise ValueError(
+                    f"{other} '{prefixes[other]}' and {field} "
+                    f"'{prefixes[field]}' can name the same store: one prefix"
+                    " must not equal another or start with another followed "
+                    "by '-'"
+                )
+
+
 class NeptuneIndexingConfig(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
@@ -163,6 +189,17 @@ class NeptuneIndexingConfig(BaseModel):
                 "hyphens, and underscores are allowed."
             ) from None
         return value
+
+    @model_validator(mode="after")
+    def _check_label_prefixes(self) -> "NeptuneIndexingConfig":
+        _check_distinct_prefixes(
+            {
+                "entity_label_prefix": self.entity_label_prefix,
+                "community_label_prefix": self.community_label_prefix,
+            },
+            fold=True,
+        )
+        return self
 
 
 # The settings an index this package creates gets when index_settings leaves
@@ -485,6 +522,17 @@ class OpenSearchIndexingConfig(BaseModel):
         if value[0] in "-_":
             raise ValueError(f"{info.field_name} must not start with '-' or '_'")
         return value
+
+    @model_validator(mode="after")
+    def _check_index_prefixes(self) -> "OpenSearchIndexingConfig":
+        _check_distinct_prefixes(
+            {
+                field: getattr(self, field)
+                for field in type(self).model_fields
+                if field.endswith("_index_prefix")
+            }
+        )
+        return self
 
     @field_validator("index_settings")
     @classmethod

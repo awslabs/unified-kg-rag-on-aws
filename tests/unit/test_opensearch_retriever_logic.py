@@ -1961,3 +1961,21 @@ async def test_the_ingested_suffix_check_raises_a_fatal_error(retriever) -> None
     await retriever._require_ingested_suffix("s1", cause)
     with pytest.raises(StoreConnectionError):
         await retriever._require_ingested_suffix("s1", cause)
+
+
+def test_determine_section_type_reads_the_prefix_exactly(retriever, config) -> None:
+    # "kg-ab" starts with "kg-a" but names another store: a hit of a
+    # concrete (timestamped) entities index is an entity, not a text unit.
+    o = config.indexing.opensearch
+    o.text_units_index_prefix = "kg-a"
+    o.entities_index_prefix = "kg-ab"
+    assert (
+        retriever._determine_section_type("kg-ab-default-20261112101010123")
+        == SectionType.ENTITY
+    )
+    assert retriever._determine_section_type("kg-a-default") == SectionType.TEXT
+    assert (
+        retriever._determine_section_type(f"{o.summary_nodes_index_prefix}-t1")
+        == SectionType.SUMMARY
+    )
+    assert retriever._determine_section_type("kg-abc-default") == SectionType.GENERAL

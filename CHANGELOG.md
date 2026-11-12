@@ -2021,7 +2021,10 @@ CLIs, configuration and library.
 - A config with a wrong type, invalid YAML or a missing file is a usage error, an empty config loads the defaults,
   and `custom_prompts` overrides are validated at load (#158, #178, #230); `ConfigurationError` replaces bare
   `ValueError`s (#297).
-- Index suffixes and prefixes are validated at load and on the command line (#367, #372, #374).
+- Index suffixes and prefixes are validated at load and on the command line (#367, #372, #374). Two index prefixes,
+  or the two graph label prefixes, that can name the same store (equal, or one is the other followed by `-`) fail the
+  load, and a search hit's section comes from its index's exact prefix: with nested prefixes every entity hit read as
+  a text unit.
 - `run-rag --filters`: repeated flags add up; a pair without `:`, a blank, duplicate, unknown or `None` value is a
   usage error (#373, #408, #411, #443). `run-rag --interactive`: a line is a command only as a whole, `set-filter`
   keeps whitespace and refuses unknown keys (#353, #413, #416, #426, #428).
