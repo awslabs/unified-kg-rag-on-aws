@@ -158,9 +158,20 @@ def test_every_strategy_cites_the_documents_its_answer_rests_on(
     assert {u["attributes"]["relative_path"] for u in pdf_units} == {"docs/manual.pdf"}
     assert {u["attributes"]["page_start"] for u in pdf_units} == {1, 2}
     stored_ids = {u["_id"] for u in units}
+    unit_files = {u["_id"]: u["_source"]["attributes"]["file_name"] for u in units}
+    # The documents each stored entity and edge states, by its lineage.
+    lineage_files = {
+        hit["_id"]: {unit_files[u] for u in hit["_source"].get("text_unit_ids") or []}
+        for prefix in (
+            config.indexing.opensearch.entities_index_prefix,
+            config.indexing.opensearch.relationships_index_prefix,
+        )
+        for hit in e2e._stored(config, providers, prefix)
+    }
 
     files = {"contract.txt", "manual.pdf"}
     resolved_graph_citation = False
+    spanning_citation = False
     # global and drift answer without citations by default; turned on, as
     # search.citations.strategies allows, every strategy's are checked.
     defaults = config.model_copy(deep=True)
@@ -192,11 +203,17 @@ def test_every_strategy_cites_the_documents_its_answer_rests_on(
                 elif citation.documents:
                     resolved_graph_citation = True
                     assert set(citation.documents[0].text_unit_ids) <= stored_ids
+                    # A graph citation names every document of its lineage.
+                    if citation.source_id in lineage_files:
+                        assert named == lineage_files[citation.source_id], strategy
+                        spanning_citation |= named == files
             # Every citation is a section the model was shown.
             context_text = model.contexts[-1]
             for citation in out.citations:
                 assert re.search(rf"^\[{citation.marker}\] ", context_text, re.M)
         assert resolved_graph_citation
+        # The English corpus states Depot and Vendor in both documents.
+        assert spanning_citation or language is not LanguageCode.EN
 
         # A streamed answer carries the same markers.
         chunks = list(

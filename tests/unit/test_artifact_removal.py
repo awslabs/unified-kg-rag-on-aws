@@ -816,6 +816,119 @@ def test_a_strip_that_notes_again_keeps_the_earlier_notes_claims(mocker) -> None
     assert claim_ids == ["c-split"]
 
 
+def test_a_re_key_whose_strip_note_cannot_be_written_writes_nothing(mocker) -> None:
+    # The strip re-keys "e-old" (no claim to strip first): its note is
+    # written before any item. When that write fails the strip reports its
+    # items failed and writes none of them; the retry re-keys them.
+    from unified_kg_rag.domain.ingestion.derivation import Derived
+
+    manager, graph, vector = _manager()
+    stored = Entity(id="e-old", name="Acme", text_unit_ids=["t1", "t2"])
+    graph.upsert_entities([stored])
+    vector.upsert_entities([stored])
+    mocker.patch.object(
+        manager,
+        "derive",
+        return_value=Derived(
+            entities=[Entity(id="e-new", name="ACME", text_unit_ids=["t1"])],
+            id_remap={"e-old": "e-new"},
+        ),
+    )
+    write = vector.write_extraction_records
+
+    def no_strip_note(records, suffix=None):  # noqa: ANN001, ANN202
+        if "pending-strip" not in records:
+            return write(records, suffix=suffix)
+        stats = IndexingStats(total_items=1)
+        stats.add_error("store down", count=1)
+        return stats
+
+    patched = mocker.patch.object(
+        vector, "write_extraction_records", side_effect=no_strip_note
+    )
+
+    def strip() -> dict[str, IndexingStats]:
+        return manager.remove_text_units_from_shared(
+            "default", entity_ids=["e-old"], relationship_ids=[], text_unit_ids=["t2"]
+        )
+
+    results = strip()
+
+    failed = {key for key, stats in results.items() if stats and stats.failed_items}
+    assert failed == {"graph_read_default"}
+    assert results["graph_read_default"].failed_items == 1
+    assert graph.ids("entities") == {"e-old"}
+    assert set(vector.data["entities"]) == {"e-old"}
+    assert graph.read_entities(["e-old"])[0].text_unit_ids == ["t1", "t2"]
+    assert vector.read_extraction_records(["pending-strip"], suffix="default") == {}
+
+    mocker.stop(patched)
+    results = strip()
+
+    assert not any(stats.failed_items for stats in results.values() if stats)
+    assert graph.read_entities(["e-new"])[0].text_unit_ids == ["t1"]
+    assert "e-new" in vector.data["entities"]
+
+
+def test_a_strip_notes_the_edges_a_retry_would_not_find_not_unchanged_ones(
+    mocker,
+) -> None:
+    # The strip re-keys "e-old": its edge takes the new endpoint (a retry
+    # would not find it by the removed unit), and the edge it derives as
+    # stored (same endpoints, units and strengths) is not noted.
+    from unified_kg_rag.domain.ingestion.derivation import Derived
+    from unified_kg_rag.domain.ingestion.relationship_weights import (
+        apply_text_unit_weights,
+    )
+    from unified_kg_rag.domain.models import Relationship
+
+    def edge(rel_id: str, source: str, target: str, weights: dict) -> Relationship:
+        rel = Relationship(id=rel_id, source_id=source, target_id=target, type="R")
+        apply_text_unit_weights(rel, weights)
+        return rel
+
+    manager, graph, vector = _manager()
+    entities = [
+        Entity(id="e-old", name="Acme", text_unit_ids=["t1", "t2"]),
+        Entity(id="e2", name="Depot", text_unit_ids=["t1", "t2"]),
+        Entity(id="e3", name="Buyer", text_unit_ids=["t1"]),
+    ]
+    edges = [
+        edge("r-kept", "e2", "e3", {"t1": 2.0}),
+        edge("r-old", "e-old", "e2", {"t1": 1.0, "t2": 1.0}),
+    ]
+    for store in (graph, vector):
+        store.upsert_entities(entities)
+        store.upsert_relationships(edges)
+    mocker.patch.object(
+        manager,
+        "derive",
+        return_value=Derived(
+            entities=[
+                Entity(id="e-new", name="ACME", text_unit_ids=["t1"]),
+                Entity(id="e2", name="Depot", text_unit_ids=["t1"]),
+                entities[2],
+            ],
+            relationships=[
+                edges[0].model_copy(),
+                edge("r-old", "e-new", "e2", {"t1": 1.0}),
+            ],
+            id_remap={"e-old": "e-new"},
+        ),
+    )
+    note = mocker.spy(manager._removal, "_note_pending_strip")
+
+    manager.remove_text_units_from_shared(
+        "default",
+        entity_ids=["e-old", "e2"],
+        relationship_ids=["r-kept", "r-old"],
+        text_unit_ids=["t2"],
+    )
+
+    _, _, relationship_ids, _ = note.call_args.args
+    assert relationship_ids == ["r-old"]
+
+
 def test_a_removal_clears_a_note_whose_items_are_gone(mocker) -> None:
     # An earlier strip's note names an item this removal deletes outright
     # (it cites only the removed unit), so nothing is left to strip: the

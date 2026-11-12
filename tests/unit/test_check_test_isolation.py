@@ -30,6 +30,7 @@ def _script() -> ModuleType:
     return module
 
 
+@pytest.mark.slow
 @pytest.mark.timeout(60)
 def test_a_file_that_needs_another_first_fails(tmp_path: Path) -> None:
     script = _script()
@@ -48,6 +49,7 @@ def test_a_file_that_needs_another_first_fails(tmp_path: Path) -> None:
     assert script.main([str(tmp_path), "--jobs", "2"]) == 1
 
 
+@pytest.mark.slow
 @pytest.mark.timeout(60)
 def test_a_file_past_the_timeout_fails_named(tmp_path: Path) -> None:
     # A hung file is stopped and named, not left to run the job out.
@@ -64,6 +66,7 @@ def test_a_file_past_the_timeout_fails_named(tmp_path: Path) -> None:
     assert failed[0][2].endswith("timed out after 8 s")
 
 
+@pytest.mark.slow
 @pytest.mark.timeout(60)
 @pytest.mark.skipif(os.name != "posix", reason="process groups")
 def test_a_timed_out_file_s_children_are_stopped_with_it(tmp_path: Path) -> None:
@@ -95,6 +98,7 @@ def test_a_timed_out_file_s_children_are_stopped_with_it(tmp_path: Path) -> None
         pytest.fail("the timed-out file's child outlived it")
 
 
+@pytest.mark.slow
 @pytest.mark.timeout(90)
 @pytest.mark.skipif(not Path("/proc/self/fd").is_dir(), reason="needs /proc")
 def test_a_grandchild_in_its_own_session_does_not_hang_the_check(

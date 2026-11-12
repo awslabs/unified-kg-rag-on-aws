@@ -71,6 +71,7 @@ GUARD = SourceGuard(
 )
 
 
+@pytest.mark.slow
 def test_no_copy_of_the_namespace_rule_remains() -> None:
     found = [str(hit) for hit in GUARD.copies()]
     assert not found, f"use {GUARD.use}: {found}"

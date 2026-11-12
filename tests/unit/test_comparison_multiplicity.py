@@ -315,6 +315,7 @@ def _null_comparison(rng: np.random.Generator, queries: int, **kwargs):
 
 
 class TestNullComparisons:
+    @pytest.mark.slow
     def test_false_positives_on_the_comparison_path(self) -> None:
         # The comparison as run-eval builds it, on A/A pairs (fewer trials
         # than the p-value checks above: each builds a whole comparison).

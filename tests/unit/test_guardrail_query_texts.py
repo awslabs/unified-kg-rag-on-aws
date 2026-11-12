@@ -59,6 +59,8 @@ def _respond(system: str, _human: str) -> str:
         )
     if "rewrite" in head:
         return json.dumps({"question": "Who supplies the Secret Buyer?"})
+    if "entity extraction expert" in head:
+        return "Vendor, Buyer"
     return "Acme supplies the Buyer [1]."
 
 
@@ -110,8 +112,16 @@ async def test_the_rewrite_and_keywords_are_screened_before_the_caller_sees_them
     assert {r["action"] for r in records} == {"masked", "blocked"}
 
 
-async def test_a_refused_answer_keeps_no_model_reading_of_the_question() -> None:
-    output = await _ask(_Guard(block_answer=True), "mix")
+# mix reads the LightRAG keywords, local the query's entities (its focus).
+@pytest.mark.parametrize("strategy", ["mix", "local"])
+async def test_a_refused_answer_keeps_no_model_reading_of_the_question(
+    strategy: str,
+) -> None:
+    answered = await _ask(_Guard(), strategy)
+    read = answered.search_results.query
+    assert read.hl_keywords if strategy == "mix" else read.entity_focus
+
+    output = await _ask(_Guard(block_answer=True), strategy)
 
     assert output.answer == "Refused."
     processed, searched = output.processed_query, output.search_results.query
