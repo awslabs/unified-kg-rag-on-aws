@@ -377,6 +377,26 @@ class TestSimpleTextChunker:
         units = simple_chunker._chunk_single_document(_doc(text))
         assert [u.text for u in units] == [text]
 
+    @pytest.mark.parametrize("unit", list(ChunkLengthUnit))
+    def test_a_size_of_one_makes_no_blank_unit(self, config: Config, unit) -> None:
+        # Regression (rv24 quality 9): fallback_chunk_size 1 (valid) cut the
+        # spaces and line breaks into chunks of their own, kept as units, and
+        # the run failed with "missing embeddings".
+        chunking = config.processing.chunking
+        chunking.length_unit = unit
+        chunking.min_chunk_size = chunking.fallback_chunk_size = 1
+        chunking.chunk_overlap = 0
+        text = "Vendor ships.\n\nBuyer pays.\n \n공급자 납품."
+        units = SimpleTextChunker(config, show_progress=False)._chunk_single_document(
+            _doc(text)
+        )
+        assert units and all(u.text.strip() for u in units)
+        assert [u.attributes["chunk_id"] for u in units] == list(
+            range(1, len(units) + 1)
+        )
+        assert {u.attributes["total_chunks"] for u in units} == {len(units)}
+        assert "".join(u.text for u in units) == "".join(text.split())
+
     def test_empty_content_returns_no_units(self, simple_chunker) -> None:
         assert simple_chunker._chunk_single_document(_doc("")) == []
 
@@ -739,6 +759,23 @@ class TestIntelligentChunkerPipeline:
         assert len(units) >= 1
         assert all(u.attributes["chunking_method"] == "fallback" for u in units)
         assert intelligent_chunker.stats.llm_processing_failures == 1
+
+    def test_a_blank_fallback_chunk_makes_no_unit(
+        self, intelligent_chunker, mocker
+    ) -> None:
+        # rv24 quality 9: the size-based fallback at a size of one kept the
+        # blanks between words as units.
+        intelligent_chunker.chunker.invoke = mocker.Mock(return_value=None)
+        intelligent_chunker.fallback_splitter = intelligent_chunker._create_splitter(
+            1, 0
+        )
+        intelligent_chunker.chunk_processor.min_chunk_size = 1
+        text = "alpha beta\n\ngamma delta\nepsilon"
+        units = intelligent_chunker._chunk_single_document(_doc(text))
+        assert units and all(u.text.strip() for u in units)
+        assert [u.attributes["chunk_id"] for u in units] == list(
+            range(1, len(units) + 1)
+        )
 
     def test_chunk_single_document_empty_content(self, intelligent_chunker) -> None:
         assert intelligent_chunker._chunk_single_document(_doc("")) == []

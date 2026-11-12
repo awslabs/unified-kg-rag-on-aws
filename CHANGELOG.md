@@ -1915,6 +1915,8 @@ Ingestion and incremental indexing.
 - A `.txt`, `.md`, `.csv`, `.json` or `.html` file that is not UTF-8 and whose encoding is not detected (a binary file
   with a text suffix) fails to parse and counts as failed: it was decoded as latin-1 and indexed as text units of
   garbage.
+- A chunk of whitespace only makes no text unit: a chunk size of a few characters or tokens (`fallback_chunk_size:
+  1`) cut the spaces between words into units of their own, and the run failed with `missing embeddings`.
 - An extraction, claims, gleaning, report-findings or chunk-boundary section that lists elements reads as empty when
   it holds a short "nothing here" marker, in any language (one line of at most three estimated tokens:
   `<relationships>없음</relationships>`, `なし`, `None.`, `Keine`): only `None`, `N/A`, `null`, `nil` and `-` did,
