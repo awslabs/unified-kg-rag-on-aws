@@ -20,6 +20,12 @@ run-describe --suffix tenant_a --output-path graph.graphml --export-format graph
 run-describe --suffix tenant_a --output-path graph.jsonl --max-items 10000
 ```
 
+`--documents failed,quarantined` (any of `failed`, `quarantined`,
+`pending`, `processed`) also lists the doc-status registry's documents of
+those statuses: file, status, `error_info`, failure, retry and attempt
+counts, and the pipeline id and time of the run that recorded them (needs
+`providers.doc_status.enabled`).
+
 An existing `--output-path` file is refused unless `--force`, and the
 `--config-path` file and the schema file the config loads are refused
 always; `export_graph` replaces an existing file only with

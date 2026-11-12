@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator
 from pathlib import Path
 from typing import IO, Any, Literal
 from xml.sax.saxutils import escape, quoteattr
@@ -36,6 +36,8 @@ from unified_kg_rag.domain.ingestion.methodologies import (
 )
 from unified_kg_rag.domain.models import (
     Config,
+    DocStatus,
+    DocStatusRecord,
 )
 from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
@@ -77,6 +79,21 @@ class IndexDescription(BaseModel):
     )
 
 
+class RegistryDocument(BaseModel):
+    """One document of the doc-status registry, as ``run-describe
+    --documents`` lists it (the inspection the runbook asks for)."""
+
+    doc_id: str = Field(description="The registry id")
+    file_path: str | None = Field(description="Its file, relative to the corpus root")
+    status: DocStatus = Field(description="Its status")
+    error_info: str | None = Field(description="Why it failed, when it did")
+    failure_count: int = Field(description="Consecutive runs it failed on its own")
+    retry_count: int = Field(description="Consecutive runs it failed for another cause")
+    attempt_count: int = Field(description="Consecutive runs its processing stopped")
+    written_by: str | None = Field(description="The pipeline id that wrote it last")
+    updated_at: str | None = Field(description="When its status last changed")
+
+
 class NamespaceDescription(NamespaceSummary):
     """What an index namespace holds (:func:`describe_namespace`)."""
 
@@ -104,6 +121,11 @@ class NamespaceDescription(NamespaceSummary):
         description="Why the registry, on, could not be read (access denied, "
         "no table, ...); None when it was read or is off",
     )
+    documents: list[RegistryDocument] | None = Field(
+        default=None,
+        description="The registry's documents of the statuses asked for "
+        "(documents=), by file; None when none were asked for",
+    )
 
 
 class GraphExport(BaseModel):
@@ -123,10 +145,16 @@ class GraphExport(BaseModel):
 
 
 def describe_namespace(
-    config: Config, suffix: str | None = None, *, providers: Providers | None = None
+    config: Config,
+    suffix: str | None = None,
+    *,
+    providers: Providers | None = None,
+    documents: Collection[DocStatus] = (),
 ) -> NamespaceDescription:
     """What the index namespace of ``suffix`` (default: the config's
     ``index_value``, else ``default``) holds; see :class:`NamespaceDescription`.
+    ``documents`` lists the registry's documents of those statuses
+    (``failed``, ``quarantined``: what the runbook inspects).
 
     Raises:
         ConfigurationError: ``suffix`` is not a safe name, or the vector
@@ -163,10 +191,27 @@ def describe_namespace(
     holdings = namespace_holdings(record, config)
     exists = any(index.index for index in indices)
     namespace = config_registry_namespace(config.indexing, name)
-    registry, unavailable = (
-        _registry_counts(providers, namespace)
+    records, unavailable = (
+        _registry_records(providers, namespace)
         if providers.doc_status_enabled
         else (None, None)
+    )
+    registry = (
+        dict(sorted(Counter(r.status.value for r in records).items()))
+        if records is not None
+        else None
+    )
+    listed = (
+        sorted(
+            (
+                RegistryDocument.model_validate(record, from_attributes=True)
+                for record in records or ()
+                if record.status in documents
+            ),
+            key=lambda d: (d.file_path or d.doc_id, d.doc_id),
+        )
+        if documents
+        else None
     )
     return NamespaceDescription(
         suffix=name,
@@ -177,14 +222,15 @@ def describe_namespace(
         indices=indices,
         registry=registry,
         registry_unavailable=unavailable,
+        documents=listed,
     )
 
 
-def _registry_counts(
+def _registry_records(
     providers: Providers, namespace: str
-) -> tuple[dict[str, int] | None, str | None]:
-    """The registry's records of ``namespace`` by status, or ``None`` and why
-    it could not be read.
+) -> tuple[list[DocStatusRecord] | None, str | None]:
+    """The registry's records of ``namespace``, or ``None`` and why it could
+    not be read.
 
     The registry is reported, not needed: a caller that may read the
     stores but not the registry (the deployed query task holds no DynamoDB
@@ -193,16 +239,7 @@ def _registry_counts(
     try:
         store = providers.build_doc_status()
         try:
-            return (
-                dict(
-                    sorted(
-                        Counter(
-                            r.status.value for r in store.list_namespace(namespace)
-                        ).items()
-                    )
-                ),
-                None,
-            )
+            return list(store.list_namespace(namespace)), None
         finally:
             close = getattr(store, "close", None)
             if callable(close):

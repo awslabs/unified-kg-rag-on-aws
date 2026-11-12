@@ -468,3 +468,30 @@ def test_a_deletion_killed_after_its_first_record_delete_is_retried(
     # are taken as done.
     with pytest.raises(DocumentNotFoundError, match="'a'"):
         pipeline.delete_documents(["a", "c"], pipeline_id="del-2")
+
+
+def test_a_deletion_names_the_documents_it_removes(
+    setup, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Regression (rv24): only counts were logged, then the registry record
+    # that named the document was deleted: no audit of what was removed.
+    import logging
+
+    config, providers, pipeline = setup
+    _ok(
+        pipeline.insert_documents(
+            [
+                {"id": "ticket-1", "text": "Vendor supplies Buyer."},
+                {"id": "ticket-2", "text": "Depot stores widgets for Carrier."},
+            ]
+        )
+    )
+    with caplog.at_level(logging.INFO):
+        _ok(pipeline.delete_documents(["ticket-2"]))
+    (audit,) = [
+        r.getMessage()
+        for r in caplog.records
+        if r.levelno == logging.INFO and "obsolete documents" in r.getMessage()
+    ]
+    assert "of 1 obsolete documents from 'default': ticket-2" in audit
+    assert "ticket-1" not in audit

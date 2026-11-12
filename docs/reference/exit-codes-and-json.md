@@ -163,7 +163,8 @@ holds:
     processed some and extracted none indexed no graph of them).
   - `delta`: what the doc-status registry's diff found, `new`, `changed`,
     `unchanged` and `deleted` documents (an `indexing.reset` run counts every
-    document new), or `null` with the registry off.
+    document new), or `null` with the registry off. The documents a run
+    deletes are named in one INFO line (the first 20).
 
   `--max-failure-rate RATE` (off by default) exits `1` when more than `RATE`
   of the run's documents failed: `files_failed`, the documents recorded
@@ -192,9 +193,13 @@ holds:
 - **`run-describe`**: the namespace's description (`suffix`, `namespace`,
   `build`, `build_record` (`present` or `missing`: then `artifacts` are
   what the config builds), `artifacts`, `methodologies`, `strategies`, `auto_routes`,
-  `indices`, `registry`) and `export` (its `path`, `counts`, `truncated`
-  and `missing` kinds, or `null` without `--output-path`); a namespace that
-  holds no index exits `2`
+  `indices`, `registry`, `registry_unavailable` (why the registry could not
+  be read, else `null`), `exists`, `artifacts_from` (`build_record` or
+  `config`), with `--documents` the `documents` of those statuses, each with
+  `doc_id`, `file_path`, `status`, `error_info`, `failure_count`,
+  `retry_count`, `attempt_count`, `written_by` and `updated_at`) and
+  `export` (its `path`, `counts`, `truncated` and `missing` kinds, or `null`
+  without `--output-path`); a namespace that holds no index exits `2`
   ([Inspect and export](../guides/inspect.md)).
 - **`run-prompt-tuning`**: the `output_path`, the `profile` and, with
   `--schema-out`, the `schema_path`.

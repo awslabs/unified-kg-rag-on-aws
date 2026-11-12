@@ -164,6 +164,7 @@ Guide: [Inspect and export](../guides/inspect.md). Also takes the [provider flag
 | `--export-format` | `jsonl` | Export format: jsonl (one record per line, every stored field but the vectors) or graphml (entities as nodes, relationships as edges, communities as nodes linked to their parent). |
 | `--max-items` | — | Export at most this many items of each kind (default: all). |
 | `--include-text` | off | Export each text unit's text too (jsonl only). |
+| `--documents` `STATUSES` |  | Also list the doc-status registry's documents of these comma-separated statuses (failed, quarantined, pending, processed): file, status, error_info, failure, retry and attempt counts, the pipeline id that wrote the record and when (needs providers.doc_status.enabled). |
 | `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
 | `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing: the load fails on one by default, since a misspelled key would leave its setting at the default. |
 | `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |

@@ -1230,6 +1230,8 @@ would stop every later run, so runs count deaths and isolate the culprit.
   WARNING naming the file, removes what the attempts wrote, records it
   `QUARANTINED` (reason in `error_info`) and indexes the rest
   (`total_documents_quarantined`; CDK alarm `DocumentsQuarantined`).
+  `run-describe --documents failed,quarantined` lists such documents with
+  their `error_info`, counts, the pipeline id that recorded them and when.
 - **Bisection.** When runs died with several documents, the next run
   processes half of the smallest dying batch and defers the other new and
   changed documents (a WARNING names the half; `total_documents_deferred`

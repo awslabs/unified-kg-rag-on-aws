@@ -50,6 +50,7 @@ from unified_kg_rag.application.storage.inspection import (
     describe_namespace,
     export_graph,
 )
+from unified_kg_rag.domain.models import DocStatus
 from unified_kg_rag.shared import ConfigurationError, get_logger
 from unified_kg_rag.shared.exceptions import (
     ErrorClass,
@@ -113,10 +114,38 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Export each text unit's text too (jsonl only)",
     )
+    parser.add_argument(
+        "--documents",
+        type=_statuses,
+        metavar="STATUSES",
+        default=(),
+        help="Also list the doc-status registry's documents of these "
+        "comma-separated statuses (failed, quarantined, pending, processed): "
+        "file, status, error_info, failure, retry and attempt counts, the "
+        "pipeline id that wrote the record and when (needs "
+        "providers.doc_status.enabled)",
+    )
     add_config_arguments(parser)
     add_output_format_argument(parser)
     add_provider_arguments(parser)
     return parser
+
+
+def _statuses(value: str) -> tuple[DocStatus, ...]:
+    """argparse ``type`` of ``--documents``: registry statuses."""
+    try:
+        return tuple(
+            dict.fromkeys(
+                DocStatus(part.strip().lower())
+                for part in value.split(",")
+                if part.strip()
+            )
+        )
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"invalid statuses {value!r} (choose from "
+            f"{', '.join(s.value for s in DocStatus)})"
+        ) from None
 
 
 def _print(description: NamespaceDescription) -> None:
@@ -164,6 +193,15 @@ def _print(description: NamespaceDescription) -> None:
             "[yellow]Doc-status registry: unavailable "
             f"({markup_safe(description.registry_unavailable)})[/yellow]"
         )
+    for document in description.documents or ():
+        console.print(
+            f"  {markup_safe(document.file_path or document.doc_id)}: "
+            f"{document.status.value}, failures {document.failure_count}, "
+            f"retries {document.retry_count}, attempts {document.attempt_count}, "
+            f"written by {markup_safe(document.written_by or '-')} at "
+            f"{document.updated_at or '-'}"
+            + (f": {markup_safe(document.error_info)}" if document.error_info else "")
+        )
 
 
 @exits_on_sigterm
@@ -183,7 +221,12 @@ def main() -> int:
         )
         if error := missing_extras_error(config, seeds=False):
             usage_error(error)
-        description = describe_namespace(config, args.suffix)
+        if args.documents and not config.doc_status_enabled:
+            usage_error(
+                "--documents lists the doc-status registry's documents: set "
+                "providers.doc_status.enabled"
+            )
+        description = describe_namespace(config, args.suffix, documents=args.documents)
         if not description.exists:
             usage_error(
                 f"the index namespace '{description.namespace}' holds no index: "

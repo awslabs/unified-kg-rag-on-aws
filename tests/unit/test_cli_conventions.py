@@ -45,6 +45,7 @@ from unified_kg_rag.application.cli.conventions import (
 from unified_kg_rag.application.cli.display import console
 from unified_kg_rag.domain.models import (
     Config,
+    DocumentDelta,
     PipelineConfig,
     PipelineContext,
     PipelineMetrics,
@@ -1201,6 +1202,14 @@ async def test_ingestion_json_result_counts_the_failed_documents() -> None:
     context.skipped_source_files = ["src/report.docx"]
     result = runner._json_result(context)
     assert (result["files_skipped"], result["documents_excluded"]) == (1, 0)
+    assert result["delta"] is None  # a full build
+    context.incremental_delta = DocumentDelta(new=["a"], deleted=["b", "c"])
+    assert runner._json_result(context)["delta"] == {
+        "new": 1,
+        "changed": 0,
+        "unchanged": 0,
+        "deleted": 2,
+    }
 
 
 def _ingestion_runner(max_failure_rate: float | None) -> Any:

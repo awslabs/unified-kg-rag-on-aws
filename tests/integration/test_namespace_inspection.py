@@ -426,3 +426,59 @@ def test_run_describe_never_replaces_its_config_file(tmp_path: Path) -> None:
         assert done.returncode == 2, done.stderr
         assert "is the --config-path file" in json.loads(done.stdout)["error"]
         assert config_file.read_text(encoding="utf-8") == "backend: local\n"
+
+
+def test_describe_lists_the_failed_and_quarantined_documents(
+    ingested, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    # The runbook said to inspect a failed document's error_info, with no
+    # way to read it short of querying the registry's store.
+    from unified_kg_rag.domain.models import DocStatus
+
+    config, providers = ingested
+    store = providers.build_doc_status()
+    namespace = describe_namespace(config, providers=providers).namespace
+    record = next(
+        r for r in store.list_namespace(namespace) if r.file_path == "ticket-1"
+    )
+    store.put_many(
+        [
+            record.model_copy(
+                update={
+                    "status": DocStatus.FAILED,
+                    "error_info": "ModelOutputError: cut off",
+                    "failure_count": 2,
+                }
+            )
+        ]
+    )
+    description = describe_namespace(
+        config, providers=providers, documents=[DocStatus.FAILED, DocStatus.QUARANTINED]
+    )
+    assert description.registry == {"failed": 1, "processed": 2}
+    (failed,) = description.documents or []
+    assert (failed.status, failed.error_info, failed.failure_count) == (
+        DocStatus.FAILED,
+        "ModelOutputError: cut off",
+        2,
+    )
+    assert describe_namespace(config, providers=providers).documents is None
+    monkeypatch.setattr(run_describe, "load_cli_config", lambda _args: config)
+    monkeypatch.setattr(inspection, "build_providers", lambda _c: providers)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run-describe",
+            "--documents",
+            "failed,quarantined",
+            "--output-format",
+            "json",
+        ],
+    )
+    assert run_describe.main() == 0
+    (listed,) = json.loads(capsys.readouterr().out)["documents"]
+    assert (
+        listed["status"] == "failed"
+        and listed["error_info"] == "ModelOutputError: cut off"
+    )
