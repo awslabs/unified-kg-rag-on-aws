@@ -80,6 +80,10 @@ test("ask, follow the trail into the graph, visit every page", async ({ page, ba
   await expect(page.getByText("2 of 2 runs done")).toBeVisible({ timeout: 60_000 });
   await expect(page.getByRole("columnheader", { name: "Holm p" })).toBeVisible({ timeout: 30_000 });
   await expect(page.locator("td .badge", { hasText: "primary" }).first()).toBeVisible();
+  // Per question: every strategy's score, and the answers side by side.
+  await page.getByText("Show each question’s score and answers").click();
+  await page.locator(".question-toggle").first().click();
+  await expect(page.locator(".answers-side .answer-card")).toHaveCount(3);
 
   // The theme: chosen in the shell, kept across a reload, back to the system's.
   await page.goto("/settings");
@@ -94,7 +98,9 @@ test("ask, follow the trail into the graph, visit every page", async ({ page, ba
   await theme.getByRole("button", { name: "System" }).click();
   expect(await page.evaluate(() => window.localStorage.getItem("ukr-console-theme"))).toBeNull();
 
-  await page.getByLabel("Language").first().selectOption("ko");
+  // One language picker: the top bar's.
+  await expect(page.getByLabel("Language")).toHaveCount(1);
+  await page.getByLabel("Language").selectOption("ko");
   await expect(page.locator("html")).toHaveAttribute("lang", "ko");
 
   expect(foreign).toEqual([]);
