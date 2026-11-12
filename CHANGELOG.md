@@ -79,31 +79,23 @@ stored is read again: follow *Upgrading* in order.
 
 #### Configuration
 - Unknown keys, in the file or as `UKR__` variables, fail the load, and `Config.model_validate` refuses them too;
-  `--allow-unknown-keys` (every CLI but `prepare-benchmark`) or `allow_unknown_keys=True` (`get_config`,
-  `ConfigLoader`) warns and drops them instead (#335). A moved key fails naming its replacement
-  (`processing.chunk_concurrency` and `processing.batch_size` are `processing.max_concurrency`, one pool of in-flight
-  calls, #296; `indexing.cross_run_fuzzy_merge` is `processing.fuzzy_entity_resolution`, #214), a removed key loads
-  with a WARNING and is ignored: the generated [Moved
-- Unknown keys, in the file or as `UKR__` variables, fail the load; `--allow-unknown-keys` (every CLI) or
-  `allow_unknown_keys=True` (`get_config`, `ConfigLoader`) warns instead (#335). A moved key fails naming its
-  replacement, a removed key loads with a WARNING and is ignored: the generated [Moved
+  `--allow-unknown-keys` (every CLI) or `allow_unknown_keys=True` (`get_config`, `ConfigLoader`) warns and drops
+  them instead (#335). A moved key fails naming its replacement (`processing.chunk_concurrency` and
+  `processing.batch_size` are `processing.max_concurrency`, one pool of in-flight calls, #296;
+  `indexing.cross_run_fuzzy_merge` is `processing.fuzzy_entity_resolution`, #214), a removed key loads with a
+  WARNING and is ignored: the generated [Moved
   keys](docs/reference/configuration.md#moved-keys) and [Removed keys](docs/reference/configuration.md#removed-keys)
   tables list them (#334, #344, #467, #468, #470, #577). [`config-template.yaml`](config-template.yaml) is a short
   starting file; every key is in the [configuration reference](docs/reference/configuration.md) (#468).
 - Models: the 0.2.3 per-stage `*_model_id` keys moved to one `models` section: the tiers `models.default` and
-  `models.fast`, `models.roles.<role>` (a model id or a tier name), `models.embedding` (model id and dimension, for
-  the indices, queries, RAGAS and the visualization) and `models.rerank`. `providers.<llm|embedding|rerank>.kind`
-  picks each family's provider, and `--llm-model`, `--embedding-model`, `--embedding-dimension` set the new keys; a
-  setting of a provider the config does not select is ignored with a WARNING; under `backend: local` another
-  embedding model needs its dimension too (#334). See [models](docs/reference/models.md).
-- Graph expansion's settings moved from `indexing.neptune` to `search.graph_expansion`, as every graph store reads them
-  at query time (the embedded SQLite graph too): `max_hops`, `max_results_per_hop`, `entity_importance_source`,
-  `traversal_fetch_multiplier`, `deterministic_order`.
   `models.fast`, `models.roles.<role>` (a model id or a tier name), `models.embedding` (model id and dimension, for the
   indices, queries, RAGAS and the visualization) and `models.rerank`. `providers.<llm|embedding|rerank>.kind` picks each
   family's provider, and `--llm-model`, `--embedding-model`, `--embedding-dimension` set the new keys; a setting of a
   provider the config does not select (after the CLI's provider flags) is ignored with a WARNING; under `backend: local`
   another embedding model needs its dimension too (#334). See [models](docs/reference/models.md).
+- Graph expansion's settings moved from `indexing.neptune` to `search.graph_expansion`, as every graph store reads them
+  at query time (the embedded SQLite graph too): `max_hops`, `max_results_per_hop`, `entity_importance_source`,
+  `traversal_fetch_multiplier`, `deterministic_order`.
 - `aws.dynamodb.enabled` moved to `providers.doc_status.enabled` (default `false`; `providers.doc_status.kind` picks
   DynamoDB or SQLite), the one switch for incremental indexing (#344). `graph.analysis.centrality` moved to
   `graph.visualization.centrality` (#335).
@@ -1249,11 +1241,10 @@ From a `main` checkout (formats and keys no release had):
   cap left it the first passages of long chunks), a round follows at most five bridge entities, a deadline that
   cancels the round an insufficient verdict started reports it (`insufficiency_reason: deadline`), and the follow-up
   queries and bridge entities in `metadata["iterative"]` are screened by the output guardrail with `check_output`
-  (#607); bridge entities are told apart by names folded as local search's seeds are. A strategy declares the run
-  record it keeps and the model text in it (`register_strategy(run_record=RunRecord(...))`): the chain screens and
-  clears every declared record, not two named ones. See
   (#607); bridge entities are told apart by names folded as local search's seeds are, and the controller writes its
-  follow-up queries in the index language (#613, #619). See
+  follow-up queries in the index language (#613, #619). A strategy declares the run record it keeps and the model
+  text in it (`register_strategy(run_record=RunRecord(...))`): the chain screens and clears every declared record,
+  not two named ones. See
   [query](docs/guides/query.md#follow-up-rounds-for-multi-hop-questions).
 - LLM usage accounting, tracing or not: calls, input and output tokens, prompt-cache reads and writes, resent and
   failed requests and cache hits per model role and id, in `RAGOutput` / `SearchOutput.metadata["usage"]`,
