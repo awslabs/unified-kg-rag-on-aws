@@ -1347,9 +1347,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         )
 
         resolved_strategy: SearchStrategy = state["resolved_strategy"]
-        # What the namespace holds (cached since the methodology check): a
+        # What the namespace holds (read when the query was admitted): a
         # strategy reads only those of its optional indexes it holds.
-        held = await methodology_check.namespace_artifacts(self, state.get("suffix"))
+        held = state.get("held_artifacts")
+        if held is None:
+            held = await methodology_check.namespace_artifacts(
+                self, state.get("suffix")
+            )
         search_query = SearchQuery(
             query=processed.final_query,
             search_type=state.get("search_type", SearchType.HYBRID),
@@ -2260,7 +2264,11 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         *,
         search: bool,
     ) -> RAGOutput | SearchOutput:
-        rag_input, input_dict = await self._admit_query(input)
+        # Fixed when the query starts: its admission (the build-record read
+        # of the methodology check, a store round trip) counts too.
+        deadline = _QueryDeadline(self.config.search.query_timeout_seconds)
+        async with deadline.scope():
+            rag_input, input_dict = await self._admit_query(input)
         # The root span of a query trace: the strategy, retrieval, fusion,
         # rerank, context build and model calls nest under it.
         with (
@@ -2277,7 +2285,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             token = _LEFTOVER_EXTRACTIONS.set(leftovers)
             try:
                 result = await self._ainvoke(
-                    rag_input, input_dict, config, span, search
+                    rag_input, input_dict, config, span, search, deadline
                 )
             except BaseException:
                 await discard(leftovers)
@@ -2360,6 +2368,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         config: RunnableConfig | None,
         span: observability.SpanHandle,
         search: bool,
+        deadline: "_QueryDeadline",
     ) -> RAGOutput | SearchOutput:
         tokens = bind_contextvars(
             query_id=uuid.uuid4().hex[:12], conversation_id=rag_input.conversation_id
@@ -2371,7 +2380,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             capture if self._ground_outputs else None
         )
         try:
-            async with _QueryDeadline(self.config.search.query_timeout_seconds):
+            async with deadline:
                 # Before the first model call (the input guardrail's).
                 await self._arequire_namespace(rag_input.suffix)
                 blocking = await self._screen_input(
@@ -2935,11 +2944,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         rag_input.suffix = input_dict["suffix"] = resolve_namespace(
             self.config, rag_input.suffix
         )
-        await self.acheck_methodology(rag_input.search_strategy, rag_input.suffix)
-        # What auto routes among (cached since the check).
-        input_dict["held_artifacts"] = await methodology_check.namespace_artifacts(
-            self, rag_input.suffix
+        # What auto routes among and the strategy reads: one read of the
+        # build record a query (a failed one is not kept, nor paid twice).
+        holdings = await methodology_check.check_strategy_holdings(
+            self, rag_input.search_strategy, rag_input.suffix
         )
+        input_dict["held_artifacts"] = holdings.artifacts
         # Filter keys after the methodology check, against the indexes the
         # namespace holds: a key only an index it lacks declares would be
         # dropped everywhere.
@@ -3077,12 +3087,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
     ) -> AsyncGenerator[str, None]:
         """The answer chunks of :meth:`astream`; the speculative extractions
         the route did not read go to ``leftovers``."""
-        rag_input, input_dict = await self._admit_query(input)
         search_config = self.config.search
         deadline = _QueryDeadline(
             search_config.query_timeout_seconds,
             first_chunk_seconds=search_config.model_timeout_seconds,
         )
+        # Admitted within the deadline (_query).
+        async with deadline.scope():
+            rag_input, input_dict = await self._admit_query(input)
         chunks: list[str] = []
         delivered = False
         # A refused answer, like a refused query, writes no memory.

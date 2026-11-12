@@ -95,10 +95,20 @@ async def check_strategy_methodology(
     chain: GraphRAGChain, strategy: SearchStrategy, suffix: str | None
 ) -> tuple[Methodology, ...]:
     """The methodologies the namespace of ``suffix`` holds, raising
+    ``MethodologyNotIndexedError`` if it does not serve ``strategy``
+    (``check_strategy_holdings``)."""
+    return (await check_strategy_holdings(chain, strategy, suffix)).methodologies
+
+
+async def check_strategy_holdings(
+    chain: GraphRAGChain, strategy: SearchStrategy, suffix: str | None
+) -> NamespaceHoldings:
+    """What the namespace of ``suffix`` holds (``read_holdings``), raising
     ``MethodologyNotIndexedError`` if it does not serve ``strategy`` (the
     record is read again first): it lacks an artifact the strategy declares
     it reads (``StrategySpec.required_artifacts``), or, for a strategy that
-    declares none, the strategy's methodology.
+    declares none, the strategy's methodology. A query admits by it once,
+    so a failed read (not kept) is not paid twice.
 
     For ``auto`` nothing is refused here: it routes among the strategies of
     the held methodologies (``strategy_registry.routable_strategies``).
@@ -109,7 +119,7 @@ async def check_strategy_methodology(
         artifacts, scopes = holdings.artifacts, holdings.scopes
         held = holdings.methodologies
         if strategy is SearchStrategy.AUTO or serves(strategy, artifacts, chain.config):
-            return held
+            return holdings
     namespace = resolve_namespace(chain.config, suffix)
     needed = strategy_artifacts(strategy, chain.config)
     methodology = strategy_methodology(strategy, chain.config)

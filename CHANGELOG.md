@@ -1219,8 +1219,10 @@ From a `main` checkout (formats and keys no release had):
   comparison names each run's rerank failures and degraded answers with their rates and warns louder (`NOT
   COMPARABLE AS IS`) when the lowest and highest rate differ beyond chance (two-sided Fisher's exact p below 0.05),
   with a note when they differ within it (#645).
-- Query deadline: `search.query_timeout_seconds` bounds every query and stream (which must send a first chunk within
-  `search.model_timeout_seconds`) and raises `QueryTimeoutError` (`run-rag` exits 1, `run-eval` counts a failure);
+- Query deadline: `search.query_timeout_seconds` bounds every query and stream, from its admission on (the one
+  build-record read of a query, where a stalled store held a new chain's first query before the deadline began); a
+  stream must send a first chunk within `search.model_timeout_seconds`. Past it the query raises
+  `QueryTimeoutError` (`run-rag` exits 1, `run-eval` counts a failure);
   query-time model calls get their own clients (`search.model_timeout_seconds`, `model_max_attempts`; `backend:
   local` presets 300 s and a 900 s deadline), and Bedrock CountTokens uses them. No retry, OpenSearch request or
   global map call starts past the deadline; global map calls are cancelled with the query (#522, #530, #567, #579).
