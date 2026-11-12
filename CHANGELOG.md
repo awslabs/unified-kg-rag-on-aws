@@ -1567,7 +1567,8 @@ From a `main` checkout (formats and keys no release had):
   a local query's retrieval took about half as long (`support` 19-20 s to 9-10 s, `ppr` 23-25 s to 11 s on a loaded
   host) for a tenth of the process CPU (#602).
 - Global search maps every report of one cut of the community hierarchy (packed by tokens, on the fast model), steps
-  down to a shallower cut over `max_reports_per_level`, credits key points only to their reports, and dynamic
+  down to a shallower cut over `max_reports_per_level`, credits key points only to their reports (the numbers their
+  ids hold after NFKC: "Report 2", "#2", "02", "２" and "2, 3" no longer credit the whole batch), and dynamic
   selection descends to the leaves; it makes no separate reduce call: the answer model reads the ranked key points
   (0.2.3 reduced them on `map_reduce_model_id`, Claude Haiku 4.5, into a `synthesized_summary` result) (#318, #347,
   #354).
