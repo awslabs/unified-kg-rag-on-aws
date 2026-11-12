@@ -1559,6 +1559,14 @@ button.cite-link:hover {
   border-top: 1px dashed var(--rule-strong);
   font-size: var(--text-sm);
 }
+.trail-details > summary {
+  cursor: pointer;
+  color: var(--graphite);
+  font-size: var(--text-xs);
+}
+.trail-details[open] > summary {
+  margin-bottom: 6px;
+}
 .trail-step {
   display: grid;
   grid-template-columns: 7.5rem minmax(0, 1fr);
@@ -2030,8 +2038,8 @@ button.cite-link:hover {
   }
 }
 .stage-name {
-  font-family: var(--font-data);
   font-size: var(--text-sm);
+  font-weight: var(--weight-strong);
 }
 .stage-meta {
   font-size: var(--text-xs);

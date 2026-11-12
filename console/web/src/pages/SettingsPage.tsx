@@ -1,7 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 import { useMemo, useState } from "react";
-import { LocalePicker } from "../components/LocalePicker";
 import { ErrorText, Loading, Notice, PageHead, Sheet } from "../components/ui";
 import { useI18n } from "../i18n/i18n";
 import { errorMessage, get, send } from "../lib/api";
@@ -121,7 +120,6 @@ export function SettingsPage({ onSaved }: { onSaved: () => void }) {
       <PageHead
         title={t("settings.title")}
         lede={data.path ? t("settings.lede", { path: data.path }) : t("settings.ledeNoFile")}
-        aside={<LocalePicker id="settings-locale" />}
       />
       {data.load_error ? (
         <Notice tone="bad" title={t("settings.loadError")}>

@@ -322,7 +322,7 @@ theme.
 
 The page is in English, Korean, Japanese, Simplified Chinese, German,
 Spanish, French, Italian, Portuguese and Russian (the languages the
-library supports), chosen in the top bar or on the Settings page,
+library supports), chosen in the top bar,
 defaulting to the browser's language and kept in the browser. Documents,
 questions and answers can be in any language; numbers, dates, durations
 and currency follow the chosen language.

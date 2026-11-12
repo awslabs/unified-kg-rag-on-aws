@@ -124,5 +124,6 @@ export function formatBytes(bytes: number, number: (v: number, o?: Intl.NumberFo
     value /= 1024;
     unit += 1;
   }
-  return number(value, { style: "unit", unit: units[unit], unitDisplay: "short", maximumFractionDigits: unit ? 1 : 0 });
+  // "180 bytes": a byte count reads in full ("short" leaves "180 byte").
+  return number(value, { style: "unit", unit: units[unit], unitDisplay: unit ? "short" : "long", maximumFractionDigits: unit ? 1 : 0 });
 }

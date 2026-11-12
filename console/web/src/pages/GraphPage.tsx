@@ -421,7 +421,9 @@ function GraphExplorer({ graphRef, data, params }: { graphRef: string; data: Gra
                   <table className="table table-compact">
                     <thead>
                       <tr>
-                        <th />
+                        <th>
+                          <span className="visually-hidden">{t("graph.stats.what")}</span>
+                        </th>
                         <th className="num">{t("graph.inSchema")}</th>
                         <th className="num">{t("graph.offSchema")}</th>
                         <th className="num">{t("graph.unannotated")}</th>
@@ -446,7 +448,9 @@ function GraphExplorer({ graphRef, data, params }: { graphRef: string; data: Gra
                   <table className="table table-compact">
                     <thead>
                       <tr>
-                        <th />
+                        <th>
+                          <span className="visually-hidden">{t("graph.stats.what")}</span>
+                        </th>
                         <th className="num">{t("graph.evidence.document")}</th>
                         <th className="num">{t("graph.evidence.seed_graph")}</th>
                         <th className="num">{t("graph.evidence.both")}</th>

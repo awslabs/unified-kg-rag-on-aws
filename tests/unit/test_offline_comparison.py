@@ -1027,7 +1027,7 @@ def test_baseline_results_pair_each_strategy_with_its_own(
     (md,) = (tmp_path / "o").rglob("evaluation_comparison_*.md")
     text = md.read_text(encoding="utf-8")
     assert "vs each strategy's baseline" in text
-    assert "mix - baseline:mix [95% CI]" in text
+    assert "mix - baseline:mix [95% unadjusted CI]" in text
     rows = list(
         csv.DictReader(next((tmp_path / "o").rglob("*.csv")).open(encoding="utf-8"))
     )

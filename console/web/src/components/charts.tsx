@@ -89,6 +89,8 @@ export function DeltaPlot({ deltas, confidence = 0.95, multiplicity, noFinding =
   const pad = 10;
   const adjusted = deltas.some(([, d]) => d.adjusted_p_value != null) && multiplicity != null;
   const alpha = multiplicity?.alpha ?? null;
+  // The kind of interval the rows show, named in its header.
+  const intervalKind = adjusted ? t("chart.intervalAdjusted") : t("chart.interval", { confidence: percent(confidence) });
   return (
     <div className="table-wrap" tabIndex={0}>
       <table className="table table-sticky table-stack">
@@ -98,9 +100,9 @@ export function DeltaPlot({ deltas, confidence = 0.95, multiplicity, noFinding =
         <thead>
           <tr>
             <th>{t("evaluate.metric")}</th>
-            <th>{adjusted ? t("chart.intervalAdjusted") : t("chart.interval", { confidence: percent(confidence) })}</th>
+            <th>{t("chart.plot")}</th>
             <th className="num">{t("evaluate.delta")}</th>
-            <th className="num">{t("evaluate.ci")}</th>
+            <th className="num">{intervalKind}</th>
             {adjusted ? <th className="num">{t("chart.holmP")}</th> : null}
             <th className="num">{t("evaluate.winsTiesLosses")}</th>
           </tr>
@@ -126,7 +128,7 @@ export function DeltaPlot({ deltas, confidence = 0.95, multiplicity, noFinding =
                     </span>
                   ) : null}
                 </td>
-                <td data-label={adjusted ? t("chart.intervalAdjusted") : t("chart.interval", { confidence: percent(confidence) })}>
+                <td data-label={t("chart.plot")}>
                   <svg className="chart" width={width} height={22} role="img" aria-label={t("chart.deltaRow", { metric, delta: number(delta.mean_delta, { maximumFractionDigits: digits }) })}>
                     <line className="zero" x1={x(0)} x2={x(0)} y1={2} y2={20} />
                     <line className={`ci ${verdict}`} x1={x(interval.low)} x2={x(interval.high)} y1={11} y2={11} />
@@ -138,7 +140,7 @@ export function DeltaPlot({ deltas, confidence = 0.95, multiplicity, noFinding =
                   {number(delta.mean_delta, { maximumFractionDigits: digits })}
                   {verdict !== "neutral" ? <span className={`badge ${verdict === "better" ? "badge-good" : "badge-bad"}`} style={{ marginLeft: 6 }}>{t(`chart.${verdict}`)}</span> : null}
                 </td>
-                <td className="num" data-label={t("evaluate.ci")}>
+                <td className="num" data-label={intervalKind}>
                   [{number(interval.low, { maximumFractionDigits: digits })}, {number(interval.high, { maximumFractionDigits: digits })}]
                   {adjusted ? <span className="muted"> {interval.adjusted ? percent(interval.confidence, 1) : t("chart.unadjusted")}</span> : null}
                 </td>

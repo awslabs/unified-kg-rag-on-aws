@@ -350,7 +350,7 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
 }
 
 function IngestResult({ job }: { job: JobRecord }) {
-  const { t, number, seconds } = useI18n();
+  const { t, number } = useI18n();
   const result = job.result as Record<string, unknown> | null;
   if (!result || job.status === "running") return null;
   const usage = (result.token_usage ?? {}) as Record<string, number>;
@@ -358,8 +358,6 @@ function IngestResult({ job }: { job: JobRecord }) {
     <dl className="kv">
       <dt>{t("ingest.result.pipeline")}</dt>
       <dd className="mono">{String(result.pipeline_id ?? job.pipeline_id)}</dd>
-      <dt>{t("ingest.result.duration")}</dt>
-      <dd>{seconds(result.duration_seconds as number)}</dd>
       <dt>{t("ingest.result.failedDocuments")}</dt>
       <dd>{number(result.failed_documents as number)}</dd>
       <dt>{t("ingest.result.excluded")}</dt>

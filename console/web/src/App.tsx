@@ -132,7 +132,9 @@ export function App() {
             </div>
             <div>
               <dt>{t("shell.models")}</dt>
-              <dd className="mono">{status.data.backend?.llm ?? "—"}</dd>
+              <dd className="mono" title={Object.entries(status.data.models ?? {}).map(([role, id]) => `${role}: ${id ?? "—"}`).join("\n")}>
+                {modelIds(status.data.models) || status.data.backend?.llm || "—"}
+              </dd>
             </div>
             <div>
               <dt>{t("shell.stores")}</dt>
@@ -143,6 +145,11 @@ export function App() {
       ) : null}
     </div>
   );
+}
+
+/** The distinct model ids the config's roles use, in role order. */
+export function modelIds(models: Record<string, string | null> | null): string {
+  return [...new Set(Object.values(models ?? {}).filter((id): id is string => !!id))].join(" · ");
 }
 
 /** A small line icon per page (drawn here, 24-unit grid). */
