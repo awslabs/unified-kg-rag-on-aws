@@ -298,14 +298,30 @@ class TokenManager:
             )
 
         all_sections = self._create_context_sections(retrieval_results, number_sections)
-        # Each section type present gets a header in the context string
-        # (build_context_string); it is paid from the same budget.
-        available_tokens -= sum(
-            self.count_tokens(self._section_header(section_type))
-            for section_type in {s.section_type for s in all_sections}
-        )
+        # Each section type seated gets a header in the context string
+        # (build_context_string); it is paid from the same budget, reserved
+        # for every type present first.
+        headers = {
+            section_type: self.count_tokens(self._section_header(section_type))
+            for section_type in dict.fromkeys(s.section_type for s in all_sections)
+        }
         selected_sections = self._select_optimal_sections(
-            all_sections, max(available_tokens, 0), spare_budget_first
+            all_sections,
+            max(available_tokens - sum(headers.values()), 0),
+            spare_budget_first,
+        )
+        if not selected_sections and all_sections:
+            # No type fits beside every header: the best section's type is
+            # packed alone, paying its own header only (a small budget went
+            # to the headers of types it could never seat).
+            best = max(all_sections, key=lambda s: s.priority).section_type
+            selected_sections = self._select_optimal_sections(
+                [s for s in all_sections if s.section_type is best],
+                max(available_tokens - headers[best], 0),
+                spare_budget_first,
+            )
+        available_tokens -= sum(
+            headers[t] for t in {s.section_type for s in selected_sections}
         )
 
         if number_sections:

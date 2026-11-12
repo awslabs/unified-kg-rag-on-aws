@@ -1688,7 +1688,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         selection, so sources reflect exactly what the answer model was given.
         """
         try:
-            return self._optimize_context(state)
+            optimized = self._optimize_context(state)
         except Exception as e:
             if not self.ignore_errors:
                 raise
@@ -1703,6 +1703,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 sections_included=0,
                 sections_excluded=len(state["search_results"].results),
             )
+        if not optimized.sections and any(
+            r.content for r in state["search_results"].results
+        ):
+            # Retrieved evidence no section of which fits the budget: the
+            # decline that follows is the budget's, not "nothing found".
+            record_degradation(DegradationStep.CONTEXT_OPTIMIZATION, "context_budget")
+        return optimized
 
     def _context_building_step(self, state: dict[str, Any]) -> str:
         optimized: OptimizedContext | None = state.get("optimized_context")

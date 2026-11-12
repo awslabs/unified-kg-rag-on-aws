@@ -48,7 +48,8 @@ A failure that degrades a section is recorded in the query's
 rating and map, DRIFT's expansion, primer and actions, iterative's
 controller) and the chain its `ignore_errors` fallbacks (`routing`,
 `follow_up_rewrite`, `query_processing` and its translation, entity and
-keyword calls, `context_optimization`). Each search reports its own entries
+keyword calls, `context_optimization`, also with reason `context_budget` when
+no retrieved section fits the context budget). Each search reports its own entries
 (`SearchResult.metadata["degraded"]`, set by `BaseSearchStrategy` for every
 strategy), the answer every entry of the query (`RAGOutput.metadata["degraded"]`,
 each `step`, `reason`, `error_type`), and `degraded_error` stays the error
