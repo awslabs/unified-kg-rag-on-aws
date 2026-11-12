@@ -3,12 +3,19 @@
 """The Graph page's server side: the ``visualization_data.json`` files the
 ingestion exported, read into what the page draws (nodes, edges,
 communities, a seeded layout) and the analysis it lists (degrees,
-communities, schema conformance, seed versus document evidence)."""
+communities, schema conformance, seed versus document evidence).
+
+A file is read once per version (path, modification time, size): the page
+gets the drawn entities and the edges between them in full and every other
+entity as ``{id, name, degree}`` (search and the table), and asks for one
+of those by id (:func:`entity`)."""
 
 from __future__ import annotations
 
 import json
-from collections import Counter
+import threading
+from collections import Counter, OrderedDict
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +35,8 @@ MAX_DESCRIPTION = 1200
 # by search); the layout is quadratic in the drawn nodes.
 MAX_DRAWN_NODES = 600
 MAX_FILE_BYTES = 200 * 1024 * 1024
+# Read graphs kept (the newest few files the page switches between).
+CACHED_GRAPHS = 4
 
 
 class GraphDataError(DataProcessingError):
@@ -73,13 +82,78 @@ def _text(value: Any, limit: int = MAX_DESCRIPTION) -> str | None:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
+@dataclass(frozen=True)
+class LoadedGraph:
+    """One version of an exported file: what the page draws (``page``,
+    encoded once) and every entity and edge, for :func:`entity`."""
+
+    page: dict[str, Any]
+    encoded: bytes
+    nodes: dict[str, dict[str, Any]]
+    edges: list[dict[str, Any]]
+
+
+_cache: OrderedDict[tuple[str, int, int], LoadedGraph] = OrderedDict()
+_cache_lock = threading.Lock()
+
+
+def cached_graph(path: Path) -> LoadedGraph:
+    """The graph of ``path``, read again only when the file changed (its
+    modification time or size).
+
+    Raises:
+        GraphDataError: As :func:`load_graph`.
+    """
+    stat = path.stat()
+    key = (str(path.resolve()), stat.st_mtime_ns, stat.st_size)
+    with _cache_lock:
+        if key in _cache:
+            _cache.move_to_end(key)
+            return _cache[key]
+    loaded = _read_graph(path)
+    with _cache_lock:
+        _cache[key] = loaded
+        while len(_cache) > CACHED_GRAPHS:
+            _cache.popitem(last=False)
+    return loaded
+
+
 def load_graph(path: Path) -> dict[str, Any]:
-    """The graph of an exported file, as the page draws it.
+    """The graph of an exported file, as the page draws it: the drawn
+    entities (``nodes``, at most :data:`MAX_DRAWN_NODES`, with their
+    ``layout``) and the edges between them in full, every other entity as
+    ``{id, name, degree}`` (``others``, most connected first), and the
+    communities and analysis of the whole graph.
 
     Raises:
         GraphDataError: The file is too large, not JSON, or not shaped like
             an export.
     """
+    return cached_graph(path).page
+
+
+def entity(path: Path, entity_id: str) -> dict[str, Any] | None:
+    """An entity of the graph of ``path`` (drawn or not), every edge that
+    touches it and the names of the entities at their other ends; None for
+    an id the graph lacks."""
+    loaded = cached_graph(path)
+    node = loaded.nodes.get(entity_id)
+    if node is None:
+        return None
+    edges = [e for e in loaded.edges if entity_id in (e["source"], e["target"])]
+    others = {e["target"] if e["source"] == entity_id else e["source"] for e in edges}
+    return {
+        "node": node,
+        "edges": edges,
+        "names": {
+            other: loaded.nodes[other]["name"]
+            for other in others
+            if other in loaded.nodes
+        },
+    }
+
+
+def _read_graph(path: Path) -> LoadedGraph:
     if path.stat().st_size > MAX_FILE_BYTES:
         raise GraphDataError(f"'{path.name}' is over {MAX_FILE_BYTES // 2**20} MiB")
     try:
@@ -143,14 +217,22 @@ def load_graph(path: Path) -> dict[str, Any]:
     layout = {k: v for k, v in exported.items() if k in drawn}
     if not layout and drawn.number_of_nodes():
         layout = packed_layout(drawn)
-    communities = _communities(data.get("communities"), {n["id"]: n for n in nodes})
-    return {
-        "nodes": nodes,
-        "edges": edges,
+    by_id = {n["id"]: n for n in nodes}
+    communities = _communities(data.get("communities"), by_id)
+    page = {
+        "nodes": [n for n in nodes if n["id"] in layout],
+        "others": [
+            {"id": n["id"], "name": n["name"], "degree": n["degree"]}
+            for n in sorted(nodes, key=lambda n: -n["degree"])
+            if n["id"] not in layout
+        ],
+        "edges": [e for e in edges if e["source"] in layout and e["target"] in layout],
         "layout": layout,
         "communities": communities,
         "stats": _stats(graph, nodes, edges, communities),
     }
+    encoded = json.dumps(page, ensure_ascii=False, separators=(",", ":")).encode()
+    return LoadedGraph(page=page, encoded=encoded, nodes=by_id, edges=edges)
 
 
 def packed_layout(graph: nx.Graph) -> dict[str, list[float]]:

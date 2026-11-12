@@ -364,6 +364,7 @@
   "graph.legend": "범례",
   "graph.other_other": "기타 {{count}}개",
   "graph.drawnOnly": "엔티티 {{total}}개 중 연결이 가장 많은 {{drawn}}개만 표시합니다. 나머지는 이름으로 찾거나 아래 표에서 확인하세요.",
+  "graph.notDrawn": "캔버스에는 표시되지 않습니다. 연결이 가장 많은 엔티티만 그립니다.",
   "graph.panels": "세부 정보",
   "graph.panel.entity": "엔티티",
   "graph.panel.communities": "커뮤니티",

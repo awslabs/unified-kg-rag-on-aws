@@ -248,8 +248,28 @@ export interface GraphStats {
   evidence: Record<"entities" | "relationships", Record<string, number>>;
 }
 
+/** An entity the canvas does not draw: listed by name for search and the
+ * table, read whole on demand (GraphEntity). */
+export interface GraphEntityRef {
+  id: string;
+  name: string;
+  degree: number;
+}
+
+/** `/api/graphs/entity`: one entity, every edge that touches it and the
+ * names at their other ends. */
+export interface GraphEntity {
+  node: GraphNode;
+  edges: GraphEdge[];
+  names: Record<string, string>;
+}
+
+/** `/api/graphs/data`: the drawn entities (`nodes`, laid out) and the
+ * edges between them, the others by name, and the whole graph's
+ * communities and analysis. */
 export interface GraphData {
   nodes: GraphNode[];
+  others: GraphEntityRef[];
   edges: GraphEdge[];
   layout: Record<string, [number, number]>;
   communities: Community[];

@@ -275,7 +275,7 @@ when it is built and otherwise says how to build it.
 | Ask | `POST /api/ask` (server-sent events) | One `GraphRAGChain` per loaded config, in the server's event loop. `ainvoke(on_answer_chunk=...)` hands the answer model's text over as it streams; the final `RAGOutput` follows, with its sources, `metadata.routing` (how `auto` chose), rerank status, usage and the query's trace id |
 | Ingest | `POST /api/jobs/ingest` | `run-ingestion` in a child process, with the console's cache directory and a pipeline id per corpus |
 | Evaluate | `POST /api/jobs/evaluate` | `run-eval --output-format json` in a child process, writing into its own directory under the evaluation outputs |
-| Graph | `GET /api/graphs/data` | Reads a `visualization_data.json` the ingestion exported; degrees, communities, source kinds and the layout (`spring_layout`) are computed on read |
+| Graph | `GET /api/graphs/data`, `GET /api/graphs/entity` | Reads a `visualization_data.json` the ingestion exported, once per version of the file (path, modification time, size); degrees, communities, source kinds and the layout of the 600 best-connected entities (`spring_layout`) are computed on read. The page gets those entities and the edges between them in full and every other entity as `{id, name, degree}`; `graphs/entity` returns one entity with every edge that touches it |
 | Dashboard | `GET /api/dashboard` | Reads the console's query log (SQLite under its cache directory) and the evaluation result files |
 | Settings | `GET/POST /api/config/*` | Validates against `Config`, diffs against the file, writes the YAML file |
 

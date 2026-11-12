@@ -574,8 +574,29 @@ def test_a_large_graph_draws_only_the_best_connected(
         "/api/graphs/data",
         params={"ref": "cache:large/visualization/visualization_data.json"},
     ).json()
-    assert len(data["layout"]) == MAX_DRAWN_NODES
+    assert len(data["layout"]) == len(data["nodes"]) == MAX_DRAWN_NODES
     assert data["stats"]["nodes"] == total
+    # The rest is listed by name, and read whole on demand.
+    (other,) = data["others"]
+    assert set(other) == {"id", "name", "degree"}
+    found = client.get(
+        "/api/graphs/entity",
+        params={
+            "ref": "cache:large/visualization/visualization_data.json",
+            "id": other["id"],
+        },
+    )
+    assert found.status_code == 200
+    assert found.json()["node"]["name"] == other["name"]
+    assert len(found.json()["edges"]) == other["degree"]
+    missing = client.get(
+        "/api/graphs/entity",
+        params={
+            "ref": "cache:large/visualization/visualization_data.json",
+            "id": "none",
+        },
+    )
+    assert missing.status_code == 404
 
 
 def test_datasets_are_found_and_previewed(client: Any) -> None:

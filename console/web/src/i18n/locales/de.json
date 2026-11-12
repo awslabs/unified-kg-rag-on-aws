@@ -382,6 +382,7 @@
   "graph.other_one": "{{count}} weiterer",
   "graph.other_other": "{{count}} weitere",
   "graph.drawnOnly": "Gezeichnet sind die {{drawn}} am stärksten vernetzten von {{total}} Entitäten; die übrigen finden Sie per Name oder in der Tabelle unten.",
+  "graph.notDrawn": "Nicht auf der Fläche gezeichnet: Dort stehen nur die am stärksten vernetzten Entitäten.",
   "graph.panels": "Details",
   "graph.panel.entity": "Entität",
   "graph.panel.communities": "Communitys",

@@ -9,7 +9,7 @@ import { useI18n } from "../i18n/i18n";
 import { get } from "../lib/api";
 import { navigate } from "../lib/router";
 import { useTrail } from "../lib/trail";
-import type { GraphData, GraphNode } from "../lib/types";
+import type { GraphData, GraphEntity, GraphEntityRef, GraphNode } from "../lib/types";
 import { useApi } from "../lib/useApi";
 
 // The canvas and its force engine load with the page that draws them.
@@ -65,12 +65,12 @@ export function GraphPage({ params }: { params: URLSearchParams }) {
         </Empty>
       ) : null}
       {graph.loading && ref ? <Loading /> : null}
-      {graph.data ? <GraphExplorer key={ref} data={graph.data} params={params} /> : null}
+      {graph.data && ref ? <GraphExplorer key={ref} graphRef={ref} data={graph.data} params={params} /> : null}
     </>
   );
 }
 
-function GraphExplorer({ data, params }: { data: GraphData; params: URLSearchParams }) {
+function GraphExplorer({ graphRef, data, params }: { graphRef: string; data: GraphData; params: URLSearchParams }) {
   const { t, number, percent } = useI18n();
   const { trail } = useTrail();
   const [selected, setSelected] = useState<string | null>(params.get("focus"));
@@ -82,6 +82,16 @@ function GraphExplorer({ data, params }: { data: GraphData; params: URLSearchPar
   const edgeTarget = params.get("edge");
 
   const byId = useMemo(() => new Map(data.nodes.map((n) => [n.id, n])), [data.nodes]);
+  // Every entity, drawn or not (search and the table).
+  const everyone = useMemo<EntityRow[]>(() => [...data.nodes, ...data.others], [data.nodes, data.others]);
+  const nameOf = useMemo(() => new Map(everyone.map((n) => [n.id, n.name])), [everyone]);
+  // Past the drawn ones, an entity (and the edges of a drawn one to them)
+  // is read from the server.
+  const partial = data.others.length > 0;
+  const remote = useApi(
+    () => (selected && partial ? get<GraphEntity>("graphs/entity", { ref: graphRef, id: selected }) : Promise.resolve(null)),
+    [selected, partial, graphRef],
+  );
   const neighbours = useMemo(() => {
     const map = new Map<string, Set<string>>();
     for (const e of data.edges) {
@@ -138,15 +148,18 @@ function GraphExplorer({ data, params }: { data: GraphData; params: URLSearchPar
   const matches = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return [];
-    return data.nodes
+    return everyone
       .filter((n) => n.name.toLowerCase().includes(q))
       .sort((a, b) => b.degree - a.degree)
       .slice(0, 12);
-  }, [search, data.nodes]);
+  }, [search, everyone]);
   useEffect(() => setActive(0), [search]);
 
-  const node = selected ? byId.get(selected) : undefined;
-  const nodeEdges = selected ? data.edges.filter((e) => e.source === selected || e.target === selected) : [];
+  const fetched = remote.data && remote.data.node.id === selected ? remote.data : null;
+  const node = selected ? (fetched?.node ?? byId.get(selected)) : undefined;
+  const nodeEdges = !selected ? [] : partial ? (fetched?.edges ?? []) : data.edges.filter((e) => e.source === selected || e.target === selected);
+  const neighbourName = (id: string) => nameOf.get(id) ?? fetched?.names[id] ?? id;
+  const notDrawn = !!selected && !byId.has(selected);
   const fromTrail = trail && (trail.source.id === params.get("focus") || trail.source.node_ids?.includes(params.get("focus")) || trail.source.community_id === params.get("community"));
 
   const pick = (id: string) => {
@@ -248,9 +261,7 @@ function GraphExplorer({ data, params }: { data: GraphData; params: URLSearchPar
             />
             </Suspense>
           </div>
-          {Object.keys(data.layout).length < data.nodes.length ? (
-            <p className="field-help">{t("graph.drawnOnly", { drawn: Object.keys(data.layout).length, total: data.nodes.length })}</p>
-          ) : null}
+          {partial ? <p className="field-help">{t("graph.drawnOnly", { drawn: number(data.nodes.length), total: number(data.stats.nodes) })}</p> : null}
         </div>
         <section className="sheet">
           <div className="tabs" role="tablist" aria-label={t("graph.panels")}>
@@ -262,8 +273,11 @@ function GraphExplorer({ data, params }: { data: GraphData; params: URLSearchPar
           </div>
           <div className="sheet-body" role="tabpanel" id={`panel-${panel}`} aria-labelledby={`tab-${panel}`}>
             <h2 className="visually-hidden">{t(`graph.panel.${panel}`)}</h2>
+            {panel === "entity" ? <ErrorText error={remote.error} /> : null}
             {panel === "entity" ? (
-              node ? (
+              selected && partial && !fetched && remote.loading ? (
+                <Loading />
+              ) : node ? (
                 <div className="stack" style={{ gap: 12 }}>
                   <div>
                     <h2 className="sheet-title" style={{ fontSize: "var(--text-lg)" }}>
@@ -276,6 +290,7 @@ function GraphExplorer({ data, params }: { data: GraphData; params: URLSearchPar
                       {node.source_kinds.includes("seed_graph") ? <span className="badge badge-trace">{t("graph.seed")}</span> : null}
                     </div>
                   </div>
+                  {notDrawn ? <p className="field-help" style={{ margin: 0 }}>{t("graph.notDrawn")}</p> : null}
                   {node.description ? <p style={{ margin: 0, whiteSpace: "pre-line", fontSize: "var(--text-sm)" }}>{node.description}</p> : null}
                   <dl className="kv">
                     <dt>{t("graph.degree")}</dt>
@@ -317,7 +332,7 @@ function GraphExplorer({ data, params }: { data: GraphData; params: URLSearchPar
                         return (
                           <li key={edge.id}>
                             <button onClick={() => pick(other)} title={edge.description ?? undefined}>
-                              <span>{byId.get(other)?.name ?? other}</span>
+                              <span>{neighbourName(other)}</span>
                               <span className="id">{edge.type}</span>
                             </button>
                           </li>
@@ -445,18 +460,21 @@ function GraphExplorer({ data, params }: { data: GraphData; params: URLSearchPar
         </section>
       </div>
       <Sheet title={t("graph.nodeTable")} pad={false}>
-        <EntityTable nodes={data.nodes} communityName={communityName} onPick={pick} />
+        <EntityTable nodes={everyone} communityName={communityName} onPick={pick} />
       </Sheet>
     </>
   );
 }
+
+/** A table row: a drawn entity in full, another by name and degree. */
+type EntityRow = GraphEntityRef & Partial<Pick<GraphNode, "type" | "community_id">>;
 
 // Rows the entity table shows at once (a graph can hold tens of thousands).
 export const TABLE_PAGE = 100;
 
 /** Every entity, most connected first: built only while open, a page at a
  * time. */
-export function EntityTable({ nodes, communityName, onPick }: { nodes: GraphNode[]; communityName: (id: string) => string; onPick: (id: string) => void }) {
+export function EntityTable({ nodes, communityName, onPick }: { nodes: EntityRow[]; communityName: (id: string) => string; onPick: (id: string) => void }) {
   const { t, number } = useI18n();
   const [open, setOpen] = useState(false);
   const [page, setPage] = useState(0);

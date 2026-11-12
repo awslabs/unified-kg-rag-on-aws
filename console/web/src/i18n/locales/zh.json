@@ -364,6 +364,7 @@
   "graph.legend": "图例",
   "graph.other_other": "其他 {{count}} 个",
   "graph.drawnOnly": "在 {{total}} 个实体中只绘制了连接最多的 {{drawn}} 个；其余实体可按名称查找，或在下方表格中查看。",
+  "graph.notDrawn": "未在画布上绘制：画布只绘制连接最多的实体。",
   "graph.panels": "详情",
   "graph.panel.entity": "实体",
   "graph.panel.communities": "社区",

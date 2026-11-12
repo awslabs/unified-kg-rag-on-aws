@@ -382,6 +382,7 @@
   "graph.other_one": "{{count}} other",
   "graph.other_other": "{{count}} others",
   "graph.drawnOnly": "The {{drawn}} best-connected of {{total}} entities are drawn; find the others by name or in the table below.",
+  "graph.notDrawn": "Not drawn on the canvas: only the best-connected entities are.",
   "graph.panels": "Details",
   "graph.panel.entity": "Entity",
   "graph.panel.communities": "Communities",

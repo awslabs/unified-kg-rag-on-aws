@@ -20,7 +20,7 @@ function graph(total: number, drawn: number): GraphData {
   const nodes = Array.from({ length: total }, (_, i) => node(i, total - i));
   const edges = nodes.slice(1).map((n, i) => ({ id: `e${i}`, source: `n${i}`, target: n.id, type: null, description: null, weight: null, in_schema: null, source_kinds: [] }));
   const layout = Object.fromEntries(nodes.slice(0, drawn).map((n, i) => [n.id, [i, i % 7] as [number, number]]));
-  return { nodes, edges, layout, communities: [], stats: {} as GraphData["stats"] };
+  return { nodes, others: [], edges, layout, communities: [], stats: {} as GraphData["stats"] };
 }
 
 describe("drawnGraph", () => {
@@ -52,5 +52,15 @@ describe("EntityTable", () => {
     expect(container.querySelectorAll("tbody tr")).toHaveLength(50);
     expect(screen.getByText("201–250 of 250")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+  });
+
+  it("lists the undrawn entities by name and degree too", () => {
+    const rows = [node(1, 9), { id: "x", name: "Undrawn", degree: 3 }];
+    const { container } = renderIn(<EntityTable nodes={rows} communityName={(id) => id} onPick={() => undefined} />);
+    const details = container.querySelector("details") as HTMLDetailsElement;
+    details.open = true;
+    fireEvent(details, new Event("toggle"));
+    const last = container.querySelectorAll("tbody tr")[1] as HTMLElement;
+    expect(last.textContent).toBe("Undrawn—3—");
   });
 });

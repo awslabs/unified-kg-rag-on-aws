@@ -400,6 +400,7 @@
   "graph.other_many": "{{count}} más",
   "graph.other_other": "{{count}} más",
   "graph.drawnOnly": "Se dibujan las {{drawn}} entidades mejor conectadas de {{total}}; busca las demás por nombre o en la tabla de abajo.",
+  "graph.notDrawn": "No se dibuja en el lienzo: solo se dibujan las entidades mejor conectadas.",
   "graph.panels": "Detalles",
   "graph.panel.entity": "Entidad",
   "graph.panel.communities": "Comunidades",

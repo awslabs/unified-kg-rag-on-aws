@@ -364,6 +364,7 @@
   "graph.legend": "凡例",
   "graph.other_other": "その他 {{count}} 件",
   "graph.drawnOnly": "{{total}} 個のエンティティのうち、つながりの多い {{drawn}} 個を描画しています。ほかは名前で検索するか、下の表で確認してください。",
+  "graph.notDrawn": "キャンバスには描画されていません。つながりの多いエンティティだけを描画します。",
   "graph.panels": "詳細",
   "graph.panel.entity": "エンティティ",
   "graph.panel.communities": "コミュニティ",

@@ -418,6 +418,7 @@
   "graph.other_many": "ещё {{count}}",
   "graph.other_other": "ещё {{count}}",
   "graph.drawnOnly": "Показаны {{drawn}} самых связанных сущностей из {{total}}; остальные можно найти по имени или в таблице ниже.",
+  "graph.notDrawn": "Не показана на холсте: там только самые связанные сущности.",
   "graph.panels": "Подробности",
   "graph.panel.entity": "Сущность",
   "graph.panel.communities": "Сообщества",
