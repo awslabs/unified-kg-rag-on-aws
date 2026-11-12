@@ -20,6 +20,7 @@ pytestmark = pytest.mark.unit
 REPO = "https://github.com/awslabs/unified-kg-rag-on-aws/blob/main/"
 
 
+@pytest.mark.slow
 def test_every_doc_link_resolves() -> None:
     report = check_docs().check_links()
     assert not report.failures, "broken doc links (run `uv run python "
