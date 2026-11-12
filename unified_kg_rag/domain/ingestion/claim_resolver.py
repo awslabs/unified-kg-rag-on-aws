@@ -346,7 +346,8 @@ def claim_status_recognised(raw: str | None) -> bool:
 
 def merge_claim_statuses(statuses: Iterable[str | None]) -> str | None:
     """The status of one claim stated with ``statuses`` (each read with
-    :func:`claim_status`): ``disputed`` when one says ``disputed`` or they
+    :func:`claim_status`; the statements of one claim are restatements of
+    one statement, see ``claim_identity_suffix``): ``disputed`` when one says ``disputed`` or they
     state it both ``true`` and ``false``; else ``true`` or ``false`` when
     one states it, which settles a ``suspected`` claim; ``suspected`` when
     one says so; and ``unknown`` only when nothing else is stated (None

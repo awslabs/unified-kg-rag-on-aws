@@ -67,11 +67,14 @@ gets its models and stores from the run's `Providers` bundle.
   extraction did not list is dropped (the prompt says so, and a unit whose
   record lists no entity is not asked), and an object not listed there is
   kept as the literal name the claim states (`object_id` empty), though
-  another document states that entity. Statements of one claim merge
-  their statuses (`merge_claim_statuses`): `disputed` when one says so or
-  they state it both `true` and `false`, else `true` or `false` when one
-  states it (which settles a `suspected` claim), else `suspected`, and
-  `unknown` only when nothing else is stated; the merge is order-free and
+  another document states that entity. Statements of one claim (one
+  statement restated: its id holds the statement, see below) merge their
+  statuses (`merge_claim_statuses`): `disputed` when one says so or they
+  state it both `true` and `false`, else `true` or `false` when one states
+  it (which settles a `suspected` restatement of it), else `suspected`, and
+  `unknown` only when nothing else is stated; a reworded statement of the
+  same fact ("must pay $50,000 by 2024-06-30", "owes a $50,000 payment due
+  30 June 2024") is another claim, neither settling nor disputing it; the merge is order-free and
   associative, so an incremental merge agrees with a full build. A model's
   status is read into the prompt's five (`claim_status`: `true`, `false`,
   `suspected`, `disputed`, `unknown`, as stored) at extraction and in each

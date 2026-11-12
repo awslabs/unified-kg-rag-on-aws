@@ -1946,13 +1946,14 @@ Ingestion and incremental indexing.
   claims whose status is none of them are counted in the `total_unrecognised_claim_statuses` metric (#644). As MS
   GraphRAG's claim prompt, built around the allegations a text reports, the prompt takes an allegation or suspicion
   the text reports as a `SUSPECTED` claim saying who alleges it, where it left out all speculation, and keeps
-  `DISPUTED` for conflicting information; only the author's own opinions are left out. A `true` or `false` statement
-  settles a `suspected` claim, `true` and `false` together dispute it. A claim's id holds its statement (the
-  description's entity key, without the spacing a dense script leaves optional: `환경법 위반` is `환경법위반`) beside
-  its subject, object, type and dates: claims of one type about one subject with no object or date were one claim,
-  their statuses merged ("accused of bribery" read as confirmed by "fined for pollution"), where MS GraphRAG keeps
-  one row per statement; only a restatement merges, under the spelling most of its statements write (then the
-  smallest, where the smallest alone took a capitalised, double-spaced one).
+  `DISPUTED` for conflicting information; only the author's own opinions are left out. A `true` or `false`
+  restatement settles a `suspected` claim, `true` and `false` restatements together dispute it (a reworded statement
+  is another claim). A claim's id holds its statement (the description's entity key, without the spacing a dense
+  script leaves optional: `환경법 위반` is `환경법위반`) beside its subject, object, type and dates: claims of one
+  type about one subject with no object or date were one claim, their statuses merged ("accused of bribery" read as
+  confirmed by "fined for pollution"), where MS GraphRAG keeps one row per statement; only a restatement merges,
+  under the spelling most of its statements write (then the smallest, where the smallest alone took a capitalised,
+  double-spaced one).
 - An entity without relationships no longer adds a level to the community hierarchy: it made a single root over
   the other communities read as a partition, so global search's cut depths depended on it (#608).
 - A model answer that corrects itself is parsed by its last complete answer (each XML section keeps its last closed
