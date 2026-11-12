@@ -870,6 +870,65 @@ def test_a_re_key_whose_strip_note_cannot_be_written_writes_nothing(mocker) -> N
     assert "e-new" in vector.data["entities"]
 
 
+def test_a_strip_notes_the_edges_a_retry_would_not_find_not_unchanged_ones(
+    mocker,
+) -> None:
+    # The strip re-keys "e-old": its edge takes the new endpoint (a retry
+    # would not find it by the removed unit), and the edge it derives as
+    # stored (same endpoints, units and strengths) is not noted.
+    from unified_kg_rag.domain.ingestion.derivation import Derived
+    from unified_kg_rag.domain.ingestion.relationship_weights import (
+        apply_text_unit_weights,
+    )
+    from unified_kg_rag.domain.models import Relationship
+
+    def edge(rel_id: str, source: str, target: str, weights: dict) -> Relationship:
+        rel = Relationship(id=rel_id, source_id=source, target_id=target, type="R")
+        apply_text_unit_weights(rel, weights)
+        return rel
+
+    manager, graph, vector = _manager()
+    entities = [
+        Entity(id="e-old", name="Acme", text_unit_ids=["t1", "t2"]),
+        Entity(id="e2", name="Depot", text_unit_ids=["t1", "t2"]),
+        Entity(id="e3", name="Buyer", text_unit_ids=["t1"]),
+    ]
+    edges = [
+        edge("r-kept", "e2", "e3", {"t1": 2.0}),
+        edge("r-old", "e-old", "e2", {"t1": 1.0, "t2": 1.0}),
+    ]
+    for store in (graph, vector):
+        store.upsert_entities(entities)
+        store.upsert_relationships(edges)
+    mocker.patch.object(
+        manager,
+        "derive",
+        return_value=Derived(
+            entities=[
+                Entity(id="e-new", name="ACME", text_unit_ids=["t1"]),
+                Entity(id="e2", name="Depot", text_unit_ids=["t1"]),
+                entities[2],
+            ],
+            relationships=[
+                edges[0].model_copy(),
+                edge("r-old", "e-new", "e2", {"t1": 1.0}),
+            ],
+            id_remap={"e-old": "e-new"},
+        ),
+    )
+    note = mocker.spy(manager._removal, "_note_pending_strip")
+
+    manager.remove_text_units_from_shared(
+        "default",
+        entity_ids=["e-old", "e2"],
+        relationship_ids=["r-kept", "r-old"],
+        text_unit_ids=["t2"],
+    )
+
+    _, _, relationship_ids, _ = note.call_args.args
+    assert relationship_ids == ["r-old"]
+
+
 def test_a_removal_clears_a_note_whose_items_are_gone(mocker) -> None:
     # An earlier strip's note names an item this removal deletes outright
     # (it cites only the removed unit), so nothing is left to strip: the
