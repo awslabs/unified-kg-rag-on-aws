@@ -180,16 +180,22 @@ export function drawnGraph(data: GraphData): { nodes: Node[]; links: Link[] } {
   return { nodes, links };
 }
 
+/** Room around each node: more for a busier one, and for labels on a small
+ * graph. */
+function collide(nodes: Node[], large: boolean) {
+  const maxDeg = nodes.reduce((m, n) => Math.max(m, n.degree), 1);
+  return forceCollide<Node & SimulationNodeDatum>((n) => 6 + 5 * Math.sqrt(n.degree / maxDeg) + (large ? 0 : 10));
+}
+
 /** Runs the pre-layout simulation on the drawn graph (in place). */
 function settle(graph: { nodes: Node[]; links: Link[] }): { nodes: Node[]; links: Link[] } {
   const { nodes, links } = graph;
   const large = nodes.length > LARGE;
   const { charge, distance } = forces(large);
-  const maxDeg = nodes.reduce((m, n) => Math.max(m, n.degree), 1);
   forceSimulation(nodes as (Node & SimulationNodeDatum)[])
     .force("link", forceLink(links as unknown as SimulationLinkDatum<Node & SimulationNodeDatum>[]).id((n) => (n as Node).id).distance(distance))
     .force("charge", forceManyBody().strength(charge).distanceMax(700))
-    .force("collide", forceCollide((n) => 6 + 5 * Math.sqrt((n as Node).degree / maxDeg) + (large ? 0 : 10)))
+    .force("collide", collide(nodes, large))
     .force("center", forceCenter(0, 0))
     .stop()
     .tick(large ? 120 : 300);
@@ -201,7 +207,7 @@ export function GraphCanvas({ data, colorOf, selected, highlighted, traced, trac
   const palette = usePalette();
   const graph = useRef<ForceGraphMethods<NodeObject<Node>, LinkObject<Node, Link>> | undefined>(undefined);
   const box = useRef<HTMLDivElement>(null);
-  const [size, setSize] = useState({ width: 800, height: 520 });
+  const [size, setSize] = useState({ width: 800, height: 520, measured: false });
   const [hoverNode, setHoverNode] = useState<string | null>(null);
   const [hoverLink, setHoverLink] = useState<Link | null>(null);
   const fitted = useRef(false);
@@ -210,7 +216,7 @@ export function GraphCanvas({ data, colorOf, selected, highlighted, traced, trac
   useEffect(() => {
     const element = box.current;
     if (!element) return;
-    const measure = () => setSize({ width: element.clientWidth, height: element.clientHeight });
+    const measure = () => setSize({ width: element.clientWidth, height: element.clientHeight, measured: true });
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(element);
@@ -224,14 +230,16 @@ export function GraphCanvas({ data, colorOf, selected, highlighted, traced, trac
   const graphData = useMemo(() => settle(drawnGraph(data)), [data]);
   const large = graphData.nodes.length > LARGE;
 
-  // The live engine keeps the same forces, so a dragged node does not pull
-  // the picture back into a knot.
+  // The live engine keeps the same forces as the settled layout (with its
+  // collision), so the picture does not drift as it starts, and a dragged
+  // node does not pull it back into a knot.
   useEffect(() => {
     const g = graph.current;
     if (!g) return;
     const { charge, distance } = forces(large);
-    g.d3Force("charge")?.strength(charge);
+    g.d3Force("charge")?.strength(charge).distanceMax(700);
     g.d3Force("link")?.distance(distance);
+    g.d3Force("collide", collide(graphData.nodes, large));
   }, [graphData, large]);
 
   const neighbours = useMemo(() => {
@@ -282,6 +290,20 @@ export function GraphCanvas({ data, colorOf, selected, highlighted, traced, trac
     },
     [graphData.nodes],
   );
+
+  // The layout is settled before the first paint: fit it (or centre the
+  // selection) once, at once, when the canvas has its size. Only the Fit
+  // button animates.
+  useEffect(() => {
+    if (!size.measured || fitted.current || !graph.current) return;
+    const frame = requestAnimationFrame(() => {
+      if (fitted.current) return;
+      fitted.current = true;
+      if (selected) centre(selected, 0);
+      else graph.current?.zoomToFit(0, 48);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [size, selected, centre]);
 
   // Bring a selection made elsewhere (search, a trail) into view.
   useEffect(() => {
@@ -481,12 +503,6 @@ export function GraphCanvas({ data, colorOf, selected, highlighted, traced, trac
         warmupTicks={0}
         cooldownTicks={reduced ? 0 : 40}
         d3VelocityDecay={0.35}
-        onEngineStop={() => {
-          if (fitted.current) return;
-          fitted.current = true;
-          if (selected) centre(selected, 0);
-          else graph.current?.zoomToFit(reduced ? 0 : 400, 48);
-        }}
       />
       <div className="graph-tools">
         <button className="button button-small" onClick={() => graph.current?.zoom((graph.current.zoom() || 1) * 1.25, 200)} aria-label={t("graph.zoomIn")}>
