@@ -565,7 +565,9 @@ def test_unknown_markers_are_never_citations() -> None:
 
 class _Store:
     """A document retriever: a fixed hit list for searches, the stored text
-    units for a fetch by id (honouring a ``team`` filter)."""
+    units for a fetch by id (honouring a ``team`` filter, and ``top_k`` as
+    the port allows: the OpenSearch retriever floors an id fetch at its id
+    count, another may not)."""
 
     UNITS = {
         "tu-1": ("doc-1", "contract.txt", "a"),
@@ -608,7 +610,7 @@ class _Store:
             )
             for unit, (document, name, unit_team) in self.UNITS.items()
             if unit in filters["id"] and (team is None or team == unit_team)
-        ]
+        ][: query.top_k]
 
 
 def _hits() -> list[RetrievalResult]:

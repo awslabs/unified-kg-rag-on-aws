@@ -402,6 +402,23 @@ class TestTypeQuota:
             counts[r.retriever_type] = counts.get(r.retriever_type, 0) + 1
         assert counts == {"text": 20, "entity": 40}
 
+    def test_a_quota_caps_its_type_when_the_budget_has_room(self) -> None:
+        # The quota leaves 4 of top_k's 6 slots free: the type's surplus does
+        # not take them (upstream cuts the chunk pool to chunk_top_k).
+        out = HybridScorer._select_with_type_quota(
+            self._typed("text", 5, 0.9), top_k=6, per_type_quota={"text": 2}
+        )
+        assert [r.content for r in out] == ["text-0", "text-1"]
+
+    def test_slots_a_quota_reserves_beyond_top_k_are_back_filled(self) -> None:
+        # The quota (3) is wider than top_k (2) and its type holds one item:
+        # the width is the quota's, the two slots left go to unquotaed types.
+        ranked = self._typed("text", 1, 0.9) + self._typed("claim", 5, 0.5)
+        out = HybridScorer._select_with_type_quota(
+            ranked, top_k=2, per_type_quota={"text": 3}
+        )
+        assert [r.content for r in out] == ["text-0", "claim-0", "claim-1"]
+
     def test_the_highest_scoring_items_of_each_type_are_the_ones_kept(self) -> None:
         ranked = self._typed("text", 5, 0.9)
         out = HybridScorer._select_with_type_quota(
