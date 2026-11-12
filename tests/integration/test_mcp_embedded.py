@@ -246,6 +246,24 @@ async def test_kg_describe_schema_lists_what_the_namespace_holds(
     assert "name.keyword" in result.filter_keys
     assert result.extraction_schema is not None
     assert result.namespaces == ["default"]
+    assert result.exists
+
+
+async def test_kg_describe_schema_of_a_namespace_nothing_was_ingested_under(
+    index: Index,
+) -> None:
+    # It listed the config's methodologies and 11 strategies for a typo'd
+    # namespace, with no exists field; a search on it is index_not_found.
+    config = index.config.model_copy(deep=True)
+    config.mcp.allowed_namespaces = ["nosuch"]
+    chain = GraphRAGChain(config, providers=index.providers)
+    try:
+        result = await KnowledgeGraphTools(chain).describe_schema(namespace="nosuch")
+    finally:
+        await chain.aclose()
+    assert result.namespace == "nosuch" and not result.exists
+    assert (result.methodologies, result.artifacts, result.strategies) == ([], [], [])
+    assert result.auto_routes == []
 
 
 # --- the strategy allowlist ------------------------------------------------

@@ -85,7 +85,6 @@ class NamespaceDescription(NamespaceSummary):
         description="The registry namespace: the suffix, indexing."
         "additional_suffix and the store tag"
     )
-    exists: bool = Field(description="Whether any of its indices is live")
     build: dict[str, Any] | None = Field(
         description="The build record of the last ingestion run that wrote it "
         "(pipeline id, mode, build time, documents, settings, artifacts)"
@@ -162,6 +161,7 @@ def describe_namespace(
             )
         )
     holdings = namespace_holdings(record, config)
+    exists = any(index.index for index in indices)
     namespace = config_registry_namespace(config.indexing, name)
     registry, unavailable = (
         _registry_counts(providers, namespace)
@@ -171,10 +171,9 @@ def describe_namespace(
     return NamespaceDescription(
         suffix=name,
         namespace=namespace,
-        exists=any(index.index for index in indices),
         build=record,
         build_record="present" if record is not None else "missing",
-        **summarize_namespace(holdings, config),
+        **summarize_namespace(holdings, config, exists=exists),
         indices=indices,
         registry=registry,
         registry_unavailable=unavailable,

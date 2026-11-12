@@ -298,6 +298,11 @@ class SchemaToolResult(BaseModel):
     """``kg_describe_schema``'s result."""
 
     namespace: str = Field(description="The index namespace described")
+    exists: bool = Field(
+        default=True,
+        description="Whether anything was ingested under it; false: it holds "
+        "nothing and every search on it is refused (index_not_found)",
+    )
     methodologies: list[str] = Field(description="The methodologies it holds")
     artifacts: list[str] = Field(description="The index artifacts it holds")
     strategies: list[str] = Field(
@@ -1079,6 +1084,7 @@ class KnowledgeGraphTools:
             offered = {s.value for s in self.strategies}
             return SchemaToolResult(
                 namespace=described.namespace,
+                exists=described.exists,
                 methodologies=described.methodologies,
                 artifacts=described.artifacts,
                 # auto first, when it has a strategy to route to.

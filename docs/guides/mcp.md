@@ -54,7 +54,7 @@ Ctrl-C.
 | `kg_answer` | The full RAG answer first, with the abstention fields (`abstained`, `abstention_reason`), then the records it rests on and `usage`. `records`: `cited` (the default: the sources and model-written sections the answer cites; when it cites none, as a `global` or `drift` answer, the first `mcp.uncited_records`, `records_kept: top`), `all` (every source the answer model saw, after the model-written sections it may cite: global search's key points, DRIFT's intermediate answers) or `none`; `records_kept` says which applied. `degraded` lists the steps the answer was given without (a partial answer: each `step`, `reason` and `error_type`), `citations_unresolved` the lineage reads that failed For a follow-up question, pass the conversation so far as `history` (below) | The above, the follow-up rewrite with a `history`, and the answer |
 | `kg_get_entity` | Entities by `id`, `iri` or `name` (exact first, as the strategies link a name: case, Arabic alef forms or `ё`/`е` aside; without one, the closest names, `match: search`) | None |
 | `kg_neighbors` | The entities within `max_hops` of one entity and the relationships among them | None |
-| `kg_describe_schema` | The methodologies and strategies the namespace holds, its last build, the extraction schema's types and patterns, the filter keys and the server's limits | None |
+| `kg_describe_schema` | The methodologies and strategies the namespace holds, its last build, the extraction schema's types and patterns, the filter keys and the server's limits; `exists: false` (and no methodology or strategy) for a namespace nothing was ingested under | None |
 
 Every tool is annotated read-only and idempotent. Call
 `kg_describe_schema` first: it says which strategies the namespace can

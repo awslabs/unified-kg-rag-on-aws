@@ -1073,18 +1073,20 @@ From a `main` checkout (formats and keys no release had):
   library](docs/guides/python-library.md#documents-from-memory).
 - `run-describe` (and `describe_namespace`, `export_graph`): what an index namespace holds (methodologies, the
   strategies it serves, each index's item count and embedding model, the build record, the registry's records), and
-  its graph streamed from the vector store as JSON Lines or GraphML with every item's text units and documents
-  (a document by its path relative to the corpus root, else its file name, never the indexing host's path;
+  its graph streamed from the vector store as JSON Lines or GraphML with every item's text units and documents (a
+  document by its path relative to the corpus root, else its file name, never the indexing host's path;
   `--output-path`, `--export-format`, `--max-items`; written atomically, so a failed export leaves the previous file
   and no partial one; an existing file is replaced only with `--force`, `export_graph(overwrite=True)`, and never the
   `--config-path` file or the schema file the config loads, by the guard `run-prompt-tuning` shares);
   `VectorIndexer.describe_indices` and `scan_items` (#628). It, `kg_describe_schema` (which adds `auto_routes`), the
-  console and the chain's refusal read what a namespace holds by one rule
-  (`NamespaceHoldings`): without a build record the console shows what the config builds, as queries are served, not
-  nothing held. A registry the caller cannot read (the CDK query task's role has no DynamoDB access) is reported
-  unavailable, with the reason in `registry_unavailable` and a warning, and the rest is still described (#636). A
-  missing extra and a namespace that holds no index exit 2 with the error on stderr, and describing creates no store
-  file where nothing was ingested (#641). See [inspect and export](docs/guides/inspect.md).
+  console and the chain's refusal read what a namespace holds by one rule (`NamespaceHoldings`): without a build
+  record the console shows what the config builds, as queries are served, not nothing held; a namespace nothing was
+  ingested under holds nothing (`exists: false`, also in `kg_describe_schema`; `acheck_methodology` and a query raise
+  `IndexNotFoundError`, not a methodology refusal naming the config's). A registry the caller cannot read (the CDK
+  query task's role has no DynamoDB access) is reported unavailable, with the reason in `registry_unavailable` and a
+  warning, and the rest is still described (#636). A missing extra and a namespace that holds no index exit 2 with the
+  error on stderr, and describing creates no store file where nothing was ingested (#641). See [inspect and
+  export](docs/guides/inspect.md).
 - Observability: the `observability` section and `otel` extra, spans for runs, stages, batches and query steps,
   GenAI model-call spans, OTLP, Langfuse and Phoenix exporters with redacted content capture (an IPv6 endpoint keeps
   its brackets in the logged URL); CDK `enable_cloudwatch_tracing` with an ADOT sidecar (#207, #208, #211, #219,

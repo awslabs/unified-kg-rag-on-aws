@@ -76,6 +76,9 @@ def test_describe_a_namespace_that_holds_nothing(ingested) -> None:
     description = describe_namespace(config, "tenant_x", providers=providers)
     assert not description.exists
     assert description.artifacts_from == "config"
+    # It holds nothing: not the methodologies the config builds.
+    assert (description.methodologies, description.strategies) == ([], [])
+    assert (description.artifacts, description.auto_routes) == ([], [])
     with pytest.raises(ConfigurationError, match="suffix"):
         describe_namespace(config, "../x", providers=providers)
 

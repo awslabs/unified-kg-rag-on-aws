@@ -299,6 +299,11 @@ def test_the_namespace_s_methodologies_come_from_its_build_record(
         assert bad.status_code == 400 and bad.json()["code"] == "invalid"
         bad = client.get("/api/strategies", params={"suffix": unsafe})
         assert bad.status_code == 400 and bad.json()["code"] == "invalid"
+    # A suffix nothing was ingested under serves no strategy (every one but
+    # tree read as available: what the config builds).
+    missing = client.get("/api/strategies", params={"suffix": "nosuch"}).json()
+    assert not any(s["available"] for s in missing["strategies"])
+    assert all("nosuch" in s["reason"] for s in missing["strategies"])
 
 
 def test_an_ingestion_that_narrows_the_namespace_is_refused_unconfirmed(

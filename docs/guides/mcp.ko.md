@@ -50,7 +50,7 @@ extra가 없으면 `run-mcp-server`는 extra 이름을 알려 주고 종료 코�
 | `kg_answer` | RAG 답변 전체와 답변 거절 필드(`abstained`, `abstention_reason`)를 먼저, 그다음 답변의 근거 레코드와 `usage`. `records`: `cited`(기본값: 답변이 인용한 출처와 모델 작성 섹션. `global`이나 `drift` 답변처럼 하나도 인용하지 않으면 앞의 `mcp.uncited_records`개, `records_kept: top`), `all`(답변 모델이 본 모든 출처. 답변이 인용할 수 있는 모델 작성 섹션인 global 검색의 핵심 요점과 DRIFT의 중간 답변이 먼저), `none`. 실제 적용된 값은 `records_kept`. `degraded`는 답변이 빠뜨린 단계(부분 답변: 각 `step`, `reason`, `error_type`), `citations_unresolved`는 실패한 계보(lineage) 읽기입니다. 후속 질문이면 지금까지의 대화를 `history`로 넘깁니다(아래 참고) | 위의 호출, `history`가 있으면 후속 질문 재작성, 답변 생성 |
 | `kg_get_entity` | `id`, `iri`, `name`으로 엔터티를 찾습니다(이름은 먼저 정확히 일치하는 것을 찾고(전략이 이름을 연결하는 방식대로 대소문자, 아랍어 알레프 형태, `ё`/`е` 차이는 무시), 없으면 가장 비슷한 이름을 찾고 `match: search`로 표시) | 없음 |
 | `kg_neighbors` | 한 엔터티에서 `max_hops` 안에 있는 엔터티와 그 사이의 관계 | 없음 |
-| `kg_describe_schema` | 네임스페이스가 가진 방법론과 전략, 마지막 빌드, 추출 스키마의 타입과 패턴, 필터 키, 서버 한도 | 없음 |
+| `kg_describe_schema` | 네임스페이스가 가진 방법론과 전략, 마지막 빌드, 추출 스키마의 타입과 패턴, 필터 키, 서버 한도. 아무것도 수집하지 않은 네임스페이스는 `exists: false`(방법론과 전략 없음) | 없음 |
 
 모든 도구에는 읽기 전용, 멱등(idempotent) 표시가 붙어 있습니다. 먼저
 `kg_describe_schema`를 호출하세요. 네임스페이스가 실행할 수 있는 전략(`strategies`, 가지지 않은

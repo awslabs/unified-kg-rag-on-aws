@@ -152,6 +152,24 @@ async def test_a_namespace_without_an_index_fails_before_any_model_call(
     assert retriever.checks == ["tenant-b", "tenant-a"]
 
 
+async def test_a_missing_namespace_is_not_described_as_holding_the_configs() -> None:
+    # Regression (rv24): tree on a suffix nothing was ingested under was
+    # refused as "'nosuch' does not hold raptor (it holds graphrag, ...)",
+    # the config's methodologies, steering to an ingestion into the typo.
+    factory = _Factory()
+    chain = _chain(_Retriever({"tenant-a"}), factory, Config())
+    try:
+        with pytest.raises(IndexNotFoundError, match="nosuch"):
+            await chain.acheck_methodology(SearchStrategy.TREE, "nosuch")
+        with pytest.raises(IndexNotFoundError, match="nosuch"):
+            await chain.ainvoke(
+                RAGInput(query="q", suffix="nosuch", search_strategy="tree")
+            )
+    finally:
+        await chain.aclose()
+    assert factory.models == 0
+
+
 async def test_under_ignore_errors_a_missing_namespace_is_the_error_answer() -> None:
     factory = _Factory()
     config = Config()

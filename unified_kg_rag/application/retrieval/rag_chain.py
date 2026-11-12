@@ -221,6 +221,9 @@ from unified_kg_rag.shared.utils.concurrency import (
 
 logger = get_logger(__name__)
 
+# The input key of the error a query's admission met checking its namespace.
+_MISSING_NAMESPACE = "_missing_namespace"
+
 
 def _names(strategies: Collection[SearchStrategy]) -> str:
     """``strategies`` as a message lists them, in declaration order."""
@@ -1461,9 +1464,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         """The methodologies the index namespace of ``suffix`` holds (its
         build record, else the configured ``indexing.methodologies``), as
         every query reads them before any model call. Raises
+        ``IndexNotFoundError`` if nothing was ingested under ``suffix`` (it
+        holds no methodology: the config's are not described as its), and
         ``MethodologyNotIndexedError`` if ``strategy`` reads another one
         (``auto`` routes only among the held ones). For callers that check a
         strategy once before many queries (an interactive session)."""
+        await self._arequire_namespace(suffix)
         return await methodology_check.check_strategy_methodology(
             self, strategy, suffix
         )
@@ -2446,7 +2452,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         try:
             async with deadline:
                 # Before the first model call (the input guardrail's).
-                await self._arequire_namespace(rag_input.suffix)
+                self._raise_missing_namespace(input_dict)
                 blocking = await self._screen_input(
                     rag_input, input_dict, guard_records
                 )
@@ -3056,6 +3062,17 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         rag_input.suffix = input_dict["suffix"] = resolve_namespace(
             self.config, rag_input.suffix
         )
+        try:
+            await self._arequire_namespace(rag_input.suffix)
+        except Exception as e:  # noqa: BLE001 - raised by the query below
+            # Nothing ingested under it (IndexNotFoundError: it holds
+            # nothing, not what the config builds, which a methodology
+            # refusal would name), or a store that cannot tell: the query
+            # raises it (_raise_missing_namespace; under ignore_errors, its
+            # error answer) before any model call.
+            input_dict["held_artifacts"] = frozenset()
+            input_dict[_MISSING_NAMESPACE] = e
+            return rag_input, input_dict
         # What auto routes among and the strategy reads: one read of the
         # build record a query (a failed one is not kept, nor paid twice).
         holdings = await methodology_check.check_strategy_holdings(
@@ -3069,6 +3086,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             self, rag_input, input_dict["held_artifacts"]
         )
         return rag_input, input_dict
+
+    @staticmethod
+    def _raise_missing_namespace(input_dict: dict[str, Any]) -> None:
+        """Raise the error the admission's namespace check met
+        (``_admit_query``: nothing ingested under the query's suffix, or a
+        store that could not be reached)."""
+        if (missing := input_dict.pop(_MISSING_NAMESPACE, None)) is not None:
+            raise missing
 
     async def _arequire_namespace(self, suffix: str | None) -> None:
         """Raise ``IndexNotFoundError`` when nothing was ingested under
@@ -3233,7 +3258,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                     ) as span,
                 ):
                     async with deadline.scope():
-                        await self._arequire_namespace(rag_input.suffix)
+                        self._raise_missing_namespace(input_dict)
                         blocking = await self._screen_input(
                             rag_input, input_dict, guard_records
                         )
