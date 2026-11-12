@@ -26,6 +26,7 @@ from unified_kg_rag.domain.models import (
     SearchQuery,
     SearchType,
 )
+from unified_kg_rag.domain.retrieval.lineage import merge as merge_lineages
 from unified_kg_rag.domain.retrieval.ppr import PassageGraph, passage_weights
 from unified_kg_rag.shared import get_logger
 
@@ -176,13 +177,13 @@ class PPRRankingMixin(BaseSearchStrategy):
         graph = PassageGraph()
         for edge in edges:
             graph.add_relationship(edge.source_id, edge.target_id)
-        linked = 0
+        linked: list[tuple[list[str], float]] = []
         for key, node in nodes.items():
             graph.add_entity(key)
             units = document_unit_ids(node)
             if units and len(units) <= frequency_threshold:
                 graph.link_passages(key, units)
-                linked += 1
+                linked.append((units, float(node.score or 0.0)))
         hits = {
             str(hit.source): float(hit.score or 0.0)
             for hit in passage_hits
@@ -201,12 +202,19 @@ class PPRRankingMixin(BaseSearchStrategy):
                 damping=settings.damping,
                 max_iterations=settings.max_iterations,
                 tolerance=settings.tolerance,
+                # Equal scores (the passages no seed reaches score 0) in
+                # local's support order, not by id.
+                tie_order=merge_lineages(
+                    [units for units, _ in linked],
+                    order="support",
+                    scores=[score for _, score in linked],
+                ),
             )
         )
         stats: dict[str, Any] = {
             "entities": len(nodes),
             "relationships": len(edges),
-            "linked_entities": linked,
+            "linked_entities": len(linked),
             "passages": len(graph.passages),
             "entity_seeds": len(reset),
             "passage_seeds": len(hits),

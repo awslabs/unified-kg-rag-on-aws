@@ -1800,6 +1800,8 @@ Queries and retrieval.
 - LightRAG `mix`/`hybrid` context includes the chunks the matched relationships cite (offline hybrid one-hop
   gold-chunk recall 0.30, now 0.86, 0.96 with rerank), and incremental and full builds pick the same chunks (#521,
   #530).
+- PPR passages of equal score (those no seed reaches, all 0 when the edge read degraded) rank in the support order
+  (the units most entities cite first), not by id, so the text quota no longer fills in id order.
 - A context budget no retrieved section fits is a `context_optimization` degradation (reason `context_budget`), not
   a silent `no_context` decline, and a section-type header is paid only for a type seated: a small budget (`local` at
   `max_tokens=40`) went to the headers of every type present and seated nothing.

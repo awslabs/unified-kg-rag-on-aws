@@ -146,6 +146,20 @@ def test_a_passage_graph_ranks_the_bridge_passage_above_a_hub_passage() -> None:
     assert graph.passages == {"p-ann", "p-bob", "p-bridge", "p-hub"}
 
 
+def test_passages_of_equal_mass_follow_the_tie_order() -> None:
+    # Regression (rv23): passages no seed reaches (an edge read that
+    # degraded leaves their entities apart) all score 0 and were ranked by
+    # id; the caller's tie order (local's support order) ranks them.
+    graph = PassageGraph()
+    graph.link_passages("ann", ["p-ann"])
+    graph.link_passages("x", ["p-a", "p-b"])
+    graph.link_passages("y", ["p-b"])
+    ranked, _ = graph.rank_passages({"ann": 1.0}, {})
+    assert [unit for unit, _ in ranked] == ["p-ann", "p-a", "p-b"]
+    ranked, _ = graph.rank_passages({"ann": 1.0}, {}, tie_order=["p-b", "p-a"])
+    assert [unit for unit, _ in ranked] == ["p-ann", "p-b", "p-a"]
+
+
 def test_entities_and_passages_with_one_id_stay_apart() -> None:
     graph = PassageGraph()
     graph.link_passages("x", ["x"])

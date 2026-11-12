@@ -397,6 +397,22 @@ async def test_edges_that_fail_degrade_and_fatal_errors_raise() -> None:
         await strategy.asearch(SearchQuery(query="q"))
 
 
+async def test_unreached_passages_rank_by_their_support() -> None:
+    # Regression (rv23): with the edges unread, the passages of unseeded
+    # entities scored 0 and filled the quota in id order; they follow the
+    # support order (the units most entities cite first) instead.
+    config = _config()
+    units = {"ann": ["u-ann"], "x": ["u-a", "u-b"], "y": ["u-b"]}
+    documents = _Documents(config)
+    graph = _Graph(units, [])
+    strategy = _strategy(SearchStrategy.PPR, config, documents, graph)
+    entities = [_hit("entity", e, 0.5, text_unit_ids=u) for e, u in units.items()]
+    ranked, _ = await strategy._ppr_rank(
+        SearchQuery(query="q"), entities, {"ann": 1.0}, [], frequency_threshold=10
+    )
+    assert ranked == ["u-ann", "u-b", "u-a"]
+
+
 # --- local's text_unit_ranking: ppr -----------------------------------------
 
 
