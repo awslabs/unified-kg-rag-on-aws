@@ -28,8 +28,8 @@ or into the language it requests with `target_language`, exactly when it is
 written in another one: a Korean question on an English index is searched in
 English, and an English question after a ko→en ingest costs no translator
 call. The query's language is read from its script and, among Latin-script
-languages, its function words; a query they do not tell apart counts as
-written in the index language and is not translated.
+languages, its function words; a query they do not tell apart (a name or
+keywords: "Acme Corp", "GPT-4o") is searched as written, on any index.
 
 **One index language.** The corpus is indexed in `target_language` when
 translation runs and in `source_language` otherwise. Every component follows

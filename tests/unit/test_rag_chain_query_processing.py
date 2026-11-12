@@ -208,6 +208,44 @@ async def test_a_query_is_translated_exactly_when_its_language_differs(
     assert seen == ([translated_into] if translated_into else [])
 
 
+@pytest.mark.parametrize("indexed", ["ko", "ja"])
+@pytest.mark.parametrize(
+    "query", ["Acme Corp", "Kubernetes 1.29", "GPT-4o", "AWS Lambda pricing"]
+)
+async def test_a_query_of_undecided_language_is_searched_as_written(
+    config: Config, indexed: str, query: str
+) -> None:
+    # Regression (rv24): a name or keyword query whose language neither its
+    # script nor its words tell counted as English and was translated into a
+    # non-Latin index language (one translator call, and "Acme" spelt in
+    # Hangul misses the units that write it in Latin letters).
+    config.processing.translation.enabled = False
+    config.processing.translation.source_language = indexed
+    config.processing.translation.target_language = indexed
+    chain = _chain(config)
+    seen: list[str] = []
+
+    async def translate(query, language, config=None):
+        seen.append(language)
+        return f"<{language}> {query}"
+
+    chain._translate_query = translate  # type: ignore[method-assign]
+    tasks = chain._start_query_inputs(
+        {"query": query}, entities=False, keywords=False, config=None
+    )
+    await asyncio.gather(*tasks.values())
+    assert seen == []
+    # An English question still is (the language is decided).
+    tasks = chain._start_query_inputs(
+        {"query": "Where is the vendor based?"},
+        entities=False,
+        keywords=False,
+        config=None,
+    )
+    await asyncio.gather(*tasks.values())
+    assert seen == [{"ko": "Korean", "ja": "Japanese"}[indexed]]
+
+
 async def test_translation_refusal_falls_back_to_original(config: Config) -> None:
     # Force a non-noop config so translation runs, but the LLM returns a refusal.
     config.processing.translation.source_language = "ja"

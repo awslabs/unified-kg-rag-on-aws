@@ -16,7 +16,11 @@ table the profiles name).
 """
 
 from unified_kg_rag.domain.languages.codes import LanguageCode
-from unified_kg_rag.domain.languages.detection import dense_language, text_language
+from unified_kg_rag.domain.languages.detection import (
+    decided_language,
+    dense_language,
+    text_language,
+)
 from unified_kg_rag.domain.languages.profile import CLAUDE_TOKENIZER, LanguageProfile
 from unified_kg_rag.domain.languages.registry import (
     BUILT_IN_ANALYZERS,
@@ -32,6 +36,7 @@ __all__ = [
     "PROFILES",
     "LanguageCode",
     "LanguageProfile",
+    "decided_language",
     "dense_language",
     "language_name",
     "profile",

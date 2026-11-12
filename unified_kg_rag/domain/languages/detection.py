@@ -66,6 +66,7 @@ from unified_kg_rag.shared.utils.scripts import (
 
 __all__ = [
     "TextEvidence",
+    "decided_language",
     "dense_language",
     "language_in_script",
     "script_language",
@@ -398,6 +399,14 @@ def _by_articles(
         counts[language.code] = sum(word in own for word in words)
     best = max(counts.values())
     return [p for p in tied if counts[p.code] == best] if best else tied
+
+
+def decided_language(text: str, fallback: LanguageCode | str) -> LanguageCode | None:
+    """The language ``text`` (a query) is written in when its script and
+    function words tell (:func:`script_language`), else ``None``: a name
+    or keyword query ("Acme Corp", "GPT-4o") is in no language of its own.
+    :func:`text_language` resolves the ``None`` to a language."""
+    return script_language(text_evidence([text]), _code(fallback))
 
 
 def text_language(text: str, fallback: LanguageCode | str) -> LanguageCode:

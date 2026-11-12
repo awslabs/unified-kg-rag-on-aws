@@ -33,7 +33,7 @@ from unified_kg_rag.adapters.retrieval.strategy_registry import (
     query_inputs as strategy_query_inputs,
 )
 from unified_kg_rag.domain.ingestion.cache_keys import index_language
-from unified_kg_rag.domain.languages import text_language
+from unified_kg_rag.domain.languages import decided_language
 from unified_kg_rag.domain.models import (
     Config,
     ModelPurpose,
@@ -107,20 +107,22 @@ def _query_language(
     the index was built in (``index_language``: the source language when
     the translation stage is disabled, the target language otherwise).
     The query is translated exactly when it is written in another language
-    (``text_language``, which falls back to the index language when the
-    query's script and words do not tell): a Korean question on an English
-    index is searched in English, an English one after a ko→en ingest
-    costs no translator call, and a query already in its language never
-    meets the failure mode where the translator answers about the request
-    ("I notice the text you...") instead of translating it. It is the
+    (``decided_language``): a Korean question on an English index is
+    searched in English, an English one after a ko→en ingest costs no
+    translator call, and a query already in its language never meets the
+    failure mode where the translator answers about the request ("I notice
+    the text you...") instead of translating it. A query whose script and
+    words do not tell its language (a name or keywords: "Acme Corp",
+    "GPT-4o") is searched as written, whatever the index language: a
+    translation would only respell the name the units write. It is the
     translation's language only: the query's entities and keywords are
     extracted in the index language whatever was requested
     (``_extraction_language``).
     """
     indexed = index_language(chain.config)
     language = language_name(inputs.get("target_language") or indexed)
-    written = language_name(text_language(question, indexed))
-    return language, written == language
+    written = decided_language(question, indexed)
+    return language, written is None or language_name(written) == language
 
 
 def _extraction_language(chain: GraphRAGChain) -> str:

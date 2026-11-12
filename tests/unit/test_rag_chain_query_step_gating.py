@@ -201,7 +201,8 @@ async def test_prompts_get_language_names_not_codes(
     chain = _chain_with(same_language_config, factory)
     await chain._process_query_step(
         {
-            "query": "q",
+            # An English question (one of undecided language is not translated).
+            "query": "What does the vendor owe?",
             "target_language": requested,
             "resolved_strategy": SearchStrategy.LOCAL,
         }
