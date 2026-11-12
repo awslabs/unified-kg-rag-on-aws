@@ -83,6 +83,7 @@ from unified_kg_rag.shared import (
     get_logger,
 )
 from unified_kg_rag.shared.exceptions import StoreRequestRejectedError
+from unified_kg_rag.shared.logging import warn_once
 from unified_kg_rag.shared.store_lookups import StoreLookupCache, lookup_cache
 from unified_kg_rag.shared.utils.common import compute_hash
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
@@ -305,11 +306,6 @@ class _ItemSpec(NamedTuple):
 
 # How OpenSearch before 2.17 refuses the knn_vector storage keys.
 _UNKNOWN_STORAGE_KEY = re.compile(r"unknown parameter \[(mode|compression_level)\]")
-# The embedded engine was warned of ignoring them (once per process).
-_storage_ignored_warned = False
-# The live text fields kept with their stored analyzers already warned of
-# (``check_index_settings``), by engine, suffix and fields.
-_kept_analyzers_warned: set[tuple[str, str, tuple[str, ...]]] = set()
 
 
 def _vector_storage_of(field: dict[str, Any]) -> tuple[str, str]:
@@ -441,17 +437,17 @@ class OpenSearchIndexer(VectorIndexer):
     def _resolve_vector_storage(self) -> dict[str, str]:
         """The ``mode`` / ``compression_level`` keys of the knn_vector
         mappings: none on the embedded engine, which searches exactly."""
-        global _storage_ignored_warned
         storage = self.opensearch_config.vector_storage()
         if storage and self.in_process:
-            if not _storage_ignored_warned:
-                _storage_ignored_warned = True
-                logger.warning(
-                    "indexing.opensearch.vector_mode / compression_level (%s) "
-                    "are ignored by the embedded search engine, which keeps "
-                    "full-precision vectors and searches them exactly",
-                    ", ".join(storage.values()),
-                )
+            # Once per process.
+            warn_once(
+                logger,
+                "embedded_vector_storage_ignored",
+                "indexing.opensearch.vector_mode / compression_level (%s) "
+                "are ignored by the embedded search engine, which keeps "
+                "full-precision vectors and searches them exactly",
+                ", ".join(storage.values()),
+            )
             return {}
         return storage
 
@@ -924,11 +920,12 @@ class OpenSearchIndexer(VectorIndexer):
                 )
             self._add_missing_fields(index_name, mappings, expected_properties)
         named = namespace_suffix(suffix)
-        warned = (self._engine, named, tuple(kept))
-        if kept and warned not in _kept_analyzers_warned:
-            # Once per process: a run checks a suffix more than once.
-            _kept_analyzers_warned.add(warned)
-            logger.warning(
+        if kept:
+            # Once per process (by engine, suffix and fields): a run checks a
+            # suffix more than once.
+            warn_once(
+                logger,
+                ("kept_analyzers", self._engine, named, tuple(kept)),
                 "The %s indices of '%s' were built before the default "
                 "language_analyzers named their language, and keep the "
                 "analyzers they were built with: %s. Their text is searched "

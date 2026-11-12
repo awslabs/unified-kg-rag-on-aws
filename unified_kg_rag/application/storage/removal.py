@@ -31,15 +31,15 @@ from functools import partial
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from unified_kg_rag.application.storage.stored_items import (
-    _PENDING_STRIP,
-    _STRIPPED_SUMMARIES,
+    PENDING_STRIP,
+    STRIPPED_SUMMARIES,
     IndexingTask,
-    _claim_text,
-    _is_summary,
-    _note_ids,
-    _other_spellings_of_parts,
-    _reads_back,
-    _vector_stale,
+    claim_text,
+    is_summary,
+    note_ids,
+    other_spellings_of_parts,
+    reads_back,
+    vector_stale,
     write_claims_new_ids_first,
 )
 from unified_kg_rag.domain.ingestion.cache_keys import unbuilt_record_prefixes
@@ -123,7 +123,7 @@ class TextUnitRemoval:
                 for i, units in citing.entities.items()
                 if exclusive(units) and i not in found
             }
-            if found is not None and _reads_back(m.graph_indexer)
+            if found is not None and reads_back(m.graph_indexer)
             else set()
         )
         results = m.delete_documents({suffix: doomed}, {suffix: vector_only})
@@ -190,7 +190,7 @@ class TextUnitRemoval:
         # interrupted strip of these units rewrote it): the entity is
         # shared then, not vector-only, so its graph copy's units count.
         unfound = sorted(set(cited) - set(found)) if found is not None else []
-        if unfound and _reads_back(graph):
+        if unfound and reads_back(graph):
             for entity in graph.read_entities(unfound, suffix=suffix):
                 cited[entity.id] = sorted(
                     set(cited[entity.id]) | set(entity.text_unit_ids or [])
@@ -233,9 +233,9 @@ class TextUnitRemoval:
         # removed units any more. Read on every removal (one record): a
         # retry need not remove the same units.
         notes = vector.read_extraction_records(
-            [_PENDING_STRIP, _STRIPPED_SUMMARIES], suffix=suffix
+            [PENDING_STRIP, STRIPPED_SUMMARIES], suffix=suffix
         )
-        note = notes.get(_PENDING_STRIP)
+        note = notes.get(PENDING_STRIP)
         # And the items an earlier strip noted for its commit, which may
         # not have run (see note_stripped_summaries).
         m.read_stripped_summaries(suffix, notes)
@@ -243,8 +243,8 @@ class TextUnitRemoval:
         # removed unit: it is found through its subject or object.
         noted_claims = sorted(
             {
-                *m._claims_about(suffix, _note_ids(note, "entity_ids")),
-                *_note_ids(note, "claim_ids"),
+                *m._claims_about(suffix, note_ids(note, "entity_ids")),
+                *note_ids(note, "claim_ids"),
             }
         )
         return _Citing(
@@ -347,10 +347,10 @@ class TextUnitRemoval:
         note = citing.note
         if note is not None:
             shared_entities = sorted(
-                (set(shared_entities) | _note_ids(note, "entity_ids")) - set(doomed)
+                (set(shared_entities) | note_ids(note, "entity_ids")) - set(doomed)
             )
             shared_relationships = sorted(
-                (set(shared_relationships) | _note_ids(note, "relationship_ids"))
+                (set(shared_relationships) | note_ids(note, "relationship_ids"))
                 - set(doomed)
             )
             shared_claims = sorted(
@@ -404,7 +404,7 @@ class TextUnitRemoval:
         Raises when the write fails, before the strip writes anything."""
         m = self._m
         m._write_note(
-            _PENDING_STRIP,
+            PENDING_STRIP,
             suffix,
             {
                 "entity_ids": entity_ids,
@@ -417,7 +417,7 @@ class TextUnitRemoval:
         """Delete the note of :meth:`_note_pending_strip` (best-effort: one
         left only makes a retry strip the items again)."""
         m = self._m
-        m._delete_note(_PENDING_STRIP, suffix)
+        m._delete_note(PENDING_STRIP, suffix)
 
     def _strip_shared(
         self,
@@ -538,7 +538,7 @@ class TextUnitRemoval:
         # Retired once the derivation is known: a noted id an earlier
         # strip retired may be derived again (see _record_strip).
         absent: tuple[set[str], set[str]] = (set(), set())
-        if _reads_back(m.graph_indexer):
+        if reads_back(m.graph_indexer):
             absent = (
                 set(entity_ids) - {e.id for e in entities},
                 set(relationship_ids) - {r.id for r in relationships},
@@ -653,8 +653,8 @@ class TextUnitRemoval:
         # where a full build summarizes the lines once.
         m._stripped_ids.setdefault(suffix, set()).update(
             made
-            | {e.id for e in new_entities if not _is_summary(e)}
-            | {r.id for r in new_relationships if not _is_summary(r)}
+            | {e.id for e in new_entities if not is_summary(e)}
+            | {r.id for r in new_relationships if not is_summary(r)}
         )
 
     def _strip_note_ids(
@@ -784,7 +784,7 @@ class TextUnitRemoval:
                     [
                         *derived.id_remap,
                         *derived.split_from.values(),
-                        *_other_spellings_of_parts(
+                        *other_spellings_of_parts(
                             derived.split_from,
                             {e.id: e for e in derived.entities},
                         ),
@@ -831,7 +831,7 @@ class TextUnitRemoval:
             stored = vector_copy.get(item.id)
             return (
                 stored is not None
-                and not _vector_stale(item, stored)
+                and not vector_stale(item, stored)
                 and (stored.get("description") or None) == (item.description or None)
             )
 
@@ -854,7 +854,7 @@ class TextUnitRemoval:
         # Written first with the rejected part's edges in its rank, it kept
         # that rank once the retry no longer derived the split.
         unread = [e.id for e in new_entities if e.id not in graph_copy]
-        if unread and _reads_back(m.graph_indexer):
+        if unread and reads_back(m.graph_indexer):
             held = m.graph_indexer.read_entities(unread, suffix=suffix)
             graph_copy |= {e.id for e in held}
             stored_units |= {e.id: set(e.text_unit_ids or []) for e in held}
@@ -969,7 +969,7 @@ class TextUnitRemoval:
         lineage_only = {
             d.id
             for d in derived
-            if d.id in before and _claim_text(d) == _claim_text(before[d.id])
+            if d.id in before and claim_text(d) == claim_text(before[d.id])
         }
         return {
             f"vector_claims_{suffix}": write_claims_new_ids_first(
@@ -1152,9 +1152,9 @@ class _StripNote:
         earlier = self._earlier
         self._removal._note_pending_strip(
             self._suffix,
-            sorted(entities_ | _note_ids(earlier, "entity_ids")),
-            sorted(edges_ | _note_ids(earlier, "relationship_ids")),
-            sorted(claims_ | new_claims | _note_ids(earlier, "claim_ids")),
+            sorted(entities_ | note_ids(earlier, "entity_ids")),
+            sorted(edges_ | note_ids(earlier, "relationship_ids")),
+            sorted(claims_ | new_claims | note_ids(earlier, "claim_ids")),
         )
         self.noted = True
 

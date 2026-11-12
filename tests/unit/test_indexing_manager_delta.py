@@ -549,7 +549,7 @@ def test_incident_edges_are_read_once_per_site_until_its_ids_shrink() -> None:
     # superset of its last ids reads only the ones it adds (all of them, in
     # each of up to 32 rounds, before). Asked other ids, it reads them all
     # again: the edges of ids it no longer asks must not come back.
-    from unified_kg_rag.application.storage.stored_items import _IncidentEdges
+    from unified_kg_rag.application.storage.stored_items import IncidentEdges
 
     edges = {"a": {"r-a"}, "b": {"r-b"}, "c": {"r-c", "r-a"}}
     reads: list[list[str]] = []
@@ -558,7 +558,7 @@ def test_incident_edges_are_read_once_per_site_until_its_ids_shrink() -> None:
         reads.append(ids)
         return sorted({r for i in ids for r in edges[i]})
 
-    incident = _IncidentEdges(read)
+    incident = IncidentEdges(read)
     assert incident("given", ["a", "b"]) == {"r-a", "r-b"}
     assert incident("given", ["b", "a", "c"]) == {"r-a", "r-b", "r-c"}
     assert incident("moved", ["a"]) == {"r-a"}

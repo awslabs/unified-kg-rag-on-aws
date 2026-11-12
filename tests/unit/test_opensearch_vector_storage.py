@@ -23,6 +23,7 @@ from unified_kg_rag.adapters.storage import opensearch_indexer
 from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import ConfigurationError
+from unified_kg_rag.shared import logging as shared_logging
 from unified_kg_rag.shared.exceptions import StoreRequestRejectedError
 
 pytestmark = pytest.mark.unit
@@ -137,7 +138,7 @@ class TestMapping:
     def test_the_embedded_engine_ignores_them_and_warns_once(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch
     ) -> None:
-        monkeypatch.setattr(opensearch_indexer, "_storage_ignored_warned", False)
+        monkeypatch.setattr(shared_logging, "_warned_once", set())
         config = _config(engine="faiss", vector_mode="on_disk")
         indexer = _indexer(config, SQLiteSearchEngine(tmp_path / "v.sqlite3"))
         with caplog.at_level(logging.WARNING):

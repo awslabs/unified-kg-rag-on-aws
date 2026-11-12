@@ -16,17 +16,17 @@ from unified_kg_rag.adapters.ingestion.description_summarizer import (
     reuse_summaries,
 )
 from unified_kg_rag.application.storage.stored_items import (
-    _PENDING_COMMIT,
-    _STRIPPED_SUMMARIES,
-    _IncidentEdges,
-    _is_summary,
-    _note_ids,
-    _other_spellings,
-    _reads_back,
-    _vector_rank_stale,
-    _vector_stale,
-    _with_old_ids,
+    PENDING_COMMIT,
+    STRIPPED_SUMMARIES,
+    IncidentEdges,
+    is_summary,
+    note_ids,
+    other_spellings,
+    reads_back,
     unit_records,
+    vector_rank_stale,
+    vector_stale,
+    with_old_ids,
 )
 from unified_kg_rag.domain.ingestion.base_resolver import FuzzyMatcher
 from unified_kg_rag.domain.ingestion.derivation import Derived, derive
@@ -142,10 +142,8 @@ class CrossRunMerge:
                 }
                 - delta_suffixes
             )
-            if _PENDING_COMMIT
-            in m.vector_indexer.read_extraction_records(
-                [_PENDING_COMMIT], suffix=suffix
-            )
+            if PENDING_COMMIT
+            in m.vector_indexer.read_extraction_records([PENDING_COMMIT], suffix=suffix)
         }
         for suffix in sorted(delta_suffixes | noted_only):
             suffix_entities, suffix_relationships, id_remap = self._merge_suffix(
@@ -535,7 +533,7 @@ class CrossRunMerge:
                     sorted(retired), suffix=suffix
                 )
             }
-        if _reads_back(m.graph_indexer):
+        if reads_back(m.graph_indexer):
             in_graph = {
                 e.id
                 for e in m.graph_indexer.read_entities(sorted(noted), suffix=suffix)
@@ -688,7 +686,7 @@ class CrossRunMerge:
                 derived.entities,
             ),
             summarized={
-                final_id(e.id, entity_id_remap) for e in entities if _is_summary(e)
+                final_id(e.id, entity_id_remap) for e in entities if is_summary(e)
             },
         )
         extended |= extend_summaries(
@@ -713,7 +711,7 @@ class CrossRunMerge:
             summarized={
                 final_id(r.id, relationship_remap)
                 for r in relationships
-                if _is_summary(r)
+                if is_summary(r)
             },
         )
         return extended
@@ -738,8 +736,8 @@ class CrossRunMerge:
         records: dict[str, TextUnitExtraction] = {}
         claim_records: dict[str, list[Claim]] = {}
         read_units: set[str] = set()
-        # Nor do the stored edges (read once per call site, _IncidentEdges).
-        incident = _IncidentEdges(
+        # Nor do the stored edges (read once per call site, IncidentEdges).
+        incident = IncidentEdges(
             lambda ids: m.graph_indexer.find_incident_relationship_ids(
                 ids, suffix=suffix
             )
@@ -777,7 +775,7 @@ class CrossRunMerge:
                 if claims or not items[0]
                 else incident(
                     "given",
-                    _with_old_ids([e.id for e in items[0]], rekeyed or {}),
+                    with_old_ids([e.id for e in items[0]], rekeyed or {}),
                 )
             )
             derived = derive(
@@ -877,7 +875,7 @@ class CrossRunMerge:
         items: tuple[list[Entity], list[Relationship], list[Claim]],
         claims: Sequence[Claim],
         given: set[str],
-        incident: _IncidentEdges,
+        incident: IncidentEdges,
     ) -> tuple[dict[str, str], set[str], list[Relationship]]:
         """Of a round of :meth:`derive`: the leftover spellings
         (``{part: whole}``), the stored entities whose edges moved, and
@@ -894,7 +892,7 @@ class CrossRunMerge:
         spellings = (
             {
                 part: whole
-                for part, whole in _other_spellings(derived.entities, items[0]).items()
+                for part, whole in other_spellings(derived.entities, items[0]).items()
                 if whole not in derived.id_remap
             }
             if not claims
@@ -1112,7 +1110,7 @@ class CrossRunMerge:
         extra_ids = sorted(
             set(
                 m.graph_indexer.find_incident_relationship_ids(
-                    _with_old_ids([e.id for e in entities], rekey), suffix=suffix
+                    with_old_ids([e.id for e in entities], rekey), suffix=suffix
                 )
             )
             - written
@@ -1364,7 +1362,7 @@ class CrossRunMerge:
             r.id
             for r in extra
             if (
-                _vector_stale(r, vector_copy[r.id])
+                vector_stale(r, vector_copy[r.id])
                 if r.id in vector_copy
                 else bool({r.source_id, r.target_id} & repointed)
             )
@@ -1372,7 +1370,7 @@ class CrossRunMerge:
         rank_stale = {
             r.id
             for r in extra
-            if r.id in vector_copy and _vector_rank_stale(r, vector_copy[r.id])
+            if r.id in vector_copy and vector_rank_stale(r, vector_copy[r.id])
         }
         return stale, rank_stale, vector_copy
 
@@ -1470,7 +1468,7 @@ class CrossRunMerge:
         edges) or the ``dropped_links`` (stored id pairs of dropped edges)."""
         m = self._m
         stored = m.graph_indexer.read_neighbor_ids(
-            _with_old_ids(ids, rekey), suffix=suffix, document_backed=True
+            with_old_ids(ids, rekey), suffix=suffix, document_backed=True
         )
         merged: dict[str, set[str]] = defaultdict(set)
         for i, neighbors in stored.items():
@@ -1553,13 +1551,13 @@ class CrossRunMerge:
         merge_with_existing_graph)."""
         m = self._m
         notes = m.vector_indexer.read_extraction_records(
-            [_PENDING_COMMIT, _STRIPPED_SUMMARIES], suffix=suffix
+            [PENDING_COMMIT, STRIPPED_SUMMARIES], suffix=suffix
         )
-        note = notes.get(_PENDING_COMMIT)
+        note = notes.get(PENDING_COMMIT)
         # The items an earlier run's removal stripped and whose commit did
         # not run: their stored summaries are not extended either.
         m.read_stripped_summaries(suffix, notes)
-        ids = _note_ids(note, "entity_ids")
+        ids = note_ids(note, "entity_ids")
         if note is not None:
             m._commit_note_suffixes.add(suffix)
         if ids:
@@ -1567,7 +1565,7 @@ class CrossRunMerge:
         # The items still stored under an old id it retires (a write failed
         # or the run died before they were deleted) are derived again too:
         # the derivation re-keys or drops what a full build does not have.
-        retired = _note_ids(note, "retired_ids")
+        retired = note_ids(note, "retired_ids")
         if retired:
             m._noted_retired.setdefault(suffix, set()).update(retired)
         return ids | retired

@@ -4,7 +4,6 @@ import asyncio
 import functools
 import json
 import math
-import threading
 from abc import ABC, abstractmethod
 from collections import Counter
 from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
@@ -77,6 +76,7 @@ from unified_kg_rag.domain.retrieval.ppr import cap_edges_per_vertex
 from unified_kg_rag.domain.retrieval.store_names import graph_label, store_name
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.exceptions import InvalidFilterError
+from unified_kg_rag.shared.logging import warn_once
 from unified_kg_rag.shared.utils.common import compute_hash, safe_float_parse
 from unified_kg_rag.shared.utils.concurrency import gather_bounded, gather_or_cancel
 
@@ -106,9 +106,6 @@ _OTHER_END = {"source_id": "target_id", "target_id": "source_id"}
 # filter check's outcomes.
 _MEMO_INCIDENT = "incident"
 _MEMO_PASSING = "passing"
-
-# Set once the incident-edge page cap was logged at WARNING (once a process).
-_PAGE_CAP_WARNED = threading.Event()
 
 # What one query has learned about its stores (``query_scope``).
 _QUERY_SCOPE: ContextVar[dict[str, Any] | None] = ContextVar(
@@ -2066,13 +2063,14 @@ class BaseSearchStrategy(ABC):
         if full and page >= cap and warn_full and not page_through:  # not sized
             # A hub entity hits it on every query that matches it: a WARNING
             # once a process, DEBUG after.
-            warned = _PAGE_CAP_WARNED.is_set()
-            _PAGE_CAP_WARNED.set()
-            (logger.debug if warned else logger.warning)(
+            warn_once(
+                logger,
+                "incident_edge_page_cap",
                 "Incident-edge fetch hit the %s-hit page cap; the lowest-ranked "
-                "edges are dropped (upstream truncates by tokens only)%s",
+                "edges are dropped (upstream truncates by tokens only; repeats "
+                "are logged at DEBUG)",
                 page,
-                "" if warned else "; further occurrences are logged at DEBUG",
+                then_debug=True,
             )
 
         # Dedup by relationship id, so an edge reachable from both of its

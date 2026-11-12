@@ -81,6 +81,7 @@ from unified_kg_rag.shared.exceptions import (
     StoreRequestRejectedError,
     StoreTimeoutError,
 )
+from unified_kg_rag.shared.logging import warn_once
 from unified_kg_rag.shared.utils import (
     EMBEDDING_FIELD_SUFFIX,
     interleave,
@@ -1167,13 +1168,16 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             )
             return
         key = (get_contextvars().get("query_id"), index, top_k, window)
-        if key in self._window_cut_warned:
-            return
-        if len(self._window_cut_warned) >= self._WINDOW_CUTS_REMEMBERED:
+        if (
+            key not in self._window_cut_warned
+            and len(self._window_cut_warned) >= self._WINDOW_CUTS_REMEMBERED
+        ):
             # Bounded: past queries' cuts are not needed.
             self._window_cut_warned.clear()
-        self._window_cut_warned.add(key)
-        logger.warning(
+        # Once per query, index and cut (this retriever's own keys).
+        warn_once(
+            logger,
+            key,
             "Index '%s' returns at most %s hits per search (its "
             "max_result_window), fewer than the %s this search asks for, so "
             "the answer may draw on fewer results than requested; raise the "
@@ -1181,6 +1185,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             index,
             window,
             top_k,
+            seen=self._window_cut_warned,
         )
 
     def _build_search_bodies(

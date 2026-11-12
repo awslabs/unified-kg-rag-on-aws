@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
-from unified_kg_rag.application.storage.stored_items import _PENDING_WRITES
+from unified_kg_rag.application.storage.stored_items import PENDING_WRITES
 from unified_kg_rag.domain.ingestion.merge import (
     merge_claims,
     merge_entities,
@@ -317,8 +317,8 @@ class PendingWrites:
         the vector store still holds and not in ``delta_units`` (see
         :meth:`read`); None when there is no note."""
         note = self._m.vector_indexer.read_extraction_records(
-            [_PENDING_WRITES], suffix=suffix
-        ).get(_PENDING_WRITES)
+            [PENDING_WRITES], suffix=suffix
+        ).get(PENDING_WRITES)
         if note is None:
             return None
         items = self._parse(self._whole(note, suffix), suffix)
@@ -371,13 +371,13 @@ class PendingWrites:
         fails."""
         parts = self._split(note)
         if len(parts) == 1:
-            self._m._write_note(_PENDING_WRITES, suffix, parts[0])
+            self._m._write_note(PENDING_WRITES, suffix, parts[0])
             return
         stamp = compute_hash(json.dumps(note, sort_keys=True, default=str), length=12)
-        keys = [f"{_PENDING_WRITES}-{stamp}-{i}" for i in range(len(parts))]
+        keys = [f"{PENDING_WRITES}-{stamp}-{i}" for i in range(len(parts))]
         for key, part in zip(keys, parts, strict=True):
             self._m._write_note(key, suffix, part)
-        self._m._write_note(_PENDING_WRITES, suffix, {"parts": keys})
+        self._m._write_note(PENDING_WRITES, suffix, {"parts": keys})
         # Not the parts just written (the same note again).
         self._parts[suffix] = [k for k in self._parts.get(suffix, []) if k not in keys]
 
@@ -630,7 +630,7 @@ class PendingWrites:
             logger.error("Noting the failed item writes failed: %s", e)
             return set()
         for suffix in sorted(self._read - set(failed)):
-            self._m._delete_note(_PENDING_WRITES, suffix)
+            self._m._delete_note(PENDING_WRITES, suffix)
             self._delete_parts(suffix)
         self._read.clear()
         return covered

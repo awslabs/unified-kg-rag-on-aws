@@ -2,7 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """Helpers over the items the stores hold, shared by the indexing
 manager and its collaborators (pure: no store is read here unless one is
-passed in)."""
+passed in).
+
+Package-private to ``application.storage``: its sibling modules import the
+unprefixed names; an underscored name is this module's own. Nothing here
+is public API (the root facade exports none of it)."""
 
 from collections import defaultdict
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
@@ -35,42 +39,42 @@ from unified_kg_rag.shared import get_logger
 logger = get_logger(__name__)
 
 # A graph item: an entity or a relationship.
-_Described = TypeVar("_Described", Entity, Relationship)
+Described = TypeVar("Described", Entity, Relationship)
 
 
 # Extraction-store key of a suffix's strip note: the stored items a
 # removal's strip merges or re-keys, kept until their old ids are deleted
 # (record keys are ``fingerprint:hash``: no clash).
-_PENDING_STRIP = "pending-strip"
+PENDING_STRIP = "pending-strip"
 
 
 # Extraction-store key of a suffix's commit note: the stored entities an
 # incremental commit splits, re-keys or rewires and the old ids it retires,
 # written before its first write and deleted once the old ids are (see
 # note_pending_commit).
-_PENDING_COMMIT = "pending-commit"
+PENDING_COMMIT = "pending-commit"
 
 
 # Extraction-store key of a suffix's write note: the items whose write a
 # commit's stores rejected, written again by the next commit of the suffix
 # (see pending_writes).
-_PENDING_WRITES = "pending-writes"
+PENDING_WRITES = "pending-writes"
 
 
 # Extraction-store key of a suffix's summary note: the items a removal's
 # strip summarized or wrote unsummarized, whose stored summary the run's
 # commit must not extend; written before the strip's writes and deleted
 # once a commit's writes succeed (see note_stripped_summaries).
-_STRIPPED_SUMMARIES = "stripped-summaries"
+STRIPPED_SUMMARIES = "stripped-summaries"
 
 
-def _note_ids(note: Mapping[str, Any] | None, field: str) -> set[str]:
+def note_ids(note: Mapping[str, Any] | None, field: str) -> set[str]:
     """The ids a strip or commit note (``None``: none stored) lists under
     ``field``."""
     return {i for i in (note or {}).get(field) or [] if isinstance(i, str)}
 
 
-def _other_spellings_of_parts(
+def other_spellings_of_parts(
     split_from: Mapping[str, str], derived: Mapping[str, Entity]
 ) -> list[str]:
     """The ids of the ``derived`` entities (by id) sharing a
@@ -84,13 +88,13 @@ def _other_spellings_of_parts(
     )
 
 
-def _is_summary(item: Entity | Relationship) -> bool:
+def is_summary(item: Entity | Relationship) -> bool:
     """Whether ``item``'s description is a summary (it carries the mark of
     the description it was made from)."""
     return SUMMARIZED_FROM_ATTRIBUTE in (item.attributes or {})
 
 
-def _reads_back(graph: GraphIndexer) -> bool:
+def reads_back(graph: GraphIndexer) -> bool:
     """Whether ``graph`` reads stored entities back (the port's default
     reads nothing, so every id would look absent). Asked of the bound
     method, not the type: the pipeline hands stages a borrowed view of an
@@ -134,14 +138,14 @@ def _vector_content(item: Entity | Relationship) -> dict[str, Any]:
     }
 
 
-def _annotations(item: Entity | Relationship) -> dict[str, Any]:
+def vector_annotations(item: Entity | Relationship) -> dict[str, Any]:
     """The annotations of ``item`` in :func:`_vector_content`: the schema's
     and its ``source_kinds``, which follow its lineage."""
     names = ("in_schema", "type_iri", "predicate_iri", "source_kinds")
     return {k: v for k, v in _vector_content(item).items() if k in names}
 
 
-def _with_sources(item: _Described) -> _Described:
+def with_sources(item: Described) -> Described:
     """``item`` with its ``source_kinds`` (``annotate_sources``: ``None``
     unless it cites a seed graph's unit); itself when they already hold."""
     kinds = annotate_sources(item)
@@ -150,13 +154,13 @@ def _with_sources(item: _Described) -> _Described:
     return item.model_copy(update={"source_kinds": kinds})
 
 
-def _vector_stale(item: Entity | Relationship, stored: Mapping[str, Any]) -> bool:
+def vector_stale(item: Entity | Relationship, stored: Mapping[str, Any]) -> bool:
     """Whether the stored vector copy of ``item`` differs from it in
     :func:`_vector_content`."""
     return any(stored.get(k) != v for k, v in _vector_content(item).items())
 
 
-def _vector_rank_stale(item: Relationship, stored: Mapping[str, Any]) -> bool:
+def vector_rank_stale(item: Relationship, stored: Mapping[str, Any]) -> bool:
     """Whether the stored vector copy of ``item`` holds another rank (as
     the adapter writes it: ``1.0`` for none). Not in :func:`_vector_content`:
     a rank is set in place with the lineage, so one that differs alone is
@@ -164,7 +168,7 @@ def _vector_rank_stale(item: Relationship, stored: Mapping[str, Any]) -> bool:
     return stored.get("rank") != (item.rank if item.rank is not None else 1.0)
 
 
-def _claim_text(claim: Claim) -> tuple[Any, ...]:
+def claim_text(claim: Claim) -> tuple[Any, ...]:
     """What a claim states beyond its lineage: its text and the names of the
     entities it is about (a renamed entity renames them)."""
     return (
@@ -237,7 +241,7 @@ def write_claims_new_ids_first(
     return stats
 
 
-def _other_spellings(
+def other_spellings(
     derived: Sequence[Entity], given: Sequence[Entity]
 ) -> dict[str, str]:
     """``{derived id: given id}`` of each given entity of another id whose
@@ -253,14 +257,14 @@ def _other_spellings(
     return pairs
 
 
-def _with_old_ids(ids: Iterable[str], rekey: Mapping[str, str]) -> list[str]:
+def with_old_ids(ids: Iterable[str], rekey: Mapping[str, str]) -> list[str]:
     """``ids`` and the stored ids ``rekey`` replaced by them (an item merged
     from several stored copies has its edges under each)."""
     wanted = set(ids)
     return sorted(wanted | {old for old, new in rekey.items() if new in wanted})
 
 
-class _IncidentEdges:
+class IncidentEdges:
     """The stored edges incident to entity ids, by call site, for one
     derivation: the stored edges do not change during it, so a query over a
     superset of the ids its site asked last reads only the ids it adds. A

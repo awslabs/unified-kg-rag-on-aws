@@ -3,7 +3,7 @@
 import logging
 import sys
 import threading
-from collections.abc import Mapping
+from collections.abc import Hashable, Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol, TextIO
@@ -239,18 +239,33 @@ def get_logger(name: str) -> structlog.stdlib.BoundLogger:
     return logger
 
 
-_warned_once: set[str] = set()
+_warned_once: set[Hashable] = set()
 _warned_once_lock = threading.Lock()
 
 
-def warn_once(logger: Any, key: str, message: str, *args: Any) -> None:
+def warn_once(
+    logger: Any,
+    key: Hashable,
+    message: str,
+    *args: Any,
+    then_debug: bool = False,
+    seen: set[Any] | None = None,
+) -> bool:
     """Log ``message`` at WARNING on ``logger`` the first time ``key`` is
-    seen in this process (a missing optional model or analyzer)."""
+    seen (a missing optional model or analyzer, a cap a hub entity hits on
+    every query); a repeat is not logged, or with ``then_debug`` logged at
+    DEBUG. ``seen`` holds the keys warned of (by default this process's):
+    a caller's own set scopes them, as one retriever's to a query. Returns
+    whether it warned."""
     with _warned_once_lock:
-        if key in _warned_once:
-            return
-        _warned_once.add(key)
-    logger.warning(message, *args)
+        store = _warned_once if seen is None else seen
+        first = key not in store
+        store.add(key)
+    if first:
+        logger.warning(message, *args)
+    elif then_debug:
+        logger.debug(message, *args)
+    return first
 
 
 def setup_logging(

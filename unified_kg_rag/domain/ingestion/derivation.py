@@ -575,7 +575,7 @@ def _derive_relationships(
             if (source, target, type_) in resolved_edges
         ]
     edge_complete = {r.id: complete(r) for r in relationships}
-    edge_matched, edge_parts, edge_derives_to = _correspondence(
+    edge_matched, _, edge_derives_to = _correspondence(
         relationships, edge_candidates, edge_complete
     )
     edge_taken = {rel.id for rel in relationships} | set(blocked)
