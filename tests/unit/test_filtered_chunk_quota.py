@@ -443,3 +443,38 @@ def test_the_text_unit_keys_are_the_document_retrievers(
     )
     filters = {"shard": "a", "n_tokens": {"gte": 1}, "id": ["u1"]}
     assert strategy._text_unit_filters(filters) == kept
+
+
+@pytest.mark.parametrize("kind", list(_FILTERS))
+@pytest.mark.parametrize("method", ["weight", "vector"])
+async def test_the_linked_chunk_pick_runs_off_the_event_loop(
+    config: Config, kind: str, method: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Regression (rv24): sorting, merging and polling a hub's lineage (an
+    # entity citing thousands of units) ran on the event loop and stalled
+    # every concurrent query for up to seconds; it runs on a worker thread,
+    # as PPR does.
+    import threading
+
+    config.search.lightrag_search.kg_chunk_pick_method = method  # type: ignore[assignment]
+    units_prefix = config.indexing.opensearch.text_units_index_prefix
+    strategy: Any = get_strategy_spec(SearchStrategy.MIX).strategy_class(
+        config=config,
+        retrievers={RetrieverRole.DOCUMENT.value: _Store(units_prefix, [])},
+    )
+    loop_thread = threading.get_ident()
+    threads: list[int] = []
+    lineages = type(strategy)._lineages
+
+    def recording(results: list[RetrievalResult]) -> list[list[str]]:
+        threads.append(threading.get_ident())
+        return lineages(results)
+
+    monkeypatch.setattr(type(strategy), "_lineages", staticmethod(recording))
+    linked = await strategy._retrieve_linked_chunks(
+        SearchQuery(query="q", top_k=3, filters=_FILTERS[kind]),
+        [_entity("e0", _UNITS)],
+        [_entity("r0", _UNITS[6:])],
+    )
+    assert linked
+    assert threads and loop_thread not in threads
