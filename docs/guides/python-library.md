@@ -19,29 +19,42 @@ from unified_kg_rag import (
     get_config,
 )
 
-config = get_config("config.yaml")
 
-# Ingest. PipelineConfig carries the run-ingestion run options (pipeline_id,
-# cache directory, S3 sync, enabled stages, force_rebuild). run() ingests the
-# directory it is given: parsing, loading and the registry scope all use it.
-pipeline = DataIngestionPipeline(config, PipelineConfig(pipeline_id="run-001"))
-try:
-    context = pipeline.run("./source")
-    if context.status == PipelineStageStatus.FAILED:
-        raise SystemExit("ingestion failed")
-finally:
-    pipeline.close()  # releases the indexers' Neptune/OpenSearch connections
+def main() -> None:
+    config = get_config("config.yaml")
 
-# Query. One chain serves many queries, including concurrent ones.
-chain = GraphRAGChain(config)
-try:
-    output = chain.invoke(RAGInput(query="How are Alice and Acme related?", search_strategy="mix"))
-    print(output.answer)
-    for source in output.sources:  # only what the answer model saw
-        print(source)
-finally:
-    chain.close()
+    # Ingest. PipelineConfig carries the run-ingestion run options (pipeline_id,
+    # cache directory, S3 sync, enabled stages, force_rebuild). run() ingests the
+    # directory it is given: parsing, loading and the registry scope all use it.
+    pipeline = DataIngestionPipeline(config, PipelineConfig(pipeline_id="run-001"))
+    try:
+        context = pipeline.run("./source")
+        if context.status == PipelineStageStatus.FAILED:
+            raise SystemExit("ingestion failed")
+    finally:
+        pipeline.close()  # releases the indexers' Neptune/OpenSearch connections
+
+    # Query. One chain serves many queries, including concurrent ones.
+    chain = GraphRAGChain(config)
+    try:
+        query = RAGInput(query="How are Alice and Acme related?", search_strategy="mix")
+        output = chain.invoke(query)
+        print(output.answer)
+        for source in output.sources:  # only what the answer model saw
+            print(source)
+    finally:
+        chain.close()
+
+
+if __name__ == "__main__":
+    main()
 ```
+
+A script that ingests keeps its work behind `if __name__ == "__main__":`:
+deduplication and fuzzy entity matching run in worker processes started
+from a forkserver, which imports the script's main module, so an unguarded
+script would run its ingestion again in every worker. A notebook needs no
+guard.
 
 - `RAGInput` takes the `run-rag` options as fields (`search_strategy`,
   `search_type`, `top_k`, `suffix`
@@ -68,18 +81,24 @@ documents are kept (a run over a directory deletes what the directory
 lacks).
 
 ```python
-from unified_kg_rag import DataIngestionPipeline, InputDocument, PipelineConfig
+from unified_kg_rag import DataIngestionPipeline, InputDocument, PipelineConfig, get_config
 
-pipeline = DataIngestionPipeline(config, PipelineConfig())
-try:
-    pipeline.insert_documents([
-        InputDocument(id="contracts/2024-07.txt", text="...", filters={"category": "contract"}),
-        {"id": "ticket-1832", "text": "...", "metadata": {"author": "support"}},
-    ])
-    pipeline.insert_documents([{"id": "ticket-1832", "text": "edited ..."}])  # re-extracted
-    pipeline.delete_documents(["contracts/2024-07.txt"])
-finally:
-    pipeline.close()
+
+def main() -> None:
+    pipeline = DataIngestionPipeline(get_config("config.yaml"), PipelineConfig())
+    try:
+        pipeline.insert_documents([
+            InputDocument(id="contracts/2024-07.txt", text="...", filters={"category": "contract"}),
+            {"id": "ticket-1832", "text": "...", "metadata": {"author": "support"}},
+        ])
+        pipeline.insert_documents([{"id": "ticket-1832", "text": "edited ..."}])  # re-extracted
+        pipeline.delete_documents(["contracts/2024-07.txt"])
+    finally:
+        pipeline.close()
+
+
+if __name__ == "__main__":
+    main()
 ```
 
 - An `id` is the document's key in its source scope, as a relative path

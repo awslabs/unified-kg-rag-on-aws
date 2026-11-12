@@ -346,3 +346,23 @@ def test_the_contributor_setup_installs_the_extras_ci_tests_with() -> None:
     pip = re.search(r"pip install -e '\.\[([\w,]+)\]'", guide)
     assert pip is not None
     assert sorted(pip.group(1).split(",")) == _extras(ci)
+
+
+def test_the_library_guides_ingesting_examples_guard_their_entry_point() -> None:
+    # Regression (rv23 docs 5): the guide's examples ran ingestion at module
+    # level; the forkserver workers of deduplication import the main module
+    # and ran the script again (CHANGELOG Upgrading: the guard is required).
+    import ast
+
+    guide = (REPO_ROOT / "docs" / "guides" / "python-library.md").read_text(
+        encoding="utf-8"
+    )
+    blocks = re.findall(r"```python\n(.*?)```", guide, flags=re.DOTALL)
+    ingesting = [block for block in blocks if "DataIngestionPipeline(" in block]
+    assert len(ingesting) >= 2
+    for block in ingesting:
+        tree = ast.parse(block)
+        top = [type(node).__name__ for node in tree.body]
+        # Only imports, definitions and the guard at module level.
+        assert set(top) <= {"ImportFrom", "Import", "FunctionDef", "If"}, block
+        assert 'if __name__ == "__main__":' in block, block
