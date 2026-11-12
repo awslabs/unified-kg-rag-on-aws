@@ -60,7 +60,8 @@ guard.
   `search_type`, `top_k`, `suffix`
   ([index suffix](../concepts/scopes-and-namespaces.md#index-suffix)),
   `filters`, `conversation_id`, `use_memory`, `history`, `target_language`);
-  a plain dict works too. What each option does: [Querying](./query.md);
+  a plain dict works too. An unknown key is refused (a dict's with
+  `InvalidArgumentError`), not ignored. What each option does: [Querying](./query.md);
   `history` is the conversation of a caller that keeps it itself
   ([History from the caller](./query.md#history-from-the-caller)).
 - `output.citations` lists the numbered context sections the answer's `[n]`

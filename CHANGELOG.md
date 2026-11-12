@@ -370,6 +370,11 @@ See [`iac/README.md`](iac/README.md).
 - `Config` reads models through `model_id(ModelRole.X)`, `tier_model_id`, `model_tier`, `embedding_model_id`,
   `embedding_dimension` and `rerank_model_id`; `ModelRole.GLOBAL_REDUCE` is gone (#334, #577).
 - `PipelineContext.unit_extractions` replaces `entities`, `relationships` and `rejected_entities` (#322).
+- `RAGInput` and `PipelineConfig` refuse an unknown key instead of ignoring it, as `Config` does: a dict query with
+  MCP's `strategy` for `search_strategy` ran `auto` at full model cost, and `PipelineConfig(force_rebuld=True)` left
+  `force_rebuild` off. A dict query raises `InvalidArgumentError` before any model call; the console's API refuses
+  an unknown body key or query parameter too (422, `invalid_argument`), the Ask, graph and evaluation reads
+  included.
 
 #### Query behaviour
 - The guardrail no longer wraps every model call: it screens the user query and the final answer through
@@ -829,8 +834,10 @@ From a `main` checkout (formats and keys no release had):
   `build_mcp_server` and `build_mcp_app` (package root; the latter the stateless ASGI application, its
   `Host`/`Origin` checks on with `allowed_hosts`) mount the same server in a host's application; neither changes the
   chain given. Under `processing.ignore_errors` the error answer names its error in `metadata.error_type`. A tool
-  error starts with its error class in brackets (`[store_unreachable] ...`), so an agent tells an outage to retry
-  from an argument to fix. Guide: [MCP server](docs/guides/mcp.md).
+  error names its error class in brackets (`[store_unreachable] ...`), so an agent tells an outage to retry
+  from an argument to fix; an unknown argument is refused (`additionalProperties: false` in every input schema;
+  `kg_neighbors` with `depth` ran with the default `max_hops`), and a refused one is named on one line
+  (`[invalid_argument] top_k: ...`), not with pydantic's text. Guide: [MCP server](docs/guides/mcp.md).
 - Structured graph queries, opt-in and unmeasured (#630): the `structured` search strategy answers counts, rankings,
   lists, paths between two named entities and seed-entity properties from a query the graph store runs. One planner
   call (`models.roles.graph_query`, default tier; `custom_prompts.graph_query_*`;

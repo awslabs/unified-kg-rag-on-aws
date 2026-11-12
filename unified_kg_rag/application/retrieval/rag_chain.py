@@ -36,6 +36,7 @@ from langchain_core.runnables import (
 from langchain_core.runnables.config import merge_configs
 from pydantic import (
     BaseModel,
+    ConfigDict,
     Field,
     ValidationError,
     field_validator,
@@ -460,7 +461,11 @@ class RAGInput(BaseModel):
     with ``use_memory`` and no id, a new id is generated and returned on
     :class:`RAGOutput`. A stateless caller passes
     the conversation itself as ``history`` instead (docs/design.md §7.2).
+    An unknown key is refused, not ignored (MCP's ``strategy`` is
+    ``search_strategy`` here).
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     query: str = Field(
         description="The user's search query (leading and trailing whitespace "

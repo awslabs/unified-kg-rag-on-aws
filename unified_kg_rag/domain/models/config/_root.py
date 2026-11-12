@@ -10,6 +10,7 @@ from typing import Annotated, Any
 from pydantic import (
     AfterValidator,
     BaseModel,
+    ConfigDict,
     Field,
     ModelWrapValidatorHandler,
     PrivateAttr,
@@ -513,6 +514,11 @@ class Config(BaseModel):
 
 
 class PipelineConfig(BaseModel):
+    """How one ingestion run executes (stages, caching, resume); an unknown
+    key is refused, not ignored."""
+
+    model_config = ConfigDict(extra="forbid")
+
     stages_enabled: dict[PipelineStageType, bool] = Field(
         default_factory=lambda: dict.fromkeys(PipelineStageType, True),
         description="Specifies which pipeline stages are enabled.",

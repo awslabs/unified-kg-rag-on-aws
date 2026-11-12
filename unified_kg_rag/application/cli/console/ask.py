@@ -29,7 +29,7 @@ import uuid
 from collections.abc import AsyncIterator, Callable
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from unified_kg_rag.adapters.retrieval.strategy_registry import strategy_methodology
 from unified_kg_rag.application.cli.console.store import ConsoleStore
@@ -76,12 +76,16 @@ MAX_TURN_CHARACTERS = 100_000
 class AskTurn(BaseModel):
     """One earlier message of the page's conversation."""
 
+    model_config = ConfigDict(extra="forbid")
+
     role: Literal["user", "assistant"]
     content: str = Field(max_length=MAX_TURN_CHARACTERS)
 
 
 class AskRequest(BaseModel):
-    """One question from the Ask page."""
+    """One question from the Ask page (an unknown key is refused)."""
+
+    model_config = ConfigDict(extra="forbid")
 
     query: str = Field(min_length=1, max_length=MAX_QUESTION_CHARACTERS)
     search_strategy: SearchStrategy = SearchStrategy.AUTO

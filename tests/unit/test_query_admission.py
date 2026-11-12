@@ -35,7 +35,9 @@ from unified_kg_rag.domain.models import (
     SearchQuery,
     SearchStrategy,
 )
+from unified_kg_rag.domain.models.config import PipelineConfig
 from unified_kg_rag.shared import IndexNotFoundError
+from unified_kg_rag.shared.exceptions import InvalidArgumentError
 
 pytestmark = pytest.mark.unit
 
@@ -56,6 +58,28 @@ def test_a_query_is_stripped() -> None:
     assert RAGInput(query="\ufeff공급사는?\u200b").query == "공급사는?"
     # Inside the text a joiner stays (an emoji sequence).
     assert RAGInput(query="a\u200db").query == "a\u200db"
+
+
+def test_an_unknown_key_is_refused_not_ignored() -> None:
+    # Regression (rv24): {"strategy": "tree"} (MCP's name for the field)
+    # ran auto, and PipelineConfig(force_rebuld=True) left force_rebuild off.
+    with pytest.raises(ValidationError, match="strategy"):
+        RAGInput(query="q", strategy="tree")  # type: ignore[call-arg]
+    with pytest.raises(InvalidArgumentError, match="bogus_key"):
+        RAGInput.checked(query="q", bogus_key=1)
+    with pytest.raises(ValidationError, match="force_rebuld"):
+        PipelineConfig(force_rebuld=True)  # type: ignore[call-arg]
+
+
+async def test_a_dict_input_with_an_unknown_key_fails_before_any_model_call() -> None:
+    factory = _Factory()
+    chain = _chain(_Retriever({"default"}), factory, Config())
+    try:
+        with pytest.raises(InvalidArgumentError, match="strategy"):
+            await chain.ainvoke({"query": "Who supplies Buyer?", "strategy": "tree"})
+    finally:
+        await chain.aclose()
+    assert factory.models == 0
 
 
 class _Factory:

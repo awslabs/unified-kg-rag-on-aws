@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import (
     FileResponse,
@@ -33,7 +33,7 @@ from fastapi.responses import (
     Response,
     StreamingResponse,
 )
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from unified_kg_rag import __version__
 from unified_kg_rag.adapters.ingestion.parser import ParserFactory
@@ -138,7 +138,48 @@ class ConsoleOptions:
         return self.workspace / "uploads"
 
 
-class IngestBody(BaseModel):
+class _Request(BaseModel):
+    """A request body of the API: an unknown key is refused (422,
+    ``invalid_argument``), not ignored, as ``RAGInput`` refuses one."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+# The query parameters any route takes besides its own: the access token.
+_ANY_ROUTE_QUERY = frozenset({"token"})
+
+
+def _query_names(dependant: Any) -> set[str]:
+    """The query parameters a route (and its dependencies) declares."""
+    names = {param.alias for param in dependant.query_params}
+    for dependency in dependant.dependencies:
+        names |= _query_names(dependency)
+    return names
+
+
+def _refuse_unknown_query(request: Request) -> None:
+    """Refuse a query parameter an API route does not declare (422,
+    ``invalid_argument``), as the bodies refuse an unknown key; a page's
+    URL keeps its own (``/graph?focus=...``, read by the web client)."""
+    dependant = getattr(request.scope.get("route"), "dependant", None)
+    if dependant is None or not request.url.path.startswith("/api/"):
+        return
+    known = _query_names(dependant)
+    unknown = sorted(set(request.query_params) - known - _ANY_ROUTE_QUERY)
+    if unknown:
+        raise RequestValidationError(
+            [
+                {
+                    "loc": ("query", name),
+                    "msg": "Extra inputs are not permitted",
+                    "type": "extra_forbidden",
+                }
+                for name in unknown
+            ]
+        )
+
+
+class IngestBody(_Request):
     corpus: str = Field(min_length=1, max_length=1024)
     methodologies: list[str] | None = None
     index_value: str | None = Field(default=None, max_length=128)
@@ -149,7 +190,7 @@ class IngestBody(BaseModel):
     confirm_narrowing: bool = False
 
 
-class EvaluateBody(BaseModel):
+class EvaluateBody(_Request):
     dataset: str = Field(min_length=1, max_length=1024)
     strategies: list[str] = Field(min_length=1, max_length=12)
     repeats: int = Field(default=1, ge=1, le=20)
@@ -159,12 +200,12 @@ class EvaluateBody(BaseModel):
     max_failure_rate: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
-class PreviewBody(BaseModel):
+class PreviewBody(_Request):
     text: str | None = Field(default=None, max_length=2_000_000)
     changes: list[dict[str, Any]] | None = Field(default=None, max_length=500)
 
 
-class SaveBody(BaseModel):
+class SaveBody(_Request):
     text: str = Field(max_length=2_000_000)
     base_sha: str = Field(min_length=64, max_length=64)
     confirm_endpoints: list[str] = Field(default_factory=list, max_length=50)
@@ -371,6 +412,7 @@ def create_app(
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
+        dependencies=[Depends(_refuse_unknown_query)],
     )
     app.state.console = state
 

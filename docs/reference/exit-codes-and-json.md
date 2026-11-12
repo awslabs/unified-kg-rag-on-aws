@@ -65,8 +65,8 @@ A query's failure maps to its code by its class (`ErrorClass`, the same for
 
 The class is the stable key a caller branches on, on every surface: the
 CLIs' JSON `error_class` ([Failures and interruptions](#failures-and-interruptions)),
-the MCP server's tool error, which starts with it in brackets
-(`[store_unreachable] ...`) and then carries the message of the first four
+the MCP server's tool error, which names it in brackets
+(`Error executing tool kg_search: [store_unreachable] ...`) and then carries the message of the first four
 and `timeout` (a generic one for the rest, whose message may name an
 endpoint), and the console's `error_class` (an HTTP error's, `invalid_argument`
 for a request it refuses, and an Ask stream's error event). A new class may

@@ -383,6 +383,51 @@ async def test_the_tools_over_the_protocol(tools: KnowledgeGraphTools) -> None:
         assert searched.structured_content["records"]
         refused = await client.call_tool("kg_search", {"query": "x", "top_k": 1000})
         assert refused.is_error
+        # One line naming the field and its class, not pydantic's text.
+        text = refused.content[0].text  # type: ignore[union-attr]
+        assert text.startswith(
+            "Error executing tool kg_search: [invalid_argument] top_k: "
+        )
+        assert "pydantic" not in text and "kg_searchArguments" not in text
+        # A mapping sent as a JSON string still reads as the mapping: its
+        # key is checked as a filter key, not refused as a string.
+        as_text = await client.call_tool(
+            "kg_search",
+            {"query": "Depot", "strategy": "naive", "filters": '{"category": "x"}'},
+        )
+        assert "[invalid_filter] Unknown filter key(s): category" in (
+            as_text.content[0].text  # type: ignore[union-attr]
+        )
+
+
+@requires_mcp
+async def test_an_unknown_tool_argument_is_refused(tools: KnowledgeGraphTools) -> None:
+    # kg_neighbors {"depth": 99} ran with the default max_hops, and a
+    # copied RAGInput key ("search_strategy" for "strategy") ran auto.
+    from mcp import Client
+
+    from unified_kg_rag.application.cli.mcp_server import build_mcp_server
+
+    server = build_mcp_server(tools)
+    async with Client(server, mode="legacy") as client:
+        listed = await client.list_tools()
+        for tool in listed.tools:
+            assert tool.input_schema.get("additionalProperties") is False, tool.name
+        for name, arguments, unknown in (
+            ("kg_neighbors", {"name": "Depot", "depth": 99}, "depth"),
+            (
+                "kg_search",
+                {"query": "Depot", "search_strategy": "naive"},
+                "search_strategy",
+            ),
+            ("kg_describe_schema", {"suffix": "other"}, "suffix"),
+        ):
+            refused = await client.call_tool(name, arguments)
+            assert refused.is_error, name
+            text = refused.content[0].text  # type: ignore[union-attr]
+            assert text.startswith(
+                f"Error executing tool {name}: [invalid_argument] {unknown}: "
+            ), text
 
 
 @requires_mcp
