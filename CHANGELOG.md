@@ -1433,8 +1433,10 @@ From a `main` checkout (formats and keys no release had):
   OTLP credentials (same-region only in private mode) (#157, #211, #319, #328, #345, #457, #459, #519, #528, #541,
   #566).
 - IaC alarms: `BedrockThrottling`, `IngestionTaskMemory`, OpenSearch snapshot failures, blocked writes, thread-pool
-  rejections, a yellow multi-node cluster, an unusable KMS key, ephemeral storage, `DocumentsNotIndexed`, and
-  `QueryLatencyHigh` on `run-rag --metrics-sink cloudwatch`'s `query_latency_ms` (#330, #519, #528).
+  and indexing-pressure rejections (where OpenSearch 2.x counts bulk 429s), the rest of AWS's recommended OpenSearch
+  alarms (CPU, old-generation heap, nodes, shards per GiB of heap, 5xx share, queues, dedicated masters), a yellow
+  multi-node cluster, an unusable KMS key, ephemeral storage, `DocumentsNotIndexed`, and `QueryLatencyHigh` on
+  `run-rag --metrics-sink cloudwatch`'s `query_latency_ms` (#330, #519, #528).
 - The package ships a `py.typed` marker (#568). `main` reports `0.3.0.dev0`, and a `v<version>` tag runs a release
   workflow that publishes a GitHub release: the tag must be on `main`, the notes are the section's introduction,
   *Highlights*, *Breaking changes*, *Upgrading* and *Security* with a link to the version's heading for the rest, and

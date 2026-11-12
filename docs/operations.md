@@ -329,6 +329,23 @@ stage overwrites, for 1 day). A `--s3-prefix` other than `pipeline-runs`
 gets neither the expiry nor the 1-day rule. Check a reused bucket's own
 lifecycle rules and versioning.
 
+OpenSearch shards: each namespace holds up to 7 single-shard indices (14
+with the replica a multi-node domain sets), and a reset rebuild holds the
+old and new generation at once, so plan for twice that per namespace. AWS
+recommends at most 25 shards per GiB of Java heap (half the node's memory,
+at most 32 GiB) per data node, which `OpenSearchShardsHigh` watches:
+
+| Domain | Shard budget | Namespaces (rebuilds included) |
+|---|---|---|
+| 1 x `r6g.large.search` (dev default, 8 GiB heap) | 200 | about 14 |
+| 2 x `r6g.large.search` (non-dev default, with replicas) | 400 | about 14 |
+| 2 x `r6g.xlarge.search` (16 GiB heap each) | 800 | about 28 |
+
+The app checks only the domain's hard `max_shards_per_node` limit when it
+creates an index, so stay under the budget by deleting namespaces no longer
+queried (or by sharing one namespace through scopes,
+[Scopes and namespaces](./concepts/scopes-and-namespaces.md)).
+
 ### OpenSearch replicas
 
 On the CDK stack a multi-node domain (`opensearch_count` > 1) gets one replica
@@ -1271,9 +1288,9 @@ an error, not empty results.
 ## Alarms
 
 On the CDK stack, a failed ingestion task publishes the execution id and the
-error to the SNS topic, and the alarms below report to the same topic: six
-on pipeline runs, eleven on store health (more on a multi-node domain, with
-`use_cmk` and on Neptune Serverless), three on capacity and one on queries.
+error to the SNS topic, and the alarms below report to the same topic: on
+pipeline runs, store health (some only on a multi-node domain, with `use_cmk`
+or on Neptune Serverless), capacity and queries.
 They have a subscriber only with `-c alarm_email=<address>`.
 A failed task also fires `PipelineFailures`, a second notice without context
 that also covers what the message cannot report (an error the task's handler
@@ -1308,8 +1325,15 @@ These fire between runs too, so degradation shows before a run breaks on it:
 | `OpenSearchClusterYellow` | Multi-node only: a replica shard is unallocated for 5 minutes | Usually a node being replaced or a blue/green deployment; if it lasts, check `_cluster/allocation/explain`, since losing another node loses data |
 | `OpenSearchIndexWritesBlocked` | The domain blocks index writes (5 minutes) | Free storage or memory (larger volume or instance), then re-run the failed ingestion; writes fail until the block lifts |
 | `OpenSearchAutomatedSnapshotFailure` | An automated snapshot failed | Often a red cluster: fix that first. Until a snapshot succeeds the hourly restore point is missing ([Backup and restore](#backup-and-restore)) |
-| `OpenSearchWriteRejections` | Write thread-pool rejections in 3 consecutive minutes | Rejected bulk items are retried, so indexing slows: more data nodes or a larger `opensearch_instance` |
+| `OpenSearchWriteRejections`, `OpenSearchIndexingPressureRejections` | Write thread-pool rejections, or indexing-pressure rejections (`CoordinatingWriteRejected` + `PrimaryWriteRejected` + `ReplicaWriteRejected`, where OpenSearch 2.x counts most bulk 429s), in 3 consecutive minutes | Rejected bulk items are retried, so indexing slows: more data nodes, a larger `opensearch_instance`, or fewer concurrent runs |
 | `OpenSearchSearchRejections` | Search thread-pool rejections in a minute | Searches were refused under load (the client retries a 429, then the query fails): fewer concurrent queries (`search.max_concurrency`, `run-eval`'s `processing.max_concurrency`) or more data nodes |
+| `OpenSearchHighCpu` | Data node CPU maximum at least 80% in 3 consecutive 15-minute periods | A larger `opensearch_instance` or more data nodes |
+| `OpenSearchOldGenJvmPressure` | Old-generation heap at least 80% for 3 minutes | Garbage collection cannot free the heap: a larger `opensearch_instance` |
+| `OpenSearchNodesMissing` | Fewer nodes than the domain's (data nodes plus 3 masters when multi-node) at some point in a day | A node was unreachable or replaced; check the domain's events and cluster health |
+| `OpenSearchShardsHigh` | Active shards at least 25 per GiB of heap per data node (heap = half the instance memory, at most 32 GiB) | Each namespace holds its own indices ([Capacity sizing](#capacity-sizing)): delete unused namespaces, or add data nodes or memory. No alarm (the synth warns) for an `opensearch_instance` the stack's memory table does not know |
+| `OpenSearch5xxShare` | At least 10% of requests returned a 5xx in 5 minutes | Overloaded data nodes or requests past the idle timeout: more or larger data nodes |
+| `OpenSearchWriteQueue`, `OpenSearchSearchQueue` | Write-queue average at least 100, or search-queue average at least 500, in a minute | High indexing or search concurrency: fewer concurrent runs or queries, or more resources |
+| `OpenSearchMasterHighCpu`, `OpenSearchMasterJvmPressure`, `OpenSearchMasterOldGenJvmPressure`, `OpenSearchMasterUnreachable` | Multi-node only: master CPU at least 50% for 45 minutes, master heap at least 95% (old generation 80%) for 3 minutes, or the master unreachable for 5 minutes | A larger `opensearch_master_instance`; an unreachable master is usually a network or AWS-side problem, so check the domain's events |
 | `OpenSearchKmsKeyError`, `OpenSearchKmsKeyInaccessible` | `use_cmk` only: the data key is disabled, or deleted or its grants revoked | Re-enable the key. A deleted key cannot be recovered: restore a manual snapshot to a new domain |
 | `DocStatusWriteThrottled` | The doc-status table throttled a write (5 minutes) | Registry calls retry with backoff; one still throttled fails the run with `DocStatusRegistryError`. Look for overlapping runs, rerun once it clears |
 | `NeptuneHighCpu` | Average writer CPU at least 90% for 15 minutes | Sustained saturation: a larger `neptune_instance` (or `neptune_serverless_ncu` maximum), or, if you raised it, a lower `indexing.neptune.index_concurrency` (default `1`) |

@@ -31,6 +31,10 @@ from iac.stacks.log_retention import set_retention
 from iac.stacks.networking_stack import NetworkingStack
 from iac.stacks.storage_custom_resources import NoriPackage
 
+# The dedicated master nodes of a multi-node OpenSearch domain
+# (opensearch_count > 1); the observability stack's alarms count them.
+OPENSEARCH_MASTER_NODES = 3
+
 # Cache-bucket prefixes the app writes and that are safe to expire: the stage
 # checkpoints of `run-ingestion --s3-sync` (PipelineConfig.s3_prefix /
 # --s3-prefix, default "pipeline-runs"). Anything else in the bucket, such as
@@ -464,7 +468,7 @@ class StorageStack(Stack):
                 data_nodes=self.config.opensearch_count,
                 # Dedicated master nodes stabilize the cluster under load; enable
                 # for HA (multi-node) deployments only.
-                master_nodes=3 if multi_node else 0,
+                master_nodes=OPENSEARCH_MASTER_NODES if multi_node else 0,
                 # Masters only manage cluster state, so they default to a
                 # smaller type than the data nodes (opensearch_master_instance).
                 master_node_instance_type=(

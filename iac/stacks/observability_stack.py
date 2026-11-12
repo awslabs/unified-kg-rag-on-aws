@@ -24,12 +24,19 @@ from constructs import Construct
 
 from iac.config import DeploymentConfig
 from iac.stacks.orchestration_stack import OrchestrationStack
-from iac.stacks.storage_stack import StorageStack
+from iac.stacks.storage_stack import OPENSEARCH_MASTER_NODES, StorageStack
 
-# Memory (GiB) per vCPU of the Neptune instance families: the memory-optimized
-# r families and x2g; a burstable t3/t4g.medium has 4 GiB.
+# Memory (GiB) per vCPU of the Neptune and OpenSearch instance families: the
+# memory-optimized r families (and OpenSearch's or1/or2), x2g, the general
+# purpose m and compute-optimized c families; a burstable t3/t4g.medium has
+# 4 GiB.
 _GIB_PER_VCPU = {
-    **dict.fromkeys(("r5", "r5d", "r6g", "r6i", "r7g", "r7i", "r8g"), 8),
+    **dict.fromkeys(
+        ("r5", "r5d", "r6g", "r6gd", "r6i", "r7g", "r7gd", "r7i", "r8g", "or1", "or2"),
+        8,
+    ),
+    **dict.fromkeys(("m5", "m6g", "m7g", "m7i", "m8g"), 4),
+    **dict.fromkeys(("c5", "c6g", "c7g", "c7i", "c8g"), 2),
     "x2g": 16,
 }
 # Low-memory threshold: this share of the instance's memory (512 MiB of the
@@ -38,13 +45,9 @@ _LOW_MEMORY_SHARE = 32
 _LOW_MEMORY_DEFAULT = 512 * 1024**2
 
 
-def neptune_instance_memory_bytes(instance_class: str) -> int | None:
-    """The memory of Neptune ``instance_class`` (``db.r6g.large``), or
-    ``None`` for a class this table does not know."""
-    parts = instance_class.split(".")
-    if len(parts) != 3 or parts[0] != "db":
-        return None
-    family, size = parts[1], parts[2]
+def _instance_memory_bytes(family: str, size: str) -> int | None:
+    """The memory of an instance of ``family`` and ``size`` (``r6g``,
+    ``large``), or ``None`` for one this table does not know."""
     if family in ("t3", "t4g"):
         return 4 * 1024**3 if size == "medium" else None
     if family not in _GIB_PER_VCPU:
@@ -58,6 +61,34 @@ def neptune_instance_memory_bytes(instance_class: str) -> int | None:
     else:
         return None
     return _GIB_PER_VCPU[family] * vcpus * 1024**3
+
+
+def neptune_instance_memory_bytes(instance_class: str) -> int | None:
+    """The memory of Neptune ``instance_class`` (``db.r6g.large``), or
+    ``None`` for a class this table does not know."""
+    parts = instance_class.split(".")
+    if len(parts) != 3 or parts[0] != "db":
+        return None
+    return _instance_memory_bytes(parts[1], parts[2])
+
+
+# OpenSearch gives the Java heap half of a node's memory, up to 32 GiB, and
+# AWS recommends at most 25 shards per GiB of heap ("Recommended CloudWatch
+# alarms for Amazon OpenSearch Service", shards.active).
+_HEAP_SHARE = 2
+_MAX_HEAP = 32 * 1024**3
+SHARDS_PER_HEAP_GIB = 25
+
+
+def opensearch_heap_bytes(instance_type: str) -> int | None:
+    """The Java heap of an OpenSearch ``instance_type`` node
+    (``r6g.large.search``), or ``None`` for a type this table does not
+    know."""
+    parts = instance_type.split(".")
+    if len(parts) != 3 or parts[2] != "search":
+        return None
+    memory = _instance_memory_bytes(parts[0], parts[1])
+    return min(memory // _HEAP_SHARE, _MAX_HEAP) if memory else None
 
 
 EMF_NAMESPACE = "unified_kg_rag/ingestion"
@@ -135,6 +166,15 @@ BEDROCK_THROTTLES = (
     'SELECT SUM(InvocationThrottles) FROM SCHEMA("AWS/Bedrock", ModelId)'
 )
 
+# OpenSearch 7.1+ indexing-pressure rejections ("Monitoring OpenSearch
+# cluster metrics with Amazon CloudWatch": totals since the node's process
+# started), where a 2.x domain's bulk 429s are counted.
+OPENSEARCH_INDEXING_PRESSURE_REJECTIONS: tuple[str, ...] = (
+    "CoordinatingWriteRejected",
+    "PrimaryWriteRejected",
+    "ReplicaWriteRejected",
+)
+
 
 class ObservabilityStack(Stack):
     def __init__(
@@ -151,6 +191,7 @@ class ObservabilityStack(Stack):
         self.storage = storage
         self.compute = orchestration.compute
         self.ingestion_task_definition = orchestration.task_definition
+        self._alarm_action = cw_actions.SnsAction(orchestration.alarm_topic)
         sm = orchestration.state_machine
 
         # Alarm: any failed Step Functions execution -> SNS. A failed task is
@@ -297,7 +338,7 @@ class ObservabilityStack(Stack):
         # RUN goes wrong. These surface data-store degradation (red cluster,
         # disk pressure, memory pressure, DDB throttling) that would otherwise be
         # invisible until the next run breaks. All route to the same SNS topic.
-        self._add_store_health_alarms(orchestration)
+        self._add_store_health_alarms()
         self._add_capacity_alarms(orchestration)
         self._add_query_alarms(orchestration)
 
@@ -643,33 +684,36 @@ class ObservabilityStack(Stack):
         )
         latency.add_alarm_action(cw_actions.SnsAction(orchestration.alarm_topic))
 
-    def _add_store_health_alarms(self, orchestration: OrchestrationStack) -> None:
-        topic = orchestration.alarm_topic
-        action = cw_actions.SnsAction(topic)
+    def _alarm(
+        self,
+        ident: str,
+        metric: cw.IMetric,
+        threshold: float,
+        description: str,
+        comparison: cw.ComparisonOperator = (
+            cw.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD
+        ),
+        evaluation_periods: int = 1,
+    ) -> cw.Alarm:
+        """An alarm on ``metric`` that notifies the alarm topic; a period
+        without data is not breaching."""
+        alarm = cw.Alarm(
+            self,
+            ident,
+            metric=metric,
+            threshold=threshold,
+            evaluation_periods=evaluation_periods,
+            comparison_operator=comparison,
+            treat_missing_data=cw.TreatMissingData.NOT_BREACHING,
+            alarm_description=description,
+        )
+        alarm.add_alarm_action(self._alarm_action)
+        return alarm
+
+    def _add_store_health_alarms(self) -> None:
         domain = self.storage.opensearch_domain
         table = self.storage.doc_status_table_for(self)
-
-        def _alarm(
-            ident: str,
-            metric: cw.IMetric,
-            threshold: float,
-            description: str,
-            comparison: cw.ComparisonOperator = (
-                cw.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD
-            ),
-            evaluation_periods: int = 1,
-        ) -> None:
-            alarm = cw.Alarm(
-                self,
-                ident,
-                metric=metric,
-                threshold=threshold,
-                evaluation_periods=evaluation_periods,
-                comparison_operator=comparison,
-                treat_missing_data=cw.TreatMissingData.NOT_BREACHING,
-                alarm_description=description,
-            )
-            alarm.add_alarm_action(action)
+        _alarm = self._alarm
 
         # OpenSearch: a red cluster means at least one primary shard is
         # unallocated (data unavailable); free storage / JVM pressure precede
@@ -705,10 +749,11 @@ class ObservabilityStack(Stack):
             "minutes (out-of-memory risk)",
             evaluation_periods=3,
         )
-        # The rest of AWS's recommended OpenSearch alarms ("Recommended
-        # CloudWatch alarms for Amazon OpenSearch Service"). A failed
-        # automated snapshot leaves the hourly restore point missing
-        # (Backup and restore); blocked writes fail every ingestion bulk.
+        # More of AWS's recommended OpenSearch alarms ("Recommended
+        # CloudWatch alarms for Amazon OpenSearch Service"; the others are in
+        # _add_opensearch_capacity_alarms). A failed automated snapshot
+        # leaves the hourly restore point missing (Backup and restore);
+        # blocked writes fail every ingestion bulk.
         _alarm(
             "OpenSearchAutomatedSnapshotFailure",
             domain.metric_automated_snapshot_failure(
@@ -761,33 +806,60 @@ class ObservabilityStack(Stack):
                 "shard) for 5 minutes: losing another node loses data",
                 evaluation_periods=5,
             )
-        # Thread-pool rejections are cumulative counters: alarm on their
-        # increase (AWS's DIFF recommendation). The bulk writer retries a
-        # rejected write, so only rejections in 3 consecutive minutes alarm;
-        # a rejected search fails a query at once.
-        for ident, pool, periods in (
-            ("OpenSearchWriteRejections", "Write", 3),
-            ("OpenSearchSearchRejections", "Search", 1),
+
+        # Rejection counters are cumulative (totals since the node's process
+        # started): alarm on their increase (AWS's DIFF recommendation). On
+        # OpenSearch 2.x most bulk 429s come from indexing pressure, counted
+        # per coordinating node, primary and replica shard, not in the write
+        # thread pool (whose queue holds 10,000 since 7.1): a write alarm
+        # sums the three. The bulk writer retries a rejected write, so only
+        # rejections in 3 consecutive minutes alarm; a rejected search fails
+        # a query at once.
+        def _rejections(names: tuple[str, ...], label: str) -> cw.MathExpression:
+            using = {
+                f"r{i}": domain.metric(
+                    name, statistic="Sum", period=Duration.minutes(1)
+                )
+                for i, name in enumerate(names)
+            }
+            # DIFF per counter, then the sum: a gap in one series (FILL
+            # inside DIFF would read it as a reset to 0, then a jump) or a
+            # series a domain does not publish leaves the others' increase.
+            return cw.MathExpression(
+                expression=" + ".join(f"FILL(DIFF({key}), 0)" for key in using),
+                using_metrics=using,
+                label=label,
+                period=Duration.minutes(1),
+            )
+
+        for ident, names, what, periods in (
+            (
+                "OpenSearchWriteRejections",
+                ("ThreadpoolWriteRejected",),
+                "write requests (thread pool queue full)",
+                3,
+            ),
+            (
+                "OpenSearchIndexingPressureRejections",
+                OPENSEARCH_INDEXING_PRESSURE_REJECTIONS,
+                "writes for indexing pressure",
+                3,
+            ),
+            (
+                "OpenSearchSearchRejections",
+                ("ThreadpoolSearchRejected",),
+                "search requests (thread pool queue full)",
+                1,
+            ),
         ):
             _alarm(
                 ident,
-                cw.MathExpression(
-                    expression="DIFF(rejected)",
-                    using_metrics={
-                        "rejected": domain.metric(
-                            f"Threadpool{pool}Rejected",
-                            statistic="Sum",
-                            period=Duration.minutes(1),
-                        )
-                    },
-                    label=f"New {pool.lower()} thread-pool rejections",
-                    period=Duration.minutes(1),
-                ),
+                _rejections(names, f"New rejections ({', '.join(names)})"),
                 1,
-                f"OpenSearch rejected {pool.lower()} requests (thread pool "
-                f"queue full) in {periods} consecutive minute(s)",
+                f"OpenSearch rejected {what} in {periods} consecutive minute(s)",
                 evaluation_periods=periods,
             )
+        self._add_opensearch_capacity_alarms()
         # DynamoDB doc-status registry: throttled writes mean delta/lineage
         # updates are being rejected, which silently corrupts incremental-indexing
         # state. The registry writes mostly through BatchWriteItem, so alarm on
@@ -901,4 +973,131 @@ class ObservabilityStack(Stack):
             "minutes (sustained write/query failures, not retried conflicts)",
             comparison=cw.ComparisonOperator.GREATER_THAN_THRESHOLD,
             evaluation_periods=3,
+        )
+
+    def _add_opensearch_capacity_alarms(self) -> None:
+        """The rest of AWS's recommended OpenSearch alarms ("Recommended
+        CloudWatch alarms for Amazon OpenSearch Service"), at its thresholds
+        (the free-storage alarm fires earlier than its 25%, at 40%):
+        data node CPU and old-generation heap, missing nodes, the shard count
+        against the heap, the 5xx share of requests, the write and search
+        queues, and the dedicated masters of a multi-node domain."""
+        domain = self.storage.opensearch_domain
+        config = self.config
+
+        def metric(name: str, statistic: str, period: Duration) -> cw.Metric:
+            return domain.metric(name, statistic=statistic, period=period)
+
+        one_minute, fifteen = Duration.minutes(1), Duration.minutes(15)
+        # Sustained use only: 100% CPU for a moment is normal under load.
+        self._alarm(
+            "OpenSearchHighCpu",
+            metric("CPUUtilization", "Maximum", fifteen),
+            80,
+            "OpenSearch data node CPU at least 80% for 45 minutes (3 "
+            "15-minute periods): a larger opensearch_instance or more nodes",
+            evaluation_periods=3,
+        )
+        self._alarm(
+            "OpenSearchOldGenJvmPressure",
+            metric("OldGenJVMMemoryPressure", "Maximum", one_minute),
+            80,
+            "OpenSearch old-generation heap at least 80% for 3 consecutive "
+            "minutes (garbage collection cannot free it: out-of-memory risk)",
+            evaluation_periods=3,
+        )
+        # Nodes counts the dedicated masters too; a minimum below the
+        # domain's size in a day means a node was unreachable at some point.
+        masters = OPENSEARCH_MASTER_NODES if config.opensearch_count > 1 else 0
+        nodes = config.opensearch_count + masters
+        self._alarm(
+            "OpenSearchNodesMissing",
+            metric("Nodes", "Minimum", Duration.days(1)),
+            nodes,
+            f"OpenSearch had fewer than its {nodes} nodes at some point in a day "
+            "(a node was unreachable or replaced)",
+            comparison=cw.ComparisonOperator.LESS_THAN_THRESHOLD,
+        )
+        heap = opensearch_heap_bytes(config.opensearch_instance)
+        if heap is None:
+            Annotations.of(self).add_warning(
+                f"opensearch_instance {config.opensearch_instance!r} is not in "
+                "the instance memory table: no OpenSearchShardsHigh alarm "
+                "(25 shards per GiB of heap per data node)."
+            )
+        else:
+            shards = SHARDS_PER_HEAP_GIB * heap // 1024**3 * config.opensearch_count
+            self._alarm(
+                "OpenSearchShardsHigh",
+                metric("Shards.active", "Maximum", one_minute),
+                shards,
+                f"OpenSearch holds at least {shards} active shards (25 per GiB "
+                "of heap per data node): delete unused namespaces or add nodes",
+            )
+        self._alarm(
+            "OpenSearch5xxShare",
+            cw.MathExpression(
+                expression="100 * FILL(errors, 0) / requests",
+                using_metrics={
+                    "errors": metric("5xx", "Sum", Duration.minutes(5)),
+                    "requests": metric(
+                        "OpenSearchRequests", "Sum", Duration.minutes(5)
+                    ),
+                },
+                label="5xx share of requests (%)",
+                period=Duration.minutes(5),
+            ),
+            10,
+            "At least 10% of OpenSearch requests failed with a 5xx in 5 "
+            "minutes (overloaded data nodes or requests over the idle timeout)",
+        )
+        for ident, name, threshold in (
+            ("OpenSearchWriteQueue", "ThreadpoolWriteQueue", 100),
+            ("OpenSearchSearchQueue", "ThreadpoolSearchQueue", 500),
+        ):
+            # AWS also lists a search-queue maximum >= 5,000, which a node's
+            # 1,000-task queue never reaches: left out.
+            self._alarm(
+                ident,
+                metric(name, "Average", one_minute),
+                threshold,
+                f"OpenSearch {name} averaged at least {threshold} tasks in a "
+                "minute (high concurrency: fewer concurrent requests or more "
+                "resources)",
+            )
+        if not masters:
+            return
+        for ident, name, threshold, period, periods in (
+            ("OpenSearchMasterHighCpu", "MasterCPUUtilization", 50, fifteen, 3),
+            (
+                "OpenSearchMasterJvmPressure",
+                "MasterJVMMemoryPressure",
+                95,
+                one_minute,
+                3,
+            ),
+            (
+                "OpenSearchMasterOldGenJvmPressure",
+                "MasterOldGenJVMMemoryPressure",
+                80,
+                one_minute,
+                3,
+            ),
+        ):
+            self._alarm(
+                ident,
+                metric(name, "Maximum", period),
+                threshold,
+                f"OpenSearch dedicated master {name} at least {threshold}% in "
+                f"{periods} consecutive periods: a larger "
+                "opensearch_master_instance",
+                evaluation_periods=periods,
+            )
+        self._alarm(
+            "OpenSearchMasterUnreachable",
+            metric("MasterReachableFromNode", "Maximum", Duration.minutes(5)),
+            1,
+            "The OpenSearch master node was unreachable for 5 minutes "
+            "(MasterNotDiscovered)",
+            comparison=cw.ComparisonOperator.LESS_THAN_THRESHOLD,
         )

@@ -423,15 +423,36 @@ def test_recommended_opensearch_alarms() -> None:
         assert (alarm["Period"], alarm["EvaluationPeriods"]) == (period, periods)
         assert alarm["Threshold"] == 1
         assert len(alarm["AlarmActions"]) == 1
-    # Rejection counters are cumulative: the alarm reads their increase.
-    for name, pool, periods in (
-        ("OpenSearchWriteRejections", "Write", 3),
-        ("OpenSearchSearchRejections", "Search", 1),
+    # Rejection counters are cumulative: the alarm reads their increase. On
+    # 7.1+ engines bulk 429s come mostly from indexing pressure, which the
+    # write thread-pool counter does not count.
+    for name, metrics, periods in (
+        ("OpenSearchWriteRejections", {"ThreadpoolWriteRejected"}, 3),
+        (
+            "OpenSearchIndexingPressureRejections",
+            {
+                "CoordinatingWriteRejected",
+                "PrimaryWriteRejected",
+                "ReplicaWriteRejected",
+            },
+            3,
+        ),
+        ("OpenSearchSearchRejections", {"ThreadpoolSearchRejected"}, 1),
     ):
         alarm = alarms[name]
         (expression,) = [m for m in alarm["Metrics"] if "Expression" in m]
-        assert expression["Expression"] == "DIFF(rejected)"
-        assert _metric_names(alarm) == {f"Threadpool{pool}Rejected"}
+        ids = sorted(m["Id"] for m in alarm["Metrics"] if "MetricStat" in m)
+        # DIFF per counter: a FILL inside DIFF would read a gap as a reset.
+        assert expression["Expression"] == " + ".join(
+            f"FILL(DIFF({i}), 0)" for i in ids
+        )
+        assert _metric_names(alarm) == metrics
+        for m in alarm["Metrics"]:
+            if "MetricStat" in m:
+                assert (m["MetricStat"]["Stat"], m["MetricStat"]["Period"]) == (
+                    "Sum",
+                    60,
+                )
         assert alarm["EvaluationPeriods"] == periods
     # One data node holds no replicas, and without a CMK no key can fail.
     assert (
@@ -441,6 +462,132 @@ def test_recommended_opensearch_alarms() -> None:
             "OpenSearchKmsKeyInaccessible",
         }
         & alarms.keys()
+    )
+
+
+# AWS's "Recommended CloudWatch alarms for Amazon OpenSearch Service":
+# name -> (metric, statistic, period, evaluation periods, comparison, threshold).
+_RECOMMENDED = {
+    "OpenSearchHighCpu": ("CPUUtilization", "Maximum", 900, 3, ">=", 80),
+    "OpenSearchOldGenJvmPressure": (
+        "OldGenJVMMemoryPressure",
+        "Maximum",
+        60,
+        3,
+        ">=",
+        80,
+    ),
+    "OpenSearchWriteQueue": ("ThreadpoolWriteQueue", "Average", 60, 1, ">=", 100),
+    "OpenSearchSearchQueue": ("ThreadpoolSearchQueue", "Average", 60, 1, ">=", 500),
+}
+_MASTER = {
+    "OpenSearchMasterHighCpu": ("MasterCPUUtilization", "Maximum", 900, 3, ">=", 50),
+    "OpenSearchMasterJvmPressure": (
+        "MasterJVMMemoryPressure",
+        "Maximum",
+        60,
+        3,
+        ">=",
+        95,
+    ),
+    "OpenSearchMasterOldGenJvmPressure": (
+        "MasterOldGenJVMMemoryPressure",
+        "Maximum",
+        60,
+        3,
+        ">=",
+        80,
+    ),
+    "OpenSearchMasterUnreachable": (
+        "MasterReachableFromNode",
+        "Maximum",
+        300,
+        1,
+        "<",
+        1,
+    ),
+}
+_OPERATORS = {
+    ">=": "GreaterThanOrEqualToThreshold",
+    "<": "LessThanThreshold",
+}
+
+
+def _assert_alarm(alarm: dict[str, Any], expected: tuple[Any, ...]) -> None:
+    metric, statistic, period, periods, comparison, threshold = expected
+    assert alarm["Namespace"] == "AWS/ES"
+    assert alarm["MetricName"] == metric
+    assert (alarm["Statistic"], alarm["Period"]) == (statistic, period)
+    assert alarm["EvaluationPeriods"] == periods
+    assert alarm["ComparisonOperator"] == _OPERATORS[comparison]
+    assert alarm["Threshold"] == threshold
+    assert alarm["AlarmActions"]
+
+
+@pytest.mark.parametrize("count", [1, 2])
+def test_aws_recommended_opensearch_capacity_alarms(count: int) -> None:
+    # Old behaviour: no CPU, old-generation heap, node, shard, 5xx or queue
+    # alarm, and none on the dedicated masters of a multi-node domain.
+    alarms = _alarms({"opensearch_count": count})
+    for name, expected in _RECOMMENDED.items():
+        _assert_alarm(alarms[name], expected)
+    # Masters only exist on a multi-node domain (3 of them).
+    if count > 1:
+        for name, expected in _MASTER.items():
+            _assert_alarm(alarms[name], expected)
+    else:
+        assert not _MASTER.keys() & alarms.keys()
+    nodes = alarms["OpenSearchNodesMissing"]
+    assert (nodes["MetricName"], nodes["Statistic"]) == ("Nodes", "Minimum")
+    assert (nodes["Period"], nodes["ComparisonOperator"]) == (
+        86400,
+        "LessThanThreshold",
+    )
+    assert nodes["Threshold"] == (count + 3 if count > 1 else 1)
+    # 25 shards per GiB of heap per data node: r6g.large has 16 GiB, 8 of
+    # them heap.
+    shards = alarms["OpenSearchShardsHigh"]
+    assert shards["MetricName"] == "Shards.active"
+    assert shards["Threshold"] == 25 * 8 * count
+    share = alarms["OpenSearch5xxShare"]
+    (expression,) = [m for m in share["Metrics"] if "Expression" in m]
+    assert expression["Expression"] == "100 * FILL(errors, 0) / requests"
+    assert _metric_names(share) == {"5xx", "OpenSearchRequests"}
+    assert share["Threshold"] == 10
+
+
+@pytest.mark.parametrize(
+    ("instance", "heap_gib"),
+    [
+        ("r6g.large.search", 8),
+        ("m6g.large.search", 4),
+        ("c6g.xlarge.search", 4),
+        ("r6g.4xlarge.search", 32),
+        ("r6g.16xlarge.search", 32),  # the heap stops at 32 GiB
+        ("or1.2xlarge.search", 32),
+        ("t3.medium.search", 2),
+        ("i3.large.search", None),
+    ],
+)
+def test_opensearch_heap_follows_the_instance(
+    instance: str, heap_gib: int | None
+) -> None:
+    from iac.stacks.observability_stack import opensearch_heap_bytes
+
+    heap = opensearch_heap_bytes(instance)
+    assert heap == (heap_gib * 1024**3 if heap_gib else None)
+
+
+def test_an_unknown_instance_has_no_shard_alarm_and_says_so() -> None:
+    stack = _stack({"opensearch_instance": "m4.large.search"})
+    assert "OpenSearchShardsHigh" not in {
+        logical_id[:-8]
+        for logical_id in Template.from_stack(stack).find_resources(
+            "AWS::CloudWatch::Alarm"
+        )
+    }
+    Annotations.from_stack(stack).has_warning(
+        "*", Match.string_like_regexp("no OpenSearchShardsHigh alarm")
     )
 
 
