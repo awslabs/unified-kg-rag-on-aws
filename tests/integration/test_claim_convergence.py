@@ -71,10 +71,13 @@ def _respond(system: str, human: str) -> str:
         if len(names) < 2:
             return "<claims></claims>"
         subject, obj = names[:2]
+        # The statement is part of a claim's id: one statement whichever
+        # spelling of the subject ("Acme Inc", "Acme") the document writes.
         return (
             f"<claims><claim><subject>{subject}</subject><object>{obj}</object>"
             "<claim_type>OBLIGATION</claim_type><claim_status>TRUE</claim_status>"
-            f"<description>{subject} must deliver to {obj}</description>"
+            f"<description>{subject.removesuffix(' Inc')} must deliver to {obj}"
+            "</description>"
             f"<source_text>{subject} supplies {obj}.</source_text></claim></claims>"
         )
     return stages._respond(system, human)
@@ -179,7 +182,13 @@ def test_a_dated_claim_keeps_its_dates_through_incremental_runs(
             # The id is the one the claim's stored fields give.
             fields = {
                 k: hit["_source"].get(k)
-                for k in ("subject_id", "object_id", "object_name", "type")
+                for k in (
+                    "subject_id",
+                    "object_id",
+                    "object_name",
+                    "type",
+                    "description",
+                )
             }
             claim = Claim(
                 id=hit["_id"],

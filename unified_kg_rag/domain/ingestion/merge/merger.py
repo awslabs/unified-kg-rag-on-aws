@@ -18,7 +18,10 @@ from unified_kg_rag.domain.ingestion.base_processor import (
     merged_confidence,
 )
 from unified_kg_rag.domain.ingestion.base_resolver import FuzzyMatcher
-from unified_kg_rag.domain.ingestion.claim_resolver import merge_claim_statuses
+from unified_kg_rag.domain.ingestion.claim_resolver import (
+    claim_description,
+    merge_claim_statuses,
+)
 from unified_kg_rag.domain.ingestion.descriptions import merge_descriptions
 from unified_kg_rag.domain.ingestion.graph_resolver import (
     ENTITY_KEYS_ATTRIBUTE,
@@ -388,11 +391,12 @@ def remove_text_units(
 def merge_claims(old: list[Claim], delta: list[Claim]) -> list[Claim]:
     """Fold the stored evidence of each delta claim into it, matched by id.
 
-    A claim's id derives from its subject, object, type and dates, not from
-    its document, so the same claim extracted from another document has the
-    stored claim's id. As in the full-build ``ClaimResolver`` merge, the
-    descriptions and source texts are unioned (stored first) and the text
-    units are the sorted union. The status is the one both state, or
+    A claim's id derives from its subject, object, type, dates and
+    statement, not from its document, so the same claim extracted from
+    another document has the stored claim's id. As in the full-build
+    ``ClaimResolver`` merge, the description is the smallest spelling of the
+    statement (``claim_description``), the source texts are unioned (stored
+    first) and the text units are the sorted union. The status is the one both state, or
     ``disputed`` when they disagree (``merge_claim_statuses``, the
     ``ClaimResolver`` rule, which is associative: the stored status stands
     for its statements). The attributes are unioned with the document
@@ -409,7 +413,7 @@ def merge_claims(old: list[Claim], delta: list[Claim]) -> list[Claim]:
         merged.append(
             claim.model_copy(
                 update={
-                    "description": merge_descriptions(
+                    "description": claim_description(
                         (match.description, claim.description)
                     ),
                     "source_text": merge_descriptions(

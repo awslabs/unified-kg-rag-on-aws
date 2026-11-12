@@ -92,8 +92,11 @@ def test_claim_statuses_merge_whatever_their_order(
 
 
 def _claim_statements(order: tuple[int, ...]) -> list[Claim]:
-    # Two spellings of one literal object and claim type, tied.
-    stated = [("PAYS", "USD 100", "Acme pays 100."), ("Pays", "usd 100", "A fee.")]
+    # Two spellings of one literal object, claim type and statement, tied.
+    stated = [
+        ("PAYS", "USD 100", "Acme pays 100.", "Acme pays 100."),
+        ("Pays", "usd 100", "ACME pays 100", "A fee."),
+    ]
     return [
         Claim(
             id="c",
@@ -102,7 +105,7 @@ def _claim_statements(order: tuple[int, ...]) -> list[Claim]:
             object_name=stated[n][1],
             type=stated[n][0],
             description=stated[n][2],
-            source_text=stated[n][2],
+            source_text=stated[n][3],
             text_unit_ids=[f"t{n}"],
         )
         for n in order
@@ -119,7 +122,7 @@ def test_resolved_claims_do_not_depend_on_their_order(order: tuple[int, ...]) ->
     merged = resolver._merge_claims(_claim_statements(order))
 
     assert (merged.type, merged.object_name) == ("PAYS", "USD 100")
-    assert merged.description == "A fee.\nAcme pays 100."
+    assert merged.description == "ACME pays 100"
     assert merged.source_text == "A fee.\nAcme pays 100."
 
 

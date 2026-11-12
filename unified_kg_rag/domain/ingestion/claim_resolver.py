@@ -385,18 +385,35 @@ def claim_date_key(value: str | None, *, end: bool = False) -> str:
     return (claim_date_value(value, end=end) or "").casefold()
 
 
-def claim_identity_suffix(start_date: str | None, end_date: str | None) -> str:
-    """Date component of a claim's identity ("" when neither date is known).
+def claim_identity_suffix(
+    start_date: str | None, end_date: str | None, description: str | None
+) -> str:
+    """Date and statement component of a claim's identity.
 
     Two claims with the same subject, object and type but different dates
     (e.g. two delivery obligations due on different days) are distinct facts;
     keying on the dates keeps them apart instead of collapsing them and keeping
-    only one date. Date-less claims keep a date-free identity, so restatements
-    of the same undated claim still merge. A coarse end date keys on the last
-    day of its period (``claim_date_value``).
+    only one date. A coarse end date keys on the last day of its period
+    (``claim_date_value``). The statement (the description's ``entity_key``)
+    is keyed too: claims of one type about one subject with no object or no
+    date (the prompt's NONE and UNKNOWN) are as many claims as statements, as
+    MS GraphRAG keeps one row per statement, so "fined for pollution" (TRUE)
+    and "accused of bribery" (SUSPECTED) do not merge into one claim of one
+    status. A restatement (the same statement up to case, spacing and a
+    closing stop) still merges.
     """
     start, end = claim_date_key(start_date), claim_date_key(end_date, end=True)
-    return f":{start}:{end}" if start or end else ""
+    dates = f":{start}:{end}" if start or end else ""
+    statement = entity_key(description)
+    return f"{dates}|{statement}" if statement else dates
+
+
+def claim_description(descriptions: Iterable[str | None]) -> str:
+    """The description of one claim stated as ``descriptions``: the smallest
+    non-empty one ("" when none). They key alike (``claim_identity_suffix``)
+    and differ in case or spacing only; the smallest is the same whatever
+    their order, and in a full build and an incremental merge."""
+    return min((d for d in descriptions if d), default="")
 
 
 def resolved_claim_id(claim: Claim) -> str:
@@ -404,7 +421,8 @@ def resolved_claim_id(claim: Claim) -> str:
 
     Keyed on what makes two claims the same fact: the subject entity id, the
     object entity id (or, for a literal object such as an amount or a date,
-    its ``entity_key``), the type and the known dates. The extractor's id
+    its ``entity_key``), the type, the known dates and the statement
+    (``claim_identity_suffix``). The extractor's id
     hashes the names as written, so "Acme Inc" and "Acme" gave one claim two
     ids; keyed on the entities, the claim gets the same id whichever spelling
     or document came first, in a full build and across incremental runs.
@@ -412,7 +430,7 @@ def resolved_claim_id(claim: Claim) -> str:
     object_key = claim.object_id or f"literal:{entity_key(claim.object_name)}"
     return generate_stable_id(
         f"claim:{claim.subject_id}:{object_key}:{(claim.type or '').casefold()}"
-        f"{claim_identity_suffix(claim.start_date, claim.end_date)}"
+        f"{claim_identity_suffix(claim.start_date, claim.end_date, claim.description)}"
     )
 
 
@@ -692,9 +710,9 @@ class ClaimResolver(BaseResolver):
                 (v for c in claims if (v := claim_date_value(c.end_date, end=True))),
                 default=primary_claim.end_date,
             ),
-            description=self._merge_descriptions(
-                by_frequency(c.description for c in claims)
-            ),
+            # One statement (part of the id): its smallest spelling, which a
+            # merge with a stored claim keeps too (merge_claims).
+            description=claim_description(c.description for c in claims),
             description_embedding=primary_claim.description_embedding,
             text_unit_ids=self._merge_lists(
                 [c.text_unit_ids for c in claims if c.text_unit_ids]

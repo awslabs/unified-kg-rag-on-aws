@@ -511,8 +511,9 @@ From a `main` checkout (formats and keys no release had):
   (#694) is ignored.
 - Re-keyed once before 0.3.0: entity ids and name keys fold quotes, apostrophes, invisible characters, dashes (not a
   leading minus), dense-script middle dots and Arabic and Hebrew marks and strip more legal forms (*Stored data and
-  reindexing*); the description summary and claim prompts changed and claims keep a `suspected` status (*Fixed*);
-  stage-cache keys hold the prompts in effect (a pipeline id resumed across a prompt change starts over); extraction
+  reindexing*); the description summary and claim prompts changed, claims keep a `suspected` status and are keyed
+  by their statement (*Fixed*); stage-cache keys hold the prompts in effect (a pipeline id resumed across a prompt
+  change starts over); extraction
   records under earlier keys (other description summary settings, #541-#556) and claims under an earlier reading of
   their dates (#612, #624) are no longer looked up. Run one reset (`indexing.reset: true`) with a new or no
   `--pipeline-id`: incremental runs keep stored entities under their earlier ids beside the new ones. That one reset
@@ -1906,7 +1907,10 @@ Ingestion and incremental indexing.
   GraphRAG's claim prompt, built around the allegations a text reports, the prompt takes an allegation or suspicion
   the text reports as a `SUSPECTED` claim saying who alleges it, where it left out all speculation, and keeps
   `DISPUTED` for conflicting information; only the author's own opinions are left out. A `true` or `false` statement
-  settles a `suspected` claim, `true` and `false` together dispute it.
+  settles a `suspected` claim, `true` and `false` together dispute it. A claim's id holds its statement (the
+  description's entity key) beside its subject, object, type and dates: claims of one type about one subject with no
+  object or date were one claim, their statuses merged ("accused of bribery" read as confirmed by "fined for
+  pollution"), where MS GraphRAG keeps one row per statement; only a restatement merges.
 - An entity without relationships no longer adds a level to the community hierarchy: it made a single root over
   the other communities read as a partition, so global search's cut depths depended on it (#608).
 - A model answer that corrects itself is parsed by its last complete answer (each XML section keeps its last closed

@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """The same claim in two documents, built incrementally (AWS-free).
 
-A claim's id derives from its subject, object, type and dates, not from its
-document, so a second document stating it yields the stored claim's id. The
+A claim's id derives from its subject, object, type, dates and statement,
+not from its document, so a second document stating it yields the stored claim's id. The
 incremental commit must merge the two as the full build's ``ClaimResolver``
 does, and removing one document must strip its text units from the claim.
 """
@@ -69,7 +69,8 @@ def _claim(path: str, suffix: str = "default") -> Claim:
         object_name="Buyer",
         type="SUPPLY",
         status="TRUE",
-        description=f"Vendor supplies Buyer per {path}.",
+        # One statement in every document (part of the claim's id).
+        description="Vendor supplies Buyer.",
         source_text=f"source {path}",
         text_unit_ids=[f"tu-{path}"],
         attributes={"index": suffix},
@@ -174,9 +175,8 @@ def test_merge_claims_is_idempotent_and_disputes_disagreeing_statuses() -> None:
 
     assert once == twice
     assert once.status == "disputed"
-    assert once.description == (
-        "Vendor supplies Buyer per a.txt.\nVendor supplies Buyer per b.txt."
-    )
+    assert once.description == "Vendor supplies Buyer."
+    assert once.source_text == "source a.txt\nsource b.txt"
     # A delta claim with nothing stored is returned as it is.
     assert merge_claims([], [delta]) == [delta]
 
@@ -319,7 +319,7 @@ def test_a_claim_overwriting_a_stored_one_waits_for_the_claims_under_new_ids(
     in_place = mocker.spy(vector, "update_claim_lineage")
     restated = _claim_of("restated").model_copy(
         update={
-            "description": "Vendor supplies Buyer per /c/a.txt.\nAnd per /c/b.txt.",
+            "description": "Vendor supplies Buyer.\nAnd per /c/b.txt.",
             "text_unit_ids": ["tu-/c/a.txt", "tu-/c/b.txt"],
         }
     )
@@ -337,7 +337,7 @@ def test_a_claim_overwriting_a_stored_one_waits_for_the_claims_under_new_ids(
         update={"text_unit_ids": ["tu-/c/a.txt", "tu-/c/n.txt"]}
     )
     split_copy = _claim_of("split").model_copy(
-        update={"description": "Vendor supplies Buyer per /c/a.txt.\nAnd Xeno."}
+        update={"description": "Vendor supplies Buyer.\nAnd Xeno."}
     )
 
     stats = write_claims_new_ids_first(

@@ -65,6 +65,7 @@ from unified_kg_rag.domain.models import (
     TextUnitExtraction,
 )
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.utils import entity_key
 
 logger = get_logger(__name__)
 
@@ -700,10 +701,11 @@ def _compact_names(claim: Claim) -> tuple[str, str | None]:
 
 def _fact(claim: Claim) -> tuple[str, str]:
     """What tells two statements about the same names apart: the type and
-    the dates, as :func:`resolved_claim_id` keys them."""
+    the dates, as :func:`resolved_claim_id` keys them (with the statement,
+    which ``_derive_claims`` compares after them)."""
     return (
         (claim.type or "").casefold(),
-        claim_identity_suffix(claim.start_date, claim.end_date),
+        claim_identity_suffix(claim.start_date, claim.end_date, None),
     )
 
 
@@ -788,18 +790,21 @@ def _derive_claims(
             # their compact keys: a legal form or a dense-script space does
             # not tell a spelling apart), not another statement of its unit
             # about another entity; of those, one of its type and dates; then
-            # the one stated in most of its units.
+            # then the same statement; then the one stated in most of its
+            # units.
             sharing = [r for r in resolved_claims if units & set(r.text_unit_ids or [])]
             if not sharing:
                 dropped.append(claim.id)
                 kept_for.append(None)
                 continue
             own_names, own_fact = _compact_names(claim), _fact(claim)
+            own_statement = entity_key(claim.description)
             match_claim = max(
                 sharing,
                 key=lambda r: (
                     _compact_names(r) == own_names,
                     _fact(r) == own_fact,
+                    entity_key(r.description) == own_statement,
                     len(units & set(r.text_unit_ids or [])),
                     resolved_claim_id(with_entity_ids(r, derived_of)),
                 ),
