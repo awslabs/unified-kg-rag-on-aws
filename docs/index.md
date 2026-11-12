@@ -34,7 +34,7 @@ the project? Read the [Overview](./concepts/overview.md) first.
 | How-to | [Extraction schema](./guides/extraction-schema.md), [Ontology](./guides/ontology.md), [Seed graphs](./guides/seed-graphs.md) | Schema modes, declaring types and patterns, the stored schema fields and their filters, what a schema change re-runs; reading the schema from an OWL/RDFS ontology; merging a knowledge graph you already have, how seeds meet the schema and the documents, their lifecycle and cost |
 | How-to | [Evaluation](./guides/evaluate.md), [Benchmarks](./guides/benchmarks.md), [Visualization](./guides/visualize.md), [Inspect and export](./guides/inspect.md) | Evaluators and what they need, the dataset format, paired comparisons of strategies, cost and prices, rebuilding, re-judging and CI gates; MuSiQue as a corpus and a dataset; rendering the exported graph; what a namespace holds, and its graph as GraphML or JSON Lines |
 | How-to | [Console](./guides/console.md) | The local web console (`run-console`): ask with a provenance trail into the graph, ingest, compare evaluations, explore the graph, usage and cost, settings; the demo and port forwarding |
-| How-to | [Guardrail](./guides/guardrail.md), [Observability](./guides/observability.md) | Screening queries and answers, the contextual grounding check; tracing with Jaeger, Langfuse, Phoenix or CloudWatch, export limits and privacy |
+| How-to | [Guardrail](./guides/guardrail.md), [Observability](./guides/observability.md), [Load testing](./guides/load-testing.md) | Screening queries and answers, the contextual grounding check; tracing with Jaeger, Langfuse, Phoenix or CloudWatch, export limits and privacy; local load, soak and chaos runs on fake models, and the nightly gates |
 | How-to | [Using the library from Python](./guides/python-library.md) | Ingesting and querying from Python, results and errors to tell apart, async code, closing, logging, injected backends |
 | How-to | [Extension guide](./guides/extend.md) | Adding a backend, parser, renderer, schema or seed source as a plugin, or a strategy or evaluator in-tree |
 | How-to | [MCP server](./guides/mcp.md) | Serving an index to agents as read-only MCP tools: the tools and their records, scope and limits, HTTP behind an authenticating proxy, cost and telemetry |
@@ -61,6 +61,7 @@ the project? Read the [Overview](./concepts/overview.md) first.
 | Change a model or a setting | [Configuration](./guides/configure.md), [Model selection notes](./reference/models.md#model-selection-notes), [Configuration Reference](./reference/configuration.md) |
 | Screen queries and answers | [Guardrail](./guides/guardrail.md) |
 | Trace queries and ingestion runs | [Observability](./guides/observability.md) |
+| Load-test, soak or chaos-test a change locally | [Load testing](./guides/load-testing.md) |
 | Let an agent search or query the index | [MCP server](./guides/mcp.md) |
 | Ingest a corpus, resume or rebuild | [Ingestion](./guides/ingest.md) |
 | Index a Korean or mixed-language corpus | [Multilingual corpora](./guides/multilingual.md) |

@@ -126,6 +126,9 @@ own report. A weekly [`hypothesis-explore`](./.github/workflows/hypothesis-explo
 from random seeds with a larger budget (`HYPOTHESIS_PROFILE=explore`); pull requests stay derandomized (`ci`). A weekly
 [`fidelity`](./.github/workflows/fidelity.yml) run installs the original HippoRAG 2, RAPTOR and BenchmarkQED at pinned
 commits and versions (outside the lock) and runs the parity tests that skip without them, failing if any still skips.
+A nightly [`load-test`](./.github/workflows/load-test.yml) run (`scripts/loadtest/nightly.py`) sweeps, soaks and
+chaos-tests the embedded stores with fake models and gates on errors, event-loop lag, RSS growth and convergence; it
+only reports, no branch protection requires it ([Load testing](./docs/guides/load-testing.md)).
 `iac/` is a separate uv project; if you change it, also run `cd iac && uv sync && uv run cdk synth -c enable_cdk_nag=true && uv run pytest` (see [`iac/README.md`](./iac/README.md)).
 
 When a pull request changes `pyproject.toml` or `uv.lock`, the

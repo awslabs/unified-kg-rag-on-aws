@@ -1504,6 +1504,11 @@ From a `main` checkout (formats and keys no release had):
   Hebrew points are dropped there, a Thai span or name is grounded by character pairs (a Thai sentence was one
   token, too short to judge), the chunker and sentence ends cut after `।`, `॥`, `؟`, `۔`, `။` and `។`, the query
   entity list splits at `،` and `؛`, and a Thai summary's length hint counts characters.
+- A local load, soak and chaos harness (`scripts/loadtest/`, [Load testing](docs/guides/load-testing.md)) on the
+  fake models: concurrency sweeps with latency quantiles, errors by `ErrorClass` and event-loop lag, soaks with
+  resource slopes, the console over HTTP, and model faults (429, 500, 503, drops, hangs), store pauses and kills,
+  each checked to converge with a full build. A nightly `load-test` workflow runs it on the embedded stores; it
+  gates on errors, loop lag, RSS growth and convergence, and only reports.
 
 ### Changed
 - A query without a suffix (`RAGInput(suffix=None)`) reads the chain config's
