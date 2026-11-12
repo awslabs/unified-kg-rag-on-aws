@@ -73,8 +73,10 @@ from unified_kg_rag.adapters.retrieval.memory_manager import (
 )
 from unified_kg_rag.adapters.retrieval.strategy_registry import (
     QueryInput,
+    RunRecord,
     get_strategy_spec,
     query_inputs,
+    run_records,
     wrapped_strategy,
 )
 from unified_kg_rag.adapters.retrieval.token_manager import (
@@ -229,36 +231,6 @@ _FINDING_IDS = ("entity_ids", "relationship_ids")
 # another, so a joined check never nears the quota on its own.
 _JOINED_CHECK_CHARS = 12_000
 
-# The search metadata of iterative search and its model-written text: the
-# follow-up queries searched (``searched``), and each verdict's bridge
-# entities and follow-up queries.
-_ITERATIVE_KEY = "iterative"
-_ITERATIVE_MODEL_TEXT: dict[str, tuple[str, ...]] = {
-    "searched": (),
-    "verdicts": ("bridge_entities", "next_queries"),
-}
-
-
-def _model_texts(iterative: dict[str, Any]) -> list[tuple[str, str]]:
-    """The model-written strings of ``iterative`` metadata, as (field, text)."""
-    found: list[tuple[str, str]] = []
-    for key, inner in _ITERATIVE_MODEL_TEXT.items():
-        value = iterative.get(key)
-        if not isinstance(value, list):
-            continue
-        if not inner:
-            found.extend((key, v) for v in value if isinstance(v, str) and v)
-            continue
-        for record in value:
-            if not isinstance(record, dict):
-                continue
-            for field_name in inner:
-                item = record.get(field_name)
-                items = item if isinstance(item, list) else [item]
-                found.extend((field_name, v) for v in items if isinstance(v, str) and v)
-    return found
-
-
 # The model-written query texts a caller sees (query processing's rewrite,
 # translation, entities and LightRAG keywords, and the search query built
 # from them), screened as a synthesized result is: (text fields, list fields).
@@ -311,14 +283,6 @@ def _replace_query_texts(
     return model.model_copy(update=update)
 
 
-# The search metadata of the structured strategy, whose plan (model output:
-# its names, values, entities and keywords), plan description and the names
-# of the entities its mentions linked to (which the description renders) are
-# returned with the search results and written into its query result.
-_STRUCTURED_KEY = "structured"
-_STRUCTURED_MODEL_TEXT = ("plan", "plan_description", "linked_names")
-
-
 def _string_leaves(value: Any) -> list[str]:
     """Every non-empty string inside ``value`` (dicts and lists walked)."""
     if isinstance(value, str):
@@ -357,37 +321,49 @@ def _replace_texts(content: str, screened: dict[str, str | None]) -> str:
     return content
 
 
-def _replace_model_texts(
-    iterative: dict[str, Any], screened: dict[str, str | None]
+def _texts_at(value: Any, path: list[str]) -> list[str]:
+    """The strings under the dotted ``path`` of ``value`` (``RunRecord``:
+    a list on the way is walked item by item)."""
+    if not path:
+        return _string_leaves(value)
+    if isinstance(value, list):
+        return [text for item in value for text in _texts_at(item, path)]
+    if isinstance(value, dict):
+        return _texts_at(value.get(path[0]), path[1:])
+    return []
+
+
+def _replace_at(value: Any, path: list[str], screened: dict[str, str | None]) -> Any:
+    """``value`` with the strings under ``path`` screened (``_replace_leaves``)."""
+    if not path:
+        return _replace_leaves(value, screened)
+    if isinstance(value, list):
+        return [_replace_at(item, path, screened) for item in value]
+    if isinstance(value, dict) and path[0] in value:
+        return {**value, path[0]: _replace_at(value[path[0]], path[1:], screened)}
+    return value
+
+
+def _record_texts(record: dict[str, Any], spec: RunRecord) -> list[str]:
+    """The model-written strings of a strategy's run ``record``
+    (``spec.model_text``), each once."""
+    return list(
+        dict.fromkeys(
+            text
+            for path in spec.model_text
+            for text in _texts_at(record, path.split("."))
+        )
+    )
+
+
+def _screened_record(
+    record: dict[str, Any], spec: RunRecord, screened: dict[str, str | None]
 ) -> dict[str, Any]:
-    """``iterative`` with each model-written string replaced by its screened
-    text; a refused one (``None``) is left out of its list, or emptied."""
-
-    def one(value: Any) -> Any:
-        if isinstance(value, list):
-            return [screened.get(v, v) for v in value if screened.get(v, v) is not None]
-        if isinstance(value, str):
-            text = screened.get(value, value)
-            return "" if text is None else text
-        return value
-
-    out = dict(iterative)
-    for key, inner in _ITERATIVE_MODEL_TEXT.items():
-        value = iterative.get(key)
-        if not isinstance(value, list):
-            continue
-        if not inner:
-            out[key] = one(value)
-            continue
-        out[key] = [
-            (
-                {**r, **{f: one(r[f]) for f in inner if f in r}}
-                if isinstance(r, dict)
-                else r
-            )
-            for r in value
-        ]
-    return out
+    """``record`` with its model-written strings replaced by their screened
+    text; a refused one is left out of its list, or emptied."""
+    for path in spec.model_text:
+        record = _replace_at(record, path.split("."), screened)
+    return record
 
 
 # How an ``auto`` query chose its strategy, in the output metadata:
@@ -2504,13 +2480,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
     ) -> None:
         """Give ``output`` the screened model text of its search results
         where it holds copies made before the screening: its metadata's
-        ``iterative`` and ``structured`` (``_format_output_step`` copies the
+        run records (``RunRecord``; ``_format_output_step`` copies the
         search metadata) and the reported query-result sources and their
-        citations, whose text, metadata and title render the structured plan (``plan_texts``: each plan
-        text and what the guardrail made of it)."""
-        for key in (_ITERATIVE_KEY, _STRUCTURED_KEY):
-            if key in output.metadata:
-                output.metadata[key] = output.search_results.metadata.get(key)
+        citations, whose text, metadata and title render the structured plan
+        (``plan_texts``: each screened text and what the guardrail made of
+        it)."""
+        for spec in run_records():
+            if spec.key in output.metadata:
+                output.metadata[spec.key] = output.search_results.metadata.get(spec.key)
         if not any(text != screened for text, screened in plan_texts.items()):
             return
         # A query result's citation is titled by its plan description.
@@ -2823,18 +2800,18 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
     @staticmethod
     def _clear_evidence_metadata(output: RAGOutput) -> None:
         """Drop the evidence a strategy's metadata holds (a refused answer):
-        the structured plan, its linked entities and rows, and iterative
-        search's follow-up queries and verdicts (``_STRUCTURED_KEY``,
-        ``_ITERATIVE_KEY``), in the answer's and its search results'
-        metadata."""
-        for key in (_STRUCTURED_KEY, _ITERATIVE_KEY):
+        every run record (``RunRecord``: the structured plan, its linked
+        entities and rows, iterative search's follow-up queries and
+        verdicts), in the answer's and its search results' metadata."""
+        keys = {spec.key for spec in run_records()}
+        for key in keys:
             output.metadata.pop(key, None)
         output.search_results = output.search_results.model_copy(
             update={
                 "metadata": {
                     k: v
                     for k, v in output.search_results.metadata.items()
-                    if k not in (_STRUCTURED_KEY, _ITERATIVE_KEY)
+                    if k not in keys
                 }
             }
         )
@@ -2905,86 +2882,47 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         *,
         plan_texts: dict[str, str | None] | None = None,
     ) -> SearchResult:
-        """``search_results`` with the model-written text of its metadata
-        (``iterative``'s follow-up queries, bridge entities and step
-        questions, ``_ITERATIVE_MODEL_TEXT``) screened as a synthesized
-        result is: masked, or left out when refused. One check reads them
-        all; only when it intervenes is each checked on its own."""
-        search_results = await self._screen_structured_metadata(
-            search_results, records, plan_texts=plan_texts
-        )
-        iterative = search_results.metadata.get(_ITERATIVE_KEY)
-        if not isinstance(iterative, dict):
-            return search_results
-        texts = [text for _, text in _model_texts(iterative)]
-        screened = await self._screen_texts(texts, records)
-        if screened is None:
-            return search_results
-        return search_results.model_copy(
-            update={
-                "metadata": {
-                    **search_results.metadata,
-                    _ITERATIVE_KEY: _replace_model_texts(iterative, screened),
-                }
-            }
-        )
-
-    async def _screen_structured_metadata(
-        self,
-        search_results: SearchResult,
-        records: list[dict[str, Any]],
-        *,
-        plan_texts: dict[str, str | None] | None = None,
-    ) -> SearchResult:
-        """``search_results`` with the structured strategy's model-written
-        plan text screened as a synthesized result is, in its metadata and
-        in the query result that renders it: masked, or removed when
-        refused. One check reads them all; only when it intervenes is each
-        checked on its own, and ``plan_texts`` receives each text's
-        screened form (``None``: refused)."""
-        structured = search_results.metadata.get(_STRUCTURED_KEY)
-        if not isinstance(structured, dict):
-            return search_results
-        texts = list(
-            dict.fromkeys(
-                text
-                for key in _STRUCTURED_MODEL_TEXT
-                for text in _string_leaves(structured.get(key))
-            )
-        )
-        screened = await self._screen_texts(texts, records)
-        if screened is None:
-            return search_results
-        if plan_texts is not None:
-            plan_texts.update(screened)
-        results = []
-        for result in search_results.results:
-            if result.retriever_type != SectionType.QUERY_RESULT.value:
-                results.append(result)
+        """``search_results`` with the model-written text of every run
+        record its metadata holds (``RunRecord.model_text``: iterative's
+        follow-up queries and bridge entities, the structured plan) screened
+        as a synthesized result is, in the record and in the query results
+        that render it: masked, or removed when refused. One check per
+        record reads its texts; only when it intervenes is each checked on
+        its own, and ``plan_texts`` receives each text's screened form
+        (``None``: refused)."""
+        for spec in run_records():
+            record = search_results.metadata.get(spec.key)
+            if not isinstance(record, dict):
                 continue
-            results.append(
-                result.model_copy(
-                    update={
-                        "content": _replace_texts(result.content, screened),
-                        "metadata": _replace_leaves(result.metadata, screened),
-                    }
-                )
-            )
-        return search_results.model_copy(
-            update={
-                "results": results,
-                "metadata": {
-                    **search_results.metadata,
-                    _STRUCTURED_KEY: {
-                        **structured,
-                        **{
-                            key: _replace_leaves(structured.get(key), screened)
-                            for key in _STRUCTURED_MODEL_TEXT
-                        },
+            screened = await self._screen_texts(_record_texts(record, spec), records)
+            if screened is None:
+                continue
+            if plan_texts is not None:
+                plan_texts.update(screened)
+            search_results = search_results.model_copy(
+                update={
+                    "results": [
+                        (
+                            result.model_copy(
+                                update={
+                                    "content": _replace_texts(result.content, screened),
+                                    "metadata": _replace_leaves(
+                                        result.metadata, screened
+                                    ),
+                                }
+                            )
+                            if result.retriever_type == SectionType.QUERY_RESULT.value
+                            else result
+                        )
+                        for result in search_results.results
+                    ],
+                    "metadata": {
+                        **search_results.metadata,
+                        spec.key: _screened_record(record, spec, screened),
                     },
-                },
-            }
-        )
+                }
+            )
+        return search_results
 
     async def _admit_query(
         self, inputs: RAGInput | dict[str, Any]

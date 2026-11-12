@@ -108,6 +108,7 @@ PUBLIC_API = sorted(
         "QueryInput",
         "RerankFactoryPort",
         "RetrieverRole",
+        "RunRecord",
         "SchemaDocument",
         "SchemaSourceContext",
         "SeedEdge",

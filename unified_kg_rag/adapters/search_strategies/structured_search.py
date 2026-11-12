@@ -45,6 +45,7 @@ from unified_kg_rag.adapters.retrieval.base import (
 )
 from unified_kg_rag.adapters.retrieval.strategy_registry import (
     QueryInput,
+    RunRecord,
     get_strategy_spec,
     query_inputs,
     register_strategy,
@@ -235,6 +236,12 @@ def _validation_message(error: ValidationError) -> str:
     SearchStrategy.STRUCTURED,
     required_artifacts=frozenset(
         {IndexArtifact.TEXT_UNITS, IndexArtifact.ENTITIES, IndexArtifact.GRAPH}
+    ),
+    # The plan (the model's names, values, entities and keywords), its
+    # description and the names of the entities its mentions linked to,
+    # which the description and the query result render.
+    run_record=RunRecord(
+        "structured", model_text=("plan", "plan_description", "linked_names")
     ),
 )
 class StructuredSearchStrategy(BaseSearchStrategy):

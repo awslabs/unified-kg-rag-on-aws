@@ -24,7 +24,7 @@ def _result(qid: str, record: dict[str, Any] | None) -> EvaluationResult:
         generated_answer="a",
         ground_truth="",
         search_strategy="iterative",
-        iterative=record,
+        strategy_records={} if record is None else {"iterative": record},
     )
 
 

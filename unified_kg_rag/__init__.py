@@ -146,6 +146,7 @@ _EXPORTS: dict[str, str] = {
     "BaseGraphRAGRetriever": "unified_kg_rag.adapters.retrieval.base",
     "register_strategy": "unified_kg_rag.adapters.retrieval.strategy_registry",
     "QueryInput": "unified_kg_rag.adapters.retrieval.strategy_registry",
+    "RunRecord": "unified_kg_rag.adapters.retrieval.strategy_registry",
     "RetrieverRole": "unified_kg_rag.domain.models",
     # Extension: parsers and renderers
     "ParserFactory": "unified_kg_rag.adapters.ingestion.parser",
@@ -220,6 +221,7 @@ if TYPE_CHECKING:
     )
     from unified_kg_rag.adapters.retrieval.strategy_registry import (
         QueryInput,
+        RunRecord,
         register_strategy,
     )
     from unified_kg_rag.adapters.schema_sources.registry import (

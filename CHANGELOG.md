@@ -863,8 +863,8 @@ From a `main` checkout (formats and keys no release had):
   and seed config, and `eval_data.json` with count, ranking, two-hop, shared-buyer, yes/no, numeric and text-only
   control templates (`category`), absent-entity negatives, Korean and Japanese variants and a `large` size past the
   scan cap, each graph gold answer computed by the reference executor from its plan (`metadata.gold_plan`). `run-eval`
-  keeps each answer's `structured` record and reports `structured_statistics` (status, fallback reasons, valid-plan,
-  repair, truncation and exact rates), per arm under a comparison
+  keeps each answer's `structured` run record (`strategy_records`) and reports `structured_statistics` (status,
+  fallback reasons, valid-plan, repair, truncation and exact rates), per arm under a comparison
   ([guide](docs/guides/benchmarks.md#structural-benchmark)). Its items say how `answer_match` reads them:
   `metadata.answer_type: number` matches when the answer's first line (the extracted span, with `extracted`)
   writes the gold number anywhere: digits, number words with their scale words, Korean native, Sino-Korean and Han
@@ -1235,7 +1235,9 @@ From a `main` checkout (formats and keys no release had):
   cap left it the first passages of long chunks), a round follows at most five bridge entities, a deadline that
   cancels the round an insufficient verdict started reports it (`insufficiency_reason: deadline`), and the follow-up
   queries and bridge entities in `metadata["iterative"]` are screened by the output guardrail with `check_output`
-  (#607); bridge entities are told apart by names folded as local search's seeds are. See
+  (#607); bridge entities are told apart by names folded as local search's seeds are. A strategy declares the run
+  record it keeps and the model text in it (`register_strategy(run_record=RunRecord(...))`): the chain screens and
+  clears every declared record, not two named ones. See
   [query](docs/guides/query.md#follow-up-rounds-for-multi-hop-questions).
 - LLM usage accounting, tracing or not: calls, input and output tokens, prompt-cache reads and writes, resent and
   failed requests and cache hits per model role and id, in `RAGOutput` / `SearchOutput.metadata["usage"]`,
@@ -1298,7 +1300,8 @@ From a `main` checkout (formats and keys no release had):
   accuracy. The answerable questions stay the MuSiQue-Ans sample the seed draws without `--unanswerable` (the full
   split is downloaded beside it, or `--unanswerable-data-path`). A comparison pairs `abstention/recall` and
   `abstention/precision`, both `--fail-if` measures. Each saved result keeps `abstention_reason`,
-  `context_sufficient`, `insufficiency_reason` and the `iterative` run record. Measured on 100 + 100 MuSiQue
+  `context_sufficient`, `insufficiency_reason` and the strategy's run records (`strategy_records`, by the key of
+  each strategy's `RunRecord`). Measured on 100 + 100 MuSiQue
   questions, `mark` stays opt-in and `hedge` the default (#593, #600, #606). Under `abstain` an answer the model
   writes instead of the decline is replaced by the no-context reply (invoke and stream), and a streamed decline
   keeps the space at a chunk boundary after the token (#607). See

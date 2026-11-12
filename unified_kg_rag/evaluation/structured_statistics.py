@@ -17,12 +17,16 @@ _BEFORE_STORE = frozenset(
 )
 
 
+# The strategy's RunRecord key.
+_KEY = "structured"
+
+
 def structured_statistics(results: Iterable[EvaluationResult]) -> dict[str, Any]:
     """Over the answers with a structured run record: their count, per
     status and fallback reason, and the rates of a valid plan (one that
     reached the graph store), a repair call, and of the answered ones a
     truncated and an exact answer; ``{}`` when none has a record."""
-    records = [r.structured for r in results if isinstance(r.structured, dict)]
+    records = [r.strategy_records[_KEY] for r in results if _KEY in r.strategy_records]
     if not records:
         return {}
     count = len(records)

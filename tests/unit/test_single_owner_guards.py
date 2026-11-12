@@ -848,10 +848,6 @@ GUARDS = [
                 1,
                 "a plan's allowed ids argument",
             ),
-            "application/retrieval/rag_chain.py::_model_texts": (
-                1,
-                "the model-written texts the output guardrail screens",
-            ),
             "domain/retrieval/graph_query.py::_check_value_kind": (
                 1,
                 "a structured plan's operand",

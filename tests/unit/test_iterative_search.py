@@ -42,7 +42,11 @@ from unified_kg_rag.adapters.search_strategies.local_search import (
     LocalSearchStrategy,
 )
 from unified_kg_rag.application.retrieval import query_processing
-from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
+from unified_kg_rag.application.retrieval.rag_chain import (
+    GraphRAGChain,
+    ProcessedQuery,
+    RAGOutput,
+)
 from unified_kg_rag.domain.models import (
     Config,
     IndexArtifact,
@@ -1010,4 +1014,50 @@ async def test_clean_follow_ups_cost_one_check() -> None:
     screened = await chain._screen_synthesized(result, [])
 
     assert screened.metadata == result.metadata
-    assert guard.checked == ["Where is Depot?\nDepot\nWhere is Depot?"]
+    # Each text once: the follow-up query repeats the searched one.
+    assert guard.checked == ["Where is Depot?\nDepot"]
+
+
+async def test_any_declared_run_record_is_screened_and_cleared(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The chain reads the registered RunRecords, not two strategy names: a
+    # strategy that declares where its model text is gets it screened, and
+    # its record dropped from a refused answer, with no edit to the chain.
+    from unified_kg_rag.adapters.retrieval.strategy_registry import RunRecord
+    from unified_kg_rag.application.retrieval import rag_chain
+
+    spec = RunRecord("notes", model_text=("steps.question",))
+    monkeypatch.setattr(rag_chain, "run_records", lambda: (spec,))
+    chain = _guarded_chain(_MaskingGuard())
+    result = SearchResult(
+        query=_query(),
+        results=list(ROUND_0),
+        total_results=len(ROUND_0),
+        search_strategy="notes_search",
+        processing_time=0.0,
+        metadata={
+            "notes": {
+                "steps": [{"question": "Where is Secret Depot?", "n": 1}],
+                "kept": "Secret",  # not declared model text
+            }
+        },
+    )
+
+    screened = await chain._screen_synthesized(result, [])
+
+    assert screened.metadata["notes"] == {
+        "steps": [{"question": "Where is {NAME} Depot?", "n": 1}],
+        "kept": "Secret",
+    }
+    output = RAGOutput(
+        answer="a",
+        sources=[],
+        search_results=screened,
+        conversation_id=None,
+        processed_query=ProcessedQuery(original_query="q", final_query="q"),
+        metadata={"notes": screened.metadata["notes"], "other": 1},
+    )
+    GraphRAGChain._clear_evidence_metadata(output)
+    assert "notes" not in output.metadata and output.metadata["other"] == 1
+    assert "notes" not in output.search_results.metadata

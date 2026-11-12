@@ -153,8 +153,9 @@ set, filtered so the corpus does not answer them:
   metrics in `deltas_vs_baseline`, so
   `--fail-if abstention/recall:ci_high<0` gates a supported drop.
 - Each saved result keeps `abstained`, `abstention_reason`,
-  `context_sufficient`, `insufficiency_reason` and, for `iterative`, its run
-  record (rounds, stop reason, verdicts), so a run can be analysed from its
+  `context_sufficient`, `insufficiency_reason` and the strategy's run
+  records (`strategy_records`: `iterative`'s rounds, stop reason and
+  verdicts, `structured`'s plan and status), so a run can be analysed from its
   files ([Result files](../reference/evaluation-output.md#result-files)).
 - With `mode: off` only the empty-context reply counts as a decline, so recall
   is a lower bound. `mark` changes the answer prompt: compare a `mark` run
