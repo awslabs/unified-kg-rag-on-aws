@@ -27,6 +27,17 @@ Prerequisites:
   reject the cloud assembly the locked `aws-cdk-lib` produces.
 - AWS credentials for the target account and region to bootstrap and deploy,
   and Docker to push the app image.
+- The OpenSearch service-linked role, once per account. An OpenSearch domain
+  in a VPC needs `AWSServiceRoleForAmazonOpenSearchService` (or the legacy
+  `AWSServiceRoleForAmazonElasticsearchService`), and in an account that has
+  never had either, the domain can fail to create with "Before you can
+  proceed, you must enable a service-linked role". Create it first (needs
+  `iam:CreateServiceLinkedRole`):
+  `aws iam create-service-linked-role --aws-service-name opensearchservice.amazonaws.com`.
+  When the role exists the command fails with `InvalidInput` ("has been
+  taken"), which is harmless. The stack does not create the role, because a
+  service-linked role that a stack creates fails the deploy in every account
+  that already has it.
 
 ```bash
 cd iac
