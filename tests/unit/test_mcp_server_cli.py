@@ -212,3 +212,29 @@ def test_kg_answer_takes_a_bounded_history_over_the_protocol(
     (rag_input,) = chain.inputs
     assert rag_input.history is not None
     assert [t.model_dump() for t in rag_input.history] == turns
+
+
+async def test_a_served_namespace_without_an_index_is_warned_of_at_start(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Regression (rv23 surfaces low): --suffix nosuch started without a word
+    # and every tool call then failed.
+    from unified_kg_rag.application.cli import run_mcp_server
+    from unified_kg_rag.application.retrieval import graph_lookup
+    from unified_kg_rag.shared.exceptions import IndexNotFoundError
+
+    checked: list[str | None] = []
+
+    async def require(_chain: object, suffix: str | None) -> None:
+        checked.append(suffix)
+        if suffix == "nosuch":
+            raise IndexNotFoundError("No index found for suffix 'nosuch'")
+
+    monkeypatch.setattr(graph_lookup, "require_namespace", require)
+    with caplog.at_level("WARNING"):
+        await run_mcp_server.warn_of_missing_namespaces(
+            object(), ["nosuch", "default"]  # type: ignore[arg-type]
+        )
+    assert checked == ["nosuch", "default"]
+    warned = [r.getMessage() for r in caplog.records]
+    assert len(warned) == 1 and "Namespace 'nosuch' holds no index" in warned[0]

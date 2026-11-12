@@ -50,7 +50,7 @@ from unified_kg_rag.application.storage.inspection import (
     export_graph,
 )
 from unified_kg_rag.shared import ConfigurationError, get_logger
-from unified_kg_rag.shared.exceptions import StoreConnectionError
+from unified_kg_rag.shared.exceptions import IndexNotFoundError, StoreConnectionError
 
 logger = get_logger(__name__)
 
@@ -168,7 +168,9 @@ def main() -> int:
         if not description.exists:
             usage_error(
                 f"the index namespace '{description.namespace}' holds no index: "
-                "check --suffix (or the config's index_value)"
+                "check --suffix (or the config's index_value)",
+                # As run-rag names a query on it.
+                error_type=IndexNotFoundError.__name__,
             )
         exported = None
         if args.output_path is not None:

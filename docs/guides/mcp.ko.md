@@ -23,7 +23,8 @@ pip install '<wheel file>[mcp]'  # from the wheel a GitHub release attaches
 extra가 없으면 `run-mcp-server`는 extra 이름을 알려 주고 종료 코드 2로 끝납니다.
 서버는 `run-rag`와 같은 설정을 읽습니다. 저장소, 모델, 인덱스 네임스페이스
 (`--suffix`, 없으면 `processing.document_parsing.index_value`. [질의](./query.ko.md)와
-같음)입니다. 에이전트의 MCP 설정에서 서버를 자식 프로세스로 띄우고 표준 입출력으로
+같음)입니다. 시작할 때 인덱스가 없는 네임스페이스를 서비스하면 경고하며, 그 네임스페이스에
+대한 도구 호출은 수집하기 전까지 모두 실패합니다. 에이전트의 MCP 설정에서 서버를 자식 프로세스로 띄우고 표준 입출력으로
 통신합니다(기본값인 `stdio` 전송). 대부분의 MCP 클라이언트는 다음과 같은 설정을 받습니다.
 
 ```json

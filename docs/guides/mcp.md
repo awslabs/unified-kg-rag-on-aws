@@ -24,7 +24,8 @@ pip install '<wheel file>[mcp]'  # from the wheel a GitHub release attaches
 Without it, `run-mcp-server` exits 2 naming the extra. The server reads the
 same configuration as `run-rag`: the stores, the models and the index
 namespace (`--suffix`, else `processing.document_parsing.index_value`, as in
-[Querying](./query.md)). Start it from the agent's MCP configuration, which
+[Querying](./query.md)); at start it warns of a served namespace that
+holds no index, on which every tool call fails until it is ingested. Start it from the agent's MCP configuration, which
 launches it as a child process and talks over its stdin and stdout (the
 `stdio` transport, the default). Most MCP clients take a block like this
 one:
