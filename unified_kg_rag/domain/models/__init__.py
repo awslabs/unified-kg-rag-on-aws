@@ -66,6 +66,8 @@ from .pipeline import (
 from .provider_config import Backend, ProvidersConfig
 from .relationship import Relationship
 from .retrieval import (
+    GENERAL_FALLBACKS,
+    STRATEGY_TRAITS,
     GraphEdge,
     RerankStage,
     RerankStatus,
@@ -77,6 +79,7 @@ from .retrieval import (
     SearchType,
     SectionType,
     Source,
+    StrategyTraits,
     validate_path_segment,
     validate_safe_name,
 )
@@ -176,6 +179,9 @@ __all__ = [
     "SearchStrategy",
     "SearchType",
     "SectionType",
+    "STRATEGY_TRAITS",
+    "StrategyTraits",
+    "GENERAL_FALLBACKS",
     "SUMMARY_TREE_META",
     "SummaryNode",
     "SummaryTreeRecord",

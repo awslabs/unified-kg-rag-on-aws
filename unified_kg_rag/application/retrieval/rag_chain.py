@@ -125,6 +125,7 @@ from unified_kg_rag.domain.ingestion.cache_keys import index_language
 from unified_kg_rag.domain.ingestion.methodologies import NamespaceHoldings
 from unified_kg_rag.domain.ingestion.report_references import REPORT_FINDINGS_FIELD
 from unified_kg_rag.domain.models import (
+    GENERAL_FALLBACKS,
     Citation,
     Config,
     LanguageCode,
@@ -1120,13 +1121,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
 
     @staticmethod
     def _fallback_strategy(routable: tuple[SearchStrategy, ...]) -> SearchStrategy:
-        """The strategy AUTO uses when routing fails: LOCAL, a general-purpose
-        graph strategy and not the costliest one, when it is routable; else
-        the first routable strategy, so a configuration that excludes LOCAL
-        (its stores may not be provisioned) is never routed to it."""
-        if not routable or SearchStrategy.LOCAL in routable:
-            return SearchStrategy.LOCAL
-        return routable[0]
+        """The strategy AUTO uses when routing fails: the first routable
+        general-purpose strategy (``GENERAL_FALLBACKS``: local, then mix),
+        else the first routable one, so a configuration that excludes them
+        (their stores may not be provisioned) is never routed to them."""
+        return next(
+            (s for s in GENERAL_FALLBACKS if s in routable),
+            routable[0] if routable else GENERAL_FALLBACKS[0],
+        )
 
     def _get_chain_for_prompt(
         self,

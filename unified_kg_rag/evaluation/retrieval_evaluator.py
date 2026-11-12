@@ -79,6 +79,7 @@ from unified_kg_rag.adapters.evaluators.base import (
 )
 from unified_kg_rag.application.retrieval.citations import citations_enabled
 from unified_kg_rag.domain.models import (
+    STRATEGY_TRAITS,
     Config,
     EvaluationMetric,
     EvaluationMetricType,
@@ -307,15 +308,15 @@ class RetrievalEvaluator(BaseGraphRAGEvaluator):
         )
 
     def _reports_no_sources(self, result: EvaluationResult) -> bool:
-        """Whether the config makes the query's strategy report no sources:
-        global search with ``search.global_search.evidence_tokens`` 0 answers
-        from the key points alone (model output, not sources)."""
-        global_search = self.config.search.global_search
-        return (
-            result.search_strategy == SearchStrategy.GLOBAL.value
-            and global_search.enable_map_reduce
-            and global_search.evidence_tokens == 0
-        )
+        """Whether the config makes the query's strategy report no sources
+        (``StrategyTraits.reports_sources``: global search with
+        ``search.global_search.evidence_tokens`` 0 answers from the key
+        points alone, model output, not sources)."""
+        try:
+            strategy = SearchStrategy(result.search_strategy)
+        except ValueError:
+            return False
+        return not STRATEGY_TRAITS[strategy].reports_sources(self.config)
 
     def _rank_scores(
         self, files: list[frozenset[str]], references: dict[str, str]

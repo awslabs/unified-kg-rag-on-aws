@@ -19,6 +19,7 @@ from pydantic import (
 )
 
 from ..retrieval import (
+    STRATEGY_TRAITS,
     SearchStrategy,
 )
 
@@ -341,22 +342,13 @@ class TokenManagerConfig(BaseModel):
 
 
 def _reject_auto_strategy(strategies: list[SearchStrategy]) -> list[SearchStrategy]:
-    if SearchStrategy.AUTO in strategies:
-        raise ValueError("auto_routable_strategies cannot include 'auto'")
-    if SearchStrategy.PPR in strategies:
-        raise ValueError(
-            "auto_routable_strategies cannot include 'ppr' until a "
-            "measurement shows where it wins (docs/design.md §6.4); select "
-            "it explicitly"
-        )
-    if SearchStrategy.TREE in strategies:
-        raise ValueError(
-            "auto_routable_strategies cannot include 'tree': it is opt-in (it "
-            "answered better than naive but well below the graph strategies, "
-            "docs/concepts/"
-            "defaults-and-evidence.md#raptor-summary-tree), so the router does "
-            "not pick it; select it explicitly"
-        )
+    for strategy in strategies:
+        reason = STRATEGY_TRAITS[strategy].not_routable_reason
+        if reason is not None:
+            raise ValueError(
+                f"auto_routable_strategies cannot include '{strategy.value}': "
+                f"{reason}"
+            )
     return strategies
 
 

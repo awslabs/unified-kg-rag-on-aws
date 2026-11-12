@@ -155,7 +155,8 @@ async def test_router_failure_falls_back_to_a_routable_strategy() -> None:
     state = await chain._resolve_strategy(
         {"search_strategy": SearchStrategy.AUTO, "query": "q"}
     )
-    assert state["resolved_strategy"] == SearchStrategy.GLOBAL
+    # The general-purpose fallback (GENERAL_FALLBACKS) when it is routable.
+    assert state["resolved_strategy"] == SearchStrategy.MIX
 
 
 async def test_one_routable_strategy_needs_no_router_call() -> None:

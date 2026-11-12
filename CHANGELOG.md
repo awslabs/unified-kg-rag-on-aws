@@ -1563,6 +1563,9 @@ From a `main` checkout (formats and keys no release had):
   gates on errors, loop lag, RSS growth and convergence, and only reports.
 
 ### Changed
+- `auto` falls back to the first routable of `local`, then `mix`, when the router's answer names no routable
+  strategy, as it does when nothing configured is served and as `structured` falls back (one order,
+  `GENERAL_FALLBACKS`, from the per-strategy `STRATEGY_TRAITS`); without `local` it took the first routable strategy.
 - A query without a suffix (`RAGInput(suffix=None)`) reads the chain config's
   `processing.document_parsing.index_value`, as ingestion writes and the CLIs query (`resolve_namespace`, the one
   rule of every entry point); it read `default`, so the console's Ask page failed with `IndexNotFoundError` after a

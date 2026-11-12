@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, TypeVar
 
 from unified_kg_rag.domain.ingestion.methodologies import artifacts_to_build
 from unified_kg_rag.domain.models import (
+    GENERAL_FALLBACKS,
     Config,
     IndexArtifact,
     Methodology,
@@ -311,10 +312,6 @@ _WARNED_FALLBACKS: set[
 ] = set()
 _WARNED_LOCK = threading.Lock()
 
-# What auto falls back to when no configured strategy reads a held
-# methodology: GraphRAG's and LightRAG's general-purpose strategies, then any.
-_FALLBACKS = (SearchStrategy.LOCAL, SearchStrategy.MIX)
-
 
 def routable_strategies(
     config: Config, artifacts: Collection[IndexArtifact] | None = None
@@ -340,7 +337,11 @@ def routable_strategies(
     routable = tuple(s for s in configured if serves(s, holding, config))
     if routable:
         return routable
-    candidates = [*_FALLBACKS, *(s for s in SearchStrategy if s not in _FALLBACKS)]
+    # The general-purpose strategies first (GENERAL_FALLBACKS), then any.
+    candidates = [
+        *GENERAL_FALLBACKS,
+        *(s for s in SearchStrategy if s not in GENERAL_FALLBACKS),
+    ]
     fallback = next(
         (
             s

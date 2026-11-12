@@ -59,6 +59,7 @@ from unified_kg_rag.domain.ingestion.seed_graph import (
     is_seed_unit,
 )
 from unified_kg_rag.domain.models import (
+    GENERAL_FALLBACKS,
     Config,
     Constants,
     IndexArtifact,
@@ -151,7 +152,6 @@ _DEGRADING = frozenset(
 # What _parsed says of an answer that holds no JSON object.
 _UNREADABLE = "plan: the answer is not one JSON object"
 # What a fallback gives way to when the namespace does not serve it.
-_FALLBACK_ORDER = (SearchStrategy.LOCAL, SearchStrategy.MIX)
 # The JSON keys of a plan, to tell it from an example the model echoes.
 _PLAN_KEYS = ("nodes", "returns", "unanswerable")
 # Suffixes whose profile a strategy keeps at most.
@@ -330,7 +330,7 @@ class StructuredSearchStrategy(BaseSearchStrategy):
         if configured is None:
             return ()
         if artifacts is None:
-            return tuple(dict.fromkeys((configured, *_FALLBACK_ORDER)))
+            return tuple(dict.fromkeys((configured, *GENERAL_FALLBACKS)))
         chosen = self._fallback_for(frozenset(artifacts))
         return () if chosen is None else (chosen,)
 
@@ -1265,7 +1265,7 @@ class StructuredSearchStrategy(BaseSearchStrategy):
         configured = self.settings.fallback_strategy
         if configured is None:
             return None
-        for candidate in (configured, *_FALLBACK_ORDER):
+        for candidate in (configured, *GENERAL_FALLBACKS):
             if serves(candidate, held, self.config):
                 return candidate
         return None
