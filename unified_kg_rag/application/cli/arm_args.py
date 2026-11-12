@@ -157,7 +157,6 @@ def arm_config(
         ) from e
     # Only the overlay's own paths: the rest are the run's, as it reads them.
     resolve_relative_paths(config, path, set_in=data)
-    config.evaluation = base.evaluation.model_copy(deep=True)
     # The models that score: the run's judge and answer-span extractor, not
     # the ones the overlay's answer model or tiers would pick.
     roles = (data.get("models") or {}).get("roles") or {}
@@ -170,7 +169,16 @@ def arm_config(
                 f"is ignored; every arm is scored with the run's ({model})."
             )
         scoring[role.value] = model
-    config.models = config.models.model_copy(
-        update={"roles": config.models.roles.model_copy(update=scoring)}
-    )
+    # Scored as the run: its evaluation settings and scoring models.
+    try:
+        config = config.updated(
+            {
+                "evaluation": base.evaluation,
+                **{f"models.roles.{role}": model for role, model in scoring.items()},
+            }
+        )
+    except ValidationError as e:
+        raise ConfigurationError(
+            f"--arm {spec['name']}: {format_validation_errors('', e)} (in '{path}')"
+        ) from e
     return config, warnings

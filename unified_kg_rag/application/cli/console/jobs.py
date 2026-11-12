@@ -32,6 +32,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
 from unified_kg_rag.application.cli.console import stages
 from unified_kg_rag.application.cli.console.paths import PathRefused, walk_files
 from unified_kg_rag.application.cli.console.store import ConsoleStore
@@ -47,6 +49,7 @@ from unified_kg_rag.domain.models.methodology import METHODOLOGY_PROFILES
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.evaluation.gates import parse_gate
 from unified_kg_rag.shared import ConfigurationError, get_logger
+from unified_kg_rag.shared.utils.validation import format_validation_errors
 
 logger = get_logger(__name__)
 
@@ -190,9 +193,15 @@ def ingest_config(
         chosen = [Methodology(m).value for m in methodologies]
     except ValueError as e:
         raise ConfigurationError(f"methodologies: {e}") from e
-    config = config.model_copy(deep=True)
-    config.indexing.methodologies = [Methodology(m) for m in chosen]
-    return config, chosen
+    try:
+        # Validated whole: a selection a switch leaves nothing of is refused
+        # here, as at load, not left with no methodology to build.
+        updated = config.updated({"indexing.methodologies": chosen})
+    except ValidationError as e:
+        raise ConfigurationError(
+            f"methodologies: {format_validation_errors('', e)}"
+        ) from e
+    return updated, chosen
 
 
 def dropped_methodologies(held: list[str], config: Config) -> list[str]:

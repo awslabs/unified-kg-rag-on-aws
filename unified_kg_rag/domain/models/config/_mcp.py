@@ -5,7 +5,6 @@
 from typing import Any, Literal
 
 from pydantic import (
-    BaseModel,
     Field,
     field_validator,
 )
@@ -14,6 +13,7 @@ from ..retrieval import (
     SearchStrategy,
     validate_safe_name,
 )
+from ._common import ConfigSection
 
 # The tools run-mcp-server can serve (mcp.tools).
 McpToolName = Literal[
@@ -28,7 +28,7 @@ MCP_TOOLS: tuple[McpToolName, ...] = (
 )
 
 
-class McpServerConfig(BaseModel):
+class McpServerConfig(ConfigSection):
     """The read-only MCP server of ``run-mcp-server`` (the ``mcp`` extra).
 
     The namespace it serves is fixed when it starts (``--suffix``, else

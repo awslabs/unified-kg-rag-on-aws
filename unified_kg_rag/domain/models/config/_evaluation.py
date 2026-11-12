@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Annotated, Any, Literal, get_args
 
 from pydantic import (
-    BaseModel,
     BeforeValidator,
     ConfigDict,
     Field,
@@ -16,6 +15,7 @@ from pydantic import (
 )
 
 from ..evaluation import EvaluationMetricType, EvaluatorType, RagasMetricType
+from ._common import ConfigSection
 from ._models import EffortLevel
 
 # One stdlib logger for every module of the config package, named as the
@@ -23,7 +23,7 @@ from ._models import EffortLevel
 _logger = logging.getLogger("unified_kg_rag.domain.models.config")
 
 
-class ModelPrice(BaseModel):
+class ModelPrice(ConfigSection):
     """A model's on-demand price, for run-eval's USD cost estimate: a
     language model's token prices, or a rerank model's search-unit price."""
 
@@ -137,7 +137,7 @@ def _without_removed_evaluators(value: Any) -> Any:
     return kept
 
 
-class EvaluationConfig(BaseModel):
+class EvaluationConfig(ConfigSection):
     outputs_directory: str | Path = Field(
         default="outputs/evaluation",
         description=("Directory the evaluation results are written to."),

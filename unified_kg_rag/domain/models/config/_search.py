@@ -9,7 +9,6 @@ from typing import Annotated
 
 from pydantic import (
     AfterValidator,
-    BaseModel,
     BeforeValidator,
     Field,
     model_validator,
@@ -18,6 +17,7 @@ from pydantic import (
 from ..retrieval import (
     SearchStrategy,
 )
+from ._common import ConfigSection
 from ._fusion import (
     DEFAULT_ANSWER_PROMPT_STYLES,
     AbstentionConfig,
@@ -49,7 +49,7 @@ from ._strategies import (
 _logger = logging.getLogger("unified_kg_rag.domain.models.config")
 
 
-class SearchConfig(BaseModel):
+class SearchConfig(ConfigSection):
     auto_routable_strategies: Annotated[
         list[SearchStrategy], AfterValidator(_reject_auto_strategy)
     ] = Field(

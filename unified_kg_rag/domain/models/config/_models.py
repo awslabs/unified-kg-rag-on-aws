@@ -8,12 +8,13 @@ from enum import Enum
 from typing import Annotated, Any, Literal, get_args
 
 from pydantic import (
-    BaseModel,
     BeforeValidator,
     Field,
     StringConstraints,
     field_validator,
 )
+
+from ._common import ConfigSection
 
 
 class EmbeddingModelId(str, Enum):
@@ -320,7 +321,7 @@ _EVALUATION_ROLE_FIELD: Any = Field(
 )
 
 
-class RoleModelsConfig(BaseModel):
+class RoleModelsConfig(ConfigSection):
     """Per-role model overrides (``models.roles``)."""
 
     fixing: str | None = _role_field(ModelRole.FIXING)
@@ -353,7 +354,7 @@ class RoleModelsConfig(BaseModel):
         return _coerce_model_id(value)
 
 
-class EmbeddingModelConfig(BaseModel):
+class EmbeddingModelConfig(ConfigSection):
     """The one embedding model (``models.embedding``): index, queries,
     evaluation and the visualization layout all embed with it."""
 
@@ -377,7 +378,7 @@ class EmbeddingModelConfig(BaseModel):
     )
 
 
-class ModelsConfig(BaseModel):
+class ModelsConfig(ConfigSection):
     """Which model serves each role (``models``).
 
     The provider of each family is ``providers.llm.kind`` /

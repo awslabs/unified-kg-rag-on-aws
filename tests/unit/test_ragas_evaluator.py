@@ -70,7 +70,10 @@ def _make_evaluator(
 
     config = Config()
     config.evaluation.max_context_tokens = max_context_tokens
-    config.search.token_manager.max_context_tokens = answer_context_tokens
+    # Unvalidated: a budget below the setting's floor keeps the cases small.
+    config.search.token_manager = config.search.token_manager.model_copy(
+        update={"max_context_tokens": answer_context_tokens}
+    )
     config.evaluation.ragas_max_contexts = ragas_max_contexts
     if ragas_metrics is not None:
         config.evaluation.ragas_metrics = ragas_metrics

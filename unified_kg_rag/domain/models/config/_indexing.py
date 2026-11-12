@@ -5,8 +5,6 @@
 from typing import Any, Literal
 
 from pydantic import (
-    BaseModel,
-    ConfigDict,
     Field,
     ValidationInfo,
     field_validator,
@@ -22,6 +20,7 @@ from ..methodology import (
 from ..retrieval import (
     validate_safe_name,
 )
+from ._common import ConfigSection
 
 
 def _check_distinct_prefixes(prefixes: dict[str, str], *, fold: bool = False) -> None:
@@ -50,8 +49,7 @@ def _check_distinct_prefixes(prefixes: dict[str, str], *, fold: bool = False) ->
                 )
 
 
-class NeptuneIndexingConfig(BaseModel):
-    model_config = ConfigDict(validate_assignment=True)
+class NeptuneIndexingConfig(ConfigSection):
 
     entity_label_prefix: str = Field(
         default="Entity",
@@ -192,10 +190,9 @@ def _stripped_unique(values: list[str], field: str) -> list[str]:
     return list(dict.fromkeys(stripped))
 
 
-class OpenSearchIndexingConfig(BaseModel):
+class OpenSearchIndexingConfig(ConfigSection):
     # Settings set in code (config.indexing.opensearch.index_settings = ...)
     # are checked too, as IndexingConfig's are.
-    model_config = ConfigDict(validate_assignment=True)
 
     text_units_index_prefix: str = Field(
         default="graphrag-text-units",
@@ -519,15 +516,13 @@ class OpenSearchIndexingConfig(BaseModel):
         return value
 
 
-class CommunityCompactionConfig(BaseModel):
+class CommunityCompactionConfig(ConfigSection):
     """When an incremental run recommends re-clustering the communities.
 
     Incremental runs append the communities of their delta instead of
     re-clustering the graph; a full build (indexing.reset: true) clusters it
     again. Nothing is reset automatically.
     """
-
-    model_config = ConfigDict(validate_assignment=True)
 
     max_runs_since_clustering: int | None = Field(
         default=20,
@@ -556,7 +551,7 @@ class CommunityCompactionConfig(BaseModel):
     )
 
 
-class SummaryTreeConfig(BaseModel):
+class SummaryTreeConfig(ConfigSection):
     """RAPTOR's summary tree over the stored text units (opt-in).
 
     Built when ``indexing.methodologies`` selects ``raptor`` (not a
@@ -572,8 +567,6 @@ class SummaryTreeConfig(BaseModel):
     (``run-ingestion --enabled-stages summary_tree`` builds it without
     re-ingesting); a call is about one per five or six text units.
     """
-
-    model_config = ConfigDict(validate_assignment=True)
 
     scope: Literal["corpus", "document"] = Field(
         default="corpus",
@@ -693,11 +686,10 @@ class SummaryTreeConfig(BaseModel):
         return _stripped_unique(keys, "partition_by")
 
 
-class IndexingConfig(BaseModel):
+class IndexingConfig(ConfigSection):
     # A suffix set in code (config.indexing.additional_suffix = ...) is
     # checked too: an index name the engine refuses read as a refused index
     # setting.
-    model_config = ConfigDict(validate_assignment=True)
 
     methodologies: list[Methodology] = Field(
         default_factory=lambda: list(DEFAULT_METHODOLOGIES),

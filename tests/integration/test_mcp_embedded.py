@@ -316,7 +316,11 @@ async def test_auto_with_no_offered_strategy_served_is_refused_before_any_call(
     config = index.config.model_copy(deep=True)
     config.processing.ignore_errors = ignore_errors
     if routable is not None:
-        config.search.auto_routable_strategies = [SearchStrategy(s) for s in routable]
+        # Unvalidated: tree stands for a route the namespace does not serve
+        # (search.auto_routable_strategies refuses it at load).
+        config.search = config.search.model_copy(
+            update={"auto_routable_strategies": [SearchStrategy(s) for s in routable]}
+        )
     strategies = [SearchStrategy(s) for s in offered]
     chain = GraphRAGChain(
         config, providers=index.providers, allowed_strategies=strategies

@@ -1270,8 +1270,7 @@ def unbuilt_record_prefixes(
         fingerprints.append(community_report_fingerprint(config))
     if IndexArtifact.CLAIMS not in building:
         # The claim section, its switch included, keys a claim record.
-        claims_on = config.model_copy(deep=True)
-        claims_on.processing.claim_extraction.enabled = True
+        claims_on = config.updated({"processing.claim_extraction.enabled": True})
         fingerprints.extend(
             unit_record_fingerprint(claims_on, gleaned=gleaned, claims=True)
             for gleaned in (False, True)

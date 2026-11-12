@@ -7,17 +7,18 @@ import logging
 from string import Formatter
 
 from pydantic import (
-    BaseModel,
     Field,
     model_validator,
 )
+
+from ._common import ConfigSection
 
 # One stdlib logger for every module of the config package, named as the
 # package (one module before the split): a filter on it sees them all.
 _logger = logging.getLogger("unified_kg_rag.domain.models.config")
 
 
-class CustomPromptConfig(BaseModel):
+class CustomPromptConfig(ConfigSection):
     graph_extraction_system: str | None = Field(
         default=None,
         description="Custom system prompt for entity and relationship extraction from text",

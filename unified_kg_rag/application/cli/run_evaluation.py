@@ -1679,12 +1679,15 @@ class EvaluationRunner:
                 enabled, per_strategy = self._saved_citations(run.manifest)
                 cited = json.dumps([enabled, per_strategy], sort_keys=True)
                 if cited not in managers:
-                    config = self.config.model_copy(deep=True)
-                    config.search.citations.enabled = enabled
-                    config.search.citations.strategies = {
-                        SearchStrategy(name): value
-                        for name, value in per_strategy.items()
-                    }
+                    config = self.config.updated(
+                        {
+                            "search.citations.enabled": enabled,
+                            "search.citations.strategies": {
+                                SearchStrategy(name): value
+                                for name, value in per_strategy.items()
+                            },
+                        }
+                    )
                     managers[cited] = EvaluationManager(
                         config=config,
                         rag_chain=_no_answers(),

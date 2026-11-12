@@ -6,8 +6,6 @@ from typing import Annotated, Literal
 
 from pydantic import (
     AfterValidator,
-    BaseModel,
-    ConfigDict,
     Field,
 )
 
@@ -16,9 +14,10 @@ from ..retrieval import (
     SearchType,
     SectionType,
 )
+from ._common import ConfigSection
 
 
-class GlobalSearchConfig(BaseModel):
+class GlobalSearchConfig(ConfigSection):
     """MS GraphRAG global search: map over a cut of the community hierarchy.
 
     The reports of one cut (``community_depth``), or of a root-down dynamic
@@ -157,7 +156,7 @@ class GlobalSearchConfig(BaseModel):
     )
 
 
-class TypeQuotaConfig(BaseModel):
+class TypeQuotaConfig(ConfigSection):
     """Fusion slots reserved per section type, ``max(multiplier * top_k,
     floor)``, in local search and the strategies built on it (DRIFT's
     follow-up local searches, ppr, iterative's rounds).
@@ -240,7 +239,7 @@ class TypeQuotaConfig(BaseModel):
         }
 
 
-class LocalSearchConfig(BaseModel):
+class LocalSearchConfig(ConfigSection):
     entity_frequency_threshold: int = Field(
         default=20,
         ge=1,
@@ -366,7 +365,7 @@ class LocalSearchConfig(BaseModel):
     )
 
 
-class DriftSearchConfig(BaseModel):
+class DriftSearchConfig(ConfigSection):
     """MS GraphRAG DRIFT search: a community-report primer, then local search.
 
     The primer expands the query into a hypothetical answer (HyDE), reads the
@@ -433,7 +432,7 @@ class DriftSearchConfig(BaseModel):
     )
 
 
-class LightRAGSearchConfig(BaseModel):
+class LightRAGSearchConfig(ConfigSection):
     raw_query_fallback_max_len: int = Field(
         default=50,
         ge=0,
@@ -507,7 +506,7 @@ class LightRAGSearchConfig(BaseModel):
     )
 
 
-class IterativeSearchConfig(BaseModel):
+class IterativeSearchConfig(ConfigSection):
     """Iterative bridge follow-up search (``iterative``; ``auto`` routes
     multi-hop questions to it, no default selects it).
 
@@ -589,7 +588,7 @@ class IterativeSearchConfig(BaseModel):
     )
 
 
-class PPRSearchConfig(BaseModel):
+class PPRSearchConfig(ConfigSection):
     """HippoRAG 2 Personalized PageRank (the ``ppr`` strategy; its PageRank
     settings also serve search.local_search.text_unit_ranking: ppr).
 
@@ -734,7 +733,7 @@ class PPRSearchConfig(BaseModel):
     )
 
 
-class TreeSearchConfig(BaseModel):
+class TreeSearchConfig(ConfigSection):
     """RAPTOR summary-tree search (``tree``, opt-in; the
     ``raptor`` methodology).
 
@@ -802,7 +801,7 @@ def _structured_fallback(value: SearchStrategy | None) -> SearchStrategy | None:
     return value
 
 
-class StructuredSearchConfig(BaseModel):
+class StructuredSearchConfig(ConfigSection):
     """Structured graph queries (the ``structured`` strategy, opt-in; docs/
     design.md §6.6, guide docs/guides/structured-queries.md).
 
@@ -973,12 +972,10 @@ class StructuredSearchConfig(BaseModel):
     )
 
 
-class GraphExpansionConfig(BaseModel):
+class GraphExpansionConfig(ConfigSection):
     """The walk around a query's seed entities, on every graph store
     (Neptune, Gremlin Server, the embedded SQLite graph) and over the
     relationships index under a document filter."""
-
-    model_config = ConfigDict(validate_assignment=True)
 
     max_hops: int = Field(
         default=3,

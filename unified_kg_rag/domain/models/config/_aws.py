@@ -5,19 +5,17 @@
 from typing import Any, Literal
 
 from pydantic import (
-    BaseModel,
-    ConfigDict,
     Field,
     SecretStr,
     field_validator,
     model_validator,
 )
 
-from ._common import S3EncryptionType
+from ._common import ConfigSection, S3EncryptionType
 from ._models import EffortLevel, ModelPurpose, ModelTier
 
 
-class ContextualGroundingConfig(BaseModel):
+class ContextualGroundingConfig(ConfigSection):
     """Bedrock Guardrails contextual grounding and relevance check on answers.
 
     Off by default. When on, the answer's ``ApplyGuardrail`` call (source
@@ -38,8 +36,6 @@ class ContextualGroundingConfig(BaseModel):
     only: other languages, Korean included, score low and are blocked.
     """
 
-    model_config = ConfigDict(validate_assignment=True)
-
     enabled: bool = Field(
         default=False,
         description=(
@@ -52,7 +48,7 @@ class ContextualGroundingConfig(BaseModel):
     )
 
 
-class GuardrailConfig(BaseModel):
+class GuardrailConfig(ConfigSection):
     """Amazon Bedrock Guardrails on the user-facing query path.
 
     Disabled by default; set ``identifier`` (and optionally ``version``) to
@@ -77,7 +73,6 @@ class GuardrailConfig(BaseModel):
 
     # Settings set in code are checked too: check_output turned off under
     # an enabled grounding check is refused, as in a file.
-    model_config = ConfigDict(validate_assignment=True)
 
     identifier: str | None = Field(
         default=None,
@@ -142,7 +137,7 @@ class GuardrailConfig(BaseModel):
             )
 
 
-class TransientRetryConfig(BaseModel):
+class TransientRetryConfig(ConfigSection):
     """Bounded retry policy on transient model errors (not a config section).
 
     botocore's retry modes do not retry Bedrock's HTTP 424
@@ -183,7 +178,7 @@ class TransientRetryConfig(BaseModel):
     )
 
 
-class RetryConfig(BaseModel):
+class RetryConfig(ConfigSection):
     """Retries on errors a new attempt can fix, for every caller (``retry``).
 
     Attempts include the first call, and 1 disables the retry. Errors a retry
@@ -191,8 +186,6 @@ class RetryConfig(BaseModel):
     attempt everywhere. ``max_attempts`` and the backoff apply to the model
     calls; the callers whose defaults differ have their own attempt count.
     """
-
-    model_config = ConfigDict(validate_assignment=True)
 
     max_attempts: int = Field(
         default=5,
@@ -287,7 +280,7 @@ class RetryConfig(BaseModel):
         )
 
 
-class BedrockConfig(BaseModel):
+class BedrockConfig(ConfigSection):
     region_name: str | None = Field(
         default=None,
         min_length=1,
@@ -407,7 +400,7 @@ class BedrockConfig(BaseModel):
         return self.default_effort
 
 
-class NeptuneConfig(BaseModel):
+class NeptuneConfig(ConfigSection):
     endpoint: str | None = Field(
         default=None,
         description=(
@@ -447,7 +440,7 @@ class NeptuneConfig(BaseModel):
     )
 
 
-class OpenSearchConfig(BaseModel):
+class OpenSearchConfig(ConfigSection):
     endpoint: str | None = Field(
         default=None,
         description=(
@@ -528,7 +521,7 @@ class OpenSearchConfig(BaseModel):
         return self
 
 
-class S3EncryptionConfig(BaseModel):
+class S3EncryptionConfig(ConfigSection):
     encryption_type: S3EncryptionType = Field(
         default=S3EncryptionType.BUCKET_DEFAULT,
         description=(
@@ -549,7 +542,7 @@ class S3EncryptionConfig(BaseModel):
         return self
 
 
-class S3Config(BaseModel):
+class S3Config(ConfigSection):
     bucket_name: str | None = Field(
         default=None,
         description=("Bucket for the stage-cache sync (run-ingestion --s3-sync)."),
@@ -560,7 +553,7 @@ class S3Config(BaseModel):
     )
 
 
-class DynamoDBConfig(BaseModel):
+class DynamoDBConfig(ConfigSection):
     table_name: str = Field(
         default="unified-kg-rag-on-aws-doc-status-v2",
         min_length=1,
@@ -579,7 +572,7 @@ class DynamoDBConfig(BaseModel):
     )
 
 
-class AWSConfig(BaseModel):
+class AWSConfig(ConfigSection):
     # us-west-2 offers every default model, including both rerank models,
     # which several regions (e.g. ap-northeast-2) do not.
     region_name: str = Field(
