@@ -1425,6 +1425,7 @@ These fire between runs too, so degradation shows before a run breaks on it:
 |---|---|---|
 | `BedrockThrottling` | At least 10% of this deployment's model requests in a run stage were throttled (`llm_throttles` over `llm_requests`, the app's own usage accounting as each stage finishes; other Bedrock users in the account do not count, and it works with any `bedrock_region`) | Throttled requests are retried, so the run slows rather than fails: lower `processing.max_concurrency` or ask for a higher quota. The dashboard's "LLM throttled requests by stage" widget shows which stage, and its account-wide "Bedrock throttles" widget whether other callers share the quota |
 | `IngestionTaskMemory` | The ingestion task used at least 90% of its memory for 3 minutes (Container Insights) | Fargate kills a task over its memory, losing the running stage: raise `fargate_memory` ([Capacity sizing](#capacity-sizing)) |
+| `QueryTaskMemory` | The query task (`run-rag`, `run-eval`) used at least 90% of its memory for 3 minutes (Container Insights) | The task is killed over its memory, with the `run-eval` run in it: raise `fargate_memory` (both task definitions share it) |
 | `IngestionTaskEphemeralStorage` | The ingestion task used at least 90% of its ephemeral storage (image included) for 5 minutes (Container Insights) | A full disk fails the running stage: raise `ingestion_ephemeral_storage_gib` (up to 200) |
 
 **Queries**
@@ -1511,6 +1512,28 @@ and calls made outside a usage scope (the `run-eval`
 [warm-up queries](./reference/evaluation-output.md#comparison), scripts) are not counted. How far
 the two counts were apart on real runs:
 [Defaults and evidence: Usage records against the bill](./concepts/defaults-and-evidence.md#usage-records-against-the-bill).
+
+### Where each threshold comes from
+
+AWS publishes recommended thresholds for some of these metrics; the others
+are this stack's own choices, not measured, which the table says.
+
+| Alarms | Threshold | Source |
+|---|---|---|
+| `OpenSearchClusterYellow`, `OpenSearchJvmPressure`, `OpenSearchOldGenJvmPressure`, `OpenSearchHighCpu`, `OpenSearchNodesMissing`, `OpenSearchShardsHigh`, `OpenSearch5xxShare`, `OpenSearchWriteQueue`, `OpenSearchSearchQueue`, `OpenSearchSearchRejections`, `OpenSearchIndexWritesBlocked`, `OpenSearchAutomatedSnapshotFailure`, `OpenSearchKmsKeyError`, `OpenSearchKmsKeyInaccessible`, the `OpenSearchMaster*` alarms | As in the tables above | AWS: [Recommended CloudWatch alarms for Amazon OpenSearch Service](https://docs.aws.amazon.com/opensearch-service/latest/developerguide/cloudwatch-alarms.html) |
+| `OpenSearchClusterRed` | Red in a 5-minute period | AWS recommends 1 minute; 5 minutes here |
+| `OpenSearchFreeStorageLow` | 40% of `opensearch_volume_gib` free | AWS recommends 25% per node; 40% gives time to resize before the write block |
+| `OpenSearchWriteRejections`, `OpenSearchIndexingPressureRejections` | New rejections in 3 consecutive minutes | AWS recommends any new rejection in a minute; the bulk writer retries a rejected write, so only sustained rejections alarm. The indexing-pressure counters are where OpenSearch 7.1+ counts most bulk 429s ([AWS knowledge center: resolve 429 errors](https://repost.aws/knowledge-center/opensearch-resolve-429-error)) |
+| `IngestionTaskEphemeralStorage` | 90% for 5 minutes | AWS's recommended Container Insights alarm |
+| `IngestionTaskMemory`, `QueryTaskMemory` | 90% for 3 minutes | This stack's choice: shorter than the disk alarm, since memory fills faster and an over-limit task is killed at once |
+| `NeptuneHighCpu`, `NeptuneReaderHighCpu` | 90% average for 15 minutes | This stack's choice: AWS publishes no recommended Neptune CPU alarm, and a bulk edge write saturates the writer by design |
+| `NeptuneLowFreeableMemory` | 1/32 of the instance's memory (512 MiB on `db.r6g.large`), 512 MiB on Serverless at its maximum | This stack's choice |
+| `NeptuneReplicaLag` | 1 s, 3 consecutive 5-minute periods | This stack's choice: readers share the writer's storage and normally lag it by far less |
+| `NeptuneGremlinErrors` | Any error in 3 consecutive minutes | This stack's choice: retried write conflicts come in short bursts |
+| `BedrockThrottling` | 10% of the deployment's requests in a run stage | This stack's choice, not measured: a throttled request is retried, so it costs run time, not results |
+| `QueryLatencyHigh` | `query_latency_alarm_seconds` (60) at p90, 2 of 3 periods | This stack's choice; set it to the latency your users accept |
+| `QueryFailures` | 10% of queries, 2 of 3 periods | This stack's choice, the share AWS uses for OpenSearch 5xx |
+| The pipeline alarms, `DocStatusWriteThrottled`, `DocStatusReadThrottled`, `DocStatusSystemErrors`, `NeptuneServerlessAtMaxCapacity` | Any occurrence (at maximum capacity: 3 periods) | Each is a loss or a limit nobody should miss |
 
 ## Query deadlines and model timeouts
 

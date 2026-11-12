@@ -510,6 +510,13 @@ class ObservabilityStack(Stack):
                 ],
             ),
             cw.GraphWidget(
+                title="Query task memory and CPU (% of reserved)",
+                left=[
+                    self._task_utilization(resource, task="query")
+                    for resource in ("Memory", "Cpu")
+                ],
+            ),
+            cw.GraphWidget(
                 title="Query outcomes",
                 left=[self._query_metric(QUERY_LATENCY_METRIC, "SampleCount")],
                 right=[
@@ -705,15 +712,23 @@ class ObservabilityStack(Stack):
             expression=query, label=label, period=Duration.minutes(5)
         )
 
-    def _task_utilization(self, resource: str) -> cw.MathExpression:
-        """Peak use of the ingestion task's CPU or memory, in % of its size.
+    def _task_utilization(
+        self, resource: str, task: str = "ingestion"
+    ) -> cw.MathExpression:
+        """Peak use of the ingestion (or ``query``) task's CPU, memory or
+        disk, in % of its size.
 
         From Container Insights (the cluster has it on), per task definition
-        family: the ingestion task's family, not the query task's.
+        family: the ingestion task's and the query task's apart.
         """
+        task_definition = (
+            self.compute.query_task_definition
+            if task == "query"
+            else self.ingestion_task_definition
+        )
         dims = {
             "ClusterName": self.compute.cluster.cluster_name,
-            "TaskDefinitionFamily": self.ingestion_task_definition.family,
+            "TaskDefinitionFamily": task_definition.family,
         }
 
         def metric(name: str) -> cw.Metric:
@@ -776,6 +791,16 @@ class ObservabilityStack(Stack):
             "memory for 3 minutes: raise fargate_memory before it is killed",
         )
         self._notify(memory)
+        # The query task (run-rag, run-eval) has the same size and is killed
+        # the same way, with the run-eval run in it.
+        self._alarm(
+            "QueryTaskMemory",
+            self._task_utilization("Memory", task="query"),
+            90,
+            "The query task (run-rag, run-eval) used at least 90% of its "
+            "memory for 3 minutes: raise fargate_memory before it is killed",
+            evaluation_periods=3,
+        )
         # Disk: the ingestion task's ephemeral storage holds the synced
         # corpus, the parsed documents and the stage cache; a full disk fails
         # the running stage. AWS's recommended Container Insights alarm: 90%

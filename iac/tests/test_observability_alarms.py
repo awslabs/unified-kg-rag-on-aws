@@ -921,3 +921,38 @@ def test_the_query_outcome_metrics_are_emitted() -> None:
     )
     for name in QUERY_OUTCOME_METRICS:
         assert f'"{name}"' in source, name
+
+
+def test_the_query_task_has_its_memory_alarm_and_widget() -> None:
+    # Old behaviour: only the ingestion task's family was watched; a run-eval
+    # task killed for memory went unnoticed.
+    stack = _stack()
+    template = Template.from_stack(stack)
+    alarms = {
+        logical_id[:-8]: a["Properties"]
+        for logical_id, a in template.find_resources("AWS::CloudWatch::Alarm").items()
+    }
+    families = {}
+    for name in ("IngestionTaskMemory", "QueryTaskMemory"):
+        metrics = [
+            m["MetricStat"]["Metric"]
+            for m in alarms[name]["Metrics"]
+            if "MetricStat" in m
+        ]
+        assert {m["MetricName"] for m in metrics} == {
+            "MemoryUtilized",
+            "MemoryReserved",
+        }
+        families[name] = {
+            json.dumps(d["Value"])
+            for m in metrics
+            for d in m["Dimensions"]
+            if d["Name"] == "TaskDefinitionFamily"
+        }
+        assert (alarms[name]["Threshold"], alarms[name]["EvaluationPeriods"]) == (90, 3)
+    assert len(families["QueryTaskMemory"]) == 1
+    assert families["QueryTaskMemory"] != families["IngestionTaskMemory"]
+    titles = {
+        w["properties"].get("title") for w in _dashboard_body(template)["widgets"]
+    }
+    assert "Query task memory and CPU (% of reserved)" in titles
