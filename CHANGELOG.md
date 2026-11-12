@@ -1677,7 +1677,8 @@ From a `main` checkout (formats and keys no release had):
   converts formatting to markdown, and fences the unit as data. It and the `intelligent` chunker's prompt are
   overridable (`custom_prompts.text_translation_*`, `custom_prompts.text_chunking_*`) (#608).
 - The splitter cuts a paragraph longer than a chunk after a Latin or Korean sentence end (".", "!", "?" or "…"
-  before a space) before it falls back to its last space (#608).
+  before a space) before it falls back to its last space (#608), and after the closing quotes or brackets of a CJK
+  sentence end ("。」"), where the next chunk began with "」と言った。".
 - The `graph_analysis` stage no longer computes the average clustering coefficient (about 10 s at 80,000 entities)
   or the diameter, which no stage read: `graph.analysis.statistics.calculate_clustering` and `calculate_diameter`
   load with a WARNING and are ignored (#608, #628).

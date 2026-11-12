@@ -19,6 +19,7 @@ import re
 
 __all__ = [
     "CLAUSE_MARKS",
+    "CLOSERS",
     "SPACED_STOPS",
     "UNSPACED_STOPS",
     "sentence_ends",
@@ -36,9 +37,10 @@ SPACED_STOPS = ".!?…।॥؟۔"
 # Clause marks a text without spaces may be cut at when no stop is near.
 CLAUSE_MARKS = "、，；"
 
-_CLOSERS = "\"'’”)\\]}»」』〉》】）｣"
-_DENSE_STOP = re.compile(f"[{UNSPACED_STOPS}][{_CLOSERS}]*")
-_LATIN_STOP = re.compile(f"[{re.escape(SPACED_STOPS)}]+[{_CLOSERS}]*(?=\\s|$)")
+# Closing quotes and brackets: after a stop they end its sentence too.
+CLOSERS = "\"'’”)\\]}»」』〉》】）｣"
+_DENSE_STOP = re.compile(f"[{UNSPACED_STOPS}][{CLOSERS}]*")
+_LATIN_STOP = re.compile(f"[{re.escape(SPACED_STOPS)}]+[{CLOSERS}]*(?=\\s|$)")
 _LINE_BREAK = re.compile(r"[^\S\n]*\n")
 
 
