@@ -1065,6 +1065,22 @@ async def test_the_refusal_says_what_adding_the_methodology_costs() -> None:
     assert "rebuilt once from its stored extractions" in str(refused.value)
 
 
+async def test_structured_on_a_tree_only_namespace_names_the_graph_methodologies() -> (
+    None
+):
+    from unified_kg_rag.shared import MethodologyNotIndexedError
+
+    # Regression (rv23): it advised "naming any methodology", raptor too,
+    # which builds no graph.
+    tree_only = _Records(_record(A.TEXT_UNITS, A.SUMMARY_TREE).model_dump(mode="json"))
+    with pytest.raises(MethodologyNotIndexedError) as refused:
+        await _chain(Config(), tree_only).acheck_methodology(SearchStrategy.STRUCTURED)
+    message = str(refused.value)
+    assert "'structured' reads the entities, graph" in message
+    assert "naming one of graphrag, lightrag, hipporag." in message
+    assert "any methodology" not in message
+
+
 async def test_the_refusal_advises_by_the_source_scopes_of_the_record() -> None:
     from unified_kg_rag.shared import MethodologyNotIndexedError
 

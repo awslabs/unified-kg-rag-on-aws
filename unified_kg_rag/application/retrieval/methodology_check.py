@@ -119,13 +119,20 @@ async def check_strategy_methodology(
     ):
         missing = needed - artifacts
         switches = artifact_switches(missing)
+        # The methodologies that build every missing artifact (structured's
+        # graph: not raptor's tree).
+        builders = [
+            m.value for m, p in METHODOLOGY_PROFILES.items() if missing <= p.artifacts
+        ] or [m.value for m in METHODOLOGY_PROFILES]
         how = (
             "ingest with "
             + " and ".join(f"{key}: true" for key in switches)
             + ": "
             + rebuild_advice("them", scopes)
             if switches
-            else "run ingestion with indexing.methodologies naming any methodology."
+            else "run ingestion with indexing.methodologies naming one of "
+            + ", ".join(builders)
+            + "."
         )
         raise MethodologyNotIndexedError(
             f"Search strategy '{strategy.value}' reads the "

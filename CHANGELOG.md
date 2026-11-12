@@ -1800,6 +1800,8 @@ Queries and retrieval.
 - LightRAG `mix`/`hybrid` context includes the chunks the matched relationships cite (offline hybrid one-hop
   gold-chunk recall 0.30, now 0.86, 0.96 with rerank), and incremental and full builds pick the same chunks (#521,
   #530).
+- `structured` refused on a namespace without the graph (a `raptor`-only one) names the methodologies that build it
+  (graphrag, lightrag, hipporag), not "any methodology".
 - PPR passages of equal score (those no seed reaches, all 0 when the edge read degraded) rank in the support order
   (the units most entities cite first), not by id, so the text quota no longer fills in id order.
 - A context budget no retrieved section fits is a `context_optimization` degradation (reason `context_budget`), not
