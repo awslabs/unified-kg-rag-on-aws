@@ -513,10 +513,12 @@ async def test_held_methodologies_come_from_the_namespace_s_build_record(
     assert held["namespace"] == "tenant-a" and held["recorded"] is True
     # LightRAG's artifacts (HippoRAG 2 reads a subset of them), not GraphRAG's.
     assert "lightrag" in held["held"] and "graphrag" not in held["held"]
-    # No record, or one from before methodology profiles: nothing recorded.
+    # No record, or one from before methodology profiles: nothing recorded,
+    # and what the config builds stands in, as it does for a query.
     for suffix in (None, "old"):
         held = await service.held_methodologies(suffix)
-        assert held["recorded"] is False and held["held"] == []
+        assert held["recorded"] is False
+        assert held["held"] == ["graphrag", "lightrag", "hipporag"]
     assert (await service.held_methodologies(None))["namespace"] == "default"
     await service.close()
 

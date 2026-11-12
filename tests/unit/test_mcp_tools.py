@@ -919,7 +919,9 @@ async def test_the_schema_is_resolved_once_and_its_error_returned(
             namespace=str(suffix),
             methodologies=[],
             artifacts=[],
+            artifacts_from="config",
             strategies=[],
+            auto_routes=[],
             schema=schema[0],
             schema_error=schema[1],
         )

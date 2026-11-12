@@ -52,8 +52,9 @@ extra가 없으면 `run-mcp-server`는 extra 이름을 알려 주고 종료 코�
 | `kg_describe_schema` | 네임스페이스가 가진 방법론과 전략, 마지막 빌드, 추출 스키마의 타입과 패턴, 필터 키, 서버 한도 | 없음 |
 
 모든 도구에는 읽기 전용, 멱등(idempotent) 표시가 붙어 있습니다. 먼저
-`kg_describe_schema`를 호출하세요. 네임스페이스가 실행할 수 있는 전략(가지지 않은
-전략은 `run-rag`처럼 거부됨)과 검색에 쓸 수 있는 필터 키를 알려 줍니다.
+`kg_describe_schema`를 호출하세요. 네임스페이스가 실행할 수 있는 전략(`strategies`, 가지지 않은
+전략은 `run-rag`처럼 거부됨), 그중 `auto`가 고르는 전략(`auto_routes`), 검색에 쓸 수 있는
+필터 키를 알려 줍니다.
 
 ## 근거 콘텐츠
 

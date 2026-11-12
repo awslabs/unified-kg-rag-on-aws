@@ -238,6 +238,10 @@ async def test_kg_describe_schema_lists_what_the_namespace_holds(
     result = await tools.describe_schema()
     assert {"graphrag", "lightrag"} <= set(result.methodologies)
     assert {"auto", "local", "mix", "global"} <= set(result.strategies)
+    # What auto routes among is search.auto_routable_strategies, not every
+    # strategy the namespace serves.
+    assert set(result.auto_routes) < set(result.strategies)
+    assert "naive" in result.strategies and "naive" not in result.auto_routes
     assert result.build is not None and result.build["pipeline_id"] == "run-1"
     assert "name.keyword" in result.filter_keys
     assert result.extraction_schema is not None

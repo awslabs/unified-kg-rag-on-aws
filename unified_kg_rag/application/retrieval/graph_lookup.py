@@ -27,11 +27,9 @@ from unified_kg_rag.application.retrieval import methodology_check
 from unified_kg_rag.domain.models import (
     GraphEdge,
     IndexArtifact,
-    Methodology,
     RetrievalResult,
     RetrieverRole,
     SearchQuery,
-    SearchStrategy,
     SearchType,
 )
 from unified_kg_rag.domain.models.methodology import methodologies_holding
@@ -306,17 +304,10 @@ async def text_unit_file_names(
     return names
 
 
-class NamespaceDescription(BaseModel):
+class NamespaceDescription(methodology_check.NamespaceSummary):
     """What one index namespace holds and how it can be searched."""
 
     namespace: str = Field(description="The namespace (index suffix)")
-    methodologies: list[Methodology] = Field(
-        description="The methodologies whose required artifacts it holds"
-    )
-    artifacts: list[IndexArtifact] = Field(description="The artifacts it holds")
-    strategies: list[SearchStrategy] = Field(
-        description="The search strategies it serves (auto routes among them)"
-    )
     build: dict[str, Any] | None = Field(
         default=None,
         description="The last ingestion run's record (pipeline_id, mode, "
@@ -368,20 +359,14 @@ async def describe_namespace(
     and the extraction schema the configuration resolves to (``schema``,
     :func:`resolve_schema`'s result, when the caller holds it)."""
     suffix = resolve_namespace(chain.config, suffix)
-    artifacts = await methodology_check.namespace_artifacts(chain, suffix)
-    retriever = _document_retriever(chain)
-    record: dict[str, Any] | None = None
-    try:
-        record = await retriever.aread_build_record(suffix)
-    except Exception as e:  # noqa: BLE001 - the record is optional
-        logger.debug("Reading the build record failed: %s", e)
+    # Read fresh: the last build it reports is the current one.
+    holdings = await methodology_check.read_holdings(chain, suffix, refresh=True)
+    record = holdings.record
     resolved, error = schema if schema is not None else await resolve_schema(chain)
-    fields = retriever.filter_fields()
+    fields = _document_retriever(chain).filter_fields()
     return NamespaceDescription(
-        namespace=resolve_namespace(chain.config, suffix),
-        methodologies=list(methodologies_holding(artifacts)),
-        artifacts=sorted(artifacts, key=lambda a: a.value),
-        strategies=methodology_check.servable_strategies(artifacts, chain.config),
+        namespace=suffix,
+        **methodology_check.summarize_namespace(holdings, chain.config),
         build=(
             {k: record[k] for k in _BUILD_KEYS if k in record}
             if isinstance(record, dict)

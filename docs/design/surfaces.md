@@ -183,7 +183,10 @@ language analyzers), a hit that is the name as the strategies link one
 an embedding: a name lookup
 needs no vector, and costs no model call. Every record keeps the
 provenance the chain reports. `kg_describe_schema` lists the methodologies
-the namespace holds and the strategies they serve; `kg_neighbors` reads the
+the namespace holds, the strategies they serve and those `auto` routes
+among, the fields `run-describe` reports (one `NamespaceSummary` over one
+`NamespaceHoldings` rule, which the chain's refusal and the console read
+too); `kg_neighbors` reads the
 relationships with their descriptions and text units from the relationships
 index when the namespace holds the relationship vectors (lightrag,
 hipporag), else the edges from the graph (ids and weights only); a

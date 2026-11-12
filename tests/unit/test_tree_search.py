@@ -88,3 +88,29 @@ async def test_graph_text_units_are_the_best_that_pass_the_filters() -> None:
     # unit-1 and unit-2 rank first but fail the filter: the two slots go to
     # the next ones that pass, not to nothing.
     assert [r.source for r in buckets[GRAPH_TEXT_BUCKET]] == ["unit-3", "unit-4"]
+
+
+def test_the_graph_buckets_read_the_entities_only_where_the_config_builds_them() -> (
+    None
+):
+    # A raptor-only config on a namespace another config built with the
+    # graph: the namespace holds the entities, but the config builds none,
+    # so the search does not read them, as the filter-key check (which
+    # reads the config) and every optional index (readable_artifacts) say.
+    from unified_kg_rag.domain.models import IndexArtifact, Methodology
+    from unified_kg_rag.domain.retrieval.index_prefixes import HELD_ARTIFACTS_KEY
+
+    config = Config()
+    config.indexing.methodologies = [Methodology.RAPTOR]
+    strategy = _strategy(_Units(), config)
+    held = SearchQuery(
+        query="q", metadata={HELD_ARTIFACTS_KEY: [a.value for a in IndexArtifact]}
+    )
+    assert strategy._graph_signal() is False
+    assert strategy._graph_signal(held) is False
+    config.indexing.methodologies = [Methodology.RAPTOR, Methodology.GRAPHRAG]
+    assert strategy._graph_signal(held) is True
+    lacking = SearchQuery(
+        query="q", metadata={HELD_ARTIFACTS_KEY: [IndexArtifact.TEXT_UNITS.value]}
+    )
+    assert strategy._graph_signal(lacking) is False

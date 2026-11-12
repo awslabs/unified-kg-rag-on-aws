@@ -109,11 +109,11 @@ from unified_kg_rag.application.retrieval import (
     query_processing,
 )
 from unified_kg_rag.domain.ingestion.cache_keys import index_language
+from unified_kg_rag.domain.ingestion.methodologies import NamespaceHoldings
 from unified_kg_rag.domain.ingestion.report_references import REPORT_FINDINGS_FIELD
 from unified_kg_rag.domain.models import (
     Citation,
     Config,
-    IndexArtifact,
     LanguageCode,
     Methodology,
     ModelRole,
@@ -780,7 +780,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         self._cache_lock = threading.RLock()
         # What each queried suffix's index namespace holds, with when it was
         # read (methodology_check; guarded by the cache lock).
-        self._held_artifacts: dict[str, tuple[float, frozenset[IndexArtifact]]] = {}
+        self._held_artifacts: dict[str, tuple[float, NamespaceHoldings]] = {}
         # The namespaces a query found ingested (_arequire_namespace).
         self._present_namespaces: set[str] = set()
         # The schema annotation fields the configured extraction schema

@@ -262,12 +262,11 @@ def test_the_namespace_s_methodologies_come_from_its_build_record(
     fresh = client.get(
         "/api/namespace/methodologies", params={"suffix": "never-built"}
     ).json()
-    assert fresh == {
-        "namespace": "never-built",
-        "recorded": False,
-        "held": [],
-        "dropped": [],
-    }
+    # No build record: what the config builds stands in, as for a query
+    # (the strategies it serves are the ones marked available).
+    assert fresh["namespace"] == "never-built" and fresh["recorded"] is False
+    assert set(status["methodologies"]) <= set(fresh["held"])
+    assert fresh["dropped"] == []
     assert held["dropped"] == []  # the config builds what it holds
     narrowed = client.get(
         "/api/namespace/methodologies", params={"methodologies": "lightrag"}

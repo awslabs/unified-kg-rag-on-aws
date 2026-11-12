@@ -8,7 +8,8 @@ stages and a stored build record.
 """
 
 from collections.abc import Collection, Iterable, Mapping
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Literal
 
 from unified_kg_rag.domain.models import Config, PipelineStageType
 from unified_kg_rag.domain.models.methodology import (
@@ -216,6 +217,53 @@ def held_artifacts(
     ``config`` builds (``artifacts_to_build``)."""
     artifacts = stored_artifacts(record)
     return artifacts_to_build(config) if artifacts is None else artifacts
+
+
+@dataclass(frozen=True)
+class NamespaceHoldings:
+    """What one index namespace holds, by one rule for every reader (the
+    chain's refusal and routing, ``run-describe``, the MCP server and the
+    console).
+
+    Attributes:
+        artifacts: The artifacts it holds (``held_artifacts``).
+        source: ``build_record`` when its build record names them, else
+            ``config``: those a run of the config builds stand in (no
+            record, one from before methodology profiles, a backend
+            without index metadata, or a record that could not be read).
+        record: The build record read (an ``IndexBuildRecord`` dump), if any.
+    """
+
+    artifacts: frozenset[IndexArtifact]
+    source: Literal["build_record", "config"]
+    record: Mapping[str, Any] | None = None
+
+    @property
+    def methodologies(self) -> tuple[Methodology, ...]:
+        """The methodologies whose required artifacts it holds."""
+        return methodologies_holding(self.artifacts)
+
+    @property
+    def scopes(self) -> list[str] | None:
+        """The source scopes its build record names (``None``: it names
+        none, or there is no record)."""
+        scopes = self.record.get("source_scopes") if self.record else None
+        if not isinstance(scopes, list):
+            return None
+        return [scope for scope in scopes if isinstance(scope, str)]
+
+
+def namespace_holdings(
+    record: Mapping[str, Any] | None, config: Config
+) -> NamespaceHoldings:
+    """What a namespace whose build record is ``record`` (``None``: none, or
+    unreadable) holds under ``config``."""
+    record = record if isinstance(record, Mapping) else None
+    return NamespaceHoldings(
+        artifacts=held_artifacts(record, config),
+        source="config" if stored_artifacts(record) is None else "build_record",
+        record=record,
+    )
 
 
 def missing_artifacts(

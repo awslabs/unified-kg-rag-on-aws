@@ -41,14 +41,13 @@ from unified_kg_rag.application.retrieval.rag_chain import (
     RAGInput,
     RAGOutput,
 )
-from unified_kg_rag.domain.ingestion.methodologies import stored_artifacts
+from unified_kg_rag.domain.ingestion.methodologies import namespace_holdings
 from unified_kg_rag.domain.models import (
     Config,
     SearchStrategy,
     SearchType,
     validate_safe_name,
 )
-from unified_kg_rag.domain.models.methodology import methodologies_holding
 from unified_kg_rag.domain.models.usage import LLMUsage
 from unified_kg_rag.domain.retrieval.citations import CitationMarkerScanner
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
@@ -314,23 +313,21 @@ class AskService:
         return views
 
     async def held_methodologies(self, suffix: str | None = None) -> dict[str, Any]:
-        """What the index namespace of ``suffix`` holds, from the build
+        """What the index namespace of ``suffix`` holds
+        (``namespace_holdings``, the chain's rule), read fresh from the build
         record ingestion wrote on it (``GraphRAGChain.aread_build_record``):
-        ``recorded`` false (and nothing ``held``) when it has none that
-        names its artifacts (never built, or built before methodology
-        profiles). A store error raises."""
+        ``recorded`` false when it has none that names its artifacts (never
+        built, or built before methodology profiles), and ``held`` then the
+        methodologies the config builds, which queries are served by. A store
+        error raises."""
         async with self._using() as (chain, config):
             record = await chain.aread_build_record(suffix)
             namespace = resolve_namespace(config, suffix)
-        artifacts = stored_artifacts(record)
+        holdings = namespace_holdings(record, config)
         return {
             "namespace": namespace,
-            "recorded": artifacts is not None,
-            "held": (
-                [m.value for m in methodologies_holding(artifacts)]
-                if artifacts is not None
-                else []
-            ),
+            "recorded": holdings.source == "build_record",
+            "held": [m.value for m in holdings.methodologies],
         }
 
     async def ask(self, request: AskRequest) -> AsyncIterator[dict[str, Any]]:

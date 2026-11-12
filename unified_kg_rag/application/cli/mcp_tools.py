@@ -302,6 +302,10 @@ class SchemaToolResult(BaseModel):
     strategies: list[str] = Field(
         description="The strategies kg_search and kg_answer can run on it"
     )
+    auto_routes: list[str] = Field(
+        default_factory=list,
+        description="Of those, the ones auto routes among on it",
+    )
     build: dict[str, Any] | None = Field(
         default=None, description="The last ingestion run that wrote it"
     )
@@ -1068,12 +1072,19 @@ class KnowledgeGraphTools:
             described = await graph_lookup.describe_namespace(
                 self.chain, suffix, schema=self._schema
             )
-            offered = set(self.strategies)
+            offered = {s.value for s in self.strategies}
             return SchemaToolResult(
                 namespace=described.namespace,
-                methodologies=[m.value for m in described.methodologies],
-                artifacts=[a.value for a in described.artifacts],
-                strategies=[s.value for s in described.strategies if s in offered],
+                methodologies=described.methodologies,
+                artifacts=described.artifacts,
+                # auto first, when it has a strategy to route to.
+                strategies=[
+                    s
+                    for s in [SearchStrategy.AUTO.value] * bool(described.strategies)
+                    + described.strategies
+                    if s in offered
+                ],
+                auto_routes=[s for s in described.auto_routes if s in offered],
                 build=described.build,
                 extraction_schema=described.schema_,
                 schema_error=described.schema_error,
