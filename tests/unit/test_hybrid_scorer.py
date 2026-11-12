@@ -101,22 +101,10 @@ class TestReciprocalRankFusion:
         assert by_content["p"] == pytest.approx(1.0 / (k + 1))
 
 
-class TestRenamedFusionBuckets:
+class TestRetiredFusionBuckets:
     @pytest.fixture(autouse=True)
     def _fresh_warnings(self) -> None:
-        config_module._warn_renamed_bucket.cache_clear()
         config_module._warn_retired_bucket.cache_clear()
-
-    def test_a_weight_on_a_renamed_bucket_applies_to_its_new_name(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        with caplog.at_level(logging.WARNING):
-            config = Config.model_validate(
-                {"search": {"fusion": {"fusion_weights": {"opensearch_all": 2.0}}}}
-            )
-        assert config.search.fusion.fusion_weights == {"vector_all": 2.0}
-        assert "'opensearch_all' is renamed" in caplog.text
-        assert "'vector_all'" in caplog.text
 
     @pytest.mark.parametrize("weight", [-1.0, -0.01])
     def test_a_negative_weight_is_refused(self, weight: float) -> None:
@@ -130,17 +118,13 @@ class TestRenamedFusionBuckets:
             {"search": {"fusion": {"fusion_weights": {"text_units": 0.0}}}}
         )
 
-    def test_the_new_name_wins_over_the_old_one(self) -> None:
-        weights = {"opensearch_all": 2.0, "vector_all": 0.5}
-        config = Config.model_validate(
-            {"search": {"fusion": {"fusion_weights": weights}}}
-        )
-        assert config.search.fusion.fusion_weights == {"vector_all": 0.5}
-
     @pytest.mark.parametrize(
         "retired",
         [
             "opensearch_community_reports",
+            # 0.2.3's simple bucket: simple fuses one bucket per index now.
+            "opensearch_all",
+            "vector_all",
             # The buckets 0.2.3's global search emitted.
             "opensearch_candidate_community_reports",
             "opensearch_expanded_community_reports",

@@ -37,7 +37,6 @@ from ._evaluation import (
 from ._fusion import (
     DEFAULT_ANSWER_PROMPT_STYLES,
     DEFAULT_CITATION_STRATEGIES,
-    RENAMED_FUSION_BUCKETS,
     RETIRED_FUSION_BUCKETS,
     AbstentionConfig,
     AnswerPromptStyle,
@@ -48,7 +47,6 @@ from ._fusion import (
     QueryOutputCeilingsConfig,
     RerankingConfig,
     TokenManagerConfig,
-    _warn_renamed_bucket,
     _warn_retired_bucket,
 )
 from ._graph import (
@@ -153,7 +151,6 @@ from ._strategies import (
 
 __all__ = [
     "_warn_missing_output_tags",
-    "_warn_renamed_bucket",
     "_warn_retired_bucket",
     "_warn_seed_floor_inert",
     "AbstentionConfig",
@@ -244,7 +241,6 @@ __all__ = [
     "REMOVED_EVALUATORS",
     "REMOVED_KEYS",
     "removed_keys",
-    "RENAMED_FUSION_BUCKETS",
     "ReportGenerationConfig",
     "RerankingConfig",
     "RerankModelId",

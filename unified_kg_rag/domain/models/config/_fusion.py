@@ -77,29 +77,20 @@ class HybridConfig(BaseModel):
         return self
 
 
-# Fusion buckets renamed -> their name now. search.fusion.fusion_weights
-# keyed by the old name loads as the new one, with a warning.
-RENAMED_FUSION_BUCKETS: dict[str, str] = {"opensearch_all": "vector_all"}
 # Buckets no strategy emits any more: a weight keyed by one is dropped, with
 # a warning (global search fuses only its text units; 0.2.3's emitted the
-# candidate and expanded report buckets, and its template listed all three).
+# candidate and expanded report buckets, and its template listed all three;
+# simple fuses one bucket per index, where one weight on all of them would
+# change no order).
 RETIRED_FUSION_BUCKETS: frozenset[str] = frozenset(
     {
+        "opensearch_all",
+        "vector_all",
         "opensearch_community_reports",
         "opensearch_candidate_community_reports",
         "opensearch_expanded_community_reports",
     }
 )
-
-
-@functools.cache
-def _warn_renamed_bucket(old: str, new: str) -> None:
-    _logger.warning(
-        "search.fusion.fusion_weights: bucket '%s' is renamed; its weight "
-        "applies to '%s' (set that key instead)",
-        old,
-        new,
-    )
 
 
 @functools.cache
@@ -146,7 +137,10 @@ class FusionConfig(BaseModel):
             "lightrag_endpoint_entities, lightrag_incident_relationships, "
             "lightrag_chunks, lightrag_linked_chunks (the chunks the entities "
             "cite), lightrag_relation_chunks (those the relationships cite)), "
-            "simple (vector_all), global (text_units), drift (results), "
+            "simple (simple_text_units, simple_entities, "
+            "simple_relationships, simple_claims, simple_community_reports, "
+            "simple_summary_nodes: one per index), global (text_units), "
+            "drift (results), "
             "iterative (iterative_round_<n>, round n's base search, 0 the "
             "first; iterative_round_<n>_text, its follow-up queries' text "
             "units; fused once more over the rounds, the base's own buckets "
@@ -158,26 +152,21 @@ class FusionConfig(BaseModel):
             "structured_text_hits, structured_fallback). A "
             "bucket without a key weighs 1.0 (the default: none); a weight is "
             "0 or more (0 drops the bucket's contribution). A weight on "
-            "the former bucket opensearch_all applies to vector_all, with a "
-            "warning; one on the retired opensearch_community_reports, "
-            "opensearch_candidate_community_reports or "
-            "opensearch_expanded_community_reports is dropped, with a warning."
+            "a retired bucket (opensearch_all, vector_all, "
+            "opensearch_community_reports, "
+            "opensearch_candidate_community_reports, "
+            "opensearch_expanded_community_reports) is dropped, with a warning."
         ),
     )
 
     @field_validator("fusion_weights", mode="before")
     @classmethod
-    def _renamed_buckets(cls, value: Any) -> Any:
-        """Load a weight keyed by a renamed or retired bucket (a dict key
-        the moved-key mechanism cannot reach) with a warning."""
+    def _retired_buckets(cls, value: Any) -> Any:
+        """Load a weight keyed by a retired bucket (a dict key the
+        moved-key mechanism cannot reach) with a warning."""
         if not isinstance(value, dict):
             return value
         weights = dict(value)
-        for old, new in RENAMED_FUSION_BUCKETS.items():
-            if old in weights:
-                _warn_renamed_bucket(old, new)
-                weight = weights.pop(old)
-                weights.setdefault(new, weight)
         for old in RETIRED_FUSION_BUCKETS:
             if old in weights:
                 _warn_retired_bucket(old)

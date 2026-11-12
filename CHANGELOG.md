@@ -170,8 +170,9 @@ stored is read again: follow *Upgrading* in order.
 - `indexing.opensearch.index_settings` refuses the `knn` keys and a setting spelled both with and without `index.`
   (set ef_search with `vector_search.ef_search`); the `"NONE"` alias of `aws.s3.encryption.encryption_type` is gone
   (use `BUCKET_DEFAULT`) (#216, #408).
-- Fusion buckets: a simple search's is `vector_all` (an `opensearch_all` weight applies to it with a WARNING); a weight
-  on `opensearch_community_reports`, or on 0.2.3's `opensearch_candidate_community_reports` and
+- Fusion buckets: a simple search fuses one per index (`simple_text_units`, `simple_entities`, `simple_relationships`,
+  `simple_claims`, `simple_community_reports`, `simple_summary_nodes`); a weight on its former `opensearch_all`, on
+  `opensearch_community_reports`, or on 0.2.3's `opensearch_candidate_community_reports` and
   `opensearch_expanded_community_reports` (in its template), is dropped with a WARNING, as no strategy emits them
   (#584, #588). A `lightrag_linked_chunks` weight weighs only the chunks the matched entities cite; the
   relationships' chunks are their own `lightrag_relation_chunks` stream, 1.0 unless set (#521, #530).
@@ -403,7 +404,7 @@ From 0.2.3; the sub-list after it is for a `main` checkout since. The runbook's
    naming the switch) and `auto` leaves them out; `local` answers as before (#612).
 4. A custom `fusion_weights.lightrag_linked_chunks` weight: set `lightrag_relation_chunks` too (usually the same
    value) to keep weighting every LightRAG graph chunk; mix and hybrid recall are sensitive to it (#521, #530).
-   Rename an `opensearch_all` weight to `vector_all` and drop `opensearch_community_reports`,
+   Drop an `opensearch_all` weight (simple's buckets are per index: `simple_<index>`), `opensearch_community_reports`,
    `opensearch_candidate_community_reports` and `opensearch_expanded_community_reports` (#584, #588).
 5. A role with a custom IAM policy needs `dynamodb:BatchGetItem`, `BatchWriteItem`, `Query` and `DescribeTable` on
    the registry table (`UpdateTimeToLive` where the library creates it), `bedrock:ApplyGuardrail` on the guardrail,
@@ -1837,9 +1838,11 @@ Queries and retrieval.
 - A relationship without a description reached the answer prompt as `Relationship: A -> B`: the relationships index
   stores the type (`RELATED_TO` when untyped; not a filter key) and the line reads `A -[TYPE]-> B` (#562).
 - With MMR on, `local` and `drift` keep every reserved text-chunk slot (#247).
-- `simple` no longer ranks hits of different indexes by raw score; local and LightRAG incident-edge expansion keep
-  no arbitrary hub edges; LightRAG keeps every typed edge between two entities; `hybrid` without keywords warns
-  (#295, #317).
+- `simple` no longer ranks hits of different indexes by raw score, and each index brings its own `top_k` ×
+  `retrieval_multiplier` candidates, fused and reranked as one pool before the `top_k` cut (one search kept that many
+  across every index, two or three each, and lost to `naive`); it reads the summary tree where RAPTOR is built.
+  Local and LightRAG incident-edge expansion keep no arbitrary hub edges; LightRAG keeps every typed edge between two
+  entities; `hybrid` without keywords warns (#295, #317).
 - LightRAG `mix`/`hybrid` context includes the chunks the matched relationships cite (offline hybrid one-hop
   gold-chunk recall 0.30, now 0.86, 0.96 with rerank), and incremental and full builds pick the same chunks (#521,
   #530).

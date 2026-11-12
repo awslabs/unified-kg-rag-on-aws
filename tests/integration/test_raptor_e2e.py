@@ -884,6 +884,26 @@ def test_tree_reads_what_the_namespace_holds_under_any_config(
         for strategy in (SearchStrategy.NAIVE, SearchStrategy.SIMPLE):
             out = ask(chain, search_strategy=strategy)
             assert by_type(out, "text"), strategy
+        # simple reads the summary tree too, each summary with its lineage,
+        # except under a key the summary index does not store.
+        stored = {n["id"]: n for n in tree_nodes(providers)}
+        out = ask(chain, search_strategy=SearchStrategy.SIMPLE)
+        meta = out.search_results.metadata
+        assert meta["sources"]["simple_summary_nodes"] > 0
+        assert meta["sources"]["simple_text_units"] > 0
+        summaries = by_type(out, "summary")
+        assert summaries, out.sources
+        for source_entry in summaries:
+            m = source_entry["metadata"]
+            assert m["text_unit_ids"] == stored[m["source_id"]]["text_unit_ids"]
+            assert not m.get("synthesized")
+        out = ask(
+            chain,
+            search_strategy=SearchStrategy.SIMPLE,
+            filters={"community_ids": "no-such-community"},
+        )
+        assert "simple_summary_nodes" not in out.search_results.metadata["sources"]
+        assert not by_type(out, "summary")
     finally:
         chain.close()
 
