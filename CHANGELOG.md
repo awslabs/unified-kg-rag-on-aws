@@ -1956,6 +1956,11 @@ Ingestion and incremental indexing.
   garbage.
 - A chunk of whitespace only makes no text unit: a chunk size of a few characters or tokens (`fallback_chunk_size:
   1`) cut the spaces between words into units of their own, and the run failed with `missing embeddings`.
+- A stage that failed because its model calls did keeps their dominant cause: a model server that was down fails
+  it as the `ModelUnreachableError` naming the server (`error_class` `model_unreachable` on the stage result, the
+  `run-ingestion` JSON and the run span), a store as its `StoreConnectionError`, and a failure a known-good request
+  met too as the model's or a setting's; it said "produced 0 outputs. Check the stage configuration", class
+  `failure`. The failed-units summary of a run that stopped before indexing no longer says they were indexed.
 - An extraction, claims, gleaning, report-findings or chunk-boundary section that lists elements reads as empty when
   it holds a short "nothing here" marker, in any language (one line of at most three estimated tokens:
   `<relationships>없음</relationships>`, `なし`, `None.`, `Keine`): only `None`, `N/A`, `null`, `nil` and `-` did,

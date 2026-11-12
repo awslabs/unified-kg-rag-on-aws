@@ -758,6 +758,14 @@ class DataIngestionPipeline:
             # _run reports a failed stage on the context instead of raising.
             if context.status == PipelineStageStatus.FAILED:
                 span.set_error(f"pipeline '{context.pipeline_id}' failed")
+                # The first failed stage's class (its items' dominant cause).
+                span.set_attribute(
+                    "kg_rag.error_class",
+                    next(
+                        (r.error_class for r in context.stage_results if r.error_class),
+                        None,
+                    ),
+                )
             return context
 
     def insert_documents(
@@ -2675,10 +2683,19 @@ class DataIngestionPipeline:
                 "re-run extracts those units again, reusing the stored "
                 "extraction records of the others"
             )
+        indexed = any(
+            r.stage_name == PipelineStageType.INDEXING.value
+            and r.status == PipelineStageStatus.COMPLETED
+            for r in context.stage_results
+        )
         logger.warning(
-            "%d text units failed and are indexed without that stage's output "
-            "(units_failed): %s; %s",
+            "%d text units failed and %s (units_failed): %s; %s",
             len(failed),
+            (
+                "are indexed without that stage's output"
+                if indexed
+                else "are not indexed: the run stopped before indexing"
+            ),
             "; ".join(stages),
             retry,
         )

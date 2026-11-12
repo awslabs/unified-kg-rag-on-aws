@@ -137,7 +137,8 @@ holds:
     records their documents, retried by the next run without counting toward
     `indexing.max_document_failures`.
   - `units_failed`: the text units a stage failed on, indexed without that
-    stage's output and extracted again by the next run. Counted in a full
+    stage's output (not indexed at all when the run stopped before its
+    indexing stage) and extracted again by the next run. Counted in a full
     build too, where no registry records a document `FAILED` and
     `failed_documents` stays 0; the run ends with a WARNING naming them by
     stage and cause.
@@ -237,7 +238,10 @@ instead:
   a Ctrl-C while it loads `130` (the status document only while loading; a
   SIGINT the parent ignores, as `nohup` does, stays ignored).
 - A `run-ingestion` result whose run a stage failed carries the same `error`,
-  `exit_code`, `error_class` and `error_type`. `run-ingestion` adds the `pipeline_id` to resume with
+  `exit_code`, `error_class` and `error_type`: the first failed stage's, its
+  items' dominant cause when they failed (`model_unreachable` and
+  `ModelUnreachableError`, naming the server, when every call was refused by
+  a model server that was down; each stage also has its `error_class`). `run-ingestion` adds the `pipeline_id` to resume with
   (once the run resolved it) and, when a stopped run's next run on the
   namespace must wait for writes possibly still in flight (this run's, or
   those of the run whose expired lease it took over),

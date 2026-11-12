@@ -63,6 +63,7 @@ from unified_kg_rag.domain.models import (
     Config,
     PipelineConfig,
     PipelineContext,
+    PipelineStageResult,
     PipelineStageStatus,
     PipelineStageType,
     RetrieverRole,
@@ -876,6 +877,18 @@ class IngestionPipelineRunner:
         return error
 
     @staticmethod
+    def _failed_stage(context: PipelineContext) -> PipelineStageResult | None:
+        """The first stage of a failed run that names its error."""
+        return next(
+            (
+                r
+                for r in context.stage_results
+                if r.status == PipelineStageStatus.FAILED and r.error_message
+            ),
+            None,
+        )
+
+    @staticmethod
     def _next_step(context: PipelineContext) -> str:
         """What to do after a run a stage failed: the fix the error names
         (an embedding dimension the index refuses), then the resume."""
@@ -922,6 +935,9 @@ class IngestionPipelineRunner:
         _load_pipeline()
         error = self._stage_failure(context) or self._failure_budget_breach(context)
         delta = context.incremental_delta
+        # The first failed stage's class (its items' dominant cause: a model
+        # server down is model_unreachable) and type, as a raised one's.
+        stage = self._failed_stage(context)
         return {
             "pipeline_id": context.pipeline_id,
             "status": context.status.value,
@@ -929,7 +945,11 @@ class IngestionPipelineRunner:
             **(
                 {
                     **failure_fields(
-                        EXIT_FAILURE, error, PipelineExecutionError.__name__
+                        EXIT_FAILURE,
+                        error,
+                        (stage.error_type if stage else None)
+                        or PipelineExecutionError.__name__,
+                        error_class=stage.error_class if stage else None,
                     ),
                     "status": context.status.value,
                 }
@@ -989,6 +1009,7 @@ class IngestionPipelineRunner:
                             "input_count",
                             "output_count",
                             "error_message",
+                            "error_class",
                         },
                     ),
                     "executed": result.stage_name in self.pipeline.executed_stages,

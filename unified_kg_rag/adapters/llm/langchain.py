@@ -23,6 +23,7 @@ from tenacity import RetryCallState
 from tqdm import tqdm
 from tqdm.asyncio import tqdm as async_tqdm
 
+from unified_kg_rag.adapters.llm.retry import record_failure
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
@@ -387,6 +388,8 @@ class BatchProcessor(BaseModel):
                 discard_responses()
                 if errors is not None:
                     errors[idx] = error
+                # The stage's ledger: what it failed with, if it fails.
+                record_failure(error)
                 return self._failed(task_name, error)
             finally:
                 _ITEM_DISCARDS.reset(token)

@@ -457,6 +457,74 @@ def _stage(
     return _Stage()
 
 
+def _failing_items_stage(error: Exception, *, known_good_failed: bool = False):
+    """A graph extraction stage whose every model call fails with ``error``
+    (through the batch processor, as the extractors call)."""
+    from unified_kg_rag.adapters.llm import retry
+
+    def _outcome() -> tuple[int, int]:
+        def call(_: dict[str, int]) -> Any:
+            raise error
+
+        BatchProcessor(max_concurrency=2, max_attempts=1).execute_with_fallback(
+            [1, 2, 3],
+            lambda items: [{"x": i} for i in items],
+            call,
+            "t",
+            show_progress=False,
+        )
+        if known_good_failed and (ledger := retry._LEDGER.get()) is not None:
+            ledger.model_failed = True
+        return 3, 0
+
+    return _stage(PipelineStageType.GRAPH_EXTRACTION, _outcome)
+
+
+def _empty_context() -> PipelineContext:
+    return PipelineContext(
+        pipeline_id="p-4",
+        config={},
+        status=PipelineStageStatus.RUNNING,
+        start_time=datetime(2026, 1, 1),
+        source_directory=Path("."),
+    )
+
+
+def test_a_stage_whose_model_server_is_down_fails_naming_it(tracing: Tracing) -> None:
+    # Regression (rv24): "Critical stage 'graph_extraction' processed 1
+    # inputs but produced 0 outputs. Check the stage configuration", class
+    # failure, although every call was refused by a server that was down.
+    import httpx
+
+    tracing()
+    result = _failing_items_stage(
+        httpx.ConnectError("All connection attempts failed")
+    ).execute(_empty_context())
+    assert result.status == PipelineStageStatus.FAILED
+    assert (result.error_class, result.error_type) == (
+        "model_unreachable",
+        "ModelUnreachableError",
+    )
+    assert "A model server could not be reached" in (result.error_message or "")
+    assert "Check the stage configuration" not in (result.error_message or "")
+
+
+def test_a_stage_the_model_refuses_alike_says_so(tracing: Tracing) -> None:
+    tracing()
+    refused = _failing_items_stage(
+        RuntimeError("HTTP 500 from the server"), known_good_failed=True
+    ).execute(_empty_context())
+    assert "a known-good request failed alike (RuntimeError)" in (
+        refused.error_message or ""
+    )
+    assert refused.error_class == "failure"
+    # Without a known-good request that failed, the documents may be at
+    # fault: the stage keeps its own error.
+    own = _failing_items_stage(RuntimeError("bad item")).execute(_empty_context())
+    assert "produced 0 outputs" in (own.error_message or "")
+    assert own.error_type == "PipelineStageError"
+
+
 @pytest.mark.parametrize("stop", [PipelineInterrupted(15), RuntimeError("boom")])
 def test_a_stopped_or_crashed_ingestion_run_span_names_its_pipeline(
     tracing: Tracing, stop: BaseException

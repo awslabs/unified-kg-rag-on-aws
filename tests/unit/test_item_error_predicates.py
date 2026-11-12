@@ -349,6 +349,21 @@ def test_one_cause_on_every_unit_counts_as_the_known_good_request_decides(
 
 
 @pytest.mark.parametrize("answered", [True, False])
+def test_a_known_good_request_that_fails_too_marks_the_stages_ledger(
+    answered: bool,
+) -> None:
+    # The stage then fails as the model's or a setting's failure, not with
+    # "check the stage configuration".
+    from unified_kg_rag.adapters.llm.retry import failure_ledger
+
+    with failure_ledger() as ledger:
+        _indices(
+            {0: _PARSE, 1: _PARSE}, 2, item_error_predicate(_BEDROCK), _Probe(answered)
+        )
+    assert ledger.model_failed is not answered
+
+
+@pytest.mark.parametrize("answered", [True, False])
 @pytest.mark.parametrize(
     "errors",
     [

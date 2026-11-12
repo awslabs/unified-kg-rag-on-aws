@@ -34,6 +34,11 @@ from unified_kg_rag.adapters.ingestion.parser import (
     ParserFactory,
 )
 from unified_kg_rag.adapters.ingestion.translator import TextUnitTranslator
+from unified_kg_rag.adapters.llm.reachability import (
+    is_unreachable_error,
+    model_unreachable_error,
+)
+from unified_kg_rag.adapters.llm.retry import FailureLedger, failure_ledger
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.ingestion.extraction_store import (
@@ -160,9 +165,11 @@ from unified_kg_rag.shared import (
     ConfirmationDeclinedError,
     NamespaceLeaseError,
     PipelineStageError,
+    StoreConnectionError,
     get_logger,
     observability,
 )
+from unified_kg_rag.shared.exceptions import classify
 from unified_kg_rag.shared.genai import ERROR_TYPE
 from unified_kg_rag.shared.write_fence import check_write_fence
 
@@ -320,6 +327,15 @@ class PipelineStage(ABC):
     def _execute_logged(
         self, context: PipelineContext, span: observability.SpanHandle
     ) -> PipelineStageResult:
+        with failure_ledger() as ledger:
+            return self._execute_in_ledger(context, span, ledger)
+
+    def _execute_in_ledger(
+        self,
+        context: PipelineContext,
+        span: observability.SpanHandle,
+        ledger: FailureLedger,
+    ) -> PipelineStageResult:
         tokens = bind_contextvars(stage=self.name)
         logger.info("Starting stage: '%s'", self.name)
         start_time = datetime.now()
@@ -364,20 +380,24 @@ class PipelineStage(ABC):
             # records the stage and raises it on).
             logger.warning("Stage '%s' stopped: %s", self.name, e)
             raise
-        except Exception as e:
-            logger.exception("Stage '%s' failed: %s", self.name, e)
-            span.record_exception(e)
-            span.set_attribute(ERROR_TYPE, type(e).__name__)
+        except Exception as raised:
+            error = self._stage_error(raised, ledger)
+            logger.exception("Stage '%s' failed: %s", self.name, error)
+            span.record_exception(error)
+            span.set_attribute(ERROR_TYPE, type(error).__name__)
             end_time = datetime.now()
 
-            return self._create_result(
+            result = self._create_result(
                 PipelineStageStatus.FAILED,
                 start_time,
                 end_time,
                 input_count,
                 output_count,
-                error_message=str(e),
+                error_message=str(error),
             )
+            result.error_class = classify(error)
+            result.error_type = type(error).__name__
+            return result
         finally:
             reset_contextvars(**tokens)
 
@@ -386,6 +406,30 @@ class PipelineStage(ABC):
         self, context: PipelineContext
     ) -> tuple[int, int, dict[str, Any] | None]:
         pass
+
+    def _stage_error(self, error: Exception, ledger: FailureLedger) -> Exception:
+        """What the stage failed with: ``error``, or, when it failed because
+        its model calls did (a critical stage that produced nothing), their
+        dominant cause (``ledger``): a model server that could not be
+        reached as the ``ModelUnreachableError`` naming it, a store as its
+        ``StoreConnectionError``, and a failure a known-good request met too
+        as the model's or a setting's, not the documents'."""
+        if is_unreachable_error(error):
+            return model_unreachable_error(error, self.config)
+        dominant = ledger.dominant() if isinstance(error, PipelineStageError) else None
+        if dominant is None:
+            return error
+        if is_unreachable_error(dominant):
+            return model_unreachable_error(dominant, self.config)
+        if isinstance(dominant, StoreConnectionError):
+            return dominant
+        if ledger.model_failed:
+            return PipelineStageError(
+                f"Stage '{self.name}' failed: every model call and a known-good "
+                f"request failed alike ({type(dominant).__name__}), a failure of "
+                f"the model or a setting, not of the documents: {dominant}"
+            )
+        return error
 
     def _allows_empty_output(self, context: PipelineContext) -> bool:
         """Stages may opt out of the zero-output critical check for valid cases.

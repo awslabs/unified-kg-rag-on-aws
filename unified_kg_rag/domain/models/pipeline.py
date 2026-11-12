@@ -9,6 +9,8 @@ from typing import Any
 import networkx as nx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from unified_kg_rag.shared.exceptions import ErrorClass
+
 from .community import Community
 from .community_report import CommunityReport
 from .config import PipelineConfig
@@ -468,6 +470,15 @@ class PipelineStageResult(BaseModel):
     output_count: int = Field(default=0, description="Number of output items generated")
     error_message: str | None = Field(
         default=None, description="Error message if stage failed"
+    )
+    error_class: ErrorClass | None = Field(
+        default=None,
+        description="The class of the failure (ErrorClass), its dominant "
+        "cause's when its items failed (model_unreachable for a model server "
+        "that could not be reached)",
+    )
+    error_type: str | None = Field(
+        default=None, description="The class name of the error it failed with"
     )
     metrics: dict[str, Any] = Field(
         default_factory=dict, description="Stage-specific performance metrics"

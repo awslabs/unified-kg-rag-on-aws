@@ -1047,9 +1047,50 @@ def test_ingestion_json_result_lists_each_stage(
             "input_count": 0,
             "output_count": 0,
             "error_message": "boom",
+            "error_class": None,
             "executed": True,
         }
     ]
+
+
+def test_ingestion_json_result_names_the_failed_stages_error_class(
+    config: Config, mocker, tmp_path: Path
+) -> None:
+    # Regression (rv24): error_type was always PipelineExecutionError and the
+    # cause's class was lost (a model server down read as a failure).
+    from unified_kg_rag.shared.exceptions import ErrorClass
+
+    mocker.patch.object(run_ingestion_pipeline, "load_cli_config", return_value=config)
+    src = tmp_path / "src"
+    src.mkdir()
+    args = run_ingestion_pipeline.CommandLineInterface._setup_arguments().parse_args(
+        ["--source-directory", str(src), "--output-format", "json"]
+    )
+    runner = run_ingestion_pipeline.IngestionPipelineRunner(args)
+    runner.pipeline = mocker.MagicMock(executed_stages=frozenset({"graph_extraction"}))
+    context = PipelineContext(
+        pipeline_id="run-2",
+        config=PipelineConfig(),
+        status=PipelineStageStatus.FAILED,
+        start_time=datetime.now(),
+        source_directory=src,
+        stage_results=[
+            PipelineStageResult(
+                stage_name="graph_extraction",
+                status=PipelineStageStatus.FAILED,
+                start_time=datetime.now(),
+                error_message="A model server could not be reached",
+                error_class=ErrorClass.MODEL_UNREACHABLE,
+                error_type="ModelUnreachableError",
+            )
+        ],
+    )
+    result = json.loads(json.dumps(runner._json_result(context)))
+    assert (result["error_class"], result["error_type"]) == (
+        "model_unreachable",
+        "ModelUnreachableError",
+    )
+    assert result["stages"][0]["error_class"] == "model_unreachable"
 
 
 def test_ingestion_json_result_reports_the_runs_token_usage(
