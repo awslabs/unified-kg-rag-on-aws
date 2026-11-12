@@ -203,14 +203,28 @@ holds:
   ([Inspect and export](../guides/inspect.md)).
 - **`run-prompt-tuning`**: the `output_path`, the `profile` and, with
   `--schema-out`, the `schema_path`.
-- **`prepare-benchmark`**: the `output_directory`, the `benchmark` label
-  and the counts written (`questions`, `paragraphs`); with `--hops`, the
+- **`prepare-benchmark musique`**: the `output_directory`, the `benchmark`
+  label and the counts written (`questions`, `paragraphs`); with `--hops`, the
   answerable questions per hop count (`hops`); with `--unanswerable`, the
   `answerable` and `unanswerable` counts and `unanswerable_filter`
   (`requested`, `kept`, `examined`, `excluded_twin`, `excluded_contaminated`,
   `excluded_no_twin`). Too few unanswerable questions passing the filters,
   `--unanswerable` with an answerable-only file, `--hops` quotas with
   `--limit` or above the questions of a hop count exit `2`.
+- **`prepare-benchmark structural`**: the `output_directory`, `benchmark`,
+  `seed`, `size`, and the counts written: `questions`, `documents` (corpus
+  files), `nodes` and `edges` (the seed graph) and `templates` (the
+  questions per question template).
+- **`prepare-benchmark assertions`**: the `output_directory` and the
+  generation report (also `generation_report.json`): `benchmark`, `license`,
+  `seed`, `settings`, `language`, `models` (`generation`, `embedding`),
+  `corpus` (`text_units`, `sampled_units`, `clusters`), `questions` (per
+  class), `assertions` (their total), `dropped` (per reason) and `usage`
+  (the model calls and tokens per step). A run that generated no question
+  exits `1`.
+
+A flag of another benchmark than the one named (`structural --limit`) exits
+`2`.
 
 ### Failures and interruptions
 
