@@ -36,7 +36,7 @@ from tests.integration.test_name_variant_convergence import _Died, _dying, _resp
 from unified_kg_rag.adapters.storage.sqlite_graph_indexer import SQLiteGraphIndexer
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
 from unified_kg_rag.domain.models import Config, PipelineConfig, PipelineStageType
-from unified_kg_rag.domain.models.config import ChunkingStrategy
+from unified_kg_rag.domain.models.config import ChunkingStrategy, ChunkLengthUnit
 from unified_kg_rag.shared import PipelineExecutionError
 
 pytestmark = pytest.mark.integration
@@ -211,6 +211,8 @@ def _failing_document_states(
     config.indexing.max_document_failures = max_failures
     chunking = config.processing.chunking
     chunking.chunker_type = ChunkingStrategy.SIMPLE
+    # The sizes below count characters.
+    chunking.length_unit = ChunkLengthUnit.CHARS
     chunking.fallback_chunk_size, chunking.chunk_overlap = 60, 0
     chunking.min_chunk_size = 1
     config.processing.gleaning.enabled = gleaning

@@ -479,8 +479,8 @@ def test_a_chunk_length_unit_set_in_code_is_the_enum() -> None:
 _BAD_CHUNK_SIZES = [
     ({"min_chunk_size": 5000, "max_chunk_size": 100}, "min_chunk_size must be"),
     ({"chunk_overlap": 1000}, "chunk_overlap must be"),
-    ({"fallback_chunk_size": 400}, "less than fallback_chunk_size"),
-    ({"pre_chunk_size": 400}, "pre_chunk_overlap must be"),
+    ({"fallback_chunk_size": 100}, "less than fallback_chunk_size"),
+    ({"pre_chunk_size": 100}, "pre_chunk_overlap must be"),
 ]
 
 
@@ -543,7 +543,7 @@ def test_settings_that_do_nothing_are_warned_at_load(
                         "guardrail": {"contextual_grounding": {"enabled": True}}
                     }
                 },
-                "processing": {"chunking": {"length_unit": "tokens"}},
+                "processing": {"chunking": {"length_unit": "chars"}},
             }
         )
     )
@@ -554,8 +554,8 @@ def test_settings_that_do_nothing_are_warned_at_load(
     ]
     assert len(messages) == 2, messages
     assert "no grounding check runs" in messages[0]
-    assert "character default" in messages[1]
-    # Sized in tokens, or with a guardrail: nothing to warn.
+    assert "token default" in messages[1]
+    # Sized in characters, or with a guardrail: nothing to warn.
     path.write_text(
         yaml.safe_dump(
             {
@@ -568,7 +568,7 @@ def test_settings_that_do_nothing_are_warned_at_load(
                     }
                 },
                 "processing": {
-                    "chunking": {"length_unit": "tokens", "max_chunk_size": 2000}
+                    "chunking": {"length_unit": "chars", "max_chunk_size": 8000}
                 },
             }
         )
@@ -579,14 +579,14 @@ def test_settings_that_do_nothing_are_warned_at_load(
     assert not [r for r in caplog.records if r.getMessage().startswith("Config: ")]
 
 
-def test_a_token_fallback_size_alone_is_no_character_default() -> None:
+def test_a_character_fallback_size_alone_is_no_token_default() -> None:
     # fallback_chunk_size is one of the sizes length_unit counts: set for
-    # tokens, the sizes are not all character defaults.
+    # characters, the sizes are not all token defaults.
     config = Config()
-    config.processing.chunking.length_unit = "tokens"  # type: ignore[assignment]
-    assert [m for m in config.ineffective_settings() if "character default" in m]
-    config.processing.chunking.fallback_chunk_size = 1200
-    assert not [m for m in config.ineffective_settings() if "character default" in m]
+    config.processing.chunking.length_unit = "chars"  # type: ignore[assignment]
+    assert [m for m in config.ineffective_settings() if "token default" in m]
+    config.processing.chunking.fallback_chunk_size = 4800
+    assert not [m for m in config.ineffective_settings() if "token default" in m]
 
 
 def test_opensearch_indexing_settings_set_in_code_are_checked_too() -> None:

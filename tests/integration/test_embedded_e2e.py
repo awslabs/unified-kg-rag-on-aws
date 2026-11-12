@@ -73,7 +73,11 @@ from unified_kg_rag.domain.models import (
     PipelineStageType,
     SearchStrategy,
 )
-from unified_kg_rag.domain.models.config import ChunkingStrategy, LanguageCode
+from unified_kg_rag.domain.models.config import (
+    ChunkingStrategy,
+    ChunkLengthUnit,
+    LanguageCode,
+)
 from unified_kg_rag.evaluation import EvaluationManager
 from unified_kg_rag.shared.exceptions import (
     ConfigurationError,
@@ -167,6 +171,8 @@ def _config(stores: Path, viz: Path) -> Config:
     )
     chunking = config.processing.chunking
     chunking.chunker_type = ChunkingStrategy.SIMPLE
+    # The sizes below count characters.
+    chunking.length_unit = ChunkLengthUnit.CHARS
     chunking.fallback_chunk_size = 60
     chunking.chunk_overlap = 0
     chunking.min_chunk_size = 1

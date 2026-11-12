@@ -438,8 +438,8 @@ class Config(BaseModel):
 
         - Contextual grounding on without a guardrail identifier: no
           guardrail screens the answers, so no grounding check runs.
-        - ``length_unit: tokens`` with every chunk size at its character
-          default: the sizes are read as tokens, about four times the
+        - ``length_unit: chars`` with every chunk size at its token
+          default: the sizes are read as characters, about a quarter of the
           intended chunk length in English text.
         - Community reports off with graphrag selected: global and drift,
           which answer from them, are refused on what ingestion builds.
@@ -453,16 +453,16 @@ class Config(BaseModel):
                 "the answers, so no grounding check runs"
             )
         chunking = self.processing.chunking
-        if chunking.length_unit is ChunkLengthUnit.TOKENS and all(
+        if chunking.length_unit is ChunkLengthUnit.CHARS and all(
             getattr(chunking, name) == ChunkingConfig.model_fields[name].default
             for name in _CHUNK_SIZE_FIELDS
         ):
             messages.append(
-                "processing.chunking.length_unit is tokens, but every chunk size "
-                "is still its character default (max_chunk_size 8000 tokens is "
-                "about 32,000 English characters): set the sizes in tokens, "
-                "for example min 250, max 2000, overlap 125, fallback 1200, "
-                "pre-chunk 12500 and its overlap 125"
+                "processing.chunking.length_unit is chars, but every chunk size "
+                "is still its token default (max_chunk_size 2000 characters is "
+                "about 500 English tokens): set the sizes in characters, "
+                "for example min 1000, max 8000, overlap 500, fallback 4800, "
+                "pre-chunk 50000 and its overlap 500"
             )
         effective = self.effective_methodologies
         # A config that sets no methodologies but switches an artifact off

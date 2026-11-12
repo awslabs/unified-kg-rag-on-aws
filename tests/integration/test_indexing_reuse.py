@@ -40,7 +40,7 @@ from unified_kg_rag.domain.models import (
     PipelineStageStatus,
     PipelineStageType,
 )
-from unified_kg_rag.domain.models.config import ChunkingStrategy
+from unified_kg_rag.domain.models.config import ChunkingStrategy, ChunkLengthUnit
 
 pytestmark = pytest.mark.integration
 
@@ -133,6 +133,8 @@ def test_unchanged_runs_ask_embed_and_write_nothing_again(
     config = e2e._config(tmp_path / "stores", tmp_path / "viz")
     chunking = config.processing.chunking
     chunking.chunker_type = ChunkingStrategy.INTELLIGENT
+    # The sizes below count characters.
+    chunking.length_unit = ChunkLengthUnit.CHARS
     chunking.pre_chunk_size = 4000
     chunking.min_chunk_size = 20
     chunking.max_chunk_size = 2000

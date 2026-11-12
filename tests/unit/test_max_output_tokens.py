@@ -169,10 +169,10 @@ def test_default_floors_follow_the_documented_arithmetic() -> None:
     # (50 + 50) records x 150 tokens + the default tier's high-effort budget.
     assert GraphExtractionPrompt.output_floor(config) == 100 * 150 + 8192
     assert GraphRefinementPrompt.output_floor(config) == 100 * 150 + 8192
-    # A whole 8000-char chunk at 1.35 tokens/char (twice for claims);
-    # translation runs on the fast tier, at low effort.
-    assert TextTranslationPrompt.output_floor(config) == 10800 + 2048
-    assert ClaimExtractionPrompt.output_floor(config) == 21600 + 8192
+    # A whole 2000-token chunk, at most 8003 characters, at 1.35 tokens/char
+    # (twice for claims); translation runs on the fast tier, at low effort.
+    assert TextTranslationPrompt.output_floor(config) == int(8003 * 1.35) + 2048
+    assert ClaimExtractionPrompt.output_floor(config) == int(2 * 8003 * 1.35) + 8192
     # medium report: 10 findings x 300 + 200 header.
     assert CommunityReportPrompt.output_floor(config) == 3200 + 8192
 
@@ -180,7 +180,7 @@ def test_default_floors_follow_the_documented_arithmetic() -> None:
 def test_floors_scale_with_the_configured_limits() -> None:
     config = Config(
         processing={
-            "chunking": {"max_chunk_size": 20000},
+            "chunking": {"length_unit": "chars", "max_chunk_size": 20000},
             "graph_extraction": {
                 "max_entities_per_chunk": 200,
                 "max_relationships_per_chunk": 200,

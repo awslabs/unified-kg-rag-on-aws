@@ -185,7 +185,7 @@ stored is read again: follow *Upgrading* in order.
 | `aws.region_name` / `aws.bedrock.region_name` | `ap-northeast-2` / `us-west-2` | `us-west-2` / `null`, following `aws.region_name` (#148) |
 | `aws.s3.encryption.encryption_type` | `AES256` | `BUCKET_DEFAULT` (#105) |
 | `aws.dynamodb.table_name` | `unified-kg-rag-on-aws-doc-status` | `unified-kg-rag-on-aws-doc-status-v2` (#327) |
-| `processing.chunking.min_chunk_size` / `max_chunk_size` / `fallback_chunk_size` | 5000 / 50000 / 50000 | 1000 / 8000 / 4800 (#125) |
+| `processing.chunking.min_chunk_size` / `max_chunk_size` / `fallback_chunk_size` | 5000 / 50000 / 50000 characters | 250 / 2000 / 1200 tokens (`length_unit: tokens`; about 1000 / 8000 / 4800 English characters) (#125) |
 | `processing.max_concurrency` | 20 | 40, 20 under `backend: local` (#310) |
 | `processing.similarity_threshold` | 0.6 | 0.85; similarity matching is opt-in (`processing.fuzzy_entity_resolution`) (#214) |
 | `indexing.neptune.property_max_length` | 1000 | 4000 (#132) |
@@ -515,7 +515,8 @@ From a `main` checkout (formats and keys no release had):
 - Re-keyed once before 0.3.0: entity ids and name keys fold quotes, apostrophes, invisible characters, dashes (not a
   leading minus), dense-script middle dots and Arabic and Hebrew marks and strip more legal forms, and dense-script
   spacing variants with a number are one entity (*Stored data and reindexing*); the description summary and claim
-  prompts changed, claims keep a `suspected` status and are keyed by their statement (*Fixed*); stage-cache keys
+  prompts changed, claims keep a `suspected` status and are keyed by their statement (*Fixed*); chunk sizes count
+  tokens (*Defaults*), which keeps English text units and re-chunks Korean, Japanese and Chinese ones; stage-cache keys
   hold the prompts in effect (a pipeline id resumed across a prompt change starts over); extraction records under
   earlier keys (other description summary settings, #541-#556) and claims under an earlier reading of
   their dates (#612, #624) are no longer looked up. Run one reset (`indexing.reset: true`) with a new or no
@@ -527,6 +528,17 @@ From a `main` checkout (formats and keys no release had):
   with claim extraction on, every unit's claims (one call per unit that states an entity). A record a build before
   #556 stored under other summary settings or `models` tiers is extracted again, and on an index built before #565
   the reset costs a first build (the #565 prompts below).
+  `--pipeline-id`: incremental runs keep stored entities under their earlier ids beside the new ones. It reuses the
+  stored graph extraction and gleaning records, their entity and relationship ids minted again from the names as
+  extraction mints them (a record a build before #556 stored under other summary settings or `models` tiers is
+  extracted again), and asks one summary per entity or relationship over the summary threshold, the
+  reports of the communities whose input changed (most of them) and, with claim extraction on, every unit's claims
+  (one call per unit that states an entity); the `intelligent` chunker asks each pre-chunk's boundaries once more
+  (one fast-tier call each), and a Korean, Japanese or Chinese corpus's re-chunked units are extracted again.
+- One reset covers all of these and the items below. On an index built with #565 or later it reuses the stored
+  extraction records and vectors: beyond what the items below name, the model is asked only for the reports of the
+  communities that cluster differently and a summary and embedding per newly merged entity over the threshold. On
+  an index built before #565 it costs a first build (the #565 prompts below).
 - Stored communities keep positional names (`Level 0 Community 3`) until the next reset, which renames them and asks
   every report once more; later resets reuse the answers (#539).
 - #640 claim statuses: claims stored before it keep the status the model wrote (`True.`, `Suspected`) until the
@@ -550,8 +562,8 @@ From a `main` checkout (formats and keys no release had):
 - An index built before vector digests embeds its items once more on its next incremental run (#527); a build record
   written earlier has no community counters until the next full build (#540); the first incremental run of each
   namespace reads its stores once to record their schema annotations, with no model call (#488).
-- `processing.chunking.length_unit: chars` (the default) keeps the chunks and ids of an index built before the
-  setting; `tokens` re-chunks and re-extracts the corpus (#460).
+- Chunk sizes count tokens by default (`processing.chunking.length_unit: tokens`, sizes 250 / 2000 / 125 / 1200 /
+  12500 / 125): a config that sets the sizes in characters must also set `length_unit: chars` (#460).
 - `run-eval` results saved before usage accounting count in `answers_without_usage` / `answers_without_latency` and
   fail a `usage/*` or `latency/*` gate; results saved before #563 carry the earlier `graph_aware` scores, which
   `--from-results` and `--baseline-results` reuse: run them again to compare (#526, #529, #563).
@@ -706,8 +718,7 @@ From a `main` checkout (formats and keys no release had):
   names with Devanagari or Thai vowel signs may resolve otherwise on that reset.
 - Token estimate: a Russian, Greek, Arabic, Hebrew, Hindi or Thai corpus is estimated at 1.7-2.7 times the
   tokens; with `length_unit: tokens` a reset re-chunks it and extracts it again, and the next run asks again the
-  description and tree summaries whose input now reads over or under their budgets (the default `chars` re-chunks
-  nothing).
+  description and tree summaries whose input now reads over or under their budgets (`chars` re-chunks nothing).
 
 ### Added
 - A query reports every step it answered without in `metadata["degraded"]` (each `step`, `reason`, `error_type`;
@@ -1371,7 +1382,8 @@ From a `main` checkout (formats and keys no release had):
   ids with `aws.bedrock.model_overrides`, reasoning effort per tier; a long-output ingestion prompt reserves its
   longest answer plus the thinking budget of the effort its call runs at (#113, #117, #127, #128, #162, #179);
   `aws.bedrock.query_prompt_cache_ttl: 1h` (#458). See [models](docs/reference/models.md).
-- `processing.chunking.length_unit: tokens`: chunk sizes in a script-aware token estimate (#460).
+- `processing.chunking.length_unit`: chunk sizes in a script-aware token estimate (`tokens`, the default) or in
+  characters (`chars`) (#460).
 - `indexing.neptune.vertex_ids: custom` (`<label>:<item id>` vertex ids); graph expansion reads either mode during a
   switch, and a running query service follows it without a restart (#466, #470, #473, #474).
 - `indexing.opensearch.vector_mode` / `compression_level`: on-disk quantized vectors on OpenSearch 2.17+ (#461).

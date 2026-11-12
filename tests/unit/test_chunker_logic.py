@@ -34,6 +34,7 @@ from unified_kg_rag.domain.ingestion.contributions import (
 )
 from unified_kg_rag.domain.models import (
     ChunkingStrategy,
+    ChunkLengthUnit,
     Config,
     Document,
 )
@@ -332,7 +333,8 @@ class TestLineBoundaryProcessor:
 # --------------------------------------------------------------------------- #
 @pytest.fixture
 def simple_chunker(config: Config) -> SimpleTextChunker:
-    # Small sizes so a short test document actually splits.
+    # Small sizes so a short test document actually splits, in characters.
+    config.processing.chunking.length_unit = ChunkLengthUnit.CHARS
     config.processing.chunking.min_chunk_size = 20
     config.processing.chunking.max_chunk_size = 200
     config.processing.chunking.chunk_overlap = 0
@@ -548,6 +550,7 @@ class TestChunkerFactory:
 # --------------------------------------------------------------------------- #
 @pytest.fixture
 def intelligent_chunker(config: Config, _patch_bedrock) -> IntelligentTextChunker:
+    config.processing.chunking.length_unit = ChunkLengthUnit.CHARS
     config.processing.chunking.min_chunk_size = 10
     config.processing.chunking.max_chunk_size = 400
     config.processing.chunking.chunk_overlap = 0
@@ -1039,6 +1042,7 @@ class TestBoundaryRecords:
         self, config, _patch_bedrock, mocker
     ) -> None:
         records = _Records()
+        config.processing.chunking.length_unit = ChunkLengthUnit.CHARS
         config.processing.chunking.min_chunk_size = 10
         config.processing.chunking.pre_chunk_size = 1000
         sizes = (400, 300)

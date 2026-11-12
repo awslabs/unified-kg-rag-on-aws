@@ -2,11 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """``processing.chunking.length_unit``: chunk sizes in characters or tokens.
 
-The default (``chars``) must keep every chunk, and so every text-unit id and
-content hash, byte-identical to the releases before the setting existed:
-``_CHARS_GOLDEN`` was produced by the chunker before it. ``tokens`` measures
-with the local estimate and must keep each chunk within its size even for
-dense scripts, where 8,000 characters are ~6,000 tokens.
+``chars`` with the character sizes must keep every chunk, and so every
+text-unit id and content hash, byte-identical to the releases before the
+setting existed: ``_CHARS_GOLDEN`` was produced by the chunker before it.
+The default (``tokens`` with the token sizes) measures with the local
+estimate and must keep each chunk within its size even for dense scripts,
+where 8,000 characters are ~6,000 tokens, while English text chunks as it
+did at the character sizes.
 """
 
 from __future__ import annotations
@@ -95,6 +97,17 @@ _CHARS_GOLDEN = {
     "inputs:mixed": "be391dd0e735b50d",
 }
 
+# The character sizes, the defaults before tokens.
+_CHAR_SIZES = {
+    "length_unit": "chars",
+    "min_chunk_size": 1000,
+    "max_chunk_size": 8000,
+    "chunk_overlap": 500,
+    "fallback_chunk_size": 4800,
+    "pre_chunk_size": 50000,
+    "pre_chunk_overlap": 500,
+}
+
 _TOKEN_SIZES = {
     "length_unit": "tokens",
     "min_chunk_size": 250,
@@ -133,11 +146,12 @@ def _intelligent(config: Config) -> IntelligentTextChunker:
         return IntelligentTextChunker(config, show_progress=False)
 
 
-def test_default_chunks_are_byte_identical_to_before() -> None:
-    simple = SimpleTextChunker(Config(), show_progress=False)
-    intelligent = _intelligent(Config())
+def _chunk_digests(config: Config, names: Any = _TEXTS) -> dict[str, str]:
+    simple = SimpleTextChunker(config, show_progress=False)
+    intelligent = _intelligent(config)
     got = {}
-    for name, make in _TEXTS.items():
+    for name in names:
+        make = _TEXTS[name]
         text = make()
         units = simple.chunk_documents([_doc(name, text)])
         got[f"simple:{name}"] = _digest([(u.id, u.text, u.n_tokens) for u in units])
@@ -148,12 +162,31 @@ def test_default_chunks_are_byte_identical_to_before() -> None:
         )
         got[f"needs_llm:{name}"] = _digest([intelligent._needs_llm(p) for p in pre])
         got[f"inputs:{name}"] = _digest(intelligent._create_chain_inputs(pre))
-    assert got == _CHARS_GOLDEN
+    return got
 
 
-def test_default_unit_is_chars_and_uses_the_stock_splitter() -> None:
+def test_character_sizes_chunk_byte_identically_to_before() -> None:
+    assert _chunk_digests(_config(_CHAR_SIZES)) == _CHARS_GOLDEN
+
+
+def test_default_english_chunks_are_those_of_the_character_sizes() -> None:
+    # The token default changes no English text unit (ids, text, boundary
+    # prompts): only dense-script chunks, which held ~3x the tokens.
+    got = _chunk_digests(Config(), ["en"])
+    assert got == {k: v for k, v in _CHARS_GOLDEN.items() if k.endswith(":en")}
+    assert _chunk_digests(Config(), ["ko"]) != {
+        k: v for k, v in _CHARS_GOLDEN.items() if k.endswith(":ko")
+    }
+
+
+def test_default_unit_is_tokens_and_chars_uses_the_stock_splitter() -> None:
     chunker = SimpleTextChunker(Config(), show_progress=False)
-    assert Config().processing.chunking.length_unit is ChunkLengthUnit.CHARS
+    assert Config().processing.chunking.length_unit is ChunkLengthUnit.TOKENS
+    assert isinstance(chunker.fallback_splitter, TokenBudgetTextSplitter)
+    assert chunker.chunk_processor.chunk_overlap == max_chars(
+        125, ChunkLengthUnit.TOKENS
+    )
+    chunker = SimpleTextChunker(_config(_CHAR_SIZES), show_progress=False)
     assert type(chunker.fallback_splitter) is not TokenBudgetTextSplitter
     assert chunker.chunk_processor.chunk_overlap == 500
 
@@ -189,7 +222,7 @@ def test_token_chunks_stay_within_the_token_sizes(name: str) -> None:
 def test_korean_8000_chars_fit_the_reranker_limit_only_in_tokens() -> None:
     text = korean_text(8000)
     by_chars = SimpleTextChunker(
-        _config({"chunker_type": "simple", "fallback_chunk_size": 8000}),
+        _config({**_CHAR_SIZES, "chunker_type": "simple", "fallback_chunk_size": 7000}),
         show_progress=False,
     ).chunk_documents([_doc("ko", text)])
     by_tokens = SimpleTextChunker(
@@ -399,7 +432,10 @@ def test_boundary_prompt_gets_the_token_range_in_characters() -> None:
     assert (dense["min_chunk_size"], dense["max_chunk_size"]) == (250, 2000)
     chars = _intelligent(Config())
     (default,) = chars._create_chain_inputs(["가" * 1000])
-    assert (default["min_chunk_size"], default["max_chunk_size"]) == (1000, 8000)
+    assert (default["min_chunk_size"], default["max_chunk_size"]) == (250, 2000)
+    chars = _intelligent(_config(_CHAR_SIZES))
+    (by_chars,) = chars._create_chain_inputs(["가" * 1000])
+    assert (by_chars["min_chunk_size"], by_chars["max_chunk_size"]) == (1000, 8000)
 
 
 def test_create_splitter_defaults_to_characters() -> None:
@@ -423,8 +459,8 @@ def test_the_unit_is_compared_by_value() -> None:
 
 
 def test_output_floor_char_bound_follows_the_unit() -> None:
-    assert max_chunk_chars(Config()) == 8000
-    assert max_chunk_chars(_config(_TOKEN_SIZES)) == 2000 * 4 + 3
+    assert max_chunk_chars(_config(_CHAR_SIZES)) == 8000
+    assert max_chunk_chars(Config()) == 2000 * 4 + 3
     assert max_chars(2000, ChunkLengthUnit.TOKENS) == 8003
     assert max_chars(2000, ChunkLengthUnit.CHARS) == 2000
 
@@ -437,9 +473,9 @@ def test_length_unit_keys_the_chunking_stage() -> None:
     assert rule is not None and getattr(rule, "stage", None) is not None
 
 
-def test_upgrading_keeps_the_extraction_settings_of_a_char_corpus() -> None:
+def test_a_record_without_the_unit_reads_it_at_its_default() -> None:
     # A record written before the field existed lacks it: at its default the
-    # corpus is not re-extracted; set to tokens, it is.
+    # corpus is not re-extracted; set to another unit, it is.
     new = extraction_settings(Config())
     path = "processing.chunking.length_unit"
     assert path in new.values
@@ -448,10 +484,10 @@ def test_upgrading_keeps_the_extraction_settings_of_a_char_corpus() -> None:
         values={k: v for k, v in new.values.items() if k != path},
     )
     assert changed_settings(old, new) == []
-    assert path in changed_settings(old, extraction_settings(_config(_TOKEN_SIZES)))
+    assert path in changed_settings(old, extraction_settings(_config(_CHAR_SIZES)))
 
     store = FakeDocStatusStore()
     store.put_extraction_settings("scope", "recorded-fp", old)
     assert run_extraction_fingerprint(store, "scope", new) == "recorded-fp"
-    tokens = extraction_settings(_config(_TOKEN_SIZES))
-    assert run_extraction_fingerprint(store, "scope", tokens) == tokens.fingerprint
+    chars = extraction_settings(_config(_CHAR_SIZES))
+    assert run_extraction_fingerprint(store, "scope", chars) == chars.fingerprint
