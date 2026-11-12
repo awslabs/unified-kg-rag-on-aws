@@ -281,7 +281,8 @@ See [exit codes and JSON output](docs/reference/exit-codes-and-json.md) and the
   one its key folds least names the entity on a tie ("토지", not "「토지」"). Entity and relationship `rank` come from
   node degree, and a relationship's weight sums its strengths per text unit (#189, #214, #574).
 - Entities have no `MemberOf` edges to communities; an entity lists its `community_ids` (#348).
-- Hidden files and files under a hidden or `__pycache__` directory of the corpus are not parsed (#213).
+- Hidden files, files under a hidden or `__pycache__` directory of the corpus (#213) and files that resolve outside it
+  (a symlink to `/etc/hostname`; a WARNING names them) are not parsed.
 
 #### Deployment (CDK)
 See [`iac/README.md`](iac/README.md).

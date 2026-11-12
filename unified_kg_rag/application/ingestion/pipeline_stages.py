@@ -68,6 +68,7 @@ from unified_kg_rag.application.storage.indexing_manager import (
 from unified_kg_rag.domain.ingestion.cache_keys import (
     extraction_settings,
     is_excluded_source_path,
+    leaves_source_root,
     unit_record_fingerprint,
 )
 from unified_kg_rag.domain.ingestion.claim_resolver import ClaimResolver
@@ -1015,12 +1016,15 @@ class DocumentParsingStage(_RegistryStage):
         files = []
         skipped_files: list[str] = []
         skipped: Counter[str] = Counter()
+        outside: list[str] = []
         for file_path in self.source_directory.rglob("*"):
-            if (
-                not file_path.is_file()
-                or is_excluded_source_path(file_path, self.source_directory)
-                or any(file_path.resolve().is_relative_to(d) for d in owned_dirs)
-            ):
+            if not file_path.is_file():
+                continue
+            if is_excluded_source_path(file_path, self.source_directory):
+                if leaves_source_root(file_path, self.source_directory):
+                    outside.append(str(file_path))
+                continue
+            if any(file_path.resolve().is_relative_to(d) for d in owned_dirs):
                 continue
             suffix = file_path.suffix.lower()
             if suffix in self.supported_extensions:
@@ -1051,6 +1055,15 @@ class DocumentParsingStage(_RegistryStage):
                     f"{count} '{suffix}'" for suffix, count in sorted(skipped.items())
                 ),
                 "; ".join(remedies),
+            )
+        if outside:
+            logger.warning(
+                "Skipping %s file(s) in '%s' that resolve outside it (a symlink "
+                "leading elsewhere): they are not indexed (%s); copy them into "
+                "the source directory to ingest them",
+                len(outside),
+                self.source_directory,
+                ", ".join(sorted(outside)[:5]) + (", ..." if len(outside) > 5 else ""),
             )
         return sorted(files), sorted(skipped_files)
 

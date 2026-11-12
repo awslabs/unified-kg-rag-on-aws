@@ -280,7 +280,9 @@ The next question and job use the saved file.
 
 - **Reads:** the workspace, the cache directory, the evaluation outputs and
   `graph.visualization.outputs_directory`. Every path the page names is
-  resolved (symlinks too) and must stay inside one of them.
+  resolved (symlinks too) and must stay inside one of them. Folder listings
+  skip symlinks, and an ingest job, like `run-ingestion`, skips a corpus
+  file that resolves outside its folder (a WARNING names it).
 - **Writes:** `uploads/` in the workspace, the cache directory (pipeline
   caches, `console/`), the evaluation outputs and the config file. The
   stores are written by the `run-ingestion` jobs, as the config says.

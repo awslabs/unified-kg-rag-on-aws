@@ -808,15 +808,26 @@ def is_excluded_source_path(path: Path, root: Path) -> bool:
     """Whether a file found under the corpus ``root`` is outside the corpus.
 
     Any component of its path below ``root`` that starts with ``.`` (a hidden
-    file, ``.git``, a hidden directory) or is ``__pycache__`` excludes it.
-    Discovery, the document loader and the corpus fingerprint share this rule,
-    so a file is parsed exactly when it counts toward the fingerprint.
+    file, ``.git``, a hidden directory) or is ``__pycache__`` excludes it, and
+    so does a path that resolves outside ``root`` (:func:`leaves_source_root`:
+    a symlink to ``/etc/hostname`` is not corpus text). Discovery, the
+    document loader and the corpus fingerprint share this rule, so a file is
+    parsed exactly when it counts toward the fingerprint.
     """
     try:
         parts = path.relative_to(root).parts
     except ValueError:
         parts = path.parts
-    return any(part.startswith(".") or part == "__pycache__" for part in parts)
+    return any(
+        part.startswith(".") or part == "__pycache__" for part in parts
+    ) or leaves_source_root(path, root)
+
+
+def leaves_source_root(path: Path, root: Path) -> bool:
+    """Whether ``path``, found under the corpus ``root``, resolves outside it
+    (a symlink, or one of its directories, leading elsewhere); a symlink to
+    another file of the corpus stays in."""
+    return not path.resolve().is_relative_to(root.resolve())
 
 
 def corpus_manifest_fingerprint(

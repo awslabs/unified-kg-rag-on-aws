@@ -167,8 +167,9 @@ tokens, temperature and reasoning.
   tokens per report call) or lower `max_cluster_size` (more, smaller
   communities and report calls).
 - **Files read:** every file under the source directory with a supported
-  suffix, except hidden files and files under a hidden or `__pycache__`
-  directory. A text format (`.txt`, `.md`, `.csv`, `.json`, `.html`) is read
+  suffix, except hidden files, files under a hidden or `__pycache__`
+  directory, and files that resolve outside the directory (a symlink leading
+  elsewhere; a WARNING names them). A text format (`.txt`, `.md`, `.csv`, `.json`, `.html`) is read
   as UTF-8, else in the encoding charset-normalizer detects; a file whose
   encoding is not detected (a binary file with a text suffix) fails to parse
   and counts as failed. If detection picks a neighbouring encoding (cp1250
