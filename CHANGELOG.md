@@ -1338,8 +1338,9 @@ From a `main` checkout (formats and keys no release had):
   single one." (0); "ni uno" and "nem um" are words for none (#324, #516, #606, #613).
 - Strategy comparison: `run-eval --search-strategy a,b --repeats N` with bootstrap intervals, `deltas_by_category`,
   a `--pairwise-judge` (LightRAG's verdicts with `evaluation.pairwise_overall`, `position_consistency`, a win-rate
-  interval, `--judge-model`) and `prepare-benchmark musique` (#324, #516, #536). See
-  [benchmarks](docs/guides/benchmarks.md).
+  interval, `--judge-model`) and `prepare-benchmark musique` (#324, #516, #536); each benchmark (`musique`,
+  `assertions`, `structural`) is a subcommand with its own flags, and another one's (`structural --limit`) exits 2
+  instead of being ignored. See [benchmarks](docs/guides/benchmarks.md).
 - Unanswerable questions and declines (opt-in; defaults unchanged): `prepare-benchmark musique --unanswerable N`
   adds MuSiQue-Full unanswerable questions (`metadata.answerable: false`, the full dev split downloaded at a pinned
   revision, SHA-256 checked), leaving out any whose answerable twin is sampled or whose removed supporting

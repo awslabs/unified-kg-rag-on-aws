@@ -128,6 +128,26 @@ def build_parsers() -> dict[str, argparse.ArgumentParser]:
     return parsers
 
 
+def subcommands(
+    parser: argparse.ArgumentParser,
+) -> list[tuple[str, argparse.ArgumentParser]]:
+    """The subcommands of ``parser`` (``prepare-benchmark musique``, ...),
+    each with its own parser; none for a command without subcommands."""
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            return list(action.choices.items())
+    return []
+
+
+def with_subcommands(
+    command: str, parser: argparse.ArgumentParser
+) -> list[tuple[str, argparse.ArgumentParser]]:
+    """``(name, parser)`` of ``command`` and of each of its subcommands."""
+    return [(command, parser)] + [
+        (f"{command} {name}", sub) for name, sub in subcommands(parser)
+    ]
+
+
 def documented_actions(parser: argparse.ArgumentParser) -> list[argparse.Action]:
     """The parser's actions the reference lists (all but ``--help``)."""
     return [
@@ -215,28 +235,43 @@ def _section(
         lines += [_cell(parser.description), ""]
     title, path = guide
     guide_link = f"[{title}](../{path})"
-    if provider_group(parser) is not None:
-        lines += [
-            f"Guide: {guide_link}. Also takes the "
-            "[provider flags](#provider-flags).",
-            "",
-        ]
-    else:
-        lines += [f"Guide: {guide_link}.", ""]
+    lines += [f"Guide: {guide_link}.{_provider_note(parser)}", ""]
+    lines += _flags(parser)
+    for name, sub in subcommands(parser):
+        lines += [f"### `{command} {name}`", ""]
+        if sub.description:
+            lines += [_cell(sub.description) + ".", ""]
+        if note := _provider_note(sub):
+            lines += [note.strip(), ""]
+        lines += _flags(sub)
+    return "\n".join(lines)
+
+
+def _provider_note(parser: argparse.ArgumentParser) -> str:
+    if provider_group(parser) is None:
+        return ""
+    return " Also takes the [provider flags](#provider-flags)."
+
+
+def _flags(parser: argparse.ArgumentParser) -> list[str]:
     actions = [
         action
         for group in parser._action_groups
         if group.title != PROVIDER_GROUP
         for action in _group_actions(parser, group)
     ]
-    lines += _table(parser, actions)
-    lines.append("")
-    return "\n".join(lines)
+    return [*_table(parser, actions), ""]
 
 
 def _provider_section(parsers: dict[str, argparse.ArgumentParser]) -> str:
-    users = [name for name, parser in parsers.items() if provider_group(parser)]
-    parser = parsers[users[0]]
+    takers = {
+        name: sub
+        for command, parser in parsers.items()
+        for name, sub in with_subcommands(command, parser)
+        if provider_group(sub)
+    }
+    users = list(takers)
+    parser = takers[users[0]]
     group = provider_group(parser)
     assert group is not None
     lines = [

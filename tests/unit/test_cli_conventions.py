@@ -122,8 +122,28 @@ FILE_FLAGS = {
 }
 
 
+def _commands(parser: argparse.ArgumentParser) -> list[argparse.ArgumentParser]:
+    """``parser``, or each of its subcommands' (prepare-benchmark's), which
+    hold the flags."""
+    subcommands = [
+        sub
+        for action in parser._actions
+        if isinstance(action, argparse._SubParsersAction)
+        for sub in action.choices.values()
+    ]
+    return subcommands or [parser]
+
+
 def _options(parser: argparse.ArgumentParser) -> list[str]:
-    return [o for action in parser._actions for o in action.option_strings]
+    return [
+        o
+        for command in {
+            id(parser): parser,
+            **{id(c): c for c in _commands(parser)},
+        }.values()
+        for action in command._actions
+        for o in action.option_strings
+    ]
 
 
 @pytest.mark.parametrize("cli", ALL_PARSERS)
@@ -137,9 +157,14 @@ def test_file_flags_follow_one_naming_scheme(cli: str) -> None:
 
 @pytest.mark.parametrize("cli", PARSERS)
 def test_every_cli_offers_json_output(cli: str) -> None:
-    parser = PARSERS[cli]()
-    action = next(a for a in parser._actions if "--output-format" in a.option_strings)
-    assert (action.default, list(action.choices or [])) == ("text", ["text", "json"])
+    for parser in _commands(PARSERS[cli]()):
+        action = next(
+            a for a in parser._actions if "--output-format" in a.option_strings
+        )
+        assert (action.default, list(action.choices or [])) == (
+            "text",
+            ["text", "json"],
+        )
 
 
 @pytest.mark.parametrize("cli", ALL_PARSERS)
@@ -151,15 +176,16 @@ def test_every_cli_has_version_and_log_level(cli: str, capsys) -> None:
         parser.parse_args(["--version"])
     assert exited.value.code == 0
     assert capsys.readouterr().out.strip().endswith(__version__)
-    action = next(a for a in parser._actions if "--log-level" in a.option_strings)
-    assert action.default is None
-    assert list(action.choices or []) == [
-        "DEBUG",
-        "INFO",
-        "WARNING",
-        "ERROR",
-        "CRITICAL",
-    ]
+    for command in _commands(parser):
+        action = next(a for a in command._actions if "--log-level" in a.option_strings)
+        assert action.default is None
+        assert list(action.choices or []) == [
+            "DEBUG",
+            "INFO",
+            "WARNING",
+            "ERROR",
+            "CRITICAL",
+        ]
     # Case-insensitive, as logging.level is.
     assert action.type("debug") == "DEBUG"
 
@@ -197,7 +223,40 @@ def test_cli_logging_follows_the_flags(
 @pytest.mark.parametrize("cli", ALL_PARSERS)
 def test_flag_abbreviations_are_rejected(cli: str) -> None:
     # A prefix such as --output-dir must not silently match a longer flag.
-    assert ALL_PARSERS[cli]().allow_abbrev is False
+    parser = ALL_PARSERS[cli]()
+    assert parser.allow_abbrev is False
+    assert all(command.allow_abbrev is False for command in _commands(parser))
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["structural", "--limit", "3"],
+        ["structural", "--language", "ko"],
+        ["musique", "--clusters", "5"],
+        ["musique", "--size", "large"],
+        ["assertions", "--hops", "2"],
+    ],
+)
+def test_prepare_benchmark_refuses_another_benchmarks_flags(
+    argv: list[str], tmp_path: Path, capsys
+) -> None:
+    # Regression (rv24): structural --clusters 5 --limit 3 --language ko
+    # --unanswerable 3 --hops 2 ran, ignoring all five, exit 0.
+    with pytest.raises(SystemExit) as exited:
+        prepare_benchmark.main(
+            [
+                *argv,
+                "--output-directory",
+                str(tmp_path / "out"),
+                "--output-format",
+                "json",
+            ]
+        )
+    assert exited.value.code == 2
+    status = _document(capsys.readouterr().out)
+    assert "unrecognized arguments" in status["error"]
+    assert not (tmp_path / "out").exists()
 
 
 def test_the_mcp_server_offers_no_json_output() -> None:

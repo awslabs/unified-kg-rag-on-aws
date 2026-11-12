@@ -4,7 +4,9 @@
 [MuSiQue](https://github.com/StonyBrookNLP/musique) (multi-hop, CC BY 4.0;
 Trivedi et al., TACL 2022) into a corpus and a `run-eval` dataset, optionally
 with [unanswerable questions](#unanswerable-questions).
-Every flag with its default: [CLI Reference](../reference/cli.md#prepare-benchmark).
+Each benchmark is a subcommand with its own flags, given after its name (a
+flag of another one is refused, exit 2); every flag with its default:
+[CLI Reference](../reference/cli.md#prepare-benchmark).
 Running and reading the evaluation itself: [Evaluation](./evaluate.md).
 Questions and source-cited assertions generated from your own corpus
 (`prepare-benchmark assertions`): [Evaluation: Assertions, length control and a

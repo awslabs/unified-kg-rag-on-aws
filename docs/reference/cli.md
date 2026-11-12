@@ -54,7 +54,6 @@ Guide: [Ingestion](../guides/ingest.md). Also takes the [provider flags](#provid
 | `--confirm-deletions` | off | Answer yes to the question of an incremental run that would delete more than indexing.max_deletion_share of its source scope's documents (their files are gone from the corpus); nothing else (falls back to the UKR_CONFIRM_DELETIONS env var: 1, true or yes). Without it (or --yes), the question is asked on the terminal, and the run stops (exit 1) before it writes when stdin is not one. |
 | `--confirm-integrity` | off | Answer yes to the question of a run that resumes a --pipeline-id whose inputs changed since its stages ran (or whose cache is incomplete): continue, recomputing those stages; nothing else. Without it (or --yes), the question is asked on the terminal, and the run stops (exit 1) when stdin is not one. |
 | `--continue-on-error` | off | Keep going when a stage fails. When an artifact stage (translation through community detection) crashes, every document of the run is recorded FAILED, so the next incremental run processes them again. |
-| `--max-failure-rate` `RATE` | — | Exit 1 when more than this fraction (0.0-1.0) of the run's documents failed: corpus files that failed to parse or load, documents recorded FAILED, and documents indexed without the output of a stage that failed one of their text units (a run every document of which failed breaches it at any value). Default: off; a run whose stages finished exits 0 and counts its failures in its summary and JSON. |
 | `--enabled-stages` | — | Comma-separated list of pipeline stages to enable (e.g., 'DOCUMENT_PARSING,TEXT_CHUNKING'). If not specified, all stages are enabled. |
 | `--metrics-sink` | `none` | Where to forward pipeline metrics: 'none' (default) or 'cloudwatch' (CloudWatch EMF to stdout, auto-extracted by CloudWatch Logs, with an Environment dimension when UKR_METRICS_ENVIRONMENT is set; pipeline_id is a log property, not a dimension). A stage's metrics are emitted when it finishes and only by the run that executed it, so a resumed run does not repeat restored stages' counts. |
 | `--retire-source-scope` `SCOPE` | — | Incremental runs: treat every doc-status record of this former source scope (in this run's index namespace) as deleted, removing its exclusive graph and vector content. Use it once after moving a corpus, with the old absolute source directory or former document_parsing.source_scope value (a value that is not a URI is also tried as a path resolved like --source-directory; a bare value whose name and path readings both have records stops the run: use ./ or an absolute path). Repeatable; added to indexing.retire_source_scopes. Never this run's own scope. |
@@ -136,13 +135,13 @@ Guide: [Evaluation](../guides/evaluate.md). Also takes the [provider flags](#pro
 
 Render graph visualizations from exported data (no ingestion).
 
-Guide: [Visualization](../guides/visualize.md). Also takes the [provider flags](#provider-flags).
+Guide: [Visualization](../guides/visualize.md).
 
 | Flag | Default | Description |
 |---|---|---|
-| `--data-path` | — | Path to exported visualization-data JSON (default: --suffix's namespace's newest visualization_data.json under graph.visualization.outputs_directory, outputs/visualization and --cache-directory when it shows the build the stores hold, else one built from the stores into --output-directory). |
-| `--suffix` | — | Index namespace to render without --data-path (the name run-ingestion --suffix wrote it under; default: the config's index_value, else 'default'). |
-| `--cache-directory` | `cache` | The run-ingestion cache directory searched for an export without --data-path (default: cache). |
+| `--data-path` | — | Path to exported visualization-data JSON (default: the newest visualization_data.json under graph.visualization.outputs_directory, outputs/visualization and --cache-directory, of --suffix's namespace when given). |
+| `--suffix` | — | Index namespace whose newest export to render, without --data-path (the name run-ingestion --suffix wrote it under). |
+| `--cache-directory` | `cache` | The run-ingestion cache directory searched without --data-path (default: cache). |
 | `--output-directory` | `visualization_outputs` | Directory to write visualization files. |
 | `--renderers` `RENDERER` | — | Renderers to run. Available: interactive, static (default: all of them, leaving out with a warning one whose extra is not installed; a renderer named here needs its extra). |
 | `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
@@ -194,19 +193,40 @@ Guide: [Domain adaptation](../guides/domain-adaptation.md#prompt-tuning-run-prom
 
 Prepare a public benchmark (MuSiQue) as a corpus directory and a run-eval dataset, generate questions and assertions from your corpus (assertions), or generate a synthetic structural benchmark for the structured strategy (structural)
 
-Guide: [Benchmarks](../guides/benchmarks.md). Also takes the [provider flags](#provider-flags).
+Guide: [Benchmarks](../guides/benchmarks.md).
 
 | Flag | Default | Description |
 |---|---|---|
 | `benchmark` | required | Benchmark to prepare: musique, assertions (questions and assertions generated from --source-directory), or structural (a generated procurement world: corpus/, seed/structural.jsonl, structural-config.yaml and graph-structure questions with gold answers computed over the generated graph). |
+| `--version` | — | Print the version and exit. |
+
+### `prepare-benchmark musique`
+
+Prepare MuSiQue (downloaded at run time, or a local copy) as a corpus directory and a run-eval dataset.
+
+| Flag | Default | Description |
+|---|---|---|
 | `--output-directory` | required | Directory for corpus/ and eval_data.json (corpus/ must be new or empty). |
+| `--seed` | `0` | Sampling seed (default 0). |
+| `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |
+| `--log-level` | — | Log level of this run (default: logging.level, INFO; DEBUG logs hold user and corpus text). With --output-format text the logs are plain lines unless logging.log_format is set. One of `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. |
+| `--version` | — | Print the version and exit. |
 | `--data-path` | — | Local official JSONL of the answerable questions (e.g. musique_ans_v1.0_dev.jsonl from the official download; a musique_full_v1.0_*.jsonl supplies its answerable half, labelled musique-full-answerable, and with --unanswerable and no --unanswerable-data-path the unanswerable questions too); default: download the answerable dev split. |
 | `--unanswerable-data-path` | — | Local musique_full_v1.0_*.jsonl to draw the --unanswerable questions from (the answerable ones still come from --data-path or the default download); default: the --data-path file when it is a full file, else download the full dev split. |
 | `--limit` | — | Number of answerable questions to sample (default: all 2,417 of dev). |
 | `--unanswerable` `N` | — | Also write N unanswerable questions of the full split (metadata.answerable: false), leaving out any whose answerable twin is sampled or whose removed supporting paragraph's exact text is in the pooled corpus; the counts are reported (default: none). |
 | `--hops` `HOPS` | — | Hop counts to sample from: a list (3,4) filters both answerable and unanswerable questions; quotas (2=50,3=50,4=100) draw exactly that many answerable questions per hop count, instead of --limit (default: every hop count, sampled as one pool). |
-| `--seed` | `0` | Sampling seed; for structural, the generated world's (default 0). |
-| `--size` | `small` | structural only: the world's size (small: 8 vendors, 6 buyers, up to 4 questions a template; medium: 40 vendors, 30 buyers, up to 25 a template; large: 400 vendors, 300 buyers, so a seed-filtered count scans past search.structured.max_scan_rows; default small). |
+
+### `prepare-benchmark assertions`
+
+Generate questions and assertions from your corpus.
+
+Also takes the [provider flags](#provider-flags).
+
+| Flag | Default | Description |
+|---|---|---|
+| `--output-directory` | required | Directory for corpus/ and eval_data.json (corpus/ must be new or empty). |
+| `--seed` | `0` | Sampling seed of the text units (default 0). |
 | `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |
 | `--log-level` | — | Log level of this run (default: logging.level, INFO; DEBUG logs hold user and corpus text). With --output-format text the logs are plain lines unless logging.log_format is set. One of `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. |
 | `--version` | — | Print the version and exit. |
@@ -221,6 +241,19 @@ Guide: [Benchmarks](../guides/benchmarks.md). Also takes the [provider flags](#p
 | `--language` | — | assertions: language of the questions and assertions (default: processing.translation.source_language). One of `ar`, `de`, `en`, `es`, `fr`, `he`, `hi`, `it`, `ja`, `ko`, `pt`, `ru`, `th`, `vi`, `zh`. |
 | `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
 | `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing: the load fails on one by default, since a misspelled key would leave its setting at the default. |
+
+### `prepare-benchmark structural`
+
+Generate a synthetic procurement world, its seed graph and graph-structure questions for the structured strategy.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--output-directory` | required | Directory for corpus/ and eval_data.json (corpus/ must be new or empty). |
+| `--seed` | `0` | The generated world's seed (default 0). |
+| `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |
+| `--log-level` | — | Log level of this run (default: logging.level, INFO; DEBUG logs hold user and corpus text). With --output-format text the logs are plain lines unless logging.log_format is set. One of `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. |
+| `--version` | — | Print the version and exit. |
+| `--size` | `small` | The world's size (small: 8 vendors, 6 buyers, up to 4 questions a template; medium: 40 vendors, 30 buyers, up to 25 a template; large: 400 vendors, 300 buyers, so a seed-filtered count scans past search.structured.max_scan_rows; default small). |
 
 ## `run-mcp-server`
 
@@ -262,7 +295,7 @@ Guide: [Console](../guides/console.md).
 
 ## Provider flags
 
-Taken by `run-ingestion`, `run-rag`, `run-eval`, `run-visualization`, `run-describe`, `run-prompt-tuning`, `prepare-benchmark`, `run-mcp-server`. Override the config's provider selection (see docs/guides/local-mode.md).
+Taken by `run-ingestion`, `run-rag`, `run-eval`, `run-describe`, `run-prompt-tuning`, `prepare-benchmark assertions`, `run-mcp-server`. Override the config's provider selection (see docs/guides/local-mode.md).
 
 | Flag | Default | Description |
 |---|---|---|

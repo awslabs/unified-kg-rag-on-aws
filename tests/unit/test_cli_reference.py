@@ -50,9 +50,12 @@ def test_reference_lists_every_flag() -> None:
     generator = _generator()
     text = generator.render()
     for command, parser in generator.build_parsers().items():
-        for action in generator.documented_actions(parser):
-            names = action.option_strings or [action.metavar or action.dest]
-            assert f"`{names[0]}`" in text, (command, names[0])
+        for name, sub in generator.with_subcommands(command, parser):
+            if name != command:
+                assert f"### `{name}`" in text
+            for action in generator.documented_actions(sub):
+                names = action.option_strings or [action.metavar or action.dest]
+                assert f"`{names[0]}`" in text, (name, names[0])
 
 
 def test_provider_flags_are_the_same_on_every_cli() -> None:
@@ -62,7 +65,8 @@ def test_provider_flags_are_the_same_on_every_cli() -> None:
             (action.option_strings, action.help)
             for action in generator.provider_group(parser)._group_actions
         ]
-        for parser in generator.build_parsers().values()
+        for command, top in generator.build_parsers().items()
+        for _, parser in generator.with_subcommands(command, top)
         if generator.provider_group(parser) is not None
     ]
     assert len(groups) >= 2

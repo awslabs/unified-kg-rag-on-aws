@@ -20,7 +20,9 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from typing import Any
 
+from unified_kg_rag import __version__
 from unified_kg_rag.application.cli.assertion_benchmark import (
     add_assertion_arguments,
     run_assertion_benchmark,
@@ -52,6 +54,8 @@ def _hops(value: str) -> dict[int, int | None]:
 
 
 def _parser() -> argparse.ArgumentParser:
+    """One subcommand per benchmark, each with its own flags: a flag of
+    another one (``structural --limit``) is refused, not ignored."""
     parser = ArgumentParser(
         allow_abbrev=False,
         description=(
@@ -66,9 +70,18 @@ def _parser() -> argparse.ArgumentParser:
             "prepare-benchmark musique --output-directory bench/musique --limit 100",
         ),
     )
+    # The other flags are each subcommand's, given after its name.
     parser.add_argument(
-        "benchmark",
-        choices=["musique", "assertions", "structural"],
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+        help="Print the version and exit",
+    )
+    benchmarks = parser.add_subparsers(
+        dest="benchmark",
+        required=True,
+        metavar="benchmark",
+        parser_class=ArgumentParser,
         help=(
             "Benchmark to prepare: musique, assertions (questions and "
             "assertions generated from --source-directory), or structural (a "
@@ -77,11 +90,60 @@ def _parser() -> argparse.ArgumentParser:
             "answers computed over the generated graph)"
         ),
     )
+    _musique_parser(benchmarks)
+    assertions = _benchmark_parser(
+        benchmarks,
+        "assertions",
+        "Generate questions and assertions from your corpus",
+        seed="Sampling seed of the text units (default 0)",
+    )
+    add_assertion_arguments(assertions)
+    structural = _benchmark_parser(
+        benchmarks,
+        "structural",
+        "Generate a synthetic procurement world, its seed graph and "
+        "graph-structure questions for the structured strategy",
+        seed="The generated world's seed (default 0)",
+    )
+    structural.add_argument(
+        "--size",
+        choices=["small", "medium", "large"],
+        default="small",
+        help=(
+            "The world's size (small: 8 vendors, 6 buyers, up to 4 questions "
+            "a template; medium: 40 vendors, 30 buyers, up to 25 a template; "
+            "large: 400 vendors, 300 buyers, so a seed-filtered count scans "
+            "past search.structured.max_scan_rows; default small)"
+        ),
+    )
+    return parser
+
+
+def _benchmark_parser(
+    benchmarks: Any, name: str, description: str, *, seed: str
+) -> argparse.ArgumentParser:
+    """The subcommand ``name`` with the flags every benchmark has."""
+    parser: argparse.ArgumentParser = benchmarks.add_parser(
+        name, help=description, description=description, allow_abbrev=False
+    )
     parser.add_argument(
         "--output-directory",
         type=Path,
         required=True,
         help="Directory for corpus/ and eval_data.json (corpus/ must be new or empty)",
+    )
+    parser.add_argument("--seed", type=int, default=0, help=seed)
+    add_output_format_argument(parser)
+    return parser
+
+
+def _musique_parser(benchmarks: Any) -> None:
+    parser = _benchmark_parser(
+        benchmarks,
+        "musique",
+        "Prepare MuSiQue (downloaded at run time, or a local copy) as a "
+        "corpus directory and a run-eval dataset",
+        seed="Sampling seed (default 0)",
     )
     parser.add_argument(
         "--data-path",
@@ -133,27 +195,6 @@ def _parser() -> argparse.ArgumentParser:
             "--limit (default: every hop count, sampled as one pool)"
         ),
     )
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=0,
-        help="Sampling seed; for structural, the generated world's (default 0)",
-    )
-    parser.add_argument(
-        "--size",
-        choices=["small", "medium", "large"],
-        default="small",
-        help=(
-            "structural only: the world's size (small: 8 vendors, 6 buyers, "
-            "up to 4 questions a template; medium: 40 vendors, 30 buyers, "
-            "up to 25 a template; large: 400 vendors, 300 buyers, so a "
-            "seed-filtered count scans past search.structured.max_scan_rows; "
-            "default small)"
-        ),
-    )
-    add_assertion_arguments(parser)
-    add_output_format_argument(parser)
-    return parser
 
 
 @exits_on_sigterm
