@@ -3,7 +3,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { describe, expect, it } from "vitest";
-import { drawnGraph } from "../components/GraphCanvas";
+import { drawnGraph, linkAlpha, placeLabels, type LabelBox } from "../components/GraphCanvas";
 import { I18nProvider } from "../i18n/i18n";
 import type { GraphData, GraphNode } from "../lib/types";
 import { EntityTable, TABLE_PAGE } from "./GraphPage";
@@ -62,5 +62,25 @@ describe("EntityTable", () => {
     fireEvent(details, new Event("toggle"));
     const last = container.querySelectorAll("tbody tr")[1] as HTMLElement;
     expect(last.textContent).toBe("Undrawn—3—");
+  });
+});
+
+describe("graph legibility", () => {
+  const box = (id: string, x: number, degree: number, strong = false): LabelBox => ({ id, x, y: 0, width: 40, height: 16, strong, degree });
+
+  it("places labels most connected first, skipping overlaps", () => {
+    const placed = placeLabels([box("low", 10, 1), box("high", 0, 9), box("apart", 100, 0)]);
+    expect([...placed].sort()).toEqual(["apart", "high"]);
+  });
+
+  it("always places the focused label", () => {
+    expect(placeLabels([box("hub", 0, 9), box("focus", 10, 1, true)]).has("focus")).toBe(true);
+  });
+
+  it("fades edges as they multiply, within bounds", () => {
+    expect(linkAlpha(100)).toBe(0.85);
+    expect(linkAlpha(300)).toBeCloseTo(0.85);
+    expect(linkAlpha(1200)).toBeCloseTo(0.425);
+    expect(linkAlpha(1_000_000)).toBe(0.06);
   });
 });

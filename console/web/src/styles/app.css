@@ -1639,6 +1639,14 @@ button.cite-link:hover {
     bottom: 60px;
   }
 }
+.legend-item {
+  border-radius: 4px;
+  cursor: default;
+}
+.legend-item:hover,
+.legend-item:focus-visible {
+  background: var(--sheet-sunk);
+}
 .swatch {
   display: inline-block;
   width: 10px;

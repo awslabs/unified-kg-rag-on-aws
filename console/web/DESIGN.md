@@ -45,11 +45,13 @@ not assets:
   the composer docked at the foot of the conversation, a welcome with sample
   questions before the first one. The evidence trace stays beside it.
 - **A force-directed canvas graph in the style of react-force-graph**: nodes
-  sized by their connections and coloured by community or type, labels for
-  the focused node, its neighbours and the busiest nodes (all labels once
-  zoomed in), the rest dimmed, directed edges with arrows, the edge's
-  relationship shown on hover, a click that centres and zooms, a legend and
-  zoom tools over the canvas, and an inspector beside it.
+  sized by their connections (never under 2.5 px) and coloured by community
+  or type, labels for the focused node, its neighbours and the busiest nodes
+  (all labels once zoomed in) set at 12 px in screen space and placed most
+  connected first without overlapping, the rest dimmed, directed edges with
+  arrows that fade as they multiply, the edge's relationship shown on hover,
+  a click that centres and zooms, a legend whose hovered entry lights its
+  members and zoom tools over the canvas, and an inspector beside it.
 
 ## Tokens
 

@@ -24,6 +24,10 @@ interface GraphFile {
 
 type Panel = "entity" | "communities" | "analysis";
 
+// Groups the legend names (one series colour each); the rest share "other".
+const LEGEND_SLOTS = 8;
+const OTHER_GROUPS = "\u0000other";
+
 export function GraphPage({ params }: { params: URLSearchParams }) {
   const { t, date } = useI18n();
   const files = useApi(() => get<{ graphs: GraphFile[] }>("graphs"), []);
@@ -123,11 +127,23 @@ function GraphExplorer({ graphRef, data, params }: { graphRef: string; data: Gra
     const node = byId.get(id);
     return colorSlot(node ? (slotOf.get(groups.key(node)) ?? 99) : 99);
   };
-  const legend = groups.order.slice(0, 8).map((k, i) => ({
+  const legend = groups.order.slice(0, LEGEND_SLOTS).map((k, i) => ({
+    key: k,
     label: `${colorBy === "community" ? communityName(k) : k} (${number(groups.counts.get(k) ?? 0)})`,
     color: colorSlot(i),
   }));
-  if (groups.order.length > 8) legend.push({ label: t("graph.other", { count: groups.order.length - 8 }), color: colorSlot(99) });
+  if (groups.order.length > LEGEND_SLOTS) legend.push({ key: OTHER_GROUPS, label: t("graph.other", { count: groups.order.length - LEGEND_SLOTS }), color: colorSlot(99) });
+  // A legend entry hovered or focused lights its members (a channel that
+  // does not rely on colour).
+  const [legendGroup, setLegendGroup] = useState<string | null>(null);
+  const groupMembers = useMemo(() => {
+    if (!legendGroup) return null;
+    const inGroup = (n: GraphNode) => {
+      const slot = slotOf.get(groups.key(n)) ?? 99;
+      return legendGroup === OTHER_GROUPS ? slot >= LEGEND_SLOTS : groups.key(n) === legendGroup;
+    };
+    return new Set(data.nodes.filter(inGroup).map((n) => n.id));
+  }, [legendGroup, data.nodes, groups, slotOf]);
 
   const highlighted = useMemo(() => {
     if (community) {
@@ -249,7 +265,7 @@ function GraphExplorer({ graphRef, data, params }: { graphRef: string; data: Gra
               data={data}
               colorOf={colorOf}
               selected={selected}
-              highlighted={highlighted}
+              highlighted={groupMembers ?? highlighted}
               traced={traced}
               tracedEdge={params.get("focus") && edgeTarget ? [params.get("focus")!, edgeTarget] : null}
               onSelect={(id) => {
@@ -258,6 +274,7 @@ function GraphExplorer({ graphRef, data, params }: { graphRef: string; data: Gra
                 if (id) setPanel("entity");
               }}
               legend={legend}
+              onLegendFocus={setLegendGroup}
             />
             </Suspense>
           </div>
