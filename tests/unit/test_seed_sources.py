@@ -380,7 +380,7 @@ def test_a_later_registration_replaces_the_earlier(custom_kind: str) -> None:
     assert seed_source_requirement(custom_kind) is None
 
 
-@pytest.mark.parametrize("kind", ["Jsonl", "my-kind", "", "1st", "_x"])
+@pytest.mark.parametrize("kind", ["my-kind", "", "1st", "_x"])
 def test_invalid_kinds_cannot_register(kind: str) -> None:
     with pytest.raises(ValueError, match="Cannot register a seed source"):
         register_seed_source(kind)

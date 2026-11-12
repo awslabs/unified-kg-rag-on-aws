@@ -11,7 +11,6 @@ stage or the chain, as an unexpected error.
 
 from __future__ import annotations
 
-import importlib.util
 from functools import reduce
 from typing import Any
 
@@ -30,6 +29,7 @@ from unified_kg_rag.adapters.schema_sources import schema_source_requirement
 from unified_kg_rag.adapters.seed_sources import seed_source_requirement
 from unified_kg_rag.domain.models import Config, RetrieverRole, SearchStrategy
 from unified_kg_rag.domain.models.config import INLINE_SCHEMA_SOURCE
+from unified_kg_rag.shared.registry import module_installed
 
 
 def _role_endpoint(config: Config, role: RetrieverRole) -> tuple[str, str] | None:
@@ -83,13 +83,6 @@ def missing_endpoints_error(
     )
 
 
-def _installed(module: str) -> bool:
-    try:
-        return importlib.util.find_spec(module) is not None
-    except (ImportError, ValueError):
-        return False
-
-
 def missing_extras_error(config: Config, *, seeds: bool = True) -> str | None:
     """Message naming each optional module the selected providers, the
     extraction schema source and, with ``seeds``, the seed graph sources
@@ -111,18 +104,18 @@ def missing_extras_error(config: Config, *, seeds: bool = True) -> str | None:
     for role in ProviderRole:
         kind = provider_kind(config, role)
         requirement = provider_requirement(role, kind)
-        if requirement is not None and not _installed(requirement[0]):
+        if requirement is not None and not module_installed(requirement[0]):
             setting = f"providers.{role.section}.kind '{kind}'"
             missing.setdefault(requirement, {})[setting] = None
     source = config.processing.graph_extraction.schema_source.kind
     if source != INLINE_SCHEMA_SOURCE:
         requirement = schema_source_requirement(source)
-        if requirement is not None and not _installed(requirement[0]):
+        if requirement is not None and not module_installed(requirement[0]):
             setting = f"processing.graph_extraction.schema_source.kind '{source}'"
             missing.setdefault(requirement, {})[setting] = None
     for seed in config.processing.seed_graphs if seeds else []:
         requirement = seed_source_requirement(seed.kind)
-        if requirement is not None and not _installed(requirement[0]):
+        if requirement is not None and not module_installed(requirement[0]):
             setting = f"processing.seed_graphs '{seed.name}' kind '{seed.kind}'"
             missing.setdefault(requirement, {})[setting] = None
     if not missing:

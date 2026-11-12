@@ -11,7 +11,6 @@ their own public names, docstrings and messages.
 
 from __future__ import annotations
 
-import re
 import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar
@@ -23,10 +22,8 @@ from .locations import redact_location
 if TYPE_CHECKING:
     import boto3
 
+
 # The form a source kind takes (SchemaSourceConfig.kind, SeedGraphConfig.kind).
-KIND_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
-
-
 class _Located(Protocol):
     @property
     def path(self) -> str | None: ...
@@ -99,40 +96,3 @@ class SourceContextBase(Generic[SourceT]):
         # Any: the service name is only known at run time.
         session: Any = self.boto_session()
         return session.client(service_name, **kwargs)
-
-
-class KindRegistry(Generic[LoaderT]):
-    """Loaders by kind, and the optional dependency each declared.
-
-    Attributes:
-        loaders: Kind -> loader.
-        requires: Kind -> ``(module, how to install it)`` of the optional
-            dependency its loader imports.
-    """
-
-    def __init__(self) -> None:
-        self.loaders: dict[str, LoaderT] = {}
-        self.requires: dict[str, tuple[str, str]] = {}
-
-    def register(
-        self, kind: str, loader: LoaderT, requires: tuple[str, str] | None
-    ) -> None:
-        """Register ``loader`` under ``kind``, replacing an earlier one and
-        its requirement."""
-        self.loaders[kind] = loader
-        if requires is None:
-            self.requires.pop(kind, None)
-        else:
-            self.requires[kind] = requires
-
-    def get(self, kind: str) -> LoaderT | None:
-        """The loader registered under ``kind``, or None."""
-        return self.loaders.get(kind)
-
-    def requirement(self, kind: str) -> tuple[str, str] | None:
-        """The ``(module, how to install it)`` ``kind`` declared, or None."""
-        return self.requires.get(kind)
-
-    def kinds(self) -> list[str]:
-        """The registered kinds, sorted."""
-        return sorted(self.loaders)

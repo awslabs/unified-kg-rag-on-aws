@@ -75,7 +75,7 @@ def test_every_default_language_analyzer_is_known_without_a_warning(
     # warning, and none falls back to standard by being unknown.
     with caplog.at_level(logging.WARNING):
         analyzer = get_analyzer(name)
-    assert name in analyzers._ANALYZERS and analyzer is analyzers._ANALYZERS[name]
+    assert name in analyzers._ANALYZERS and analyzer is analyzers._ANALYZERS.get(name)
     assert "has no" not in caplog.text
 
 
@@ -163,7 +163,9 @@ def test_each_unknown_analyzer_warns_once(
 
 
 def test_register_analyzer_adds_a_name(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(analyzers, "_ANALYZERS", dict(analyzers._ANALYZERS))
+    monkeypatch.setattr(
+        analyzers._ANALYZERS, "entries", dict(analyzers._ANALYZERS.entries)
+    )
 
     @register_analyzer("whitespace")
     def whitespace(text: str) -> list[str]:

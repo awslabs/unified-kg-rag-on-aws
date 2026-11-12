@@ -243,7 +243,7 @@ def test_the_local_model_demos_name_the_local_extra_before_any_work(
     demo = load("demo")
     from unified_kg_rag.application.cli import preflight
 
-    monkeypatch.setattr(preflight, "_installed", lambda module: False)
+    monkeypatch.setattr(preflight, "module_installed", lambda module: False)
     with pytest.raises(SystemExit) as raised:
         demo.main(["--models", models, "--workspace", str(tmp_path), "--prepare-only"])
     assert "--extra local" in str(raised.value)

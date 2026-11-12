@@ -100,7 +100,7 @@ def custom_kind() -> Iterator[str]:
     kind = "synthetic_server"
     yield kind
     for role in ProviderRole:
-        provider_registry._REGISTRY.pop((role, kind), None)
+        provider_registry.unregister_provider(role, kind)
 
 
 # --- registry ---------------------------------------------------------------

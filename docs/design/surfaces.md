@@ -245,7 +245,8 @@ HTML-escaped), computing a seeded spring layout and the configured
 centrality first. The interactive renderer is the `viz` extra: the adapters
 import the renderers on use, so the registry, `BaseRenderer` and `static`
 work on a core install, and a missing extra fails the run
-(`BaseRenderer.check_dependencies`) before anything renders.
+(`register_renderer(..., requires=...)`, `check_renderer_dependencies`)
+before anything renders.
 Using it: [Visualization](../guides/visualize.md).
 
 ### 10.1 The console (`run-console`, opt-in)

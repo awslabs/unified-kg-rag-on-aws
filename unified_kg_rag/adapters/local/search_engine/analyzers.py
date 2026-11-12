@@ -62,6 +62,7 @@ from functools import cache, lru_cache
 
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.logging import warn_once
+from unified_kg_rag.shared.registry import Registry
 from unified_kg_rag.shared.utils.scripts import (
     DENSE_SCRIPT_LETTERS,
     SCRIPTS,
@@ -76,7 +77,8 @@ Analyzer = Callable[[str], list[str]]
 
 STANDARD = "standard"
 
-_ANALYZERS: dict[str, Analyzer] = {}
+# Under the one registry rule (``shared.registry``).
+_ANALYZERS: Registry[str, Analyzer] = Registry("analyzer")
 
 # Code point ranges by their part in a word under Unicode word boundaries
 # (UAX #29, which OpenSearch's standard tokenizer follows), read from
@@ -212,11 +214,14 @@ _ASTRAL = re.compile("[\U00010000-\U0010ffff]")
 
 
 def register_analyzer(*names: str) -> Callable[[Analyzer], Analyzer]:
-    """Register ``analyzer`` under ``names`` (a later registration replaces)."""
+    """Register ``analyzer`` under ``names`` (the one registry rule,
+    ``shared.registry``: case-insensitive, a later registration replaces)."""
+    for name in names:
+        _ANALYZERS.check_name(name)
 
     def decorator(analyzer: Analyzer) -> Analyzer:
         for name in names:
-            _ANALYZERS[name] = analyzer
+            _ANALYZERS.register(name, analyzer)
         return analyzer
 
     return decorator
@@ -234,17 +239,22 @@ def get_analyzer(name: str | None) -> Analyzer:
         "field with 'standard' instead",
         name,
     )
-    return _ANALYZERS[STANDARD]
+    return _standard()
 
 
 def analyzes_alike(first: str | None, second: str | None) -> bool:
     """Whether the analyzers named ``first`` and ``second`` are one analyzer
     here (``standard`` standing in for an unknown name, as in
     :func:`get_analyzer`), so a field mapped with either tokenizes alike."""
-    standard = _ANALYZERS[STANDARD]
-    return _ANALYZERS.get(first or STANDARD, standard) is _ANALYZERS.get(
-        second or STANDARD, standard
+    standard = _standard()
+    return (_ANALYZERS.get(first or STANDARD) or standard) is (
+        _ANALYZERS.get(second or STANDARD) or standard
     )
+
+
+def _standard() -> Analyzer:
+    # Registered below, at import.
+    return _ANALYZERS.entries[STANDARD]
 
 
 def _bigrams(run: str) -> list[str]:

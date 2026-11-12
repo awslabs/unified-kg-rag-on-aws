@@ -4,6 +4,7 @@ import functools
 import hashlib
 import importlib.util
 import inspect
+import re
 import sys
 from importlib import metadata
 from pathlib import Path
@@ -27,6 +28,7 @@ from unified_kg_rag.adapters.ingestion.json_loader import JsonTextLoader
 from unified_kg_rag.domain.models import Config, Document
 from unified_kg_rag.shared import DataProcessingError, get_logger
 from unified_kg_rag.shared.exceptions import causes
+from unified_kg_rag.shared.registry import Registry
 
 logger = get_logger(__name__)
 
@@ -153,6 +155,12 @@ _ENCODING_AWARE_LOADERS = (
 )
 
 
+# The names ParserFactory.register_loader takes: a file extension.
+_EXTENSIONS: Registry[str, None] = Registry(
+    "file loader", pattern=re.compile(r"\.[a-z0-9][a-z0-9_+-]*")
+)
+
+
 class ParserFactory:
     """The file-extension registry of document loaders.
 
@@ -220,18 +228,18 @@ class ParserFactory:
         files of that type are then both discovered and parsed.
 
         Args:
-            extension: file extension including the leading dot (case-insensitive).
+            extension: file extension including the leading dot
+                (case-insensitive; a dot, then letters, digits, ``_``, ``+``
+                or ``-``).
             loader_class: a ``langchain_core`` ``BaseLoader`` subclass.
             loader_kwargs: kwargs passed to the loader constructor (besides the
                 file path), e.g. ``{"text_mode": "strings"}`` for ``JsonTextLoader``.
             file_type_name: human-readable name for logs (defaults to the
                 extension without its dot, upper-cased).
         """
-        ext = extension.lower()
-        if not ext.startswith("."):
-            raise ValueError(
-                f"extension must include the leading dot, got '{extension}'"
-            )
+        # The one registry rule (shared.registry): case-insensitive, a later
+        # registration replaces; the entries are the class's own table.
+        ext = _EXTENSIONS.check_name(extension)
         if not (
             isinstance(loader_class, type) and issubclass(loader_class, BaseLoader)
         ):

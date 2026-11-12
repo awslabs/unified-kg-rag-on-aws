@@ -334,7 +334,10 @@ See [`iac/README.md`](iac/README.md).
   `RenderContext`, `TransientRetryConfig`, ...), and `load_seed_graphs` / `resolve_extraction_schema`. Import from the
   package root; every other module path is internal and many moved, so they have no entry here (#164, #210, #216,
   #312, #333, #365, #456, #464, #584). The `unified_kg_rag.visualization` package is gone (#467). See the [Python
-  library guide](docs/guides/python-library.md).
+  library guide](docs/guides/python-library.md). The registries keyed by a name (providers, renderers, schema and
+  seed sources, analyzers, file loaders) follow one rule: a name is case-insensitive, a later registration replaces
+  (a renderer's too), and an optional package is declared with `requires=` (a renderer's as well, in place of
+  `BaseRenderer.check_dependencies`).
 - `GraphRAGChain`: retrieval-only queries are `search()` / `asearch()`, returning a `SearchOutput`; `ChainMode` and
   `mode=` are gone (`GraphRAGChain(cfg).asearch(q)`, read `out.search_results.results`) (#333). It rejects unknown
   keyword arguments, and only `Providers` / `build_providers` take `boto_session` (`providers=Providers(config,

@@ -27,14 +27,11 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TypeVar
 
-from unified_kg_rag.adapters.source_files.context import (
-    KIND_PATTERN,
-    KindRegistry,
-    SourceContextBase,
-)
+from unified_kg_rag.adapters.source_files.context import SourceContextBase
 from unified_kg_rag.domain.models.config import INLINE_SCHEMA_SOURCE, SchemaSourceConfig
 from unified_kg_rag.domain.models.schema import SchemaDocument
 from unified_kg_rag.shared.exceptions import SchemaSourceError
+from unified_kg_rag.shared.registry import Registry
 
 
 class SchemaSourceContext(SourceContextBase[SchemaSourceConfig]):
@@ -54,8 +51,10 @@ class SchemaSourceContext(SourceContextBase[SchemaSourceConfig]):
 SchemaLoader = Callable[[SchemaSourceContext], SchemaDocument]
 LoaderT = TypeVar("LoaderT", bound=SchemaLoader)
 
-_KINDS: KindRegistry[SchemaLoader] = KindRegistry()
-_REGISTRY = _KINDS.loaders
+_KINDS: Registry[str, SchemaLoader] = Registry(
+    "schema source", reserved={INLINE_SCHEMA_SOURCE}
+)
+_REGISTRY = _KINDS.entries
 # Kind -> (module, how to install it) of the optional dependency its loader
 # imports.
 _REQUIRES = _KINDS.requires
@@ -71,23 +70,17 @@ def register_schema_source(
     in a deterministic order; it raises ``SchemaSourceError`` for a source it
     cannot read. ``requires`` is the ``(module, how to install it)`` of the
     optional dependency the loader imports, or None: the CLIs check it is
-    installed before any model call. A later registration of the same kind
-    replaces the earlier one, requirement included, so a deployment can
-    override a built-in.
+    installed before any model call. The name follows the one registry rule
+    (``shared.registry``): case-insensitive, a later registration replaces.
 
     Raises:
         ValueError: ``kind`` is ``inline`` (the inline keys themselves) or
             not of the form ``schema_source.kind`` takes.
     """
-    if kind == INLINE_SCHEMA_SOURCE or not KIND_PATTERN.match(kind):
-        raise ValueError(
-            f"Cannot register a schema source as {kind!r}: a kind is "
-            f"lower-case letters, digits and '_', and not "
-            f"'{INLINE_SCHEMA_SOURCE}'"
-        )
+    _KINDS.check_name(kind)
 
     def decorator(loader: LoaderT) -> LoaderT:
-        _KINDS.register(kind, loader, requires)
+        _KINDS.register(kind, loader, requires=requires)
         return loader
 
     return decorator
@@ -115,4 +108,4 @@ def schema_source_requirement(kind: str) -> tuple[str, str] | None:
 
 def registered_schema_sources() -> list[str]:
     """The registered kinds, sorted (``inline`` is built in, not listed)."""
-    return _KINDS.kinds()
+    return _KINDS.names()
