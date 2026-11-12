@@ -13,6 +13,7 @@ count, so it never excludes a document.
 
 from __future__ import annotations
 
+import argparse
 import json
 import shutil
 from pathlib import Path
@@ -142,6 +143,7 @@ def test_a_document_failing_for_its_own_error_is_excluded_and_deletions_apply(
     # The JSON result and the loading stage count the document excluded
     # from the third run on; only a WARNING named it.
     runner = IngestionPipelineRunner.__new__(IngestionPipelineRunner)
+    runner.args = argparse.Namespace(max_failure_rate=None)
     runner.pipeline = SimpleNamespace(executed_stages=frozenset())  # type: ignore[assignment]
     assert [runner._json_result(c)["documents_excluded"] for c in contexts] == [
         0,
@@ -304,6 +306,7 @@ def test_failed_documents_counts_the_documents_recorded_failed(
         beside=mode == "beside",
     )
     runner = IngestionPipelineRunner.__new__(IngestionPipelineRunner)
+    runner.args = argparse.Namespace(max_failure_rate=None)
     runner.pipeline = SimpleNamespace(executed_stages=frozenset())  # type: ignore[assignment]
     result = runner._json_result(contexts[0])
     assert result["failed_documents"] == recorded, result
@@ -656,6 +659,7 @@ def test_a_document_failing_runs_for_an_error_not_its_own_is_reported(
     e2e._ingest(config, providers, source, tmp_path / "seed")
     (source / "fz.txt").write_text(_FAILING)
     runner = IngestionPipelineRunner.__new__(IngestionPipelineRunner)
+    runner.args = argparse.Namespace(max_failure_rate=None)
     runner.pipeline = SimpleNamespace(executed_stages=frozenset())  # type: ignore[assignment]
     seen = []
     for run in range(3):

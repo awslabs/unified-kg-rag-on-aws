@@ -167,6 +167,14 @@ class ArgumentParser(argparse.ArgumentParser):
         usage_error(message)
 
 
+def failure_rate(value: str) -> float:
+    """A ``--max-failure-rate`` value: a fraction from 0.0 to 1.0."""
+    rate = float(value)
+    if not 0.0 <= rate <= 1.0:
+        raise argparse.ArgumentTypeError("must be between 0.0 and 1.0")
+    return rate
+
+
 def is_loopback(host: str) -> bool:
     """Whether ``host`` names a loopback address (``127.0.0.0/8``, ``::1``,
     ``localhost``): reachable from this machine only."""

@@ -30,6 +30,7 @@ from unified_kg_rag.application.cli.conventions import (
     ArgumentParser,
     add_output_format_argument,
     exits_on_sigterm,
+    failure_rate,
     interrupted_fields,
     json_output,
     print_json,
@@ -55,6 +56,7 @@ from unified_kg_rag.application.cli.provider_args import (
 )
 from unified_kg_rag.application.cli.query_args import namespace_name, suffix_arg
 from unified_kg_rag.application.config import load_cli_dotenv, resolve_relative_paths
+from unified_kg_rag.domain.ingestion.delta_detector import document_doc_id
 from unified_kg_rag.domain.ingestion.methodologies import writes_graph_store
 from unified_kg_rag.domain.models import (
     Config,
@@ -328,6 +330,19 @@ class CommandLineInterface:
             "(translation through community detection) crashes, every document "
             "of the run is recorded FAILED, so the next incremental run "
             "processes them again",
+        )
+        parser.add_argument(
+            "--max-failure-rate",
+            type=failure_rate,
+            default=None,
+            metavar="RATE",
+            help="Exit 1 when more than this fraction (0.0-1.0) of the run's "
+            "documents failed: corpus files that failed to parse or load, "
+            "documents recorded FAILED, and documents indexed without the "
+            "output of a stage that failed one of their text units (a run "
+            "every document of which failed breaches it at any value). "
+            "Default: off; a run whose stages finished exits 0 and counts its "
+            "failures in its summary and JSON",
         )
         parser.add_argument(
             "--enabled-stages",
@@ -809,6 +824,8 @@ class IngestionPipelineRunner:
                         "[/yellow]"
                     )
                     raise PipelineExecutionError(error)
+                if (breach := self._failure_budget_breach(context)) is not None:
+                    raise PipelineExecutionError(breach)
                 success_msg = "✓ Pipeline completed successfully!"
                 console.print(
                     Panel.fit(
@@ -875,13 +892,30 @@ class IngestionPipelineRunner:
             "finished stages are cached; --force-rebuild recomputes them)."
         )
 
+    def _failure_budget_breach(self, context: PipelineContext) -> str | None:
+        """Why the run breached ``--max-failure-rate`` (its documents that
+        failed, :func:`_document_failures`), or ``None``: within it, or no
+        budget set."""
+        budget = self.args.max_failure_rate
+        if budget is None:
+            return None
+        failed, total = _document_failures(context)
+        if not failed or (failed < total and failed / total <= budget):
+            return None
+        return (
+            f"{failed} of {total} documents failed ({failed / total:.0%}), more "
+            f"than --max-failure-rate {budget} tolerates: rerun to retry them "
+            "after fixing the cause the WARNINGs above name"
+        )
+
     def _json_result(self, context: PipelineContext) -> dict[str, Any]:
-        """The run's ``--output-format json`` result; a run a stage failed
-        also has its ``error`` and ``exit_code``, as a run that fails before
-        printing does."""
+        """The run's ``--output-format json`` result; a run a stage failed,
+        or that breached ``--max-failure-rate``, also has its ``error`` and
+        ``exit_code``, as a run that fails before printing does."""
         assert self.pipeline is not None
         _load_pipeline()
-        error = self._stage_failure(context)
+        error = self._stage_failure(context) or self._failure_budget_breach(context)
+        delta = context.incremental_delta
         return {
             "pipeline_id": context.pipeline_id,
             "status": context.status.value,
@@ -914,6 +948,19 @@ class IngestionPipelineRunner:
             ),
             # Corpus files of a type no loader reads (the WARNING names them).
             "files_skipped": len(context.skipped_source_files),
+            # Corpus files that failed to parse or load (not indexed).
+            "files_failed": len(context.failed_source_files),
+            # What the registry diff found (None: the registry is off).
+            "delta": (
+                None
+                if delta is None
+                else {
+                    "new": len(delta.new),
+                    "changed": len(delta.changed),
+                    "unchanged": len(delta.unchanged),
+                    "deleted": len(delta.deleted),
+                }
+            ),
             # The model calls and tokens of the stages this run executed.
             "token_usage": run_token_usage(context, self.pipeline.executed_stages),
             "stages": [
@@ -960,6 +1007,20 @@ class IngestionPipelineRunner:
             if signum == signal.SIGTERM
             or signal.getsignal(signum) is not signal.SIG_IGN
         }
+
+
+def _document_failures(context: PipelineContext) -> tuple[int, int]:
+    """How many of the run's documents failed, of how many: its corpus files
+    that failed to parse or load, the documents it recorded FAILED, and the
+    documents a stage failed a text unit of (a full build records none
+    FAILED), over those and the documents it processed."""
+    processed = {document_doc_id(document) for document in context.documents}
+    failed = set(context.recorded_failed_doc_ids) | {
+        document_doc_id(document)
+        for document in context.documents_of_units(context.failed_unit_ids())
+    }
+    files = len(context.failed_source_files)
+    return len(failed) + files, len(processed | failed) + files
 
 
 def _next_run_writes_from(runner: IngestionPipelineRunner | None) -> str | None:

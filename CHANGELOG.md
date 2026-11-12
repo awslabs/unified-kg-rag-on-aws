@@ -1279,9 +1279,12 @@ From a `main` checkout (formats and keys no release had):
   of one per 100 at 4,800-character chunks) (#626), priced by `evaluation.prices.<rerank
   model>.per_thousand_rerank_search_units` (#607); the run manifest records the usage schema (`usage_schema: 3`), and
   a comparison gives no USD delta against a run saved with an earlier one (#613, #626).
-- Corpus coverage: `run-ingestion`'s JSON `units_failed` and EMF metrics `total_units_failed`, `total_files_failed`,
-  `total_files_skipped`, `total_documents_excluded` / `_deleted` / `_failed` / `_retrying` and
-  `total_documents_without_claims`; a run with failed units ends with a WARNING naming them per stage (#518, #532).
+- Corpus coverage: `run-ingestion`'s JSON `units_failed`, `files_failed` and `delta` (`new`, `changed`, `unchanged`,
+  `deleted`) and EMF metrics `total_units_failed`, `total_files_failed`, `total_files_skipped`,
+  `total_documents_excluded` / `_deleted` / `_failed` / `_retrying` and `total_documents_without_claims`; a run with
+  failed units ends with a WARNING naming them per stage (#518, #532). `run-ingestion --max-failure-rate` (off by
+  default) exits 1 when more of its documents failed (files that failed to load, documents recorded `FAILED` or
+  indexed without a failed stage's output).
 - Evaluation: `retrieval` (hit@k, recall@k, MRR; the passages' files ranked before the lineage files of summaries,
   reports, entities, relationships and claims, so one high-ranked summary or report cannot fill the top k) and
   `answer_match` (exact match, token F1) evaluators, grouped statistics, the run manifest and index build record,

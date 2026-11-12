@@ -12,7 +12,7 @@ prints. Every flag: [CLI Reference](./cli.md); what an error message means:
 | Code | Meaning |
 |---|---|
 | `0` | Success |
-| `1` | The run failed: a failed stage or query (in `run-ingestion` also a `ConfigurationError` a stage meets, an unreachable store or an unreachable model server), a breached `--max-failure-rate`, a failed `run-eval --fail-if` gate, a failed upload, nothing rendered or a failed renderer |
+| `1` | The run failed: a failed stage or query (in `run-ingestion` also a `ConfigurationError` a stage meets, an unreachable store or an unreachable model server), a breached `--max-failure-rate` (`run-eval`, `run-ingestion`), a failed `run-eval --fail-if` gate, a failed upload, nothing rendered or a failed renderer |
 | `2` | Usage or configuration error, before any work or outside a stage ([exit code 2](#exit-code-2)) |
 | `130` | Interrupted with Ctrl-C (SIGINT) |
 | `143` | Stopped by SIGTERM (ECS `StopTask`, a Step Functions timeout); `run-ingestion` checkpoints its finished stages first, and `run-eval` uploads the finished runs' results to an `s3://` output (or keeps them locally and logs the path) |
@@ -147,6 +147,20 @@ holds:
   - `files_skipped`: the corpus files of a type no loader reads (a `.docx`
     without the `docx` extra, a suffix no loader registers), which one
     WARNING names with the remedy.
+  - `files_failed`: the corpus files that failed to parse or load (an empty
+    or broken file, a binary file with a text suffix), not indexed; an
+    incremental run keeps what they indexed before.
+  - `delta`: what the doc-status registry's diff found, `new`, `changed`,
+    `unchanged` and `deleted` documents (an `indexing.reset` run counts every
+    document new), or `null` with the registry off.
+
+  `--max-failure-rate RATE` (off by default) exits `1` when more than `RATE`
+  of the run's documents failed: `files_failed`, the documents recorded
+  `FAILED` and the documents indexed without the output of a stage that
+  failed one of their text units, over those and the documents the run
+  processed (a run all of whose documents failed breaches it at any value).
+  The document then also has the `error` and `exit_code`, and the stage
+  results stand: rerun to retry the failed documents.
 
   And `build_record`, the suffix's build record after the run: `written`,
   `kept` (the run wrote nothing; the stored one stands), `failed` (no index

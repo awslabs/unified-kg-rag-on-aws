@@ -12,6 +12,7 @@ them; the next run extracts those units again.
 
 from __future__ import annotations
 
+import argparse
 import logging
 from pathlib import Path
 from types import SimpleNamespace
@@ -62,6 +63,7 @@ def _setup(tmp: Path, *, registry: bool):
 
 def _json(context) -> dict:
     runner = IngestionPipelineRunner.__new__(IngestionPipelineRunner)
+    runner.args = argparse.Namespace(max_failure_rate=None)
     runner.pipeline = SimpleNamespace(executed_stages=set())  # type: ignore[assignment]
     return runner._json_result(context)
 
