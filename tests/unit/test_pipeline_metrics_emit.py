@@ -304,3 +304,34 @@ def test_run_token_usage_sums_the_stages_this_run_executed(mocker) -> None:
     assert usage["by_role"]["ingestion"]["llm_calls"] == 2
     both = run_token_usage(context, frozenset({"document_parsing", "graph_extraction"}))
     assert both["llm_calls"] == 3
+
+
+def test_throttled_requests_are_emitted_even_when_every_call_failed() -> None:
+    # Old behaviour: no throttle metric at all, and a stage whose calls all
+    # failed (throttled past their retries) emitted no usage.
+    from types import SimpleNamespace
+
+    from unified_kg_rag.application.ingestion.pipeline_metrics import (
+        LLM_USAGE_METRIC,
+        stage_usage_metrics,
+    )
+
+    def context(usage: dict[str, int]) -> SimpleNamespace:
+        result = SimpleNamespace(
+            stage_name="graph_extraction", metrics={LLM_USAGE_METRIC: usage}
+        )
+        return SimpleNamespace(stage_results=[result])
+
+    failed = stage_usage_metrics(
+        context({"failed_calls": 2, "request_retries": 10, "throttled_requests": 12}),
+        "graph_extraction",
+    )
+    assert failed["llm_throttles_graph_extraction"] == 12
+    # Every request sent: 2 failed calls of 6 requests each, all throttled.
+    assert (failed["llm_throttles"], failed["llm_requests"]) == (12, 12)
+    mixed = stage_usage_metrics(
+        context({"llm_calls": 8, "request_retries": 2, "throttled_requests": 1}),
+        "graph_extraction",
+    )
+    assert (mixed["llm_throttles"], mixed["llm_requests"]) == (1, 10)
+    assert stage_usage_metrics(context({}), "graph_extraction") == {}

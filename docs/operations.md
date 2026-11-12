@@ -329,6 +329,23 @@ stage overwrites, for 1 day). A `--s3-prefix` other than `pipeline-runs`
 gets neither the expiry nor the 1-day rule. Check a reused bucket's own
 lifecycle rules and versioning.
 
+OpenSearch shards: each namespace holds up to 7 single-shard indices (14
+with the replica a multi-node domain sets), and a reset rebuild holds the
+old and new generation at once, so plan for twice that per namespace. AWS
+recommends at most 25 shards per GiB of Java heap (half the node's memory,
+at most 32 GiB) per data node, which `OpenSearchShardsHigh` watches:
+
+| Domain | Shard budget | Namespaces (rebuilds included) |
+|---|---|---|
+| 1 x `r6g.large.search` (dev default, 8 GiB heap) | 200 | about 14 |
+| 2 x `r6g.large.search` (non-dev default, with replicas) | 400 | about 14 |
+| 2 x `r6g.xlarge.search` (16 GiB heap each) | 800 | about 28 |
+
+The app checks only the domain's hard `max_shards_per_node` limit when it
+creates an index, so stay under the budget by deleting namespaces no longer
+queried (or by sharing one namespace through scopes,
+[Scopes and namespaces](./concepts/scopes-and-namespaces.md)).
+
 ### OpenSearch replicas
 
 On the CDK stack a multi-node domain (`opensearch_count` > 1) gets one replica
@@ -408,6 +425,79 @@ run it with an operator role.
 **Otherwise**, run one full rebuild with `indexing.reset: true`
 ([Re-ingest](#re-ingest)); restore the table first only if other namespaces
 share it.
+
+#### Recovery objectives
+
+What each failure loses (RPO) and how long recovery takes (RTO) with the
+stack's defaults. The RTO values are estimates, not measured: run the
+[restore drill](#restore-drill) to measure yours.
+
+| Failure | RPO | RTO (estimate) | Recovery |
+|---|---|---|---|
+| One AZ lost, non-dev (2 Neptune instances, zone-aware OpenSearch with replicas) | None | Minutes: Neptune fails over to the reader; OpenSearch serves from the replicas, yellow until AWS replaces the node | Nothing to do; watch `OpenSearchClusterYellow` and `OpenSearchNodesMissing` |
+| One AZ lost, dev (one Neptune instance, one data node) | None if the AZ comes back | Until the AZ or the node is back, or a restore below | Wait, or restore into the remaining AZ as for a damaged store |
+| A store damaged (a bad run, a wrong delete, a corrupt index) | Back to the last OpenSearch snapshot after a finished run: at most about an hour of writes | Hours: a Neptune and DynamoDB point-in-time restore plus an index restore, then one-off tasks against them | [Within Neptune's window](#backup-and-restore), above |
+| OpenSearch domain deleted | Its automated snapshots go with it: the last [manual snapshot](#manual-snapshots), or everything | With a manual snapshot, a new domain and an index restore (hours); without one, a full rebuild from the corpus, which re-runs every extraction and report call (the extraction records live in the domain too): the run time and Bedrock bill of the whole corpus | Restore the manual snapshot into a new domain, or [Re-ingest](#re-ingest) |
+| `use_cmk` key scheduled for deletion | None while the deletion is pending | Minutes | Cancel the deletion (`aws kms cancel-key-deletion`) within its waiting period, then re-enable the key |
+| `use_cmk` key deleted | Every store the key encrypts (Neptune and its snapshots, the domain, the table, the bucket) | A redeploy and a full rebuild from a corpus copy outside the key, if there is one | Keep a manual OpenSearch snapshot and a corpus copy under another key |
+| Region lost | Everything: no store or corpus is copied out of the region | A deploy in another region and a full rebuild from a corpus copy kept there, if there is one | Copy the corpus and Neptune snapshots to another region yourself (`aws neptune copy-db-cluster-snapshot`) |
+
+#### Manual snapshots
+
+Automated OpenSearch snapshots are deleted with the domain and cannot leave
+it. A manual snapshot repository in S3 outlives the domain and its key. The
+stack does not create one; register it once per domain from inside the
+VPC:
+
+1. Create an S3 bucket for the snapshots in the deploy region (another key
+   than the domain's if you use `use_cmk`, so a lost key does not take the
+   snapshots with it).
+2. Create an IAM role OpenSearch Service assumes (trust principal
+   `es.amazonaws.com`) with `s3:ListBucket` on the bucket and
+   `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject` on its objects (and
+   `kms:GenerateDataKey`, `kms:Decrypt` on the bucket's key, if it has one).
+3. Sign the registration with a role that may pass that role
+   (`iam:PassRole`) and call `es:ESHttpPut` on the domain. The domain's
+   access policy allows the account's principals from inside the VPC; the
+   domain has no fine-grained access control, so no role mapping is needed.
+
+   ```bash
+   curl -X PUT "https://<OpenSearch endpoint>/_snapshot/manual" \
+     --aws-sigv4 "aws:amz:<region>:es" --user "$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY" \
+     -H "x-amz-security-token: $AWS_SESSION_TOKEN" -H 'Content-Type: application/json' \
+     -d '{"type": "s3", "settings": {"bucket": "<snapshot bucket>", "region": "<region>",
+          "role_arn": "arn:aws:iam::<account>:role/<snapshot role>"}}'
+   ```
+
+4. Take a snapshot after a run finishes (no `RUNNING` execution), with
+   `PUT _snapshot/manual/<name>`, and check it with
+   `GET _snapshot/manual/<name>` (`"state": "SUCCESS"`). Take a manual
+   Neptune snapshot (`aws neptune create-db-cluster-snapshot`) and a
+   DynamoDB backup (`aws dynamodb create-backup`) at the same point: both
+   outlive the backup window, so the three restore to one common point.
+   An OpenSearch Snapshot Management policy (`POST _plugins/_sm/policies/<name>`)
+   can take the OpenSearch one on a schedule; time it outside the runs.
+5. To restore, create the domain (a deploy), register the same repository,
+   and restore the stack's indices without the system ones:
+   `POST _snapshot/manual/<name>/_restore` with
+   `{"indices": "*,-.*", "include_aliases": true}`.
+
+#### Restore drill
+
+Once a quarter, and after a change to the stores' configuration, restore
+into new resources and measure the RTO you planned with:
+
+1. Note the time, then follow [Within Neptune's window](#backup-and-restore)
+   up to step 3, restoring Neptune and the table under new names, and
+   restore the last manual OpenSearch snapshot into a scratch domain (or
+   the indices under new names with `rename_pattern` /
+   `rename_replacement`).
+2. Run a fixed question set against the restored stores as a one-off query
+   task (`run-eval` with a saved dataset), and compare its scores and
+   sources with the last run against the live stores.
+3. Record the elapsed time per step and the RPO the restore point gave, then
+   delete the restored cluster, table and scratch domain (they bill by the
+   hour).
 
 ### Upgrading OpenSearch
 
@@ -1271,9 +1361,10 @@ an error, not empty results.
 ## Alarms
 
 On the CDK stack, a failed ingestion task publishes the execution id and the
-error to the SNS topic, and the alarms below report to the same topic: six
-on pipeline runs, eleven on store health (more on a multi-node domain, with
-`use_cmk` and on Neptune Serverless), three on capacity and one on queries.
+error to the SNS topic, and the alarms below report to the same topic: on
+pipeline runs, store health (some only on a multi-node domain, with `use_cmk`,
+with a Neptune reader or on Neptune Serverless), capacity and queries. Each
+notifies when it fires and again when it is back to OK.
 They have a subscriber only with `-c alarm_email=<address>`.
 A failed task also fires `PipelineFailures`, a second notice without context
 that also covers what the message cannot report (an error the task's handler
@@ -1308,11 +1399,22 @@ These fire between runs too, so degradation shows before a run breaks on it:
 | `OpenSearchClusterYellow` | Multi-node only: a replica shard is unallocated for 5 minutes | Usually a node being replaced or a blue/green deployment; if it lasts, check `_cluster/allocation/explain`, since losing another node loses data |
 | `OpenSearchIndexWritesBlocked` | The domain blocks index writes (5 minutes) | Free storage or memory (larger volume or instance), then re-run the failed ingestion; writes fail until the block lifts |
 | `OpenSearchAutomatedSnapshotFailure` | An automated snapshot failed | Often a red cluster: fix that first. Until a snapshot succeeds the hourly restore point is missing ([Backup and restore](#backup-and-restore)) |
-| `OpenSearchWriteRejections` | Write thread-pool rejections in 3 consecutive minutes | Rejected bulk items are retried, so indexing slows: more data nodes or a larger `opensearch_instance` |
+| `OpenSearchWriteRejections`, `OpenSearchIndexingPressureRejections` | Write thread-pool rejections, or indexing-pressure rejections (`CoordinatingWriteRejected` + `PrimaryWriteRejected` + `ReplicaWriteRejected`, where OpenSearch 2.x counts most bulk 429s), in 3 consecutive minutes | Rejected bulk items are retried, so indexing slows: more data nodes, a larger `opensearch_instance`, or fewer concurrent runs |
 | `OpenSearchSearchRejections` | Search thread-pool rejections in a minute | Searches were refused under load (the client retries a 429, then the query fails): fewer concurrent queries (`search.max_concurrency`, `run-eval`'s `processing.max_concurrency`) or more data nodes |
-| `OpenSearchKmsKeyError`, `OpenSearchKmsKeyInaccessible` | `use_cmk` only: the data key is disabled, or deleted or its grants revoked | Re-enable the key. A deleted key cannot be recovered: restore a manual snapshot to a new domain |
+| `OpenSearchHighCpu` | Data node CPU maximum at least 80% in 3 consecutive 15-minute periods | A larger `opensearch_instance` or more data nodes |
+| `OpenSearchOldGenJvmPressure` | Old-generation heap at least 80% for 3 minutes | Garbage collection cannot free the heap: a larger `opensearch_instance` |
+| `OpenSearchNodesMissing` | Fewer nodes than the domain's (data nodes plus 3 masters when multi-node) at some point in a day | A node was unreachable or replaced; check the domain's events and cluster health |
+| `OpenSearchShardsHigh` | Active shards at least 25 per GiB of heap per data node (heap = half the instance memory, at most 32 GiB) | Each namespace holds its own indices ([Capacity sizing](#capacity-sizing)): delete unused namespaces, or add data nodes or memory. No alarm (the synth warns) for an `opensearch_instance` the stack's memory table does not know |
+| `OpenSearch5xxShare` | At least 10% of requests returned a 5xx in 5 minutes | Overloaded data nodes or requests past the idle timeout: more or larger data nodes |
+| `OpenSearchWriteQueue`, `OpenSearchSearchQueue` | Write-queue average at least 100, or search-queue average at least 500, in a minute | High indexing or search concurrency: fewer concurrent runs or queries, or more resources |
+| `OpenSearchMasterHighCpu`, `OpenSearchMasterJvmPressure`, `OpenSearchMasterOldGenJvmPressure`, `OpenSearchMasterUnreachable` | Multi-node only: master CPU at least 50% for 45 minutes, master heap at least 95% (old generation 80%) for 3 minutes, or the master unreachable for 5 minutes | A larger `opensearch_master_instance`; an unreachable master is usually a network or AWS-side problem, so check the domain's events |
+| `OpenSearchKmsKeyError`, `OpenSearchKmsKeyInaccessible` | `use_cmk` only: the data key is disabled, or deleted or its grants revoked | Re-enable the key, or cancel a scheduled deletion. A deleted key cannot be recovered: restore a [manual snapshot](#manual-snapshots) to a new domain |
 | `DocStatusWriteThrottled` | The doc-status table throttled a write (5 minutes) | Registry calls retry with backoff; one still throttled fails the run with `DocStatusRegistryError`. Look for overlapping runs, rerun once it clears |
+| `DocStatusReadThrottled` | The doc-status table throttled a read (5 minutes) | A run reads one namespace's records under one partition key; as for writes, look for overlapping runs and rerun once it clears |
+| `DocStatusSystemErrors` | DynamoDB returned internal errors to the registry's operations (5 minutes) | Retried by the client; persistent ones fail the run with `DocStatusRegistryError`. Check the AWS Health Dashboard, then rerun |
 | `NeptuneHighCpu` | Average writer CPU at least 90% for 15 minutes | Sustained saturation: a larger `neptune_instance` (or `neptune_serverless_ncu` maximum), or, if you raised it, a lower `indexing.neptune.index_concurrency` (default `1`) |
+| `NeptuneReaderHighCpu` | `neptune_instances` > 1 only: average reader CPU at least 90% for 15 minutes | The readers serve the queries: a larger `neptune_instance` or more `neptune_instances` |
+| `NeptuneReplicaLag` | `neptune_instances` > 1 only: a reader at least 1 s behind the writer in 3 consecutive 5-minute periods | Queries read a stale graph; readers share the writer's storage and normally lag it by far less, so check the reader's CPU and the instance events |
 | `NeptuneLowFreeableMemory` | Writer freeable memory at or below 512 MiB at any point in 5 minutes; on Serverless only while the writer is at maximum capacity | Out-of-memory failures ahead: a larger `neptune_instance` (or `neptune_serverless_ncu` maximum) |
 | `NeptuneServerlessAtMaxCapacity` | Serverless only: the writer is at the `neptune_serverless_ncu` maximum for 3 consecutive 5-minute periods | Raise the maximum (or the minimum, so capacity is there before a burst) |
 | `NeptuneGremlinErrors` | Gremlin server errors on any instance for 3 consecutive minutes | Persistent failures (retried write conflicts come in short bursts and do not fire it): find the failing request in the task log |
@@ -1321,8 +1423,9 @@ These fire between runs too, so degradation shows before a run breaks on it:
 
 | Alarm | Fires when | What to do |
 |---|---|---|
-| `BedrockThrottling` | At least 100 throttled calls in each of 3 consecutive 5-minute periods, summed over every model in the account and region (other Bedrock users count too). It watches the deploy region: with a different `bedrock_region` the calls publish their metrics there, so it cannot fire (the synth warns; the dashboard's Bedrock widgets read `bedrock_region`) | Throttled calls are retried, so the run slows rather than fails: lower `processing.max_concurrency` or ask for a higher quota. With a different `bedrock_region`, create the same alarm in that region to be notified |
+| `BedrockThrottling` | At least 10% of this deployment's model requests in a run stage were throttled (`llm_throttles` over `llm_requests`, the app's own usage accounting as each stage finishes; other Bedrock users in the account do not count, and it works with any `bedrock_region`) | Throttled requests are retried, so the run slows rather than fails: lower `processing.max_concurrency` or ask for a higher quota. The dashboard's "LLM throttled requests by stage" widget shows which stage, and its account-wide "Bedrock throttles" widget whether other callers share the quota |
 | `IngestionTaskMemory` | The ingestion task used at least 90% of its memory for 3 minutes (Container Insights) | Fargate kills a task over its memory, losing the running stage: raise `fargate_memory` ([Capacity sizing](#capacity-sizing)) |
+| `QueryTaskMemory` | The query task (`run-rag`, `run-eval`) used at least 90% of its memory for 3 minutes (Container Insights) | The task is killed over its memory, with the `run-eval` run in it: raise `fargate_memory` (both task definitions share it) |
 | `IngestionTaskEphemeralStorage` | The ingestion task used at least 90% of its ephemeral storage (image included) for 5 minutes (Container Insights) | A full disk fails the running stage: raise `ingestion_ephemeral_storage_gib` (up to 200) |
 
 **Queries**
@@ -1331,15 +1434,24 @@ These fire between runs too, so degradation shows before a run breaks on it:
 |---|---|---|
 | `QueryLatencyHigh` | The p90 latency of `run-rag --metrics-sink cloudwatch` queries is above `query_latency_alarm_seconds` (default 60) in 2 of 3 5-minute periods | The dashboard's per-strategy widget shows which strategy is slow; check Bedrock latency and throttles and OpenSearch search latency. `global` and `drift` make many model calls per query by design. The metric's `Strategy` is the requested one, so `auto` covers the queries it routes to `iterative` (a controller call and up to `max_rounds` more searches: [Follow-up rounds](./guides/query.md#follow-up-rounds-for-multi-hop-questions); leave it out of `search.auto_routable_strategies` to opt out). `local` ranks text units by PageRank by default, which adds a text-unit search, a relationship kNN search, a Neptune edge read and a query embedding to each query ([Local PPR ranking](./concepts/defaults-and-evidence.md#local-ppr-ranking); `search.local_search.text_unit_ranking: support` drops them); DRIFT's follow-ups add them only with `search.drift_search.text_unit_ranking: ppr` |
 
+| `QueryFailures` | At least 10% of queries failed (`query_failed` against the count of `query_latency_ms` values) in 2 of 3 5-minute periods | A fast failure (store or rerank access denied, an empty context) lowers the p90 instead of raising it, so this alarm, not `QueryLatencyHigh`, shows it: read the failing queries' errors in the log |
+
 `run-rag` publishes `query_latency_ms` only with `--metrics-sink cloudwatch`
 (`--mode rag` queries, failed ones included: a query that ran past
 `search.query_timeout_seconds` records about the deadline, so timeouts raise
 the p90 rather than vanishing from it), under `unified_kg_rag/query`
 with the task's `Environment` and the requested `Strategy`. A serving layer
 that embeds `GraphRAGChain` publishes nothing; emit the same metric from it
-to use the alarm.
+to use the alarm. `QueryFailures` and the "Query outcomes" widget also read
+`query_failed`, `query_degraded` and `query_abstained`, one count per query
+under the same namespace and dimensions; where no surface publishes them,
+the alarm stays OK and the widget empty.
 
-The dashboard also plots stage durations, task memory, CPU and disk, the
+The dashboard also lists every alarm's state, plots the stores' own signals
+(OpenSearch CPU, heap, indexing and search rates, 5xx and queues; Neptune CPU
+and freeable memory per writer and reader, replica lag, Gremlin requests and
+errors; the doc-status table's consumed capacity and throttles), and plots
+stage durations, task memory, CPU and disk, the
 run's LLM tokens and calls by stage and its response-cache hits, Bedrock
 calls, throttles and latency by model, query latency, the document outcomes
 of each run (failed, skipped, excluded, deleted, retrying, without claims),
@@ -1376,6 +1488,8 @@ same counts in `token_usage`:
 | `llm_calls_<stage>` | Model calls that returned (retries included, failed calls not) |
 | `llm_input_tokens_<stage>` | Input tokens the responses reported, prompt-cache reads and writes included |
 | `llm_output_tokens_<stage>` | Output tokens the responses reported |
+| `llm_throttles_<stage>` | Requests Bedrock throttled (HTTP 429), each attempt once: resent inside a call or the last attempt of a failed one |
+| `llm_throttles`, `llm_requests` | The throttled requests and every request sent (returned and failed calls plus the requests resent inside them), summed over the stages: `BedrockThrottling` reads their ratio |
 | `llm_cache_hits` | Responses the run's LLM response cache served instead of a call (a resumed stage), chunk-boundary and community report answers the extraction store served, and description summaries a full build took from their stored copies, summed over the stages |
 
 To check them against Bedrock's own counts, compare a run's sums with the
@@ -1398,6 +1512,28 @@ and calls made outside a usage scope (the `run-eval`
 [warm-up queries](./reference/evaluation-output.md#comparison), scripts) are not counted. How far
 the two counts were apart on real runs:
 [Defaults and evidence: Usage records against the bill](./concepts/defaults-and-evidence.md#usage-records-against-the-bill).
+
+### Where each threshold comes from
+
+AWS publishes recommended thresholds for some of these metrics; the others
+are this stack's own choices, not measured, which the table says.
+
+| Alarms | Threshold | Source |
+|---|---|---|
+| `OpenSearchClusterYellow`, `OpenSearchJvmPressure`, `OpenSearchOldGenJvmPressure`, `OpenSearchHighCpu`, `OpenSearchNodesMissing`, `OpenSearchShardsHigh`, `OpenSearch5xxShare`, `OpenSearchWriteQueue`, `OpenSearchSearchQueue`, `OpenSearchSearchRejections`, `OpenSearchIndexWritesBlocked`, `OpenSearchAutomatedSnapshotFailure`, `OpenSearchKmsKeyError`, `OpenSearchKmsKeyInaccessible`, the `OpenSearchMaster*` alarms | As in the tables above | AWS: [Recommended CloudWatch alarms for Amazon OpenSearch Service](https://docs.aws.amazon.com/opensearch-service/latest/developerguide/cloudwatch-alarms.html) |
+| `OpenSearchClusterRed` | Red in a 5-minute period | AWS recommends 1 minute; 5 minutes here |
+| `OpenSearchFreeStorageLow` | 40% of `opensearch_volume_gib` free | AWS recommends 25% per node; 40% gives time to resize before the write block |
+| `OpenSearchWriteRejections`, `OpenSearchIndexingPressureRejections` | New rejections in 3 consecutive minutes | AWS recommends any new rejection in a minute; the bulk writer retries a rejected write, so only sustained rejections alarm. The indexing-pressure counters are where OpenSearch 7.1+ counts most bulk 429s ([AWS knowledge center: resolve 429 errors](https://repost.aws/knowledge-center/opensearch-resolve-429-error)) |
+| `IngestionTaskEphemeralStorage` | 90% for 5 minutes | AWS's recommended Container Insights alarm |
+| `IngestionTaskMemory`, `QueryTaskMemory` | 90% for 3 minutes | This stack's choice: shorter than the disk alarm, since memory fills faster and an over-limit task is killed at once |
+| `NeptuneHighCpu`, `NeptuneReaderHighCpu` | 90% average for 15 minutes | This stack's choice: AWS publishes no recommended Neptune CPU alarm, and a bulk edge write saturates the writer by design |
+| `NeptuneLowFreeableMemory` | 1/32 of the instance's memory (512 MiB on `db.r6g.large`), 512 MiB on Serverless at its maximum | This stack's choice |
+| `NeptuneReplicaLag` | 1 s, 3 consecutive 5-minute periods | This stack's choice: readers share the writer's storage and normally lag it by far less |
+| `NeptuneGremlinErrors` | Any error in 3 consecutive minutes | This stack's choice: retried write conflicts come in short bursts |
+| `BedrockThrottling` | 10% of the deployment's requests in a run stage | This stack's choice, not measured: a throttled request is retried, so it costs run time, not results |
+| `QueryLatencyHigh` | `query_latency_alarm_seconds` (60) at p90, 2 of 3 periods | This stack's choice; set it to the latency your users accept |
+| `QueryFailures` | 10% of queries, 2 of 3 periods | This stack's choice, the share AWS uses for OpenSearch 5xx |
+| The pipeline alarms, `DocStatusWriteThrottled`, `DocStatusReadThrottled`, `DocStatusSystemErrors`, `NeptuneServerlessAtMaxCapacity` | Any occurrence (at maximum capacity: 3 periods) | Each is a loss or a limit nobody should miss |
 
 ## Query deadlines and model timeouts
 

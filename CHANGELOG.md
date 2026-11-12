@@ -1252,8 +1252,8 @@ From a `main` checkout (formats and keys no release had):
   text in it (`register_strategy(run_record=RunRecord(...))`): the chain screens and clears every declared record,
   not two named ones. See
   [query](docs/guides/query.md#follow-up-rounds-for-multi-hop-questions).
-- LLM usage accounting, tracing or not: calls, input and output tokens, prompt-cache reads and writes, resent and
-  failed requests and cache hits per model role and id, in `RAGOutput` / `SearchOutput.metadata["usage"]`,
+- LLM usage accounting, tracing or not: calls, input and output tokens, prompt-cache reads and writes, resent,
+  throttled and failed requests and cache hits per model role and id, in `RAGOutput` / `SearchOutput.metadata["usage"]`,
   `EvaluationResult.usage`, `run-ingestion`'s JSON `token_usage` and per-stage EMF metrics on the CDK dashboard. A
   call counts from its start, so cancelled and background calls are billed at an estimated input; a response that
   reports no tokens keeps its resent requests and an output estimated from its text (#526, #530, #532, #533, #541,
@@ -1425,16 +1425,22 @@ From a `main` checkout (formats and keys no release had):
   2); `run-ingestion` and `run-rag` print the run's index namespace (suffix and `indexing.additional_suffix`) as
   one `Index Namespace` line (#629).
 - Operability: run, stage and query ids in logs, extraction-failure metrics and alarms, start-up endpoint checks,
-  and runbook sections on backup, restore, replicas and store upgrades (#122, #178, #211, #457, #519).
+  and runbook sections on backup, restore (recovery objectives per failure, manual snapshots, a quarterly restore
+  drill), replicas and store upgrades (#122, #178, #211, #457, #519).
 - IaC options: `neptune_serverless_ncu`, `ingestion_ephemeral_storage_gib`, `opensearch_master_instance`,
   `flow_log_retention_days`, `sfn_timeout_hours`, `opensearch_volume_gib`, `guardrail_version` and a published
   `GuardrailVersion`, `opensearch_nori_package`, Fargate Spot and ARM64 tasks, an `EnableVersionUpgrade` policy,
   `log_retention_days`, the stores' maintenance windows, and `observability_secret_arn` / `_keys` for Langfuse or
   OTLP credentials (same-region only in private mode) (#157, #211, #319, #328, #345, #457, #459, #519, #528, #541,
   #566).
-- IaC alarms: `BedrockThrottling`, `IngestionTaskMemory`, OpenSearch snapshot failures, blocked writes, thread-pool
-  rejections, a yellow multi-node cluster, an unusable KMS key, ephemeral storage, `DocumentsNotIndexed`, and
-  `QueryLatencyHigh` on `run-rag --metrics-sink cloudwatch`'s `query_latency_ms` (#330, #519, #528).
+- IaC alarms: `BedrockThrottling` (the share of this deployment's model requests throttled), `IngestionTaskMemory` and
+  `QueryTaskMemory`, OpenSearch snapshot failures, blocked writes, thread-pool and indexing-pressure rejections (where
+  OpenSearch 2.x counts bulk 429s), the rest of AWS's recommended OpenSearch alarms (CPU, old-generation heap, nodes,
+  shards per GiB of heap, 5xx share, queues, dedicated masters), a yellow multi-node cluster, an unusable KMS key,
+  Neptune reader CPU and replica lag, doc-status read throttles and system errors, ephemeral storage,
+  `DocumentsNotIndexed`, and `QueryLatencyHigh` on `run-rag --metrics-sink cloudwatch`'s `query_latency_ms`, and
+  `QueryFailures` on the failed share of queries (`query_failed`); each also notifies when it recovers, and the
+  dashboard shows the stores' metrics and every alarm's state (#330, #519, #528).
 - The package ships a `py.typed` marker (#568). `main` reports `0.3.0.dev0`, and a `v<version>` tag runs a release
   workflow that publishes a GitHub release: the tag must be on `main`, the notes are the section's introduction,
   *Highlights*, *Breaking changes*, *Upgrading* and *Security* with a link to the version's heading for the rest, and

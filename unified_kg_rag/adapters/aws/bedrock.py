@@ -37,6 +37,7 @@ from unified_kg_rag.adapters.aws.bedrock_retry import (
     is_bedrock_item_error,
     is_transient_bedrock_error,
 )
+from unified_kg_rag.adapters.aws.bedrock_throttles import count_throttled_requests
 from unified_kg_rag.adapters.aws.token_counter import BedrockTokenCounter
 from unified_kg_rag.adapters.llm.langchain import with_callback
 from unified_kg_rag.adapters.llm.reachability import is_unreachable_error
@@ -236,45 +237,62 @@ class BaseBedrockModelFactory(Generic[ModelIdT, ModelInfoT, WrapperT], ABC):
             self.boto_session, assumed_role_arn=config.aws.bedrock.assumed_role_arn
         )
         self.region_name = region_name or config.aws.bedrock_region
-        boto_config = self._boto_config(read_timeout=self.BOTO_READ_TIMEOUT)
-        self._client = self._new_client(boto_config)
-        # The client of query-time calls (_client_for), built on first use.
-        self._query_client: Any = None
-        self._query_client_lock = threading.Lock()
+        self._client = self._new_client(
+            self._boto_config(read_timeout=self.BOTO_READ_TIMEOUT),
+            ModelPurpose.INGESTION,
+        )
+        # The clients of query-time and evaluation calls (_client_for), built
+        # on first use.
+        self._purpose_clients: dict[ModelPurpose, Any] = {}
+        self._purpose_clients_lock = threading.Lock()
         logger.debug(
             "Initialized %s for region: '%s'", self.__class__.__name__, self.region_name
         )
 
-    def _new_client(self, boto_config: BotoConfig) -> Any:
+    def _new_client(self, boto_config: BotoConfig, purpose: ModelPurpose) -> Any:
         # Service name is resolved dynamically per subclass, so it is a plain
         # str and does not match types-boto3's literal-overloaded client().
-        return self.boto_session.client(
+        client = self.boto_session.client(
             self._get_boto_service_name(),  # type: ignore[call-overload]
             region_name=self.region_name,
             config=boto_config,
         )
+        self._instrument_client(client, purpose)
+        return client
+
+    def _instrument_client(self, client: Any, purpose: ModelPurpose) -> None:
+        """Hook for a subclass to attach event handlers to a new runtime
+        client of ``purpose``'s calls (none here)."""
 
     def _client_for(self, purpose: ModelPurpose) -> Any:
-        """The runtime client for a call made for ``purpose``.
+        """The runtime client for a call made for ``purpose``, one per
+        purpose.
 
-        Query calls get a client of their own, with the query's read timeout
-        and attempts (``search.model_timeout_seconds``,
-        ``search.model_max_attempts``): on the ingestion client's 330 s and 6
-        requests, one stalled call held a query for 33 minutes. Ingestion and
-        evaluation calls keep the ingestion client.
+        Query calls get the query's read timeout and attempts
+        (``search.model_timeout_seconds``, ``search.model_max_attempts``): on
+        the ingestion client's 330 s and 6 requests, one stalled call held a
+        query for 33 minutes. Evaluation calls get a client of their own with
+        the ingestion settings, so what a client counts (the language model
+        factory's throttled requests) is its purpose's.
         """
-        if purpose is not ModelPurpose.QUERY:
+        if purpose is ModelPurpose.INGESTION:
             return self._client
-        with self._query_client_lock:
-            if self._query_client is None:
+        with self._purpose_clients_lock:
+            client = self._purpose_clients.get(purpose)
+            if client is None:
                 search = self.config.search
-                self._query_client = self._new_client(
+                boto_config = (
                     self._boto_config(
                         read_timeout=search.model_timeout_seconds,
                         total_max_attempts=search.model_max_attempts,
                     )
+                    if purpose is ModelPurpose.QUERY
+                    else self._boto_config(read_timeout=self.BOTO_READ_TIMEOUT)
                 )
-            return self._query_client
+                client = self._purpose_clients[purpose] = self._new_client(
+                    boto_config, purpose
+                )
+            return client
 
     @abstractmethod
     def _get_boto_service_name(self) -> str:
@@ -670,6 +688,11 @@ class BedrockLanguageModelFactory(
 
     def _get_boto_service_name(self) -> str:
         return "bedrock-runtime"
+
+    def _instrument_client(self, client: Any, purpose: ModelPurpose) -> None:
+        # The model calls' throttled requests, which botocore retries inside
+        # a call, count in the usage scopes (throttled_requests).
+        count_throttled_requests(client, self._get_boto_service_name(), purpose.value)
 
     # Whether an error is worth a retry: the ingestion batch retries and the
     # query-chain retry of ``setup_chain``.

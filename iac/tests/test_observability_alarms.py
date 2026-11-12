@@ -267,7 +267,10 @@ def test_emf_metric_names_are_pipeline_metrics_fields() -> None:
         'f"llm_calls_{stage_name}"',
         'f"llm_input_tokens_{stage_name}"',
         'f"llm_output_tokens_{stage_name}"',
+        'f"llm_throttles_{stage_name}"',
         '"llm_cache_hits"',
+        '"llm_throttles"',
+        '"llm_requests"',
     ):
         assert usage_name in pipeline
     names = _emf_metric_names(_template())
@@ -275,9 +278,9 @@ def test_emf_metric_names_are_pipeline_metrics_fields() -> None:
     durations = {f"duration_{stage}_seconds" for stage in _pipeline_stages()}
     durations |= {
         f"llm_{kind}_{stage}"
-        for kind in ("calls", "input_tokens", "output_tokens")
+        for kind in ("calls", "input_tokens", "output_tokens", "throttles")
         for stage in _pipeline_stages()
-    } | {"llm_cache_hits"}
+    } | {"llm_cache_hits", "llm_throttles", "llm_requests"}
     fields = _pipeline_metric_fields()
     # Every document outcome is a PipelineMetrics field (a name drifted from
     # DOCUMENT_METRICS would alarm on a series nobody emits).
@@ -376,15 +379,27 @@ def test_emf_alarms_watch_only_this_environment() -> None:
             assert stat["Dimensions"] == [{"Name": "Environment", "Value": env}]
 
 
-def test_sustained_bedrock_throttling_alarms() -> None:
-    alarm = _alarms()["BedrockThrottling"]
-    (query,) = alarm["Metrics"]
-    # Summed over every model: Bedrock publishes per ModelId only.
-    assert "SUM(InvocationThrottles)" in query["Expression"]
-    assert 'SCHEMA("AWS/Bedrock", ModelId)' in query["Expression"]
-    assert (alarm["Threshold"], alarm["EvaluationPeriods"]) == (100, 3)
-    assert alarm["TreatMissingData"] == "notBreaching"
-    assert len(alarm["AlarmActions"]) == 1
+def test_bedrock_throttling_alarms_on_this_deployments_share() -> None:
+    # Old behaviour: an absolute count of InvocationThrottles over every
+    # caller in the account and region, which other users tripped and which
+    # could not fire with another bedrock_region.
+    for context in ({}, {"bedrock_region": "us-east-1", "network_mode": "public"}):
+        alarm = _alarms(context)["BedrockThrottling"]
+        (expression,) = [m for m in alarm["Metrics"] if "Expression" in m]
+        assert expression["Expression"] == "100 * FILL(throttled, 0) / requests"
+        stats = {
+            m["Id"]: m["MetricStat"]["Metric"]
+            for m in alarm["Metrics"]
+            if "MetricStat" in m
+        }
+        assert stats["throttled"]["MetricName"] == "llm_throttles"
+        assert stats["requests"]["MetricName"] == "llm_requests"
+        for metric in stats.values():
+            assert metric["Namespace"] == EMF_NAMESPACE
+            assert metric["Dimensions"] == [{"Name": "Environment", "Value": "dev"}]
+        assert (alarm["Threshold"], alarm["EvaluationPeriods"]) == (10, 1)
+        assert alarm["TreatMissingData"] == "notBreaching"
+        assert len(alarm["AlarmActions"]) == 1
 
 
 def test_ingestion_task_memory_alarms() -> None:
@@ -423,15 +438,36 @@ def test_recommended_opensearch_alarms() -> None:
         assert (alarm["Period"], alarm["EvaluationPeriods"]) == (period, periods)
         assert alarm["Threshold"] == 1
         assert len(alarm["AlarmActions"]) == 1
-    # Rejection counters are cumulative: the alarm reads their increase.
-    for name, pool, periods in (
-        ("OpenSearchWriteRejections", "Write", 3),
-        ("OpenSearchSearchRejections", "Search", 1),
+    # Rejection counters are cumulative: the alarm reads their increase. On
+    # 7.1+ engines bulk 429s come mostly from indexing pressure, which the
+    # write thread-pool counter does not count.
+    for name, metrics, periods in (
+        ("OpenSearchWriteRejections", {"ThreadpoolWriteRejected"}, 3),
+        (
+            "OpenSearchIndexingPressureRejections",
+            {
+                "CoordinatingWriteRejected",
+                "PrimaryWriteRejected",
+                "ReplicaWriteRejected",
+            },
+            3,
+        ),
+        ("OpenSearchSearchRejections", {"ThreadpoolSearchRejected"}, 1),
     ):
         alarm = alarms[name]
         (expression,) = [m for m in alarm["Metrics"] if "Expression" in m]
-        assert expression["Expression"] == "DIFF(rejected)"
-        assert _metric_names(alarm) == {f"Threadpool{pool}Rejected"}
+        ids = sorted(m["Id"] for m in alarm["Metrics"] if "MetricStat" in m)
+        # DIFF per counter: a FILL inside DIFF would read a gap as a reset.
+        assert expression["Expression"] == " + ".join(
+            f"FILL(DIFF({i}), 0)" for i in ids
+        )
+        assert _metric_names(alarm) == metrics
+        for m in alarm["Metrics"]:
+            if "MetricStat" in m:
+                assert (m["MetricStat"]["Stat"], m["MetricStat"]["Period"]) == (
+                    "Sum",
+                    60,
+                )
         assert alarm["EvaluationPeriods"] == periods
     # One data node holds no replicas, and without a CMK no key can fail.
     assert (
@@ -441,6 +477,132 @@ def test_recommended_opensearch_alarms() -> None:
             "OpenSearchKmsKeyInaccessible",
         }
         & alarms.keys()
+    )
+
+
+# AWS's "Recommended CloudWatch alarms for Amazon OpenSearch Service":
+# name -> (metric, statistic, period, evaluation periods, comparison, threshold).
+_RECOMMENDED = {
+    "OpenSearchHighCpu": ("CPUUtilization", "Maximum", 900, 3, ">=", 80),
+    "OpenSearchOldGenJvmPressure": (
+        "OldGenJVMMemoryPressure",
+        "Maximum",
+        60,
+        3,
+        ">=",
+        80,
+    ),
+    "OpenSearchWriteQueue": ("ThreadpoolWriteQueue", "Average", 60, 1, ">=", 100),
+    "OpenSearchSearchQueue": ("ThreadpoolSearchQueue", "Average", 60, 1, ">=", 500),
+}
+_MASTER = {
+    "OpenSearchMasterHighCpu": ("MasterCPUUtilization", "Maximum", 900, 3, ">=", 50),
+    "OpenSearchMasterJvmPressure": (
+        "MasterJVMMemoryPressure",
+        "Maximum",
+        60,
+        3,
+        ">=",
+        95,
+    ),
+    "OpenSearchMasterOldGenJvmPressure": (
+        "MasterOldGenJVMMemoryPressure",
+        "Maximum",
+        60,
+        3,
+        ">=",
+        80,
+    ),
+    "OpenSearchMasterUnreachable": (
+        "MasterReachableFromNode",
+        "Maximum",
+        300,
+        1,
+        "<",
+        1,
+    ),
+}
+_OPERATORS = {
+    ">=": "GreaterThanOrEqualToThreshold",
+    "<": "LessThanThreshold",
+}
+
+
+def _assert_alarm(alarm: dict[str, Any], expected: tuple[Any, ...]) -> None:
+    metric, statistic, period, periods, comparison, threshold = expected
+    assert alarm["Namespace"] == "AWS/ES"
+    assert alarm["MetricName"] == metric
+    assert (alarm["Statistic"], alarm["Period"]) == (statistic, period)
+    assert alarm["EvaluationPeriods"] == periods
+    assert alarm["ComparisonOperator"] == _OPERATORS[comparison]
+    assert alarm["Threshold"] == threshold
+    assert alarm["AlarmActions"]
+
+
+@pytest.mark.parametrize("count", [1, 2])
+def test_aws_recommended_opensearch_capacity_alarms(count: int) -> None:
+    # Old behaviour: no CPU, old-generation heap, node, shard, 5xx or queue
+    # alarm, and none on the dedicated masters of a multi-node domain.
+    alarms = _alarms({"opensearch_count": count})
+    for name, expected in _RECOMMENDED.items():
+        _assert_alarm(alarms[name], expected)
+    # Masters only exist on a multi-node domain (3 of them).
+    if count > 1:
+        for name, expected in _MASTER.items():
+            _assert_alarm(alarms[name], expected)
+    else:
+        assert not _MASTER.keys() & alarms.keys()
+    nodes = alarms["OpenSearchNodesMissing"]
+    assert (nodes["MetricName"], nodes["Statistic"]) == ("Nodes", "Minimum")
+    assert (nodes["Period"], nodes["ComparisonOperator"]) == (
+        86400,
+        "LessThanThreshold",
+    )
+    assert nodes["Threshold"] == (count + 3 if count > 1 else 1)
+    # 25 shards per GiB of heap per data node: r6g.large has 16 GiB, 8 of
+    # them heap.
+    shards = alarms["OpenSearchShardsHigh"]
+    assert shards["MetricName"] == "Shards.active"
+    assert shards["Threshold"] == 25 * 8 * count
+    share = alarms["OpenSearch5xxShare"]
+    (expression,) = [m for m in share["Metrics"] if "Expression" in m]
+    assert expression["Expression"] == "100 * FILL(errors, 0) / requests"
+    assert _metric_names(share) == {"5xx", "OpenSearchRequests"}
+    assert share["Threshold"] == 10
+
+
+@pytest.mark.parametrize(
+    ("instance", "heap_gib"),
+    [
+        ("r6g.large.search", 8),
+        ("m6g.large.search", 4),
+        ("c6g.xlarge.search", 4),
+        ("r6g.4xlarge.search", 32),
+        ("r6g.16xlarge.search", 32),  # the heap stops at 32 GiB
+        ("or1.2xlarge.search", 32),
+        ("t3.medium.search", 2),
+        ("i3.large.search", None),
+    ],
+)
+def test_opensearch_heap_follows_the_instance(
+    instance: str, heap_gib: int | None
+) -> None:
+    from iac.stacks.observability_stack import opensearch_heap_bytes
+
+    heap = opensearch_heap_bytes(instance)
+    assert heap == (heap_gib * 1024**3 if heap_gib else None)
+
+
+def test_an_unknown_instance_has_no_shard_alarm_and_says_so() -> None:
+    stack = _stack({"opensearch_instance": "m4.large.search"})
+    assert "OpenSearchShardsHigh" not in {
+        logical_id[:-8]
+        for logical_id in Template.from_stack(stack).find_resources(
+            "AWS::CloudWatch::Alarm"
+        )
+    }
+    Annotations.from_stack(stack).has_warning(
+        "*", Match.string_like_regexp("no OpenSearchShardsHigh alarm")
     )
 
 
@@ -571,21 +733,22 @@ def _widget_regions(template: Template) -> dict[str, str]:
     return {
         w["properties"]["title"]: w["properties"].get("region")
         for w in body["widgets"]
-        if "title" in w["properties"]
+        # Metric widgets: the alarm status widget lists alarms, of no region.
+        if "title" in w["properties"] and w["type"] == "metric"
     }
 
 
 @pytest.mark.parametrize(
-    ("context", "bedrock", "warned"),
+    ("context", "bedrock"),
     [
-        ({}, "TOKEN", False),  # the stack's own region (AWS::Region)
-        ({"bedrock_region": "us-west-2"}, "us-west-2", False),
-        ({"bedrock_region": "us-east-1", "network_mode": "public"}, "us-east-1", True),
+        ({}, "TOKEN"),  # the stack's own region (AWS::Region)
+        ({"bedrock_region": "us-west-2"}, "us-west-2"),
+        ({"bedrock_region": "us-east-1", "network_mode": "public"}, "us-east-1"),
     ],
     ids=["unset", "deploy-region", "other-region"],
 )
 def test_the_bedrock_widgets_read_the_bedrock_region(
-    context: dict[str, Any], bedrock: str, warned: bool
+    context: dict[str, Any], bedrock: str
 ) -> None:
     # Bedrock publishes its metrics where the calls go; the widgets watched
     # the deploy region, where a cross-region deployment's calls publish none.
@@ -598,13 +761,198 @@ def test_the_bedrock_widgets_read_the_bedrock_region(
         "us-west-2",
         "TOKEN",
     }
-    # An alarm cannot read another region's metrics: the synth says so.
-    # has_warning/has_no_warning assert on the jsii side: find_warning returns
+    # The throttling alarm reads the app's own metrics, published in the
+    # deploy region, so another bedrock_region needs no warning.
+    # has_no_warning asserts on the jsii side: find_warning returns
     # MetadataEntry objects, which a process that has not imported
     # aws_cdk.cloud_assembly_schema cannot deserialize.
-    annotations = Annotations.from_stack(stack)
-    message = Match.string_like_regexp("BedrockThrottling alarm watches the deploy")
-    if warned:
-        annotations.has_warning("*", message)
-    else:
-        annotations.has_no_warning("*", message)
+    Annotations.from_stack(stack).has_no_warning(
+        "*", Match.string_like_regexp("BedrockThrottling")
+    )
+
+
+def _dashboard_body(template: Template) -> dict[str, Any]:
+    (dashboard,) = template.find_resources("AWS::CloudWatch::Dashboard").values()
+    _, parts = dashboard["Properties"]["DashboardBody"]["Fn::Join"]
+    return json.loads("".join(p if isinstance(p, str) else "TOKEN" for p in parts))
+
+
+def test_every_alarm_notifies_when_it_fires_and_when_it_recovers() -> None:
+    # Old behaviour: no OK action, so the subscriber never heard that an
+    # alarm was over.
+    for context in ({}, {"opensearch_count": 2, "neptune_instances": 2}):
+        alarms = _alarms(context)
+        assert alarms
+        for name, alarm in alarms.items():
+            assert len(alarm["AlarmActions"]) == 1, name
+            assert alarm["OKActions"] == alarm["AlarmActions"], name
+
+
+@pytest.mark.parametrize("readers", [False, True])
+def test_the_dashboard_shows_every_store_and_the_alarm_status(readers: bool) -> None:
+    # Old behaviour: no AWS/ES, AWS/Neptune or AWS/DynamoDB series and no
+    # alarm widget, so store signals and app metrics could not be read side
+    # by side.
+    context = {"neptune_instances": 2} if readers else {}
+    template = _template(context)
+    body = _dashboard_body(template)
+    namespaces: dict[str, set[str]] = {}
+    neptune_roles: set[str] = set()
+    for widget in body["widgets"]:
+        for metric in widget["properties"].get("metrics", []):
+            if isinstance(metric[0], str) and metric[0].startswith("AWS/"):
+                namespaces.setdefault(metric[0], set()).add(
+                    widget["properties"]["title"]
+                )
+                if metric[0] == "AWS/Neptune" and "Role" in metric:
+                    neptune_roles.add(metric[metric.index("Role") + 1])
+    for namespace in ("AWS/ES", "AWS/Neptune", "AWS/DynamoDB"):
+        assert namespaces.get(namespace), namespace
+    assert neptune_roles == ({"WRITER", "READER"} if readers else {"WRITER"})
+    (status,) = [w for w in body["widgets"] if w["type"] == "alarm"]
+    # Every alarm of the stack is listed.
+    assert len(status["properties"]["alarms"]) == len(_alarms(context))
+
+
+def test_neptune_reader_alarms_with_a_reader_only() -> None:
+    # Old behaviour: the reader serves every query in non-dev but had no CPU
+    # alarm, and replica lag was not watched.
+    alarms = _alarms({"neptune_instances": 2})
+    cpu = alarms["NeptuneReaderHighCpu"]
+    dims = {d["Name"]: d["Value"] for d in cpu["Dimensions"]}
+    assert dims["Role"] == "READER"
+    assert (cpu["MetricName"], cpu["Threshold"], cpu["EvaluationPeriods"]) == (
+        "CPUUtilization",
+        90,
+        3,
+    )
+    lag = alarms["NeptuneReplicaLag"]
+    assert (lag["MetricName"], lag["Statistic"]) == (
+        "ClusterReplicaLagMaximum",
+        "Maximum",
+    )
+    assert lag["Threshold"] == 1000
+    assert not {"NeptuneReaderHighCpu", "NeptuneReplicaLag"} & _alarms().keys()
+
+
+def test_doc_status_read_throttles_and_system_errors_alarm() -> None:
+    from iac.stacks.observability_stack import DOC_STATUS_OPERATIONS
+
+    alarms = _alarms()
+    read = alarms["DocStatusReadThrottled"]
+    assert (read["MetricName"], read["Statistic"], read["Threshold"]) == (
+        "ReadThrottleEvents",
+        "Sum",
+        1,
+    )
+    errors = alarms["DocStatusSystemErrors"]
+    operations = {
+        {d["Name"]: d["Value"] for d in m["MetricStat"]["Metric"]["Dimensions"]}[
+            "Operation"
+        ]
+        for m in errors["Metrics"]
+        if "MetricStat" in m
+    }
+    # SystemErrors exists per operation only: one series per operation the
+    # registry calls (at most 10 metrics fit one alarm).
+    assert operations == set(DOC_STATUS_OPERATIONS)
+    assert len(operations) <= 10
+    source = (_PACKAGE / "adapters" / "doc_status" / "dynamodb.py").read_text(
+        encoding="utf-8"
+    )
+    names = re.findall(r"client\.(\w+)\(", source)
+    names += re.findall(r"get_paginator\(\"(\w+)\"\)", source)
+    called = {"".join(part.title() for part in name.split("_")) for name in names}
+    # Set-up and helper calls, not registry requests.
+    called -= {
+        "CreateTable",
+        "DescribeTable",
+        "GetPaginator",
+        "GetWaiter",
+        "UpdateTimeToLive",
+    }
+    assert called == set(DOC_STATUS_OPERATIONS)
+
+
+def test_failed_queries_alarm_on_their_share() -> None:
+    # Old behaviour: only latency alarmed, and a query that fails fast lowers
+    # the p90 instead of raising it.
+    from iac.stacks.observability_stack import (
+        QUERY_FAILED_METRIC,
+        QUERY_OUTCOME_METRICS,
+    )
+
+    for env in ("dev", "prod"):
+        alarm = _alarms({"env_name": env})["QueryFailures"]
+        (expression,) = [m for m in alarm["Metrics"] if "Expression" in m]
+        assert expression["Expression"] == "100 * FILL(failed, 0) / queries"
+        stats = {
+            m["Id"]: m["MetricStat"] for m in alarm["Metrics"] if "MetricStat" in m
+        }
+        assert stats["failed"]["Metric"]["MetricName"] == QUERY_FAILED_METRIC
+        assert stats["failed"]["Stat"] == "Sum"
+        assert stats["queries"]["Metric"]["MetricName"] == QUERY_LATENCY_METRIC
+        assert stats["queries"]["Stat"] == "SampleCount"
+        for stat in stats.values():
+            assert stat["Metric"]["Namespace"] == QUERY_NAMESPACE
+            assert stat["Metric"]["Dimensions"] == [
+                {"Name": "Environment", "Value": env}
+            ]
+        assert alarm["Threshold"] == 10
+        assert (alarm["EvaluationPeriods"], alarm["DatapointsToAlarm"]) == (3, 2)
+        assert alarm["TreatMissingData"] == "notBreaching"
+    body = json.dumps(_dashboard_body(_template()))
+    for name in QUERY_OUTCOME_METRICS:
+        assert f'"{QUERY_NAMESPACE}", "{name}"' in body
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="no surface emits the query outcome metrics yet: once one does, "
+    "this passes and the mark goes",
+)
+def test_the_query_outcome_metrics_are_emitted() -> None:
+    # The alarm and widget read names the package must emit: a drifted name
+    # would leave the alarm on a series nobody publishes.
+    from iac.stacks.observability_stack import QUERY_OUTCOME_METRICS
+
+    source = "\n".join(
+        path.read_text(encoding="utf-8") for path in sorted(_PACKAGE.rglob("*.py"))
+    )
+    for name in QUERY_OUTCOME_METRICS:
+        assert f'"{name}"' in source, name
+
+
+def test_the_query_task_has_its_memory_alarm_and_widget() -> None:
+    # Old behaviour: only the ingestion task's family was watched; a run-eval
+    # task killed for memory went unnoticed.
+    stack = _stack()
+    template = Template.from_stack(stack)
+    alarms = {
+        logical_id[:-8]: a["Properties"]
+        for logical_id, a in template.find_resources("AWS::CloudWatch::Alarm").items()
+    }
+    families = {}
+    for name in ("IngestionTaskMemory", "QueryTaskMemory"):
+        metrics = [
+            m["MetricStat"]["Metric"]
+            for m in alarms[name]["Metrics"]
+            if "MetricStat" in m
+        ]
+        assert {m["MetricName"] for m in metrics} == {
+            "MemoryUtilized",
+            "MemoryReserved",
+        }
+        families[name] = {
+            json.dumps(d["Value"])
+            for m in metrics
+            for d in m["Dimensions"]
+            if d["Name"] == "TaskDefinitionFamily"
+        }
+        assert (alarms[name]["Threshold"], alarms[name]["EvaluationPeriods"]) == (90, 3)
+    assert len(families["QueryTaskMemory"]) == 1
+    assert families["QueryTaskMemory"] != families["IngestionTaskMemory"]
+    titles = {
+        w["properties"].get("title") for w in _dashboard_body(template)["widgets"]
+    }
+    assert "Query task memory and CPU (% of reserved)" in titles
