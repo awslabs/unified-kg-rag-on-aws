@@ -319,6 +319,28 @@ async def test_the_cache_is_keyed_by_the_extraction_language() -> None:
     assert languages == ["English"]
 
 
+async def test_the_cache_is_keyed_by_the_namespace() -> None:
+    # Low (rv24): the key was the question alone, so a chain serving several
+    # namespaces (the console, MCP) let one tell by latency that another
+    # was asked the same question.
+    factory = _Factory()
+    chain = _chain(_config(), factory)
+    await _route(chain, "local", suffix="tenant-a")
+    await _route(chain, "local", suffix="tenant-b")
+    await _route(chain, "local", suffix="tenant-a")
+    assert factory.counts[EntityExtractionPrompt] == 2
+    # Within an extraction scope (run-eval's), an arm on another namespace
+    # shares the run's extraction: the pair compares the same keywords.
+    from unified_kg_rag.application.retrieval.rag_chain import (
+        extraction_cache_scope,
+    )
+
+    with extraction_cache_scope("run"):
+        await _route(chain, "local", suffix="tenant-a")
+        await _route(chain, "local", suffix="tenant-b")
+    assert factory.counts[EntityExtractionPrompt] == 3
+
+
 def test_the_cache_is_keyed_by_the_prompt_text() -> None:
     plain = GraphRAGChain(config=_config())
     custom = GraphRAGChain(

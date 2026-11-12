@@ -259,8 +259,10 @@ class RetryConfig(BaseModel):
             "between them (0.25-0.5 s, then 0.5-1 s, doubling up to 2-4 s), so"
             " a short throttling burst is waited out. A hung cluster fails a "
             "query after about query_store_max_attempts x "
-            "search.store_timeout_seconds. Neptune query requests are not "
-            "retried."
+            "search.store_timeout_seconds. A Neptune or Gremlin query read "
+            "that failed leaving the store usable (throttling, a memory "
+            "limit) is retried alike; one stopped at its time limit, a "
+            "timeout and a lost connection are not."
         ),
     )
     judge_max_attempts: int = Field(

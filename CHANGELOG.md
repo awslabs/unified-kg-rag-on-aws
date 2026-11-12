@@ -170,8 +170,9 @@ stored is read again: follow *Upgrading* in order.
 - `indexing.opensearch.index_settings` refuses the `knn` keys and a setting spelled both with and without `index.`
   (set ef_search with `vector_search.ef_search`); the `"NONE"` alias of `aws.s3.encryption.encryption_type` is gone
   (use `BUCKET_DEFAULT`) (#216, #408).
-- Fusion buckets: a simple search's is `vector_all` (an `opensearch_all` weight applies to it with a WARNING); a weight
-  on `opensearch_community_reports`, or on 0.2.3's `opensearch_candidate_community_reports` and
+- Fusion buckets: a simple search fuses one per index (`simple_text_units`, `simple_entities`, `simple_relationships`,
+  `simple_claims`, `simple_community_reports`, `simple_summary_nodes`); a weight on its former `opensearch_all`, on
+  `opensearch_community_reports`, or on 0.2.3's `opensearch_candidate_community_reports` and
   `opensearch_expanded_community_reports` (in its template), is dropped with a WARNING, as no strategy emits them
   (#584, #588). A `lightrag_linked_chunks` weight weighs only the chunks the matched entities cite; the
   relationships' chunks are their own `lightrag_relation_chunks` stream, 1.0 unless set (#521, #530).
@@ -403,7 +404,7 @@ From 0.2.3; the sub-list after it is for a `main` checkout since. The runbook's
    naming the switch) and `auto` leaves them out; `local` answers as before (#612).
 4. A custom `fusion_weights.lightrag_linked_chunks` weight: set `lightrag_relation_chunks` too (usually the same
    value) to keep weighting every LightRAG graph chunk; mix and hybrid recall are sensitive to it (#521, #530).
-   Rename an `opensearch_all` weight to `vector_all` and drop `opensearch_community_reports`,
+   Drop an `opensearch_all` weight (simple's buckets are per index: `simple_<index>`), `opensearch_community_reports`,
    `opensearch_candidate_community_reports` and `opensearch_expanded_community_reports` (#584, #588).
 5. A role with a custom IAM policy needs `dynamodb:BatchGetItem`, `BatchWriteItem`, `Query` and `DescribeTable` on
    the registry table (`UpdateTimeToLive` where the library creates it), `bedrock:ApplyGuardrail` on the guardrail,
@@ -1218,8 +1219,10 @@ From a `main` checkout (formats and keys no release had):
   comparison names each run's rerank failures and degraded answers with their rates and warns louder (`NOT
   COMPARABLE AS IS`) when the lowest and highest rate differ beyond chance (two-sided Fisher's exact p below 0.05),
   with a note when they differ within it (#645).
-- Query deadline: `search.query_timeout_seconds` bounds every query and stream (which must send a first chunk within
-  `search.model_timeout_seconds`) and raises `QueryTimeoutError` (`run-rag` exits 1, `run-eval` counts a failure);
+- Query deadline: `search.query_timeout_seconds` bounds every query and stream, from its admission on (the one
+  build-record read of a query, where a stalled store held a new chain's first query before the deadline began); a
+  stream must send a first chunk within `search.model_timeout_seconds`. Past it the query raises
+  `QueryTimeoutError` (`run-rag` exits 1, `run-eval` counts a failure);
   query-time model calls get their own clients (`search.model_timeout_seconds`, `model_max_attempts`; `backend:
   local` presets 300 s and a 900 s deadline), and Bedrock CountTokens uses them. No retry, OpenSearch request or
   global map call starts past the deadline; global map calls are cancelled with the query (#522, #530, #567, #579).
@@ -1523,7 +1526,8 @@ From a `main` checkout (formats and keys no release had):
   its last object is not repaired.
 - A query is translated exactly when it is written in another language than the index language (or the requested
   `target_language`): a Korean question on an English index is now searched in English (one fast-model call), and an
-  English question after a ko→en ingest no longer pays a translator call.
+  English question after a ko→en ingest no longer pays a translator call. A query whose script and words do not tell
+  its language (a name or keywords: "Acme Corp", "GPT-4o") is searched as written, on any index.
 - The query translation, the follow-up rewrite and the community relevance rating answer JSON: `{"translation": ...}`,
   `{"question": ...}`, and MS GraphRAG's `{"reason": ..., "rating": 0-5}` (`rate_prompt.py`; the rating is divided by
   5, so `relevance_threshold: 0.2` is still a rating of 1 or more). The router answers the strategy name, read from
@@ -1613,10 +1617,10 @@ From a `main` checkout (formats and keys no release had):
   counts follow-ups by `report_selection` (#323, #347, #541, #567).
 - `auto` routes with the fast model, falls back to the first routable strategy, and starts the extractions its
   strategies read alongside the router call (one round trip fewer; the unread one still runs and is billed); query
-  entities and keywords are cached (`search.query_extraction_cache_size`, 1024; 0 turns it off), so `--repeats` and
-  comparison arms pay the extraction once; short-answer calls ask for `search.output_ceilings` (and
-  `evaluation.answer_span_output_ceiling`) tokens, never below the thinking budget plus 1024 (#125, #132, #212,
-  #224, #347, #525, #530).
+  entities and keywords are cached (`search.query_extraction_cache_size`, 1024; 0 turns it off) per index namespace,
+  so `--repeats` and comparison arms (on any namespace) pay the extraction once; short-answer calls ask for
+  `search.output_ceilings` (and `evaluation.answer_span_output_ceiling`) tokens, never below the thinking budget plus
+  1024 (#125, #132, #212, #224, #347, #525, #530).
 - `auto` may route a question that chains facts through an entity it does not name to `iterative` (over `mix`),
   about 10 s slower at the median for those; it starts the extractions a wrapper's base reads alongside the router.
   Leave `iterative` out of `search.auto_routable_strategies` to opt out (#598).
@@ -1810,8 +1814,9 @@ Queries and retrieval.
   schema (`filter_fields_for`) (#567).
 - Earlier turns' entities no longer leak into a follow-up, and `memory.max_conversation_age_hours` is enforced
   (#176, #218).
-- Korean BM25 recall, CJK fuzziness and NFC normalization in retrieval (#175, #177); MMR diversity compares Han,
-  Hangul and Kana words by character bigrams (#567).
+- Korean BM25 recall, CJK fuzziness and NFC normalization in retrieval (#175, #177); MMR diversity compares words
+  as entity linking does (`word_terms`: punctuation ignored, and Han, Hangul, Kana, Thai, Lao, Myanmar, Khmer and Tai
+  runs by character bigrams), so a Thai or Khmer near-duplicate is no longer kept as distinct (#567).
 - A query is translated only when ingestion translates or the caller asks (`RAGInput.target_language`), and its
   entities and keywords are extracted in the index language even when the caller asks for another: only the text
   units carry the requested language, so they matched no entity, relationship or report (#567, #583, #619).
@@ -1827,8 +1832,10 @@ Queries and retrieval.
   a query for about half an hour (#522).
 - Neptune reconnects after a closed websocket, a lost connection no longer leaks threads or hangs a write, and
   concurrent queries share one connection attempt (#258, #261, #263, #266, #267).
-- A short OpenSearch throttling burst no longer fails a query or a bulk write (#263, #264); a long question no
-  longer fails its lexical search, and long list filters no longer multiply searches (#258, #260).
+- A short OpenSearch throttling burst no longer fails a query or a bulk write (#263, #264), and a throttled Neptune
+  or Gremlin read no longer empties a query's graph expansion: it is retried within the query deadline, as an
+  OpenSearch query request is; a long question no longer fails its lexical search, and long list filters no longer
+  multiply searches (#258, #260).
 - The text-units section is no longer empty for a corpus translated into five or more languages (#264).
 - The answer context stays within `max_tokens`, a small budget no longer yields an empty context, and CJK sections
   truncate at a character (#247, #258); an entity hit renders as `Entity` / `Type` / `Description` lines and items
@@ -1836,12 +1843,15 @@ Queries and retrieval.
 - A relationship without a description reached the answer prompt as `Relationship: A -> B`: the relationships index
   stores the type (`RELATED_TO` when untyped; not a filter key) and the line reads `A -[TYPE]-> B` (#562).
 - With MMR on, `local` and `drift` keep every reserved text-chunk slot (#247).
-- `simple` no longer ranks hits of different indexes by raw score; local and LightRAG incident-edge expansion keep
-  no arbitrary hub edges; LightRAG keeps every typed edge between two entities; `hybrid` without keywords warns
-  (#295, #317).
+- `simple` no longer ranks hits of different indexes by raw score, and each index brings its own `top_k` ×
+  `retrieval_multiplier` candidates, fused and reranked as one pool before the `top_k` cut (one search kept that many
+  across every index, two or three each, and lost to `naive`); it reads the summary tree where RAPTOR is built.
+  Local and LightRAG incident-edge expansion keep no arbitrary hub edges; LightRAG keeps every typed edge between two
+  entities; `hybrid` without keywords warns (#295, #317).
 - LightRAG `mix`/`hybrid` context includes the chunks the matched relationships cite (offline hybrid one-hop
   gold-chunk recall 0.30, now 0.86, 0.96 with rerank), and incremental and full builds pick the same chunks (#521,
-  #530).
+  #530); the pick runs on a worker thread, as PPR does: on a corpus whose hub entities cite thousands of units it held
+  the event loop for up to seconds a query, stalling every concurrent one.
 - An answer the output guardrail blocks writes no conversation memory, as a blocked query writes none (the refusal
   was saved and read by the next turn's follow-up rewrite).
 - `structured` refused on a namespace without the graph (a `raptor`-only one) names the methodologies that build it
@@ -2117,7 +2127,8 @@ Deployment (CDK).
   #381, #479, #483, #490, #581). See [filters](docs/reference/filters.md).
 - A guardrail-blocked answer returns no sources, search results or model-written query texts, and the query span
   records only the screened query (#345). With `check_output`, the rewritten and translated query, its entities and
-  LightRAG keywords (`processed_query`, `search_results.query`) are screened as model output.
+  LightRAG keywords (`processed_query`, `search_results.query`) are screened as model output, alongside the answer's
+  check (with the synthesized results, not one round trip after another).
 - IaC: queries run under a read-only role that cannot write through a `_search` path, lists only `eval/` and has no
   DynamoDB access; `bedrock:ApplyGuardrail` is granted on the configured guardrail only; unused Neptune, S3 delete
   and `GetInferenceProfile` actions are dropped, and private-mode endpoint policies admit only the account (#204,

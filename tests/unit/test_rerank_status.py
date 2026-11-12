@@ -409,12 +409,13 @@ def _simple(
     )
 
 
-async def test_simple_search_emits_the_vector_all_bucket() -> None:
-    # The bucket search.fusion.fusion_weights keys a simple search's results
-    # by (renamed from opensearch_all: any vector store serves it).
+async def test_simple_search_emits_one_bucket_per_index() -> None:
+    # The buckets search.fusion.fusion_weights keys a simple search's
+    # results by: one per index it searched.
     strategy = _simple(_FakeRerankFactory(_FakeReranker()))
     buckets = await strategy._retrieve_documents(SearchQuery(query="q"))
-    assert list(buckets) == ["vector_all"]
+    assert "simple_text_units" in buckets
+    assert all(name.startswith("simple_") for name in buckets)
 
 
 async def test_strategy_reports_status_in_search_result_metadata() -> None:

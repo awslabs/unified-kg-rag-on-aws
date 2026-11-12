@@ -20,7 +20,7 @@ from unified_kg_rag.ports.model_factory import RerankFactoryPort
 from unified_kg_rag.shared import RerankModelError, get_logger
 from unified_kg_rag.shared.usage import record_rerank_call, rerank_search_units
 from unified_kg_rag.shared.utils import compute_hash
-from unified_kg_rag.shared.utils.scripts import has_dense_script
+from unified_kg_rag.shared.utils.scripts import word_terms
 
 logger = get_logger(__name__)
 
@@ -56,20 +56,12 @@ def _cause_name(exc: BaseException) -> str:
 
 
 def _redundancy_terms(text: str) -> frozenset[str]:
-    """The terms MMR compares two results by (Jaccard similarity).
-
-    Whitespace words, except that a word holding a Han, Hangul or Kana letter
-    is split into its character bigrams: those scripts need no spaces, so a
-    Japanese or Chinese sentence was one "word", and a near-duplicate that
-    differed by one character shared nothing with its original.
-    """
-    terms: set[str] = set()
-    for word in text.lower().split():
-        if has_dense_script(word) and len(word) > 1:
-            terms.update(word[i : i + 2] for i in range(len(word) - 1))
-        else:
-            terms.add(word)
-    return frozenset(terms)
+    """The terms MMR compares two results by (Jaccard similarity): the
+    casefolded text's ``word_terms``, a run of a script written without
+    spaces (Han, Hangul, Kana, Thai, Khmer...) as its character bigrams,
+    since a Japanese or Thai sentence is one whitespace "word", and a
+    near-duplicate differing by one character shared nothing with it."""
+    return word_terms(text.casefold())
 
 
 class RerankTrace:

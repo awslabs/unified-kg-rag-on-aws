@@ -787,6 +787,31 @@ async def test_the_answer_cites_numbered_sections_and_their_documents(
     assert [s["source"] for s in out.sources] == ["tu-1", "e-1"]
 
 
+@pytest.mark.parametrize("stream", [False, True])
+async def test_each_sections_source_is_built_once_a_query(
+    config: Config, monkeypatch: pytest.MonkeyPatch, stream: bool
+) -> None:
+    # perf (rv24): the citations and the sources each built every section's
+    # source entry, twice a query over the widest contexts.
+    chain, _, _ = _chain(config)
+    built: list[str] = []
+    section_source = GraphRAGChain._section_source
+
+    def counting(section: Any, results: Any) -> Any:
+        built.append(str(section.source_id))
+        return section_source(section, results)
+
+    monkeypatch.setattr(GraphRAGChain, "_section_source", staticmethod(counting))
+    if stream:
+        chunks = [chunk async for chunk in chain.astream(_query())]
+        assert chunks
+    else:
+        out = await chain.ainvoke(_query())
+        assert [s["source"] for s in out.sources] == ["tu-1", "e-1"]
+        assert [c.marker for c in out.citations] == [1, 2]
+    assert sorted(built) == ["e-1", "tu-1"]
+
+
 # --- citations per strategy ------------------------------------------------
 
 _DEFAULT_OFF = {SearchStrategy.GLOBAL, SearchStrategy.DRIFT}

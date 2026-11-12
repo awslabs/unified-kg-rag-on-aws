@@ -18,7 +18,7 @@ from collections.abc import (
     Collection,
     Iterator,
 )
-from contextlib import AbstractContextManager, aclosing, contextmanager, nullcontext
+from contextlib import AbstractContextManager, aclosing, nullcontext
 from typing import Any, Literal, TypeVar, cast
 
 from langchain_core.exceptions import OutputParserException
@@ -107,6 +107,15 @@ from unified_kg_rag.application.retrieval import (
     filter_validation,
     methodology_check,
     query_processing,
+)
+
+# The extraction cache's scope lives with the extraction key; re-exported
+# for the evaluation runners.
+from unified_kg_rag.application.retrieval.query_processing import (
+    _EXTRACTION_SCOPE,
+)
+from unified_kg_rag.application.retrieval.query_processing import (
+    extraction_cache_scope as extraction_cache_scope,
 )
 from unified_kg_rag.domain.ingestion.cache_keys import index_language
 from unified_kg_rag.domain.ingestion.methodologies import NamespaceHoldings
@@ -202,7 +211,12 @@ from unified_kg_rag.shared.utils import (
     strip_invisible,
     text_digest,
 )
-from unified_kg_rag.shared.utils.concurrency import discard, gather_bounded, settle
+from unified_kg_rag.shared.utils.concurrency import (
+    cancel_on_exit,
+    discard,
+    gather_bounded,
+    settle,
+)
 
 logger = get_logger(__name__)
 
@@ -1222,19 +1236,29 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             )
 
     async def _extract_query_entities(
-        self, query: str, target_language: str, config: RunnableConfig | None
+        self,
+        query: str,
+        target_language: str,
+        config: RunnableConfig | None,
+        *,
+        namespace: str | None = None,
     ) -> list[str]:
         """``query_processing.extract_query_entities``."""
         return await query_processing.extract_query_entities(
-            self, query, target_language, config
+            self, query, target_language, config, namespace=namespace
         )
 
     def _extraction_key(
-        self, prompt_class: type[BasePrompt], query: str, target_language: str
+        self,
+        prompt_class: type[BasePrompt],
+        query: str,
+        target_language: str,
+        *,
+        namespace: str | None = None,
     ) -> tuple[str, ...]:
         """``query_processing.extraction_key``."""
         return query_processing.extraction_key(
-            self, prompt_class, query, target_language
+            self, prompt_class, query, target_language, namespace=namespace
         )
 
     def _cached_extraction(self, key: tuple[str, ...]) -> Any:
@@ -1250,10 +1274,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         query: str,
         target_language: str,
         config: RunnableConfig | None = None,
+        *,
+        namespace: str | None = None,
     ) -> tuple[list[str], list[str]]:
         """``query_processing.extract_dual_keywords``."""
         return await query_processing.extract_dual_keywords(
-            self, query, target_language, config
+            self, query, target_language, config, namespace=namespace
         )
 
     async def _load_memory_step(self, state: dict[str, Any]) -> dict[str, Any]:
@@ -1347,9 +1373,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         )
 
         resolved_strategy: SearchStrategy = state["resolved_strategy"]
-        # What the namespace holds (cached since the methodology check): a
+        # What the namespace holds (read when the query was admitted): a
         # strategy reads only those of its optional indexes it holds.
-        held = await methodology_check.namespace_artifacts(self, state.get("suffix"))
+        held = state.get("held_artifacts")
+        if held is None:
+            held = await methodology_check.namespace_artifacts(
+                self, state.get("suffix")
+            )
         search_query = SearchQuery(
             query=processed.final_query,
             search_type=state.get("search_type", SearchType.HYBRID),
@@ -1867,22 +1897,45 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         return state
 
     @staticmethod
+    def _section_sources(
+        state: dict[str, Any], optimized: OptimizedContext
+    ) -> list[Source]:
+        """The reported source of each section of ``optimized``, the answer
+        context (``_section_source``), in section order: built once a query
+        and kept in ``state``, as both its citations and its sources read
+        them (each built them all, the hybrid scorer's widest contexts
+        twice)."""
+        kept = state.get(_SECTION_SOURCES)
+        if kept is not None and kept[0] is optimized:
+            entries: list[Source] = kept[1]
+            return entries
+        results: list[RetrievalResult] = state["search_results"].results
+        entries = [
+            GraphRAGChain._section_source(section, results)
+            for section in optimized.sections
+        ]
+        state[_SECTION_SOURCES] = (optimized, entries)
+        return entries
+
+    @staticmethod
     def _context_citations(state: dict[str, Any]) -> list[Citation]:
         """One citation per numbered section of the answer context, in
         marker order (documents of graph sections not yet resolved)."""
         optimized: OptimizedContext | None = state.get("optimized_context")
         if optimized is None or GraphRAGChain._context_is_empty(state):
             return []
-        results: list[RetrievalResult] = state["search_results"].results
-        cited: list[Citation] = []
-        for section in sorted(
-            (s for s in optimized.sections if s.marker is not None),
-            key=lambda s: s.marker or 0,
-        ):
-            entry = GraphRAGChain._section_source(section, results)
-            assert section.marker is not None
-            cited.append(citations.citation_from_entry(section.marker, entry))
-        return cited
+        entries = GraphRAGChain._section_sources(state, optimized)
+        numbered = sorted(
+            (
+                (section.marker, entry)
+                for section, entry in zip(optimized.sections, entries, strict=True)
+                if section.marker is not None
+            ),
+            key=lambda pair: pair[0],
+        )
+        return [
+            citations.citation_from_entry(marker, entry) for marker, entry in numbered
+        ]
 
     async def _answer_with_citations_step(
         self, state: dict[str, Any], config: RunnableConfig | None = None
@@ -1901,6 +1954,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             raise
         await lineage
         answered["citations"] = read_state["citations"]
+        if _SECTION_SOURCES in read_state:
+            answered[_SECTION_SOURCES] = read_state[_SECTION_SOURCES]
         return answered
 
     async def _citations_step(self, state: dict[str, Any]) -> dict[str, Any]:
@@ -2000,7 +2055,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             sources = []
         else:
             sources = GraphRAGChain._sources_from_sections(
-                optimized.sections, sr.results
+                optimized.sections,
+                sr.results,
+                entries=GraphRAGChain._section_sources(state, optimized),
             )
 
         metadata = {
@@ -2102,27 +2159,33 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
 
     @staticmethod
     def _sources_from_sections(
-        sections: list[ContextSection], results: list[RetrievalResult]
+        sections: list[ContextSection],
+        results: list[RetrievalResult],
+        *,
+        entries: list[Source] | None = None,
     ) -> list[Source]:
         """Map the budgeter's selected sections back to their results.
 
         Reported in retrieval-rank order (the selection itself is grouped by
         section type). A section without a usable ``result_index`` (a custom
         token manager) is reported from the section alone. Synthesized results
-        are skipped (see ``_format_output_step``).
+        are skipped (see ``_format_output_step``). ``entries``: each
+        section's source, already built (``_section_sources``).
         """
+        if entries is None:
+            entries = [GraphRAGChain._section_source(s, results) for s in sections]
 
-        def _rank(section: ContextSection) -> int:
-            index = section.result_index
+        def _rank(pair: tuple[ContextSection, Source]) -> int:
+            index = pair[0].result_index
             return index if index is not None else len(results)
 
         sources: list[Source] = []
-        for section in sorted(sections, key=_rank):
+        for section, entry in sorted(zip(sections, entries, strict=True), key=_rank):
             if GraphRAGChain._is_synthesized(
                 GraphRAGChain._section_result(section, results).metadata
             ):
                 continue
-            sources.append(GraphRAGChain._section_source(section, results))
+            sources.append(entry)
         return sources
 
     @staticmethod
@@ -2260,7 +2323,11 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         *,
         search: bool,
     ) -> RAGOutput | SearchOutput:
-        rag_input, input_dict = await self._admit_query(input)
+        # Fixed when the query starts: its admission (the build-record read
+        # of the methodology check, a store round trip) counts too.
+        deadline = _QueryDeadline(self.config.search.query_timeout_seconds)
+        async with deadline.scope():
+            rag_input, input_dict = await self._admit_query(input)
         # The root span of a query trace: the strategy, retrieval, fusion,
         # rerank, context build and model calls nest under it.
         with (
@@ -2277,7 +2344,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             token = _LEFTOVER_EXTRACTIONS.set(leftovers)
             try:
                 result = await self._ainvoke(
-                    rag_input, input_dict, config, span, search
+                    rag_input, input_dict, config, span, search, deadline
                 )
             except BaseException:
                 await discard(leftovers)
@@ -2360,6 +2427,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         config: RunnableConfig | None,
         span: observability.SpanHandle,
         search: bool,
+        deadline: "_QueryDeadline",
     ) -> RAGOutput | SearchOutput:
         tokens = bind_contextvars(
             query_id=uuid.uuid4().hex[:12], conversation_id=rag_input.conversation_id
@@ -2371,7 +2439,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             capture if self._ground_outputs else None
         )
         try:
-            async with _QueryDeadline(self.config.search.query_timeout_seconds):
+            async with deadline:
                 # Before the first model call (the input guardrail's).
                 await self._arequire_namespace(rag_input.suffix)
                 blocking = await self._screen_input(
@@ -2394,12 +2462,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                     input_dict, config
                 )
                 answer_blocked = False
+                plan_texts: dict[str, str | None] = {}
+                verdict, evidence_records = await self._screen_outputs_of(
+                    output, guard_records, plan_texts, capture[-1] if capture else None
+                )
                 if isinstance(output, RAGOutput):
-                    verdict = await self._screen_output(
-                        output.answer,
-                        guard_records,
-                        grounding=capture[-1] if capture else None,
-                    )
+                    assert verdict is not None
                     screened = verdict.text != output.answer
                     output.answer = verdict.text
                     if verdict.grounding is not None:
@@ -2418,11 +2486,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                         self._clear_evidence_metadata(output)
                     elif screened:
                         self._mark_citations(output)
-                plan_texts: dict[str, str | None] = {}
-                output.search_results = await self._screen_synthesized(
-                    output.search_results, guard_records, plan_texts=plan_texts
-                )
-                await self._screen_query_texts(output, guard_records)
+                if not answer_blocked:
+                    # A refused answer keeps none of what they screened.
+                    guard_records.extend(evidence_records)
                 if isinstance(output, RAGOutput):
                     self._refresh_screened_copies(output, plan_texts)
                 if guard_records:
@@ -2648,6 +2714,47 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         rag_input.history = turns
         input_dict["history"] = [t.model_dump() for t in turns]
 
+    async def _screen_outputs_of(
+        self,
+        output: RAGOutput | SearchOutput,
+        records: list[dict[str, Any]],
+        plan_texts: dict[str, str | None],
+        grounding: GroundingContext | None,
+    ) -> tuple[GuardVerdict | None, list[dict[str, Any]]]:
+        """Screen ``output``'s model-written text at once: the answer
+        (:meth:`_screen_output`, its verdict returned and recorded on
+        ``records``; ``None`` for a search), the synthesized search results
+        (:meth:`_screen_synthesized`) and the query texts
+        (:meth:`_query_text_screening`), which are applied to ``output``.
+        The last two do not depend on the answer's verdict, so they no longer
+        wait for it: one guardrail round trip after the answer, not three.
+        Their records are returned apart, for the caller to keep unless the
+        answer was refused (its refusal drops what they screened)."""
+        evidence: list[dict[str, Any]] = []
+        queried: list[dict[str, Any]] = []
+
+        async def answer() -> GuardVerdict | None:
+            if not isinstance(output, RAGOutput):
+                return None
+            return await self._screen_output(
+                output.answer, records, grounding=grounding
+            )
+
+        tasks = (
+            asyncio.ensure_future(answer()),
+            asyncio.ensure_future(
+                self._screen_synthesized(
+                    output.search_results, evidence, plan_texts=plan_texts
+                )
+            ),
+            asyncio.ensure_future(self._query_text_screening(output, queried)),
+        )
+        async with cancel_on_exit(tasks):
+            verdict, synthesized, screened = await asyncio.gather(*tasks)
+        output.search_results = synthesized
+        self._apply_query_texts(output, screened)
+        return verdict, evidence + queried
+
     async def _screen_output(
         self,
         answer: str,
@@ -2837,18 +2944,17 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             }
         )
 
-    async def _screen_query_texts(
+    async def _query_text_screening(
         self, output: RAGOutput | SearchOutput, records: list[dict[str, Any]]
-    ) -> None:
-        """Screen ``output``'s model-written query texts (the rewritten and
-        translated query, the entities and LightRAG keywords, and the search
-        query built from them; ``_PROCESSED_QUERY_MODEL_TEXT``) as a
-        synthesized result is: masked, or left out when refused (a refused
-        searched query reads as the original). The original query is the
-        user's own, screened as input. One check reads them all; only when
-        it intervenes is each checked on its own."""
+    ) -> dict[str, str | None] | None:
+        """What the output guardrail makes of ``output``'s model-written
+        query texts (the rewritten and translated query, the entities and
+        LightRAG keywords, and the search query built from them;
+        ``_PROCESSED_QUERY_MODEL_TEXT``), screened as a synthesized result
+        is (``_screen_texts``; ``None``: nothing to replace). The original
+        query is the user's own, screened as input."""
         if not self._screen_outputs:
-            return
+            return None
         processed, query = output.processed_query, output.search_results.query
         original = processed.original_query
         texts = [
@@ -2861,9 +2967,19 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             )
             if text != original
         ]
-        screened = await self._screen_texts(texts, records)
+        return await self._screen_texts(texts, records)
+
+    @staticmethod
+    def _apply_query_texts(
+        output: RAGOutput | SearchOutput, screened: dict[str, str | None] | None
+    ) -> None:
+        """``output``'s query texts as screened (``_query_text_screening``):
+        masked, or left out when refused (a refused searched query reads as
+        the original)."""
         if screened is None:
             return
+        processed, query = output.processed_query, output.search_results.query
+        original = processed.original_query
         output.processed_query = _replace_query_texts(
             processed, _PROCESSED_QUERY_MODEL_TEXT, screened, refused=original
         )
@@ -2935,11 +3051,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         rag_input.suffix = input_dict["suffix"] = resolve_namespace(
             self.config, rag_input.suffix
         )
-        await self.acheck_methodology(rag_input.search_strategy, rag_input.suffix)
-        # What auto routes among (cached since the check).
-        input_dict["held_artifacts"] = await methodology_check.namespace_artifacts(
-            self, rag_input.suffix
+        # What auto routes among and the strategy reads: one read of the
+        # build record a query (a failed one is not kept, nor paid twice).
+        holdings = await methodology_check.check_strategy_holdings(
+            self, rag_input.search_strategy, rag_input.suffix
         )
+        input_dict["held_artifacts"] = holdings.artifacts
         # Filter keys after the methodology check, against the indexes the
         # namespace holds: a key only an index it lacks declares would be
         # dropped everywhere.
@@ -3077,12 +3194,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
     ) -> AsyncGenerator[str, None]:
         """The answer chunks of :meth:`astream`; the speculative extractions
         the route did not read go to ``leftovers``."""
-        rag_input, input_dict = await self._admit_query(input)
         search_config = self.config.search
         deadline = _QueryDeadline(
             search_config.query_timeout_seconds,
             first_chunk_seconds=search_config.model_timeout_seconds,
         )
+        # Admitted within the deadline (_query).
+        async with deadline.scope():
+            rag_input, input_dict = await self._admit_query(input)
         chunks: list[str] = []
         delivered = False
         # A refused answer, like a refused query, writes no memory.
@@ -3230,29 +3349,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             await self._save_memory(self._format_output_step(state), rag_input)
 
 
-# The query extraction cache's scope (``extraction_cache_scope``): part of
-# every entry's key, so the queries of one scope share no extraction with
-# those of another ("" outside one).
-_EXTRACTION_SCOPE: contextvars.ContextVar[str] = contextvars.ContextVar(
-    "kg_rag_extraction_scope", default=""
-)
-
-
-@contextmanager
-def extraction_cache_scope(scope: str) -> Iterator[None]:
-    """Key the query extractions cached inside the block by ``scope`` too.
-
-    ``run-eval --repeats`` answers each repeat in a scope of its own, so a
-    repeat extracts the query's entities and keywords again instead of
-    reusing the first repeat's (the repeats then sample the extraction's
-    run-to-run variance), while the arms of one repeat still share them.
-    Tasks started inside the block inherit it.
-    """
-    token = _EXTRACTION_SCOPE.set(scope)
-    try:
-        yield
-    finally:
-        _EXTRACTION_SCOPE.reset(token)
+# The state key of the answer context's section sources, with the context
+# they were built from (``GraphRAGChain._section_sources``).
+_SECTION_SOURCES = "_section_sources"
 
 
 class _ExtractionCache:

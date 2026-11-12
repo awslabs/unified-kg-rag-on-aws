@@ -18,16 +18,28 @@ from unified_kg_rag.domain.models import (
     SearchStrategy,
 )
 from unified_kg_rag.domain.retrieval.index_prefixes import (
-    all_index_prefixes,
     configured_index_prefixes,
     held_artifacts_of,
     held_index_prefixes,
+    index_artifacts,
+    readable_artifacts,
 )
 from unified_kg_rag.domain.retrieval.source_fields import id_list
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import text_digest
+from unified_kg_rag.shared.utils.concurrency import gather_or_cancel
 
 logger = get_logger(__name__)
+
+# The fusion bucket of each index (search.fusion.fusion_weights keys).
+_BUCKETS: dict[IndexArtifact | None, str] = {
+    IndexArtifact.TEXT_UNITS: "simple_text_units",
+    IndexArtifact.ENTITIES: "simple_entities",
+    IndexArtifact.RELATIONSHIP_VECTORS: "simple_relationships",
+    IndexArtifact.CLAIMS: "simple_claims",
+    IndexArtifact.COMMUNITY_REPORTS: "simple_community_reports",
+    IndexArtifact.SUMMARY_TREE: "simple_summary_nodes",
+}
 
 
 @register_strategy(
@@ -40,8 +52,12 @@ class SimpleSearchStrategy(BaseSearchStrategy):
     methodology = Methodology.GRAPHRAG
 
     def filtered_index_prefixes(self, strategy: SearchStrategy) -> list[str]:
-        # Every index the pipeline builds (_apply_claim_gate).
-        return configured_index_prefixes(self.config)
+        # Every index the pipeline builds (_swept_prefixes); the chain keeps
+        # those the queried namespace holds.
+        prefixes = configured_index_prefixes(self.config)
+        if IndexArtifact.SUMMARY_TREE in readable_artifacts(self.config, None):
+            prefixes.append(self.config.indexing.opensearch.summary_nodes_index_prefix)
+        return prefixes
 
     async def asearch(
         self, query: SearchQuery, config: RunnableConfig | None = None
@@ -63,7 +79,7 @@ class SimpleSearchStrategy(BaseSearchStrategy):
                 total_results=0,
                 search_strategy="simple_search",
                 processing_time=time.time() - start_time,
-                metadata={"rerank": rerank.summary()},
+                metadata={"rerank": rerank.summary(), "sources": {}},
             )
 
         final_results = await self._fuse_and_rerank(
@@ -88,64 +104,91 @@ class SimpleSearchStrategy(BaseSearchStrategy):
             total_results=len(final_results),
             search_strategy="simple_search",
             processing_time=processing_time,
-            metadata={"rerank": rerank.summary()},
+            metadata={
+                "rerank": rerank.summary(),
+                "sources": {name: len(hits) for name, hits in all_results.items()},
+            },
         )
 
     async def _retrieve_documents(
         self, query: SearchQuery
     ) -> dict[str, list[RetrievalResult]]:
-        if not self.document_retriever:
+        """One fusion bucket per index swept (``_BUCKETS``), each its own
+        ``top_k * retrieval_multiplier`` best: fused by RRF, reranked as one
+        pool and cut to ``top_k`` (``_fuse_and_rerank``). One search over
+        every index kept only ``top_k * retrieval_multiplier`` hits across
+        them all, about two or three of each index before the reranker
+        saw any."""
+        retriever = self.document_retriever
+        if retriever is None:
             return {}
-
-        search_query = await self._apply_claim_gate(query)
-        if self._source_kinds_skip_reports(query):
-            without = self._without_reports(search_query)
-            if without is None:
-                return {}
-            search_query = without
-        results = await self._safe_aretrieve(
-            self.document_retriever, search_query, "Document retrieval"
+        prefixes = await self._swept_prefixes(query)
+        artifacts = index_artifacts(self.config)
+        buckets = [
+            _BUCKETS.get(artifacts.get(prefix), f"simple_{prefix}")
+            for prefix in prefixes
+        ]
+        found = await gather_or_cancel(
+            [
+                self._safe_aretrieve(
+                    retriever,
+                    query.model_copy(update={"index_prefixes": [prefix]}),
+                    f"Simple retrieval ({bucket})",
+                )
+                for prefix, bucket in zip(prefixes, buckets, strict=True)
+            ]
         )
-        return {"vector_all": results} if results else {}
+        return {
+            bucket: results
+            for bucket, results in zip(buckets, found, strict=True)
+            if results
+        }
 
-    def _without_reports(self, query: SearchQuery) -> SearchQuery | None:
-        # A community report carries no source kind and summarizes seed-only
-        # members too, so a source_kinds filter that keeps one kind cannot
-        # be honoured on it (local and DRIFT read no report then either).
-        # None: the caller pinned the reports index alone.
-        reports = self.config.indexing.opensearch.community_reports_index_prefix
-        listed = id_list(query.index_prefixes) or configured_index_prefixes(self.config)
-        prefixes = [prefix for prefix in listed if prefix != reports]
-        if len(prefixes) < len(listed):
+    async def _swept_prefixes(self, query: SearchQuery) -> list[str]:
+        """The indexes ``query`` sweeps: those the caller pinned, else every
+        one the configured pipeline builds and the queried namespace holds
+        (``held_index_prefixes``; any document backend honours the same
+        gates), the summary tree's among them. A claim extraction that
+        found no claim built no claims index: left out, as local leaves it
+        (no "Index not found" WARNING on every query). The reports are left
+        out under a ``source_kinds`` filter that keeps one kind, the summary
+        nodes under a filter key their index does not store
+        (``_summary_unfiltered_keys``)."""
+        o = self.config.indexing.opensearch
+        prefixes = id_list(query.index_prefixes)
+        if not prefixes:
+            held = held_artifacts_of(query.metadata)
+            prefixes = (
+                configured_index_prefixes(self.config)
+                if held is None
+                else held_index_prefixes(self.config, held)
+            )
+            if (
+                o.claims_index_prefix in prefixes
+                and not await self._claims_index_exists(query.suffix)
+            ):
+                prefixes = [p for p in prefixes if p != o.claims_index_prefix]
+            if self._reads_artifact(query, IndexArtifact.SUMMARY_TREE):
+                prefixes = [*prefixes, o.summary_nodes_index_prefix]
+        if self._source_kinds_skip_reports(query) and (
+            o.community_reports_index_prefix in prefixes
+        ):
+            # A community report carries no source kind and summarizes
+            # seed-only members too, so a source_kinds filter that keeps one
+            # kind cannot be honoured on it (local and DRIFT read no report
+            # then either).
             logger.info(
                 "Community reports skipped: the source_kinds filter keeps one "
                 "source kind and a report carries none"
             )
-        if not prefixes:
-            return None
-        return query.model_copy(update={"index_prefixes": prefixes})
-
-    async def _apply_claim_gate(self, query: SearchQuery) -> SearchQuery:
-        # Simple search sweeps every index by default. When the caller hasn't
-        # pinned index_prefixes and some optional index is not built by the
-        # configured pipeline (claims off, no relationship vector index, no
-        # community detection) or not held by the queried namespace (a
-        # lightrag-only one has no reports, a raptor-only one no entities),
-        # pin the sweep to the indices that do exist so any document backend
-        # honours the same gates as OpenSearchRetriever. A claim extraction
-        # that found no claim built no claims index: left out too, as local
-        # leaves it (no "Index not found" WARNING on every query).
-        if query.index_prefixes:
-            return query
-        held = held_artifacts_of(query.metadata)
-        configured = (
-            configured_index_prefixes(self.config)
-            if held is None
-            else held_index_prefixes(self.config, held)
-        )
-        claims = self.config.indexing.opensearch.claims_index_prefix
-        if claims in configured and not await self._claims_index_exists(query.suffix):
-            configured = [prefix for prefix in configured if prefix != claims]
-        if configured == all_index_prefixes(self.config):
-            return query
-        return query.model_copy(update={"index_prefixes": configured})
+            prefixes = [p for p in prefixes if p != o.community_reports_index_prefix]
+        if o.summary_nodes_index_prefix in prefixes and (
+            unfiltered := self._summary_unfiltered_keys(query)
+        ):
+            logger.info(
+                "Simple search reads no summary: the summary index does not "
+                "store the filter keys %s",
+                ", ".join(unfiltered),
+            )
+            prefixes = [p for p in prefixes if p != o.summary_nodes_index_prefix]
+        return prefixes

@@ -153,3 +153,18 @@ def test_bedrock_rerank_wrapper_clamps_on_a_copy(mocker) -> None:
     assert len(out) == 2
     assert seen == [2]
     assert wrapper.top_n == 5
+
+
+def test_candidates_past_the_rerank_width_are_dropped() -> None:
+    # Pinned (rv24): the reranker sees the best search.reranking.top_k fused
+    # candidates and the rest leave the result (their fused scores do not
+    # compare with relevance scores); the field description says so.
+    scorer = _scorer(_RecordingReranker(top_n=3, seen=[]))
+    out = scorer.fuse_and_rerank_results(
+        {"text_units": _results("t", 5)}, top_k=10, query="q"
+    )
+    assert [r.source for r in out] == ["t-0", "t-1", "t-2"]
+    from unified_kg_rag.domain.models.config import RerankingConfig
+
+    description = RerankingConfig.model_fields["top_k"].description
+    assert description and "the others are dropped" in description

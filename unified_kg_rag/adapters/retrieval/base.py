@@ -694,6 +694,28 @@ class BaseSearchStrategy(ABC):
             found.add(suffix)
         return True
 
+    def _summary_unfiltered_keys(self, query: SearchQuery) -> list[str]:
+        """The caller's filter keys the text units declare and the summary
+        tree's index does not (``community_ids``, ``source_kinds``): the
+        retriever would drop them there and return summaries the filter
+        keeps out of the text units, so a strategy reading both (``tree``,
+        ``simple``) leaves the summaries out instead (fail-closed). A key
+        the text units do not declare either (an entity's ``type``) leaves
+        both unfiltered alike, so it skips no summary."""
+        retriever = self.document_retriever
+        if not query.filters or retriever is None:
+            return []
+        o = self.config.indexing.opensearch
+        summaries = retriever.filter_fields_for([o.summary_nodes_index_prefix])
+        units = retriever.filter_fields_for([o.text_units_index_prefix])
+        if summaries is None or units is None:
+            return []
+        return sorted(
+            key
+            for key in query.filters
+            if units.declares(key) and not summaries.declares(key)
+        )
+
     def _reads_artifact(self, query: SearchQuery, artifact: IndexArtifact) -> bool:
         """Whether ``query``'s searches read the optional index ``artifact``
         (claims, the relationship vectors, the reports): a run of the config

@@ -23,7 +23,8 @@ To create the guardrail with the CDK stack, see
   `search_results.query`), iterative search's follow-up queries and bridge
   entities, and the structured plan. They take one joined check, and one
   check each only when it intervened; a refused one is left out (a refused
-  searched query reads as the original). Only these are billed.
+  searched query reads as the original). These checks run alongside the
+  answer's, not after it. Only these are billed.
 - **What happens.**
   - A blocked query gets the guardrail's message, retrieves nothing, writes
     no memory and sets `RAGOutput.metadata.blocked`. A masked query continues

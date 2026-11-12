@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import functools
+import math
 import time
 import weakref
 from collections.abc import Callable
@@ -19,6 +20,7 @@ from unified_kg_rag.adapters.aws.neptune import (
     CUSTOM_VERTEX_IDS,
     NeptuneClient,
     is_evaluation_timeout,
+    is_permanent_neptune_error,
     neptune_pool_size,
     neptune_request_error,
     sample_vertex_query,
@@ -37,6 +39,7 @@ from unified_kg_rag.adapters.graph_query.gremlin import (
     named_vertex_ids,
     profile_traversal,
 )
+from unified_kg_rag.adapters.llm.retry import acall_with_transient_retry
 from unified_kg_rag.adapters.retrieval.base import seed_shares
 from unified_kg_rag.adapters.retrievers.graph_expansion import (
     GraphExpansionRetriever,
@@ -47,6 +50,7 @@ from unified_kg_rag.adapters.storage.neptune_codec import property_values
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
 from unified_kg_rag.domain.ingestion.seed_graph import SOURCE_KINDS_FIELD
 from unified_kg_rag.domain.models import Config, GraphEdge, SearchQuery
+from unified_kg_rag.domain.models.config import TransientRetryConfig
 from unified_kg_rag.domain.models.graph_query import (
     GraphProfile,
     GraphQueryRequest,
@@ -67,6 +71,11 @@ from unified_kg_rag.shared.utils import safe_float_parse
 from unified_kg_rag.shared.utils.concurrency import gather_or_cancel
 
 logger = get_logger(__name__)
+
+# The backoff between attempts of a query read (retry.query_store_max_attempts),
+# as an OpenSearch query request's: 0.25-0.5 s, then 0.5-1 s, up to 2-4 s.
+_QUERY_RETRY_BASE_DELAY_SECONDS = 0.5
+_QUERY_RETRY_MAX_DELAY_SECONDS = 4.0
 
 # The vertex properties a traversal row projects (the shape
 # ``GraphExpansionRetriever`` reads).
@@ -624,6 +633,19 @@ class NeptuneRetriever(GraphExpansionRetriever):
             projected = projected.by(__.id_())
         return projected
 
+    def _retryable_read(self, exc: BaseException) -> bool:
+        """Whether another attempt of a failed read may succeed: one that
+        leaves the store usable (throttling, a memory limit, a concurrent
+        modification), not a checker refusal, a request a retry cannot fix
+        (``is_permanent_neptune_error``), a traversal stopped at its time
+        limit (as long again) nor an unusable store, which fails the query
+        (``is_fatal_retrieval_error``: a timeout, a lost connection)."""
+        if not isinstance(exc, Exception) or isinstance(exc, GraphQueryError):
+            return False
+        if is_permanent_neptune_error(exc) or is_evaluation_timeout(exc):
+            return False
+        return not is_fatal_retrieval_error(self._request_error(exc))
+
     async def _execute_traversal(
         self,
         build: Callable[[GraphTraversalSource], Traversal],
@@ -677,7 +699,8 @@ class NeptuneRetriever(GraphExpansionRetriever):
         # below closes the connection, which wakes a thread blocked on its
         # pool and fails one whose write was in flight (_close_connection).
         timeout = 2 * self._config.search.store_timeout_seconds
-        try:
+
+        async def attempt() -> list[Any]:
             async with slots:
                 if self._closed:
                     # Closed while this query waited for a slot: no new pool.
@@ -686,6 +709,21 @@ class NeptuneRetriever(GraphExpansionRetriever):
                     loop.run_in_executor(self._traversal_executor(), run), timeout
                 )
             return result
+
+        try:
+            # As an OpenSearch query request is (``retry.query_store``): no
+            # retry starts past the query's deadline (``retry_deadline``).
+            return await acall_with_transient_retry(
+                attempt,
+                is_transient=self._retryable_read,
+                operation="Neptune query",
+                policy=TransientRetryConfig(
+                    max_attempts=self._config.retry.query_store_max_attempts,
+                    base_delay_seconds=_QUERY_RETRY_BASE_DELAY_SECONDS,
+                    max_delay_seconds=_QUERY_RETRY_MAX_DELAY_SECONDS,
+                    max_total_seconds=math.inf,
+                ),
+            )
         except Exception as e:
             if isinstance(e, GraphQueryError):
                 raise
@@ -695,7 +733,7 @@ class NeptuneRetriever(GraphExpansionRetriever):
             error = self._request_error(e)
             if is_fatal_retrieval_error(error):
                 if isinstance(error, StoreConnectionError) and used:
-                    await asyncio.to_thread(self._neptune_client.reset, used[0])
+                    await asyncio.to_thread(self._neptune_client.reset, used[-1])
                 if error is e:
                     raise
                 raise error from e

@@ -613,8 +613,13 @@ empowerment 0.657 (0.030) and directness 0.636 (0.030), with diversity
   ([methodology profiles](./overview.md#methodology-profiles)); on this
   index regenerating the community reports alone cost $95.6 (2026-11-08,
   [Citations](#citations)), against $371.64 for the whole build.
-- **`simple`** is not in the table: its retrieval is under revision and is
-  measured again after the change.
+- **`simple`** is not in the table. On this corpus and 200 MuSiQue
+  questions it lost to `naive` (`answer_contains` 0.528 against 0.605,
+  2026-11-08): one search over every index kept `top_k` ×
+  `retrieval_multiplier` hits in all, about two or three per index, before
+  fusion and the reranker saw them. That is fixed (each index keeps that
+  many, the union is fused and reranked, and the summary tree is read); the
+  re-measure is queued.
 
 No default changed. Limits: one corpus of short Wikipedia paragraphs, one
 judge (Opus 5.5), and questions written from the level-0 report summaries

@@ -169,7 +169,8 @@ class SearchConfig(BaseModel):
         gt=0,
         description=(
             "Seconds one query (invoke, search or a stream) may take in all, "
-            "from the input guardrail to the saved answer; past it the query "
+            "from its admission (the read of the namespace's build record) "
+            "to the saved answer; past it the query "
             "fails with QueryTimeoutError and its model and store calls in "
             "flight are cancelled (a Bedrock call already sent from a worker "
             "thread runs on through its own attempts, model_max_attempts x "
@@ -177,7 +178,9 @@ class SearchConfig(BaseModel):
             "retries start no new call past the deadline). A streamed answer "
             "must also deliver its first chunk within model_timeout_seconds "
             "of its model call. Under processing.ignore_errors the query "
-            "returns the error answer instead. null disables both deadlines."
+            "returns the error answer instead, unless the deadline passes "
+            "during its admission, which raises as a refused strategy or "
+            "filter does. null disables both deadlines."
         ),
     )
     model_timeout_seconds: float = Field(
@@ -232,8 +235,10 @@ class SearchConfig(BaseModel):
         ge=0,
         description=(
             "Query entity and keyword extractions a chain keeps in memory, "
-            "keyed by the question, the target language, the model and the "
-            "prompt text (a custom_prompts override is a new key), least "
+            "keyed by the question, the target language, the model, the "
+            "prompt text (a custom_prompts override is a new key) and the "
+            "index namespace (no namespace reads by a cache hit what another "
+            "was asked; a run-eval run's arms share across namespaces), least "
             "recently used dropped first. A repeated question (run-eval "
             "--repeats, the arms of a strategy comparison, a retry) reuses "
             "the extraction instead of calling the model again, so every "

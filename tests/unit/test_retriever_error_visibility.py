@@ -1036,6 +1036,74 @@ async def test_neptune_execute_traversal_degrades_on_transient(
     assert results == []
 
 
+class _FlakyTraversal:
+    """Fails with ``exc`` for the first ``failures`` requests, then answers."""
+
+    def __init__(self, exc: Exception, failures: int) -> None:
+        self.exc = exc
+        self.failures = failures
+        self.calls = 0
+
+    def __call__(self, g: object) -> _FlakyTraversal:
+        return self
+
+    def to_list(self) -> list:
+        self.calls += 1
+        if self.calls <= self.failures:
+            raise self.exc
+        return ["row"]
+
+
+@pytest.mark.parametrize(
+    ("code", "attempts"),
+    # Throttling and a memory limit pass with another attempt; a malformed
+    # query never does, nor a query stopped at its time limit (it would
+    # take as long again).
+    [
+        ("ThrottlingException", 2),
+        ("MemoryLimitExceededException", 2),
+        ("MalformedQueryException", 1),
+        ("TimeLimitExceededException", 1),
+    ],
+)
+async def test_neptune_query_reads_retry_what_another_attempt_may_fix(
+    config: Config, monkeypatch: pytest.MonkeyPatch, code: str, attempts: int
+) -> None:
+    # Regression (rv24): a Neptune read at query time was never retried, so
+    # a throttled read degraded graph expansion to empty; OpenSearch reads
+    # get retry.query_store_max_attempts, and so do these now.
+    monkeypatch.setattr("asyncio.sleep", _no_sleep)
+    retriever = _neptune_retriever(config, _ClientWithLocalGraph())
+    body = json.dumps({"code": code, "detailedMessage": "x"})
+    flaky = _FlakyTraversal(
+        GremlinServerError({"code": 500, "message": body, "attributes": {}}), 1
+    )
+    results = await retriever._execute_traversal(flaky)  # type: ignore[arg-type]
+    assert flaky.calls == attempts
+    assert results == (["row"] if attempts == 2 else [])
+
+
+async def test_neptune_query_reads_stop_at_query_store_max_attempts(
+    config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("asyncio.sleep", _no_sleep)
+    config.retry.query_store_max_attempts = 2
+    retriever = _neptune_retriever(config, _ClientWithLocalGraph())
+    body = json.dumps({"code": "ThrottlingException", "detailedMessage": "x"})
+    flaky = _FlakyTraversal(
+        GremlinServerError({"code": 500, "message": body, "attributes": {}}), 5
+    )
+    assert await retriever._execute_traversal(flaky) == []  # type: ignore[arg-type]
+    assert flaky.calls == 2
+
+
+_REAL_SLEEP = asyncio.sleep
+
+
+async def _no_sleep(delay: float, *args: object) -> object:
+    return await _REAL_SLEEP(0)
+
+
 class _ClientWithLocalGraph:
     """A fake NeptuneClient exposing a real, connectionless traversal source."""
 

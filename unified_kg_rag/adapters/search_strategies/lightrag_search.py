@@ -31,6 +31,7 @@ and caching as the GraphRAG strategies — only the retrieval algorithm differs.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any
 
@@ -579,6 +580,13 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
                 lineages.append(lineage)
         return lineages
 
+    def _disallowed_linked_ids(
+        self, filters: dict[str, Any] | None, results: list[RetrievalResult]
+    ) -> set[str]:
+        """The chunks ``results`` cite that a caller ``id`` filter removes."""
+        linked = [unit for lineage in self._lineages(results) for unit in lineage]
+        return set(linked) - set(self._ids_allowed(filters, linked))
+
     def _collect_linked_chunk_ids(
         self,
         entity_results: list[RetrievalResult],
@@ -674,13 +682,15 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         # KG hits its pool is far larger than a flat top_k=10 before the cut.
         limit = self._chunk_stream_top_k(query.top_k)
         exclude = set(exclude or ())
+        # The lineage work (sorting, merging and polling every hit's
+        # text_unit_ids: a hub's cite thousands) runs on a worker thread,
+        # as PPR does, so it never stalls the other queries on the loop.
         # The caller's id filter: no slot for a chunk the fetch removes.
-        linked = [
-            unit
-            for lineage in self._lineages([*entity_results, *relationship_results])
-            for unit in lineage
-        ]
-        exclude.update(set(linked) - set(self._ids_allowed(query.filters, linked)))
+        exclude |= await asyncio.to_thread(
+            self._disallowed_linked_ids,
+            query.filters,
+            [*entity_results, *relationship_results],
+        )
         if self._lightrag_config.kg_chunk_pick_method == "vector":
             return await self._vector_picked_chunks(
                 query, entity_results, relationship_results, limit, exclude
@@ -690,8 +700,12 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
                 query, entity_results, relationship_results, filters, limit, exclude
             )
         else:
-            entity_ids, relation_ids = self._collect_linked_chunk_ids(
-                entity_results, relationship_results, limit=limit, exclude=exclude
+            entity_ids, relation_ids = await asyncio.to_thread(
+                self._collect_linked_chunk_ids,
+                entity_results,
+                relationship_results,
+                limit,
+                exclude,
             )
         # Disjoint: the relationship side drops the entity side's chunks.
         chunk_ids = [*entity_ids, *relation_ids]
@@ -781,8 +795,11 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
                 label,
             )
 
-        entity_cited, entity_wanted = side(entity_results)
-        relation_cited, relation_wanted = side(relationship_results)
+        (entity_cited, entity_wanted), (relation_cited, relation_wanted) = (
+            await asyncio.to_thread(
+                lambda: (side(entity_results), side(relationship_results))
+            )
+        )
         entity_hits, relation_hits = await gather_or_cancel(
             [
                 pick(entity_cited, entity_wanted, "Entity chunk pick (vector)"),
@@ -838,16 +855,24 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         cap = self._lightrag_config.related_chunk_number
         lineages = [
             [unit for unit in lineage if unit not in exclude]
-            for lineage in self._lineages([*entity_results, *relationship_results])
+            for lineage in await asyncio.to_thread(
+                self._lineages, [*entity_results, *relationship_results]
+            )
         ]
         prefix = self._os_config.text_units_index_prefix
         passed: set[str] = set()
         checked: set[str] = set()
         failing = set(exclude)
 
-        def select() -> tuple[list[str], list[str]]:
-            return self._collect_linked_chunk_ids(
-                entity_results, relationship_results, limit=limit, exclude=failing
+        async def select() -> tuple[list[str], list[str]]:
+            # Off the loop (_retrieve_linked_chunks); a copy of the failing
+            # ids, which the loop's checks update.
+            return await asyncio.to_thread(
+                self._collect_linked_chunk_ids,
+                entity_results,
+                relationship_results,
+                limit,
+                set(failing),
             )
 
         def flat(selection: tuple[list[str], list[str]]) -> list[str]:
@@ -875,17 +900,19 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
                 # The unfiltered selection too: the slots land there unless
                 # the filter fails some of it, which the order of a lineage
                 # (sorted by id) decides otherwise.
-                parts = [flat(select()), *(lineage[:cap] for lineage in lineages)]
+                parts = [flat(await select()), *(lineage[:cap] for lineage in lineages)]
             ask = [
                 u
                 for u in dict.fromkeys(u for part in parts for u in part)
                 if u not in checked
             ]
             if ask and not await check(ask):
-                return select()
-            if not second and all(u in checked for u in flat(select())):
-                return select()
-        selected = select()
+                return await select()
+            if not second:
+                selection = await select()
+                if all(u in checked for u in flat(selection)):
+                    return selection
+        selected = await select()
         # How far past the deepest unknown chunk a round asks; doubled each
         # round. Asking only the selected chunks cost a request per failing
         # chunk, a hub's whole rest a request per few ids (max_terms_count).
@@ -907,7 +934,7 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
                     )
                 )
             )
-            selected = select()
+            selected = await select()
             reach *= 2
             if not ok:
                 break

@@ -163,7 +163,12 @@ async def test_repeats_reuse_or_one_repeat_share_the_chain_cache(
     args = _args(tmp_path, *repeats, *extra, queries=2)
     chain = _DriftingChain()
     assert await run_evaluation.EvaluationRunner(args, chain, eval_config).run() == 0
-    assert {scope for _, scope in chain.scopes} == {""}
+    # One scope every such run shares: its repeats and arms share their
+    # extractions, whatever namespace an arm reads. The two warm-up queries
+    # (one per strategy, a question of no dataset) run outside it.
+    scopes = [scope for _, scope in chain.scopes]
+    assert set(scopes) == {run_evaluation._REUSED_EXTRACTIONS, ""}
+    assert scopes.count("") == 2
 
 
 def test_the_extraction_cache_is_keyed_by_its_scope() -> None:
@@ -294,8 +299,12 @@ class _ExtractingChain:
         self._extractions = _ExtractionCache(size)
         self.model = _KeywordModel(fail_first)
 
-    def _extraction_key(self, prompt: Any, query: str, language: str) -> Any:
-        return query_processing.extraction_key(self, prompt, query, language)
+    def _extraction_key(
+        self, prompt: Any, query: str, language: str, *, namespace: Any = None
+    ) -> Any:
+        return query_processing.extraction_key(
+            self, prompt, query, language, namespace=namespace
+        )
 
     def _cached_extraction(self, key: Any) -> Any:
         return query_processing.cached_extraction(self, key)

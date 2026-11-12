@@ -261,6 +261,74 @@ async def test_ignore_errors_returns_the_error_answer_on_a_timeout() -> None:
     assert "search.query_timeout_seconds" in out.search_results.metadata["error"]
 
 
+class _StalledRecordRetriever(_Retriever):
+    """A store whose build-record read stalls (``stall``) or fails."""
+
+    def __init__(self, *, stall: float = 0.0, error: Exception | None = None) -> None:
+        self.stall = stall
+        self.error = error
+        self.reads = 0
+
+    async def aread_build_record(self, suffix: str | None) -> dict[str, Any] | None:
+        self.reads += 1
+        await asyncio.sleep(self.stall)
+        if self.error is not None:
+            raise self.error
+        return None
+
+
+def _chain_on(config: Config, retriever: _Retriever) -> GraphRAGChain:
+    providers = Providers(
+        config,
+        llm_factory=_Factory(_SlowChatModel()),
+        token_counter_factory=local_token_counter_factory(config),
+        retriever_builders={RetrieverRole.DOCUMENT: lambda: retriever},
+    )
+    return GraphRAGChain(config=config, providers=providers)
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_the_deadline_covers_a_new_chains_methodology_check(
+    stream: bool,
+) -> None:
+    # Regression (rv24): a chain's first query read the namespace's build
+    # record (the methodology check) before its deadline began, so a stalled
+    # store held run-rag and a new console or MCP chain for 2 x store_timeout
+    # x attempts before the 180 s deadline even started.
+    chain = _chain_on(
+        _config(query_timeout_seconds=0.3), _StalledRecordRetriever(stall=60)
+    )
+    started = time.monotonic()
+    with pytest.raises(QueryTimeoutError):
+        if stream:
+            await asyncio.wait_for(_drain(chain.astream(_query())), timeout=10)
+        else:
+            await asyncio.wait_for(chain.ainvoke(_query()), timeout=10)
+    assert time.monotonic() - started < 5
+
+
+async def _drain(chunks: AsyncIterator[str]) -> None:
+    async for _ in chunks:
+        pass
+
+
+async def test_a_failed_build_record_read_is_not_repeated_within_a_query() -> None:
+    # The methodology check and the held artifacts read the record in turn:
+    # a failed read (a store timeout, retried by its client) is kept for the
+    # rest of the query instead of being paid twice.
+    from unified_kg_rag.shared.exceptions import StoreTimeoutError
+
+    retriever = _StalledRecordRetriever(error=StoreTimeoutError("stalled"))
+    config = _config()
+    config.providers.rerank.kind = "none"
+    chain = _chain_on(config, retriever)
+    await chain.ainvoke(_query())
+    assert retriever.reads == 1
+    # Not kept past the query: the next one reads it again.
+    await chain.ainvoke(_query())
+    assert retriever.reads == 2
+
+
 async def test_null_disables_both_deadlines() -> None:
     config = _config(query_timeout_seconds=None, model_timeout_seconds=0.05)
     chain = _chain(config, _Factory(_SlowChatModel(first_delay=0.3)))

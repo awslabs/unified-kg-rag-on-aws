@@ -102,8 +102,12 @@ the methodology: GraphRAG's (§6.1) and LightRAG's (§6.2), the wrapper
 
 ### 6.1 GraphRAG Methodology (`adapters/search_strategies/`)
 
-- **simple** — vector and lexical search over every built index, no graph; the
-  claims index joins the sweep only when claim extraction is on.
+- **simple** — vector and lexical search over every index the namespace holds,
+  no graph: each index is searched for its own `top_k` × `retrieval_multiplier`
+  candidates (one fusion bucket per index, `simple_<index>`), the union is
+  fused by RRF, reranked and cut to `top_k`. The claims index joins the sweep
+  only when claim extraction is on, the summary tree's when RAPTOR is built
+  (left out under a filter key it does not store, as `tree` does).
 - **local** — candidate entities → graph expansion → frequency filter → their
   text units, plus a community-report section and a relationship section
   (MS GraphRAG local search). Each query entity is looked up in the entities

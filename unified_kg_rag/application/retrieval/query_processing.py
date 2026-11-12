@@ -14,8 +14,10 @@ through (a test or a subclass replaces a step on the chain).
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import hashlib
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
 from langchain_core.exceptions import OutputParserException
@@ -33,7 +35,7 @@ from unified_kg_rag.adapters.retrieval.strategy_registry import (
     query_inputs as strategy_query_inputs,
 )
 from unified_kg_rag.domain.ingestion.cache_keys import index_language
-from unified_kg_rag.domain.languages import text_language
+from unified_kg_rag.domain.languages import decided_language
 from unified_kg_rag.domain.models import (
     Config,
     ModelPurpose,
@@ -65,6 +67,32 @@ if TYPE_CHECKING:
     )
 
 logger = get_logger(__name__)
+
+# The query extraction cache's scope (``extraction_cache_scope``): part of
+# every entry's key, so the queries of one scope share no extraction with
+# those of another ("" outside one).
+_EXTRACTION_SCOPE: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "kg_rag_extraction_scope", default=""
+)
+
+
+@contextmanager
+def extraction_cache_scope(scope: str) -> Iterator[None]:
+    """Key the query extractions cached inside the block by ``scope`` too.
+
+    ``run-eval --repeats`` answers each repeat in a scope of its own, so a
+    repeat extracts the query's entities and keywords again instead of
+    reusing the first repeat's (the repeats then sample the extraction's
+    run-to-run variance), while the arms of one repeat still share them,
+    whatever index namespace each reads (``extraction_key``). Tasks
+    started inside the block inherit it.
+    """
+    token = _EXTRACTION_SCOPE.set(scope)
+    try:
+        yield
+    finally:
+        _EXTRACTION_SCOPE.reset(token)
+
 
 # The two keyword lists of the keyword extraction's answer.
 _KEYWORD_LEVELS: tuple[str, str] = (
@@ -107,20 +135,22 @@ def _query_language(
     the index was built in (``index_language``: the source language when
     the translation stage is disabled, the target language otherwise).
     The query is translated exactly when it is written in another language
-    (``text_language``, which falls back to the index language when the
-    query's script and words do not tell): a Korean question on an English
-    index is searched in English, an English one after a ko→en ingest
-    costs no translator call, and a query already in its language never
-    meets the failure mode where the translator answers about the request
-    ("I notice the text you...") instead of translating it. It is the
+    (``decided_language``): a Korean question on an English index is
+    searched in English, an English one after a ko→en ingest costs no
+    translator call, and a query already in its language never meets the
+    failure mode where the translator answers about the request ("I notice
+    the text you...") instead of translating it. A query whose script and
+    words do not tell its language (a name or keywords: "Acme Corp",
+    "GPT-4o") is searched as written, whatever the index language: a
+    translation would only respell the name the units write. It is the
     translation's language only: the query's entities and keywords are
     extracted in the index language whatever was requested
     (``_extraction_language``).
     """
     indexed = index_language(chain.config)
     language = language_name(inputs.get("target_language") or indexed)
-    written = language_name(text_language(question, indexed))
-    return language, written == language
+    written = decided_language(question, indexed)
+    return language, written is None or language_name(written) == language
 
 
 def _extraction_language(chain: GraphRAGChain) -> str:
@@ -157,16 +187,19 @@ def start_query_inputs(
     target_language, skip_translation = _query_language(chain, inputs, question)
     extraction_language = _extraction_language(chain)
     coroutines: dict[str, Awaitable[Any]] = {}
+    # The namespace the query reads keys its extractions: no namespace sees
+    # by a cache hit that another was asked the same question.
+    namespace = inputs.get("suffix")
     if entities:
         coroutines["entities"] = chain._extract_query_entities(
-            question, extraction_language, config
+            question, extraction_language, config, namespace=namespace
         )
     # The keyword prompt writes its keywords in the index language itself,
     # so it reads the untranslated question and runs alongside the
     # translation instead of after it.
     if keywords:
         coroutines["keywords"] = chain._extract_dual_keywords(
-            question, extraction_language, config
+            question, extraction_language, config, namespace=namespace
         )
     if translation and not skip_translation:
         coroutines["translation"] = chain._translate_query(
@@ -352,10 +385,15 @@ async def extract_query_entities(
     query: str,
     target_language: str,
     config: RunnableConfig | None,
+    *,
+    namespace: str | None = None,
 ) -> list[str]:
     """The entities the query names (entity extraction), from the
-    extraction cache when this question was extracted before."""
-    key = chain._extraction_key(EntityExtractionPrompt, query, target_language)
+    extraction cache when this question was extracted before on
+    ``namespace``."""
+    key = chain._extraction_key(
+        EntityExtractionPrompt, query, target_language, namespace=namespace
+    )
 
     async def extract() -> tuple[str, ...]:
         extractor = chain._get_chain_for_prompt(
@@ -414,10 +452,13 @@ def extraction_key(
     prompt_class: type[BasePrompt],
     query: str,
     target_language: str,
+    *,
+    namespace: str | None = None,
 ) -> tuple[str, ...]:
     """The extraction cache key: the prompt, its model, a digest of its
-    templates (a custom_prompts override is another key), the question
-    and the target language."""
+    templates (a custom_prompts override is another key), the question,
+    the target language and the index namespace the query reads (one
+    namespace's callers never see by a hit what another's asked)."""
     resolved = prompt_class.resolve(custom_prompts=chain.config.custom_prompts)
     templates = hashlib.sha256(
         f"{resolved.system_prompt_template}\0{resolved.human_prompt_template}".encode()
@@ -428,6 +469,10 @@ def extraction_key(
         templates,
         query,
         target_language,
+        # Inside an extraction scope (one caller's: run-eval's repeat) the
+        # namespaces share, so an arm on another index searches with the
+        # same keywords as the run it is paired with.
+        "" if _EXTRACTION_SCOPE.get() else (namespace or ""),
     )
 
 
@@ -487,6 +532,8 @@ async def extract_dual_keywords(
     query: str,
     target_language: str,
     config: RunnableConfig | None = None,
+    *,
+    namespace: str | None = None,
 ) -> tuple[list[str], list[str]]:
     """Extract LightRAG high/low-level keywords as two lists.
 
@@ -499,7 +546,9 @@ async def extract_dual_keywords(
     returns them under ``ignore_errors`` only.
     """
     try:
-        key = chain._extraction_key(KeywordsExtractionPrompt, query, target_language)
+        key = chain._extraction_key(
+            KeywordsExtractionPrompt, query, target_language, namespace=namespace
+        )
 
         async def extract() -> tuple[tuple[str, ...], tuple[str, ...]]:
             extractor = chain._get_chain_for_prompt(

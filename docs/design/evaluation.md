@@ -56,7 +56,9 @@ choices:
   scoring models kept, the judge chosen over every arm's answer model),
   labelled `<strategy>@NAME` and paired with the same strategy's base run;
   an arm shares the base chain's extractions only when its extraction
-  settings match (`run_evaluation.extraction_settings`). Every delta gets a sign-flip randomization p-value (exact
+  settings match (`run_evaluation.extraction_settings`), whatever index
+  namespace it reads: an evaluation run answers in an extraction scope,
+  where the namespace leaves the key (outside one it keys the extraction). Every delta gets a sign-flip randomization p-value (exact
   on few pairs, where the percentile bootstrap is anti-conservative), and
   `adjust_for_multiplicity` Holm-adjusts them in families: the pre-declared
   primary metric (`evaluation.primary_metric`, default `answer_contains`)
