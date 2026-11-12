@@ -12,6 +12,7 @@ from itertools import zip_longest
 from multiprocessing import cpu_count
 from pathlib import Path
 from typing import Any, TypeVar
+from urllib.parse import urlsplit, urlunsplit
 
 from .scripts import (
     APOSTROPHE_STAND_INS,
@@ -151,6 +152,18 @@ def text_digest(text: str | None) -> str:
     if not text:
         return "len=0"
     return f"len={len(text)} sha={compute_hash(text, length=8)}"
+
+
+def safe_url(url: str) -> str:
+    """``url`` without userinfo, query or fragment (they may hold a key)."""
+    parts = urlsplit(url)
+    host = parts.hostname or ""
+    if ":" in host:
+        # An IPv6 literal keeps its brackets ("http://[::1]:4318").
+        host = f"[{host}]"
+    if parts.port:
+        host = f"{host}:{parts.port}"
+    return urlunsplit((parts.scheme, host, parts.path, "", ""))
 
 
 def error_digest(error: BaseException) -> str:

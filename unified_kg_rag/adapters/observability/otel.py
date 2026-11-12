@@ -36,6 +36,7 @@ processor's 30-second shutdown wait ends it.
 from __future__ import annotations
 
 import os
+import traceback
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from enum import Enum
@@ -50,7 +51,8 @@ from unified_kg_rag.shared.exceptions import ConfigurationError
 from unified_kg_rag.shared.extras import extra_hint
 from unified_kg_rag.shared.genai import ERROR_TYPE
 from unified_kg_rag.shared.logging import get_logger
-from unified_kg_rag.shared.observability import SpanHandle, SpanKind
+from unified_kg_rag.shared.observability import SpanHandle, SpanKind, content_policy
+from unified_kg_rag.shared.utils import error_digest
 
 from .endpoints import ExportSettings, resolve_export_settings
 
@@ -128,6 +130,25 @@ def clean_attributes(attributes: Mapping[str, Any]) -> dict[str, AttributeValue]
     return cleaned
 
 
+def record_error(span: trace.Span, error: BaseException) -> None:
+    """Record ``error`` on ``span`` as its ``exception`` event: the type
+    and ``kg_rag.error_digest`` (:func:`error_digest`), never the message
+    or the stack (a parser's error quotes the model's reply, a store's the
+    corpus text) unless ``observability.capture_content``, then through its
+    ``redact_patterns``, as span content is."""
+    attributes: dict[str, AttributeValue] = {
+        "exception.type": type(error).__name__,
+        "kg_rag.error_digest": error_digest(error),
+    }
+    policy = content_policy()
+    if policy.capture_content:
+        attributes["exception.message"] = policy.redact(str(error))
+        attributes["exception.stacktrace"] = policy.redact(
+            "".join(traceback.format_exception(error))
+        )
+    span.add_event("exception", attributes)
+
+
 class OTelSpan:
     """``SpanHandle`` over an OpenTelemetry span."""
 
@@ -147,7 +168,7 @@ class OTelSpan:
             self._span.set_attributes(cleaned)
 
     def record_exception(self, exception: BaseException) -> None:
-        self._span.record_exception(exception)
+        record_error(self._span, exception)
 
     def set_error(self, description: str) -> None:
         self._span.set_status(Status(StatusCode.ERROR, description))
@@ -172,15 +193,22 @@ class OTelTracerBackend:
     def use_span(
         self, name: str, attributes: Mapping[str, Any], kind: SpanKind
     ) -> Iterator[SpanHandle]:
-        # start_as_current_span records an escaping exception and sets the
-        # ERROR status before re-raising it; error.type is added here.
+        # An escaping exception is recorded here (record_error: its type, not
+        # its text) with the ERROR status and error.type; the SDK's own
+        # recording would export the message and stack.
         with self._tracer.start_as_current_span(
-            name, kind=_SPAN_KINDS[kind], attributes=clean_attributes(attributes)
+            name,
+            kind=_SPAN_KINDS[kind],
+            attributes=clean_attributes(attributes),
+            record_exception=False,
+            set_status_on_exception=False,
         ) as otel_span:
             try:
                 yield OTelSpan(otel_span)
             except Exception as e:
                 otel_span.set_attribute(ERROR_TYPE, type(e).__name__)
+                record_error(otel_span, e)
+                otel_span.set_status(Status(StatusCode.ERROR, type(e).__name__))
                 raise
             except BaseException as e:
                 # start_as_current_span leaves a BaseException UNSET, so an

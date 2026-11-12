@@ -27,7 +27,6 @@ from unified_kg_rag.adapters.evaluators.base import (
     judge_effort,
 )
 from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED, BatchProcessor
-from unified_kg_rag.adapters.observability.endpoints import safe_url
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.strategy_registry import run_records
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
@@ -86,6 +85,7 @@ from unified_kg_rag.shared.usage import (
     metering,
     usage_scope,
 )
+from unified_kg_rag.shared.utils import safe_url
 from unified_kg_rag.shared.utils.files import atomic_write_text
 
 from .answer_match_evaluator import (

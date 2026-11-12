@@ -25,6 +25,7 @@ from unified_kg_rag.shared.exceptions import (
     ModelUnreachableError,
     causes,
 )
+from unified_kg_rag.shared.utils import safe_url
 
 # Errors of a connection that was never made, by class name so this module
 # imports no client: httpx's ConnectError and ConnectTimeout, the OpenAI
@@ -174,8 +175,9 @@ def model_unreachable_error(
             ]
             or servers
         )
+    # A base_url may carry a key in its userinfo or query: never named.
     named = ", ".join(
-        f"{setting} ({kind}{f' at {url}' if url else ''})"
+        f"{setting} ({kind}{f' at {safe_url(url)}' if url else ''})"
         for setting, kind, url in servers
     )
     return ModelUnreachableError(

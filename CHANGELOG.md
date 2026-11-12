@@ -2198,6 +2198,11 @@ Deployment (CDK).
   when piped, and no relationship endpoints or output previews from gleaning; an evaluator or judge error is logged
   as its type and a digest, its text at DEBUG; a unit test fails on a new INFO+ log call that passes them (#156,
   #173, #245, #255, #606).
+- Spans carry an error's type and a digest of its message (`kg_rag.error_digest`), not its text or stack, unless
+  `observability.capture_content` (then through `redact_patterns`): a judge's or parser's error quoting corpus text
+  reached Langfuse or Phoenix with capture off. A model server that cannot be reached is named by its URL without
+  userinfo or query, which may hold a key (the message reaches logs, `run-rag` JSON, MCP callers and the failure
+  notification).
 - CLI output escapes the data it prints, and `run-rag` strips terminal control characters (#173, #408).
 - Prompts delimit corpus and retrieved text as data that cannot close its tags, the community report's claim lines
   included (#179, #182, #565); the LLM XML parser never resolves DOCTYPE entities (#578).

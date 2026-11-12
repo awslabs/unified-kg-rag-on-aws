@@ -346,6 +346,61 @@ def test_span_records_namespaced_attributes_and_escaping_errors(
     assert span.events[0].name == "exception"
 
 
+_MARKER = "corpus text: Vendor's secret price 4242"
+
+
+def _exported_text(span: ReadableSpan) -> str:
+    """Everything ``span`` exports: attributes, status, events."""
+    return json.dumps(
+        {
+            "attributes": dict(span.attributes or {}),
+            "status": span.status.description,
+            "events": [
+                {"name": e.name, "attributes": dict(e.attributes or {})}
+                for e in span.events
+            ],
+        },
+        default=str,
+    )
+
+
+def test_an_exception_reaches_a_span_by_its_type_not_its_text(
+    tracing: Tracing,
+) -> None:
+    # Regression (rv24): the SDK recorded an escaping error's message, stack
+    # and status description: a judge's OutputParserException quoting
+    # corpus text reached the trace with capture_content off.
+    exporter = tracing()
+    with pytest.raises(ValueError):
+        with observability.span("escaping"):
+            raise ValueError(_MARKER)
+    with observability.span("recorded") as handle:
+        handle.record_exception(ValueError(_MARKER))
+    for name in ("escaping", "recorded"):
+        span = _one(exporter, name)
+        assert _MARKER not in _exported_text(span), name
+        (event,) = span.events
+        assert event.attributes is not None
+        assert event.attributes["exception.type"] == "ValueError"
+        assert str(event.attributes["kg_rag.error_digest"]).startswith("ValueError (")
+    assert _one(exporter, "escaping").status.description == "ValueError"
+
+
+def test_capture_content_records_the_exception_text_redacted(
+    tracing: Tracing,
+) -> None:
+    exporter = tracing(capture_content=True, redact_patterns=[r"price \d+"])
+    with pytest.raises(ValueError):
+        with observability.span("escaping"):
+            raise ValueError(_MARKER)
+    (event,) = _one(exporter, "escaping").events
+    assert event.attributes is not None
+    assert event.attributes["exception.message"] == (
+        "corpus text: Vendor's secret [REDACTED]"
+    )
+    assert "4242" not in str(event.attributes["exception.stacktrace"])
+
+
 def test_trace_ids_reach_log_records(tracing: Tracing) -> None:
     assert add_trace_ids in _SHARED_PROCESSORS
     assert add_trace_ids(None, "info", {}) == {}
