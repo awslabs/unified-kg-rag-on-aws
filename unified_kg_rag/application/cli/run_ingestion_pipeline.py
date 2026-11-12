@@ -52,7 +52,6 @@ from unified_kg_rag.application.cli.preflight import (
 )
 from unified_kg_rag.application.cli.provider_args import (
     add_provider_arguments,
-    apply_provider_arguments,
 )
 from unified_kg_rag.application.cli.query_args import namespace_name, suffix_arg
 from unified_kg_rag.application.config import load_cli_dotenv, resolve_relative_paths
@@ -422,9 +421,7 @@ class IngestionPipelineRunner:
         _load_pipeline()
         self.args = args
         with exit_on_config_error():
-            self.config = apply_namespace_arguments(
-                apply_provider_arguments(load_cli_config(args), args), args
-            )
+            self.config = apply_namespace_arguments(load_cli_config(args), args)
         retired = getattr(args, "retire_source_scope", None) or []
         if retired:
             indexing = self.config.indexing

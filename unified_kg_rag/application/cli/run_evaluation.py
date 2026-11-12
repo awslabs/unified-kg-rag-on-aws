@@ -71,7 +71,6 @@ from unified_kg_rag.application.cli.preflight import (
 )
 from unified_kg_rag.application.cli.provider_args import (
     add_provider_arguments,
-    apply_provider_arguments,
 )
 from unified_kg_rag.application.cli.query_args import (
     add_query_arguments,
@@ -2610,10 +2609,7 @@ def main() -> None:
         _load_evaluation()
 
         with exit_on_config_error():
-            config = apply_provider_arguments(
-                load_cli_config(args),
-                args,
-            )
+            config = load_cli_config(args)
         json_output(args)
         setup_cli_logging(config, args)
 

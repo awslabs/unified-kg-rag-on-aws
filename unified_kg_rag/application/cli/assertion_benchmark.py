@@ -28,7 +28,6 @@ from unified_kg_rag.application.cli.conventions import (
 from unified_kg_rag.application.cli.display import console, markup_safe
 from unified_kg_rag.application.cli.provider_args import (
     add_provider_arguments,
-    apply_provider_arguments,
 )
 from unified_kg_rag.application.cli.query_args import positive_int
 from unified_kg_rag.domain.models import LanguageCode, LLMUsage
@@ -171,7 +170,7 @@ def run_assertion_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     except EvaluationException as e:
         usage_error(str(e))
     with exit_on_config_error():
-        config = apply_provider_arguments(load_cli_config(args), args)
+        config = load_cli_config(args)
     setup_cli_logging(config, args)
     settings = autoq.GenerationSettings(
         questions_per_class=args.questions_per_class,

@@ -139,3 +139,44 @@ def test_backend_local_flag_resolves_the_registry_against_the_config_file(
         sqlite_path = Path(section.sqlite_path)
         assert sqlite_path.is_absolute()
         assert sqlite_path.is_relative_to(config_dir.resolve())
+
+
+@pytest.mark.parametrize(
+    ("flags", "ignored"),
+    [
+        # Regression (rv23 docs 3): the quickstart's --backend local selects
+        # the providers that read base_url, but the loader judged the file
+        # alone (Bedrock) and called the setting ignored.
+        (["--backend", "local"], False),
+        ([], True),
+    ],
+    ids=["backend-flag", "no-flag"],
+)
+def test_ignored_provider_settings_are_judged_after_the_flags(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    flags: list[str],
+    ignored: bool,
+) -> None:
+    from unified_kg_rag.application.cli.config_args import load_cli_config
+
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "logging:\n  log_to_file: false\n"
+        "providers:\n  llm:\n    base_url: http://127.0.0.1:11533\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("UKR__PROVIDERS__EMBEDDING__BASE_URL", "http://127.0.0.1:11533")
+    args = run_rag_chain.CommandLineInterface._setup_arguments().parse_args(
+        ["-q", "x", "--config-path", str(path), *flags]
+    )
+    with caplog.at_level("WARNING"):
+        config = load_cli_config(args)
+    assert (config.backend is Backend.LOCAL) is not ignored
+    warned = [r.getMessage() for r in caplog.records if "is ignored" in r.getMessage()]
+    if ignored:
+        assert any("providers.llm.base_url" in w for w in warned), warned
+        assert any("providers.embedding.base_url" in w for w in warned), warned
+    else:
+        assert warned == []

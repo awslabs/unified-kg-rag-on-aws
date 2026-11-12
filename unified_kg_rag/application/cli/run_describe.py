@@ -40,7 +40,6 @@ from unified_kg_rag.application.cli.help_text import doc_epilog
 from unified_kg_rag.application.cli.preflight import missing_extras_error
 from unified_kg_rag.application.cli.provider_args import (
     add_provider_arguments,
-    apply_provider_arguments,
 )
 from unified_kg_rag.application.cli.query_args import positive_int
 from unified_kg_rag.application.config import load_cli_dotenv
@@ -161,7 +160,7 @@ def main() -> int:
     as_json = json_output(args)
     try:
         with exit_on_config_error():
-            config = apply_provider_arguments(load_cli_config(args), args)
+            config = load_cli_config(args)
         setup_cli_logging(config, args)
         if error := missing_extras_error(config, seeds=False):
             usage_error(error)

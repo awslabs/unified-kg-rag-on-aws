@@ -52,7 +52,6 @@ from unified_kg_rag.application.cli.preflight import (
 )
 from unified_kg_rag.application.cli.provider_args import (
     add_provider_arguments,
-    apply_provider_arguments,
 )
 from unified_kg_rag.application.config import load_cli_dotenv
 from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
@@ -204,7 +203,7 @@ async def serve(args: argparse.Namespace, config: Config) -> int:
 async def async_main(args: argparse.Namespace) -> int:
     try:
         with exit_on_config_error():
-            config = apply_provider_arguments(load_cli_config(args), args)
+            config = load_cli_config(args)
         # stdout is the protocol's: everything else goes to stderr.
         console.stderr = True
         level = {"level": args.log_level} if args.log_level else None

@@ -56,7 +56,6 @@ from unified_kg_rag.application.cli.preflight import (
 )
 from unified_kg_rag.application.cli.provider_args import (
     add_provider_arguments,
-    apply_provider_arguments,
 )
 from unified_kg_rag.application.cli.query_args import (
     add_query_arguments,
@@ -486,10 +485,7 @@ class RAGChainRunner:
         _load_chain()
         self.args = args
         with exit_on_config_error():
-            self.config = apply_provider_arguments(
-                load_cli_config(args),
-                args,
-            )
+            self.config = load_cli_config(args)
         # JSON mode keeps stdout machine-parseable (pipeable to jq): the banner,
         # status lines and logs all go to stderr; only the JSON goes to stdout.
         self.json_output = json_output(args)

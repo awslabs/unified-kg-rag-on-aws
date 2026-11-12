@@ -95,6 +95,11 @@ stored is read again: follow *Upgrading* in order.
 - Graph expansion's settings moved from `indexing.neptune` to `search.graph_expansion`, as every graph store reads them
   at query time (the embedded SQLite graph too): `max_hops`, `max_results_per_hop`, `entity_importance_source`,
   `traversal_fetch_multiplier`, `deterministic_order`.
+  `models.fast`, `models.roles.<role>` (a model id or a tier name), `models.embedding` (model id and dimension, for the
+  indices, queries, RAGAS and the visualization) and `models.rerank`. `providers.<llm|embedding|rerank>.kind` picks each
+  family's provider, and `--llm-model`, `--embedding-model`, `--embedding-dimension` set the new keys; a setting of a
+  provider the config does not select (after the CLI's provider flags) is ignored with a WARNING; under `backend: local`
+  another embedding model needs its dimension too (#334). See [models](docs/reference/models.md).
 - `aws.dynamodb.enabled` moved to `providers.doc_status.enabled` (default `false`; `providers.doc_status.kind` picks
   DynamoDB or SQLite), the one switch for incremental indexing (#344). `graph.analysis.centrality` moved to
   `graph.visualization.centrality` (#335).
