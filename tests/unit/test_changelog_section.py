@@ -248,3 +248,80 @@ def test_real_unreleased_notes_fit_a_release_body() -> None:
 def test_main_prints_the_package_version(capsys: pytest.CaptureFixture[str]) -> None:
     assert _script().main(["--print-package-version"]) == 0
     assert capsys.readouterr().out == f"{unified_kg_rag.__version__}\n"
+
+
+SECTIONED = """\
+# Changelog
+
+## [0.3.0] - 2026-12-01
+
+The release in one line.
+
+### Highlights
+- Faster.
+
+### Breaking changes
+- A flag renamed.
+
+### Added
+- A feature.
+
+### Fixed
+- A bug.
+
+### Security
+- A floor.
+
+[0.3.0]: https://example.invalid/compare/v0.2.3...v0.3.0
+"""
+
+
+def test_the_heading_fragment_is_githubs() -> None:
+    module = _script()
+    assert module.heading_fragment(SECTIONED, "0.3.0") == "030---2026-12-01"
+    assert module.heading_fragment(CHANGELOG, "Unreleased") == "unreleased"
+
+
+def test_the_release_body_keeps_what_an_upgrade_needs_and_links_the_rest() -> None:
+    notes = _script().extract_section(SECTIONED, "0.3.0")
+    body = _script().condense(notes, "https://x.invalid/CHANGELOG.md#030")
+    assert body == (
+        "The release in one line.\n\n"
+        "### Highlights\n- Faster.\n\n"
+        "### Breaking changes\n- A flag renamed.\n\n"
+        "### Security\n- A floor.\n\n"
+        "The full notes, with *Added* and *Fixed*: https://x.invalid/CHANGELOG.md#030\n"
+    )
+    # A section of other subsections only is published whole.
+    plain = "### Fixed\n- A bug (#1).\n"
+    assert _script().condense(plain, "https://x.invalid") == plain
+
+
+def test_main_links_the_version_heading(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    changelog = tmp_path / "CHANGELOG.md"
+    changelog.write_text(SECTIONED, encoding="utf-8")
+    url = "https://x.invalid/blob/v0.3.0/CHANGELOG.md"
+    args = ["v0.3.0", "--changelog", str(changelog), "--full-notes-url", url]
+    assert _script().main(args) == 0
+    out = capsys.readouterr().out
+    assert out.endswith(f"*Added* and *Fixed*: {url}#030---2026-12-01\n")
+    assert "- A feature." not in out
+
+
+def test_the_real_unreleased_release_body_is_condensed_not_cut() -> None:
+    # Regression (rv23 docs 6): the 205 KB section was cut at 120,000
+    # characters partway through Added, so the notes lost Changed, Fixed and
+    # Security, and the link named no heading.
+    module = _script()
+    text = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    url = "https://x.invalid/CHANGELOG.md#unreleased"
+    body = module.fit_release_body(
+        module.condense(module.extract_section(text, "Unreleased"), url), url
+    )
+    assert len(body) <= module.GITHUB_RELEASE_BODY_LIMIT
+    assert "\n\n... The full notes" not in body  # nothing was cut
+    for name in module.RELEASE_SUBSECTIONS:
+        assert f"### {name}\n" in body, name
+    assert body.endswith(f"*Added*, *Changed* and *Fixed*: {url}\n")

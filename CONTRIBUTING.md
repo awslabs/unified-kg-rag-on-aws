@@ -359,15 +359,16 @@ The version lives in one place, `__version__` in `unified_kg_rag/__init__.py`; `
    git push origin vX.Y.Z
    ```
 
-   The tag push runs [.github/workflows/release.yml](./.github/workflows/release.yml). It fails unless the tagged
-   commit is on `main`, the tag is `v` plus `__version__` and the changelog has a non-empty section for that version;
-   it builds the sdist and wheel, runs `twine check --strict`, checks both carry LICENSE and NOTICE, installs the
-   wheel in a clean environment, writes a CycloneDX SBOM of the locked dependencies with each package's licence (read
-   from an environment synced with every extra, `.github/scripts/sbom_licenses.py`), and creates the GitHub release
-   with both files, their checksums, the SBOM and that changelog section as its notes
-   (`scripts/changelog_section.py`; a release body resolves no relative link, so `--link-base` points the section's
-   repo-relative links at the tagged tree, and a section longer than a release body allows ends with a link to the
-   full changelog). A version with an `a`, `b`, `rc` or `.dev` segment is marked as a pre-release.
+   The tag push runs [.github/workflows/release.yml](./.github/workflows/release.yml). It fails unless the tagged commit
+   is on `main`, the tag is `v` plus `__version__` and the changelog has a non-empty section for that version; it builds
+   the sdist and wheel, runs `twine check --strict`, checks both carry LICENSE and NOTICE, installs the wheel in a clean
+   environment, writes a CycloneDX SBOM of the locked dependencies with each package's licence (read from an environment
+   synced with every extra, `.github/scripts/sbom_licenses.py`), attests the build provenance of the distributions and
+   the SBOM (Sigstore), and creates the GitHub release with both files, their checksums, the SBOM and the changelog
+   section's notes (`scripts/changelog_section.py`): the section's introduction, *Highlights*, *Breaking changes*,
+   *Upgrading* and *Security*, then a link to the version's heading in the tagged `CHANGELOG.md` for *Added*, *Changed*
+   and *Fixed*. A release body resolves no relative link, so `--link-base` points the section's repo-relative links at
+   the tagged tree. A version with an `a`, `b`, `rc` or `.dev` segment is marked as a pre-release.
 5. In a follow-up pull request, set `__version__` to the next development version (`X.Y.(Z+1).dev0` or
    `X.(Y+1).0.dev0`).
 
