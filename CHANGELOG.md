@@ -1676,6 +1676,8 @@ From a `main` checkout (formats and keys no release had):
   #330); queries read Neptune through the reader endpoint, so with `neptune_instances` above 1 a query right after
   an ingestion can miss its last writes for the replica lag (#566); synth warns when the guardrail stack's guardrail
   is not given to compute (#566).
+- CDK: both task definitions drop every Linux capability (as `docker/compose.local.yaml`), and synth warns when an
+  environment other than dev deploys the mutable `latest` image tag.
 - CDK: a plain `cdk deploy --all` attaches the guardrail it creates when `bedrock_region` is the deploy region (every
   private deploy): the tasks read its id and version from SSM parameters the guardrail stack writes, so queries and
   answers are screened without `-c guardrail_identifier`; across regions, and for a given identifier, the context

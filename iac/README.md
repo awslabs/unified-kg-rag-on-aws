@@ -225,7 +225,7 @@ did-you-mean hint.
 | `fargate_memory` | `8192` | Task memory (MiB), a size Fargate offers for `fargate_cpu` |
 | `ingestion_ephemeral_storage_gib` | `40` | Ingestion task disk (21-200 GiB): about twice the corpus plus the stage cache |
 | `fargate_cpu_architecture` | `x86_64` | CPU architecture of both task definitions: `x86_64`, or `arm64` (Graviton) for an image built with `--platform linux/arm64` ([Build and push](#2-build-and-push-the-app-image)) |
-| `image_tag` | `latest` | Image tag the tasks pull; any other tag makes the repository's tags immutable (the ECR lifecycle keeps it and the 10 newest images) |
+| `image_tag` | `latest` | Image tag the tasks pull; any other tag makes the repository's tags immutable (the ECR lifecycle keeps it and the 10 newest images); `latest` outside dev makes synth warn ([Build and push](#2-build-and-push-the-app-image)) |
 | `sfn_timeout_hours` | `6` | State machine timeout for a whole run, re-runs and their waits included |
 | `ingestion_fargate_spot` | `false` | Run the ingestion task on Fargate Spot; a task Spot interrupted runs again ([Fargate Spot](#fargate-spot)) |
 | `spot_interruption_retries` | `2` | Re-runs after Spot interruptions per execution (0-10); `ingestion_fargate_spot` only |
@@ -410,7 +410,8 @@ The stacks apply least-privilege IAM (Bedrock model and inference-profile
 ARNs, `neptune-db:connect`, domain-scoped `es:ESHttp*`), encryption in transit
 and at rest, Graviton instances, a lifecycle on the checkpoint prefixes, S3
 access logs (retained environments, [Teardown](#teardown)), Step Functions tracing and execution logs, and an SSL-only alarm
-topic; production hardening is opt-in through the flags above. Validate with:
+topic. Every container runs on a read-only root filesystem with every Linux
+capability dropped. Production hardening is opt-in through the flags above. Validate with:
 
 ```bash
 cdk synth -c enable_cdk_nag=true                       # dev
@@ -510,7 +511,10 @@ docker push "$REGISTRY/graphrag-app:latest"
 
 - Outside dev, push a unique version tag and deploy with
   `cdk deploy --all -c image_tag=<tag>`, so a pushed image cannot be swapped
-  under the running task definition.
+  under the running task definition. Synth warns when an environment other
+  than dev keeps `latest`. The repository is not made immutable for
+  `latest` instead, because `latest` could then be pushed only once; the
+  pinned tag makes the tags immutable.
 - Extras: the image installs none by default (`run-eval`'s default
   evaluators are LLM-free); add `--build-arg UV_EXTRAS="--extra eval"` for
   the ragas judge on the query task. The core install reads `.md` / `.html`

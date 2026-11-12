@@ -126,6 +126,16 @@ class ComputeStack(Stack):
         # the mutable "latest" default (dev iteration) must stay MUTABLE so it
         # can be re-pushed. So mutability tracks whether a real tag was pinned.
         pinned_image = config.image_tag != "latest"
+        if not pinned_image and not config.is_dev:
+            # Not immutable outside dev instead: `latest` could then be pushed
+            # only once, and the next push would fail. The tag decides.
+            Annotations.of(self).add_warning(
+                "image_tag is 'latest' outside dev: the repository's tags stay "
+                "mutable, so a push can replace the image the tasks run "
+                "without a deploy, and a rollback has no fixed image to go "
+                "back to. Push a unique tag and deploy it with "
+                "-c image_tag=<tag> (any other tag makes the tags immutable)."
+            )
         # Fixed physical names (repo, log group) must go with the stack when
         # removal_destroy is set, or the next deploy collides with the
         # retained copy. Outside dev they are kept (image provenance, logs).
@@ -706,7 +716,7 @@ class ComputeStack(Stack):
             # and reaps the processes it leaves (pool workers, the
             # entrypoint's S3 sync); the CLI as PID 1 got no signal it
             # had no handler for and reaped nothing.
-            linux_parameters=ecs.LinuxParameters(
+            linux_parameters=self._linux_parameters(
                 task_def, "AppLinuxParameters", init_process_enabled=True
             ),
             readonly_root_filesystem=True,
@@ -737,6 +747,19 @@ class ComputeStack(Stack):
                 )
             )
         return task_def
+
+    @staticmethod
+    def _linux_parameters(
+        scope: Construct, construct_id: str, init_process_enabled: bool = False
+    ) -> ecs.LinuxParameters:
+        """Every Linux capability dropped, as docker/compose.local.yaml's
+        ``cap_drop: [ALL]``: the containers run as a non-root user, bind no
+        port below 1024 and change no ownership or network setting."""
+        parameters = ecs.LinuxParameters(
+            scope, construct_id, init_process_enabled=init_process_enabled or None
+        )
+        parameters.drop_capabilities(ecs.Capability.ALL)
+        return parameters
 
     # ------------------------------------------------ trace collector sidecar
     def _collector_image_repository(self) -> ecr.IRepository:
@@ -870,6 +893,9 @@ class ComputeStack(Stack):
             ),
             # Security Hub ECS.5, as the app: writes go to task volumes only.
             readonly_root_filesystem=True,
+            linux_parameters=self._linux_parameters(
+                task_def, "CollectorLinuxParameters"
+            ),
         )
         for name, path in COLLECTOR_VOLUMES.items():
             task_def.add_volume(name=name)
