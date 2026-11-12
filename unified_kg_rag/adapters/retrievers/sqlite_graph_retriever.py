@@ -111,10 +111,10 @@ class SQLiteGraphRetriever(GraphExpansionRetriever):
             max_hops=hops,
             max_results_per_hop=self._max_results_per_hop,
             per_seed_limit=seed_shares(
-                query, self._neptune_config.traversal_fetch_multiplier, seed_ids
+                query, self._expansion.traversal_fetch_multiplier, seed_ids
             ),
             keep=vertex_filter(filters),
-            with_degree=self._neptune_config.entity_importance_source == "degree",
+            with_degree=self._expansion.entity_importance_source == "degree",
         )
 
     async def _edges_within(

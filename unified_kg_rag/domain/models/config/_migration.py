@@ -69,6 +69,17 @@ MOVED_KEYS: dict[str, str] = {
     "processing.chunk_concurrency": "processing.max_concurrency",
     "processing.batch_size": "processing.max_concurrency",
     "indexing.cross_run_fuzzy_merge": "processing.fuzzy_entity_resolution",
+    # Query-time traversal settings every graph store reads.
+    **{
+        f"indexing.neptune.{key}": f"search.graph_expansion.{key}"
+        for key in (
+            "max_hops",
+            "max_results_per_hop",
+            "entity_importance_source",
+            "traversal_fetch_multiplier",
+            "deterministic_order",
+        )
+    },
 }
 
 # Moved key -> what to know when converting its value (a key whose

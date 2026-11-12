@@ -91,6 +91,9 @@ stored is read again: follow *Upgrading* in order.
   picks each family's provider, and `--llm-model`, `--embedding-model`, `--embedding-dimension` set the new keys; a
   setting of a provider the config does not select is ignored with a WARNING; under `backend: local` another
   embedding model needs its dimension too (#334). See [models](docs/reference/models.md).
+- Graph expansion's settings moved from `indexing.neptune` to `search.graph_expansion`, as every graph store reads them
+  at query time (the embedded SQLite graph too): `max_hops`, `max_results_per_hop`, `entity_importance_source`,
+  `traversal_fetch_multiplier`, `deterministic_order`.
 - `aws.dynamodb.enabled` moved to `providers.doc_status.enabled` (default `false`; `providers.doc_status.kind` picks
   DynamoDB or SQLite), the one switch for incremental indexing (#344). `graph.analysis.centrality` moved to
   `graph.visualization.centrality` (#335).
@@ -1776,7 +1779,7 @@ Queries and retrieval.
   then first seen; an entity citing a unit twice counts once, and a lineage a graph store returns as its JSON text
   is read as its list (it was skipped).
 - Graph expansion returns every seed and its neighbourhood ranked by distance (#161, #218), fetches at most its
-  per-seed budget (#310), and no longer depends on the store's edge order (`indexing.neptune.deterministic_order:
+  per-seed budget (#310), and no longer depends on the store's edge order (`search.graph_expansion.deterministic_order:
   false` keeps it) (#470, #473); an expanded entity shows its type (#567).
 - A number or boolean document filter value is a keyword on OpenSearch, so a string value of the same key no longer
   fails to index (`mapper_parsing_exception`) and ranges compare as text, as documented (#566).

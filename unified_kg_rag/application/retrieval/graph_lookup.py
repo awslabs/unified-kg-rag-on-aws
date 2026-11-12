@@ -226,7 +226,7 @@ async def neighbourhood(
 ) -> Neighbourhood:
     """The entities within ``max_hops`` of ``entity_id`` (at most ``limit``,
     nearest and most important first, each hop at most
-    ``indexing.neptune.max_results_per_hop`` per vertex, as every graph
+    ``search.graph_expansion.max_results_per_hop`` per vertex, as every graph
     expansion) and the relationships among them and the start (at most
     ``limit``).
 

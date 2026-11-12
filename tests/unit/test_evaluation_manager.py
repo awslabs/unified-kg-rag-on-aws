@@ -1369,8 +1369,8 @@ class TestComparability:
             {"graph": {"community_detection": {"enabled": False}}},
             {"processing": {"claim_extraction": {"enabled": True}}},
             {"processing": {"ignore_errors": True}},
-            {"indexing": {"neptune": {"max_hops": 1}}},
-            {"indexing": {"neptune": {"traversal_fetch_multiplier": 7}}},
+            {"search": {"graph_expansion": {"max_hops": 1}}},
+            {"search": {"graph_expansion": {"traversal_fetch_multiplier": 7}}},
             {"aws": {"bedrock": {"guardrail": {"check_output": False}}}},
         ],
     )

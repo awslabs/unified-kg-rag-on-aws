@@ -35,6 +35,7 @@ from ._fusion import (
 from ._strategies import (
     DriftSearchConfig,
     GlobalSearchConfig,
+    GraphExpansionConfig,
     IterativeSearchConfig,
     LightRAGSearchConfig,
     LocalSearchConfig,
@@ -122,6 +123,11 @@ class SearchConfig(BaseModel):
     structured: StructuredSearchConfig = Field(
         default_factory=StructuredSearchConfig,
         description="Structured graph query (structured strategy) configuration (opt-in)",
+    )
+    graph_expansion: GraphExpansionConfig = Field(
+        default_factory=GraphExpansionConfig,
+        description="Graph expansion around the seed entities (every strategy "
+        "that walks the graph, on every graph store)",
     )
     token_manager: TokenManagerConfig = Field(
         default_factory=TokenManagerConfig, description="Token management configuration"

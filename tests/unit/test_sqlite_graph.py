@@ -46,7 +46,9 @@ pytestmark = pytest.mark.unit
 LABEL = "Entity-default"
 
 
-def _config(tmp_path: Path, **neptune: Any) -> Config:
+def _config(
+    tmp_path: Path, neptune: dict[str, Any] | None = None, **graph_expansion: Any
+) -> Config:
     return Config.model_validate(
         {
             "providers": {
@@ -55,8 +57,11 @@ def _config(tmp_path: Path, **neptune: Any) -> Config:
                     "sqlite_path": str(tmp_path / "graph.sqlite3"),
                 }
             },
-            "indexing": {"neptune": neptune},
-            "search": {"store_timeout_seconds": 0.2},
+            "indexing": {"neptune": neptune or {}},
+            "search": {
+                "store_timeout_seconds": 0.2,
+                "graph_expansion": graph_expansion,
+            },
         }
     )
 
@@ -152,7 +157,7 @@ def test_entity_and_relationship_round_trip(indexer: SQLiteGraphIndexer) -> None
 
 
 def test_property_max_length_truncates_strings(tmp_path: Path) -> None:
-    indexer = SQLiteGraphIndexer(_config(tmp_path, property_max_length=4))
+    indexer = SQLiteGraphIndexer(_config(tmp_path, {"property_max_length": 4}))
     indexer.upsert_entities([_entity("e1", description="abcdefgh")])
     (read,) = indexer.read_entities(["e1"])
     assert read.description == "abcd"

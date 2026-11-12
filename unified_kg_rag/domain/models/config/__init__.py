@@ -141,6 +141,7 @@ from ._seed import (
 from ._strategies import (
     DriftSearchConfig,
     GlobalSearchConfig,
+    GraphExpansionConfig,
     IterativeSearchConfig,
     LightRAGSearchConfig,
     LocalSearchConfig,
@@ -195,6 +196,7 @@ __all__ = [
     "FusionConfig",
     "GleaningConfig",
     "GlobalSearchConfig",
+    "GraphExpansionConfig",
     "GraphConfig",
     "GraphExtractionConfig",
     "GuardrailConfig",

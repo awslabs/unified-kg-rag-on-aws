@@ -239,7 +239,7 @@ NEW_KEYS_IN_CHANGES = {
     "custom_prompts.text_chunking_": "the chunker prompt it made overridable",
     "custom_prompts.text_translation_": "the translation prompt it made overridable",
     "graph.community_detection.max_cluster_size": "the leaf bound the change added",
-    "indexing.neptune.deterministic_order": "keeps the store's edge order",
+    "search.graph_expansion.deterministic_order": "keeps the store's edge order",
     "models.embedding.dimension": "indexing.opensearch.embedding_dimension, renamed",
     "models.roles.fixing": "fixing.model_id, renamed",
     "processing.embedding_batch_size": "the bound the change added",

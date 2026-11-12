@@ -174,7 +174,7 @@ class NeptuneRetriever(GraphExpansionRetriever):
         self, seed_ids: list[Any], query: SearchQuery
     ) -> list[dict[str, Any]]:
         # Every seed the caller chose; a fixed cap here dropped seeds silently.
-        # max_hops is validated (>= 1) by NeptuneIndexingConfig (and a
+        # max_hops is validated (>= 1) by GraphExpansionConfig (and a
         # query's own by SearchQuery).
         hops = query.max_hops or self._max_hops
         entity_label = self._get_label(
@@ -202,7 +202,7 @@ class NeptuneRetriever(GraphExpansionRetriever):
         # fan out unbounded: its first n by id, as the embedded store takes
         # them, not the first n the store happens to keep (two builds of one
         # graph, with their edges written in another order, expanded to
-        # other entities); indexing.neptune.deterministic_order: false takes
+        # other entities); search.graph_expansion.deterministic_order: false takes
         # the store's first n, without reading the rest of a hub. The seeds
         # come back through the identity() branch (path length 1, the top
         # relevance band, never cut); repeat().emit() emits from the first
@@ -214,13 +214,13 @@ class NeptuneRetriever(GraphExpansionRetriever):
         # weights its seeds by score) are walked in one request per share,
         # concurrently, each the traversal above for its seeds.
         shares = seed_shares(
-            query, self._neptune_config.traversal_fetch_multiplier, seed_ids
+            query, self._expansion.traversal_fetch_multiplier, seed_ids
         )
         by_share: dict[int, list[Any]] = {}
         for seed in seed_ids:
             by_share.setdefault(shares[str(seed)], []).append(seed)
         filters = self._scope_filters_to_label(entity_label, query.filters)
-        with_degree = self._neptune_config.entity_importance_source == "degree"
+        with_degree = self._expansion.entity_importance_source == "degree"
         if not seed_ids:
             return []
         settled = self._settled(entity_label)
@@ -235,7 +235,7 @@ class NeptuneRetriever(GraphExpansionRetriever):
 
         def neighbours() -> GraphTraversal:
             reached = __.both().hasLabel(entity_label)
-            if self._neptune_config.deterministic_order:
+            if self._expansion.deterministic_order:
                 reached = reached.order().by("id")
             return reached.limit(self._max_results_per_hop)
 
@@ -314,7 +314,7 @@ class NeptuneRetriever(GraphExpansionRetriever):
         full build switches the label: both copies are read, and their
         edges deduplicated by relationship id) by the ``id`` property."""
         custom_ids, _ = await self._vertex_lookup(label)
-        deterministic = self._neptune_config.deterministic_order
+        deterministic = self._expansion.deterministic_order
 
         def build(g: GraphTraversalSource) -> Traversal:
             if custom_ids:

@@ -46,6 +46,7 @@ from unified_kg_rag.domain.models import (
     RetrievalResult,
     SearchQuery,
 )
+from unified_kg_rag.domain.models.config import GraphExpansionConfig
 from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.filters import (
     ATTRIBUTE_KEY_PREFIX,
@@ -146,8 +147,9 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
 
     Every search strategy finds its seed entities in the vector store and
     passes their ids (``filters["id"]``); a query without one returns no
-    results. ``indexing.neptune`` holds the logical graph settings (labels,
-    hops, fetch budget, importance source) for every graph backend.
+    results. ``indexing.neptune`` holds the graph's labels and
+    ``search.graph_expansion`` the walk's settings (hops, fetch budget,
+    importance source) for every graph backend.
     """
 
     # Name used in log lines.
@@ -156,8 +158,13 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
     def __init__(self, config: Config, **kwargs: Any) -> None:
         super().__init__(config, **kwargs)
         self._neptune_config = config.indexing.neptune
-        self._max_hops = self._neptune_config.max_hops
-        self._max_results_per_hop = self._neptune_config.max_results_per_hop
+        self._max_hops = self._expansion.max_hops
+        self._max_results_per_hop = self._expansion.max_results_per_hop
+
+    @property
+    def _expansion(self) -> GraphExpansionConfig:
+        """The walk's settings (``search.graph_expansion``)."""
+        return self._config.search.graph_expansion
 
     @abstractmethod
     async def _traverse(
@@ -399,7 +406,7 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
             {str(s) for s in seed_ids},
             (
                 query.top_k * query.retrieval_multiplier
-                if self._neptune_config.traversal_fetch_multiplier > 1
+                if self._expansion.traversal_fetch_multiplier > 1
                 else None
             ),
         )
@@ -430,7 +437,7 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
 
     def _entity_importance_key(self) -> str | None:
         """The node property graph expansion reads as entity importance."""
-        source = self._neptune_config.entity_importance_source
+        source = self._expansion.entity_importance_source
         return None if source == "none" else source
 
     def _node_data(self, item: dict[str, Any]) -> dict[str, Any]:

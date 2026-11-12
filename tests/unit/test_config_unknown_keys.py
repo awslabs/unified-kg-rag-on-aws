@@ -385,9 +385,18 @@ def test_a_removed_key_still_validates_and_is_ignored() -> None:
         ("processing.chunk_concurrency", "processing.max_concurrency"),
         ("processing.batch_size", "processing.max_concurrency (it counted"),
         ("indexing.cross_run_fuzzy_merge", "processing.fuzzy_entity_resolution"),
+        # Read at query time by every graph store, not Neptune's alone.
+        ("indexing.neptune.max_hops", "search.graph_expansion.max_hops"),
+        (
+            "indexing.neptune.deterministic_order",
+            "search.graph_expansion.deterministic_order",
+        ),
     ],
 )
 def test_the_renamed_0_2_3_keys_name_their_replacement(old: str, new: str) -> None:
-    section, key = old.split(".")
+    *sections, key = old.split(".")
+    data: dict[str, Any] = {key: 4}
+    for section in reversed(sections):
+        data = {section: data}
     with pytest.raises(ValueError, match=re.escape(f"{old} -> {new}")):
-        Config.model_validate({section: {key: 4}})
+        Config.model_validate(data)

@@ -37,9 +37,9 @@ def retriever(config: Config) -> NeptuneRetriever:
     inst = NeptuneRetriever.__new__(NeptuneRetriever)
     object.__setattr__(inst, "_config", config)
     object.__setattr__(inst, "_neptune_config", config.indexing.neptune)
-    object.__setattr__(inst, "_max_hops", config.indexing.neptune.max_hops)
+    object.__setattr__(inst, "_max_hops", config.search.graph_expansion.max_hops)
     object.__setattr__(
-        inst, "_max_results_per_hop", config.indexing.neptune.max_results_per_hop
+        inst, "_max_results_per_hop", config.search.graph_expansion.max_results_per_hop
     )
     return inst
 
@@ -480,7 +480,7 @@ def test_rank_is_normalized_within_the_result(retriever) -> None:
 
 
 def test_degree_source_uses_the_projected_edge_count(retriever, config) -> None:
-    config.indexing.neptune.entity_importance_source = "degree"
+    config.search.graph_expansion.entity_importance_source = "degree"
     items = [_entity_item("leaf", 1, degree=2), _entity_item("hub", 1, degree=10)]
     results = retriever._process_traversal_results(items, SearchQuery(query="x"))
     assert [r.source for r in results] == ["hub", "leaf"]
@@ -488,7 +488,7 @@ def test_degree_source_uses_the_projected_edge_count(retriever, config) -> None:
 
 
 def test_none_source_keeps_the_neutral_importance(retriever, config) -> None:
-    config.indexing.neptune.entity_importance_source = "none"
+    config.search.graph_expansion.entity_importance_source = "none"
     items = [_entity_item("a", 1, rank=1), _entity_item("b", 1, rank=9)]
     results = retriever._process_traversal_results(items, SearchQuery(query="x"))
     neutral = 1 / 3 + (1 / 6) * (1.0 + 0.5) / 2
@@ -496,7 +496,7 @@ def test_none_source_keeps_the_neutral_importance(retriever, config) -> None:
 
 
 def test_overfetched_entities_are_cut_after_ranking(retriever, config) -> None:
-    config.indexing.neptune.traversal_fetch_multiplier = 3
+    config.search.graph_expansion.traversal_fetch_multiplier = 3
     query = SearchQuery(query="x", top_k=2)
     # Emit order puts the far nodes first; ranking must keep the near ones.
     items = [_entity_item(f"far{i}", 3, rank=1) for i in range(4)] + [
@@ -513,8 +513,8 @@ def test_cut_keeps_every_seed_over_higher_ranked_hubs(
 ) -> None:
     # 10 low-degree seeds and 30 one-hop hubs: averaging importance and
     # proximity let the hubs push 8 of the 10 seeds out of the cut.
-    config.indexing.neptune.entity_importance_source = source
-    config.indexing.neptune.traversal_fetch_multiplier = 3
+    config.search.graph_expansion.entity_importance_source = source
+    config.search.graph_expansion.traversal_fetch_multiplier = 3
     seeds = [
         _entity_item(f"seed{i}", 0, rank=1 + i % 3, degree=1 + i % 3) for i in range(10)
     ]
@@ -535,7 +535,7 @@ def test_cut_keeps_every_seed_over_higher_ranked_hubs(
 
 
 def test_fetch_multiplier_one_keeps_every_traversed_entity(retriever, config) -> None:
-    config.indexing.neptune.traversal_fetch_multiplier = 1
+    config.search.graph_expansion.traversal_fetch_multiplier = 1
     query = SearchQuery(query="x", top_k=2)
     items = [_entity_item(f"e{i}", 1, rank=1) for i in range(3)]
     assert len(retriever._process_traversal_results(items, query)) == 3
@@ -564,7 +564,7 @@ async def test_entity_traversal_returns_the_seeds_and_expands_each_one(
     # expansion runs, with its own budget, per seed inside local(). Neptune
     # applies the limit inside repeat() per traverser and hop, so the seed's
     # total is capped after emit().
-    config.indexing.neptune.traversal_fetch_multiplier = 3
+    config.search.graph_expansion.traversal_fetch_multiplier = 3
     object.__setattr__(retriever, "_max_hops", 2)
     object.__setattr__(retriever, "_max_results_per_hop", 7)
     query = SearchQuery(query="x", top_k=10, retrieval_multiplier=1)
@@ -583,10 +583,10 @@ async def test_entity_traversal_returns_the_seeds_and_expands_each_one(
 async def test_entity_traversal_without_deterministic_order_keeps_the_store_order(
     retriever, config
 ) -> None:
-    # indexing.neptune.deterministic_order: false is the unordered limit()
+    # search.graph_expansion.deterministic_order: false is the unordered limit()
     # traversal: a hub's first neighbours as the store returns them, the
     # rest of it never read.
-    config.indexing.neptune.deterministic_order = False
+    config.search.graph_expansion.deterministic_order = False
     object.__setattr__(retriever, "_max_hops", 2)
     object.__setattr__(retriever, "_max_results_per_hop", 7)
     query = SearchQuery(query="x", top_k=10, retrieval_multiplier=1)
@@ -641,7 +641,7 @@ async def test_entity_traversal_keeps_every_seed(retriever, config) -> None:
 async def test_entity_traversal_budget_scales_with_fetch_multiplier(
     retriever, config, multiplier, per_seed
 ) -> None:
-    config.indexing.neptune.traversal_fetch_multiplier = multiplier
+    config.search.graph_expansion.traversal_fetch_multiplier = multiplier
     query = SearchQuery(query="x", top_k=4, retrieval_multiplier=2)
     text = await _entity_traversal_text(retriever, ["e1", "e2"], query)
     assert f".emit().dedup().limit({per_seed})))" in text

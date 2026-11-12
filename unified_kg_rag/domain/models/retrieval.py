@@ -215,7 +215,8 @@ class SearchQuery(BaseModel):
     max_hops: int | None = Field(
         default=None,
         ge=1,
-        description="Graph expansion depth; None is indexing.neptune.max_hops",
+        description="Graph expansion depth; None is search.graph_expansion.max_hops "
+        "(on every graph store)",
     )
 
     @field_validator("suffix")
