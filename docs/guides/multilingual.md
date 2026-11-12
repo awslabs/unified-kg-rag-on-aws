@@ -21,9 +21,15 @@ processing:
 
 With `source_language == target_language` and no additional targets, the
 translation stage is skipped at no cost, even with `enabled: true`. With
-`enabled: false` the corpus is indexed as written, and queries are processed
-in `source_language` (no query translation) unless a query asks for a
-language with `target_language`.
+`enabled: false` the corpus is indexed as written.
+
+**Query translation.** A query is translated into the index language (below),
+or into the language it requests with `target_language`, exactly when it is
+written in another one: a Korean question on an English index is searched in
+English, and an English question after a ko→en ingest costs no translator
+call. The query's language is read from its script and, among Latin-script
+languages, its function words; a query they do not tell apart counts as
+written in the index language and is not translated.
 
 **One index language.** The corpus is indexed in `target_language` when
 translation runs and in `source_language` otherwise. Every component follows

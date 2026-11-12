@@ -1485,6 +1485,9 @@ From a `main` checkout (formats and keys no release had):
   still fails the query. A global map
   output that is not map JSON goes to the fixer, not to a second map call over its batch. A response cut inside
   its last object is not repaired.
+- A query is translated exactly when it is written in another language than the index language (or the requested
+  `target_language`): a Korean question on an English index is now searched in English (one fast-model call), and an
+  English question after a ko→en ingest no longer pays a translator call.
 - The query translation, the follow-up rewrite and the community relevance rating answer JSON: `{"translation": ...}`,
   `{"question": ...}`, and MS GraphRAG's `{"reason": ..., "rating": 0-5}` (`rate_prompt.py`; the rating is divided by
   5, so `relevance_threshold: 0.2` is still a rating of 1 or more). The router answers the strategy name, read from

@@ -265,7 +265,8 @@ async def test_the_translation_runs_alongside_the_router() -> None:
     config.processing.translation.target_language = "en"
     factory = _Factory(route="global")
     factory.router_waits_for = TranslationPrompt
-    state = await _route(_chain(config, factory))
+    # A Japanese question on the ja->en index: translated into English.
+    state = await _route(_chain(config, factory), query="供給者はどこにありますか？")
     assert state["processed_query"].final_query == "translated"
     assert factory.counts[TranslationPrompt] == 1
 

@@ -33,6 +33,7 @@ from unified_kg_rag.adapters.retrieval.strategy_registry import (
     query_inputs as strategy_query_inputs,
 )
 from unified_kg_rag.domain.ingestion.cache_keys import index_language
+from unified_kg_rag.domain.languages import text_language
 from unified_kg_rag.domain.models import (
     Config,
     ModelPurpose,
@@ -96,34 +97,30 @@ _REWRITE_FIX = (
 )
 
 
-def _query_language(chain: GraphRAGChain, inputs: dict[str, Any]) -> tuple[str, bool]:
+def _query_language(
+    chain: GraphRAGChain, inputs: dict[str, Any], question: str
+) -> tuple[str, bool]:
     """The language the query is processed into, and whether its
     translation is skipped.
 
-    Translation is skipped when no explicit target was requested AND
-    ingestion did not translate: the translation stage is disabled (the
-    corpus is indexed as written) or would be a no-op (a same-language
-    corpus, TranslationConfig.is_noop). This avoids paying an LLM
-    call per query for e.g. an English-only or Japanese-only corpus, and
-    — more importantly — avoids the failure mode where the translator
-    LLM returns a meta-response ("I notice the text you...") for a query
-    already in the target language, which would then be used verbatim as
-    the search query.
-
-    The language is the requested one, else the one the index was built
-    in (``index_language``): the source language when the stage is
-    disabled, the target language otherwise (equal to the source for a
-    no-op). It is the translation's language only: the query's entities
-    and keywords are extracted in the index language whatever was
-    requested (``_extraction_language``).
+    The language is the requested one (``target_language``), else the one
+    the index was built in (``index_language``: the source language when
+    the translation stage is disabled, the target language otherwise).
+    The query is translated exactly when it is written in another language
+    (``text_language``, which falls back to the index language when the
+    query's script and words do not tell): a Korean question on an English
+    index is searched in English, an English one after a ko→en ingest
+    costs no translator call, and a query already in its language never
+    meets the failure mode where the translator answers about the request
+    ("I notice the text you...") instead of translating it. It is the
+    translation's language only: the query's entities and keywords are
+    extracted in the index language whatever was requested
+    (``_extraction_language``).
     """
-    requested_language = inputs.get("target_language")
-    translation = chain.config.processing.translation
-    skip_translation = requested_language is None and (
-        not translation.enabled or translation.is_noop
-    )
-    language = requested_language or index_language(chain.config)
-    return language_name(language), skip_translation
+    indexed = index_language(chain.config)
+    language = language_name(inputs.get("target_language") or indexed)
+    written = language_name(text_language(question, indexed))
+    return language, written == language
 
 
 def _extraction_language(chain: GraphRAGChain) -> str:
@@ -157,7 +154,7 @@ def start_query_inputs(
     Their errors surface when they are awaited (``process_query``).
     """
     question = chain._question(inputs)
-    target_language, skip_translation = _query_language(chain, inputs)
+    target_language, skip_translation = _query_language(chain, inputs, question)
     extraction_language = _extraction_language(chain)
     coroutines: dict[str, Awaitable[Any]] = {}
     if entities:
