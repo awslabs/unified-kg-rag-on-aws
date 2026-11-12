@@ -229,11 +229,16 @@ gets its models and stores from the run's `Providers` bundle.
   name similarity also joins different organizations that share most of their
   name ("Northfield University" / "Northfield University Hospital"). When it is
   on, names link above `processing.similarity_threshold` only when their
-  *discriminator tokens* (tokens with a digit, single letters, Roman numerals)
-  are identical, their types are compatible, and, for names ending in Han,
+  *discriminator tokens* (tokens with a numeral of any script, Han numerals
+  included, single letters, Roman numerals) are identical, their types are compatible, and, for names ending in Han,
   Hangul or Kana, their final (head) characters are equal ("가나다연구원" and
-  "가나다연구소" stay apart). A type-aware union-find never groups two
-  differently typed names. Without fuzzy matching, full and incremental
+  "가나다연구소" stay apart). The tokens are the compact key's words, cut
+  where they pass between a dense-script letter and another character
+  ("제3조" and "제 3 조" both 제, 3, 조), so both guards are functions of the
+  compact key and never keep two spellings of one compact key apart: "the
+  same entity" is that key's equality in resolution, the incremental merge,
+  claim resolution and the stores' lookups by name key alike. A type-aware
+  union-find never groups two differently typed names. Without fuzzy matching, full and incremental
   builds group the same names (both merge by compact name key). With it, the
   incremental merge uses the same matcher but folds each delta entity into
   its one best-matching stored entity and does not join stored entities with

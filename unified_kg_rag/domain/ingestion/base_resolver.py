@@ -113,11 +113,11 @@ class FuzzyMatcher:
 
     def _build_indices(self) -> None:
         # Precomputed once so find_all_matches' identifier guard is a dict
-        # lookup per candidate rather than a re-normalization.
-        self.discriminator_index = {
-            name: discriminator_tokens(name) for name in self.candidates
-        }
-        self.head_index = {name: head_character(name) for name in self.candidates}
+        # lookup per candidate rather than a re-normalization; only similar
+        # (fuzzy) matches are guarded.
+        fuzzy = self.candidates if self.fuzzy else []
+        self.discriminator_index = {name: discriminator_tokens(name) for name in fuzzy}
+        self.head_index = {name: head_character(name) for name in fuzzy}
         # Spacing and legal-form variants of one name share a compact key.
         self.compact_index: dict[str, list[str]] = {}
         for name in self.candidates:
@@ -188,32 +188,37 @@ class FuzzyMatcher:
         that share most of their name ("... University" / "... University
         Hospital"), so it is opt-in.
 
-        Candidates whose :func:`discriminator_tokens` or
+        Similar candidates whose :func:`discriminator_tokens` or
         :func:`head_character` differ from the query's are dropped:
         "purchase order 1001" and "purchase order 1002" share most shingles
         but name different things, as do "가나다연구원" and "가나다연구소",
         and every consumer of this method (full-build grouping, incremental
-        merge, claim resolution) would otherwise collapse them.
+        merge, claim resolution) would otherwise collapse them. Both are
+        functions of the compact key, so a compact-key variant is never
+        dropped: "the same entity" is the compact key's equality here as in
+        every other comparison (``compact_name_key``).
         """
         if not self.fuzzy:
             matches: list[tuple[str, float]] = []
-        elif self.resolution_method == ResolutionMethod.MINHASH:
-            matches = self._find_all_lsh_matches(query)
         else:
-            matches = self._find_all_string_similarity_matches(query)
+            if self.resolution_method == ResolutionMethod.MINHASH:
+                similar = self._find_all_lsh_matches(query)
+            else:
+                similar = self._find_all_string_similarity_matches(query)
+            query_discriminators = discriminator_tokens(query)
+            query_head = head_character(query)
+            matches = [
+                match
+                for match in similar
+                if self._discriminators_of(match[0]) == query_discriminators
+                and self._head_of(match[0]) == query_head
+            ]
         variants = self.compact_index.get(compact_name_key(query), [])
         if variants:
             scores = dict(matches)
             scores.update(dict.fromkeys(variants, 1.0))
             matches = list(scores.items())
-        query_discriminators = discriminator_tokens(query)
-        query_head = head_character(query)
-        return [
-            match
-            for match in matches
-            if self._discriminators_of(match[0]) == query_discriminators
-            and self._head_of(match[0]) == query_head
-        ]
+        return matches
 
     def _discriminators_of(self, candidate: str) -> frozenset[str]:
         cached = self.discriminator_index.get(candidate)

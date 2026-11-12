@@ -89,7 +89,7 @@ def test_designator_alone_is_not_stripped(method) -> None:
         ("㈜가나다", set()),
         ("가나다 (유)", set()),
         ("(株)そらいろ", set()),
-        ("(주)가나다 2공장", {"2공장"}),
+        ("(주)가나다 2공장", {"2"}),
         ("Vendor A Inc.", {"a"}),
         ("Acme Co", set()),
     ],
@@ -126,3 +126,60 @@ def test_entity_key_is_unchanged() -> None:
 def test_english_head_words_unaffected(method) -> None:
     # The head-character guard applies only to dense-script names.
     assert _matches(method, "Acme Corporation", "Acme Corporations")
+
+
+# Spacing variants of a dense-script name with a number share a compact key
+# (one entity) but split into other whitespace words: their discriminator
+# tokens differed, so the default (non-fuzzy) resolution kept them apart.
+_SPACED_NUMBERED = [
+    ("제3조", "제 3 조"),
+    ("2공장", "2 공장"),
+    ("제1항", "제 1 항"),
+    ("1차 협력사", "1 차 협력사"),
+    ("第3条", "第 3 条"),
+    ("3号館", "3 号館"),
+    ("第2章", "第 2 章"),
+    ("第3条", "第3 条"),
+]
+
+
+@pytest.mark.parametrize(("a", "b"), _SPACED_NUMBERED)
+def test_spacing_variants_with_a_number_are_one_entity(a: str, b: str) -> None:
+    from unified_kg_rag.domain.ingestion.graph_resolver import GraphResolver
+    from unified_kg_rag.domain.models import Config, Entity
+
+    resolver = GraphResolver(Config(), max_workers=1, use_process_pool=False)
+    entities = [
+        Entity(id=f"e{i}", name=n, type="clause", text_unit_ids=[f"t{i}"])
+        for i, n in enumerate((a, b))
+    ]
+    resolved, _, _ = resolver.entity_resolver.resolve(entities)
+    assert len(resolved) == 1
+    for method in METHODS:
+        matcher = FuzzyMatcher(
+            [b], resolution_method=method, similarity_threshold=0.9, fuzzy=False
+        )
+        assert [name for name, _ in matcher.find_all_matches(a)] == [b]
+
+
+@pytest.mark.parametrize("method", METHODS)
+@pytest.mark.parametrize(
+    ("a", "b"),
+    [
+        # An identifier glued inside a dense word: a Han numeral, a Latin
+        # letter, digits.
+        ("東京第一工場", "東京第二工場"),
+        ("东京第一工厂", "东京第二工厂"),
+        ("가나다아파트 A동", "가나다아파트 B동"),
+        ("プロジェクトA号", "プロジェクトB号"),
+        ("가나다아파트 101동", "가나다아파트 102동"),
+        ("서울공장 1라인", "서울공장 2라인"),
+    ],
+)
+def test_an_identifier_inside_a_dense_word_never_fuzzy_links(
+    method: ResolutionMethod, a: str, b: str
+) -> None:
+    matcher = FuzzyMatcher(
+        [b], resolution_method=method, similarity_threshold=0.5, fuzzy=True
+    )
+    assert matcher.find_all_matches(a) == []

@@ -12,7 +12,11 @@ between two letters, and an "&" a dropped space joined to the word before.
 And names with one ``entity_key`` (one entity id) have one matching key of
 every kind: the discriminator tokens split "한·빛" at the middle dot its key
 joins, so whether the fuzzy matcher linked a spelling depended on which one
-the merged entity was displayed under.
+the merged entity was displayed under. Names with one ``compact_name_key``
+(spacing and legal-form variants: one entity) have one discriminator token
+set and one head character, so the fuzzy matcher's guards never keep two
+spellings of one entity apart ("제3조" and "제 3 조" had {제3조} and
+{제, 3, 조}).
 """
 
 from __future__ import annotations
@@ -107,3 +111,25 @@ def test_names_with_one_entity_key_have_one_matching_key(name: str) -> None:
     key = entity_key(name)
     for matching_key in (compact_name_key, discriminator_tokens, head_character):
         assert matching_key(name) == matching_key(key), matching_key.__name__
+
+
+@given(name=_NAMES, spaced=st.lists(st.sampled_from([" ", "  ", ""]), max_size=12))
+@example(name="제3조", spaced=[" ", " "])
+@example(name="第3条", spaced=[" ", " "])
+@example(name="2공장", spaced=[" "])
+@example(name="3号館", spaced=[" "])
+@example(name="1차 협력사", spaced=[" ", "", " "])
+@example(name="(주)가나다 2공장", spaced=["", "", "", "", "", " "])
+def test_names_with_one_compact_key_have_one_guard_key(
+    name: str, spaced: list[str]
+) -> None:
+    # The name respaced between its characters, and the name's compact key:
+    # where they share a compact key they share the guards' keys too.
+    respaced = "".join(
+        c + (spaced[i] if i < len(spaced) else "") for i, c in enumerate(name)
+    )
+    key = compact_name_key(name)
+    for other in (respaced, key):
+        if compact_name_key(other) == key:
+            assert discriminator_tokens(other) == discriminator_tokens(name), other
+            assert head_character(other) == head_character(name), other
