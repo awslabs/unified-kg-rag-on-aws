@@ -136,15 +136,18 @@ def load_graph(path: Path) -> dict[str, Any]:
     degrees = dict(graph.degree())
     for node in nodes:
         node["degree"] = degrees.get(node["id"], 0)
-    layout = data.get("layout") or {}
-    if not layout and graph.number_of_nodes():
-        layout = packed_layout(displayed_graph(graph, MAX_DRAWN_NODES))
-    drawn = set(layout)
+    # The page draws the best-connected MAX_DRAWN_NODES, at an exported
+    # layout's positions when it has them (an export may lay out more).
+    drawn = displayed_graph(graph, MAX_DRAWN_NODES)
+    exported = data.get("layout") or {}
+    layout = {k: v for k, v in exported.items() if k in drawn}
+    if not layout and drawn.number_of_nodes():
+        layout = packed_layout(drawn)
     communities = _communities(data.get("communities"), {n["id"]: n for n in nodes})
     return {
         "nodes": nodes,
         "edges": edges,
-        "layout": {k: v for k, v in layout.items() if k in drawn},
+        "layout": layout,
         "communities": communities,
         "stats": _stats(graph, nodes, edges, communities),
     }

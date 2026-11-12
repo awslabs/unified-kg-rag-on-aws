@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -22,6 +23,7 @@ import pytest
 import yaml
 
 from tests.fixtures.console_demo import load, requires_console
+from tests.fixtures.graph_exports import write_export
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow, requires_console]
 
@@ -554,6 +556,26 @@ def test_the_graph_is_read_with_layout_communities_and_analysis(client: Any) -> 
     node_ids = {n["id"] for n in data["nodes"]}
     entity_ids = {s["id"] for s in result["sources"] if s["kind"] == "entity"}
     assert entity_ids and entity_ids <= node_ids
+
+
+def test_a_large_graph_draws_only_the_best_connected(
+    client: Any, workspace: Path
+) -> None:
+    from unified_kg_rag.application.cli.console.graph_api import MAX_DRAWN_NODES
+
+    total = MAX_DRAWN_NODES + 1
+    path = write_export(
+        workspace / "cache" / "large" / "visualization" / "visualization_data.json",
+        total,
+    )
+    # Listed last (oldest), so the demo's graph stays the newest.
+    os.utime(path, (1.0, 1.0))
+    data = client.get(
+        "/api/graphs/data",
+        params={"ref": "cache:large/visualization/visualization_data.json"},
+    ).json()
+    assert len(data["layout"]) == MAX_DRAWN_NODES
+    assert data["stats"]["nodes"] == total
 
 
 def test_datasets_are_found_and_previewed(client: Any) -> None:

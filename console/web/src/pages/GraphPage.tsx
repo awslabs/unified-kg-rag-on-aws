@@ -102,14 +102,16 @@ function GraphExplorer({ data, params }: { data: GraphData; params: URLSearchPar
     const order = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([k]) => k);
     return { key, order, counts };
   }, [data.nodes, colorBy]);
+  const communityById = useMemo(() => new Map(data.communities.map((c) => [c.id, c])), [data.communities]);
   const communityName = (id: string) => {
     if (id === "none") return t("graph.noCommunity");
-    const c = data.communities.find((x) => x.id === id);
+    const c = communityById.get(id);
     return c ? c.top_entities.slice(0, 2).join(", ") || id.slice(0, 8) : id.slice(0, 8);
   };
+  const slotOf = useMemo(() => new Map(groups.order.map((k, i) => [k, i])), [groups.order]);
   const colorOf = (id: string) => {
     const node = byId.get(id);
-    return colorSlot(node ? groups.order.indexOf(groups.key(node)) : 99);
+    return colorSlot(node ? (slotOf.get(groups.key(node)) ?? 99) : 99);
   };
   const legend = groups.order.slice(0, 8).map((k, i) => ({
     label: `${colorBy === "community" ? communityName(k) : k} (${number(groups.counts.get(k) ?? 0)})`,
@@ -119,12 +121,12 @@ function GraphExplorer({ data, params }: { data: GraphData; params: URLSearchPar
 
   const highlighted = useMemo(() => {
     if (community) {
-      const c = data.communities.find((x) => x.id === community);
+      const c = communityById.get(community);
       return c ? new Set(c.nodes) : null;
     }
     if (selected) return new Set([selected, ...(neighbours.get(selected) ?? [])]);
     return null;
-  }, [community, selected, neighbours, data.communities]);
+  }, [community, selected, neighbours, communityById]);
 
   const traced = useMemo(() => {
     const ids = new Set<string>();
@@ -443,8 +445,29 @@ function GraphExplorer({ data, params }: { data: GraphData; params: URLSearchPar
         </section>
       </div>
       <Sheet title={t("graph.nodeTable")} pad={false}>
-        <details>
-          <summary style={{ padding: "12px 20px" }}>{t("graph.nodeTableShow", { count: data.nodes.length })}</summary>
+        <EntityTable nodes={data.nodes} communityName={communityName} onPick={pick} />
+      </Sheet>
+    </>
+  );
+}
+
+// Rows the entity table shows at once (a graph can hold tens of thousands).
+export const TABLE_PAGE = 100;
+
+/** Every entity, most connected first: built only while open, a page at a
+ * time. */
+export function EntityTable({ nodes, communityName, onPick }: { nodes: GraphNode[]; communityName: (id: string) => string; onPick: (id: string) => void }) {
+  const { t, number } = useI18n();
+  const [open, setOpen] = useState(false);
+  const [page, setPage] = useState(0);
+  const sorted = useMemo(() => (open ? [...nodes].sort((a, b) => b.degree - a.degree) : []), [open, nodes]);
+  const pages = Math.max(1, Math.ceil(nodes.length / TABLE_PAGE));
+  const shown = sorted.slice(page * TABLE_PAGE, (page + 1) * TABLE_PAGE);
+  return (
+    <details onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}>
+      <summary style={{ padding: "12px 20px" }}>{t("graph.nodeTableShow", { count: nodes.length })}</summary>
+      {open ? (
+        <>
           <div className="table-wrap" tabIndex={0} style={{ maxHeight: 360 }}>
             <table className="table">
               <thead>
@@ -456,26 +479,37 @@ function GraphExplorer({ data, params }: { data: GraphData; params: URLSearchPar
                 </tr>
               </thead>
               <tbody>
-                {[...data.nodes]
-                  .sort((a, b) => b.degree - a.degree)
-                  .map((n) => (
-                    <tr key={n.id}>
-                      <td>
-                        <button className="link-button" onClick={() => pick(n.id)}>
-                          {n.name}
-                        </button>
-                      </td>
-                      <td>{n.type}</td>
-                      <td className="num">{n.degree}</td>
-                      <td>{n.community_id ? communityName(n.community_id) : "—"}</td>
-                    </tr>
-                  ))}
+                {shown.map((n) => (
+                  <tr key={n.id}>
+                    <td>
+                      <button className="link-button" onClick={() => onPick(n.id)}>
+                        {n.name}
+                      </button>
+                    </td>
+                    <td>{n.type ?? "—"}</td>
+                    <td className="num">{number(n.degree)}</td>
+                    <td>{n.community_id ? communityName(n.community_id) : "—"}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
-        </details>
-      </Sheet>
-    </>
+          {pages > 1 ? (
+            <div className="row" style={{ padding: "10px 20px" }}>
+              <button className="button button-small" disabled={page === 0} onClick={() => setPage(page - 1)}>
+                {t("graph.tablePrev")}
+              </button>
+              <span className="field-help" role="status">
+                {t("graph.tableRange", { from: number(page * TABLE_PAGE + 1), to: number(Math.min(nodes.length, (page + 1) * TABLE_PAGE)), total: number(nodes.length) })}
+              </span>
+              <button className="button button-small" disabled={page >= pages - 1} onClick={() => setPage(page + 1)}>
+                {t("graph.tableNext")}
+              </button>
+            </div>
+          ) : null}
+        </>
+      ) : null}
+    </details>
   );
 }
 

@@ -907,7 +907,7 @@ From a `main` checkout (formats and keys no release had):
   (`console/web/`, Vite, React, TypeScript) is in English and nine more languages, in a light and a dark theme (the
   system's unless one is chosen in the top bar), set in Pretendard (Pretendard JP for Japanese, JetBrains Mono for
   figures; self-hosted, SIL OFL), with a force-directed canvas graph (the focused node and its neighbours labelled,
-  the rest dimmed), to the brief in `console/web/DESIGN.md`; `console/demo/demo.py` prepares a synthetic corpus of
+  the rest dimmed; the 600 best-connected entities drawn, the rest found by name or in a paged table), to the brief in `console/web/DESIGN.md`; `console/demo/demo.py` prepares a synthetic corpus of
   the formats the core install parses (multi-page PDFs, whose citations name their page, Markdown, HTML, CSV, JSON
   and text), a dataset and a config (kept on a restart, `--reset-config` to write it again) for fake, Ollama or
   Bedrock models, and stops before it writes anything without the `console` extra, the built web client, or the

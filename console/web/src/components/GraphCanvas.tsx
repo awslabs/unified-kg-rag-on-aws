@@ -102,6 +102,56 @@ function withAlpha(color: string, alpha: number): string {
 
 const endId = (end: string | NodeObject<Node>) => (typeof end === "object" ? String(end.id) : end);
 
+/** The part of the graph the canvas draws: the nodes the server laid out
+ * (its best-connected MAX_DRAWN_NODES), placed from that layout scaled to a
+ * canvas-sized frame so the picture is stable from one visit to the next,
+ * and the edges between them. */
+export function drawnGraph(data: GraphData): { nodes: Node[]; links: Link[] } {
+  const entries = Object.values(data.layout);
+  let [minX, maxX, minY, maxY] = [Infinity, -Infinity, Infinity, -Infinity];
+  for (const [x, y] of entries) {
+    minX = Math.min(minX, x);
+    maxX = Math.max(maxX, x);
+    minY = Math.min(minY, y);
+    maxY = Math.max(maxY, y);
+  }
+  const span = Math.max(maxX - minX, maxY - minY) || 1;
+  const nodes: Node[] = [];
+  for (const n of data.nodes) {
+    const p = data.layout[n.id];
+    if (!p) continue;
+    nodes.push({
+      id: n.id,
+      name: n.name,
+      type: n.type,
+      degree: n.degree,
+      x: ((p[0] - (minX + maxX) / 2) / span) * 600,
+      y: ((p[1] - (minY + maxY) / 2) / span) * 600,
+    });
+  }
+  const ids = new Set(nodes.map((n) => n.id));
+  const links: Link[] = data.edges
+    .filter((e) => ids.has(e.source) && ids.has(e.target))
+    .map((e) => ({ id: e.id, source: e.source, target: e.target, type: e.type, description: e.description }));
+  return { nodes, links };
+}
+
+/** Runs the pre-layout simulation on the drawn graph (in place). */
+function settle(graph: { nodes: Node[]; links: Link[] }): { nodes: Node[]; links: Link[] } {
+  const { nodes, links } = graph;
+  const large = nodes.length > LARGE;
+  const { charge, distance } = forces(large);
+  const maxDeg = nodes.reduce((m, n) => Math.max(m, n.degree), 1);
+  forceSimulation(nodes as (Node & SimulationNodeDatum)[])
+    .force("link", forceLink(links as unknown as SimulationLinkDatum<Node & SimulationNodeDatum>[]).id((n) => (n as Node).id).distance(distance))
+    .force("charge", forceManyBody().strength(charge).distanceMax(700))
+    .force("collide", forceCollide((n) => 6 + 5 * Math.sqrt((n as Node).degree / maxDeg) + (large ? 0 : 10)))
+    .force("center", forceCenter(0, 0))
+    .stop()
+    .tick(large ? 120 : 300);
+  return graph;
+}
+
 export function GraphCanvas({ data, colorOf, selected, highlighted, traced, tracedEdge, onSelect, legend }: GraphCanvasProps) {
   const { t } = useI18n();
   const palette = usePalette();
@@ -112,7 +162,6 @@ export function GraphCanvas({ data, colorOf, selected, highlighted, traced, trac
   const [hoverLink, setHoverLink] = useState<Link | null>(null);
   const fitted = useRef(false);
   const reduced = useMemo(() => typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches, []);
-  const large = data.nodes.length > LARGE;
 
   useEffect(() => {
     const element = box.current;
@@ -124,43 +173,12 @@ export function GraphCanvas({ data, colorOf, selected, highlighted, traced, trac
     return () => observer.disconnect();
   }, []);
 
-  // The force simulation starts from the exported layout (scaled to a
-  // canvas-sized frame), so the picture is stable from one visit to the next.
-  const graphData = useMemo(() => {
-    const entries = Object.values(data.layout);
-    const xs = entries.map((p) => p[0]);
-    const ys = entries.map((p) => p[1]);
-    const [minX, maxX, minY, maxY] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
-    const span = Math.max(maxX - minX, maxY - minY) || 1;
-    const nodes: Node[] = data.nodes.map((n) => {
-      const p = data.layout[n.id];
-      return {
-        id: n.id,
-        name: n.name,
-        type: n.type,
-        degree: n.degree,
-        ...(p ? { x: ((p[0] - (minX + maxX) / 2) / span) * 600, y: ((p[1] - (minY + maxY) / 2) / span) * 600 } : {}),
-      };
-    });
-    const ids = new Set(nodes.map((n) => n.id));
-    const links: Link[] = data.edges
-      .filter((e) => ids.has(e.source) && ids.has(e.target))
-      .map((e) => ({ id: e.id, source: e.source, target: e.target, type: e.type, description: e.description }));
-    // Settled before the first paint, so the canvas opens on a readable
-    // picture (and stays still under reduced motion); the live engine then
-    // only eases what a drag disturbs.
-    const large = nodes.length > LARGE;
-    const { charge, distance } = forces(large);
-    const maxDeg = Math.max(1, ...nodes.map((n) => n.degree));
-    forceSimulation(nodes as (Node & SimulationNodeDatum)[])
-      .force("link", forceLink(links as unknown as SimulationLinkDatum<Node & SimulationNodeDatum>[]).id((n) => (n as Node).id).distance(distance))
-      .force("charge", forceManyBody().strength(charge).distanceMax(700))
-      .force("collide", forceCollide((n) => 6 + 5 * Math.sqrt((n as Node).degree / maxDeg) + (large ? 0 : 10)))
-      .force("center", forceCenter(0, 0))
-      .stop()
-      .tick(large ? 120 : 300);
-    return { nodes, links };
-  }, [data]);
+  // Only the laid-out nodes are drawn (the server lays out the best-connected
+  // MAX_DRAWN_NODES), settled before the first paint, so the canvas opens on
+  // a readable picture (and stays still under reduced motion); the live
+  // engine then only eases what a drag disturbs.
+  const graphData = useMemo(() => settle(drawnGraph(data)), [data]);
+  const large = graphData.nodes.length > LARGE;
 
   // The live engine keeps the same forces, so a dragged node does not pull
   // the picture back into a knot.
@@ -174,19 +192,20 @@ export function GraphCanvas({ data, colorOf, selected, highlighted, traced, trac
 
   const neighbours = useMemo(() => {
     const map = new Map<string, Set<string>>();
-    for (const e of data.edges) {
-      if (!map.has(e.source)) map.set(e.source, new Set());
-      if (!map.has(e.target)) map.set(e.target, new Set());
-      map.get(e.source)?.add(e.target);
-      map.get(e.target)?.add(e.source);
+    for (const e of graphData.links) {
+      const [a, b] = [endId(e.source), endId(e.target)];
+      if (!map.has(a)) map.set(a, new Set());
+      if (!map.has(b)) map.set(b, new Set());
+      map.get(a)?.add(b);
+      map.get(b)?.add(a);
     }
     return map;
-  }, [data.edges]);
+  }, [graphData.links]);
 
-  const maxDegree = useMemo(() => Math.max(1, ...data.nodes.map((n) => n.degree)), [data.nodes]);
+  const maxDegree = useMemo(() => graphData.nodes.reduce((m, n) => Math.max(m, n.degree), 1), [graphData.nodes]);
   const busiest = useMemo(
-    () => new Set([...data.nodes].sort((a, b) => b.degree - a.degree).slice(0, large ? 20 : 10).map((n) => n.id)),
-    [data.nodes, large],
+    () => new Set([...graphData.nodes].sort((a, b) => b.degree - a.degree).slice(0, large ? 20 : 10).map((n) => n.id)),
+    [graphData.nodes, large],
   );
 
   const focus = hoverNode ?? selected;
@@ -324,7 +343,7 @@ export function GraphCanvas({ data, colorOf, selected, highlighted, traced, trac
     ctx.fillText(text, x, y);
   };
 
-  const selectedName = selected ? data.nodes.find((n) => n.id === selected)?.name : null;
+  const selectedName = selected ? graphData.nodes.find((n) => n.id === selected)?.name : null;
 
   return (
     <div
@@ -334,7 +353,8 @@ export function GraphCanvas({ data, colorOf, selected, highlighted, traced, trac
       role="application"
       data-traced={traced.size}
       data-selected={selected ?? ""}
-      aria-label={t("graph.canvasLabel", { nodes: data.nodes.length, edges: data.edges.length })}
+      data-drawn={graphData.nodes.length}
+      aria-label={t("graph.canvasLabel", { nodes: graphData.nodes.length, edges: graphData.links.length })}
       onKeyDown={(event) => {
         const step = 60;
         if (event.key === "+" || event.key === "=") graph.current?.zoom((graph.current.zoom() || 1) * 1.25, 200);
