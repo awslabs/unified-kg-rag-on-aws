@@ -912,6 +912,8 @@ class IngestionPipelineRunner:
                 if context.incremental_delta is not None
                 else 0
             ),
+            # Corpus files of a type no loader reads (the WARNING names them).
+            "files_skipped": len(context.skipped_source_files),
             # The model calls and tokens of the stages this run executed.
             "token_usage": run_token_usage(context, self.pipeline.executed_stages),
             "stages": [

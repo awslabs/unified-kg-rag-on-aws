@@ -593,7 +593,10 @@ class DocumentLoadingStage(_RegistryStage):
         else:
             discovered_files = self.loader.discover_files()
             input_count = len(discovered_files)
-            documents = self.loader.load()
+            # A deletion from memory stages no document: no empty corpus to
+            # warn of ("No supported files found").
+            deletion_only = self.deletions is not None and not discovered_files
+            documents = [] if deletion_only else self.loader.load()
             for document in documents:
                 assign_document_identity(
                     document,

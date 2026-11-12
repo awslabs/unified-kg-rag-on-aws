@@ -144,6 +144,9 @@ holds:
     `indexing.max_document_failures` consecutive runs unchanged, at the same
     extraction settings (a settings change starts the count over); also in
     the summary.
+  - `files_skipped`: the corpus files of a type no loader reads (a `.docx`
+    without the `docx` extra, a suffix no loader registers), which one
+    WARNING names with the remedy.
 
   And `build_record`, the suffix's build record after the run: `written`,
   `kept` (the run wrote nothing; the stored one stands), `failed` (no index

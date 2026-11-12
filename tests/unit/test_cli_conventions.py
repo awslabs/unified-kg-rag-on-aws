@@ -1077,6 +1077,12 @@ async def test_ingestion_json_result_counts_the_failed_documents() -> None:
     assert (result["documents_without_claims"], result["failed_documents"]) == (1, 2)
     # No indexing stage ran: nothing to say of the build record.
     assert result["build_record"] is None
+    # A file of a type no loader reads (a .docx without its extra) is no
+    # excluded document: counted apart, it read as nothing skipped.
+    assert result["files_skipped"] == 0
+    context.skipped_source_files = ["src/report.docx"]
+    result = runner._json_result(context)
+    assert (result["files_skipped"], result["documents_excluded"]) == (1, 0)
 
 
 async def test_eval_json_output_is_the_only_stdout(
