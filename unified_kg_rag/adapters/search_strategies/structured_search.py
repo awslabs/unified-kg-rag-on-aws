@@ -51,7 +51,6 @@ from unified_kg_rag.adapters.retrieval.strategy_registry import (
     register_strategy,
     serves,
 )
-from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
 from unified_kg_rag.domain.ingestion.cache_keys import index_language
 from unified_kg_rag.domain.ingestion.seed_graph import (
@@ -70,6 +69,7 @@ from unified_kg_rag.domain.models import (
     SearchResult,
     SearchStrategy,
     SearchType,
+    SectionType,
 )
 from unified_kg_rag.domain.models.config import language_name
 from unified_kg_rag.domain.models.graph_query import (
@@ -991,7 +991,7 @@ class StructuredSearchStrategy(BaseSearchStrategy):
             ),
             score=1.0,
             source="graph-query",
-            retriever_type=SectionType.QUERY_RESULT.value,
+            retriever_type=SectionType.QUERY_RESULT,
             metadata={
                 "plan": run.plan,
                 "plan_description": run.description,
@@ -1046,7 +1046,7 @@ class StructuredSearchStrategy(BaseSearchStrategy):
             content=entity_content(node, []),
             score=1.0 / (1 + rank),
             source=vertex_id,
-            retriever_type=SectionType.ENTITY.value,
+            retriever_type=SectionType.ENTITY,
             metadata=node,
         )
 
@@ -1132,7 +1132,7 @@ class StructuredSearchStrategy(BaseSearchStrategy):
                 content=f"{name(e.source_id)} -[{e.type}]-> {name(e.target_id)}",
                 score=1.0 / (1 + rank),
                 source=e.id,
-                retriever_type=SectionType.RELATIONSHIP.value,
+                retriever_type=SectionType.RELATIONSHIP,
                 metadata={
                     "id": e.id,
                     "source_id": e.source_id,

@@ -29,7 +29,6 @@ from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.hybrid_scorer import HybridScorer, RerankTrace
 from unified_kg_rag.adapters.retrieval.strategy_registry import citations_enabled
 from unified_kg_rag.adapters.retrieval.token_manager import (
-    SectionType,
     TokenManager,
 )
 from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
@@ -55,6 +54,7 @@ from unified_kg_rag.domain.models import (
     SearchResult,
     SearchStrategy,
     SearchType,
+    SectionType,
 )
 from unified_kg_rag.domain.models.config import language_name
 from unified_kg_rag.domain.retrieval import source_fields
@@ -1643,7 +1643,7 @@ class BaseSearchStrategy(ABC):
                             len(chain),
                             raw / top if raw is not None and top > 0 else 0.5,
                         ),
-                        "retriever_type": SectionType.ENTITY.value,
+                        "retriever_type": SectionType.ENTITY,
                     }
                 )
             )

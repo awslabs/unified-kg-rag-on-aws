@@ -14,8 +14,9 @@ a community report is attributed to many files, so counting it as one source
 let five random reports cover most of a small corpus and score near-perfect
 hit@5. The passages come first: the files of the sources that name their own
 file (text units) in their rank order, then the lineage files of the derived
-sources (``DERIVED_SOURCE_TYPES``: summaries, community reports, entities,
-relationships, claims) in theirs. A derived source stands for every file of
+sources (the section types ``SectionType.lineage_attributed``: summaries,
+community reports, entities, relationships, claims, graph query results) in
+theirs. A derived source stands for every file of
 its lineage, so at its own rank one high-ranked summary or report of twenty
 files filled the top ``k`` and crowded out the passages ranked after it
 (``tree`` scored below its own passages' ``text`` row). A strategy that
@@ -87,6 +88,7 @@ from unified_kg_rag.domain.models import (
     EvaluatorType,
     SearchStrategy,
 )
+from unified_kg_rag.domain.retrieval.section_types import LINEAGE_ATTRIBUTED_TYPES
 from unified_kg_rag.evaluation.citation_scoring import (
     CITATION_METRICS,
     citation_scores,
@@ -100,12 +102,6 @@ SKIP_REASON_NO_SOURCES_BY_CONFIG = "no_sources_by_config"
 # whose section type is not reported.
 BY_SOURCE_TYPE_KEY = "by_source_type"
 UNKNOWN_SOURCE_TYPE = "unknown"
-
-# The section types attributed to the files of their text_unit_ids lineage
-# rather than to a file of their own: their files rank after the passages'.
-DERIVED_SOURCE_TYPES = frozenset(
-    {"claim", "community", "entity", "relationship", "summary"}
-)
 
 # A file extension: "." + 1-5 ASCII alphanumerics with at least one letter, so
 # "Version 2.0" or "Route 66" keep their numeric tail, and not a version
@@ -155,14 +151,14 @@ def ranked_files(
     A file ranks where the first source naming it ranks; within one source,
     files keep the source's order. Files that reduce to the same name count
     once. With ``types`` (parallel to ``sources``), the sources of a
-    ``DERIVED_SOURCE_TYPES`` type come after the others, each part in rank
-    order.
+    lineage-attributed type (``LINEAGE_ATTRIBUTED_TYPES``) come after the
+    others, each part in rank order.
     """
     if types is not None:
         derived = [
             i
             for i, source_type in enumerate(types[: len(sources)])
-            if source_type in DERIVED_SOURCE_TYPES
+            if source_type in LINEAGE_ATTRIBUTED_TYPES
         ]
         derived_set = set(derived)
         order = [i for i in range(len(sources)) if i not in derived_set] + derived

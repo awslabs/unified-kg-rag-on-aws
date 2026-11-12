@@ -29,7 +29,6 @@ from unified_kg_rag.adapters.evaluators.base import (
 from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED, BatchProcessor
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.strategy_registry import run_records
-from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.application.bootstrap import (
     build_providers,
     resolve_extraction_schema,
@@ -53,6 +52,7 @@ from unified_kg_rag.domain.models import (
     LLMUsage,
     ModelRole,
     SearchStrategy,
+    SectionType,
     model_id_value,
 )
 from unified_kg_rag.domain.models.config import REMOVED_EVALUATORS

@@ -25,7 +25,6 @@ from unified_kg_rag.adapters.retrieval.ppr_ranking import (
     entity_id,
 )
 from unified_kg_rag.adapters.retrieval.strategy_registry import register_strategy
-from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.domain.models import (
     IndexArtifact,
     Methodology,
@@ -33,6 +32,7 @@ from unified_kg_rag.domain.models import (
     SearchQuery,
     SearchResult,
     SearchStrategy,
+    SectionType,
 )
 from unified_kg_rag.domain.retrieval.ppr import seed_weights
 from unified_kg_rag.shared import get_logger

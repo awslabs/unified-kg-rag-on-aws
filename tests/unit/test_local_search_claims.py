@@ -66,7 +66,7 @@ async def test_claims_queried_when_extraction_enabled(config: Config) -> None:
     claim_calls = [q for q in os_r.calls if q.index_prefixes == [claims_prefix]]
     assert claim_calls and claim_calls[0].query == "Alice"
     # Claim hits flow into the assembled context.
-    assert any(r.retriever_type == "document" for r in result.results)
+    assert any(r.source == f"{claims_prefix}-1" for r in result.results)
 
 
 async def test_no_claims_query_when_extraction_disabled(config: Config) -> None:

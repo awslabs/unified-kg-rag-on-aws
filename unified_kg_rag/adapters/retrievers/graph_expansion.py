@@ -36,7 +36,6 @@ from unified_kg_rag.adapters.retrieval.base import (
     graph_relevance,
     rank_expanded,
 )
-from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.storage.neptune_codec import decode_edge_list
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
 from unified_kg_rag.domain.ingestion.seed_graph import SOURCE_KINDS_FIELD
@@ -45,6 +44,7 @@ from unified_kg_rag.domain.models import (
     GraphEdge,
     RetrievalResult,
     SearchQuery,
+    SectionType,
 )
 from unified_kg_rag.domain.models.config import GraphExpansionConfig
 from unified_kg_rag.domain.retrieval import source_fields
@@ -464,7 +464,7 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
                 max_importance=max_importance,
             ),
             source=str(node_data.get("id")),
-            retriever_type=str(SectionType.ENTITY.value),
+            retriever_type=SectionType.ENTITY,
             metadata={
                 **node_data,
                 "_node_type": item.get("node_type", "unknown"),

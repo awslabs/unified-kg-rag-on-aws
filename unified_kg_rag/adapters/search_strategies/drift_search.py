@@ -34,7 +34,6 @@ from unified_kg_rag.adapters.retrieval.base import (
     record_degradation,
 )
 from unified_kg_rag.adapters.retrieval.strategy_registry import register_strategy
-from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.search_strategies.local_search import (
     LocalSearchStrategy,
 )
@@ -49,6 +48,7 @@ from unified_kg_rag.domain.models import (
     SearchResult,
     SearchStrategy,
     SearchType,
+    SectionType,
 )
 from unified_kg_rag.domain.models.config import language_name
 from unified_kg_rag.domain.models.methodology import REPORT_READER_ARTIFACTS
@@ -576,7 +576,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
                     content=entry,
                     score=answer.score / 100.0,
                     source=f"synthesized_drift_answers_{rank}",
-                    retriever_type=SectionType.GENERAL.value,
+                    retriever_type=SectionType.GENERAL,
                     metadata={
                         "synthesized": True,
                         "citable": bool(

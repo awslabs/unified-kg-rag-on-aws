@@ -33,7 +33,6 @@ from langchain_core.runnables import RunnableConfig
 from unified_kg_rag.adapters.retrieval.base import BaseSearchStrategy
 from unified_kg_rag.adapters.retrieval.ppr_ranking import document_unit_ids
 from unified_kg_rag.adapters.retrieval.strategy_registry import register_strategy
-from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.domain.models import (
     IndexArtifact,
     Methodology,
@@ -43,6 +42,7 @@ from unified_kg_rag.domain.models import (
     SearchResult,
     SearchStrategy,
     SearchType,
+    SectionType,
 )
 from unified_kg_rag.domain.retrieval.index_prefixes import (
     held_artifacts_of,

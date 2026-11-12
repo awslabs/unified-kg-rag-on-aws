@@ -43,6 +43,7 @@ from unified_kg_rag.domain.models import (
     RetrievalResult,
     SearchStrategy,
     SearchType,
+    SectionType,
     validate_safe_name,
 )
 from unified_kg_rag.domain.models.config import McpServerConfig
@@ -411,7 +412,7 @@ def _record(
     if len(view.text_unit_ids) > MAX_TEXT_UNIT_IDS:
         attributes["text_unit_count"] = len(view.text_unit_ids)
     # Every item's title names it but a passage's, its file name (file_name).
-    named = kind != "text"
+    named = SectionType.of(kind).named
     return SupportingContent(
         rank=view.rank,
         kind=kind,
@@ -959,7 +960,7 @@ class KnowledgeGraphTools:
                 match, hits = await self._find(suffix, given, bounded)
                 records = [
                     self._from_result(
-                        i, hit.model_copy(update={"retriever_type": "entity"})
+                        i, hit.model_copy(update={"retriever_type": SectionType.ENTITY})
                     )
                     for i, hit in enumerate(hits, 1)
                 ]
@@ -1025,7 +1026,7 @@ class KnowledgeGraphTools:
                         namespace=suffix, match=match, records=[]
                     )
                 start = self._from_result(
-                    0, hits[0].model_copy(update={"retriever_type": "entity"})
+                    0, hits[0].model_copy(update={"retriever_type": SectionType.ENTITY})
                 )
                 assert start.source_id is not None
                 found = await graph_lookup.neighbourhood(
@@ -1044,7 +1045,9 @@ class KnowledgeGraphTools:
                     records += [
                         self._from_result(
                             offset + i,
-                            r.model_copy(update={"retriever_type": "relationship"}),
+                            r.model_copy(
+                                update={"retriever_type": SectionType.RELATIONSHIP}
+                            ),
                         ).model_copy(update={"score": None})
                         for i, r in enumerate(found.relationships, 1)
                     ]

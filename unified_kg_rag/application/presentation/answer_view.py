@@ -28,7 +28,12 @@ from unified_kg_rag.application.retrieval.rag_chain import (
     RAGOutput,
     SearchOutput,
 )
-from unified_kg_rag.domain.models import Citation, RetrievalResult, Source
+from unified_kg_rag.domain.models import (
+    Citation,
+    RetrievalResult,
+    SectionType,
+    Source,
+)
 from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.degradation import (
     Degradation,
@@ -179,9 +184,9 @@ class SourceView(BaseModel):
     ) -> SourceView:
         """The view of one item from its content and stored metadata."""
         item_id = _text(metadata.get("id")) or source
-        if kind == "text" and chunk_id is None:
+        if kind == SectionType.TEXT and chunk_id is None:
             chunk_id = _text(metadata.get("chunk_id")) or item_id
-        name = source_fields.file_name(metadata) if kind == "text" else None
+        name = source_fields.file_name(metadata) if kind == SectionType.TEXT else None
         iri = metadata.get("iri")
         return cls(
             rank=rank,
@@ -194,7 +199,7 @@ class SourceView(BaseModel):
             chunk_id=chunk_id,
             type=(
                 _text(metadata.get("type"))
-                if kind in ("entity", "relationship")
+                if kind in (SectionType.ENTITY, SectionType.RELATIONSHIP)
                 else None
             ),
             document_ids=source_fields.document_ids(metadata),

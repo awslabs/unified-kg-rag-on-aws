@@ -458,6 +458,38 @@ def test_sources_keep_their_provenance_and_link_to_passages() -> None:
     assert relation["title"] == "A -> B" and relation["node_ids"] == ["a", "b"]
 
 
+def test_a_claim_links_to_the_passages_that_state_it() -> None:
+    # Regression: claims carry text_unit_ids, but the console only linked
+    # entities, relationships and graph query results to their passages.
+    claim = _view(
+        1,
+        {
+            "source": "c1",
+            "content": "Vendor must deliver.",
+            "metadata": {"section_type": "claim", "text_unit_ids": ["t1"]},
+        },
+    )
+    summary = _view(
+        3,
+        {
+            "source": "s1",
+            "content": "A summary.",
+            "metadata": {"section_type": "summary", "text_unit_ids": ["t1"]},
+        },
+    )
+    passage = _view(
+        2,
+        {
+            "source": "t1",
+            "content": "Vendor must deliver.",
+            "metadata": {"section_type": "text", "chunk_id": "t1"},
+        },
+    )
+    link_sources([claim, passage, summary])
+    assert claim["stated_by_passages"] and claim["supported_by"] == [2]
+    assert not summary["stated_by_passages"] and "supported_by" not in summary
+
+
 def test_trace_links_follow_the_template_or_langfuse(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

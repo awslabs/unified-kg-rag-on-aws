@@ -15,7 +15,6 @@ from unified_kg_rag.adapters.retrieval.base import (
     current_query_scope,
     entity_content,
 )
-from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.storage.embedding_settings import (
     configured_embedding_model,
     resolve_embedding_dimension,
@@ -45,6 +44,7 @@ from unified_kg_rag.domain.models import (
     RetrievalResult,
     SearchQuery,
     SearchType,
+    SectionType,
 )
 from unified_kg_rag.domain.retrieval.filters import (
     EXACT_SUBFIELD,
@@ -1683,7 +1683,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             content=content,
             score=hit.get("_score", 0.0),
             source=source_id,
-            retriever_type=str(section_type.value),
+            retriever_type=section_type,
             metadata={**strip_embedding_fields(source), "_search_index": index_name},
         )
 

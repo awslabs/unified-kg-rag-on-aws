@@ -31,7 +31,6 @@ from unified_kg_rag.adapters.retrieval.strategy_registry import (
     routable_strategies,
     wrapped_strategy,
 )
-from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.search_strategies.iterative_search import (
     IterativeSearchStrategy,
 )
@@ -55,6 +54,7 @@ from unified_kg_rag.domain.models import (
     SearchQuery,
     SearchResult,
     SearchStrategy,
+    SectionType,
 )
 from unified_kg_rag.domain.models.config import LanguageCode, unknown_keys
 from unified_kg_rag.domain.models.methodology import METHODOLOGY_PROFILES

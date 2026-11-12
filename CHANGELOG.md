@@ -875,7 +875,8 @@ From a `main` checkout (formats and keys no release had):
   model-written plan text is screened wherever it is returned: the search and answer metadata, the result table and
   the query-result source the console, MCP and `run-rag` JSON show (#635). `GraphQueryPort` is exported for custom graph
   backends, and `search.token_manager.type_budgets.query_result` sizes the result's context share (docs/design.md
-  §6.6, [guide](docs/guides/structured-queries.md)).
+  §6.6, [guide](docs/guides/structured-queries.md)). `run-eval`'s rank metrics put a query result's lineage files
+  after the passages', as for every graph source (`SectionType.lineage_attributed`).
 - `prepare-benchmark structural [--seed N] [--size small|medium|large]` (#630): a generated, never committed,
   procurement world for the `structured` strategy: a JSONL seed graph (`country`, `founded`, `employees`; `SUPPLIES`,
   `MAKES`), a document per vendor and buyer (part of those facts, and a chief executive only text states), the schema
@@ -900,7 +901,8 @@ From a `main` checkout (formats and keys no release had):
 - A local web console, opt-in (the `console` extra, `run-console`; #631, #634): ask with a strategy picker (and how
   `auto` chose; an empty namespace leads to Ingest), the answer streamed as the answer model writes it, its citation
   markers `[n]` linked to the sources they cite, follow-ups sent with the page's conversation (`RAGInput.history`),
-  and each source the answer read on a provenance trace back to its passage, file, seed graph and IRI and into the
+  and each source the answer read on a provenance trace back to its passage (a claim's too: the API marks each
+  source `stated_by_passages`), file, seed graph and IRI and into the
   graph; ingest a workspace folder or an upload with a methodology profile (starting from what the namespace's build
   record holds; a run that would drop a held methodology for every corpus in the namespace starts only once
   confirmed), with live stage progress, the run's WARNINGs (a run that extracted no entity flagged) and a stop the

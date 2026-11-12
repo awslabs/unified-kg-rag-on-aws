@@ -88,7 +88,6 @@ from unified_kg_rag.adapters.retrieval.token_manager import (
     EMPTY_CONTEXT_PLACEHOLDER,
     ContextSection,
     OptimizedContext,
-    SectionType,
     TokenManager,
 )
 
@@ -137,6 +136,7 @@ from unified_kg_rag.domain.models import (
     SearchResult,
     SearchStrategy,
     SearchType,
+    SectionType,
     Source,
     validate_safe_name,
 )
@@ -2237,7 +2237,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             content=section.content,
             score=section.priority,
             source=section.source_id,
-            retriever_type=section.section_type.value,
+            retriever_type=section.section_type,
             metadata=section.metadata,
         )
 

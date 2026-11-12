@@ -30,7 +30,6 @@ from unified_kg_rag.adapters.retrieval.base import (
 )
 from unified_kg_rag.adapters.retrieval.hybrid_scorer import RerankTrace
 from unified_kg_rag.adapters.retrieval.strategy_registry import register_strategy
-from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.store_errors import (
     is_bad_request,
     is_fatal_retrieval_error,
@@ -46,6 +45,7 @@ from unified_kg_rag.domain.models import (
     SearchResult,
     SearchStrategy,
     SearchType,
+    SectionType,
 )
 from unified_kg_rag.domain.models.methodology import REPORT_READER_ARTIFACTS
 from unified_kg_rag.domain.prompts import CommunityRelevancePrompt, GlobalMapPrompt
@@ -1195,7 +1195,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                     ),
                     score=point.score / 100.0,
                     source=f"{_KEY_POINTS_SOURCE}_{rank}",
-                    retriever_type=SectionType.GENERAL.value,
+                    retriever_type=SectionType.GENERAL,
                     metadata={
                         # Map-LLM output, not retrieved evidence: in the
                         # answer context (citable by its reports' lineage),

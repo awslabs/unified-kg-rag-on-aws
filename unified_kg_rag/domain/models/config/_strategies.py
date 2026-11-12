@@ -14,6 +14,7 @@ from pydantic import (
 from ..retrieval import (
     SearchStrategy,
     SearchType,
+    SectionType,
 )
 
 
@@ -228,13 +229,14 @@ class TypeQuotaConfig(BaseModel):
 
     def slots(self, top_k: int) -> dict[str, int]:
         """Reserved slots per section type (its value, ``"text"``) for
-        ``top_k``."""
+        ``top_k``: one per type with a ``<type>_multiplier`` field here."""
         return {
-            kind: max(
+            kind.value: max(
                 int(getattr(self, f"{kind}_multiplier") * top_k),
                 getattr(self, f"{kind}_floor"),
             )
-            for kind in ("text", "entity", "relationship", "community", "claim")
+            for kind in SectionType
+            if f"{kind}_multiplier" in type(self).model_fields
         }
 
 

@@ -7,6 +7,7 @@ from typing import Annotated, Any
 from pydantic import AfterValidator, BaseModel, Field, field_validator
 from typing_extensions import TypedDict
 
+from unified_kg_rag.domain.retrieval.section_types import SectionType as SectionType
 from unified_kg_rag.domain.retrieval.source_fields import decode_list_fields
 
 _SAFE_NAME = re.compile(r"[a-z0-9_-]+")
@@ -94,8 +95,8 @@ class RetrievalResult(BaseModel):
     content: str = Field(description="Retrieved content text")
     score: float = Field(description="Relevance score (0-1)")
     source: str | None = Field(default=None, description="Content source identifier")
-    retriever_type: str = Field(
-        description="Type of retriever that generated this result"
+    retriever_type: SectionType = Field(
+        description="The kind of item retrieved (an unknown kind reads as " "general)"
     )
     chunk_id: str | None = Field(default=None, description="Source chunk identifier")
     metadata: dict[str, Any] = Field(
@@ -103,6 +104,11 @@ class RetrievalResult(BaseModel):
         description="Additional retrieval result metadata (its id lists, "
         "source_fields.LIST_FIELDS, are lists of strings)",
     )
+
+    @field_validator("retriever_type", mode="before")
+    @classmethod
+    def _known_kind(cls, value: Any) -> SectionType:
+        return SectionType.of(value)
 
     @field_validator("metadata")
     @classmethod

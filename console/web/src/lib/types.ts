@@ -62,6 +62,10 @@ export interface Source {
   node_ids?: (string | null)[];
   edge_id?: string | null;
   community_id?: string | null;
+  /** Its text units are passages that state it (an entity, relationship,
+   * claim or graph query result): its trail lists them. Served by the API
+   * from the section type's traits. */
+  stated_by_passages?: boolean;
   supported_by?: number[];
   unread_passages?: number;
   /** A graph query result (the structured strategy). */

@@ -22,7 +22,6 @@ from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.token_manager import (
     ContextSection,
     OptimizedContext,
-    SectionType,
     TokenManager,
 )
 from unified_kg_rag.domain.models import (
@@ -30,6 +29,7 @@ from unified_kg_rag.domain.models import (
     LanguageModelId,
     ModelRole,
     RetrievalResult,
+    SectionType,
 )
 from unified_kg_rag.domain.models.config import ContextTypeBudgetConfig
 from unified_kg_rag.ports.model_factory import effective_max_output_tokens
