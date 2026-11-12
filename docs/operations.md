@@ -426,6 +426,79 @@ run it with an operator role.
 ([Re-ingest](#re-ingest)); restore the table first only if other namespaces
 share it.
 
+#### Recovery objectives
+
+What each failure loses (RPO) and how long recovery takes (RTO) with the
+stack's defaults. The RTO values are estimates, not measured: run the
+[restore drill](#restore-drill) to measure yours.
+
+| Failure | RPO | RTO (estimate) | Recovery |
+|---|---|---|---|
+| One AZ lost, non-dev (2 Neptune instances, zone-aware OpenSearch with replicas) | None | Minutes: Neptune fails over to the reader; OpenSearch serves from the replicas, yellow until AWS replaces the node | Nothing to do; watch `OpenSearchClusterYellow` and `OpenSearchNodesMissing` |
+| One AZ lost, dev (one Neptune instance, one data node) | None if the AZ comes back | Until the AZ or the node is back, or a restore below | Wait, or restore into the remaining AZ as for a damaged store |
+| A store damaged (a bad run, a wrong delete, a corrupt index) | Back to the last OpenSearch snapshot after a finished run: at most about an hour of writes | Hours: a Neptune and DynamoDB point-in-time restore plus an index restore, then one-off tasks against them | [Within Neptune's window](#backup-and-restore), above |
+| OpenSearch domain deleted | Its automated snapshots go with it: the last [manual snapshot](#manual-snapshots), or everything | With a manual snapshot, a new domain and an index restore (hours); without one, a full rebuild from the corpus, which re-runs every extraction and report call (the extraction records live in the domain too): the run time and Bedrock bill of the whole corpus | Restore the manual snapshot into a new domain, or [Re-ingest](#re-ingest) |
+| `use_cmk` key scheduled for deletion | None while the deletion is pending | Minutes | Cancel the deletion (`aws kms cancel-key-deletion`) within its waiting period, then re-enable the key |
+| `use_cmk` key deleted | Every store the key encrypts (Neptune and its snapshots, the domain, the table, the bucket) | A redeploy and a full rebuild from a corpus copy outside the key, if there is one | Keep a manual OpenSearch snapshot and a corpus copy under another key |
+| Region lost | Everything: no store or corpus is copied out of the region | A deploy in another region and a full rebuild from a corpus copy kept there, if there is one | Copy the corpus and Neptune snapshots to another region yourself (`aws neptune copy-db-cluster-snapshot`) |
+
+#### Manual snapshots
+
+Automated OpenSearch snapshots are deleted with the domain and cannot leave
+it. A manual snapshot repository in S3 outlives the domain and its key. The
+stack does not create one; register it once per domain from inside the
+VPC:
+
+1. Create an S3 bucket for the snapshots in the deploy region (another key
+   than the domain's if you use `use_cmk`, so a lost key does not take the
+   snapshots with it).
+2. Create an IAM role OpenSearch Service assumes (trust principal
+   `es.amazonaws.com`) with `s3:ListBucket` on the bucket and
+   `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject` on its objects (and
+   `kms:GenerateDataKey`, `kms:Decrypt` on the bucket's key, if it has one).
+3. Sign the registration with a role that may pass that role
+   (`iam:PassRole`) and call `es:ESHttpPut` on the domain. The domain's
+   access policy allows the account's principals from inside the VPC; the
+   domain has no fine-grained access control, so no role mapping is needed.
+
+   ```bash
+   curl -X PUT "https://<OpenSearch endpoint>/_snapshot/manual" \
+     --aws-sigv4 "aws:amz:<region>:es" --user "$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY" \
+     -H "x-amz-security-token: $AWS_SESSION_TOKEN" -H 'Content-Type: application/json' \
+     -d '{"type": "s3", "settings": {"bucket": "<snapshot bucket>", "region": "<region>",
+          "role_arn": "arn:aws:iam::<account>:role/<snapshot role>"}}'
+   ```
+
+4. Take a snapshot after a run finishes (no `RUNNING` execution), with
+   `PUT _snapshot/manual/<name>`, and check it with
+   `GET _snapshot/manual/<name>` (`"state": "SUCCESS"`). Take a manual
+   Neptune snapshot (`aws neptune create-db-cluster-snapshot`) and a
+   DynamoDB backup (`aws dynamodb create-backup`) at the same point: both
+   outlive the backup window, so the three restore to one common point.
+   An OpenSearch Snapshot Management policy (`POST _plugins/_sm/policies/<name>`)
+   can take the OpenSearch one on a schedule; time it outside the runs.
+5. To restore, create the domain (a deploy), register the same repository,
+   and restore the stack's indices without the system ones:
+   `POST _snapshot/manual/<name>/_restore` with
+   `{"indices": "*,-.*", "include_aliases": true}`.
+
+#### Restore drill
+
+Once a quarter, and after a change to the stores' configuration, restore
+into new resources and measure the RTO you planned with:
+
+1. Note the time, then follow [Within Neptune's window](#backup-and-restore)
+   up to step 3, restoring Neptune and the table under new names, and
+   restore the last manual OpenSearch snapshot into a scratch domain (or
+   the indices under new names with `rename_pattern` /
+   `rename_replacement`).
+2. Run a fixed question set against the restored stores as a one-off query
+   task (`run-eval` with a saved dataset), and compare its scores and
+   sources with the last run against the live stores.
+3. Record the elapsed time per step and the RPO the restore point gave, then
+   delete the restored cluster, table and scratch domain (they bill by the
+   hour).
+
 ### Upgrading OpenSearch
 
 The CDK domain runs OpenSearch 2.19 and carries the CloudFormation
@@ -1334,7 +1407,7 @@ These fire between runs too, so degradation shows before a run breaks on it:
 | `OpenSearch5xxShare` | At least 10% of requests returned a 5xx in 5 minutes | Overloaded data nodes or requests past the idle timeout: more or larger data nodes |
 | `OpenSearchWriteQueue`, `OpenSearchSearchQueue` | Write-queue average at least 100, or search-queue average at least 500, in a minute | High indexing or search concurrency: fewer concurrent runs or queries, or more resources |
 | `OpenSearchMasterHighCpu`, `OpenSearchMasterJvmPressure`, `OpenSearchMasterOldGenJvmPressure`, `OpenSearchMasterUnreachable` | Multi-node only: master CPU at least 50% for 45 minutes, master heap at least 95% (old generation 80%) for 3 minutes, or the master unreachable for 5 minutes | A larger `opensearch_master_instance`; an unreachable master is usually a network or AWS-side problem, so check the domain's events |
-| `OpenSearchKmsKeyError`, `OpenSearchKmsKeyInaccessible` | `use_cmk` only: the data key is disabled, or deleted or its grants revoked | Re-enable the key. A deleted key cannot be recovered: restore a manual snapshot to a new domain |
+| `OpenSearchKmsKeyError`, `OpenSearchKmsKeyInaccessible` | `use_cmk` only: the data key is disabled, or deleted or its grants revoked | Re-enable the key, or cancel a scheduled deletion. A deleted key cannot be recovered: restore a [manual snapshot](#manual-snapshots) to a new domain |
 | `DocStatusWriteThrottled` | The doc-status table throttled a write (5 minutes) | Registry calls retry with backoff; one still throttled fails the run with `DocStatusRegistryError`. Look for overlapping runs, rerun once it clears |
 | `NeptuneHighCpu` | Average writer CPU at least 90% for 15 minutes | Sustained saturation: a larger `neptune_instance` (or `neptune_serverless_ncu` maximum), or, if you raised it, a lower `indexing.neptune.index_concurrency` (default `1`) |
 | `NeptuneLowFreeableMemory` | Writer freeable memory at or below 512 MiB at any point in 5 minutes; on Serverless only while the writer is at maximum capacity | Out-of-memory failures ahead: a larger `neptune_instance` (or `neptune_serverless_ncu` maximum) |

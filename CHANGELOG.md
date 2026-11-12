@@ -1425,7 +1425,8 @@ From a `main` checkout (formats and keys no release had):
   2); `run-ingestion` and `run-rag` print the run's index namespace (suffix and `indexing.additional_suffix`) as
   one `Index Namespace` line (#629).
 - Operability: run, stage and query ids in logs, extraction-failure metrics and alarms, start-up endpoint checks,
-  and runbook sections on backup, restore, replicas and store upgrades (#122, #178, #211, #457, #519).
+  and runbook sections on backup, restore (recovery objectives per failure, manual snapshots, a quarterly restore
+  drill), replicas and store upgrades (#122, #178, #211, #457, #519).
 - IaC options: `neptune_serverless_ncu`, `ingestion_ephemeral_storage_gib`, `opensearch_master_instance`,
   `flow_log_retention_days`, `sfn_timeout_hours`, `opensearch_volume_gib`, `guardrail_version` and a published
   `GuardrailVersion`, `opensearch_nori_package`, Fargate Spot and ARM64 tasks, an `EnableVersionUpgrade` policy,
