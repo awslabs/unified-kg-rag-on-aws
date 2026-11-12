@@ -69,7 +69,7 @@ ingestion stage that made it. `RAGOutput.metadata["usage"]` (and
 `SearchOutput.metadata["usage"]`) holds the query's `llm_calls`,
 `input_tokens`, `output_tokens`, `cache_hits`, `estimated_calls`,
 `cache_read_input_tokens`, `cache_write_input_tokens`, `request_retries`,
-`failed_calls`, `rerank_calls` and `rerank_search_units` (the reranker's
+`throttled_requests`, `failed_calls`, `rerank_calls` and `rerank_search_units` (the reranker's
 requests and their billed search units, one per 100 documents a request
 ranks, a document of more than 500 estimated tokens with the query counting
 as several, as Amazon Bedrock bills them; not model calls), and the same counts
@@ -92,7 +92,10 @@ Bedrock's `cacheReadInputTokens` / `cacheWriteInputTokens`) since they are
 billed at other rates. `request_retries` counts the requests botocore resent
 inside one call (its `RetryAttempts`): the call counts once in `llm_calls`,
 but a request resent after a read timeout or a server error is a Bedrock
-invocation of its own (a resent throttled one is not). So Bedrock's
+invocation of its own (a resent throttled one is not). `throttled_requests`
+counts the requests Bedrock throttled, each attempt once (a botocore hook of
+the Bedrock language model clients; a throttling error inside a response
+stream is not counted). So Bedrock's
 CloudWatch `Invocations` can exceed `llm_calls` by up to `request_retries +
 failed_calls`, plus any calls made outside a usage scope (the `run-eval`
 warm-up queries). A call that has not answered when the

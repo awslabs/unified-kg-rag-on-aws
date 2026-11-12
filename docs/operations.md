@@ -1423,7 +1423,7 @@ These fire between runs too, so degradation shows before a run breaks on it:
 
 | Alarm | Fires when | What to do |
 |---|---|---|
-| `BedrockThrottling` | At least 100 throttled calls in each of 3 consecutive 5-minute periods, summed over every model in the account and region (other Bedrock users count too). It watches the deploy region: with a different `bedrock_region` the calls publish their metrics there, so it cannot fire (the synth warns; the dashboard's Bedrock widgets read `bedrock_region`) | Throttled calls are retried, so the run slows rather than fails: lower `processing.max_concurrency` or ask for a higher quota. With a different `bedrock_region`, create the same alarm in that region to be notified |
+| `BedrockThrottling` | At least 10% of this deployment's model requests in a run stage were throttled (`llm_throttles` over `llm_requests`, the app's own usage accounting as each stage finishes; other Bedrock users in the account do not count, and it works with any `bedrock_region`) | Throttled requests are retried, so the run slows rather than fails: lower `processing.max_concurrency` or ask for a higher quota. The dashboard's "LLM throttled requests by stage" widget shows which stage, and its account-wide "Bedrock throttles" widget whether other callers share the quota |
 | `IngestionTaskMemory` | The ingestion task used at least 90% of its memory for 3 minutes (Container Insights) | Fargate kills a task over its memory, losing the running stage: raise `fargate_memory` ([Capacity sizing](#capacity-sizing)) |
 | `IngestionTaskEphemeralStorage` | The ingestion task used at least 90% of its ephemeral storage (image included) for 5 minutes (Container Insights) | A full disk fails the running stage: raise `ingestion_ephemeral_storage_gib` (up to 200) |
 
@@ -1487,6 +1487,8 @@ same counts in `token_usage`:
 | `llm_calls_<stage>` | Model calls that returned (retries included, failed calls not) |
 | `llm_input_tokens_<stage>` | Input tokens the responses reported, prompt-cache reads and writes included |
 | `llm_output_tokens_<stage>` | Output tokens the responses reported |
+| `llm_throttles_<stage>` | Requests Bedrock throttled (HTTP 429), each attempt once: resent inside a call or the last attempt of a failed one |
+| `llm_throttles`, `llm_requests` | The throttled requests and every request sent (returned and failed calls plus the requests resent inside them), summed over the stages: `BedrockThrottling` reads their ratio |
 | `llm_cache_hits` | Responses the run's LLM response cache served instead of a call (a resumed stage), chunk-boundary and community report answers the extraction store served, and description summaries a full build took from their stored copies, summed over the stages |
 
 To check them against Bedrock's own counts, compare a run's sums with the

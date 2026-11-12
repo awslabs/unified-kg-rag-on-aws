@@ -142,6 +142,7 @@ def test_a_cached_response_is_a_cache_hit_not_a_call(tmp_path: Path) -> None:
             "cache_read_input_tokens": 0,
             "cache_write_input_tokens": 0,
             "request_retries": 0,
+            "throttled_requests": 0,
             "failed_calls": 0,
             "rerank_calls": 0,
             "rerank_search_units": 0,
@@ -571,3 +572,83 @@ def test_a_model_near_the_estimate_is_not_warned_of(
     with caplog.at_level("WARNING"), usage.usage_scope():
         _calls(handler, prompt, int(estimate_token_count(prompt) * 1.3), 40)
     assert "local token estimate" not in caplog.text
+
+
+class _Raw:
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+
+    def stream(self, **_: Any) -> Any:
+        yield self._body
+
+
+def test_throttled_bedrock_requests_count_per_attempt_and_role(monkeypatch) -> None:
+    # Old behaviour: botocore resent each throttled request inside the call,
+    # so usage showed request_retries with no cause and nothing told this
+    # deployment's throttling from a read timeout's.
+    import json
+    import time
+
+    import boto3
+    from botocore.awsrequest import AWSResponse
+
+    from unified_kg_rag.adapters.aws.bedrock import BedrockLanguageModelFactory
+
+    monkeypatch.setenv("AWS_EC2_METADATA_DISABLED", "true")
+    monkeypatch.setattr(time, "sleep", lambda _seconds: None)  # retry backoff
+    session = boto3.Session(
+        aws_access_key_id="testing",
+        aws_secret_access_key="testing",
+        region_name="us-east-1",
+    )
+    factory = BedrockLanguageModelFactory(Config(), boto_session=session)
+    answer = {
+        "output": {"message": {"role": "assistant", "content": [{"text": "ok"}]}},
+        "stopReason": "end_turn",
+        "usage": {"inputTokens": 1, "outputTokens": 1, "totalTokens": 2},
+        "metrics": {"latencyMs": 1},
+    }
+
+    def responder(throttles: int) -> Any:
+        sent: list[int] = []
+
+        def before_send(request: Any, **_: Any) -> AWSResponse:
+            sent.append(1)
+            if len(sent) <= throttles:
+                return AWSResponse(
+                    request.url,
+                    429,
+                    {"x-amzn-ErrorType": "ThrottlingException"},
+                    _Raw(b'{"message": "Too many requests"}'),
+                )
+            return AWSResponse(request.url, 200, {}, _Raw(json.dumps(answer).encode()))
+
+        return before_send
+
+    message = [{"role": "user", "content": [{"text": "hi"}]}]
+    for purpose, throttles in (
+        (ModelPurpose.INGESTION, 2),
+        (ModelPurpose.EVALUATION, 1),
+        (ModelPurpose.QUERY, 0),
+    ):
+        client = factory._client_for(purpose)
+        client.meta.events.register("before-send.bedrock-runtime", responder(throttles))
+        with usage.usage_scope() as meter:
+            client.converse(modelId="vendor.model-a", messages=message)
+        snapshot = meter.snapshot()
+        assert snapshot["throttled_requests"] == throttles
+        if throttles:
+            assert snapshot["by_role"] == {
+                purpose.value: {**snapshot["by_role"][purpose.value]}
+            }
+            assert snapshot["by_model"]["vendor.model-a"]["throttled_requests"] == (
+                throttles
+            )
+    # One that fails on its last throttled attempt counts every attempt.
+    client = factory._client_for(ModelPurpose.INGESTION)
+    client.meta.events.register_first("before-send.bedrock-runtime", responder(99))
+    with usage.usage_scope() as meter, pytest.raises(Exception, match="Throttling"):
+        client.converse(modelId="vendor.model-a", messages=message)
+    assert meter.snapshot()["throttled_requests"] == factory.BOTO_MAX_ATTEMPTS + 1
+    # Validated as part of the usage record.
+    assert LLMUsage.model_validate(meter.snapshot()).throttled_requests == 6

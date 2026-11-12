@@ -17,7 +17,7 @@ SNS topic.
 
 from __future__ import annotations
 
-from aws_cdk import Annotations, Duration, Stack, Token
+from aws_cdk import Annotations, Duration, Stack
 from aws_cdk import aws_cloudwatch as cw
 from aws_cdk import aws_cloudwatch_actions as cw_actions
 from constructs import Construct
@@ -197,6 +197,13 @@ DOC_STATUS_OPERATIONS: tuple[str, ...] = (
 # Neptune reader lag (ms) the NeptuneReplicaLag alarm fires at: readers share
 # the writer's storage and normally trail it by well under a second.
 NEPTUNE_REPLICA_LAG_MS = 1000
+
+# This deployment's model requests and the throttled ones, summed over the
+# stages (run-ingestion's usage accounting, pipeline_metrics), and the share
+# of throttled requests (%) the BedrockThrottling alarm fires at.
+LLM_THROTTLES_METRIC = "llm_throttles"
+LLM_REQUESTS_METRIC = "llm_requests"
+LLM_THROTTLED_SHARE = 10
 
 # OpenSearch 7.1+ indexing-pressure rejections ("Monitoring OpenSearch
 # cluster metrics with Amazon CloudWatch": totals since the node's process
@@ -527,6 +534,12 @@ class ObservabilityStack(Stack):
                 left=[self._emf(f"llm_calls_{stage}") for stage in LLM_STAGES],
                 right=[self._emf("llm_cache_hits")],
             ),
+            cw.GraphWidget(
+                title="LLM throttled requests by stage (EMF)",
+                left=[self._emf(f"llm_throttles_{stage}") for stage in LLM_STAGES],
+                right=[self._emf(LLM_REQUESTS_METRIC)],
+                stacked=True,
+            ),
         )
         # One Metrics Insights query per widget: GetMetricWidgetImage (the
         # API that renders a widget to a PNG, e.g. for a report) refuses a
@@ -685,15 +698,6 @@ class ObservabilityStack(Stack):
             period=Duration.minutes(5),
         )
 
-    @property
-    def bedrock_region(self) -> str | None:
-        """The region the model calls go to, when it is not this stack's
-        (``None`` too when the deploy region is not known at synth)."""
-        region = self.config.bedrock_region
-        if not region or Token.is_unresolved(self.region) or region == self.region:
-            return None
-        return region
-
     @staticmethod
     def _insights(query: str, label: str) -> cw.MathExpression:
         """A Metrics Insights query (alarms and widgets take it as math)."""
@@ -734,34 +738,30 @@ class ObservabilityStack(Stack):
         )
 
     def _add_capacity_alarms(self) -> None:
-        # Sustained throttling: the batch retries each throttled call, so a
-        # burst is absorbed, but 15 minutes of it means the run's concurrency
-        # (processing.max_concurrency) exceeds the account's Bedrock quota and
-        # the run slows to the retry backoff.
-        throttles = cw.Alarm(
-            self,
+        # Throttling of this deployment's own model requests, from the app's
+        # usage accounting (each run stage's EMF record, as the stage
+        # finishes): the share of the requests it sent that Bedrock
+        # throttled. botocore and the batch retry them, so the run slows
+        # rather than fails; a high share means processing.max_concurrency
+        # is above the account's quota. Unlike Bedrock's InvocationThrottles
+        # (the dashboard's account-wide widget) it counts no other caller and
+        # is published in the deploy region whatever bedrock_region is.
+        self._alarm(
             "BedrockThrottling",
-            metric=self._insights(BEDROCK_THROTTLES, "Bedrock throttles"),
-            threshold=100,
-            evaluation_periods=3,
-            comparison_operator=cw.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
-            treat_missing_data=cw.TreatMissingData.NOT_BREACHING,
-            alarm_description="Bedrock throttled at least 100 calls in each of "
-            "3 consecutive 5-minute periods (all models in the account and "
-            "region): lower processing.max_concurrency or raise the quota",
+            cw.MathExpression(
+                expression="100 * FILL(throttled, 0) / requests",
+                using_metrics={
+                    "throttled": self._emf(LLM_THROTTLES_METRIC),
+                    "requests": self._emf(LLM_REQUESTS_METRIC),
+                },
+                label="Throttled model requests (%)",
+                period=Duration.minutes(5),
+            ),
+            LLM_THROTTLED_SHARE,
+            f"Bedrock throttled at least {LLM_THROTTLED_SHARE}% of this "
+            "deployment's model requests in a run stage: lower "
+            "processing.max_concurrency or raise the quota",
         )
-        self._notify(throttles)
-        if self.bedrock_region:
-            # An alarm reads metrics of its own region only, and Bedrock
-            # publishes them where the calls go.
-            Annotations.of(self).add_warning(
-                f"bedrock_region ({self.bedrock_region}) is not the deploy "
-                f"region ({self.region}): the BedrockThrottling alarm watches "
-                "the deploy region, where this deployment's model calls publish "
-                "no metrics, so it cannot fire. The dashboard's Bedrock widgets "
-                f"read {self.bedrock_region}; create a throttling alarm there to "
-                "be notified (docs/operations.md, Alarms)."
-            )
         # Memory pressure: Fargate kills a task that exceeds its memory (exit
         # 137, OutOfMemoryError), which loses the running stage.
         memory = cw.Alarm(

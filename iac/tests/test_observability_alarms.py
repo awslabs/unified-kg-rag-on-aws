@@ -267,7 +267,10 @@ def test_emf_metric_names_are_pipeline_metrics_fields() -> None:
         'f"llm_calls_{stage_name}"',
         'f"llm_input_tokens_{stage_name}"',
         'f"llm_output_tokens_{stage_name}"',
+        'f"llm_throttles_{stage_name}"',
         '"llm_cache_hits"',
+        '"llm_throttles"',
+        '"llm_requests"',
     ):
         assert usage_name in pipeline
     names = _emf_metric_names(_template())
@@ -275,9 +278,9 @@ def test_emf_metric_names_are_pipeline_metrics_fields() -> None:
     durations = {f"duration_{stage}_seconds" for stage in _pipeline_stages()}
     durations |= {
         f"llm_{kind}_{stage}"
-        for kind in ("calls", "input_tokens", "output_tokens")
+        for kind in ("calls", "input_tokens", "output_tokens", "throttles")
         for stage in _pipeline_stages()
-    } | {"llm_cache_hits"}
+    } | {"llm_cache_hits", "llm_throttles", "llm_requests"}
     fields = _pipeline_metric_fields()
     # Every document outcome is a PipelineMetrics field (a name drifted from
     # DOCUMENT_METRICS would alarm on a series nobody emits).
@@ -376,15 +379,27 @@ def test_emf_alarms_watch_only_this_environment() -> None:
             assert stat["Dimensions"] == [{"Name": "Environment", "Value": env}]
 
 
-def test_sustained_bedrock_throttling_alarms() -> None:
-    alarm = _alarms()["BedrockThrottling"]
-    (query,) = alarm["Metrics"]
-    # Summed over every model: Bedrock publishes per ModelId only.
-    assert "SUM(InvocationThrottles)" in query["Expression"]
-    assert 'SCHEMA("AWS/Bedrock", ModelId)' in query["Expression"]
-    assert (alarm["Threshold"], alarm["EvaluationPeriods"]) == (100, 3)
-    assert alarm["TreatMissingData"] == "notBreaching"
-    assert len(alarm["AlarmActions"]) == 1
+def test_bedrock_throttling_alarms_on_this_deployments_share() -> None:
+    # Old behaviour: an absolute count of InvocationThrottles over every
+    # caller in the account and region, which other users tripped and which
+    # could not fire with another bedrock_region.
+    for context in ({}, {"bedrock_region": "us-east-1", "network_mode": "public"}):
+        alarm = _alarms(context)["BedrockThrottling"]
+        (expression,) = [m for m in alarm["Metrics"] if "Expression" in m]
+        assert expression["Expression"] == "100 * FILL(throttled, 0) / requests"
+        stats = {
+            m["Id"]: m["MetricStat"]["Metric"]
+            for m in alarm["Metrics"]
+            if "MetricStat" in m
+        }
+        assert stats["throttled"]["MetricName"] == "llm_throttles"
+        assert stats["requests"]["MetricName"] == "llm_requests"
+        for metric in stats.values():
+            assert metric["Namespace"] == EMF_NAMESPACE
+            assert metric["Dimensions"] == [{"Name": "Environment", "Value": "dev"}]
+        assert (alarm["Threshold"], alarm["EvaluationPeriods"]) == (10, 1)
+        assert alarm["TreatMissingData"] == "notBreaching"
+        assert len(alarm["AlarmActions"]) == 1
 
 
 def test_ingestion_task_memory_alarms() -> None:
@@ -724,16 +739,16 @@ def _widget_regions(template: Template) -> dict[str, str]:
 
 
 @pytest.mark.parametrize(
-    ("context", "bedrock", "warned"),
+    ("context", "bedrock"),
     [
-        ({}, "TOKEN", False),  # the stack's own region (AWS::Region)
-        ({"bedrock_region": "us-west-2"}, "us-west-2", False),
-        ({"bedrock_region": "us-east-1", "network_mode": "public"}, "us-east-1", True),
+        ({}, "TOKEN"),  # the stack's own region (AWS::Region)
+        ({"bedrock_region": "us-west-2"}, "us-west-2"),
+        ({"bedrock_region": "us-east-1", "network_mode": "public"}, "us-east-1"),
     ],
     ids=["unset", "deploy-region", "other-region"],
 )
 def test_the_bedrock_widgets_read_the_bedrock_region(
-    context: dict[str, Any], bedrock: str, warned: bool
+    context: dict[str, Any], bedrock: str
 ) -> None:
     # Bedrock publishes its metrics where the calls go; the widgets watched
     # the deploy region, where a cross-region deployment's calls publish none.
@@ -746,16 +761,14 @@ def test_the_bedrock_widgets_read_the_bedrock_region(
         "us-west-2",
         "TOKEN",
     }
-    # An alarm cannot read another region's metrics: the synth says so.
-    # has_warning/has_no_warning assert on the jsii side: find_warning returns
+    # The throttling alarm reads the app's own metrics, published in the
+    # deploy region, so another bedrock_region needs no warning.
+    # has_no_warning asserts on the jsii side: find_warning returns
     # MetadataEntry objects, which a process that has not imported
     # aws_cdk.cloud_assembly_schema cannot deserialize.
-    annotations = Annotations.from_stack(stack)
-    message = Match.string_like_regexp("BedrockThrottling alarm watches the deploy")
-    if warned:
-        annotations.has_warning("*", message)
-    else:
-        annotations.has_no_warning("*", message)
+    Annotations.from_stack(stack).has_no_warning(
+        "*", Match.string_like_regexp("BedrockThrottling")
+    )
 
 
 def _dashboard_body(template: Template) -> dict[str, Any]:

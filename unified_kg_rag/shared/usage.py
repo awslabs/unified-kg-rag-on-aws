@@ -33,7 +33,10 @@ Bedrock call running on a worker thread), so it is billed. One that ends
 later settles in the scopes still open (a ``run-eval`` run's); a snapshot
 already taken keeps the estimate. Retries are calls too, but the requests
 the SDK resends inside one call (botocore's own retries) are not: they are
-counted apart, in ``request_retries``. ``input_tokens`` includes the prompt
+counted apart, in ``request_retries``; of all the requests, those Bedrock
+throttled are counted in ``throttled_requests`` (a botocore hook of the
+language model clients, ``adapters.aws.bedrock_throttles``, records each one
+as it comes back). ``input_tokens`` includes the prompt
 cache reads and writes, also counted apart
 (``cache_read_input_tokens`` / ``cache_write_input_tokens``) since they are
 billed at other rates.
@@ -65,6 +68,7 @@ __all__ = [
     "record_cache_hit",
     "record_llm_call",
     "record_rerank_call",
+    "record_throttled_request",
     "rerank_search_units",
     "start_llm_call",
     "usage_scope",
@@ -80,6 +84,7 @@ COUNT_FIELDS: tuple[str, ...] = (
     "cache_read_input_tokens",
     "cache_write_input_tokens",
     "request_retries",
+    "throttled_requests",
     "failed_calls",
     "rerank_calls",
     "rerank_search_units",
@@ -109,6 +114,7 @@ class _Counts:
     cache_read_input_tokens: int = 0
     cache_write_input_tokens: int = 0
     request_retries: int = 0
+    throttled_requests: int = 0
     failed_calls: int = 0
     rerank_calls: int = 0
     rerank_search_units: int = 0
@@ -346,6 +352,12 @@ def record_rerank_call(
         else rerank_search_units(0, documents=documents)
     )
     _record("rerank", model, _Counts(rerank_calls=1, rerank_search_units=units))
+
+
+def record_throttled_request(role: str, model: str) -> None:
+    """Record one request the provider throttled (HTTP 429): an attempt, not
+    a call, whether the SDK resent it or the call failed on it."""
+    _record(role, model, _Counts(throttled_requests=1))
 
 
 def record_cache_hit(role: str, model: str) -> None:

@@ -1027,6 +1027,7 @@ def test_ingestion_json_result_reports_the_runs_token_usage(
             "cache_read_input_tokens": 0,
             "cache_write_input_tokens": 0,
             "request_retries": 0,
+            "throttled_requests": 0,
             "failed_calls": 0,
             "rerank_calls": 0,
             "rerank_search_units": 0,

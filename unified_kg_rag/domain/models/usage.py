@@ -46,6 +46,15 @@ class LLMUsageCounts(BaseModel):
             "billed."
         ),
     )
+    throttled_requests: int = Field(
+        default=0,
+        description=(
+            "Requests the provider throttled (HTTP 429, Bedrock "
+            "ThrottlingException), each attempt once: those the SDK resent "
+            "inside a call (also in request_retries) and the last attempt "
+            "of a call that failed on it. Bedrock language models only."
+        ),
+    )
     failed_calls: int = Field(
         default=0,
         description=(
