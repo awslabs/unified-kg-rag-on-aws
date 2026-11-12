@@ -224,8 +224,8 @@ See [exit codes and JSON output](docs/reference/exit-codes-and-json.md) and the
   with `aws.bedrock.default_effort` / `fast_effort`; from Python, `RAGInput.enable_thinking` still turns thinking on
   for a model that opts in). Either flag fails with exit 2 saying so; run-eval results no longer record
   `enable_thinking` (#628).
-- Exit codes: `2` for a usage or configuration error before any work (also one met while running), `1` for a failed
-  run, `130` for Ctrl-C, `143` for SIGTERM (#333, #344).
+- Exit codes: `2` for a usage or configuration error before any work (also one met while running or while `run-rag`
+  builds its query chain), `1` for a failed run, `130` for Ctrl-C, `143` for SIGTERM (#333, #344).
 - `--output-format json` prints one JSON document on stdout (a status document on failure, argparse errors included)
   and everything else on stderr; `run-ingestion` rejects it with `--metrics-sink cloudwatch` (#333, #359, #366,
   #420).

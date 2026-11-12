@@ -35,6 +35,7 @@ from unified_kg_rag.application.cli.conventions import (
     interruptible,
     json_output,
     print_json,
+    print_status,
     setup_cli_logging,
     stoppable,
     usage_error,
@@ -593,9 +594,22 @@ class RAGChainRunner:
             self.rag_chain = GraphRAGChain(config=self.config)
             console.print("[green]Query chain initialized.[/green]")
         except Exception as e:
-            logger.exception("Failed to initialize RAG chain: %s", e)
+            # Classified as a query's error is (_run_query): a setting the
+            # chain refused (observability on without the otel extra, a bad
+            # guardrail setting) is a usage error, exit 2.
+            error_class = classify(e)
+            exit_code = EXIT_CODES[error_class]
+            if exit_code == EXIT_USAGE:
+                usage_error(str(e), error_type=type(e).__name__)
+            if error_class is ErrorClass.FAILURE:
+                logger.exception("Failed to initialize RAG chain: %s", e)
+            else:
+                logger.error(
+                    "Failed to initialize RAG chain (%s): %s", error_class.value, e
+                )
             console.print(f"[red]Error during initialization: {markup_safe(e)}[/red]")
-            sys.exit(EXIT_FAILURE)
+            print_status(exit_code, e)
+            sys.exit(exit_code)
 
     async def _interactive_mode(self) -> None:
         console.print(
