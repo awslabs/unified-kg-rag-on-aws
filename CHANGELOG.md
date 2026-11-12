@@ -531,8 +531,8 @@ From a `main` checkout (formats and keys no release had):
   `--pipeline-id`: incremental runs keep stored entities under their earlier ids beside the new ones. It reuses the
   stored graph extraction and gleaning records, their entity and relationship ids minted again from the names as
   extraction mints them (a record a build before #556 stored under other summary settings or `models` tiers is
-  extracted again), and asks one summary per entity or relationship over the summary threshold, the
-  reports of the communities whose input changed (most of them) and, with claim extraction on, every unit's claims
+  extracted again), and asks one summary per entity or relationship over the summary threshold, every community's
+  report (the report prompt cites sub-community reports now) and, with claim extraction on, every unit's claims
   (one call per unit that states an entity); the `intelligent` chunker asks each pre-chunk's boundaries once more
   (one fast-tier call each), and a Korean, Japanese or Chinese corpus's re-chunked units are extracted again.
 - One reset covers all of these and the items below. On an index built with #565 or later it reuses the stored
@@ -1639,7 +1639,10 @@ From a `main` checkout (formats and keys no release had):
 - Community reports: the prompt allows only what the data supports (MS GraphRAG's evidence rule, no "strategic
   value" or "actionable intelligence" asks), numbers the entities and relationships it packs and asks each finding
   for `[Data: Entities (...); Relationships (...)]` references, kept as the cited record ids on the finding
-  (`CommunityFinding.entity_ids` / `relationship_ids`) and taken out of the searched text (#618). The report stores
+  (`CommunityFinding.entity_ids` / `relationship_ids`) and taken out of the searched text (#618). A parent's rolled-up
+  sub-community reports are numbered too and cited as `Reports (n)`, which a finding reads as the records the child's
+  findings cite (a parent's roll-up findings cited nothing, so `global` and `drift` attributed a parent report to the
+  few members packed raw); a range `(1-4)` reads as 1 to 4 and `【Data: ...】` as `[Data: ...]`. The report stores
   them (an unindexed `findings` field): a retrieved report, and its source's metadata (each finding's ids, not its
   text), name the records each finding cites (`report_cited_ids`), pointed at the ids an incremental merge kept, and
   a stored report at the new id of a record a later run re-keys (found by its `findings_record_ids` list,

@@ -372,12 +372,18 @@ gets its models and stores from the run's `Providers` bundle.
   references, `[Data: Entities (1, 3); Relationships (2, +more)]`, at most 5
   numbers a list; the entities and relationships are numbered in packing
   order, from 1, in place of GraphRAG's `human_readable_id`. The syntax
-  stays ASCII in every report language (full-width brackets and commas a
-  CJK answer may use are read too). The numbers name records only within
-  that input, so `report_references.split_data_references` takes them out
-  of the prose and the finding keeps the record ids
-  (`CommunityFinding.entity_ids` / `relationship_ids`); claims and
-  sub-community reports are not numbered. The stored report keeps its
+  stays ASCII in every report language (full-width and lenticular
+  brackets and the commas a CJK answer may use are read too, and a range
+  `1-4` is each number in it). The numbers name records only within that
+  input, so `report_references.split_data_references` takes them out of
+  the prose and the finding keeps the record ids
+  (`CommunityFinding.entity_ids` / `relationship_ids`). Rolled-up
+  sub-community reports are numbered too and cited as `Reports (n)`, as MS
+  GraphRAG's parent reports cite theirs: a cited sub-report stands for the
+  records its own findings cite, added after the finding's own, so a
+  parent's roll-up findings rest on the records of its children rather
+  than on the minority of its members packed raw. Claims are not
+  numbered. The stored report keeps its
   findings, ids included, in an unindexed field (`findings`, mapped
   `enabled: false`; an earlier index gets it in the preflight's additive
   mapping update), so a retrieved report and its reported source name the

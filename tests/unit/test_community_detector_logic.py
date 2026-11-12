@@ -1596,7 +1596,9 @@ class TestSubCommunityRollup:
         report_input = cd._prepare_report_input(parent, {"c": child_report})
 
         assert len(report_input["entities"]) == 2
-        assert "E2 detail." in report_input["sub_community_reports"]
+        (chain_input,) = cd._create_report_chain_inputs([report_input])
+        assert "- [1] Child" in chain_input["sub_community_reports"]
+        assert "E2 detail." in chain_input["sub_community_reports"]
 
     def test_build_sub_community_context_packs_children_biggest_first(self) -> None:
         from unified_kg_rag.domain.models import CommunityReport
@@ -1632,8 +1634,8 @@ class TestSubCommunityRollup:
         }
         out = cd._build_sub_community_context(parent, reports_by_id, token_budget=4000)
         # Biggest child (size 8) is packed first.
-        assert out.index("Big child") < out.index("Small child")
-        assert "9.0/10" in out and "big summary" in out
+        assert [sub["id"] for sub in out] == ["r1", "r0"]
+        assert "9.0/10" in out[0]["line"] and "big summary" in out[0]["line"]
 
     def test_build_sub_community_context_empty_without_children(self) -> None:
         cd = self._detector()
@@ -1647,7 +1649,7 @@ class TestSubCommunityRollup:
             text_unit_ids=[],
             size=1,
         )
-        assert cd._build_sub_community_context(parent, {}, 4000) == ""
+        assert cd._build_sub_community_context(parent, {}, 4000) == []
 
     def test_rollup_processes_children_before_parents_and_substitutes(self) -> None:
         # A parent (L1) whose raw context overflows, with one child (L0). With
@@ -1713,7 +1715,8 @@ class TestSubCommunityRollup:
         assert prepared_ids.index("L0_C0") < prepared_ids.index("L1_C0")
         # The parent's prepared input carries the child's rolled-up summary.
         parent_input = next(ri for ri in captured if ri["community_id"] == "L1_C0")
-        assert "summary for L0_C0" in parent_input["sub_community_reports"]
+        (line,) = [sub["line"] for sub in parent_input["sub_community_reports"]]
+        assert "summary for L0_C0" in line
 
     def test_flat_path_when_rollup_disabled(self) -> None:
         cd = self._detector()

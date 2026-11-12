@@ -2,14 +2,18 @@
 # SPDX-License-Identifier: Apache-2.0
 """The data references of a community report's findings (pure).
 
-The report prompt numbers the entities and relationships it packs and asks
-for MS GraphRAG's grounding syntax at the end of each finding:
-``[Data: Entities (1, 3); Relationships (2, +more)]``. The numbers mean
+The report prompt numbers the entities, relationships and sub-community
+reports it packs and asks for MS GraphRAG's grounding syntax at the end of
+each finding: ``[Data: Reports (1); Entities (1, 3); Relationships (2,
++more)]``. A cited sub-report stands for the records its own findings cite,
+so a parent report that rolls its children up cites what they rest on
+(MS GraphRAG substitutes the children's content). The numbers mean
 something only beside the report's own input, so they are taken out of the
 prose (which is embedded and searched) and kept, resolved to record ids, on
 the finding. The syntax is ASCII in every report language; a model writing
-CJK text may still use full-width brackets, parentheses, colons or commas,
-which are read the same.
+CJK text may still use full-width or lenticular brackets (``【Data: ...】``),
+full-width parentheses, colons or commas, which are read the same, and a
+range (``1-4``, ``2～3``) reads as every number in it.
 
 A stored report keeps its findings, cited ids included, in an unindexed
 field (:data:`REPORT_FINDINGS_FIELD`), so a retrieved report (its
@@ -26,6 +30,7 @@ from typing import Any
 __all__ = [
     "DATASET_ENTITIES",
     "DATASET_RELATIONSHIPS",
+    "DATASET_REPORTS",
     "FINDINGS_DOCUMENTS_FIELD",
     "FINDINGS_RECORD_IDS_FIELD",
     "FINDINGS_TEXT_UNITS_FIELD",
@@ -39,6 +44,8 @@ __all__ = [
 
 DATASET_ENTITIES = "entities"
 DATASET_RELATIONSHIPS = "relationships"
+# A parent report's packed sub-community reports.
+DATASET_REPORTS = "reports"
 
 # The stored community report's field holding its findings
 # (``CommunityFinding.model_dump()`` each), not searched or filtered.
@@ -58,10 +65,11 @@ FINDINGS_TEXT_UNITS_FIELD = "findings_text_unit_ids"
 FINDINGS_DOCUMENTS_FIELD = "findings_document_ids"
 
 _REFERENCE = re.compile(
-    r"\s*[\[［]\s*Data\s*[:：](?P<body>[^\]］]*)[\]］]", re.IGNORECASE
+    r"\s*[\[［【]\s*Data\s*[:：](?P<body>[^\]］】]*)[\]］】]", re.IGNORECASE
 )
 _DATASET = re.compile(r"(?P<name>[A-Za-z]+)\s*[(（](?P<ids>[^)）]*)[)）]")
-_NUMBER = re.compile(r"\d+")
+# A number, or a range of them ("1-4", "2 – 3", "2～3").
+_NUMBERS = re.compile(r"(?P<lo>\d+)(?:\s*[-‐‑–—~～〜]\s*(?P<hi>\d+))?")
 
 
 def _dataset(name: str) -> str | None:
@@ -70,15 +78,21 @@ def _dataset(name: str) -> str | None:
         return DATASET_ENTITIES
     if name.startswith("relation"):
         return DATASET_RELATIONSHIPS
+    if name.startswith("report"):
+        return DATASET_REPORTS
     return None
 
 
-def split_data_references(text: str) -> tuple[str, dict[str, list[int]]]:
+def split_data_references(
+    text: str, sizes: Mapping[str, int] | None = None
+) -> tuple[str, dict[str, list[int]]]:
     """``text`` without its ``[Data: ...]`` references, and the record
     numbers they cite by dataset (:data:`DATASET_ENTITIES`,
-    :data:`DATASET_RELATIONSHIPS`; others, such as ``Claims``, are
-    dropped), each in first-cited order without repeats. ``+more`` is no
-    number."""
+    :data:`DATASET_RELATIONSHIPS`, :data:`DATASET_REPORTS`; others, such
+    as ``Claims``, are dropped), each in first-cited order without repeats.
+    ``+more`` is no number; a range is each number in it, up to the
+    dataset's size in ``sizes`` (the records the input numbered) where it
+    is given."""
     cited: dict[str, list[int]] = {}
 
     def take(match: re.Match[str]) -> str:
@@ -87,9 +101,18 @@ def split_data_references(text: str) -> tuple[str, dict[str, list[int]]]:
             if name is None:
                 continue
             numbers = cited.setdefault(name, [])
-            for number in _NUMBER.findall(dataset.group("ids")):
-                if int(number) not in numbers:
-                    numbers.append(int(number))
+            for found in _NUMBERS.finditer(dataset.group("ids")):
+                low = int(found["lo"])
+                high = int(found["hi"]) if found["hi"] else low
+                if high < low:  # written backwards: its two ends
+                    span = [low, high]
+                else:
+                    if sizes is not None and name in sizes:
+                        high = max(low, min(high, sizes[name]))
+                    span = list(range(low, high + 1))
+                for number in span:
+                    if number not in numbers:
+                        numbers.append(number)
         return ""
 
     return _REFERENCE.sub(take, text).strip(), cited

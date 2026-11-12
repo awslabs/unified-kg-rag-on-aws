@@ -258,9 +258,10 @@ _COMMUNITY_REPORT_RULES = f"""# ANALYSIS FRAMEWORK
 - Do not include information where the supporting evidence for it is not provided
 
 ## Grounding Rules:
-- The entities and the relationships are numbered in the data ([1], [2], ...), each list on its own
+- The entities, the relationships and the sub-community reports are numbered in the data ([1], [2], ...), each list on its own
 - End each finding's explanation with the records supporting it, in exactly this form whatever the report language:
   [Data: Entities (1, 3); Relationships (2, 7)]
+- A finding drawn from a sub-community report cites it as a report: [Data: Reports (2); Entities (5)]
 - List at most 5 numbers per list, the most relevant, and add "+more" when more support it:
   [Data: Entities (1, 2, 3, 4, 5, +more)]
 - Cite only numbers shown in the data; leave out a list with no supporting record
@@ -792,10 +793,10 @@ class CommunityReportPrompt(BasePrompt):
 {claims}
 ## SUB-COMMUNITY REPORTS:
 The following are summaries of finer-grained sub-communities nested within this
-community. When present, treat them as authoritative synthesis of the parts of
-this community whose raw entities/relationships are not listed above, and roll
-their insights up into this report. (Empty if this community has no summarized
-sub-communities.)
+community, numbered as the entities are. When present, treat them as authoritative
+synthesis of the parts of this community whose raw entities/relationships are not
+listed above, and roll their insights up into this report, citing them as Reports.
+(Empty if this community has no summarized sub-communities.)
 <sub_community_reports>
 {sub_community_reports}
 </sub_community_reports>
