@@ -64,12 +64,23 @@ FINDINGS_RECORD_IDS_FIELD = "findings_record_ids"
 FINDINGS_TEXT_UNITS_FIELD = "findings_text_unit_ids"
 FINDINGS_DOCUMENTS_FIELD = "findings_document_ids"
 
+# The body may hold a dataset's numbers in square brackets
+# ("Entities [1, 2]").
 _REFERENCE = re.compile(
-    r"\s*[\[［【]\s*Data\s*[:：](?P<body>[^\]］】]*)[\]］】]", re.IGNORECASE
+    r"\s*[\[［【]\s*Data\s*[:：]"
+    r"(?P<body>(?:[^\[\]［］【】]|[\[［][^\]］]*[\]］])*)[\]］】]",
+    re.IGNORECASE,
 )
-_DATASET = re.compile(r"(?P<name>[A-Za-z]+)\s*[(（](?P<ids>[^)）]*)[)）]")
+# A number: digits, with a thousands separator ("2,000") or not.
+_NUMBER = r"\d{1,3}(?:,\d{3})+(?!\d)|\d+"
 # A number, or a range of them ("1-4", "2 – 3", "2～3").
-_NUMBERS = re.compile(r"(?P<lo>\d+)(?:\s*[-‐‑–—~～〜]\s*(?P<hi>\d+))?")
+_NUMBERS = re.compile(rf"(?P<lo>{_NUMBER})(?:\s*[-‐‑–—~～〜]\s*(?P<hi>{_NUMBER}))?")
+# A dataset's numbers in parentheses or square brackets, or one number or
+# range without them ("Report 1").
+_DATASET = re.compile(
+    r"(?P<name>[A-Za-z]+)\s*(?:[(（\[［](?P<ids>[^)）\]］]*)[)）\]］]"
+    rf"|(?P<bare>(?:{_NUMBERS.pattern})))"
+)
 
 
 def _dataset(name: str) -> str | None:
@@ -84,38 +95,39 @@ def _dataset(name: str) -> str | None:
 
 
 def split_data_references(
-    text: str, sizes: Mapping[str, int] | None = None
+    text: str, sizes: Mapping[str, int]
 ) -> tuple[str, dict[str, list[int]]]:
     """``text`` without its ``[Data: ...]`` references, and the record
     numbers they cite by dataset (:data:`DATASET_ENTITIES`,
     :data:`DATASET_RELATIONSHIPS`, :data:`DATASET_REPORTS`; others, such
     as ``Claims``, are dropped), each in first-cited order without repeats.
-    ``+more`` is no number; a range is each number in it, up to the
-    dataset's size in ``sizes`` (the records the input numbered) where it
-    is given."""
-    cited: dict[str, list[int]] = {}
+    ``+more`` is no number, "2,000" one; a range is each number in it, up
+    to the dataset's size in ``sizes`` (the records the input numbered;
+    none for a dataset it does not name), so a model's "1-200000" costs no
+    more than the input."""
+    cited: dict[str, dict[int, None]] = {}
 
     def take(match: re.Match[str]) -> str:
         for dataset in _DATASET.finditer(match.group("body")):
             name = _dataset(dataset.group("name"))
             if name is None:
                 continue
-            numbers = cited.setdefault(name, [])
-            for found in _NUMBERS.finditer(dataset.group("ids")):
-                low = int(found["lo"])
-                high = int(found["hi"]) if found["hi"] else low
+            numbers = cited.setdefault(name, {})
+            ids = dataset.group("ids")
+            for found in _NUMBERS.finditer(
+                dataset.group("bare") if ids is None else ids
+            ):
+                low = int(found["lo"].replace(",", ""))
+                high = int(found["hi"].replace(",", "")) if found["hi"] else low
                 if high < low:  # written backwards: its two ends
                     span = [low, high]
                 else:
-                    if sizes is not None and name in sizes:
-                        high = max(low, min(high, sizes[name]))
-                    span = list(range(low, high + 1))
-                for number in span:
-                    if number not in numbers:
-                        numbers.append(number)
+                    span = list(range(low, max(low, min(high, sizes.get(name, 0))) + 1))
+                numbers.update(dict.fromkeys(span))
         return ""
 
-    return _REFERENCE.sub(take, text).strip(), cited
+    prose = _REFERENCE.sub(take, text).strip()
+    return prose, {name: list(numbers) for name, numbers in cited.items()}
 
 
 def report_cited_ids(metadata: Mapping[str, Any]) -> tuple[list[str], list[str]]:
