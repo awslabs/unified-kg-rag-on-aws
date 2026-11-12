@@ -71,6 +71,11 @@ guard.
 - `chain.search(...)` (`await chain.asearch(...)`) retrieves without
   answering and returns a `SearchOutput` (`search_results`,
   `processed_query`, `metadata`).
+- To change a loaded config, use `config.updated({"indexing.methodologies":
+  ["lightrag"], "search.citations.enabled": False})`: it returns a new
+  config validated whole, so the checks across sections run as they do at
+  load. Assigning a setting (`config.search.top_k = 5`) validates that
+  field only.
 
 ## Documents from memory
 

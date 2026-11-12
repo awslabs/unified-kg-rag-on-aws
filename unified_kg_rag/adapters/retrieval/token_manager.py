@@ -2,13 +2,17 @@
 # SPDX-License-Identifier: Apache-2.0
 import re
 from collections.abc import Sequence
-from enum import Enum
 from typing import Any, ClassVar
 
 from pydantic import BaseModel, Field
 
 from unified_kg_rag.adapters.providers import Providers
-from unified_kg_rag.domain.models import Config, ModelRole, RetrievalResult
+from unified_kg_rag.domain.models import (
+    Config,
+    ModelRole,
+    RetrievalResult,
+    SectionType,
+)
 from unified_kg_rag.domain.prompts import AnswerGenerationPrompt
 from unified_kg_rag.domain.retrieval.citations import neutralize_markers
 from unified_kg_rag.ports.model_factory import (
@@ -38,19 +42,6 @@ _TRUNCATION_BACKOFF_RATIO = 0.2
 # was packed in, and the widest an answer's marker is read at
 # (domain/retrieval/citations.py).
 _MARKER_PLACEHOLDER = 999
-
-
-class SectionType(str, Enum):
-    CLAIM = "claim"
-    COMMUNITY = "community"
-    ENTITY = "entity"
-    GENERAL = "general"
-    RELATIONSHIP = "relationship"
-    # A node of the summary tree (the tree strategy).
-    SUMMARY = "summary"
-    TEXT = "text"
-    # A graph query's result table (the structured strategy).
-    QUERY_RESULT = "query_result"
 
 
 class ContextSection(BaseModel):
@@ -416,15 +407,8 @@ class TokenManager:
 
     @staticmethod
     def _section_type(result: RetrievalResult) -> SectionType:
-        try:
-            return SectionType(
-                (result.retriever_type or SectionType.GENERAL.value).lower()
-            )
-        except ValueError:
-            # `retriever_type` is a free-form str; an out-of-enum value (a future
-            # retriever, or a malformed result) must degrade to GENERAL rather
-            # than abort context-building for the whole query.
-            return SectionType.GENERAL
+        # A result built with model_copy(update=...) is not validated.
+        return SectionType.of(result.retriever_type)
 
     def _create_context_section(
         self,

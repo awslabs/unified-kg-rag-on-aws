@@ -174,7 +174,9 @@ def test_kg_answer_takes_a_bounded_history_over_the_protocol(
     from tests.unit.test_mcp_tools import FakeChain
     from unified_kg_rag.application.retrieval import graph_lookup
 
-    async def names(chain: object, suffix: object, units: list[str]) -> dict:
+    async def names(
+        chain: object, suffix: object, units: list[str], **_: object
+    ) -> dict:
         return {}
 
     monkeypatch.setattr(graph_lookup, "text_unit_file_names", names)

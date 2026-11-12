@@ -303,10 +303,6 @@ class ScriptCounts:
             if name in _BY_NAME and _BY_NAME[name].spacing is Spacing.DENSE
         )
 
-    @property
-    def dense_share(self) -> float:
-        return self.dense / self.letters if self.letters else 0.0
-
     def dominant(self, without: Collection[str] = ()) -> str | None:
         """The script most of the text is in, weighed by what its letters
         carry (its letters over its ``chars_per_token``, so one Hangul

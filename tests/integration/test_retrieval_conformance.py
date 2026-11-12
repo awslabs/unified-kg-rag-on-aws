@@ -39,6 +39,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.models.config import LanguageCode
 from unified_kg_rag.shared import ConfigurationError, IndexNotFoundError
+from unified_kg_rag.shared import logging as shared_logging
 
 pytestmark = pytest.mark.integration
 
@@ -2028,12 +2029,10 @@ def test_the_relationships_index_gives_a_hubs_neighbourhood_edges(
             await graph.aclose()
         return None if found is None else [e.id for e in found]
 
-    import threading
-
     from unified_kg_rag.adapters.retrieval import base
 
     # The full pages are asked again, so no "edges are dropped" warning.
-    monkeypatch.setattr(base, "_PAGE_CAP_WARNED", threading.Event())
+    monkeypatch.setattr(shared_logging, "_warned_once", set())
     caplog.set_level(logging.WARNING, logger=base.__name__)
     for per_vertex in (1, 50, 1000):
         on_graph = [e[0] for e in _edges_within(h, vertices, per_vertex=per_vertex)]

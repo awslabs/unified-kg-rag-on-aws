@@ -5,13 +5,14 @@
 from pathlib import Path
 
 from pydantic import (
-    BaseModel,
     Field,
     model_validator,
 )
 
+from ._common import ConfigSection
 
-class CentralityConfig(BaseModel):
+
+class CentralityConfig(ConfigSection):
     calculate_degree: bool = Field(
         default=True,
         description="Calculate degree centrality to measure node connectivity",
@@ -60,7 +61,7 @@ class CentralityConfig(BaseModel):
     )
 
 
-class ReportGenerationConfig(BaseModel):
+class ReportGenerationConfig(ConfigSection):
     enabled: bool = Field(
         default=True,
         description=(
@@ -107,7 +108,7 @@ class ReportGenerationConfig(BaseModel):
     )
 
 
-class CommunityDetectionConfig(BaseModel):
+class CommunityDetectionConfig(ConfigSection):
     enabled: bool = Field(
         default=True,
         description=(
@@ -191,7 +192,7 @@ class CommunityDetectionConfig(BaseModel):
         return self
 
 
-class InteractiveGraphSettings(BaseModel):
+class InteractiveGraphSettings(ConfigSection):
     """The interactive pyvis graph (``interactive_graph.html``)."""
 
     height: str = Field(default="900px", description="Canvas height (CSS).")
@@ -213,7 +214,7 @@ class InteractiveGraphSettings(BaseModel):
     )
 
 
-class StaticChartSettings(BaseModel):
+class StaticChartSettings(ConfigSection):
     """The static charts (dependency-free HTML with inline SVG)."""
 
     figure_width: int = Field(default=900, ge=100, description="Chart width (px).")
@@ -225,7 +226,7 @@ class StaticChartSettings(BaseModel):
     )
 
 
-class VisualizationConfig(BaseModel):
+class VisualizationConfig(ConfigSection):
     centrality: CentralityConfig = Field(
         default_factory=CentralityConfig,
         description="Node centrality metrics the static renderer's centrality "
@@ -261,7 +262,7 @@ class VisualizationConfig(BaseModel):
     )
 
 
-class GraphConfig(BaseModel):
+class GraphConfig(ConfigSection):
     community_detection: CommunityDetectionConfig = Field(
         default_factory=CommunityDetectionConfig,
         description="Community detection configuration",

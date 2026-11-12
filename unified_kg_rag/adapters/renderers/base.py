@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
 from unified_kg_rag.shared import ConfigurationError, get_logger
 from unified_kg_rag.shared.extras import extra_hint
+from unified_kg_rag.shared.registry import Registry
 
 if TYPE_CHECKING:
     import networkx as nx
@@ -49,53 +50,60 @@ class BaseRenderer(ABC):
     def __init__(self, config: Any) -> None:
         self.config = config
 
-    @classmethod
-    def check_dependencies(cls) -> None:
-        """Raise ``ConfigurationError`` when a package :meth:`render` needs
-        is not installed (nothing by default).
-
-        Called before any rendering, so a missing optional dependency fails
-        the run naming its remedy instead of leaving that renderer's files
-        out.
-        """
-        return None
-
     @abstractmethod
     def render(self, context: RenderContext, output_dir: Path) -> list[Path]:
         """Produce visualization files; return the paths written."""
         ...
 
 
-_REGISTRY: dict[str, type[BaseRenderer]] = {}
+_RENDERERS: Registry[str, type[BaseRenderer]] = Registry("renderer")
+_REGISTRY = _RENDERERS.entries
 
 RendererT = TypeVar("RendererT", bound="type[BaseRenderer]")
 
 
-def register_renderer(name: str) -> Callable[[RendererT], RendererT]:
-    """Class decorator registering a renderer under ``name``."""
+def register_renderer(
+    name: str, *, requires: tuple[str, str] | None = None
+) -> Callable[[RendererT], RendererT]:
+    """Class decorator registering a renderer under ``name``, under the one
+    registry rule (``shared.registry``: case-insensitive, a later
+    registration replaces). ``requires`` is the ``(module, how to install
+    it)`` of the optional package :meth:`BaseRenderer.render` imports:
+    :func:`resolve_renderers` fails naming it before any rendering."""
+    _RENDERERS.check_name(name)
 
     def decorator(cls: RendererT) -> RendererT:
-        if name in _REGISTRY and _REGISTRY[name] is not cls:
-            raise ValueError(f"Renderer '{name}' already registered")
-        _REGISTRY[name] = cls
-        logger.debug("Registered renderer '%s' -> %s", name, cls.__name__)
+        key = _RENDERERS.register(name, cls, requires=requires)
+        logger.debug("Registered renderer '%s' -> %s", key, cls.__name__)
         return cls
 
     return decorator
 
 
 def registered_renderers() -> tuple[str, ...]:
-    return tuple(_REGISTRY)
+    return tuple(_RENDERERS)
 
 
 def get_renderer_class(name: str) -> type[BaseRenderer]:
-    try:
-        return _REGISTRY[name]
-    except KeyError:
-        available = ", ".join(sorted(_REGISTRY)) or "(none)"
+    renderer = _RENDERERS.get(name)
+    if renderer is None:
+        available = ", ".join(_RENDERERS.names()) or "(none)"
         raise ValueError(
             f"No renderer registered for '{name}'. Available: {available}."
-        ) from None
+        )
+    return renderer
+
+
+def check_renderer_dependencies(name: str) -> None:
+    """Raise ``ConfigurationError`` when the package renderer ``name``
+    declared (``requires``) is not installed."""
+    missing = _RENDERERS.missing(name)
+    if missing is not None:
+        module, install = missing
+        raise ConfigurationError(
+            f"The '{name}' renderer needs '{module}', which is not installed: "
+            f"{install}"
+        )
 
 
 def resolve_renderers(
@@ -103,10 +111,10 @@ def resolve_renderers(
 ) -> list[tuple[str, type[BaseRenderer]]]:
     """The renderer class of each name, its dependencies checked: an unknown
     name raises ``ValueError`` and a missing dependency
-    ``ConfigurationError`` (:meth:`BaseRenderer.check_dependencies`)."""
+    ``ConfigurationError`` (:func:`check_renderer_dependencies`)."""
     renderers = [(name, get_renderer_class(name)) for name in renderer_names]
-    for _, renderer_cls in renderers:
-        renderer_cls.check_dependencies()
+    for name, _ in renderers:
+        check_renderer_dependencies(name)
     return renderers
 
 

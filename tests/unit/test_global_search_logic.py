@@ -201,8 +201,9 @@ def _strategy(
     gs = config.search.global_search
     # Map even a cut of one or two reports.
     gs.map_reduce_min_results = 1
-    for key, value in settings.items():
-        setattr(gs, key, value)
+    # Unvalidated: a test may map with a budget below the setting's floor.
+    gs = gs.model_copy(update=settings)
+    config.search.global_search = gs
     strat = GlobalSearchStrategy.__new__(GlobalSearchStrategy)
     strat.config = config
     strat.global_search_config = gs

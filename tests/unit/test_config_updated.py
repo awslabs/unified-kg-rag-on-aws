@@ -1,0 +1,96 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""Changing a config: an assignment validates its field, and
+``Config.updated`` validates the whole config as loading does."""
+
+from __future__ import annotations
+
+import pytest
+from pydantic import BaseModel, ValidationError
+
+from unified_kg_rag.application.cli.console.jobs import ingest_config
+from unified_kg_rag.domain.models import Config, Methodology
+from unified_kg_rag.domain.models.config import ConfigSection
+from unified_kg_rag.shared import ConfigurationError
+
+pytestmark = pytest.mark.unit
+
+
+def _lightrag_without_communities() -> Config:
+    return Config.model_validate(
+        {
+            "graph": {"community_detection": {"enabled": False}},
+            "indexing": {"methodologies": ["lightrag"]},
+        }
+    )
+
+
+def test_every_section_validates_an_assignment() -> None:
+    config = Config()
+    with pytest.raises(ValidationError):
+        config.search.local_search.entity_frequency_threshold = -5
+    with pytest.raises(ValidationError):
+        config.search.global_search.evidence_tokens = "many"  # type: ignore[assignment]
+
+
+def test_every_config_section_shares_the_base() -> None:
+    def sections(model: type) -> set[type]:
+        found: set[type] = set()
+        for field in model.model_fields.values():
+            annotation = field.annotation
+            if isinstance(annotation, type) and issubclass(annotation, ConfigSection):
+                found |= {annotation, *sections(annotation)}
+        return found
+
+    assert len(sections(Config)) > 40
+    for name, field in Config.model_fields.items():
+        if isinstance(field.annotation, type) and issubclass(
+            field.annotation, BaseModel
+        ):
+            assert issubclass(field.annotation, ConfigSection), name
+
+
+def test_the_hybrid_weights_normalize_as_a_pair() -> None:
+    # Validated on assignment, one weight renormalized both before the
+    # other was set, and the validator's own writes recursed (a hang).
+    config = Config()
+    config.search.hybrid.lexical_weight = 0.25
+    config.search.hybrid.vector_weight = 0.75
+    assert config.search.hybrid.lexical_weight == 0.25
+    changed = config.updated(
+        {"search.hybrid.lexical_weight": 0.2, "search.hybrid.vector_weight": 0.6}
+    )
+    assert changed.search.hybrid.lexical_weight == pytest.approx(0.25)
+
+
+def test_updated_runs_the_checks_across_sections() -> None:
+    # Regression: the console set indexing.methodologies by assignment, so a
+    # selection community_detection.enabled false leaves nothing of passed.
+    config = _lightrag_without_communities()
+    with pytest.raises(ValidationError, match="indexing.methodologies"):
+        config.updated({"indexing.methodologies": ["graphrag"]})
+    assert config.indexing.methodologies == [Methodology.LIGHTRAG]
+
+
+def test_updated_returns_a_changed_copy() -> None:
+    config = Config()
+    changed = config.updated(
+        {"search.citations.enabled": False, "indexing.methodologies": ["lightrag"]}
+    )
+    assert changed.search.citations.enabled is False
+    assert changed.indexing.methodologies == [Methodology.LIGHTRAG]
+    assert config.search.citations.enabled is not False or config == changed
+    assert config.indexing.methodologies != changed.indexing.methodologies
+
+
+def test_updated_refuses_a_key_that_names_no_setting() -> None:
+    with pytest.raises(ValueError, match="No setting 'search.no_such_key'"):
+        Config().updated({"search.no_such_key": 1})
+
+
+def test_the_console_refuses_a_methodology_the_config_cannot_build() -> None:
+    with pytest.raises(ConfigurationError, match="methodologies"):
+        ingest_config(_lightrag_without_communities(), ["graphrag"])
+    config, chosen = ingest_config(Config(), ["lightrag"])
+    assert chosen == ["lightrag"]
+    assert config.indexing.methodologies == [Methodology.LIGHTRAG]

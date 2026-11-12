@@ -1,12 +1,15 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import re
+from collections.abc import Callable
+from dataclasses import dataclass
 from enum import Enum
 from typing import Annotated, Any
 
 from pydantic import AfterValidator, BaseModel, Field, field_validator
 from typing_extensions import TypedDict
 
+from unified_kg_rag.domain.retrieval.section_types import SectionType as SectionType
 from unified_kg_rag.domain.retrieval.source_fields import decode_list_fields
 
 _SAFE_NAME = re.compile(r"[a-z0-9_-]+")
@@ -84,6 +87,73 @@ class SearchStrategy(str, Enum):
     STRUCTURED = "structured"
 
 
+def _always_reports_sources(config: Any) -> bool:
+    return True
+
+
+def _global_reports_sources(config: Any) -> bool:
+    # Map-reduce with evidence_tokens 0 answers from the key points alone
+    # (model output, not sources).
+    settings = config.search.global_search
+    return not (settings.enable_map_reduce and settings.evidence_tokens == 0)
+
+
+@dataclass(frozen=True)
+class StrategyTraits:
+    """What the chain, the router, the config checks and the evaluator need
+    to know of a search strategy, so none of them keys it by name
+    (:data:`STRATEGY_TRAITS`; every strategy has a row, a unit test checks).
+    The router's text for a strategy is ``STRATEGY_ROUTING_GUIDE``."""
+
+    # Why ``search.auto_routable_strategies`` refuses it; None: it may list
+    # it.
+    not_routable_reason: str | None = None
+    # Its place among the general-purpose strategies a query falls back to
+    # (``GENERAL_FALLBACKS``: auto's when routing fails or nothing configured
+    # is served, structured's when its fallback is not served); None: not
+    # one.
+    general_fallback_rank: int | None = None
+    # Whether a query under a config (``Config``) reports sources.
+    reports_sources: Callable[[Any], bool] = _always_reports_sources
+
+    @property
+    def auto_routable(self) -> bool:
+        return self.not_routable_reason is None
+
+
+STRATEGY_TRAITS: dict[SearchStrategy, StrategyTraits] = {
+    SearchStrategy.AUTO: StrategyTraits(not_routable_reason="it is the router itself"),
+    SearchStrategy.LOCAL: StrategyTraits(general_fallback_rank=0),
+    SearchStrategy.MIX: StrategyTraits(general_fallback_rank=1),
+    SearchStrategy.GLOBAL: StrategyTraits(reports_sources=_global_reports_sources),
+    SearchStrategy.DRIFT: StrategyTraits(),
+    SearchStrategy.SIMPLE: StrategyTraits(),
+    SearchStrategy.HYBRID: StrategyTraits(),
+    SearchStrategy.NAIVE: StrategyTraits(),
+    SearchStrategy.ITERATIVE: StrategyTraits(),
+    SearchStrategy.PPR: StrategyTraits(
+        not_routable_reason="it is opt-in until a measurement shows where it "
+        "wins (docs/design.md §6.4); select it explicitly"
+    ),
+    SearchStrategy.TREE: StrategyTraits(
+        not_routable_reason="it is opt-in (it answered better than naive but "
+        "well below the graph strategies, docs/concepts/"
+        "defaults-and-evidence.md#raptor-summary-tree), so the router does "
+        "not pick it; select it explicitly"
+    ),
+    # Routable once listed (not by default: docs/design.md §6.6).
+    SearchStrategy.STRUCTURED: StrategyTraits(),
+}
+
+# The general-purpose strategies a query falls back to, in order.
+GENERAL_FALLBACKS: tuple[SearchStrategy, ...] = tuple(
+    sorted(
+        (s for s, t in STRATEGY_TRAITS.items() if t.general_fallback_rank is not None),
+        key=lambda s: STRATEGY_TRAITS[s].general_fallback_rank or 0,
+    )
+)
+
+
 class SearchType(str, Enum):
     HYBRID = "hybrid"
     LEXICAL = "lexical"
@@ -94,8 +164,8 @@ class RetrievalResult(BaseModel):
     content: str = Field(description="Retrieved content text")
     score: float = Field(description="Relevance score (0-1)")
     source: str | None = Field(default=None, description="Content source identifier")
-    retriever_type: str = Field(
-        description="Type of retriever that generated this result"
+    retriever_type: SectionType = Field(
+        description="The kind of item retrieved (an unknown kind reads as " "general)"
     )
     chunk_id: str | None = Field(default=None, description="Source chunk identifier")
     metadata: dict[str, Any] = Field(
@@ -103,6 +173,11 @@ class RetrievalResult(BaseModel):
         description="Additional retrieval result metadata (its id lists, "
         "source_fields.LIST_FIELDS, are lists of strings)",
     )
+
+    @field_validator("retriever_type", mode="before")
+    @classmethod
+    def _known_kind(cls, value: Any) -> SectionType:
+        return SectionType.of(value)
 
     @field_validator("metadata")
     @classmethod

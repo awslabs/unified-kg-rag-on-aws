@@ -55,20 +55,21 @@ class TestRegistry:
         register_renderer("registry_idempotent")(_R)
         assert get_renderer_class("registry_idempotent") is _R
 
-    def test_reregister_different_class_raises(self) -> None:
+    def test_a_later_registration_replaces_any_case(self) -> None:
+        # The one registry rule (shared.registry): a deployment overrides a
+        # renderer, and "Static" names "static", not a second renderer.
         @register_renderer("registry_conflict")
         class _A(BaseRenderer):
             def render(self, context: RenderContext, output_dir: Path) -> list[Path]:
                 return []
 
-        with pytest.raises(ValueError, match="already registered"):
+        @register_renderer("Registry_Conflict ")
+        class _B(BaseRenderer):
+            def render(self, context: RenderContext, output_dir: Path) -> list[Path]:
+                return []
 
-            @register_renderer("registry_conflict")
-            class _B(BaseRenderer):
-                def render(
-                    self, context: RenderContext, output_dir: Path
-                ) -> list[Path]:
-                    return []
+        assert get_renderer_class("registry_conflict") is _B
+        assert registered_renderers().count("registry_conflict") == 1
 
 
 class TestRenderContext:

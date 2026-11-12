@@ -9,7 +9,6 @@ from typing import Annotated, Any, Literal
 
 from pydantic import (
     AfterValidator,
-    BaseModel,
     BeforeValidator,
     ConfigDict,
     Field,
@@ -19,15 +18,23 @@ from pydantic import (
 )
 
 from ..retrieval import (
+    STRATEGY_TRAITS,
     SearchStrategy,
 )
+from ._common import ConfigSection
 
 # One stdlib logger for every module of the config package, named as the
 # package (one module before the split): a filter on it sees them all.
 _logger = logging.getLogger("unified_kg_rag.domain.models.config")
 
 
-class HybridConfig(BaseModel):
+class HybridConfig(ConfigSection):
+    # The two weights are normalized as a pair (validate_weights_sum_to_one
+    # writes them): validated on each assignment, setting one renormalized
+    # both before the other was set, and the validator's own writes
+    # recursed. Set them together with Config.updated.
+    model_config = ConfigDict(validate_assignment=False)
+
     lexical_weight: float = Field(
         default=0.5,
         ge=0.0,
@@ -102,7 +109,7 @@ def _warn_retired_bucket(old: str) -> None:
     )
 
 
-class FusionConfig(BaseModel):
+class FusionConfig(ConfigSection):
     rrf_k: int = Field(
         default=60,
         ge=1,
@@ -174,7 +181,7 @@ class FusionConfig(BaseModel):
         return weights
 
 
-class RerankingConfig(BaseModel):
+class RerankingConfig(ConfigSection):
     """How the fused results are reranked with models.rerank.
 
     providers.rerank.kind picks the reranker; none turns reranking off.
@@ -205,7 +212,7 @@ class RerankingConfig(BaseModel):
     )
 
 
-class ContextTypeBudgetConfig(BaseModel):
+class ContextTypeBudgetConfig(ConfigSection):
     """Per-section-type share of the answer context window.
 
     Both upstream methodologies split the context window into per-type
@@ -296,7 +303,7 @@ class ContextTypeBudgetConfig(BaseModel):
         return self
 
 
-class TokenManagerConfig(BaseModel):
+class TokenManagerConfig(ConfigSection):
     max_context_tokens: int | None = Field(
         default=30_000,
         ge=1024,
@@ -341,22 +348,13 @@ class TokenManagerConfig(BaseModel):
 
 
 def _reject_auto_strategy(strategies: list[SearchStrategy]) -> list[SearchStrategy]:
-    if SearchStrategy.AUTO in strategies:
-        raise ValueError("auto_routable_strategies cannot include 'auto'")
-    if SearchStrategy.PPR in strategies:
-        raise ValueError(
-            "auto_routable_strategies cannot include 'ppr' until a "
-            "measurement shows where it wins (docs/design.md §6.4); select "
-            "it explicitly"
-        )
-    if SearchStrategy.TREE in strategies:
-        raise ValueError(
-            "auto_routable_strategies cannot include 'tree': it is opt-in (it "
-            "answered better than naive but well below the graph strategies, "
-            "docs/concepts/"
-            "defaults-and-evidence.md#raptor-summary-tree), so the router does "
-            "not pick it; select it explicitly"
-        )
+    for strategy in strategies:
+        reason = STRATEGY_TRAITS[strategy].not_routable_reason
+        if reason is not None:
+            raise ValueError(
+                f"auto_routable_strategies cannot include '{strategy.value}': "
+                f"{reason}"
+            )
     return strategies
 
 
@@ -387,7 +385,7 @@ def _reject_auto_style(
     return value
 
 
-class QueryOutputCeilingsConfig(BaseModel):
+class QueryOutputCeilingsConfig(ConfigSection):
     """max_tokens of the short-answer query calls.
 
     Bedrock reserves input + max_tokens against the tokens-per-minute quota
@@ -440,7 +438,7 @@ class QueryOutputCeilingsConfig(BaseModel):
     )
 
 
-class AbstentionConfig(BaseModel):
+class AbstentionConfig(ConfigSection):
     """How an answer declines a question its context does not answer.
 
     Opt-in: with the defaults the answer prompts and outputs are those of
@@ -521,13 +519,12 @@ def _reject_auto_citations(
     return value
 
 
-class CitationConfig(BaseModel):
+class CitationConfig(ConfigSection):
     """Numbered answer contexts and the answer's citations
     (``RAGOutput.citations``). Guide: docs/guides/query.md#citations
     """
 
     # An assigned strategies map merges over the default as a loaded one.
-    model_config = ConfigDict(validate_assignment=True)
 
     enabled: bool = Field(
         default=True,

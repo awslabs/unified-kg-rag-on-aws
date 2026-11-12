@@ -25,7 +25,6 @@ from unified_kg_rag.adapters.retrieval.token_manager import (
     EMPTY_CONTEXT_PLACEHOLDER,
     ContextSection,
     OptimizedContext,
-    SectionType,
 )
 from unified_kg_rag.application.retrieval.rag_chain import (
     GraphRAGChain,
@@ -40,6 +39,7 @@ from unified_kg_rag.domain.models import (
     SearchQuery,
     SearchResult,
     SearchStrategy,
+    SectionType,
 )
 
 pytestmark = pytest.mark.unit

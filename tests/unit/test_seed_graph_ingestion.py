@@ -758,7 +758,9 @@ def test_run_ingestion_preflights_the_seed_sources_extras(
     # Only run-ingestion loads the seeds: an rdf seed without the ontology
     # extra fails before the pipeline is built.
     built = mocker.patch.object(run_ingestion_pipeline, "DataIngestionPipeline")
-    mocker.patch.object(preflight, "_installed", side_effect=lambda m: m != "rdflib")
+    mocker.patch.object(
+        preflight, "module_installed", side_effect=lambda m: m != "rdflib"
+    )
     config = Config()
     config.processing.seed_graphs = [
         SeedGraphConfig(name="procure", kind="rdf", path="procure.ttl")

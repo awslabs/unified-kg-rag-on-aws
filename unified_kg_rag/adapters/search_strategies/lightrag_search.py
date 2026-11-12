@@ -45,7 +45,6 @@ from unified_kg_rag.adapters.retrieval.strategy_registry import (
     QueryInput,
     register_strategy,
 )
-from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.domain.ingestion.seed_graph import is_seed_unit
 from unified_kg_rag.domain.models import (
     Config,
@@ -57,6 +56,7 @@ from unified_kg_rag.domain.models import (
     SearchResult,
     SearchStrategy,
     SearchType,
+    SectionType,
 )
 from unified_kg_rag.domain.retrieval.keyword_fallback import raw_query_falls_back
 from unified_kg_rag.domain.retrieval.lineage import merge as merge_lineages

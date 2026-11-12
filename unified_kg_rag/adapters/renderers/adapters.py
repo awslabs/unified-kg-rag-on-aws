@@ -65,13 +65,9 @@ def _render_file(path: Path, draw: Callable[[str], None]) -> list[Path]:
     return [path]
 
 
-@register_renderer("interactive")
+@register_renderer("interactive", requires=("pyvis", VIZ_EXTRA_HINT))
 class InteractiveRendererAdapter(BaseRenderer):
     """pyvis interactive network + community hierarchy."""
-
-    @classmethod
-    def check_dependencies(cls) -> None:
-        _interactive_renderer()
 
     def render(self, context: RenderContext, output_dir: Path) -> list[Path]:
         renderer = _interactive_renderer()(self.config)

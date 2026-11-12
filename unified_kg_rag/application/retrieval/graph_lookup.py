@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 from unified_kg_rag.adapters.retrieval.base import BaseGraphRAGRetriever
 from unified_kg_rag.application.bootstrap import resolve_extraction_schema
 from unified_kg_rag.application.retrieval import methodology_check
+from unified_kg_rag.application.retrieval.text_units import fetch_text_units
 from unified_kg_rag.domain.models import (
     GraphEdge,
     IndexArtifact,
@@ -297,26 +298,27 @@ async def neighbourhood(
 
 
 async def text_unit_file_names(
-    chain: GraphRAGChain, suffix: str | None, unit_ids: list[str]
+    chain: GraphRAGChain,
+    suffix: str | None,
+    unit_ids: list[str],
+    *,
+    filters: dict[str, Any] | None = None,
 ) -> dict[str, str]:
     """``{text_unit_id: file name}`` of ``unit_ids``' text units (the name,
-    never the path), in fetches by id of at most ``id_batch_size`` ids."""
-    suffix = resolve_namespace(chain.config, suffix)
-    wanted = list(dict.fromkeys(str(i) for i in unit_ids if i))
-    if not wanted:
-        return {}
-    retriever = _document_retriever(chain)
-    prefix = chain.config.indexing.opensearch.text_units_index_prefix
-    step = (await retriever.aindex_limits(prefix, suffix)).id_batch_size
-    names: dict[str, str] = {}
-    for start in range(0, len(wanted), step):
-        batch = wanted[start : start + step]
-        query = _fetch(prefix, suffix, {"id": batch}, len(batch))
-        for hit in await retriever.aretrieve(query):
-            metadata = hit.metadata or {}
-            if name := source_fields.file_name(metadata):
-                names[str(metadata.get("id") or hit.source)] = name
-    return names
+    never the path) that pass ``filters`` (``text_units.fetch_text_units``):
+    a unit the caller's filters exclude is never named."""
+    fetched = await fetch_text_units(
+        _document_retriever(chain),
+        chain.config,
+        resolve_namespace(chain.config, suffix),
+        unit_ids,
+        filters=filters,
+    )
+    return {
+        unit_id: name
+        for unit_id, metadata in fetched.units.items()
+        if (name := source_fields.file_name(metadata))
+    }
 
 
 class NamespaceDescription(methodology_check.NamespaceSummary):

@@ -151,7 +151,7 @@ def test_a_later_registration_replaces_the_earlier(custom_kind: str) -> None:
     assert get_schema_source(custom_kind) is replacement
 
 
-@pytest.mark.parametrize("kind", ["inline", "File", "my-kind", "", "1st"])
+@pytest.mark.parametrize("kind", ["inline", " Inline", "my-kind", "", "1st"])
 def test_invalid_kinds_cannot_register(kind: str) -> None:
     with pytest.raises(ValueError, match="Cannot register"):
         register_schema_source(kind)

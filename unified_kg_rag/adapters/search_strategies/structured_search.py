@@ -51,7 +51,6 @@ from unified_kg_rag.adapters.retrieval.strategy_registry import (
     register_strategy,
     serves,
 )
-from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
 from unified_kg_rag.domain.ingestion.cache_keys import index_language
 from unified_kg_rag.domain.ingestion.seed_graph import (
@@ -60,6 +59,7 @@ from unified_kg_rag.domain.ingestion.seed_graph import (
     is_seed_unit,
 )
 from unified_kg_rag.domain.models import (
+    GENERAL_FALLBACKS,
     Config,
     Constants,
     IndexArtifact,
@@ -70,6 +70,7 @@ from unified_kg_rag.domain.models import (
     SearchResult,
     SearchStrategy,
     SearchType,
+    SectionType,
 )
 from unified_kg_rag.domain.models.config import language_name
 from unified_kg_rag.domain.models.graph_query import (
@@ -151,7 +152,6 @@ _DEGRADING = frozenset(
 # What _parsed says of an answer that holds no JSON object.
 _UNREADABLE = "plan: the answer is not one JSON object"
 # What a fallback gives way to when the namespace does not serve it.
-_FALLBACK_ORDER = (SearchStrategy.LOCAL, SearchStrategy.MIX)
 # The JSON keys of a plan, to tell it from an example the model echoes.
 _PLAN_KEYS = ("nodes", "returns", "unanswerable")
 # Suffixes whose profile a strategy keeps at most.
@@ -330,7 +330,7 @@ class StructuredSearchStrategy(BaseSearchStrategy):
         if configured is None:
             return ()
         if artifacts is None:
-            return tuple(dict.fromkeys((configured, *_FALLBACK_ORDER)))
+            return tuple(dict.fromkeys((configured, *GENERAL_FALLBACKS)))
         chosen = self._fallback_for(frozenset(artifacts))
         return () if chosen is None else (chosen,)
 
@@ -991,7 +991,7 @@ class StructuredSearchStrategy(BaseSearchStrategy):
             ),
             score=1.0,
             source="graph-query",
-            retriever_type=SectionType.QUERY_RESULT.value,
+            retriever_type=SectionType.QUERY_RESULT,
             metadata={
                 "plan": run.plan,
                 "plan_description": run.description,
@@ -1046,7 +1046,7 @@ class StructuredSearchStrategy(BaseSearchStrategy):
             content=entity_content(node, []),
             score=1.0 / (1 + rank),
             source=vertex_id,
-            retriever_type=SectionType.ENTITY.value,
+            retriever_type=SectionType.ENTITY,
             metadata=node,
         )
 
@@ -1132,7 +1132,7 @@ class StructuredSearchStrategy(BaseSearchStrategy):
                 content=f"{name(e.source_id)} -[{e.type}]-> {name(e.target_id)}",
                 score=1.0 / (1 + rank),
                 source=e.id,
-                retriever_type=SectionType.RELATIONSHIP.value,
+                retriever_type=SectionType.RELATIONSHIP,
                 metadata={
                     "id": e.id,
                     "source_id": e.source_id,
@@ -1265,7 +1265,7 @@ class StructuredSearchStrategy(BaseSearchStrategy):
         configured = self.settings.fallback_strategy
         if configured is None:
             return None
-        for candidate in (configured, *_FALLBACK_ORDER):
+        for candidate in (configured, *GENERAL_FALLBACKS):
             if serves(candidate, held, self.config):
                 return candidate
         return None

@@ -24,6 +24,7 @@ from ._aws import (
 from ._common import (
     ChunkingStrategy,
     ChunkLengthUnit,
+    ConfigSection,
     Constants,
     PipelineStageType,
     ResolutionMethod,
@@ -162,6 +163,7 @@ __all__ = [
     "ChunkingConfig",
     "ChunkingStrategy",
     "ChunkLengthUnit",
+    "ConfigSection",
     "CitationConfig",
     "ClaimExtractionConfig",
     "CommunityCompactionConfig",

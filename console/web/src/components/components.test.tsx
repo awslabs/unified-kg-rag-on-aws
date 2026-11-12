@@ -33,6 +33,8 @@ function source(rank: number, kind: string, extra: Partial<Source> = {}): Source
     iri: null,
     provenance: null,
     marker: null,
+    // As the API serves it (SectionType.stated_by_passages).
+    stated_by_passages: ["entity", "relationship", "claim", "query_result"].includes(kind),
     ...extra,
   };
 }
@@ -84,6 +86,17 @@ describe("EvidenceTrace", () => {
     const passage = container.querySelector('[data-rank="2"] .source-trail') as HTMLElement;
     expect(within(passage).getByText("doc-2.txt")).toBeInTheDocument();
     expect(within(passage).getByRole("button", { name: "#1" })).toBeInTheDocument();
+  });
+
+  it("lists the passages of the sources the API marks as stated by them", () => {
+    // A claim's passages state it; a summary only rests on its passages.
+    const claim = source(1, "claim", { supported_by: [2] });
+    const summary = source(3, "summary", { supported_by: [2] });
+    const { container } = renderIn(<EvidenceTrace sources={[claim, source(2, "text"), summary]} question="" />);
+    fireEvent.click(screen.getByText("Source 1").closest("button") as HTMLElement);
+    expect(within(container.querySelector(".source-trail") as HTMLElement).getByText("Stated in passages")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Source 3").closest("button") as HTMLElement);
+    expect(within(container.querySelector(".source-trail") as HTMLElement).queryByText("Stated in passages")).not.toBeInTheDocument();
   });
 
   it("shows seed-graph provenance and the IRI", () => {

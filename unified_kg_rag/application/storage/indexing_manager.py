@@ -25,15 +25,15 @@ from unified_kg_rag.application.storage.reannotation import (
 )
 from unified_kg_rag.application.storage.removal import TextUnitRemoval
 from unified_kg_rag.application.storage.stored_items import (
-    _PENDING_COMMIT,
-    _STRIPPED_SUMMARIES,
+    PENDING_COMMIT,
+    STRIPPED_SUMMARIES,
+    Described,
     IndexingTask,
-    _annotations,
-    _Described,
-    _note_ids,
-    _with_sources,
+    note_ids,
     stripped_descriptions,
     unit_records,
+    vector_annotations,
+    with_sources,
     write_claims_new_ids_first,
 )
 from unified_kg_rag.domain.ingestion.cache_keys import unbuilt_record_prefixes
@@ -505,14 +505,14 @@ class IndexingManager:
     def _annotated_entities(self, entities: Iterable[Entity]) -> list[Entity]:
         """``entities`` annotated as they are written: the schema annotations
         and ``source_kinds``."""
-        return [_with_sources(e) for e in self._annotator.entities(entities)]
+        return [with_sources(e) for e in self._annotator.entities(entities)]
 
     def _annotated_relationships(
         self, relationships: Iterable[Relationship]
     ) -> list[Relationship]:
         """``relationships`` annotated as they are written (see
         :meth:`_annotated_entities`)."""
-        return [_with_sources(r) for r in self._annotator.relationships(relationships)]
+        return [with_sources(r) for r in self._annotator.relationships(relationships)]
 
     def _write_artifacts(
         self,
@@ -738,7 +738,7 @@ class IndexingManager:
             r
             for r in candidates
             if r.id in stored
-            and all(stored[r.id].get(k) == v for k, v in _annotations(r).items())
+            and all(stored[r.id].get(k) == v for k, v in vector_annotations(r).items())
         ]
         kept = {r.id for r in partial}
         full = [r for r in relationships if r.id not in kept]
@@ -870,10 +870,10 @@ class IndexingManager:
 
     def _with_full_descriptions(
         self,
-        items: list[_Described],
+        items: list[Described],
         read: Callable[..., dict[str, str]],
         suffix: str,
-    ) -> list[_Described]:
+    ) -> list[Described]:
         """``items`` read back from the graph, with each description the graph
         capped at ``indexing.neptune.property_max_length`` replaced by the
         vector store's full one (the merged description is written there)."""
@@ -1044,7 +1044,7 @@ class IndexingManager:
             note: dict[str, Any] = {"entity_ids": sorted(ids)}
             if old_ids:
                 note["retired_ids"] = sorted(old_ids)
-            self._write_note(_PENDING_COMMIT, suffix, note)
+            self._write_note(PENDING_COMMIT, suffix, note)
             self._commit_note_suffixes.add(suffix)
 
     def _still_stored(self, ids: list[str], suffix: str) -> set[str]:
@@ -1108,7 +1108,7 @@ class IndexingManager:
         (best-effort: one left only makes the next commit derive the
         entities again)."""
         for suffix in sorted(self._commit_note_suffixes):
-            self._delete_note(_PENDING_COMMIT, suffix)
+            self._delete_note(PENDING_COMMIT, suffix)
         self._commit_note_suffixes.clear()
 
     def read_stripped_summaries(
@@ -1122,9 +1122,9 @@ class IndexingManager:
             return
         if records is None:
             records = self.vector_indexer.read_extraction_records(
-                [_STRIPPED_SUMMARIES], suffix=suffix
+                [STRIPPED_SUMMARIES], suffix=suffix
             )
-        ids = _note_ids(records.get(_STRIPPED_SUMMARIES), "ids")
+        ids = note_ids(records.get(STRIPPED_SUMMARIES), "ids")
         self._noted_stripped_ids[suffix] = ids
         if ids:
             self._stripped_ids.setdefault(suffix, set()).update(ids)
@@ -1141,7 +1141,7 @@ class IndexingManager:
         ids = self._stripped_ids.get(suffix, set())
         if ids <= self._noted_stripped_ids[suffix]:
             return
-        self._write_note(_STRIPPED_SUMMARIES, suffix, {"ids": sorted(ids)})
+        self._write_note(STRIPPED_SUMMARIES, suffix, {"ids": sorted(ids)})
         self._noted_stripped_ids[suffix] = set(ids)
 
     def clear_stripped_summaries(self) -> None:
@@ -1150,7 +1150,7 @@ class IndexingManager:
         commit summarize its items from their records, as a full build)."""
         for suffix, ids in sorted(self._noted_stripped_ids.items()):
             if ids:
-                self._delete_note(_STRIPPED_SUMMARIES, suffix)
+                self._delete_note(STRIPPED_SUMMARIES, suffix)
         self._noted_stripped_ids.clear()
 
     def discard_retired_ids(self) -> None:

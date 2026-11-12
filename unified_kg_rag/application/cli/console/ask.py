@@ -47,6 +47,7 @@ from unified_kg_rag.domain.models import (
     Config,
     SearchStrategy,
     SearchType,
+    SectionType,
     validate_safe_name,
 )
 from unified_kg_rag.domain.models.usage import LLMUsage
@@ -146,6 +147,9 @@ def source_view(view: SourceView) -> dict[str, Any]:
         # its citation names.
         "synthesized": view.synthesized,
         "documents": view.documents,
+        # Whether its text units are passages that state it (its trail
+        # lists them: ``link_sources``).
+        "stated_by_passages": SectionType.of(view.kind).stated_by_passages,
     }
     if view.kind == "entity":
         shown.update(entity_type=view.type, node_ids=[view.id])
@@ -173,13 +177,16 @@ def source_view(view: SourceView) -> dict[str, Any]:
 
 def link_sources(sources: list[dict[str, Any]]) -> None:
     """Join the graph sources to the passages of the same answer: each
-    entity, relationship or graph query result lists the ranks of the text sources it cites
-    (``supported_by``) and how many cited passages the answer did not read
-    (``unread_passages``)."""
-    by_unit = {s["id"]: s["rank"] for s in sources if s["kind"] == "text" and s["id"]}
+    source its passages state (``SectionType.stated_by_passages``: an
+    entity, relationship, claim or graph query result) lists the ranks of
+    the text sources it cites (``supported_by``) and how many cited
+    passages the answer did not read (``unread_passages``)."""
+    by_unit = {
+        s["id"]: s["rank"] for s in sources if s["kind"] == SectionType.TEXT and s["id"]
+    }
     for source in sources:
         units = source.get("text_unit_ids") or []
-        if source["kind"] in ("entity", "relationship", "query_result") and units:
+        if SectionType.of(source["kind"]).stated_by_passages and units:
             source["supported_by"] = [by_unit[u] for u in units if u in by_unit]
             source["unread_passages"] = sum(1 for u in units if u not in by_unit)
 

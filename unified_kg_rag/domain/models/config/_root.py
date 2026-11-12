@@ -3,7 +3,7 @@
 """The root ``Config`` and ``PipelineConfig``."""
 
 import copy
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -173,6 +173,42 @@ class Config(BaseModel):
             return self.model_dump(exclude_unset=True)
         built = type(self).model_validate(copy.deepcopy(self._input))
         return merge_over(copy.deepcopy(self._input), _changes(built, self))
+
+    def updated(self, changes: Mapping[str, Any]) -> "Config":
+        """A new config: this one with each dotted key of ``changes`` set
+        (``{"indexing.methodologies": ["graphrag"]}``), validated whole, so
+        the checks across sections run as they do at load (an assignment
+        validates only its own field). This config is unchanged.
+
+        Raises:
+            ValueError: A key names no setting.
+            pydantic.ValidationError: The changed config is invalid.
+        """
+        data = self.as_input()
+        for dotted, value in changes.items():
+            model: type[BaseModel] | None = type(self)
+            node = data
+            parts = dotted.split(".")
+            for depth, part in enumerate(parts):
+                field = model.model_fields.get(part) if model is not None else None
+                if model is not None and field is None:
+                    raise ValueError(f"No setting '{dotted}'")
+                if depth == len(parts) - 1:
+                    node[part] = _plain(value)
+                    break
+                annotation = field.annotation if field is not None else None
+                model = (
+                    annotation
+                    if isinstance(annotation, type)
+                    and issubclass(annotation, BaseModel)
+                    else None
+                )
+                child = node.get(part)
+                if not isinstance(child, dict):
+                    child = _plain(child) if isinstance(child, BaseModel) else {}
+                    node[part] = child
+                node = child
+        return type(self).model_validate(data)
 
     @model_validator(mode="after")
     def _check_models(self) -> "Config":

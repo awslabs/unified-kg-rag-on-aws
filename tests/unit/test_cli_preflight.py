@@ -111,7 +111,7 @@ def embedded_kind() -> Iterator[str]:
         register_provider(role, kind)(lambda providers: None)
     yield kind
     for role in ProviderRole:
-        provider_registry._REGISTRY.pop((role, kind), None)
+        provider_registry.unregister_provider(role, kind)
 
 
 def test_kind_without_an_endpoint_is_not_checked(embedded_kind: str) -> None:
@@ -136,7 +136,7 @@ def test_reregistering_a_kind_replaces_its_endpoint() -> None:
         register_provider(role, kind)(lambda providers: None)
         assert provider_endpoint(role, kind) is None
     finally:
-        provider_registry._REGISTRY.pop((role, kind), None)
+        provider_registry.unregister_provider(role, kind)
 
 
 # --- run-ingestion -------------------------------------------------------
@@ -306,12 +306,10 @@ def test_a_module_lookup_that_raises_counts_as_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # find_spec raises ValueError for a module whose __spec__ is None.
-    from unified_kg_rag.application.cli import preflight
-
     def refuse(name: str) -> None:
         raise ValueError(f"{name}.__spec__ is None")
 
-    monkeypatch.setattr(preflight.importlib.util, "find_spec", refuse)
+    monkeypatch.setattr("importlib.util.find_spec", refuse)
     assert "'langchain_ollama'" in (missing_extras_error(_local_config()) or "")
 
 
@@ -331,8 +329,7 @@ def test_a_kind_two_roles_share_is_named_once() -> None:
         assert error.count(f"providers.graph.kind '{kind}'") == 1, error
     finally:
         for role in roles:
-            provider_registry._REGISTRY.pop((role, kind), None)
-            provider_registry._REQUIRES.pop((role, kind), None)
+            provider_registry.unregister_provider(role, kind)
 
 
 def test_an_installed_extra_passes() -> None:
@@ -355,7 +352,7 @@ def test_reregistering_a_kind_replaces_its_requirement() -> None:
         assert provider_requirement(role, kind) is None
         assert missing_extras_error(config) is None
     finally:
-        provider_registry._REGISTRY.pop((role, kind), None)
+        provider_registry.unregister_provider(role, kind)
 
 
 def test_ingestion_exits_before_the_pipeline_without_the_extra(

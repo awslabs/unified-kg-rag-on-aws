@@ -37,16 +37,13 @@ from typing import TYPE_CHECKING, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from unified_kg_rag.adapters.source_files.context import (
-    KIND_PATTERN,
-    KindRegistry,
-    SourceContextBase,
-)
+from unified_kg_rag.adapters.source_files.context import SourceContextBase
 from unified_kg_rag.adapters.source_files.locations import SourceTerms
 from unified_kg_rag.domain.ingestion.seed_graph import SeedDangling
 from unified_kg_rag.domain.models.config import Config, SeedGraphConfig
 from unified_kg_rag.domain.models.seed_graph import SeedGraph
 from unified_kg_rag.shared.exceptions import ConfigurationError, SeedGraphError
+from unified_kg_rag.shared.registry import Registry
 from unified_kg_rag.shared.utils.validation import format_validation_errors
 
 if TYPE_CHECKING:
@@ -163,8 +160,8 @@ def statement_problems(error: ValidationError) -> str:
 SeedLoader = Callable[[SeedSourceContext], SeedGraph]
 LoaderT = TypeVar("LoaderT", bound=SeedLoader)
 
-_KINDS: KindRegistry[SeedLoader] = KindRegistry()
-_REGISTRY = _KINDS.loaders
+_KINDS: Registry[str, SeedLoader] = Registry("seed source")
+_REGISTRY = _KINDS.entries
 # Kind -> (module, how to install it) of the optional dependency its loader
 # imports.
 _REQUIRES = _KINDS.requires
@@ -180,21 +177,17 @@ def register_seed_source(
     on what it read and the options; it raises ``SeedGraphError`` for a seed
     it cannot read. ``requires`` is the ``(module, how to install it)`` of
     the optional dependency the loader imports, or None: the CLIs check it
-    is installed before any model call. A later registration of the same
-    kind replaces the earlier one, requirement included, so a deployment can
-    override a built-in.
+    is installed before any model call. The name follows the one registry
+    rule (``shared.registry``): case-insensitive, a later registration
+    replaces.
 
     Raises:
         ValueError: ``kind`` is not of the form ``seed_graphs[].kind`` takes.
     """
-    if not KIND_PATTERN.match(kind):
-        raise ValueError(
-            f"Cannot register a seed source as {kind!r}: a kind is "
-            "lower-case letters, digits and '_', starting with a letter"
-        )
+    _KINDS.check_name(kind)
 
     def decorator(loader: LoaderT) -> LoaderT:
-        _KINDS.register(kind, loader, requires)
+        _KINDS.register(kind, loader, requires=requires)
         return loader
 
     return decorator
@@ -222,4 +215,4 @@ def seed_source_requirement(kind: str) -> tuple[str, str] | None:
 
 def registered_seed_sources() -> list[str]:
     """The registered kinds, sorted."""
-    return _KINDS.kinds()
+    return _KINDS.names()

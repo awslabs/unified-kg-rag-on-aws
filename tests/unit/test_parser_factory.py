@@ -199,7 +199,7 @@ def test_register_loader_can_override_builtin(_restore_loader_configs) -> None:
 
 
 def test_register_loader_rejects_missing_dot(_restore_loader_configs) -> None:
-    with pytest.raises(ValueError, match="leading dot"):
+    with pytest.raises(ValueError, match="Cannot register a file loader as .xyz."):
         ParserFactory.register_loader("xyz", _DummyLoader)
 
 

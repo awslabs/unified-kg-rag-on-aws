@@ -84,7 +84,7 @@ def installed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]
     yield root
     sys.modules.pop("ukr_synthetic_plugin", None)
     for role in ProviderRole:
-        provider_registry._REGISTRY.pop((role, KIND), None)
+        provider_registry.unregister_provider(role, KIND)
 
 
 def test_an_entry_point_plugin_is_loaded_once(installed: Path) -> None:

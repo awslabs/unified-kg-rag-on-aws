@@ -8,8 +8,6 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import (
-    BaseModel,
-    ConfigDict,
     Field,
     ValidationError,
     ValidationInfo,
@@ -32,13 +30,12 @@ from ..schema import (
     relationship_pattern,
     relationship_type_spec,
 )
-from ._common import ChunkingStrategy, ChunkLengthUnit, ResolutionMethod
+from ._common import ChunkingStrategy, ChunkLengthUnit, ConfigSection, ResolutionMethod
 from ._seed import SeedGraphConfig
 
 
-class DocumentParsingConfig(BaseModel):
+class DocumentParsingConfig(ConfigSection):
     # index_value set in code is checked too (see IndexingConfig).
-    model_config = ConfigDict(validate_assignment=True)
 
     source_directory: str | Path = Field(
         default="source",
@@ -123,10 +120,9 @@ class DocumentParsingConfig(BaseModel):
         return value if value is None else validate_safe_name(value, "index_value")
 
 
-class ChunkingConfig(BaseModel):
+class ChunkingConfig(ConfigSection):
     # Settings set in code are checked too: a string length_unit would pick
     # the character splitter while the cache key reads tokens.
-    model_config = ConfigDict(validate_assignment=True)
 
     chunker_type: ChunkingStrategy = Field(
         default=ChunkingStrategy.INTELLIGENT,
@@ -255,11 +251,10 @@ _CHUNK_SIZE_FIELDS = (
 )
 
 
-class TranslationConfig(BaseModel):
+class TranslationConfig(ConfigSection):
     # An assigned code ("ko") is checked and read as its LanguageCode, as a
     # loaded one is: the index language (cache_keys.index_language) reads
     # its value.
-    model_config = ConfigDict(validate_assignment=True)
 
     enabled: bool = Field(
         default=True,
@@ -320,7 +315,7 @@ class TranslationConfig(BaseModel):
         )
 
 
-class DescriptionSummarizationConfig(BaseModel):
+class DescriptionSummarizationConfig(ConfigSection):
     """LLM re-summarization of merged entity/relationship descriptions.
 
     Without this, merging an entity that appears in many chunks simply
@@ -359,7 +354,7 @@ class DescriptionSummarizationConfig(BaseModel):
     )
 
 
-class EntityGroundingConfig(BaseModel):
+class EntityGroundingConfig(ConfigSection):
     """Provenance grounding for extracted entities.
 
     The extraction prompt asks the model to emit a verbatim ``source_text`` span
@@ -422,11 +417,9 @@ class EntityGroundingConfig(BaseModel):
 INLINE_SCHEMA_SOURCE = "inline"
 
 
-class SchemaSourceConfig(BaseModel):
+class SchemaSourceConfig(ConfigSection):
     """Where the extraction schema comes from: the inline keys, or a
     registered schema source that fills them at start-up."""
-
-    model_config = ConfigDict(validate_assignment=True)
 
     kind: str = Field(
         default=INLINE_SCHEMA_SOURCE,
@@ -499,8 +492,7 @@ class SchemaSourceConfig(BaseModel):
         return self
 
 
-class GraphExtractionConfig(BaseModel):
-    model_config = ConfigDict(validate_assignment=True)
+class GraphExtractionConfig(ConfigSection):
 
     max_entities_per_chunk: int = Field(
         default=50,
@@ -675,7 +667,7 @@ def _schema_message(error: ValueError) -> str:
     return str(error)
 
 
-class GleaningConfig(BaseModel):
+class GleaningConfig(ConfigSection):
     enabled: bool = Field(
         default=True,
         description=(
@@ -708,7 +700,7 @@ class GleaningConfig(BaseModel):
     )
 
 
-class ClaimExtractionConfig(BaseModel):
+class ClaimExtractionConfig(ConfigSection):
     enabled: bool = Field(
         default=False,
         description=(
@@ -729,7 +721,7 @@ class ClaimExtractionConfig(BaseModel):
     )
 
 
-class ProcessingConfig(BaseModel):
+class ProcessingConfig(ConfigSection):
     max_concurrency: int = Field(
         default=40,
         ge=1,

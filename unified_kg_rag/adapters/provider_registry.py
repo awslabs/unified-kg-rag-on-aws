@@ -29,10 +29,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from enum import Enum
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, NamedTuple, TypeVar
 
 from unified_kg_rag.domain.models import RetrieverRole
 from unified_kg_rag.shared import ConfigurationError
+from unified_kg_rag.shared.registry import Registry
 
 if TYPE_CHECKING:
     from unified_kg_rag.adapters.providers import Providers
@@ -80,15 +81,19 @@ RETRIEVER_PROVIDER_ROLES: dict[RetrieverRole, ProviderRole] = {
 ProviderBuilder = Callable[["Providers"], Any]
 BuilderT = TypeVar("BuilderT", bound=ProviderBuilder)
 
-_REGISTRY: dict[tuple[ProviderRole, str], ProviderBuilder] = {}
-# (config key, environment variable) of the endpoint a kind connects to.
-_ENDPOINTS: dict[tuple[ProviderRole, str], tuple[str, str]] = {}
-# (module, how to install it) of the optional dependency a kind imports.
-_REQUIRES: dict[tuple[ProviderRole, str], tuple[str, str]] = {}
+
+class ProviderEntry(NamedTuple):
+    """A registered kind: its builder and the ``(config key, environment
+    variable)`` of the endpoint the built component connects to."""
+
+    builder: ProviderBuilder
+    endpoint: tuple[str, str] | None
 
 
-def _key(role: ProviderRole, kind: str) -> tuple[ProviderRole, str]:
-    return role, kind.strip().lower()
+# One registry per role, under the one registry rule (``shared.registry``).
+_REGISTRIES: dict[ProviderRole, Registry[str, ProviderEntry]] = {
+    role: Registry(f"{role.value} provider") for role in ProviderRole
+}
 
 
 def register_provider(
@@ -105,37 +110,46 @@ def register_provider(
     ``requires`` is the ``(module, how to install it)`` of the optional
     dependency the built component imports, or None.
 
-    A later registration of the same role and kind replaces the earlier one,
-    endpoint and requirement included, so a deployment can override a
-    built-in (e.g. a tuned Bedrock factory).
+    The kind follows the one registry rule (``shared.registry``):
+    case-insensitive, and a later registration of the same role and kind
+    replaces the earlier one, endpoint and requirement included, so a
+    deployment can override a built-in (e.g. a tuned Bedrock factory).
+
+    Raises:
+        ValueError: ``kind`` is not a registry name.
     """
-    key = _key(role, kind)
+    registry = _REGISTRIES[role]
+    registry.check_name(kind)
 
     def decorator(builder: BuilderT) -> BuilderT:
-        _REGISTRY[key] = builder
-        for declared, table in ((endpoint, _ENDPOINTS), (requires, _REQUIRES)):
-            if declared is None:
-                table.pop(key, None)
-            else:
-                table[key] = declared
+        registry.register(kind, ProviderEntry(builder, endpoint), requires=requires)
         return builder
 
     return decorator
 
 
+def unregister_provider(role: ProviderRole, kind: str) -> None:
+    """Remove ``kind``'s registration for ``role`` (a test's own kind)."""
+    registry = _REGISTRIES[role]
+    key = registry.normalize(kind)
+    registry.entries.pop(key, None)
+    registry.requires.pop(key, None)
+
+
 def provider_endpoint(role: ProviderRole, kind: str) -> tuple[str, str] | None:
     """The ``(config key, environment variable)`` ``kind`` declared for ``role``."""
-    return _ENDPOINTS.get(_key(role, kind))
+    entry = _REGISTRIES[role].get(kind)
+    return None if entry is None else entry.endpoint
 
 
 def provider_requirement(role: ProviderRole, kind: str) -> tuple[str, str] | None:
     """The ``(module, how to install it)`` ``kind`` declared for ``role``."""
-    return _REQUIRES.get(_key(role, kind))
+    return _REGISTRIES[role].requirement(kind)
 
 
 def registered_kinds(role: ProviderRole) -> list[str]:
     """The kinds registered for ``role``, sorted."""
-    return sorted(kind for registered, kind in _REGISTRY if registered is role)
+    return _REGISTRIES[role].names()
 
 
 def provider_kind(config: Config, role: ProviderRole) -> str:
@@ -151,11 +165,11 @@ def get_provider_builder(role: ProviderRole, kind: str) -> ProviderBuilder:
         ConfigurationError: Nothing is registered for the pair; the message
             lists the kinds that are.
     """
-    builder = _REGISTRY.get((role, kind))
-    if builder is None:
+    entry = _REGISTRIES[role].get(kind)
+    if entry is None:
         raise ConfigurationError(
             f"No {role.value} provider is registered for "
             f"providers.{role.section}.kind '{kind}'. Registered kinds: "
             f"{', '.join(registered_kinds(role)) or 'none'}."
         )
-    return builder
+    return entry.builder

@@ -30,7 +30,6 @@ from unified_kg_rag.adapters.retrieval.strategy_registry import (
     get_strategy_spec,
     serves,
 )
-from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.search_strategies.structured_search import (
     StructuredSearchStrategy,
 )
@@ -43,6 +42,7 @@ from unified_kg_rag.domain.models import (
     SearchResult,
     SearchStrategy,
     SearchType,
+    SectionType,
 )
 from unified_kg_rag.domain.models.methodology import (
     METHODOLOGY_PROFILES,

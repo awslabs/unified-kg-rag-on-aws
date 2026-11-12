@@ -16,8 +16,6 @@ import { Highlighted } from "./Highlighted";
 // listed (a summary node, a claim, a new section) follows them, so every
 // source can be filtered to.
 const KIND_ORDER = ["all", "query_result", "text", "entity", "relationship", "community", "claim", "summary"];
-// The kinds whose trail lists the passages that state them.
-const STATED = new Set(["entity", "relationship", "query_result"]);
 // Sources shown before "Show all".
 const FIRST = 10;
 
@@ -261,7 +259,7 @@ function SourceCard({
               {source.node_ids?.length ? <Step label={t("ask.trail.entities")}>{number(source.node_ids.length)}</Step> : null}
             </>
           ) : null}
-          {STATED.has(source.kind) ? (
+          {source.stated_by_passages ? (
             <>
               <Step label={t("ask.trail.statedIn")}>
                 <RankLinks ranks={source.supported_by ?? []} onJump={onJump} none={t("ask.trail.statedInNone")} />

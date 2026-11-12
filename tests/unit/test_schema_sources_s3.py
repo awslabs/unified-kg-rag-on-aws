@@ -459,9 +459,11 @@ def test_preflight_makes_no_s3_call(monkeypatch: pytest.MonkeyPatch) -> None:
     assert missing_extras_error(file_config) is None
     owl_config = _run_config(schema_source={"kind": "owl", "path": f"s3://{BUCKET}/"})
     # Only the extra is checked: named when it is missing, else nothing.
-    monkeypatch.setattr(preflight, "_installed", lambda module: module != "rdflib")
+    monkeypatch.setattr(
+        preflight, "module_installed", lambda module: module != "rdflib"
+    )
     assert "rdflib" in (missing_extras_error(owl_config) or "")
-    monkeypatch.setattr(preflight, "_installed", lambda module: True)
+    monkeypatch.setattr(preflight, "module_installed", lambda module: True)
     assert missing_extras_error(owl_config) is None
 
 

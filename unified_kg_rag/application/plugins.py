@@ -4,7 +4,9 @@
 
 A plugin registers its extensions on import, through the public registries
 (``register_provider``, ``register_schema_source``, ``register_seed_source``,
-``register_renderer``, ``ParserFactory.register_loader``). The library
+``register_renderer``, ``ParserFactory.register_loader``), each under the
+one registry rule (``shared.registry``: case-insensitive names, a later
+registration replaces a built-in, ``requires=`` an optional package). The library
 imports only the built-in ones, so a plugin is imported here, once per
 process, before a CLI loads its configuration and before any provider bundle
 is built (``bootstrap.build_providers``):

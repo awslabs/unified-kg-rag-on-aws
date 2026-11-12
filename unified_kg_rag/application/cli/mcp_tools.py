@@ -43,6 +43,7 @@ from unified_kg_rag.domain.models import (
     RetrievalResult,
     SearchStrategy,
     SearchType,
+    SectionType,
     validate_safe_name,
 )
 from unified_kg_rag.domain.models.config import McpServerConfig
@@ -411,7 +412,7 @@ def _record(
     if len(view.text_unit_ids) > MAX_TEXT_UNIT_IDS:
         attributes["text_unit_count"] = len(view.text_unit_ids)
     # Every item's title names it but a passage's, its file name (file_name).
-    named = kind != "text"
+    named = SectionType.of(kind).named
     return SupportingContent(
         rank=view.rank,
         kind=kind,
@@ -684,10 +685,14 @@ class KnowledgeGraphTools:
         return kept, len(records) - len(kept)
 
     async def _resolve_documents(
-        self, suffix: str, records: list[SupportingContent]
+        self,
+        suffix: str,
+        records: list[SupportingContent],
+        filters: dict[str, Any] | None = None,
     ) -> None:
         """Fill each graph record's ``documents``: the file names of its
-        text units, resolved in one fetch by id."""
+        text units that pass the caller's ``filters``, resolved in one fetch
+        by id."""
         # A cited model-written record names its citation's documents.
         resolved = [
             r
@@ -697,7 +702,9 @@ class KnowledgeGraphTools:
         units = [unit for record in resolved for unit in record.text_unit_ids]
         if not units:
             return
-        names = await graph_lookup.text_unit_file_names(self.chain, suffix, units)
+        names = await graph_lookup.text_unit_file_names(
+            self.chain, suffix, units, filters=filters
+        )
         for record in resolved:
             found = [names[u] for u in record.text_unit_ids if u in names]
             record.documents = list(dict.fromkeys(found))
@@ -739,11 +746,14 @@ class KnowledgeGraphTools:
         return _record(SourceView.of_result(rank, result), self.settings.max_text_chars)
 
     async def _shaped(
-        self, suffix: str, records: list[SupportingContent]
+        self,
+        suffix: str,
+        records: list[SupportingContent],
+        filters: dict[str, Any] | None = None,
     ) -> tuple[list[SupportingContent], int]:
         _cite_entities(records)
         kept, omitted = self._capped(records)
-        await self._resolve_documents(suffix, kept)
+        await self._resolve_documents(suffix, kept, filters)
         return kept, omitted
 
     @staticmethod
@@ -804,6 +814,7 @@ class KnowledgeGraphTools:
             records, omitted = await self._shaped(
                 str(rag_input.suffix),
                 [self._from_result(i, r) for i, r in enumerate(results, 1)],
+                rag_input.filters,
             )
             return SearchToolResult(
                 namespace=str(rag_input.suffix),
@@ -887,6 +898,7 @@ class KnowledgeGraphTools:
                     )
                     for rank, item in enumerate(chosen, 1)
                 ],
+                rag_input.filters,
             )
             answer, cut = _cut(view.answer, self.settings.max_response_chars)
             return AnswerToolResult(
@@ -959,7 +971,7 @@ class KnowledgeGraphTools:
                 match, hits = await self._find(suffix, given, bounded)
                 records = [
                     self._from_result(
-                        i, hit.model_copy(update={"retriever_type": "entity"})
+                        i, hit.model_copy(update={"retriever_type": SectionType.ENTITY})
                     )
                     for i, hit in enumerate(hits, 1)
                 ]
@@ -1025,7 +1037,7 @@ class KnowledgeGraphTools:
                         namespace=suffix, match=match, records=[]
                     )
                 start = self._from_result(
-                    0, hits[0].model_copy(update={"retriever_type": "entity"})
+                    0, hits[0].model_copy(update={"retriever_type": SectionType.ENTITY})
                 )
                 assert start.source_id is not None
                 found = await graph_lookup.neighbourhood(
@@ -1044,7 +1056,9 @@ class KnowledgeGraphTools:
                     records += [
                         self._from_result(
                             offset + i,
-                            r.model_copy(update={"retriever_type": "relationship"}),
+                            r.model_copy(
+                                update={"retriever_type": SectionType.RELATIONSHIP}
+                            ),
                         ).model_copy(update={"score": None})
                         for i, r in enumerate(found.relationships, 1)
                     ]

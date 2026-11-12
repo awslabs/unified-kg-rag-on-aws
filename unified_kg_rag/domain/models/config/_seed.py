@@ -6,7 +6,6 @@ import math
 from typing import Any, Literal
 
 from pydantic import (
-    BaseModel,
     ConfigDict,
     Field,
     field_validator,
@@ -16,6 +15,7 @@ from pydantic import (
 from ..retrieval import (
     validate_safe_name,
 )
+from ._common import ConfigSection
 
 # The document filter every item of a seed graph carries, its name
 # (domain.ingestion.seed_graph.SEED_FILTER_KEY): reserved in its filters.
@@ -30,7 +30,7 @@ SEED_MAX_BYTES = 256 * 1024 * 1024
 RDF_SEED_MAX_BYTES = 32 * 1024 * 1024
 
 
-class SeedGraphConfig(BaseModel):
+class SeedGraphConfig(ConfigSection):
     """A knowledge graph imported as virtual documents of the corpus."""
 
     # A list item: the unknown-key check of the config loader walks nested

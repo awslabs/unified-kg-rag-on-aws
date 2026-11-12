@@ -105,7 +105,7 @@ def _output(metadata: dict[str, Any], *, error: str | None = None) -> RAGOutput:
                 Citation(
                     marker=1,
                     cited=True,
-                    section_type="key_point",
+                    section_type="general",
                     source_id=_KEY_POINT.source,
                     documents=[
                         CitedDocument(
@@ -255,7 +255,7 @@ async def test_run_rag_prints_a_partial_answer_and_its_written_sections() -> Non
     # Regression (rv8): a passage's citation named its file twice.
     assert "[2] 계약서.txt" in text and "[2] 계약서.txt -" not in text
     # A key point names the document its citation resolved.
-    assert "[1] 계약서.txt - key_point" in text
+    assert "[1] 계약서.txt - general" in text
     # Regression (rv8): the text output never showed the model-written
     # sections the answer cites; the JSON had none either.
     verbose = _printed(document, verbose=True)

@@ -24,9 +24,8 @@ from gremlin_python.process.translator import Translator
 from gremlin_python.structure.graph import Graph
 
 from tests.fixtures.fakes.gremlin import RecordingTraversal
-from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
-from unified_kg_rag.domain.models import Config, SearchQuery
+from unified_kg_rag.domain.models import Config, SearchQuery, SectionType
 from unified_kg_rag.shared.exceptions import InvalidFilterError
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("skip_vertex_id_check")]

@@ -2044,8 +2044,9 @@ def filter_to_delta(
             stored_spelling,
             source_scope,
         )
-        respelled = config.model_copy(deep=True)
-        respelled.processing.document_parsing.source_scope = stored_spelling
+        respelled = config.updated(
+            {"processing.document_parsing.source_scope": stored_spelling}
+        )
         return filter_to_delta(
             documents,
             context,

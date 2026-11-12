@@ -266,14 +266,14 @@ def test_an_unseeded_item_is_never_stale_against_an_earlier_copy() -> None:
     copies = vector.read_vector_copies("entities", ["e1"])
     copies |= vector.read_vector_copies("relationships", ["r1"])
     assert not {"iri", "source_kinds"} & (set(copies["e1"]) | set(copies["r1"]))
-    seeded = stored_items._with_sources(entity)
+    seeded = stored_items.with_sources(entity)
     assert seeded is entity
-    assert not stored_items._vector_stale(seeded, copies["e1"])
-    assert not stored_items._vector_stale(rel, copies["r1"])
+    assert not stored_items.vector_stale(seeded, copies["e1"])
+    assert not stored_items.vector_stale(rel, copies["r1"])
     # A seed item whose copy lacks them is.
     cited = _entity(text_unit_ids=["tu-1", SEED_UNIT])
-    assert stored_items._vector_stale(stored_items._with_sources(cited), copies["e1"])
-    assert stored_items._vector_stale(_entity(iri=IRI), copies["e1"])
+    assert stored_items.vector_stale(stored_items.with_sources(cited), copies["e1"])
+    assert stored_items.vector_stale(_entity(iri=IRI), copies["e1"])
 
 
 def test_a_rank_only_edge_is_written_in_full_only_when_its_kinds_change() -> None:

@@ -4,6 +4,17 @@
 
 from enum import Enum
 
+from pydantic import BaseModel, ConfigDict
+
+
+class ConfigSection(BaseModel):
+    """The base of every configuration section: an assignment is validated
+    against its field (``config.search.top_k = -1`` raises as loading it
+    would). The checks across sections (``Config``'s own validators) run on
+    a whole config: change one with :meth:`Config.updated`."""
+
+    model_config = ConfigDict(validate_assignment=True)
+
 
 class PipelineStageType(Enum):
     """Ingestion stages, declared in pipeline order.

@@ -68,7 +68,6 @@ from unified_kg_rag.adapters.retrieval.base import (
     degradation_scope,
     query_scope,
     record_degradation,
-    scope_filters,
 )
 from unified_kg_rag.adapters.retrieval.memory_manager import (
     HISTORY_ANSWER_CHARS,
@@ -88,7 +87,6 @@ from unified_kg_rag.adapters.retrieval.token_manager import (
     EMPTY_CONTEXT_PLACEHOLDER,
     ContextSection,
     OptimizedContext,
-    SectionType,
     TokenManager,
 )
 
@@ -122,10 +120,12 @@ from unified_kg_rag.application.retrieval.query_processing import (
 from unified_kg_rag.application.retrieval.query_processing import (
     extraction_cache_scope as extraction_cache_scope,
 )
+from unified_kg_rag.application.retrieval.text_units import fetch_text_units
 from unified_kg_rag.domain.ingestion.cache_keys import index_language
 from unified_kg_rag.domain.ingestion.methodologies import NamespaceHoldings
 from unified_kg_rag.domain.ingestion.report_references import REPORT_FINDINGS_FIELD
 from unified_kg_rag.domain.models import (
+    GENERAL_FALLBACKS,
     Citation,
     Config,
     LanguageCode,
@@ -137,6 +137,7 @@ from unified_kg_rag.domain.models import (
     SearchResult,
     SearchStrategy,
     SearchType,
+    SectionType,
     Source,
     validate_safe_name,
 )
@@ -1120,13 +1121,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
 
     @staticmethod
     def _fallback_strategy(routable: tuple[SearchStrategy, ...]) -> SearchStrategy:
-        """The strategy AUTO uses when routing fails: LOCAL, a general-purpose
-        graph strategy and not the costliest one, when it is routable; else
-        the first routable strategy, so a configuration that excludes LOCAL
-        (its stores may not be provisioned) is never routed to it."""
-        if not routable or SearchStrategy.LOCAL in routable:
-            return SearchStrategy.LOCAL
-        return routable[0]
+        """The strategy AUTO uses when routing fails: the first routable
+        general-purpose strategy (``GENERAL_FALLBACKS``: local, then mix),
+        else the first routable one, so a configuration that excludes them
+        (their stores may not be provisioned) is never routed to them."""
+        return next(
+            (s for s in GENERAL_FALLBACKS if s in routable),
+            routable[0] if routable else GENERAL_FALLBACKS[0],
+        )
 
     def _get_chain_for_prompt(
         self,
@@ -2033,33 +2035,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         """The stored text units of ``unit_ids`` (id, documents, attributes)
         in the query's namespace that pass the caller's filters the
         text-units index declares: a unit they exclude is never named."""
-        retriever = self._get_retriever(RetrieverRole.DOCUMENT)
-        prefix = self.config.indexing.opensearch.text_units_index_prefix
-        suffix = state.get("suffix")
-        declared = retriever.filter_fields_for([prefix])
-        filters = {
-            key: value
-            for key, value in (state.get("filters") or {}).items()
-            if declared is None or declared.declares(key)
-        }
-        limits = await retriever.aindex_limits(prefix, suffix)
-        size = max(1, limits.id_batch_size)
-        found: list[dict[str, Any]] = []
-        for start in range(0, len(unit_ids), size):
-            batch = unit_ids[start : start + size]
-            hits = await retriever.aretrieve(
-                SearchQuery(
-                    query="",
-                    search_type=SearchType.LEXICAL,
-                    top_k=len(batch),
-                    index_prefixes=[prefix],
-                    suffix=suffix,
-                    filters=scope_filters(filters, id=batch),
-                    source_fields=["id", "document_ids", "attributes"],
-                )
-            )
-            found.extend(hit.metadata or {} for hit in hits)
-        return found
+        fetched = await fetch_text_units(
+            self._get_retriever(RetrieverRole.DOCUMENT),
+            self.config,
+            state.get("suffix"),
+            unit_ids,
+            filters=state.get("filters"),
+        )
+        return list(fetched.units.values())
 
     @staticmethod
     def _format_output_step(state: dict[str, Any]) -> RAGOutput:
@@ -2237,7 +2220,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             content=section.content,
             score=section.priority,
             source=section.source_id,
-            retriever_type=section.section_type.value,
+            retriever_type=section.section_type,
             metadata=section.metadata,
         )
 

@@ -1233,12 +1233,13 @@ async def test_iterative_is_refused_where_its_base_is_not_held() -> None:
     assert await _chain(over_mix, light).acheck_methodology(SearchStrategy.ITERATIVE)
 
 
-def test_the_auto_fallback_is_warned_about_once(caplog) -> None:
+def test_the_auto_fallback_is_warned_about_once(caplog, monkeypatch) -> None:
     import logging
 
     from unified_kg_rag.adapters.retrieval import strategy_registry
+    from unified_kg_rag.shared import logging as shared_logging
 
-    strategy_registry._WARNED_FALLBACKS.clear()
+    monkeypatch.setattr(shared_logging, "_warned_once", set())
     config = Config(search={"auto_routable_strategies": ["global", "drift"]})
     with caplog.at_level(logging.DEBUG, logger=strategy_registry.logger.name):
         for _ in range(3):

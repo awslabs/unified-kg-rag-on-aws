@@ -52,7 +52,6 @@ from unified_kg_rag.adapters.evaluators.base import (
     SKIPPED_METRICS_KEY,
     BaseGraphRAGEvaluator,
 )
-from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.domain.models import (
     Config,
     EvaluationMetric,
@@ -61,6 +60,7 @@ from unified_kg_rag.domain.models import (
     EvaluationReport,
     EvaluationResult,
     EvaluatorType,
+    SectionType,
 )
 from unified_kg_rag.domain.retrieval.linking import link_key
 from unified_kg_rag.shared import get_logger

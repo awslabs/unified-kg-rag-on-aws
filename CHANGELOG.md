@@ -334,7 +334,10 @@ See [`iac/README.md`](iac/README.md).
   `RenderContext`, `TransientRetryConfig`, ...), and `load_seed_graphs` / `resolve_extraction_schema`. Import from the
   package root; every other module path is internal and many moved, so they have no entry here (#164, #210, #216,
   #312, #333, #365, #456, #464, #584). The `unified_kg_rag.visualization` package is gone (#467). See the [Python
-  library guide](docs/guides/python-library.md).
+  library guide](docs/guides/python-library.md). The registries keyed by a name (providers, renderers, schema and
+  seed sources, analyzers, file loaders) follow one rule: a name is case-insensitive, a later registration replaces
+  (a renderer's too), and an optional package is declared with `requires=` (a renderer's as well, in place of
+  `BaseRenderer.check_dependencies`).
 - `GraphRAGChain`: retrieval-only queries are `search()` / `asearch()`, returning a `SearchOutput`; `ChainMode` and
   `mode=` are gone (`GraphRAGChain(cfg).asearch(q)`, read `out.search_results.results`) (#333). It rejects unknown
   keyword arguments, and only `Providers` / `build_providers` take `boto_session` (`providers=Providers(config,
@@ -818,7 +821,9 @@ From a `main` checkout (formats and keys no release had):
   by default; another address needs `--allow-remote`, and the server authenticates no caller). Results share one
   chunk-oriented record (chunk id, text, score, source document id and file name, cited entities with their IRIs,
   seed-graph provenance; a text record's document id as its text unit stores it; a structured query's
-  `query_result` with its table up to 6000 characters and the entities it returned, by id and name). `kg_answer`
+  `query_result` with its table up to 6000 characters and the entities it returned, by id and name); a graph
+  record's documents are the files of its text units the caller's filters pass, read as the chain's citations read
+  them (`text_units.fetch_text_units`). `kg_answer`
   returns the answer first, then by default only the records it cites (`records`: `cited`, `all`, `none`; the first
   `mcp.uncited_records`, `records_kept: top`, when it cites none; `all` lists the model-written sections too), and
   takes the caller's conversation as an optional bounded `history` for a follow-up question (`RAGInput.history`; the
@@ -875,7 +880,8 @@ From a `main` checkout (formats and keys no release had):
   model-written plan text is screened wherever it is returned: the search and answer metadata, the result table and
   the query-result source the console, MCP and `run-rag` JSON show (#635). `GraphQueryPort` is exported for custom graph
   backends, and `search.token_manager.type_budgets.query_result` sizes the result's context share (docs/design.md
-  §6.6, [guide](docs/guides/structured-queries.md)).
+  §6.6, [guide](docs/guides/structured-queries.md)). `run-eval`'s rank metrics put a query result's lineage files
+  after the passages', as for every graph source (`SectionType.lineage_attributed`).
 - `prepare-benchmark structural [--seed N] [--size small|medium|large]` (#630): a generated, never committed,
   procurement world for the `structured` strategy: a JSONL seed graph (`country`, `founded`, `employees`; `SUPPLIES`,
   `MAKES`), a document per vendor and buyer (part of those facts, and a chief executive only text states), the schema
@@ -900,7 +906,8 @@ From a `main` checkout (formats and keys no release had):
 - A local web console, opt-in (the `console` extra, `run-console`; #631, #634): ask with a strategy picker (and how
   `auto` chose; an empty namespace leads to Ingest), the answer streamed as the answer model writes it, its citation
   markers `[n]` linked to the sources they cite, follow-ups sent with the page's conversation (`RAGInput.history`),
-  and each source the answer read on a provenance trace back to its passage, file, seed graph and IRI and into the
+  and each source the answer read on a provenance trace back to its passage (a claim's too: the API marks each
+  source `stated_by_passages`), file, seed graph and IRI and into the
   graph; ingest a workspace folder or an upload with a methodology profile (starting from what the namespace's build
   record holds; a run that would drop a held methodology for every corpus in the namespace starts only once
   confirmed), with live stage progress, the run's WARNINGs (a run that extracted no entity flagged) and a stop the
@@ -1559,6 +1566,13 @@ From a `main` checkout (formats and keys no release had):
   gates on errors, loop lag, RSS growth and convergence, and only reports.
 
 ### Changed
+- Every config section validates an assignment against its field (`ConfigSection`), and `Config.updated({"dotted.key":
+  value})` returns a changed config validated whole, so the checks across sections run (the console's methodology
+  selection, `run-eval --arm` and the re-scoring use it): an assignment let the console run a methodology the
+  config's switches leave nothing of. The two `search.hybrid` weights, normalized as a pair, are set together with it.
+- `auto` falls back to the first routable of `local`, then `mix`, when the router's answer names no routable
+  strategy, as it does when nothing configured is served and as `structured` falls back (one order,
+  `GENERAL_FALLBACKS`, from the per-strategy `STRATEGY_TRAITS`); without `local` it took the first routable strategy.
 - A query without a suffix (`RAGInput(suffix=None)`) reads the chain config's
   `processing.document_parsing.index_value`, as ingestion writes and the CLIs query (`resolve_namespace`, the one
   rule of every entry point); it read `default`, so the console's Ask page failed with `IndexNotFoundError` after a

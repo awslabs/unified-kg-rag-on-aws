@@ -32,6 +32,7 @@ from unified_kg_rag.domain.ingestion.seed_graph import SEED_UNIT_PREFIX
 from unified_kg_rag.domain.models import (
     Citation,
     CitedDocument,
+    SectionType,
     Source,
 )
 from unified_kg_rag.domain.retrieval import source_fields
@@ -45,8 +46,7 @@ __all__ = [
     "mark_cited",
 ]
 
-# Section type of a passage (``SectionType.TEXT``).
-_TEXT = "text"
+_TEXT = SectionType.TEXT
 
 # Reads of a query's lineage units at most: each asks of a citation still
 # short twice the units the one before did, so a citation reads at most
@@ -110,7 +110,7 @@ def citation_from_entry(marker: int, entry: Source | Mapping[str, Any]) -> Citat
     A passage's citation is complete; a graph section's names its lineage,
     its documents filled in by :func:`aresolve_documents`."""
     metadata = entry.get("metadata") or {}
-    section_type = str(metadata.get("section_type") or "general")
+    section_type = SectionType.of(metadata.get("section_type"))
     provenance = metadata.get("provenance")
     provenance = dict(provenance) if isinstance(provenance, dict) else None
     iri = _first_text((provenance or {}).get("iri"), metadata.get("iri"))

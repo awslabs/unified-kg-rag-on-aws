@@ -260,8 +260,10 @@ def test_upload_applies_aes256_extra_args(s3_setup, tmp_path, mocker) -> None:
 
 def test_upload_applies_kms_extra_args(s3_setup, tmp_path, mocker) -> None:
     config, session = s3_setup
-    config.aws.s3.encryption.encryption_type = S3EncryptionType.KMS
-    config.aws.s3.encryption.kms_key_id = "key-123"
+    # Both at once: an assignment is validated, and KMS needs its key.
+    config.aws.s3.encryption = config.aws.s3.encryption.model_validate(
+        {"encryption_type": S3EncryptionType.KMS, "kms_key_id": "key-123"}
+    )
     mgr = _manager(config, session)
 
     captured: dict = {}
@@ -305,8 +307,9 @@ def test_sse_extra_args_selection(
     s3_setup, encryption_type, kms_key_id, expected
 ) -> None:
     config, session = s3_setup
-    config.aws.s3.encryption.encryption_type = encryption_type
-    config.aws.s3.encryption.kms_key_id = kms_key_id
+    config.aws.s3.encryption = config.aws.s3.encryption.model_validate(
+        {"encryption_type": encryption_type, "kms_key_id": kms_key_id}
+    )
     assert sse_extra_args(config.aws.s3.encryption) == expected
 
 

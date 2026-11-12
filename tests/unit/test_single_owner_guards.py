@@ -942,10 +942,6 @@ GUARDS = [
                 1,
                 "the ids to look up, deduplicated before one batched read",
             ),
-            "application/retrieval/graph_lookup.py::text_unit_file_names": (
-                1,
-                "the ids asked, deduplicated before batched reads",
-            ),
             "adapters/search_strategies/lightrag_search.py::"
             "LightRAGSearchStrategy._passing_linked_chunk_ids": (
                 1,

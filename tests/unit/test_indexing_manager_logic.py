@@ -791,7 +791,7 @@ def test_indexing_stage_reports_the_store_error(mocker, reset: bool) -> None:
         ps.IndexingStage(config=config)._execute_core(context)
 
 
-# --- _vector_stale --------------------------------------------------------
+# --- vector_stale --------------------------------------------------------
 
 _ENTITY = Entity(id="e1", name="Vendor", type="ORGANIZATION", confidence=0.8)
 _EDGE = Relationship(
@@ -818,9 +818,9 @@ def test_a_vector_copy_differing_in_one_field_is_stale(
     # strip or commit left behind in any one of them is rewritten.
     from unified_kg_rag.application.storage.stored_items import (
         _vector_content,
-        _vector_stale,
+        vector_stale,
     )
 
     stored = _vector_content(item)
-    assert not _vector_stale(item, stored)
-    assert _vector_stale(item, {**stored, field: other})
+    assert not vector_stale(item, stored)
+    assert vector_stale(item, {**stored, field: other})

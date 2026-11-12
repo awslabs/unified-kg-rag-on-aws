@@ -18,10 +18,15 @@ from typing import Any
 import pytest
 
 from unified_kg_rag.adapters.retrieval.base import entity_content, query_scope
-from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.retrievers.opensearch_retriever import OpenSearchRetriever
 from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
-from unified_kg_rag.domain.models import Config, Methodology, SearchQuery, SearchType
+from unified_kg_rag.domain.models import (
+    Config,
+    Methodology,
+    SearchQuery,
+    SearchType,
+    SectionType,
+)
 from unified_kg_rag.domain.models.config import LanguageCode
 from unified_kg_rag.shared.exceptions import StoreRequestRejectedError
 from unified_kg_rag.shared.utils.scripts import is_dense_script_char

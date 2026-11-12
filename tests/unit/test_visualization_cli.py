@@ -15,6 +15,7 @@ from tests.fixtures.extras import requires_viz
 from unified_kg_rag.adapters.renderers import (
     BaseRenderer,
     RenderContext,
+    check_renderer_dependencies,
     get_renderer_class,
     register_renderer,
     registered_renderers,
@@ -140,31 +141,21 @@ class TestRunVisualization:
         assert (out_dir / "fake.txt").read_text() == "ok"
 
     @pytest.mark.usefixtures("restore_renderer_registry")
-    def test_checks_each_renderer_once_before_loading(
+    def test_checks_each_renderer_before_loading(
         self, tmp_path: Path, config: Config
     ) -> None:
-        checks: list[str] = []
-
-        @register_renderer("checked_for_cli_test")
+        @register_renderer(
+            "checked_for_cli_test", requires=("synthetic_absent_module", "install it")
+        )
         class _Checked(BaseRenderer):
-            @classmethod
-            def check_dependencies(cls) -> None:
-                checks.append("checked")
-
             def render(self, context: RenderContext, output_dir: Path) -> list[Path]:
                 return []
 
         # Checked before the data is read: a missing file fails after it.
-        with pytest.raises(FileNotFoundError):
+        with pytest.raises(ConfigurationError, match="synthetic_absent_module"):
             run_visualization(
                 tmp_path / "missing.json", tmp_path, ["checked_for_cli_test"], config
             )
-        assert checks == ["checked"]
-        checks.clear()
-        data = tmp_path / "viz.json"
-        data.write_text(json.dumps({"nodes": [], "edges": []}), encoding="utf-8")
-        run_visualization(data, tmp_path / "out", ["checked_for_cli_test"], config)
-        assert checks == ["checked"]
 
     @requires_viz
     def test_data_only_export_gets_a_layout_and_centrality(
@@ -432,7 +423,7 @@ class TestWithoutTheVizExtra:
         )
         renderer_cls = get_renderer_class("interactive")
         with pytest.raises(ConfigurationError, match=r"'pyvis'.*--extra viz"):
-            renderer_cls.check_dependencies()
+            check_renderer_dependencies("interactive")
         with pytest.raises(ConfigurationError, match="--extra viz"):
             renderer_cls({}).render(RenderContext(graph=nx.Graph()), Path("."))
 
@@ -443,8 +434,7 @@ class TestWithoutTheVizExtra:
         _without_module(
             monkeypatch, "pyvis", "unified_kg_rag.adapters.renderers.static"
         )
-        renderer_cls = get_renderer_class("static")
-        renderer_cls.check_dependencies()
+        check_renderer_dependencies("static")
         graph = nx.Graph([("a", "b")])
         written = _render(RenderContext(graph=graph), tmp_path, ["static"], None)
         assert [p.name for p in written] == ["degree_distribution.html"]

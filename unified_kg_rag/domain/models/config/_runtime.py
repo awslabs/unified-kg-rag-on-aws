@@ -6,13 +6,14 @@ import re
 from enum import Enum
 
 from pydantic import (
-    BaseModel,
     Field,
     field_validator,
 )
 
+from ._common import ConfigSection
 
-class MemoryConfig(BaseModel):
+
+class MemoryConfig(ConfigSection):
     max_conversations: int = Field(
         default=100,
         ge=1,
@@ -45,7 +46,7 @@ class MemoryConfig(BaseModel):
     )
 
 
-class LLMResponseCacheConfig(BaseModel):
+class LLMResponseCacheConfig(ConfigSection):
     """The ingestion LLM response cache (``adapters.llm.response_cache``)."""
 
     enabled: bool = Field(
@@ -65,7 +66,7 @@ class LLMResponseCacheConfig(BaseModel):
     )
 
 
-class CacheConfig(BaseModel):
+class CacheConfig(ConfigSection):
     ttl_seconds: int | None = Field(
         default=86400,
         ge=1,
@@ -81,7 +82,7 @@ class CacheConfig(BaseModel):
     )
 
 
-class LoggingConfig(BaseModel):
+class LoggingConfig(ConfigSection):
     level: str = Field(
         default="INFO",
         pattern="^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$",
@@ -160,7 +161,7 @@ class ObservabilityBackend(str, Enum):
     PHOENIX = "phoenix"
 
 
-class ObservabilityConfig(BaseModel):
+class ObservabilityConfig(ConfigSection):
     """OpenTelemetry tracing of ingestion and query runs (off by default).
 
     Needs the ``otel`` extra for every backend. The

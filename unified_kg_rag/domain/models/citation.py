@@ -4,7 +4,9 @@
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from unified_kg_rag.domain.retrieval.section_types import SectionType
 
 
 class CitedDocument(BaseModel):
@@ -48,9 +50,9 @@ class Citation(BaseModel):
     cited: bool = Field(
         default=False, description="Whether the answer cites this marker"
     )
-    section_type: str = Field(
+    section_type: SectionType = Field(
         description="Section type: text, entity, relationship, claim, "
-        "community, summary or general"
+        "community, summary, query_result or general"
     )
     source_id: str | None = Field(
         default=None, description="The id of the retrieved item"
@@ -96,3 +98,8 @@ class Citation(BaseModel):
         "a seed graph states; None otherwise",
     )
     iri: str | None = Field(default=None, description="The item's IRI, if any")
+
+    @field_validator("section_type", mode="before")
+    @classmethod
+    def _known_kind(cls, value: Any) -> SectionType:
+        return SectionType.of(value)

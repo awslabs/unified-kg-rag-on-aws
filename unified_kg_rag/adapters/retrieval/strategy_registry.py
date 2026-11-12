@@ -15,7 +15,6 @@ registries it lives with what it registers: the strategies are
 
 from __future__ import annotations
 
-import threading
 from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 from enum import Enum
@@ -23,6 +22,7 @@ from typing import TYPE_CHECKING, TypeVar
 
 from unified_kg_rag.domain.ingestion.methodologies import artifacts_to_build
 from unified_kg_rag.domain.models import (
+    GENERAL_FALLBACKS,
     Config,
     IndexArtifact,
     Methodology,
@@ -32,6 +32,7 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.domain.models.methodology import methodologies_holding
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import MethodologyNotIndexedError
+from unified_kg_rag.shared.logging import warn_once
 
 if TYPE_CHECKING:
     from unified_kg_rag.adapters.retrieval.base import BaseSearchStrategy
@@ -304,18 +305,6 @@ def serves(
     return methodology is None or methodology in methodologies_holding(held)
 
 
-# The fallbacks routable_strategies has warned about (configured strategies,
-# held methodologies, fallback): each is warned about once per process.
-_WARNED_FALLBACKS: set[
-    tuple[tuple[SearchStrategy, ...], tuple[Methodology, ...], SearchStrategy]
-] = set()
-_WARNED_LOCK = threading.Lock()
-
-# What auto falls back to when no configured strategy reads a held
-# methodology: GraphRAG's and LightRAG's general-purpose strategies, then any.
-_FALLBACKS = (SearchStrategy.LOCAL, SearchStrategy.MIX)
-
-
 def routable_strategies(
     config: Config, artifacts: Collection[IndexArtifact] | None = None
 ) -> tuple[SearchStrategy, ...]:
@@ -340,7 +329,11 @@ def routable_strategies(
     routable = tuple(s for s in configured if serves(s, holding, config))
     if routable:
         return routable
-    candidates = [*_FALLBACKS, *(s for s in SearchStrategy if s not in _FALLBACKS)]
+    # The general-purpose strategies first (GENERAL_FALLBACKS), then any.
+    candidates = [
+        *GENERAL_FALLBACKS,
+        *(s for s in SearchStrategy if s not in GENERAL_FALLBACKS),
+    ]
     fallback = next(
         (
             s
@@ -358,16 +351,15 @@ def routable_strategies(
             + "): re-run ingestion with indexing.methodologies naming one of "
             + ", ".join(m.value for m in Methodology)
         )
-    warned = (tuple(configured), tuple(sorted(held)), fallback)
-    with _WARNED_LOCK:
-        first = warned not in _WARNED_FALLBACKS
-        _WARNED_FALLBACKS.add(warned)
     # Once per configuration and namespace holdings, not on every query.
-    (logger.warning if first else logger.debug)(
+    warn_once(
+        logger,
+        ("auto_fallback", tuple(configured), tuple(sorted(held)), fallback),
         "No strategy in search.auto_routable_strategies (%s) reads what the "
         "index namespace holds (%s); auto uses %s",
         ", ".join(s.value for s in configured),
         ", ".join(m.value for m in sorted(held)),
         fallback.value,
+        then_debug=True,
     )
     return (fallback,)

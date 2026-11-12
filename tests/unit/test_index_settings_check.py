@@ -43,6 +43,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.models.config import DEFAULT_LANGUAGE_ANALYZERS
 from unified_kg_rag.shared import ConfigurationError
+from unified_kg_rag.shared import logging as shared_logging
 
 pytestmark = pytest.mark.unit
 
@@ -267,7 +268,7 @@ def test_an_index_built_before_the_default_named_its_language_keeps_it(
     client = _FakeOpenSearchClient()
     _japanese_indexer(mocker, client, _EN_KO_ANALYZERS).upsert_text_units([_unit()])
     caplog.clear()
-    mocker.patch.object(module, "_kept_analyzers_warned", set())
+    mocker.patch.object(shared_logging, "_warned_once", set())
 
     with caplog.at_level("WARNING", logger=module.__name__):
         _japanese_indexer(mocker, client).check_index_settings("default")
@@ -318,7 +319,7 @@ def test_a_map_set_with_the_languages_default_keeps_its_stored_fields(
     # built before the default named its language.
     client = _FakeOpenSearchClient()
     _japanese_indexer(mocker, client, _EN_KO_ANALYZERS).upsert_text_units([_unit()])
-    mocker.patch.object(module, "_kept_analyzers_warned", set())
+    mocker.patch.object(shared_logging, "_warned_once", set())
 
     with caplog.at_level("WARNING", logger=module.__name__):
         _japanese_indexer(mocker, client, language_analyzers).check_index_settings(
@@ -357,7 +358,7 @@ def test_a_newly_mapped_language_keeps_its_standard_fields(mocker, caplog) -> No
     OpenSearchIndexer(
         before, embedding_factory=HashingEmbeddingFactory(dimensions=8)
     ).upsert_text_units([_unit()])
-    mocker.patch.object(module, "_kept_analyzers_warned", set())
+    mocker.patch.object(shared_logging, "_warned_once", set())
 
     with caplog.at_level("WARNING", logger=module.__name__):
         _indexer(mocker, client, translation=dutch).check_index_settings("default")
@@ -388,7 +389,7 @@ def test_a_field_keeps_its_analyzer_by_its_own_language(mocker, caplog) -> None:
     OpenSearchIndexer(
         before, embedding_factory=HashingEmbeddingFactory(dimensions=8)
     ).upsert_text_units([_unit()])
-    mocker.patch.object(module, "_kept_analyzers_warned", set())
+    mocker.patch.object(shared_logging, "_warned_once", set())
     after = Config(processing={"translation": nl})
     analyzers = after.indexing.opensearch.language_analyzers
     after.indexing.opensearch.language_analyzers = {**analyzers, "af": "dutch"}

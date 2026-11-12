@@ -21,6 +21,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from unified_kg_rag.domain.retrieval.section_types import SectionType
+
 # The metadata keys that hold id lists (stored items' lineage and links,
 # a report's findings lineage, an item's evidence kinds).
 LIST_FIELDS = frozenset(
@@ -153,7 +155,7 @@ def entity_refs(
     """The entities an item of section ``kind`` is about: the entity itself,
     a relationship's or claim's endpoints, a graph query result's
     entities."""
-    if kind == "entity":
+    if kind == SectionType.ENTITY:
         return [
             EntityRef(
                 id=item_id,
@@ -162,7 +164,7 @@ def entity_refs(
                 iri=text_value(metadata.get("iri")),
             )
         ]
-    if kind == "relationship":
+    if kind == SectionType.RELATIONSHIP:
         return [
             EntityRef(
                 id=text_value(metadata.get(f"{end}_id")),
@@ -170,7 +172,7 @@ def entity_refs(
             )
             for end in ("source", "target")
         ]
-    if kind == "claim":
+    if kind == SectionType.CLAIM:
         return [
             EntityRef(
                 id=text_value(metadata.get(f"{end}_id")),
@@ -179,7 +181,7 @@ def entity_refs(
             for end in ("subject", "object")
             if metadata.get(f"{end}_id") or metadata.get(f"{end}_name")
         ]
-    if kind == "query_result":
+    if kind == SectionType.QUERY_RESULT:
         names = metadata.get("entity_names")
         names = names if isinstance(names, list) else []
         return [
@@ -193,17 +195,17 @@ def title(kind: str, metadata: Mapping[str, Any]) -> str | None:
     """What an item of section ``kind`` is called: an entity's or report's
     name, a relationship's ``A -> B``, a graph query's plan description,
     a passage's file name."""
-    if kind == "relationship":
+    if kind == SectionType.RELATIONSHIP:
         source, target = (
             text_value(metadata.get("source_name")),
             text_value(metadata.get("target_name")),
         )
         return f"{source or '?'} -> {target or '?'}" if source or target else None
-    if kind == "query_result":
+    if kind == SectionType.QUERY_RESULT:
         return text_value(metadata.get("plan_description")) or text_value(
             metadata.get("operation")
         )
-    if kind == "text":
+    if kind == SectionType.TEXT:
         return file_name(metadata)
     return text_value(metadata.get("name")) or text_value(metadata.get("title"))
 

@@ -38,7 +38,11 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from unified_kg_rag.domain.models import EvaluationMetricType, EvaluationResult
+from unified_kg_rag.domain.models import (
+    EvaluationMetricType,
+    EvaluationResult,
+    SectionType,
+)
 
 __all__ = [
     "CITATION_METRICS",
@@ -59,7 +63,7 @@ CITATION_METRICS = (
 # when any of its files matched.
 CITATION_SCORING = "file_weighted"
 # The section type of a passage citation.
-_PASSAGE = "text"
+_PASSAGE = SectionType.TEXT
 
 
 def _file_names(citation: dict[str, Any]) -> list[str]:

@@ -22,7 +22,9 @@ import copy
 from enum import Enum
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, SecretStr, StringConstraints
+from pydantic import Field, SecretStr, StringConstraints
+
+from unified_kg_rag.domain.models.config._common import ConfigSection
 
 ProviderKind = Annotated[
     str, StringConstraints(strip_whitespace=True, to_lower=True, min_length=1)
@@ -49,7 +51,7 @@ class Backend(str, Enum):
     LOCAL = "local"
 
 
-class EndpointConfig(BaseModel):
+class EndpointConfig(ConfigSection):
     base_url: str | None = Field(
         default=None,
         min_length=1,
@@ -134,7 +136,7 @@ class EmbeddingProviderConfig(EndpointConfig):
     )
 
 
-class RerankProviderConfig(BaseModel):
+class RerankProviderConfig(ConfigSection):
     kind: ProviderKind = Field(
         default=BEDROCK,
         description=(
@@ -158,7 +160,7 @@ class RerankProviderConfig(BaseModel):
     )
 
 
-class GraphProviderConfig(BaseModel):
+class GraphProviderConfig(ConfigSection):
     kind: ProviderKind = Field(
         default=NEPTUNE,
         description=(
@@ -176,7 +178,7 @@ class GraphProviderConfig(BaseModel):
     )
 
 
-class VectorProviderConfig(BaseModel):
+class VectorProviderConfig(ConfigSection):
     kind: ProviderKind = Field(
         default=OPENSEARCH,
         description=(
@@ -195,7 +197,7 @@ class VectorProviderConfig(BaseModel):
     )
 
 
-class DocStatusProviderConfig(BaseModel):
+class DocStatusProviderConfig(ConfigSection):
     kind: ProviderKind = Field(
         default=DYNAMODB,
         description="Document-status registry for incremental indexing: dynamodb | sqlite.",
@@ -217,7 +219,7 @@ class DocStatusProviderConfig(BaseModel):
     )
 
 
-class ProvidersConfig(BaseModel):
+class ProvidersConfig(ConfigSection):
     llm: LLMProviderConfig = Field(
         default_factory=LLMProviderConfig, description="Language-model provider"
     )
