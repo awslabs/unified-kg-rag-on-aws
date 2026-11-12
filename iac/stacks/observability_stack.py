@@ -93,8 +93,9 @@ def opensearch_heap_bytes(instance_type: str) -> int | None:
 
 EMF_NAMESPACE = "unified_kg_rag/ingestion"
 
-# run-rag --metrics-sink cloudwatch: one query_latency_ms value per query,
-# per Environment and per Environment and Strategy (the search strategy).
+# GraphRAGChain through its providers' metrics sink (run-rag --metrics-sink
+# cloudwatch): one query_latency_ms value per answer, per Environment and per
+# Environment and Strategy (the search strategy that ran).
 QUERY_NAMESPACE = "unified_kg_rag/query"
 QUERY_LATENCY_METRIC = "query_latency_ms"
 # Query outcomes, one count per query (read as Sum), under the same namespace

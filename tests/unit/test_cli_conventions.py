@@ -53,6 +53,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.shared import ConfigurationError, StoreConnectionError
 from unified_kg_rag.shared.exceptions import classify
+from unified_kg_rag.shared.metrics import NullMetricsSink
 
 pytestmark = pytest.mark.unit
 
@@ -1234,6 +1235,11 @@ def test_ingestion_max_failure_rate_fails_a_run_over_it() -> None:
     assert breach is not None and "3 of 5 documents failed (60%)" in breach
     result = _ingestion_runner(0.5)._json_result(context)
     assert (result["error"], result["exit_code"]) == (breach, EXIT_FAILURE)
+    # The keys of every failure document, its stable class included.
+    assert (result["error_class"], result["error_type"]) == (
+        "failure",
+        "PipelineExecutionError",
+    )
     # Every document failed: a breach at any value; none failed: none.
     context.documents = context.documents[:2]
     context.text_units = context.text_units[:2]
@@ -1830,11 +1836,16 @@ def test_run_rag_classifies_an_error_building_its_chain(
     monkeypatch.setattr(console, "stderr", True)
     monkeypatch.setattr(sys, "argv", sys.argv)
     monkeypatch.setattr(run_rag_chain, "_load_chain", lambda: None)
+    # Not loaded with _load_chain off: the providers the chain gets.
+    monkeypatch.setattr(
+        run_rag_chain, "build_providers", lambda *_a, **_k: None, raising=False
+    )
     monkeypatch.setattr(run_rag_chain, "GraphRAGChain", fail, raising=False)
     monkeypatch.setitem(conventions._json, "enabled", True)
     monkeypatch.setitem(conventions._json, "printed", False)
     runner = run_rag_chain.RAGChainRunner.__new__(run_rag_chain.RAGChainRunner)
     runner.config = Config()
+    runner.metrics_sink = NullMetricsSink()
     with pytest.raises(SystemExit) as exited:
         asyncio.run(runner._initialize_chain())
     assert exited.value.code == code

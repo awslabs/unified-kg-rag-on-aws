@@ -557,6 +557,7 @@ def test_a_partial_summary_tree_reaches_the_emf_metrics() -> None:
     from unified_kg_rag.domain.models.cache import CacheStats
 
     pipe = object.__new__(DataIngestionPipeline)
+    pipe.config = Config()
     pipe.cache_manager = SimpleNamespace(get_cache_stats=lambda pid: CacheStats())
     ctx = _ctx_with_results(
         [
@@ -640,6 +641,7 @@ def test_coverage_metrics_are_emitted_once_by_the_stage_that_completes_them() ->
             self.records.append((self.stage, dict(metrics)))
 
     pipe = object.__new__(DataIngestionPipeline)
+    pipe.config = Config()
     pipe.metrics_sink = sink = Sink()
     pipe.stages = [
         SimpleNamespace(name=stage.value)

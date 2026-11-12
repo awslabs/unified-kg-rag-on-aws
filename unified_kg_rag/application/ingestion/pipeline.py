@@ -715,10 +715,16 @@ class DataIngestionPipeline:
                 answered no, or nothing could answer it.
         """
         # The root span of an ingestion trace: stages, batches and model calls
-        # nest under it. A failure leaving the block is recorded on it.
-        with observability.span(
-            "kg_rag.ingestion.run", resume_from_stage=resume_from_stage
-        ) as span:
+        # nest under it, each tagged with the namespace it writes (the tenant
+        # boundary). A failure leaving the block is recorded on it.
+        with (
+            observability.bind_attributes(
+                namespace=resolve_namespace(self.config, None)
+            ),
+            observability.span(
+                "kg_rag.ingestion.run", resume_from_stage=resume_from_stage
+            ) as span,
+        ):
             self.pipeline_id = None
             try:
                 context = self._run(source_directory, pipeline_id, resume_from_stage)
@@ -727,6 +733,7 @@ class DataIngestionPipeline:
                 # (_run sets it; read past mypy's narrowing to None above).
                 if resolved := getattr(self, "pipeline_id", None):
                     span.set_attribute("kg_rag.pipeline_id", resolved)
+            delta = context.incremental_delta
             span.set_attributes(
                 {
                     "kg_rag.pipeline_id": context.pipeline_id,
@@ -734,6 +741,17 @@ class DataIngestionPipeline:
                     "kg_rag.stages_completed": sum(
                         r.status == PipelineStageStatus.COMPLETED
                         for r in context.stage_results
+                    ),
+                    # What the run applied: a full build, or a delta's counts.
+                    "kg_rag.mode": "incremental" if delta is not None else "full",
+                    **(
+                        {
+                            "kg_rag.delta.new": len(delta.new),
+                            "kg_rag.delta.changed": len(delta.changed),
+                            "kg_rag.delta.deleted": len(delta.deleted),
+                        }
+                        if delta is not None
+                        else {}
                     ),
                 }
             )
@@ -1046,7 +1064,10 @@ class DataIngestionPipeline:
             # Every log line of the run, the S3 sync and the failure report
             # included, carries the id (also in worker threads, see
             # ContextThreadPoolExecutor).
-            log_context = bind_contextvars(pipeline_id=resolved_pipeline_id)
+            log_context = bind_contextvars(
+                pipeline_id=resolved_pipeline_id,
+                namespace=resolve_namespace(self.config, None),
+            )
             resolved_resume_stage = self.normalize_stage_name(
                 resume_from_stage or self.pipeline_config.resume_from_stage
             )

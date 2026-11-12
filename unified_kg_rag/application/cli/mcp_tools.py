@@ -235,6 +235,12 @@ class SearchToolResult(_Records, _Outcome):
         default_factory=list, description="The guardrail's interventions"
     )
     rerank: str | None = Field(default=None, description="The rerank status")
+    query_id: str | None = Field(
+        default=None, description="The id the server's log lines of the call carry"
+    )
+    trace_id: str | None = Field(
+        default=None, description="The call's trace id, when tracing is on"
+    )
 
 
 class _AnswerHead(BaseModel):
@@ -771,6 +777,8 @@ class KnowledgeGraphTools:
             "guardrail": list(metadata.get("guardrail") or []),
             "rerank": (str(rerank.get("status")) if isinstance(rerank, dict) else None),
             "usage": dict(metadata.get("usage") or {}),
+            "query_id": metadata.get("query_id"),
+            "trace_id": metadata.get("trace_id"),
         }
 
     async def search(

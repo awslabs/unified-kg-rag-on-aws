@@ -57,6 +57,7 @@ from unified_kg_rag.ports.model_factory import (
 )
 from unified_kg_rag.shared.exceptions import ConfigurationError
 from unified_kg_rag.shared.extras import extra_hint
+from unified_kg_rag.shared.metrics import MetricsSink, NullMetricsSink
 
 if TYPE_CHECKING:
     import boto3
@@ -90,6 +91,8 @@ class Providers:
         doc_status: The doc-status registry (``DocStatusPort``), shared by
             every run that uses this bundle. Injecting one turns incremental
             indexing on (``doc_status_enabled``).
+        metrics_sink: Where ``GraphRAGChain`` publishes each answer's
+            latency and outcome (``shared.metrics``; default: discarded).
     """
 
     def __init__(
@@ -107,8 +110,10 @@ class Providers:
             Mapping[RetrieverRole, Callable[[], BaseGraphRAGRetriever]] | None
         ) = None,
         doc_status: DocStatusPort | None = None,
+        metrics_sink: MetricsSink | None = None,
     ) -> None:
         self.config = config
+        self.metrics_sink: MetricsSink = metrics_sink or NullMetricsSink()
         self._boto_session = boto_session
         self._llm_factory = llm_factory
         self._embedding_factory = embedding_factory

@@ -5,9 +5,11 @@
 The ingestion pipeline publishes each run's scalar ``PipelineMetrics`` (and
 per-stage durations) through ``MetricsSink`` without assuming a monitoring
 backend: an embedding application passes the sink of its choice
-(``DataIngestionPipeline(metrics_sink=...)``). Query-side counts and timings
-travel on the OpenTelemetry spans (``observability``) and do not reach the
-sink. Two adapters ship:
+(``DataIngestionPipeline(metrics_sink=...)``). ``GraphRAGChain`` publishes
+each answer's latency and outcome (failed, degraded, abstained) through its
+``Providers.metrics_sink`` (``QUERY_METRICS_NAMESPACE``); the other
+query-side counts and timings travel on the OpenTelemetry spans
+(``observability``). Two adapters ship:
 
 - ``NullMetricsSink`` (default): discards — zero overhead, no AWS dependency.
 - ``CloudWatchEMFSink``: writes CloudWatch Embedded Metric Format (EMF) JSON to
@@ -29,6 +31,15 @@ from typing import Any, Protocol, runtime_checkable
 from unified_kg_rag.shared.logging import get_logger
 
 logger = get_logger(__name__)
+
+# The query metrics GraphRAGChain emits per answer through
+# Providers.metrics_sink (dimension keys Strategy and Environment; the CDK
+# stack's QueryLatencyHigh and QueryFailures alarms read them).
+QUERY_METRICS_NAMESPACE = "unified_kg_rag/query"
+QUERY_LATENCY_METRIC = "query_latency_ms"
+QUERY_FAILED_METRIC = "query_failed"
+QUERY_DEGRADED_METRIC = "query_degraded"
+QUERY_ABSTAINED_METRIC = "query_abstained"
 
 
 @runtime_checkable

@@ -394,44 +394,17 @@ class _RecordingSink:
         self.records.append((namespace, metrics, dimensions))
 
 
-@pytest.mark.parametrize("fails", [False, True], ids=["answered", "raised"])
-async def test_rag_runner_records_each_query_latency(
-    config, mocker, fails: bool
-) -> None:
-    # The CDK stack's QueryLatencyHigh alarm reads query_latency_ms; a query
-    # that raised took its time too.
+async def test_rag_runner_hands_its_metrics_sink_to_the_chain(config, mocker) -> None:
+    # The chain emits the query metrics (latency and outcome, for every
+    # surface); run-rag only chooses the sink (--metrics-sink).
     mocker.patch.object(run_rag_chain, "load_cli_config", return_value=config)
-    runner = run_rag_chain.RAGChainRunner(
-        _rag_parser().parse_args(["-q", "hi", "--search-strategy", "local"])
-    )
+    runner = run_rag_chain.RAGChainRunner(_rag_parser().parse_args(["-q", "hi"]))
     sink = runner.metrics_sink = _RecordingSink()
-    runner.rag_chain = mocker.AsyncMock()
-    if fails:
-        runner.rag_chain.ainvoke.side_effect = RuntimeError("Neptune down")
-    else:
-        runner.rag_chain.ainvoke.return_value = MagicMock(
-            model_dump=MagicMock(return_value={"answer": "a"})
-        )
-    result = await runner._run_query(run_rag_chain.RAGInput(query="hi"))
-    assert result["success"] is not fails
-    ((namespace, metrics, dimensions),) = sink.records
-    assert namespace == run_rag_chain.QUERY_METRICS_NAMESPACE == "unified_kg_rag/query"
-    assert set(metrics) == {"query_latency_ms"} and metrics["query_latency_ms"] >= 0
-    assert dimensions == {"Strategy": "local"}
-
-
-async def test_rag_runner_records_no_latency_for_retrieval_only(config, mocker) -> None:
-    mocker.patch.object(run_rag_chain, "load_cli_config", return_value=config)
-    runner = run_rag_chain.RAGChainRunner(
-        _rag_parser().parse_args(["-q", "hi", "--mode", "search"])
-    )
-    sink = runner.metrics_sink = _RecordingSink()
-    runner.rag_chain = mocker.AsyncMock()
-    runner.rag_chain.asearch.return_value = MagicMock(
-        model_dump=MagicMock(return_value={})
-    )
-    await runner._run_query(run_rag_chain.RAGInput(query="hi"))
-    assert sink.records == []
+    chain = mocker.patch.object(run_rag_chain, "GraphRAGChain")
+    built = mocker.patch.object(run_rag_chain, "build_providers")
+    await runner._initialize_chain()
+    built.assert_called_once_with(config, metrics_sink=sink)
+    assert chain.call_args.kwargs["providers"] is built.return_value
 
 
 def test_rag_runner_builds_the_cloudwatch_sink_of_the_task(

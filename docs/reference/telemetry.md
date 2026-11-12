@@ -6,13 +6,18 @@ usage it counts with tracing on or off.
 
 ## Trace shape
 
+Every span of a query or an ingestion run carries `kg_rag.namespace`, the
+index suffix it reads or writes (the tenant boundary), so a trace backend
+filters by it.
+
 | Span | Parent | Attributes |
 |---|---|---|
-| `kg_rag.ingestion.run` | root | Status `ERROR` when the run failed |
+| `kg_rag.ingestion.run` | root | `kg_rag.pipeline_id`, `kg_rag.mode` (`full`, `incremental`) and an incremental run's `kg_rag.delta.new` / `.changed` / `.deleted` counts; status `ERROR` when the run failed |
 | `kg_rag.ingestion.stage` | run | One per stage: input/output counts, status, the stage's numeric metrics as `kg_rag.stage.<metric>`, `error.type` and the exception when it crashed |
 | `kg_rag.batch` | stage, or root for `run-eval` answer generation | Item and failure counts; in `run-eval` the run's `kg_rag.eval.strategy` and `kg_rag.eval.repeat` (1-based), as on every span of the run |
 | `kg_rag.mcp.tool` | root | One per MCP tool call (`run-mcp-server`): `mcp.tool.name`, `kg_rag.records`; with `capture_content` the redacted arguments as `input.value`. A `kg_search` or `kg_answer` call's `kg_rag.query` span nests under it |
-| `kg_rag.query` | root, the `run-eval` batch, or an MCP tool call | `session.id`, `user.id`, `kg_rag.blocked`; with `capture_content` the redacted query as `input.value` and (outside `stream` / `astream`) the answer as `output.value` |
+| `kg_rag.console.ask` | root | One per console question: `kg_rag.search_strategy`, `kg_rag.query_id` (the id its `kg_rag.query` span's log lines and result carry); the query span nests under it |
+| `kg_rag.query` | root, the `run-eval` batch, an MCP tool call, or a console question | `session.id`, `user.id`, `kg_rag.blocked`, `kg_rag.degraded` (answered without a step), `kg_rag.error_class` (of an error answer under `processing.ignore_errors`); with `capture_content` the redacted query as `input.value` and (outside `stream` / `astream`) the answer as `output.value`. Its id and trace id are the result's `metadata.query_id` and `metadata.trace_id`, and its log lines carry `query_id` and `namespace` |
 | `kg_rag.strategy` | query | `kg_rag.rerank_status` for the whole query |
 | `kg_rag.retrieve` | strategy | Hits per result type, up to 50 source ids |
 | `kg_rag.fusion` | strategy | In/out counts, the step's `kg_rag.rerank_status` |

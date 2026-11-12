@@ -1092,6 +1092,11 @@ From a `main` checkout (formats and keys no release had):
   warning, and the rest is still described (#636). A missing extra and a namespace that holds no index exit 2 with the
   error on stderr, and describing creates no store file where nothing was ingested (#641). See [inspect and
   export](docs/guides/inspect.md).
+- Telemetry names the namespace (the tenant boundary) and ties a query to its logs: `kg_rag.namespace` on every span
+  of a query or ingestion run, `namespace` in their log context and an ingestion run's EMF properties; the
+  ingestion root span has `kg_rag.mode` and the delta counts, the query span `kg_rag.degraded` and
+  `kg_rag.error_class`; a result's `metadata.query_id` and `metadata.trace_id` (also MCP's `query_id` /
+  `trace_id`) are the ids of its log lines and trace, and a console question's log lines carry its id.
 - Observability: the `observability` section and `otel` extra, spans for runs, stages, batches and query steps,
   GenAI model-call spans, OTLP, Langfuse and Phoenix exporters with redacted content capture (an IPv6 endpoint keeps
   its brackets in the logged URL); CDK `enable_cloudwatch_tracing` with an ADOT sidecar (#207, #208, #211, #219,
@@ -1485,6 +1490,12 @@ From a `main` checkout (formats and keys no release had):
   `DocumentsNotIndexed`, and `QueryLatencyHigh` on `run-rag --metrics-sink cloudwatch`'s `query_latency_ms`, and
   `QueryFailures` on the failed share of queries (`query_failed`); each also notifies when it recovers, and the
   dashboard shows the stores' metrics and every alarm's state (#330, #519, #528).
+- IaC alarms: `BedrockThrottling`, `IngestionTaskMemory`, OpenSearch snapshot failures, blocked writes, thread-pool
+  rejections, a yellow multi-node cluster, an unusable KMS key, ephemeral storage, `DocumentsNotIndexed`, and
+  `QueryLatencyHigh` on `run-rag --metrics-sink cloudwatch`'s `query_latency_ms` (#330, #519, #528). The chain emits
+  the query metrics itself, through the new `Providers.metrics_sink`, so a library host, MCP app or console counts
+  too: per answer `query_latency_ms` and the outcome `query_failed`, `query_degraded`, `query_abstained` (0 or 1),
+  per `Strategy` that ran (`auto` queries no longer land under `auto`), with `Namespace` a log property.
 - The package ships a `py.typed` marker (#568). `main` reports `0.3.0.dev0`, and a `v<version>` tag runs a release
   workflow that publishes a GitHub release: the tag must be on `main`, the notes are the section's introduction,
   *Highlights*, *Breaking changes*, *Upgrading* and *Security* with a link to the version's heading for the rest, and

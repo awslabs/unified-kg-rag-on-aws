@@ -467,6 +467,7 @@ def test_a_stopped_or_crashed_ingestion_run_span_names_its_pipeline(
 
     exporter = tracing()
     pipeline = object.__new__(DataIngestionPipeline)
+    pipeline.config = Config()
 
     def _run(*_: Any) -> PipelineContext:
         pipeline.pipeline_id = "p-2"
@@ -480,6 +481,35 @@ def test_a_stopped_or_crashed_ingestion_run_span_names_its_pipeline(
     assert run.status.status_code == StatusCode.ERROR
 
 
+def test_an_incremental_run_span_counts_its_delta(tracing: Tracing) -> None:
+    from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+    from unified_kg_rag.domain.models import DocumentDelta
+
+    exporter = tracing()
+    context = PipelineContext(
+        pipeline_id="p-3",
+        config={},
+        status=PipelineStageStatus.COMPLETED,
+        start_time=datetime(2026, 1, 1),
+        source_directory=Path("."),
+    )
+    context.incremental_delta = DocumentDelta(
+        new=["a", "b"], changed=["c"], deleted=["d", "e", "f"]
+    )
+    pipeline = object.__new__(DataIngestionPipeline)
+    pipeline.config = Config()
+    pipeline.config.processing.document_parsing.index_value = "tenant-a"
+    pipeline._run = lambda *_: context  # type: ignore[method-assign]
+    pipeline.run(".")
+    run = _attrs(_one(exporter, "kg_rag.ingestion.run"))
+    assert (run["kg_rag.mode"], run["kg_rag.namespace"]) == ("incremental", "tenant-a")
+    assert (
+        run["kg_rag.delta.new"],
+        run["kg_rag.delta.changed"],
+        run["kg_rag.delta.deleted"],
+    ) == (2, 1, 3)
+
+
 def test_a_reused_pipeline_does_not_name_its_last_run(tracing: Tracing) -> None:
     # A run that fails before it resolves its id must not report the id of
     # the pipeline's previous run (the CLI resumes a stopped run by it).
@@ -487,6 +517,7 @@ def test_a_reused_pipeline_does_not_name_its_last_run(tracing: Tracing) -> None:
 
     exporter = tracing()
     pipeline = object.__new__(DataIngestionPipeline)
+    pipeline.config = Config()
     ids = iter(["p-1", None])
 
     def _run(*_: Any) -> PipelineContext:
@@ -535,6 +566,7 @@ def test_ingestion_run_and_stage_spans(tracing: Tracing) -> None:
         return context
 
     pipeline = object.__new__(DataIngestionPipeline)
+    pipeline.config = Config()
     pipeline._run = _run  # type: ignore[method-assign]
     pipeline.run(".")
 
@@ -545,6 +577,13 @@ def test_ingestion_run_and_stage_spans(tracing: Tracing) -> None:
     }
     assert _attrs(run)["kg_rag.pipeline_id"] == "p-1"
     assert _attrs(run)["kg_rag.stages_completed"] == 1
+    # The namespace it writes, on every span of the run, and a full build.
+    assert all(
+        _attrs(span)["kg_rag.namespace"] == "default"
+        for span in exporter.get_finished_spans()
+    )
+    assert _attrs(run)["kg_rag.mode"] == "full"
+    assert "kg_rag.delta.new" not in _attrs(run)
     parsing = stages[PipelineStageType.DOCUMENT_PARSING.value]
     assert _is_child(parsing, run)
     assert _attrs(parsing)["kg_rag.input_count"] == 3
@@ -699,6 +738,107 @@ _SIMPLE_QUERY = RAGInput(
     search_strategy=SearchStrategy.SIMPLE,
     enable_query_processing=False,
 )
+
+
+class _RecordingSink:
+    def __init__(self) -> None:
+        self.emitted: list[tuple[str, dict[str, float], dict[str, str]]] = []
+
+    def emit(
+        self,
+        namespace: str,
+        metrics: dict[str, float],
+        dimensions: dict[str, str] | None = None,
+    ) -> None:
+        self.emitted.append((namespace, metrics, dict(dimensions or {})))
+
+
+class _ContextRetriever(_FakeRetriever):
+    """Records the log context its retrieval runs in."""
+
+    seen: list[dict[str, Any]] = []
+
+    async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+        from structlog.contextvars import get_contextvars
+
+        _ContextRetriever.seen.append(get_contextvars())
+        return await super().aretrieve(query)
+
+
+async def test_a_query_is_tied_to_its_namespace_logs_trace_and_metrics(
+    tracing: Tracing,
+) -> None:
+    # Regression (rv24): nothing named the namespace (the tenant boundary)
+    # on the query trace, its logs or its metrics, the query id was in the
+    # logs only, and only run-rag emitted query metrics (latency only).
+    from unified_kg_rag.shared import metrics
+
+    exporter = tracing()
+    chain = _simple_chain()
+    sink = _RecordingSink()
+    chain.providers.metrics_sink = sink
+    chain.providers._retriever_builders[RetrieverRole.DOCUMENT] = _ContextRetriever
+    _ContextRetriever.seen.clear()
+    try:
+        output = await chain.ainvoke(_SIMPLE_QUERY)
+    finally:
+        await chain.aclose()
+    query = _one(exporter, "kg_rag.query")
+    assert all(
+        _attrs(span)["kg_rag.namespace"] == "default"
+        for span in exporter.get_finished_spans()
+    )
+    query_id = output.metadata["query_id"]
+    assert len(query_id) == 12
+    assert output.metadata["trace_id"] == format(query.context.trace_id, "032x")
+    assert _ContextRetriever.seen
+    assert all(
+        (seen["query_id"], seen["namespace"]) == (query_id, "default")
+        for seen in _ContextRetriever.seen
+    )
+    ((namespace, values, dimensions),) = sink.emitted
+    assert namespace == metrics.QUERY_METRICS_NAMESPACE
+    assert values[metrics.QUERY_LATENCY_METRIC] > 0
+    assert [
+        values[name]
+        for name in (
+            metrics.QUERY_FAILED_METRIC,
+            metrics.QUERY_DEGRADED_METRIC,
+            metrics.QUERY_ABSTAINED_METRIC,
+        )
+    ] == [0.0, 0.0, 0.0]
+    assert dimensions == {"Strategy": "simple", "Namespace": "default"}
+
+
+async def test_a_failed_query_is_counted_and_a_search_is_not(
+    tracing: Tracing,
+) -> None:
+    from unified_kg_rag.shared import metrics
+
+    class _Down(GenericFakeChatModel):
+        def _generate(self, *args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError("model down")
+
+        async def _agenerate(self, *args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError("model down")
+
+    class _Failing(_FakeModelFactory):
+        def get_model(self, model_id: Any, **kwargs: Any) -> Any:
+            return _Down(messages=iter(()))
+
+    tracing()
+    chain = _simple_chain(model_factory=_Failing())
+    sink = _RecordingSink()
+    chain.providers.metrics_sink = sink
+    try:
+        with pytest.raises(RuntimeError, match="model down"):
+            await chain.ainvoke(_SIMPLE_QUERY)
+        await chain.asearch(_SIMPLE_QUERY)
+    finally:
+        await chain.aclose()
+    ((_, values, dimensions),) = sink.emitted
+    assert values[metrics.QUERY_FAILED_METRIC] == 1.0
+    assert dimensions["Strategy"] == "simple"
 
 
 async def test_captured_query_span_carries_redacted_query_and_answer(

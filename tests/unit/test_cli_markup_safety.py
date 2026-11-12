@@ -32,6 +32,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.models.evaluation import EvaluationSummary
 from unified_kg_rag.evaluation.benchmarks import musique
+from unified_kg_rag.shared.metrics import NullMetricsSink
 
 pytestmark = pytest.mark.unit
 
@@ -172,6 +173,7 @@ def test_run_rag_prints_metrics_filters_and_init_errors_literally(
     monkeypatch.setattr(run_rag_chain, "GraphRAGChain", fail)
     runner = object.__new__(run_rag_chain.RAGChainRunner)
     runner.config = Config()
+    runner.metrics_sink = NullMetricsSink()
     with pytest.raises(SystemExit):
         asyncio.run(runner._initialize_chain())
 

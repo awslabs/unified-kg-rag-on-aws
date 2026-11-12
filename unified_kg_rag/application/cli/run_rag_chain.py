@@ -6,7 +6,6 @@ import argparse
 import asyncio
 import os
 import sys
-import time
 import uuid
 from collections.abc import Callable
 from types import ModuleType
@@ -76,6 +75,7 @@ from unified_kg_rag.shared import (
 )
 from unified_kg_rag.shared.exceptions import (
     ErrorClass,
+    IndexNotFoundError,
     InvalidArgumentError,
     classify,
     error_class_of,
@@ -83,6 +83,7 @@ from unified_kg_rag.shared.exceptions import (
 from unified_kg_rag.shared.utils import event_loop
 
 if TYPE_CHECKING:
+    from unified_kg_rag.application.bootstrap import build_providers
     from unified_kg_rag.application.presentation.answer_view import (
         AnswerView,
         QueryOutcome,
@@ -110,6 +111,12 @@ def _view_module() -> ModuleType:
     return answer_view
 
 
+def _bootstrap_module() -> ModuleType:
+    from unified_kg_rag.application import bootstrap
+
+    return bootstrap
+
+
 # Imported on first use: --help and a refused command line load no chain.
 __getattr__, _load_chain = lazy_names(
     globals(),
@@ -121,13 +128,9 @@ __getattr__, _load_chain = lazy_names(
         "AnswerView": _view_module,
         "QueryOutcome": _view_module,
         "SourceView": _view_module,
+        "build_providers": _bootstrap_module,
     },
 )
-
-# --metrics-sink cloudwatch: query_latency_ms of each answered query, per
-# Environment and per Environment and Strategy (the CDK stack's
-# QueryLatencyHigh alarm and dashboard read them).
-QUERY_METRICS_NAMESPACE = "unified_kg_rag/query"
 
 
 def _rerank_line(rerank: dict[str, Any]) -> str:
@@ -415,9 +418,10 @@ class CommandLineInterface:
             choices=["none", "cloudwatch"],
             default="none",
             help="Where to send query metrics: 'none' (default) or 'cloudwatch' "
-            "(CloudWatch EMF to stdout: query_latency_ms of each --mode rag "
+            "(CloudWatch EMF to stdout: query_latency_ms and the outcome counts "
+            "query_failed, query_degraded and query_abstained of each --mode rag "
             "query under unified_kg_rag/query, with an Environment dimension "
-            "when UKR_METRICS_ENVIRONMENT is set and a Strategy dimension; not "
+            "when UKR_METRICS_ENVIRONMENT is set and the Strategy that ran; not "
             "with --output-format json)",
         )
         parser.add_argument(
@@ -509,17 +513,6 @@ class RAGChainRunner:
             )
         return NullMetricsSink()
 
-    def _record_latency(self, started: float) -> None:
-        """Publish an answered query's latency (``--mode rag`` only, so a
-        retrieval-only run does not lower the answer latency)."""
-        if self.args.mode != "rag":
-            return
-        self.metrics_sink.emit(
-            QUERY_METRICS_NAMESPACE,
-            {"query_latency_ms": (time.perf_counter() - started) * 1000},
-            {"Strategy": str(self.args.search_strategy)},
-        )
-
     def _get_suffix_display(self) -> str:
         """The namespace line: what the store names end in, the index suffix
         queried plus ``indexing.additional_suffix`` (as run-ingestion names
@@ -587,7 +580,12 @@ class RAGChainRunner:
         console.print("[bold]Initializing RAG chain...[/bold]")
         _load_chain()
         try:
-            self.rag_chain = GraphRAGChain(config=self.config)
+            # The chain publishes each answer's latency and outcome through
+            # the sink of its providers (--metrics-sink).
+            self.rag_chain = GraphRAGChain(
+                config=self.config,
+                providers=build_providers(self.config, metrics_sink=self.metrics_sink),
+            )
             console.print("[green]Query chain initialized.[/green]")
         except Exception as e:
             # Classified as a query's error is (_run_query): a setting the
@@ -624,6 +622,8 @@ class RAGChainRunner:
                 )
             except MethodologyNotIndexedError as e:
                 usage_error(f"--search-strategy: {e}")
+            except IndexNotFoundError as e:
+                usage_error(e)
         # An undeclared key failed every question of the session.
         if filters and self.rag_chain is not None:
             try:
@@ -724,19 +724,13 @@ class RAGChainRunner:
                 f"[bold]Executing RAG query in '{self.args.mode}' mode...[/bold]",
                 "[dim]This may take some time depending on query complexity[/dim]",
             )
-            started = time.perf_counter()
-            try:
-                result = (
-                    await self.rag_chain.asearch(rag_input)
-                    if self.args.mode == "search"
-                    else await self.rag_chain.ainvoke(rag_input)
-                )
-            except Exception:
-                # A query that failed took its time too (a stopped one is
-                # not recorded).
-                self._record_latency(started)
-                raise
-            self._record_latency(started)
+            # The chain publishes an answer's latency and outcome through
+            # the metrics sink its providers hold (--metrics-sink).
+            result = (
+                await self.rag_chain.asearch(rag_input)
+                if self.args.mode == "search"
+                else await self.rag_chain.ainvoke(rag_input)
+            )
             dumped = result.model_dump()
             outcome, fields = self._view_fields(result, dumped)
             output = {**dumped, **fields}

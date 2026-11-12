@@ -140,6 +140,9 @@ async def test_kg_search_returns_chunks_with_their_documents(
         "Who stores the widgets for Vendor?", strategy="local", top_k=10
     )
     assert result.strategy == "local" and result.namespace == "default"
+    # The id the server's log lines of the call carry (no trace: tracing off).
+    assert result.query_id and len(result.query_id) == 12
+    assert result.trace_id is None
     texts = [r for r in result.records if r.kind == "text"]
     assert texts, [r.kind for r in result.records]
     assert {r.document_name for r in texts} <= set(DOCUMENTS)

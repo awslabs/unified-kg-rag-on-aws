@@ -14,7 +14,7 @@ from __future__ import annotations
 import pytest
 
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
-from unified_kg_rag.domain.models import PipelineMetrics
+from unified_kg_rag.domain.models import Config, PipelineMetrics
 
 pytestmark = pytest.mark.unit
 
@@ -22,9 +22,11 @@ pytestmark = pytest.mark.unit
 class _RecordingSink:
     def __init__(self) -> None:
         self.metrics: dict = {}
+        self.dimensions: dict = {}
 
     def emit(self, namespace: str, metrics: dict, dimensions: dict) -> None:
         self.metrics = metrics
+        self.dimensions = dimensions
 
 
 def _emit(metrics: PipelineMetrics) -> dict:
@@ -110,6 +112,7 @@ def _stage_pipeline(*stage_names: str) -> tuple[DataIngestionPipeline, _Recordin
     from types import SimpleNamespace
 
     pipe = DataIngestionPipeline.__new__(DataIngestionPipeline)
+    pipe.config = Config()
     pipe.metrics_sink = sink = _RecordingSink()
     pipe.stages = [SimpleNamespace(name=name) for name in stage_names]
     return pipe, sink
@@ -170,6 +173,15 @@ def test_the_run_end_emits_only_the_run_metrics() -> None:
         "duration_indexing_seconds",
     ):
         assert name not in sink.metrics
+
+
+def test_the_metrics_name_the_namespace_the_run_wrote() -> None:
+    # Regression (rv24): only pipeline_id; the alarms could not be split
+    # per namespace (tenant) in Logs Insights.
+    pipe, sink = _stage_pipeline("indexing")
+    pipe.config.processing.document_parsing.index_value = "tenant-a"
+    pipe._emit_metrics(_metrics(), "pid")
+    assert sink.dimensions == {"pipeline_id": "pid", "namespace": "tenant-a"}
 
 
 def test_community_drift_is_emitted() -> None:

@@ -30,6 +30,7 @@ from collections.abc import AsyncIterator, Callable
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from structlog.contextvars import bound_contextvars
 
 from unified_kg_rag.adapters.retrieval.strategy_registry import strategy_methodology
 from unified_kg_rag.application.cli.console.store import ConsoleStore
@@ -429,9 +430,17 @@ class AskService:
     ) -> tuple[RAGOutput, str | None]:
         """Answer ``request`` under the console's trace span, the start event
         and the answer's chunks put on ``queue``; the output and trace id."""
-        with observability.span(
-            "kg_rag.console.ask",
-            {"kg_rag.search_strategy": request.search_strategy.value},
+        with (
+            observability.span(
+                "kg_rag.console.ask",
+                {
+                    "kg_rag.search_strategy": request.search_strategy.value,
+                    "kg_rag.query_id": query_id,
+                },
+            ),
+            # The chain's log lines and its result's metadata carry the id
+            # the page and the history show (it reuses a bound one).
+            bound_contextvars(query_id=query_id),
         ):
             ids = observability.current_trace_ids()
             trace_id = ids[0] if ids else None
