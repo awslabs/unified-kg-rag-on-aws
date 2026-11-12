@@ -275,10 +275,11 @@ See [exit codes and JSON output](docs/reference/exit-codes-and-json.md) and the
   a trailing "。" ("ジョン・スミス" is "ジョンスミス"); a key is its own key, and the fuzzy matcher reads a name's identifier
   tokens from its compact key, cut where a word passes between a Han, Hangul or Kana letter and another character
   (a dotted "한·빛" has none, as "한빛"; "제3조" and "제 3 조" both 제, 3 and 조, so spacing variants with a number are
-  one entity, where they were two), and a word with a Han numeral is an identifier ("東京第一工場" never links
-  "東京第二工場"). Of spellings with one key, the one its key
-  folds least names the entity on a tie ("토지", not "「토지」"). Entity and relationship `rank` come from node degree,
-  and a relationship's weight sums its strengths per text unit (#189, #214, #574).
+  one entity, where they were two), with a space where a letter meets a digit ("PO1002" is "PO 1002", "ISO9001"
+  "ISO 9001"), and a numeral is an identifier of its own ("東京第一工場" never links "東京第二工場", and "百度" or
+  "三菱商事" no longer hold one whole-word identifier that kept every variant apart). Of spellings with one key, the
+  one its key folds least names the entity on a tie ("토지", not "「토지」"). Entity and relationship `rank` come from
+  node degree, and a relationship's weight sums its strengths per text unit (#189, #214, #574).
 - Entities have no `MemberOf` edges to communities; an entity lists its `community_ids` (#348).
 - Hidden files and files under a hidden or `__pycache__` directory of the corpus are not parsed (#213).
 
@@ -515,7 +516,8 @@ From a `main` checkout (formats and keys no release had):
   (#694) is ignored.
 - Re-keyed once before 0.3.0: entity ids and name keys fold quotes, apostrophes, invisible characters, dashes (not a
   leading minus), dense-script middle dots and Arabic and Hebrew marks and strip more legal forms, and dense-script
-  spacing variants with a number are one entity (*Stored data and reindexing*); the description summary and claim
+  spacing variants with a number and a letter run into a digit ("PO1002", "PO 1002") are one entity (*Stored data and
+  reindexing*); the description summary and claim
   prompts changed, claims keep a `suspected` status and are keyed by their statement (*Fixed*); chunk sizes count
   tokens (*Defaults*), which keeps English text units and re-chunks Korean, Japanese and Chinese ones; stage-cache keys
   hold the prompts in effect (a pipeline id resumed across a prompt change starts over); extraction records under

@@ -64,7 +64,7 @@ def _together(groups: list[set], a: str, b: str) -> bool:
         ("Phase II", {"ii"}),
         ("Phase 2", {"2"}),
         ("Section 4.2", {"4", "2"}),
-        ("Model v2", {"v2"}),
+        ("Model v2", {"v", "2"}),  # keyed "model v 2", as "Model v 2" is
         ("Acme Corporation", set()),
         ("Mix Studio", set()),  # "mix" is not a Roman numeral
         ("Party 가", {"가"}),  # single letters of any script are designators
@@ -105,6 +105,27 @@ def test_find_all_matches_drops_identifier_conflicts(method) -> None:
     matched = {name for name, _ in matcher.find_all_matches("Purchase Order 1001")}
     assert "Purchase Order 1002" not in matched
     assert "Purchase Order 1003" not in matched
+
+
+@pytest.mark.parametrize(
+    ("stored", "variant"),
+    [
+        # Simplified 电 beside Traditional 電: a Han numeral in the name made
+        # the whole run one discriminator, so no variant ever linked.
+        ("九州電力送配電", "九州电力送配電"),
+        ("三井住友信託銀行", "三井住友信托銀行"),
+        # A letter run into a digit is one word with it spaced.
+        ("PO 1002", "PO1002"),
+        ("ISO 9001", "ISO9001"),
+    ],
+)
+def test_a_numeral_does_not_keep_a_variant_apart(stored: str, variant: str) -> None:
+    matcher = FuzzyMatcher(
+        [stored],
+        resolution_method=ResolutionMethod.SEQUENCE_MATCHER,
+        similarity_threshold=0.85,
+    )
+    assert [name for name, _ in matcher.find_all_matches(variant)] == [stored]
 
 
 # --------------------------------------------------------------------------- #

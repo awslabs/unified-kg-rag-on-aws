@@ -217,9 +217,10 @@ gets its models and stores from the run's `Providers` bundle.
   `entity_key` without the legal-form designators of the language profiles
   (`domain/languages/legal_forms.py`: `(주)`, `주식회사`, `株式会社`,
   `有限公司`, a trailing `Inc` / `Ltd` / `LLC` / `Co` / `Corp` / `GmbH & Co.
-  KG` / `S.A. de C.V.`, a leading `ООО` or `Công ty TNHH`, ...) and without
-  spaces next to Han, Hangul or Kana, so "(주)가나다", "가나다 상사" /
-  "가나다상사", "Acme Inc" / "Acme" and "ООО «Ромашка»" / "Ромашка" merge. A
+  KG` / `S.A. de C.V.`, a leading `ООО` or `Công ty TNHH`, ...), without
+  spaces next to Han, Hangul or Kana and with one where a letter meets a
+  digit, so "(주)가나다", "가나다 상사" / "가나다상사", "Acme Inc" / "Acme",
+  "PO1002" / "PO 1002" and "ООО «Ромашка»" / "Ромашка" merge. A
   form is read as written or without all its accents, never a word without
   its own ("Marcelo Sá" keeps "Sá"), and one that is also a unit symbol
   (`LanguageProfile.unit_like_legal_forms`: "kg") not after a number. A
@@ -234,12 +235,15 @@ gets its models and stores from the run's `Providers` bundle.
   name similarity also joins different organizations that share most of their
   name ("Northfield University" / "Northfield University Hospital"). When it is
   on, names link above `processing.similarity_threshold` only when their
-  *discriminator tokens* (tokens with a numeral of any script, Han numerals
+  *discriminator tokens* (the numerals of any script, Han numerals
   included, single letters, Roman numerals) are identical, their types are compatible, and, for names ending in Han,
   Hangul or Kana, their final (head) characters are equal ("가나다연구원" and
   "가나다연구소" stay apart). The tokens are the compact key's words, cut
   where they pass between a dense-script letter and another character
-  ("제3조" and "제 3 조" both 제, 3, 조), so both guards are functions of the
+  ("제3조" and "제 3 조" both 제, 3, 조; the compact key spaces a letter
+  from a digit, so "PO1002" and "PO 1002" both have 1002), and a numeral
+  inside a word is a token of its own ("東京第一工場" has 一, "百度" 百),
+  so both guards are functions of the
   compact key and never keep two spellings of one compact key apart: "the
   same entity" is that key's equality in resolution, the incremental merge,
   claim resolution and the stores' lookups by name key alike. A type-aware

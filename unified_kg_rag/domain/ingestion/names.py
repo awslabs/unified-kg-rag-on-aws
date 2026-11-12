@@ -53,9 +53,12 @@ def compact_name_key(name: str | None) -> str:
     lookups by name key) is this key's equality, and the fuzzy matcher's
     guards (:func:`discriminator_tokens`, :func:`head_character`) are
     functions of it, so they never keep two spellings of one key apart.
+    A space separates a letter from a digit next to it ("PO1002" is "PO
+    1002", as "GPT-4" is "GPT 4"), before the legal forms are stripped too
+    ("0INC" is "0 Inc", so a key is its own key).
     This is a matching key only: entity ids keep using ``entity_key``.
     """
-    return _compact(strip_legal_forms(entity_key(name)))
+    return _compact(strip_legal_forms(_break_letter_digits(entity_key(name))))
 
 
 def compact_text_key(text: str | None) -> str:
@@ -66,11 +69,25 @@ def compact_text_key(text: str | None) -> str:
     return _compact(entity_key(text))
 
 
+# Where a letter meets a digit, either way round.
+_LETTER_DIGIT = re.compile(r"(?<=[^\W\d_])(?=\d)|(?<=\d)(?=[^\W\d_])")
+
+
+def _break_letter_digits(key: str) -> str:
+    """``key`` with a space where a letter meets a digit: "po1002" is "po
+    1002" (one next to a dense-script letter is dropped again, see
+    :func:`_compact`)."""
+    return _LETTER_DIGIT.sub(" ", key)
+
+
 def _compact(key: str) -> str:
-    """``key`` (an ``entity_key``) without the spaces next to a dense-script
-    letter; a dot the dropped spaces put between two letters is joined as
-    entity_key joins one, so a compact key is its own compact key."""
-    return join_dense_middle_dots(drop_dense_script_spaces(key))
+    """``key`` (an ``entity_key``) with a space where a letter meets a digit
+    and none next to a dense-script letter: "PO1002" and "PO 1002" are one,
+    and "제 3 조" is "제3조", as a script that writes no spaces runs a number
+    into its words. A dot the dropped spaces put between two letters is
+    joined as entity_key joins one, so a compact key is its own compact
+    key."""
+    return join_dense_middle_dots(drop_dense_script_spaces(_break_letter_digits(key)))
 
 
 def display_name_order(name: str) -> tuple[int, str]:
@@ -112,15 +129,33 @@ def _script_runs(token: str) -> list[str]:
     return runs
 
 
+def _numerals(token: str) -> list[str]:
+    """The numerals ``token`` holds, each a run of numeric characters: "百度"
+    holds "百" and "東京第一工場" "一"."""
+    runs: list[str] = []
+    after_numeral = False
+    for ch in token:
+        if ch.isnumeric():
+            if after_numeral:
+                runs[-1] += ch
+            else:
+                runs.append(ch)
+        after_numeral = ch.isnumeric()
+    return runs
+
+
+def _discriminators(token: str) -> list[str]:
+    """The discriminators of a token (see :func:`discriminator_tokens`): the
+    numerals it holds, or the token itself when it is a single letter or a
+    Roman numeral."""
+    if numerals := _numerals(token):
+        return numerals
+    return [token] if _is_discriminator(token) else []
+
+
 def _is_discriminator(token: str) -> bool:
-    return (
-        any(c.isnumeric() for c in token)
-        or (len(token) == 1 and token.isalnum())
-        or (
-            len(token) > 1
-            and token.isascii()
-            and bool(_RE_ROMAN_NUMERAL.fullmatch(token))
-        )
+    return (len(token) == 1 and token.isalnum()) or (
+        len(token) > 1 and token.isascii() and bool(_RE_ROMAN_NUMERAL.fullmatch(token))
     )
 
 
@@ -140,8 +175,10 @@ def discriminator_tokens(name: str | None) -> frozenset[str]:
     so the "주" of "(주)가나다" does not count). A token counts as a
     discriminator when it
 
-    * contains a numeral of any script (``1001``, ``4``, ``2b``, ``v2``, and
-      the Han numerals: "東京第一工場" and "東京第二工場" differ in one), or
+    * is a numeral of any script, or one a token holds (``1001``, ``4``; the
+      ``2`` of ``2b`` and ``v2``, which the key spells ``2 b`` and ``v 2``;
+      the Han numerals: "東京第一工場" and "東京第二工場" differ in one, and
+      "百度" and "百度集团" share 百, where the whole of each was one), or
     * is a single letter or digit of any script (``a``, ``b``, ``甲``/``乙``,
       ``갑``/``을``, ``α``/``β``, ``ä``/``ö``; the "a" of "가나다아파트
       a동"), or
@@ -159,10 +196,10 @@ def discriminator_tokens(name: str | None) -> frozenset[str]:
     if not name:
         return frozenset()
     return frozenset(
-        run
+        discriminator
         for word in normalize_name(compact_name_key(name)).split()
         for run in _script_runs(word)
-        if _is_discriminator(run)
+        for discriminator in _discriminators(run)
     )
 
 
