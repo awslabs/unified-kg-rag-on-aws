@@ -10,7 +10,7 @@ from collections import Counter
 from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Any, ClassVar
+from typing import Any, ClassVar, final
 
 from langchain_core.callbacks import (
     AsyncCallbackManagerForRetrieverRun,
@@ -598,6 +598,7 @@ class BaseSearchStrategy(ABC):
         self.hybrid_scorer = HybridScorer(self.config, providers=self.providers)
         self.token_manager = TokenManager(self.config, providers=self.providers)
 
+    @final
     def json_answers(
         self,
         *,

@@ -19,14 +19,14 @@ This section is the single reference for extending the framework. Extensions com
 
   from langchain_core.runnables import RunnableConfig
 
-  from unified_kg_rag.adapters.retrieval.base import BaseSearchStrategy
-  from unified_kg_rag.adapters.retrieval.strategy_registry import register_strategy
-  from unified_kg_rag.domain.models import (
+  from unified_kg_rag import (
+      BaseSearchStrategy,
       Methodology,
       RetrieverRole,
       SearchQuery,
       SearchResult,
       SearchStrategy,
+      register_strategy,
   )
 
 
@@ -403,11 +403,7 @@ exception degrades only the section that raised it.
 shapes:
 
 ```python
-from unified_kg_rag import GraphRAGChain
-
-# Not exported from unified_kg_rag: an internal path that may change in any
-# release (§2.5); pin the package version when you import it.
-from unified_kg_rag.domain.models.config import TransientRetryConfig
+from unified_kg_rag import GraphRAGChain, TransientRetryConfig
 
 class MyLLMFactory:                       # structurally an LLMFactoryPort
     def get_model(self, model_id, **kwargs): ...   # returns a LangChain chat model

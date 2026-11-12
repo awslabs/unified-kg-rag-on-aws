@@ -314,7 +314,9 @@ See [`iac/README.md`](iac/README.md).
   `Config` and `get_config`, `DataIngestionPipeline`, `GraphRAGChain` with `RAGInput` / `RAGOutput` /
   `SearchOutput`, `MemoryManager`, `EvaluationManager`, the errors they raise, and the extension surface (ports,
   `Providers`, the provider, strategy, parser, renderer, schema-source and seed-source registries; a failed model
-  call is a `ModelError`: `LanguageModelError`, `EmbeddingModelError` or `RerankModelError`, #657). Import from the
+  call is a `ModelError`: `LanguageModelError`, `EmbeddingModelError` or `RerankModelError`, #657) with every type
+  their signatures name (the stored items, `SearchQuery`, `RetrievalResult`, `IndexBuildRecord`, `DocStatusRecord`,
+  `RenderContext`, `TransientRetryConfig`, ...), and `load_seed_graphs` / `resolve_extraction_schema`. Import from the
   package root; every other module path is internal and many moved, so they have no entry here (#164, #210, #216,
   #312, #333, #365, #456, #464, #584). The `unified_kg_rag.visualization` package is gone (#467). See the [Python
   library guide](docs/guides/python-library.md).

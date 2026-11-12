@@ -336,9 +336,7 @@ items.
 What the seeds convert to, with no model call and no store:
 
 ```python
-from unified_kg_rag import get_config
-# Internal, not exported from unified_kg_rag: may change in any release.
-from unified_kg_rag.application.bootstrap import load_seed_graphs, resolve_extraction_schema
+from unified_kg_rag import get_config, load_seed_graphs, resolve_extraction_schema
 
 config = resolve_extraction_schema(get_config("config.yaml"))
 for conversion in load_seed_graphs(config):

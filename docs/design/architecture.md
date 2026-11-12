@@ -286,11 +286,13 @@ module loads an infrastructure package, even transitively.
 whose `__all__` is the supported surface: the names for using the framework
 (`Config`, `get_config`, `DataIngestionPipeline`, `GraphRAGChain`, `RAGInput`
 / `RAGOutput` / `SearchOutput`, `EvaluationManager`, ...) and for extending it
-(the ports, `Providers` / `build_providers`, the registries). Other module
+(the ports, `Providers` / `build_providers`, the registries, and every type
+their signatures name, so a plugin needs no internal path). Other module
 paths are internal; only a change to the exported names, configuration keys,
 CLI flags and exit codes, or stored formats is breaking. Names resolve on
 first access (`import unified_kg_rag` loads nothing), and
-`tests/unit/test_public_api.py` pins the list.
+`tests/unit/test_public_api.py` pins the list and checks that closure (a
+`@final` helper's return type aside).
 
 ---
 
