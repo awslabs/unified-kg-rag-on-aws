@@ -45,7 +45,7 @@ preset points at `localhost` ([containers](#local-stores-in-containers)).
   not checked against the model at start): a wrong value fails at the first
   vector write or search.
 - **Reranking.** The cross-encoder downloads its model from Hugging Face on
-  the first query. Without the `cross-encoder` extra (`uv sync --extra local --extra
+  the first query. Without the `cross-encoder` extra (`uv sync --inexact --extra local --extra
   cross-encoder`; it pulls in PyTorch), or with `kind: none`, queries
   keep the fused order, logged once and reported as
   `metadata.rerank.status` `unavailable` (`disabled` for `kind: none`).
@@ -131,7 +131,7 @@ Service, so use it to check ranking before an AWS deployment
 turns on incremental indexing. It needs Docker Compose 2.23.1 or later.
 
 ```bash
-uv sync --extra local
+uv sync --inexact --extra local
 docker compose -f docker/compose.local.yaml --profile models up -d --wait
 docker compose -f docker/compose.local.yaml exec ollama ollama pull qwen2.5:7b-instruct
 docker compose -f docker/compose.local.yaml exec ollama ollama pull bge-m3

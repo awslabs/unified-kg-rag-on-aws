@@ -17,7 +17,7 @@ The console is the `console` extra; its web client is built once with
 Node.js 20.19 or later (the build output is not in the repository):
 
 ```bash
-uv sync --extra console
+uv sync --inexact --extra console
 (cd console/web && npm ci && npm run build)
 uv run run-console --config-path config.yaml --source-directory ./workspace
 ```

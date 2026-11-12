@@ -60,8 +60,8 @@ def test_skipped_files_are_warned_once_with_counts_and_remedies(
     (warning,) = _skip_warnings(caplog)
     assert f"Skipping 3 file(s) in '{tmp_path}'" in warning
     assert "2 '.docx'" in warning and "1 '.xyz'" in warning
-    assert "for .docx, install the optional 'docx' extra" in warning
-    assert "uv sync --extra docx" in warning
+    assert "for .docx, install the 'docx' extra" in warning
+    assert "uv sync --inexact --extra docx" in warning
     # An image needs the build argument.
     assert '--build-arg UV_EXTRAS="--extra docx"' in warning
     assert "for .xyz, convert them" in warning

@@ -163,7 +163,7 @@ class ObservabilityBackend(str, Enum):
 class ObservabilityConfig(BaseModel):
     """OpenTelemetry tracing of ingestion and query runs (off by default).
 
-    Needs the ``otel`` extra (``uv sync --extra otel``) for every backend. The
+    Needs the ``otel`` extra for every backend. The
     exporter endpoint and headers come from environment variables
     (``OTEL_EXPORTER_OTLP_*``, or ``LANGFUSE_*`` / ``PHOENIX_*`` for those
     backends), never from this file, so no credential lands in a config file.

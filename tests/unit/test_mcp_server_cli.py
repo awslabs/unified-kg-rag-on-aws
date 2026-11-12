@@ -37,7 +37,7 @@ def without_mcp(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_building_a_server_without_the_extra_names_it(without_mcp: None) -> None:
     assert mcp_extra_error() == MCP_EXTRA_HINT
-    with pytest.raises(ConfigurationError, match=r"mcp extra.*--extra mcp"):
+    with pytest.raises(ConfigurationError, match=r"'mcp' extra.*--extra mcp"):
         build_mcp_server(SimpleNamespace(config=Config()))  # type: ignore[arg-type]
 
 

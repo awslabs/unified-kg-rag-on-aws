@@ -38,6 +38,7 @@ from unified_kg_rag.domain.models import SearchType
 from unified_kg_rag.domain.models.config import McpServerConfig
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import ConfigurationError
+from unified_kg_rag.shared.extras import extra_hint
 
 if TYPE_CHECKING:
     from mcp.server.mcpserver import MCPServer
@@ -45,10 +46,7 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 SERVER_NAME = "unified-kg-rag"
-MCP_EXTRA_HINT = (
-    "The MCP server needs the mcp extra: install "
-    "'unified-kg-rag-on-aws[mcp]' (uv sync --extra mcp)."
-)
+MCP_EXTRA_HINT = f"The MCP server needs {extra_hint('mcp')}."
 
 _Scalar = str | int | float | bool
 _Range = dict[Literal["gt", "gte", "lt", "lte"], str | int | float]

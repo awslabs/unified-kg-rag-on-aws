@@ -47,17 +47,14 @@ from unified_kg_rag.domain.models.config import (
     ObservabilityConfig,
 )
 from unified_kg_rag.shared.exceptions import ConfigurationError
+from unified_kg_rag.shared.extras import extra_hint
 from unified_kg_rag.shared.genai import ERROR_TYPE
 from unified_kg_rag.shared.logging import get_logger
 from unified_kg_rag.shared.observability import SpanHandle, SpanKind
 
 from .endpoints import ExportSettings, resolve_export_settings
 
-_EXTRA_HINT = (
-    "install the 'otel' extra (`uv sync --extra otel`, or "
-    "`pip install -e '.[otel]'` in a source checkout) or set "
-    "observability.enabled: false"
-)
+_EXTRA_HINT = f"install {extra_hint('otel')} or set observability.enabled: false"
 
 try:
     from opentelemetry import trace

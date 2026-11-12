@@ -78,6 +78,7 @@ from unified_kg_rag.shared.exceptions import (
     IndexNotFoundError,
     InvalidFilterError,
 )
+from unified_kg_rag.shared.extras import extra_hint
 from unified_kg_rag.shared.usage import (
     UsageMeter,
     current_meter,
@@ -126,8 +127,7 @@ SourceProvenance = list[tuple[list[str], list[str]]]
 FilterKeyCheck = Callable[[dict[str, Any] | None, SearchStrategy], None]
 
 EVAL_EXTRA_HINT = (
-    "install the eval extra (`uv sync --extra eval`, or `pip install -e "
-    "'.[eval]'` in a source checkout), or leave the evaluator out of "
+    f"install {extra_hint('eval')}, or leave the evaluator out of "
     "evaluation.enabled_evaluators"
 )
 

@@ -27,7 +27,9 @@ ollama pull bge-m3
 ```
 
 `--no-dev` leaves out the contributors' test and lint tools, which `uv sync`
-and `uv run` install without it.
+and `uv run` install without it. `uv sync` is exact: a later one removes the
+extras it is not given, so add an extra to this command, or pass `--inexact`
+([Install](./aws.md#install)).
 
 - **Reranking.** The local preset reranks with a cross-encoder, which needs
   the `cross-encoder` extra: `uv sync --no-dev --extra local --extra cross-encoder`.

@@ -16,8 +16,8 @@ API 없이도 인덱스를 검색하고, 질문하고, 그래프를 따라갈 �
 서버에는 `mcp` extra(공식 MCP Python SDK)가 필요합니다.
 
 ```bash
-uv sync --extra mcp                      # from a clone
-pip install "unified-kg-rag-on-aws[mcp]" # from a package index
+uv sync --inexact --extra mcp    # from a clone
+pip install '<wheel file>[mcp]'  # from the wheel a GitHub release attaches
 ```
 
 extra가 없으면 `run-mcp-server`는 extra 이름을 알려 주고 종료 코드 2로 끝납니다.
@@ -141,7 +141,7 @@ extra가 없고, 스택의 질의 태스크는 서비스, 포트, 로드 밸런�
   명령으로 실행합니다. 저장소에 닿는 VPC 안에서, 질의 태스크 역할과 같은 권한으로 실행해야
   합니다.
 - **에이전트 옆에서 실행.** 저장소에 닿는 컴퓨터(로컬 모드나 VPC 안의 호스트)에서
-  `uv sync --extra mcp`로 설치하고, 같은 컴퓨터의 에이전트에는 stdio로 연결합니다.
+  `uv sync --inexact --extra mcp`로 설치하고, 같은 컴퓨터의 에이전트에는 stdio로 연결합니다.
 
 AgentCore나 이 서버를 실행하는 ECS 서비스 구성은 아직 AWS에서 검증하지 않았습니다.
 
@@ -183,7 +183,7 @@ app = build_mcp_app(chain, namespace="default", allowed_hosts=["mcp.example.com"
 
 | 메시지 | 해결 |
 |---|---|
-| `The MCP server needs the mcp extra` | `uv sync --extra mcp` |
+| `The MCP server needs the 'mcp' extra` | `uv sync --inexact --extra mcp` |
 | `Missing endpoint configuration for the MCP server` | `run-rag`처럼 저장소 엔드포인트를 설정([설정](./configure.ko.md)) |
 | `is not a loopback address ... needs --allow-remote` | `127.0.0.1`에 바인딩하거나, 인증 프록시 뒤에서 `--allow-remote` 추가 |
 | `Strategy '...' is not offered` / `does not hold` | `kg_describe_schema`를 호출해 목록에 있는 전략 선택 |

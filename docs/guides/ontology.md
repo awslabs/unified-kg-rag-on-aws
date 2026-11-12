@@ -15,7 +15,7 @@ read, the mapping rules and a worked example:
 The source needs the `ontology` extra (rdflib):
 
 ```bash
-uv sync --extra ontology    # or: pip install -e '.[ontology]'
+uv sync --inexact --extra ontology    # or: pip install -e '.[ontology]'
 ```
 
 Without it, every CLI run with such a config (`run-ingestion`, `run-rag`,

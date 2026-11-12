@@ -600,7 +600,9 @@ def test_the_cross_encoder_names_its_own_extra(mocker) -> None:
         side_effect=ImportError("no module"),
     )
     factory = CrossEncoderRerankFactory(Config())
-    with pytest.raises(ConfigurationError, match="uv sync --extra cross-encoder"):
+    with pytest.raises(
+        ConfigurationError, match="uv sync --inexact --extra cross-encoder"
+    ):
         factory._encoder("cross-encoder/model")
 
 

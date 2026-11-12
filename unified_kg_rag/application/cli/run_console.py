@@ -39,12 +39,18 @@ from unified_kg_rag.application.cli.help_text import doc_epilog
 from unified_kg_rag.application.config import get_config, load_cli_dotenv
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import ConfigurationError, get_logger
+from unified_kg_rag.shared.extras import extra_hint
 
 logger = get_logger(__name__)
 
 DEFAULT_PORT = 8501
 # The packages of the console extra (pyproject [project.optional-dependencies]).
-EXTRA_PACKAGES = ("fastapi", "uvicorn", "multipart")
+# The console extra's modules, by the package that installs each.
+EXTRA_PACKAGES = {
+    "fastapi": "fastapi",
+    "uvicorn": "uvicorn",
+    "multipart": "python-multipart",
+}
 # The built client: the environment variable, else the source checkout's.
 WEB_DIRECTORY_ENV = "UKR_CONSOLE_WEB_DIRECTORY"
 # The access token, when a launcher chooses it (the demo); else a new random
@@ -141,7 +147,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def missing_extra() -> list[str]:
     """The console extra's packages that are not installed."""
-    return [name for name in EXTRA_PACKAGES if importlib.util.find_spec(name) is None]
+    return [
+        package
+        for module, package in EXTRA_PACKAGES.items()
+        if importlib.util.find_spec(module) is None
+    ]
 
 
 def web_directory() -> Path:
@@ -177,8 +187,8 @@ def main(argv: list[str] | None = None) -> int:
     as_json = json_output(args)
     if missing := missing_extra():
         usage_error(
-            "run-console needs the console extra (missing: "
-            f"{', '.join(missing)}): uv sync --extra console"
+            f"run-console needs {extra_hint('console')}; missing: "
+            f"{', '.join(missing)}"
         )
     if not is_loopback(args.host) and not args.allow_remote:
         usage_error(

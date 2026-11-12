@@ -18,7 +18,7 @@ run-visualization --data-path visualization_data.json --renderers interactive --
 ```
 
 The two renderers are **`interactive`** (pyvis; it needs the `viz` extra,
-`uv sync --extra viz`, [Install](../getting-started/aws.md#install)) and
+`uv sync --inexact --extra viz`, [Install](../getting-started/aws.md#install)) and
 **`static`** (dependency-free HTML with inline SVG; it runs on a core
 install), configured under `graph.visualization` (`interactive.*`,
 `static.*`, `centrality.*`; every key: [Configuration

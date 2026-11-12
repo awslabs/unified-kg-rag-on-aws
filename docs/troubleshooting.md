@@ -25,7 +25,7 @@ them again as changed documents. A file of a type no loader reads logs
 `Skipping N file(s) in '<dir>' of a type no loader reads (...)`, naming the
 extra that reads it, and is not indexed; an incremental run keeps what it
 indexed before and does not treat it as deleted. Install an extra with
-`uv sync --extra docx` (or `unstructured`), or build the image with
+`uv sync --inexact --extra docx` (or `unstructured`), or build the image with
 `--build-arg UV_EXTRAS="--extra docx"`
 ([`iac/README.md`: Build and push the app image](../iac/README.md#2-build-and-push-the-app-image)).
 
@@ -186,9 +186,9 @@ model or credential error fails a query rather than answering from no context.
 | `... needs confirmation, but stdin is not a terminal` | Completed stages' outputs are no longer cached under the current inputs | `--yes` (recomputes them), or a new `--pipeline-id` |
 | `Stage '<stage>', upstream of this run's enabled stages, has not completed` | An earlier stage failed or lost its output | Run the earlier stages first |
 | `Stage '<stage>' is in the run's enabled stages, but no selected methodology needs it (indexing.methodologies: ...)` (`run-ingestion` exit 2, before any model call) | `--enabled-stages` lists a stage that builds only what an unselected methodology reads (`summary_tree` without `raptor`, `community_detection` without `graphrag`) | Add the methodology the message names (`--methodologies`, or `indexing.methodologies`), or leave the stage out |
-| `observability.enabled is true but OpenTelemetry is not installed` | The `otel` extra is missing | `uv sync --extra otel`, or turn tracing off |
+| `observability.enabled is true but OpenTelemetry is not installed` | The `otel` extra is missing | `uv sync --inexact --extra otel`, or turn tracing off |
 | `Skipping N file(s) in '<dir>' of a type no loader reads (2 '.docx', ...)` / `No supported source files found in '<dir>'` | The `docx` extra is not installed (`.docx`), or no loader is registered for the type. The files are not indexed; an incremental run keeps what they indexed before and lists them as `failed` (`total_files_skipped`) | Install the extra the message names (rebuild the image with it), or convert the files. Until then the skipped files' indexed content stays as it was, edits to them included |
-| `Not installed: 'rdflib' (for processing.graph_extraction.schema_source.kind 'owl')` (exit 2) | The `ontology` extra is missing | `uv sync --extra ontology`, or build the image with it ([Ontology schema in the image](./operations.md#ontology-schema-in-the-image)) |
+| `Not installed: 'rdflib' (for processing.graph_extraction.schema_source.kind 'owl')` (exit 2) | The `ontology` extra is missing | `uv sync --inexact --extra ontology`, or build the image with it ([Ontology schema in the image](./operations.md#ontology-schema-in-the-image)) |
 | `Ontology file '...' is OWL/XML ...` / `... names a remote JSON-LD context ...` / `... more than max_entity_types ...` (exit 2) | A format the `owl` source does not read, or a selection over a cap | Follow the message: convert the file, inline the context, or narrow the selection ([Ontology mapping](./reference/ontology-mapping.md#not-followed-not-read)) |
 | `Ontology file '...' holds ... (MAX_XML_TEXT_CHUNKS)` / `... (MAX_XML_LITERAL_ELEMENTS)` / `... has a line of N bytes ... (MAX_LINE_BYTES)` / `... limit on input amplification factor ...` (exit 2) | A shape the RDF/XML or N-Triples parser takes quadratic time over (refused before parsing) | Convert the file to Turtle (`robot convert --input onto.rdf --output onto.ttl`) |
 | `Ontology IRIs with whitespace: ...` / `Ontology rdf:List is cyclic ...` (exit 2) | An IRI the RDF/XML or JSON-LD parser let through, or a malformed list | Fix the named IRI (`%20` for a space), or end the list with `rdf:nil` |

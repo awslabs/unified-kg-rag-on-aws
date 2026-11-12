@@ -59,14 +59,15 @@ stored is read again: follow *Upgrading* in order.
 
 #### Install and extras
 - Python 3.11 or 3.12 is required (`>=3.11, <3.13`); 3.10 is dropped (#430).
-- A core install (`uv sync`, `pip install -e .`) is ingestion and queries: 145 to 83 packages, 937 to 335 MB on
-  Linux. Extras: `eval` (ragas, datasets, pandas, langchain, langchain-community, langchain-openai), `viz` (pyvis,
-  for the `interactive` renderer), `local`, `cross-encoder` (the local reranker, with PyTorch), `otel`,
-  `unstructured` (the richer Markdown and HTML parser), `docx` (Word files), `ontology` (rdflib), `mcp`
-  (`run-mcp-server`), `console` (`run-console`: FastAPI, Uvicorn, python-multipart). A feature whose
-  extra is missing fails naming it: the CLIs exit 2 before any work, the library raises `ConfigurationError` (also
-  under `processing.ignore_errors`). The LLM-free evaluators and the `static` renderer need no extra; the container
-  image installs none (`--build-arg UV_EXTRAS="--extra eval"` adds the ragas judge) (#467, #472, #520, #576, #636).
+- A core install (`uv sync`, `pip install -e .`) is ingestion and queries: 145 to 83 packages, 937 to 335 MB on Linux.
+  Extras: `eval` (ragas, datasets, pandas, langchain, langchain-community, langchain-openai), `viz` (pyvis, for the
+  `interactive` renderer), `local`, `cross-encoder` (the local reranker, with PyTorch), `otel`, `unstructured` (the
+  richer Markdown and HTML parser), `docx` (Word files), `ontology` (rdflib), `mcp` (`run-mcp-server`), `console`
+  (`run-console`: FastAPI, Uvicorn, python-multipart). A feature whose extra is missing fails naming it and its install
+  (from a checkout `uv sync --inexact --extra X`, as `uv sync` removes the extras it is not given; from a release wheel
+  `pip install '<wheel file>[X]'`): the CLIs exit 2 before any work, the library raises `ConfigurationError` (also under
+  `processing.ignore_errors`). The LLM-free evaluators and the `static` renderer need no extra; the container image
+  installs none (`--build-arg UV_EXTRAS="--extra eval"` adds the ragas judge) (#467, #472, #520, #576, #636).
 - No longer dependencies: `graspologic` (Leiden runs on `graspologic-native`), `bokeh` (with `contourpy`, `tornado`,
   `xyzservices`), `umap-learn`, `scikit-learn`, `nest-asyncio`; `langchain` comes only with `eval` (#225, #226,
   #465, #520, #576). Security floors follow the package that pulls the pinned one in: `pillow` in `eval`, `llvmlite`
