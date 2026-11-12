@@ -184,7 +184,11 @@ class FakeChain:
 @pytest.fixture(autouse=True)
 def _file_names(monkeypatch: pytest.MonkeyPatch) -> None:
     async def names(
-        chain: Any, suffix: str | None, unit_ids: list[str]
+        chain: Any,
+        suffix: str | None,
+        unit_ids: list[str],
+        *,
+        filters: dict[str, Any] | None = None,
     ) -> dict[str, str]:
         return dict.fromkeys(unit_ids, "logistics.txt")
 
@@ -395,6 +399,30 @@ async def test_omitted_sizes_default_within_the_caps(
     await _tools().get_entity(name="Depot")
     assert [i.top_k for i in chain.inputs] == [10, 3]
     assert limits == [3, 5]
+
+
+async def test_record_documents_are_read_under_the_callers_filters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression: a graph record's documents were resolved without the
+    # caller's filters, so it named files the filters exclude.
+    seen: list[dict[str, Any] | None] = []
+
+    async def names(
+        chain: Any,
+        suffix: str | None,
+        unit_ids: list[str],
+        *,
+        filters: dict[str, Any] | None = None,
+    ) -> dict[str, str]:
+        seen.append(filters)
+        return {}
+
+    monkeypatch.setattr(graph_lookup, "text_unit_file_names", names)
+    tools = _tools()
+    await tools.search("q", filters={"attr_region": "north"})
+    await tools.answer("q", filters={"attr_region": "north"})
+    assert seen == [{"attr_region": "north"}] * 2
 
 
 async def test_filters_are_typed_and_checked_before_the_query() -> None:

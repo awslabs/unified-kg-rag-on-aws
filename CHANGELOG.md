@@ -818,7 +818,9 @@ From a `main` checkout (formats and keys no release had):
   by default; another address needs `--allow-remote`, and the server authenticates no caller). Results share one
   chunk-oriented record (chunk id, text, score, source document id and file name, cited entities with their IRIs,
   seed-graph provenance; a text record's document id as its text unit stores it; a structured query's
-  `query_result` with its table up to 6000 characters and the entities it returned, by id and name). `kg_answer`
+  `query_result` with its table up to 6000 characters and the entities it returned, by id and name); a graph
+  record's documents are the files of its text units the caller's filters pass, read as the chain's citations read
+  them (`text_units.fetch_text_units`). `kg_answer`
   returns the answer first, then by default only the records it cites (`records`: `cited`, `all`, `none`; the first
   `mcp.uncited_records`, `records_kept: top`, when it cites none; `all` lists the model-written sections too), and
   takes the caller's conversation as an optional bounded `history` for a follow-up question (`RAGInput.history`; the

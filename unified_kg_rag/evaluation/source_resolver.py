@@ -19,12 +19,11 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from typing import Protocol
 
-from unified_kg_rag.domain.models import (
-    Config,
-    RetrievalResult,
-    SearchQuery,
-    SearchType,
+from unified_kg_rag.application.retrieval.text_units import (
+    TextUnitReader,
+    fetch_text_units,
 )
+from unified_kg_rag.domain.models import Config
 from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.shared import get_logger
 
@@ -41,25 +40,15 @@ class SourceFileResolver(Protocol):
         ...
 
 
-class _IndexLimits(Protocol):
-    @property
-    def id_batch_size(self) -> int: ...
-
-
-class _DocumentRetriever(Protocol):
-    async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]: ...
-
-    async def aindex_limits(self, prefix: str, suffix: str | None) -> _IndexLimits: ...
-
-
 class TextUnitFileResolver:
-    """Resolve text-unit ids to file names via a document retriever, in
-    batches one fetch by id can name (``IndexLimits.id_batch_size``)."""
+    """Resolve text-unit ids to file names via a document retriever
+    (``text_units.fetch_text_units``), caching each settled answer per
+    index suffix."""
 
     def __init__(
-        self, config: Config, retriever_provider: Callable[[], _DocumentRetriever]
+        self, config: Config, retriever_provider: Callable[[], TextUnitReader]
     ) -> None:
-        self._index_prefix = config.indexing.opensearch.text_units_index_prefix
+        self._config = config
         self._retriever_provider = retriever_provider
         # (suffix, text_unit_id) -> file name, or None when the id is unknown.
         self._cache: dict[tuple[str | None, str], str | None] = {}
@@ -70,55 +59,25 @@ class TextUnitFileResolver:
         wanted = list(dict.fromkeys(str(i) for i in text_unit_ids if i))
         missing = [i for i in wanted if (suffix, i) not in self._cache]
         if missing:
-            retriever = self._retriever_provider()
-            size = await self._batch_size(retriever, suffix)
-            fetched: list[tuple[list[str], dict[str, str], bool]] = []
-            for start in range(0, len(missing), size):
-                batch = missing[start : start + size]
-                found, answered = await self._fetch(retriever, batch, suffix)
-                fetched.append((batch, found, answered))
-            # A miss is cached only from a batch that itself answered with a
-            # hit (a failed request degrades to none, as a batch of unknown
-            # ids does: another batch's answer does not tell them apart, so a
-            # batch of unknown ids is asked again next time) and that fit the
-            # limits read after the fetches (a reindex lowered them: the hits
-            # were cut).
-            size = await self._batch_size(retriever, suffix)
-            for batch, found, answered in fetched:
-                fits = answered and len(batch) <= size
-                for unit_id in batch:
-                    if fits or unit_id in found:
-                        self._cache[(suffix, unit_id)] = found.get(unit_id)
+            fetched = await fetch_text_units(
+                self._retriever_provider(),
+                self._config,
+                suffix,
+                missing,
+                fields=None,
+            )
+            # A miss is cached only once settled: from a batch that itself
+            # answered with a hit (a failed request degrades to none, as a
+            # batch of unknown ids does) and that fit the limits read after
+            # the fetch (a reindex lowered them: the hits were cut).
+            for unit_id in missing:
+                if unit_id in fetched.settled:
+                    metadata = fetched.units.get(unit_id)
+                    self._cache[(suffix, unit_id)] = (
+                        source_fields.file_name(metadata) if metadata else None
+                    )
         return {
             unit_id: name
             for unit_id in wanted
             if (name := self._cache.get((suffix, unit_id)))
         }
-
-    async def _batch_size(
-        self, retriever: _DocumentRetriever, suffix: str | None
-    ) -> int:
-        limits = await retriever.aindex_limits(self._index_prefix, suffix)
-        return limits.id_batch_size
-
-    async def _fetch(
-        self, retriever: _DocumentRetriever, batch: list[str], suffix: str | None
-    ) -> tuple[dict[str, str], bool]:
-        """The file names of ``batch``'s text units, and whether any came
-        back."""
-        query = SearchQuery(
-            query="",
-            search_type=SearchType.LEXICAL,
-            top_k=len(batch),
-            index_prefixes=[self._index_prefix],
-            suffix=suffix,
-            filters={"id": batch},
-        )
-        found: dict[str, str] = {}
-        hits = await retriever.aretrieve(query)
-        for hit in hits:
-            metadata = hit.metadata or {}
-            unit_id = str(metadata.get("id") or hit.source)
-            if name := source_fields.file_name(metadata):
-                found[unit_id] = name
-        return found, bool(hits)
