@@ -317,6 +317,10 @@ On the 200 MuSiQue questions:
 
 No change was significantly better on the answers, so both defaults stayed
 ([Search strategies](./retrieval.md#search-strategies--when-to-use-which)).
+These runs took each hit's chunks in chunk-id order. `weight` now orders
+them as upstream LightRAG does, those more matched hits cite first, then by
+chunk id; no run compared the two orders yet, and a run on `mix` and
+`hybrid` is queued.
 
 ## Retrieval switches
 

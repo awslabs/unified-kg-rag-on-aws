@@ -1796,6 +1796,9 @@ Queries and retrieval.
 - LightRAG `mix`/`hybrid` context includes the chunks the matched relationships cite (offline hybrid one-hop
   gold-chunk recall 0.30, now 0.86, 0.96 with rerank), and incremental and full builds pick the same chunks (#521,
   #530).
+- LightRAG `mix`/`hybrid` (`kg_chunk_pick_method: weight`) take each matched hit's chunks as upstream does, those
+  more matched hits of the side cite first, then by chunk id: in id (hash) order a chunk three hits cite, kept on the
+  first, could miss that hit's slots. No run measured the change yet; one on `mix` and `hybrid` is queued.
 - Hybrid search on OpenSearch 2.13 keeps the `size`-th lexical hit, kNN on lucene uses `vector_search.ef_search`,
   and a filter on an attribute an index never mapped no longer fails vector and hybrid searches (#295, #306).
 - `auto` no longer routes to `global` or `drift` without community reports, and falls back to `local` only when it
