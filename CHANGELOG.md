@@ -1574,7 +1574,8 @@ From a `main` checkout (formats and keys no release had):
   "Who is the CEO of 한빛전자?" and "Compare 한빛전자 and 아크미" English, "with 문 사용법" Korean; a shouted text (three or more
   words, all in capitals; beside another script one longer than two letters, so "AS IS / TO BE 비교" is Korean)
   reads its words lowercased, so "QUI A SIGNÉ LE CONTRAT ?" is French; a colon joins a word only before "//", a digit
-  or a colon ("Frage:Wer hat …" is German); among Latin-script languages, Spanish and Portuguese with their "how
+  or a colon ("Frage:Wer hat …" is German), and the whole "::" or "://" joins (`std::vector`, `https://the` count no
+  words); among Latin-script languages, Spanish and Portuguese with their "how
   many" words ("como" both: the index language breaks the tie), an elision only one of them
   writes ("dell'", "qu'"; not "d'", French and
   Italian) counts with the function words, and a tie the index language is not in goes to the language whose own
