@@ -64,8 +64,8 @@ def add_config_arguments(
         help=(
             "Ignore config keys (and UKR__ environment variables) the "
             "configuration does not define, with a warning each, instead of "
-            "failing. A misspelled key otherwise leaves its setting at the "
-            "default without a word"
+            "failing: the load fails on one by default, since a misspelled key "
+            "would leave its setting at the default"
         ),
     )
 

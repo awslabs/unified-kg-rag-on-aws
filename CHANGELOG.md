@@ -59,7 +59,7 @@ stored is read again: follow *Upgrading* in order.
 
 #### Install and extras
 - Python 3.11 or 3.12 is required (`>=3.11, <3.13`); 3.10 is dropped (#430).
-- A core install (`uv sync`, `pip install -e .`) is ingestion and queries: 145 to 83 packages, 937 to 335 MB on Linux.
+- A core install (`uv sync`, `pip install -e .`) is ingestion and queries: 145 to 78 packages, 937 to 335 MB on Linux.
   Extras: `eval` (ragas, datasets, pandas, langchain, langchain-community, langchain-openai), `viz` (pyvis, for the
   `interactive` renderer), `local`, `cross-encoder` (the local reranker, with PyTorch), `otel`, `unstructured` (the
   richer Markdown and HTML parser), `docx` (Word files), `ontology` (rdflib), `mcp` (`run-mcp-server`), `console`
@@ -83,6 +83,9 @@ stored is read again: follow *Upgrading* in order.
   (`processing.chunk_concurrency` and `processing.batch_size` are `processing.max_concurrency`, one pool of in-flight
   calls, #296; `indexing.cross_run_fuzzy_merge` is `processing.fuzzy_entity_resolution`, #214), a removed key loads
   with a WARNING and is ignored: the generated [Moved
+- Unknown keys, in the file or as `UKR__` variables, fail the load; `--allow-unknown-keys` (every CLI) or
+  `allow_unknown_keys=True` (`get_config`, `ConfigLoader`) warns instead (#335). A moved key fails naming its
+  replacement, a removed key loads with a WARNING and is ignored: the generated [Moved
   keys](docs/reference/configuration.md#moved-keys) and [Removed keys](docs/reference/configuration.md#removed-keys)
   tables list them (#334, #344, #467, #468, #470, #577). [`config-template.yaml`](config-template.yaml) is a short
   starting file; every key is in the [configuration reference](docs/reference/configuration.md) (#468).
@@ -205,7 +208,7 @@ stored is read again: follow *Upgrading* in order.
 | `search.query_timeout_seconds` | no deadline | 180 s; `null` turns it off (#522) |
 | `search.model_timeout_seconds` / `model_max_attempts` | the ingestion client's 300 s, 6 requests | 90 s / 2 for query-time calls (#522) |
 | `search.auto_speculative_extraction` | extraction after the router | `true`: alongside the router call (#525) |
-| `search.output_ceilings` | the model's maximum output | 4096 for routing, query extraction and relevance ratings (#525) |
+| `search.output_ceilings` | the model's maximum output | 1024 for routing, 4096 for query extraction and relevance ratings (#525) |
 | `search.answer_prompt_style` | every strategy concise | `{global: comprehensive}`, merged under your map (#533) |
 | `search.global_search.evidence_tokens` | every cited report the budget holds | 4000; `null` removes the cap (#533) |
 | `search.local_search.text_unit_ranking` (local's text-unit order) | by how many expanded entities cite a unit (no setting) | `ppr`, HippoRAG 2's PageRank; `support` is the earlier order, which DRIFT's follow-ups keep (`search.drift_search.text_unit_ranking`) (#597, #602, #607) |
@@ -519,23 +522,18 @@ From a `main` checkout (formats and keys no release had):
   stage-cache keys hold the prompts in effect (a pipeline id resumed across a prompt change starts over); extraction
   records under earlier keys (other description summary settings, #541-#556) and claims under an earlier reading of
   their dates (#612, #624) are no longer looked up. Run one reset (`indexing.reset: true`) with a new or no
-  `--pipeline-id`: incremental runs keep stored entities under their earlier ids beside the new ones. It reuses the
-  stored graph extraction and gleaning records, their entity and relationship ids minted again from the names as
-  extraction mints them (a record a build before #556 stored under other summary settings or `models` tiers is
-  extracted again), and asks one summary per entity or relationship over the summary threshold, the
-  reports of the communities whose input changed (most of them) and, with claim extraction on, every unit's claims
-  (one call per unit that states an entity).
-- One reset covers all of these and the items below. On an index built with #565 or later it reuses the stored
-  extraction records and vectors: beyond what the items below name, the model is asked only for the reports of the
-  communities that cluster differently and a summary and embedding per newly merged entity over the threshold. On
-  an index built before #565 it costs a first build (the #565 prompts below).
+  `--pipeline-id`: incremental runs keep stored entities under their earlier ids beside the new ones. That one reset
+  covers this item and every item below, and its cost depends on the index's age. On an index built with #565 or
+  later it reuses the stored graph extraction and gleaning records and the vectors (entity and relationship ids are
+  minted again from the names, as extraction mints them) and asks the model one summary, and one embedding, per entity
+  or relationship over the summary threshold, the reports of the communities whose input changed (most of them) and,
+  with claim extraction on, every unit's claims (one call per unit that states an entity). A record a build before
+  #556 stored under other summary settings or `models` tiers is extracted again, and on an index built before #565
+  the reset costs a first build (the #565 prompts below).
 - Stored communities keep positional names (`Level 0 Community 3`) until the next reset, which renames them and asks
   every report once more; later resets reuse the answers (#539).
-- #640 claim statuses: claims stored before it keep the status the model wrote (`True.`, `Suspected`) until a
-  reset, which reads them from the stored records into the vocabulary without an extraction call; that first reset
-  also asks again the community reports whose input held such a status (their input changed). Claim records stored
-  since #640 keep the status that build read (`uncertain` as `disputed`) until `--force-rebuild` extracts them again
-  (#644).
+- #640 claim statuses: claims stored before it keep the status the model wrote (`True.`, `Suspected`) until the
+  reset, which asks every unit's claims again (above).
 - Claims and report switches: with claim extraction on and the registry on, a namespace whose build record does not
   name claims (claims turned on after its build, or an incremental claims-off run since) is rebuilt once by its next
   run from its stored extractions, asking claims only of the units without a stored claim record (every unit after
@@ -903,7 +901,9 @@ From a `main` checkout (formats and keys no release had):
   `run-ingestion` and `run-eval` in child processes. It binds `127.0.0.1` (another address needs `--allow-remote`),
   requires a per-launch access token, refuses paths outside its directories, cross-site requests and uploads of a
   file ingestion does not read (another type, or hidden) or naming one path as a file and a folder, writes an
-  upload all or none (a refused one leaves no folder), names an error by its class (`ErrorClass`), and loads
+  upload all or none (a refused one leaves no folder) and atomically (a temporary file 0600 until the rename, a
+  re-upload keeping the replaced file's mode; a name past its folder's limit is refused up front, `path_refused`),
+  names an error by its class (`ErrorClass`), and loads
   nothing from another host. The web client
   (`console/web/`, Vite, React, TypeScript) is in English and nine more languages, in a light and a dark theme (the
   system's unless one is chosen in the top bar), set in Pretendard (Pretendard JP for Japanese, JetBrains Mono for
@@ -1034,7 +1034,8 @@ From a `main` checkout (formats and keys no release had):
   `<reasoning>` block is dropped before every parser, streamed answers included: it began every answer, was stored
   in descriptions, misled the router and hid the `[NO_ANSWER]` token. An Ollama model whose `/api/show` lists
   `thinking` is built with `reasoning=True`, and an OpenAI-compatible server's `reasoning_content` is kept beside
-  the answer. See [local mode](docs/guides/local-mode.md).
+  the answer. The preset adds anonymous OpenSearch access only without a password (#617). See
+  [local mode](docs/guides/local-mode.md).
 - Filter keys for a document's metadata, `attr_<key>`, on every index and graph store, and for an entity's own
   extracted attribute, `attributes.<key>` (the entities index's key), strictly on every store: a graph store no
   longer matches `attr_<key>` against an entity's own attribute (`attr_category:finance` dropped an entity of a
@@ -1171,7 +1172,8 @@ From a `main` checkout (formats and keys no release had):
 - Schema and seed sources in S3: a `path` may be an `s3://bucket/key` object or, for `owl` and seeds, a prefix read
   as a directory; sizes are checked before any byte is fetched, and a missing, denied (`s3:GetObject` /
   `s3:ListBucket`), empty or oversized source fails with what to fix. Moving between local and S3 re-extracts
-  nothing; `run-rag` loads the schema on the first query with a schema filter key (#493, #495, #579).
+  nothing; `run-rag` loads the schema on the first query with a schema filter key; an S3 ontology without a reader
+  raises `SchemaSourceError` (#493, #495, #579, #617).
 - `run-prompt-tuning --schema-out PATH` drafts a schema file: the profile's entity types, the relationship types the
   tuning examples state most (with counts), patterns seen at least twice per endpoint-type pair, and every
   configured type with its description and IRI; a draft over an `owl` source keeps that source's patterns and names
@@ -1249,6 +1251,8 @@ From a `main` checkout (formats and keys no release had):
   (#607); bridge entities are told apart by names folded as local search's seeds are. A strategy declares the run
   record it keeps and the model text in it (`register_strategy(run_record=RunRecord(...))`): the chain screens and
   clears every declared record, not two named ones. See
+  (#607); bridge entities are told apart by names folded as local search's seeds are, and the controller writes its
+  follow-up queries in the index language (#613, #619). See
   [query](docs/guides/query.md#follow-up-rounds-for-multi-hop-questions).
 - LLM usage accounting, tracing or not: calls, input and output tokens, prompt-cache reads and writes, resent and
   failed requests and cache hits per model role and id, in `RAGOutput` / `SearchOutput.metadata["usage"]`,
@@ -1798,10 +1802,10 @@ Queries and retrieval.
 - A query is translated only when ingestion translates or the caller asks (`RAGInput.target_language`), and its
   entities and keywords are extracted in the index language even when the caller asks for another: only the text
   units carry the requested language, so they matched no entity, relationship or report (#567, #583, #619).
-- DRIFT (primer, actions, HyDE), iterative's controller and global search's map points write in the index language
-  (`source_language` with translation disabled), not always `target_language` nor a requested language, whose
-  follow-up queries found no entity (#613, #619); query entities a model separates with `、`, `，` or `；` (or one per
-  line) are split into entities, not read as one (#605).
+- DRIFT (primer, actions, HyDE) and global search's map points write in the index language (`source_language` with
+  translation disabled), not always `target_language` nor a requested language, whose follow-up queries found no
+  entity (#613, #619); query entities a model separates with `、`, `，` or `；` (or one per line) are split into
+  entities, not read as one (#605).
 - `simple` leaves the claims index out of its sweep when claim extraction found no claim (and built none), as
   `local` does: every query WARNed "Index not found" for it.
 - Store failures fail the query instead of answering from no context (unreachable, denied, rejected or overloaded
@@ -2020,9 +2024,8 @@ Evaluation, visualization and tuning.
   just before the copy, also when the file is opened only then), keeps the staged file and names it in the error,
   and `fsync` flushes the copy too; a write that asks for `fsync` flushes the directory after the rename where it
   may. A valid name of 218-255 bytes (about
-  73 or more Korean or Japanese characters, a console upload's too) is written atomically: its temporary name is
-  cut to fit the directory's name limit (255 bytes, 143 on eCryptfs, 255 where the file system says none), and a
-  console upload's name past its folder's limit is refused up front (`path_refused`), not when it is renamed.
+  73 or more Korean or Japanese characters) is written atomically: its temporary name is cut to fit the directory's
+  name limit (255 bytes, 143 on eCryptfs, 255 where the file system says none).
 - `graph_aware` matches a word through its possessive and finds a Latin word or number inside Chinese or Japanese
   text (`AWS` in `答案是AWS公司`) (#516, #563).
 - `run-visualization` rejects unknown `--renderers` and invalid data (exit 2), lays out only the drawn nodes, keeps
@@ -2073,16 +2076,14 @@ Deployment (CDK).
   for the cache bucket or guardrail name fails the synth (not the deploy); an odd `opensearch_count` synthesized
   without an account says why only 2 AZs are seen; the endpoint count in `iac/README.md` is six (#617).
 - Configuration: `aws.opensearch.password` with `allow_anonymous` (the password was dropped) and `use_iam` with a
-  username or password (ignored) are refused, and the local preset no longer adds anonymous access beside a password;
-  a negative `search.fusion.fusion_weights` value is refused. A source directory that is a file raises
-  `ConfigurationError`, an S3 ontology without a reader `SchemaSourceError`, and creating an OpenSearch index that
-  exists raises `AWSServiceError` without being logged as an unexpected error (#617).
+  username or password (ignored) are refused; a negative `search.fusion.fusion_weights` value is refused. A source
+  directory that is a file raises `ConfigurationError`, and creating an OpenSearch index that exists raises
+  `AWSServiceError` without being logged as an unexpected error (#617).
 
 ### Security
 - An atomic write's temporary file (beside the file, or staged in the shared temp directory) is created 0600 and
   given the file's mode only at the rename, so other local users cannot read a private file's new text while an
-  export streams; it was 0644 under the default umask. A console upload's are made the same way, and a re-upload
-  keeps the replaced file's mode, where a 0600 file came back 0644.
+  export streams; it was 0644 under the default umask.
 - The image upgrades `zlib1g` to the Debian security release fixing CVE-2026-76844 and CVE-2026-85091 (HIGH),
   which the base image still carries, so the image scan passes (#632).
 - Pinned floors for advisories: pypdf 6.21.4 (seven high-severity denial-of-service advisories, e.g.
