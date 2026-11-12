@@ -238,6 +238,32 @@ def test_an_edge_of_another_spelling_merges_into_the_stored_one() -> None:
     assert harness.registry_problems(reverted) == []
 
 
+@pytest.mark.parametrize(
+    "spellings",
+    [
+        ("한·빛", "〈한빛〉", "(주)한빛"),
+        ("中・日", "中日", "中日公司"),
+        ("ひ・かり", "「ひかり」", "株式会社ひかり"),
+    ],
+    ids=["ko", "zh", "ja"],
+)
+def test_a_spelling_with_a_middle_dot_links_as_its_key_does(
+    spellings: tuple[str, str, str],
+) -> None:
+    # "한·빛" and "〈한빛〉" are one entity (one key); the identifier guard
+    # read "한" and "빛" as two tokens of the dotted spelling only, so
+    # whether "(주)한빛" linked to the entity followed its display name: a
+    # run deleting g.txt and adding n.txt diverged from a full build.
+    dotted, quoted, with_form = spellings
+    kept: Corpus = {"/c/k.txt": [[(_B, dotted, 1)]]}
+    final: Corpus = {**kept, "/c/n.txt": [[(_D, quoted, 1), (_D, with_form, 1)]]}
+    harness = IncrementalRun()
+    for corpus in ({**kept, "/c/g.txt": [[(_D, _B, 1)]]}, final):
+        harness.run(corpus)
+
+    assert harness.state() == expected_state(final)
+
+
 def test_a_rekey_interrupted_mid_commit_converges() -> None:
     corpus: Corpus = {
         "/c/c.txt": [[(_V, _D, 1)]],

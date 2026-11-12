@@ -30,6 +30,7 @@ from tests.integration.test_embedded_e2e import (
 from tests.integration.test_embedded_e2e import no_aws as _no_aws  # noqa: F401
 from unified_kg_rag.application.ingestion import pipeline_stages as ps
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
 from unified_kg_rag.domain.models import (
     Config,
     LanguageCode,
@@ -37,6 +38,7 @@ from unified_kg_rag.domain.models import (
     PipelineStageStatus,
     PipelineStageType,
 )
+from unified_kg_rag.shared.utils import generate_stable_id
 
 pytestmark = pytest.mark.integration
 
@@ -223,6 +225,55 @@ def test_a_reset_reuses_the_records_and_force_rebuild_does_not(
     store.ingest(corpus, force_rebuild=True)
     assert model.calls == Counter(extract=1, glean=1)
     assert store.edges() == edges
+
+
+def test_a_reset_gives_records_stored_under_other_keys_the_ids_of_now(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Records an earlier build stored hold the ids its entity_key minted; a
+    # reset reusing them rebuilt the graph under those ids, which a new
+    # document's statement of the same name no longer takes.
+    model = _Model()
+    store = _Store(tmp_path, model)
+    corpus = {"a.txt": "Acme supplies goods to Buyer here."}
+    with monkeypatch.context() as earlier:
+        earlier.setattr(
+            BaseProcessor,
+            "_generate_entity_id",
+            staticmethod(lambda name: generate_stable_id(f"earlier:{name}")),
+        )
+        earlier.setattr(
+            BaseProcessor,
+            "_generate_relationship_id",
+            staticmethod(lambda *names: generate_stable_id(f"earlier:{names}")),
+        )
+        store.ingest(corpus)
+
+    store.config.indexing.reset = True
+    model.calls.clear()
+    store.ingest(corpus)
+
+    assert model.calls == Counter()
+    graph = store.providers.build_graph_indexer()
+    try:
+        names = graph.read_entity_names()
+        relationships = graph.read_relationships(
+            graph.find_incident_relationship_ids([i for i, _ in names])
+        )
+    finally:
+        graph.close()
+    assert sorted(names) == sorted(
+        (BaseProcessor._generate_entity_id(name), name) for _, name in names
+    )
+    assert relationships
+    for r in relationships:
+        assert (r.id, r.source_id, r.target_id) == (
+            BaseProcessor._generate_relationship_id(
+                r.source_name or "", r.target_name or "", r.type or ""
+            ),
+            BaseProcessor._generate_entity_id(r.source_name or ""),
+            BaseProcessor._generate_entity_id(r.target_name or ""),
+        )
 
 
 def test_a_reset_keeps_only_the_records_its_text_units_name(

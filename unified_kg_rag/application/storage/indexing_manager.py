@@ -198,7 +198,7 @@ class IndexingManager:
         # By (suffix, id), the stored claims the claim merge read: the
         # commit writes the derived claims under other ids first
         # (write_claims_new_ids_first).
-        self._stored_claim_ids: set[tuple[str, str]] = set()
+        self._stored_claims: dict[tuple[str, str], Claim] = {}
         # The suffixes whose graph merge found nothing stored.
         self._fresh: set[str] = set()
         # By suffix, the stored items a full build does not have (edges
@@ -696,11 +696,15 @@ class IndexingManager:
         """Delta upsert of the claims, those under new ids before those
         overwriting a stored claim the merge read
         (:func:`write_claims_new_ids_first`)."""
-        stored, self._stored_claim_ids = self._stored_claim_ids, set()
+        stored, self._stored_claims = self._stored_claims, {}
         return write_claims_new_ids_first(
             self.vector_indexer,
             claims,
-            {c.id for c in claims if (BaseIndexer.get_suffix(c), c.id) in stored},
+            {
+                c.id: stored[key]
+                for c in claims
+                if (key := (BaseIndexer.get_suffix(c), c.id)) in stored
+            },
         )
 
     def _upsert_vector_relationships(
@@ -1169,7 +1173,7 @@ class IndexingManager:
             self._fresh,
             self._rank_only,
             self._rank_only_copies,
-            self._stored_claim_ids,
+            self._stored_claims,
             self._derived_entities,
         ):
             state.clear()

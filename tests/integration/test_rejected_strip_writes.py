@@ -459,6 +459,55 @@ def test_a_rejected_split_part_leaves_its_neighbours_rank(
 @pytest.mark.parametrize(
     "names",
     [
+        ("“Acme”", "Acme Inc", "Acme Corp", "Buyer"),
+        ("「한빛」", "한빛 주식회사", "주식회사 「한빛」", "구매자"),
+        ("「ひかり」", "ひかり・株式会社", "株式会社「ひかり」", "買い手"),
+        ("「ひかり」", "ひかり・株式会社", "株式会社「ひかり」", "구매자"),
+    ],
+    ids=["en", "ko", "ja", "mix"],
+)
+@pytest.mark.parametrize("stop", ["rejected", "killed"])
+def test_a_stored_edge_that_gains_a_statement_of_its_unit_is_noted(
+    names: tuple[str, str, str, str], stop: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # k1.txt's first unit states the edge to the buyer under two spellings.
+    # Deleting i0.txt moves the first spelling's statement from the third
+    # spelling's edge to the second's, which cites that unit already: its
+    # graph copy gains a statement but no unit, and its vector write is
+    # rejected (or the run dies before it). No copy cites a removed unit,
+    # so the retry did not find it: its vector copy lacked the line and
+    # the strength for good.
+    first, second, third, buyer = names
+    final: Corpus = {
+        "/corpus/k0.txt": [[(buyer, first, 2), (buyer, second, 1)]],
+        "/corpus/k1.txt": [
+            [(second, buyer, 3), (first, buyer, 3)],
+            [(third, buyer, 2)],
+        ],
+        "/corpus/n0.txt": [[(third, buyer, 2)]],
+    }
+    config = _config()
+    harness = IncrementalRun(FakeDocStatusStore(), config)
+    harness.run({**final, "/corpus/i0.txt": [[(buyer, first, 2)]]})
+
+    if stop == "rejected":
+        harness.run(final, fail=lambda at, _i: at == "vector.upsert_relationships")
+    else:
+
+        def killed(*_args: object, **_kwargs: object) -> None:
+            raise Killed("between the strip's graph and vector edge writes")
+
+        with monkeypatch.context() as patched:
+            patched.setattr(harness.vector, "upsert_relationships", killed)
+            patched.setattr(harness.vector, "update_relationship_lineage", killed)
+            assert harness.run(final)
+
+    _converges(harness, final, config)
+
+
+@pytest.mark.parametrize(
+    "names",
+    [
         ("Acme", "Acme Co", "ACME Inc.", "Acme Corp", "Buyer", "Depot", "Vendor"),
         (
             "한빛",
@@ -575,5 +624,108 @@ def test_a_rejected_entity_gaining_a_name_key_keeps_the_spelling_it_takes(
         {**kept, **other},
         fail=lambda at, i: at == "graph.upsert_entities" and i in taker,
     )
+
+    _converges(harness, kept, config)
+
+
+_STRANDED_NAMES = pytest.mark.parametrize(
+    "names",
+    [
+        ("Acme Inc", "Acme", "Acme Corp", "ACME", "Vendor", "Buyer"),
+        ("(주)한빛", "한빛", "한빛 주식회사", "한빛 ", "공급사", "구매자"),
+        ("ひかり株式会社", "ひかり", "株式会社ひかり", "ひかり", "仕入先", "買い手"),
+        ("Acme Inc", "Acme", "Acme 주식회사", "ACME", "仕入先", "구매자"),
+    ],
+    ids=["en", "ko", "ja", "mix"],
+)
+
+
+def _strand_an_edge(
+    names: tuple[str, str, str, str, str, str],
+    stop: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[IncrementalRun, Config, Corpus, Corpus]:
+    """A harness whose last run stopped a strip before re-pointing a kept
+    document's edge, and the kept and the removed corpus.
+
+    Deleting h0.txt splits the first spelling off the entity the others
+    fold into (the type vote changes): the strip writes the part and the
+    origin, which now cites only i0.txt's units, and stops before
+    re-pointing k0.txt's edge at the part (rejected, or the run dies)."""
+    first, plain, other, upper, vendor, buyer = names
+    kept: Corpus = {"/corpus/k0.txt": [[(first, vendor, 1)]]}
+    removed: Corpus = {"/corpus/h0.txt": [[(buyer, plain, 1)]]}
+    shared: Corpus = {
+        **kept,
+        "/corpus/i0.txt": [[("Depot", other, 2)], [(vendor, upper, 2)]],
+    }
+    config = _config()
+    harness = IncrementalRun(FakeDocStatusStore(), config)
+    harness.run({**shared, **removed})
+
+    if stop == "rejected":
+        harness.run(shared, fail=lambda at, _i: at == "graph.upsert_relationships")
+    else:
+
+        def killed(*_args: object, **_kwargs: object) -> None:
+            raise Killed("between the strip's vertex and edge writes")
+
+        with monkeypatch.context() as patched:
+            patched.setattr(harness.graph, "upsert_relationships", killed)
+            assert harness.run(shared)
+    return harness, config, kept, removed
+
+
+@pytest.mark.parametrize("returned", [False, True], ids=["removed", "returned"])
+@pytest.mark.parametrize("stop", ["rejected", "killed"])
+@_STRANDED_NAMES
+def test_an_edge_left_at_a_vertex_citing_only_removed_units_is_kept(
+    names: tuple[str, str, str, str, str, str],
+    stop: str,
+    returned: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The next run deletes i0.txt (with h0.txt, or with h0.txt back):
+    # deleting the origin, every unit of it removed, deleted k0.txt's edge
+    # with it, and k0.txt lost its only edge for good.
+    harness, config, kept, removed = _strand_an_edge(names, stop, monkeypatch)
+
+    _converges(harness, {**kept, **removed} if returned else kept, config)
+
+
+@pytest.mark.parametrize("after", ["unnoted", "killed_before_retiring"])
+@_STRANDED_NAMES
+def test_a_vertex_holding_a_kept_edge_goes_once_the_edge_is_re_pointed(
+    names: tuple[str, str, str, str, str, str],
+    after: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The removal finds the edge at the vertex in the graph, not only in
+    # the pending-strip note; and the vertex, left citing no text unit, is
+    # not written but retired: a run killed before the retired ids are
+    # deleted leaves its stored copy, which still cites the removed units.
+    harness, config, kept, _removed = _strand_an_edge(names, "rejected", monkeypatch)
+    if after == "unnoted":
+        harness.vector.delete_extraction_records(["pending-strip"], suffix="default")
+        harness.run(kept)
+    else:
+        deletes: list[object] = []
+        delete = harness.graph.delete_by_id
+
+        def killed_second(*args: object, **kwargs: object) -> object:
+            deletes.append(args)
+            if len(deletes) == 2:
+                raise Killed("before the strip's retired ids are deleted")
+            return delete(*args, **kwargs)
+
+        with monkeypatch.context() as patched:
+            patched.setattr(harness.graph, "delete_by_id", killed_second)
+            assert harness.run(kept)
+        # No copy without provenance: the vertex keeps the units a retry
+        # finds it by.
+        graph_entities = harness.graph.read_entities(
+            sorted(harness.graph.ids("entities"))
+        )
+        assert all(e.text_unit_ids for e in graph_entities)
 
     _converges(harness, kept, config)

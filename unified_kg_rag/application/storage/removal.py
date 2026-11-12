@@ -3,7 +3,11 @@
 """Removal of text units (removed or changed documents) from both stores.
 
 What only the removed text units state is deleted; what other text units
-state too is stripped of them and derived again (the *strip*).
+state too is stripped of them and derived again (the *strip*). So is an
+entity citing only removed text units with an edge citing a kept one at it
+(a strip stopped before re-pointing the edge left it there): deleted, its
+vertex took the edge with it; stripped, it is retired once the edge is
+re-pointed.
 
 A strip is all or retry. It writes in phases, each after the ones it
 depends on: the claims under new ids, then the stored claims; the new
@@ -52,6 +56,7 @@ from unified_kg_rag.domain.ingestion.merge import (
 )
 from unified_kg_rag.domain.ingestion.methodologies import artifacts_to_build
 from unified_kg_rag.domain.ingestion.names import compact_name_key
+from unified_kg_rag.domain.ingestion.relationship_weights import text_unit_weights
 from unified_kg_rag.domain.models import Entity, Relationship
 from unified_kg_rag.ports.indexer import IndexingStats
 from unified_kg_rag.shared import NamespaceLeaseError, get_logger
@@ -190,7 +195,7 @@ class TextUnitRemoval:
                 cited[entity.id] = sorted(
                     set(cited[entity.id]) | set(entity.text_unit_ids or [])
                 )
-        edges = self._graph_edges_citing(suffix, text_unit_ids, cited)
+        edges, held = self._graph_edges_citing(suffix, text_unit_ids, cited)
         relationships = {
             **m._vector_citing(
                 prefixes.relationships_index_prefix, text_unit_ids, suffix
@@ -253,16 +258,24 @@ class TextUnitRemoval:
             live=live,
             note=note,
             noted_claims=noted_claims,
+            held=held,
         )
 
     def _graph_edges_citing(
-        self, suffix: str, text_unit_ids: list[str], cited: Collection[str]
-    ) -> dict[str, list[str]]:
+        self,
+        suffix: str,
+        text_unit_ids: list[str],
+        cited: Mapping[str, Collection[str]],
+    ) -> tuple[dict[str, list[str]], set[str]]:
         """``{id: text_unit_ids}`` of the graph edges citing a removed text
-        unit, found among the edges of the ``cited`` entities."""
+        unit, found among the edges of the ``cited`` entities (by id, with
+        the text units they cite), and the ``cited`` entities citing only
+        removed ones with an edge citing a kept one at them
+        (``_Citing.held``)."""
         m = self._m
         removed = set(text_unit_ids)
         graph, vector = m.graph_indexer, m.vector_indexer
+        exclusive = {i for i, units in cited.items() if set(units) <= removed}
         # The edges citing them are among the cited entities' edges,
         # except after an earlier removal of these units that got past
         # deleting them (their vector copies are gone) and died: it may
@@ -276,18 +289,27 @@ class TextUnitRemoval:
             if resumed
             else None
         )
+        # The edges at the entities whose every unit is removed are read in
+        # either case: one citing a kept unit is the edge an earlier strip
+        # stopped before re-pointing (the vertex it left it on was written
+        # first, without the units the edge cites).
+        at = sorted(cited) if edges is None else sorted(exclusive)
+        incident = graph.find_incident_relationship_ids(at, suffix=suffix) if at else []
+        read = graph.read_relationships(incident, suffix=suffix) if incident else []
         if edges is None:
-            incident = (
-                graph.find_incident_relationship_ids(sorted(cited), suffix=suffix)
-                if cited
-                else []
-            )
             edges = {
                 r.id: list(r.text_unit_ids or [])
-                for r in graph.read_relationships(incident, suffix=suffix)
+                for r in read
                 if removed.intersection(r.text_unit_ids or [])
             }
-        return edges
+        held = {
+            i
+            for r in read
+            if set(r.text_unit_ids or []) - removed
+            for i in (r.source_id, r.target_id)
+            if i in exclusive
+        }
+        return edges, held
 
     @staticmethod
     def _shared_and_doomed(
@@ -298,7 +320,9 @@ class TextUnitRemoval:
         the ids it deletes."""
         exclusive, gone = citing.exclusive, citing.gone
         shared_entities = sorted(
-            i for i, units in citing.entities.items() if not exclusive(units)
+            i
+            for i, units in citing.entities.items()
+            if not exclusive(units) or i in citing.held
         )
         shared_relationships = sorted(
             i for i, units in citing.relationships.items() if not exclusive(units)
@@ -309,7 +333,11 @@ class TextUnitRemoval:
         doomed = sorted(
             {
                 *text_unit_ids,
-                *(i for i, units in citing.entities.items() if exclusive(units)),
+                *(
+                    i
+                    for i, units in citing.entities.items()
+                    if exclusive(units) and i not in citing.held
+                ),
                 *(i for i, units in citing.relationships.items() if exclusive(units)),
                 *(i for i, units in citing.claims.items() if exclusive(units)),
                 *(i for i, units in citing.communities.items() if gone(units)),
@@ -422,11 +450,13 @@ class TextUnitRemoval:
             entities, relationships, absent = self._read_shared(
                 suffix, entity_ids, relationship_ids
             )
-            derived, new_entities, new_relationships, made = self._derive_stripped(
-                suffix, entities, relationships, text_unit_ids, community_ids
+            derived, new_entities, new_relationships, made, emptied = (
+                self._derive_stripped(
+                    suffix, entities, relationships, text_unit_ids, community_ids
+                )
             )
             self._record_strip(
-                suffix, derived, new_entities, new_relationships, absent, made
+                suffix, derived, new_entities, new_relationships, absent, made, emptied
             )
             note.ids, split_claims = self._strip_note_ids(
                 suffix, derived, relationships
@@ -537,10 +567,11 @@ class TextUnitRemoval:
         relationships: list[Relationship],
         text_unit_ids: list[str],
         community_ids: Collection[str],
-    ) -> tuple[Derived, list[Entity], list[Relationship], set[str]]:
+    ) -> tuple[Derived, list[Entity], list[Relationship], set[str], set[str]]:
         """The stored items stripped of ``text_unit_ids`` and derived again:
         the derivation, the entities and relationships to write
-        (``_finish``) and the ids of the items it summarized."""
+        (``_finish``), the ids of the items it summarized and of the
+        entities it leaves citing no text unit (not written: retired)."""
         m = self._m
         stripped_entities, stripped_relationships = remove_text_units(
             entities, relationships, text_unit_ids, community_ids
@@ -571,7 +602,12 @@ class TextUnitRemoval:
             unsummarized=m._delta_ids.get(suffix, set()),
             made=made,
         )
-        return derived, new_entities, new_relationships, made
+        # An entity left citing no text unit (one an edge citing a kept unit
+        # held, see _Citing.held) goes once the strip is written, as an id
+        # the derivation re-keyed away does: its edges are re-pointed then.
+        emptied = {e.id for e in new_entities if not e.text_unit_ids}
+        new_entities = [e for e in new_entities if e.id not in emptied]
+        return derived, new_entities, new_relationships, made, emptied
 
     def _record_strip(
         self,
@@ -581,13 +617,20 @@ class TextUnitRemoval:
         new_relationships: list[Relationship],
         absent: tuple[set[str], set[str]],
         made: set[str],
+        emptied: Collection[str],
     ) -> None:
         """Record in the run state what a strip's derivation decided: the
-        ids it retires, the vector-only copies (``absent``, see
-        :meth:`_read_shared`), the entities it derived and the items whose
-        stored summary the commit must not extend."""
+        ids it retires (with the ``emptied`` entities), the vector-only
+        copies (``absent``, see :meth:`_read_shared`), the entities it
+        derived and the items whose stored summary the commit must not
+        extend."""
         m = self._m
-        m._merge._retire(suffix, derived.id_remap, derived.split_from, derived.dropped)
+        m._merge._retire(
+            suffix,
+            derived.id_remap,
+            derived.split_from,
+            [*derived.dropped, *sorted(emptied)],
+        )
         # Not an absent id this strip writes (a part split off again
         # under the id an earlier, interrupted strip re-keyed away).
         written = {e.id for e in new_entities} | {r.id for r in new_relationships}
@@ -647,9 +690,9 @@ class TextUnitRemoval:
         # unit, and a strip stopped or killed after its graph copy left no
         # vector copy, so a retry rewrote it from the graph copy, its
         # description cut at the graph's limit. And a stored edge that
-        # gains a unit (another spelling's statement merged in): a strip
-        # stopped after its graph copy left the vector copy without that
-        # line, and no copy cited a removed unit.
+        # gains a statement (another spelling's merged in, from a unit it
+        # may cite already): a strip stopped after its graph copy left the
+        # vector copy without that line, and no copy cited a removed unit.
         retired_edges |= self._unfindable_edges(suffix, derived, relationships)
         # The stored claims about a split's part and origin: a retry
         # cannot tell them (the split kept the stored id).
@@ -683,9 +726,11 @@ class TextUnitRemoval:
     ) -> set[str]:
         """The ids of the edges ``derived`` writes that a retry would not
         find by the removed text units: the stored ones it keeps under their
-        id with other endpoints or that gain a text unit, and those the
-        graph does not hold (``relationships``: the stored copies read; the
-        edges the derivation reached beyond them are read here)."""
+        id with other endpoints or that gain a statement (a text unit, or
+        strength in one they cite: another spelling's statement in that unit
+        merged in), and those the graph does not hold
+        (``relationships``: the stored copies read; the edges the derivation
+        reached beyond them are read here)."""
         stored = {r.id: r for r in relationships}
         reached = [r.id for r in derived.relationships if r.id not in stored]
         if reached:
@@ -701,7 +746,7 @@ class TextUnitRemoval:
             if r.id not in stored
             or (r.source_id, r.target_id)
             != (stored[r.id].source_id, stored[r.id].target_id)
-            or set(r.text_unit_ids or []) - set(stored[r.id].text_unit_ids or [])
+            or _gains_a_statement(r, stored[r.id])
         }
 
     def _claims_to_strip(
@@ -1063,6 +1108,10 @@ class _Citing(NamedTuple):
     # The note of an earlier strip, and the claims it names or is about.
     note: dict[str, Any] | None
     noted_claims: list[str]
+    # The graph's entities citing only removed text units at which an edge
+    # citing a kept one is: stripped, not deleted (dropping the vertex
+    # dropped the edge), and retired once the edge is re-pointed.
+    held: set[str]
 
     def exclusive(self, units: Iterable[str]) -> bool:
         """Whether ``units`` are all removed."""
@@ -1108,6 +1157,17 @@ class _StripNote:
             sorted(claims_ | new_claims | _note_ids(earlier, "claim_ids")),
         )
         self.noted = True
+
+
+def _gains_a_statement(derived: Relationship, stored: Relationship) -> bool:
+    """Whether ``derived`` holds a statement its ``stored`` copy lacks: a
+    text unit, or more strength in a unit it cites (a statement of that
+    unit merged in: the strengths of one unit's statements add up)."""
+    stored_weights = text_unit_weights(stored)
+    return any(
+        weight > stored_weights.get(unit, 0.0)
+        for unit, weight in text_unit_weights(derived).items()
+    ) or bool(set(derived.text_unit_ids or []) - set(stored.text_unit_ids or []))
 
 
 def _rejected(results: Mapping[str, IndexingStats]) -> bool:

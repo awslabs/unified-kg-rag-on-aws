@@ -261,7 +261,7 @@ class CrossRunMerge:
                 derived = self._derive_claims(suffix, group, units)
             # The commit writes the derived claims under other ids before
             # those overwriting these (write_claims_new_ids_first).
-            m._stored_claim_ids.update((suffix, c.id) for c in read)
+            m._stored_claims.update(((suffix, c.id), c) for c in read)
             merged.extend(derived)
         return merged if claims is not None or merged else claims
 

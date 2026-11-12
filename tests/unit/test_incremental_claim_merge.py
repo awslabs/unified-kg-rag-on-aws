@@ -301,7 +301,10 @@ def test_a_claim_overwriting_a_stored_one_waits_for_the_claims_under_new_ids(
 ) -> None:
     # A stored claim overwritten with another statement holds its own lines
     # until the claim they moved to (under a new id) is written: a rejected
-    # write of that one holds the overwrite back, counted failed by id.
+    # write of that one holds the overwrite back, counted failed by id. The
+    # overwrites keeping every unit and line of their stored copy (restated
+    # claims) lose nothing, and are written: held back too, they counted
+    # failed, and one rejected new claim failed the whole commit.
     vector = FakeVectorStore()
     put = vector.upsert_claims
 
@@ -314,19 +317,50 @@ def test_a_claim_overwriting_a_stored_one_waits_for_the_claims_under_new_ids(
 
     writes = mocker.patch.object(vector, "upsert_claims", side_effect=upsert)
     in_place = mocker.spy(vector, "update_claim_lineage")
-    claims = [_claim_of("stored"), _claim_of("new"), _claim_of("same")]
+    restated = _claim_of("restated").model_copy(
+        update={
+            "description": "Vendor supplies Buyer per /c/a.txt.\nAnd per /c/b.txt.",
+            "text_unit_ids": ["tu-/c/a.txt", "tu-/c/b.txt"],
+        }
+    )
+    claims = [
+        _claim_of("stored"),
+        _claim_of("new"),
+        _claim_of("same"),
+        restated,
+        _claim_of("split"),
+        _claim_of("quoted"),
+    ]
+    # The stored copy of "stored" holds a unit, and those of "split" and
+    # "quoted" a line of its one unit, that moved to "new".
+    stored_copy = _claim_of("stored").model_copy(
+        update={"text_unit_ids": ["tu-/c/a.txt", "tu-/c/n.txt"]}
+    )
+    split_copy = _claim_of("split").model_copy(
+        update={"description": "Vendor supplies Buyer per /c/a.txt.\nAnd Xeno."}
+    )
 
     stats = write_claims_new_ids_first(
-        vector, claims, stored={"stored", "same"}, lineage_only={"same"}
+        vector,
+        claims,
+        stored={
+            "stored": stored_copy,
+            "same": _claim_of("same"),
+            "restated": _claim_of("restated"),
+            "split": split_copy,
+            "quoted": _claim_of("quoted").model_copy(
+                update={"source_text": "source /c/a.txt\nXeno"}
+            ),
+        },
+        lineage_only={"same"},
     )
 
     written = [[c.id for c in call.args[0]] for call in writes.call_args_list]
-    assert stats.total_items == 3
+    assert stats.total_items == 6
+    assert [c.id for c in in_place.call_args.args[0]] == ["same"]
     if rejected:
-        assert written == [["new"]]
-        assert in_place.call_count == 0
-        assert sorted(stats.failed_ids) == ["new", "same", "stored"]
+        assert written == [["new"], ["restated"]]
+        assert sorted(stats.failed_ids) == ["new", "quoted", "split", "stored"]
     else:
-        assert written == [["new"], ["stored"]]
-        assert [c.id for c in in_place.call_args.args[0]] == ["same"]
+        assert written == [["new"], ["stored", "restated", "split", "quoted"]]
         assert stats.failed_items == 0

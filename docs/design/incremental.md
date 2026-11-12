@@ -117,11 +117,16 @@ unless noted.
    first): the kept items it did not write state the removed text until the
    write succeeds. The commit writes its claims in the same order
    (`write_claims_new_ids_first`): those overwriting a stored claim the
-   claim merge read only after those under new ids, and not at all (held
-   back, noted as rejected) when one of those fails. A stored claim whose
-   id the derivation gave another document's statement holds its own lines
-   until the claim they moved to is written; a store writes a call in
-   slices, and a run killed after the slice that overwrote it lost them.
+   claim merge read only after those under new ids, and when one of those
+   fails, not those dropping a text unit or line of their stored copy (held
+   back, noted as rejected). A stored claim whose id the derivation gave
+   another document's statement holds its own lines until the claim they
+   moved to is written; a store writes a call in slices, and a run killed
+   after the slice that overwrote it lost them. A claim keeping every unit
+   and line of its stored copy (restated by another document) loses
+   nothing and is written: held back too, one rejected new claim failed a
+   commit with ten restated ones (11 of 11 over `max_failure_rate`), and no
+   document was recorded while the rejection lasted.
    A stored edge a derivation would rewrite for its rank alone whose vector
    copy cites a text unit its graph copy does not (written to one store
    only) is left to the removal or the documents retried, which derive it
@@ -171,14 +176,23 @@ unless noted.
    delete through the graph, so an interrupted run leaves a graph copy, not
    an orphaned vector copy); one citing others too is stripped of them, its
    weight recomputed and its content derived again from the text units left.
+   An entity citing only removed text units with an edge citing a kept one
+   at it is stripped, not deleted: a strip stopped before re-pointing the
+   edge (the vertex it was at was written first, without the edge's units)
+   left it there, and deleting the vertex deleted the edge with it, for
+   good. The strip re-points the edge and retires the entity, which it
+   leaves citing no text unit, with the ids it re-keys away (deleted once
+   its writes succeed). The edges at the entities whose every unit is
+   removed are read for this in either case.
    A strip that merges or re-keys items (another spelling of a stripped
    entity's name, which need not cite the removed text units), or derives
    claims under new ids, notes before its first write the entities on both
    sides of the merge, the edges it re-keyed, re-pointed or dropped, the
    edges and claims under new ids (no copy of one cites a removed text unit:
    a strip stopped after an edge's graph copy left no vector copy to complete
-   a description the graph caps), the stored edges that gain a unit (one
-   stopped there left a vector copy without the merged-in line) and the
+   a description the graph caps), the stored edges that gain a statement (a
+   unit, or another spelling's statement of a unit they cite: one stopped
+   there left a vector copy without the merged-in line) and the
    claims about a split's entities, in
    one record of the
    suffix's extraction store (`pending-strip`, with those of a note a retry

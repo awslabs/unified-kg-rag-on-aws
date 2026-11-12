@@ -266,9 +266,10 @@ See [exit codes and JSON output](docs/reference/exit-codes-and-json.md) and the
   (´, ʼ, ′; not the ʻokina) and the invisible format characters (soft hyphen, zero-width space, direction marks; not
   the joiners), read every dash as a space but a minus sign opening the name ("−40 °C" is not "40 °C"), drop a middle
   dot between Han, Hangul or Kana letters (and Korean's "ㆍ" between syllables), the Arabic and Hebrew vowel marks and
-  a trailing "。" ("ジョン・スミス" is "ジョンスミス"); a key is its own key. Of spellings with one key, the one its key folds
-  least names the entity on a tie ("토지", not "「토지」"). Entity and relationship `rank` come from node degree, and a
-  relationship's weight sums its strengths per text unit (#189, #214, #574).
+  a trailing "。" ("ジョン・スミス" is "ジョンスミス"); a key is its own key, and the fuzzy matcher reads a name's identifier
+  tokens from it as its compact key (a dotted "한·빛" has none, as "한빛"). Of spellings with one key, the one its key
+  folds least names the entity on a tie ("토지", not "「토지」"). Entity and relationship `rank` come from node degree,
+  and a relationship's weight sums its strengths per text unit (#189, #214, #574).
 - Entities have no `MemberOf` edges to communities; an entity lists its `community_ids` (#348).
 - Hidden files and files under a hidden or `__pycache__` directory of the corpus are not parsed (#213).
 
@@ -508,8 +509,9 @@ From a `main` checkout (formats and keys no release had):
   records under earlier keys (other description summary settings, #541-#556) and claims under an earlier reading of
   their dates (#612, #624) are no longer looked up. Run one reset (`indexing.reset: true`) with a new or no
   `--pipeline-id`: incremental runs keep stored entities under their earlier ids beside the new ones. It reuses the
-  stored graph extraction and gleaning records (a record a build before #556 stored under other summary settings or
-  `models` tiers is extracted again) and asks one summary per entity or relationship over the summary threshold, the
+  stored graph extraction and gleaning records, their entity and relationship ids minted again from the names as
+  extraction mints them (a record a build before #556 stored under other summary settings or `models` tiers is
+  extracted again), and asks one summary per entity or relationship over the summary threshold, the
   reports of the communities whose input changed (most of them) and, with claim extraction on, every unit's claims
   (one call per unit that states an entity).
 - One reset covers all of these and the items below. On an index built with #565 or later it reuses the stored
@@ -1071,14 +1073,16 @@ From a `main` checkout (formats and keys no release had):
   after the entity that lost the key, which a later removal deleted with the key), or kept a stale vector edge after two
   failed removals in a row (also when they renamed an entity and back: its graph copy held the name derived again, so
   the edge looked current and kept the other name in its vector
-  copy). The note lists the edges the strip writes under new ids too, and the stored edges that gain a unit (a strip
-  stopped after the graph copy left the vector copy without the merged-in line, and no copy cited a removed unit): a
+  copy). The note lists the edges the strip writes under new ids too, and the stored edges that gain a statement (a
+  unit, or another spelling's statement of a unit they cite: a strip stopped after the graph copy left the vector copy
+  without the merged-in line and strength, and no copy cited a removed unit): a
   strip stopped (or killed) after an edge's graph copy left no vector copy, and the next one rewrote the edge from its
   graph copy, description cut at the graph's limit. While a store keeps rejecting a write, the strip writes only the
   phases before it (the claims come first), and the kept items it did not write state the removed text until the write
   succeeds. The commit writes its claims in the same order, those overwriting a stored claim only after those under new
-  ids (held back and noted when one of those fails): a run killed between two slices of its claim write lost a kept
-  document's claim whose id another document's claim took. A failed removal stops the run before the commit, a deleted
+  ids (when one of those fails, those dropping a text unit or line of their stored copy are held back and noted, the
+  restated ones written): a run killed between two slices of its claim write lost a kept document's claim whose id
+  another document's claim took. A failed removal stops the run before the commit, a deleted
   document's too, with an error naming the documents (a quarantined one it removes in the same pass too) and WARNING
   lines naming the rejected writes' items by id: the delta merged into the entities a failed strip left citing the
   removed text units, and dropped a new edge no later run wrote. A deleted document whose removal keeps failing so holds
@@ -1086,7 +1090,10 @@ From a `main` checkout (formats and keys no release had):
   write of an edge whose rank alone changed compares the vector copies the derivation read, not read again, and
   leaves one whose vector copy cites a text unit its graph copy does not (written to one store only: a strip whose
   vector write was rejected) to the removal's retry: rewritten from those copies, it kept the removed document's
-  line, which no later run found.
+  line, which no later run found. An entity citing only removed text units with an edge citing a kept one at it is
+  stripped, and retired once the edge is re-pointed, not deleted: a strip stopped before re-pointing the edge (the
+  vertex it was at written first, without the edge's units) left it there, and deleting the vertex with a later
+  removal deleted a kept document's edge for good.
   A write note (`pending-writes`) over 1 MiB is split into parts, each its own record,
   under a store's request limit (10 MiB on
   small OpenSearch instances). A noted edge the delta states again takes the endpoints the delta resolves, one whose

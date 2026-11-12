@@ -8,6 +8,11 @@ stored key compared with a key of it (an incremental merge, a query link)
 misses. Regressions: the trailing "." a removed legal form left ("Müller &
 Co. KG" gave "müller & co."), a middle dot a dropped quote mark or space put
 between two letters, and an "&" a dropped space joined to the word before.
+
+And names with one ``entity_key`` (one entity id) have one matching key of
+every kind: the discriminator tokens split "한·빛" at the middle dot its key
+joins, so whether the fuzzy matcher linked a spelling depended on which one
+the merged entity was displayed under.
 """
 
 from __future__ import annotations
@@ -16,7 +21,11 @@ import pytest
 from hypothesis import example, given
 from hypothesis import strategies as st
 
-from unified_kg_rag.domain.ingestion.names import compact_name_key
+from unified_kg_rag.domain.ingestion.names import (
+    compact_name_key,
+    discriminator_tokens,
+    head_character,
+)
 from unified_kg_rag.domain.retrieval.linking import link_key
 from unified_kg_rag.shared.utils import entity_key
 
@@ -86,3 +95,15 @@ def test_compact_name_key_is_its_own_key(name: str) -> None:
     key = compact_name_key(name)
     assert compact_name_key(key) == key
     assert link_key(link_key(name)) == link_key(name)
+
+
+@given(name=_NAMES)
+@example(name="한·빛")
+@example(name="中・日")
+@example(name="״빛(주)「")
+def test_names_with_one_entity_key_have_one_matching_key(name: str) -> None:
+    # Each key is a function of the entity key: so two names with one
+    # entity key have the same keys.
+    key = entity_key(name)
+    for matching_key in (compact_name_key, discriminator_tokens, head_character):
+        assert matching_key(name) == matching_key(key), matching_key.__name__

@@ -189,6 +189,37 @@ def test_incremental_rounds_converge_with_a_full_build(run: _GremlinRun) -> None
         run.assert_custom_ids()
 
 
+@pytest.mark.parametrize(
+    "names",
+    [
+        ("Acme Inc", "Acme", "Acme Corp", "ACME", "Vendor", "Buyer"),
+        ("(주)한빛", "한빛", "한빛 주식회사", "한빛 ", "공급사", "구매자"),
+    ],
+    ids=["en", "ko"],
+)
+def test_a_kept_edge_at_a_vertex_citing_only_removed_units_survives(
+    run: _GremlinRun, names: tuple[str, str, str, str, str, str]
+) -> None:
+    # A removal whose strip wrote a split's origin (now citing only
+    # i0.txt's units) and had its edge re-point rejected left k0.txt's edge
+    # at that vertex; deleting i0.txt then dropped the vertex, and the
+    # server dropped the edge with it (see test_rejected_strip_writes).
+    first, plain, other, upper, vendor, buyer = names
+    kept: Corpus = {"/corpus/k0.txt": [[(first, vendor, 1)]]}
+    shared: Corpus = {
+        **kept,
+        "/corpus/i0.txt": [[("Depot", other, 2)], [(vendor, upper, 2)]],
+    }
+    run.config.indexing.max_failure_rate = 0.95
+    run.run({**shared, "/corpus/h0.txt": [[(buyer, plain, 1)]]})
+    run.run(shared, fail=lambda at, _i: at == "graph.upsert_relationships")
+    for _ in range(3):
+        run.run(kept)
+    assert run.graph_state() == _graph_expected(kept)
+    assert run.registry_problems(kept) == []
+    run.assert_custom_ids()
+
+
 # --- switching modes -----------------------------------------------------------
 
 
