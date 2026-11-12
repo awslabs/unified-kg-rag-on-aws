@@ -1115,11 +1115,10 @@ class CommunityDetector:
             **graph_attributes,
         }
 
-        report_name = (
-            f"Report for {community.name}: {name}"
-            if name
-            else f"Report for {community.name}"
-        )
+        # The model's name, in the report's language: an English "Report
+        # for <community>:" prefix was embedded and searched with every
+        # report, whatever its language. The community's name without one.
+        report_name = name or community.name
 
         report = CommunityReport(
             id=report_id,
@@ -1150,17 +1149,22 @@ class CommunityDetector:
 
     @classmethod
     def _extract_rating(cls, result: dict[str, Any]) -> float:
-        """Parse the 0-10 importance rating, tolerating noisy LLM output."""
+        """Parse the 0-10 importance rating, tolerating noisy LLM output.
+
+        The first number, except that of a rating written beside its scale:
+        of two numbers one 10, the other ("10점 만점에 7점", "10点満点中7点"
+        and "满分10分，得7分" write the scale first; "7/10" and "7 out of 10"
+        after)."""
         raw = coerce_llm_text(result.get("rating"))
         if not raw:
             return 0.0
-        match = re.search(r"-?\d+(?:\.\d+)?", raw)
-        if not match:
+        numbers = [float(n) for n in re.findall(r"-?\d+(?:\.\d+)?", raw)]
+        if not numbers:
             return 0.0
-        try:
-            return max(0.0, min(10.0, float(match.group())))
-        except ValueError:
-            return 0.0
+        rating = numbers[0]
+        if len(numbers) == 2 and 10.0 in numbers:
+            rating = numbers[1] if numbers[0] == 10.0 else numbers[0]
+        return max(0.0, min(10.0, rating))
 
     @classmethod
     def _extract_findings(

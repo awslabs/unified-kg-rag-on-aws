@@ -321,3 +321,39 @@ def test_sub_reports_are_numbered_and_cited_by_their_findings_records() -> None:
 def test_the_prompt_lets_a_finding_cite_its_sub_reports() -> None:
     system = CommunityReportPrompt.system_prompt_template
     assert "Reports (" in system
+
+
+@pytest.mark.parametrize(
+    ("raw", "rating"),
+    [
+        ("7.5", 7.5),
+        ("Rating: 8", 8.0),
+        ("7 out of 10", 7.0),
+        ("7/10", 7.0),
+        ("10/10", 10.0),
+        # The scale written first, as Korean, Japanese and Chinese write it.
+        ("10점 만점에 7점", 7.0),
+        ("10点満点中6.5点", 6.5),
+        ("满分10分，得8分", 8.0),
+        ("12", 10.0),
+        ("none", 0.0),
+    ],
+)
+def test_a_rating_is_read_beside_its_scale(raw: str, rating: float) -> None:
+    assert CommunityDetector._extract_rating({"rating": raw}) == rating
+
+
+@pytest.mark.parametrize(
+    "name", ["벤더 공급망", "仕入先の供給網", "供应链", "Vendor supply chain"]
+)
+def test_a_report_is_titled_by_its_name_alone(name: str) -> None:
+    # "Report for Level 0 Community c0: ..." put English into every report's
+    # embedded and searched text.
+    detector = _detector()
+    community = _community()
+    result = {"community_name": name, "summary": "s", "rating": "5"}
+    report = detector._create_community_report(community, result, {})
+    assert report.name == name
+    assert report.full_content.startswith(f"# {name}\n")
+    untitled = detector._create_community_report(community, {"summary": "s"}, {})
+    assert untitled.name == community.name

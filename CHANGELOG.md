@@ -1642,7 +1642,9 @@ From a `main` checkout (formats and keys no release had):
   (`CommunityFinding.entity_ids` / `relationship_ids`) and taken out of the searched text (#618). A parent's rolled-up
   sub-community reports are numbered too and cited as `Reports (n)`, which a finding reads as the records the child's
   findings cite (a parent's roll-up findings cited nothing, so `global` and `drift` attributed a parent report to the
-  few members packed raw); a range `(1-4)` reads as 1 to 4 and `【Data: ...】` as `[Data: ...]`. The report stores
+  few members packed raw); a range `(1-4)` reads as 1 to 4 and `【Data: ...】` as `[Data: ...]`. A report is titled
+  by its name alone (an English "Report for Level 0 Community ...:" was embedded with every report), and a rating
+  written beside its scale reads as the rating ("10점 만점에 7점" is 7, not 10). The report stores
   them (an unindexed `findings` field): a retrieved report, and its source's metadata (each finding's ids, not its
   text), name the records each finding cites (`report_cited_ids`), pointed at the ids an incremental merge kept, and
   a stored report at the new id of a record a later run re-keys (found by its `findings_record_ids` list,
