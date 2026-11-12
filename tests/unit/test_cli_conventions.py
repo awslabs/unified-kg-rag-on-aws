@@ -46,6 +46,7 @@ from unified_kg_rag.domain.models import (
     Config,
     PipelineConfig,
     PipelineContext,
+    PipelineMetrics,
     PipelineStageResult,
     PipelineStageStatus,
 )
@@ -1128,6 +1129,11 @@ def test_ingestion_json_result_counts_failed_files_and_the_delta() -> None:
     result = _ingestion_runner(None)._json_result(context)
     assert (result["files_failed"], result["delta"]) == (2, None)
     assert "error" not in result
+    # rv24 ux 8: what the console flags a run that extracted nothing by.
+    assert (result["documents_processed"], result["entities_extracted"]) == (4, 0)
+    context.global_metrics = PipelineMetrics.model_construct(total_entities_extracted=7)
+    result = _ingestion_runner(None)._json_result(context)
+    assert result["entities_extracted"] == 7
     context.incremental_delta = DocumentDelta(
         new=["n1", "n2"], changed=["c1"], unchanged=["k1", "k2", "k3"], deleted=["x"]
     )

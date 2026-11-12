@@ -151,6 +151,9 @@ holds:
   - `files_failed`: the corpus files that failed to parse or load (an empty
     or broken file, a binary file with a text suffix), not indexed; an
     incremental run keeps what they indexed before.
+  - `documents_processed` and `entities_extracted`: the documents the run
+    processed and the distinct entities their extraction found (a run that
+    processed some and extracted none indexed no graph of them).
   - `delta`: what the doc-status registry's diff found, `new`, `changed`,
     `unchanged` and `deleted` documents (an `indexing.reset` run counts every
     document new), or `null` with the registry off.

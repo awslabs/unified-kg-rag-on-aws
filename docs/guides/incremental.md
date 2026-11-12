@@ -284,8 +284,9 @@ corpus), so the old content stays indexed. Either:
 
 A local run with the default scope and new documents logs a WARNING naming the
 other local source directories with records in its suffix (a document only a
-refused or failed run recorded counts as new); it deletes nothing. Set
-`source_scope` per corpus to silence it when they are separate corpora.
+refused or failed run recorded counts as new); it deletes nothing. Separate
+corpora (the console's folders) need nothing; a moved corpus needs one
+`--retire-source-scope` run. Set `source_scope` per corpus to silence it.
 
 ## Failed documents
 

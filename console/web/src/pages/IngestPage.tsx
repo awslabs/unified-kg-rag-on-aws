@@ -349,15 +349,48 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
   );
 }
 
-function IngestResult({ job }: { job: JobRecord }) {
-  const { t, number } = useI18n();
+export function IngestResult({ job }: { job: JobRecord }) {
+  const { t } = useI18n();
   const result = job.result as Record<string, unknown> | null;
   if (!result || job.status === "running") return null;
   const usage = (result.token_usage ?? {}) as Record<string, number>;
+  const warnings = job.warnings ?? { count: 0, lines: [] };
+  // Documents processed, no entity extracted: none of them is in a graph.
+  const noEntities = Number(result.documents_processed ?? 0) > 0 && result.entities_extracted === 0;
+  return (
+    <>
+      {noEntities ? <Notice tone="warn" title={t("ingest.result.noEntitiesTitle")}>{t("ingest.result.noEntities")}</Notice> : null}
+      <IngestCounts result={result} usage={usage} warnings={warnings.count} pipelineId={job.pipeline_id} />
+      {warnings.lines.length ? (
+        <details>
+          <summary>{t("ingest.result.showWarnings")}</summary>
+          <ul className="mono warnings-list">
+            {warnings.lines.map((line, i) => (
+              <li key={i}>{line}</li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+    </>
+  );
+}
+
+function IngestCounts({
+  result,
+  usage,
+  warnings,
+  pipelineId,
+}: {
+  result: Record<string, unknown>;
+  usage: Record<string, number>;
+  warnings: number;
+  pipelineId: string | null;
+}) {
+  const { t, number } = useI18n();
   return (
     <dl className="kv">
       <dt>{t("ingest.result.pipeline")}</dt>
-      <dd className="mono">{String(result.pipeline_id ?? job.pipeline_id)}</dd>
+      <dd className="mono">{String(result.pipeline_id ?? pipelineId)}</dd>
       <dt>{t("ingest.result.failedDocuments")}</dt>
       <dd>{number(result.failed_documents as number)}</dd>
       <dt>{t("ingest.result.excluded")}</dt>
@@ -368,6 +401,8 @@ function IngestResult({ job }: { job: JobRecord }) {
       <dd>
         {number(usage.input_tokens)} / {number(usage.output_tokens)}
       </dd>
+      <dt>{t("ingest.result.warnings")}</dt>
+      <dd>{number(warnings)}</dd>
     </dl>
   );
 }

@@ -821,6 +821,12 @@ kbd {
   margin: 0;
   min-width: 0;
 }
+.warnings-list {
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-4);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
 
 /* ---------------------------------------------------------------- tables */
 

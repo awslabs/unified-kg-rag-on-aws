@@ -2550,12 +2550,12 @@ def _warn_about_other_local_scopes(
         return
     logger.warning(
         "The doc-status registry also holds records of index namespace %r "
-        "under other local source directories: %s. If this corpus was "
-        "moved from one of them, its old records keep the previous "
-        "content indexed: run once with --retire-source-scope <old "
-        "directory> (indexing.retire_source_scopes) to remove it. If they "
-        "are other corpora, set document_parsing.source_scope to a stable "
-        "name per corpus.",
+        "under other local source directories: %s. Other corpora sharing "
+        "the namespace (the console's folders) keep their documents and "
+        "need nothing. If this corpus was moved from one of them, its old "
+        "records keep the previous content indexed: run once with "
+        "--retire-source-scope <old directory> "
+        "(indexing.retire_source_scopes) to remove it.",
         namespace,
         ", ".join(others),
     )

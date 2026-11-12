@@ -891,9 +891,9 @@ From a `main` checkout (formats and keys no release had):
   markers `[n]` linked to the sources they cite, follow-ups sent with the page's conversation (`RAGInput.history`),
   and each source the answer read on a provenance trace back to its passage, file, seed graph and IRI and into the
   graph; ingest a workspace folder or an upload with a methodology profile (starting from what the namespace's build
-  record holds; a run that would drop a
-  held methodology for every corpus in the namespace starts only once confirmed), with live stage progress and a stop
-  the pipeline checkpoints; run and compare evaluations (progress per answer; paired deltas called by their
+  record holds; a run that would drop a held methodology for every corpus in the namespace starts only once
+  confirmed), with live stage progress, the run's WARNINGs (a run that extracted no entity flagged) and a stop the
+  pipeline checkpoints; run and compare evaluations (progress per answer; paired deltas called by their
   Holm-adjusted p-value with the family's simultaneous interval and the primary metric marked, falling back to the
   interval for older comparisons; gates, cost, declines, win rates by answer length, each metric described on hover,
   and per question every strategy's primary-metric score, its win, tie or loss and the answers side by side) and open
@@ -1279,8 +1279,9 @@ From a `main` checkout (formats and keys no release had):
   of one per 100 at 4,800-character chunks) (#626), priced by `evaluation.prices.<rerank
   model>.per_thousand_rerank_search_units` (#607); the run manifest records the usage schema (`usage_schema: 3`), and
   a comparison gives no USD delta against a run saved with an earlier one (#613, #626).
-- Corpus coverage: `run-ingestion`'s JSON `units_failed`, `files_failed` and `delta` (`new`, `changed`, `unchanged`,
-  `deleted`) and EMF metrics `total_units_failed`, `total_files_failed`, `total_files_skipped`,
+- Corpus coverage: `run-ingestion`'s JSON `units_failed`, `files_failed`, `documents_processed`,
+  `entities_extracted` and `delta` (`new`, `changed`, `unchanged`, `deleted`) and EMF metrics `total_units_failed`,
+  `total_files_failed`, `total_files_skipped`,
   `total_documents_excluded` / `_deleted` / `_failed` / `_retrying` and `total_documents_without_claims`; a run with
   failed units ends with a WARNING naming them per stage (#518, #532). `run-ingestion --max-failure-rate` (off by
   default) exits 1 when more of its documents failed (files that failed to load, documents recorded `FAILED` or

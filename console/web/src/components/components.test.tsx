@@ -7,7 +7,7 @@ import { I18nProvider, translate } from "../i18n/i18n";
 import { ApiError, errorMessage } from "../lib/api";
 import { fieldsOf, parseValue, type JsonSchema } from "../lib/schema";
 import { answerSegments, markerNumbers } from "../lib/citations";
-import type { AskResult, Citation, Comparison, Delta, Multiplicity, Source, StrategyInfo } from "../lib/types";
+import type { AskResult, Citation, Comparison, Delta, JobRecord, Multiplicity, Source, StrategyInfo } from "../lib/types";
 import { conversationHistory, parseFilters, stepNames } from "../pages/AskPage";
 import { intervalResamples } from "../pages/EvaluatePage";
 import { AnswerText, CitationList } from "./AnswerText";
@@ -278,6 +278,50 @@ describe("errorMessage", () => {
     const missing = new ApiError(400, "holds no hipporag", { code: "not_indexed" });
     expect(errorMessage(t, missing)).toBe("This index does not hold what the strategy reads: holds no hipporag");
     expect(errorMessage(t, new ApiError(400, "odd", { code: "no_such_kind" }))).toBe("odd");
+  });
+});
+
+describe("an ingestion's result", () => {
+  const job = (result: Record<string, unknown>, warnings = { count: 0, lines: [] as string[] }): JobRecord => ({
+    id: "j1",
+    kind: "ingest",
+    namespace: "default",
+    params: {},
+    command: ["run-ingestion"],
+    created: 0,
+    started: 0,
+    ended: 1,
+    status: "succeeded",
+    exit_code: 0,
+    error: null,
+    result,
+    pipeline_id: "p1",
+    output_directory: null,
+    plan: [],
+    total_runs: 0,
+    warnings,
+  });
+
+  it("counts and lists the run's warnings", async () => {
+    const { IngestResult } = await import("../pages/IngestPage");
+    renderIn(<IngestResult job={job({ documents_processed: 2, entities_extracted: 5 }, { count: 3, lines: ["Skipping 1 file(s)", "Retrying"] })} />);
+    expect(screen.getByText("Warnings").nextElementSibling?.textContent).toBe("3");
+    expect(screen.getByText("Show the warnings")).toBeTruthy();
+    expect(screen.getByText("Retrying")).toBeTruthy();
+    expect(screen.queryByText("No entities extracted")).toBeNull();
+  });
+
+  it("flags a run that processed documents and extracted no entity", async () => {
+    const { IngestResult } = await import("../pages/IngestPage");
+    renderIn(<IngestResult job={job({ documents_processed: 2, entities_extracted: 0 })} />);
+    expect(screen.getByText("No entities extracted")).toBeTruthy();
+    expect(screen.queryByText("Show the warnings")).toBeNull();
+  });
+
+  it("does not flag a run that processed nothing", async () => {
+    const { IngestResult } = await import("../pages/IngestPage");
+    renderIn(<IngestResult job={job({ documents_processed: 0, entities_extracted: 0 })} />);
+    expect(screen.queryByText("No entities extracted")).toBeNull();
   });
 });
 

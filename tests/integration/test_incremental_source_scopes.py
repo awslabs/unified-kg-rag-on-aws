@@ -366,6 +366,10 @@ def test_a_moved_corpus_is_reported_after_a_refused_first_run(
     assert any(
         old.as_posix() in m and "--retire-source-scope" in m for m in warnings
     ), warnings
+    # Other corpora (the console's folders) need nothing (rv24 ux 8): the
+    # advice to set a per-corpus source_scope could not be followed there.
+    (warning,) = [m for m in warnings if "other local source directories" in m]
+    assert "need nothing" in warning and "source_scope to a stable" not in warning
 
 
 def test_an_edited_document_of_a_moved_corpus_does_not_warn_again(

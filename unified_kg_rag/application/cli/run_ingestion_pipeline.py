@@ -950,6 +950,14 @@ class IngestionPipelineRunner:
             "files_skipped": len(context.skipped_source_files),
             # Corpus files that failed to parse or load (not indexed).
             "files_failed": len(context.failed_source_files),
+            # What the run processed and extracted: a run that processed
+            # documents and extracted no entity indexed no graph of them.
+            "documents_processed": len(context.documents),
+            "entities_extracted": (
+                context.global_metrics.total_entities_extracted
+                if context.global_metrics is not None
+                else 0
+            ),
             # What the registry diff found (None: the registry is off).
             "delta": (
                 None

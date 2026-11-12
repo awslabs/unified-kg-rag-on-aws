@@ -9,6 +9,7 @@ ingestion that would narrow it."""
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from pathlib import Path
 from typing import Any
@@ -721,3 +722,47 @@ async def test_a_failed_graph_build_leaves_the_job_succeeded(
     await manager._watch(job)
     assert job.status is JobStatus.SUCCEEDED
     assert job.result == {"visualization_data": None}
+
+
+def _event(level: str, text: str) -> str:
+    return json.dumps({"event": text, "logger": "x", "level": level})
+
+
+async def test_a_job_records_its_warnings_and_a_stopped_one_no_error(
+    tmp_path: Path,
+) -> None:
+    # rv24 ux 8 and quality 8: a run that logged WARNINGs showed a green
+    # "Finished" with nothing else, and a stopped job's error was a banner
+    # line ("│ Continue on Error: False │").
+    manager = _manager(tmp_path)
+    log = [
+        "╭──────────────────╮",
+        _event("info", "Starting"),
+        *(_event("warning", f"warning {i}") for i in range(25)),
+        "│ Continue on Error: False │",
+        "╰──────────────────╯",
+    ]
+    job = _ingest_job(manager, tmp_path, '{"visualization_data": "x.json"}')
+    job.log_path.write_text("\n".join(log) + "\n", encoding="utf-8")
+    await manager._watch(job)
+    assert job.record()["warnings"]["count"] == 25
+    assert job.record()["warnings"]["lines"] == [f"warning {i}" for i in range(5, 25)]
+
+    stopped = _ingest_job(manager, tmp_path, '{"status": "interrupted"}', code=143)
+    stopped.log_path.write_text("\n".join(log) + "\n", encoding="utf-8")
+    await manager._watch(stopped)
+    assert stopped.status is JobStatus.STOPPED and stopped.error is None
+
+
+def test_a_failed_job_s_error_is_its_last_error_event_not_a_banner() -> None:
+    banner = "│ Continue on Error: False │"
+    assert (
+        jobs_module._last_error(
+            [_event("error", "Stage failed: boom"), _event("info", "x"), banner]
+        )
+        == "Stage failed: boom"
+    )
+    # No error event: the last plain line (a traceback's), never the banner.
+    trace = "ValueError: bad value"
+    assert jobs_module._last_error([trace, banner, "╰────╯"]) == trace
+    assert jobs_module._last_error([_event("info", "x")]) is None

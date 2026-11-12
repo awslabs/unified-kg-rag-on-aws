@@ -183,7 +183,9 @@ that question alone (`--confirm-integrity`, `--confirm-reset`,
 beforehand. The run's
 stages appear as a column of stations as they finish (from the pipeline's
 own metadata), with their time, outputs and model calls, each failed
-stage's error and failed files, and the log's tail. Stop sends the CLI
+stage's error and failed files, and the log's tail. A finished run counts
+the WARNINGs it logged and lists the last 20, and flags a run that
+processed documents but extracted no entity from them. Stop sends the CLI
 the stop it is built for: the finished stages are kept and the next run of
 the corpus resumes. A job a console left running when it stopped is shown
 as lost when the console starts again (its namespace is free; the
