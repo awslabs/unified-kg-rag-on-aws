@@ -1545,8 +1545,8 @@ From a `main` checkout (formats and keys no release had):
   `--pool-runs` is given, with a warning naming what the pooled runs mix (#620).
 - `run-eval` answers the runs of a comparison interleaved: every query by every strategy and repeat before the next
   query, their order reversed on every other query (ABBA), in one batch. Answered one run after another, the later
-  runs answered later, and two runs of one configuration differed by 0.5-5.8 s of latency per query; the drift now
-  lands on every run alike. `--run-order sequential` (`evaluation.run_order`) keeps the earlier order, and a
+  runs answered later, and runs of one configuration differed by 0.5 to 2.3 s of latency a query on average; the
+  drift now lands on every run alike. `--run-order sequential` (`evaluation.run_order`) keeps the earlier order, and a
   comparison whose runs were not answered interleaved in one invocation (sequential, `--from-results` of several,
   `--baseline-results`) warns that its latency deltas measure time too. Each repeat extracts the query's entities and
   keywords again (`--repeat-extractions resample`, `evaluation.repeat_extractions`), so `repeat_stdev` includes the

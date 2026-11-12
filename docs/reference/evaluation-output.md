@@ -420,8 +420,9 @@ strategies, or `--repeats`) saves every run's files and adds
   hit. Answered one run after another
   (`sequential`), every later run answers later, and a service whose
   latency drifts over the run, or caches warmed by the earlier runs, show
-  up as latency deltas: two runs of one configuration answered so differed
-  by 0.5-5.8 s per query. A comparison whose runs were not answered
+  up as latency deltas: runs of one configuration answered so differed by
+  0.5 to 2.3 s a query on average
+  ([Defaults and evidence](../concepts/defaults-and-evidence.md#how-the-measurements-were-run)). A comparison whose runs were not answered
   interleaved in one `run-eval` (a `sequential` run, `--from-results` of
   several invocations, any `--baseline-results`, runs saved before
   `run_order` was recorded) warns that its latency, and possibly usage,
@@ -739,7 +740,7 @@ list, top level or under `metadata`, which wins), taking the maximum.
     answer that declines in its own words is read like any other (`There
     is no information on lot 7` asked about lot 7 matches 0); one the
     pipeline marks `abstained` scores 0. These nuances are the LLM judges'
-    (`ragas`, `langchain`) in the same run. A dot groups no thousands
+    (`ragas`) in the same run. A dot groups no thousands
     (German `3.000` reads as 3), and a gold's digits before a scale word
     are read without it (the gold `2 million` is 2, so `2 billion` matches
     it).

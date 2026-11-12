@@ -278,9 +278,9 @@ How to read it:
   other query, so a service that slows down over the run, or caches the
   first runs warmed, do not show up as latency deltas (and reversed again
   on every other repeat, so an even `--repeats` balances an odd-sized
-  dataset's every query; two runs of one
-  configuration answered one after the other differed by 0.5-5.8 s per
-  query). `--run-order sequential` answers one run after another, keeps
+  dataset's every query; runs of one configuration answered one after
+  the other differed by 0.5 to 2.3 s a query on average: see
+  [Defaults and evidence](../concepts/defaults-and-evidence.md#how-the-measurements-were-run)). `--run-order sequential` answers one run after another, keeps
   the finished runs when stopped part-way, and warns that its latency
   deltas measure time too; so does a comparison of runs from separate
   invocations (`--from-results`, `--baseline-results`).

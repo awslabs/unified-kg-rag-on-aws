@@ -120,7 +120,7 @@ ships no price table, because one would go stale.
 | `search.local_search.text_unit_ranking` | `ppr` | Against `support` on 200 MuSiQue questions, two repeats: recall@5 +6.1 [+2.9, +9.4] and supporting paragraphs in the context +12 to +13 points; answers no worse (`answer_contains` +3.5 [+0.5, +6.75], borderline after a multiplicity correction; EM and token F1 n.s.); +0.10 s retrieval a query ([Local PPR ranking](#local-ppr-ranking)) |
 | `search.local_search.entity_frequency_threshold` | 20 | Without the cut, recall@5 -1.75 points [-3.12, -0.50] and supporting paragraphs in the context -2.42 [-3.96, -1.04], both significant; +3.08 s per answer, run separately (see *Latency* in [How the measurements were run](#how-the-measurements-were-run)) ([Retrieval switches](#retrieval-switches)) |
 | `search.auto_routable_strategies` | `local`, `mix`, `global`, `iterative` | `iterative` over `mix` against `mix` on multi-hop questions: `answer_contains` +12.5 points [+7.5, +18.0], token F1 +5.2 [+0.2, +10.1], last hop in the context +21.5; p95 11.1 s to 27.4 s. It cost +$0.0099 a query over `mix` (+18%) in the baselines of 2026-11-07, not the +$0.002 of that first run. `decompose` was no better than the loop, so it stays off ([Iterative follow-up rounds](#iterative-follow-up-rounds)) |
-| `indexing.methodologies` | `[graphrag, lightrag]` (no `raptor`); `search.auto_routable_strategies` refuses `tree` | `tree` against `naive` on 100 MuSiQue questions, one repeat, on a namespace that also held the graph (so `tree` fused its graph signal too): `answer_contains` +8.0 points [+3.0, +14.0], EM +9.0 [+2.0, +16.0], token F1 +7.5 [+1.1, +14.1], recall@5 -0.6 n.s., +1.2 s and +$0.0060 a query; `mix` and `local` scored +19 and +18 points of `answer_contains` over `naive` on the same questions. A `[raptor]`-only namespace was not measured. One repeat on one corpus, so opt-in. On sensemaking questions, with the comprehensive answer, `mix`, which needs no community reports (`[lightrag]`; the reports were 26% of that index's model cost), answered at least as well as `global` ([RAPTOR summary tree](#raptor-summary-tree), [Sensemaking strategies](#sensemaking-strategies)) |
+| `indexing.methodologies` | `[graphrag, lightrag]` (no `raptor`); `search.auto_routable_strategies` refuses `tree` | `tree` against `naive` on 100 MuSiQue questions, one repeat, on a namespace that also held the graph (so `tree` fused its graph signal too): `answer_contains` +8.0 points [+3.0, +14.0], EM +9.0 [+2.0, +16.0], token F1 +7.5 [+1.1, +14.1], recall@5 -0.6 n.s., +1.2 s and +$0.0060 a query; `mix` and `local` scored +19 and +18 points of `answer_contains` over `naive` on the same questions. A `[raptor]`-only namespace was not measured. One repeat on one corpus, so opt-in. On sensemaking questions, with the comprehensive answer, `mix`, which needs no community reports (`[lightrag]`; regenerating that index's community reports alone cost about a quarter of its build), answered at least as well as `global` ([RAPTOR summary tree](#raptor-summary-tree), [Sensemaking strategies](#sensemaking-strategies)) |
 | `aws.bedrock.ingestion_effort` | `null` (`default_effort`, `high`) | `low` on a 109-document slice: ingestion cost -19%, answers n.s. on 30 questions ([Ingestion effort](#ingestion-effort)) |
 | `search.model_timeout_seconds`, `search.query_timeout_seconds` | 90 s, 180 s | From the query times of the package's real-AWS evaluation runs ([Query deadlines and model timeouts](#query-deadlines-and-model-timeouts)) |
 | `search.citations.enabled`, `search.citations.strategies` | `true`; `{global: false, drift: false}` | Against off on 200 MuSiQue questions, two repeats, interleaved: `local` and `mix` answers n.s. (`answer_contains` -0.75 [-2.5, +0.75] adjusted, and 0.0), citation precision 0.75 and 0.82, recall 0.88 and 0.85. On 50 sensemaking questions the answers without citations won comprehensiveness 0.617 [0.540, 0.695] 95% (`global`, Holm p 0.037) and 0.642 [0.573, 0.708] 95% (`drift`, Holm p 0.002) with the differential judge, averaged over both answer orders, and `global` 0.742 (Holm p 0.002) with `run-eval`'s split on 2026-11-08; a "cite where possible" instruction for them won no comprehensiveness back and cost `global` directness ([Citations](#citations)) |
@@ -214,8 +214,8 @@ the 50 sensemaking questions, two repeats: the candidate won
 comprehensiveness 0.645 as Answer 2 and 0.48 as Answer 1 (the baseline
 0.52); averaged over both slots 0.562 [0.490, 0.635] 95%, n.s. That slot effect (as
 Answer 2 minus as Answer 1) was +0.165 on comprehensiveness, and +0.125 to
-+0.215 in the citation comparisons below, larger than most differences
-between strategies there (-0.12 to +0.07). So the comparisons from
++0.215 in the citation comparisons below, larger than the slot effects in
+the comparisons between strategies there (-0.12 to +0.07). So the comparisons from
 2026-11-08 on average both slot orders, as `run-eval` does
 ([Evaluation](../guides/evaluate.md); results in
 [Sensemaking strategies](#sensemaking-strategies) and [Citations](#citations)).
@@ -611,7 +611,8 @@ empowerment 0.657 (0.030) and directness 0.636 (0.030), with diversity
 - **`mix` matched `global` without community reports.** A `[lightrag]`
   namespace builds no communities or reports
   ([methodology profiles](./overview.md#methodology-profiles)); on this
-  index the reports were $95.6 of the $371.64 build (26%).
+  index regenerating the community reports alone cost $95.6 (2026-11-08,
+  [Citations](#citations)), against $371.64 for the whole build.
 - **`simple`** is not in the table: its retrieval is under revision and is
   measured again after the change.
 
@@ -805,15 +806,19 @@ A run on 2026-11-07 (package at commit `b0ba0231`) measured the noise floor
 and the baselines on the repaired index, the 200 MuSiQue questions and the
 default models, every comparison interleaved in one `run-eval`
 (`--run-order interleaved`), two repeats each, Holm-adjusted as `run-eval`
-reports. EM and token F1 scored the extracted span with SQuAD's official
+at that commit reported (conservative: each arm's family also held the
+in-run `local` against `mix` test, which today's per-arm families leave
+out, so today's adjusted intervals are a little narrower: `mix` at 12000
+context tokens -5.25 to +0.5 instead of -5.75 to +0.75). EM and token F1 scored the extracted span with SQuAD's official
 normalization, as above.
 
 **Noise floor.** An empty `--arm` against the base, which reads the base's
 query extractions: `local` `answer_contains` -1.25 points [-3.0, 0.0] 95%,
 EM +0.5 and token F1 +0.9; `mix` -0.25, -0.25 and +0.5, all n.s.; latency
 +0.14 s (`local`) and -0.10 s (`mix`), n.s., with 95% intervals up to
-+0.67 s. Two separate `run-eval` invocations of one configuration,
-each extracting its own query entities and keywords, differed by up to 1.5
++0.67 s. Separate `run-eval` invocations of one configuration (one
+invocation's base against two later ones, pooled), each extracting its own
+query entities and keywords, differed by up to 1.5
 points of `answer_contains`, 3.25 of EM and 2.4 of token F1 (n.s.), and by
 0.6 to 1.0 s a query (significant: separate invocations measure what
 changed between them). So a difference below about 1.5 points of
@@ -896,7 +901,7 @@ answer tokens without citations against 1,528 with them.
 On 100 MuSiQue questions, two repeats, where `global` declines most
 questions, its citations attributed little: it declined 113 of 199 answers
 and cited a file in 86 (citation precision 0.087, recall 0.023), and a
-cited key point named about 9.07 files (`lineage_units` caps it at 10): a
+cited key point named about 8.7 files (`lineage_units` caps it at 10): a
 point credits every report it came from, often a whole map batch. That
 lineage width also caps the file-weighted precision (a point of 9 files
 scores one ninth per reference file it names), so the figure
@@ -910,12 +915,27 @@ precision 0.571 against 0.576, `global` 0.087 against 0.071).
 answers carried an extra instruction: cite where possible and keep a
 relevant point that has no marker. It departs from MS GraphRAG's global
 reduce prompt ("Do not include information where the supporting evidence
-for it is not provided"). Against the same configuration without it (four
-runs, ABBA order, pooled), the answers without it won comprehensiveness
-0.48 [0.375, 0.58] 95% (`global`) and 0.49 [0.395, 0.585] 95% (`drift`),
-n.s., and `global` directness 0.665 [0.585, 0.74] 95%, Holm p 0.003; `global` citation
-precision on MuSiQue was 0.1225 against 0.1222. It bought no
-comprehensiveness, so it was removed.
+for it is not provided"). It was compared with the same configuration
+without it (four runs, ABBA order, pooled). A re-judge of those saved
+answers on 2026-11-12 (package at commit `ac77f33d`; no answer call, $10.55
+of judge calls) used the symmetric differential judge: both split slots,
+both answer orders, Opus 5.5 judging and Haiku 5.5 splitting at
+`judge_effort: low`, Holm p over the 8 tests. The answers without the
+instruction won comprehensiveness 0.438 [0.360, 0.518] 95% (`global`, Holm
+p 0.88) and 0.425 [0.320, 0.530] 95% (`drift`, Holm p 0.99): both lean a
+little toward the instruction, n.s. Without it `global` answers were more
+direct, 0.637 [0.568, 0.700] 95%, Holm p 0.008, with a slot effect of
+-0.005, so not a slot artifact; diversity and empowerment were n.s. for
+both. `drift` was judged on its first repeat only (50 pairs, to stay in the
+judge budget), so its intervals are wider; it was n.s. on every criterion,
+and its comprehensiveness slot effect was +0.230. The first reading of
+these pairs (2026-11-08, package at commit `876c938b`) had judged each pair
+in one split slot, the answers without the instruction always as Answer 2,
+the slot the split favours (comprehensiveness 0.48 and 0.49, `global`
+directness 0.665); the re-judge supersedes it. `global` citation precision
+on MuSiQue was 0.1225 against 0.1222. The instruction bought no
+significant comprehensiveness and cost `global` directness, so it was
+removed.
 
 So `global` and `drift` answer without citations by default
 (`search.citations.strategies: {global: false, drift: false}`), with the
@@ -980,7 +1000,9 @@ pairwise judge. The run of 2026-11-07 re-scored the same saved answers
 
 - **Span extraction.** `high` against `low` on 1,600 answers: the spans
   were identical in 84-86% (two `low` passes: 93-95%), and EM fell by 1.0
-  to 1.75 points in each of four runs (n.s. each), token F1 by 1.1 to 1.8.
+  to 1.75 points in each of four runs (sign-flip p 0.06 to 0.57, none
+  significant; one bootstrap 95% interval, `local`'s second pair, excluded
+  zero: -1.75 [-3.5, -0.25]), token F1 by 1.1 to 1.8.
   It cost $0.18 against $0.10.
 - **Pairwise judge** (differential, that run's `global` and `drift`
   citation pairs): position consistency rose from 0.82 to 0.86 (`global`)
@@ -1051,17 +1073,26 @@ run-eval --data-path bench/musique/eval_data.json --suffix musique \
   --search-strategy mix --repeats 2 --output-directory runs/vector --config-path vector.yaml \
   --baseline-results runs/base
 
-# Pairwise LLM judge across strategies, on your own question set.
+# Pairwise LLM judge across strategies, on your own question set, as the
+# sensemaking comparisons ran it (both split slots, every repeat).
 run-eval --data-path my_questions.json --suffix musique --search-strategy global,drift \
-  --repeats 2 --pairwise-judge --config-path musique.yaml
+  --repeats 2 --pairwise-judge --pairwise-mode differential --pairwise-repeats all \
+  --config-path musique.yaml
 ```
+
+The MuSiQue runs scored EM and token F1 on the extracted span with SQuAD's
+official normalization (`evaluation.answer_span: extracted`,
+`answer_normalization: official_squad`; the config is in
+[Benchmarks](../guides/benchmarks.md)).
 
 `--baseline-results` pairs each strategy with the earlier run of the same
 strategy, `--from-results` rebuilds or re-judges a comparison from saved
 answers without a model call, and `--fail-if` turns a delta into a CI gate
 ([Rebuilding, re-judging and gating a comparison](../guides/evaluate.md#rebuilding-re-judging-and-gating-a-comparison)).
-Run at least two repeats, and read a difference only when its interval
-excludes zero.
+Run at least two repeats, and read a difference as this page does
+(*Significance* at the top): significant when its Holm-adjusted p over the
+comparison's family of tests, as `run-eval` reports it, is below 0.05, not
+when an unadjusted 95% interval excludes zero.
 
 ## Limits of the evidence
 
