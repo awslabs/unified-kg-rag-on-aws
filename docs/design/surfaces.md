@@ -118,7 +118,7 @@ another namespace. `mcp.strategies` limits which strategies the tools run
 chain's `MethodologyNotIndexedError` message, which names what it holds.
 The list binds the chain (`GraphRAGChain(allowed_strategies=...)`) and is
 enforced where the chain resolves the strategy (`_resolve_strategy`), not
-after the answer: a strategy outside it is refused (`ToolArgumentError`),
+after the answer: a strategy outside it is refused (`InvalidArgumentError`),
 and `auto`'s candidates (the routing fallback of
 `strategy_registry.routable_strategies` included) are cut to the list
 before the router is asked, so neither the router nor the fallback after

@@ -73,6 +73,7 @@ PUBLIC_API = sorted(
         "ErrorClass",
         "GraphRAGException",
         "IndexNotFoundError",
+        "InvalidArgumentError",
         "InvalidFilterError",
         "LanguageModelError",
         "MethodologyNotIndexedError",

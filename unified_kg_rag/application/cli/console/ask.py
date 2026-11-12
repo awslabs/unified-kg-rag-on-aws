@@ -393,7 +393,12 @@ class AskService:
                     error=str(e), latency_seconds=time.perf_counter() - started
                 )
                 queue.put_nowait(
-                    {"kind": "error", "error_kind": kind, "message": str(e)}
+                    {
+                        "kind": "error",
+                        "error_kind": kind,
+                        "error_class": kind,
+                        "message": str(e),
+                    }
                 )
             finally:
                 with contextlib.suppress(Exception):

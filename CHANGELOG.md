@@ -234,10 +234,12 @@ See [exit codes and JSON output](docs/reference/exit-codes-and-json.md) and the
 - `--output-format json` prints one JSON document on stdout (a status document on failure, argparse errors included)
   and everything else on stderr; `run-ingestion` rejects it with `--metrics-sink cloudwatch` (#333, #359, #366,
   #420).
-- JSON failures have one schema: `status` (`failed`, or `interrupted`), `exit_code`, `error` and a new `error_type`
-  (the exception's class, `UsageError`, `FailureBudgetExceeded`, `RegressionGateFailed`, `RunFailed` or
+- JSON failures have one schema: `status` (`failed`, or `interrupted`), `exit_code`, `error`, a new `error_class`
+  (the `ErrorClass` value, the stable key; a refused command line is `invalid_argument`) and `error_type`
+  (informational: the exception's class, `UsageError`, `FailureBudgetExceeded`, `RegressionGateFailed`, `RunFailed` or
   `Interrupted`), in a status document and in a result that shows a failure: a failed `run-rag` query adds them to
-  `success: false` (it had only `error`), and a failing `run-eval` or `run-visualization` result has them (#629).
+  `success: false` (it had only `error`), and a failing `run-eval`, `run-ingestion` or `run-visualization` result has
+  them (#629). Every JSON document starts with `version`, the package version that wrote it.
 - `run-rag --output-format json`: an answer's `search_results` leaves out `results`, which repeated its `sources`;
   `--verbose` keeps them (#629).
 - `run-eval --search-strategy` takes a list (`["auto"]` by default); with several strategies or `--repeats` it
@@ -826,8 +828,9 @@ From a `main` checkout (formats and keys no release had):
   otherwise), and on any loopback address the `Host` and `Origin` headers must name it or a loopback name (421/403).
   `build_mcp_server` and `build_mcp_app` (package root; the latter the stateless ASGI application, its
   `Host`/`Origin` checks on with `allowed_hosts`) mount the same server in a host's application; neither changes the
-  chain given. Under `processing.ignore_errors` the error answer names its error in `metadata.error_type`. Guide:
-  [MCP server](docs/guides/mcp.md).
+  chain given. Under `processing.ignore_errors` the error answer names its error in `metadata.error_type`. A tool
+  error starts with its error class in brackets (`[store_unreachable] ...`), so an agent tells an outage to retry
+  from an argument to fix. Guide: [MCP server](docs/guides/mcp.md).
 - Structured graph queries, opt-in and unmeasured (#630): the `structured` search strategy answers counts, rankings,
   lists, paths between two named entities and seed-entity properties from a query the graph store runs. One planner
   call (`models.roles.graph_query`, default tier; `custom_prompts.graph_query_*`;
@@ -908,7 +911,8 @@ From a `main` checkout (formats and keys no release had):
   file ingestion does not read (another type, or hidden) or naming one path as a file and a folder, writes an
   upload all or none (a refused one leaves no folder) and atomically (a temporary file 0600 until the rename, a
   re-upload keeping the replaced file's mode; a name past its folder's limit is refused up front, `path_refused`),
-  names an error by its class (`ErrorClass`), and loads
+  names an error by its class (`ErrorClass`; `error_class` in every API error and Ask error event, `invalid_argument`
+  for a request it refuses), and loads
   nothing from another host. The web client
   (`console/web/`, Vite, React, TypeScript) is in English and nine more languages, in a light and a dark theme (the
   system's unless one is chosen in the top bar), set in Pretendard (Pretendard JP for Japanese, JetBrains Mono for
@@ -1055,10 +1059,10 @@ From a `main` checkout (formats and keys no release had):
 - Documents from memory: `DataIngestionPipeline.insert_documents([InputDocument(id=..., text=..., filters=...)])`
   adds or updates documents, `delete_documents(ids)` deletes them, through the incremental path of `run` (one run
   each, under the namespace lease); the source scope's other documents are kept (`DocumentDelta.kept`). Needs the
-  doc-status registry; an id the registry does not hold raises the new `DocumentNotFoundError` before any write
-  (#628), unless the interrupted run of the same `pipeline_id` deleted it (a retry finishes the others), and a
-  methodology the namespace does not hold yet raises `ConfigurationError` before the run, naming the methodologies
-  held and the directory run that adds it (#640). See [Python
+  doc-status registry; an id the registry does not hold raises the new `DocumentNotFoundError` (error class
+  `invalid_argument`) before any write (#628), unless the interrupted run of the same `pipeline_id` deleted it (a
+  retry finishes the others), and a methodology the namespace does not hold yet raises `ConfigurationError` before the
+  run, naming the methodologies held and the directory run that adds it (#640). See [Python
   library](docs/guides/python-library.md#documents-from-memory).
 - `run-describe` (and `describe_namespace`, `export_graph`): what an index namespace holds (methodologies, the
   strategies it serves, each index's item count and embedding model, the build record, the registry's records), and
@@ -1801,7 +1805,8 @@ From a `main` checkout (formats and keys no release had):
   relationship's `A -> B`) and `[n]` alike; `run-rag` builds its text and JSON output from it, the model-written
   sections an answer may cite included (`written`; `--verbose` lists them), and names a passage's file once in its
   citation line. A query a surface builds that the chain refuses (a blank question) is an `invalid_argument`
-  (`RAGInput.checked`, `ToolArgumentError`): `run-rag` exits 2 before any model call, the console names it.
+  (`RAGInput.checked`, the new `InvalidArgumentError`, exported; `ToolArgumentError` is the same class): `run-rag`
+  exits 2 before any model call, the console names it.
 
 ### Fixed
 Bugs present in 0.2.3.

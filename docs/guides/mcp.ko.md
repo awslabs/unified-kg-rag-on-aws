@@ -57,6 +57,14 @@ extra가 없으면 `run-mcp-server`는 extra 이름을 알려 주고 종료 코�
 전략은 `run-rag`처럼 거부됨), 그중 `auto`가 고르는 전략(`auto_routes`), 검색에 쓸 수 있는
 필터 키를 알려 줍니다.
 
+실패한 호출의 도구 오류는 대괄호로 감싼
+[오류 클래스](../reference/exit-codes-and-json.md#exit-code-2)(영문)로 시작하며, 이 값이 분기에 쓸
+안정된 키입니다. `[invalid_argument]`, `[invalid_filter]`, `[not_indexed]`,
+`[index_not_found]`, `[timeout]`은 호출자를 위한 메시지(바꿀 인자, 나중에 다시 할 호출)를,
+`[store_unreachable]`, `[model_unreachable]`, `[configuration]`, `[failure]`는 일반
+메시지(자세한 내용은 서버 로그)를 담습니다. 그래서 에이전트가 다시 시도할 장애와 보고할 오류를
+구분할 수 있습니다.
+
 ## 근거 콘텐츠
 
 `kg_search`와 `kg_answer`는 `records`를 돌려주고, 그래프 도구도 엔터티와 관계를 같은

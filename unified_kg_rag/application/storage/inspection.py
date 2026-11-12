@@ -44,7 +44,7 @@ from unified_kg_rag.shared import ConfigurationError, get_logger
 from unified_kg_rag.shared.exceptions import (
     DocStatusFormatError,
     DocStatusRegistryError,
-    ToolArgumentError,
+    InvalidArgumentError,
 )
 from unified_kg_rag.shared.utils.files import atomic_open
 
@@ -285,7 +285,7 @@ def export_graph(
     Raises:
         ConfigurationError: An unknown ``format``, an unsafe ``suffix``, or
             a vector store that cannot page its items.
-        ToolArgumentError: ``path`` exists and ``overwrite`` is not set.
+        InvalidArgumentError: ``path`` exists and ``overwrite`` is not set.
         StoreConnectionError: A store cannot be reached.
     """
     if format not in EXPORT_FORMATS:
@@ -296,7 +296,7 @@ def export_graph(
         raise ConfigurationError("max_items must be at least 1")
     target = Path(path)
     if target.exists() and not overwrite:
-        raise ToolArgumentError(
+        raise InvalidArgumentError(
             f"'{target}' exists: pass overwrite=True to replace it, or name "
             "another file"
         )

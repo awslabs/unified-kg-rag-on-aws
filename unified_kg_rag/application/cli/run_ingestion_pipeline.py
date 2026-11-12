@@ -30,6 +30,7 @@ from unified_kg_rag.application.cli.conventions import (
     ArgumentParser,
     add_output_format_argument,
     exits_on_sigterm,
+    failure_fields,
     failure_rate,
     interrupted_fields,
     json_output,
@@ -80,6 +81,7 @@ from unified_kg_rag.shared import (
     StoreConnectionError,
     get_logger,
 )
+from unified_kg_rag.shared.exceptions import ErrorClass
 from unified_kg_rag.shared.utils.validation import format_validation_errors
 
 if TYPE_CHECKING:
@@ -587,7 +589,11 @@ class IngestionPipelineRunner:
             if error := unneeded_stage_error(
                 self.config, [all_stages[name] for name in sorted(enabled_stages_set)]
             ):
-                usage_error(error, error_type=ConfigurationError.__name__)
+                usage_error(
+                    error,
+                    error_type=ConfigurationError.__name__,
+                    error_class=ErrorClass.CONFIGURATION,
+                )
         else:
             stages = dict.fromkeys(PipelineStageType, True)
 
@@ -922,9 +928,10 @@ class IngestionPipelineRunner:
             # The keys of every failure document (status stays the run's).
             **(
                 {
-                    "error": error,
-                    "exit_code": EXIT_FAILURE,
-                    "error_type": PipelineExecutionError.__name__,
+                    **failure_fields(
+                        EXIT_FAILURE, error, PipelineExecutionError.__name__
+                    ),
+                    "status": context.status.value,
                 }
                 if error
                 else {}
@@ -1073,9 +1080,8 @@ def _print_failed(
     """The JSON status of a run that failed before it printed its result,
     with its error and, once resolved, its pipeline id."""
     pipeline_id = runner.pipeline.pipeline_id if runner and runner.pipeline else None
-    print_status(
-        exit_code, error, **({"pipeline_id": pipeline_id} if pipeline_id else {})
-    )
+    fields: dict[str, Any] = {"pipeline_id": pipeline_id} if pipeline_id else {}
+    print_status(exit_code, error, **fields)
 
 
 @exits_on_sigterm

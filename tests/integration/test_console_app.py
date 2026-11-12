@@ -1096,6 +1096,15 @@ def test_a_blank_question_is_an_invalid_argument(client: Any) -> None:
     assert events[-1]["kind"] == "error"
     assert events[-1]["error_kind"] == "invalid_argument"
     assert events[-1]["message"] == "query: The query is empty."
+    # One class for one error on every path: the stream's event and the
+    # HTTP refusal of an empty one ("code": "invalid") name it alike.
+    assert events[-1]["error_class"] == "invalid_argument"
+    empty = client.post("/api/ask", json={"query": ""}, headers=HEADERS)
+    assert empty.status_code == 422
+    assert (empty.json()["code"], empty.json()["error_class"]) == (
+        "invalid",
+        "invalid_argument",
+    )
 
 
 def test_the_history_records_the_namespace_asked(client: Any) -> None:

@@ -21,6 +21,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from unified_kg_rag import __version__
 from unified_kg_rag.application.cli import (
     conventions,
     prepare_benchmark,
@@ -51,8 +52,20 @@ from unified_kg_rag.domain.models import (
     PipelineStageStatus,
 )
 from unified_kg_rag.shared import ConfigurationError, StoreConnectionError
+from unified_kg_rag.shared.exceptions import classify
 
 pytestmark = pytest.mark.unit
+
+
+def _document(text: str) -> Any:
+    """The JSON document a CLI printed, without the ``version`` every one
+    starts with (checked here)."""
+    document = json.loads(text)
+    assert isinstance(document, dict)
+    assert next(iter(document)) == "version" and document.pop("version") == (
+        __version__
+    )
+    return document
 
 
 @pytest.fixture(autouse=True)
@@ -406,7 +419,7 @@ def test_a_stopped_cli_that_does_not_unwind_is_ended_after_the_grace_period() ->
         """)
     assert result.returncode == 143, result.stderr
     assert time.time() - started < 20
-    assert json.loads(result.stdout) == {
+    assert _document(result.stdout) == {
         "status": "interrupted",
         "exit_code": 143,
         "error_type": "Interrupted",
@@ -508,7 +521,7 @@ def test_a_second_signal_ends_a_stopping_cli_at_once() -> None:
         """)
     assert result.returncode == 143, result.stderr
     assert time.time() - started < 20
-    assert json.loads(result.stdout) == {
+    assert _document(result.stdout) == {
         "status": "interrupted",
         "exit_code": 143,
         "error_type": "Interrupted",
@@ -576,7 +589,7 @@ def test_a_sigterm_after_the_result_is_printed_ends_the_process_at_once(
         signal.signal(signal.SIGTERM, previous)
     # Ended from the handler, not after unwinding through the loop.
     assert events[:2] == [143, "unwound"]
-    assert json.loads(capsys.readouterr().out) == {"ok": True}
+    assert _document(capsys.readouterr().out) == {"ok": True}
 
 
 def test_a_sigterm_after_main_returned_ends_the_process_with_143(
@@ -609,7 +622,7 @@ def test_a_sigterm_after_main_returned_ends_the_process_with_143(
         signal.signal(signal.SIGTERM, previous)
     assert ended == [143]
     # One document: the result, not a status after it.
-    assert json.loads(capsys.readouterr().out) == {"ok": True}
+    assert _document(capsys.readouterr().out) == {"ok": True}
 
 
 @pytest.mark.slow
@@ -675,7 +688,7 @@ def test_a_sigterm_while_a_cli_loads_exits_143(
     )
     assert done.returncode == 143, done.stderr
     if output_format == "json":
-        assert json.loads(done.stdout) == {
+        assert _document(done.stdout) == {
             "status": "interrupted",
             "exit_code": 143,
             "error_type": "Interrupted",
@@ -707,7 +720,7 @@ def test_a_ctrl_c_while_a_cli_loads_exits_130() -> None:
         preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL),
     )
     assert done.returncode == 130, done.stderr
-    assert json.loads(done.stdout) == {
+    assert _document(done.stdout) == {
         "status": "interrupted",
         "exit_code": 130,
         "error_type": "Interrupted",
@@ -877,7 +890,7 @@ def test_json_output_prints_a_status_when_stopped(
 
     with pytest.raises((SystemExit, KeyboardInterrupt)):
         main()
-    assert json.loads(capsys.readouterr().out) == {
+    assert _document(capsys.readouterr().out) == {
         "status": "interrupted",
         "exit_code": code,
         "error_type": "Interrupted",
@@ -895,7 +908,7 @@ def test_a_printed_json_result_is_not_followed_by_a_status(capsys, monkeypatch) 
 
     with pytest.raises(SystemExit):
         main()
-    assert json.loads(capsys.readouterr().out) == {"done": True}
+    assert _document(capsys.readouterr().out) == {"done": True}
 
 
 @pytest.mark.parametrize(
@@ -1196,7 +1209,7 @@ async def test_eval_json_output_is_the_only_stdout(
     )
     runner = run_evaluation.EvaluationRunner(args, _Chain(), config)  # type: ignore[arg-type]
     assert await runner.run() == 0
-    result = json.loads(capsys.readouterr().out)
+    result = _document(capsys.readouterr().out)
     # The run's own subdirectory of the outputs directory.
     assert result["output_directory"] == str(tmp_path / "out" / runner.run_id)
     assert result["failure_budget_breaches"] == []
@@ -1229,7 +1242,7 @@ def test_visualization_json_output_names_the_written_files(
     )
     monkeypatch.setattr(run_visualization, "load_cli_config", lambda _args: Config())
     assert run_visualization.main() == 1  # an empty graph renders nothing
-    result = json.loads(capsys.readouterr().out)
+    result = _document(capsys.readouterr().out)
     # The result shows the failure with the keys of every failure document.
     assert "No visualization files were rendered" in result.pop("error")
     assert result == {
@@ -1240,6 +1253,7 @@ def test_visualization_json_output_names_the_written_files(
         "skipped_renderers": {},
         "status": "failed",
         "exit_code": 1,
+        "error_class": "failure",
         "error_type": "RunFailed",
     }
 
@@ -1397,7 +1411,7 @@ def test_ctrl_c_exits_130_with_a_json_status_in_every_cli(
         with pytest.raises(SystemExit) as exc:
             main()
         assert exc.value.code == 130, argv[0]
-        assert json.loads(capsys.readouterr().out) == {
+        assert _document(capsys.readouterr().out) == {
             "status": "interrupted",
             "exit_code": 130,
             "error_type": "Interrupted",
@@ -1465,7 +1479,7 @@ def test_interrupted_ingestion_json_names_the_pipeline_id(
         expected["next_run_writes_from"] = datetime.fromtimestamp(
             until, tz=UTC
         ).isoformat()
-    assert json.loads(capsys.readouterr().out) == expected
+    assert _document(capsys.readouterr().out) == expected
 
 
 def test_ingestion_stopped_after_its_result_prints_one_document(
@@ -1534,7 +1548,7 @@ def test_ingestion_stopped_after_its_result_prints_one_document(
         run_ingestion_pipeline.main()
     assert exc.value.code == 143
     out, err = capsys.readouterr()
-    result = json.loads(out)
+    result = _document(out)
     assert (result["pipeline_id"], result["status"]) == ("run-7", "completed")
     assert "--pipeline-id" not in err
     assert "after it finished" in err
@@ -1618,12 +1632,13 @@ def test_a_failed_json_run_prints_a_failed_status(
     for main, argv, error, kind in cases:
         monkeypatch.setattr(sys, "argv", argv)
         assert main() == 1, argv[0]
-        status = json.loads(capsys.readouterr().out)
+        status = _document(capsys.readouterr().out)
         assert error in status.pop("error"), argv[0]
         assert status == {
             "status": "failed",
             "exit_code": 1,
             # The exception it failed with, else a run that failed.
+            "error_class": "failure",
             "error_type": kind,
         }, argv[0]
 
@@ -1635,7 +1650,7 @@ def _json_status(main: Callable[[], object], argv: list[str], capsys: Any) -> An
         code = main()  # run-visualization and run-prompt-tuning return it
     except SystemExit as exc:
         code = exc.code
-    return code, json.loads(capsys.readouterr().out)
+    return code, _document(capsys.readouterr().out)
 
 
 @pytest.mark.parametrize(
@@ -1686,6 +1701,7 @@ def test_a_json_run_failing_while_running_names_the_error(
             "status": "failed",
             "exit_code": code,
             "error": str(error),
+            "error_class": classify(error).value,
             "error_type": type(error).__name__,
         },
     )
@@ -1722,11 +1738,12 @@ def test_run_rag_refusing_its_configuration_at_startup_exits_2_naming_it(
         env=env,
     )
     assert done.returncode == 2, done.stderr
-    status = json.loads(done.stdout)
+    status = _document(done.stdout)
     assert "OpenTelemetry is not installed" in status.pop("error")
     assert status == {
         "status": "failed",
         "exit_code": 2,
+        "error_class": "configuration",
         "error_type": "ConfigurationError",
     }
     assert "Traceback" not in done.stderr
@@ -1762,11 +1779,12 @@ def test_run_rag_classifies_an_error_building_its_chain(
     with pytest.raises(SystemExit) as exited:
         asyncio.run(runner._initialize_chain())
     assert exited.value.code == code
-    status = json.loads(capsys.readouterr().out)
+    status = _document(capsys.readouterr().out)
     assert status == {
         "status": "failed",
         "exit_code": code,
         "error": str(error),
+        "error_class": classify(error).value,
         "error_type": type(error).__name__,
     }
 
@@ -1789,7 +1807,12 @@ def test_a_json_run_with_an_unknown_flag_names_it(
     )
     assert code == 2
     assert status.pop("error") == "unrecognized arguments: --bogus"
-    assert status == {"status": "failed", "exit_code": 2, "error_type": "UsageError"}
+    assert status == {
+        "status": "failed",
+        "exit_code": 2,
+        "error_class": "invalid_argument",
+        "error_type": "UsageError",
+    }
 
 
 def test_an_invalid_visualization_data_file_names_the_error_in_json(
@@ -1813,6 +1836,7 @@ def test_an_invalid_visualization_data_file_names_the_error_in_json(
     assert status == {
         "status": "failed",
         "exit_code": 2,
+        "error_class": "invalid_argument",
         "error_type": "InvalidVisualizationDataError",
     }
 
@@ -1840,7 +1864,7 @@ def test_prepare_benchmark_ctrl_c_exits_130_without_a_traceback(
             ]
         )
     assert exc.value.code == 130
-    assert json.loads(capsys.readouterr().out)["status"] == "interrupted"
+    assert _document(capsys.readouterr().out)["status"] == "interrupted"
 
 
 def test_prepare_benchmark_structural_ctrl_c_exits_130(
@@ -1862,7 +1886,7 @@ def test_prepare_benchmark_structural_ctrl_c_exits_130(
             ]
         )
     assert exc.value.code == 130
-    assert json.loads(capsys.readouterr().out)["status"] == "interrupted"
+    assert _document(capsys.readouterr().out)["status"] == "interrupted"
 
 
 @pytest.mark.parametrize(
@@ -1960,10 +1984,15 @@ def test_an_early_usage_error_still_prints_a_json_status(
     with pytest.raises(SystemExit) as exc:
         main()
     assert exc.value.code == 2
-    status = json.loads(capsys.readouterr().out)
+    status = _document(capsys.readouterr().out)
     # The error it exited for is named (it was not).
     assert error in status.pop("error")
-    assert status == {"status": "failed", "exit_code": 2, "error_type": "UsageError"}
+    assert status == {
+        "status": "failed",
+        "exit_code": 2,
+        "error_class": "invalid_argument",
+        "error_type": "UsageError",
+    }
 
 
 @pytest.mark.parametrize(
@@ -2011,10 +2040,11 @@ def test_a_failed_ingestion_status_names_the_error_and_pipeline_id(
     with pytest.raises(SystemExit) as exc:
         run_ingestion_pipeline.main()
     assert exc.value.code == code
-    assert json.loads(capsys.readouterr().out) == {
+    assert _document(capsys.readouterr().out) == {
         "status": "failed",
         "exit_code": code,
         "error": str(raised),
+        "error_class": classify(raised).value,
         "error_type": type(raised).__name__,
         "pipeline_id": "run-7",
     }
@@ -2050,7 +2080,7 @@ def test_a_stopped_cli_exits_without_joining_the_threads_it_abandoned() -> None:
     )
     assert result.returncode == 143
     assert time.time() - started < 20
-    assert json.loads(result.stdout) == {
+    assert _document(result.stdout) == {
         "status": "interrupted",
         "exit_code": 143,
         "error_type": "Interrupted",
@@ -2070,9 +2100,10 @@ def test_a_json_run_that_exits_with_an_error_prints_a_failed_status(
 
     with pytest.raises(SystemExit):
         main()
-    assert json.loads(capsys.readouterr().out) == {
+    assert _document(capsys.readouterr().out) == {
         "status": "failed",
         "exit_code": code,
+        "error_class": "invalid_argument" if code == 2 else "failure",
         "error_type": "UsageError" if code == 2 else "RunFailed",
     }
 
@@ -2144,9 +2175,10 @@ def test_an_explicit_argv_decides_json_output(
     with pytest.raises(SystemExit):
         main(["--output-format", "json"])
     assert seen == [True]
-    assert json.loads(capsys.readouterr().out) == {
+    assert _document(capsys.readouterr().out) == {
         "status": "failed",
         "exit_code": 2,
+        "error_class": "invalid_argument",
         "error_type": "UsageError",
     }
 
@@ -2243,7 +2275,7 @@ def test_a_finished_cli_writes_its_json_document_to_a_pipe() -> None:
         sys.exit(main())
         """)
     assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout) == {"status": "completed"}
+    assert _document(result.stdout) == {"status": "completed"}
 
 
 def test_a_finished_cli_shuts_its_tracing_backend_down() -> None:
@@ -2288,7 +2320,7 @@ def test_a_ctrl_c_stop_the_watchdog_ends_exits_130() -> None:
         main()
         """)
     assert result.returncode == 130, result.stderr
-    assert json.loads(result.stdout) == {
+    assert _document(result.stdout) == {
         "status": "interrupted",
         "exit_code": 130,
         "error_type": "Interrupted",
@@ -2510,6 +2542,7 @@ async def test_a_failed_run_rag_query_has_the_failure_keys(mocker) -> None:
         "status": "failed",
         "exit_code": 1,
         "error": "search.query_timeout_seconds (90 s) passed",
+        "error_class": "timeout",
         "error_type": "QueryTimeoutError",
         "conversation_id": "c-1",
     }
@@ -2538,6 +2571,7 @@ def test_a_failing_run_eval_result_has_the_failure_keys() -> None:
         "status": "failed",
         "exit_code": 1,
         "error": "local: 3 of 10 queries failed; f1 < 0.5",
+        "error_class": "failure",
         "error_type": "FailureBudgetExceeded",
     }
     assert failure(1, [], ["f1 < 0.5"], None)["error_type"] == "RegressionGateFailed"
@@ -2552,10 +2586,11 @@ def test_a_refused_config_names_its_error_type(capsys, monkeypatch) -> None:
     with pytest.raises(SystemExit) as exited, exit_on_config_error():
         raise ConfigurationError("models.default is required")
     assert exited.value.code == 2
-    status = json.loads(capsys.readouterr().out)
+    status = _document(capsys.readouterr().out)
     assert status == {
         "status": "failed",
         "exit_code": 2,
         "error": "models.default is required",
+        "error_class": "configuration",
         "error_type": "ConfigurationError",
     }

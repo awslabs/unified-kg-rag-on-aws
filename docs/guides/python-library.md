@@ -145,7 +145,9 @@ the stores only. `run-describe` prints them
   rather than raising, so check it as above.
 - The errors to tell apart are exported from the package root:
   `ConfigurationError` (a setting to fix; `StoreRequestRejectedError` among
-  them), `InvalidFilterError`, `IndexNotFoundError`, `StoreConnectionError`,
+  them), `InvalidFilterError`, `InvalidArgumentError` (an invalid query
+  input or tool argument, an output file that exists; `ToolArgumentError`
+  is the same class), `IndexNotFoundError`, `StoreConnectionError`,
   `QueryTimeoutError`, `NamespaceLeaseError`, `DocumentNotFoundError`,
   `ModelError` (a model call that failed: `LanguageModelError`,
   `EmbeddingModelError` or `RerankModelError`), `PipelineExecutionError` and

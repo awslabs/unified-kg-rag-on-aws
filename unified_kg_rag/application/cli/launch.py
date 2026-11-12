@@ -21,6 +21,8 @@ import signal
 import sys
 from typing import Any
 
+from unified_kg_rag import __version__
+
 
 def wants_json(argv: list[str]) -> bool:
     """Whether ``argv`` asks for ``--output-format json`` (read before the
@@ -38,6 +40,7 @@ def _stopped_while_loading(signum: int, _frame: object) -> None:
     exit_code = 128 + signum
     if wants_json(sys.argv[1:]):
         status = {
+            "version": __version__,  # conventions.print_json
             "status": "interrupted",
             "exit_code": exit_code,
             "error_type": "Interrupted",  # conventions.INTERRUPTED

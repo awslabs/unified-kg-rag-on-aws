@@ -197,8 +197,8 @@ from unified_kg_rag.shared import (
 )
 from unified_kg_rag.shared.exceptions import (
     ERROR_CLASS_KEY,
+    InvalidArgumentError,
     MethodologyNotIndexedError,
-    ToolArgumentError,
     classify,
 )
 from unified_kg_rag.shared.genai import ERROR_TYPE, GEN_AI_CONVERSATION_ID
@@ -569,17 +569,17 @@ class RAGInput(BaseModel):
     @classmethod
     def checked(cls, **fields: Any) -> "RAGInput":
         """A query from a surface's arguments. One it refuses (an empty
-        query, a value out of range) raises ``ToolArgumentError``, an
+        query, a value out of range) raises ``InvalidArgumentError``, an
         ``invalid_argument`` (``ErrorClass``), naming each field and why,
         rather than a ``ValidationError``.
 
         Raises:
-            ToolArgumentError: A field the query cannot take.
+            InvalidArgumentError: A field the query cannot take.
         """
         try:
             return cls(**fields)
         except ValidationError as e:
-            raise ToolArgumentError(validation_message(e)) from None
+            raise InvalidArgumentError(validation_message(e)) from None
 
 
 def validation_message(error: ValidationError) -> str:
@@ -1031,7 +1031,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         model call of the query."""
         allowed = getattr(self, "allowed_strategies", None)
         if allowed is not None and strategy not in allowed:
-            raise ToolArgumentError(
+            raise InvalidArgumentError(
                 f"Search strategy '{strategy.value}' is not allowed here; "
                 f"choose one of {_names(allowed)}."
             )

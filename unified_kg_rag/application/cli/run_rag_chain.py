@@ -76,7 +76,7 @@ from unified_kg_rag.shared import (
 )
 from unified_kg_rag.shared.exceptions import (
     ErrorClass,
-    ToolArgumentError,
+    InvalidArgumentError,
     classify,
     error_class_of,
 )
@@ -443,7 +443,7 @@ class CommandLineInterface:
             _load_chain()
             try:
                 RAGInput.checked(query=args.query)
-            except ToolArgumentError as e:
+            except InvalidArgumentError as e:
                 self.parser.error(f"--query: {str(e).removeprefix('query: ')}")
         if args.interactive and args.mode != "rag":
             self.parser.error(
@@ -596,7 +596,7 @@ class RAGChainRunner:
             error_class = classify(e)
             exit_code = EXIT_CODES[error_class]
             if exit_code == EXIT_USAGE:
-                usage_error(str(e), error_type=type(e).__name__)
+                usage_error(e)
             if error_class is ErrorClass.FAILURE:
                 logger.exception("Failed to initialize RAG chain: %s", e)
             else:
@@ -748,7 +748,7 @@ class RAGChainRunner:
                 error_class = error_class_of(outcome.error_class)
                 if EXIT_CODES[error_class] == EXIT_USAGE and not self.args.interactive:
                     # As raised without ignore_errors (below).
-                    usage_error(error, error_type=error_type)
+                    usage_error(error, error_type=error_type, error_class=error_class)
                 console.print(
                     f"\n[bold red]Error executing query: {markup_safe(error)}"
                     "[/bold red]"
@@ -756,7 +756,9 @@ class RAGChainRunner:
                 return {
                     "success": False,
                     **output,
-                    **failure_fields(EXIT_FAILURE, error, error_type),
+                    **failure_fields(
+                        EXIT_FAILURE, error, error_type, error_class=error_class
+                    ),
                 }
             console.print("\n[bold green]Query executed successfully![/bold green]")
             return {"success": True, **output}
@@ -769,7 +771,7 @@ class RAGChainRunner:
                 # the index cannot serve (an embedding dimension it does not
                 # hold) or a --suffix nothing was ingested under: the command
                 # line or the configuration is wrong (exit 2).
-                usage_error(str(e), error_type=type(e).__name__)
+                usage_error(e)
             if error_class is ErrorClass.FAILURE:
                 logger.exception("Error during query execution: %s", e)
             else:

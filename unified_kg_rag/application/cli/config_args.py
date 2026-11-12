@@ -20,7 +20,7 @@ from unified_kg_rag.application.config import (
     warn_ineffective_settings,
 )
 from unified_kg_rag.domain.models import Config
-from unified_kg_rag.shared.exceptions import ConfigurationError
+from unified_kg_rag.shared.exceptions import ConfigurationError, ErrorClass
 
 
 def config_path_arg(value: str) -> str:
@@ -41,7 +41,7 @@ def exit_on_config_error() -> Iterator[None]:
     try:
         yield
     except (ConfigurationError, FileNotFoundError) as e:
-        usage_error(str(e), error_type=type(e).__name__)
+        usage_error(e, error_class=ErrorClass.CONFIGURATION)
 
 
 def add_config_arguments(

@@ -696,17 +696,22 @@ async def test_synthesized_results_are_flagged() -> None:
 
 
 def test_caller_errors_keep_their_message_others_do_not() -> None:
-    for expected in (
-        ToolArgumentError("bad top_k"),
-        InvalidFilterError("bad filter"),
-        MethodologyNotIndexedError("holds graphrag only"),
-        QueryTimeoutError("late", timeout_seconds=1.0),
+    for expected, name in (
+        (ToolArgumentError("bad top_k"), "invalid_argument"),
+        (InvalidFilterError("bad filter"), "invalid_filter"),
+        (MethodologyNotIndexedError("holds graphrag only"), "not_indexed"),
+        (QueryTimeoutError("late", timeout_seconds=1.0), "timeout"),
     ):
-        assert describe_error(expected) == (str(expected), True)
+        assert describe_error(expected) == (f"[{name}] {expected}", True)
+    # The class tells a retryable outage from a fatal error; the message
+    # stays generic.
     secret = StoreConnectionError("Failed to connect to https://vpc-x.internal:443")
-    assert describe_error(secret) == (INTERNAL_ERROR_MESSAGE, False)
+    assert describe_error(secret) == (
+        f"[store_unreachable] {INTERNAL_ERROR_MESSAGE}",
+        False,
+    )
     assert describe_error(RuntimeError("Traceback ...")) == (
-        INTERNAL_ERROR_MESSAGE,
+        f"[failure] {INTERNAL_ERROR_MESSAGE}",
         False,
     )
 
@@ -896,13 +901,19 @@ async def test_a_refusal_the_error_answer_absorbed_keeps_its_message() -> None:
     refusal = "auto may run only local, and none of them serves it"
     with pytest.raises(mcp_tools._AbsorbedQueryError) as raised:
         await _tools(Absorbing("MethodologyNotIndexedError", refusal)).search("q")
-    assert describe_error(raised.value) == (refusal, True)
+    assert describe_error(raised.value) == (f"[not_indexed] {refusal}", True)
     assert raised.value.error_class is ErrorClass.NOT_INDEXED
-    for internal in ("StoreConnectionError", "ModelUnreachableError"):
+    for internal, name in (
+        ("StoreConnectionError", "store_unreachable"),
+        ("ModelUnreachableError", "model_unreachable"),
+    ):
         # Its message names an endpoint: never the caller's.
         with pytest.raises(mcp_tools._AbsorbedQueryError) as failed:
             await _tools(Absorbing(internal, "https://vpc-x")).search("q")
-        assert describe_error(failed.value) == (INTERNAL_ERROR_MESSAGE, False)
+        assert describe_error(failed.value) == (
+            f"[{name}] {INTERNAL_ERROR_MESSAGE}",
+            False,
+        )
 
 
 async def test_the_schema_is_resolved_once_and_its_error_returned(

@@ -62,6 +62,15 @@ run (`strategies`; a strategy it does not hold is refused, as in
 `run-rag`), which of them `auto` routes among (`auto_routes`) and which
 filter keys a search may give.
 
+A failed call's tool error starts with its
+[error class](../reference/exit-codes-and-json.md#exit-code-2) in brackets,
+the stable key to branch on: `[invalid_argument]`, `[invalid_filter]`,
+`[not_indexed]`, `[index_not_found]` and `[timeout]` carry a message for the
+caller (an argument to change, or a call to retry later); `[store_unreachable]`,
+`[model_unreachable]`, `[configuration]` and `[failure]` a generic one (the
+server log has the details), so an agent can tell an outage to retry from an
+error to report.
+
 ## Supporting content
 
 `kg_search` and `kg_answer` return `records`, and the graph tools return

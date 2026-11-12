@@ -85,6 +85,7 @@ from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import (
     ConfigurationError,
     DataProcessingError,
+    ErrorClass,
     classify,
 )
 from unified_kg_rag.shared.utils import event_loop
@@ -314,8 +315,20 @@ class ConsoleState:
 
 def _error(status: int, code: str, message: str, **extra: Any) -> JSONResponse:
     """An API error: ``code`` for the page to name it in its language,
-    ``error`` the detail."""
-    return JSONResponse({"error": message, "code": code, **extra}, status_code=status)
+    ``error`` the detail, and ``error_class`` the :class:`ErrorClass` every
+    surface names a failure by: ``code`` when it is one, else
+    ``invalid_argument`` for a request the caller can fix (a 4xx) and
+    ``failure`` for the rest."""
+    try:
+        error_class = ErrorClass(code)
+    except ValueError:
+        error_class = (
+            ErrorClass.INVALID_ARGUMENT if status < 500 else ErrorClass.FAILURE
+        )
+    return JSONResponse(
+        {"error": message, "code": code, "error_class": error_class.value, **extra},
+        status_code=status,
+    )
 
 
 TOKEN_COOKIE = "ukr_console_token"

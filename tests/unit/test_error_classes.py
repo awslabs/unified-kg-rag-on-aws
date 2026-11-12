@@ -41,7 +41,9 @@ pytestmark = pytest.mark.unit
 _CASES: list[tuple[BaseException, x.ErrorClass, int, bool]] = [
     # (error, class, CLI exit code, message for an MCP caller)
     (x.InvalidFilterError("f"), x.ErrorClass.INVALID_FILTER, 2, True),
-    (x.ToolArgumentError("a"), x.ErrorClass.INVALID_ARGUMENT, 2, True),
+    (x.InvalidArgumentError("a"), x.ErrorClass.INVALID_ARGUMENT, 2, True),
+    # A document id to fix, as an argument is (it was a failure, exit 1).
+    (x.DocumentNotFoundError("d"), x.ErrorClass.INVALID_ARGUMENT, 2, True),
     (x.MethodologyNotIndexedError("m"), x.ErrorClass.NOT_INDEXED, 2, True),
     (x.IndexNotFoundError("i"), x.ErrorClass.INDEX_NOT_FOUND, 2, True),
     (x.ConfigurationError("c"), x.ErrorClass.CONFIGURATION, 2, False),
@@ -67,12 +69,19 @@ def test_every_surface_reads_one_classification(
     assert x.classify(error) is error_class
     assert EXIT_CODES[error_class] == exit_code
     assert describe_error(error)[1] is callers
+    # The MCP message starts with the class, the stable key a caller reads.
+    message = describe_error(error)[0]
+    assert message.startswith(f"[{error_class.value}] ")
     if not callers:
-        assert describe_error(error)[0] == INTERNAL_ERROR_MESSAGE
+        assert message == f"[{error_class.value}] {INTERNAL_ERROR_MESSAGE}"
     # The console's kind is the class (its page names each).
     assert _error_kind(error if isinstance(error, Exception) else Exception()) == (
         error_class.value
     )
+
+
+def test_the_former_name_is_the_same_class() -> None:
+    assert x.ToolArgumentError is x.InvalidArgumentError
 
 
 def test_every_class_has_an_exit_code() -> None:

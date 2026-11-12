@@ -54,7 +54,7 @@ A query's failure maps to its code by its class (`ErrorClass`, the same for
 | Class | Raised as | Exit code |
 |---|---|---|
 | `invalid_filter` | `InvalidFilterError` | `2` |
-| `invalid_argument` | `ToolArgumentError` | `2` |
+| `invalid_argument` | `InvalidArgumentError` (`ToolArgumentError`), `DocumentNotFoundError`, a refused command line | `2` |
 | `not_indexed` | `MethodologyNotIndexedError` | `2` |
 | `index_not_found` | `IndexNotFoundError` | `2` |
 | `configuration` | `ConfigurationError` | `2` |
@@ -63,9 +63,14 @@ A query's failure maps to its code by its class (`ErrorClass`, the same for
 | `model_unreachable` | `ModelUnreachableError` | `1` |
 | `failure` | any other | `1` |
 
-The MCP server returns the message of the first four and `timeout` to the
-caller (a generic one for the rest, whose message may name an endpoint); the
-console's Ask page names the class. `run-rag`'s interactive session keeps
+The class is the stable key a caller branches on, on every surface: the
+CLIs' JSON `error_class` ([Failures and interruptions](#failures-and-interruptions)),
+the MCP server's tool error, which starts with it in brackets
+(`[store_unreachable] ...`) and then carries the message of the first four
+and `timeout` (a generic one for the rest, whose message may name an
+endpoint), and the console's `error_class` (an HTTP error's, `invalid_argument`
+for a request it refuses, and an Ask stream's error event). A new class may
+be added; a value is never renamed. `run-rag`'s interactive session keeps
 going after any of them.
 
 `run-mcp-server` uses the same codes: `0` once the client closes stdio (or
@@ -108,7 +113,8 @@ are flushed first, and a process pool's workers are ended with it.
 
 `--output-format json` prints one JSON document to stdout and moves the
 banner, progress and logs to stderr, so the output pipes into `jq` (not with
-`--metrics-sink cloudwatch`, which also writes to stdout). The document
+`--metrics-sink cloudwatch`, which also writes to stdout). Every document
+starts with `version`, the package version that wrote it. The document
 holds:
 
 - **`run-rag`**: `success` and the answer or the search results; a failed
@@ -210,7 +216,8 @@ shows the failure:
 | `status` | `"failed"` (`"interrupted"` for a stopped run; a `run-ingestion` result keeps the run's own status) |
 | `exit_code` | The process's exit code |
 | `error` | The message, when there is one |
-| `error_type` | What failed: the exception's class name (`ConfigurationError`, `QueryTimeoutError`, `StoreConnectionError`, `ModelUnreachableError`, `PipelineExecutionError`, ...), `UsageError` for a refused command line, `FailureBudgetExceeded` or `RegressionGateFailed` for `run-eval`, `RunFailed` for a run that failed without an exception (nothing rendered), `Interrupted` for a stopped run |
+| `error_class` | The class of the failure ([`ErrorClass`](#exit-code-2): `invalid_argument` for a refused command line, `configuration` for a config that does not load, `failure` for a run that failed without an exception); the stable key to branch on. A stopped run has none |
+| `error_type` | Informational, may change between releases: the exception's class name (`ConfigurationError`, `QueryTimeoutError`, `StoreConnectionError`, `ModelUnreachableError`, `PipelineExecutionError`, ...), `UsageError` for a refused command line, `FailureBudgetExceeded` or `RegressionGateFailed` for `run-eval`, `RunFailed` for a run that failed without an exception (nothing rendered), `Interrupted` for a stopped run |
 
 A run that printed its result prints nothing more; the result shows the
 failure with these keys: a failed `run-rag` query (also with
@@ -223,14 +230,14 @@ instead:
   `{"status": "interrupted", "exit_code": 143, "error_type": "Interrupted"}`
   (`130` for Ctrl-C).
 - A run that fails before it printed prints
-  `{"status": "failed", "exit_code": 1, "error_type": ...}` (or `2`) with the
-  `error` it failed with, an argparse error included.
+  `{"status": "failed", "exit_code": 1, "error_class": ..., "error_type": ...}`
+  (or `2`) with the `error` it failed with, an argparse error included.
 - That holds from the first moment: a SIGTERM while the CLI still loads, or
   after it printed its result while the process exits, exits `143` too, and
   a Ctrl-C while it loads `130` (the status document only while loading; a
   SIGINT the parent ignores, as `nohup` does, stays ignored).
 - A `run-ingestion` result whose run a stage failed carries the same `error`,
-  `exit_code` and `error_type`. `run-ingestion` adds the `pipeline_id` to resume with
+  `exit_code`, `error_class` and `error_type`. `run-ingestion` adds the `pipeline_id` to resume with
   (once the run resolved it) and, when a stopped run's next run on the
   namespace must wait for writes possibly still in flight (this run's, or
   those of the run whose expired lease it took over),
