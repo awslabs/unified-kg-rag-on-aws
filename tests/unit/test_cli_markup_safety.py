@@ -105,7 +105,7 @@ def test_run_rag_banner_prints_the_query_literally(
         interactive=False,
         disable_query_processing=False,
         verbose=False,
-        suffix="[/x]",
+        suffix="x",  # a safe name: --suffix and resolve_namespace refuse markup
         filters=["k:[/red]"],
         conversation_id="[/c]",
         query=_QUERY,

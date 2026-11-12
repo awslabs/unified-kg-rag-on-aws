@@ -124,3 +124,19 @@ def test_no_function_renames_the_namespace_rule() -> None:
         "def namespace_of(config, value=None):\n"
         "    return resolve_namespace(config, value)\n",
     )
+
+
+@pytest.mark.parametrize("suffix", ["acme*", "a,b", "Docs", "docs.v2", "../x"])
+def test_every_surface_refuses_a_name_no_store_takes(suffix: str) -> None:
+    # A wildcard reached the stores: the build-record read and the existence
+    # check ran on "graphrag-text-units-acme*", other tenants' indexes.
+    from pydantic import ValidationError
+
+    from unified_kg_rag.application.retrieval.rag_chain import RAGInput
+    from unified_kg_rag.shared import ConfigurationError
+
+    with pytest.raises(ConfigurationError, match="lowercase"):
+        resolve_namespace(Config(), suffix)
+    with pytest.raises(ValidationError, match="lowercase"):
+        RAGInput(query="q", suffix=suffix)
+    assert resolve_namespace(Config(), "tenant_a-1") == "tenant_a-1"

@@ -46,7 +46,7 @@ from unified_kg_rag.domain.models import (
     Config,
     SearchStrategy,
     SearchType,
-    validate_path_segment,
+    validate_safe_name,
 )
 from unified_kg_rag.domain.models.methodology import methodologies_holding
 from unified_kg_rag.domain.models.usage import LLMUsage
@@ -96,7 +96,7 @@ class AskRequest(BaseModel):
     @classmethod
     def _safe_suffix(cls, value: str | None) -> str | None:
         # An index namespace names store indexes and cache paths.
-        return None if value is None else validate_path_segment(value, "suffix")
+        return None if value is None else validate_safe_name(value, "suffix")
 
 
 def trace_url(trace_id: str | None, template: str | None, config: Config) -> str | None:

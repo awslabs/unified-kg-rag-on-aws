@@ -77,7 +77,7 @@ from unified_kg_rag.domain.models import (
     Config,
     Methodology,
     ModelRole,
-    validate_path_segment,
+    validate_safe_name,
 )
 from unified_kg_rag.domain.prompts.retrieval import STRATEGY_ROUTING_GUIDE
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
@@ -883,7 +883,7 @@ def _suffix(value: str | None) -> str | None:
     if value is None:
         return None
     try:
-        return validate_path_segment(value, "suffix")
+        return validate_safe_name(value, "suffix")
     except ValueError as e:
         raise ConfigurationError(str(e)) from e
 

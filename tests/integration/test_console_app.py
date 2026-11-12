@@ -273,8 +273,12 @@ def test_the_namespace_s_methodologies_come_from_its_build_record(
         "/api/namespace/methodologies", params={"methodologies": "lightrag"}
     ).json()
     assert narrowed["dropped"] == ["graphrag"]
-    bad = client.get("/api/namespace/methodologies", params={"suffix": "../x"})
-    assert bad.status_code == 400 and bad.json()["code"] == "invalid"
+    for unsafe in ("../x", "Docs", "acme*"):
+        # The stores' name rule: the config and the stores refuse the others.
+        bad = client.get("/api/namespace/methodologies", params={"suffix": unsafe})
+        assert bad.status_code == 400 and bad.json()["code"] == "invalid"
+        bad = client.get("/api/strategies", params={"suffix": unsafe})
+        assert bad.status_code == 400 and bad.json()["code"] == "invalid"
 
 
 def test_an_ingestion_that_narrows_the_namespace_is_refused_unconfirmed(

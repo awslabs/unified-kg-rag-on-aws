@@ -41,6 +41,7 @@ from unified_kg_rag.domain.models import (
     Methodology,
     SearchStrategy,
     validate_path_segment,
+    validate_safe_name,
 )
 from unified_kg_rag.domain.models.methodology import METHODOLOGY_PROFILES
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
@@ -356,7 +357,7 @@ class JobManager:
             env["UKR__INDEXING__METHODOLOGIES"] = json.dumps(chosen)
         if index_value:
             try:
-                index_value = validate_path_segment(index_value, "index value")
+                index_value = validate_safe_name(index_value, "index value")
             except ValueError as e:
                 raise ConfigurationError(str(e)) from e
             env["UKR__PROCESSING__DOCUMENT_PARSING__INDEX_VALUE"] = index_value

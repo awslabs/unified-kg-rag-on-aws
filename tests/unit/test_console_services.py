@@ -611,10 +611,30 @@ async def test_a_missing_index_is_reported_as_such(tmp_path: Path) -> None:
     await service.close()
 
 
-@pytest.mark.parametrize("suffix", ["../etc", "a/b", "", "x" * 129, "-lead", "a..b"])
+# The stores' rule (validate_safe_name): a name the console took but the
+# config refuses started a job whose subprocess failed loading its config.
+_UNSAFE_NAMESPACES = ["../etc", "a/b", "", "x" * 129, "a..b", "Docs", "docs.v2"]
+_UNSAFE_NAMESPACES += ["acme*", "a,b"]
+
+
+@pytest.mark.parametrize("suffix", _UNSAFE_NAMESPACES)
 def test_a_question_s_suffix_must_be_a_safe_namespace_name(suffix: str) -> None:
     from pydantic import ValidationError
 
     with pytest.raises(ValidationError):
         AskRequest(query="q", suffix=suffix)
-    assert AskRequest(query="q", suffix="tenant_a-1.v2").suffix == "tenant_a-1.v2"
+    assert AskRequest(query="q", suffix="tenant_a-1_v2").suffix == "tenant_a-1_v2"
+
+
+@pytest.mark.parametrize("index_value", ["Docs", "docs.v2", "acme*"])
+async def test_an_ingest_s_index_value_must_be_a_safe_namespace_name(
+    tmp_path: Path, index_value: str
+) -> None:
+    from unified_kg_rag.shared import ConfigurationError
+
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    with pytest.raises(ConfigurationError, match="lowercase"):
+        await _manager(tmp_path).start_ingest(
+            corpus=corpus, corpus_ref="workspace:corpus", index_value=index_value
+        )

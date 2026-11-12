@@ -122,6 +122,7 @@ from unified_kg_rag.domain.models import (
     SearchStrategy,
     SearchType,
     Source,
+    validate_safe_name,
 )
 from unified_kg_rag.domain.prompts import (
     AnswerGenerationPrompt,
@@ -546,6 +547,12 @@ class RAGInput(BaseModel):
     filters: dict[str, Any] | None = Field(
         default=None, description="Additional filters to apply to the search"
     )
+
+    @field_validator("suffix")
+    @classmethod
+    def _safe_suffix(cls, suffix: str | None) -> str | None:
+        # It names store indexes: a wildcard or comma would widen the target.
+        return None if suffix is None else validate_safe_name(suffix, "suffix")
 
     @field_validator("query")
     @classmethod

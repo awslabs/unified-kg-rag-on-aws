@@ -28,7 +28,18 @@ def resolve_namespace(config: Config, suffix: str | None) -> str:
     namespace ingestion with the same config writes), else
     ``Constants.DEFAULT_SUFFIX``. The one rule of every entry point (the
     chain, the CLIs, the MCP server, the console, ingestion), so a query
-    without a suffix reads what ingestion with its config wrote."""
+    without a suffix reads what ingestion with its config wrote.
+
+    Raises:
+        ConfigurationError: ``suffix`` is not a safe name (lowercase
+            letters, digits, ``-``, ``_``): a wildcard or a comma would
+            widen the store target to other namespaces.
+    """
+    if suffix:
+        try:
+            validate_safe_name(suffix, "index suffix")
+        except ValueError as e:
+            raise ConfigurationError(str(e)) from e
     return namespace_suffix(suffix or config.processing.document_parsing.index_value)
 
 
