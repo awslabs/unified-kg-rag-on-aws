@@ -718,7 +718,8 @@ def _widget_regions(template: Template) -> dict[str, str]:
     return {
         w["properties"]["title"]: w["properties"].get("region")
         for w in body["widgets"]
-        if "title" in w["properties"]
+        # Metric widgets: the alarm status widget lists alarms, of no region.
+        if "title" in w["properties"] and w["type"] == "metric"
     }
 
 
@@ -755,3 +756,106 @@ def test_the_bedrock_widgets_read_the_bedrock_region(
         annotations.has_warning("*", message)
     else:
         annotations.has_no_warning("*", message)
+
+
+def _dashboard_body(template: Template) -> dict[str, Any]:
+    (dashboard,) = template.find_resources("AWS::CloudWatch::Dashboard").values()
+    _, parts = dashboard["Properties"]["DashboardBody"]["Fn::Join"]
+    return json.loads("".join(p if isinstance(p, str) else "TOKEN" for p in parts))
+
+
+def test_every_alarm_notifies_when_it_fires_and_when_it_recovers() -> None:
+    # Old behaviour: no OK action, so the subscriber never heard that an
+    # alarm was over.
+    for context in ({}, {"opensearch_count": 2, "neptune_instances": 2}):
+        alarms = _alarms(context)
+        assert alarms
+        for name, alarm in alarms.items():
+            assert len(alarm["AlarmActions"]) == 1, name
+            assert alarm["OKActions"] == alarm["AlarmActions"], name
+
+
+@pytest.mark.parametrize("readers", [False, True])
+def test_the_dashboard_shows_every_store_and_the_alarm_status(readers: bool) -> None:
+    # Old behaviour: no AWS/ES, AWS/Neptune or AWS/DynamoDB series and no
+    # alarm widget, so store signals and app metrics could not be read side
+    # by side.
+    context = {"neptune_instances": 2} if readers else {}
+    template = _template(context)
+    body = _dashboard_body(template)
+    namespaces: dict[str, set[str]] = {}
+    neptune_roles: set[str] = set()
+    for widget in body["widgets"]:
+        for metric in widget["properties"].get("metrics", []):
+            if isinstance(metric[0], str) and metric[0].startswith("AWS/"):
+                namespaces.setdefault(metric[0], set()).add(
+                    widget["properties"]["title"]
+                )
+                if metric[0] == "AWS/Neptune" and "Role" in metric:
+                    neptune_roles.add(metric[metric.index("Role") + 1])
+    for namespace in ("AWS/ES", "AWS/Neptune", "AWS/DynamoDB"):
+        assert namespaces.get(namespace), namespace
+    assert neptune_roles == ({"WRITER", "READER"} if readers else {"WRITER"})
+    (status,) = [w for w in body["widgets"] if w["type"] == "alarm"]
+    # Every alarm of the stack is listed.
+    assert len(status["properties"]["alarms"]) == len(_alarms(context))
+
+
+def test_neptune_reader_alarms_with_a_reader_only() -> None:
+    # Old behaviour: the reader serves every query in non-dev but had no CPU
+    # alarm, and replica lag was not watched.
+    alarms = _alarms({"neptune_instances": 2})
+    cpu = alarms["NeptuneReaderHighCpu"]
+    dims = {d["Name"]: d["Value"] for d in cpu["Dimensions"]}
+    assert dims["Role"] == "READER"
+    assert (cpu["MetricName"], cpu["Threshold"], cpu["EvaluationPeriods"]) == (
+        "CPUUtilization",
+        90,
+        3,
+    )
+    lag = alarms["NeptuneReplicaLag"]
+    assert (lag["MetricName"], lag["Statistic"]) == (
+        "ClusterReplicaLagMaximum",
+        "Maximum",
+    )
+    assert lag["Threshold"] == 1000
+    assert not {"NeptuneReaderHighCpu", "NeptuneReplicaLag"} & _alarms().keys()
+
+
+def test_doc_status_read_throttles_and_system_errors_alarm() -> None:
+    from iac.stacks.observability_stack import DOC_STATUS_OPERATIONS
+
+    alarms = _alarms()
+    read = alarms["DocStatusReadThrottled"]
+    assert (read["MetricName"], read["Statistic"], read["Threshold"]) == (
+        "ReadThrottleEvents",
+        "Sum",
+        1,
+    )
+    errors = alarms["DocStatusSystemErrors"]
+    operations = {
+        {d["Name"]: d["Value"] for d in m["MetricStat"]["Metric"]["Dimensions"]}[
+            "Operation"
+        ]
+        for m in errors["Metrics"]
+        if "MetricStat" in m
+    }
+    # SystemErrors exists per operation only: one series per operation the
+    # registry calls (at most 10 metrics fit one alarm).
+    assert operations == set(DOC_STATUS_OPERATIONS)
+    assert len(operations) <= 10
+    source = (_PACKAGE / "adapters" / "doc_status" / "dynamodb.py").read_text(
+        encoding="utf-8"
+    )
+    names = re.findall(r"client\.(\w+)\(", source)
+    names += re.findall(r"get_paginator\(\"(\w+)\"\)", source)
+    called = {"".join(part.title() for part in name.split("_")) for name in names}
+    # Set-up and helper calls, not registry requests.
+    called -= {
+        "CreateTable",
+        "DescribeTable",
+        "GetPaginator",
+        "GetWaiter",
+        "UpdateTimeToLive",
+    }
+    assert called == set(DOC_STATUS_OPERATIONS)

@@ -1362,8 +1362,9 @@ an error, not empty results.
 
 On the CDK stack, a failed ingestion task publishes the execution id and the
 error to the SNS topic, and the alarms below report to the same topic: on
-pipeline runs, store health (some only on a multi-node domain, with `use_cmk`
-or on Neptune Serverless), capacity and queries.
+pipeline runs, store health (some only on a multi-node domain, with `use_cmk`,
+with a Neptune reader or on Neptune Serverless), capacity and queries. Each
+notifies when it fires and again when it is back to OK.
 They have a subscriber only with `-c alarm_email=<address>`.
 A failed task also fires `PipelineFailures`, a second notice without context
 that also covers what the message cannot report (an error the task's handler
@@ -1409,7 +1410,11 @@ These fire between runs too, so degradation shows before a run breaks on it:
 | `OpenSearchMasterHighCpu`, `OpenSearchMasterJvmPressure`, `OpenSearchMasterOldGenJvmPressure`, `OpenSearchMasterUnreachable` | Multi-node only: master CPU at least 50% for 45 minutes, master heap at least 95% (old generation 80%) for 3 minutes, or the master unreachable for 5 minutes | A larger `opensearch_master_instance`; an unreachable master is usually a network or AWS-side problem, so check the domain's events |
 | `OpenSearchKmsKeyError`, `OpenSearchKmsKeyInaccessible` | `use_cmk` only: the data key is disabled, or deleted or its grants revoked | Re-enable the key, or cancel a scheduled deletion. A deleted key cannot be recovered: restore a [manual snapshot](#manual-snapshots) to a new domain |
 | `DocStatusWriteThrottled` | The doc-status table throttled a write (5 minutes) | Registry calls retry with backoff; one still throttled fails the run with `DocStatusRegistryError`. Look for overlapping runs, rerun once it clears |
+| `DocStatusReadThrottled` | The doc-status table throttled a read (5 minutes) | A run reads one namespace's records under one partition key; as for writes, look for overlapping runs and rerun once it clears |
+| `DocStatusSystemErrors` | DynamoDB returned internal errors to the registry's operations (5 minutes) | Retried by the client; persistent ones fail the run with `DocStatusRegistryError`. Check the AWS Health Dashboard, then rerun |
 | `NeptuneHighCpu` | Average writer CPU at least 90% for 15 minutes | Sustained saturation: a larger `neptune_instance` (or `neptune_serverless_ncu` maximum), or, if you raised it, a lower `indexing.neptune.index_concurrency` (default `1`) |
+| `NeptuneReaderHighCpu` | `neptune_instances` > 1 only: average reader CPU at least 90% for 15 minutes | The readers serve the queries: a larger `neptune_instance` or more `neptune_instances` |
+| `NeptuneReplicaLag` | `neptune_instances` > 1 only: a reader at least 1 s behind the writer in 3 consecutive 5-minute periods | Queries read a stale graph; readers share the writer's storage and normally lag it by far less, so check the reader's CPU and the instance events |
 | `NeptuneLowFreeableMemory` | Writer freeable memory at or below 512 MiB at any point in 5 minutes; on Serverless only while the writer is at maximum capacity | Out-of-memory failures ahead: a larger `neptune_instance` (or `neptune_serverless_ncu` maximum) |
 | `NeptuneServerlessAtMaxCapacity` | Serverless only: the writer is at the `neptune_serverless_ncu` maximum for 3 consecutive 5-minute periods | Raise the maximum (or the minimum, so capacity is there before a burst) |
 | `NeptuneGremlinErrors` | Gremlin server errors on any instance for 3 consecutive minutes | Persistent failures (retried write conflicts come in short bursts and do not fire it): find the failing request in the task log |
@@ -1436,7 +1441,11 @@ with the task's `Environment` and the requested `Strategy`. A serving layer
 that embeds `GraphRAGChain` publishes nothing; emit the same metric from it
 to use the alarm.
 
-The dashboard also plots stage durations, task memory, CPU and disk, the
+The dashboard also lists every alarm's state, plots the stores' own signals
+(OpenSearch CPU, heap, indexing and search rates, 5xx and queues; Neptune CPU
+and freeable memory per writer and reader, replica lag, Gremlin requests and
+errors; the doc-status table's consumed capacity and throttles), and plots
+stage durations, task memory, CPU and disk, the
 run's LLM tokens and calls by stage and its response-cache hits, Bedrock
 calls, throttles and latency by model, query latency, the document outcomes
 of each run (failed, skipped, excluded, deleted, retrying, without claims),

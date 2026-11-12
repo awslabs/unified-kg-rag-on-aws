@@ -166,6 +166,21 @@ BEDROCK_THROTTLES = (
     'SELECT SUM(InvocationThrottles) FROM SCHEMA("AWS/Bedrock", ModelId)'
 )
 
+# The DynamoDB operations the doc-status registry calls
+# (adapters/doc_status/dynamodb.py; pinned against it by the tests).
+DOC_STATUS_OPERATIONS: tuple[str, ...] = (
+    "GetItem",
+    "BatchGetItem",
+    "PutItem",
+    "BatchWriteItem",
+    "DeleteItem",
+    "Query",
+    "Scan",
+)
+# Neptune reader lag (ms) the NeptuneReplicaLag alarm fires at: readers share
+# the writer's storage and normally trail it by well under a second.
+NEPTUNE_REPLICA_LAG_MS = 1000
+
 # OpenSearch 7.1+ indexing-pressure rejections ("Monitoring OpenSearch
 # cluster metrics with Amazon CloudWatch": totals since the node's process
 # started), where a 2.x domain's bulk 429s are counted.
@@ -189,9 +204,16 @@ class ObservabilityStack(Stack):
         super().__init__(scope, construct_id, **kwargs)
         self.config = config
         self.storage = storage
+        # The doc-status table as this stack reads it (an import of it by
+        # name on an upgraded 0.2.3 deployment): one construct for the
+        # alarms and the dashboard.
+        self._doc_status_table = storage.doc_status_table_for(self)
         self.compute = orchestration.compute
         self.ingestion_task_definition = orchestration.task_definition
         self._alarm_action = cw_actions.SnsAction(orchestration.alarm_topic)
+        # Every alarm of the stack, in creation order (the dashboard's alarm
+        # status widget lists them).
+        self.alarms: list[cw.Alarm] = []
         sm = orchestration.state_machine
 
         # Alarm: any failed Step Functions execution -> SNS. A failed task is
@@ -212,7 +234,7 @@ class ObservabilityStack(Stack):
             treat_missing_data=cw.TreatMissingData.NOT_BREACHING,
             alarm_description="unified-kg-rag-on-aws ingestion pipeline had a failed execution",
         )
-        failed_alarm.add_alarm_action(cw_actions.SnsAction(orchestration.alarm_topic))
+        self._notify(failed_alarm)
 
         # Alarm: a run that hit the state machine timeout or was stopped never
         # reaches the task's Catch and does not count as failed, so neither the
@@ -234,7 +256,7 @@ class ObservabilityStack(Stack):
             alarm_description="unified-kg-rag-on-aws ingestion pipeline had a "
             "timed-out or aborted execution",
         )
-        stopped_alarm.add_alarm_action(cw_actions.SnsAction(orchestration.alarm_topic))
+        self._notify(stopped_alarm)
 
         # Alarm: any indexing failures -> SNS. A SUCCEEDED Step Functions run can
         # still have silently dropped artifacts (extracted > 0 but indexed == 0,
@@ -252,9 +274,7 @@ class ObservabilityStack(Stack):
             alarm_description="unified-kg-rag-on-aws indexing reported failed items "
             "(possible silent artifact drop despite a SUCCEEDED run)",
         )
-        index_failed_alarm.add_alarm_action(
-            cw_actions.SnsAction(orchestration.alarm_topic)
-        )
+        self._notify(index_failed_alarm)
 
         # Alarm: a document quarantined -> SNS. Its processing killed the task
         # indexing.max_document_attempts runs in a row, the last one alone; it
@@ -271,9 +291,7 @@ class ObservabilityStack(Stack):
             "processing kept killing the run (skipped until their content "
             "changes)",
         )
-        quarantined_alarm.add_alarm_action(
-            cw_actions.SnsAction(orchestration.alarm_topic)
-        )
+        self._notify(quarantined_alarm)
 
         # Alarm: per-chunk extraction failures -> SNS. A chunk whose LLM call
         # fails every retry is dropped and the run still SUCCEEDS with a partial
@@ -302,9 +320,7 @@ class ObservabilityStack(Stack):
             alarm_description="unified-kg-rag-on-aws extraction/gleaning/claim "
             "extraction dropped text units (partial graph despite a SUCCEEDED run)",
         )
-        extraction_failed_alarm.add_alarm_action(
-            cw_actions.SnsAction(orchestration.alarm_topic)
-        )
+        self._notify(extraction_failed_alarm)
 
         # Alarm: source documents the run left out of the stores -> SNS. A
         # file that failed to parse and a document recorded FAILED are
@@ -330,17 +346,15 @@ class ObservabilityStack(Stack):
             "the stores (parse failures, failed documents) despite a SUCCEEDED "
             "run",
         )
-        not_indexed_alarm.add_alarm_action(
-            cw_actions.SnsAction(orchestration.alarm_topic)
-        )
+        self._notify(not_indexed_alarm)
 
         # Store-health alarms: the run alarms above only fire when a pipeline
         # RUN goes wrong. These surface data-store degradation (red cluster,
         # disk pressure, memory pressure, DDB throttling) that would otherwise be
         # invisible until the next run breaks. All route to the same SNS topic.
         self._add_store_health_alarms()
-        self._add_capacity_alarms(orchestration)
-        self._add_query_alarms(orchestration)
+        self._add_capacity_alarms()
+        self._add_query_alarms()
 
         # All alarms route to the orchestration SNS topic, but with no subscriber
         # they fire into the void. Warn at synth (rather than silently) when no
@@ -525,7 +539,100 @@ class ObservabilityStack(Stack):
                 ],
             ),
         )
+        # The stores' own signals, which explain slow stages and queries,
+        # on the same 5-minute periods as the EMF widgets above.
+        opensearch_widgets, neptune_widgets, dynamodb_widgets = self._store_widgets()
+        dashboard.add_widgets(*opensearch_widgets, *dynamodb_widgets)
+        dashboard.add_widgets(*neptune_widgets)
+        # Which alarm is in ALARM, at a glance: every alarm of the stack.
+        dashboard.add_widgets(
+            cw.AlarmStatusWidget(title="Alarms", alarms=list(self.alarms), width=24)
+        )
         self.dashboard = dashboard
+
+    def _store_widgets(
+        self,
+    ) -> tuple[list[cw.IWidget], list[cw.IWidget], list[cw.IWidget]]:
+        """The OpenSearch, Neptune and DynamoDB widgets of the dashboard."""
+        domain = self.storage.opensearch_domain
+        table = self._doc_status_table
+        five = Duration.minutes(5)
+
+        def search(name: str, statistic: str = "Maximum") -> cw.Metric:
+            return domain.metric(name, statistic=statistic, period=five)
+
+        opensearch_widgets: list[cw.IWidget] = [
+            cw.GraphWidget(
+                title="OpenSearch CPU and heap (%, maximum)",
+                left=[
+                    search(name)
+                    for name in (
+                        "CPUUtilization",
+                        "JVMMemoryPressure",
+                        "OldGenJVMMemoryPressure",
+                    )
+                ],
+            ),
+            cw.GraphWidget(
+                title="OpenSearch indexing and search",
+                left=[search(name, "Sum") for name in ("IndexingRate", "SearchRate")],
+                right=[
+                    search("5xx", "Sum"),
+                    search("ThreadpoolWriteQueue"),
+                    search("ThreadpoolSearchQueue"),
+                ],
+            ),
+        ]
+        readers = self.config.neptune_instances > 1
+        roles = ("WRITER", "READER") if readers else ("WRITER",)
+        neptune_widgets: list[cw.IWidget] = [
+            cw.GraphWidget(
+                title="Neptune CPU (%) by role",
+                left=[
+                    self._neptune_metric("CPUUtilization", role=role) for role in roles
+                ],
+                right=(
+                    [
+                        self._neptune_metric(
+                            "ClusterReplicaLagMaximum", statistic="Maximum"
+                        )
+                    ]
+                    if readers
+                    else []
+                ),
+            ),
+            cw.GraphWidget(
+                title="Neptune Gremlin requests and errors (per second)",
+                left=[self._neptune_metric("GremlinRequestsPerSec")],
+                right=[self._neptune_metric("GremlinServerErrorsPerSec")],
+            ),
+            cw.GraphWidget(
+                title="Neptune freeable memory by role (bytes, minimum)",
+                left=[
+                    self._neptune_metric(
+                        "FreeableMemory", statistic="Minimum", role=role
+                    )
+                    for role in roles
+                ],
+            ),
+        ]
+        dynamodb_widgets: list[cw.IWidget] = [
+            cw.GraphWidget(
+                title="DynamoDB doc-status capacity and throttles",
+                left=[
+                    table.metric(name, statistic="Sum", period=five)
+                    for name in (
+                        "ConsumedReadCapacityUnits",
+                        "ConsumedWriteCapacityUnits",
+                    )
+                ],
+                right=[
+                    table.metric(name, statistic="Sum", period=five)
+                    for name in ("ReadThrottleEvents", "WriteThrottleEvents")
+                ],
+            ),
+        ]
+        return opensearch_widgets, neptune_widgets, dynamodb_widgets
 
     def _emf(
         self,
@@ -601,8 +708,7 @@ class ObservabilityStack(Stack):
             period=Duration.minutes(1),
         )
 
-    def _add_capacity_alarms(self, orchestration: OrchestrationStack) -> None:
-        action = cw_actions.SnsAction(orchestration.alarm_topic)
+    def _add_capacity_alarms(self) -> None:
         # Sustained throttling: the batch retries each throttled call, so a
         # burst is absorbed, but 15 minutes of it means the run's concurrency
         # (processing.max_concurrency) exceeds the account's Bedrock quota and
@@ -619,7 +725,7 @@ class ObservabilityStack(Stack):
             "3 consecutive 5-minute periods (all models in the account and "
             "region): lower processing.max_concurrency or raise the quota",
         )
-        throttles.add_alarm_action(action)
+        self._notify(throttles)
         if self.bedrock_region:
             # An alarm reads metrics of its own region only, and Bedrock
             # publishes them where the calls go.
@@ -644,7 +750,7 @@ class ObservabilityStack(Stack):
             alarm_description="The ingestion task used at least 90% of its "
             "memory for 3 minutes: raise fargate_memory before it is killed",
         )
-        memory.add_alarm_action(action)
+        self._notify(memory)
         # Disk: the ingestion task's ephemeral storage holds the synced
         # corpus, the parsed documents and the stage cache; a full disk fails
         # the running stage. AWS's recommended Container Insights alarm: 90%
@@ -662,9 +768,9 @@ class ObservabilityStack(Stack):
             "ephemeral storage for 5 minutes: raise "
             "ingestion_ephemeral_storage_gib before the disk fills",
         )
-        disk.add_alarm_action(action)
+        self._notify(disk)
 
-    def _add_query_alarms(self, orchestration: OrchestrationStack) -> None:
+    def _add_query_alarms(self) -> None:
         # Slow queries: the p90 latency of run-rag queries (--metrics-sink
         # cloudwatch) above query_latency_alarm_seconds in 2 of 3 5-minute
         # periods. Periods without a query are missing, not breaching.
@@ -682,7 +788,36 @@ class ObservabilityStack(Stack):
             f"{self.config.query_latency_alarm_seconds} s in 2 of 3 5-minute "
             "periods (all search strategies)",
         )
-        latency.add_alarm_action(cw_actions.SnsAction(orchestration.alarm_topic))
+        self._notify(latency)
+
+    def _notify(self, alarm: cw.Alarm) -> cw.Alarm:
+        """Route ``alarm`` to the alarm topic when it fires and when it
+        recovers (an OK notice tells the subscriber it is over)."""
+        alarm.add_alarm_action(self._alarm_action)
+        alarm.add_ok_action(self._alarm_action)
+        self.alarms.append(alarm)
+        return alarm
+
+    def _neptune_metric(
+        self,
+        metric_name: str,
+        minutes: int = 5,
+        statistic: str = "Average",
+        role: str | None = None,
+    ) -> cw.Metric:
+        """A metric of the Neptune cluster, of one instance ``role``
+        (``WRITER``, ``READER``: each role's instances aggregated) or
+        cluster-wide."""
+        dims = {"DBClusterIdentifier": self.storage.neptune_cluster.cluster_identifier}
+        if role:
+            dims["Role"] = role
+        return cw.Metric(
+            namespace="AWS/Neptune",
+            metric_name=metric_name,
+            dimensions_map=dims,
+            statistic=statistic,
+            period=Duration.minutes(minutes),
+        )
 
     def _alarm(
         self,
@@ -707,12 +842,11 @@ class ObservabilityStack(Stack):
             treat_missing_data=cw.TreatMissingData.NOT_BREACHING,
             alarm_description=description,
         )
-        alarm.add_alarm_action(self._alarm_action)
-        return alarm
+        return self._notify(alarm)
 
     def _add_store_health_alarms(self) -> None:
         domain = self.storage.opensearch_domain
-        table = self.storage.doc_status_table_for(self)
+        table = self._doc_status_table
         _alarm = self._alarm
 
         # OpenSearch: a red cluster means at least one primary shard is
@@ -872,6 +1006,39 @@ class ObservabilityStack(Stack):
             1,
             "DynamoDB doc-status table is throttling writes",
         )
+        # Reads too: a run's delta reads one namespace's records, all under
+        # one partition key, so a large namespace's Query is one hot key.
+        _alarm(
+            "DocStatusReadThrottled",
+            table.metric(
+                "ReadThrottleEvents", statistic="Sum", period=Duration.minutes(5)
+            ),
+            1,
+            "DynamoDB doc-status table is throttling reads",
+        )
+        # DynamoDB publishes SystemErrors (HTTP 500) per operation only: sum
+        # the operations the registry calls.
+        system_errors = {
+            f"e{i}": table.metric(
+                "SystemErrors",
+                statistic="Sum",
+                period=Duration.minutes(5),
+                dimensions_map={"TableName": table.table_name, "Operation": op},
+            )
+            for i, op in enumerate(DOC_STATUS_OPERATIONS)
+        }
+        _alarm(
+            "DocStatusSystemErrors",
+            cw.MathExpression(
+                expression=" + ".join(f"FILL({key}, 0)" for key in system_errors),
+                using_metrics=system_errors,
+                label="Doc-status system errors",
+                period=Duration.minutes(5),
+            ),
+            1,
+            "DynamoDB returned internal server errors to the doc-status "
+            "registry (retried; persistent ones fail the run)",
+        )
 
         # Neptune: the primary graph store and the write target of every
         # ingestion run. Without these, Neptune degradation (CPU saturation
@@ -882,23 +1049,7 @@ class ObservabilityStack(Stack):
         # the WRITER role only: the cluster-wide series averages in idle
         # readers (neptune_instances=2 halves a saturated writer's CPU), and
         # every ingestion write lands on the writer.
-        neptune_cluster = self.storage.neptune_cluster
-        cluster_dims = {"DBClusterIdentifier": neptune_cluster.cluster_identifier}
-        writer_dims = {**cluster_dims, "Role": "WRITER"}
-
-        def _neptune_metric(
-            metric_name: str,
-            minutes: int = 5,
-            statistic: str = "Average",
-            writer: bool = False,
-        ) -> cw.Metric:
-            return cw.Metric(
-                namespace="AWS/Neptune",
-                metric_name=metric_name,
-                dimensions_map=writer_dims if writer else cluster_dims,
-                statistic=statistic,
-                period=Duration.minutes(minutes),
-            )
+        _neptune_metric = self._neptune_metric
 
         # AWS publishes no recommended Neptune CPU alarm, and Neptune's metric
         # best practices note that high CPU can be appropriate: a bulk edge
@@ -906,14 +1057,37 @@ class ObservabilityStack(Stack):
         # lasts three consecutive 5-minute periods.
         _alarm(
             "NeptuneHighCpu",
-            _neptune_metric("CPUUtilization", writer=True),
+            _neptune_metric("CPUUtilization", role="WRITER"),
             90,
             "Neptune writer CPU utilization is at least 90% for 15 minutes — "
             "ingestion writes and queries may stall",
             evaluation_periods=3,
         )
+        if self.config.neptune_instances > 1:
+            # The readers serve every query (the query task reads the reader
+            # endpoint): the same sustained saturation there slows queries.
+            _alarm(
+                "NeptuneReaderHighCpu",
+                _neptune_metric("CPUUtilization", role="READER"),
+                90,
+                "Neptune reader CPU utilization is at least 90% for 15 "
+                "minutes: queries may stall (a larger neptune_instance or more "
+                "neptune_instances)",
+                evaluation_periods=3,
+            )
+            # Readers share the writer's storage volume and normally lag it by
+            # well under a second; seconds of lag serve stale graph reads.
+            _alarm(
+                "NeptuneReplicaLag",
+                _neptune_metric("ClusterReplicaLagMaximum", statistic="Maximum"),
+                NEPTUNE_REPLICA_LAG_MS,
+                "A Neptune reader lagged the writer by at least "
+                f"{NEPTUNE_REPLICA_LAG_MS / 1000:g} s in 3 consecutive 5-minute "
+                "periods: queries read a stale graph",
+                evaluation_periods=3,
+            )
         # Minimum: the lowest point in the window, not a mean that hides it.
-        freeable = _neptune_metric("FreeableMemory", statistic="Minimum", writer=True)
+        freeable = _neptune_metric("FreeableMemory", statistic="Minimum", role="WRITER")
         # Low freeable memory precedes query/write failures.
         serverless = self.config.neptune_serverless_ncu
         if serverless is None:
@@ -935,7 +1109,7 @@ class ObservabilityStack(Stack):
             # the writer pinned at that maximum (the NCU range is too small).
             max_ncu = serverless[1]
             capacity = _neptune_metric(
-                "ServerlessDatabaseCapacity", statistic="Maximum", writer=True
+                "ServerlessDatabaseCapacity", statistic="Maximum", role="WRITER"
             )
             _alarm(
                 "NeptuneLowFreeableMemory",
