@@ -168,3 +168,18 @@ def test_without_latin_accents_folds_every_latin_mark(text: str, folded: str) ->
     # the decomposing accents and the letters no decomposition takes a mark
     # from.
     assert scripts.without_latin_accents(text) == folded
+
+
+@pytest.mark.parametrize(
+    ("text", "terms"),
+    [
+        ("Acme, Corp.", {"Acme", "Corp"}),
+        ("東京電力", {"東京", "京電", "電力"}),
+        ("กรุงเทพ", {"กร", "รุ", "ุง", "งเ", "เท", "ทพ"}),
+        ("ក", {"ក"}),
+        ("공급사 Acme", {"공급", "급사", "Acme"}),
+    ],
+)
+def test_word_terms_split_unspaced_runs_into_bigrams(text: str, terms: set) -> None:
+    # One owner of the rule MMR redundancy and name coverage compare by.
+    assert scripts.word_terms(text) == frozenset(terms)

@@ -859,6 +859,31 @@ def test_mmr_drops_a_japanese_near_duplicate() -> None:
     assert _diverse([original, original + "今日", other]) == ["c0", "c2"]
 
 
+@pytest.mark.parametrize(
+    ("original", "other"),
+    [
+        # Thai and Khmer write no spaces between words either: a whitespace
+        # run was one term, and a near-duplicate shared none with it.
+        (
+            "ธนาคารกรุงเทพประกาศผลกำไรไตรมาสที่สามเพิ่มขึ้นร้อยละสิบ",
+            "บริษัทแกมมาผลิตชิ้นส่วนเพื่อการส่งออกในโอไฮโอ",
+        ),
+        ("ធនាគារបានប្រកាសប្រាក់ចំណេញ", "ក្រុមហ៊ុនហ្គាម៉ាផលិតគ្រឿងបន្លាស់"),
+    ],
+)
+def test_mmr_drops_a_spaceless_script_near_duplicate(original: str, other: str) -> None:
+    assert _diverse([original, original + "ใหม่", other]) == ["c0", "c2"]
+
+
+def test_mmr_terms_ignore_punctuation() -> None:
+    # "profit." and "profit," are one word.
+    from unified_kg_rag.adapters.retrieval.hybrid_scorer import _redundancy_terms
+
+    assert _redundancy_terms("Acme reported a rise in profit.") == _redundancy_terms(
+        "acme reported a rise in profit, "
+    )
+
+
 def test_mmr_on_spaced_text_is_unchanged() -> None:
     original = "Acme Corp acquired Beta Inc in 2020 for ten million dollars"
     other = "Gamma Ltd makes widgets in Ohio for export"

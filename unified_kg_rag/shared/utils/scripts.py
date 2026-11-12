@@ -64,6 +64,7 @@ __all__ = [
     "script_of",
     "without_latin_accents",
     "word_spans",
+    "word_terms",
     "words",
 ]
 
@@ -669,3 +670,21 @@ def word_spans(text: str) -> list[tuple[int, int]]:
 def words(text: str) -> list[str]:
     """The words of ``text`` (:func:`word_spans`)."""
     return [text[start:end] for start, end in word_spans(text)]
+
+
+# A run of letters written without spaces between words: Han, Hangul and
+# Kana, and the spaceless alphabets (Thai, Lao, Myanmar, Khmer, Tai).
+_UNSPACED_RUN = re.compile(f"[{DENSE_SCRIPT_LETTERS}{SPACELESS_SCRIPT_LETTERS}]+")
+
+
+def word_terms(text: str) -> frozenset[str]:
+    """The terms two texts are compared by: the :func:`words` of ``text``,
+    each run of a script written without spaces (Han, Hangul, Kana, Thai,
+    Lao, Myanmar, Khmer, Tai) split into its character bigrams (a run of
+    one letter kept whole), as such a run is a clause, not a word."""
+    terms: set[str] = set()
+    for word in words(text):
+        for run in _UNSPACED_RUN.findall(word):
+            terms.update(run[i : i + 2] for i in range(max(1, len(run) - 1)))
+        terms.update(_UNSPACED_RUN.sub(" ", word).split())
+    return frozenset(terms)

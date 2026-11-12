@@ -38,7 +38,6 @@ covers "Café", "Dang" "Đặng": ``shared.utils.scripts.without_latin_accents``
 
 from __future__ import annotations
 
-import re
 from collections.abc import Sequence
 from difflib import SequenceMatcher
 from typing import Literal
@@ -48,11 +47,9 @@ from unified_kg_rag.domain.languages.legal_forms import latin_legal_form
 from unified_kg_rag.domain.models import RetrievalResult
 from unified_kg_rag.shared.utils import entity_key
 from unified_kg_rag.shared.utils.scripts import (
-    DENSE_SCRIPT_LETTERS,
-    SPACELESS_SCRIPT_LETTERS,
     fold_letter_variants,
     without_latin_accents,
-    words,
+    word_terms,
 )
 
 __all__ = [
@@ -64,10 +61,6 @@ __all__ = [
     "link_key",
     "name_terms",
 ]
-
-# A run of letters written without spaces between words: Han, Hangul and
-# Kana, and the spaceless alphabets (Thai, Lao, Myanmar, Khmer, Tai).
-_UNSPACED_RUN = re.compile(f"[{DENSE_SCRIPT_LETTERS}{SPACELESS_SCRIPT_LETTERS}]+")
 
 
 def hit_name(hit: RetrievalResult) -> str:
@@ -99,15 +92,10 @@ def name_terms(name: str) -> frozenset[str]:
     Latin accents left out before its words are told apart: a lowercased
     "İ" is an "i" and a combining dot, which would split "İzmir" ("Izmir"
     covers it)."""
-    terms: set[str] = set()
     # A legal form is read as written, before the accents go ("Sá" is no
     # "SA", as ``latin_legal_form`` reads it).
     written = (w for w in link_key(name).split() if latin_legal_form(w) is None)
-    for word in words(without_latin_accents(" ".join(written))):
-        for run in _UNSPACED_RUN.findall(word):
-            terms.update(run[i : i + 2] for i in range(max(1, len(run) - 1)))
-        terms.update(_UNSPACED_RUN.sub(" ", word).split())
-    return frozenset(terms)
+    return word_terms(without_latin_accents(" ".join(written)))
 
 
 def covers(name: str, mention: str, similarity: float = 1.0) -> bool:

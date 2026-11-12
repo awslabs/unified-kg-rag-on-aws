@@ -1812,8 +1812,9 @@ Queries and retrieval.
   schema (`filter_fields_for`) (#567).
 - Earlier turns' entities no longer leak into a follow-up, and `memory.max_conversation_age_hours` is enforced
   (#176, #218).
-- Korean BM25 recall, CJK fuzziness and NFC normalization in retrieval (#175, #177); MMR diversity compares Han,
-  Hangul and Kana words by character bigrams (#567).
+- Korean BM25 recall, CJK fuzziness and NFC normalization in retrieval (#175, #177); MMR diversity compares words
+  as entity linking does (`word_terms`: punctuation ignored, and Han, Hangul, Kana, Thai, Lao, Myanmar, Khmer and Tai
+  runs by character bigrams), so a Thai or Khmer near-duplicate is no longer kept as distinct (#567).
 - A query is translated only when ingestion translates or the caller asks (`RAGInput.target_language`), and its
   entities and keywords are extracted in the index language even when the caller asks for another: only the text
   units carry the requested language, so they matched no entity, relationship or report (#567, #583, #619).
