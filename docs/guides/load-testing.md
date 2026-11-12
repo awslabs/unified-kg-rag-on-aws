@@ -165,3 +165,40 @@ run it. Run it locally with
 minutes; `--soak-seconds` and `--chaos-docs` scale it), and check another
 report with `load.py gate report.json` (`--max-errors`, `--max-loop-lag-ms`,
 `--max-rss-mb-per-hour`).
+
+## Local baseline (fake models)
+
+Measured once on a development host (Linux, 16 vCPUs, shared with other
+work) at the 2026-11-12 review, with the demo corpus (8 documents) on the
+embedded stores and the fake models. **These are local numbers with fake
+models, not product performance**: they show the overhead of the code around
+the models and are the reference a regression is measured against on the same
+host.
+
+| Run | Requests | Throughput | Latency | Errors |
+|---|---|---|---|---|
+| In process, concurrency 1 | 140 | 8.3 rps | p50 0.11 s, p99 0.29 s | 0 |
+| In process, concurrency 16 | 140 | 18 rps (saturated) | p50 0.86 s, p99 1.44 s | 0 |
+| In process, concurrency 64 | 140 | 17 rps | p50 2.99 s, p99 6.6 s | 0 |
+| Console over HTTP, concurrency 1 | 80 | 2.9 rps | first event 0.05 s | 0 |
+| Console over HTTP, concurrency 32 | 80 | 9.1 rps | p99 6.2 s | 0 |
+| Soak, 40 min, concurrency 8, 30% memory turns | 31,210 | 12.9 rps | p50 0.55 s, p99 1.72 s | 0 |
+
+- Event-loop lag p99 stayed at 9 ms from concurrency 1 to 16.
+- Soak resources: RSS went from 163 to 168 MB (+4.5 MB/h over the second
+  half). File descriptors, SQLite files, threads and gc objects stayed flat,
+  and the conversations held stayed at the 100 cap: no leak.
+- Bulk ingestion with the fake models: 1,500 documents (3,000 text units) in
+  100 s at 617 MB peak RSS; one 15 MB file (6,710 units) in 202 s at 966 MB;
+  8,000 documents (15.5k units) in 362 s at 1.77 GB, about 101 KiB per unit.
+- Chaos: the runs after 30% 429s, after a SIGKILL and after an OpenSearch
+  pause converged (the pause up to the community drift incremental indexing
+  documents). A kill mid-run resumed with the stages it had finished reused
+  (141 model calls instead of 551). With 15% hung, 5% dropped and 5% 503
+  model calls and an 8 s query deadline, 14% of queries failed, all within
+  7.2 s. 968 queries during a 300-document incremental run
+  had no errors, at twice the p50.
+
+The demo corpus has no hub entities, so a cost that grows with how many text
+units an entity cites does not show in the nightly run: measure that on a
+`--docs` corpus, whose 13 entities each appear in most documents.
