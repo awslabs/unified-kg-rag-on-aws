@@ -1048,6 +1048,9 @@ From a `main` checkout (formats and keys no release had):
   longer matches `attr_<key>` against an entity's own attribute (`attr_category:finance` dropped an entity of a
   finance document whose extracted `category` was `hardware`) (#446, #661). See
   [filters](docs/reference/filters.md).
+- `processing.document_parsing.encoding`: the encoding the text formats that are not UTF-8 are read in instead of
+  the one detected (cp1252 for a French file detected as cp1250). See
+  [ingest](docs/guides/ingest.md#large-and-heterogeneous-corpora).
 - Documents from memory: `DataIngestionPipeline.insert_documents([InputDocument(id=..., text=..., filters=...)])`
   adds or updates documents, `delete_documents(ids)` deletes them, through the incremental path of `run` (one run
   each, under the namespace lease); the source scope's other documents are kept (`DocumentDelta.kept`). Needs the
@@ -1909,6 +1912,9 @@ Queries and retrieval.
   once no longer fails its item for good (#369, #378).
 
 Ingestion and incremental indexing.
+- A `.txt`, `.md`, `.csv`, `.json` or `.html` file that is not UTF-8 and whose encoding is not detected (a binary file
+  with a text suffix) fails to parse and counts as failed: it was decoded as latin-1 and indexed as text units of
+  garbage.
 - An extraction, claims, gleaning, report-findings or chunk-boundary section that lists elements reads as empty when
   it holds a short "nothing here" marker, in any language (one line of at most three estimated tokens:
   `<relationships>없음</relationships>`, `なし`, `None.`, `Keine`): only `None`, `N/A`, `null`, `nil` and `-` did,

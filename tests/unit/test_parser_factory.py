@@ -12,6 +12,7 @@ from __future__ import annotations
 
 # Imported here, not first inside the 10 s test below: pypdf's first import
 # takes seconds on a loaded runner (one pytest-xdist worker imports it there).
+import random
 import sys
 
 import pypdf  # noqa: F401
@@ -89,6 +90,45 @@ def test_core_html_retries_a_non_utf8_file(tmp_path) -> None:
     path.write_bytes("<p>공급자는 구매자에게 물품을 납품한다.</p>".encode("cp949"))
     doc = ParserFactory.create_parser(path, Config()).parse_file(path)
     assert doc.page_content == "공급자는 구매자에게 물품을 납품한다."
+
+
+def test_a_binary_file_with_a_text_suffix_fails_to_parse(tmp_path) -> None:
+    # Regression (rv24 quality 3): random bytes detect as no encoding, and
+    # the latin-1 fallback indexed them as text units of garbage.
+    path = tmp_path / "binary.txt"
+    path.write_bytes(random.Random(7).randbytes(3072))
+    with pytest.raises(DataProcessingError, match="not text in any detected"):
+        ParserFactory.create_parser(path, Config()).parse_file(path)
+
+
+def test_the_configured_encoding_reads_a_non_utf8_file(tmp_path) -> None:
+    # charset-normalizer reads this French cp1252 file as cp1250 ("ŕ
+    # Genčve"); the configured encoding is read instead of a detection.
+    text = "Livraison à Genève, réception déjà confirmée.\n"
+    path = tmp_path / "terms.txt"
+    path.write_bytes(text.encode("cp1252"))
+    config = Config()
+    config.processing.document_parsing.encoding = "cp1252"
+    assert ParserFactory.create_parser(path, config).parse_file(path).page_content == (
+        text
+    )
+    # A UTF-8 file is read as UTF-8 whatever is configured.
+    path.write_text("Livraison à Genève.\n", encoding="utf-8")
+    doc = ParserFactory.create_parser(path, config).parse_file(path)
+    assert doc.page_content == "Livraison à Genève.\n"
+
+
+def test_an_unknown_encoding_fails_the_config_load() -> None:
+    with pytest.raises(ValueError, match="unknown encoding 'utf-99'"):
+        Config.model_validate(
+            {"processing": {"document_parsing": {"encoding": "utf-99"}}}
+        )
+    assert (
+        Config.model_validate(
+            {"processing": {"document_parsing": {"encoding": "Latin1"}}}
+        ).processing.document_parsing.encoding
+        == "iso8859-1"
+    )
 
 
 def test_core_parser_constructs() -> None:

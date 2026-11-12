@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import logging
+import random
 from datetime import datetime
 from pathlib import Path
 
@@ -87,6 +88,24 @@ def test_the_stage_reports_skipped_files_apart_from_failed_ones(
     assert context.failed_source_files == []
     assert metrics is not None
     assert (metrics["files_skipped"], metrics["files_failed"]) == (1, 0)
+
+
+def test_a_binary_file_with_a_text_suffix_counts_as_failed(tmp_path: Path) -> None:
+    # rv24 quality 3: it was decoded as latin-1 and indexed as garbage.
+    (tmp_path / "binary.txt").write_bytes(random.Random(7).randbytes(3072))
+    (tmp_path / "keep.txt").write_text("Vendor ships goods to Buyer.")
+    context = PipelineContext(
+        pipeline_id="p",
+        config={},
+        status=PipelineStageStatus.RUNNING,
+        start_time=datetime(2026, 1, 1),
+        source_directory=tmp_path,
+    )
+
+    _, _, metrics = _stage(tmp_path)._execute_core(context)
+
+    assert context.failed_source_files == [str(tmp_path / "binary.txt")]
+    assert metrics is not None and metrics["files_failed"] == 1
 
 
 def test_files_under_hidden_directories_are_neither_parsed_nor_fingerprinted(

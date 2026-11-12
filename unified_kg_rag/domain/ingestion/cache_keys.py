@@ -499,6 +499,10 @@ _KEYED_ONCE_SET = frozenset(
         *(f"indexing.summary_tree.{name}" for name in SummaryTreeConfig.model_fields),
         *(f"search.tree_search.{name}" for name in TreeSearchConfig.model_fields),
         "search.token_manager.type_budgets.summary",
+        # Unset, a file that is not UTF-8 is read in the detected encoding,
+        # as before (one detected as none now fails instead of being read
+        # as latin-1).
+        "processing.document_parsing.encoding",
         # Overrides of the chunker's and the translator's prompts, added
         # after them: unset, the prompts are the ones keyed before.
         "custom_prompts.text_chunking_system",

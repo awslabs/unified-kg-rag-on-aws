@@ -63,17 +63,27 @@ class FileParser:
         self.loader_kwargs = loader_kwargs or {}
         self.file_type_name = file_type_name
 
-    def _detect_encoding(self, file_path: str | Path) -> str | None:
-        """Detect a text file's encoding with charset-normalizer.
+    def _detect_encoding(self, file_path: str | Path) -> str:
+        """The encoding a text file that is not UTF-8 is read in: the
+        configured ``processing.document_parsing.encoding``, else the one
+        charset-normalizer detects (logged at debug).
 
-        Returns the detected encoding name (logged at debug), or None if
-        detection fails so the caller can fall back to latin-1.
+        Raises:
+            DataProcessingError: Nothing is configured and no encoding is
+                detected: the bytes are not text (a binary file with a text
+                suffix), which latin-1 would decode into garbage text units.
         """
+        configured = self.config.processing.document_parsing.encoding
+        if configured is not None:
+            return configured
         from charset_normalizer import from_path
 
         best = from_path(file_path).best()
         if best is None:
-            return None
+            raise DataProcessingError(
+                "not text in any detected encoding (set "
+                "processing.document_parsing.encoding to read it in one)"
+            )
         logger.debug("Detected encoding '%s' for '%s'", best.encoding, file_path)
         return best.encoding
 
@@ -109,8 +119,9 @@ class FileParser:
                     and self._is_decode_error(exc)
                 ):
                     raise
-                detected = self._detect_encoding(file_path) or "latin-1"
-                langchain_docs = self._load_with_encoding(file_path, detected)
+                langchain_docs = self._load_with_encoding(
+                    file_path, self._detect_encoding(file_path)
+                )
             document = convert_langchain_to_document(
                 langchain_docs, file_path, index_value=index_value
             )
@@ -128,8 +139,9 @@ class FileParser:
 
 
 # Text-based loaders accept an ``encoding`` kwarg. When a non-UTF-8 file
-# (e.g. cp949, latin-1) raises UnicodeDecodeError, FileParser re-detects the
-# encoding with charset-normalizer and retries with an explicit ``encoding=``.
+# (e.g. cp949, latin-1) raises UnicodeDecodeError, FileParser retries with an
+# explicit ``encoding=``: the configured one, else the one charset-normalizer
+# detects (none detected: the file fails, it is not text).
 # Detection runs only after a decode error, so a file that decodes keeps the
 # text it always had (charset-normalizer is a declared dependency, reused in
 # ``Document._read_text_autodetect`` for one consistent detection path).
