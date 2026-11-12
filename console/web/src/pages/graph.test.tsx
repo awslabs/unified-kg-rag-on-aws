@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { drawnGraph, linkAlpha, placeLabels, type LabelBox } from "../components/GraphCanvas";
 import { I18nProvider } from "../i18n/i18n";
 import type { GraphData, GraphNode } from "../lib/types";
-import { EntityTable, TABLE_PAGE } from "./GraphPage";
+import { EntityTable, rankMatches, TABLE_PAGE } from "./GraphPage";
 
 const renderIn = (ui: ReactElement) => render(<I18nProvider initial="en">{ui}</I18nProvider>);
 
@@ -82,5 +82,18 @@ describe("graph legibility", () => {
     expect(linkAlpha(300)).toBeCloseTo(0.85);
     expect(linkAlpha(1200)).toBeCloseTo(0.425);
     expect(linkAlpha(1_000_000)).toBe(0.06);
+  });
+});
+
+describe("rankMatches", () => {
+  it("puts the exact name first, then prefixes, then by connections", () => {
+    const entities = [
+      { id: "a", name: "Entity 779", degree: 40 },
+      { id: "b", name: "Entity 77", degree: 2 },
+      { id: "c", name: "Big Entity 77", degree: 90 },
+      { id: "d", name: "entity 770", degree: 50 },
+    ];
+    expect(rankMatches(entities, "Entity 77").map((e) => e.id)).toEqual(["b", "d", "a", "c"]);
+    expect(rankMatches(entities, "  ")).toEqual([]);
   });
 });

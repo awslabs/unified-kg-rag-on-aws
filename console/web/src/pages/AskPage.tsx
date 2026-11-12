@@ -161,7 +161,7 @@ export function AskPage({ status }: { status: Status | null }) {
       />
       <div className="grid-2">
         <div className="conversation">
-          <div className="thread" aria-live="polite">
+          <div className="thread" aria-live="polite" aria-busy={busy}>
             {!turns.length ? (
               <div className="welcome">
                 <svg className="welcome-mark" viewBox="0 0 28 28" aria-hidden="true">

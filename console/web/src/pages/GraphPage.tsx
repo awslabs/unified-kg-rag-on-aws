@@ -161,14 +161,7 @@ function GraphExplorer({ graphRef, data, params }: { graphRef: string; data: Gra
     return ids;
   }, [params, edgeTarget]);
 
-  const matches = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return [];
-    return everyone
-      .filter((n) => n.name.toLowerCase().includes(q))
-      .sort((a, b) => b.degree - a.degree)
-      .slice(0, 12);
-  }, [search, everyone]);
+  const matches = useMemo(() => rankMatches(everyone, search), [search, everyone]);
   useEffect(() => setActive(0), [search]);
 
   const fetched = remote.data && remote.data.node.id === selected ? remote.data : null;
@@ -481,6 +474,21 @@ function GraphExplorer({ graphRef, data, params }: { graphRef: string; data: Gra
       </Sheet>
     </>
   );
+}
+
+/** The entities whose name holds `search` (case-insensitive), best first:
+ * the exact name, then names starting with it, then the rest, each by
+ * connections. */
+export function rankMatches<T extends { name: string; degree: number }>(entities: T[], search: string, limit = 12): T[] {
+  const q = search.trim().toLowerCase();
+  if (!q) return [];
+  const rank = (name: string) => (name === q ? 0 : name.startsWith(q) ? 1 : 2);
+  return entities
+    .map((n) => ({ n, name: n.name.toLowerCase() }))
+    .filter(({ name }) => name.includes(q))
+    .sort((a, b) => rank(a.name) - rank(b.name) || b.n.degree - a.n.degree)
+    .slice(0, limit)
+    .map(({ n }) => n);
 }
 
 /** A table row: a drawn entity in full, another by name and degree. */

@@ -22,7 +22,7 @@
   /* Text */
   --ink: #1c2128; /* 16.2:1 on sheet, 15.1:1 on paper */
   --graphite: #59636e; /* secondary, 6.1:1 on sheet, 5.7:1 on paper */
-  --placeholder: #6b7480; /* 4.8:1 */
+  --placeholder: #5f6873; /* 5.1:1 on sheet-sunk (the composer), 5.7:1 on sheet */
   --disabled-ink: #6b7480; /* 4.3:1 on sheet-sunk, a disabled control */
 
   /* The accent: indigo. The trace, links, focus, the primary action. */
@@ -91,7 +91,7 @@
 
   --ink: #e6e9ee; /* 14.4:1 on sheet, 15.5:1 on paper */
   --graphite: #8f98a3; /* 6.0:1 on sheet, 6.5:1 on paper, 5.5:1 on sheet-sunk */
-  --placeholder: #7d8691; /* 4.7:1 */
+  --placeholder: #8a939e; /* 5.1:1 on sheet-sunk (the composer), 5.6:1 on sheet */
   --disabled-ink: #8f98a3;
 
   --cobalt: #a5a8ff; /* 8.0:1 on sheet */
@@ -126,14 +126,16 @@
   --bad-wash: #331616;
 
   /* The same eight hues stepped for the dark surface (dataviz reference),
-   * all at least 3:1 on the sheet. */
+   * all at least 3:1 on the sheet; 5 and 7 lighter, so no pair falls under
+   * a CIELAB difference of 9 under simulated protanopia, deuteranopia or
+   * tritanopia (7 against 1 was 2.5 under protanopia). */
   --series-1: #3987e5;
   --series-2: #d95926;
   --series-3: #199e70;
   --series-4: #c98500;
-  --series-5: #d55181;
+  --series-5: #f28bb4;
   --series-6: #008300;
-  --series-7: #9085e9;
+  --series-7: #c4a2ff;
   --series-8: #e66767;
   --series-other: #6b7480;
 }

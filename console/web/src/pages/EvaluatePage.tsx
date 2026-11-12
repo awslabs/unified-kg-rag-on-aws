@@ -285,7 +285,7 @@ function RunView({ refName }: { refName: string }) {
       </h2>
       <Sheet title={t("evaluate.results")} pad={false}>
         <div className="table-wrap" tabIndex={0}>
-          <table className="table">
+          <table className="table table-sticky">
             <thead>
               <tr>
                 <th>{t("evaluate.metric")}</th>
@@ -358,7 +358,7 @@ function RunView({ refName }: { refName: string }) {
         {comparison?.cost ? (
           <Sheet title={t("evaluate.cost")} pad={false}>
             <div className="table-wrap" tabIndex={0}>
-              <table className="table">
+              <table className="table table-sticky">
                 <thead>
                   <tr>
                     <th>{t("evaluate.strategy")}</th>
@@ -390,7 +390,7 @@ function RunView({ refName }: { refName: string }) {
         ) : null}
         <Sheet title={t("evaluate.abstention")} pad={false}>
           <div className="table-wrap" tabIndex={0}>
-            <table className="table">
+            <table className="table table-sticky">
               <thead>
                 <tr>
                   <th>{t("evaluate.strategy")}</th>
@@ -423,7 +423,7 @@ function RunView({ refName }: { refName: string }) {
         <Sheet title={t("evaluate.lengths")} pad={!lengths}>
           {lengths ? (
             <div className="table-wrap" tabIndex={0}>
-              <table className="table">
+              <table className="table table-sticky">
                 <thead>
                   <tr>
                     <th>{t("evaluate.lengthRatio")}</th>
@@ -542,7 +542,7 @@ export function QuestionTable({ refName, candidate, baseline }: { refName: strin
               ) : null}
             </div>
             <div className="table-wrap" tabIndex={0}>
-              <table className="table">
+              <table className="table table-sticky">
                 <thead>
                   <tr>
                     <th>{t("evaluate.question")}</th>

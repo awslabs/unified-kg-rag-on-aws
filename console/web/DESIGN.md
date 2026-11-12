@@ -77,7 +77,7 @@ since the page's CSP allows no inline script).
 | `--trace-wash` / `--trace-ink` | `#eef0ff` / `#3730a3` (8.8:1) | `#232557` / `#c9ccff` (9.2:1) | Chosen chips, citation chips |
 | `--highlighter` / `--mark-ink` | `#ffd33d` / `#1c2128` (11.3:1) | same | Matched evidence, cited markers |
 | `--good` / `--warn` / `--bad` | 4.6 / 4.5 / 4.7:1 on their washes | 6.3 / 6.2 / 4.9:1 | Status, with a label |
-| `--series-1..8` | dataviz reference, light steps | the same hues, dark steps (3:1 on sheet) | Graph communities and types, charts |
+| `--series-1..8` | dataviz reference, light steps | the same hues, dark steps (3:1 on sheet; 5 and 7 lighter, apart under colour-blindness) | Graph communities and types, charts |
 
 Type: Pretendard (SIL OFL 1.1), one design for Latin and Hangul, with
 Pretendard JP for a Japanese page and the system's faces after them (Chinese
