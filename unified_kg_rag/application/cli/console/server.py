@@ -796,6 +796,16 @@ def create_app(
             raise HTTPException(404, f"no saved run '{ref}'")
         return await asyncio.to_thread(evaluations.read_run, directory)
 
+    @app.get("/api/evaluations/questions")
+    async def run_questions(ref: str) -> dict[str, Any]:
+        directory = state.roots.resolve(ref)
+        if not await asyncio.to_thread(directory.is_dir):
+            raise HTTPException(404, f"no saved run '{ref}'")
+        saved = await asyncio.to_thread(evaluations.read_run, directory)
+        return await asyncio.to_thread(
+            evaluations.question_scores, directory, saved["comparison"]
+        )
+
     # -- graph ------------------------------------------------------------
 
     @app.get("/api/graphs")

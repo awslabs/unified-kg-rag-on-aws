@@ -210,7 +210,8 @@ runs that finished. Any saved
 run (the console's or another `run-eval`'s) opens as a results table (each
 metric's mean per strategy), the paired comparison against the baseline (a
 row per metric: the mean difference with its interval drawn on the row's
-own scale, and the wins, ties and losses). A comparison adjusted for
+own scale, and the wins, ties and losses); hovering a metric's name gives
+its description and which way is better. A comparison adjusted for
 multiplicity ([Comparing strategies](./evaluate.md#comparing-strategies))
 marks a difference better or worse only when its Holm-adjusted p-value is
 below the comparison's alpha, shows that p-value, draws the family's
@@ -219,8 +220,12 @@ an older comparison, and a delta without per-query pairs or a closed-book
 arm, falls back to the interval excluding zero. Then the comparison's warnings, the cost per
 question (USD, tokens, median and 95th percentile time), the declines
 (rate, and precision and recall over the unanswerable questions) and, with
-the pairwise judge, the win rate per answer-length bucket. A job's gates
-show as passed or failed.
+the pairwise judge, the win rate per answer-length bucket. **Per
+question**, read once opened, lists each question with every strategy's
+score on the primary metric (the mean over its repeats) and its outcome
+(win, tie or loss) for the shown candidate against its baseline, filterable
+by outcome; a question opens the reference answer and every strategy's
+answer side by side. A job's gates show as passed or failed.
 
 **Graph.** A `visualization_data.json` the ingestion exported (the newest
 by default; every run that indexed writes the namespace's whole graph), drawn with a seeded layout per connected component: pan with a

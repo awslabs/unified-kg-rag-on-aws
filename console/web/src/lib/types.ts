@@ -276,6 +276,20 @@ export interface GraphData {
   stats: GraphStats;
 }
 
+/** `/api/evaluations/questions`: per question of a saved run, each
+ * strategy's score on one metric (the primary) and its answer. */
+export interface QuestionScores {
+  metric: string | null;
+  strategies: string[];
+  questions: {
+    id: string;
+    question: string;
+    ground_truth: string;
+    scores: Record<string, number>;
+    answers: Record<string, { text: string; error: string | null; abstained: boolean }>;
+  }[];
+}
+
 export interface MetricStats {
   mean: number;
   queries: number;

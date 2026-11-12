@@ -1639,6 +1639,35 @@ button.cite-link:hover {
     bottom: 60px;
   }
 }
+.metric-name {
+  cursor: help;
+}
+.metric-direction {
+  margin-left: 4px;
+  color: var(--graphite);
+}
+.answers-side {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--space-3);
+}
+.answer-card {
+  background: var(--sheet-sunk);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  font-size: var(--text-sm);
+}
+.answer-card p {
+  margin: 6px 0 0;
+  white-space: pre-line;
+}
+.question-toggle {
+  text-align: left;
+}
+.pager {
+  padding: 10px 20px;
+}
 .legend-item {
   border-radius: 4px;
   cursor: default;

@@ -7,12 +7,47 @@ import { useState } from "react";
 import { useI18n } from "../i18n/i18n";
 import type { Delta, Multiplicity } from "../lib/types";
 
+// Rates where less is better, and diagnostics with no better direction
+// (the evaluation's own lists: comparison._UNFILLED, _DIAGNOSTICS).
+const LOWER_IS_BETTER = new Set(["assertion_contradiction_rate", "negative_assertion_violation_rate"]);
+const NO_DIRECTION = new Set(["answer_length", "attributable_fraction"]);
+
 /** Whether a higher value of `metric` is better (true), worse (false) or
- * neither (null: answer length). */
+ * neither (null: answer length, the attributable fraction). */
 export function higherIsBetter(metric: string): boolean | null {
   if (metric.startsWith("latency/") || metric.startsWith("usage/")) return false;
-  if (metric.endsWith("/answer_length")) return null;
-  return true;
+  const type = metric.split("/").pop() ?? metric;
+  if (NO_DIRECTION.has(type)) return null;
+  return !LOWER_IS_BETTER.has(type);
+}
+
+/** The catalog key of a metric's description: `metric.<type>` (the
+ * abstention measures `metric.abstention_<type>`). */
+export function metricKey(metric: string): string {
+  const [evaluator, type] = metric.includes("/") ? metric.split("/", 2) : ["", metric];
+  return evaluator === "abstention" ? `metric.abstention_${type}` : `metric.${type}`;
+}
+
+/** A metric's name, its description and which way is better on hover, and
+ * an arrow for the direction (named for screen readers). */
+export function MetricName({ metric }: { metric: string }) {
+  const { t } = useI18n();
+  const direction = higherIsBetter(metric);
+  const hint = t(direction === null ? "evaluate.noDirection" : direction ? "evaluate.higherBetter" : "evaluate.lowerBetter");
+  const key = metricKey(metric);
+  const described = t(key);
+  const help = described === key ? hint : `${described} ${hint}.`;
+  return (
+    <span className="metric-name" title={help}>
+      <span className="mono">{metric}</span>
+      {direction !== null ? (
+        <span className="metric-direction" aria-hidden="true">
+          {direction ? "↑" : "↓"}
+        </span>
+      ) : null}
+      <span className="visually-hidden">{help}</span>
+    </span>
+  );
 }
 
 /** Whether a delta counts, and which way: with a Holm-adjusted p-value
@@ -83,8 +118,8 @@ export function DeltaPlot({ deltas, confidence = 0.95, multiplicity, noFinding =
             const primary = delta.family === "primary" || delta.family === "arm_primary";
             return (
               <tr key={metric}>
-                <td className="mono">
-                  {metric}
+                <td>
+                  <MetricName metric={metric} />
                   {primary ? (
                     <span className="badge" style={{ marginLeft: 6 }} title={t("chart.primaryHelp")}>
                       {t("chart.primary")}

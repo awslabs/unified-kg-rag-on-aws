@@ -369,7 +369,12 @@ def test_responses_carry_security_headers_and_no_cors(client: Any) -> None:
 def test_paths_outside_the_console_directories_are_refused(
     client: Any, ref: str
 ) -> None:
-    for path in ("graphs/data", "datasets/preview", "evaluations/run"):
+    for path in (
+        "graphs/data",
+        "datasets/preview",
+        "evaluations/run",
+        "evaluations/questions",
+    ):
         response = client.get(f"/api/{path}", params={"ref": ref})
         assert response.status_code == 403, (path, ref, response.text)
 
@@ -649,6 +654,17 @@ def test_an_evaluation_job_runs_the_cli_and_its_run_is_saved(
     assert run["comparison"]["baseline"] == "local"
     assert "naive" in run["comparison"]["deltas_vs_baseline"]
     assert {s["strategy"] for s in run["summaries"]} == {"local", "naive"}
+    # Per question: each strategy's primary-metric score and its answer.
+    questions = client.get(
+        "/api/evaluations/questions", params={"ref": mine["ref"]}
+    ).json()
+    assert questions["metric"] == run["comparison"]["multiplicity"]["primary_metric"]
+    assert questions["strategies"] == ["local", "naive"]
+    dataset = json.loads((workspace / "datasets" / "demo-eval.json").read_text())
+    assert len(questions["questions"]) == len(dataset)
+    first = questions["questions"][0]
+    assert set(first["answers"]) == {"local", "naive"}
+    assert all(0.0 <= v <= 1.0 for v in first["scores"].values())
     dashboard = client.get("/api/dashboard").json()
     row = next(j for j in dashboard["jobs"] if j["id"] == job["id"])
     assert row["llm_calls"] and row["cost_usd"]
@@ -991,7 +1007,7 @@ def test_a_changed_provider_endpoint_is_saved_only_when_confirmed(
 
 
 def test_missing_files_are_not_found(client: Any) -> None:
-    for path in ("datasets/preview", "evaluations/run"):
+    for path in ("datasets/preview", "evaluations/run", "evaluations/questions"):
         response = client.get(f"/api/{path}", params={"ref": "workspace:no-such.json"})
         assert response.status_code == 404 and response.json()["code"] == "not_found"
     response = client.get(

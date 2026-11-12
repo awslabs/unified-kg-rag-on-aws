@@ -4,7 +4,7 @@ import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { Bars } from "../components/charts";
 import { colorSlot } from "../lib/graphColors";
 
-import { Empty, ErrorText, Loading, PageHead, Sheet } from "../components/ui";
+import { Empty, ErrorText, Loading, PageHead, Pager, Sheet } from "../components/ui";
 import { useI18n } from "../i18n/i18n";
 import { get } from "../lib/api";
 import { navigate } from "../lib/router";
@@ -496,7 +496,6 @@ export function EntityTable({ nodes, communityName, onPick }: { nodes: EntityRow
   const [open, setOpen] = useState(false);
   const [page, setPage] = useState(0);
   const sorted = useMemo(() => (open ? [...nodes].sort((a, b) => b.degree - a.degree) : []), [open, nodes]);
-  const pages = Math.max(1, Math.ceil(nodes.length / TABLE_PAGE));
   const shown = sorted.slice(page * TABLE_PAGE, (page + 1) * TABLE_PAGE);
   return (
     <details onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}>
@@ -529,19 +528,7 @@ export function EntityTable({ nodes, communityName, onPick }: { nodes: EntityRow
               </tbody>
             </table>
           </div>
-          {pages > 1 ? (
-            <div className="row" style={{ padding: "10px 20px" }}>
-              <button className="button button-small" disabled={page === 0} onClick={() => setPage(page - 1)}>
-                {t("graph.tablePrev")}
-              </button>
-              <span className="field-help" role="status">
-                {t("graph.tableRange", { from: number(page * TABLE_PAGE + 1), to: number(Math.min(nodes.length, (page + 1) * TABLE_PAGE)), total: number(nodes.length) })}
-              </span>
-              <button className="button button-small" disabled={page >= pages - 1} onClick={() => setPage(page + 1)}>
-                {t("graph.tableNext")}
-              </button>
-            </div>
-          ) : null}
+          <Pager page={page} size={TABLE_PAGE} total={nodes.length} onPage={setPage} />
         </>
       ) : null}
     </details>
