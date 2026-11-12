@@ -96,3 +96,85 @@ def test_a_private_synth_rejects_a_secret_of_another_region(tmp_path: Path) -> N
     result = _synth({"observability_secret_arn": secret}, tmp_path)
     assert result.returncode != 0
     assert "observability_secret_arn is in 'us-east-1'" in result.stderr
+
+
+def _app_containers(outdir: Path) -> list[dict]:
+    """The app container of both task definitions (query: compute stack,
+    ingestion: orchestration stack)."""
+    containers = []
+    for stack in ("GraphRagCompute", "GraphRagOrchestration"):
+        template = json.loads((outdir / f"{stack}.template.json").read_text())
+        containers += [
+            c
+            for r in template["Resources"].values()
+            if r["Type"] == "AWS::ECS::TaskDefinition"
+            for c in r["Properties"]["ContainerDefinitions"]
+            if c["Name"] == "app"
+        ]
+    assert len(containers) == 2
+    return containers
+
+
+def _guardrail_grants(outdir: Path) -> list[str]:
+    template = (outdir / "GraphRagCompute.template.json").read_text()
+    return [
+        json.dumps(s["Resource"])
+        for r in json.loads(template)["Resources"].values()
+        if r["Type"] == "AWS::IAM::Policy"
+        for s in r["Properties"]["PolicyDocument"]["Statement"]
+        if s["Action"] == "bedrock:ApplyGuardrail"
+    ]
+
+
+def test_the_default_deploy_attaches_the_guardrail_it_creates(tmp_path: Path) -> None:
+    # The README quick start (`cdk deploy --all`, no guardrail context) used
+    # to create the guardrail and screen nothing with it.
+    result = _synth({}, tmp_path)
+    assert result.returncode == 0, result.stderr
+    for app in _app_containers(tmp_path):
+        env = {e["Name"]: e["Value"] for e in app["Environment"]}
+        assert env["UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER"] == (
+            "{{resolve:ssm:/graphrag/guardrail/identifier}}"
+        )
+        assert env["UKR__AWS__BEDROCK__GUARDRAIL__VERSION"] == (
+            "{{resolve:ssm:/graphrag/guardrail/version}}"
+        )
+        assert app["DockerLabels"]["guardrail-policy"]
+    # Both task roles may apply that one guardrail.
+    grants = _guardrail_grants(tmp_path)
+    assert len(grants) == 2
+    for grant in grants:
+        assert "guardrail/{{resolve:ssm:/graphrag/guardrail/identifier}}" in grant
+    manifest = json.loads((tmp_path / "manifest.json").read_text())
+    # Deployed after the parameters it reads, and through no export: a policy
+    # change replaces the version, and an export in use cannot change.
+    assert (
+        "GraphRagGuardrail" in manifest["artifacts"]["GraphRagCompute"]["dependencies"]
+    )
+    guardrail = (tmp_path / "GraphRagGuardrail.template.json").read_text()
+    assert "Export" not in guardrail
+    assert "is not attached to compute" not in result.stderr
+
+
+def test_a_cross_region_guardrail_still_needs_the_context(tmp_path: Path) -> None:
+    result = _synth({"network_mode": "public", "bedrock_region": "us-east-1"}, tmp_path)
+    assert result.returncode == 0, result.stderr
+    for app in _app_containers(tmp_path):
+        names = {e["Name"] for e in app["Environment"]}
+        assert "UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER" not in names
+    assert _guardrail_grants(tmp_path) == []
+    result = _synth(
+        {
+            "network_mode": "public",
+            "bedrock_region": "us-east-1",
+            "guardrail_identifier": "gr-1",
+            "guardrail_version": "3",
+        },
+        tmp_path,
+    )
+    assert result.returncode == 0, result.stderr
+    for app in _app_containers(tmp_path):
+        env = {e["Name"]: e["Value"] for e in app["Environment"]}
+        assert env["UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER"] == "gr-1"
+        assert env["UKR__AWS__BEDROCK__GUARDRAIL__VERSION"] == "3"
+        assert "DockerLabels" not in app

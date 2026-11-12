@@ -15,6 +15,7 @@ from aws_cdk.assertions import Template
 
 from iac.config import DeploymentConfig
 from iac.stacks.compute_stack import COLLECTOR_VOLUMES, WRITABLE_VOLUMES, ComputeStack
+from iac.stacks.guardrail_stack import GuardrailAttachment
 from iac.stacks.networking_stack import NetworkingStack
 from iac.stacks.orchestration_stack import OrchestrationStack
 from iac.stacks.storage_stack import StorageStack
@@ -51,7 +52,11 @@ def _compute_template(
         config=config,
         networking=networking,
         storage=storage,
-        guardrail_identifier=guardrail_identifier,
+        guardrail=(
+            GuardrailAttachment(guardrail_identifier, config.guardrail_version)
+            if guardrail_identifier
+            else None
+        ),
         env=_ENV,
     )
     orchestration = OrchestrationStack(
@@ -66,8 +71,12 @@ def _compute_template(
     return _data_plane(compute, orchestration)
 
 
-def _task_environment(context: dict[str, Any] | None = None) -> dict[str, Any]:
-    task_defs = _compute_template(context).find_resources("AWS::ECS::TaskDefinition")
+def _task_environment(
+    context: dict[str, Any] | None = None, guardrail_identifier: str | None = None
+) -> dict[str, Any]:
+    task_defs = _compute_template(context, guardrail_identifier).find_resources(
+        "AWS::ECS::TaskDefinition"
+    )
     (task_def,) = [v for k, v in task_defs.items() if k.startswith("IngestionTask")]
     (container,) = task_def["Properties"]["ContainerDefinitions"]
     return {e["Name"]: e["Value"] for e in container["Environment"]}
@@ -203,7 +212,9 @@ def test_an_unpinned_guardrail_warns_that_the_tasks_apply_draft() -> None:
             config=config,
             networking=net,
             storage=store,
-            guardrail_identifier=config.guardrail_identifier,
+            guardrail=GuardrailAttachment(
+                config.guardrail_identifier, config.guardrail_version
+            ),
             env=_ENV,
         )
 
@@ -216,7 +227,7 @@ def test_an_unpinned_guardrail_warns_that_the_tasks_apply_draft() -> None:
 
 def test_guardrail_version_is_injected_only_when_set() -> None:
     assert "UKR__AWS__BEDROCK__GUARDRAIL__VERSION" not in _task_environment()
-    env = _task_environment({"guardrail_identifier": "gr-1", "guardrail_version": "2"})
+    env = _task_environment({"guardrail_version": "2"}, "gr-1")
     assert env["UKR__AWS__BEDROCK__GUARDRAIL__VERSION"] == "2"
 
 

@@ -22,10 +22,14 @@ _ENV = cdk.Environment(account="111111111111", region="us-west-2")
 _GUARDRAIL = "AWS::Bedrock::Guardrail"
 
 
-def _synth(context: dict[str, Any]) -> tuple[GuardrailStack, Template]:
+def _synth(
+    context: dict[str, Any], deploy_region: str | None = None
+) -> tuple[GuardrailStack, Template]:
     app = cdk.App(context=context)
     config = DeploymentConfig.from_context(app)
-    stack = GuardrailStack(app, "TestGuardrail", config=config, env=_ENV)
+    stack = GuardrailStack(
+        app, "TestGuardrail", config=config, deploy_region=deploy_region, env=_ENV
+    )
     return stack, Template.from_stack(stack)
 
 
@@ -120,17 +124,97 @@ def test_no_identifier_does_not_warn() -> None:
 _UNATTACHED_WARNING = Match.string_like_regexp("is not attached to compute")
 
 
+_CROSS_REGION = {"bedrock_region": "us-west-2", "network_mode": "public"}
+
+
 def test_an_owned_guardrail_left_unattached_warns() -> None:
-    # The id reaches compute only through context: a deploy without it
-    # detaches the guardrail, silently before (an info note).
-    stack, _ = _synth({})
+    # Across regions the id reaches compute only through context: a deploy
+    # without it detaches the guardrail, silently before (an info note).
+    stack, _ = _synth(_CROSS_REGION, deploy_region="eu-west-1")
     Annotations.from_stack(stack).has_warning("*", _UNATTACHED_WARNING)
-    for context in (
-        {"guardrail_identifier": "gr-example123"},
-        {"create_guardrail": "false"},
+    assert stack.attachment is None
+    for context, deploy_region in (
+        ({}, "us-west-2"),
+        ({"bedrock_region": "us-west-2"}, "us-west-2"),
+        ({**_CROSS_REGION, "guardrail_identifier": "gr-example123"}, "eu-west-1"),
+        ({"create_guardrail": "false"}, "us-west-2"),
     ):
-        stack, _ = _synth(context)
+        stack, _ = _synth(context, deploy_region)
         Annotations.from_stack(stack).has_no_warning("*", _UNATTACHED_WARNING)
+
+
+_PARAMETER = "AWS::SSM::Parameter"
+
+
+def test_the_owned_guardrail_is_attached_in_the_deploy_region() -> None:
+    # The README's plain `cdk deploy --all`: no context, one region.
+    stack, template = _synth({}, deploy_region="us-west-2")
+    attachment = stack.attachment
+    assert attachment is not None
+    resolved = stack.resolve([attachment.identifier, attachment.version])
+    assert resolved == [
+        "{{resolve:ssm:/graphrag/guardrail/identifier}}",
+        "{{resolve:ssm:/graphrag/guardrail/version}}",
+    ]
+    assert attachment.source is stack
+    assert attachment.revision == stack.policy_digest
+    parameters = {
+        p["Properties"]["Name"]: p["Properties"]["Value"]
+        for p in template.find_resources(_PARAMETER).values()
+    }
+    assert parameters == {
+        "/graphrag/guardrail/identifier": {
+            "Fn::GetAtt": [stack.get_logical_id(stack.guardrail), "GuardrailId"]
+        },
+        "/graphrag/guardrail/version": {
+            "Fn::GetAtt": [stack.get_logical_id(stack.guardrail_version), "Version"]
+        },
+    }
+
+
+def test_an_attachment_from_context_wins_and_writes_no_parameter() -> None:
+    for context, deploy_region in (
+        ({"guardrail_identifier": "gr-1", "guardrail_version": "4"}, "us-west-2"),
+        (
+            {**_CROSS_REGION, "guardrail_identifier": "gr-1", "guardrail_version": "4"},
+            "eu-west-1",
+        ),
+        (
+            {
+                "create_guardrail": "false",
+                "guardrail_identifier": "gr-1",
+                "guardrail_version": "4",
+            },
+            "us-west-2",
+        ),
+    ):
+        stack, template = _synth(context, deploy_region)
+        assert stack.attachment == ("gr-1", "4", None, None)
+        template.resource_count_is(_PARAMETER, 0)
+
+
+def test_an_explicit_version_pins_the_attached_owned_guardrail() -> None:
+    stack, _ = _synth({"guardrail_version": "2"}, deploy_region="us-west-2")
+    assert stack.attachment is not None
+    assert stack.attachment.version == "2"
+
+
+def test_a_policy_change_changes_the_attachment_revision(
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    # The tasks read the version parameter only when their definition
+    # changes: the revision is what changes it.
+    from iac.stacks import guardrail_stack
+
+    def revision() -> str | None:
+        attachment = _synth({}, deploy_region="us-west-2")[0].attachment
+        assert attachment is not None
+        return attachment.revision
+
+    before = revision()
+    assert before and revision() == before
+    monkeypatch.setattr(guardrail_stack, "PII_ANONYMIZED", ("EMAIL",))
+    assert revision() != before
 
 
 def test_bring_your_own_creates_nothing() -> None:

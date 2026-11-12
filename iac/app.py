@@ -73,16 +73,24 @@ kms_key = (
     if config.use_cmk
     else None
 )
-# The guardrail is region-pinned to bedrock_region in its own stack. We avoid a
-# cross-region CloudFormation reference (those rewrite SSM/export plumbing across
-# every stack and cause export-in-use churn on the deploy-region stacks).
-# Instead the guardrail id flows to compute via the `guardrail_identifier`
-# context value: deploy the guardrail stack first, then pass its id with
-# `-c guardrail_identifier=<id>` on subsequent deploys. When unset, compute
-# simply injects no guardrail env var (guardrails disabled). Passing the id does
-# NOT stop the guardrail stack from owning its guardrail (`create_guardrail`
-# controls that), so step 2 never deletes what step 1 created.
-GuardrailStack(app, stack_id("Guardrail"), config=config, env=bedrock_env)
+# The guardrail is region-pinned to bedrock_region in its own stack. In the
+# deploy region (bedrock_region unset or equal, which private mode requires)
+# compute attaches the guardrail it owns through SSM parameters read at deploy
+# time. Across regions we avoid a cross-region CloudFormation reference (those
+# rewrite SSM/export plumbing across every stack and cause export-in-use churn
+# on the deploy-region stacks): the id flows to compute via the
+# `guardrail_identifier` context value, which always wins when given. Deploy the
+# guardrail stack first, then pass its id with `-c guardrail_identifier=<id>` on
+# subsequent deploys. Passing the id does NOT stop the guardrail stack from
+# owning its guardrail (`create_guardrail` controls that), so step 2 never
+# deletes what step 1 created. See iac/stacks/guardrail_stack.py.
+guardrail = GuardrailStack(
+    app,
+    stack_id("Guardrail"),
+    config=config,
+    deploy_region=deploy_region,
+    env=bedrock_env,
+)
 networking = NetworkingStack(
     app, stack_id("Network"), config=config, kms_key=kms_key, env=env
 )
@@ -101,7 +109,7 @@ compute = ComputeStack(
     networking=networking,
     storage=storage,
     kms_key=kms_key,
-    guardrail_identifier=config.guardrail_identifier,
+    guardrail=guardrail.attachment,
     env=env,
 )
 orchestration = OrchestrationStack(

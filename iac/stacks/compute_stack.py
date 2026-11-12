@@ -46,6 +46,7 @@ from aws_cdk import aws_secretsmanager as secretsmanager
 from constructs import Construct
 
 from iac.config import DeploymentConfig
+from iac.stacks.guardrail_stack import GuardrailAttachment
 from iac.stacks.log_retention import set_retention
 from iac.stacks.networking_stack import NetworkingStack
 from iac.stacks.storage_stack import StorageStack
@@ -102,14 +103,18 @@ class ComputeStack(Stack):
         networking: NetworkingStack,
         storage: StorageStack,
         kms_key=None,
-        guardrail_identifier: str | None = None,
+        guardrail: GuardrailAttachment | None = None,
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
         self.config = config
         self.storage = storage
         self.kms_key = kms_key
-        self.guardrail_identifier = guardrail_identifier
+        self.guardrail = guardrail
+        if guardrail is not None and guardrail.source is not None:
+            # The task definitions read the guardrail's SSM parameters at
+            # deploy time; CloudFormation sees no reference to order by.
+            self.add_dependency(guardrail.source)
         # Fixed names: a task definition in another stack refers to the
         # repository and the log group by name (build_task_definition).
         self.repository_name = f"{config.prefix}-app"
@@ -205,7 +210,7 @@ class ComputeStack(Stack):
             if config.corpus_bucket_name
             else None
         )
-        if self.guardrail_identifier and not config.guardrail_version:
+        if self.guardrail is not None and not self.guardrail.version:
             Annotations.of(self).add_warning(
                 "guardrail_identifier is set without guardrail_version: the "
                 "tasks apply the guardrail's DRAFT, which changes with every "
@@ -508,10 +513,10 @@ class ComputeStack(Stack):
             )
 
     def _guardrail_arn(self) -> str | None:
-        """ARN of the guardrail the task uses (``guardrail_identifier``)."""
-        identifier = self.guardrail_identifier
-        if not identifier:
+        """ARN of the guardrail the task uses."""
+        if self.guardrail is None:
             return None
+        identifier = self.guardrail.identifier
         if identifier.startswith("arn:"):
             return identifier
         region = self.config.bedrock_region or self.region
@@ -640,15 +645,14 @@ class ComputeStack(Stack):
             environment["UKR__INDEXING__METHODOLOGIES"] = json.dumps(
                 list(self.config.methodologies)
             )
-        if self.guardrail_identifier:
+        guardrail = self.guardrail
+        if guardrail is not None:
             environment["UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER"] = (
-                self.guardrail_identifier
+                guardrail.identifier
             )
-        if self.config.guardrail_version:
-            environment["UKR__AWS__BEDROCK__GUARDRAIL__VERSION"] = (
-                self.config.guardrail_version
-            )
-        if self.guardrail_identifier and self.config.guardrail_contextual_grounding:
+            if guardrail.version:
+                environment["UKR__AWS__BEDROCK__GUARDRAIL__VERSION"] = guardrail.version
+        if guardrail is not None and self.config.guardrail_contextual_grounding:
             # The guardrail's grounding policy only scores an answer checked
             # with the retrieved context, which the app then sends.
             environment[
@@ -706,6 +710,14 @@ class ComputeStack(Stack):
                 task_def, "AppLinuxParameters", init_process_enabled=True
             ),
             readonly_root_filesystem=True,
+            # A policy change publishes a new guardrail version under the same
+            # SSM parameter: the digest changes the task definition, so its
+            # deploy reads the new one.
+            docker_labels=(
+                {"guardrail-policy": guardrail.revision}
+                if guardrail is not None and guardrail.revision
+                else None
+            ),
         )
         for name, path in WRITABLE_VOLUMES.items():
             task_def.add_volume(name=name)
