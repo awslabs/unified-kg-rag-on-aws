@@ -12,11 +12,18 @@ version has none (the release workflow's dry run on a dev version); an empty
 ``[Unreleased]`` (right after a release) then prints a one-line placeholder.
 ``--link-base`` resolves repo-relative link targets against a URL such as
 ``https://github.com/<owner>/<repo>/blob/<tag>/``, the way GitHub resolves them
-when it renders CHANGELOG.md (a release body resolves none of them). Notes
-longer than a GitHub release body allows (125,000 characters, less a margin)
-are cut at a line break and end with a link to the full section
-(``--full-notes-url``). ``.github/workflows/release.yml`` runs it;
-``tests/unit/test_changelog_section.py`` covers it.
+when it renders CHANGELOG.md (a release body resolves none of them).
+
+The release body is the section condensed to what a reader of the release
+needs before upgrading: its introduction and its *Highlights*, *Breaking
+changes*, *Upgrading* and *Security* subsections, followed by a link to the
+version's heading in the full changelog (``--full-notes-url`` and the
+heading's fragment) for the subsections left out (*Added*, *Changed*,
+*Fixed*). A section with none of the kept subsections is printed whole.
+Notes still longer than a GitHub release body allows (125,000 characters,
+less a margin) are cut at a line break and end with that link.
+``.github/workflows/release.yml`` runs it; ``tests/unit/test_changelog_section.py``
+covers it.
 
 Usage:
     uv run python scripts/changelog_section.py --print-package-version
@@ -56,6 +63,9 @@ _REFERENCE_TARGET = re.compile(
 # fragment-only ``#x`` target is left as it is.
 _NOT_REPO_RELATIVE = re.compile(r"^(?:[A-Za-z][A-Za-z0-9+.-]*:|//|#)")
 NO_UNRELEASED_CHANGES = "No unreleased changes.\n"
+# The subsections a release body keeps; the others are linked.
+RELEASE_SUBSECTIONS = ("Highlights", "Breaking changes", "Upgrading", "Security")
+_SUBSECTION = re.compile(r"^### (?P<name>.+?)\s*$", re.MULTILINE)
 
 
 class ChangelogError(Exception):
@@ -80,6 +90,26 @@ def package_version(init_text: str) -> str:
     return str(matches[0])
 
 
+def _section_start(changelog_text: str, version: str) -> tuple[list[str], int]:
+    """The changelog's lines and the index of the ``## [version]`` heading."""
+    heading = re.compile(rf"^## \[{re.escape(version)}\](?:\s+-\s+\S.*)?\s*$")
+    lines = changelog_text.splitlines()
+    start = next((i for i, line in enumerate(lines) if heading.match(line)), None)
+    if start is None:
+        raise ChangelogError(f"CHANGELOG.md has no `## [{version}]` section")
+    return lines, start
+
+
+def heading_fragment(changelog_text: str, version: str) -> str:
+    """The fragment GitHub gives the ``## [version]`` heading when it renders
+    the changelog: the heading's text lowercased, without punctuation but
+    hyphens and underscores, its spaces as hyphens (``## [0.3.0] -
+    2026-12-01`` is ``030---2026-12-01``)."""
+    lines, start = _section_start(changelog_text, version)
+    text = lines[start].removeprefix("## ").strip().lower()
+    return re.sub(r"[^\w\- ]", "", text).replace(" ", "-")
+
+
 def extract_section(
     changelog_text: str, version: str, *, allow_empty: bool = False
 ) -> str:
@@ -87,11 +117,7 @@ def extract_section(
 
     An empty section fails unless ``allow_empty`` (then it is ``""``).
     """
-    heading = re.compile(rf"^## \[{re.escape(version)}\](?:\s+-\s+\S.*)?\s*$")
-    lines = changelog_text.splitlines()
-    start = next((i for i, line in enumerate(lines) if heading.match(line)), None)
-    if start is None:
-        raise ChangelogError(f"CHANGELOG.md has no `## [{version}]` section")
+    lines, start = _section_start(changelog_text, version)
     body: list[str] = []
     for line in lines[start + 1 :]:
         if line.startswith("## ") or _LINK_REFERENCE.match(line):
@@ -146,6 +172,52 @@ def fit_release_body(
         raise ChangelogError(f"a {limit}-character limit leaves no room for notes")
     cut = notes.rfind("\n", 0, room + 1)
     return notes[: cut if cut > 0 else room].rstrip() + footer
+
+
+def condense(notes: str, full_notes_url: str) -> str:
+    """``notes`` with only its introduction and :data:`RELEASE_SUBSECTIONS`,
+    then a link to ``full_notes_url`` naming the subsections left out;
+    ``notes`` unchanged when it holds none of those subsections."""
+    starts = list(_SUBSECTION.finditer(notes))
+    if not any(match["name"] in RELEASE_SUBSECTIONS for match in starts):
+        return notes
+    kept = [notes[: starts[0].start()].strip()]
+    omitted: list[str] = []
+    for match, following in zip(starts, [*starts[1:], None], strict=True):
+        if match["name"] not in RELEASE_SUBSECTIONS:
+            omitted.append(match["name"])
+            continue
+        end = following.start() if following is not None else len(notes)
+        kept.append(notes[match.start() : end].strip())
+    body = "\n\n".join(part for part in kept if part)
+    if omitted:
+        names = [f"*{name}*" for name in omitted]
+        listed = ", ".join(names[:-1]) + " and " + names[-1] if names[1:] else names[0]
+        body += f"\n\nThe full notes, with {listed}: {full_notes_url}"
+    return body + "\n"
+
+
+def release_section(
+    changelog_text: str,
+    tag_or_version: str,
+    *,
+    init_text: str | None = None,
+    fallback_unreleased: bool = False,
+) -> tuple[str, str]:
+    """The version whose section the release reads (``Unreleased`` on the
+    fallback) and :func:`release_notes`."""
+    version = normalize_version(tag_or_version)
+    notes = release_notes(
+        changelog_text,
+        tag_or_version,
+        init_text=init_text,
+        fallback_unreleased=fallback_unreleased,
+    )
+    try:
+        _section_start(changelog_text, version)
+    except ChangelogError:
+        return UNRELEASED, notes
+    return version, notes
 
 
 def release_notes(
@@ -205,7 +277,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--full-notes-url",
         default="CHANGELOG.md",
-        help="where truncated notes point to for the full section",
+        help=(
+            "the full changelog the condensed notes link to; the version "
+            "heading's fragment is added unless the URL has a fragment"
+        ),
     )
     args = parser.parse_args(argv)
     try:
@@ -215,15 +290,20 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.version is None:
             parser.error("a version is required")
-        notes = release_notes(
-            args.changelog.read_text(encoding="utf-8"),
+        changelog_text = args.changelog.read_text(encoding="utf-8")
+        version, notes = release_section(
+            changelog_text,
             args.version,
             init_text=init_text if args.check_package else None,
             fallback_unreleased=args.fallback_unreleased,
         )
+        full_notes_url = args.full_notes_url
+        if "#" not in full_notes_url:
+            full_notes_url += f"#{heading_fragment(changelog_text, version)}"
+        notes = condense(notes, full_notes_url)
         if args.link_base:
             notes = absolutize_links(notes, args.link_base)
-        notes = fit_release_body(notes, args.full_notes_url)
+        notes = fit_release_body(notes, full_notes_url)
     except ChangelogError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

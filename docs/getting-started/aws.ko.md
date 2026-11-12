@@ -82,7 +82,11 @@ uv sync --no-dev --extra eval --extra viz  # or: pip install -e '.[eval,viz]'
 ```
 
 `--no-dev`는 기여자용 테스트·린트 도구를 빼며, 이 옵션이 없으면 `uv sync`와 `uv run`이 이 도구를
-설치합니다. `uv sync`만 실행하면 수집과 질의만 설치됩니다. 선택 기능은 extra로 추가하며(이 페이지는
+설치합니다. `uv sync`는 지정한 extra만 설치하고 나머지는 지우므로, 위 명령 뒤에
+`uv sync --extra docx`를 실행하면 `eval`과 `viz`가 제거됩니다. extra를 더하려면 실행했던 명령에
+추가하거나, 설치된 것을 유지하는 `--inexact`를 붙이세요(`uv sync --inexact --extra docx`. 문서와
+오류 메시지가 이 형태로 안내합니다). 저장소를 받는 대신 GitHub 릴리스에 첨부된 wheel로 설치한다면
+`pip install '<wheel 파일>[eval,viz]'`을 씁니다(PyPI에는 아직 없습니다). `uv sync`만 실행하면 수집과 질의만 설치됩니다. 선택 기능은 extra로 추가하며(이 페이지는
 배포에 쓰는 extra를 다룹니다), 필요한 extra가 없으면 해당 명령이 extra 이름을 알려 주고 종료
 코드 `2`로 종료합니다. 위 명령의 두 extra는 다음과 같습니다.
 
@@ -93,9 +97,9 @@ uv sync --no-dev --extra eval --extra viz  # or: pip install -e '.[eval,viz]'
 
 **Markdown과 HTML**은 추가 패키지 없이 파싱합니다. Markdown은 쓰인 그대로, HTML은 표준
 라이브러리 파서로 읽습니다. `unstructured` extra는 둘을 더 정교하게 파싱하며, 설치되어 있으면 기본
-리더 대신 사용됩니다(`uv sync --extra unstructured`. URL 분할의 SSRF와 마크업 미이스케이프 문제를
+리더 대신 사용됩니다(`uv sync --inexact --extra unstructured`. URL 분할의 SSRF와 마크업 미이스케이프 문제를
 고친 `unstructured>=0.24.1`을 요구함). **Word**(`.docx`) 파일에는 `docx` extra가 필요하며
-(`uv sync --extra docx`), 없으면 수집은 이 파일을 건너뛰고 extra 이름을 담은 경고를 한 번 남깁니다.
+(`uv sync --inexact --extra docx`), 없으면 수집은 이 파일을 건너뛰고 extra 이름을 담은 경고를 한 번 남깁니다.
 [원본 형식](../troubleshooting.md#which-source-formats-are-read)(영문)을 참고하세요.
 
 `unstructured` extra는 spaCy 모델(`en_core_web_sm`)로 토큰을 나누며, 첫 Markdown·HTML 파일을 읽을 때
@@ -114,7 +118,7 @@ Word 파일을 읽으려면 `--build-arg UV_EXTRAS="--extra docx"`로, `unstruct
 이미지의 `docker/config.yaml`에는 엔드포인트가 없으며 CDK 태스크 정의(task definition)가 주입합니다.
 
 **OWL/RDFS 온톨로지**를 추출 스키마로 쓰려면 `ontology` extra가 필요합니다
-(`uv sync --extra ontology`, [Ontology](../guides/ontology.md#install), 영문).
+(`uv sync --inexact --extra ontology`, [Ontology](../guides/ontology.md#install), 영문).
 
 ## 인증
 

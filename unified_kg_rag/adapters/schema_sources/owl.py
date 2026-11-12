@@ -57,6 +57,7 @@ from unified_kg_rag.domain.models.config import SchemaSourceConfig
 from unified_kg_rag.domain.models.schema import SchemaDocument
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import SchemaSourceError
+from unified_kg_rag.shared.extras import extra_hint
 from unified_kg_rag.shared.utils.s3_uri import is_s3_uri
 from unified_kg_rag.shared.utils.validation import format_validation_errors
 
@@ -66,10 +67,7 @@ from .registry import SchemaSourceContext, register_schema_source
 
 logger = get_logger(__name__)
 
-INSTALL_HINT = (
-    "the ontology extra: uv sync --extra ontology (pip install "
-    "'unified-kg-rag-on-aws[ontology]')"
-)
+INSTALL_HINT = extra_hint("ontology")
 
 # How the files' errors name the source (the reader's S3 errors keep the
 # default "Schema source").

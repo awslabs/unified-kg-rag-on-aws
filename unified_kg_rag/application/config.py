@@ -205,6 +205,21 @@ def _warn_removed(where: str, path: str) -> None:
     )
 
 
+def warn_ineffective_settings(config: Config) -> None:
+    """Log a WARNING for each setting ``config`` sets that nothing reads: a
+    provider's setting while another provider is selected
+    (``Config.inactive_provider_settings``) and the others
+    ``Config.ineffective_settings`` names."""
+    for path in config.inactive_provider_settings():
+        _logger.warning(
+            "Config key '%s' is ignored: its provider is not the one selected "
+            "(see providers.*.kind)",
+            path,
+        )
+    for message in config.ineffective_settings():
+        _logger.warning("Config: %s", message)
+
+
 class ConfigLoader:
     """Loads the config from its layers: defaults < ``backend`` preset < file
     < environment (``UKR__`` variables; ``AWS_PROFILE`` / ``AWS_REGION`` only
@@ -219,10 +234,17 @@ class ConfigLoader:
     """
 
     def __init__(
-        self, config_path: Path | None = None, *, allow_unknown_keys: bool = False
+        self,
+        config_path: Path | None = None,
+        *,
+        allow_unknown_keys: bool = False,
+        warn_ineffective: bool = True,
     ) -> None:
         self.config_path = Path(config_path) if config_path else None
         self.allow_unknown_keys = allow_unknown_keys
+        # Off for a caller that changes the config after the load (the CLIs'
+        # provider flags), which warns of the result instead.
+        self.warn_ineffective = warn_ineffective
         self._config: Config | None = None
 
         # Debug, not print: a module-level ConfigLoader() runs this on every
@@ -272,14 +294,8 @@ class ConfigLoader:
             [f"'{path}'{where}" for path in unknown]
             + [_unknown_variable(name) for name in unknown_env]
         )
-        for path in config.inactive_provider_settings():
-            _logger.warning(
-                "Config key '%s' is ignored: its provider is not the one selected "
-                "(see providers.*.kind)",
-                path,
-            )
-        for message in config.ineffective_settings():
-            _logger.warning("Config: %s", message)
+        if self.warn_ineffective:
+            warn_ineffective_settings(config)
         if self.config_path is not None:
             resolve_relative_paths(config, self.config_path)
         self._config = config

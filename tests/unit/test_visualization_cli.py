@@ -490,3 +490,36 @@ class TestWithoutTheVizExtra:
         assert cli_module.main() == 2
         assert "--extra viz" in json.loads(capsys.readouterr().out)["error"]
         assert not (tmp_path / "out").exists()
+
+    def test_the_default_renderers_skip_one_whose_extra_is_missing(
+        self,
+        export_json: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        # Regression (rv23 docs low): without --renderers the guide's first
+        # commands exited 2 on a core install, since the default renders
+        # interactive too; the static charts need no extra.
+        _without_module(
+            monkeypatch, "pyvis", "unified_kg_rag.adapters.renderers.interactive"
+        )
+        argv = [
+            "run-visualization",
+            "--data-path",
+            str(export_json),
+            "--output-directory",
+            str(tmp_path / "out"),
+            "--output-format",
+            "json",
+        ]
+        monkeypatch.setattr(sys, "argv", argv)
+        monkeypatch.setattr(cli_module, "load_cli_config", lambda _args: Config())
+        with caplog.at_level("WARNING"):
+            assert cli_module.main() == 0
+        result = json.loads(capsys.readouterr().out)
+        assert result["files"] and all("interactive" not in f for f in result["files"])
+        assert list(result["skipped_renderers"]) == ["interactive"]
+        assert "--extra viz" in result["skipped_renderers"]["interactive"]
+        assert "Skipping the 'interactive' renderer" in caplog.text

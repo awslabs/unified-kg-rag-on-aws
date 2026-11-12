@@ -450,3 +450,70 @@ def test_the_cli_writes_the_files_and_refuses_a_used_directory(
     with pytest.raises(SystemExit) as exit_info:
         prepare_benchmark.main(argv)
     assert exit_info.value.code == 2
+
+
+def _cli_argv(corpus: Path, out: Path) -> list[str]:
+    return [
+        "assertions",
+        "--source-directory",
+        str(corpus),
+        "--output-directory",
+        str(out),
+        "--questions-per-class",
+        "2",
+        "--clusters",
+        "2",
+        "--classes",
+        "data_local",
+        "--unit-tokens",
+        "50",
+        "--output-format",
+        "json",
+    ]
+
+
+def test_the_cli_fails_when_no_question_was_generated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    # Regression (rv23 surfaces 3): every call failing printed "Generated 0
+    # questions", exited 0 and wrote an empty dataset run-eval refused.
+    def failing(system: str, human: str) -> str:
+        raise RuntimeError("AccessDeniedException")
+
+    monkeypatch.setattr(
+        "unified_kg_rag.application.cli.assertion_benchmark.build_providers",
+        lambda cfg: _providers(cfg, failing),
+    )
+    out = tmp_path / "bench"
+    with pytest.raises(SystemExit) as exit_info:
+        prepare_benchmark.main(_cli_argv(_corpus(tmp_path), out))
+    assert exit_info.value.code == 1
+    status = json.loads(capsys.readouterr().out)
+    assert status["status"] == "failed" and status["exit_code"] == 1
+    assert "generated no question" in status["error"]
+    assert "data_local_questions_call_failed 2" in status["error"]
+    # Nothing written: the directory takes the next run.
+    assert not out.exists() or not any(out.iterdir())
+
+
+def test_an_unreachable_model_stops_generation_naming_the_server(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    # The client's raw "Failed to connect to Ollama" was counted per call;
+    # it is the ModelUnreachableError run-rag gives, at the first call.
+    calls: list[str] = []
+
+    def unreachable(system: str, human: str) -> str:
+        calls.append(system)
+        raise ConnectionError("Failed to connect to Ollama.")
+
+    monkeypatch.setattr(
+        "unified_kg_rag.application.cli.assertion_benchmark.build_providers",
+        lambda cfg: _providers(cfg, unreachable),
+    )
+    with pytest.raises(SystemExit) as exit_info:
+        prepare_benchmark.main(_cli_argv(_corpus(tmp_path), tmp_path / "bench"))
+    assert exit_info.value.code == 1
+    status = json.loads(capsys.readouterr().out)
+    assert status["error_type"] == "ModelUnreachableError"
+    assert "A model server could not be reached" in status["error"]

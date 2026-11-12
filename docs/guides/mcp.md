@@ -17,14 +17,15 @@ every flag is in the [CLI reference](../reference/cli.md#run-mcp-server).
 The server needs the `mcp` extra (the official MCP Python SDK):
 
 ```bash
-uv sync --extra mcp                      # from a clone
-pip install "unified-kg-rag-on-aws[mcp]" # from a package index
+uv sync --inexact --extra mcp    # from a clone
+pip install '<wheel file>[mcp]'  # from the wheel a GitHub release attaches
 ```
 
 Without it, `run-mcp-server` exits 2 naming the extra. The server reads the
 same configuration as `run-rag`: the stores, the models and the index
 namespace (`--suffix`, else `processing.document_parsing.index_value`, as in
-[Querying](./query.md)). Start it from the agent's MCP configuration, which
+[Querying](./query.md)); at start it warns of a served namespace that
+holds no index, on which every tool call fails until it is ingested. Start it from the agent's MCP configuration, which
 launches it as a child process and talks over its stdin and stdout (the
 `stdio` transport, the default). Most MCP clients take a block like this
 one:
@@ -153,7 +154,7 @@ To serve agents from AWS:
   service behind an authenticating proxy, or AgentCore Runtime), inside the
   VPC that reaches the stores, under a role with the query task role's
   permissions.
-- **Or run it next to the agent.** `uv sync --extra mcp` on a machine that
+- **Or run it next to the agent.** `uv sync --inexact --extra mcp` on a machine that
   reaches the stores (local mode, or a host in the VPC), with stdio for an
   agent on the same machine.
 
@@ -201,7 +202,7 @@ app = build_mcp_app(chain, namespace="default", allowed_hosts=["mcp.example.com"
 
 | Message | Fix |
 |---|---|
-| `The MCP server needs the mcp extra` | `uv sync --extra mcp` |
+| `The MCP server needs the 'mcp' extra` | `uv sync --inexact --extra mcp` |
 | `Missing endpoint configuration for the MCP server` | Set the store endpoints, as for `run-rag` ([Configuration](./configure.md)) |
 | `is not a loopback address ... needs --allow-remote` | Bind `127.0.0.1`, or add `--allow-remote` behind an authenticating proxy |
 | `Strategy '...' is not offered` / `does not hold` | Call `kg_describe_schema` and pick a listed strategy |

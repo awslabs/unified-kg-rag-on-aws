@@ -40,7 +40,8 @@ document metadata and no nested attribute path (`attributes.<key>.<sub>`).
 
 ## Values, case and dates
 
-Entity and claim `type` and claim `status` are stored lowercase, and a
+Entity and claim `type` and claim `status` are stored lowercase (a claim's
+`status` is one of `true`, `false`, `suspected`, `disputed` and `unknown`), and a
 filter value of theirs matches its lowercase form (`str.lower`) as well as
 itself: `type:PERSON` matches `person`, and a type a caller wrote to a store
 itself as given. Relationships

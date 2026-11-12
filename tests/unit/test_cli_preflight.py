@@ -277,7 +277,7 @@ def test_a_missing_extra_is_named_with_the_settings_that_need_it(
         "'langchain_ollama' (for providers.llm.kind 'ollama', "
         "providers.embedding.kind 'ollama')" in error
     )
-    assert error.count("uv sync --extra local") == 1
+    assert error.count("uv sync --inexact --extra local") == 1
 
 
 @pytest.mark.parametrize("role", ["llm", "embedding"])
@@ -299,7 +299,7 @@ def test_two_modules_of_one_extra_name_its_install_once(
     config.providers.llm.kind = "openai_compatible"
     error = missing_extras_error(config) or ""
     assert "'langchain_openai'" in error and "'langchain_ollama'" in error
-    assert error.count("uv sync --extra local") == 1
+    assert error.count("uv sync --inexact --extra local") == 1
 
 
 def test_a_module_lookup_that_raises_counts_as_missing(
@@ -370,7 +370,9 @@ def test_ingestion_exits_before_the_pipeline_without_the_extra(
         runner.run()
     assert exc.value.code == 2  # a configuration error
     pipeline.assert_not_called()
-    assert "uv sync --extra local" in " ".join(capsys.readouterr().err.split())
+    assert "uv sync --inexact --extra local" in " ".join(
+        capsys.readouterr().err.split()
+    )
 
 
 def test_verify_metadata_without_the_extra_exits_before_the_pipeline(
@@ -389,7 +391,9 @@ def test_verify_metadata_without_the_extra_exits_before_the_pipeline(
         runner.run()
     assert exc.value.code == 2
     pipeline.assert_not_called()
-    assert "uv sync --extra local" in " ".join(capsys.readouterr().err.split())
+    assert "uv sync --inexact --extra local" in " ".join(
+        capsys.readouterr().err.split()
+    )
 
 
 async def test_rag_exits_before_the_chain_without_the_extra(
@@ -460,7 +464,7 @@ def test_describe_exits_before_the_stores_without_the_extra(
     assert exc.value.code == 2
     describe.assert_not_called()
     err = " ".join(capsys.readouterr().err.split())
-    assert "run-describe: error:" in err and "uv sync --extra local" in err
+    assert "run-describe: error:" in err and "uv sync --inexact --extra local" in err
 
 
 def _rdf_seeded_config() -> Config:

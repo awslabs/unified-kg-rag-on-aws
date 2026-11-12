@@ -3,7 +3,7 @@
 Tracing is off by default. With `observability.enabled: true`, every ingestion
 run and every query becomes an OpenTelemetry trace that any OTLP-capable
 backend (Jaeger, Grafana Tempo, an OpenTelemetry Collector, Langfuse, Phoenix)
-can show. It needs the `otel` extra (`uv sync --extra otel`); enabling tracing
+can show. It needs the `otel` extra (`uv sync --inexact --extra otel`); enabling tracing
 without it fails at start-up with a `ConfigurationError` naming the extra, and
 with tracing off nothing OpenTelemetry-related is imported. Every span and
 attribute, the vendor attribute names, the known limits and the model-usage
@@ -36,7 +36,7 @@ To send traces to a local Jaeger, which accepts OTLP on port 4318:
 ```bash
 docker run --rm -d --name jaeger -p 16686:16686 -p 4318:4318 \
   jaegertracing/all-in-one:latest
-uv sync --extra otel
+uv sync --inexact --extra otel
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
 ```
 
@@ -74,7 +74,7 @@ cd langfuse && docker compose up -d     # UI on http://localhost:3000
 Create a project and an API key pair in the UI, then:
 
 ```bash
-uv sync --extra otel
+uv sync --inexact --extra otel
 export LANGFUSE_HOST=http://localhost:3000
 export LANGFUSE_PUBLIC_KEY=pk-lf-...   # deployments: from Secrets Manager
 export LANGFUSE_SECRET_KEY=sk-lf-...   # as task secrets, never in a file
@@ -105,7 +105,7 @@ observability:
 ```bash
 docker run --rm -d --name phoenix -p 6006:6006 -p 4317:4317 \
   arizephoenix/phoenix:latest            # UI on http://localhost:6006
-uv sync --extra otel
+uv sync --inexact --extra otel
 ```
 
 ```yaml

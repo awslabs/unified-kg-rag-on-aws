@@ -27,7 +27,9 @@ ollama pull bge-m3
 ```
 
 `--no-dev` leaves out the contributors' test and lint tools, which `uv sync`
-and `uv run` install without it.
+and `uv run` install without it. `uv sync` is exact: a later one removes the
+extras it is not given, so add an extra to this command, or pass `--inexact`
+([Install](./aws.md#install)).
 
 - **Reranking.** The local preset reranks with a cross-encoder, which needs
   the `cross-encoder` extra: `uv sync --no-dev --extra local --extra cross-encoder`.
@@ -88,8 +90,10 @@ uv run --no-dev run-rag --backend local --search-strategy local --verbose --quer
 uv run --no-dev run-rag --backend local --search-strategy mix --verbose --query "How are Acme Robotics and Globex Sensors related?"
 ```
 
-`--verbose` prints, after the answer, the sources it used (text-unit ids
-with their scores) and the retrieval metrics. The commands log every step at `INFO`; prefix
+`--verbose` prints, after the answer, the query's extracted entities,
+every source it used (each numbered with its type, `entity`,
+`relationship` or `text`, its name or file, its score and a snippet) and
+the retrieval metrics. The commands log every step at `INFO`; prefix
 them with `UKR__LOGGING__LEVEL=WARNING` to keep only warnings and the
 result.
 

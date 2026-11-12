@@ -22,6 +22,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from unified_kg_rag.application.cli import (
+    conventions,
     prepare_benchmark,
     run_console,
     run_describe,
@@ -47,7 +48,7 @@ from unified_kg_rag.domain.models import (
     PipelineStageResult,
     PipelineStageStatus,
 )
-from unified_kg_rag.shared import ConfigurationError
+from unified_kg_rag.shared import ConfigurationError, StoreConnectionError
 
 pytestmark = pytest.mark.unit
 
@@ -1076,6 +1077,12 @@ async def test_ingestion_json_result_counts_the_failed_documents() -> None:
     assert (result["documents_without_claims"], result["failed_documents"]) == (1, 2)
     # No indexing stage ran: nothing to say of the build record.
     assert result["build_record"] is None
+    # A file of a type no loader reads (a .docx without its extra) is no
+    # excluded document: counted apart, it read as nothing skipped.
+    assert result["files_skipped"] == 0
+    context.skipped_source_files = ["src/report.docx"]
+    result = runner._json_result(context)
+    assert (result["files_skipped"], result["documents_excluded"]) == (1, 0)
 
 
 async def test_eval_json_output_is_the_only_stdout(
@@ -1144,6 +1151,7 @@ def test_visualization_json_output_names_the_written_files(
         "output_directory": str(tmp_path / "out"),
         "files": [],
         "failed_renderers": {},
+        "skipped_renderers": {},
         "status": "failed",
         "exit_code": 1,
         "error_type": "RunFailed",
@@ -1595,6 +1603,86 @@ def test_a_json_run_failing_while_running_names_the_error(
             "error_type": type(error).__name__,
         },
     )
+
+
+@pytest.mark.slow
+def test_run_rag_refusing_its_configuration_at_startup_exits_2_naming_it(
+    tmp_path: Path,
+) -> None:
+    # The chain is built after the command line is checked: a
+    # ConfigurationError it raised (observability on without the otel extra,
+    # here) exited 1 with error_type RunFailed and no error, unlike
+    # run-ingestion and run-eval. A fresh interpreter, the extra hidden.
+    import subprocess
+
+    script = (
+        "import sys\n"
+        "sys.modules['opentelemetry'] = None\n"
+        "from unified_kg_rag.application.cli import launch\n"
+        "launch.run_rag()\n"
+    )
+    env = {
+        **{k: v for k, v in os.environ.items() if not k.startswith("UKR__")},
+        "UKR__OBSERVABILITY__ENABLED": "true",
+        "UKR__LOGGING__LOG_TO_FILE": "false",
+    }
+    argv = ["--query", "Who ships parts?", "--backend", "local"]
+    done = subprocess.run(
+        [sys.executable, "-c", script, *argv, "--output-format", "json"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        cwd=tmp_path,
+        env=env,
+    )
+    assert done.returncode == 2, done.stderr
+    status = json.loads(done.stdout)
+    assert "OpenTelemetry is not installed" in status.pop("error")
+    assert status == {
+        "status": "failed",
+        "exit_code": 2,
+        "error_type": "ConfigurationError",
+    }
+    assert "Traceback" not in done.stderr
+
+
+@pytest.mark.parametrize(
+    ("error", "code"),
+    [
+        (ConfigurationError("aws.bedrock.guardrail: check_output is off"), 2),
+        (StoreConnectionError("Failed to connect to OpenSearch."), 1),
+        (RuntimeError("chain crashed"), 1),
+    ],
+)
+def test_run_rag_classifies_an_error_building_its_chain(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    error: Exception,
+    code: int,
+) -> None:
+    # Every error building the chain exited 1 without naming itself: the
+    # ErrorClass map the query path uses decides the exit code now.
+    def fail(*_args: object, **_kwargs: object) -> None:
+        raise error
+
+    monkeypatch.setattr(console, "stderr", True)
+    monkeypatch.setattr(sys, "argv", sys.argv)
+    monkeypatch.setattr(run_rag_chain, "_load_chain", lambda: None)
+    monkeypatch.setattr(run_rag_chain, "GraphRAGChain", fail, raising=False)
+    monkeypatch.setitem(conventions._json, "enabled", True)
+    monkeypatch.setitem(conventions._json, "printed", False)
+    runner = run_rag_chain.RAGChainRunner.__new__(run_rag_chain.RAGChainRunner)
+    runner.config = Config()
+    with pytest.raises(SystemExit) as exited:
+        asyncio.run(runner._initialize_chain())
+    assert exited.value.code == code
+    status = json.loads(capsys.readouterr().out)
+    assert status == {
+        "status": "failed",
+        "exit_code": code,
+        "error": str(error),
+        "error_type": type(error).__name__,
+    }
 
 
 @pytest.mark.parametrize("cli", ["run-rag", "run-visualization", "run-prompt-tuning"])

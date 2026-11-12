@@ -79,7 +79,10 @@ def test_a_missing_extra_is_named(
         run_console.main(["--output-format", "json"])
     assert exc.value.code == 2
     status = json.loads(capsys.readouterr().out)
-    assert status["exit_code"] == 2 and "uv sync --extra console" in status["error"]
+    assert (
+        status["exit_code"] == 2
+        and "uv sync --inexact --extra console" in status["error"]
+    )
     assert (status["status"], status["error_type"]) == ("failed", "UsageError")
 
 

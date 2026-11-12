@@ -219,11 +219,13 @@ models:
   the call runs at (the role's tier's ingestion effort, `high` 8192 by
   default; document translation, on the fast tier at `low`, 2048, stays under
   the cap). The short-answer
-  query calls ask for less (`search.output_ceilings`, 4096 each: the
-  router, the query entity and keyword extractions, the dynamic-selection
-  report ratings; `evaluation.answer_span_output_ceiling` for the answer-span
-  extractor), never less than the call's thinking budget plus 1024 (an
-  effort of low budgets 2048, high 8192), so an `auto` query reserves about
-  29k output tokens instead of 49k.
+  query calls ask for less (`search.output_ceilings`: 1024 for the router,
+  4096 each for the query entity and keyword extractions and the
+  dynamic-selection report ratings; `evaluation.answer_span_output_ceiling`
+  for the answer-span extractor), never less than the call's thinking budget
+  plus 1024 (an effort of low budgets 2048, high 8192). An `auto` query
+  (the router and the two extractions on the fast tier at `low`, the answer
+  at the default cap) reserves about 28k output tokens (3072 + 4096 + 4096
+  + 16384) where four calls at the default cap reserved 65k.
 - Curated models, request shapes, prompt caching and
   `aws.bedrock.model_overrides` are described above.

@@ -210,7 +210,7 @@ def _write(path: Path, text: str) -> Path:
 def test_rdf_is_registered_with_the_ontology_extra() -> None:
     assert "rdf" in registered_seed_sources()
     assert seed_source_requirement("rdf") == ("rdflib", INSTALL_HINT)
-    assert "uv sync --extra ontology" in INSTALL_HINT
+    assert "uv sync --inexact --extra ontology" in INSTALL_HINT
 
 
 def test_the_options_are_the_mapping_options_and_the_format() -> None:
@@ -227,7 +227,7 @@ def test_preflight_names_the_missing_extra(monkeypatch: pytest.MonkeyPatch) -> N
     )
     error = missing_extras_error(config) or ""
     assert "'rdflib' (for processing.seed_graphs 'procure' kind 'rdf')" in error
-    assert "uv sync --extra ontology" in error
+    assert "uv sync --inexact --extra ontology" in error
 
 
 def test_without_rdflib_the_loader_says_how_to_install_it(
@@ -245,7 +245,7 @@ def test_without_rdflib_the_loader_says_how_to_install_it(
     with pytest.raises(SeedGraphError, match="kind 'rdf' needs rdflib") as error:
         load_seed_graphs(config)
     assert str(error.value).startswith("seed graph 'procure': ")
-    assert "uv sync --extra ontology" in str(error.value)
+    assert "uv sync --inexact --extra ontology" in str(error.value)
 
 
 def test_the_mapping_and_the_registry_import_without_rdflib() -> None:

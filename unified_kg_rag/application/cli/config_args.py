@@ -15,7 +15,10 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from unified_kg_rag.application.cli.conventions import usage_error
-from unified_kg_rag.application.config import get_config
+from unified_kg_rag.application.config import (
+    ConfigLoader,
+    warn_ineffective_settings,
+)
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared.exceptions import ConfigurationError
 
@@ -61,17 +64,31 @@ def add_config_arguments(
         help=(
             "Ignore config keys (and UKR__ environment variables) the "
             "configuration does not define, with a warning each, instead of "
-            "failing. A misspelled key otherwise leaves its setting at the "
-            "default without a word"
+            "failing: the load fails on one by default, since a misspelled key "
+            "would leave its setting at the default"
         ),
     )
 
 
 def load_cli_config(args: argparse.Namespace) -> Config:
     """The configuration ``args`` names (``--config-path``,
-    ``--allow-unknown-keys``); call it inside :func:`exit_on_config_error`."""
+    ``--allow-unknown-keys``) with its provider flags applied
+    (:func:`~unified_kg_rag.application.cli.provider_args.apply_provider_arguments`);
+    call it inside :func:`exit_on_config_error`.
+
+    The settings nothing reads are warned of once the flags are applied: a
+    ``base_url`` the file sets is read under ``--backend local``, not ignored.
+    """
+    # Imported here: the provider flags' module loads the composition root,
+    # which --help and a refused command line do not need.
+    from unified_kg_rag.application.cli.provider_args import apply_provider_arguments
+
     path = getattr(args, "config_path", None)
-    return get_config(
+    loaded = ConfigLoader(
         Path(path) if path else None,
         allow_unknown_keys=getattr(args, "allow_unknown_keys", False),
-    )
+        warn_ineffective=False,
+    ).load_config()
+    config = apply_provider_arguments(loaded, args)
+    warn_ineffective_settings(config)
+    return config

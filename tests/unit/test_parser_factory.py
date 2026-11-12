@@ -71,7 +71,7 @@ def test_a_docx_without_its_extra_fails_naming_it(tmp_path, monkeypatch) -> None
     path = tmp_path / "report.docx"
     path.write_bytes(b"PK")
     parser = FileParser(Config(), DocxFileLoader, {}, "Word")
-    with pytest.raises(DataProcessingError, match="uv sync --extra docx"):
+    with pytest.raises(DataProcessingError, match="uv sync --inexact --extra docx"):
         parser.parse_file(path)
 
 

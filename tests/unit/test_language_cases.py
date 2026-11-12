@@ -18,14 +18,17 @@ from pydantic import BaseModel
 
 from tests.fixtures.language_cases import (
     CONTAINS,
+    CORPORA,
     COVERS,
     DETECTION,
     NUMBERS,
     ROUTER,
     Case,
+    corpus_documents,
     corpus_score,
 )
-from unified_kg_rag.domain.languages import text_language
+from unified_kg_rag.domain.languages import LanguageCode, text_language
+from unified_kg_rag.domain.languages.corpus import corpus_language, corpus_sample
 from unified_kg_rag.domain.models import SearchStrategy
 from unified_kg_rag.domain.retrieval.linking import covers
 from unified_kg_rag.evaluation.answer_match_evaluator import (
@@ -47,6 +50,14 @@ class _Route(BaseModel):
 
 def detected(case: Case) -> object:
     return text_language(case.text, case.context or "en").value
+
+
+def corpus_read(case: Case) -> object:
+    """The language a corpus sample of the case's documents reads as
+    (``context``: the index language a tie falls back to)."""
+    fallback = LanguageCode(case.context) if case.context else None
+    language = corpus_language(corpus_sample(corpus_documents(case)), fallback)
+    return None if language is None else language.value
 
 
 def counted(case: Case) -> object:
@@ -93,6 +104,11 @@ def test_detection(case: Case) -> None:
     assert detected(case) == case.answer, case.text
 
 
+@pytest.mark.parametrize("case", CORPORA, ids=_ids(CORPORA))
+def test_corpora(case: Case) -> None:
+    assert corpus_read(case) == case.answer, case.source
+
+
 @pytest.mark.parametrize("case", NUMBERS, ids=_ids(NUMBERS))
 def test_numbers(case: Case) -> None:
     assert counted(case) == case.answer, case.text
@@ -117,12 +133,13 @@ def test_covers(case: Case) -> None:
     ("cases", "read"),
     [
         (DETECTION, detected),
+        (CORPORA, corpus_read),
         (NUMBERS, counted),
         (CONTAINS, contained),
         (ROUTER, routed),
         (COVERS, covered),
     ],
-    ids=["detection", "numbers", "contains", "router", "covers"],
+    ids=["detection", "corpora", "numbers", "contains", "router", "covers"],
 )
 def test_every_miss_is_a_documented_tradeoff(
     cases: tuple[Case, ...], read: Callable[[Case], object]

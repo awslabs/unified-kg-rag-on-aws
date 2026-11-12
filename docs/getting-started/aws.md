@@ -90,7 +90,13 @@ uv sync --no-dev --extra eval --extra viz  # or: pip install -e '.[eval,viz]'
 ```
 
 `--no-dev` leaves out the contributors' test and lint tools, which `uv sync`
-and `uv run` install without it. `uv sync` alone installs ingestion and
+and `uv run` install without it. `uv sync` is exact: it installs the extras
+it is given and removes the others, so `uv sync --extra docx` after the
+command above would uninstall `eval` and `viz`. Add an extra to the command
+you ran, or pass `--inexact` to keep what is installed (`uv sync --inexact
+--extra docx`, the form the pages and error messages give). From the wheel
+a GitHub release attaches instead of a clone, `pip install '<wheel
+file>[eval,viz]'` (the package is not on PyPI). `uv sync` alone installs ingestion and
 queries; optional features come as
 extras (this page names the ones a deployment uses), and without its extra
 the command that needs it stops with exit `2`, naming it. The two above:
@@ -103,9 +109,9 @@ the command that needs it stops with exit `2`, naming it. The two above:
 **Markdown and HTML** are parsed without an extra: Markdown as written, HTML
 through the standard library's parser. The `unstructured` extra is the richer
 parser of both and reads them in place of the core readers when installed
-(`uv sync --extra unstructured`; it requires `unstructured>=0.24.1`, which
+(`uv sync --inexact --extra unstructured`; it requires `unstructured>=0.24.1`, which
 fixes URL-partitioning SSRF and unescaped markup). **Word** (`.docx`) files
-need the `docx` extra (`uv sync --extra docx`); without it ingestion skips
+need the `docx` extra (`uv sync --inexact --extra docx`); without it ingestion skips
 them with one warning naming the extra. See
 [source formats](../troubleshooting.md#which-source-formats-are-read).
 
@@ -126,7 +132,7 @@ in the image (a task in the private VPC cannot download it). It leaves out
 `docker/config.yaml` holds no endpoints; the CDK task definitions inject them.
 
 **OWL/RDFS ontologies** as the extraction schema need the `ontology` extra
-(`uv sync --extra ontology`; [Ontology](../guides/ontology.md#install)).
+(`uv sync --inexact --extra ontology`; [Ontology](../guides/ontology.md#install)).
 
 ## Authentication
 

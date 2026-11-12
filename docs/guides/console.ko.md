@@ -16,7 +16,7 @@ CLI와 같은 진입점 위에 올린 로컬 웹 앱입니다. 질문하고 답�
 빌드합니다(빌드 결과물은 저장소에 없습니다).
 
 ```bash
-uv sync --extra console
+uv sync --inexact --extra console
 (cd console/web && npm ci && npm run build)
 uv run run-console --config-path config.yaml --source-directory ./workspace
 ```

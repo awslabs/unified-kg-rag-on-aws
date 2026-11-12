@@ -41,7 +41,7 @@ from unified_kg_rag.application.cli.help_text import doc_epilog
 from unified_kg_rag.application.cli.query_args import positive_int
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.evaluation.benchmarks import musique, structural
-from unified_kg_rag.shared import EvaluationException
+from unified_kg_rag.shared import EvaluationException, ModelUnreachableError
 
 
 def _hops(value: str) -> dict[int, int | None]:
@@ -267,7 +267,7 @@ def _assertions(args: argparse.Namespace, as_json: bool) -> None:
     except KeyboardInterrupt:
         console.print("\n[yellow]Benchmark generation interrupted by user.[/yellow]")
         sys.exit(EXIT_INTERRUPTED)
-    except (EvaluationException, OSError) as e:
+    except (EvaluationException, ModelUnreachableError, OSError) as e:
         console.print(f"[red]Error: {markup_safe(e)}[/red]")
         sys.exit(EXIT_FAILURE)
     if as_json:

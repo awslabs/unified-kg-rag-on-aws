@@ -59,14 +59,16 @@ stored is read again: follow *Upgrading* in order.
 
 #### Install and extras
 - Python 3.11 or 3.12 is required (`>=3.11, <3.13`); 3.10 is dropped (#430).
-- A core install (`uv sync`, `pip install -e .`) is ingestion and queries: 145 to 83 packages, 937 to 335 MB on
-  Linux. Extras: `eval` (ragas, datasets, pandas, langchain, langchain-community, langchain-openai), `viz` (pyvis,
-  for the `interactive` renderer), `local`, `cross-encoder` (the local reranker, with PyTorch), `otel`,
-  `unstructured` (the richer Markdown and HTML parser), `docx` (Word files), `ontology` (rdflib), `mcp`
-  (`run-mcp-server`), `console` (`run-console`: FastAPI, Uvicorn, python-multipart). A feature whose
-  extra is missing fails naming it: the CLIs exit 2 before any work, the library raises `ConfigurationError` (also
-  under `processing.ignore_errors`). The LLM-free evaluators and the `static` renderer need no extra; the container
-  image installs none (`--build-arg UV_EXTRAS="--extra eval"` adds the ragas judge) (#467, #472, #520, #576, #636).
+- A core install (`uv sync`, `pip install -e .`) is ingestion and queries: 145 to 78 packages, 937 to 335 MB on Linux.
+  Extras: `eval` (ragas, datasets, pandas, langchain, langchain-community, langchain-openai), `viz` (pyvis, for the
+  `interactive` renderer, which a `run-visualization` without `--renderers` leaves out with a WARNING without it),
+  `local`, `cross-encoder` (the local reranker, with PyTorch), `otel`, `unstructured` (the richer Markdown and HTML
+  parser), `docx` (Word files), `ontology` (rdflib), `mcp` (`run-mcp-server`), `console` (`run-console`: FastAPI,
+  Uvicorn, python-multipart). A feature whose extra is missing fails naming it and its install (from a checkout `uv sync
+  --inexact --extra X`, as `uv sync` removes the extras it is not given; from a release wheel `pip install '<wheel
+  file>[X]'`): the CLIs exit 2 before any work, the library raises `ConfigurationError` (also under
+  `processing.ignore_errors`). The LLM-free evaluators and the `static` renderer need no extra; the container image
+  installs none (`--build-arg UV_EXTRAS="--extra eval"` adds the ragas judge) (#467, #472, #520, #576, #636).
 - No longer dependencies: `graspologic` (Leiden runs on `graspologic-native`), `bokeh` (with `contourpy`, `tornado`,
   `xyzservices`), `umap-learn`, `scikit-learn`, `nest-asyncio`; `langchain` comes only with `eval` (#225, #226,
   #465, #520, #576). Security floors follow the package that pulls the pinned one in: `pillow` in `eval`, `llvmlite`
@@ -77,20 +79,20 @@ stored is read again: follow *Upgrading* in order.
 
 #### Configuration
 - Unknown keys, in the file or as `UKR__` variables, fail the load, and `Config.model_validate` refuses them too;
-  `--allow-unknown-keys` (every CLI but `prepare-benchmark`) or `allow_unknown_keys=True` (`get_config`,
-  `ConfigLoader`) warns and drops them instead (#335). A moved key fails naming its replacement
-  (`processing.chunk_concurrency` and `processing.batch_size` are `processing.max_concurrency`, one pool of in-flight
-  calls, #296; `indexing.cross_run_fuzzy_merge` is `processing.fuzzy_entity_resolution`, #214), a removed key loads
-  with a WARNING and is ignored: the generated [Moved
+  `--allow-unknown-keys` (every CLI) or `allow_unknown_keys=True` (`get_config`, `ConfigLoader`) warns and drops
+  them instead (#335). A moved key fails naming its replacement (`processing.chunk_concurrency` and
+  `processing.batch_size` are `processing.max_concurrency`, one pool of in-flight calls, #296;
+  `indexing.cross_run_fuzzy_merge` is `processing.fuzzy_entity_resolution`, #214), a removed key loads with a
+  WARNING and is ignored: the generated [Moved
   keys](docs/reference/configuration.md#moved-keys) and [Removed keys](docs/reference/configuration.md#removed-keys)
   tables list them (#334, #344, #467, #468, #470, #577). [`config-template.yaml`](config-template.yaml) is a short
   starting file; every key is in the [configuration reference](docs/reference/configuration.md) (#468).
 - Models: the 0.2.3 per-stage `*_model_id` keys moved to one `models` section: the tiers `models.default` and
-  `models.fast`, `models.roles.<role>` (a model id or a tier name), `models.embedding` (model id and dimension, for
-  the indices, queries, RAGAS and the visualization) and `models.rerank`. `providers.<llm|embedding|rerank>.kind`
-  picks each family's provider, and `--llm-model`, `--embedding-model`, `--embedding-dimension` set the new keys; a
-  setting of a provider the config does not select is ignored with a WARNING; under `backend: local` another
-  embedding model needs its dimension too (#334). See [models](docs/reference/models.md).
+  `models.fast`, `models.roles.<role>` (a model id or a tier name), `models.embedding` (model id and dimension, for the
+  indices, queries, RAGAS and the visualization) and `models.rerank`. `providers.<llm|embedding|rerank>.kind` picks each
+  family's provider, and `--llm-model`, `--embedding-model`, `--embedding-dimension` set the new keys; a setting of a
+  provider the config does not select (after the CLI's provider flags) is ignored with a WARNING; under `backend: local`
+  another embedding model needs its dimension too (#334). See [models](docs/reference/models.md).
 - Graph expansion's settings moved from `indexing.neptune` to `search.graph_expansion`, as every graph store reads them
   at query time (the embedded SQLite graph too): `max_hops`, `max_results_per_hop`, `entity_importance_source`,
   `traversal_fetch_multiplier`, `deterministic_order`.
@@ -199,7 +201,7 @@ stored is read again: follow *Upgrading* in order.
 | `search.query_timeout_seconds` | no deadline | 180 s; `null` turns it off (#522) |
 | `search.model_timeout_seconds` / `model_max_attempts` | the ingestion client's 300 s, 6 requests | 90 s / 2 for query-time calls (#522) |
 | `search.auto_speculative_extraction` | extraction after the router | `true`: alongside the router call (#525) |
-| `search.output_ceilings` | the model's maximum output | 4096 for routing, query extraction and relevance ratings (#525) |
+| `search.output_ceilings` | the model's maximum output | 1024 for routing, 4096 for query extraction and relevance ratings (#525) |
 | `search.answer_prompt_style` | every strategy concise | `{global: comprehensive}`, merged under your map (#533) |
 | `search.global_search.evidence_tokens` | every cited report the budget holds | 4000; `null` removes the cap (#533) |
 | `search.local_search.text_unit_ranking` (local's text-unit order) | by how many expanded entities cite a unit (no setting) | `ppr`, HippoRAG 2's PageRank; `support` is the earlier order, which DRIFT's follow-ups keep (`search.drift_search.text_unit_ranking`) (#597, #602, #607) |
@@ -224,8 +226,8 @@ See [exit codes and JSON output](docs/reference/exit-codes-and-json.md) and the
   with `aws.bedrock.default_effort` / `fast_effort`; from Python, `RAGInput.enable_thinking` still turns thinking on
   for a model that opts in). Either flag fails with exit 2 saying so; run-eval results no longer record
   `enable_thinking` (#628).
-- Exit codes: `2` for a usage or configuration error before any work (also one met while running), `1` for a failed
-  run, `130` for Ctrl-C, `143` for SIGTERM (#333, #344).
+- Exit codes: `2` for a usage or configuration error before any work (also one met while running or while `run-rag`
+  builds its query chain), `1` for a failed run, `130` for Ctrl-C, `143` for SIGTERM (#333, #344).
 - `--output-format json` prints one JSON document on stdout (a status document on failure, argparse errors included)
   and everything else on stderr; `run-ingestion` rejects it with `--metrics-sink cloudwatch` (#333, #359, #366,
   #420).
@@ -513,23 +515,18 @@ From a `main` checkout (formats and keys no release had):
   stage-cache keys hold the prompts in effect (a pipeline id resumed across a prompt change starts over); extraction
   records under earlier keys (other description summary settings, #541-#556) and claims under an earlier reading of
   their dates (#612, #624) are no longer looked up. Run one reset (`indexing.reset: true`) with a new or no
-  `--pipeline-id`: incremental runs keep stored entities under their earlier ids beside the new ones. It reuses the
-  stored graph extraction and gleaning records, their entity and relationship ids minted again from the names as
-  extraction mints them (a record a build before #556 stored under other summary settings or `models` tiers is
-  extracted again), and asks one summary per entity or relationship over the summary threshold, the
-  reports of the communities whose input changed (most of them) and, with claim extraction on, every unit's claims
-  (one call per unit that states an entity).
-- One reset covers all of these and the items below. On an index built with #565 or later it reuses the stored
-  extraction records and vectors: beyond what the items below name, the model is asked only for the reports of the
-  communities that cluster differently and a summary and embedding per newly merged entity over the threshold. On
-  an index built before #565 it costs a first build (the #565 prompts below).
+  `--pipeline-id`: incremental runs keep stored entities under their earlier ids beside the new ones. That one reset
+  covers this item and every item below, and its cost depends on the index's age. On an index built with #565 or
+  later it reuses the stored graph extraction and gleaning records and the vectors (entity and relationship ids are
+  minted again from the names, as extraction mints them) and asks the model one summary, and one embedding, per entity
+  or relationship over the summary threshold, the reports of the communities whose input changed (most of them) and,
+  with claim extraction on, every unit's claims (one call per unit that states an entity). A record a build before
+  #556 stored under other summary settings or `models` tiers is extracted again, and on an index built before #565
+  the reset costs a first build (the #565 prompts below).
 - Stored communities keep positional names (`Level 0 Community 3`) until the next reset, which renames them and asks
   every report once more; later resets reuse the answers (#539).
-- #640 claim statuses: claims stored before it keep the status the model wrote (`True.`, `Suspected`) until a
-  reset, which reads them from the stored records into the vocabulary without an extraction call; that first reset
-  also asks again the community reports whose input held such a status (their input changed). Claim records stored
-  since #640 keep the status that build read (`uncertain` as `disputed`) until `--force-rebuild` extracts them again
-  (#644).
+- #640 claim statuses: claims stored before it keep the status the model wrote (`True.`, `Suspected`) until the
+  reset, which asks every unit's claims again (above).
 - Claims and report switches: with claim extraction on and the registry on, a namespace whose build record does not
   name claims (claims turned on after its build, or an incremental claims-off run since) is rebuilt once by its next
   run from its stored extractions, asking claims only of the units without a stored claim record (every unit after
@@ -897,7 +894,9 @@ From a `main` checkout (formats and keys no release had):
   `run-ingestion` and `run-eval` in child processes. It binds `127.0.0.1` (another address needs `--allow-remote`),
   requires a per-launch access token, refuses paths outside its directories, cross-site requests and uploads of a
   file ingestion does not read (another type, or hidden) or naming one path as a file and a folder, writes an
-  upload all or none (a refused one leaves no folder), names an error by its class (`ErrorClass`), and loads
+  upload all or none (a refused one leaves no folder) and atomically (a temporary file 0600 until the rename, a
+  re-upload keeping the replaced file's mode; a name past its folder's limit is refused up front, `path_refused`),
+  names an error by its class (`ErrorClass`), and loads
   nothing from another host. The web client
   (`console/web/`, Vite, React, TypeScript) is in English and nine more languages, in a light and a dark theme (the
   system's unless one is chosen in the top bar), set in Pretendard (Pretendard JP for Japanese, JetBrains Mono for
@@ -1028,7 +1027,8 @@ From a `main` checkout (formats and keys no release had):
   `<reasoning>` block is dropped before every parser, streamed answers included: it began every answer, was stored
   in descriptions, misled the router and hid the `[NO_ANSWER]` token. An Ollama model whose `/api/show` lists
   `thinking` is built with `reasoning=True`, and an OpenAI-compatible server's `reasoning_content` is kept beside
-  the answer. See [local mode](docs/guides/local-mode.md).
+  the answer. The preset adds anonymous OpenSearch access only without a password (#617). See
+  [local mode](docs/guides/local-mode.md).
 - Filter keys for a document's metadata, `attr_<key>`, on every index and graph store, and for an entity's own
   extracted attribute, `attributes.<key>` (the entities index's key), strictly on every store: a graph store no
   longer matches `attr_<key>` against an entity's own attribute (`attr_category:finance` dropped an entity of a
@@ -1165,7 +1165,8 @@ From a `main` checkout (formats and keys no release had):
 - Schema and seed sources in S3: a `path` may be an `s3://bucket/key` object or, for `owl` and seeds, a prefix read
   as a directory; sizes are checked before any byte is fetched, and a missing, denied (`s3:GetObject` /
   `s3:ListBucket`), empty or oversized source fails with what to fix. Moving between local and S3 re-extracts
-  nothing; `run-rag` loads the schema on the first query with a schema filter key (#493, #495, #579).
+  nothing; `run-rag` loads the schema on the first query with a schema filter key; an S3 ontology without a reader
+  raises `SchemaSourceError` (#493, #495, #579, #617).
 - `run-prompt-tuning --schema-out PATH` drafts a schema file: the profile's entity types, the relationship types the
   tuning examples state most (with counts), patterns seen at least twice per endpoint-type pair, and every
   configured type with its description and IRI; a draft over an `owl` source keeps that source's patterns and names
@@ -1240,9 +1241,10 @@ From a `main` checkout (formats and keys no release had):
   cap left it the first passages of long chunks), a round follows at most five bridge entities, a deadline that
   cancels the round an insufficient verdict started reports it (`insufficiency_reason: deadline`), and the follow-up
   queries and bridge entities in `metadata["iterative"]` are screened by the output guardrail with `check_output`
-  (#607); bridge entities are told apart by names folded as local search's seeds are. A strategy declares the run
-  record it keeps and the model text in it (`register_strategy(run_record=RunRecord(...))`): the chain screens and
-  clears every declared record, not two named ones. See
+  (#607); bridge entities are told apart by names folded as local search's seeds are, and the controller writes its
+  follow-up queries in the index language (#613, #619). A strategy declares the run record it keeps and the model
+  text in it (`register_strategy(run_record=RunRecord(...))`): the chain screens and clears every declared record,
+  not two named ones. See
   [query](docs/guides/query.md#follow-up-rounds-for-multi-hop-questions).
 - LLM usage accounting, tracing or not: calls, input and output tokens, prompt-cache reads and writes, resent and
   failed requests and cache hits per model role and id, in `RAGOutput` / `SearchOutput.metadata["usage"]`,
@@ -1311,22 +1313,20 @@ From a `main` checkout (formats and keys no release had):
   writes instead of the decline is replaced by the no-context reply (invoke and stream), and a streamed decline
   keeps the space at a chunk boundary after the token (#607). See
   [evaluate](docs/guides/evaluate.md#unanswerable-questions-and-declines).
-- Evaluation of open-ended answers, all opt-in: the
-  pairwise judge reports win rates per answer-length bucket in estimated tokens (symmetric in the log ratio) and
-  their correlation with length;
-  `evaluation.pairwise_mode: differential` (`run-eval --pairwise-mode differential`, model role
-  `models.roles.pairwise_overlap`, its output limit `models.default_max_output_tokens` above the judge effort's
-  thinking budget) judges only the statements unique to each answer, split in both answer slots and averaged
-  (`slots.<criterion>.slot_effect` reports the split model's slot preference: one slot gave an A/A pair 0.645), two
-  fast and four judge calls per pair; the `assertion` evaluator
+- Evaluation of open-ended answers, all opt-in: the pairwise judge reports win rates per answer-length bucket in
+  estimated tokens (symmetric in the log ratio) and their correlation with length; `evaluation.pairwise_mode:
+  differential` (`run-eval --pairwise-mode differential`, model role `models.roles.pairwise_overlap`, its output limit
+  `models.default_max_output_tokens` above the judge effort's thinking budget) judges only the statements unique to each
+  answer, split in both answer slots and averaged (`slots.<criterion>.slot_effect` reports the split model's slot
+  preference: one slot gave an A/A pair 0.645), two fast and four judge calls per pair; the `assertion` evaluator
   (`assertion_recall`, `assertion_contradiction_rate`, `negative_assertion_violation_rate`;
   `evaluation.assertion_trials`, a majority over trials in distinct assertion orders, every judge call within
-  `processing.max_concurrency`) scores a dataset's `assertions`; `prepare-benchmark assertions` generates questions
-  in five classes and source-cited assertions from your corpus, after Microsoft BenchmarkQED (MIT; no BenchmarkQED
-  data used); `run-eval --closed-book` adds an answer-model-only arm without retrieval, and `deltas_by_closed_book`
-  splits the other runs' deltas into the questions it knows (a primary-metric mean of at least 0.5 over its repeats,
-  a failed answer counting 0) and those it does not, exploratory (#595, #606). See
-  [evaluation](docs/guides/evaluate.md#assertions-length-control-and-a-closed-book-bound).
+  `processing.max_concurrency`) scores a dataset's `assertions`; `prepare-benchmark assertions` generates questions in
+  five classes and source-cited assertions from your corpus, after Microsoft BenchmarkQED (MIT; no BenchmarkQED data
+  used), and exits 1 writing nothing when it generates no question; `run-eval --closed-book` adds an answer-model-only
+  arm without retrieval, and `deltas_by_closed_book` splits the other runs' deltas into the questions it knows (a
+  primary-metric mean of at least 0.5 over its repeats, a failed answer counting 0) and those it does not, exploratory
+  (#595, #606). See [evaluation](docs/guides/evaluate.md#assertions-length-control-and-a-closed-book-bound).
 - Comparison cost: per strategy calls, tokens and latency per query (mean, p50, p95) with paired deltas, a USD
   estimate from an optional `evaluation.prices` table (cache read and write rates too), and per-query CSV and
   Markdown; a failed answer counts with what it spent (#526, #529, #533).
@@ -1383,9 +1383,10 @@ From a `main` checkout (formats and keys no release had):
 - The document loading stage samples the corpus (the first 2,000 characters of its first 20 documents) and WARNs,
   naming `processing.translation.source_language`, when the sample disagrees with the setting: a Korean, Japanese,
   Chinese, Russian, Thai, Arabic or German corpus under the default `en` was extracted with prompts asking for
-  English and analyzed as English without a word. The sample's language is read by the rule a query's is (its
-  script, and a Latin-script one's function words); a sample that reads as the setting is not reported, however few
-  of its letters are in its script (a Korean document that is mostly code). `run-prompt-tuning` writes the
+  English and analyzed as English without a word. Each sampled document's language is read by the rule a query's is
+  (its script, and a Latin-script one's function words), and the sample reads as the language most of them read as
+  (four English documents and one Korean one read as English); a sample that reads as the setting is not reported,
+  however few of its letters are in its script (a Korean document that is mostly code). `run-prompt-tuning` writes the
   `source_language` the sample reads as into its output (#629). Han, Hangul and Kana text reads by one rule
   (`domain.languages.dense_language`): Korean when a tenth or more of those letters are Hangul (and no fewer than
   Kana), so Korean written with Hanja reads as Korean, else Japanese when a tenth are Kana, else Chinese.
@@ -1428,9 +1429,10 @@ From a `main` checkout (formats and keys no release had):
   rejections, a yellow multi-node cluster, an unusable KMS key, ephemeral storage, `DocumentsNotIndexed`, and
   `QueryLatencyHigh` on `run-rag --metrics-sink cloudwatch`'s `query_latency_ms` (#330, #519, #528).
 - The package ships a `py.typed` marker (#568). `main` reports `0.3.0.dev0`, and a `v<version>` tag runs a release
-  workflow that publishes a GitHub release: the tag must be on `main`, and the notes' repo-relative links point at
-  the tagged tree (#572, #588). Its PyPI upload (trusted publishing, `pypi` environment) stays off until the
-  repository variable `PYPI_PUBLISH` is `true` (CONTRIBUTING.md, "Releasing").
+  workflow that publishes a GitHub release: the tag must be on `main`, the notes are the section's introduction,
+  *Highlights*, *Breaking changes*, *Upgrading* and *Security* with a link to the version's heading for the rest, and
+  their repo-relative links point at the tagged tree (#572, #588). Its PyPI upload (trusted publishing, `pypi`
+  environment) stays off until the repository variable `PYPI_PUBLISH` is `true` (CONTRIBUTING.md, "Releasing").
 - HippoRAG 2's Personalized PageRank (docs/design.md §6.4): the opt-in `ppr` strategy and `local`'s default
   text-unit order. The `ppr` search strategy (`search.ppr_search`; `auto` never routes to it, and
   `search.auto_routable_strategies` refuses it until a measurement shows where it wins) seeds a Personalized
@@ -1793,10 +1795,10 @@ Queries and retrieval.
 - A query is translated only when ingestion translates or the caller asks (`RAGInput.target_language`), and its
   entities and keywords are extracted in the index language even when the caller asks for another: only the text
   units carry the requested language, so they matched no entity, relationship or report (#567, #583, #619).
-- DRIFT (primer, actions, HyDE), iterative's controller and global search's map points write in the index language
-  (`source_language` with translation disabled), not always `target_language` nor a requested language, whose
-  follow-up queries found no entity (#613, #619); query entities a model separates with `、`, `，` or `；` (or one per
-  line) are split into entities, not read as one (#605).
+- DRIFT (primer, actions, HyDE) and global search's map points write in the index language (`source_language` with
+  translation disabled), not always `target_language` nor a requested language, whose follow-up queries found no
+  entity (#613, #619); query entities a model separates with `、`, `，` or `；` (or one per line) are split into
+  entities, not read as one (#605).
 - `simple` leaves the claims index out of its sweep when claim extraction found no claim (and built none), as
   `local` does: every query WARNed "Index not found" for it.
 - Store failures fail the query instead of answering from no context (unreachable, denied, rejected or overloaded
@@ -2015,9 +2017,8 @@ Evaluation, visualization and tuning.
   just before the copy, also when the file is opened only then), keeps the staged file and names it in the error,
   and `fsync` flushes the copy too; a write that asks for `fsync` flushes the directory after the rename where it
   may. A valid name of 218-255 bytes (about
-  73 or more Korean or Japanese characters, a console upload's too) is written atomically: its temporary name is
-  cut to fit the directory's name limit (255 bytes, 143 on eCryptfs, 255 where the file system says none), and a
-  console upload's name past its folder's limit is refused up front (`path_refused`), not when it is renamed.
+  73 or more Korean or Japanese characters) is written atomically: its temporary name is cut to fit the directory's
+  name limit (255 bytes, 143 on eCryptfs, 255 where the file system says none).
 - `graph_aware` matches a word through its possessive and finds a Latin word or number inside Chinese or Japanese
   text (`AWS` in `答案是AWS公司`) (#516, #563).
 - `run-visualization` rejects unknown `--renderers` and invalid data (exit 2), lays out only the drawn nodes, keeps
@@ -2068,16 +2069,14 @@ Deployment (CDK).
   for the cache bucket or guardrail name fails the synth (not the deploy); an odd `opensearch_count` synthesized
   without an account says why only 2 AZs are seen; the endpoint count in `iac/README.md` is six (#617).
 - Configuration: `aws.opensearch.password` with `allow_anonymous` (the password was dropped) and `use_iam` with a
-  username or password (ignored) are refused, and the local preset no longer adds anonymous access beside a password;
-  a negative `search.fusion.fusion_weights` value is refused. A source directory that is a file raises
-  `ConfigurationError`, an S3 ontology without a reader `SchemaSourceError`, and creating an OpenSearch index that
-  exists raises `AWSServiceError` without being logged as an unexpected error (#617).
+  username or password (ignored) are refused; a negative `search.fusion.fusion_weights` value is refused. A source
+  directory that is a file raises `ConfigurationError`, and creating an OpenSearch index that exists raises
+  `AWSServiceError` without being logged as an unexpected error (#617).
 
 ### Security
 - An atomic write's temporary file (beside the file, or staged in the shared temp directory) is created 0600 and
   given the file's mode only at the rename, so other local users cannot read a private file's new text while an
-  export streams; it was 0644 under the default umask. A console upload's are made the same way, and a re-upload
-  keeps the replaced file's mode, where a 0600 file came back 0644.
+  export streams; it was 0644 under the default umask.
 - The image upgrades `zlib1g` to the Debian security release fixing CVE-2026-76844 and CVE-2026-85091 (HIGH),
   which the base image still carries, so the image scan passes (#632).
 - Pinned floors for advisories: pypdf 6.21.4 (seven high-severity denial-of-service advisories, e.g.

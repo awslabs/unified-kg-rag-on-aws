@@ -45,6 +45,7 @@ from langchain_core.document_loaders import BaseLoader
 from langchain_core.documents import Document as LangChainDocument
 
 from unified_kg_rag.shared.exceptions import DataProcessingError
+from unified_kg_rag.shared.extras import extra_hint
 
 
 class TextFileLoader(BaseLoader):
@@ -293,9 +294,8 @@ class HtmlFileLoader(BaseLoader):
 
 
 DOCX_INSTALL_HINT = (
-    "install the optional 'docx' extra: `uv sync --extra docx` or "
-    "`pip install -e '.[docx]'` in a source checkout (the docker/Dockerfile "
-    'image: build with `--build-arg UV_EXTRAS="--extra docx"`)'
+    f"install {extra_hint('docx')}, or build the docker/Dockerfile image "
+    'with `--build-arg UV_EXTRAS="--extra docx"`'
 )
 
 

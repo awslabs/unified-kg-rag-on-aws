@@ -296,12 +296,13 @@ to its page map, and link it from the pages around it.
   broken chunk: the draw.io command-line export (`drawio -x -e`) writes its zTXt chunk with a wrong CRC and no `IEND`,
   so rewrite the chunk CRCs and append `IEND` after such an export.
 
-**Korean pages.** User-facing documentation is in English. The Tier-1 pages, the ones most Korean readers use, have
-a Korean twin `<page>.ko.md` next to the English page. The one list of them is `TRANSLATED_PAGES` in
+**Korean pages.** User-facing documentation is in English. The Tier-1 pages, the ones most Korean readers use, have a
+Korean twin `<page>.ko.md` next to the English page. The one list of them is `TRANSLATED_PAGES` in
 [`scripts/check_docs.py`](./scripts/check_docs.py): `README.md`, `docs/index.md`, the two `getting-started/` pages,
 `concepts/overview.md`, `concepts/retrieval.md` and `concepts/scopes-and-namespaces.md`, and `guides/configure.md`,
-`ingest.md`, `multilingual.md`, `query.md`, `incremental.md`, `domain-adaptation.md` and `evaluate.md`. Every other page is English-only, and a Korean page that links one adds "(영문)" after
-the link.
+`ingest.md`, `multilingual.md`, `query.md`, `structured-queries.md`, `incremental.md`, `domain-adaptation.md`,
+`evaluate.md`, `mcp.md` and `console.md`. Every other page is English-only, and a Korean page that links one adds "(영문)"
+after the link.
 
 1. **Same pull request.** A change to a Tier-1 English page updates its `.ko.md` twin in the same pull request.
 2. **Lag note.** If you cannot write the Korean text, say so in the pull request description and add this note at
@@ -359,15 +360,16 @@ The version lives in one place, `__version__` in `unified_kg_rag/__init__.py`; `
    git push origin vX.Y.Z
    ```
 
-   The tag push runs [.github/workflows/release.yml](./.github/workflows/release.yml). It fails unless the tagged
-   commit is on `main`, the tag is `v` plus `__version__` and the changelog has a non-empty section for that version;
-   it builds the sdist and wheel, runs `twine check --strict`, checks both carry LICENSE and NOTICE, installs the
-   wheel in a clean environment, writes a CycloneDX SBOM of the locked dependencies with each package's licence (read
-   from an environment synced with every extra, `.github/scripts/sbom_licenses.py`), and creates the GitHub release
-   with both files, their checksums, the SBOM and that changelog section as its notes
-   (`scripts/changelog_section.py`; a release body resolves no relative link, so `--link-base` points the section's
-   repo-relative links at the tagged tree, and a section longer than a release body allows ends with a link to the
-   full changelog). A version with an `a`, `b`, `rc` or `.dev` segment is marked as a pre-release.
+   The tag push runs [.github/workflows/release.yml](./.github/workflows/release.yml). It fails unless the tagged commit
+   is on `main`, the tag is `v` plus `__version__` and the changelog has a non-empty section for that version; it builds
+   the sdist and wheel, runs `twine check --strict`, checks both carry LICENSE and NOTICE, installs the wheel in a clean
+   environment, writes a CycloneDX SBOM of the locked dependencies with each package's licence (read from an environment
+   synced with every extra, `.github/scripts/sbom_licenses.py`), attests the build provenance of the distributions and
+   the SBOM (Sigstore), and creates the GitHub release with both files, their checksums, the SBOM and the changelog
+   section's notes (`scripts/changelog_section.py`): the section's introduction, *Highlights*, *Breaking changes*,
+   *Upgrading* and *Security*, then a link to the version's heading in the tagged `CHANGELOG.md` for *Added*, *Changed*
+   and *Fixed*. A release body resolves no relative link, so `--link-base` points the section's repo-relative links at
+   the tagged tree. A version with an `a`, `b`, `rc` or `.dev` segment is marked as a pre-release.
 5. In a follow-up pull request, set `__version__` to the next development version (`X.Y.(Z+1).dev0` or
    `X.(Y+1).0.dev0`).
 

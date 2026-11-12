@@ -144,6 +144,9 @@ holds:
     `indexing.max_document_failures` consecutive runs unchanged, at the same
     extraction settings (a settings change starts the count over); also in
     the summary.
+  - `files_skipped`: the corpus files of a type no loader reads (a `.docx`
+    without the `docx` extra, a suffix no loader registers), which one
+    WARNING names with the remedy.
 
   And `build_record`, the suffix's build record after the run: `written`,
   `kept` (the run wrote nothing; the stored one stands), `failed` (no index
@@ -156,9 +159,10 @@ holds:
   (`runs`), the `comparison`, the failure-budget breaches
   (`failure_budget_breaches`) and the failed gates (`gate_failures`); a
   breach, a failed gate or an upload error exits `1`.
-- **`run-visualization`**: the `output_directory`, the written `files` and
-  the `failed_renderers` (each failed renderer's error); an empty list
-  (nothing rendered) or a failed renderer exits `1`.
+- **`run-visualization`**: the `output_directory`, the written `files`,
+  the `failed_renderers` (each failed renderer's error) and the
+  `skipped_renderers` (each default renderer left out for a missing extra,
+  with why); an empty list (nothing rendered) or a failed renderer exits `1`.
 - **`run-describe`**: the namespace's description (`suffix`, `namespace`,
   `build`, `build_record` (`present` or `missing`: then `artifacts` are
   what the config builds), `artifacts`, `methodologies`, `strategies`, `auto_routes`,

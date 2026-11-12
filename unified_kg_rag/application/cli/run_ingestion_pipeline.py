@@ -52,7 +52,6 @@ from unified_kg_rag.application.cli.preflight import (
 )
 from unified_kg_rag.application.cli.provider_args import (
     add_provider_arguments,
-    apply_provider_arguments,
 )
 from unified_kg_rag.application.cli.query_args import namespace_name, suffix_arg
 from unified_kg_rag.application.config import load_cli_dotenv, resolve_relative_paths
@@ -232,8 +231,10 @@ class CommandLineInterface:
         parser.add_argument(
             "--force-rebuild",
             action="store_true",
-            help="Recompute every stage, ignoring existing cached stage outputs "
-            "(the stage cache is rewritten with the new outputs)",
+            help="Recompute every stage, ignoring the cached stage outputs, the "
+            "stored extraction records and the LLM response cache: every model "
+            "call and embedding is paid again (the caches are rewritten with "
+            "the new outputs)",
         )
         parser.add_argument(
             "--s3-sync",
@@ -422,9 +423,7 @@ class IngestionPipelineRunner:
         _load_pipeline()
         self.args = args
         with exit_on_config_error():
-            self.config = apply_namespace_arguments(
-                apply_provider_arguments(load_cli_config(args), args), args
-            )
+            self.config = apply_namespace_arguments(load_cli_config(args), args)
         retired = getattr(args, "retire_source_scope", None) or []
         if retired:
             indexing = self.config.indexing
@@ -913,6 +912,8 @@ class IngestionPipelineRunner:
                 if context.incremental_delta is not None
                 else 0
             ),
+            # Corpus files of a type no loader reads (the WARNING names them).
+            "files_skipped": len(context.skipped_source_files),
             # The model calls and tokens of the stages this run executed.
             "token_usage": run_token_usage(context, self.pipeline.executed_stages),
             "stages": [

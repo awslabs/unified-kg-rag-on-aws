@@ -38,7 +38,7 @@ without it.
 answer against the item's assertions, `evaluation.assertion_trials` (default
 3) judge calls per answer, and needs no extra; see
 [Assertions, length control and a closed-book bound](#assertions-length-control-and-a-closed-book-bound).
-The `ragas` judge needs the `eval` extra (`uv sync --extra eval`, [Install](../getting-started/aws.md#install));
+The `ragas` judge needs the `eval` extra (`uv sync --inexact --extra eval`, [Install](../getting-started/aws.md#install));
 without it `run-eval` stops before the first query with exit `2`, naming the
 extra, even with `processing.ignore_errors: true`. The default, judge-free
 run needs no extra. Any other enabled evaluator that cannot be built (no Bedrock
@@ -429,7 +429,10 @@ changes a default until a measured experiment decides
    (and a USD estimate with `evaluation.prices`). The questions and
    assertions are in `--language` (default
    `processing.translation.source_language`). The same seed and the same
-   model replies give the same files.
+   model replies give the same files. A failed call drops its item (counted
+   in the report); a run that generates no question writes nothing and
+   exits 1 naming the drops, and a model server it cannot reach stops it
+   at once.
 2. Score the answers on the assertions and judge them without length bias:
 
    ```bash

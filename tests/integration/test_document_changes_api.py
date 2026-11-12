@@ -90,7 +90,9 @@ def _unit_filters(config: Config, providers: Any) -> dict[str, Any]:
     }
 
 
-def test_documents_from_memory_are_added_updated_and_deleted(setup) -> None:
+def test_documents_from_memory_are_added_updated_and_deleted(
+    setup, caplog: pytest.LogCaptureFixture
+) -> None:
     config, providers, pipeline = setup
 
     # Added: Korean text, filters, a nested id.
@@ -139,8 +141,11 @@ def test_documents_from_memory_are_added_updated_and_deleted(setup) -> None:
     assert "Depot stores gadgets for Buyer." in _stored_texts(config, providers)
     assert "Depot stores widgets for Vendor." not in _stored_texts(config, providers)
 
-    # Deleted by id: only what it alone stated goes.
-    fourth = _ok(pipeline.delete_documents(["ticket-2"]))
+    # Deleted by id: only what it alone stated goes. A deletion stages no
+    # document, which is no empty corpus to warn of.
+    with caplog.at_level("WARNING"):
+        fourth = _ok(pipeline.delete_documents(["ticket-2"]))
+    assert "No supported files found" not in caplog.text
     assert len(fourth.incremental_delta.deleted) == 1
     assert set(_records(providers)) == {"contracts/supply.txt", "ticket-1"}
     assert _entity_names(providers) == {"Vendor", "Buyer", "Depot"}

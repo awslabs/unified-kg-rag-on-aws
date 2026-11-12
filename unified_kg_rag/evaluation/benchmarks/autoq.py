@@ -63,6 +63,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from unified_kg_rag.adapters.evaluators.base import error_digest, judge_answers
 from unified_kg_rag.adapters.llm.chain_factory import setup_chain
+from unified_kg_rag.adapters.llm.reachability import (
+    is_unreachable_error,
+    model_unreachable_error,
+)
 from unified_kg_rag.adapters.llm.token_estimate import (
     estimate_token_count,
     truncate_to_estimate,
@@ -552,6 +556,9 @@ class AssertionBenchmarkGenerator:
                     {**inputs, "language": self.language}
                 )
         except Exception as e:  # noqa: BLE001 - a failed call drops its item
+            if is_unreachable_error(e):
+                # Every later call meets the same server: stop, naming it.
+                raise model_unreachable_error(e, self.config) from e
             # The error may quote the model's reply: a digest at WARNING.
             logger.warning(
                 "prepare-benchmark assertions: %s call failed: %s",
@@ -588,12 +595,21 @@ class AssertionBenchmarkGenerator:
 
     async def agenerate(self, corpus_directory: Path) -> dict[str, Any]:
         """Generate; returns ``rows`` (the run-eval dataset), ``units`` (the
-        units the rows cite) and ``report``."""
+        units the rows cite) and ``report``.
+
+        Raises:
+            ModelUnreachableError: A model server could not be reached.
+        """
         settings = self.settings
         all_units = load_corpus(corpus_directory, settings.unit_tokens)
         units = sample_units(all_units, settings.max_units, settings.seed)
         self.units = {u.id: u for u in units}
-        vectors = await self._embed(units)
+        try:
+            vectors = await self._embed(units)
+        except Exception as e:
+            if is_unreachable_error(e):
+                raise model_unreachable_error(e, self.config) from e
+            raise
         labels = kmeans(vectors, settings.clusters, settings.seed)
         samples = cluster_samples(vectors, labels, settings.units_per_cluster)
         clusters = [(label, [units[i] for i in idx]) for label, idx in samples]

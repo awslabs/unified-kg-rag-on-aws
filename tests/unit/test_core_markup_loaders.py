@@ -135,5 +135,5 @@ def test_a_skipped_format_names_the_extra_that_reads_it(
     (warning,) = [
         r.getMessage() for r in caplog.records if "Skipping" in r.getMessage()
     ]
-    assert "for .docx, install the optional 'docx' extra" in warning
+    assert "for .docx, install the 'docx' extra" in warning
     assert "for .xyz, convert them to a supported format" in warning

@@ -81,12 +81,13 @@ unit holds any more are deleted by the next full build
   (`was built for other language settings`) until one `indexing.reset: true`
   run. The loading stage samples the corpus (the first 2,000 characters of
   its first 20 documents) and logs a WARNING naming
-  `processing.translation.source_language` when the sample's script
-  disagrees with it: mostly Hangul, Kana or Han letters under a language of
-  another script (it suggests `ko`, `ja` or `zh`), or few of them under
-  `ko`, `ja` or `zh` (not when the sample still reads as that language: a
-  Korean document that is mostly code). It cannot tell two languages of one script apart
-  (English from German), and the run goes on.
+  `processing.translation.source_language` when the sample disagrees with
+  it: it reads as another language (it suggests that one's code), or few
+  of its letters are in the setting's script (not when the sample still
+  reads as that language: a Korean document that is mostly code). The
+  sample reads as the language most of its documents read as, so one
+  Korean document among English ones does not make it Korean. Languages
+  of one script are told apart by their function words; the run goes on.
 - **Unicode.** Text and queries are NFC-normalized, so decomposed Hangul (NFD)
   matches its composed form.
 - **Other languages.** `source_language` and `target_language` take the

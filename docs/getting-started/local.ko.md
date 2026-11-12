@@ -26,7 +26,8 @@ ollama pull bge-m3
 ```
 
 `--no-dev`는 기여자용 테스트·린트 도구를 빼며, 이 옵션이 없으면 `uv sync`와 `uv run`이 이 도구를
-설치합니다.
+설치합니다. `uv sync`는 지정하지 않은 extra를 지우므로, extra를 더할 때는 이 명령에 추가하거나
+`--inexact`를 붙이세요([설치](./aws.ko.md#설치)).
 
 - **재순위화.** 로컬 프리셋은 크로스 인코더로 재순위화하며, 여기에는 `cross-encoder` extra가
   필요합니다(`uv sync --no-dev --extra local --extra cross-encoder`). 없으면 질의는 융합 순서를 그대로
@@ -83,7 +84,8 @@ uv run --no-dev run-rag --backend local --search-strategy local --verbose --quer
 uv run --no-dev run-rag --backend local --search-strategy mix --verbose --query "How are Acme Robotics and Globex Sensors related?"
 ```
 
-`--verbose`는 답변 뒤에 답변에 쓴 근거(텍스트 단위 id와 점수)와 검색 지표를 출력합니다. 명령은 모든 단계를
+`--verbose`는 답변 뒤에 질의에서 추출한 엔티티, 답변에 쓴 근거 전체(번호마다 유형인 `entity`,
+`relationship`, `text`와 이름 또는 파일, 점수, 발췌)와 검색 지표를 출력합니다. 명령은 모든 단계를
 `INFO`로 기록하므로, 경고와 결과만 보려면 명령 앞에 `UKR__LOGGING__LEVEL=WARNING`을
 붙이세요.
 

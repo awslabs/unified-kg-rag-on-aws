@@ -42,7 +42,7 @@ Guide: [Ingestion](../guides/ingest.md). Also takes the [provider flags](#provid
 | `--source-directory` | — | Directory of the source documents to process; required unless --verify-metadata (falls back to the UKR_SOURCE_DIRECTORY env var). |
 | `--output-directory` | — | Export each parsed document as <stem>.json to this directory for inspection (processing.document_parsing.target_directory; no export when omitted; must not be the source directory). |
 | `--cache-directory` | — | Directory of the pipeline cache and intermediate results (default: cache). |
-| `--force-rebuild` | off | Recompute every stage, ignoring existing cached stage outputs (the stage cache is rewritten with the new outputs). |
+| `--force-rebuild` | off | Recompute every stage, ignoring the cached stage outputs, the stored extraction records and the LLM response cache: every model call and embedding is paid again (the caches are rewritten with the new outputs). |
 | `--s3-sync` | off | Synchronize the cache with Amazon S3 (needs --s3-bucket-name or aws.s3.bucket_name). |
 | `--s3-bucket-name` | — | Amazon S3 bucket for cache synchronization with --s3-sync (default: aws.s3.bucket_name). |
 | `--s3-prefix` | `pipeline-runs` | S3 object key prefix for organizing cache files (default: pipeline-runs). |
@@ -58,7 +58,7 @@ Guide: [Ingestion](../guides/ingest.md). Also takes the [provider flags](#provid
 | `--metrics-sink` | `none` | Where to forward pipeline metrics: 'none' (default) or 'cloudwatch' (CloudWatch EMF to stdout, auto-extracted by CloudWatch Logs, with an Environment dimension when UKR_METRICS_ENVIRONMENT is set; pipeline_id is a log property, not a dimension). A stage's metrics are emitted when it finishes and only by the run that executed it, so a resumed run does not repeat restored stages' counts. |
 | `--retire-source-scope` `SCOPE` | — | Incremental runs: treat every doc-status record of this former source scope (in this run's index namespace) as deleted, removing its exclusive graph and vector content. Use it once after moving a corpus, with the old absolute source directory or former document_parsing.source_scope value (a value that is not a URI is also tried as a path resolved like --source-directory; a bare value whose name and path readings both have records stops the run: use ./ or an absolute path). Repeatable; added to indexing.retire_source_scopes. Never this run's own scope. |
 | `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
-| `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
+| `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing: the load fails on one by default, since a misspelled key would leave its setting at the default. |
 | `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |
 | `--log-level` | — | Log level of this run (default: logging.level, INFO; DEBUG logs hold user and corpus text). With --output-format text the logs are plain lines unless logging.log_format is set. One of `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. |
 | `--version` | — | Print the version and exit. |
@@ -91,7 +91,7 @@ Guide: [Querying](../guides/query.md). Also takes the [provider flags](#provider
 | `--metrics-sink` | `none` | Where to send query metrics: 'none' (default) or 'cloudwatch' (CloudWatch EMF to stdout: query_latency_ms of each --mode rag query under unified_kg_rag/query, with an Environment dimension when UKR_METRICS_ENVIRONMENT is set and a Strategy dimension; not with --output-format json). |
 | `--verbose`, `-v` | off | Show more of each result: the query processing, every source (or search hit) with its score and text, and the metrics; with --output-format json, also an answer's search_results.results (the logs: --log-level). |
 | `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
-| `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
+| `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing: the load fails on one by default, since a misspelled key would leave its setting at the default. |
 
 ## `run-eval`
 
@@ -126,7 +126,7 @@ Guide: [Evaluation](../guides/evaluate.md). Also takes the [provider flags](#pro
 | `--arm` `NAME=OVERLAY[,suffix=SUFFIX][,aa=true]` | — | A configuration arm, repeatable: answer the dataset again with the config under OVERLAY (a YAML mapping merged over it, as a config file is validated; its evaluation section is the run's), as a chain of its own, with each --search-strategy. Its runs are labelled <strategy>@NAME and compared with the same strategy's base run, interleaved with it (--run-order); the arms' deltas are Holm-adjusted in families of their own (arm_primary, arm_secondary, arm_cost, arm_pairwise), apart from the strategies'. The run manifest records the overlay's path and sha256. suffix= queries another index namespace with the arm. An arm whose resolved config equals the run's (cache sizes aside) on its own index, or one given aa=true, is an A/A arm: its deltas are the noise floor, left out of Holm and of --fail-if. |
 | `--max-failure-rate` | `1.0` | Exit non-zero when the fraction of queries whose answer generation failed, the fraction of attempted values of any metric that failed, the fraction of reranked queries whose rerank call failed (the fused order kept), or the fraction of answers a retrieval step failure degraded, exceeds this value (0.0-1.0). Skipped metrics do not count. Default 1.0 = fail only when all queries, all attempts of a metric, or all of those, failed. |
 | `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
-| `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
+| `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing: the load fails on one by default, since a misspelled key would leave its setting at the default. |
 | `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |
 | `--log-level` | — | Log level of this run (default: logging.level, INFO; DEBUG logs hold user and corpus text). With --output-format text the logs are plain lines unless logging.log_format is set. One of `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. |
 | `--version` | — | Print the version and exit. |
@@ -143,9 +143,9 @@ Guide: [Visualization](../guides/visualize.md).
 | `--suffix` | — | Index namespace whose newest export to render, without --data-path (the name run-ingestion --suffix wrote it under). |
 | `--cache-directory` | `cache` | The run-ingestion cache directory searched without --data-path (default: cache). |
 | `--output-directory` | `visualization_outputs` | Directory to write visualization files. |
-| `--renderers` `RENDERER` | `interactive`, `static` | Renderers to run. Available: interactive, static. |
+| `--renderers` `RENDERER` | — | Renderers to run. Available: interactive, static (default: all of them, leaving out with a warning one whose extra is not installed; a renderer named here needs its extra). |
 | `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
-| `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
+| `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing: the load fails on one by default, since a misspelled key would leave its setting at the default. |
 | `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |
 | `--log-level` | — | Log level of this run (default: logging.level, INFO; DEBUG logs hold user and corpus text). With --output-format text the logs are plain lines unless logging.log_format is set. One of `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. |
 | `--version` | — | Print the version and exit. |
@@ -164,7 +164,7 @@ Guide: [Inspect and export](../guides/inspect.md). Also takes the [provider flag
 | `--max-items` | — | Export at most this many items of each kind (default: all). |
 | `--include-text` | off | Export each text unit's text too (jsonl only). |
 | `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
-| `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
+| `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing: the load fails on one by default, since a misspelled key would leave its setting at the default. |
 | `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |
 | `--log-level` | — | Log level of this run (default: logging.level, INFO; DEBUG logs hold user and corpus text). With --output-format text the logs are plain lines unless logging.log_format is set. One of `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. |
 | `--version` | — | Print the version and exit. |
@@ -183,7 +183,7 @@ Guide: [Domain adaptation](../guides/domain-adaptation.md#prompt-tuning-run-prom
 | `--force` | off | Let --output-path and --schema-out replace an existing file (never the --config-path file or the schema file the config loads). |
 | `--max-docs` | `20` | Max documents to sample (at least 1). |
 | `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
-| `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
+| `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing: the load fails on one by default, since a misspelled key would leave its setting at the default. |
 | `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |
 | `--log-level` | — | Log level of this run (default: logging.level, INFO; DEBUG logs hold user and corpus text). With --output-format text the logs are plain lines unless logging.log_format is set. One of `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. |
 | `--version` | — | Print the version and exit. |
@@ -218,7 +218,7 @@ Guide: [Benchmarks](../guides/benchmarks.md). Also takes the [provider flags](#p
 | `--max-assertions` | `10` | assertions: assertions kept per question (default 10). |
 | `--language` | — | assertions: language of the questions and assertions (default: processing.translation.source_language). One of `ar`, `de`, `en`, `es`, `fr`, `he`, `hi`, `it`, `ja`, `ko`, `pt`, `ru`, `th`, `vi`, `zh`. |
 | `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
-| `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
+| `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing: the load fails on one by default, since a misspelled key would leave its setting at the default. |
 
 ## `run-mcp-server`
 
@@ -236,7 +236,7 @@ Guide: [MCP server](../guides/mcp.md). Also takes the [provider flags](#provider
 | `--log-level` | — | Log level of this run (default: logging.level, INFO; DEBUG logs hold user and corpus text). With --output-format text the logs are plain lines unless logging.log_format is set. One of `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. |
 | `--version` | — | Print the version and exit. |
 | `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
-| `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
+| `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing: the load fails on one by default, since a misspelled key would leave its setting at the default. |
 
 ## `run-console`
 
@@ -253,7 +253,7 @@ Guide: [Console](../guides/console.md).
 | `--allow-remote` | off | Allow a --host other than a loopback address. Anyone who can reach the port can then query, ingest and edit the configuration. |
 | `--trace-url` `TEMPLATE` | — | Link each answer to its trace: a URL with {trace_id}, e.g. http://localhost:16686/trace/{trace_id} for Jaeger (default with observability.backend langfuse: LANGFUSE_HOST/trace/{trace_id}). |
 | `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
-| `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
+| `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing: the load fails on one by default, since a misspelled key would leave its setting at the default. |
 | `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |
 | `--log-level` | — | Log level of this run (default: logging.level, INFO; DEBUG logs hold user and corpus text). With --output-format text the logs are plain lines unless logging.log_format is set. One of `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. |
 | `--version` | — | Print the version and exit. |

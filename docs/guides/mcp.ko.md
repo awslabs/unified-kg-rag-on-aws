@@ -16,14 +16,15 @@ API 없이도 인덱스를 검색하고, 질문하고, 그래프를 따라갈 �
 서버에는 `mcp` extra(공식 MCP Python SDK)가 필요합니다.
 
 ```bash
-uv sync --extra mcp                      # from a clone
-pip install "unified-kg-rag-on-aws[mcp]" # from a package index
+uv sync --inexact --extra mcp    # from a clone
+pip install '<wheel file>[mcp]'  # from the wheel a GitHub release attaches
 ```
 
 extra가 없으면 `run-mcp-server`는 extra 이름을 알려 주고 종료 코드 2로 끝납니다.
 서버는 `run-rag`와 같은 설정을 읽습니다. 저장소, 모델, 인덱스 네임스페이스
 (`--suffix`, 없으면 `processing.document_parsing.index_value`. [질의](./query.ko.md)와
-같음)입니다. 에이전트의 MCP 설정에서 서버를 자식 프로세스로 띄우고 표준 입출력으로
+같음)입니다. 시작할 때 인덱스가 없는 네임스페이스를 서비스하면 경고하며, 그 네임스페이스에
+대한 도구 호출은 수집하기 전까지 모두 실패합니다. 에이전트의 MCP 설정에서 서버를 자식 프로세스로 띄우고 표준 입출력으로
 통신합니다(기본값인 `stdio` 전송). 대부분의 MCP 클라이언트는 다음과 같은 설정을 받습니다.
 
 ```json
@@ -141,7 +142,7 @@ extra가 없고, 스택의 질의 태스크는 서비스, 포트, 로드 밸런�
   명령으로 실행합니다. 저장소에 닿는 VPC 안에서, 질의 태스크 역할과 같은 권한으로 실행해야
   합니다.
 - **에이전트 옆에서 실행.** 저장소에 닿는 컴퓨터(로컬 모드나 VPC 안의 호스트)에서
-  `uv sync --extra mcp`로 설치하고, 같은 컴퓨터의 에이전트에는 stdio로 연결합니다.
+  `uv sync --inexact --extra mcp`로 설치하고, 같은 컴퓨터의 에이전트에는 stdio로 연결합니다.
 
 AgentCore나 이 서버를 실행하는 ECS 서비스 구성은 아직 AWS에서 검증하지 않았습니다.
 
@@ -183,7 +184,7 @@ app = build_mcp_app(chain, namespace="default", allowed_hosts=["mcp.example.com"
 
 | 메시지 | 해결 |
 |---|---|
-| `The MCP server needs the mcp extra` | `uv sync --extra mcp` |
+| `The MCP server needs the 'mcp' extra` | `uv sync --inexact --extra mcp` |
 | `Missing endpoint configuration for the MCP server` | `run-rag`처럼 저장소 엔드포인트를 설정([설정](./configure.ko.md)) |
 | `is not a loopback address ... needs --allow-remote` | `127.0.0.1`에 바인딩하거나, 인증 프록시 뒤에서 `--allow-remote` 추가 |
 | `Strategy '...' is not offered` / `does not hold` | `kg_describe_schema`를 호출해 목록에 있는 전략 선택 |

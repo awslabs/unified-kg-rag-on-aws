@@ -121,7 +121,7 @@ def _keys(config: Config) -> dict[str, str]:
 def test_owl_is_registered_with_its_extra() -> None:
     assert "owl" in registered_schema_sources()
     assert schema_source_requirement("owl") == ("rdflib", INSTALL_HINT)
-    assert "uv sync --extra ontology" in INSTALL_HINT
+    assert "uv sync --inexact --extra ontology" in INSTALL_HINT
     assert schema_source_requirement("file") is None
 
 
@@ -153,7 +153,7 @@ def test_preflight_names_the_missing_extra(monkeypatch: pytest.MonkeyPatch) -> N
     assert (
         "'rdflib' (for processing.graph_extraction.schema_source.kind 'owl')" in error
     )
-    assert "uv sync --extra ontology" in error
+    assert "uv sync --inexact --extra ontology" in error
 
 
 def test_preflight_checks_only_the_selected_kind(
@@ -193,7 +193,9 @@ def test_ingestion_exits_2_naming_the_extra(
         run_ingestion_pipeline.IngestionPipelineRunner(args).run()
     assert exc.value.code == 2
     pipeline.assert_not_called()
-    assert "uv sync --extra ontology" in " ".join(capsys.readouterr().err.split())
+    assert "uv sync --inexact --extra ontology" in " ".join(
+        capsys.readouterr().err.split()
+    )
 
 
 def test_without_rdflib_the_loader_says_how_to_install_it(
@@ -207,7 +209,7 @@ def test_without_rdflib_the_loader_says_how_to_install_it(
     monkeypatch.delitem(sys.modules, f"{package.__name__}.owl_reader", raising=False)
     with pytest.raises(SchemaSourceError, match="needs rdflib") as error:
         _load(PROCURE)
-    assert "uv sync --extra ontology" in str(error.value)
+    assert "uv sync --inexact --extra ontology" in str(error.value)
 
 
 def test_the_package_imports_without_rdflib() -> None:

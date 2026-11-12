@@ -35,6 +35,7 @@ from unified_kg_rag.application.cli.conventions import (
     interruptible,
     json_output,
     print_json,
+    print_status,
     setup_cli_logging,
     stoppable,
     usage_error,
@@ -55,7 +56,6 @@ from unified_kg_rag.application.cli.preflight import (
 )
 from unified_kg_rag.application.cli.provider_args import (
     add_provider_arguments,
-    apply_provider_arguments,
 )
 from unified_kg_rag.application.cli.query_args import (
     add_query_arguments,
@@ -485,10 +485,7 @@ class RAGChainRunner:
         _load_chain()
         self.args = args
         with exit_on_config_error():
-            self.config = apply_provider_arguments(
-                load_cli_config(args),
-                args,
-            )
+            self.config = load_cli_config(args)
         # JSON mode keeps stdout machine-parseable (pipeable to jq): the banner,
         # status lines and logs all go to stderr; only the JSON goes to stdout.
         self.json_output = json_output(args)
@@ -593,9 +590,22 @@ class RAGChainRunner:
             self.rag_chain = GraphRAGChain(config=self.config)
             console.print("[green]Query chain initialized.[/green]")
         except Exception as e:
-            logger.exception("Failed to initialize RAG chain: %s", e)
+            # Classified as a query's error is (_run_query): a setting the
+            # chain refused (observability on without the otel extra, a bad
+            # guardrail setting) is a usage error, exit 2.
+            error_class = classify(e)
+            exit_code = EXIT_CODES[error_class]
+            if exit_code == EXIT_USAGE:
+                usage_error(str(e), error_type=type(e).__name__)
+            if error_class is ErrorClass.FAILURE:
+                logger.exception("Failed to initialize RAG chain: %s", e)
+            else:
+                logger.error(
+                    "Failed to initialize RAG chain (%s): %s", error_class.value, e
+                )
             console.print(f"[red]Error during initialization: {markup_safe(e)}[/red]")
-            sys.exit(EXIT_FAILURE)
+            print_status(exit_code, e)
+            sys.exit(exit_code)
 
     async def _interactive_mode(self) -> None:
         console.print(

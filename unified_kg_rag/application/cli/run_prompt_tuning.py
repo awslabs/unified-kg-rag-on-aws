@@ -44,7 +44,6 @@ from unified_kg_rag.application.cli.lazy import lazy_names
 from unified_kg_rag.application.cli.preflight import missing_extras_error
 from unified_kg_rag.application.cli.provider_args import (
     add_provider_arguments,
-    apply_provider_arguments,
 )
 from unified_kg_rag.application.cli.query_args import positive_int
 from unified_kg_rag.application.config import load_cli_dotenv
@@ -286,7 +285,7 @@ def main() -> int:
     as_json = json_output(args)
     try:
         with exit_on_config_error():
-            config = apply_provider_arguments(load_cli_config(args), args)
+            config = load_cli_config(args)
         if not args.source_directory.is_dir():
             usage_error(f"source directory not found: '{args.source_directory}'")
         if args.schema_out is not None and args.schema_out.suffix.lower() not in (

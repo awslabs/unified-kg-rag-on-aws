@@ -231,7 +231,9 @@ def _script(name: str) -> str:
         return str(found)
     which = shutil.which(name)
     if which is None:
-        raise SystemExit(f"{name} not found: run `uv sync --extra console` first")
+        raise SystemExit(
+            f"{name} not found: run `uv sync --inexact --extra console` first"
+        )
     return which
 
 

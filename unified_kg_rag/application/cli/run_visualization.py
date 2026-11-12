@@ -202,18 +202,35 @@ def run_visualization(
     config: Any,
     *,
     failures: dict[str, str] | None = None,
+    skipped: dict[str, str] | None = None,
 ) -> list[Path]:
     """Render the requested renderers from exported data; return written paths.
 
     Centrality is computed only when a requested renderer reads it
     (``BaseRenderer.needs_centrality``). ``failures``, when given, gets each
-    renderer that failed and its error.
+    renderer that failed and its error. With ``skipped`` (the defaults, not
+    a requested list), a renderer whose dependency is not installed is left
+    out with a WARNING and recorded there, unless every one of them is.
 
     Raises:
         ConfigurationError: A renderer's dependency is not installed (the
             ``viz`` extra), checked before the data is loaded.
     """
-    renderers = resolve_renderers(renderer_names)
+    if skipped is None:
+        renderers = resolve_renderers(renderer_names)
+    else:
+        renderers = []
+        missing: list[ConfigurationError] = []
+        for name in renderer_names:
+            try:
+                renderers += resolve_renderers([name])
+            except ConfigurationError as e:
+                missing.append(e)
+                skipped[name] = str(e)
+        if not renderers and missing:
+            raise missing[0]
+        for name, reason in skipped.items():
+            logger.warning("Skipping the '%s' renderer: %s", name, reason)
     output_dir.mkdir(parents=True, exist_ok=True)
     context = load_render_context(data_path)
     _fill_missing_analysis(
@@ -304,11 +321,13 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--renderers",
         nargs="+",
-        default=list(registered_renderers()),
+        default=None,
         # Rejected here, before the data is loaded and centrality computed.
         choices=registered_renderers(),
         metavar="RENDERER",
-        help=f"Renderers to run. Available: {', '.join(registered_renderers())}",
+        help=f"Renderers to run. Available: {', '.join(registered_renderers())} "
+        "(default: all of them, leaving out with a warning one whose extra is "
+        "not installed; a renderer named here needs its extra)",
     )
     add_config_arguments(parser)
     add_output_format_argument(parser)
@@ -330,12 +349,15 @@ def main() -> int:
         setup_cli_logging(config, args)
         logger.info("Rendering '%s'", args.data_path)
         failures: dict[str, str] = {}
+        # Only the default list leaves out a renderer it cannot run.
+        skipped: dict[str, str] | None = {} if args.renderers is None else None
         written = run_visualization(
             args.data_path,
             args.output_directory,
-            args.renderers,
+            args.renderers or list(registered_renderers()),
             config,
             failures=failures,
+            skipped=skipped,
         )
         logger.info(
             "Visualization complete: %d files in '%s'",
@@ -354,6 +376,7 @@ def main() -> int:
                     "output_directory": str(args.output_directory),
                     "files": [str(path) for path in written],
                     "failed_renderers": failures,
+                    "skipped_renderers": skipped or {},
                     **(failure_fields(EXIT_FAILURE, error) if error else {}),
                 }
             )

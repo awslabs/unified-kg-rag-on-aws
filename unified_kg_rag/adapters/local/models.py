@@ -40,6 +40,7 @@ from unified_kg_rag.ports.model_factory import (
     effective_max_output_tokens,
 )
 from unified_kg_rag.shared import ConfigurationError, get_logger, observability
+from unified_kg_rag.shared.extras import extra_hint
 
 logger = get_logger(__name__)
 
@@ -57,8 +58,7 @@ def import_optional(module: str, kind: str, extra: str = "local") -> Any:
     except ImportError as e:
         raise ConfigurationError(
             f"Provider kind '{kind}' needs '{module}', which is not installed. "
-            f"Install the {extra} extra: uv sync --extra {extra} (or pip install "
-            f"-e '.[{extra}]' in a source checkout)."
+            f"Install {extra_hint(extra)}."
         ) from e
 
 

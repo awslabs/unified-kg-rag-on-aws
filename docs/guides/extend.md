@@ -75,8 +75,9 @@ This section is the single reference for extending the framework. Extensions com
   A loader that imports an optional package declares it:
   `@register_schema_source("kind", requires=("module", "how to install
   it"))`, and the CLIs check that the module is importable before any model
-  call, exiting 2 with the install hint (`owl` declares `("rdflib", "the
-  ontology extra: uv sync --extra ontology ...")`). Import the package
+  call, exiting 2 with the install hint (`owl` declares `("rdflib",
+  extra_hint("ontology"))`, from `unified_kg_rag.shared.extras`, the one
+  wording of an extra's install). Import the package
   inside the loader, not at module level, so registering the kind needs
   nothing, and raise `SchemaSourceError` naming the extra when the import
   fails; re-registering a kind replaces its loader and its requirement. It

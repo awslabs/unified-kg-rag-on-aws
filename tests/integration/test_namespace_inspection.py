@@ -166,14 +166,16 @@ def test_run_describe_prints_one_json_document(
     assert document["methodologies"] == ["graphrag", "lightrag", "hipporag"]
     assert document["export"]["counts"]["entities"] == 3
     assert out.is_file()
-    # A namespace without an index is a usage error (exit 2).
+    # A namespace without an index is a usage error (exit 2), of the type
+    # run-rag names it by (it said UsageError).
     monkeypatch.setattr(
         sys, "argv", ["run-describe", "--suffix", "tenant_x", "--output-format", "json"]
     )
     with pytest.raises(SystemExit) as exc:
         run_describe.main()
     assert exc.value.code == 2
-    assert json.loads(capsys.readouterr().out)["exit_code"] == 2
+    status = json.loads(capsys.readouterr().out)
+    assert (status["exit_code"], status["error_type"]) == (2, "IndexNotFoundError")
 
 
 def test_run_describe_names_a_wrong_suffix_on_stderr(

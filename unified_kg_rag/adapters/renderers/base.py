@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
 from unified_kg_rag.shared import ConfigurationError, get_logger
+from unified_kg_rag.shared.extras import extra_hint
 
 if TYPE_CHECKING:
     import networkx as nx
@@ -24,10 +25,7 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 # How to install what the interactive renderer imports (pyvis).
-VIZ_EXTRA_HINT = (
-    "install the viz extra (`uv sync --extra viz`, or `pip install -e "
-    "'.[viz]'` in a source checkout)"
-)
+VIZ_EXTRA_HINT = f"install {extra_hint('viz')}"
 
 
 @dataclass

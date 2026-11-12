@@ -56,6 +56,7 @@ from unified_kg_rag.ports.model_factory import (
     TokenCounterPort,
 )
 from unified_kg_rag.shared.exceptions import ConfigurationError
+from unified_kg_rag.shared.extras import extra_hint
 
 if TYPE_CHECKING:
     import boto3
@@ -296,10 +297,7 @@ class Providers:
 # The model server clients come from the [local] extra; the cross-encoder
 # reranker (its own [cross-encoder] extra) and the tiktoken counter degrade
 # without theirs, so only these kinds declare it.
-_LOCAL_EXTRA = (
-    "the local extra: uv sync --extra local (or pip install -e '.[local]' in "
-    "a source checkout)"
-)
+_LOCAL_EXTRA = extra_hint("local")
 _OPENAI_CLIENT = ("langchain_openai", _LOCAL_EXTRA)
 _OLLAMA_CLIENT = ("langchain_ollama", _LOCAL_EXTRA)
 

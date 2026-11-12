@@ -28,7 +28,6 @@ from unified_kg_rag.application.cli.conventions import (
 from unified_kg_rag.application.cli.display import console, markup_safe
 from unified_kg_rag.application.cli.provider_args import (
     add_provider_arguments,
-    apply_provider_arguments,
 )
 from unified_kg_rag.application.cli.query_args import positive_int
 from unified_kg_rag.domain.models import LanguageCode, LLMUsage
@@ -153,7 +152,9 @@ def run_assertion_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     """Generate, write and summarize; returns the generation report.
 
     Raises:
-        EvaluationException: The corpus holds no text, or generation failed.
+        EvaluationException: The corpus holds no text, or generation failed
+            or generated no question.
+        ModelUnreachableError: A model server could not be reached.
     """
     # The generator loads the model stack: imported here, not for --help.
     from unified_kg_rag.evaluation.benchmarks import autoq
@@ -169,7 +170,7 @@ def run_assertion_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     except EvaluationException as e:
         usage_error(str(e))
     with exit_on_config_error():
-        config = apply_provider_arguments(load_cli_config(args), args)
+        config = load_cli_config(args)
     setup_cli_logging(config, args)
     settings = autoq.GenerationSettings(
         questions_per_class=args.questions_per_class,
@@ -188,8 +189,16 @@ def run_assertion_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     generated = event_loop.run(
         stoppable(generator.agenerate(corpus)), io_workers=config.processing.io_workers
     )
-    autoq.write_outputs(args.output_directory, generated)
     report = generated["report"]
+    if not generated["rows"]:
+        # An empty dataset run-eval refuses: a failed run, nothing written.
+        dropped = ", ".join(f"{k} {v}" for k, v in report["dropped"].items())
+        raise EvaluationException(
+            "prepare-benchmark assertions generated no question from "
+            f"{report['corpus']['sampled_units']} text units (dropped: "
+            f"{dropped or 'none'}); see the WARNINGs for the failed calls"
+        )
+    autoq.write_outputs(args.output_directory, generated)
     counts = ", ".join(f"{k} {v}" for k, v in report["questions"].items()) or "none"
     console.print(
         f"[green]Generated {len(generated['rows'])} questions ({markup_safe(counts)}) "

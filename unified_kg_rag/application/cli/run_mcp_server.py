@@ -52,16 +52,21 @@ from unified_kg_rag.application.cli.preflight import (
 )
 from unified_kg_rag.application.cli.provider_args import (
     add_provider_arguments,
-    apply_provider_arguments,
 )
 from unified_kg_rag.application.config import load_cli_dotenv
+from unified_kg_rag.application.retrieval import graph_lookup
 from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
 from unified_kg_rag.domain.models import (
     Config,
     RetrieverRole,
     validate_safe_name,
 )
-from unified_kg_rag.shared import ConfigurationError, get_logger, setup_logging
+from unified_kg_rag.shared import (
+    ConfigurationError,
+    IndexNotFoundError,
+    get_logger,
+    setup_logging,
+)
 from unified_kg_rag.shared.utils import event_loop
 
 logger = get_logger(__name__)
@@ -178,6 +183,26 @@ async def serve_http(tools: KnowledgeGraphTools, host: str, port: int) -> None:
     await uvicorn.Server(config).serve()
 
 
+async def warn_of_missing_namespaces(
+    chain: GraphRAGChain, namespaces: list[str]
+) -> None:
+    """WARN of each served namespace nothing was ingested under (a mistyped
+    ``--suffix``): the server starts, as one may be ingested while it runs,
+    but every tool call on it fails until then."""
+    for namespace in namespaces:
+        try:
+            await graph_lookup.require_namespace(chain, namespace)
+        except IndexNotFoundError as e:
+            logger.warning(
+                "Namespace '%s' holds no index, so every tool call on it fails "
+                "until it is ingested: %s",
+                namespace,
+                e,
+            )
+        except Exception as e:  # noqa: BLE001 - a call meets it again
+            logger.warning("Could not check namespace '%s': %s", namespace, e)
+
+
 async def serve(args: argparse.Namespace, config: Config) -> int:
     """Build the chain and the server, and serve until the transport ends."""
     loop = asyncio.get_running_loop()
@@ -185,6 +210,7 @@ async def serve(args: argparse.Namespace, config: Config) -> int:
     chain = GraphRAGChain(config=config, allowed_strategies=config.mcp.strategies)
     try:
         tools = KnowledgeGraphTools(chain, namespace=args.suffix)
+        await warn_of_missing_namespaces(chain, tools.namespaces)
         logger.info(
             "Serving namespace '%s' read-only over %s (tools: %s)",
             tools.namespace,
@@ -204,7 +230,7 @@ async def serve(args: argparse.Namespace, config: Config) -> int:
 async def async_main(args: argparse.Namespace) -> int:
     try:
         with exit_on_config_error():
-            config = apply_provider_arguments(load_cli_config(args), args)
+            config = load_cli_config(args)
         # stdout is the protocol's: everything else goes to stderr.
         console.stderr = True
         level = {"level": args.log_level} if args.log_level else None

@@ -198,6 +198,22 @@ def test_prompt_tuning_writes_the_source_language(caplog) -> None:
     )
 
 
+def test_prompt_tuning_writes_the_language_most_documents_are_in(caplog) -> None:
+    # Regression (rv23 surfaces 2): four English documents and one Korean one
+    # were tuned as Korean (prompts and analyzers), and the loading stage
+    # told an English setting to be 'ko'.
+    english, korean = [
+        (text * (2000 // len(text) + 1))[:2000] for text in (ENGLISH, KOREAN)
+    ]
+    texts = [english] * 4 + [korean]
+    result = {"profile": {"language": "Korean"}, "custom_prompts": {}}
+    with caplog.at_level(logging.WARNING):
+        tuned = run_prompt_tuning._with_source_language(result, texts, Config())
+    assert tuned["processing"] == {"translation": {"source_language": "en"}}
+    assert source_language_mismatch(corpus_sample(texts), LanguageCode.EN) is None
+    assert "processing.translation.source_language" not in caplog.text
+
+
 def test_the_loading_stage_warns_of_another_script(caplog) -> None:
     from unified_kg_rag.application.ingestion.pipeline_stages import (
         DocumentLoadingStage,

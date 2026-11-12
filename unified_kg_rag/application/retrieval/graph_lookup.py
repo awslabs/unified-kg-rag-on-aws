@@ -73,6 +73,14 @@ def _document_retriever(chain: GraphRAGChain) -> BaseGraphRAGRetriever:
     return chain._get_retriever(RetrieverRole.DOCUMENT)
 
 
+async def require_namespace(chain: GraphRAGChain, suffix: str | None) -> None:
+    """Raise ``IndexNotFoundError`` when nothing was ingested under
+    ``suffix``: the check a query runs before its first model call."""
+    await _document_retriever(chain).arequire_namespace(
+        resolve_namespace(chain.config, suffix)
+    )
+
+
 def _fetch(
     prefix: str, suffix: str | None, filters: dict[str, Any], top_k: int
 ) -> SearchQuery:
