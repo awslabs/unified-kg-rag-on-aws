@@ -1800,6 +1800,8 @@ Queries and retrieval.
 - LightRAG `mix`/`hybrid` context includes the chunks the matched relationships cite (offline hybrid one-hop
   gold-chunk recall 0.30, now 0.86, 0.96 with rerank), and incremental and full builds pick the same chunks (#521,
   #530).
+- An answer the output guardrail blocks writes no conversation memory, as a blocked query writes none (the refusal
+  was saved and read by the next turn's follow-up rewrite).
 - `structured` refused on a namespace without the graph (a `raptor`-only one) names the methodologies that build it
   (graphrag, lightrag, hipporag), not "any methodology".
 - PPR passages of equal score (those no seed reaches, all 0 when the edge read degraded) rank in the support order

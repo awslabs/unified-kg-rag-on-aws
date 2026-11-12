@@ -30,7 +30,8 @@ To create the guardrail with the CDK stack, see
     with the masked text only.
   - A blocked or masked answer is replaced by the guardrail's text (blocked:
     no `sources`, search results or model-written query texts either:
-    `processed_query` keeps only the original query). Masking covers the answer, not its sources (corpus
+    `processed_query` keeps only the original query, and the turn writes no
+    memory). Masking covers the answer, not its sources (corpus
     text as retrieved): keep text a caller must not see out of the corpus.
   - Interventions are in `RAGOutput.metadata.guardrail`, the WARNING log and
     the trace. A guardrail API error fails the query, or with

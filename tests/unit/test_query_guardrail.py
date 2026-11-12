@@ -500,7 +500,10 @@ async def test_blocked_answer_is_replaced_before_memory(
     assert output.answer == _REFUSAL
     assert output.metadata["guardrail"][0]["source"] == "output"
     assert "blocked" not in output.metadata  # the query itself was answered
-    assert memory.turns == [(_QUERY, _REFUSAL)]
+    # Regression (rv23): a refused turn is no history, refused on the way out
+    # as on the way in (the refusal was saved, and read by the follow-up
+    # rewrite).
+    assert memory.turns == []
     # Nor does the refused answer hand out the evidence it was built from.
     assert output.sources == []
     assert output.search_results.results == []
@@ -596,6 +599,18 @@ async def test_astream_screened_answer_is_one_chunk(runtime) -> None:  # noqa: A
 
     assert chunks == [masked]
     assert memory.turns == [(_QUERY, masked)]
+
+
+async def test_astream_blocked_answer_writes_no_memory(runtime) -> None:  # noqa: ANN001
+    client, stubber = runtime
+    stubber.add_response("apply_guardrail", _NONE, _request(_QUERY))
+    stubber.add_response("apply_guardrail", _PROMPT_ATTACK, _request(_ANSWER, "OUTPUT"))
+    chain, _, _, memory = _chain(_guarded_config(), client)
+
+    chunks = [c async for c in chain.astream(_input())]
+
+    assert chunks == [_REFUSAL]
+    assert memory.turns == []
 
 
 async def test_astream_without_output_check_still_streams(
@@ -1084,7 +1099,7 @@ async def test_ungrounded_answer_takes_the_refusal_path(
         "grounding": 0.1,
         "relevance": 0.95,
     }
-    assert memory.turns == [(_QUERY, _REFUSAL)]
+    assert memory.turns == []
 
 
 @pytest.mark.parametrize(
