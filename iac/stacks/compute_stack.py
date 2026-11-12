@@ -114,7 +114,9 @@ class ComputeStack(Stack):
         if guardrail is not None and guardrail.source is not None:
             # The task definitions read the guardrail's SSM parameters at
             # deploy time; CloudFormation sees no reference to order by.
-            self.add_dependency(guardrail.source)
+            self.add_stack_dependency(
+                guardrail.source, "the task definitions read its SSM parameters"
+            )
         # Fixed names: a task definition in another stack refers to the
         # repository and the log group by name (build_task_definition).
         self.repository_name = f"{config.prefix}-app"
