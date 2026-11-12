@@ -362,8 +362,9 @@ The version lives in one place, `__version__` in `unified_kg_rag/__init__.py`; `
    The tag push runs [.github/workflows/release.yml](./.github/workflows/release.yml). It fails unless the tagged
    commit is on `main`, the tag is `v` plus `__version__` and the changelog has a non-empty section for that version;
    it builds the sdist and wheel, runs `twine check --strict`, checks both carry LICENSE and NOTICE, installs the
-   wheel in a clean environment, and creates the GitHub release with both files and that changelog section as its
-   notes
+   wheel in a clean environment, writes a CycloneDX SBOM of the locked dependencies with each package's licence (read
+   from an environment synced with every extra, `.github/scripts/sbom_licenses.py`), and creates the GitHub release
+   with both files, their checksums, the SBOM and that changelog section as its notes
    (`scripts/changelog_section.py`; a release body resolves no relative link, so `--link-base` points the section's
    repo-relative links at the tagged tree, and a section longer than a release body allows ends with a link to the
    full changelog). A version with an `a`, `b`, `rc` or `.dev` segment is marked as a pre-release.

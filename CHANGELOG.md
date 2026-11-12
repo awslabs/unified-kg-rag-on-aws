@@ -2072,8 +2072,9 @@ Deployment (CDK).
   package from the copied source and fails unless the installed files are that source (uv's cache keys the project's
   wheel by its version, so a warm cache had put an earlier commit's code in an image); the image keeps the digest
   (`/app/.venv/unified-kg-rag-source.sha256`, `scripts/package_digest.py`), which the CI docker job checks.
-- Releases attach SHA-256 checksums and a CycloneDX SBOM of the locked dependencies, with a signed build provenance
-  attestation of the distributions (`gh attestation verify`) (#617).
+- Releases attach SHA-256 checksums and a CycloneDX SBOM of the locked dependencies with each package's licence and
+  the package version, with a signed build provenance attestation of the distributions (`gh attestation verify`)
+  (#617).
 - IaC: the ingestion role cannot change OpenSearch cluster settings or plugin configuration (writes under
   `_cluster`, `_plugins` and `_opendistro` are denied), nor write snapshot repositories, templates, ingest or search
   pipelines or stored scripts (`_snapshot`, `_index_template`, `_component_template`, `_template`, `_ingest`,
