@@ -1027,3 +1027,27 @@ async def test_an_invisible_query_is_refused_as_empty(query: str) -> None:
     with pytest.raises(ToolArgumentError, match="query is empty"):
         await _tools(chain).search(query)
     assert chain.inputs == []
+
+
+@pytest.mark.parametrize(
+    ("kind", "metadata", "name"),
+    [
+        ("summary", {"id": "s-1", "title": "Level 1 summary"}, "Level 1 summary"),
+        (
+            "claim",
+            {"id": "c-1", "title": "Depot stores widgets"},
+            "Depot stores widgets",
+        ),
+        ("text", {"id": "u-1", "file_name": "logistics.txt"}, None),
+    ],
+)
+def test_every_named_record_carries_its_name(
+    kind: str, metadata: dict[str, Any], name: str | None
+) -> None:
+    # A tree summary's and a claim's title were dropped by a fixed list of
+    # named kinds; a passage's title is its file name, reported apart.
+    from unified_kg_rag.application.cli.mcp_tools import _record
+    from unified_kg_rag.application.presentation.answer_view import SourceView
+
+    view = SourceView.of(1, kind, "text", source=None, score=0.5, metadata=metadata)
+    assert _record(view, 1000).name == name

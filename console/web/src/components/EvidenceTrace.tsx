@@ -12,7 +12,10 @@ import { useI18n } from "../i18n/i18n";
 import type { Source } from "../lib/types";
 import { Highlighted } from "./Highlighted";
 
-const KINDS = ["all", "query_result", "text", "entity", "relationship", "community"] as const;
+// The order of the kind chips; a kind the answer's sources hold that is not
+// listed (a summary node, a claim, a new section) follows them, so every
+// source can be filtered to.
+const KIND_ORDER = ["all", "query_result", "text", "entity", "relationship", "community", "claim", "summary"];
 // The kinds whose trail lists the passages that state them.
 const STATED = new Set(["entity", "relationship", "query_result"]);
 // Sources shown before "Show all".
@@ -28,7 +31,6 @@ export function excerptBody(source: Source): string {
     .map((line) => line.replace(/^Description:\s*/, ""))
     .join("\n");
 }
-type KindFilter = (typeof KINDS)[number];
 
 export interface EvidenceTraceProps {
   sources: Source[];
@@ -48,7 +50,7 @@ export function citedBy(sources: Source[], rank: number): number[] {
 
 export function EvidenceTrace({ sources, question, onOpenInGraph, cited, open: controlled, onOpenChange }: EvidenceTraceProps) {
   const { t, number } = useI18n();
-  const [filter, setFilter] = useState<KindFilter>("all");
+  const [filter, setFilter] = useState<string>("all");
   const [own, setOwn] = useState<number | null>(null);
   const open = controlled === undefined ? own : controlled;
   const setOpen = (rank: number | null) => {
@@ -124,7 +126,7 @@ export function EvidenceTrace({ sources, question, onOpenInGraph, cited, open: c
   return (
     <div>
       <div className="filter-row" role="group" aria-label={t("ask.trace.filter")}>
-        {KINDS.filter((k) => k === "all" || counts[k]).map((kind) => (
+        {[...KIND_ORDER.filter((k) => counts[k]), ...Object.keys(counts).filter((k) => !KIND_ORDER.includes(k))].map((kind) => (
           <button key={kind} className="chip" aria-pressed={filter === kind} onClick={() => setFilter(kind)}>
             {t(`ask.kind.${kind}`)} <span className="chip-meta">{number(counts[kind] ?? 0)}</span>
           </button>

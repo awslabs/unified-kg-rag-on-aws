@@ -122,8 +122,9 @@ class SupportingContent(BaseModel):
     )
     name: str | None = Field(
         default=None,
-        description="The entity's or report's name, a relationship as 'A -> B', "
-        "a query_result's plan description",
+        description="The item's name (an entity's, report's, claim's or "
+        "summary's), a relationship as 'A -> B', a query_result's plan "
+        "description; none for a text record (document_name names its file)",
     )
     type: str | None = Field(
         default=None, description="The entity's or relationship's type"
@@ -396,7 +397,8 @@ def _record(
     }
     if len(view.text_unit_ids) > MAX_TEXT_UNIT_IDS:
         attributes["text_unit_count"] = len(view.text_unit_ids)
-    named = kind in ("entity", "relationship", "community", "query_result")
+    # Every item's title names it but a passage's, its file name (file_name).
+    named = kind != "text"
     return SupportingContent(
         rank=view.rank,
         kind=kind,

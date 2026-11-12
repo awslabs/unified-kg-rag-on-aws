@@ -58,6 +58,17 @@ describe("EvidenceTrace", () => {
     expect(screen.getByText("doc-2.txt")).toBeInTheDocument();
   });
 
+  it("offers a chip for every kind the sources hold", () => {
+    const mixed = [...sources, source(5, "summary"), source(6, "claim"), source(7, "key_point")];
+    renderIn(<EvidenceTrace sources={mixed} question="q" />);
+    for (const name of [/^Summary \d/, /^Claim \d/, /^Key point \d/]) {
+      expect(screen.getByRole("button", { name })).toBeInTheDocument();
+    }
+    fireEvent.click(screen.getByRole("button", { name: /^Summary \d/ }));
+    expect(screen.getByText("Source 5")).toBeInTheDocument();
+    expect(screen.queryByText("Vendor")).not.toBeInTheDocument();
+  });
+
   it("opens a graph source's trail to the passages that state it", () => {
     const open = vi.fn();
     const { container } = renderIn(<EvidenceTrace sources={sources} question="Vendor" onOpenInGraph={open} />);
