@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from unified_kg_rag.domain.ingestion.base_processor import merge_attributes
 from unified_kg_rag.domain.ingestion.base_resolver import BaseResolver, FuzzyMatcher
 from unified_kg_rag.domain.ingestion.descriptions import by_frequency
+from unified_kg_rag.domain.ingestion.names import compact_text_key
 from unified_kg_rag.domain.languages import profiles
 from unified_kg_rag.domain.models import Claim, Entity
 from unified_kg_rag.shared import get_logger
@@ -394,26 +395,26 @@ def claim_identity_suffix(
     (e.g. two delivery obligations due on different days) are distinct facts;
     keying on the dates keeps them apart instead of collapsing them and keeping
     only one date. A coarse end date keys on the last day of its period
-    (``claim_date_value``). The statement (the description's ``entity_key``)
-    is keyed too: claims of one type about one subject with no object or no
+    (``claim_date_value``). The statement (the description's
+    ``compact_text_key``) is keyed too: claims of one type about one subject with no object or no
     date (the prompt's NONE and UNKNOWN) are as many claims as statements, as
     MS GraphRAG keeps one row per statement, so "fined for pollution" (TRUE)
     and "accused of bribery" (SUSPECTED) do not merge into one claim of one
-    status. A restatement (the same statement up to case, spacing and a
-    closing stop) still merges.
+    status. A restatement (the same statement up to case, spacing, the
+    spacing a dense script leaves optional and a closing stop) still merges.
     """
     start, end = claim_date_key(start_date), claim_date_key(end_date, end=True)
     dates = f":{start}:{end}" if start or end else ""
-    statement = entity_key(description)
+    statement = compact_text_key(description)
     return f"{dates}|{statement}" if statement else dates
 
 
 def claim_description(descriptions: Iterable[str | None]) -> str:
-    """The description of one claim stated as ``descriptions``: the smallest
-    non-empty one ("" when none). They key alike (``claim_identity_suffix``)
-    and differ in case or spacing only; the smallest is the same whatever
-    their order, and in a full build and an incremental merge."""
-    return min((d for d in descriptions if d), default="")
+    """The description of one claim stated as ``descriptions``: the
+    non-empty one most of them write, the smallest on a tie ("" when none;
+    ``by_frequency``). They key alike (``claim_identity_suffix``) and differ
+    in case or spacing only; the choice is the same whatever their order."""
+    return next(iter(by_frequency(descriptions)), "")
 
 
 def resolved_claim_id(claim: Claim) -> str:
@@ -710,8 +711,9 @@ class ClaimResolver(BaseResolver):
                 (v for c in claims if (v := claim_date_value(c.end_date, end=True))),
                 default=primary_claim.end_date,
             ),
-            # One statement (part of the id): its smallest spelling, which a
-            # merge with a stored claim keeps too (merge_claims).
+            # One statement (part of the id): its most frequent spelling,
+            # the smallest on a tie, as a merge with a stored claim keeps
+            # (merge_claims).
             description=claim_description(c.description for c in claims),
             description_embedding=primary_claim.description_embedding,
             text_unit_ids=self._merge_lists(

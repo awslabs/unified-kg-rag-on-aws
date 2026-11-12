@@ -84,10 +84,12 @@ gets its models and stores from the run's `Providers` bundle.
   `total_unrecognised_claim_statuses`. Each unit's statement is resolved
   on its own, and resolution merges the statements that resolve to one
   claim id: the subject and object entities, the type, the known dates and
-  the statement (the description's entity key), so two claims of one type
+  the statement (the description's entity key without the spacing a dense
+  script leaves optional, `compact_text_key`), so two claims of one type
   about one subject with no object or date stay two claims, as MS GraphRAG
   keeps one row per statement, and only a restatement (the same statement
-  up to case, spacing and a closing stop) merges its status. As MS GraphRAG's `extract_claims` prompt, built around the
+  up to case, spacing and a closing stop) merges its status, described by
+  the spelling most of its statements write (the smallest on a tie). As MS GraphRAG's `extract_claims` prompt, built around the
   allegations a text reports ("Person C was suspected of ..."), the claim
   prompt asks for the facts a text states and the allegations and
   suspicions it reports (as `SUSPECTED`, saying who alleges them), and

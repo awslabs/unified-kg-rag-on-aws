@@ -55,11 +55,22 @@ def compact_name_key(name: str | None) -> str:
     functions of it, so they never keep two spellings of one key apart.
     This is a matching key only: entity ids keep using ``entity_key``.
     """
-    # A dot the dropped spaces put between two letters is joined as
-    # entity_key joins one, so a compact key is its own compact key.
-    return join_dense_middle_dots(
-        drop_dense_script_spaces(strip_legal_forms(entity_key(name)))
-    )
+    return _compact(strip_legal_forms(entity_key(name)))
+
+
+def compact_text_key(text: str | None) -> str:
+    """Return the ``entity_key`` of ``text`` without the spacing a dense
+    script leaves optional, as :func:`compact_name_key` keys a name but
+    keeping every word (no legal form is stripped): the key of a statement
+    ("환경법 위반" and "환경법위반" are one)."""
+    return _compact(entity_key(text))
+
+
+def _compact(key: str) -> str:
+    """``key`` (an ``entity_key``) without the spaces next to a dense-script
+    letter; a dot the dropped spaces put between two letters is joined as
+    entity_key joins one, so a compact key is its own compact key."""
+    return join_dense_middle_dots(drop_dense_script_spaces(key))
 
 
 def display_name_order(name: str) -> tuple[int, str]:
