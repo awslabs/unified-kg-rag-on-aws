@@ -203,7 +203,8 @@ def _joined(text: str, word: re.Match[str]) -> bool:
             # A colon joins a scheme, a port, a time or "::" ("https://",
             # ":8080", "std::vector"), not a label ("Frage:Wer").
             return False
-        if text[i] in _JOINERS:
+        # Over the whole joiner run: "::" and "://" join as ":" does.
+        while text[i] in _JOINERS:
             i += step
             if not 0 <= i < len(text):
                 return False

@@ -275,10 +275,11 @@ See [exit codes and JSON output](docs/reference/exit-codes-and-json.md) and the
   a trailing "。" ("ジョン・スミス" is "ジョンスミス"); a key is its own key, and the fuzzy matcher reads a name's identifier
   tokens from its compact key, cut where a word passes between a Han, Hangul or Kana letter and another character
   (a dotted "한·빛" has none, as "한빛"; "제3조" and "제 3 조" both 제, 3 and 조, so spacing variants with a number are
-  one entity, where they were two), and a word with a Han numeral is an identifier ("東京第一工場" never links
-  "東京第二工場"). Of spellings with one key, the one its key
-  folds least names the entity on a tie ("토지", not "「토지」"). Entity and relationship `rank` come from node degree,
-  and a relationship's weight sums its strengths per text unit (#189, #214, #574).
+  one entity, where they were two), with a space where a letter meets a digit ("PO1002" is "PO 1002", "ISO9001"
+  "ISO 9001"), and a numeral is an identifier of its own ("東京第一工場" never links "東京第二工場", and "百度" or
+  "三菱商事" no longer hold one whole-word identifier that kept every variant apart). Of spellings with one key, the
+  one its key folds least names the entity on a tie ("토지", not "「토지」"). Entity and relationship `rank` come from
+  node degree, and a relationship's weight sums its strengths per text unit (#189, #214, #574).
 - Entities have no `MemberOf` edges to communities; an entity lists its `community_ids` (#348).
 - Hidden files and files under a hidden or `__pycache__` directory of the corpus are not parsed (#213).
 
@@ -515,7 +516,8 @@ From a `main` checkout (formats and keys no release had):
   (#694) is ignored.
 - Re-keyed once before 0.3.0: entity ids and name keys fold quotes, apostrophes, invisible characters, dashes (not a
   leading minus), dense-script middle dots and Arabic and Hebrew marks and strip more legal forms, and dense-script
-  spacing variants with a number are one entity (*Stored data and reindexing*); the description summary and claim
+  spacing variants with a number and a letter run into a digit ("PO1002", "PO 1002") are one entity (*Stored data and
+  reindexing*); the description summary and claim
   prompts changed, claims keep a `suspected` status and are keyed by their statement (*Fixed*); chunk sizes count
   tokens (*Defaults*), which keeps English text units and re-chunks Korean, Japanese and Chinese ones; stage-cache keys
   hold the prompts in effect (a pipeline id resumed across a prompt change starts over); extraction records under
@@ -1126,7 +1128,10 @@ From a `main` checkout (formats and keys no release had):
   touched it again. Not against the stored copy of an entity the run re-keyed away, though (it is still stored until its
   old id is deleted), and a claim endpoint none of the entities it derives takes follows the run's re-key: a retried
   strip derived that copy as itself and kept a claim about `Acme Corp` at its old id, beside the re-keyed one, about an
-  entity the run then deleted. The stored claims about a noted entity are derived again when the commit merges it into
+  entity the run then deleted. A claim endpoint a removal's claim derivation resolved outside the entities it was given
+  (a part split off a noted entity, which its entity side never writes) is derived again by the commit, so every claim
+  is about an entity written or stored: a strip stopped after writing such a claim left it about an id no run wrote.
+  The stored claims about a noted entity are derived again when the commit merges it into
   another spelling (one kept a claim at its old id), and only then: one written again under its own id keeps them, where
   a hub whose write kept failing had each claim about it read and rewritten on every run. A removal counts the text
   units of an entity's graph copy beside its vector copy, which a rejected write left stale: retried after a kill,
@@ -1569,7 +1574,8 @@ From a `main` checkout (formats and keys no release had):
   "Who is the CEO of 한빛전자?" and "Compare 한빛전자 and 아크미" English, "with 문 사용법" Korean; a shouted text (three or more
   words, all in capitals; beside another script one longer than two letters, so "AS IS / TO BE 비교" is Korean)
   reads its words lowercased, so "QUI A SIGNÉ LE CONTRAT ?" is French; a colon joins a word only before "//", a digit
-  or a colon ("Frage:Wer hat …" is German); among Latin-script languages, Spanish and Portuguese with their "how
+  or a colon ("Frage:Wer hat …" is German), and the whole "::" or "://" joins (`std::vector`, `https://the` count no
+  words); among Latin-script languages, Spanish and Portuguese with their "how
   many" words ("como" both: the index language breaks the tie), an elision only one of them
   writes ("dell'", "qu'"; not "d'", French and
   Italian) counts with the function words, and a tie the index language is not in goes to the language whose own
@@ -1648,9 +1654,11 @@ From a `main` checkout (formats and keys no release had):
   (`CommunityFinding.entity_ids` / `relationship_ids`) and taken out of the searched text (#618). A parent's rolled-up
   sub-community reports are numbered too and cited as `Reports (n)`, which a finding reads as the records the child's
   findings cite (a parent's roll-up findings cited nothing, so `global` and `drift` attributed a parent report to the
-  few members packed raw); a range `(1-4)` reads as 1 to 4 and `【Data: ...】` as `[Data: ...]`. A report is titled
-  by its name alone (an English "Report for Level 0 Community ...:" was embedded with every report), and a rating
-  written beside its scale reads as the rating ("10점 만점에 7점" is 7, not 10). The report stores the cited ids (an
+  few members packed raw); a range `(1-4)` reads as 1 to 4 (never past the records the input numbered),
+  `【Data: ...】` as `[Data: ...]`, `Entities [1, 2]` and `Report 1` as `Entities (1, 2)` and `Reports (1)`, and
+  `(2,000)` as one number, not 2 and 0. A report is titled by its name alone (an English "Report for Level 0
+  Community ...:" was embedded with every report), and a rating written beside its scale reads as the rating ("10점
+  만점에 7점" is 7, not 10; "10 (3 key risks)" is 10, not 3). The report stores the cited ids (an
   unindexed `findings` field): a retrieved report, and its source's metadata (each finding's ids, not its text),
   name the records each finding cites (`report_cited_ids`), pointed at the ids an incremental merge kept, and a
   stored report at the new id of a record a later run re-keys (found by its `findings_record_ids` list,
@@ -1911,7 +1919,10 @@ Ingestion and incremental indexing.
   build's (#640). Nor when the moved and the kept lines share a text unit (a delta that resolved `(주)벤더` into
   `벤더`): an edge with an endpoint the derivation split off is summarized from its lines (#644). Nor when the
   derivation folded another stored spelling into the item (a delta `Depot -> Vendor` edge that folds the stored
-  `Depot -> Vendor Inc` into it): the extended summary lost the folded edge's line (#648).
+  `Depot -> Vendor Inc` into it): the extended summary lost the folded edge's line (#648). An extended description
+  is marked as made from the lines it stands for, also under the summary threshold, where it was left unmarked and
+  every second run summarized all of the item's lines again (a hub in 600 documents: 28 KB of summary input every
+  second one-document run); a stored extension a run before this left unmarked is summarized once more.
 - A document's doc-status registry namespace and its artifacts' index suffix follow one rule
   (`store_names.index_suffix`): an `index` value no store accepts, which a pre-parsed `Document` JSON can carry,
   fails the loading stage naming it instead of keying the document's record under a namespace no index has (#628).
@@ -1940,11 +1951,14 @@ Ingestion and incremental indexing.
   claims whose status is none of them are counted in the `total_unrecognised_claim_statuses` metric (#644). As MS
   GraphRAG's claim prompt, built around the allegations a text reports, the prompt takes an allegation or suspicion
   the text reports as a `SUSPECTED` claim saying who alleges it, where it left out all speculation, and keeps
-  `DISPUTED` for conflicting information; only the author's own opinions are left out. A `true` or `false` statement
-  settles a `suspected` claim, `true` and `false` together dispute it. A claim's id holds its statement (the
-  description's entity key) beside its subject, object, type and dates: claims of one type about one subject with no
-  object or date were one claim, their statuses merged ("accused of bribery" read as confirmed by "fined for
-  pollution"), where MS GraphRAG keeps one row per statement; only a restatement merges.
+  `DISPUTED` for conflicting information; only the author's own opinions are left out. A `true` or `false`
+  restatement settles a `suspected` claim, `true` and `false` restatements together dispute it (a reworded statement
+  is another claim). A claim's id holds its statement (the description's entity key, without the spacing a dense
+  script leaves optional: `환경법 위반` is `환경법위반`) beside its subject, object, type and dates: claims of one
+  type about one subject with no object or date were one claim, their statuses merged ("accused of bribery" read as
+  confirmed by "fined for pollution"), where MS GraphRAG keeps one row per statement; only a restatement merges,
+  under the spelling most of its statements write (then the smallest, where the smallest alone took a capitalised,
+  double-spaced one).
 - An entity without relationships no longer adds a level to the community hierarchy: it made a single root over
   the other communities read as a partition, so global search's cut depths depended on it (#608).
 - A model answer that corrects itself is parsed by its last complete answer (each XML section keeps its last closed

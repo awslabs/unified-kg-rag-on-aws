@@ -1154,11 +1154,16 @@ class CommunityDetector:
         The first number, except that of a rating written beside its scale:
         of two numbers one 10, the other ("10점 만점에 7점", "10点満点中7点"
         and "满分10分，得7分" write the scale first; "7/10" and "7 out of 10"
-        after)."""
+        after). A number in parentheses is a remark, not the scale ("10 (3
+        key risks)" is 10), unless no other is written."""
         raw = coerce_llm_text(result.get("rating"))
         if not raw:
             return 0.0
-        numbers = [float(n) for n in re.findall(r"-?\d+(?:\.\d+)?", raw)]
+        number = r"-?\d+(?:\.\d+)?"
+        outside = re.sub(r"[(（][^)）]*[)）]", " ", raw)
+        numbers = [float(n) for n in re.findall(number, outside)] or [
+            float(n) for n in re.findall(number, raw)
+        ]
         if not numbers:
             return 0.0
         rating = numbers[0]

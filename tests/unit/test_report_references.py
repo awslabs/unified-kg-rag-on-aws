@@ -28,6 +28,9 @@ from unified_kg_rag.domain.prompts import CommunityReportPrompt
 
 pytestmark = pytest.mark.unit
 
+# The records a report input numbered (more than any case cites).
+_SIZES = {"entities": 9, "relationships": 9, "reports": 9}
+
 
 @pytest.mark.parametrize(
     ("text", "prose", "cited"),
@@ -60,7 +63,7 @@ pytestmark = pytest.mark.unit
 def test_references_are_split_from_the_prose(
     text: str, prose: str, cited: dict[str, list[int]]
 ) -> None:
-    assert split_data_references(text) == (prose, cited)
+    assert split_data_references(text, _SIZES) == (prose, cited)
 
 
 def _detector() -> CommunityDetector:
@@ -242,7 +245,34 @@ def test_a_reports_cited_records_come_finding_by_finding() -> None:
 def test_reports_ranges_and_lenticular_brackets_are_read(
     text: str, prose: str, cited: dict[str, list[int]]
 ) -> None:
-    assert split_data_references(text) == (prose, cited)
+    assert split_data_references(text, _SIZES) == (prose, cited)
+
+
+@pytest.mark.parametrize(
+    ("text", "cited"),
+    [
+        # Square brackets inside the reference: the first "]" closed it,
+        # so nothing was cited and a stray "]" stayed in the prose.
+        (
+            "x [Data: Entities [1, 2]; Relationships [3]]",
+            {"entities": [1, 2], "relationships": [3]},
+        ),
+        ("x 【Data: Entities ［2］】", {"entities": [2]}),
+        # A thousands separator: read as 2 and 0, it cited report 2.
+        ("x [Data: Reports (2,000)]", {"reports": []}),
+        ("x [Data: Entities (1,2,3)]", {"entities": [1, 2, 3]}),
+        # A number with no parentheses.
+        ("x [Data: Report 1; Entities 2-3]", {"reports": [1], "entities": [2, 3]}),
+    ],
+)
+def test_reference_syntax_variants_are_read(
+    text: str, cited: dict[str, list[int]]
+) -> None:
+    # Numbers outside the input are dropped later (_extract_findings); the
+    # sizes here only bound a range.
+    prose, found = split_data_references(text, _SIZES)
+    assert prose == "x"
+    assert {k: [n for n in v if n <= 9] for k, v in found.items()} == cited
 
 
 def test_a_range_reads_only_the_numbers_the_input_has() -> None:
@@ -337,6 +367,10 @@ def test_the_prompt_lets_a_finding_cite_its_sub_reports() -> None:
         ("满分10分，得8分", 8.0),
         ("12", 10.0),
         ("none", 0.0),
+        # A count in parentheses beside the rating is no scale.
+        ("10 (3 key risks)", 10.0),
+        ("8 (2 of 5 findings)", 8.0),
+        ("(7)", 7.0),
     ],
 )
 def test_a_rating_is_read_beside_its_scale(raw: str, rating: float) -> None:

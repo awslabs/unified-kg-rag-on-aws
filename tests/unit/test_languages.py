@@ -411,6 +411,23 @@ def test_an_article_before_a_names_last_word_opens_the_name(text: str) -> None:
     assert {"the", "depot"} <= set(text_evidence(["공급사는 the depot"]).words)
 
 
+@pytest.mark.parametrize(
+    ("text", "kept"),
+    [
+        # "::" and "://" join their words, as the colon rule says: one step
+        # over a single ':' or '/' reached the next joiner, not a letter.
+        ("std::vector 사용법", set()),
+        ("https://the.example 요약", set()),
+        ("a::the 사용법", set()),
+        # A port, a time: joined as before. A label colon joins nothing.
+        ("port:8080 요약", set()),
+        ("Frage:Wer 요약", {"frage", "wer"}),
+    ],
+)
+def test_a_colon_joiner_run_joins_its_words(text: str, kept: set[str]) -> None:
+    assert set(text_evidence([text]).words) == kept
+
+
 def test_a_script_no_profile_writes_falls_back_like_latin_text() -> None:
     # Greek has no profile: a Latin-script index language is its fallback,
     # another script's is not.

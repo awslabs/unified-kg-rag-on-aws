@@ -682,7 +682,8 @@ class IncrementalRun:
     def registry_problems(self, corpus: Corpus) -> list[str]:
         """Registry inconsistencies: rows not PROCESSED or not in the corpus,
         text units the rows and the stores disagree on, artifacts citing a
-        text unit that is not stored."""
+        text unit that is not stored, claims about an entity that is not
+        stored."""
         records = all_records(self.store)
         problems = []
         paths = sorted(r.file_path or r.doc_id for r in records)
@@ -708,5 +709,12 @@ class IncrementalRun:
             f"{item.id} cites text units that are not stored"
             for item in artifacts
             if not set(item.text_unit_ids or []) <= units
+        ]
+        entities = self.graph.ids("entities")
+        problems += [
+            f"claim {claim.id} is about {end}, which is not a stored entity"
+            for claim in self.vector.data.get("claims", {}).values()
+            for end in (claim.subject_id, claim.object_id)
+            if end and end not in entities
         ]
         return problems

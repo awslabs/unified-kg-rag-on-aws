@@ -67,11 +67,14 @@ gets its models and stores from the run's `Providers` bundle.
   extraction did not list is dropped (the prompt says so, and a unit whose
   record lists no entity is not asked), and an object not listed there is
   kept as the literal name the claim states (`object_id` empty), though
-  another document states that entity. Statements of one claim merge
-  their statuses (`merge_claim_statuses`): `disputed` when one says so or
-  they state it both `true` and `false`, else `true` or `false` when one
-  states it (which settles a `suspected` claim), else `suspected`, and
-  `unknown` only when nothing else is stated; the merge is order-free and
+  another document states that entity. Statements of one claim (one
+  statement restated: its id holds the statement, see below) merge their
+  statuses (`merge_claim_statuses`): `disputed` when one says so or they
+  state it both `true` and `false`, else `true` or `false` when one states
+  it (which settles a `suspected` restatement of it), else `suspected`, and
+  `unknown` only when nothing else is stated; a reworded statement of the
+  same fact ("must pay $50,000 by 2024-06-30", "owes a $50,000 payment due
+  30 June 2024") is another claim, neither settling nor disputing it; the merge is order-free and
   associative, so an incremental merge agrees with a full build. A model's
   status is read into the prompt's five (`claim_status`: `true`, `false`,
   `suspected`, `disputed`, `unknown`, as stored) at extraction and in each
@@ -84,10 +87,12 @@ gets its models and stores from the run's `Providers` bundle.
   `total_unrecognised_claim_statuses`. Each unit's statement is resolved
   on its own, and resolution merges the statements that resolve to one
   claim id: the subject and object entities, the type, the known dates and
-  the statement (the description's entity key), so two claims of one type
+  the statement (the description's entity key without the spacing a dense
+  script leaves optional, `compact_text_key`), so two claims of one type
   about one subject with no object or date stay two claims, as MS GraphRAG
   keeps one row per statement, and only a restatement (the same statement
-  up to case, spacing and a closing stop) merges its status. As MS GraphRAG's `extract_claims` prompt, built around the
+  up to case, spacing and a closing stop) merges its status, described by
+  the spelling most of its statements write (the smallest on a tie). As MS GraphRAG's `extract_claims` prompt, built around the
   allegations a text reports ("Person C was suspected of ..."), the claim
   prompt asks for the facts a text states and the allegations and
   suspicions it reports (as `SUSPECTED`, saying who alleges them), and
@@ -212,9 +217,10 @@ gets its models and stores from the run's `Providers` bundle.
   `entity_key` without the legal-form designators of the language profiles
   (`domain/languages/legal_forms.py`: `(주)`, `주식회사`, `株式会社`,
   `有限公司`, a trailing `Inc` / `Ltd` / `LLC` / `Co` / `Corp` / `GmbH & Co.
-  KG` / `S.A. de C.V.`, a leading `ООО` or `Công ty TNHH`, ...) and without
-  spaces next to Han, Hangul or Kana, so "(주)가나다", "가나다 상사" /
-  "가나다상사", "Acme Inc" / "Acme" and "ООО «Ромашка»" / "Ромашка" merge. A
+  KG` / `S.A. de C.V.`, a leading `ООО` or `Công ty TNHH`, ...), without
+  spaces next to Han, Hangul or Kana and with one where a letter meets a
+  digit, so "(주)가나다", "가나다 상사" / "가나다상사", "Acme Inc" / "Acme",
+  "PO1002" / "PO 1002" and "ООО «Ромашка»" / "Ромашка" merge. A
   form is read as written or without all its accents, never a word without
   its own ("Marcelo Sá" keeps "Sá"), and one that is also a unit symbol
   (`LanguageProfile.unit_like_legal_forms`: "kg") not after a number. A
@@ -229,12 +235,15 @@ gets its models and stores from the run's `Providers` bundle.
   name similarity also joins different organizations that share most of their
   name ("Northfield University" / "Northfield University Hospital"). When it is
   on, names link above `processing.similarity_threshold` only when their
-  *discriminator tokens* (tokens with a numeral of any script, Han numerals
+  *discriminator tokens* (the numerals of any script, Han numerals
   included, single letters, Roman numerals) are identical, their types are compatible, and, for names ending in Han,
   Hangul or Kana, their final (head) characters are equal ("가나다연구원" and
   "가나다연구소" stay apart). The tokens are the compact key's words, cut
   where they pass between a dense-script letter and another character
-  ("제3조" and "제 3 조" both 제, 3, 조), so both guards are functions of the
+  ("제3조" and "제 3 조" both 제, 3, 조; the compact key spaces a letter
+  from a digit, so "PO1002" and "PO 1002" both have 1002), and a numeral
+  inside a word is a token of its own ("東京第一工場" has 一, "百度" 百),
+  so both guards are functions of the
   compact key and never keep two spellings of one compact key apart: "the
   same entity" is that key's equality in resolution, the incremental merge,
   claim resolution and the stores' lookups by name key alike. A type-aware

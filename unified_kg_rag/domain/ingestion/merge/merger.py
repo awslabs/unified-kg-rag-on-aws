@@ -394,8 +394,8 @@ def merge_claims(old: list[Claim], delta: list[Claim]) -> list[Claim]:
     A claim's id derives from its subject, object, type, dates and
     statement, not from its document, so the same claim extracted from
     another document has the stored claim's id. As in the full-build
-    ``ClaimResolver`` merge, the description is the smallest spelling of the
-    statement (``claim_description``), the source texts are unioned (stored
+    ``ClaimResolver`` merge, the description is chosen by
+    ``claim_description`` (of two spellings, the smallest), the source texts are unioned (stored
     first) and the text units are the sorted union. The status is the one both state, or
     ``disputed`` when they disagree (``merge_claim_statuses``, the
     ``ClaimResolver`` rule, which is associative: the stored status stands

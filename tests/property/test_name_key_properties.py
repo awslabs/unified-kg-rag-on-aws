@@ -133,3 +133,52 @@ def test_names_with_one_compact_key_have_one_guard_key(
         if compact_name_key(other) == key:
             assert discriminator_tokens(other) == discriminator_tokens(name), other
             assert head_character(other) == head_character(name), other
+
+
+_LETTERS = st.text(
+    st.sampled_from([*"abcxyzABCXYZ", "é", "ж", "Ω"]), min_size=1, max_size=4
+)
+_DIGITS = st.text(st.sampled_from([*"0123456789", "１", "٣"]), min_size=1, max_size=4)
+
+
+@given(
+    parts=st.lists(st.tuples(_LETTERS, _DIGITS), min_size=1, max_size=3),
+    spaces=st.lists(st.booleans(), min_size=6, max_size=6),
+)
+@example(parts=[("PO", "1002")], spaces=[True] * 6)
+@example(parts=[("ISO", "9001")], spaces=[True] * 6)
+@example(parts=[("A", "4")], spaces=[False] * 6)
+def test_a_space_between_letters_and_digits_keys_alike(
+    parts: list[tuple[str, str]], spaces: list[bool]
+) -> None:
+    # "PO1002" and "PO 1002", "ISO9001" and "ISO 9001" are one name, as
+    # "GPT-4" and "GPT 4" are and a dense script's "제3조" and "제 3 조":
+    # they had two compact keys, so the fuzzy matcher never linked them.
+    words = [word for pair in parts for word in pair]
+    joined = "".join(words)
+    spaced = "".join(
+        w + (" " if i < len(words) - 1 and spaces[i % len(spaces)] else "")
+        for i, w in enumerate(words)
+    )
+    assert compact_name_key(spaced) == compact_name_key(joined)
+    assert discriminator_tokens(spaced) == discriminator_tokens(joined)
+
+
+@pytest.mark.parametrize(
+    ("name", "variant", "other"),
+    [
+        ("百度", "百度集团", "千度集团"),
+        ("三菱商事", "三菱商事グループ", "二菱商事グループ"),
+        ("九州電力", "九州電力本店", "八州電力本店"),
+        ("東京第一工場", "東京第一工場本館", "東京第二工場本館"),
+    ],
+)
+def test_a_han_numeral_is_its_own_discriminator(
+    name: str, variant: str, other: str
+) -> None:
+    # A numeral in a Han or Kana name is a discriminator of its own, not the
+    # whole run it sits in: "百度" and "百度集团" share {百} and may be linked,
+    # where {百度} and {百度集团} kept every such name apart; another numeral
+    # still keeps two names apart.
+    assert discriminator_tokens(name) == discriminator_tokens(variant)
+    assert discriminator_tokens(variant) != discriminator_tokens(other)

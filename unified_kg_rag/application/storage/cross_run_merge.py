@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from unified_kg_rag.adapters.ingestion.description_summarizer import (
     extend_summaries,
+    mark_extended,
     needs_summary,
     reuse_summaries,
 )
@@ -326,7 +327,7 @@ class CrossRunMerge:
             )
         rekey = derived.id_remap
         self._note_decided(suffix, derived, existing)
-        self._extend_stored_summaries(
+        extended = self._extend_stored_summaries(
             suffix,
             derived,
             entities,
@@ -352,6 +353,7 @@ class CrossRunMerge:
             # A commit killed between its vector and graph edge writes left
             # the vector copies of a split part's edges ahead of the graph's.
             split_from=derived.split_from,
+            extended=extended,
         )
         # A delta id the merge folded into a stored item of another id has no
         # graph copy (the stored one of that id would have been merged), but
@@ -622,9 +624,10 @@ class CrossRunMerge:
         existing_rels: Sequence[Relationship],
         entity_id_remap: Mapping[str, str],
         relationship_remap: Mapping[str, str],
-    ) -> None:
+    ) -> dict[str, str]:
         """Reuse and extend the summaries of the derived items from the
-        delta's and the stored ones (``existing``, ``existing_rels``)."""
+        delta's and the stored ones (``existing``, ``existing_rels``);
+        returns the extended ids' marks (see ``extend_summaries``)."""
         m = self._m
         rekey = derived.id_remap
 
@@ -675,7 +678,7 @@ class CrossRunMerge:
             for r in existing_rels
             if r.id not in stripped
         ]
-        extend_summaries(
+        extended = extend_summaries(
             derived.entities,
             stored_entities,
             _single_additions(
@@ -688,7 +691,7 @@ class CrossRunMerge:
                 final_id(e.id, entity_id_remap) for e in entities if _is_summary(e)
             },
         )
-        extend_summaries(
+        extended |= extend_summaries(
             derived.relationships,
             stored_relationships,
             _single_additions(
@@ -713,6 +716,7 @@ class CrossRunMerge:
                 if _is_summary(r)
             },
         )
+        return extended
 
     def derive(
         self,
@@ -727,6 +731,7 @@ class CrossRunMerge:
         """See :meth:`IndexingManager.derive`."""
         m = self._m
         items = (list(entities), list(relationships), list(claims))
+        given_entities = {e.id for e in entities}
         blocked: set[str] = set()
         # The records read so far: a record does not change during the
         # derivation, so each round reads only the units it adds.
@@ -810,6 +815,13 @@ class CrossRunMerge:
                 done = True
             if done:
                 m.underived_items += len(set(derived.underived))
+                if loose := {
+                    i
+                    for c in derived.claims
+                    for i in (c.subject_id, c.object_id)
+                    if i and i not in given_entities
+                }:
+                    m._claim_endpoints.setdefault(suffix, set()).update(loose)
                 return derived.model_copy(
                     update={
                         "rewired": rewired,
@@ -1054,6 +1066,7 @@ class CrossRunMerge:
         split_from: Mapping[str, str] | None = None,
         unsummarized: Collection[str] = (),
         made: set[str] | None = None,
+        extended: Mapping[str, str] | None = None,
     ) -> tuple[list[Entity], list[Relationship]]:
         """Summarize, rank and complete derived items for writing.
 
@@ -1085,6 +1098,7 @@ class CrossRunMerge:
             stored_relationships,
             unsummarized,
             made,
+            extended or {},
         )
         dropped_links = self._dropped_links(
             suffix, relationships, stored_relationships, rekey, dropped
@@ -1136,8 +1150,12 @@ class CrossRunMerge:
         stored_relationships: Sequence[Relationship],
         unsummarized: Collection[str],
         made: set[str] | None,
+        extended: Mapping[str, str],
     ) -> None:
-        """Summarize the derived items in place, as :meth:`_finish` says."""
+        """Summarize the derived items in place, as :meth:`_finish` says.
+
+        A summary of an ``extended`` item keeps the mark of the derived
+        description the extension stands for (``extend_summaries``)."""
         m = self._m
         # A summary (reused, or already held) is not summarized again, even
         # when it is over the threshold itself (summarized in place).
@@ -1156,8 +1174,11 @@ class CrossRunMerge:
         derived_descriptions.update({r.id: r.description for r in due_rels})
         if any(needs_summary(m.config, i.description) for i in due_rels):
             m.description_summarizer.summarize_relationships(due_rels)
+        summarized: list[Entity | Relationship] = [*due, *due_rels]
+        for item in summarized:
+            if item.id in extended:
+                mark_extended(item, extended[item.id])
         if made is not None:
-            summarized: list[Entity | Relationship] = [*due, *due_rels]
             made.update(
                 i.id for i in summarized if i.description != derived_descriptions[i.id]
             )
@@ -1488,7 +1509,9 @@ class CrossRunMerge:
         other spellings this run derived of a split-off, re-keyed or renamed
         entity's name (a claim naming it may sit on one of them), and the
         noted entities the delta joined (``PendingWrites.joined_entities``:
-        held like stored ones, they may merge into another id too)."""
+        held like stored ones, they may merge into another id too), and the
+        endpoints a claim derivation resolved outside the entities it was
+        given (one the strip derived from a noted entity it does not write)."""
         m = self._m
         split_from = m._split_from.get(suffix, {})
         derived = m._derived_entities.get(suffix, {})
@@ -1507,6 +1530,7 @@ class CrossRunMerge:
                 *m._renamed.get(suffix, set()),
                 *m._noted_commit_entities.get(suffix, set()),
                 *m._pending_writes.joined_entities().get(suffix, set()),
+                *m._claim_endpoints.get(suffix, set()),
             }
         )
 

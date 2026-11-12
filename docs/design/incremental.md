@@ -155,6 +155,10 @@ unless noted.
    and a claim endpoint none of them takes follows the run's re-key: a
    retried strip derived that copy as itself and kept the claim at its old
    id, about an entity the run deleted, beside the one the re-key gave it.
+   Every claim endpoint is an entity the run writes or has stored: one a
+   claim derivation resolved outside the entities it was given (a part split
+   off a noted entity, which the strip's entity side, reading the graph, does
+   not write) has its claims derived again by the commit.
    The note is replaced
    by what still fails, or deleted. A commit over `max_failure_rate` notes
    its rejected items too, though it records no document: it wrote items of
@@ -484,7 +488,11 @@ every write and check that the next run converges to a fresh full build.
   it did) is summarized from itself and the new description, as LightRAG
   merges into the stored one, and a stored description that is no summary is
   extended with the delta's summary when graph resolution made one (which
-  would otherwise go unused). An item that lost a text unit is summarized from
+  would otherwise go unused). An extended description is marked as made from
+  the description it stands for (`summarized_from`), even when it stays
+  under the threshold and is not summarized, so the next run that adds to it
+  extends it again rather than summarizing every line (upstream GraphRAG's
+  update summarizes the stored summary and the new descriptions once). An item that lost a text unit is summarized from
   its derived description, so removed text goes, and so is an item this
   run's removal summarized; the removal leaves the summary of an item the
   delta derives again under its id to the commit (`expect_delta`), so an

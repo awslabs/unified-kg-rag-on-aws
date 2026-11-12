@@ -943,6 +943,12 @@ def test_distinct_statements_of_one_subject_stay_distinct_claims(
         ("Acme Corp was fined for pollution.", "ACME CORP  was fined for pollution"),
         ("가나전자는 과징금을 부과받았다.", "가나전자는  과징금을 부과받았다"),
         ("山田商事は黒字を計上した。", "山田商事は黒字を計上した"),
+        # Spacing a dense script leaves optional (as names key).
+        (
+            "가나전자는 환경법 위반으로 과징금을 받았다",
+            "가나전자는 환경법위반으로 과징금을 받았다",
+        ),
+        ("山田商事は 黒字を 計上した", "山田商事は黒字を計上した"),
     ],
 )
 def test_a_restatement_merges_whatever_order_it_comes_in(
@@ -975,3 +981,30 @@ def test_a_restatement_merges_whatever_order_it_comes_in(
         assert claim.status == "disputed"
         assert claim.description == min(first, again)
         assert claim.id == resolved_claim_id(claim)
+
+
+def test_a_claim_s_description_is_its_most_frequent_spelling() -> None:
+    """Of a claim's spellings, the one most of its statements write, then the
+    smallest: the smallest alone took a capitalised, double-spaced one."""
+    often, once = (
+        "Acme Corp was fined for pollution.",
+        "ACME CORP  was fined for pollution",
+    )
+    units = ("u1", "u2", "u3")
+    for order in ((often, often, once), (once, often, often)):
+        claims = [
+            _claim(
+                str(i),
+                "Acme Corp",
+                "NONE",
+                type_="LEGAL",
+                status="TRUE",
+                description=description,
+                text_unit_ids=[units[i]],
+            )
+            for i, description in enumerate(order)
+        ]
+        resolved, _ = ClaimResolver(Config()).resolve(
+            claims, [_entity("e1", "Acme Corp", units)]
+        )
+        assert [c.description for c in resolved] == [often]

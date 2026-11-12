@@ -189,6 +189,12 @@ class IndexingManager:
         # Stored entities a derivation of this run renamed under their id (a
         # case or spelling variant won): their claims name them anew.
         self._renamed: dict[str, set[str]] = {}
+        # By suffix, the claim endpoints a claim derivation resolved to an
+        # entity it was not given (a noted, unwritten one, say): the commit
+        # derives the claims about them again against the entities it
+        # writes, so every claim endpoint is an entity written or stored.
+        # Kept from a removal's strip to the commit (a run's state).
+        self._claim_endpoints: dict[str, set[str]] = {}
         # Ids of the stored edges this run rewrites for their rank only, and
         # by (suffix, id) the vector copies of those the derivation read
         # (None: none stored), which the write compares instead of reading
@@ -1191,6 +1197,7 @@ class IndexingManager:
         self._removed_record_keys.clear()
         self._offered_summaries.clear()
         self._stripped_ids.clear()
+        self._claim_endpoints.clear()
         self._noted_stripped_ids.clear()
         self._delta_ids.clear()
         self._pending_writes.reset()

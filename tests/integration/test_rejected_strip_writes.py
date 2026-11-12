@@ -729,3 +729,71 @@ def test_a_vertex_holding_a_kept_edge_goes_once_the_edge_is_re_pointed(
         assert all(e.text_unit_ids for e in graph_entities)
 
     _converges(harness, kept, config)
+
+
+def test_a_claim_at_a_part_a_strip_split_off_a_noted_entity_follows_the_commit() -> (
+    None
+):
+    # The graph write of "주식회사 한빛" is rejected (noted); a claim names
+    # it. Deleting the documents holding "(주)한빛" splits "한빛" off it:
+    # the strip's claim derivation, seeing the noted entity, re-keyed the
+    # claim to the part, but its entity side reads the graph only and never
+    # wrote that part. A rejected edge write stopped the run; the retry's
+    # commit folded everything into "(주)한빛" and never looked at the
+    # claim again, left about an entity no store holds.
+    kept: Corpus = {
+        "/corpus/k0.txt": [[("Vendor", "Acme Corp", 3), ("ひかり株式会社", "Depot", 3)]]
+    }
+    gone: Corpus = {
+        "/corpus/g0.txt": [[("Buyer", "ひかり", 3)]],
+        "/corpus/h0.txt": [
+            [("Vendor", "Acme Corp", 3), ("ひかり株式会社", "Depot", 3)]
+        ],
+        "/corpus/i0.txt": [
+            [
+                ("주식회사 한빛", "Acme Inc", 1),
+                ("Buyer", "(주)한빛", 1),
+                ("주식회사 한빛", "ひかり株式会社", 2),
+            ]
+        ],
+        "/corpus/i1.txt": [[("Acme Corp", "Buyer", 3)]],
+    }
+    added: Corpus = {
+        "/corpus/n0.txt": [
+            [("Depot", "株式会社ひかり", 2), ("ひかり株式会社", "주식회사 한빛", 2)],
+            [("Vendor", "한빛", 3), ("Vendor", "Buyer", 1)],
+        ]
+    }
+    more: Corpus = {
+        "/corpus/m0.txt": [
+            [("(주)한빛", "Acme Corp", 1), ("ひかり", "주식회사 한빛", 3)],
+            [
+                ("ひかり", "Buyer", 3),
+                ("株式会社ひかり", "Acme Corp", 1),
+                ("ひかり", "Vendor", 3),
+            ],
+        ],
+        "/corpus/m1.txt": [
+            [("한빛", "Vendor", 1), ("Buyer", "Vendor", 1), ("ひかり", "(주)한빛", 3)]
+        ],
+    }
+    config = _config()
+    harness = IncrementalRun(FakeDocStatusStore(), config)
+    harness.run({**kept, **gone})
+    second = {**kept, **{k: v for k, v in gone.items() if k != "/corpus/g0.txt"}}
+    noted = {
+        e.id for e in extract({**second, **added}).entities if e.name == "주식회사 한빛"
+    }
+    harness.run(
+        {**second, **added},
+        fail=lambda at, i: at == "graph.upsert_entities" and i in noted,
+    )
+    third = {k: v for k, v in second.items() if k != "/corpus/h0.txt"}
+    harness.run(
+        {**third, **added, **more},
+        fail=lambda at, _i: at == "vector.upsert_claims",
+    )
+    final = {**kept, **added, **more}
+    harness.run(final, fail=lambda at, _i: at == "graph.upsert_relationships")
+
+    _converges(harness, final, config)
