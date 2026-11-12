@@ -21,6 +21,9 @@ PROFILE = LanguageProfile(
     legal_forms={"ذمم": "ذمم", "شمم": "شمم", "شمع": "شمع"},
     # "Company", written before the name ("شركة النور").
     leading_legal_forms={"شركة": "شركة"},
+    # The prefixed particles and the article: "and", "so", "with", "to",
+    # "as", "the" ("وبالقاهرة" is "و", "ب", "ال" and "قاهرة").
+    proclitics=("و", "ف", "ب", "ل", "ك", "ال"),
     quote_pairs=(("«", "»"),),
     chars_per_token={CLAUDE_TOKENIZER: 1.75},
 )

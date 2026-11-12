@@ -68,6 +68,21 @@ class TestCoverage:
         # A CJK entity absent from the answer still scores 0.
         assert evaluator._coverage(["大阪ガス"], "本契約は東京電力と締結された")[1] == 0
 
+    @pytest.mark.parametrize(
+        ("entity", "answer"),
+        [
+            ("กรุงเทพมหานคร", "บริษัท Acme ตั้งอยู่ที่กรุงเทพมหานคร"),
+            ("ירושלים", "Acme נמצאת בירושלים."),
+            ("بيروت", "تقع شركة أكمي في القاهرة وبيروت."),
+        ],
+    )
+    def test_thai_hebrew_and_arabic_entities_are_covered(
+        self, evaluator: GraphAwareEvaluator, entity: str, answer: str
+    ) -> None:
+        # Regression (rv23 eval 2): a Thai run is no word, and a Hebrew or
+        # Arabic prefixed particle hid the entity.
+        assert evaluator._coverage([entity], answer) == (1.0, 1)
+
 
 class TestEvaluateSingle:
     def _result(self, answer: str, **md) -> EvaluationResult:

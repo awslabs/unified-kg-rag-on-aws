@@ -691,6 +691,15 @@ list, top level or under `metadata`, which wins), taking the maximum.
   substring (`AWS` matches `AWSは`, `2024` matches `2024年`; `AI` does not
   match `airport附近` nor `2` `12年`); next to Hangul the Korean rules
   above decide.
+- **Thai, Lao, Myanmar and Khmer** write no spaces between words either, so
+  they take the CJK substring path (`กรุงเทพ` matches
+  `อยู่ที่กรุงเทพ`, `Acme` matches `บริษัทAcmeตั้งอยู่`). **Hebrew and
+  Arabic** write their prefixed particles onto the next word: a run of up
+  to three of them (`LanguageProfile.proclitics`: Hebrew `ב ה ו כ ל מ ש`,
+  Arabic `و ف ب ل ك ال`) is tolerated before a gold word, as Korean
+  particles are after one (`ירושלים` matches `בירושלים`, `بيروت` matches
+  `وبيروت`, `القاهرة` matches `بالقاهرة`; the contracted `للقاهرة` is not
+  read).
 - **Structured golds.** An item's `metadata.answer_type` changes how
   `answer_contains` reads it: `number` reads the answer's first line that
   is no heading (its extracted span, with `extracted`) and scores 1.0 on
@@ -790,7 +799,9 @@ list, top level or under `metadata`, which wins), taking the maximum.
   (`token_f1_tokens: script_aware_v2` in each report): a Han, Hangul or Kana
   letter is a token of its own, as the CMRC 2018 and KorQuAD 1.0 scripts
   score Chinese and Korean by character (they split Latin words and
-  numbers too; these stay whole), and a run of Korean particles or copula
+  numbers too; these stay whole), and so is a Thai, Lao, Myanmar or Khmer
+  letter or vowel sign; Hebrew and Arabic proclitics on a gold word
+  (`בירושלים` for `ירושלים`) cost nothing; a run of Korean particles or copula
   endings from their closed class attached to a gold word (`서울은`,
   `서울에서는`, `서울입니다` for `서울`) is dropped first, which KorQuAD
   does not do: so `東京都です` scores 0.75 against `東京都` and

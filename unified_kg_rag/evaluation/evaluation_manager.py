@@ -84,7 +84,6 @@ from unified_kg_rag.shared.usage import (
     usage_scope,
 )
 from unified_kg_rag.shared.utils.files import atomic_write_text
-from unified_kg_rag.shared.utils.scripts import has_dense_script
 
 from .answer_match_evaluator import (
     ANSWER_CANDIDATES_KEY,
@@ -109,6 +108,7 @@ from .iterative_statistics import iterative_statistics
 from .retrieval_evaluator import BY_SOURCE_TYPE_KEY, RetrievalEvaluator
 from .source_resolver import SourceFileResolver, TextUnitFileResolver
 from .structured_statistics import structured_statistics
+from .text_matching import tokenized_by_script
 
 logger = get_logger(__name__)
 
@@ -1386,13 +1386,15 @@ class EvaluationManager:
     def holds_dense_script(
         queries: list[EvaluationQuery], ground_truths: list[EvaluationGroundTruth]
     ) -> bool:
-        """Whether a question, a gold answer or an answer alias holds Han,
-        Hangul or Kana text (``has_dense_script``)."""
+        """Whether a question, a gold answer or an answer alias holds text
+        script-aware token F1 tokenizes otherwise than whitespace does
+        (``text_matching.tokenized_by_script``: Han, Hangul, Kana, Thai and
+        the other scripts written without spaces, Hebrew and Arabic)."""
         texts: list[str] = [q.question for q in queries]
         texts += [gt.ground_truth for gt in ground_truths]
         for q in queries:
             texts += answer_aliases(q.metadata)
-        return any(isinstance(t, str) and has_dense_script(t) for t in texts)
+        return any(isinstance(t, str) and tokenized_by_script(t) for t in texts)
 
     @staticmethod
     def benchmarks_of(queries: list[EvaluationQuery]) -> dict[str, int]:
@@ -1514,8 +1516,9 @@ class EvaluationManager:
             # The benchmark the rows were prepared from (prepare-benchmark's
             # metadata.benchmark), so a summary says which one it scored.
             dataset["benchmarks"] = self.benchmarks_of(queries)
-            # Token F1's tokenizations differ only on Han, Hangul and Kana
-            # text: without any, runs scored with either compare.
+            # Token F1's tokenizations differ only on the text of some
+            # scripts (Han, Hangul, Kana, Thai, Hebrew, Arabic, ...): without
+            # any, runs scored with either compare.
             dataset["dense_script"] = self.holds_dense_script(
                 queries, ground_truths or []
             )

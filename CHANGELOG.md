@@ -1267,7 +1267,10 @@ From a `main` checkout (formats and keys no release had):
   about lot 7 is 0, "No hay más de tres" no 0); a condition or comparative is not told from a count, so a line that
   writes the gold as either matches, a gold that states no number or several ("1990-1995", "3 (as of 2024)") is
   matched as a phrase, and a Unicode minus or en-dash is a minus ("−5" is -5) but an em-dash is not ("3 vendors —2"
-  states 2) (#324, #516, #606, #613).
+  states 2). Thai, Lao, Myanmar and Khmer, which write no spaces between words, are matched as substrings and
+  token-scored by letter as Chinese is, and a run of Hebrew or Arabic prefixed particles before a gold word
+  (`LanguageProfile.proclitics`: "בירושלים", "وبيروت") is tolerated as a Korean particle after one is, in
+  `answer_contains`, token F1, `graph_aware` coverage and the extracted-span check (#324, #516, #606, #613).
 - Strategy comparison: `run-eval --search-strategy a,b --repeats N` with bootstrap intervals, `deltas_by_category`,
   a `--pairwise-judge` (LightRAG's verdicts with `evaluation.pairwise_overall`, `position_consistency`, a win-rate
   interval, `--judge-model`) and `prepare-benchmark musique` (#324, #516, #536). See

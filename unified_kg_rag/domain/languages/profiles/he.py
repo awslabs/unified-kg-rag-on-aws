@@ -17,6 +17,8 @@ PROFILE = LanguageProfile(
     no_value_words=("לאידוע", "אין", "לאצוין"),
     # Limited company (בע"מ, its quote mark dropped as entity keys drop it).
     legal_forms={"בעמ": "בעמ"},
+    # The prefixed particles: "in", "the", "and", "as", "to", "from", "that".
+    proclitics=("ב", "ה", "ו", "כ", "ל", "מ", "ש"),
     quote_pairs=(("„", "”"), ('"', '"')),
     chars_per_token={CLAUDE_TOKENIZER: 1.54},
 )

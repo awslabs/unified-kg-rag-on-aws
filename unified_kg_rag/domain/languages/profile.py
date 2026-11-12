@@ -74,6 +74,11 @@ class LanguageProfile:
     # ("l'accord", "d'Avignon", "dell'accordo"): split from the next word
     # (an article among them is then dropped), and a sign of the language.
     elided_prefixes: frozenset[str] = frozenset()
+    # The words it writes onto the front of the next word (Hebrew "ב"
+    # "in", Arabic "و" "and", "ال" "the"): a match tolerates a run of up to
+    # three of them before a gold word ("בירושלים" holds "ירושלים",
+    # "وبيروت" "بيروت"), as it tolerates Korean particles after one.
+    proclitics: tuple[str, ...] = ()
     # Its number words with their values, which an answer states a count by
     # ("drei"): the words below twenty a tens word composes with
     # ("twenty-one"), and the ones it writes as one word below a hundred

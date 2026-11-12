@@ -317,6 +317,32 @@ class TestScriptAwareTokenF1:
         "서울"."""
         assert token_f1(prediction, reference) == pytest.approx(expected)
 
+    @pytest.mark.parametrize(
+        ("prediction", "reference", "expected"),
+        [
+            # Thai writes no spaces: a letter (or vowel sign) is a token,
+            # 7 of 14 here (whitespace tokens scored 0).
+            ("อยู่ที่กรุงเทพ", "กรุงเทพ", 2 * 0.5 / 1.5),
+            ("กรุงเทพ", "กรุงเทพ", 1.0),
+            # Character F1: two letters shared, 2 of 9 against 2 of 7.
+            ("เชียงใหม่", "กรุงเทพ", 0.25),
+            # Hebrew and Arabic proclitics on a gold word cost nothing.
+            ("בירושלים", "ירושלים", 1.0),
+            ("וירושלים בירה", "ירושלים", 2 * 0.5 / 1.5),
+            ("وبيروت", "بيروت", 1.0),
+            ("بالقاهرة", "القاهرة", 1.0),
+            # Other letters before a gold word are another word.
+            ("אירושלים", "ירושלים", 0.0),
+        ],
+    )
+    def test_spaceless_scripts_and_proclitics(
+        self, prediction: str, reference: str, expected: float
+    ) -> None:
+        """Regression (rv23 eval 2): a Thai answer was one whitespace token,
+        and a Hebrew or Arabic word with a prefixed particle another word,
+        so a correct answer scored 0."""
+        assert token_f1(prediction, reference) == pytest.approx(expected)
+
     def test_containment_stays_lenient(self) -> None:
         # answer_contains (recall-style) keeps the wider rule.
         assert answer_contains("서울특별시에 있다", "서울") == 1.0
@@ -759,6 +785,24 @@ class TestExtractedSpan:
         assert _values(report)["token_f1"] == 0.0
         assert report.metadata["scored_span"] == ""
         assert "answer_span_fallback" not in report.metadata
+
+    @pytest.mark.parametrize(
+        ("answer", "span"),
+        [
+            ("บริษัท Acme ตั้งอยู่ที่กรุงเทพมหานคร", "กรุงเทพมหานคร"),
+            ("Acme נמצאת בירושלים.", "ירושלים"),
+        ],
+    )
+    async def test_a_thai_or_hebrew_span_is_found_in_its_answer(
+        self, mocker, config, answer: str, span: str
+    ) -> None:
+        # Regression (rv23 eval 2): the span was not "in" the answer, so it
+        # fell back to the first line.
+        evaluator, _ = _extracting(mocker, config, span)
+        report = await _ascore(evaluator, answer, span)
+        assert report.metadata["scored_span"] == span
+        assert "answer_span_fallback" not in report.metadata
+        assert _values(report)["exact_match"] == 1.0
 
     async def test_a_yes_no_span_need_not_be_verbatim(self, mocker, config) -> None:
         evaluator, _ = _extracting(mocker, config, "no")

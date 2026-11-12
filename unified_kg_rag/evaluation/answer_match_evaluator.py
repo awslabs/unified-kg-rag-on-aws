@@ -33,7 +33,8 @@ records the span mode (``answer_span``) and the text scored
 
 - ``answer_contains``: 1.0 if the gold answer appears in the generated answer
   as a whole-word phrase (``text_matching.phrase_in_text``: Korean particles
-  tolerated, substring match for single-word CJK phrases). Long-form RAG
+  and Hebrew and Arabic proclitics tolerated, substring match for
+  single-word CJK and Thai phrases). Long-form RAG
   answers rarely equal a short gold span, so this is the headline
   deterministic answer metric. A yes/no gold ("yes"/"no", Korean
   "예"/"네"/"아니요"/"아니오"/"아닙니다", Chinese "是"/"对"/"否"/"不是"/"没有", Japanese
@@ -59,8 +60,8 @@ records the span mode (``answer_span``) and the text scored
 - ``exact_match``: 1.0 if the normalized span equals the normalized reference.
 - ``token_f1``: harmonic mean of token precision/recall (multiset overlap).
   Under ``default`` the tokens are script-aware
-  (``text_matching.script_tokens``): whitespace words, but a Han, Hangul or
-  Kana letter is a token of its own (character F1, as the CMRC 2018 and
+  (``text_matching.script_tokens``): whitespace words, but a Han, Hangul,
+  Kana or Thai (Lao, Myanmar, Khmer) letter is a token of its own (character F1, as the CMRC 2018 and
   KorQuAD 1.0 scripts score Chinese and Korean), after a run of Korean
   particles (their closed class) attached to a reference word is stripped. Under ``official_squad`` and ``hotpotqa`` they are
   whitespace words, as in those scripts, so for Chinese and Japanese token
@@ -384,7 +385,7 @@ def token_f1(
     reference that normalizes to "yes", "no" or "noanswer" scores 0 unless
     the two normalize equal. ``script_aware`` (default: with the default
     ``normalize_answer``) tokenizes by script (``text_matching.script_tokens``:
-    a Han, Hangul or Kana letter per token, Korean particles of their
+    a letter of a script written without spaces per token, Korean particles of their
     closed class stripped);
     otherwise tokens are whitespace words, as in the official scripts."""
     if script_aware is None:

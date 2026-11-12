@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """The regression corpus (``tests/fixtures/language_cases.py``) through the
 language-aware readers: a query's language, the gold number an answer
-matches, the router's strategy name and a stored name's cover of a mention.
+matches, an answer's containment of its gold, the router's strategy name
+and a stored name's cover of a mention.
 
 Each case is pinned to its stated answer, or to a documented trade-off's;
 a rule added for one case that moves another fails here.
@@ -16,6 +17,7 @@ import pytest
 from pydantic import BaseModel
 
 from tests.fixtures.language_cases import (
+    CONTAINS,
     COVERS,
     DETECTION,
     NUMBERS,
@@ -26,7 +28,10 @@ from tests.fixtures.language_cases import (
 from unified_kg_rag.domain.languages import text_language
 from unified_kg_rag.domain.models import SearchStrategy
 from unified_kg_rag.domain.retrieval.linking import covers
-from unified_kg_rag.evaluation.answer_match_evaluator import number_matches
+from unified_kg_rag.evaluation.answer_match_evaluator import (
+    answer_contains,
+    number_matches,
+)
 from unified_kg_rag.evaluation.text_matching import stated_numbers
 from unified_kg_rag.shared import ModelOutputError
 from unified_kg_rag.shared.utils import named_choice, parse_model_object
@@ -54,6 +59,13 @@ def counted(case: Case) -> object:
     ):
         return gold
     return tuple(sorted(stated_numbers(case.text, case.context))) or None
+
+
+def contained(case: Case) -> object:
+    """The score ``answer_match`` gives the answer against its gold
+    (``answer_contains``)."""
+    assert case.gold is not None
+    return answer_contains(case.text, case.gold, case.context)
 
 
 def routed(case: Case) -> object:
@@ -86,6 +98,11 @@ def test_numbers(case: Case) -> None:
     assert counted(case) == case.answer, case.text
 
 
+@pytest.mark.parametrize("case", CONTAINS, ids=_ids(CONTAINS))
+def test_contains(case: Case) -> None:
+    assert contained(case) == case.answer, (case.text, case.gold)
+
+
 @pytest.mark.parametrize("case", ROUTER, ids=_ids(ROUTER))
 def test_router(case: Case) -> None:
     assert routed(case) == case.answer, case.text
@@ -101,10 +118,11 @@ def test_covers(case: Case) -> None:
     [
         (DETECTION, detected),
         (NUMBERS, counted),
+        (CONTAINS, contained),
         (ROUTER, routed),
         (COVERS, covered),
     ],
-    ids=["detection", "numbers", "router", "covers"],
+    ids=["detection", "numbers", "contains", "router", "covers"],
 )
 def test_every_miss_is_a_documented_tradeoff(
     cases: tuple[Case, ...], read: Callable[[Case], object]

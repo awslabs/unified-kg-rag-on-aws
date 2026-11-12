@@ -17,11 +17,13 @@ from unified_kg_rag.domain.languages import (
 )
 from unified_kg_rag.shared.utils.scripts import (
     DENSE_SCRIPT_LETTERS,
+    SPACELESS_SCRIPT_LETTERS,
     drop_dense_script_spaces,
-    has_dense_script,
+    has_unspaced_script,
     is_dense_script_char,
     is_hangul,
     is_hangul_syllable,
+    is_unspaced_char,
     letter_class,
 )
 
@@ -195,15 +197,27 @@ def tokenize(text: str, language: str | None = None) -> list[str]:
 
 
 def is_spaceless_script(text: str) -> bool:
-    """True if the text has CJK characters and no internal whitespace.
+    """True if the text has letters of a script that needs no spaces
+    between words (``has_unspaced_script``: Han, Hangul, Kana, and Thai,
+    Lao, Myanmar, Khmer and Tai) and no internal whitespace.
 
-    Such a phrase is not whitespace-tokenizable (Chinese/Japanese), or is a
-    single Korean word that takes attached particles, so contiguous word-token
-    matching would miss it; it is matched as a substring instead.
+    Such a phrase is not whitespace-tokenizable (Chinese, Japanese, Thai),
+    or is a single Korean word that takes attached particles, so contiguous
+    word-token matching would miss it; it is matched as a substring instead.
     """
     if any(ch.isspace() for ch in text.strip()):
         return False
-    return has_dense_script(text)
+    return has_unspaced_script(text)
+
+
+def tokenized_by_script(text: str) -> bool:
+    """Whether script-aware token F1 (``script_tokens``) may read ``text``
+    otherwise than whitespace tokens do: it holds a letter of a script
+    written without spaces (``has_unspaced_script``) or of one whose words
+    take proclitics (``LanguageProfile.proclitics``: Hebrew, Arabic)."""
+    return has_unspaced_script(text) or bool(
+        _PROCLITIC_SCRIPT is not None and _PROCLITIC_SCRIPT.search(text)
+    )
 
 
 def _continues_word(a: str, b: str) -> bool:
@@ -215,11 +229,11 @@ def _continues_word(a: str, b: str) -> bool:
 
     def wordlike(ch: str) -> bool:
         # A "." or "," survives normalization only between digits ("1.5"),
-        # a "-" only as the sign of a number ("-2년" is not "2년").
+        # a "-" only as the sign of a number ("-2년" is not "2년"). A letter
+        # of a script written without spaces (Thai too) is no word of its
+        # own to continue.
         return (
-            ch.isnumeric()
-            or ch in ".,-"
-            or (ch.isalpha() and not is_dense_script_char(ch))
+            ch.isnumeric() or ch in ".,-" or (ch.isalpha() and not is_unspaced_char(ch))
         )
 
     return wordlike(a) and wordlike(b)
@@ -367,6 +381,47 @@ def _is_particle(suffix: str, *, strict: bool = False) -> bool:
     )
 
 
+# The proclitics of every language (``LanguageProfile.proclitics``: Hebrew
+# "ב", Arabic "و", "ال"), a run of up to three of them before a word
+# ("וב", "وبال"), and the letters of the scripts that write them.
+_PROCLITICS = tuple(
+    dict.fromkeys(word for language in profiles() for word in language.proclitics)
+)
+_PROCLITIC_RUN = (
+    re.compile(
+        "(?:"
+        + "|".join(sorted(map(re.escape, _PROCLITICS), key=len, reverse=True))
+        + "){1,3}"
+    )
+    if _PROCLITICS
+    else None
+)
+_PROCLITIC_SCRIPT = (
+    re.compile(
+        "["
+        + letter_class(
+            *dict.fromkeys(
+                language.script for language in profiles() if language.proclitics
+            )
+        )
+        + "]"
+    )
+    if _PROCLITICS
+    else None
+)
+
+
+def _after_proclitics(expected: str, actual: str) -> bool:
+    """True if ``actual`` is ``expected`` with a run of proclitics on its
+    front ("בירושלים" for "ירושלים", "وبيروت" for "بيروت")."""
+    return (
+        _PROCLITIC_RUN is not None
+        and len(actual) > len(expected)
+        and actual.endswith(expected)
+        and _PROCLITIC_RUN.fullmatch(actual[: -len(expected)]) is not None
+    )
+
+
 def _number_suffix_keeps_value(suffix: str, *, strict: bool = False) -> bool:
     """True if Hangul ``suffix`` after a number is a unit and/or a particle."""
     if not suffix or suffix[0] in _KOREAN_MAGNITUDES:
@@ -382,8 +437,9 @@ def _token_matches(expected: str, actual: str, *, strict: bool = False) -> bool:
     # A word may carry an attached particle: "서울은", "AWS는". A bare number
     # may carry a unit and a particle ("2024년에", "3명이"), but not a
     # magnitude numeral ("3억", "5천"), which changes the value. ``strict``
-    # (token F1) takes only the closed class of particles as one.
-    if expected == actual:
+    # (token F1) takes only the closed class of particles as one. A Hebrew
+    # or Arabic word may carry proclitics on its front ("בירושלים").
+    if expected == actual or _after_proclitics(expected, actual):
         return True
     if not actual.startswith(expected):
         return False
@@ -393,8 +449,10 @@ def _token_matches(expected: str, actual: str, *, strict: bool = False) -> bool:
     return _is_particle(suffix, strict=strict)
 
 
-# One Han, Hangul or Kana letter, or a run of anything else.
-_SCRIPT_TOKEN = re.compile(f"[{DENSE_SCRIPT_LETTERS}]|[^{DENSE_SCRIPT_LETTERS}]+")
+# One letter of a script written without spaces (Han, Hangul, Kana, Thai,
+# Lao, Myanmar, Khmer, Tai), or a run of anything else.
+_UNSPACED_LETTERS = DENSE_SCRIPT_LETTERS + SPACELESS_SCRIPT_LETTERS
+_SCRIPT_TOKEN = re.compile(f"[{_UNSPACED_LETTERS}]|[^{_UNSPACED_LETTERS}]+")
 
 
 def script_tokens(prediction: str, reference: str) -> tuple[list[str], list[str]]:
@@ -404,14 +462,18 @@ def script_tokens(prediction: str, reference: str) -> tuple[list[str], list[str]
     its own, as the character F1 of the Chinese (CMRC 2018) and Korean
     (KorQuAD 1.0) evaluation scripts: Chinese and Japanese put no space
     between words, so a whitespace word is a whole clause there, and a
-    Korean word carries its particles. Unlike those scripts, which split
+    Korean word carries its particles. So is a letter (or vowel sign) of
+    Thai, Lao, Myanmar, Khmer and Tai, which write no spaces between words
+    either. Unlike those scripts, which split
     every character, Latin words and numbers stay whole ("2024年" is
     "2024", "年"), and a prediction word that is a reference word plus a
     run of Korean particles from their closed class (``_KOREAN_JOSA``) or a
     number's unit ("서울은" for "서울", "2024년에" for "2024년") first
     counts as that word, so the particle costs no precision (KorQuAD
     charges its characters). Any other Hangul after a reference word stays
-    ("서울대학교" is five letters against "서울").
+    ("서울대학교" is five letters against "서울"). So does a run of
+    Hebrew or Arabic proclitics before a reference word (``_PROCLITICS``:
+    "בירושלים" counts as "ירושלים").
     """
     reference_words = sorted(set(reference.split()), key=len, reverse=True)
 
@@ -446,7 +508,9 @@ def _compact_window_matches(expected: str, actual: list[str]) -> bool:
     for start in range(len(actual)):
         joined = ""
         for token in actual[start:]:
-            joined = drop_dense_script_spaces(f"{joined} {token}" if joined else token)
+            joined = drop_dense_script_spaces(
+                f"{joined} {token}" if joined else token, spaceless=True
+            )
             if _token_matches(expected, joined):
                 return True
             if len(joined) > len(expected) + _MAX_KOREAN_SUFFIX:
@@ -462,22 +526,26 @@ def phrase_in_text(phrase: str, text: str, language: str | None = None) -> bool:
     "AI" does not match inside "airport". Any token except a bare number also
     matches a token that extends it by up to three Hangul syllables, so
     "서울 특별시" matches "서울 특별시는" and "AWS" matches "AWS는" (attached
-    particles). A bare number also matches it followed by a Korean unit and
+    particles), and any token one that puts a run of Hebrew or Arabic
+    proclitics before it (``LanguageProfile.proclitics``: "ירושלים" in
+    "בירושלים", "بيروت" in "وبيروت"). A bare number also matches it followed by a Korean unit and
     a particle ("2024" in "2024년에"), but not by a magnitude numeral ("3" is
     not "3억", which changes the value). A phrase
     containing CJK is also compared with the spaces next to CJK letters
     removed, so "가나다 상사" matches "가나다상사이다" and "3억 원" matches
-    "3억원". A phrase that is a single CJK run (``is_spaceless_script``) is
+    "3억원". A phrase that is a single run of a script written without
+    spaces (``is_spaceless_script``: CJK, Thai, Lao, Myanmar, Khmer) is
     matched as a substring of the normalized text (spacing ignored), but not
     where a digit, decimal point or Latin letter continues it on either side:
-    "2년" does not match "12년" or "1.2년", nor "二年" "十二年". In a text
-    with CJK, any phrase is also matched as such a substring where no
-    Hangul letter is next to it, since Chinese and Japanese put no space
-    around a Latin word or a number: "AWS" matches "AWSは" and "2024"
-    "2024年", but "AI" does not match "airport附近", nor "2" "12年"
-    (``_substring_beside_han_or_kana``).
+    "2년" does not match "12년" or "1.2년", nor "二年" "十二年"; "กรุงเทพ"
+    matches "อยู่ที่กรุงเทพ". In a text with such letters, any phrase is also
+    matched as such a substring where no Hangul letter is next to it, since
+    Chinese, Japanese and Thai put no space around a Latin word or a
+    number: "AWS" matches "AWSは" and "2024" "2024年", but "AI" does not
+    match "airport附近", nor "2" "12年" (``_substring_beside_unspaced``).
 
-    LIMITATION (CJK): without a morphological segmenter there is no morpheme
+    LIMITATION (CJK, Thai): without a morphological segmenter there is no
+    morpheme
     boundary, so a short expected word can match inside a longer one ("가나"
     within "가나상사", "서울" within "서울대학교"). This over-counts rather
     than under-counts; both uses (coverage, containment) are recall-style.
@@ -489,7 +557,8 @@ def phrase_in_text(phrase: str, text: str, language: str | None = None) -> bool:
     if is_spaceless_script(phrase):
         cleaned = normalize_answer(phrase, language)
         return bool(cleaned) and _substring_at_boundary(
-            cleaned, drop_dense_script_spaces(normalize_answer(text, language))
+            cleaned,
+            drop_dense_script_spaces(normalize_answer(text, language), spaceless=True),
         )
 
     expected = tokenize(phrase, language)
@@ -505,23 +574,24 @@ def phrase_in_text(phrase: str, text: str, language: str | None = None) -> bool:
         for start in range(len(actual) - window + 1)
     ):
         return True
-    if has_dense_script(phrase) and _compact_window_matches(
-        drop_dense_script_spaces(" ".join(expected)), actual
+    if has_unspaced_script(phrase) and _compact_window_matches(
+        drop_dense_script_spaces(" ".join(expected), spaceless=True), actual
     ):
         return True
-    return has_dense_script(text) and _substring_beside_han_or_kana(
-        drop_dense_script_spaces(" ".join(expected)),
-        drop_dense_script_spaces(" ".join(actual)),
+    return has_unspaced_script(text) and _substring_beside_unspaced(
+        drop_dense_script_spaces(" ".join(expected), spaceless=True),
+        drop_dense_script_spaces(" ".join(actual), spaceless=True),
     )
 
 
-def _substring_beside_han_or_kana(needle: str, haystack: str) -> bool:
+def _substring_beside_unspaced(needle: str, haystack: str) -> bool:
     """True if ``needle`` occurs in ``haystack`` where no word, number or
     Hangul letter continues it on either side.
 
-    Chinese and Japanese write no space between words, so a Latin word or a
-    number inside them ("AWSは", "合同于2024年签订") is not a whitespace token
-    of its own; a Han or Kana neighbour is a word boundary. A Latin letter or
+    Chinese, Japanese and Thai write no space between words, so a Latin word
+    or a number inside them ("AWSは", "合同于2024年签订") is not a whitespace
+    token of its own; a Han, Kana or Thai neighbour is a word boundary. A
+    Latin letter or
     a digit is not ("AI" is not in "airport", "2" not in "12年"), nor a Han
     numeral after a digit ("3" is not in "3億"). Korean is left to the token
     rules above: a Hangul neighbour is a particle, a unit or a magnitude

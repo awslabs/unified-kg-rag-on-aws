@@ -1,8 +1,9 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""The regression corpus of language detection, number reading, router
-answers and name folding: every case the query reviews rv9 to rv14 probed
-or reported, with the answer they stated as right.
+"""The regression corpus of language detection, number reading, answer
+containment, router answers and name folding: every case the query
+reviews rv9 to rv14 (and the evaluation reviews since) probed or
+reported, with the answer they stated as right.
 
 A case the code answers otherwise is a documented trade-off: it carries
 the answer the code gives and why (``Tradeoff``), so a change that moves
@@ -18,6 +19,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
 __all__ = [
+    "CONTAINS",
     "COVERS",
     "DETECTION",
     "NUMBERS",
@@ -43,7 +45,8 @@ class Case:
     states no number); ``context`` is the index language a detection falls
     back to, the answer language a number is read in, or the mention a
     stored name covers; ``question`` is the question a number answers
-    (``None``: read without one)."""
+    (``None``: read without one); ``gold`` is the gold answer a
+    containment case scores ``text`` against."""
 
     text: str
     expected: object
@@ -51,6 +54,7 @@ class Case:
     source: str
     tradeoff: Tradeoff | None = None
     question: str | None = None
+    gold: str | None = None
 
     @property
     def answer(self) -> object:
@@ -2400,4 +2404,35 @@ COVERS: tuple[Case, ...] = (
     Case("टीसीएस", False, "टाटा", "rv23 algo-ret 2"),
     Case("ธนาคารกรุงเทพ", True, "กรุงเทพ", "rv23 algo-ret 2"),
     Case("ธนาคารกสิกรไทย", False, "ธนาคารกรุงเทพ", "rv23 algo-ret 2"),
+)
+
+# Answer containment (``answer_contains``): ``text`` is the answer,
+# ``gold`` the gold answer, ``context`` the answer language and
+# ``expected`` the score.
+CONTAINS: tuple[Case, ...] = (
+    # Thai, Lao, Myanmar and Khmer write no spaces between words: a gold
+    # word is a substring of the answer's run, as in Chinese.
+    Case(
+        "บริษัท Acme ตั้งอยู่ที่กรุงเทพมหานคร",
+        1.0,
+        "th",
+        "rv23 eval 2",
+        gold="กรุงเทพมหานคร",
+    ),
+    Case("เขาอาศัยอยู่ที่กรุงเทพครับ", 1.0, "th", "rv23 eval 2", gold="กรุงเทพ"),
+    Case("บริษัทAcmeตั้งอยู่ที่นี่", 1.0, "th", "rv23 eval 2", gold="Acme"),
+    Case("เขาอาศัยอยู่ที่เชียงใหม่", 0.0, "th", "rv23 eval 2", gold="กรุงเทพ"),
+    Case("ລາວຢູ່ສະຫວັນ", 1.0, None, "rv23 eval 2", gold="ສະຫວັນ"),
+    Case("သူရန်ကုန်မှာ", 1.0, None, "rv23 eval 2", gold="ရန်ကုန်"),
+    Case("គាត់រស់នៅភ្នំពេញ", 1.0, None, "rv23 eval 2", gold="ភ្នំពេញ"),
+    # Hebrew and Arabic write their prefixed particles onto the word.
+    Case("Acme נמצאת בירושלים.", 1.0, "he", "rv23 eval 2", gold="ירושלים"),
+    Case("Acme נמצאת ובתל אביב.", 1.0, "he", "rv23 eval 2", gold="תל אביב"),
+    Case("Acme נמצאת בחיפה.", 0.0, "he", "rv23 eval 2", gold="ירושלים"),
+    Case("تقع شركة أكمي في القاهرة وبيروت.", 1.0, "ar", "rv23 eval 2", gold="بيروت"),
+    Case("تقع الشركة بالقاهرة.", 1.0, "ar", "rv23 eval 2", gold="القاهرة"),
+    Case("تقع الشركة في دمشق.", 0.0, "ar", "rv23 eval 2", gold="بيروت"),
+    # Hindi and Vietnamese are spaced: whole words, as before.
+    Case("Acme दिल्ली में स्थित है।", 1.0, "hi", "rv23 eval 2", gold="दिल्ली"),
+    Case("Acme ở Hà Nội.", 1.0, "vi", "rv23 eval 2", gold="Hà Nội"),
 )
