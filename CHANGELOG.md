@@ -2125,7 +2125,8 @@ Deployment (CDK).
   #381, #479, #483, #490, #581). See [filters](docs/reference/filters.md).
 - A guardrail-blocked answer returns no sources, search results or model-written query texts, and the query span
   records only the screened query (#345). With `check_output`, the rewritten and translated query, its entities and
-  LightRAG keywords (`processed_query`, `search_results.query`) are screened as model output.
+  LightRAG keywords (`processed_query`, `search_results.query`) are screened as model output, alongside the answer's
+  check (with the synthesized results, not one round trip after another).
 - IaC: queries run under a read-only role that cannot write through a `_search` path, lists only `eval/` and has no
   DynamoDB access; `bedrock:ApplyGuardrail` is granted on the configured guardrail only; unused Neptune, S3 delete
   and `GetInferenceProfile` actions are dropped, and private-mode endpoint policies admit only the account (#204,

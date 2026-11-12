@@ -7,6 +7,7 @@ of them."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -158,7 +159,43 @@ async def test_clean_query_texts_cost_one_check() -> None:
     )
     before = output.model_dump()
 
-    await chain._screen_query_texts(output, [])
+    chain._apply_query_texts(output, await chain._query_text_screening(output, []))
 
     assert guard.outputs == ["Who supplies Buyer?\nsupply\nBuyer"]
     assert output.model_dump() == before
+
+
+class _OverlapGuard(_Guard):
+    """Holds the answer's check until another output check has started."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.other_started = asyncio.Event()
+
+    async def acheck(self, text: str, source: GuardSource, **_: Any) -> GuardVerdict:
+        if source is GuardSource.OUTPUT:
+            if text.startswith("Acme"):
+                await asyncio.wait_for(self.other_started.wait(), timeout=5)
+            else:
+                self.other_started.set()
+        return await super().acheck(text, source)
+
+
+@pytest.mark.parametrize("block_answer", [False, True])
+async def test_the_query_texts_are_screened_alongside_the_answer(
+    block_answer: bool,
+) -> None:
+    # perf (rv24): the query texts' check waited for the answer's, one
+    # guardrail round trip after another; they do not depend on its verdict.
+    output = await _ask(_OverlapGuard(block_answer=block_answer), "mix")
+
+    assert "error" not in output.metadata
+    records = [r for r in output.metadata["guardrail"] if r["source"] == "output"]
+    if block_answer:
+        # A refused answer keeps no record of the texts it dropped.
+        assert output.answer == "Refused."
+        assert [r["action"] for r in records] == ["blocked"]
+        assert output.search_results.query.hl_keywords == []
+    else:
+        assert output.processed_query.hl_keywords == ["{NAME} supply theme"]
+        assert {r["action"] for r in records} == {"masked", "blocked"}

@@ -202,7 +202,12 @@ from unified_kg_rag.shared.utils import (
     strip_invisible,
     text_digest,
 )
-from unified_kg_rag.shared.utils.concurrency import discard, gather_bounded, settle
+from unified_kg_rag.shared.utils.concurrency import (
+    cancel_on_exit,
+    discard,
+    gather_bounded,
+    settle,
+)
 
 logger = get_logger(__name__)
 
@@ -2403,12 +2408,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                     input_dict, config
                 )
                 answer_blocked = False
+                plan_texts: dict[str, str | None] = {}
+                verdict, evidence_records = await self._screen_outputs_of(
+                    output, guard_records, plan_texts, capture[-1] if capture else None
+                )
                 if isinstance(output, RAGOutput):
-                    verdict = await self._screen_output(
-                        output.answer,
-                        guard_records,
-                        grounding=capture[-1] if capture else None,
-                    )
+                    assert verdict is not None
                     screened = verdict.text != output.answer
                     output.answer = verdict.text
                     if verdict.grounding is not None:
@@ -2427,11 +2432,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                         self._clear_evidence_metadata(output)
                     elif screened:
                         self._mark_citations(output)
-                plan_texts: dict[str, str | None] = {}
-                output.search_results = await self._screen_synthesized(
-                    output.search_results, guard_records, plan_texts=plan_texts
-                )
-                await self._screen_query_texts(output, guard_records)
+                if not answer_blocked:
+                    # A refused answer keeps none of what they screened.
+                    guard_records.extend(evidence_records)
                 if isinstance(output, RAGOutput):
                     self._refresh_screened_copies(output, plan_texts)
                 if guard_records:
@@ -2657,6 +2660,47 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         rag_input.history = turns
         input_dict["history"] = [t.model_dump() for t in turns]
 
+    async def _screen_outputs_of(
+        self,
+        output: RAGOutput | SearchOutput,
+        records: list[dict[str, Any]],
+        plan_texts: dict[str, str | None],
+        grounding: GroundingContext | None,
+    ) -> tuple[GuardVerdict | None, list[dict[str, Any]]]:
+        """Screen ``output``'s model-written text at once: the answer
+        (:meth:`_screen_output`, its verdict returned and recorded on
+        ``records``; ``None`` for a search), the synthesized search results
+        (:meth:`_screen_synthesized`) and the query texts
+        (:meth:`_query_text_screening`), which are applied to ``output``.
+        The last two do not depend on the answer's verdict, so they no longer
+        wait for it: one guardrail round trip after the answer, not three.
+        Their records are returned apart, for the caller to keep unless the
+        answer was refused (its refusal drops what they screened)."""
+        evidence: list[dict[str, Any]] = []
+        queried: list[dict[str, Any]] = []
+
+        async def answer() -> GuardVerdict | None:
+            if not isinstance(output, RAGOutput):
+                return None
+            return await self._screen_output(
+                output.answer, records, grounding=grounding
+            )
+
+        tasks = (
+            asyncio.ensure_future(answer()),
+            asyncio.ensure_future(
+                self._screen_synthesized(
+                    output.search_results, evidence, plan_texts=plan_texts
+                )
+            ),
+            asyncio.ensure_future(self._query_text_screening(output, queried)),
+        )
+        async with cancel_on_exit(tasks):
+            verdict, synthesized, screened = await asyncio.gather(*tasks)
+        output.search_results = synthesized
+        self._apply_query_texts(output, screened)
+        return verdict, evidence + queried
+
     async def _screen_output(
         self,
         answer: str,
@@ -2846,18 +2890,17 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             }
         )
 
-    async def _screen_query_texts(
+    async def _query_text_screening(
         self, output: RAGOutput | SearchOutput, records: list[dict[str, Any]]
-    ) -> None:
-        """Screen ``output``'s model-written query texts (the rewritten and
-        translated query, the entities and LightRAG keywords, and the search
-        query built from them; ``_PROCESSED_QUERY_MODEL_TEXT``) as a
-        synthesized result is: masked, or left out when refused (a refused
-        searched query reads as the original). The original query is the
-        user's own, screened as input. One check reads them all; only when
-        it intervenes is each checked on its own."""
+    ) -> dict[str, str | None] | None:
+        """What the output guardrail makes of ``output``'s model-written
+        query texts (the rewritten and translated query, the entities and
+        LightRAG keywords, and the search query built from them;
+        ``_PROCESSED_QUERY_MODEL_TEXT``), screened as a synthesized result
+        is (``_screen_texts``; ``None``: nothing to replace). The original
+        query is the user's own, screened as input."""
         if not self._screen_outputs:
-            return
+            return None
         processed, query = output.processed_query, output.search_results.query
         original = processed.original_query
         texts = [
@@ -2870,9 +2913,19 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             )
             if text != original
         ]
-        screened = await self._screen_texts(texts, records)
+        return await self._screen_texts(texts, records)
+
+    @staticmethod
+    def _apply_query_texts(
+        output: RAGOutput | SearchOutput, screened: dict[str, str | None] | None
+    ) -> None:
+        """``output``'s query texts as screened (``_query_text_screening``):
+        masked, or left out when refused (a refused searched query reads as
+        the original)."""
         if screened is None:
             return
+        processed, query = output.processed_query, output.search_results.query
+        original = processed.original_query
         output.processed_query = _replace_query_texts(
             processed, _PROCESSED_QUERY_MODEL_TEXT, screened, refused=original
         )
