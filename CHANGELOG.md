@@ -937,9 +937,10 @@ From a `main` checkout (formats and keys no release had):
   the namespace has an entities index (buckets `tree_text_units`, `tree_summaries`, `tree_graph_summaries`,
   `tree_graph_text_units`), reranks them together, keeps `max_nodes_per_level` summaries of a level and expands each
   to `expand_children` of its passages; a summary is reported with its lineage, keeps a document filter only when
-  all its documents share it, and goes, with every summary above it, when one of its text units is removed. Under a
-  filter key the text units store and the summary index does not (`community_ids`, `source_kinds`; not an entity
-  key, which leaves both unfiltered alike, #613) `tree` reads no summary (`metadata.summaries_skipped_for_filters`)
+  all its documents share it, and goes, with every summary above it, when one of its text units is removed (also
+  one it lists as a child past its lineage cut, in a removal and a full build's sweep alike). Under a filter key
+  the text units store and the summary index does not (`community_ids`, `source_kinds`; not an entity key, which
+  leaves both unfiltered alike, #613) `tree` reads no summary (`metadata.summaries_skipped_for_filters`)
   where it returned them unfiltered, the graph buckets run where the queried namespace holds the entities index
   (not where the config would build one), and their text units are the best-weighted that pass the filters (#607).
   Settings: `indexing.summary_tree`, `search.tree_search`, `search.token_manager.type_budgets.summary`; the
