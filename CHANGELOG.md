@@ -1617,10 +1617,10 @@ From a `main` checkout (formats and keys no release had):
   counts follow-ups by `report_selection` (#323, #347, #541, #567).
 - `auto` routes with the fast model, falls back to the first routable strategy, and starts the extractions its
   strategies read alongside the router call (one round trip fewer; the unread one still runs and is billed); query
-  entities and keywords are cached (`search.query_extraction_cache_size`, 1024; 0 turns it off), so `--repeats` and
-  comparison arms pay the extraction once; short-answer calls ask for `search.output_ceilings` (and
-  `evaluation.answer_span_output_ceiling`) tokens, never below the thinking budget plus 1024 (#125, #132, #212,
-  #224, #347, #525, #530).
+  entities and keywords are cached (`search.query_extraction_cache_size`, 1024; 0 turns it off) per index namespace,
+  so `--repeats` and comparison arms (on any namespace) pay the extraction once; short-answer calls ask for
+  `search.output_ceilings` (and `evaluation.answer_span_output_ceiling`) tokens, never below the thinking budget plus
+  1024 (#125, #132, #212, #224, #347, #525, #530).
 - `auto` may route a question that chains facts through an entity it does not name to `iterative` (over `mix`),
   about 10 s slower at the median for those; it starts the extractions a wrapper's base reads alongside the router.
   Leave `iterative` out of `search.auto_routable_strategies` to opt out (#598).

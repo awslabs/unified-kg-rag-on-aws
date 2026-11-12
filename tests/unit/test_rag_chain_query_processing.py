@@ -132,11 +132,11 @@ async def test_query_extractions_use_the_language_the_index_was_built_in(
     chain = _chain(config)
     seen: dict[str, str] = {}
 
-    async def entities(query, language, config=None):
+    async def entities(query, language, config=None, namespace=None):
         seen["entities"] = language
         return []
 
-    async def keywords(query, language, config=None):
+    async def keywords(query, language, config=None, namespace=None):
         seen["keywords"] = language
         return None
 

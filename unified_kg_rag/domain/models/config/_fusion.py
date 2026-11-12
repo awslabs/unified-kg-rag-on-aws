@@ -185,7 +185,13 @@ class RerankingConfig(BaseModel):
     top_k: int = Field(
         default=100,
         ge=1,
-        description=("Fused candidates sent to the reranker."),
+        description=(
+            "Fused candidates sent to the reranker, the best fused first; "
+            "the others are dropped from the result (their fused scores do "
+            "not compare with the reranker's), so keep it at least the "
+            "result width a strategy asks for (top_k x retrieval_multiplier, "
+            "or the sum of its per-type quotas)."
+        ),
     )
     required: bool = Field(
         default=False,

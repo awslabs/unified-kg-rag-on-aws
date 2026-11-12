@@ -18,7 +18,7 @@ from collections.abc import (
     Collection,
     Iterator,
 )
-from contextlib import AbstractContextManager, aclosing, contextmanager, nullcontext
+from contextlib import AbstractContextManager, aclosing, nullcontext
 from typing import Any, Literal, TypeVar, cast
 
 from langchain_core.exceptions import OutputParserException
@@ -107,6 +107,15 @@ from unified_kg_rag.application.retrieval import (
     filter_validation,
     methodology_check,
     query_processing,
+)
+
+# The extraction cache's scope lives with the extraction key; re-exported
+# for the evaluation runners.
+from unified_kg_rag.application.retrieval.query_processing import (
+    _EXTRACTION_SCOPE,
+)
+from unified_kg_rag.application.retrieval.query_processing import (
+    extraction_cache_scope as extraction_cache_scope,
 )
 from unified_kg_rag.domain.ingestion.cache_keys import index_language
 from unified_kg_rag.domain.ingestion.methodologies import NamespaceHoldings
@@ -1227,19 +1236,29 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             )
 
     async def _extract_query_entities(
-        self, query: str, target_language: str, config: RunnableConfig | None
+        self,
+        query: str,
+        target_language: str,
+        config: RunnableConfig | None,
+        *,
+        namespace: str | None = None,
     ) -> list[str]:
         """``query_processing.extract_query_entities``."""
         return await query_processing.extract_query_entities(
-            self, query, target_language, config
+            self, query, target_language, config, namespace=namespace
         )
 
     def _extraction_key(
-        self, prompt_class: type[BasePrompt], query: str, target_language: str
+        self,
+        prompt_class: type[BasePrompt],
+        query: str,
+        target_language: str,
+        *,
+        namespace: str | None = None,
     ) -> tuple[str, ...]:
         """``query_processing.extraction_key``."""
         return query_processing.extraction_key(
-            self, prompt_class, query, target_language
+            self, prompt_class, query, target_language, namespace=namespace
         )
 
     def _cached_extraction(self, key: tuple[str, ...]) -> Any:
@@ -1255,10 +1274,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         query: str,
         target_language: str,
         config: RunnableConfig | None = None,
+        *,
+        namespace: str | None = None,
     ) -> tuple[list[str], list[str]]:
         """``query_processing.extract_dual_keywords``."""
         return await query_processing.extract_dual_keywords(
-            self, query, target_language, config
+            self, query, target_language, config, namespace=namespace
         )
 
     async def _load_memory_step(self, state: dict[str, Any]) -> dict[str, Any]:
@@ -1876,22 +1897,45 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         return state
 
     @staticmethod
+    def _section_sources(
+        state: dict[str, Any], optimized: OptimizedContext
+    ) -> list[Source]:
+        """The reported source of each section of ``optimized``, the answer
+        context (``_section_source``), in section order: built once a query
+        and kept in ``state``, as both its citations and its sources read
+        them (each built them all, the hybrid scorer's widest contexts
+        twice)."""
+        kept = state.get(_SECTION_SOURCES)
+        if kept is not None and kept[0] is optimized:
+            entries: list[Source] = kept[1]
+            return entries
+        results: list[RetrievalResult] = state["search_results"].results
+        entries = [
+            GraphRAGChain._section_source(section, results)
+            for section in optimized.sections
+        ]
+        state[_SECTION_SOURCES] = (optimized, entries)
+        return entries
+
+    @staticmethod
     def _context_citations(state: dict[str, Any]) -> list[Citation]:
         """One citation per numbered section of the answer context, in
         marker order (documents of graph sections not yet resolved)."""
         optimized: OptimizedContext | None = state.get("optimized_context")
         if optimized is None or GraphRAGChain._context_is_empty(state):
             return []
-        results: list[RetrievalResult] = state["search_results"].results
-        cited: list[Citation] = []
-        for section in sorted(
-            (s for s in optimized.sections if s.marker is not None),
-            key=lambda s: s.marker or 0,
-        ):
-            entry = GraphRAGChain._section_source(section, results)
-            assert section.marker is not None
-            cited.append(citations.citation_from_entry(section.marker, entry))
-        return cited
+        entries = GraphRAGChain._section_sources(state, optimized)
+        numbered = sorted(
+            (
+                (section.marker, entry)
+                for section, entry in zip(optimized.sections, entries, strict=True)
+                if section.marker is not None
+            ),
+            key=lambda pair: pair[0],
+        )
+        return [
+            citations.citation_from_entry(marker, entry) for marker, entry in numbered
+        ]
 
     async def _answer_with_citations_step(
         self, state: dict[str, Any], config: RunnableConfig | None = None
@@ -1910,6 +1954,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             raise
         await lineage
         answered["citations"] = read_state["citations"]
+        if _SECTION_SOURCES in read_state:
+            answered[_SECTION_SOURCES] = read_state[_SECTION_SOURCES]
         return answered
 
     async def _citations_step(self, state: dict[str, Any]) -> dict[str, Any]:
@@ -2009,7 +2055,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             sources = []
         else:
             sources = GraphRAGChain._sources_from_sections(
-                optimized.sections, sr.results
+                optimized.sections,
+                sr.results,
+                entries=GraphRAGChain._section_sources(state, optimized),
             )
 
         metadata = {
@@ -2111,27 +2159,33 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
 
     @staticmethod
     def _sources_from_sections(
-        sections: list[ContextSection], results: list[RetrievalResult]
+        sections: list[ContextSection],
+        results: list[RetrievalResult],
+        *,
+        entries: list[Source] | None = None,
     ) -> list[Source]:
         """Map the budgeter's selected sections back to their results.
 
         Reported in retrieval-rank order (the selection itself is grouped by
         section type). A section without a usable ``result_index`` (a custom
         token manager) is reported from the section alone. Synthesized results
-        are skipped (see ``_format_output_step``).
+        are skipped (see ``_format_output_step``). ``entries``: each
+        section's source, already built (``_section_sources``).
         """
+        if entries is None:
+            entries = [GraphRAGChain._section_source(s, results) for s in sections]
 
-        def _rank(section: ContextSection) -> int:
-            index = section.result_index
+        def _rank(pair: tuple[ContextSection, Source]) -> int:
+            index = pair[0].result_index
             return index if index is not None else len(results)
 
         sources: list[Source] = []
-        for section in sorted(sections, key=_rank):
+        for section, entry in sorted(zip(sections, entries, strict=True), key=_rank):
             if GraphRAGChain._is_synthesized(
                 GraphRAGChain._section_result(section, results).metadata
             ):
                 continue
-            sources.append(GraphRAGChain._section_source(section, results))
+            sources.append(entry)
         return sources
 
     @staticmethod
@@ -3295,29 +3349,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             await self._save_memory(self._format_output_step(state), rag_input)
 
 
-# The query extraction cache's scope (``extraction_cache_scope``): part of
-# every entry's key, so the queries of one scope share no extraction with
-# those of another ("" outside one).
-_EXTRACTION_SCOPE: contextvars.ContextVar[str] = contextvars.ContextVar(
-    "kg_rag_extraction_scope", default=""
-)
-
-
-@contextmanager
-def extraction_cache_scope(scope: str) -> Iterator[None]:
-    """Key the query extractions cached inside the block by ``scope`` too.
-
-    ``run-eval --repeats`` answers each repeat in a scope of its own, so a
-    repeat extracts the query's entities and keywords again instead of
-    reusing the first repeat's (the repeats then sample the extraction's
-    run-to-run variance), while the arms of one repeat still share them.
-    Tasks started inside the block inherit it.
-    """
-    token = _EXTRACTION_SCOPE.set(scope)
-    try:
-        yield
-    finally:
-        _EXTRACTION_SCOPE.reset(token)
+# The state key of the answer context's section sources, with the context
+# they were built from (``GraphRAGChain._section_sources``).
+_SECTION_SOURCES = "_section_sources"
 
 
 class _ExtractionCache:

@@ -11,7 +11,7 @@ import tempfile
 import time
 import uuid
 from collections.abc import Callable, Iterable
-from contextlib import AbstractContextManager, nullcontext
+from contextlib import AbstractContextManager
 from datetime import datetime
 from pathlib import Path
 from types import ModuleType
@@ -228,6 +228,10 @@ def _saved_results_module() -> ModuleType:
 
     return saved_results
 
+
+# The query extraction cache scope of the evaluation runs that reuse their
+# extractions (_extraction_scope_name).
+_REUSED_EXTRACTIONS = "run-eval"
 
 # Imported on first use: the chain and the evaluation manager load LangChain
 # and every search strategy (seconds), which --help and a refused command
@@ -2083,16 +2087,19 @@ class EvaluationRunner:
             or self.config.evaluation.repeat_extractions
         )
 
-    def _extraction_scope_name(self, repeat: int) -> str | None:
+    def _extraction_scope_name(self, repeat: int) -> str:
         """The query extraction cache scope of ``repeat``: its own with
-        several repeats resampling their extractions, else ``None``."""
+        several repeats resampling their extractions, else the one every
+        evaluation run of the chain shares (``_REUSED_EXTRACTIONS``: a
+        later run, ``--from-results`` completing one, reuses them). In
+        either the arms share their extractions whatever index namespace
+        each reads (``query_processing.extraction_key``)."""
         if self.args.repeats > 1 and self._repeat_extractions() == "resample":
             return f"{self.run_id}/repeat-{repeat}"
-        return None
+        return _REUSED_EXTRACTIONS
 
     def _extraction_scope(self, repeat: int) -> AbstractContextManager[None]:
-        scope = self._extraction_scope_name(repeat)
-        return nullcontext() if scope is None else extraction_cache_scope(scope)
+        return extraction_cache_scope(self._extraction_scope_name(repeat))
 
     async def _answer_interleaved(
         self,

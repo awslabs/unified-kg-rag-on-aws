@@ -235,8 +235,10 @@ class SearchConfig(BaseModel):
         ge=0,
         description=(
             "Query entity and keyword extractions a chain keeps in memory, "
-            "keyed by the question, the target language, the model and the "
-            "prompt text (a custom_prompts override is a new key), least "
+            "keyed by the question, the target language, the model, the "
+            "prompt text (a custom_prompts override is a new key) and the "
+            "index namespace (no namespace reads by a cache hit what another "
+            "was asked; a run-eval run's arms share across namespaces), least "
             "recently used dropped first. A repeated question (run-eval "
             "--repeats, the arms of a strategy comparison, a retry) reuses "
             "the extraction instead of calling the model again, so every "
