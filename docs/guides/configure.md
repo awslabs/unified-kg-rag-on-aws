@@ -88,6 +88,9 @@ into a WARNING.
   exports `AWS_REGION` (SSO helpers and CloudShell do) does not move a file's
   region; `AWS_REGION` then also moves Bedrock calls while
   `aws.bedrock.region_name` is `null`. `AWS_DEFAULT_REGION` is not read.
+- `UKR_PLUGINS` names the plugin modules a CLI loads instead of the
+  installed `unified_kg_rag.plugins` entry points
+  ([Loading plugins](./extend.md#loading-plugins)).
 - `UKR_SOURCE_DIRECTORY`, `UKR_PIPELINE_ID` (one underscore: not config
   keys) and `UKR_METRICS_ENVIRONMENT` are read by `run-ingestion`
   ([CLI Reference](../reference/cli.md#run-ingestion)). The variables the CDK tasks get

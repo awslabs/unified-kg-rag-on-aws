@@ -55,6 +55,7 @@ from unified_kg_rag.adapters.seed_sources import (
     get_seed_source,
     seed_options,
 )
+from unified_kg_rag.application.plugins import load_plugins
 from unified_kg_rag.domain.ingestion.seed_graph import (
     SeedConversion,
     SeedConversionSettings,
@@ -108,7 +109,16 @@ def build_providers(
             ``token_counter_factory=``, ``graph_indexer_factory=``,
             ``vector_indexer_factory=``, ``retriever_builders=``,
             ``doc_status=``); each wins over the configured kind.
+
+    The installed plugins are loaded first (``application.plugins``: the
+    ``unified_kg_rag.plugins`` entry points, or ``UKR_PLUGINS``), once per
+    process, so a kind one registers can be selected.
+
+    Raises:
+        ConfigurationError: A plugin cannot be loaded, or a selected kind
+            has no registered provider.
     """
+    load_plugins()
     selected = check_providers(config)
     logger.info(
         "Providers (backend '%s'): %s",

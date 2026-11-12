@@ -1043,6 +1043,11 @@ From a `main` checkout (formats and keys no release had):
   that full build (a reset) also deletes the namespace's graph when a graph endpoint is configured (#612). See
   [methodology profiles](docs/concepts/overview.md#methodology-profiles) and [Design
   §4.6](docs/design.md#46-methodology-profiles).
+- Plugins for the CLIs, the MCP server and the console: the entry points of the `unified_kg_rag.plugins` group (or the
+  modules `UKR_PLUGINS` names instead) are imported once per process, before a CLI loads its config and in
+  `build_providers`, so a provider kind, schema or seed source, renderer or file loader a plugin registers is
+  selectable from the deployed image without a fork; one that cannot be loaded fails naming it. See [Loading
+  plugins](docs/guides/extend.md#loading-plugins).
 - Local mode: the `providers` section and provider registry (`@register_provider`), Ollama and OpenAI-compatible
   models, a sentence-transformers cross-encoder reranker, embedded SQLite graph and vector stores and registry, the
   `local` extra and an Ollama service in `docker/compose.local.yaml` (#154, #209, #271-#273). The cross-encoder is

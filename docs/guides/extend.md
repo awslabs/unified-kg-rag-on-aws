@@ -7,7 +7,7 @@ plugin, or a search strategy or evaluator in-tree.
 
 This section is the single reference for extending the framework. Extensions come in two kinds:
 
-- **Plugins**, which live in your own package and import only from `unified_kg_rag` (§2.5): backends through the provider registry or constructor injection, and renderers, parsers, schema sources and seed sources through their registries. None needs a change to the framework's code.
+- **Plugins**, which live in your own package and import only from `unified_kg_rag` (§2.5): backends through the provider registry or constructor injection, and renderers, parsers, schema sources and seed sources through their registries. None needs a change to the framework's code, and the CLIs, the MCP server and the console load them from an entry point ([Loading plugins](#loading-plugins)).
 - **In-tree changes**, made in a fork or contributed upstream: a search strategy and an evaluator. `register_strategy` is keyed by the closed `SearchStrategy` enum, which `RAGInput.search_strategy`, `--search-strategy` and `search.auto_routable_strategies` validate against, so a new strategy adds an enum member; an evaluator adds an `EvaluatorType` member and a branch in `EvaluationManager._resolve_evaluator_class`. The registry still keeps the chain's dispatch code unchanged.
 
 - **New search strategy** (in-tree): Add a `SearchStrategy` enum member (`domain/models/retrieval.py`; the CLI choices follow it) + subclass `BaseSearchStrategy` + `@register_strategy(SearchStrategy.X, required_roles=(...), query_inputs=frozenset({QueryInput.ENTITIES}))` + export from `adapters/search_strategies/__init__.py` + an entry in `STRATEGY_ROUTING_GUIDE` (`domain/prompts/retrieval.py`; a unit test requires one for every strategy but `auto`). `query_inputs` declares the query-side LLM extractions it reads (`ENTITIES` for `entity_focus`, `DUAL_KEYWORDS` for `hl_keywords`/`ll_keywords`); the chain skips the rest. Set the class attribute `methodology` (a `Methodology`: the one whose index artifacts it reads, §4.6) so a query on a namespace that does not hold it is refused before any model call and `auto` routes to it only where it is held; a new methodology adds a `Methodology` member, its `METHODOLOGY_PROFILES` entry (required and optional `IndexArtifact`s) and, for an artifact no stage builds yet, the stage and its `ARTIFACT_STAGES`/`ARTIFACT_PRODUCERS` entries (`domain/ingestion/methodologies.py`; a corpus-wide artifact also joins `CORPUS_WIDE_ARTIFACTS`). A strategy that runs another one's search (as `iterative` runs `local` or `mix`) passes `wraps=` a function of the config naming it: the chain then extracts what that one reads and packs its context as that one does (`wrapped_strategy`), the wrapper builds its base through `get_strategy_spec(...).strategy_class`, not by name, and it declares no `methodology` of its own: it reads the wrapped one's (`strategy_registry.strategy_methodology`). Fetch by id through `BaseSearchStrategy._fetch_by_ids` (batched by the live limits), and cut or batch any other list filter (`terms`) to the live `max_terms_count` from `aindex_limits` of the index it reads: a longer list is refused (`InvalidFilterError`). Override `filtered_index_prefixes` with the indexes it searches with the caller's filters, so a filter key none of them declares is refused instead of dropped (the default checks every index), and `filtered_retrievers` with the retrievers it applies them to (the default: every one it holds; `mix` and `hybrid` leave out the graph without graph expansion); build each sub-search's filters with `_scoped_filters`, which keeps the caller's and intersects a key both set (`id`/`source_id`/`target_id`: the scope's values the caller allows; the chain refuses a range on them); `reserved_filter_keys` names the keys it scopes by with values a caller value cannot be intersected with (`global`: its cut ranges or browse from the roots, and the multi-valued `community_ids`, where a text unit in a caller's community and a scope's one passes both filters but the two lists may not intersect), which the chain refuses; a strategy that may answer with another one's search in its place (`structured`'s fallback) names it in `filter_delegates`, and the chain checks the filter against that one too. A strategy that keeps a record of its run in `SearchResult.metadata` declares it with `run_record=RunRecord(key, model_text=(...))`, the dotted paths of the model-written text in it (`iterative`: `searched`, `verdicts.next_queries`, ...): the chain copies it into the answer's metadata, screens that text with the output guardrail, drops the record from a refused answer, and evaluation keeps it per answer (`EvaluationResult.strategy_records`); model text in undeclared metadata skips the guardrail. No edit to `rag_chain`; add it to `search.auto_routable_strategies` if `auto` may pick it. Regenerate the references (the new member is a `--search-strategy` choice and a config value): `uv run python scripts/gen_cli_reference.py` and `uv run python scripts/gen_config_reference.py`. A minimal strategy, a document search fused and reranked like `simple` (`adapters/search_strategies/simple_search.py` is the full version, with the index gates):
@@ -61,7 +61,7 @@ This section is the single reference for extending the framework. Extensions com
   ```
 - **New storage/LLM backend**: Implement the relevant port, then either register a builder for a new `providers.<role>.kind` with `@register_provider(ProviderRole.X, "kind")` (`adapters/provider_registry.py`) and select it in config, or pass the port to the constructor that uses it (see "Custom backends" below). Do not hardcode it into a manager's `__init__`.
 - **New evaluator** (in-tree): Subclass `BaseGraphRAGEvaluator` (`from unified_kg_rag.adapters.evaluators.base import BaseGraphRAGEvaluator`) + add a branch in `EvaluationManager._resolve_evaluator_class` + an `EvaluatorType` enum. Regenerate the configuration reference, whose `evaluation.enabled_evaluators` lists the types: `uv run python scripts/gen_config_reference.py`.
-- **New renderer**: Subclass `BaseRenderer` + `@register_renderer("name")`. Registration happens on import: `run-visualization` sees those that `adapters/renderers/__init__.py` imports. Override `check_dependencies` to fail fast when an optional package the renderer imports is missing, and set `needs_centrality = True` when `render` reads `RenderContext.centrality`: `run-visualization` computes the centrality metrics (betweenness alone is O(V·E)) only when a selected renderer sets it. Regenerate the CLI reference, where the name is a `--renderers` choice: `uv run python scripts/gen_cli_reference.py` (and `uv run python scripts/gen_config_reference.py` when it adds a `graph.visualization` settings section).
+- **New renderer**: Subclass `BaseRenderer` + `@register_renderer("name")`. Registration happens on import: `run-visualization` sees those that `adapters/renderers/__init__.py` imports and those of the [plugins it loads](#loading-plugins). Override `check_dependencies` to fail fast when an optional package the renderer imports is missing, and set `needs_centrality = True` when `render` reads `RenderContext.centrality`: `run-visualization` computes the centrality metrics (betweenness alone is O(V·E)) only when a selected renderer sets it. Regenerate the CLI reference, where the name is a `--renderers` choice: `uv run python scripts/gen_cli_reference.py` (and `uv run python scripts/gen_config_reference.py` when it adds a `graph.visualization` settings section).
 - **New parser / file format**: `ParserFactory.register_loader(".ext", MyLangChainLoader, loader_kwargs=..., file_type_name=...)` — any `langchain_core` `BaseLoader` subclass (the built-in loaders in `adapters/ingestion/file_loaders.py` are examples); no edit to the factory, and the extension is then auto-discovered + parseable. Override a built-in by registering its extension.
 - **New schema source** (an ontology format or service): register a loader
   for a new `schema_source.kind` with `@register_schema_source("kind")`
@@ -248,9 +248,8 @@ This section is the single reference for extending the framework. Extensions com
 
   selected with `schema_source: {kind: ontology_service, path:
   "https://ontology.example.com/v1", options: {graph: products},
-  secret_arn: ...}`. Registration happens on import, and the CLIs import
-  only the built-in sources, so a run with a custom source starts from
-  Python after importing its module. Nothing else changes: start-up writes
+  secret_arn: ...}`. Registration happens on import: a library caller imports
+  its module, and the CLIs load it as a [plugin](#loading-plugins). Nothing else changes: start-up writes
   the result into the inline keys, the config validates it (unique labels,
   patterns naming declared types), and the content keys the caches, so the
   snapshot a run used is the one it is keyed by. Raise `SchemaSourceError`
@@ -358,8 +357,8 @@ This section is the single reference for extending the framework. Extensions com
 
   selected with `seed_graphs: [{name: catalog, kind: ontology_service,
   path: "https://ontology.example.com/v1", options: {graph: products},
-  secret_arn: ...}]`, from Python after importing the module (the CLIs
-  import only the built-in sources).
+  secret_arn: ...}]`, from Python after importing the module, or from the
+  CLIs once it is a [plugin](#loading-plugins).
 
   **Copy, or federate.** Such a loader copies: the snapshot becomes part
   of the graph, embedded, clustered and keyed like the rest, and its IRIs
@@ -374,6 +373,36 @@ This section is the single reference for extending the framework. Extensions com
 - **New config section**: Define a Pydantic `BaseModel` → attach it to its parent via `Field(default_factory=...)` → describe every field and regenerate `docs/reference/configuration.md`; add a key to `config-template.yaml` only when most deployments set it (see §12).
 - **Shared concepts have one owner.** A new strategy, store, evaluator or surface reuses what the framework already does once: read a stored item's file name or id list through `domain/retrieval/source_fields.py`, merge lineages with `domain/retrieval/lineage.merge`, classify scripts with `shared/utils/scripts.py`, detect a language with `domain/languages`, parse model JSON with `shared/utils/model_output.parse_model_object`, read the degraded steps with `DegradationReport.of`, compare a filter's range with `domain/retrieval/filters.py`, show an answer from its `AnswerView`, resolve a namespace with `resolve_namespace`, and write a file with `shared/utils/files.atomic_write_text` (or `atomic_open` for a stream). `tests/unit/test_single_owner_guards.py` fails on a copy of any of them (an alias, a `from ... import` or a relative import does not hide one) and names the owner to call; [CONTRIBUTING.md](../../CONTRIBUTING.md#single-owner-guards) says how to allow a place that is not a copy or to guard a new concept.
 
+
+### Loading plugins
+
+A plugin registers on import, so a process must import it before it reads
+a config that selects it. The CLIs (every `run-*` and `prepare-benchmark`,
+the deployed data-plane image included), `run-mcp-server`, `run-console` and
+any `build_providers` call (so `GraphRAGChain` and `DataIngestionPipeline`)
+load the plugins once per process, before the config is loaded:
+
+- every entry point of the `unified_kg_rag.plugins` group an installed
+  distribution declares, in its `pyproject.toml`:
+
+  ```toml
+  [project.entry-points."unified_kg_rag.plugins"]
+  my_backend = "my_package.plugin"            # importing the module registers
+  my_source = "my_package.sources:register"   # or a function, called with no argument
+  ```
+
+- or, with `UKR_PLUGINS` set, only the modules it names
+  (`UKR_PLUGINS=my_package.plugin,my_package.sources:register`; empty:
+  none), for a plugin that is on `PYTHONPATH` but not installed, or to
+  leave an installed one out.
+
+Installing the distribution in the same environment (`pip install
+my-backend` in a derived image, `uv pip install -e ../my-backend` beside a
+checkout) is all a CLI needs: `providers.llm.kind: my_server` then selects
+it. A plugin that cannot be imported fails the run before any work with a
+`ConfigurationError` naming it (a CLI exits 2). Import from
+`unified_kg_rag` only, and register at import time; the entry point must
+not do work beyond registering.
 
 ### Custom backends (run without AWS)
 

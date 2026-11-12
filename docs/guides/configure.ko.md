@@ -81,6 +81,8 @@ Bedrock 임베딩, 질의 시점 호출)에 적용되고, 기본값이 다른 �
   CloudShell이 그렇게 함) 파일에 적은 리전은 바뀌지 않습니다. 이때
   `aws.bedrock.region_name`이 `null`이면 `AWS_REGION`이 Bedrock 호출 리전도 정합니다.
   `AWS_DEFAULT_REGION`은 읽지 않습니다.
+- `UKR_PLUGINS`는 CLI가 설치된 `unified_kg_rag.plugins` 진입점(entry point) 대신 불러올
+  플러그인 모듈을 지정합니다([Loading plugins](./extend.md#loading-plugins), 영문).
 - `UKR_SOURCE_DIRECTORY`, `UKR_PIPELINE_ID`(설정 키가 아니므로 밑줄 하나)와
   `UKR_METRICS_ENVIRONMENT`는 `run-ingestion`이 읽습니다([CLI 레퍼런스](../reference/cli.md#run-ingestion), 영문).
   CDK 태스크가 받는 변수는

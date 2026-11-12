@@ -78,10 +78,15 @@ def load_cli_config(args: argparse.Namespace) -> Config:
 
     The settings nothing reads are warned of once the flags are applied: a
     ``base_url`` the file sets is read under ``--backend local``, not ignored.
+    The plugins are loaded first (``application.plugins``), so a kind or a
+    format a plugin registers is known to every step of the run.
     """
     # Imported here: the provider flags' module loads the composition root,
     # which --help and a refused command line do not need.
     from unified_kg_rag.application.cli.provider_args import apply_provider_arguments
+    from unified_kg_rag.application.plugins import load_plugins
+
+    load_plugins()
 
     path = getattr(args, "config_path", None)
     loaded = ConfigLoader(
