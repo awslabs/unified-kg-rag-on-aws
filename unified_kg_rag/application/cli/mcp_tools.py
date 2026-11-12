@@ -122,8 +122,9 @@ class SupportingContent(BaseModel):
     )
     name: str | None = Field(
         default=None,
-        description="The entity's or report's name, a relationship as 'A -> B', "
-        "a query_result's plan description",
+        description="The item's name (an entity's, report's, claim's or "
+        "summary's), a relationship as 'A -> B', a query_result's plan "
+        "description; none for a text record (document_name names its file)",
     )
     type: str | None = Field(
         default=None, description="The entity's or relationship's type"
@@ -302,6 +303,10 @@ class SchemaToolResult(BaseModel):
     strategies: list[str] = Field(
         description="The strategies kg_search and kg_answer can run on it"
     )
+    auto_routes: list[str] = Field(
+        default_factory=list,
+        description="Of those, the ones auto routes among on it",
+    )
     build: dict[str, Any] | None = Field(
         default=None, description="The last ingestion run that wrote it"
     )
@@ -392,7 +397,8 @@ def _record(
     }
     if len(view.text_unit_ids) > MAX_TEXT_UNIT_IDS:
         attributes["text_unit_count"] = len(view.text_unit_ids)
-    named = kind in ("entity", "relationship", "community", "query_result")
+    # Every item's title names it but a passage's, its file name (file_name).
+    named = kind != "text"
     return SupportingContent(
         rank=view.rank,
         kind=kind,
@@ -1068,12 +1074,19 @@ class KnowledgeGraphTools:
             described = await graph_lookup.describe_namespace(
                 self.chain, suffix, schema=self._schema
             )
-            offered = set(self.strategies)
+            offered = {s.value for s in self.strategies}
             return SchemaToolResult(
                 namespace=described.namespace,
-                methodologies=[m.value for m in described.methodologies],
-                artifacts=[a.value for a in described.artifacts],
-                strategies=[s.value for s in described.strategies if s in offered],
+                methodologies=described.methodologies,
+                artifacts=described.artifacts,
+                # auto first, when it has a strategy to route to.
+                strategies=[
+                    s
+                    for s in [SearchStrategy.AUTO.value] * bool(described.strategies)
+                    + described.strategies
+                    if s in offered
+                ],
+                auto_routes=[s for s in described.auto_routes if s in offered],
                 build=described.build,
                 extraction_schema=described.schema_,
                 schema_error=described.schema_error,

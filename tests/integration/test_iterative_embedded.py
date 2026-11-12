@@ -166,7 +166,7 @@ def _build(
     config.processing.translation.source_language = chain.language
     config.processing.translation.target_language = chain.language
     # One hop from the first company reaches the carrier, not the depot.
-    config.indexing.neptune.max_hops = 1
+    config.search.graph_expansion.max_hops = 1
     # The base round must miss the last hop: the support order keeps to the
     # entities one hop reached (the PageRank's passage search of the
     # question finds the depot's passage on this tiny corpus).

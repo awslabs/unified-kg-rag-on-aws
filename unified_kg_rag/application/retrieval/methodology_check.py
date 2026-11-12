@@ -14,16 +14,22 @@ chain they check for, like ``filter_validation``.
 from __future__ import annotations
 
 import time
-from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any, Literal
+
+from pydantic import BaseModel, Field
 
 from unified_kg_rag.adapters.retrieval.strategy_registry import (
     get_strategy_spec,
+    routable_strategies,
     serves,
     strategy_artifacts,
     strategy_methodology,
 )
-from unified_kg_rag.domain.ingestion.methodologies import held_artifacts
+from unified_kg_rag.domain.ingestion.methodologies import (
+    NamespaceHoldings,
+    namespace_holdings,
+)
 from unified_kg_rag.domain.models import (
     Config,
     IndexArtifact,
@@ -52,25 +58,25 @@ HELD_TTL_SECONDS = 300.0
 async def namespace_artifacts(
     chain: GraphRAGChain, suffix: str | None, *, refresh: bool = False
 ) -> frozenset[IndexArtifact]:
-    """The index artifacts the namespace of ``suffix`` holds: from its build
-    record, else (no record, one from before methodology profiles, a backend
-    without index metadata, an unreadable one) those a run of the config
-    builds (``held_artifacts``)."""
-    return (await _namespace_holding(chain, suffix, refresh=refresh))[0]
+    """The index artifacts the namespace of ``suffix`` holds
+    (``read_holdings``)."""
+    return (await read_holdings(chain, suffix, refresh=refresh)).artifacts
 
 
-async def _namespace_holding(
-    chain: GraphRAGChain, suffix: str | None, *, refresh: bool
-) -> tuple[frozenset[IndexArtifact], list[str] | None]:
-    """``namespace_artifacts`` and the source scopes the build record names
-    (``IndexBuildRecord.source_scopes``; None when it names none, is not
-    read again here or cannot be read)."""
+async def read_holdings(
+    chain: GraphRAGChain, suffix: str | None, *, refresh: bool = False
+) -> NamespaceHoldings:
+    """What the namespace of ``suffix`` holds (``namespace_holdings``): from
+    its build record, else (no record, one from before methodology
+    profiles, a backend without index metadata, an unreadable one) what a
+    run of the config builds. Kept per namespace for ``HELD_TTL_SECONDS``
+    unless ``refresh``; a failed read is not kept."""
     key = resolve_namespace(chain.config, suffix)
     now = time.monotonic()
     with chain._cache_lock:
         cached = chain._held_artifacts.get(key)
     if cached is not None and not refresh and now - cached[0] < HELD_TTL_SECONDS:
-        return cached[1], None
+        return cached[1]
     try:
         record = await chain.aread_build_record(key)
     except Exception as e:  # noqa: BLE001 - the record is optional
@@ -78,14 +84,11 @@ async def _namespace_holding(
         # for this query only: a cached fallback would refuse (or serve)
         # by the config for HELD_TTL_SECONDS after the store recovered.
         logger.debug("Reading the build record of '%s' failed: %s", key, e)
-        return held_artifacts(None, chain.config), None
-    held = held_artifacts(record, chain.config)
+        return namespace_holdings(None, chain.config)
+    holdings = namespace_holdings(record, chain.config)
     with chain._cache_lock:
-        chain._held_artifacts[key] = (now, held)
-    scopes = record.get("source_scopes") if isinstance(record, Mapping) else None
-    if not isinstance(scopes, list):
-        return held, None
-    return held, [s for s in scopes if isinstance(s, str)]
+        chain._held_artifacts[key] = (now, holdings)
+    return holdings
 
 
 async def check_strategy_methodology(
@@ -102,9 +105,10 @@ async def check_strategy_methodology(
     """
     for refresh in (False, True):
         # The scopes of the last, fresh read advise a refusal.
-        artifacts, scopes = await _namespace_holding(chain, suffix, refresh=refresh)
-        held = methodologies_holding(artifacts)
-        if _served(chain, strategy, artifacts, held):
+        holdings = await read_holdings(chain, suffix, refresh=refresh)
+        artifacts, scopes = holdings.artifacts, holdings.scopes
+        held = holdings.methodologies
+        if strategy is SearchStrategy.AUTO or serves(strategy, artifacts, chain.config):
             return held
     namespace = resolve_namespace(chain.config, suffix)
     needed = strategy_artifacts(strategy, chain.config)
@@ -139,7 +143,7 @@ async def check_strategy_methodology(
             f"{', '.join(sorted(a.value for a in missing))} of the index "
             f"namespace '{namespace}', which it does not hold; {how}"
         )
-    assert methodology is not None  # _served serves a strategy without one
+    assert methodology is not None  # serves() serves a strategy without one
     raise MethodologyNotIndexedError(
         not_indexed_message(
             strategy,
@@ -193,21 +197,6 @@ def rebuild_advice(what: str, source_scopes: Sequence[str] | None) -> str:
     )
 
 
-def _served(
-    chain: GraphRAGChain,
-    strategy: SearchStrategy,
-    artifacts: frozenset[IndexArtifact],
-    held: tuple[Methodology, ...],
-) -> bool:
-    if strategy is SearchStrategy.AUTO:
-        return True
-    needed = strategy_artifacts(strategy, chain.config)
-    if needed is not None:
-        return needed <= artifacts
-    methodology = strategy_methodology(strategy, chain.config)
-    return methodology is None or methodology in held
-
-
 def not_indexed_message(
     strategy: SearchStrategy,
     methodology: Methodology,
@@ -259,14 +248,55 @@ def not_indexed_message(
 def _reads(
     strategy: SearchStrategy, artifacts: frozenset[IndexArtifact], config: Config
 ) -> bool:
+    """Whether ``strategy`` is registered and a namespace holding
+    ``artifacts`` serves it (``strategy_registry.serves``)."""
     try:
         get_strategy_spec(strategy)
     except ValueError:
         return False
-    if strategy_artifacts(strategy, config) is not None:
-        return serves(strategy, artifacts, config)
-    methodology = strategy_methodology(strategy, config)
-    return methodology is not None and methodology in methodologies_holding(artifacts)
+    return serves(strategy, artifacts, config)
+
+
+class NamespaceSummary(BaseModel):
+    """What an index namespace holds and how it is searched, as every
+    surface describes it (``run-describe``'s ``describe_namespace``, the MCP
+    server's ``kg_describe_schema``): ``summarize_namespace``'s fields."""
+
+    artifacts: list[str] = Field(description="The index artifacts it holds")
+    artifacts_from: Literal["build_record", "config"] = Field(
+        description="Where artifacts comes from: the build record, or, without "
+        "one that names them, what a run of the config builds"
+    )
+    methodologies: list[str] = Field(
+        description="The methodologies whose required artifacts it holds"
+    )
+    strategies: list[str] = Field(
+        description="The search strategies it serves (auto aside; any can be "
+        "named explicitly)"
+    )
+    auto_routes: list[str] = Field(
+        description="The strategies auto routes among on it "
+        "(search.auto_routable_strategies it serves, else the fallback)"
+    )
+
+
+def summarize_namespace(holdings: NamespaceHoldings, config: Config) -> dict[str, Any]:
+    """``NamespaceSummary``'s fields for a namespace holding ``holdings``."""
+    try:
+        routes = [s.value for s in routable_strategies(config, holdings.artifacts)]
+    except MethodologyNotIndexedError:
+        routes = []
+    return {
+        "artifacts": sorted(a.value for a in holdings.artifacts),
+        "artifacts_from": holdings.source,
+        "methodologies": [m.value for m in holdings.methodologies],
+        "strategies": [
+            s.value
+            for s in servable_strategies(holdings.artifacts, config)
+            if s is not SearchStrategy.AUTO
+        ],
+        "auto_routes": routes,
+    }
 
 
 def servable_strategies(

@@ -153,7 +153,7 @@ tokens, temperature and reasoning.
   up by vertex id rather than by the `id` property. Switching an existing
   graph needs one full build ([Custom Neptune vertex ids](../operations.md#custom-neptune-vertex-ids)).
   Graph expansion takes a hub's neighbours in id order
-  (`indexing.neptune.deterministic_order: true`, the default), so a rebuild
+  (`search.graph_expansion.deterministic_order: true`, the default), so a rebuild
   returns the same results, at the cost of reading every neighbour of each
   expanded hub (on Gremlin Server, 6.8 to 23.2 ms per query for
   2,500-neighbour hubs; unmeasured on Neptune). If hub-heavy queries are

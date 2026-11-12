@@ -76,9 +76,12 @@ stored is read again: follow *Upgrading* in order.
   Ingestion renders nothing: see *Configuration*.
 
 #### Configuration
-- Unknown keys, in the file or as `UKR__` variables, fail the load; `--allow-unknown-keys` (every CLI but
-  `prepare-benchmark`) or `allow_unknown_keys=True` (`get_config`, `ConfigLoader`) warns instead (#335). A moved key
-  fails naming its replacement, a removed key loads with a WARNING and is ignored: the generated [Moved
+- Unknown keys, in the file or as `UKR__` variables, fail the load, and `Config.model_validate` refuses them too;
+  `--allow-unknown-keys` (every CLI but `prepare-benchmark`) or `allow_unknown_keys=True` (`get_config`,
+  `ConfigLoader`) warns and drops them instead (#335). A moved key fails naming its replacement
+  (`processing.chunk_concurrency` and `processing.batch_size` are `processing.max_concurrency`, one pool of in-flight
+  calls, #296; `indexing.cross_run_fuzzy_merge` is `processing.fuzzy_entity_resolution`, #214), a removed key loads
+  with a WARNING and is ignored: the generated [Moved
   keys](docs/reference/configuration.md#moved-keys) and [Removed keys](docs/reference/configuration.md#removed-keys)
   tables list them (#334, #344, #467, #468, #470, #577). [`config-template.yaml`](config-template.yaml) is a short
   starting file; every key is in the [configuration reference](docs/reference/configuration.md) (#468).
@@ -88,6 +91,9 @@ stored is read again: follow *Upgrading* in order.
   picks each family's provider, and `--llm-model`, `--embedding-model`, `--embedding-dimension` set the new keys; a
   setting of a provider the config does not select is ignored with a WARNING; under `backend: local` another
   embedding model needs its dimension too (#334). See [models](docs/reference/models.md).
+- Graph expansion's settings moved from `indexing.neptune` to `search.graph_expansion`, as every graph store reads them
+  at query time (the embedded SQLite graph too): `max_hops`, `max_results_per_hop`, `entity_importance_source`,
+  `traversal_fetch_multiplier`, `deterministic_order`.
 - `aws.dynamodb.enabled` moved to `providers.doc_status.enabled` (default `false`; `providers.doc_status.kind` picks
   DynamoDB or SQLite), the one switch for incremental indexing (#344). `graph.analysis.centrality` moved to
   `graph.visualization.centrality` (#335).
@@ -108,7 +114,6 @@ stored is read again: follow *Upgrading* in order.
   - `search.global_search.max_communities`, `map_batch_size`, `max_text_units`: use `community_depth` (2),
     `max_reports_per_level` (100), `map_context_tokens` (12000); `text_unit_slots` is an integer, default `0`
     (#318). `graph_timeout_seconds` has no replacement (#161).
-  - `indexing.cross_run_fuzzy_merge` is `processing.fuzzy_entity_resolution` (#214).
   - No replacement: `graph.community_detection.report_generation.include_statistics` / `include_key_entities`
     (#214); `processing.gleaning.quality_threshold`, `convergence_threshold`, `convergence_change_scale`,
     `min_improvement_threshold`, `quality_completeness_weight`, `initial_quality_entity_scale`,
@@ -117,8 +122,6 @@ stored is read again: follow *Upgrading* in order.
     search fuses in the retriever, #306); `indexing.opensearch.terms_batch_size`, `max_total_clauses`,
     `reserved_clauses` (a list filter is one `terms` query; more values than `max_terms_count` raise
     `InvalidFilterError`, #258); `processing.chunking.content_type` (plain text, #289).
-  - `processing.chunk_concurrency` and `processing.batch_size` are `processing.max_concurrency`, one pool of
-    in-flight calls (#296).
 - Removed settings that change behaviour where you had set them (each loads with a WARNING):
   `search.reranking.enabled: false` no longer turns reranking off (set `providers.rerank.kind: none`);
   `search.fusion.method: weighted` fuses by RRF (weighted fusion is gone); `fixing.enabled: false` no longer stops
@@ -314,7 +317,9 @@ See [`iac/README.md`](iac/README.md).
   `Config` and `get_config`, `DataIngestionPipeline`, `GraphRAGChain` with `RAGInput` / `RAGOutput` /
   `SearchOutput`, `MemoryManager`, `EvaluationManager`, the errors they raise, and the extension surface (ports,
   `Providers`, the provider, strategy, parser, renderer, schema-source and seed-source registries; a failed model
-  call is a `ModelError`: `LanguageModelError`, `EmbeddingModelError` or `RerankModelError`, #657). Import from the
+  call is a `ModelError`: `LanguageModelError`, `EmbeddingModelError` or `RerankModelError`, #657) with every type
+  their signatures name (the stored items, `SearchQuery`, `RetrievalResult`, `IndexBuildRecord`, `DocStatusRecord`,
+  `RenderContext`, `TransientRetryConfig`, ...), and `load_seed_graphs` / `resolve_extraction_schema`. Import from the
   package root; every other module path is internal and many moved, so they have no entry here (#164, #210, #216,
   #312, #333, #365, #456, #464, #584). The `unified_kg_rag.visualization` package is gone (#467). See the [Python
   library guide](docs/guides/python-library.md).
@@ -861,8 +866,8 @@ From a `main` checkout (formats and keys no release had):
   and seed config, and `eval_data.json` with count, ranking, two-hop, shared-buyer, yes/no, numeric and text-only
   control templates (`category`), absent-entity negatives, Korean and Japanese variants and a `large` size past the
   scan cap, each graph gold answer computed by the reference executor from its plan (`metadata.gold_plan`). `run-eval`
-  keeps each answer's `structured` record and reports `structured_statistics` (status, fallback reasons, valid-plan,
-  repair, truncation and exact rates), per arm under a comparison
+  keeps each answer's `structured` run record (`strategy_records`) and reports `structured_statistics` (status,
+  fallback reasons, valid-plan, repair, truncation and exact rates), per arm under a comparison
   ([guide](docs/guides/benchmarks.md#structural-benchmark)). Its items say how `answer_match` reads them:
   `metadata.answer_type: number` matches when the answer's first line (the extracted span, with `extracted`)
   writes the gold number anywhere: digits, number words with their scale words, Korean native, Sino-Korean and Han
@@ -1042,11 +1047,13 @@ From a `main` checkout (formats and keys no release had):
   its graph streamed from the vector store as JSON Lines or GraphML with every item's text units and documents
   (a document by its path relative to the corpus root, else its file name, never the indexing host's path;
   `--output-path`, `--export-format`, `--max-items`; written atomically, so a failed export leaves the previous file
-  and no partial one); `VectorIndexer.describe_indices` and `scan_items` (#628). A
-  registry the caller cannot read (the CDK query task's role has no DynamoDB access) is reported unavailable, with
-  the reason in `registry_unavailable` and a warning, and the rest is still described (#636). A missing extra and a
-  namespace that holds no index exit 2 with the error on stderr, and describing creates no store file where nothing
-  was ingested (#641). See [inspect and export](docs/guides/inspect.md).
+  and no partial one); `VectorIndexer.describe_indices` and `scan_items` (#628). It, `kg_describe_schema` (which
+  adds `auto_routes`), the console and the chain's refusal read what a namespace holds by one rule
+  (`NamespaceHoldings`): without a build record the console shows what the config builds, as queries are served, not
+  nothing held. A registry the caller cannot read (the CDK query task's role has no DynamoDB access) is reported
+  unavailable, with the reason in `registry_unavailable` and a warning, and the rest is still described (#636). A
+  missing extra and a namespace that holds no index exit 2 with the error on stderr, and describing creates no store
+  file where nothing was ingested (#641). See [inspect and export](docs/guides/inspect.md).
 - Observability: the `observability` section and `otel` extra, spans for runs, stages, batches and query steps,
   GenAI model-call spans, OTLP, Langfuse and Phoenix exporters with redacted content capture (an IPv6 endpoint keeps
   its brackets in the logged URL); CDK `enable_cloudwatch_tracing` with an ADOT sidecar (#207, #208, #211, #219,
@@ -1233,7 +1240,9 @@ From a `main` checkout (formats and keys no release had):
   cap left it the first passages of long chunks), a round follows at most five bridge entities, a deadline that
   cancels the round an insufficient verdict started reports it (`insufficiency_reason: deadline`), and the follow-up
   queries and bridge entities in `metadata["iterative"]` are screened by the output guardrail with `check_output`
-  (#607); bridge entities are told apart by names folded as local search's seeds are. See
+  (#607); bridge entities are told apart by names folded as local search's seeds are. A strategy declares the run
+  record it keeps and the model text in it (`register_strategy(run_record=RunRecord(...))`): the chain screens and
+  clears every declared record, not two named ones. See
   [query](docs/guides/query.md#follow-up-rounds-for-multi-hop-questions).
 - LLM usage accounting, tracing or not: calls, input and output tokens, prompt-cache reads and writes, resent and
   failed requests and cache hits per model role and id, in `RAGOutput` / `SearchOutput.metadata["usage"]`,
@@ -1296,7 +1305,8 @@ From a `main` checkout (formats and keys no release had):
   accuracy. The answerable questions stay the MuSiQue-Ans sample the seed draws without `--unanswerable` (the full
   split is downloaded beside it, or `--unanswerable-data-path`). A comparison pairs `abstention/recall` and
   `abstention/precision`, both `--fail-if` measures. Each saved result keeps `abstention_reason`,
-  `context_sufficient`, `insufficiency_reason` and the `iterative` run record. Measured on 100 + 100 MuSiQue
+  `context_sufficient`, `insufficiency_reason` and the strategy's run records (`strategy_records`, by the key of
+  each strategy's `RunRecord`). Measured on 100 + 100 MuSiQue
   questions, `mark` stays opt-in and `hedge` the default (#593, #600, #606). Under `abstain` an answer the model
   writes instead of the decline is replaced by the no-context reply (invoke and stream), and a streamed decline
   keeps the space at a chunk boundary after the token (#607). See
@@ -1769,7 +1779,7 @@ Queries and retrieval.
   then first seen; an entity citing a unit twice counts once, and a lineage a graph store returns as its JSON text
   is read as its list (it was skipped).
 - Graph expansion returns every seed and its neighbourhood ranked by distance (#161, #218), fetches at most its
-  per-seed budget (#310), and no longer depends on the store's edge order (`indexing.neptune.deterministic_order:
+  per-seed budget (#310), and no longer depends on the store's edge order (`search.graph_expansion.deterministic_order:
   false` keeps it) (#470, #473); an expanded entity shows its type (#567).
 - A number or boolean document filter value is a keyword on OpenSearch, so a string value of the same key no longer
   fails to index (`mapper_parsing_exception`) and ranges compare as text, as documented (#566).
@@ -2021,7 +2031,12 @@ CLIs, configuration and library.
 - A config with a wrong type, invalid YAML or a missing file is a usage error, an empty config loads the defaults,
   and `custom_prompts` overrides are validated at load (#158, #178, #230); `ConfigurationError` replaces bare
   `ValueError`s (#297).
-- Index suffixes and prefixes are validated at load and on the command line (#367, #372, #374).
+- Index suffixes and prefixes are validated at load and on the command line (#367, #372, #374). Two index prefixes,
+  or the two graph label prefixes, that can name the same store (equal, or one is the other followed by `-`) fail the
+  load, and a search hit's section comes from its index's exact prefix: with nested prefixes every entity hit read as
+  a text unit. `RAGInput.suffix` and every entry point's namespace (`resolve_namespace`) take the stores' rule too
+  (lowercase letters, digits, `-`, `_`): a library query with the suffix `acme*` read the build record of every
+  namespace the wildcard matched before the search refused it.
 - `run-rag --filters`: repeated flags add up; a pair without `:`, a blank, duplicate, unknown or `None` value is a
   usage error (#373, #408, #411, #443). `run-rag --interactive`: a line is a command only as a whole, `set-filter`
   keeps whitespace and refuses unknown keys (#353, #413, #416, #426, #428).

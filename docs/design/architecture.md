@@ -286,11 +286,13 @@ module loads an infrastructure package, even transitively.
 whose `__all__` is the supported surface: the names for using the framework
 (`Config`, `get_config`, `DataIngestionPipeline`, `GraphRAGChain`, `RAGInput`
 / `RAGOutput` / `SearchOutput`, `EvaluationManager`, ...) and for extending it
-(the ports, `Providers` / `build_providers`, the registries). Other module
+(the ports, `Providers` / `build_providers`, the registries, and every type
+their signatures name, so a plugin needs no internal path). Other module
 paths are internal; only a change to the exported names, configuration keys,
 CLI flags and exit codes, or stored formats is breaking. Names resolve on
 first access (`import unified_kg_rag` loads nothing), and
-`tests/unit/test_public_api.py` pins the list.
+`tests/unit/test_public_api.py` pins the list and checks that closure (a
+`@final` helper's return type aside).
 
 ---
 
@@ -382,7 +384,8 @@ checks that its values are the defaults and each key is in the reference).
   layers: defaults < `backend` preset < file < environment. `UKR__<SECTION>__<KEY>`
   sets any key, resolved against the model tree (no variable table to keep in
   step); `AWS_PROFILE` / `AWS_REGION` fill only keys the file leaves unset. Unknown keys fail the
-  load unless `allow_unknown_keys`, a moved key (`MOVED_KEYS`) fails
+  load (`Config`'s own validator refuses them, `unknown_keys`) unless
+  `allow_unknown_keys`, which drops them first; a moved key (`MOVED_KEYS`) fails
   naming its replacement, and a removed key (`REMOVED_KEYS`) logs a warning
   and is ignored. `Config` keeps the input it was validated from, so
   `with_provider_overrides` (the CLI provider flags) rebuilds from it plus

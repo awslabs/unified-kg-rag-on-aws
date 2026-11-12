@@ -1369,8 +1369,8 @@ class TestComparability:
             {"graph": {"community_detection": {"enabled": False}}},
             {"processing": {"claim_extraction": {"enabled": True}}},
             {"processing": {"ignore_errors": True}},
-            {"indexing": {"neptune": {"max_hops": 1}}},
-            {"indexing": {"neptune": {"traversal_fetch_multiplier": 7}}},
+            {"search": {"graph_expansion": {"max_hops": 1}}},
+            {"search": {"graph_expansion": {"traversal_fetch_multiplier": 7}}},
             {"aws": {"bedrock": {"guardrail": {"check_output": False}}}},
         ],
     )
@@ -1634,12 +1634,12 @@ class TestAbstention:
         assert saved["q0"]["abstention_reason"] is None
         assert saved["q0"]["context_sufficient"] is None
         assert saved["q0"]["insufficiency_reason"] is None
-        assert saved["q0"]["iterative"] is None
+        assert saved["q0"]["strategy_records"] == {}
         assert saved["q1"]["abstained"] is True
         assert saved["q1"]["abstention_reason"] == "insufficient_context"
         assert saved["q1"]["context_sufficient"] is False
         assert saved["q1"]["insufficiency_reason"] == "max_rounds"
-        assert saved["q1"]["iterative"] == iterative
+        assert saved["q1"]["strategy_records"] == {"iterative": iterative}
         # A saved file reads back (run-eval --from-results).
         assert EvaluationResult.model_validate(saved["q1"]) == results[1]
 

@@ -10,7 +10,7 @@ from collections import Counter
 from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Any, ClassVar
+from typing import Any, ClassVar, final
 
 from langchain_core.callbacks import (
     AsyncCallbackManagerForRetrieverRun,
@@ -598,6 +598,7 @@ class BaseSearchStrategy(ABC):
         self.hybrid_scorer = HybridScorer(self.config, providers=self.providers)
         self.token_manager = TokenManager(self.config, providers=self.providers)
 
+    @final
     def json_answers(
         self,
         *,
@@ -1392,10 +1393,10 @@ class BaseSearchStrategy(ABC):
         retriever = self.document_retriever
         assert retriever is not None  # the caller walks the graph without one
         o = self.config.indexing.opensearch
-        neptune = self.config.indexing.neptune
+        expansion = self.config.search.graph_expansion
         filters = document_filters(query.filters)
         limit = query.top_k * query.retrieval_multiplier
-        shares = seed_shares(query, neptune.traversal_fetch_multiplier, seeds)
+        shares = seed_shares(query, expansion.traversal_fetch_multiplier, seeds)
         # Text units only decide an edge under two or more keys.
         fields = [
             f for f in _WALK_EDGE_FIELDS if len(filters) > 1 or f != "text_unit_ids"
@@ -1435,7 +1436,7 @@ class BaseSearchStrategy(ABC):
         def needed(vertex: str) -> int:
             """How many more neighbours ``vertex`` may take this hop."""
             return min(
-                neptune.max_results_per_hop - per_vertex.get(vertex, 0),
+                expansion.max_results_per_hop - per_vertex.get(vertex, 0),
                 shares[root[vertex]] - taken[root[vertex]],
             )
 
@@ -1495,7 +1496,7 @@ class BaseSearchStrategy(ABC):
                 edges = kept
             return edges, full, dropped
 
-        for hop in range(query.max_hops or neptune.max_hops):
+        for hop in range(query.max_hops or expansion.max_hops):
             per_vertex.clear()
             # Only the vertices whose seed is still short of its share.
             frontier = [vertex for vertex in frontier if open_(vertex)]
@@ -1582,7 +1583,7 @@ class BaseSearchStrategy(ABC):
                 filters,
             )
             entities = [e for e in entities if str(e.source) in seed_set | vouched]
-        with_importance = neptune.entity_importance_source != "none"
+        with_importance = expansion.entity_importance_source != "none"
 
         def importance(result: RetrievalResult) -> float | None:
             return (

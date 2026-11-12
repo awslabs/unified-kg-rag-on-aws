@@ -32,8 +32,9 @@ cp config-template.yaml config.yaml
 파일은 읽을 때 검증합니다. 타입이나 값이 틀린 경우(`Configuration validation error: ...`),
 올바른 YAML이 아닌 파일, 존재하지 않는 `--config-path` 파일, 알 수 없는 키(파일이나
 `UKR__` 변수)는 사용법 오류(종료 코드 2)입니다. 철자가 틀린 키는 아무 표시 없이 설정을
-기본값으로 남기므로 알 수 없는 키를 거부하며, `--allow-unknown-keys`(`get_config`에서는
-`allow_unknown_keys=True`)를 주면 키마다 WARNING만 남깁니다. 위치가 바뀐 키는 대신할 키를
+기본값으로 남기므로 알 수 없는 키를 거부하며(Python의 `Config.model_validate`도 거부합니다),
+`--allow-unknown-keys`(`get_config`에서는 `allow_unknown_keys=True`)를 주면 키마다 WARNING을
+남기고 그 키를 버립니다. 위치가 바뀐 키는 대신할 키를
 알려 주며 실패합니다([Moved keys](../reference/configuration.md#moved-keys), 영문).
 
 재시도는 `retry` 섹션 하나에서 설정합니다. `max_attempts`와 백오프는 모델 호출(수집 항목,

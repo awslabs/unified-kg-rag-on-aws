@@ -134,7 +134,8 @@ musique --unanswerable N`이 코퍼스로 답할 수 없도록 걸러 낸 질문
   함께 들어가므로 `--fail-if abstention/recall:ci_high<0`으로 뒷받침되는 하락을 게이트로
   걸 수 있습니다.
 - 저장된 결과마다 `abstained`, `abstention_reason`, `context_sufficient`,
-  `insufficiency_reason`과 `iterative`의 실행 기록(라운드 수, 멈춘 이유, 판정)이 남으므로 결과
+  `insufficiency_reason`과 전략의 실행 기록(`strategy_records`: `iterative`의 라운드 수, 멈춘 이유,
+  판정과 `structured`의 계획, 상태)이 남으므로 결과
   파일만으로 실행을 분석할 수 있습니다
   ([Evaluation output: Result files](../reference/evaluation-output.md#result-files)(영문)).
 - `mode: off`이면 빈 컨텍스트에 대한 고정 문구만 거절로 세므로 recall은 하한값입니다.

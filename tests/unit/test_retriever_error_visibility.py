@@ -961,9 +961,9 @@ def _neptune_retriever(config: Config, neptune_client) -> NeptuneRetriever:
     object.__setattr__(inst, "_config", config)
     object.__setattr__(inst, "_neptune_config", config.indexing.neptune)
     object.__setattr__(inst, "_neptune_client", neptune_client)
-    object.__setattr__(inst, "_max_hops", config.indexing.neptune.max_hops)
+    object.__setattr__(inst, "_max_hops", config.search.graph_expansion.max_hops)
     object.__setattr__(
-        inst, "_max_results_per_hop", config.indexing.neptune.max_results_per_hop
+        inst, "_max_results_per_hop", config.search.graph_expansion.max_results_per_hop
     )
     object.__setattr__(inst, "_pool_size", config.aws.neptune.pool_size)
     object.__setattr__(inst, "_traversal_slots", weakref.WeakKeyDictionary())

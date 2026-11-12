@@ -40,18 +40,19 @@ sufficiency fields:
   insufficient (`iterative` does), `null` when the strategy did not judge it.
 - `insufficiency_reason`: the strategy's reason for that flag (for
   `iterative`, its stop reason); `null` otherwise.
-- `iterative`: the `iterative` strategy's run record (`base`,
-  `rounds`, `stop_reason`, `degraded`, `llm_calls`, `usage`, `searched`,
-  `verdicts`, `added_results`, `round_0_rerank`;
-  [Querying](../guides/query.md#follow-up-rounds-for-multi-hop-questions)); `null` for the
-  other strategies.
-- `structured`: the `structured` strategy's run record (`status`,
-  `reason`, `fallback_strategy`, `plan`, `plan_description`, `operation`,
-  `row_count`, `truncated`, `exact`, `linked`, `repairs`, `backend`,
-  `elapsed_ms`, `usage`; [Structured graph queries](../guides/structured-queries.md#when-no-plan-answers));
-  `null` for the other strategies.
+- `strategy_records`: the run records the answer's strategy kept, by key
+  (each strategy's registered `RunRecord`; `{}` for a strategy that keeps
+  none): `iterative` (`base`, `rounds`, `stop_reason`, `degraded`,
+  `llm_calls`, `usage`, `searched`, `verdicts`, `added_results`,
+  `round_0_rerank`;
+  [Querying](../guides/query.md#follow-up-rounds-for-multi-hop-questions))
+  and `structured` (`status`, `reason`, `fallback_strategy`, `plan`,
+  `plan_description`, `operation`, `row_count`, `truncated`, `exact`,
+  `linked`, `repairs`, `backend`, `elapsed_ms`, `usage`;
+  [Structured graph queries](../guides/structured-queries.md#when-no-plan-answers)).
 
-Results saved before these fields read back with them `null`.
+Results saved before these fields read back with them `null` (`{}` for
+`strategy_records`).
 
 ## Run summary
 
@@ -113,12 +114,12 @@ from the text, and under
   retrieval miss and scores 0 on context precision and recall, while
   `faithfulness` is skipped, as for any answer without context:
   `no_contexts`); each result carries `guardrail_blocked`.
-- `structured_statistics`: over the answers with a `structured` record,
+- `structured_statistics`: over the answers with a `structured` run record,
   their count (`queries`), per `status` and `fallback_reasons`, and the
   `valid_plan_rate` (plans that reached the graph store), `repair_rate`,
   and of the answered ones the `truncated_rate` and `exact_rate`; `{}`
   without such answers. A strategy comparison reports it per arm.
-- `iterative_statistics`: over the answers with an `iterative` record,
+- `iterative_statistics`: over the answers with an `iterative` run record,
   their count (`queries`), the follow-up `rounds` per answer (a histogram,
   and `mean_rounds`), the `stop_reasons`, `max_rounds_rate` (the share the
   round cap ended, not the controller) and the `degraded` runs; `{}`

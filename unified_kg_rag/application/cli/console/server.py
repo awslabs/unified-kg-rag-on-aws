@@ -77,7 +77,7 @@ from unified_kg_rag.domain.models import (
     Config,
     Methodology,
     ModelRole,
-    validate_path_segment,
+    validate_safe_name,
 )
 from unified_kg_rag.domain.prompts.retrieval import STRATEGY_ROUTING_GUIDE
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
@@ -855,7 +855,11 @@ def create_app(
             [m for m in (methodologies or "").split(",") if m] or None,
         )
         held = await state.ask.held_methodologies(_suffix(suffix))
-        return {**held, "dropped": dropped_methodologies(held["held"], config)}
+        # Without a build record nothing is dropped: the run writes the first.
+        dropped = (
+            dropped_methodologies(held["held"], config) if held["recorded"] else []
+        )
+        return {**held, "dropped": dropped}
 
     @app.get("/api/methodologies")
     async def methodologies() -> dict[str, Any]:
@@ -883,7 +887,7 @@ def _suffix(value: str | None) -> str | None:
     if value is None:
         return None
     try:
-        return validate_path_segment(value, "suffix")
+        return validate_safe_name(value, "suffix")
     except ValueError as e:
         raise ConfigurationError(str(e)) from e
 

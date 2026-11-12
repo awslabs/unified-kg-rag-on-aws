@@ -162,7 +162,7 @@ def _result(structured: dict | None) -> EvaluationResult:
         question="?",
         generated_answer="a",
         ground_truth="",
-        structured=structured,
+        strategy_records={} if structured is None else {"structured": structured},
     )
 
 

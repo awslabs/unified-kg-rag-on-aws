@@ -173,7 +173,7 @@ cannot tell; the strategy then reads the relationships index.
   `local(bothE().where(otherV().<in the set>).order().by("id").limit(n))`
   from the set's vertices, in one request (custom vertex ids: `g.V(ids)` and
   `hasId`; property ids: `has("id", within(...))`, also while a full build
-  switches the label). `indexing.neptune.deterministic_order: false` takes
+  switches the label). `search.graph_expansion.deterministic_order: false` takes
   the store's first `n`, as the walk does. The traversal reads every
   incident edge of each vertex (a hub of 20,000 edges took 0.4 s on Gremlin
   Server, more than the expansion), so the retriever declares

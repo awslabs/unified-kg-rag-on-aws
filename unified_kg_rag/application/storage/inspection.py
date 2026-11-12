@@ -23,24 +23,20 @@ from xml.sax.saxutils import escape, quoteattr
 from pydantic import BaseModel, Field
 
 from unified_kg_rag.adapters.providers import Providers
-from unified_kg_rag.adapters.retrieval.strategy_registry import routable_strategies
 from unified_kg_rag.application.bootstrap import build_providers
 from unified_kg_rag.application.retrieval.methodology_check import (
-    servable_strategies,
+    NamespaceSummary,
+    summarize_namespace,
 )
 from unified_kg_rag.domain.ingestion.document_identity import (
     config_registry_namespace,
 )
 from unified_kg_rag.domain.ingestion.methodologies import (
-    held_artifacts,
-    stored_artifacts,
+    namespace_holdings,
 )
 from unified_kg_rag.domain.models import (
     Config,
-    SearchStrategy,
-    validate_safe_name,
 )
-from unified_kg_rag.domain.models.methodology import methodologies_holding
 from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.ports.indexer import StoredItemKind
@@ -48,7 +44,6 @@ from unified_kg_rag.shared import ConfigurationError, get_logger
 from unified_kg_rag.shared.exceptions import (
     DocStatusFormatError,
     DocStatusRegistryError,
-    MethodologyNotIndexedError,
 )
 from unified_kg_rag.shared.utils.files import atomic_open
 
@@ -81,7 +76,7 @@ class IndexDescription(BaseModel):
     )
 
 
-class NamespaceDescription(BaseModel):
+class NamespaceDescription(NamespaceSummary):
     """What an index namespace holds (:func:`describe_namespace`)."""
 
     suffix: str = Field(description="The index suffix (index_value)")
@@ -99,16 +94,6 @@ class NamespaceDescription(BaseModel):
         "rejected it, or a build from before records) queries take it to "
         "hold what their config builds",
     )
-    artifacts: list[str] = Field(description="The index artifacts it holds")
-    artifacts_from: Literal["build_record", "config"] = Field(
-        description="Where artifacts comes from: the build record, or, without "
-        "one that names them, what a run of the config builds"
-    )
-    methodologies: list[str] = Field(description="The methodologies it holds")
-    strategies: list[str] = Field(
-        description="The search strategies it serves (auto routes among " "auto_routes)"
-    )
-    auto_routes: list[str] = Field(description="The strategies auto may pick on it")
     indices: list[IndexDescription] = Field(description="Its indices")
     registry: dict[str, int] | None = Field(
         description="The doc-status registry's records of the namespace by "
@@ -137,14 +122,6 @@ class GraphExport(BaseModel):
     )
 
 
-def _suffix(config: Config, suffix: str | None) -> str:
-    value = resolve_namespace(config, suffix)
-    try:
-        return validate_safe_name(value, "suffix")
-    except ValueError as e:
-        raise ConfigurationError(str(e)) from e
-
-
 def describe_namespace(
     config: Config, suffix: str | None = None, *, providers: Providers | None = None
 ) -> NamespaceDescription:
@@ -156,7 +133,7 @@ def describe_namespace(
             store keeps no index metadata.
         StoreConnectionError: A store cannot be reached.
     """
-    name = _suffix(config, suffix)
+    name = resolve_namespace(config, suffix)
     providers = providers or build_providers(config)
     vector = providers.build_vector_indexer()
     try:
@@ -183,12 +160,7 @@ def describe_namespace(
                 meta=meta,
             )
         )
-    artifacts = held_artifacts(record, config)
-    held = methodologies_holding(artifacts)
-    try:
-        routes = [s.value for s in routable_strategies(config, artifacts)]
-    except MethodologyNotIndexedError:
-        routes = []
+    holdings = namespace_holdings(record, config)
     namespace = config_registry_namespace(config.indexing, name)
     registry, unavailable = (
         _registry_counts(providers, namespace)
@@ -201,15 +173,7 @@ def describe_namespace(
         exists=any(index.index for index in indices),
         build=record,
         build_record="present" if record is not None else "missing",
-        artifacts=sorted(a.value for a in artifacts),
-        artifacts_from="config" if stored_artifacts(record) is None else "build_record",
-        methodologies=[m.value for m in held],
-        strategies=[
-            s.value
-            for s in servable_strategies(artifacts, config)
-            if s is not SearchStrategy.AUTO
-        ],
-        auto_routes=routes,
+        **summarize_namespace(holdings, config),
         indices=indices,
         registry=registry,
         registry_unavailable=unavailable,
@@ -326,7 +290,7 @@ def export_graph(
         )
     if max_items is not None and max_items < 1:
         raise ConfigurationError("max_items must be at least 1")
-    name = _suffix(config, suffix)
+    name = resolve_namespace(config, suffix)
     providers = providers or build_providers(config)
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)

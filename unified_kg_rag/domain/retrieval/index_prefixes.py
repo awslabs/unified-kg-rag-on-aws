@@ -42,6 +42,17 @@ def index_artifacts(config: Config) -> dict[str, IndexArtifact]:
     }
 
 
+def index_artifact_of(config: Config, index_name: str) -> IndexArtifact | None:
+    """The artifact the vector-store index or alias ``index_name`` holds:
+    that of the prefix it is named after (``<prefix>-<suffix>...``,
+    ``store_names.store_name``), else ``None``. Exact, as the config refuses
+    one prefix nested in another (``OpenSearchIndexingConfig``)."""
+    for prefix, artifact in index_artifacts(config).items():
+        if index_name == prefix or index_name.startswith(f"{prefix}-"):
+            return artifact
+    return None
+
+
 def all_index_prefixes(config: Config) -> list[str]:
     """Every document index prefix, in sweep order."""
     return [prefix for prefix, _ in _prefix_artifacts(config)]
@@ -106,9 +117,7 @@ def readable_index_prefixes(
     artifact is kept."""
     if prefixes is None:
         return held_index_prefixes(config, held)
-    o = config.indexing.opensearch
-    artifacts = dict(_prefix_artifacts(config))
-    artifacts[o.summary_nodes_index_prefix] = IndexArtifact.SUMMARY_TREE
+    artifacts = index_artifacts(config)
     return [
         prefix
         for prefix in prefixes

@@ -17,7 +17,10 @@ internal and may change in any release. Two groups:
 - **Extending it**: the ports a backend implements, the :class:`Providers`
   bundle that injects them, and the registries for providers, search
   strategies, parsers, renderers, extraction-schema sources and seed graph
-  sources (see the design doc's extension guide).
+  sources (see the design doc's extension guide), with every type their
+  methods take or return (the stored items, :class:`SearchQuery`,
+  :class:`RetrievalResult`, :class:`IndexBuildRecord`, ...), so a plugin
+  imports from this package alone.
 
 The errors these raise for a caller to tell apart are exported too. Each is
 a :class:`GraphRAGException` but :class:`PipelineInterrupted`, a
@@ -143,6 +146,7 @@ _EXPORTS: dict[str, str] = {
     "BaseGraphRAGRetriever": "unified_kg_rag.adapters.retrieval.base",
     "register_strategy": "unified_kg_rag.adapters.retrieval.strategy_registry",
     "QueryInput": "unified_kg_rag.adapters.retrieval.strategy_registry",
+    "RunRecord": "unified_kg_rag.adapters.retrieval.strategy_registry",
     "RetrieverRole": "unified_kg_rag.domain.models",
     # Extension: parsers and renderers
     "ParserFactory": "unified_kg_rag.adapters.ingestion.parser",
@@ -161,6 +165,36 @@ _EXPORTS: dict[str, str] = {
     "SeedGraph": "unified_kg_rag.domain.models.seed_graph",
     "SeedNode": "unified_kg_rag.domain.models.seed_graph",
     "SeedEdge": "unified_kg_rag.domain.models.seed_graph",
+    "load_seed_graphs": "unified_kg_rag.application.bootstrap",
+    "resolve_extraction_schema": "unified_kg_rag.application.bootstrap",
+    # Extension: the types the ports, bases and registries above name
+    # (tests/unit/test_public_api.py checks the closure)
+    "Entity": "unified_kg_rag.domain.models",
+    "Relationship": "unified_kg_rag.domain.models",
+    "Community": "unified_kg_rag.domain.models",
+    "CommunityReport": "unified_kg_rag.domain.models",
+    "TextUnit": "unified_kg_rag.domain.models",
+    "Claim": "unified_kg_rag.domain.models",
+    "SummaryNode": "unified_kg_rag.domain.models",
+    "IndexArtifact": "unified_kg_rag.domain.models",
+    "IndexBuildRecord": "unified_kg_rag.domain.models",
+    "IndexingStats": "unified_kg_rag.ports",
+    "StoredAnnotation": "unified_kg_rag.ports.indexer",
+    "DocStatusRecord": "unified_kg_rag.domain.models",
+    "DocumentDelta": "unified_kg_rag.domain.models",
+    "ExtractionSettings": "unified_kg_rag.domain.models",
+    "SearchQuery": "unified_kg_rag.domain.models",
+    "RetrievalResult": "unified_kg_rag.domain.models",
+    "GraphEdge": "unified_kg_rag.domain.models",
+    "FilterFields": "unified_kg_rag.domain.retrieval.filters",
+    "IndexLimits": "unified_kg_rag.adapters.storage.filter_schema",
+    "GraphProfile": "unified_kg_rag.domain.models.graph_query",
+    "GraphQueryRequest": "unified_kg_rag.domain.models.graph_query",
+    "GraphQueryResult": "unified_kg_rag.domain.models.graph_query",
+    "GroundingContext": "unified_kg_rag.ports.guardrail",
+    "LanguageModelInfo": "unified_kg_rag.ports.model_factory",
+    "TransientRetryConfig": "unified_kg_rag.domain.models.config",
+    "RenderContext": "unified_kg_rag.adapters.renderers.base",
 }
 
 __all__ = ["__version__", *_EXPORTS]
@@ -172,7 +206,11 @@ if TYPE_CHECKING:
         register_provider,
     )
     from unified_kg_rag.adapters.providers import Providers
-    from unified_kg_rag.adapters.renderers.base import BaseRenderer, register_renderer
+    from unified_kg_rag.adapters.renderers.base import (
+        BaseRenderer,
+        RenderContext,
+        register_renderer,
+    )
     from unified_kg_rag.adapters.retrieval.base import (
         BaseGraphRAGRetriever,
         BaseSearchStrategy,
@@ -183,6 +221,7 @@ if TYPE_CHECKING:
     )
     from unified_kg_rag.adapters.retrieval.strategy_registry import (
         QueryInput,
+        RunRecord,
         register_strategy,
     )
     from unified_kg_rag.adapters.schema_sources.registry import (
@@ -194,7 +233,12 @@ if TYPE_CHECKING:
         SeedSourceOptions,
         register_seed_source,
     )
-    from unified_kg_rag.application.bootstrap import build_providers
+    from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
+    from unified_kg_rag.application.bootstrap import (
+        build_providers,
+        load_seed_graphs,
+        resolve_extraction_schema,
+    )
     from unified_kg_rag.application.cli.mcp_server import (
         build_mcp_app,
         build_mcp_server,
@@ -216,7 +260,17 @@ if TYPE_CHECKING:
     from unified_kg_rag.domain.models import (
         Citation,
         CitedDocument,
+        Claim,
+        Community,
+        CommunityReport,
         Config,
+        DocStatusRecord,
+        DocumentDelta,
+        Entity,
+        ExtractionSettings,
+        GraphEdge,
+        IndexArtifact,
+        IndexBuildRecord,
         InputDocument,
         Methodology,
         ModelPurpose,
@@ -225,15 +279,27 @@ if TYPE_CHECKING:
         PipelineContext,
         PipelineStageStatus,
         PipelineStageType,
+        Relationship,
+        RetrievalResult,
         RetrieverRole,
+        SearchQuery,
         SearchResult,
         SearchStrategy,
         SearchType,
         Source,
+        SummaryNode,
+        TextUnit,
+    )
+    from unified_kg_rag.domain.models.config import TransientRetryConfig
+    from unified_kg_rag.domain.models.graph_query import (
+        GraphProfile,
+        GraphQueryRequest,
+        GraphQueryResult,
     )
     from unified_kg_rag.domain.models.schema import SchemaDocument
     from unified_kg_rag.domain.models.seed_graph import SeedEdge, SeedGraph, SeedNode
     from unified_kg_rag.domain.retrieval.citations import CitationMarkerScanner
+    from unified_kg_rag.domain.retrieval.filters import FilterFields
     from unified_kg_rag.evaluation.evaluation_manager import EvaluationManager
     from unified_kg_rag.ports import (
         ContentGuardPort,
@@ -244,12 +310,16 @@ if TYPE_CHECKING:
         GuardAction,
         GuardSource,
         GuardVerdict,
+        IndexingStats,
         LLMFactoryPort,
         ModelFactoryPort,
         RerankFactoryPort,
         TokenCounterPort,
         VectorIndexer,
     )
+    from unified_kg_rag.ports.guardrail import GroundingContext
+    from unified_kg_rag.ports.indexer import StoredAnnotation
+    from unified_kg_rag.ports.model_factory import LanguageModelInfo
     from unified_kg_rag.shared.exceptions import (
         ConfigurationError,
         ConfirmationDeclinedError,

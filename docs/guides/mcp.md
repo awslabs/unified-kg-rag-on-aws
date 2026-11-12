@@ -57,7 +57,8 @@ Ctrl-C.
 
 Every tool is annotated read-only and idempotent. Call
 `kg_describe_schema` first: it says which strategies the namespace can
-run (a strategy it does not hold is refused, as in `run-rag`) and which
+run (`strategies`; a strategy it does not hold is refused, as in
+`run-rag`), which of them `auto` routes among (`auto_routes`) and which
 filter keys a search may give.
 
 ## Supporting content

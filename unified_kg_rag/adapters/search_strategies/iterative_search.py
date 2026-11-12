@@ -59,6 +59,7 @@ from unified_kg_rag.adapters.retrieval.base import (
 )
 from unified_kg_rag.adapters.retrieval.hybrid_scorer import RerankTrace
 from unified_kg_rag.adapters.retrieval.strategy_registry import (
+    RunRecord,
     get_strategy_spec,
     register_strategy,
 )
@@ -151,7 +152,16 @@ def _query_key(text: str) -> str:
     return " ".join(text.casefold().split())
 
 
-@register_strategy(SearchStrategy.ITERATIVE, wraps=_base_strategy)
+@register_strategy(
+    SearchStrategy.ITERATIVE,
+    wraps=_base_strategy,
+    # The follow-up queries searched, and each verdict's bridge entities and
+    # follow-up queries, are the controller model's.
+    run_record=RunRecord(
+        "iterative",
+        model_text=("searched", "verdicts.bridge_entities", "verdicts.next_queries"),
+    ),
+)
 class IterativeSearchStrategy(BaseSearchStrategy):
     """Bounded bridge follow-up rounds over a base strategy (see the module
     docstring). Reads what the base reads: its query extraction, its indexes

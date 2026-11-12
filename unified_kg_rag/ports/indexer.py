@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from collections.abc import Collection, Iterator, Mapping
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -39,14 +39,7 @@ StoredItemKind = Literal[
     "community_reports",
     "summary_nodes",
 ]
-STORED_ITEM_KINDS: tuple[StoredItemKind, ...] = (
-    "text_units",
-    "entities",
-    "relationships",
-    "claims",
-    "community_reports",
-    "summary_nodes",
-)
+STORED_ITEM_KINDS: tuple[StoredItemKind, ...] = get_args(StoredItemKind)
 
 
 class IndexingStats(BaseModel):

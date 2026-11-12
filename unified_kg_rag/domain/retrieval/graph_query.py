@@ -56,13 +56,16 @@ from unified_kg_rag.domain.models.graph_query import (
     ValueKind,
 )
 from unified_kg_rag.domain.models.schema import ExtractionSchema, schema_key
-from unified_kg_rag.domain.retrieval.filters import RANGE_BOUNDS, bound_holds
+from unified_kg_rag.domain.retrieval.filters import (
+    ATTRIBUTE_KEY_PREFIX,
+    RANGE_BOUNDS,
+    bound_holds,
+)
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import InvalidGraphQueryError
 
 logger = get_logger(__name__)
 
-ATTRIBUTE_KEY_PREFIX = f"{Constants.ATTRIBUTE_PREFIX.value}_"
 # The vertex property that holds the seed properties, as one JSON string.
 SEED_PROPERTIES_KEY = f"{ATTRIBUTE_KEY_PREFIX}{SEED_PROPERTIES_ATTRIBUTE}"
 # The vertex property that holds the entity's document filters (JSON).

@@ -234,12 +234,12 @@ async def test_an_edge_stored_towards_the_seed_is_walked(config: Config) -> None
 
 
 async def test_hops_and_per_vertex_neighbours_bound_the_walk(config: Config) -> None:
-    config.indexing.neptune.max_hops = 1
+    config.search.graph_expansion.max_hops = 1
     kept = await _expand(config, _Index(config), {"attr_grp": "a"})
     assert sorted(_paths(kept)) == ["B", "S"]
 
-    config.indexing.neptune.max_hops = 3
-    config.indexing.neptune.max_results_per_hop = 1
+    config.search.graph_expansion.max_hops = 3
+    config.search.graph_expansion.max_results_per_hop = 1
     edges = [("r1", "S", "X", 9.0), ("r2", "S", "Y", 1.0)]
     kept = await _expand(
         config, _Index(config, edges=edges, passing={"r1", "r2"}), {"attr_grp": "a"}
@@ -352,7 +352,7 @@ async def test_the_score_band_follows_the_walks_distance_and_rank(
     assert by_id["D"].score == pytest.approx(1 / 4 + (1 / 3 - 1 / 4) * 0.625)
 
     # No importance source: the middle of each band.
-    config.indexing.neptune.entity_importance_source = "none"
+    config.search.graph_expansion.entity_importance_source = "none"
     by_id = {r.source: r for r in await _expand(config, index, {"attr_grp": "a"})}
     assert by_id["D"].score == pytest.approx(1 / 4 + (1 / 3 - 1 / 4) * 0.75)
 
@@ -369,9 +369,9 @@ async def test_a_paths_last_name_is_the_entitys_own(config: Config) -> None:
 async def test_the_walk_stops_at_its_vertex_budget(config: Config) -> None:
     # top_k * retrieval_multiplier * traversal_fetch_multiplier vertices in
     # all: no further vertex is taken, and no further hop is asked for.
-    config.indexing.neptune.traversal_fetch_multiplier = 1
-    config.indexing.neptune.max_results_per_hop = 10
-    config.indexing.neptune.max_hops = 3
+    config.search.graph_expansion.traversal_fetch_multiplier = 1
+    config.search.graph_expansion.max_results_per_hop = 10
+    config.search.graph_expansion.max_hops = 3
     edges = [(f"r{i}", "S", f"v{i}", float(10 - i)) for i in range(5)]
     edges += [("r-far", "v0", "far", 1.0)]
     index = _Index(config, edges=edges, passing={e[0] for e in edges})
@@ -393,8 +393,8 @@ async def test_the_vertex_budget_counts_the_traversal_fetch_multiplier(
 ) -> None:
     # top_k * retrieval_multiplier * traversal_fetch_multiplier: with 2 the
     # walk reaches twice the expansion limit (the cut comes after it).
-    config.indexing.neptune.traversal_fetch_multiplier = 2
-    config.indexing.neptune.max_results_per_hop = 10
+    config.search.graph_expansion.traversal_fetch_multiplier = 2
+    config.search.graph_expansion.max_results_per_hop = 10
     edges = [(f"r{i}", "S", f"v{i}", float(10 - i)) for i in range(6)]
     index = _Index(config, edges=edges, passing={e[0] for e in edges})
     strategy = _strategy(config, _Graph(), index)
@@ -491,7 +491,7 @@ async def test_a_hub_seed_does_not_crowd_out_another_seeds_neighbours(
 
 async def test_the_budget_is_split_across_the_seeds(config: Config) -> None:
     # A's edges rank above B's: one budget went to A's neighbours alone.
-    config.indexing.neptune.traversal_fetch_multiplier = 1
+    config.search.graph_expansion.traversal_fetch_multiplier = 1
     edges = [(f"a{i}", "A", f"va{i}", 9.0 - i) for i in range(3)]
     edges += [(f"b{i}", "B", f"vb{i}", 3.0 - i) for i in range(3)]
     index = _Index(config, edges=edges, passing={e[0] for e in edges})
@@ -539,7 +539,7 @@ async def test_a_full_page_asks_the_open_vertices_together_then_each(
     edges.append(("l0", "L", "LX", 1.0))
     index = _Index(config, edges=edges, passing={e[0] for e in edges})
     seeds = [f"M{j:02d}" for j in range(20)] + ["L"]
-    config.indexing.neptune.max_hops = 1
+    config.search.graph_expansion.max_hops = 1
     kept = await _strategy(config, _Graph(), index)._expand_via_graph(
         SearchQuery(query="q", top_k=10, filters={"attr_grp": "a"}), seeds
     )
@@ -582,7 +582,7 @@ async def test_the_requests_on_their_own_run_max_concurrency_at_a_time(
 
     index.aretrieve = counted  # type: ignore[method-assign]
     config.search.max_concurrency = 3
-    config.indexing.neptune.max_hops = 1
+    config.search.graph_expansion.max_hops = 1
     await _strategy(config, _Graph(), index)._expand_via_graph(
         SearchQuery(query="q", top_k=10, filters={"attr_grp": "a"}),
         [f"M{j:02d}" for j in range(20)],
@@ -626,7 +626,7 @@ async def test_a_fatal_error_on_its_own_cancels_the_rest_of_its_wave(
 
     index.aretrieve = failing  # type: ignore[method-assign]
     config.search.max_concurrency = 3
-    config.indexing.neptune.max_hops = 1
+    config.search.graph_expansion.max_hops = 1
     with pytest.raises(StoreAccessDeniedError):
         await asyncio.wait_for(
             _strategy(config, _Graph(), index)._expand_via_graph(
@@ -657,7 +657,7 @@ async def test_a_live_window_below_the_page_is_judged_full(
 
     index.aindex_limits = limits  # type: ignore[method-assign]
     o.max_query_size = 3
-    config.indexing.neptune.max_hops = 1
+    config.search.graph_expansion.max_hops = 1
     await _strategy(config, _Graph(), index)._expand_via_graph(
         SearchQuery(query="q", top_k=10, filters={"attr_grp": "a"}), ["S"]
     )
@@ -685,7 +685,7 @@ async def test_a_window_shrunk_under_the_walk_is_judged_full(config: Config) -> 
 
     index.aindex_limits = limits  # type: ignore[method-assign]
     o.max_query_size = 3
-    config.indexing.neptune.max_hops = 1
+    config.search.graph_expansion.max_hops = 1
     await _strategy(config, _Graph(), index)._expand_via_graph(
         SearchQuery(query="q", top_k=10, filters={"attr_grp": "a"}), ["S"]
     )
@@ -707,7 +707,7 @@ async def test_internal_lists_over_max_terms_count_do_not_fail_the_query(
     edges = [(f"e{i}", a, b, 1.0) for i, (a, b) in enumerate(pairs)]
     index = _Index(config, edges=edges, passing={e[0] for e in edges})
     config.indexing.opensearch.index_settings = {"max_terms_count": 2}
-    config.indexing.neptune.max_hops = 4
+    config.search.graph_expansion.max_hops = 4
     kept = await _strategy(config, _Graph(), index)._expand_via_graph(
         SearchQuery(query="q", top_k=10, filters={"attr_grp": "a"}), ["S"]
     )
@@ -732,7 +732,7 @@ async def test_a_fanned_out_frontier_is_asked_in_batches_of_max_terms_count(
     edges += [(f"a{i}", f"A{i}", f"B{i}", 1.0) for i in range(3)]
     index = _Index(config, edges=edges, passing={e[0] for e in edges})
     config.indexing.opensearch.index_settings = {"max_terms_count": 2}
-    config.indexing.neptune.max_hops = 2
+    config.search.graph_expansion.max_hops = 2
     kept = await _strategy(config, _Graph(), index)._expand_via_graph(
         SearchQuery(query="q", top_k=10, filters={"attr_grp": "a"}), ["S"]
     )
@@ -752,7 +752,7 @@ async def test_a_frontier_over_max_terms_count_is_asked_in_batches(
     edges = [(f"e{i}", f"S{i}", f"N{i}", 1.0) for i in range(5)]
     index = _Index(config, edges=edges, passing={e[0] for e in edges})
     config.indexing.opensearch.index_settings = {"max_terms_count": 2}
-    config.indexing.neptune.max_hops = 1
+    config.search.graph_expansion.max_hops = 1
     kept = await _strategy(config, _Graph(), index)._expand_via_graph(
         SearchQuery(query="q", top_k=10, filters={"attr_grp": "a"}), seeds
     )
@@ -787,11 +787,13 @@ async def test_the_requests_on_their_own_are_sized_by_their_wave(
 
     index.aretrieve = recorded  # type: ignore[method-assign]
     config.search.max_concurrency = 2
-    config.indexing.neptune.max_hops = 1
+    config.search.graph_expansion.max_hops = 1
     query = SearchQuery(query="q", top_k=10, filters={"attr_grp": "a"})
     await _strategy(config, _Graph(), index)._expand_via_graph(query, seeds)
 
-    share = seed_share(query, config.indexing.neptune.traversal_fetch_multiplier, 6)
+    share = seed_share(
+        query, config.search.graph_expansion.traversal_fetch_multiplier, 6
+    )
     # The first page closed M0, the joint one M1; M2-M5 go two at a time.
     assert [ends for ends, _, _ in asked] == [["M2"], ["M3"], ["M4"], ["M5"]]
     assert {size for _, size, _ in asked} == {2 * share}
@@ -824,7 +826,7 @@ async def test_the_requests_on_their_own_never_ask_past_a_page(
     index.aretrieve = recorded  # type: ignore[method-assign]
     config.indexing.opensearch.max_query_size = 20
     config.search.max_concurrency = 6
-    config.indexing.neptune.max_hops = 1
+    config.search.graph_expansion.max_hops = 1
     await _strategy(config, _Graph(), index)._expand_via_graph(
         SearchQuery(query="q", top_k=30, filters={"attr_grp": "a"}), seeds
     )
@@ -845,7 +847,7 @@ async def test_seeds_sharing_their_neighbours_each_reach_their_share(
     ]
     edges += [(f"{s}-p{j}", s, f"{s}P{j}", 1.0) for s in seeds for j in range(5)]
     index = _Index(config, edges=edges, passing={e[0] for e in edges})
-    config.indexing.neptune.max_hops = 1
+    config.search.graph_expansion.max_hops = 1
     await _strategy(config, _Graph(), index)._expand_via_graph(
         SearchQuery(query="q", top_k=10, filters={"attr_grp": "a"}), seeds
     )
@@ -866,7 +868,7 @@ async def test_edges_back_to_reached_vertices_do_not_fill_a_page(
     edges += [("bx", "B", "X", 1.0), ("ay", "A", "Y", 1.0)]
     index = _Index(config, edges=edges, passing={e[0] for e in edges})
     index.honours_exclude = respected
-    config.indexing.neptune.max_hops = 1
+    config.search.graph_expansion.max_hops = 1
     await _strategy(config, _Graph(), index)._expand_via_graph(
         SearchQuery(query="q", top_k=10, filters={"attr_grp": "a"}), ["A", "B"]
     )
@@ -899,7 +901,7 @@ async def test_two_keys_ask_again_past_the_edges_the_check_dropped(
     index = _Index(
         config, edges=edges, passing={e[0] for e in edges}, units_passing=units
     )
-    config.indexing.neptune.max_hops = 1
+    config.search.graph_expansion.max_hops = 1
     await _strategy(config, _Graph(), index)._expand_via_graph(
         SearchQuery(
             query="q", top_k=2, filters={"attr_grp": "a", "attr_category": "x"}
@@ -1120,7 +1122,7 @@ async def test_equal_edges_and_entities_are_ordered_by_id(config: Config) -> Non
     # Ties followed the store's order (the order of the two endpoint
     # requests, the index order of the entities read): a subset index of
     # the passing documents and the filtered index kept different ones.
-    config.indexing.neptune.max_results_per_hop = 1
+    config.search.graph_expansion.max_results_per_hop = 1
     edges = [("r-b", "S", "B", 1.0), ("r-a", "A", "S", 1.0)]
     kept = await _expand(
         config, _Index(config, edges=edges, passing={"r-a", "r-b"}), {"attr_grp": "a"}
@@ -1131,7 +1133,7 @@ async def test_equal_edges_and_entities_are_ordered_by_id(config: Config) -> Non
         async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
             return list(reversed(await super().aretrieve(query)))
 
-    config.indexing.neptune.max_results_per_hop = 50
+    config.search.graph_expansion.max_results_per_hop = 50
     edges = [(f"r{i}", "S", f"v{i}", 1.0) for i in range(9)]
     index = _Reversed(config, edges=edges, passing={e[0] for e in edges})
     kept = await _strategy(config, _Graph(), index)._expand_via_graph(
@@ -1619,10 +1621,12 @@ async def test_an_emptied_wave_does_not_end_the_waves(config: Config) -> None:
     edges += [(f"b{i:03d}", "B", f"BX{i:03d}", 45.0) for i in range(20)]
     edges += [(f"e{i:03d}", "E", f"EX{i:03d}", 40.0) for i in range(3)]
     index = _Index(config, edges=edges, passing={e[0] for e in edges})
-    config.indexing.neptune.max_hops = 2
+    config.search.graph_expansion.max_hops = 2
     config.search.max_concurrency = 1
     query = SearchQuery(query="q", top_k=10, filters={"attr_grp": "a"})
-    share = seed_share(query, config.indexing.neptune.traversal_fetch_multiplier, 4)
+    share = seed_share(
+        query, config.search.graph_expansion.traversal_fetch_multiplier, 4
+    )
     assert 3 < share < 20
     await _strategy(config, _Graph(), index)._expand_via_graph(
         query, ["S1", "S2", "S3", "S4"]
@@ -1646,8 +1650,8 @@ async def test_the_walk_splits_its_budget_by_the_seed_weights(
         for i in range(20)
     ]
     index = _Index(config, edges=edges, passing={e[0] for e in edges})
-    config.indexing.neptune.max_hops = 1
-    config.indexing.neptune.traversal_fetch_multiplier = 1
+    config.search.graph_expansion.max_hops = 1
+    config.search.graph_expansion.traversal_fetch_multiplier = 1
     query = SearchQuery(query="q", top_k=8, filters={"attr_grp": "a"})
     strategy = _strategy(config, _Graph(), index)
 

@@ -452,7 +452,7 @@ def test_an_index_name_part_set_in_code_is_checked_too(
         (lambda c: c.processing.chunking, "length_unit", "words"),
         (lambda c: c.processing.chunking, "max_chunk_size", 0),
         (lambda c: c.indexing.neptune, "vertex_ids", "Custom"),
-        (lambda c: c.indexing.neptune, "max_hops", 0),
+        (lambda c: c.search.graph_expansion, "max_hops", 0),
         (lambda c: c.retry, "max_attempts", 0),
         (lambda c: c.retry, "graph_store_max_attempts", 0),
         (lambda c: c.aws.bedrock.guardrail, "version", ""),

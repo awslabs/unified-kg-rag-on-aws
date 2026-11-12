@@ -87,6 +87,10 @@ class EvaluatorType(str, Enum):
     ASSERTION = "assertion"
 
 
+# The evaluators that call the LLM judge (models.roles.evaluation).
+JUDGE_EVALUATORS = frozenset({EvaluatorType.RAGAS, EvaluatorType.ASSERTION})
+
+
 class EvaluationQuery(BaseModel):
     query_id: str = Field(description="Unique identifier for the evaluation query.")
     question: str = Field(description="The question text to be evaluated.")
@@ -314,23 +318,17 @@ class EvaluationResult(BaseModel):
             "(metadata.insufficiency_reason; for iterative its stop reason)."
         ),
     )
-    iterative: dict[str, Any] | None = Field(
-        default=None,
+    strategy_records: dict[str, dict[str, Any]] = Field(
+        default_factory=dict,
         description=(
-            "The iterative strategy's run record (metadata.iterative): base, "
+            "The run records the answer's strategy kept in its metadata, by "
+            "key (each strategy's registered RunRecord): 'iterative' (base, "
             "mode, rounds, stop_reason, degraded, llm_calls, usage, searched, "
-            "verdicts, steps, added_results, round_0_rerank. None for the "
-            "other strategies."
-        ),
-    )
-    structured: dict[str, Any] | None = Field(
-        default=None,
-        description=(
-            "The structured strategy's run record (metadata.structured): "
-            "status (answered, fallback, failed), reason, fallback_strategy, "
-            "plan, plan_description, operation, row_count, truncated, exact, "
-            "linked, repairs, backend, elapsed_ms, usage. None for the other "
-            "strategies."
+            "verdicts, steps, added_results, round_0_rerank) and "
+            "'structured' (status: answered, fallback, failed; reason, "
+            "fallback_strategy, plan, plan_description, operation, "
+            "row_count, truncated, exact, linked, repairs, backend, "
+            "elapsed_ms, usage). Empty for a strategy that keeps none."
         ),
     )
     rerank_status: RerankStatus | None = Field(
@@ -553,7 +551,7 @@ class EvaluationSummary(BaseModel):
         default_factory=dict,
         description=(
             "Over the answers the structured strategy gave (an "
-            "EvaluationResult.structured record): their count ('queries'), "
+            "EvaluationResult.strategy_records['structured'] record): their count ('queries'), "
             "per status, per fallback reason, and the rates of a valid plan "
             "(one that reached the graph store), a repair call, a truncated "
             "answer and an exact one; empty when no answer had a record."
@@ -563,7 +561,7 @@ class EvaluationSummary(BaseModel):
         default_factory=dict,
         description=(
             "Over the answers the iterative strategy gave (an "
-            "EvaluationResult.iterative record): their count ('queries'), "
+            "EvaluationResult.strategy_records['iterative'] record): their count ('queries'), "
             "the follow-up rounds per answer ('rounds' histogram, "
             "'mean_rounds'), the stop reasons, the share stopped at "
             "search.iterative.max_rounds ('max_rounds_rate') and the "

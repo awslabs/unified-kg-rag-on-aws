@@ -262,19 +262,22 @@ def test_the_namespace_s_methodologies_come_from_its_build_record(
     fresh = client.get(
         "/api/namespace/methodologies", params={"suffix": "never-built"}
     ).json()
-    assert fresh == {
-        "namespace": "never-built",
-        "recorded": False,
-        "held": [],
-        "dropped": [],
-    }
+    # No build record: what the config builds stands in, as for a query
+    # (the strategies it serves are the ones marked available).
+    assert fresh["namespace"] == "never-built" and fresh["recorded"] is False
+    assert set(status["methodologies"]) <= set(fresh["held"])
+    assert fresh["dropped"] == []
     assert held["dropped"] == []  # the config builds what it holds
     narrowed = client.get(
         "/api/namespace/methodologies", params={"methodologies": "lightrag"}
     ).json()
     assert narrowed["dropped"] == ["graphrag"]
-    bad = client.get("/api/namespace/methodologies", params={"suffix": "../x"})
-    assert bad.status_code == 400 and bad.json()["code"] == "invalid"
+    for unsafe in ("../x", "Docs", "acme*"):
+        # The stores' name rule: the config and the stores refuse the others.
+        bad = client.get("/api/namespace/methodologies", params={"suffix": unsafe})
+        assert bad.status_code == 400 and bad.json()["code"] == "invalid"
+        bad = client.get("/api/strategies", params={"suffix": unsafe})
+        assert bad.status_code == 400 and bad.json()["code"] == "invalid"
 
 
 def test_an_ingestion_that_narrows_the_namespace_is_refused_unconfirmed(

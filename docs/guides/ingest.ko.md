@@ -135,7 +135,7 @@ temperature, 추론 설정입니다.
   듭니다. Neptune에서 `indexing.neptune.vertex_ids: custom`을 쓰면 정점을 `id` 속성
   대신 정점 id로 찾습니다. 기존 그래프를 전환하려면 전체 빌드를 한 번 실행해야
   합니다([운영 런북: 사용자 지정 Neptune 정점 id](../operations.md#custom-neptune-vertex-ids), 영문).
-  그래프 확장은 허브의 이웃을 id 순서로 가져오므로(`indexing.neptune.deterministic_order:
+  그래프 확장은 허브의 이웃을 id 순서로 가져오므로(`search.graph_expansion.deterministic_order:
   true`, 기본값) 다시 빌드해도 결과가 같습니다. 대신 확장하는 허브마다 이웃을 모두
   읽습니다(Gremlin Server에서 이웃 2,500개 허브는 질의당 6.8 ms에서 23.2 ms로 늘었고,
   Neptune에서는 측정하지 않음). 허브가 많은 질의가 너무 느리면 `false`로 두어 Neptune이

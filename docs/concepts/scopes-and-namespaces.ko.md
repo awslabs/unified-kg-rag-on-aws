@@ -16,7 +16,9 @@ scope)**는 실행이 비교하는 코퍼스 소스를 정하고, **네임스페
 `processing.document_parsing.index_value`에서 가져오고, `run-rag`와
 `run-eval`은 `--suffix`로 다른 값을 지정하지 않으면 설정 파일의 같은 `index_value`를
 질의합니다. Python에서는 `RAGInput.suffix`로 고릅니다(`None`이면 체인 설정의
-`index_value`). 모두 기본값은 `default`입니다.
+`index_value`). 모두 기본값은 `default`입니다. 두 인덱스 접두사나 두 레이블 접두사가
+같은 저장소 이름을 만들 수 있으면(같은 값이거나, `kg`와 `kg-entities`처럼 한쪽이 다른 쪽 뒤에
+`-`를 붙인 값) 설정을 불러올 때 실패합니다.
 테넌트나 코퍼스 버전마다 인덱스 접미사를 하나씩 두고(수집과 질의에 같은 `--suffix`나 같은
 설정 파일),
 `indexing.additional_suffix`는 양쪽에서 같게 하세요. 증분 인덱싱과 삭제는 인덱스 접미사

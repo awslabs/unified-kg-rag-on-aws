@@ -10,10 +10,16 @@ CHANGELOG "Breaking" entry.
 from __future__ import annotations
 
 import ast
+import importlib
+import inspect
 import json
+import re
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
+from types import ModuleType
+from typing import Any
 
 import pytest
 
@@ -102,6 +108,7 @@ PUBLIC_API = sorted(
         "QueryInput",
         "RerankFactoryPort",
         "RetrieverRole",
+        "RunRecord",
         "SchemaDocument",
         "SchemaSourceContext",
         "SeedEdge",
@@ -117,6 +124,35 @@ PUBLIC_API = sorted(
         "register_schema_source",
         "register_seed_source",
         "register_strategy",
+        # The types the extension surface names
+        "Claim",
+        "Community",
+        "CommunityReport",
+        "DocStatusRecord",
+        "DocumentDelta",
+        "Entity",
+        "ExtractionSettings",
+        "FilterFields",
+        "GraphEdge",
+        "GraphProfile",
+        "GraphQueryRequest",
+        "GraphQueryResult",
+        "GroundingContext",
+        "IndexArtifact",
+        "IndexBuildRecord",
+        "IndexLimits",
+        "IndexingStats",
+        "LanguageModelInfo",
+        "Relationship",
+        "RenderContext",
+        "RetrievalResult",
+        "SearchQuery",
+        "StoredAnnotation",
+        "SummaryNode",
+        "TextUnit",
+        "TransientRetryConfig",
+        "load_seed_graphs",
+        "resolve_extraction_schema",
     ]
 )
 
@@ -216,3 +252,88 @@ def test_the_public_api_loads_no_optional_extra() -> None:
         timeout=120,
     )
     assert json.loads(result.stdout.strip().splitlines()[-1]) == []
+
+
+def _module_names(module: ModuleType) -> dict[str, Any]:
+    """The names an annotation in ``module`` can use: its globals and the
+    names its ``TYPE_CHECKING`` blocks import."""
+    names = dict(vars(module))
+    tree = ast.parse(Path(str(module.__file__)).read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.If) and getattr(node.test, "id", "") == "TYPE_CHECKING":
+            for statement in node.body:
+                if isinstance(statement, ast.ImportFrom):
+                    source = importlib.import_module(
+                        "." * statement.level + (statement.module or ""),
+                        module.__package__,
+                    )
+                    for alias in statement.names:
+                        if hasattr(source, alias.name):
+                            names[alias.asname or alias.name] = getattr(
+                                source, alias.name
+                            )
+    return names
+
+
+def _extension_points(value: Any) -> list[Callable[..., Any]]:
+    """The functions of an exported extension point whose signatures an
+    extender reads: a registry function itself, or every public method (and
+    ``__init__``) a port, base class or ``Providers`` defines in the package."""
+    if inspect.isfunction(value):
+        return [value]
+    found = []
+    for klass in value.__mro__:
+        if not klass.__module__.startswith("unified_kg_rag."):
+            continue
+        for name, member in vars(klass).items():
+            function = getattr(member, "__func__", member)
+            if inspect.isfunction(function) and (
+                name == "__init__" or not name.startswith("_")
+            ):
+                found.append(function)
+    return found
+
+
+def _named_types(function: Callable[..., Any]) -> set[str]:
+    """The package's classes ``function``'s annotations name; a ``@final``
+    helper's return type is the caller's to pass on, not to name."""
+    namespace = _module_names(sys.modules[function.__module__])
+    annotations = dict(function.__annotations__)
+    if getattr(function, "__final__", False):
+        annotations.pop("return", None)
+    found = set()
+    for annotation in annotations.values():
+        text = annotation.__name__ if inspect.isclass(annotation) else str(annotation)
+        for token in re.findall(r"[A-Za-z_]\w*", text):
+            value = namespace.get(token)
+            if inspect.isclass(value) and value.__module__.startswith(
+                "unified_kg_rag."
+            ):
+                found.add(value.__name__)
+    return found
+
+
+def test_the_extension_surface_names_only_exported_types() -> None:
+    # A plugin implements a port or a base class from the root package
+    # alone (docs/guides/extend.md): every type a port's, a base class's or
+    # a registry's signature names is exported too.
+    points = [
+        value
+        for name in unified_kg_rag._EXPORTS
+        if (value := getattr(unified_kg_rag, name)) is unified_kg_rag.Providers
+        or (inspect.isfunction(value) and name.startswith("register_"))
+        or (
+            inspect.isclass(value)
+            and (inspect.isabstract(value) or getattr(value, "_is_protocol", False))
+        )
+    ]
+    assert unified_kg_rag.VectorIndexer in points
+    assert unified_kg_rag.DocStatusPort in points
+    missing = {
+        f"{function.__qualname__}: {name}"
+        for point in points
+        for function in _extension_points(point)
+        for name in _named_types(function)
+        if name not in unified_kg_rag._EXPORTS
+    }
+    assert not missing, sorted(missing)

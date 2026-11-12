@@ -50,6 +50,27 @@ class QueryInput(str, Enum):
 
 
 @dataclass(frozen=True)
+class RunRecord:
+    """The record a strategy keeps of its run in ``SearchResult.metadata``.
+
+    The chain copies it into the answer's metadata, screens its model-written
+    text with the output guardrail (masked, or left out when refused, as a
+    synthesized result is) and drops it from a refused answer; evaluation
+    keeps it per answer (``EvaluationResult.strategy_records``).
+
+    Attributes:
+        key: Its ``SearchResult.metadata`` key.
+        model_text: Dotted paths of the model-written text in it; a list met
+            on the way is walked item by item, and every string under a
+            path is screened (``"verdicts.next_queries"``: each verdict's
+            follow-up queries).
+    """
+
+    key: str
+    model_text: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class StrategySpec:
     """Registration record for a search strategy.
 
@@ -69,6 +90,8 @@ class StrategySpec:
             the text units alone, ``global`` the community reports too): a
             namespace holding them serves it, whatever methodology built
             them. ``None``: its methodology's required artifacts.
+        run_record: The record of its run it keeps in the search metadata
+            (``RunRecord``), if any.
     """
 
     strategy_class: type[BaseSearchStrategy]
@@ -78,6 +101,7 @@ class StrategySpec:
     query_inputs: frozenset[QueryInput] = frozenset()
     wraps: Callable[[Config], SearchStrategy] | None = None
     required_artifacts: frozenset[IndexArtifact] | None = None
+    run_record: RunRecord | None = None
 
     @property
     def methodology(self) -> Methodology | None:
@@ -101,6 +125,7 @@ def register_strategy(
     query_inputs: frozenset[QueryInput] = frozenset(),
     wraps: Callable[[Config], SearchStrategy] | None = None,
     required_artifacts: frozenset[IndexArtifact] | None = None,
+    run_record: RunRecord | None = None,
 ) -> Callable[[StrategyT], StrategyT]:
     """Class decorator that registers a search strategy under ``strategy``.
 
@@ -113,6 +138,11 @@ def register_strategy(
             (``StrategySpec.wraps``).
         required_artifacts: The index artifacts it reads, when other than
             its methodology requires (``StrategySpec.required_artifacts``).
+        run_record: The record of its run it keeps in the search metadata
+            and where its model-written text is (``RunRecord``): the chain
+            screens and clears it, evaluation keeps it. A strategy that
+            writes model text into its metadata must declare it, or the
+            text skips the output guardrail.
 
     Re-registering the same class with the same arguments keeps the record
     it has; with other arguments it raises, because replacing the record
@@ -132,7 +162,18 @@ def register_strategy(
             required_artifacts=(
                 None if required_artifacts is None else frozenset(required_artifacts)
             ),
+            run_record=run_record,
         )
+        if run_record is not None and any(
+            other.run_record is not None
+            and other.run_record.key == run_record.key
+            and other.strategy_class is not cls
+            for other in _REGISTRY.values()
+        ):
+            raise ValueError(
+                f"Search strategy '{strategy.value}': another strategy keeps "
+                f"its run record under '{run_record.key}'."
+            )
         registered = _REGISTRY.get(strategy)
         if registered is not None:
             if registered.strategy_class is not cls:
@@ -165,6 +206,15 @@ def _register_built_in_strategies() -> None:
     imports this module.
     """
     import unified_kg_rag.adapters.search_strategies  # noqa: F401
+
+
+def run_records() -> tuple[RunRecord, ...]:
+    """The run record of every registered strategy that keeps one
+    (``StrategySpec.run_record``), each key once."""
+    _register_built_in_strategies()
+    return tuple(
+        spec.run_record for spec in _REGISTRY.values() if spec.run_record is not None
+    )
 
 
 def get_strategy_spec(strategy: SearchStrategy) -> StrategySpec:

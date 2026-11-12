@@ -2,7 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Moved and removed configuration keys, with the hints they raise."""
 
-from typing import Any
+import types
+from typing import Any, Union, get_args, get_origin
+
+from pydantic import BaseModel
 
 # Moved settings -> the key that replaces each. A config that sets one fails
 # validation naming its replacement.
@@ -62,6 +65,21 @@ MOVED_KEYS: dict[str, str] = {
     # The 0.2.3 retry counts, which count otherwise (MOVED_KEY_NOTES).
     "processing.max_retries": "retry.max_attempts",
     "indexing.neptune.max_retries": "retry.graph_store_max_attempts",
+    # 0.2.3's call pools, one pool of in-flight calls now.
+    "processing.chunk_concurrency": "processing.max_concurrency",
+    "processing.batch_size": "processing.max_concurrency",
+    "indexing.cross_run_fuzzy_merge": "processing.fuzzy_entity_resolution",
+    # Query-time traversal settings every graph store reads.
+    **{
+        f"indexing.neptune.{key}": f"search.graph_expansion.{key}"
+        for key in (
+            "max_hops",
+            "max_results_per_hop",
+            "entity_importance_source",
+            "traversal_fetch_multiplier",
+            "deterministic_order",
+        )
+    },
 }
 
 # Moved key -> what to know when converting its value (a key whose
@@ -73,6 +91,10 @@ MOVED_KEY_NOTES: dict[str, str] = {
     ),
     "indexing.neptune.max_retries": (
         "it counted retries, so max_retries N is graph_store_max_attempts N+1"
+    ),
+    "processing.batch_size": (
+        "it counted the items of one batch, not calls in flight; "
+        "max_concurrency caps the calls"
     ),
 }
 
@@ -221,3 +243,67 @@ def removed_keys(data: Any) -> list[str]:
 
 
 _ABSENT: Any = object()
+
+
+def nested_model(annotation: Any) -> type[BaseModel] | None:
+    """The BaseModel behind ``Model`` / ``Model | None`` (not dict/list values)."""
+    if get_origin(annotation) not in (None, Union, types.UnionType):
+        return None
+    for candidate in get_args(annotation) or (annotation,):
+        if isinstance(candidate, type) and issubclass(candidate, BaseModel):
+            return candidate
+    return None
+
+
+def unknown_keys(data: Any, model: type[BaseModel], prefix: str = "") -> list[str]:
+    """The config keys in ``data`` the model does not define (pydantic would
+    drop them), as dotted paths. Moved keys are left out (validation refuses
+    them, naming their replacement), and so are removed ones (ignored with a
+    warning)."""
+    if not isinstance(data, dict):
+        return []
+    found: list[str] = []
+    for key, value in data.items():
+        path = f"{prefix}{key}"
+        field = model.model_fields.get(key)
+        if field is None:
+            if path not in MOVED_KEYS and path not in REMOVED_KEYS:
+                found.extend(_unknown_in_gone_section(path, value))
+            continue
+        nested = nested_model(field.annotation)
+        if nested is not None:
+            found.extend(unknown_keys(value, nested, f"{path}."))
+    return found
+
+
+def _unknown_in_gone_section(path: str, value: Any) -> list[str]:
+    """The unknown keys at ``path``, a key no model defines: none of a
+    section that only holds moved or removed keys (``graph.analysis``,
+    whose last settings went) but the keys in it that are neither, else
+    ``path`` itself."""
+    gone = [*MOVED_KEYS, *REMOVED_KEYS]
+    if not isinstance(value, dict) or not any(k.startswith(f"{path}.") for k in gone):
+        return [path]
+    found: list[str] = []
+    for key, inner in value.items():
+        inner_path = f"{path}.{key}"
+        if inner_path not in MOVED_KEYS and inner_path not in REMOVED_KEYS:
+            found.extend(_unknown_in_gone_section(inner_path, inner))
+    return found
+
+
+def without_keys(data: dict[str, Any], paths: list[str]) -> dict[str, Any]:
+    """``data`` without the dotted ``paths`` (``unknown_keys``), copied
+    where it changes: what ``allow_unknown_keys`` validates."""
+    stripped = dict(data)
+    for path in paths:
+        *parents, last = path.split(".")
+        node = stripped
+        for key in parents:
+            child = node.get(key)
+            if not isinstance(child, dict):
+                break
+            node[key] = node = dict(child)
+        else:
+            node.pop(last, None)
+    return stripped

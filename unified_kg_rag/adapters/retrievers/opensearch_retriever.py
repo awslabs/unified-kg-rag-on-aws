@@ -40,6 +40,7 @@ from unified_kg_rag.domain.ingestion.seed_graph import (
 )
 from unified_kg_rag.domain.models import (
     Config,
+    IndexArtifact,
     ModelPurpose,
     RetrievalResult,
     SearchQuery,
@@ -61,7 +62,10 @@ from unified_kg_rag.domain.retrieval.filters import (
     union_filter_fields,
 )
 from unified_kg_rag.domain.retrieval.hybrid_normalization import combine_min_max
-from unified_kg_rag.domain.retrieval.index_prefixes import configured_index_prefixes
+from unified_kg_rag.domain.retrieval.index_prefixes import (
+    configured_index_prefixes,
+    index_artifact_of,
+)
 from unified_kg_rag.domain.retrieval.source_fields import id_list
 from unified_kg_rag.domain.retrieval.store_names import namespace_suffix
 from unified_kg_rag.ports.model_factory import EmbeddingFactoryPort
@@ -115,6 +119,15 @@ _LEXICAL_TERM_BUDGET = 200
 _LEXICAL_CLAUSE_BUDGET = 1000
 _MAX_FUZZY_QUERY_TERMS = 10
 _FUZZY_MAX_EXPANSIONS = 10
+# The section a hit of each vector-store artifact's index reads as.
+_ARTIFACT_SECTIONS: dict[IndexArtifact | None, SectionType] = {
+    IndexArtifact.TEXT_UNITS: SectionType.TEXT,
+    IndexArtifact.ENTITIES: SectionType.ENTITY,
+    IndexArtifact.RELATIONSHIP_VECTORS: SectionType.RELATIONSHIP,
+    IndexArtifact.CLAIMS: SectionType.CLAIM,
+    IndexArtifact.COMMUNITY_REPORTS: SectionType.COMMUNITY,
+    IndexArtifact.SUMMARY_TREE: SectionType.SUMMARY,
+}
 
 
 def _invalid_dimension_reason(reason: str | None) -> str | None:
@@ -1746,19 +1759,5 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         return "\n".join(unique_parts).strip()
 
     def _determine_section_type(self, index_name: str) -> SectionType:
-        opensearch_config = self._opensearch_config
-
-        if index_name.startswith(opensearch_config.text_units_index_prefix):
-            return SectionType.TEXT
-        if index_name.startswith(opensearch_config.entities_index_prefix):
-            return SectionType.ENTITY
-        if index_name.startswith(opensearch_config.relationships_index_prefix):
-            return SectionType.RELATIONSHIP
-        if index_name.startswith(opensearch_config.claims_index_prefix):
-            return SectionType.CLAIM
-        if index_name.startswith(opensearch_config.community_reports_index_prefix):
-            return SectionType.COMMUNITY
-        if index_name.startswith(opensearch_config.summary_nodes_index_prefix):
-            return SectionType.SUMMARY
-
-        return SectionType.GENERAL
+        artifact = index_artifact_of(self._config, index_name)
+        return _ARTIFACT_SECTIONS.get(artifact, SectionType.GENERAL)

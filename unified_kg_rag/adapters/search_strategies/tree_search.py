@@ -34,7 +34,6 @@ from unified_kg_rag.adapters.retrieval.base import BaseSearchStrategy
 from unified_kg_rag.adapters.retrieval.ppr_ranking import document_unit_ids
 from unified_kg_rag.adapters.retrieval.strategy_registry import register_strategy
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
-from unified_kg_rag.domain.ingestion.methodologies import artifacts_to_build
 from unified_kg_rag.domain.models import (
     IndexArtifact,
     Methodology,
@@ -45,7 +44,10 @@ from unified_kg_rag.domain.models import (
     SearchStrategy,
     SearchType,
 )
-from unified_kg_rag.domain.retrieval.index_prefixes import held_artifacts_of
+from unified_kg_rag.domain.retrieval.index_prefixes import (
+    held_artifacts_of,
+    readable_artifacts,
+)
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import text_digest
 from unified_kg_rag.shared.utils.concurrency import gather_bounded, gather_or_cancel
@@ -73,15 +75,16 @@ class TreeSearchStrategy(BaseSearchStrategy):
     spare_context_budget_first = (SectionType.TEXT,)
 
     def _graph_signal(self, query: SearchQuery | None = None) -> bool:
-        """Whether the graph buckets run: on (``auto``) where the queried
-        namespace holds the entities index (``query``'s held artifacts; the
-        configured methodologies' when it names none, or without a query)."""
+        """Whether the graph buckets run: on (``auto``) where the query reads
+        the entities index (``readable_artifacts``: a run of the config
+        builds it and the queried namespace holds it, by ``query``'s held
+        artifacts; without them, or without a query, what the config
+        builds), the rule of every optional index, so the filter-key check
+        and the search agree."""
         if self.config.search.tree_search.graph_signal != "auto":
             return False
         held = held_artifacts_of(query.metadata) if query is not None else None
-        if held is None:
-            held = artifacts_to_build(self.config)
-        return IndexArtifact.ENTITIES in held
+        return IndexArtifact.ENTITIES in readable_artifacts(self.config, held)
 
     def _summary_unfiltered_keys(self, query: SearchQuery) -> list[str]:
         """The caller's filter keys the text units declare and the summary

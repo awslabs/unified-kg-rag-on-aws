@@ -1191,7 +1191,7 @@ def test_graph_expansion_returns_seeds_first_then_distance_bands(
     # the first seeds' neighbourhoods consume it, and the seeds themselves
     # were never emitted.
     h = graph_harness.derive(
-        lambda c: setattr(c.indexing.neptune, "traversal_fetch_multiplier", 1)
+        lambda c: setattr(c.search.graph_expansion, "traversal_fetch_multiplier", 1)
     )
     seeds = [f"seed{i}" for i in range(4)]
     near = {seed: [f"{seed}-n{j}" for j in range(4)] for seed in seeds}
@@ -1382,8 +1382,8 @@ def test_graph_expansion_budget_caps_each_seed_breadth_first(
     # traverser of each hop: on this tree of fan-out 8 a budget of 5 fetched
     # 5 + 25 entities. The budget caps the seed's total, hop 1 first.
     def change(config: Any) -> None:
-        config.indexing.neptune.traversal_fetch_multiplier = 1  # no cut
-        config.indexing.neptune.max_hops = 2
+        config.search.graph_expansion.traversal_fetch_multiplier = 1  # no cut
+        config.search.graph_expansion.max_hops = 2
 
     h = graph_harness.derive(change)
     near = [f"n{i}" for i in range(8)]
@@ -1435,8 +1435,8 @@ def test_graph_expansion_splits_the_budget_by_the_seed_weights(
     # 3:1 reach 6 and 2, where an even split reached 4 and 4. On Gremlin the
     # seeds of each share go in a traversal of their own.
     def change(config: Any) -> None:
-        config.indexing.neptune.traversal_fetch_multiplier = 1  # no cut
-        config.indexing.neptune.max_hops = 1
+        config.search.graph_expansion.traversal_fetch_multiplier = 1  # no cut
+        config.search.graph_expansion.max_hops = 1
 
     h = graph_harness.derive(change)
     leaves = {seed: [f"{seed}-n{i}" for i in range(8)] for seed in ("a", "b")}
@@ -1700,9 +1700,9 @@ def test_graph_expansion_does_not_depend_on_the_edge_write_order(
     def change(suffix: str) -> Any:
         def apply(config: Any) -> None:
             config.indexing.additional_suffix = suffix
-            config.indexing.neptune.max_results_per_hop = 3
-            config.indexing.neptune.max_hops = 1
-            config.indexing.neptune.traversal_fetch_multiplier = 1
+            config.search.graph_expansion.max_results_per_hop = 3
+            config.search.graph_expansion.max_hops = 1
+            config.search.graph_expansion.traversal_fetch_multiplier = 1
 
         return apply
 

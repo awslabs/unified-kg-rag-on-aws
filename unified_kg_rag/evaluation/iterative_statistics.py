@@ -17,12 +17,16 @@ from unified_kg_rag.domain.models import EvaluationResult
 _AT_MAX_ROUNDS = "max_rounds"
 
 
+# The strategy's RunRecord key.
+_KEY = "iterative"
+
+
 def iterative_statistics(results: Iterable[EvaluationResult]) -> dict[str, Any]:
     """Over the answers with an iterative run record: their count, the
     follow-up rounds per answer (a histogram and the mean), the stop reasons,
     the share stopped at ``max_rounds`` and the degraded runs (a controller
     reply that did not parse, a failed round); ``{}`` when none has one."""
-    records = [r.iterative for r in results if isinstance(r.iterative, dict)]
+    records = [r.strategy_records[_KEY] for r in results if _KEY in r.strategy_records]
     if not records:
         return {}
     rounds = [int(r.get("rounds") or 0) for r in records]

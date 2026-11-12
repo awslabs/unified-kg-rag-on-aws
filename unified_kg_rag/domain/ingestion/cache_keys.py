@@ -368,8 +368,6 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
     "indexing.max_deletion_share": _neutral(
         "stops a run before it writes, never changes what a stage produces"
     ),
-    # Which neighbours graph expansion keeps (deterministic_order) included:
-    # shapes answers (eval manifests record it), no cached stage output.
     "indexing.neptune": Unkeyed(_AT_INDEXING),
     "indexing.opensearch": Unkeyed(_AT_INDEXING),
     "indexing.opensearch.refresh_after_batch": _neutral(_THROUGHPUT),
@@ -391,6 +389,8 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
     "aws.s3": _neutral("says where caches and exports are stored"),
     "cache": _neutral("says how and how long caches are stored, not what they hold"),
     "retry": _neutral(_THROUGHPUT),
+    # Graph expansion's settings (search.graph_expansion) included: they
+    # shape answers (eval manifests record them), no cached stage output.
     "search": Unkeyed(_QUERY),
     "memory": Unkeyed(_QUERY),
     "evaluation": Unkeyed("read by run-eval only"),

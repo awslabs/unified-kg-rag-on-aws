@@ -137,7 +137,7 @@ as extraction merges names) become one entity:
 | Properties | Kept under `attributes.seed_properties`, never over an extracted attribute. Stored, not indexed: any key and any string, number or boolean value can be written, and no filter or search matches them |
 | IRI | The smallest one stated; an entity stated with several is counted (`entities_with_conflicting_iris`, INFO) |
 | Edges | Added. A seed edge and a document edge with the same endpoints and type are one relationship, their weights added |
-| Ranks | Count document-backed edges only (an edge is seed-only when every text unit it cites is a seed's): a seed never makes an entity more important, and an entity only seed edges join has rank 0. Leiden still clusters every edge at its full weight. `indexing.neptune.entity_importance_source: degree` counts the edges at query time, seed edges included |
+| Ranks | Count document-backed edges only (an edge is seed-only when every text unit it cites is a seed's): a seed never makes an entity more important, and an entity only seed edges join has rank 0. Leiden still clusters every edge at its full weight. `search.graph_expansion.entity_importance_source: degree` counts the edges at query time, seed edges included |
 | Communities | A community whose members only seeds state is stored without a report (`communities_seed_only` in the stage metrics); a report on a mixed community lists the document-ranked entities first. On an incremental run a community counts as mixed when a stored member is document-backed, though the run's own graph states it only from a seed (a seed added beside unchanged documents) |
 
 - **Homonyms.** Identity is the name: an unrelated seed node "Mercury" (a
@@ -336,9 +336,7 @@ items.
 What the seeds convert to, with no model call and no store:
 
 ```python
-from unified_kg_rag import get_config
-# Internal, not exported from unified_kg_rag: may change in any release.
-from unified_kg_rag.application.bootstrap import load_seed_graphs, resolve_extraction_schema
+from unified_kg_rag import get_config, load_seed_graphs, resolve_extraction_schema
 
 config = resolve_extraction_schema(get_config("config.yaml"))
 for conversion in load_seed_graphs(config):

@@ -309,13 +309,13 @@ def test_location_fields_are_config_fields() -> None:
 def test_the_neighbour_order_shapes_answers_but_keys_no_stage() -> None:
     # It changes which entities graph expansion returns (eval manifests and
     # paired comparisons record it), never a cached stage output.
-    path = "indexing.neptune.deterministic_order"
+    path = "search.graph_expansion.deterministic_order"
     assert shapes_answers(path)
     assert path in answer_settings(Config())
     assert not isinstance(classify(path), Keyed)
     # Its section's entry classifies it: no entry of its own.
     assert path not in CONFIG_KEYING
-    assert classify(path) == CONFIG_KEYING["indexing.neptune"]
+    assert classify(path) == CONFIG_KEYING["search"]
 
 
 @pytest.mark.parametrize(

@@ -78,7 +78,10 @@ from ._migration import (
     REMOVED_KEYS,
     moved_key_hint,
     moved_keys,
+    nested_model,
     removed_keys,
+    unknown_keys,
+    without_keys,
 )
 from ._models import (
     DEFAULT_MODEL_ID,
@@ -138,6 +141,7 @@ from ._seed import (
 from ._strategies import (
     DriftSearchConfig,
     GlobalSearchConfig,
+    GraphExpansionConfig,
     IterativeSearchConfig,
     LightRAGSearchConfig,
     LocalSearchConfig,
@@ -192,6 +196,7 @@ __all__ = [
     "FusionConfig",
     "GleaningConfig",
     "GlobalSearchConfig",
+    "GraphExpansionConfig",
     "GraphConfig",
     "GraphExtractionConfig",
     "GuardrailConfig",
@@ -224,6 +229,7 @@ __all__ = [
     "MOVED_KEYS",
     "moved_keys",
     "NeptuneConfig",
+    "nested_model",
     "NeptuneIndexingConfig",
     "ObservabilityBackend",
     "ObservabilityConfig",
@@ -265,5 +271,7 @@ __all__ = [
     "TranslationConfig",
     "TreeSearchConfig",
     "TypeQuotaConfig",
+    "unknown_keys",
     "VisualizationConfig",
+    "without_keys",
 ]

@@ -29,6 +29,7 @@ from unified_kg_rag.adapters.evaluators.base import (
 from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED, BatchProcessor
 from unified_kg_rag.adapters.observability.endpoints import safe_url
 from unified_kg_rag.adapters.providers import Providers
+from unified_kg_rag.adapters.retrieval.strategy_registry import run_records
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.application.bootstrap import (
     build_providers,
@@ -56,6 +57,7 @@ from unified_kg_rag.domain.models import (
     model_id_value,
 )
 from unified_kg_rag.domain.models.config import REMOVED_EVALUATORS
+from unified_kg_rag.domain.models.evaluation import JUDGE_EVALUATORS
 from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.abstention import (
     ABSTENTION_REASON_KEY,
@@ -987,19 +989,21 @@ class EvaluationManager:
     def _decline_details(rag_metadata: Any) -> dict[str, Any]:
         """The chain's per-answer decline and sufficiency fields, kept in the
         saved results: why it declined, whether the strategy judged its
-        context insufficient (and why), and the iterative run record."""
+        context insufficient (and why), and the strategy's run records
+        (``RunRecord``)."""
         if not isinstance(rag_metadata, dict):
             return {}
-        iterative = rag_metadata.get("iterative")
-        structured = rag_metadata.get("structured")
         sufficient = rag_metadata.get(CONTEXT_SUFFICIENT_KEY)
         reason = rag_metadata.get(INSUFFICIENCY_REASON_KEY)
         return {
             "abstention_reason": rag_metadata.get(ABSTENTION_REASON_KEY),
             "context_sufficient": sufficient if isinstance(sufficient, bool) else None,
             "insufficiency_reason": None if reason is None else str(reason),
-            "iterative": dict(iterative) if isinstance(iterative, dict) else None,
-            "structured": dict(structured) if isinstance(structured, dict) else None,
+            "strategy_records": {
+                spec.key: dict(record)
+                for spec in run_records()
+                if isinstance(record := rag_metadata.get(spec.key), dict)
+            },
         }
 
     @staticmethod
@@ -1503,10 +1507,7 @@ class EvaluationManager:
             len(args.get("search_strategy") or ()) > 1
             or bool(args.get("baseline_results"))
         )
-        uses_judge = pairwise_judge or bool(
-            enabled
-            & {EvaluatorType.LANGCHAIN, EvaluatorType.RAGAS, EvaluatorType.ASSERTION}
-        )
+        uses_judge = pairwise_judge or bool(enabled & JUDGE_EVALUATORS)
         evaluation = self.config.evaluation
         answer_model = self.config.model_id(ModelRole.ANSWER_GENERATION)
         judge_model = self.config.model_id(ModelRole.EVALUATION)
