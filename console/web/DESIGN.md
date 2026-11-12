@@ -45,11 +45,13 @@ not assets:
   the composer docked at the foot of the conversation, a welcome with sample
   questions before the first one. The evidence trace stays beside it.
 - **A force-directed canvas graph in the style of react-force-graph**: nodes
-  sized by their connections and coloured by community or type, labels for
-  the focused node, its neighbours and the busiest nodes (all labels once
-  zoomed in), the rest dimmed, directed edges with arrows, the edge's
-  relationship shown on hover, a click that centres and zooms, a legend and
-  zoom tools over the canvas, and an inspector beside it.
+  sized by their connections (never under 2.5 px) and coloured by community
+  or type, labels for the focused node, its neighbours and the busiest nodes
+  (all labels once zoomed in) set at 12 px in screen space and placed most
+  connected first without overlapping, the rest dimmed, directed edges with
+  arrows that fade as they multiply, the edge's relationship shown on hover,
+  a click that centres and zooms, a legend whose hovered entry lights its
+  members and zoom tools over the canvas, and an inspector beside it.
 
 ## Tokens
 
@@ -75,7 +77,7 @@ since the page's CSP allows no inline script).
 | `--trace-wash` / `--trace-ink` | `#eef0ff` / `#3730a3` (8.8:1) | `#232557` / `#c9ccff` (9.2:1) | Chosen chips, citation chips |
 | `--highlighter` / `--mark-ink` | `#ffd33d` / `#1c2128` (11.3:1) | same | Matched evidence, cited markers |
 | `--good` / `--warn` / `--bad` | 4.6 / 4.5 / 4.7:1 on their washes | 6.3 / 6.2 / 4.9:1 | Status, with a label |
-| `--series-1..8` | dataviz reference, light steps | the same hues, dark steps (3:1 on sheet) | Graph communities and types, charts |
+| `--series-1..8` | dataviz reference, light steps | the same hues, dark steps (3:1 on sheet; 5 and 7 lighter, apart under colour-blindness) | Graph communities and types, charts |
 
 Type: Pretendard (SIL OFL 1.1), one design for Latin and Hangul, with
 Pretendard JP for a Japanese page and the system's faces after them (Chinese

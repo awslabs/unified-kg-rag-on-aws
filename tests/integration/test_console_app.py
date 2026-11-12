@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -22,6 +23,7 @@ import pytest
 import yaml
 
 from tests.fixtures.console_demo import load, requires_console
+from tests.fixtures.graph_exports import write_export
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow, requires_console]
 
@@ -367,7 +369,12 @@ def test_responses_carry_security_headers_and_no_cors(client: Any) -> None:
 def test_paths_outside_the_console_directories_are_refused(
     client: Any, ref: str
 ) -> None:
-    for path in ("graphs/data", "datasets/preview", "evaluations/run"):
+    for path in (
+        "graphs/data",
+        "datasets/preview",
+        "evaluations/run",
+        "evaluations/questions",
+    ):
         response = client.get(f"/api/{path}", params={"ref": ref})
         assert response.status_code == 403, (path, ref, response.text)
 
@@ -556,6 +563,47 @@ def test_the_graph_is_read_with_layout_communities_and_analysis(client: Any) -> 
     assert entity_ids and entity_ids <= node_ids
 
 
+def test_a_large_graph_draws_only_the_best_connected(
+    client: Any, workspace: Path
+) -> None:
+    from unified_kg_rag.application.cli.console.graph_api import MAX_DRAWN_NODES
+
+    total = MAX_DRAWN_NODES + 1
+    path = write_export(
+        workspace / "cache" / "large" / "visualization" / "visualization_data.json",
+        total,
+    )
+    # Listed last (oldest), so the demo's graph stays the newest.
+    os.utime(path, (1.0, 1.0))
+    data = client.get(
+        "/api/graphs/data",
+        params={"ref": "cache:large/visualization/visualization_data.json"},
+    ).json()
+    assert len(data["layout"]) == len(data["nodes"]) == MAX_DRAWN_NODES
+    assert data["stats"]["nodes"] == total
+    # The rest is listed by name, and read whole on demand.
+    (other,) = data["others"]
+    assert set(other) == {"id", "name", "degree"}
+    found = client.get(
+        "/api/graphs/entity",
+        params={
+            "ref": "cache:large/visualization/visualization_data.json",
+            "id": other["id"],
+        },
+    )
+    assert found.status_code == 200
+    assert found.json()["node"]["name"] == other["name"]
+    assert len(found.json()["edges"]) == other["degree"]
+    missing = client.get(
+        "/api/graphs/entity",
+        params={
+            "ref": "cache:large/visualization/visualization_data.json",
+            "id": "none",
+        },
+    )
+    assert missing.status_code == 404
+
+
 def test_datasets_are_found_and_previewed(client: Any) -> None:
     datasets = client.get("/api/datasets").json()["datasets"]
     assert {
@@ -606,6 +654,17 @@ def test_an_evaluation_job_runs_the_cli_and_its_run_is_saved(
     assert run["comparison"]["baseline"] == "local"
     assert "naive" in run["comparison"]["deltas_vs_baseline"]
     assert {s["strategy"] for s in run["summaries"]} == {"local", "naive"}
+    # Per question: each strategy's primary-metric score and its answer.
+    questions = client.get(
+        "/api/evaluations/questions", params={"ref": mine["ref"]}
+    ).json()
+    assert questions["metric"] == run["comparison"]["multiplicity"]["primary_metric"]
+    assert questions["strategies"] == ["local", "naive"]
+    dataset = json.loads((workspace / "datasets" / "demo-eval.json").read_text())
+    assert len(questions["questions"]) == len(dataset)
+    first = questions["questions"][0]
+    assert set(first["answers"]) == {"local", "naive"}
+    assert all(0.0 <= v <= 1.0 for v in first["scores"].values())
     dashboard = client.get("/api/dashboard").json()
     row = next(j for j in dashboard["jobs"] if j["id"] == job["id"])
     assert row["llm_calls"] and row["cost_usd"]
@@ -948,7 +1007,7 @@ def test_a_changed_provider_endpoint_is_saved_only_when_confirmed(
 
 
 def test_missing_files_are_not_found(client: Any) -> None:
-    for path in ("datasets/preview", "evaluations/run"):
+    for path in ("datasets/preview", "evaluations/run", "evaluations/questions"):
         response = client.get(f"/api/{path}", params={"ref": "workspace:no-such.json"})
         assert response.status_code == 404 and response.json()["code"] == "not_found"
     response = client.get(

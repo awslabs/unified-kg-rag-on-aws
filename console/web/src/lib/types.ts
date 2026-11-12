@@ -17,6 +17,17 @@ export interface Status {
   sample_questions: string[];
 }
 
+/** `/api/namespace/methodologies`: what an index namespace holds, as its
+ * build record names it (`recorded` false: no build record, so nothing was
+ * ingested into it), and which of those an ingestion of the picked
+ * methodologies would no longer serve. */
+export interface NamespaceHeld {
+  namespace: string;
+  recorded: boolean;
+  held: string[];
+  dropped: string[];
+}
+
 export interface StrategyInfo {
   name: string;
   methodology: string | null;
@@ -248,12 +259,46 @@ export interface GraphStats {
   evidence: Record<"entities" | "relationships", Record<string, number>>;
 }
 
+/** An entity the canvas does not draw: listed by name for search and the
+ * table, read whole on demand (GraphEntity). */
+export interface GraphEntityRef {
+  id: string;
+  name: string;
+  degree: number;
+}
+
+/** `/api/graphs/entity`: one entity, every edge that touches it and the
+ * names at their other ends. */
+export interface GraphEntity {
+  node: GraphNode;
+  edges: GraphEdge[];
+  names: Record<string, string>;
+}
+
+/** `/api/graphs/data`: the drawn entities (`nodes`, laid out) and the
+ * edges between them, the others by name, and the whole graph's
+ * communities and analysis. */
 export interface GraphData {
   nodes: GraphNode[];
+  others: GraphEntityRef[];
   edges: GraphEdge[];
   layout: Record<string, [number, number]>;
   communities: Community[];
   stats: GraphStats;
+}
+
+/** `/api/evaluations/questions`: per question of a saved run, each
+ * strategy's score on one metric (the primary) and its answer. */
+export interface QuestionScores {
+  metric: string | null;
+  strategies: string[];
+  questions: {
+    id: string;
+    question: string;
+    ground_truth: string;
+    scores: Record<string, number>;
+    answers: Record<string, { text: string; error: string | null; abstained: boolean }>;
+  }[];
 }
 
 export interface MetricStats {

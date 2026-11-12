@@ -5,19 +5,10 @@ import { JobPanel } from "../components/JobPanel";
 import { Empty, ErrorText, formatBytes, JobStatusBadge, Loading, Notice, PageHead, Sheet } from "../components/ui";
 import { useI18n } from "../i18n/i18n";
 import { errorMessage, get, send, upload } from "../lib/api";
-import type { Corpus, JobRecord, Status } from "../lib/types";
+import type { Corpus, JobRecord, NamespaceHeld, Status } from "../lib/types";
 import { useApi } from "../lib/useApi";
 
 const METHODOLOGIES = ["graphrag", "lightrag", "hipporag", "raptor"];
-
-/** What an index namespace holds, as its build record names it. */
-interface Held {
-  namespace: string;
-  recorded: boolean;
-  held: string[];
-  // Those an ingestion of the picked methodologies would no longer serve.
-  dropped: string[];
-}
 
 interface FileWithPath extends File {
   webkitRelativePath: string;
@@ -53,7 +44,7 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
   const chosen = methodologies ?? holds ?? status?.methodologies ?? ["graphrag", "lightrag"];
   const held = useApi(
     () =>
-      get<Held>("namespace/methodologies", { suffix: suffix || undefined, methodologies: chosen.join(",") || undefined })
+      get<NamespaceHeld>("namespace/methodologies", { suffix: suffix || undefined, methodologies: chosen.join(",") || undefined })
         .then((found) => {
           setHolds(found.recorded && found.held.length ? found.held : null);
           return found;
@@ -359,7 +350,7 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
 }
 
 function IngestResult({ job }: { job: JobRecord }) {
-  const { t, number, seconds } = useI18n();
+  const { t, number } = useI18n();
   const result = job.result as Record<string, unknown> | null;
   if (!result || job.status === "running") return null;
   const usage = (result.token_usage ?? {}) as Record<string, number>;
@@ -367,8 +358,6 @@ function IngestResult({ job }: { job: JobRecord }) {
     <dl className="kv">
       <dt>{t("ingest.result.pipeline")}</dt>
       <dd className="mono">{String(result.pipeline_id ?? job.pipeline_id)}</dd>
-      <dt>{t("ingest.result.duration")}</dt>
-      <dd>{seconds(result.duration_seconds as number)}</dd>
       <dt>{t("ingest.result.failedDocuments")}</dt>
       <dd>{number(result.failed_documents as number)}</dd>
       <dt>{t("ingest.result.excluded")}</dt>

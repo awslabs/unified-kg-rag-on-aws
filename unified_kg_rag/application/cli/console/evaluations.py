@@ -1,7 +1,8 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 """The Evaluate page's files: ``run-eval`` datasets to pick, and the saved
-runs (summaries and comparisons) ``run-eval`` wrote, read back as written."""
+runs (summaries, comparisons and per-question results) ``run-eval`` wrote,
+read back as written."""
 
 from __future__ import annotations
 
@@ -11,10 +12,17 @@ from pathlib import Path
 from typing import Any
 
 from unified_kg_rag.application.cli.console.paths import Roots, walk_files
-from unified_kg_rag.shared.exceptions import DataProcessingError
+from unified_kg_rag.evaluation.comparison import (
+    DEFAULT_PRIMARY_METRIC,
+    per_query_means,
+)
+from unified_kg_rag.evaluation.saved_results import group_runs, load_saved_runs
+from unified_kg_rag.shared.exceptions import DataProcessingError, EvaluationException
 
 MAX_DATASET_BYTES = 50 * 1024 * 1024
 MAX_RESULT_BYTES = 200 * 1024 * 1024
+# Characters of each answer the per-question view shows.
+MAX_ANSWER_CHARS = 2000
 # Directories a dataset search skips: outputs, caches and stores.
 _SKIPPED = {"cache", "outputs", "stores", "node_modules", "uploads"}
 
@@ -218,3 +226,67 @@ def read_run(directory: Path) -> dict[str, Any]:
         "comparison": comparison,
         "comparison_file": comparisons[-1].name if comparisons else None,
     }
+
+
+def question_scores(
+    directory: Path, comparison: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Per question of a saved run: each strategy's score on one metric
+    (its mean over the repeats that scored it; a failed answer has none and
+    shows its error) and its answer (the first repeat's).
+
+    The metric is the comparison's primary one, else
+    ``answer_match/answer_contains`` when scored, else the first scored.
+    Empty (``questions: []``) when the run saved no per-question results
+    (``evaluation.save_detailed_results: false``).
+
+    Raises:
+        EvaluationFileError: A result file that cannot be read.
+    """
+    if not any(directory.glob("evaluation_results_*.json")):
+        return {"metric": None, "strategies": [], "questions": []}
+    try:
+        grouped = group_runs(load_saved_runs([directory]))
+    except EvaluationException as e:
+        raise EvaluationFileError(str(e)) from e
+    means = {
+        strategy: per_query_means([run.run for run in saved])
+        for strategy, saved in grouped.items()
+    }
+    scored = sorted({m for by_metric in means.values() for m in by_metric})
+    primary = ((comparison or {}).get("multiplicity") or {}).get("primary_metric")
+    metric = next(
+        (m for m in (primary, DEFAULT_PRIMARY_METRIC) if m in scored),
+        scored[0] if scored else None,
+    )
+    questions: dict[str, dict[str, Any]] = {}
+    for strategy, saved in grouped.items():
+        for result in saved[0].results:
+            entry = questions.setdefault(
+                result.query_id,
+                {
+                    "id": result.query_id,
+                    "question": result.question,
+                    "ground_truth": result.ground_truth,
+                    "scores": {},
+                    "answers": {},
+                },
+            )
+            entry["answers"][strategy] = {
+                "text": _text(result.generated_answer),
+                "error": result.error_message if result.error else None,
+                "abstained": bool(result.abstained),
+            }
+        for qid, value in (means[strategy].get(metric or "") or {}).items():
+            if qid in questions:
+                questions[qid]["scores"][strategy] = value
+    return {
+        "metric": metric,
+        "strategies": list(grouped),
+        "questions": list(questions.values()),
+    }
+
+
+def _text(value: str | None) -> str:
+    text = value or ""
+    return text if len(text) <= MAX_ANSWER_CHARS else text[: MAX_ANSWER_CHARS - 1] + "…"

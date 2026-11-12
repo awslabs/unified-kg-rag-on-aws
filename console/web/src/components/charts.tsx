@@ -7,12 +7,47 @@ import { useState } from "react";
 import { useI18n } from "../i18n/i18n";
 import type { Delta, Multiplicity } from "../lib/types";
 
+// Rates where less is better, and diagnostics with no better direction
+// (the evaluation's own lists: comparison._UNFILLED, _DIAGNOSTICS).
+const LOWER_IS_BETTER = new Set(["assertion_contradiction_rate", "negative_assertion_violation_rate"]);
+const NO_DIRECTION = new Set(["answer_length", "attributable_fraction"]);
+
 /** Whether a higher value of `metric` is better (true), worse (false) or
- * neither (null: answer length). */
+ * neither (null: answer length, the attributable fraction). */
 export function higherIsBetter(metric: string): boolean | null {
   if (metric.startsWith("latency/") || metric.startsWith("usage/")) return false;
-  if (metric.endsWith("/answer_length")) return null;
-  return true;
+  const type = metric.split("/").pop() ?? metric;
+  if (NO_DIRECTION.has(type)) return null;
+  return !LOWER_IS_BETTER.has(type);
+}
+
+/** The catalog key of a metric's description: `metric.<type>` (the
+ * abstention measures `metric.abstention_<type>`). */
+export function metricKey(metric: string): string {
+  const [evaluator, type] = metric.includes("/") ? metric.split("/", 2) : ["", metric];
+  return evaluator === "abstention" ? `metric.abstention_${type}` : `metric.${type}`;
+}
+
+/** A metric's name, its description and which way is better on hover, and
+ * an arrow for the direction (named for screen readers). */
+export function MetricName({ metric }: { metric: string }) {
+  const { t } = useI18n();
+  const direction = higherIsBetter(metric);
+  const hint = t(direction === null ? "evaluate.noDirection" : direction ? "evaluate.higherBetter" : "evaluate.lowerBetter");
+  const key = metricKey(metric);
+  const described = t(key);
+  const help = described === key ? hint : `${described} ${hint}.`;
+  return (
+    <span className="metric-name" title={help}>
+      <span className="mono">{metric}</span>
+      {direction !== null ? (
+        <span className="metric-direction" aria-hidden="true">
+          {direction ? "↑" : "↓"}
+        </span>
+      ) : null}
+      <span className="visually-hidden">{help}</span>
+    </span>
+  );
 }
 
 /** Whether a delta counts, and which way: with a Holm-adjusted p-value
@@ -54,18 +89,20 @@ export function DeltaPlot({ deltas, confidence = 0.95, multiplicity, noFinding =
   const pad = 10;
   const adjusted = deltas.some(([, d]) => d.adjusted_p_value != null) && multiplicity != null;
   const alpha = multiplicity?.alpha ?? null;
+  // The kind of interval the rows show, named in its header.
+  const intervalKind = adjusted ? t("chart.intervalAdjusted") : t("chart.interval", { confidence: percent(confidence) });
   return (
     <div className="table-wrap" tabIndex={0}>
-      <table className="table">
+      <table className="table table-sticky table-stack">
         <caption className="visually-hidden">
           {adjusted ? t("chart.deltaCaptionHolm", { alpha: number(alpha ?? 0.05) }) : t("chart.deltaCaption", { confidence: percent(confidence) })}
         </caption>
         <thead>
           <tr>
             <th>{t("evaluate.metric")}</th>
-            <th>{adjusted ? t("chart.intervalAdjusted") : t("chart.interval", { confidence: percent(confidence) })}</th>
+            <th>{t("chart.plot")}</th>
             <th className="num">{t("evaluate.delta")}</th>
-            <th className="num">{t("evaluate.ci")}</th>
+            <th className="num">{intervalKind}</th>
             {adjusted ? <th className="num">{t("chart.holmP")}</th> : null}
             <th className="num">{t("evaluate.winsTiesLosses")}</th>
           </tr>
@@ -83,34 +120,34 @@ export function DeltaPlot({ deltas, confidence = 0.95, multiplicity, noFinding =
             const primary = delta.family === "primary" || delta.family === "arm_primary";
             return (
               <tr key={metric}>
-                <td className="mono">
-                  {metric}
+                <td>
+                  <MetricName metric={metric} />
                   {primary ? (
                     <span className="badge" style={{ marginLeft: 6 }} title={t("chart.primaryHelp")}>
                       {t("chart.primary")}
                     </span>
                   ) : null}
                 </td>
-                <td>
+                <td data-label={t("chart.plot")}>
                   <svg className="chart" width={width} height={22} role="img" aria-label={t("chart.deltaRow", { metric, delta: number(delta.mean_delta, { maximumFractionDigits: digits }) })}>
                     <line className="zero" x1={x(0)} x2={x(0)} y1={2} y2={20} />
                     <line className={`ci ${verdict}`} x1={x(interval.low)} x2={x(interval.high)} y1={11} y2={11} />
                     <circle className={`ci-dot ${verdict}`} cx={x(delta.mean_delta)} cy={11} r={4.5} />
                   </svg>
                 </td>
-                <td className="num">
+                <td className="num" data-label={t("evaluate.delta")}>
                   {delta.mean_delta > 0 ? "+" : ""}
                   {number(delta.mean_delta, { maximumFractionDigits: digits })}
                   {verdict !== "neutral" ? <span className={`badge ${verdict === "better" ? "badge-good" : "badge-bad"}`} style={{ marginLeft: 6 }}>{t(`chart.${verdict}`)}</span> : null}
                 </td>
-                <td className="num">
+                <td className="num" data-label={intervalKind}>
                   [{number(interval.low, { maximumFractionDigits: digits })}, {number(interval.high, { maximumFractionDigits: digits })}]
                   {adjusted ? <span className="muted"> {interval.adjusted ? percent(interval.confidence, 1) : t("chart.unadjusted")}</span> : null}
                 </td>
                 {adjusted ? (
-                  <td className="num">{delta.adjusted_p_value != null ? number(delta.adjusted_p_value, { maximumFractionDigits: 3 }) : "—"}</td>
+                  <td className="num" data-label={t("chart.holmP")}>{delta.adjusted_p_value != null ? number(delta.adjusted_p_value, { maximumFractionDigits: 3 }) : "—"}</td>
                 ) : null}
-                <td className="num">
+                <td className="num" data-label={t("evaluate.winsTiesLosses")}>
                   {delta.wins}/{delta.ties}/{delta.losses}
                 </td>
               </tr>

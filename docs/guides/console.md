@@ -123,7 +123,9 @@ port can query the index, start jobs and edit the configuration.
 
 **Ask.** A question box with the strategy picker: `auto` and the strategies
 grouped by methodology, those the index namespace does not hold disabled
-with the reason. The answer streams in as the answer model writes it; the
+with the reason. A namespace nothing was ingested into yet (no build
+record) says so before the first question, with a way to Ingest, and a
+question to it names the same. The answer streams in as the answer model writes it; the
 final answer then replaces it (it is the one a decline or the output
 guardrail decided). Under it: for `auto`, the strategy it chose and how
 (the router named it, it was the only candidate under the filters, or the
@@ -210,7 +212,8 @@ runs that finished. Any saved
 run (the console's or another `run-eval`'s) opens as a results table (each
 metric's mean per strategy), the paired comparison against the baseline (a
 row per metric: the mean difference with its interval drawn on the row's
-own scale, and the wins, ties and losses). A comparison adjusted for
+own scale, and the wins, ties and losses); hovering a metric's name gives
+its description and which way is better. A comparison adjusted for
 multiplicity ([Comparing strategies](./evaluate.md#comparing-strategies))
 marks a difference better or worse only when its Holm-adjusted p-value is
 below the comparison's alpha, shows that p-value, draws the family's
@@ -219,8 +222,12 @@ an older comparison, and a delta without per-query pairs or a closed-book
 arm, falls back to the interval excluding zero. Then the comparison's warnings, the cost per
 question (USD, tokens, median and 95th percentile time), the declines
 (rate, and precision and recall over the unanswerable questions) and, with
-the pairwise judge, the win rate per answer-length bucket. A job's gates
-show as passed or failed.
+the pairwise judge, the win rate per answer-length bucket. **Per
+question**, read once opened, lists each question with every strategy's
+score on the primary metric (the mean over its repeats) and its outcome
+(win, tie or loss) for the shown candidate against its baseline, filterable
+by outcome; a question opens the reference answer and every strategy's
+answer side by side. A job's gates show as passed or failed.
 
 **Graph.** A `visualization_data.json` the ingestion exported (the newest
 by default; every run that indexed writes the namespace's whole graph), drawn with a seeded layout per connected component: pan with a
@@ -315,7 +322,7 @@ theme.
 
 The page is in English, Korean, Japanese, Simplified Chinese, German,
 Spanish, French, Italian, Portuguese and Russian (the languages the
-library supports), chosen in the top bar or on the Settings page,
+library supports), chosen in the top bar,
 defaulting to the browser's language and kept in the browser. Documents,
 questions and answers can be in any language; numbers, dates, durations
 and currency follow the chosen language.

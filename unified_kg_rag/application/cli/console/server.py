@@ -796,6 +796,16 @@ def create_app(
             raise HTTPException(404, f"no saved run '{ref}'")
         return await asyncio.to_thread(evaluations.read_run, directory)
 
+    @app.get("/api/evaluations/questions")
+    async def run_questions(ref: str) -> dict[str, Any]:
+        directory = state.roots.resolve(ref)
+        if not await asyncio.to_thread(directory.is_dir):
+            raise HTTPException(404, f"no saved run '{ref}'")
+        saved = await asyncio.to_thread(evaluations.read_run, directory)
+        return await asyncio.to_thread(
+            evaluations.question_scores, directory, saved["comparison"]
+        )
+
     # -- graph ------------------------------------------------------------
 
     @app.get("/api/graphs")
@@ -807,14 +817,25 @@ def create_app(
             "graphs": await asyncio.to_thread(graph_api.find_graphs, state.roots, names)
         }
 
-    @app.get("/api/graphs/data")
-    async def graph_data(ref: str) -> dict[str, Any]:
+    async def graph_file(ref: str) -> Path:
         path = state.roots.resolve(ref)
         if path.name != VISUALIZATION_DATA_FILENAME:
             raise PathRefused(f"'{ref}' is not a visualization_data.json file")
         if not await asyncio.to_thread(path.is_file):
             raise HTTPException(404, f"no graph '{ref}'")
-        return await asyncio.to_thread(graph_api.load_graph, path)
+        return path
+
+    @app.get("/api/graphs/data")
+    async def graph_data(ref: str) -> Response:
+        loaded = await asyncio.to_thread(graph_api.cached_graph, await graph_file(ref))
+        return Response(loaded.encoded, media_type="application/json")
+
+    @app.get("/api/graphs/entity")
+    async def graph_entity(ref: str, id: str) -> dict[str, Any]:
+        found = await asyncio.to_thread(graph_api.entity, await graph_file(ref), id)
+        if found is None:
+            raise HTTPException(404, f"no entity '{id}' in '{ref}'")
+        return found
 
     # -- settings ---------------------------------------------------------
 

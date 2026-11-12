@@ -79,7 +79,10 @@ textarea {
   opacity: 1;
 }
 
-:focus-visible {
+:focus-visible,
+/* A button-styled label around a visually hidden file input (Ingest's
+ * "Choose files"): the ring goes on the label. */
+label.button:has(> input:focus-visible) {
   outline: 2px solid var(--cobalt);
   outline-offset: 2px;
 }
@@ -841,7 +844,9 @@ kbd {
   color: var(--graphite);
   font-size: var(--text-xs);
   letter-spacing: 0.03em;
-  white-space: nowrap;
+  /* Headers wrap at spaces only: a column is as wide as its longest word. */
+  white-space: normal;
+  overflow-wrap: normal;
   vertical-align: bottom;
   background: var(--sheet-sunk);
 }
@@ -876,6 +881,8 @@ kbd {
 .table th.num {
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+.table td.num {
   white-space: nowrap;
 }
 .table td.num {
@@ -889,13 +896,65 @@ kbd {
   background: var(--trace-wash);
 }
 .table-compact th,
-.table-compact th.num {
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-.table-compact th,
 .table-compact td {
   padding: 7px 8px;
+}
+/* A wide table's first column (the row's name) stays in view while the
+ * rest scrolls under it. */
+.table-sticky th:first-child,
+.table-sticky td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--sheet);
+}
+.table-sticky thead th:first-child {
+  background: var(--sheet-sunk);
+}
+.table-sticky tbody tr:hover td:first-child {
+  background: var(--sheet-hover);
+}
+.table-sticky tr[aria-selected="true"] td:first-child {
+  background: var(--trace-wash);
+}
+/* Under 700 px a comparison row stacks: each value on its own line under
+ * the metric, named by its column (data-label). */
+@media (max-width: 700px) {
+  .table-stack thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .table-stack,
+  .table-stack tbody,
+  .table-stack tr,
+  .table-stack td {
+    display: block;
+    width: 100%;
+  }
+  .table-stack tr {
+    border-bottom: 1px solid var(--rule);
+    padding: 6px 0;
+  }
+  .table-stack td {
+    border: 0;
+    padding: 3px 12px;
+  }
+  .table-stack td[data-label] {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    text-align: right;
+  }
+  .table-stack td[data-label]::before {
+    content: attr(data-label);
+    color: var(--graphite);
+    font-family: var(--font-body);
+    font-size: var(--text-xs);
+    text-align: left;
+  }
 }
 
 /* ------------------------------------------------------------------ tabs */
@@ -1500,6 +1559,14 @@ button.cite-link:hover {
   border-top: 1px dashed var(--rule-strong);
   font-size: var(--text-sm);
 }
+.trail-details > summary {
+  cursor: pointer;
+  color: var(--graphite);
+  font-size: var(--text-xs);
+}
+.trail-details[open] > summary {
+  margin-bottom: 6px;
+}
 .trail-step {
   display: grid;
   grid-template-columns: 7.5rem minmax(0, 1fr);
@@ -1638,6 +1705,43 @@ button.cite-link:hover {
     max-width: calc(100% - 24px);
     bottom: 60px;
   }
+}
+.metric-name {
+  cursor: help;
+}
+.metric-direction {
+  margin-left: 4px;
+  color: var(--graphite);
+}
+.answers-side {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--space-3);
+}
+.answer-card {
+  background: var(--sheet-sunk);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  font-size: var(--text-sm);
+}
+.answer-card p {
+  margin: 6px 0 0;
+  white-space: pre-line;
+}
+.question-toggle {
+  text-align: left;
+}
+.pager {
+  padding: 10px 20px;
+}
+.legend-item {
+  border-radius: 4px;
+  cursor: default;
+}
+.legend-item:hover,
+.legend-item:focus-visible {
+  background: var(--sheet-sunk);
 }
 .swatch {
   display: inline-block;
@@ -1934,8 +2038,8 @@ button.cite-link:hover {
   }
 }
 .stage-name {
-  font-family: var(--font-data);
   font-size: var(--text-sm);
+  font-weight: var(--weight-strong);
 }
 .stage-meta {
   font-size: var(--text-xs);

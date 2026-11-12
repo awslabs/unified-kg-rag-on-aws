@@ -96,6 +96,26 @@ export function ErrorText({ error }: { error: unknown }) {
   );
 }
 
+/** The previous and next buttons of a paged table, and its row range. */
+export function Pager({ page, size, total, onPage }: { page: number; size: number; total: number; onPage: (page: number) => void }) {
+  const { t, number } = useI18n();
+  const pages = Math.max(1, Math.ceil(total / size));
+  if (pages <= 1) return null;
+  return (
+    <div className="row pager">
+      <button className="button button-small" disabled={page === 0} onClick={() => onPage(page - 1)}>
+        {t("common.previous")}
+      </button>
+      <span className="field-help" role="status">
+        {t("common.range", { from: number(page * size + 1), to: number(Math.min(total, (page + 1) * size)), total: number(total) })}
+      </span>
+      <button className="button button-small" disabled={page >= pages - 1} onClick={() => onPage(page + 1)}>
+        {t("common.next")}
+      </button>
+    </div>
+  );
+}
+
 export function formatBytes(bytes: number, number: (v: number, o?: Intl.NumberFormatOptions) => string): string {
   const units = ["byte", "kilobyte", "megabyte", "gigabyte"] as const;
   let value = bytes;
@@ -104,5 +124,6 @@ export function formatBytes(bytes: number, number: (v: number, o?: Intl.NumberFo
     value /= 1024;
     unit += 1;
   }
-  return number(value, { style: "unit", unit: units[unit], unitDisplay: "short", maximumFractionDigits: unit ? 1 : 0 });
+  // "180 bytes": a byte count reads in full ("short" leaves "180 byte").
+  return number(value, { style: "unit", unit: units[unit], unitDisplay: unit ? "short" : "long", maximumFractionDigits: unit ? 1 : 0 });
 }

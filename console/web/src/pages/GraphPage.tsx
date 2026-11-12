@@ -4,12 +4,12 @@ import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { Bars } from "../components/charts";
 import { colorSlot } from "../lib/graphColors";
 
-import { Empty, ErrorText, Loading, PageHead, Sheet } from "../components/ui";
+import { Empty, ErrorText, Loading, PageHead, Pager, Sheet } from "../components/ui";
 import { useI18n } from "../i18n/i18n";
 import { get } from "../lib/api";
 import { navigate } from "../lib/router";
 import { useTrail } from "../lib/trail";
-import type { GraphData, GraphNode } from "../lib/types";
+import type { GraphData, GraphEntity, GraphEntityRef, GraphNode } from "../lib/types";
 import { useApi } from "../lib/useApi";
 
 // The canvas and its force engine load with the page that draws them.
@@ -23,6 +23,10 @@ interface GraphFile {
 }
 
 type Panel = "entity" | "communities" | "analysis";
+
+// Groups the legend names (one series colour each); the rest share "other".
+const LEGEND_SLOTS = 8;
+const OTHER_GROUPS = "\u0000other";
 
 export function GraphPage({ params }: { params: URLSearchParams }) {
   const { t, date } = useI18n();
@@ -57,7 +61,7 @@ export function GraphPage({ params }: { params: URLSearchParams }) {
           title={t("graph.noneTitle")}
           action={
             <button className="button" onClick={() => navigate("ingest")}>
-              {t("graph.goIngest")}
+              {t("common.goIngest")}
             </button>
           }
         >
@@ -65,12 +69,12 @@ export function GraphPage({ params }: { params: URLSearchParams }) {
         </Empty>
       ) : null}
       {graph.loading && ref ? <Loading /> : null}
-      {graph.data ? <GraphExplorer key={ref} data={graph.data} params={params} /> : null}
+      {graph.data && ref ? <GraphExplorer key={ref} graphRef={ref} data={graph.data} params={params} /> : null}
     </>
   );
 }
 
-function GraphExplorer({ data, params }: { data: GraphData; params: URLSearchParams }) {
+function GraphExplorer({ graphRef, data, params }: { graphRef: string; data: GraphData; params: URLSearchParams }) {
   const { t, number, percent } = useI18n();
   const { trail } = useTrail();
   const [selected, setSelected] = useState<string | null>(params.get("focus"));
@@ -82,6 +86,16 @@ function GraphExplorer({ data, params }: { data: GraphData; params: URLSearchPar
   const edgeTarget = params.get("edge");
 
   const byId = useMemo(() => new Map(data.nodes.map((n) => [n.id, n])), [data.nodes]);
+  // Every entity, drawn or not (search and the table).
+  const everyone = useMemo<EntityRow[]>(() => [...data.nodes, ...data.others], [data.nodes, data.others]);
+  const nameOf = useMemo(() => new Map(everyone.map((n) => [n.id, n.name])), [everyone]);
+  // Past the drawn ones, an entity (and the edges of a drawn one to them)
+  // is read from the server.
+  const partial = data.others.length > 0;
+  const remote = useApi(
+    () => (selected && partial ? get<GraphEntity>("graphs/entity", { ref: graphRef, id: selected }) : Promise.resolve(null)),
+    [selected, partial, graphRef],
+  );
   const neighbours = useMemo(() => {
     const map = new Map<string, Set<string>>();
     for (const e of data.edges) {
@@ -102,29 +116,43 @@ function GraphExplorer({ data, params }: { data: GraphData; params: URLSearchPar
     const order = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([k]) => k);
     return { key, order, counts };
   }, [data.nodes, colorBy]);
+  const communityById = useMemo(() => new Map(data.communities.map((c) => [c.id, c])), [data.communities]);
   const communityName = (id: string) => {
     if (id === "none") return t("graph.noCommunity");
-    const c = data.communities.find((x) => x.id === id);
+    const c = communityById.get(id);
     return c ? c.top_entities.slice(0, 2).join(", ") || id.slice(0, 8) : id.slice(0, 8);
   };
+  const slotOf = useMemo(() => new Map(groups.order.map((k, i) => [k, i])), [groups.order]);
   const colorOf = (id: string) => {
     const node = byId.get(id);
-    return colorSlot(node ? groups.order.indexOf(groups.key(node)) : 99);
+    return colorSlot(node ? (slotOf.get(groups.key(node)) ?? 99) : 99);
   };
-  const legend = groups.order.slice(0, 8).map((k, i) => ({
+  const legend = groups.order.slice(0, LEGEND_SLOTS).map((k, i) => ({
+    key: k,
     label: `${colorBy === "community" ? communityName(k) : k} (${number(groups.counts.get(k) ?? 0)})`,
     color: colorSlot(i),
   }));
-  if (groups.order.length > 8) legend.push({ label: t("graph.other", { count: groups.order.length - 8 }), color: colorSlot(99) });
+  if (groups.order.length > LEGEND_SLOTS) legend.push({ key: OTHER_GROUPS, label: t("graph.other", { count: groups.order.length - LEGEND_SLOTS }), color: colorSlot(99) });
+  // A legend entry hovered or focused lights its members (a channel that
+  // does not rely on colour).
+  const [legendGroup, setLegendGroup] = useState<string | null>(null);
+  const groupMembers = useMemo(() => {
+    if (!legendGroup) return null;
+    const inGroup = (n: GraphNode) => {
+      const slot = slotOf.get(groups.key(n)) ?? 99;
+      return legendGroup === OTHER_GROUPS ? slot >= LEGEND_SLOTS : groups.key(n) === legendGroup;
+    };
+    return new Set(data.nodes.filter(inGroup).map((n) => n.id));
+  }, [legendGroup, data.nodes, groups, slotOf]);
 
   const highlighted = useMemo(() => {
     if (community) {
-      const c = data.communities.find((x) => x.id === community);
+      const c = communityById.get(community);
       return c ? new Set(c.nodes) : null;
     }
     if (selected) return new Set([selected, ...(neighbours.get(selected) ?? [])]);
     return null;
-  }, [community, selected, neighbours, data.communities]);
+  }, [community, selected, neighbours, communityById]);
 
   const traced = useMemo(() => {
     const ids = new Set<string>();
@@ -133,18 +161,14 @@ function GraphExplorer({ data, params }: { data: GraphData; params: URLSearchPar
     return ids;
   }, [params, edgeTarget]);
 
-  const matches = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return [];
-    return data.nodes
-      .filter((n) => n.name.toLowerCase().includes(q))
-      .sort((a, b) => b.degree - a.degree)
-      .slice(0, 12);
-  }, [search, data.nodes]);
+  const matches = useMemo(() => rankMatches(everyone, search), [search, everyone]);
   useEffect(() => setActive(0), [search]);
 
-  const node = selected ? byId.get(selected) : undefined;
-  const nodeEdges = selected ? data.edges.filter((e) => e.source === selected || e.target === selected) : [];
+  const fetched = remote.data && remote.data.node.id === selected ? remote.data : null;
+  const node = selected ? (fetched?.node ?? byId.get(selected)) : undefined;
+  const nodeEdges = !selected ? [] : partial ? (fetched?.edges ?? []) : data.edges.filter((e) => e.source === selected || e.target === selected);
+  const neighbourName = (id: string) => nameOf.get(id) ?? fetched?.names[id] ?? id;
+  const notDrawn = !!selected && !byId.has(selected);
   const fromTrail = trail && (trail.source.id === params.get("focus") || trail.source.node_ids?.includes(params.get("focus")) || trail.source.community_id === params.get("community"));
 
   const pick = (id: string) => {
@@ -234,7 +258,7 @@ function GraphExplorer({ data, params }: { data: GraphData; params: URLSearchPar
               data={data}
               colorOf={colorOf}
               selected={selected}
-              highlighted={highlighted}
+              highlighted={groupMembers ?? highlighted}
               traced={traced}
               tracedEdge={params.get("focus") && edgeTarget ? [params.get("focus")!, edgeTarget] : null}
               onSelect={(id) => {
@@ -243,12 +267,11 @@ function GraphExplorer({ data, params }: { data: GraphData; params: URLSearchPar
                 if (id) setPanel("entity");
               }}
               legend={legend}
+              onLegendFocus={setLegendGroup}
             />
             </Suspense>
           </div>
-          {Object.keys(data.layout).length < data.nodes.length ? (
-            <p className="field-help">{t("graph.drawnOnly", { drawn: Object.keys(data.layout).length, total: data.nodes.length })}</p>
-          ) : null}
+          {partial ? <p className="field-help">{t("graph.drawnOnly", { drawn: number(data.nodes.length), total: number(data.stats.nodes) })}</p> : null}
         </div>
         <section className="sheet">
           <div className="tabs" role="tablist" aria-label={t("graph.panels")}>
@@ -260,8 +283,11 @@ function GraphExplorer({ data, params }: { data: GraphData; params: URLSearchPar
           </div>
           <div className="sheet-body" role="tabpanel" id={`panel-${panel}`} aria-labelledby={`tab-${panel}`}>
             <h2 className="visually-hidden">{t(`graph.panel.${panel}`)}</h2>
+            {panel === "entity" ? <ErrorText error={remote.error} /> : null}
             {panel === "entity" ? (
-              node ? (
+              selected && partial && !fetched && remote.loading ? (
+                <Loading />
+              ) : node ? (
                 <div className="stack" style={{ gap: 12 }}>
                   <div>
                     <h2 className="sheet-title" style={{ fontSize: "var(--text-lg)" }}>
@@ -274,6 +300,7 @@ function GraphExplorer({ data, params }: { data: GraphData; params: URLSearchPar
                       {node.source_kinds.includes("seed_graph") ? <span className="badge badge-trace">{t("graph.seed")}</span> : null}
                     </div>
                   </div>
+                  {notDrawn ? <p className="field-help" style={{ margin: 0 }}>{t("graph.notDrawn")}</p> : null}
                   {node.description ? <p style={{ margin: 0, whiteSpace: "pre-line", fontSize: "var(--text-sm)" }}>{node.description}</p> : null}
                   <dl className="kv">
                     <dt>{t("graph.degree")}</dt>
@@ -315,7 +342,7 @@ function GraphExplorer({ data, params }: { data: GraphData; params: URLSearchPar
                         return (
                           <li key={edge.id}>
                             <button onClick={() => pick(other)} title={edge.description ?? undefined}>
-                              <span>{byId.get(other)?.name ?? other}</span>
+                              <span>{neighbourName(other)}</span>
                               <span className="id">{edge.type}</span>
                             </button>
                           </li>
@@ -394,7 +421,9 @@ function GraphExplorer({ data, params }: { data: GraphData; params: URLSearchPar
                   <table className="table table-compact">
                     <thead>
                       <tr>
-                        <th />
+                        <th>
+                          <span className="visually-hidden">{t("graph.stats.what")}</span>
+                        </th>
                         <th className="num">{t("graph.inSchema")}</th>
                         <th className="num">{t("graph.offSchema")}</th>
                         <th className="num">{t("graph.unannotated")}</th>
@@ -419,7 +448,9 @@ function GraphExplorer({ data, params }: { data: GraphData; params: URLSearchPar
                   <table className="table table-compact">
                     <thead>
                       <tr>
-                        <th />
+                        <th>
+                          <span className="visually-hidden">{t("graph.stats.what")}</span>
+                        </th>
                         <th className="num">{t("graph.evidence.document")}</th>
                         <th className="num">{t("graph.evidence.seed_graph")}</th>
                         <th className="num">{t("graph.evidence.both")}</th>
@@ -443,8 +474,46 @@ function GraphExplorer({ data, params }: { data: GraphData; params: URLSearchPar
         </section>
       </div>
       <Sheet title={t("graph.nodeTable")} pad={false}>
-        <details>
-          <summary style={{ padding: "12px 20px" }}>{t("graph.nodeTableShow", { count: data.nodes.length })}</summary>
+        <EntityTable nodes={everyone} communityName={communityName} onPick={pick} />
+      </Sheet>
+    </>
+  );
+}
+
+/** The entities whose name holds `search` (case-insensitive), best first:
+ * the exact name, then names starting with it, then the rest, each by
+ * connections. */
+export function rankMatches<T extends { name: string; degree: number }>(entities: T[], search: string, limit = 12): T[] {
+  const q = search.trim().toLowerCase();
+  if (!q) return [];
+  const rank = (name: string) => (name === q ? 0 : name.startsWith(q) ? 1 : 2);
+  return entities
+    .map((n) => ({ n, name: n.name.toLowerCase() }))
+    .filter(({ name }) => name.includes(q))
+    .sort((a, b) => rank(a.name) - rank(b.name) || b.n.degree - a.n.degree)
+    .slice(0, limit)
+    .map(({ n }) => n);
+}
+
+/** A table row: a drawn entity in full, another by name and degree. */
+type EntityRow = GraphEntityRef & Partial<Pick<GraphNode, "type" | "community_id">>;
+
+// Rows the entity table shows at once (a graph can hold tens of thousands).
+export const TABLE_PAGE = 100;
+
+/** Every entity, most connected first: built only while open, a page at a
+ * time. */
+export function EntityTable({ nodes, communityName, onPick }: { nodes: EntityRow[]; communityName: (id: string) => string; onPick: (id: string) => void }) {
+  const { t, number } = useI18n();
+  const [open, setOpen] = useState(false);
+  const [page, setPage] = useState(0);
+  const sorted = useMemo(() => (open ? [...nodes].sort((a, b) => b.degree - a.degree) : []), [open, nodes]);
+  const shown = sorted.slice(page * TABLE_PAGE, (page + 1) * TABLE_PAGE);
+  return (
+    <details onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}>
+      <summary style={{ padding: "12px 20px" }}>{t("graph.nodeTableShow", { count: nodes.length })}</summary>
+      {open ? (
+        <>
           <div className="table-wrap" tabIndex={0} style={{ maxHeight: 360 }}>
             <table className="table">
               <thead>
@@ -456,26 +525,25 @@ function GraphExplorer({ data, params }: { data: GraphData; params: URLSearchPar
                 </tr>
               </thead>
               <tbody>
-                {[...data.nodes]
-                  .sort((a, b) => b.degree - a.degree)
-                  .map((n) => (
-                    <tr key={n.id}>
-                      <td>
-                        <button className="link-button" onClick={() => pick(n.id)}>
-                          {n.name}
-                        </button>
-                      </td>
-                      <td>{n.type}</td>
-                      <td className="num">{n.degree}</td>
-                      <td>{n.community_id ? communityName(n.community_id) : "—"}</td>
-                    </tr>
-                  ))}
+                {shown.map((n) => (
+                  <tr key={n.id}>
+                    <td>
+                      <button className="link-button" onClick={() => onPick(n.id)}>
+                        {n.name}
+                      </button>
+                    </td>
+                    <td>{n.type ?? "—"}</td>
+                    <td className="num">{number(n.degree)}</td>
+                    <td>{n.community_id ? communityName(n.community_id) : "—"}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
-        </details>
-      </Sheet>
-    </>
+          <Pager page={page} size={TABLE_PAGE} total={nodes.length} onPage={setPage} />
+        </>
+      ) : null}
+    </details>
   );
 }
 

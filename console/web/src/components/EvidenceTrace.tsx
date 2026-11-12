@@ -284,11 +284,15 @@ function SourceCard({
             </Step>
           ) : null}
           {source.source_kinds.length ? <Step label={t("ask.trail.sourceKinds")}>{source.source_kinds.join(", ")}</Step> : null}
-          <Step label={t("ask.trail.ids")}>
-            <span className="id">{source.id}</span>
-            {source.text_unit_ids.length ? <span className="muted">{t("ask.trail.units", { count: source.text_unit_ids.length })}</span> : null}
-          </Step>
-          {source.score != null ? <Step label={t("ask.trail.score")}>{number(source.score, { maximumFractionDigits: 4 })}</Step> : null}
+          {/* The ids and the fused score are for debugging: folded. */}
+          <details className="trail-details">
+            <summary>{t("ask.trail.details")}</summary>
+            <Step label={t("ask.trail.ids")}>
+              <span className="id">{source.id}</span>
+              {source.text_unit_ids.length ? <span className="muted">{t("ask.trail.units", { count: source.text_unit_ids.length })}</span> : null}
+            </Step>
+            {source.score != null ? <Step label={t("ask.trail.score")}>{number(source.score, { maximumFractionDigits: 4 })}</Step> : null}
+          </details>
           {onOpenInGraph && source.kind !== "text" && !source.synthesized && (source.kind !== "query_result" || source.node_ids?.length) ? (
             <div>
               <button className="button button-small button-primary" onClick={() => onOpenInGraph(source)}>

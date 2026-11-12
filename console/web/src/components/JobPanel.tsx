@@ -107,13 +107,23 @@ export function JobPanel({ jobId, onEnded, children }: { jobId: string; onEnded?
   );
 }
 
+/** A pipeline stage's name in the page's language (its id when the
+ * catalog has none, a stage added later). */
+export function stageName(t: (key: string) => string, id: string): string {
+  const key = `stage.name.${id}`;
+  const name = t(key);
+  return name === key ? id : name;
+}
+
 export function Stages({ stages }: { stages: StageProgress[] }) {
   const { t, number, seconds } = useI18n();
   return (
     <ol className="stages" aria-label={t("job.stages")}>
       {stages.map((stage) => (
         <li key={stage.name} className="stage" data-status={stage.status}>
-          <span className="stage-name">{stage.name}</span>
+          <span className="stage-name" title={stage.name}>
+            {stageName(t, stage.name)}
+          </span>
           <span className="stage-meta">
             {t(`stage.status.${stage.status}`)}
             {stage.duration_seconds != null ? ` · ${seconds(stage.duration_seconds)}` : ""}

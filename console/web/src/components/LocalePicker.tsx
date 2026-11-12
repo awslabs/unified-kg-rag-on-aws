@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import { isLocale, LOCALES, useI18n } from "../i18n/i18n";
 
-export function LocalePicker({ id = "locale" }: { id?: string }) {
+export function LocalePicker() {
   const { t, locale, setLocale } = useI18n();
+  const id = "locale";
   return (
     <label className="field" htmlFor={id}>
       <span className="field-label">{t("shell.language")}</span>

@@ -885,16 +885,19 @@ From a `main` checkout (formats and keys no release had):
   counts carry 3곳 / 세 곳 and 3社 / 三社 aliases (#639, #645). `structural-config.yaml` sets
   `evaluation.answer_span: extracted` (EM and F1 on the short span: one fast-model call per scored answer) (#645).
 - A local web console, opt-in (the `console` extra, `run-console`; #631, #634): ask with a strategy picker (and how
-  `auto` chose), the answer streamed as the answer model writes it, its citation markers `[n]` linked to the sources
-  they cite, follow-ups sent with the page's conversation (`RAGInput.history`), and each source the answer read on a
-  provenance trace back to its passage, file, seed graph and IRI and into the graph; ingest a workspace folder or an
-  upload with a methodology profile (starting from what the namespace's build record holds; a run that would drop a
+  `auto` chose; an empty namespace leads to Ingest), the answer streamed as the answer model writes it, its citation
+  markers `[n]` linked to the sources they cite, follow-ups sent with the page's conversation (`RAGInput.history`),
+  and each source the answer read on a provenance trace back to its passage, file, seed graph and IRI and into the
+  graph; ingest a workspace folder or an upload with a methodology profile (starting from what the namespace's build
+  record holds; a run that would drop a
   held methodology for every corpus in the namespace starts only once confirmed), with live stage progress and a stop
   the pipeline checkpoints; run and compare evaluations (progress per answer; paired deltas called by their
   Holm-adjusted p-value with the family's simultaneous interval and the primary metric marked, falling back to the
-  interval for older comparisons; gates, cost, declines, win rates by answer length) and open saved runs; explore the
-  exported graph (search, neighbourhoods, communities, degree, schema conformance, seed versus document evidence); a
-  dashboard of the questions and jobs run through it (time, tokens, cost per strategy, model and role); and edit the
+  interval for older comparisons; gates, cost, declines, win rates by answer length, each metric described on hover,
+  and per question every strategy's primary-metric score, its win, tie or loss and the answers side by side) and open
+  saved runs; explore the exported graph (search, neighbourhoods, communities, degree, schema conformance, seed
+  versus document evidence); a dashboard of the questions and jobs run through it (time, tokens, cost per strategy,
+  model and role); and edit the
   config file with validation, a diff before saving, a confirmation before a provider endpoint or a file or directory
   path changes (every config key that names one), and secrets never shown or written. Jobs run the unchanged
   `run-ingestion` and `run-eval` in child processes. It binds `127.0.0.1` (another address needs `--allow-remote`),
@@ -906,8 +909,10 @@ From a `main` checkout (formats and keys no release had):
   nothing from another host. The web client
   (`console/web/`, Vite, React, TypeScript) is in English and nine more languages, in a light and a dark theme (the
   system's unless one is chosen in the top bar), set in Pretendard (Pretendard JP for Japanese, JetBrains Mono for
-  figures; self-hosted, SIL OFL), with a force-directed canvas graph (the focused node and its neighbours labelled,
-  the rest dimmed), to the brief in `console/web/DESIGN.md`; `console/demo/demo.py` prepares a synthetic corpus of
+  figures; self-hosted, SIL OFL), with a force-directed canvas graph (the focused node and its neighbours labelled
+  in screen pixels without overlaps, the rest dimmed, edges fading as they multiply; the 600 best-connected entities
+  drawn and sent whole, the rest by name, found by search or in a paged table and read on demand; a file read once
+  per version), to the brief in `console/web/DESIGN.md`; `console/demo/demo.py` prepares a synthetic corpus of
   the formats the core install parses (multi-page PDFs, whose citations name their page, Markdown, HTML, CSV, JSON
   and text), a dataset and a config (kept on a restart, `--reset-config` to write it again) for fake, Ollama or
   Bedrock models, and stops before it writes anything without the `console` extra, the built web client, or the

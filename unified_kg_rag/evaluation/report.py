@@ -166,13 +166,17 @@ def comparison_markdown(comparison: Mapping[str, Any]) -> str:
         for strategy in others:
             row.append(delta_cell(comparison["deltas_vs_baseline"][strategy].get(key)))
         rows.append(row)
+    # The table's intervals are the plain ones; a comparison that adjusts
+    # for multiplicity says so, as its simultaneous ones are in the JSON.
+    interval = (
+        f"{confidence:.0%} unadjusted CI"
+        if comparison.get("multiplicity")
+        else f"{confidence:.0%} CI"
+    )
     header = [
         "Metric",
         *(f"{s}{arm_role_mark(s, roles)}" for s in strategies),
-        *(
-            f"{s} - {pairs[s]} [{confidence:.0%} CI]{arm_role_mark(s, roles)}"
-            for s in others
-        ),
+        *(f"{s} - {pairs[s]} [{interval}]{arm_role_mark(s, roles)}" for s in others),
     ]
     lines += _table(header, rows)
     lines += _multiplicity_lines(comparison)
@@ -215,7 +219,7 @@ def comparison_markdown(comparison: Mapping[str, Any]) -> str:
         if measures and others:
             lines += ["", f"Paired cost deltas {title}:", ""]
             lines += _table(
-                ["Measure", *(f"{s} - {pairs[s]}" for s in others)],
+                ["Measure", *(f"{s} - {pairs[s]} [{interval}]" for s in others)],
                 [
                     [
                         f"`{measure}`",

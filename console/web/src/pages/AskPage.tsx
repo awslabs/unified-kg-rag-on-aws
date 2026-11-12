@@ -9,7 +9,7 @@ import { useI18n } from "../i18n/i18n";
 import { errorMessage, get, stream } from "../lib/api";
 import { navigate } from "../lib/router";
 import { useTrail } from "../lib/trail";
-import type { AskEvent, AskResult, Citation, Degradation, Source, Status, StrategyInfo } from "../lib/types";
+import type { AskEvent, AskResult, Citation, Degradation, NamespaceHeld, Source, Status, StrategyInfo } from "../lib/types";
 import { useApi } from "../lib/useApi";
 
 interface Turn {
@@ -56,6 +56,9 @@ export function AskPage({ status }: { status: Status | null }) {
   const { t } = useI18n();
   const { setTrail } = useTrail();
   const strategies = useApi(() => get<{ strategies: StrategyInfo[] }>("strategies"), [status?.config_path]);
+  // Whether the namespace holds anything yet (read again after an ingestion).
+  const ingested = (status?.jobs ?? []).filter((j) => j.kind === "ingest" && j.status === "succeeded").length;
+  const held = useApi(() => get<NamespaceHeld>("namespace/methodologies").catch(() => null), [status?.config_path, ingested]);
   const [query, setQuery] = useState("");
   const [strategy, setStrategy] = useState("auto");
   const [followUp, setFollowUp] = useState(true);
@@ -158,7 +161,7 @@ export function AskPage({ status }: { status: Status | null }) {
       />
       <div className="grid-2">
         <div className="conversation">
-          <div className="thread" aria-live="polite">
+          <div className="thread" aria-live="polite" aria-busy={busy}>
             {!turns.length ? (
               <div className="welcome">
                 <svg className="welcome-mark" viewBox="0 0 28 28" aria-hidden="true">
@@ -169,8 +172,18 @@ export function AskPage({ status }: { status: Status | null }) {
                   <circle cx="22" cy="19" r="3.5" />
                   <circle className="lit" cx="14" cy="7" r="3.5" />
                 </svg>
-                <p className="welcome-title">{t("ask.evidenceEmptyTitle")}</p>
-                {status?.sample_questions.length ? (
+                {held.data && !held.data.recorded ? (
+                  <>
+                    <p className="welcome-title">{t("ask.emptyNamespaceTitle", { namespace: held.data.namespace })}</p>
+                    <span>{t("ask.emptyNamespace")}</span>
+                    <button type="button" className="button button-primary" onClick={() => navigate("ingest")}>
+                      {t("common.goIngest")}
+                    </button>
+                  </>
+                ) : (
+                  <p className="welcome-title">{t("ask.evidenceEmptyTitle")}</p>
+                )}
+                {status?.sample_questions.length && !(held.data && !held.data.recorded) ? (
                   <>
                     <span>{t("ask.samples")}</span>
                     <div className="samples">
@@ -361,7 +374,13 @@ function TurnView({
         ) : null}
         {turn.error ? (
           <Notice tone="bad" title={t(`ask.error.${turn.error.kind}`)}>
-            {turn.error.message}
+            {turn.error.kind === "index_not_found" ? (
+              <button type="button" className="button button-small" style={{ marginTop: 6 }} onClick={() => navigate("ingest")}>
+                {t("common.goIngest")}
+              </button>
+            ) : (
+              turn.error.message
+            )}
           </Notice>
         ) : (
           <p className={`answer-text${turn.status === "streaming" ? " streaming" : ""}`}>

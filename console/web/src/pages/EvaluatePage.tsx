@@ -1,13 +1,13 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-import { useState } from "react";
-import { DeltaPlot } from "../components/charts";
+import { useMemo, useState } from "react";
+import { DeltaPlot, higherIsBetter, MetricName } from "../components/charts";
 import { JobPanel } from "../components/JobPanel";
 import { StrategyPicker } from "../components/StrategyPicker";
-import { Empty, ErrorText, Loading, Notice, PageHead, Sheet } from "../components/ui";
+import { Empty, ErrorText, Loading, Notice, PageHead, Pager, Sheet } from "../components/ui";
 import { useI18n } from "../i18n/i18n";
 import { errorMessage, get, send } from "../lib/api";
-import type { Comparison, JobRecord, SavedRun, Status, StrategyInfo } from "../lib/types";
+import type { Comparison, JobRecord, QuestionScores, SavedRun, Status, StrategyInfo } from "../lib/types";
 import { useApi } from "../lib/useApi";
 
 interface DatasetInfo {
@@ -285,7 +285,7 @@ function RunView({ refName }: { refName: string }) {
       </h2>
       <Sheet title={t("evaluate.results")} pad={false}>
         <div className="table-wrap" tabIndex={0}>
-          <table className="table">
+          <table className="table table-sticky">
             <thead>
               <tr>
                 <th>{t("evaluate.metric")}</th>
@@ -300,7 +300,9 @@ function RunView({ refName }: { refName: string }) {
             <tbody>
               {metricRows.map((metric) => (
                 <tr key={metric}>
-                  <td className="mono">{metric}</td>
+                  <td>
+                    <MetricName metric={metric} />
+                  </td>
                   {strategies.map((s) => (
                     <td key={s} className="num">
                       {number(mean(s, metric), { maximumFractionDigits: 3 })}
@@ -351,11 +353,12 @@ function RunView({ refName }: { refName: string }) {
       ) : (
         <Notice title={t("evaluate.noComparison")}>{t("evaluate.noComparisonHelp")}</Notice>
       )}
+      <QuestionTable refName={refName} candidate={shown} baseline={shown && comparison ? (comparison.baselines?.[shown] ?? comparison.baseline) : null} />
       <div className="grid-wide">
         {comparison?.cost ? (
           <Sheet title={t("evaluate.cost")} pad={false}>
             <div className="table-wrap" tabIndex={0}>
-              <table className="table">
+              <table className="table table-sticky">
                 <thead>
                   <tr>
                     <th>{t("evaluate.strategy")}</th>
@@ -387,7 +390,7 @@ function RunView({ refName }: { refName: string }) {
         ) : null}
         <Sheet title={t("evaluate.abstention")} pad={false}>
           <div className="table-wrap" tabIndex={0}>
-            <table className="table">
+            <table className="table table-sticky">
               <thead>
                 <tr>
                   <th>{t("evaluate.strategy")}</th>
@@ -420,7 +423,7 @@ function RunView({ refName }: { refName: string }) {
         <Sheet title={t("evaluate.lengths")} pad={!lengths}>
           {lengths ? (
             <div className="table-wrap" tabIndex={0}>
-              <table className="table">
+              <table className="table table-sticky">
                 <thead>
                   <tr>
                     <th>{t("evaluate.lengthRatio")}</th>
@@ -455,6 +458,156 @@ function RunView({ refName }: { refName: string }) {
         </Sheet>
       </div>
     </div>
+  );
+}
+
+export type Outcome = "win" | "tie" | "loss";
+
+/** A question's outcome for `candidate` against `baseline` on `metric`:
+ * better, equal or worse by the metric's direction; null when either has no
+ * score or the metric has no direction. */
+export function outcomeOf(metric: string, candidate: number | undefined, baseline: number | undefined): Outcome | null {
+  const direction = higherIsBetter(metric);
+  if (candidate == null || baseline == null || direction === null) return null;
+  if (candidate === baseline) return "tie";
+  return candidate > baseline === direction ? "win" : "loss";
+}
+
+const OUTCOME_TONES: Record<Outcome, string> = { win: "badge-good", tie: "", loss: "badge-bad" };
+// Questions the table shows at once.
+export const QUESTION_PAGE = 50;
+
+/** Per question: each strategy's score on the primary metric and, for the
+ * shown candidate, its outcome against its baseline; a question opens the
+ * answers side by side. Read only once opened. */
+export function QuestionTable({ refName, candidate, baseline }: { refName: string; candidate: string | null; baseline: string | null }) {
+  const { t, number } = useI18n();
+  const [open, setOpen] = useState(false);
+  const [filter, setFilter] = useState<Outcome | "all">("all");
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [page, setPage] = useState(0);
+  const view = useApi(() => (open ? get<QuestionScores>("evaluations/questions", { ref: refName }) : Promise.resolve(null)), [open, refName]);
+  const data = view.data;
+  const metric = data?.metric ?? null;
+  const compared = !!(candidate && baseline && data?.strategies.includes(candidate) && data.strategies.includes(baseline));
+  const rows = useMemo(
+    () =>
+      (data?.questions ?? []).map((q) => ({
+        ...q,
+        outcome: compared && metric ? outcomeOf(metric, q.scores[candidate!], q.scores[baseline!]) : null,
+      })),
+    [data, compared, metric, candidate, baseline],
+  );
+  const counts = { win: 0, tie: 0, loss: 0 };
+  for (const r of rows) if (r.outcome) counts[r.outcome] += 1;
+  const shown = filter === "all" ? rows : rows.filter((r) => r.outcome === filter);
+  const paged = shown.slice(page * QUESTION_PAGE, (page + 1) * QUESTION_PAGE);
+  const strategies = data?.strategies ?? [];
+  return (
+    <Sheet title={t("evaluate.questions")} pad={false}>
+      <details onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}>
+        <summary style={{ padding: "12px 20px" }}>{t("evaluate.questionsShow")}</summary>
+        {!open ? null : view.error ? (
+          <ErrorText error={view.error} />
+        ) : !data ? (
+          <Loading />
+        ) : !rows.length ? (
+          <p className="muted" style={{ padding: "0 20px" }}>
+            {t("evaluate.questionsNone")}
+          </p>
+        ) : (
+          <>
+            <div className="row" style={{ padding: "0 20px 10px" }}>
+              {compared ? (
+                <>
+                  <p className="field-help" style={{ margin: 0, flex: "1 1 320px" }}>
+                    {t("evaluate.questionsHelp", { metric: metric ?? "", candidate: candidate!, baseline: baseline! })}
+                  </p>
+                  <div className="chips" role="group" aria-label={t("evaluate.outcome")}>
+                    {(["all", "win", "tie", "loss"] as const).map((o) => (
+                      <button
+                        key={o}
+                        className="chip"
+                        aria-pressed={filter === o}
+                        onClick={() => {
+                          setFilter(o);
+                          setPage(0);
+                        }}
+                      >
+                        {t(`evaluate.outcome.${o}`)} {o === "all" ? number(rows.length) : number(counts[o])}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              ) : null}
+            </div>
+            <div className="table-wrap" tabIndex={0}>
+              <table className="table table-sticky">
+                <thead>
+                  <tr>
+                    <th>{t("evaluate.question")}</th>
+                    {strategies.map((s) => (
+                      <th key={s} className="num">
+                        {s}
+                        {s === baseline ? ` (${t("evaluate.baseline")})` : ""}
+                      </th>
+                    ))}
+                    {compared ? <th>{t("evaluate.outcome")}</th> : null}
+                  </tr>
+                </thead>
+                <tbody>
+                  {paged.flatMap((q) => {
+                    const isOpen = expanded === q.id;
+                    const row = (
+                      <tr key={q.id}>
+                        <td>
+                          <button className="link-button question-toggle" aria-expanded={isOpen} onClick={() => setExpanded(isOpen ? null : q.id)}>
+                            {q.question}
+                          </button>
+                        </td>
+                        {strategies.map((s) => (
+                          <td key={s} className="num">
+                            {number(q.scores[s] ?? null, { maximumFractionDigits: 3 })}
+                          </td>
+                        ))}
+                        {compared ? <td>{q.outcome ? <span className={`badge ${OUTCOME_TONES[q.outcome]}`}>{t(`evaluate.outcome.${q.outcome}`)}</span> : "—"}</td> : null}
+                      </tr>
+                    );
+                    if (!isOpen) return [row];
+                    return [
+                      row,
+                      <tr key={`${q.id}-answers`} className="answers-row">
+                        <td colSpan={strategies.length + (compared ? 2 : 1)}>
+                          <div className="answers-side">
+                            <div className="answer-card">
+                              <div className="field-label">{t("evaluate.reference")}</div>
+                              <p>{q.ground_truth}</p>
+                            </div>
+                            {strategies.map((s) => {
+                              const a = q.answers[s];
+                              return (
+                                <div key={s} className="answer-card">
+                                  <div className="field-label">
+                                    <span className="mono">{s}</span> · {number(q.scores[s] ?? null, { maximumFractionDigits: 3 })}
+                                    {a?.abstained ? <span className="badge" style={{ marginLeft: 6 }}>{t("evaluate.answerDeclined")}</span> : null}
+                                  </div>
+                                  {a?.error ? <p className="muted">{t("evaluate.answerFailed", { error: a.error })}</p> : <p>{a?.text ?? "—"}</p>}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </td>
+                      </tr>,
+                    ];
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <Pager page={page} size={QUESTION_PAGE} total={shown.length} onPage={setPage} />
+          </>
+        )}
+      </details>
+    </Sheet>
   );
 }
 
