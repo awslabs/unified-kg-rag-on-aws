@@ -309,9 +309,9 @@ the input rate (an upper bound for reads, which cost a tenth of input on
 Claude). The rerank model is priced too, per thousand search units (usage
 `rerank_search_units`: one per rerank request of up to 100 documents, where
 Amazon Bedrock bills a document of more than 500 tokens, the query included,
-as several: a ~4,800-character chunk is about three; the tokens are the
-script-aware estimate, so the count can differ from the bill by a unit; set 0
-for a local cross-encoder):
+as several: a default 1,200-token chunk (~4,800 English characters) is about
+three; the tokens are the script-aware estimate, so the count can differ from
+the bill by a unit; set 0 for a local cross-encoder):
 
 ```yaml
 evaluation:

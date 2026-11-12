@@ -522,7 +522,8 @@ From a `main` checkout (formats and keys no release had):
   spacing variants with a number and a letter run into a digit ("PO1002", "PO 1002") are one entity (*Stored data and
   reindexing*); the description summary and claim
   prompts changed, claims keep a `suspected` status and are keyed by their statement (*Fixed*); chunk sizes count
-  tokens (*Defaults*), which keeps English text units and re-chunks Korean, Japanese and Chinese ones; stage-cache keys
+  tokens (*Defaults*), which re-chunks Korean, Japanese and Chinese text units and English ones of short or long words
+  (most others are kept); stage-cache keys
   hold the prompts in effect (a pipeline id resumed across a prompt change starts over); extraction records under
   earlier keys (other description summary settings, #541-#556) and claims under an earlier reading of their dates
   (#612, #624) are no longer looked up. Run one reset (`indexing.reset: true`) with a new or no `--pipeline-id`:
