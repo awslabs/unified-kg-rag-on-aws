@@ -662,7 +662,8 @@ From a `main` checkout (formats and keys no release had):
   one report call per community and its embeddings, the report stage of a first build (no text unit is extracted
   again); later builds reuse them. An incremental run clusters and reports its own communities the new way (#618).
 - #627 citations: answers now cite their context with `[n]` markers (`search.citations.enabled`, on), so answer texts
-  and the LLM judges' scores differ from earlier runs (`answer_match` scores the words without the markers): compare
+  and the LLM judges' scores differ from earlier runs (`answer_match`, `graph_aware`, the `ragas` and `assertion`
+  judges and the pairwise judge read the words without the markers): compare
   runs of one setting, or set it `false` for the earlier context and prompt. `global` and `drift` answers no longer
   carry `[n]` markers or `RAGOutput.citations` by default, and their answer prompt drops the "cite where possible"
   instruction: set `search.citations.strategies: {global: true, drift: true}` to cite there again (with the plain

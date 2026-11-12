@@ -700,6 +700,16 @@ class TestAssertionEvaluator:
         assert report.metrics == []
         assert "no label" in report.metadata[FAILED_METRICS_KEY]["assertion_recall"]
 
+    def test_the_judge_reads_the_answer_without_citation_markers(self, mocker) -> None:
+        # Like answer_match, graph_aware, ragas and the pairwise judge.
+        judge = _AssertionJudge(lambda t, n: "supported")
+        result = _result("q", "The vendor supplies widgets [1].")
+        result.search_strategy = "local"
+        _score(_evaluator(mocker, judge), _scored(result, ["widgets"]))
+        assert {call["answer"] for call in judge.calls} == {
+            "The vendor supplies widgets."
+        }
+
     def test_an_item_without_assertions_makes_no_call(self, mocker) -> None:
         judge = _AssertionJudge(lambda t, n: "supported")
         report = _score(_evaluator(mocker, judge), _result("q", "a"))

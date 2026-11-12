@@ -109,7 +109,6 @@ from unified_kg_rag.adapters.evaluators.base import (
 )
 from unified_kg_rag.adapters.llm.chain_factory import setup_chain
 from unified_kg_rag.adapters.providers import Providers
-from unified_kg_rag.application.retrieval.citations import citations_enabled
 from unified_kg_rag.domain.ingestion.cache_keys import index_language
 from unified_kg_rag.domain.languages import profiles
 from unified_kg_rag.domain.models import (
@@ -125,7 +124,6 @@ from unified_kg_rag.domain.models import (
     model_id_value,
 )
 from unified_kg_rag.domain.prompts import NO_ANSWER_SPAN, AnswerSpanExtractionPrompt
-from unified_kg_rag.domain.retrieval.citations import strip_markers
 from unified_kg_rag.domain.retrieval.no_context import answer_language
 from unified_kg_rag.shared import EvaluationException, get_logger
 
@@ -488,14 +486,6 @@ class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
             EvaluationMetricType.TOKEN_F1,
         ]
 
-    def _answer(self, result: EvaluationResult) -> str:
-        """The answer's words: without its citation markers ([1]) when the
-        answer prompt asked for them (search.citations, for the strategy the
-        answer ran)."""
-        answer = result.generated_answer or ""
-        cited = citations_enabled(self.config, result.search_strategy)
-        return strip_markers(answer) if cited else answer
-
     @staticmethod
     def _references(ground_truth: str, metadata: dict[str, Any]) -> list[str]:
         candidates = [ground_truth, *answer_aliases(metadata)]
@@ -512,7 +502,7 @@ class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
             raise EvaluationException(
                 "answer_span 'extracted' calls a model: use aevaluate_single"
             )
-        answer = self._answer(result)
+        answer = self.answer_words(result)
         span = first_answer_line(answer) if self.answer_span == "first_line" else answer
         return self._score(query, result, ground_truth, span, {})
 
@@ -528,7 +518,7 @@ class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
         if result.abstained or not self._references(ground_truth, result.metadata):
             # Nothing to extract (a decline scores 0): no model call.
             return self._score(query, result, ground_truth, "", {})
-        answer = self._answer(result)
+        answer = self.answer_words(result)
         try:
             span = await self._extracted_span(result.question, answer)
         except Exception as e:  # noqa: BLE001 - scored on the first line instead
@@ -672,7 +662,7 @@ class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
                     **({DECLINE_IS_CORRECT_KEY: True} if correct else {}),
                 },
             )
-        answer = self._answer(result)
+        answer = self.answer_words(result)
         # Normalized in the answer's language: the question's.
         language = answer_language(result.question, index_language(self.config)).value
         contains = self._contains(

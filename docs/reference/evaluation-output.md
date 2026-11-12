@@ -529,6 +529,11 @@ How each evaluator scores. Which evaluators exist, what they need in the
 dataset and how a failure is handled:
 [Evaluation: Evaluators](../guides/evaluate.md#evaluators).
 
+`answer_match`, `graph_aware`, `ragas` and `assertion` read an answer
+without its `[n]` citation markers where the answer prompt asked for them
+(`search.citations` for the strategy it ran), and the pairwise judge always
+does, so a citations on/off comparison does not score the markers.
+
 ### `ragas` contexts
 
 - `context_precision` makes one judge call per context, so it scores at most

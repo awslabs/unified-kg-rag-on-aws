@@ -387,6 +387,38 @@ class TestAevaluateBatch:
         ]
         assert reports[0].metrics[0].value == 0.9
 
+    @pytest.mark.parametrize(
+        ("strategy", "answer"),
+        [
+            # search.citations asks local for markers: the judges read the
+            # answer's words, as answer_match and graph_aware do.
+            ("local", "Alice founded Acme."),
+            # global answers without citations: a bracket is its text.
+            ("global", "Alice founded Acme [1]."),
+        ],
+    )
+    async def test_the_judges_read_the_answer_without_citation_markers(
+        self, mocker, strategy: str, answer: str
+    ) -> None:
+        """Regression (rv23 eval low): the markers reached the judges, so a
+        citations on/off comparison's RAGAS deltas partly measured them."""
+        ev, _ = _make_evaluator(
+            mocker, ragas_metrics=[EvaluationMetricType.FAITHFULNESS]
+        )
+        captured = {}
+
+        def fake_from_dict(d):
+            captured.update(d)
+            return d
+
+        _patch_evaluate(mocker, lambda **kwargs: None)
+        mocker.patch.object(rg_module.Dataset, "from_dict", side_effect=fake_from_dict)
+        result = _result(contexts=["ctx one"])
+        result.generated_answer = "Alice founded Acme [1]."
+        result.search_strategy = strategy
+        await ev.aevaluate_batch([_query()], [result], ["truth"])
+        assert captured["answer"] == [answer]
+
     async def test_each_score_goes_to_its_query_and_metric(self, mocker) -> None:
         # ragas' executor returns one flat list, row by row and metric by
         # metric within a row (the order evaluate submits the jobs in): the
