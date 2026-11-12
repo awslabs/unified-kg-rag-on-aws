@@ -2,12 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 """Standalone graph visualization CLI.
 
-Renders visualizations from a previously exported visualization-data JSON
+Renders visualizations from a visualization-data JSON
 (``visualization_data.json``, the index namespace's graph and its
-communities, which ingestion writes from the stores at the end of every run
-that indexed, ``graph.visualization.export_data``) WITHOUT re-running
-ingestion: ``--data-path``, else the newest export (of ``--suffix``'s
-namespace) where ingestion writes them. The file
+communities, which ingestion writes from the stores at the end of a full
+build, ``graph.visualization.export_data``) WITHOUT re-running ingestion:
+``--data-path``, else the namespace's (``--suffix``, else the config's)
+newest export where ingestion writes them when it shows the build the
+stores hold, else one built from the stores into ``--output-directory``
+(after an incremental run, which exports nothing). The file
 gets a spring layout here unless it carries its own, and the configured
 centrality metrics when a requested renderer reads them (``static``). Drives the renderer registry, so any registered renderer
 (``--renderers interactive static``) can be produced independently. The
@@ -52,14 +54,20 @@ from unified_kg_rag.application.cli.conventions import (
     usage_error,
 )
 from unified_kg_rag.application.cli.help_text import doc_epilog
+from unified_kg_rag.application.cli.preflight import missing_extras_error
+from unified_kg_rag.application.cli.provider_args import add_provider_arguments
 from unified_kg_rag.application.config import load_cli_dotenv
-from unified_kg_rag.application.storage.visualization_export import newest_export
+from unified_kg_rag.application.storage.visualization_export import (
+    current_visualization_data,
+    newest_export,
+)
 from unified_kg_rag.domain.ingestion.graph_analyzer import (
     CentralityMetrics,
     GraphAnalyzer,
 )
 from unified_kg_rag.domain.ingestion.visualization_data import (
     DEFAULT_OUTPUTS_DIRECTORY,
+    VISUALIZATION_DATA_FILENAME,
     spring_layout,
 )
 from unified_kg_rag.domain.models import (
@@ -68,9 +76,11 @@ from unified_kg_rag.domain.models import (
     validate_safe_name,
 )
 from unified_kg_rag.domain.models.config import InteractiveGraphSettings
+from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.shared import (
     ConfigurationError,
     DataProcessingError,
+    StoreConnectionError,
     get_logger,
 )
 
@@ -257,25 +267,59 @@ def _suffix(value: str) -> str:
         raise argparse.ArgumentTypeError(str(e)) from e
 
 
-def _newest_export(config: Any, args: argparse.Namespace) -> Path:
-    """The newest export under the directories ingestion writes to, of
-    ``--suffix``'s namespace when given (exit 2 when there is none)."""
+def _namespace_data(config: Any, args: argparse.Namespace) -> Path:
+    """The visualization data of ``--suffix``'s namespace (else the
+    config's): its newest export under the directories ingestion writes to
+    when it shows the build the stores hold, else one built from the stores
+    into ``--output-directory`` (``current_visualization_data``). With the
+    stores unreachable or not configured, the newest export, with a
+    WARNING; exit 2 when the namespace holds no graph."""
+    from unified_kg_rag.application.bootstrap import build_providers
+
+    if error := missing_extras_error(config, seeds=False):
+        usage_error(error)
+    suffix = resolve_namespace(config, args.suffix)
     configured = config.graph.visualization.outputs_directory
     directories = [
         *([Path(configured)] if configured else []),
         Path(DEFAULT_OUTPUTS_DIRECTORY),
         args.cache_directory,
     ]
-    found = newest_export(directories, args.suffix)
-    if found is None:
-        usage_error(
-            "no visualization_data.json"
-            + (f" of namespace '{args.suffix}'" if args.suffix else "")
-            + " under "
-            + ", ".join(f"'{d}'" for d in directories)
-            + ": run run-ingestion first, or pass --data-path"
+    target = args.output_directory / VISUALIZATION_DATA_FILENAME
+    try:
+        path, counts = current_visualization_data(
+            build_providers(config), suffix, directories, target
         )
-    return found
+    except (StoreConnectionError, ConfigurationError) as e:
+        found = newest_export([*directories, target.parent], suffix)
+        if found is None:
+            raise
+        logger.warning(
+            "The stores of namespace '%s' could not be read (%s): rendering its "
+            "newest export, '%s', which may be older than they are (pass "
+            "--config-path to read them)",
+            suffix,
+            e,
+            found,
+        )
+        return found
+    if counts is None:
+        logger.info("The export '%s' shows the stores of '%s'", path, suffix)
+    elif not counts["nodes"]:
+        usage_error(
+            f"the index namespace '{suffix}' holds no graph: run run-ingestion "
+            "first, check --suffix, or pass --data-path"
+        )
+    else:
+        logger.info(
+            "Built the visualization data of namespace '%s' from its stores "
+            "(%d nodes, %d edges) into '%s'",
+            suffix,
+            counts["nodes"],
+            counts["edges"],
+            path,
+        )
+    return path
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -293,24 +337,26 @@ def _build_parser() -> argparse.ArgumentParser:
         "--data-path",
         type=Path,
         default=None,
-        help="Path to exported visualization-data JSON (default: the newest "
-        "visualization_data.json under graph.visualization.outputs_directory, "
-        "outputs/visualization and --cache-directory, of --suffix's namespace "
-        "when given)",
+        help="Path to exported visualization-data JSON (default: --suffix's "
+        "namespace's newest visualization_data.json under "
+        "graph.visualization.outputs_directory, outputs/visualization and "
+        "--cache-directory when it shows the build the stores hold, else "
+        "one built from the stores into --output-directory)",
     )
     parser.add_argument(
         "--suffix",
         type=_suffix,
         default=None,
-        help="Index namespace whose newest export to render, without "
-        "--data-path (the name run-ingestion --suffix wrote it under)",
+        help="Index namespace to render without --data-path (the name "
+        "run-ingestion --suffix wrote it under; default: the config's "
+        "index_value, else 'default')",
     )
     parser.add_argument(
         "--cache-directory",
         type=Path,
         default=Path("cache"),
-        help="The run-ingestion cache directory searched without --data-path "
-        "(default: cache)",
+        help="The run-ingestion cache directory searched for an export "
+        "without --data-path (default: cache)",
     )
     parser.add_argument(
         "--output-directory",
@@ -331,6 +377,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     add_config_arguments(parser)
     add_output_format_argument(parser)
+    add_provider_arguments(parser)
     return parser
 
 
@@ -342,11 +389,11 @@ def main() -> int:
     try:
         with exit_on_config_error():
             config = load_cli_config(args)
+        setup_cli_logging(config, args)
         if args.data_path is None:
-            args.data_path = _newest_export(config, args)
+            args.data_path = _namespace_data(config, args)
         if not args.data_path.is_file():
             usage_error(f"visualization data not found: '{args.data_path}'")
-        setup_cli_logging(config, args)
         logger.info("Rendering '%s'", args.data_path)
         failures: dict[str, str] = {}
         # Only the default list leaves out a renderer it cannot run.
@@ -373,6 +420,8 @@ def main() -> int:
         if as_json:
             print_json(
                 {
+                    # The data rendered (an export, or built from the stores).
+                    "data_path": str(args.data_path),
                     "output_directory": str(args.output_directory),
                     "files": [str(path) for path in written],
                     "failed_renderers": failures,
@@ -390,6 +439,9 @@ def main() -> int:
     except (ConfigurationError, InvalidVisualizationDataError) as e:
         logger.error("Visualization input error: %s", e)
         return failed(EXIT_USAGE, e)
+    except StoreConnectionError as e:
+        logger.error("Visualization failed: a store could not be reached: %s", e)
+        return failed(EXIT_FAILURE, e)
     except Exception as e:
         # Clean error line rather than a raw traceback (parity with the other
         # CLIs); full detail goes to the log at debug level.

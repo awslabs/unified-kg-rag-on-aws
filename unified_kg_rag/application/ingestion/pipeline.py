@@ -76,6 +76,7 @@ from unified_kg_rag.application.ingestion.pipeline_stages import (
     PipelineStage,
     TextChunkingStage,
     TranslationStage,
+    is_incremental_build,
 )
 from unified_kg_rag.application.ingestion.source_parsing import fingerprint_digest
 from unified_kg_rag.application.ingestion.summary_tree_stage import SummaryTreeStage
@@ -2430,13 +2431,16 @@ class DataIngestionPipeline:
 
     def _export_visualization(self, context: PipelineContext) -> None:
         """Write the namespace's ``visualization_data.json`` from its stores
-        once a run indexed (``graph.visualization.export_data``): the whole
-        graph, also after an incremental run or beside another corpus's
-        documents. Run after the namespace's lease is given up (it only
-        reads), and skipped when an export already shows the stores
-        (:meth:`_current_export`). With the S3 cache sync on, an export
-        in the cache directory is uploaded. Best effort: a failed export
-        never fails the run."""
+        once a full build indexed (``graph.visualization.export_data``):
+        the whole graph, also beside another corpus's documents. An
+        incremental run exports nothing (a scan of the whole graph per
+        run, in proportion to the namespace, not to its delta):
+        ``run-visualization`` builds the file from the stores when asked.
+        Run after the namespace's lease is given up (it only reads), and
+        skipped when an export already shows the stores
+        (:meth:`_current_export`), which any run reports. With the S3
+        cache sync on, an export in the cache directory is uploaded. Best
+        effort: a failed export never fails the run."""
         if not self.config.graph.visualization.export_data:
             return
         if PipelineStageType.INDEXING.value not in self._executed_stages:
@@ -2452,6 +2456,13 @@ class DataIngestionPipeline:
                     current,
                 )
                 context.visualization_data_path = current
+                return
+            if is_incremental_build(context, self.config):
+                logger.info(
+                    "An incremental run exports no visualization data: "
+                    "run-visualization --suffix %s builds it from the stores",
+                    suffix,
+                )
                 return
             counts = write_visualization_data(self.providers, suffix, path)
         except Exception as e:  # noqa: BLE001 - the export is optional

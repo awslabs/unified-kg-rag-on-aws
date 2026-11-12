@@ -226,12 +226,15 @@ real-AWS verification before they are documented as supported.
 
 ## 10. Visualization & Analytics
 
-Ingestion renders nothing: at the end of every run that indexed it writes
-the index namespace's graph and community hierarchy, read from the stores,
-as JSON (`graph.visualization.export_data`,
+Ingestion renders nothing: at the end of a full build it writes the index
+namespace's graph and community hierarchy, read from the stores, as JSON
+(`graph.visualization.export_data`,
 `application/storage/visualization_export.py` over
-`domain/ingestion/visualization_data.py`), so the file is the whole
-namespace also after an incremental run. `run-visualization` renders that
+`domain/ingestion/visualization_data.py`); an incremental run writes none,
+and `run-visualization` (and the console after an ingestion job) builds it
+with the same `write_visualization_data` when no export names the build
+the stores hold (`current_visualization_data`), so the file is the whole
+namespace. `run-visualization` renders that
 file without ingestion through the renderers of `adapters/renderers/`
 (`BaseRenderer`, `@register_renderer`, `RenderContext`, `resolve_renderers`,
 `render_resolved`):

@@ -139,13 +139,15 @@ stored is read again: follow *Upgrading* in order.
   `evaluation.ragas_metrics` takes only the five metrics ragas scores (`answer_correctness`, `answer_relevancy`,
   `context_precision`, `context_recall`, `faithfulness`); another fails the load instead of the evaluator.
 - Visualization: ingestion only writes `visualization_data.json` (`graph.visualization.export_data`, default
-  `true`), at the end of every run that indexed, from the namespace's stores once the run gave up the namespace's
-  lease, and prints its path; a run that wrote nothing keeps an export naming the build the stores hold (`built_at`),
-  local or uploaded by the S3 cache sync from the run the build record names (`visualization_export_run`; one that
-  cannot be read is written again), so a no-change run at 10k text units, a deployed task's on an empty disk too,
-  no longer rewrites a 59 MB file;
-  `run-visualization` renders it (without `--data-path` the newest export, of `--suffix`'s namespace when given)
-  with a seeded spring layout, and the embedding layouts (UMAP, t-SNE, PCA) are gone.
+  `true`), at the end of a full build, from the namespace's stores once the run gave up the namespace's lease, and
+  prints its path; an incremental run writes none (a scan of the whole graph per run: 36% of a one-document run at
+  3,200 entities), and any run that wrote nothing reports an export naming the build the stores hold (`built_at`),
+  local or uploaded by the S3 cache sync from the run the build record names (`visualization_export_run`), so a
+  no-change run at 10k text units, a deployed task's on an empty disk too, no longer rewrites a 59 MB file;
+  `run-visualization` renders it (without `--data-path` the namespace's newest export when it shows the build the
+  stores hold, else one it builds from the stores, as the console does after an ingestion that exported none; it
+  takes the provider flags again) with a seeded spring layout, and the embedding layouts (UMAP, t-SNE, PCA) are
+  gone.
   `graph.visualization.interactive` and `static` are typed sections: a misspelled setting is an unknown key (#344,
   #467). See [visualize](docs/guides/visualize.md).
 - Environment variables: `UKR__<SECTION>__<KEY>` sets any key (double underscores between segments, any case, JSON
@@ -689,9 +691,6 @@ From a `main` checkout (formats and keys no release had):
   call on a fast-tier role (`translation` by default) or under `aws.bedrock.ingestion_effort` asks for another
   `max_tokens`, so its LLM response-cache entries miss once and a re-run of that stage pays its model calls again;
   extraction-store records are reused (they are keyed by the effort, not by `max_tokens`).
-- #628 `run-visualization` no longer takes the provider flags (`--backend`, `--llm-provider`, `--llm-model`,
-  `--embedding-provider`, `--embedding-model`, `--embedding-dimension`): it renders exported data and calls no model,
-  so a script passing one exits 2 until it drops it.
 - A `custom_prompts` override of `query_rewrite_*` (#212) should answer `{"question": ...}`, or
   `{"question": "[CANNOT_REWRITE]"}` to keep the question as asked (*Changed*): another answer costs one
   output-fixer call per follow-up.
@@ -1929,9 +1928,9 @@ Ingestion and incremental indexing.
   as prose: it gets one output-fixer call, and a repair that still holds text only is read as empty, counted
   (`sections_read_empty_from_text` in the graph and claim extraction stats) and logged with the section and its
   length.
-- An incremental run, and a run into a namespace that holds other source scopes' documents, export the whole
-  namespace's graph, read from its stores, not only its own delta or corpus (or none, or `Communities must be
-  detected before exporting`), so the console's graph and `run-visualization` show what queries read (#640).
+- The graph `run-visualization` and the console show is the whole namespace's, read from its stores, not a run's
+  own delta or corpus (or none, or `Communities must be detected before exporting`): a full build into a namespace
+  that holds other source scopes' documents exports it, and after an incremental run they build it (#640).
 - With description summaries on, an incremental run no longer extends a stored summary with a delta edge's
   description when the derivation moved part of it to another edge (a delta that resolved `Vendor Inc` into `Vendor`
   where the stored graph keeps them apart): the summary held a line the edge no longer states, unlike a full

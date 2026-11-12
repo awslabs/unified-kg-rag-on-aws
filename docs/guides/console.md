@@ -230,7 +230,8 @@ by outcome; a question opens the reference answer and every strategy's
 answer side by side. A job's gates show as passed or failed.
 
 **Graph.** A `visualization_data.json` the ingestion exported (the newest
-by default; every run that indexed writes the namespace's whole graph), drawn with a seeded layout per connected component: pan with a
+by default; a full build writes the namespace's whole graph, and after an
+incremental job the console builds it from the stores), drawn with a seeded layout per connected component: pan with a
 drag or the arrow keys, zoom with the wheel or `+`/`-`. Colour by community
 or by type (the eight largest groups, the rest grey, named in the legend).
 Find an entity by name; selecting one shows its type, description,

@@ -26,7 +26,13 @@ from unified_kg_rag.application.storage.visualization_export import (
 from unified_kg_rag.domain.ingestion.visualization_data import (
     stored_visualization_data,
 )
-from unified_kg_rag.domain.models import Claim, Config, Entity, Relationship
+from unified_kg_rag.domain.models import (
+    Claim,
+    Config,
+    DocumentDelta,
+    Entity,
+    Relationship,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -174,18 +180,24 @@ def test_the_export_goes_where_the_config_says(
 
 
 @pytest.mark.parametrize(
-    ("export_data", "executed", "written"),
+    ("export_data", "executed", "delta", "written"),
     [
-        (True, {"indexing"}, True),
-        (False, {"indexing"}, False),
-        (True, {"graph_extraction"}, False),
+        (True, {"indexing"}, None, True),
+        (False, {"indexing"}, None, False),
+        (True, {"graph_extraction"}, None, False),
+        # A first run into an empty namespace is a full build.
+        (True, {"indexing"}, DocumentDelta(new=["d1"]), True),
+        # An incremental run exports nothing (rv24 perf 2): run-visualization
+        # builds the file from the stores.
+        (True, {"indexing"}, DocumentDelta(new=["d2"], unchanged=["d1"]), False),
     ],
 )
-def test_a_run_exports_once_it_indexed_and_never_fails_for_it(
+def test_a_full_build_exports_once_it_indexed_and_never_fails_for_it(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     export_data: bool,
     executed: set[str],
+    delta: DocumentDelta | None,
     written: bool,
 ) -> None:
     calls: list[Path] = []
@@ -201,7 +213,10 @@ def test_a_run_exports_once_it_indexed_and_never_fails_for_it(
     config.graph.visualization.export_data = export_data
     pipeline = _pipeline(config, executed, tmp_path)
     context = SimpleNamespace(
-        pipeline_id="pid", visualization_data_path=None, stage_results=[]
+        pipeline_id="pid",
+        visualization_data_path=None,
+        stage_results=[],
+        incremental_delta=delta,
     )
     pipeline._export_visualization(context)
     assert bool(calls) is written
@@ -214,7 +229,10 @@ def test_a_run_exports_once_it_indexed_and_never_fails_for_it(
         "unified_kg_rag.application.ingestion.pipeline.write_visualization_data", fail
     )
     context = SimpleNamespace(
-        pipeline_id="pid", visualization_data_path=None, stage_results=[]
+        pipeline_id="pid",
+        visualization_data_path=None,
+        stage_results=[],
+        incremental_delta=delta,
     )
     pipeline._export_visualization(context)  # logged, not raised
     assert context.visualization_data_path is None

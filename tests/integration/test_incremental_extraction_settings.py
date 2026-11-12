@@ -26,6 +26,9 @@ from tests.integration.test_ingestion_stages import _config, _respond
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.ingestion import pipeline_stages as ps
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+from unified_kg_rag.application.storage.visualization_export import (
+    current_visualization_data,
+)
 from unified_kg_rag.domain.ingestion.cache_keys import extraction_fingerprint
 from unified_kg_rag.domain.ingestion.visualization_data import (
     VISUALIZATION_DATA_FILENAME,
@@ -79,6 +82,7 @@ class _Harness:
             vector_indexer_factory=lambda: vectors,
             graph_indexer_factory=lambda: self.graph,
         )
+        self.providers = providers
         pipeline = DataIngestionPipeline(
             config,
             PipelineConfig(
@@ -254,9 +258,11 @@ def _visualization_file(tmp_path: Path, pipeline_id: str) -> Path:
     )
 
 
-def test_an_incremental_run_exports_the_whole_stored_graph(
+def test_the_stores_give_the_whole_graph_after_an_incremental_run(
     tmp_path: Path,
 ) -> None:
+    # An incremental run exports nothing (a scan of the whole graph per run,
+    # rv24 perf 2): run-visualization builds the file from the stores.
     harness = _Harness(tmp_path)
     config = _base_config()
     harness.run(config, "full")
@@ -266,10 +272,22 @@ def test_an_incremental_run_exports_the_whole_stored_graph(
     assert all(node["attributes"].get("community_id") for node in full["nodes"])
 
     (harness.source / "third.txt").write_text("Depot ships widgets to Buyer.")
-    harness.run(config, "delta")
+    context = harness.run(config, "delta")
+    assert context.visualization_data_path is None
+    assert not _visualization_file(tmp_path, "delta").exists()
+    # The full build's export no longer shows the stores: built again.
+    target = tmp_path / "viz" / VISUALIZATION_DATA_FILENAME
+    path, counts = current_visualization_data(
+        harness.providers, "default", [tmp_path / "cache"], target
+    )
+    assert path == target and counts is not None
     # Read from the stores: the unchanged documents' graph and the delta's,
     # not the delta's alone.
-    delta = json.loads(_visualization_file(tmp_path, "delta").read_text())
+    delta = json.loads(target.read_text())
     names = {node["attributes"]["name"] for node in delta["nodes"]}
     assert {node["attributes"]["name"] for node in full["nodes"]} <= names
     assert "Vendor" in names  # in no document the delta read
+    # It shows the stores now: reused, not built again.
+    assert current_visualization_data(
+        harness.providers, "default", [tmp_path / "cache"], target
+    ) == (target, None)

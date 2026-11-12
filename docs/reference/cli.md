@@ -136,13 +136,13 @@ Guide: [Evaluation](../guides/evaluate.md). Also takes the [provider flags](#pro
 
 Render graph visualizations from exported data (no ingestion).
 
-Guide: [Visualization](../guides/visualize.md).
+Guide: [Visualization](../guides/visualize.md). Also takes the [provider flags](#provider-flags).
 
 | Flag | Default | Description |
 |---|---|---|
-| `--data-path` | — | Path to exported visualization-data JSON (default: the newest visualization_data.json under graph.visualization.outputs_directory, outputs/visualization and --cache-directory, of --suffix's namespace when given). |
-| `--suffix` | — | Index namespace whose newest export to render, without --data-path (the name run-ingestion --suffix wrote it under). |
-| `--cache-directory` | `cache` | The run-ingestion cache directory searched without --data-path (default: cache). |
+| `--data-path` | — | Path to exported visualization-data JSON (default: --suffix's namespace's newest visualization_data.json under graph.visualization.outputs_directory, outputs/visualization and --cache-directory when it shows the build the stores hold, else one built from the stores into --output-directory). |
+| `--suffix` | — | Index namespace to render without --data-path (the name run-ingestion --suffix wrote it under; default: the config's index_value, else 'default'). |
+| `--cache-directory` | `cache` | The run-ingestion cache directory searched for an export without --data-path (default: cache). |
 | `--output-directory` | `visualization_outputs` | Directory to write visualization files. |
 | `--renderers` `RENDERER` | — | Renderers to run. Available: interactive, static (default: all of them, leaving out with a warning one whose extra is not installed; a renderer named here needs its extra). |
 | `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
@@ -261,7 +261,7 @@ Guide: [Console](../guides/console.md).
 
 ## Provider flags
 
-Taken by `run-ingestion`, `run-rag`, `run-eval`, `run-describe`, `run-prompt-tuning`, `prepare-benchmark`, `run-mcp-server`. Override the config's provider selection (see docs/guides/local-mode.md).
+Taken by `run-ingestion`, `run-rag`, `run-eval`, `run-visualization`, `run-describe`, `run-prompt-tuning`, `prepare-benchmark`, `run-mcp-server`. Override the config's provider selection (see docs/guides/local-mode.md).
 
 | Flag | Default | Description |
 |---|---|---|

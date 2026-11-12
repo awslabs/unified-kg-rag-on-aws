@@ -1227,6 +1227,7 @@ def test_visualization_json_output_names_the_written_files(
     # The result shows the failure with the keys of every failure document.
     assert "No visualization files were rendered" in result.pop("error")
     assert result == {
+        "data_path": str(data),
         "output_directory": str(tmp_path / "out"),
         "files": [],
         "failed_renderers": {},

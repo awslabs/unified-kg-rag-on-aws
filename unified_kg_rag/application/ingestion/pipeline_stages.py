@@ -184,6 +184,23 @@ def _resolved_claims(context: PipelineContext) -> list[Claim]:
     return [claim for claim in context.resolved_claims if claim.subject_id]
 
 
+def is_incremental_build(context: PipelineContext, config: Config) -> bool:
+    """Whether the run added its delta to what the namespace held (its
+    build record's ``mode`` ``incremental``). A delta of new documents only
+    into a namespace the registry held nothing of built the suffix from
+    nothing: a full build, as is a reset or a run without the registry. One
+    beside other source scopes' documents (``stored_scopes``) added to
+    them."""
+    delta = context.incremental_delta
+    return (
+        delta is not None
+        and not config.indexing.reset
+        and bool(
+            delta.changed or delta.unchanged or delta.deleted or delta.stored_scopes
+        )
+    )
+
+
 def _completed_stages(context: PipelineContext) -> set[PipelineStageType]:
     """The stages completed in ``context`` (this run's and, on a resume,
     its earlier phases')."""
@@ -2974,16 +2991,7 @@ class IndexingStage(_RegistryStage):
         config would build.
         """
         delta = context.incremental_delta
-        # A delta of new documents only into a namespace the registry held
-        # nothing of built the suffix from nothing: a full build. One beside
-        # other source scopes' documents (stored_scopes) added to them.
-        incremental = (
-            delta is not None
-            and not self.config.indexing.reset
-            and bool(
-                delta.changed or delta.unchanged or delta.deleted or delta.stored_scopes
-            )
-        )
+        incremental = is_incremental_build(context, self.config)
         suffixes = {BaseIndexer.get_suffix(unit) for unit in text_units} or {
             resolve_namespace(self.config, None)
         }
@@ -3030,9 +3038,10 @@ class IndexingStage(_RegistryStage):
             extraction_settings=settings,
             package_version=package_version,
             source_scopes=recorded_source_scopes(context, self.config.indexing.reset),
+            # Only a full build exports (DataIngestionPipeline's export).
             visualization_export_run=(
                 context.pipeline_id
-                if self.config.graph.visualization.export_data
+                if self.config.graph.visualization.export_data and not incremental
                 else None
             ),
         ).with_artifacts(artifacts)

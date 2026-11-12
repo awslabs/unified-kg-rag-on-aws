@@ -29,7 +29,8 @@ Exit code `2` covers:
   methodology the index namespace does not hold
   ([methodology profiles](../concepts/overview.md#methodology-profiles));
   a missing or invalid input (a `run-eval` dataset, a `run-visualization`
-  data file, a `prepare-benchmark` data file).
+  data file, a `prepare-benchmark` data file); a `run-visualization`
+  namespace that holds no graph.
 - **Configuration**, all before any work: an invalid config file or
   override, an unset store endpoint, or a missing extra the selected
   providers need (`local`).
@@ -173,7 +174,8 @@ holds:
   (`runs`), the `comparison`, the failure-budget breaches
   (`failure_budget_breaches`) and the failed gates (`gate_failures`); a
   breach, a failed gate or an upload error exits `1`.
-- **`run-visualization`**: the `output_directory`, the written `files`,
+- **`run-visualization`**: the `data_path` it rendered (an export, or the
+  file it built from the stores), the `output_directory`, the written `files`,
   the `failed_renderers` (each failed renderer's error) and the
   `skipped_renderers` (each default renderer left out for a missing extra,
   with why); an empty list (nothing rendered) or a failed renderer exits `1`.

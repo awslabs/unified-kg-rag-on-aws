@@ -1921,6 +1921,51 @@ def test_visualization_parser_finds_the_newest_export_without_a_data_path() -> N
         run_visualization._build_parser().parse_args(["--suffix", "../x"])
 
 
+def test_visualization_without_a_data_path_reads_the_namespace_s_stores(
+    config, mocker, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # rv24 perf 2: an incremental run exports nothing, so the newest export
+    # may show an earlier build; the data is built from the stores instead.
+    from unified_kg_rag.shared import StoreConnectionError
+
+    args = run_visualization._build_parser().parse_args(
+        [
+            "--suffix",
+            "t-1",
+            "--output-directory",
+            str(tmp_path / "out"),
+            "--cache-directory",
+            str(tmp_path / "cache"),
+        ]
+    )
+    mocker.patch("unified_kg_rag.application.bootstrap.build_providers")
+    built = tmp_path / "out" / "visualization_data.json"
+    current = mocker.patch.object(
+        run_visualization,
+        "current_visualization_data",
+        return_value=(built, {"nodes": 3, "edges": 2, "communities": 1}),
+    )
+    assert run_visualization._namespace_data(config, args) == built
+    suffix, directories, target = current.call_args.args[1:]
+    assert (suffix, target) == ("t-1", built)
+    assert tmp_path / "cache" in directories
+    # Nothing stored under it: a usage error, as no export was.
+    current.return_value = (built, {"nodes": 0, "edges": 0, "communities": 0})
+    with pytest.raises(SystemExit) as stopped:
+        run_visualization._namespace_data(config, args)
+    assert stopped.value.code == 2
+    # The stores unreachable: the newest export, with a warning.
+    current.side_effect = StoreConnectionError("down")
+    with pytest.raises(StoreConnectionError):
+        run_visualization._namespace_data(config, args)
+    old = tmp_path / "cache" / "p1" / "visualization" / "visualization_data.json"
+    old.parent.mkdir(parents=True)
+    old.write_text('{"namespace": "t-1", "built_at": null, "nodes": []}')
+    with caplog.at_level("WARNING"):
+        assert run_visualization._namespace_data(config, args) == old
+    assert "may be older than they are" in caplog.text
+
+
 def test_visualization_parser_defaults() -> None:
     args = run_visualization._build_parser().parse_args(["--data-path", "g.json"])
     assert args.data_path == Path("g.json")
