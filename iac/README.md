@@ -574,6 +574,15 @@ aws logs tail /graphrag/tasks --region "$REGION" --follow
   (`docker/entrypoint.sh`) syncs it to the task's disk first. `pipeline_id`
   takes letters, digits, `.`, `_` and `-`, starting with a letter or digit,
   without `..`, up to 128 characters.
+- **One spelling per corpus.** The entrypoint passes the URI, exactly as
+  given, as the run's `document_parsing.source_scope`
+  (`UKR__PROCESSING__DOCUMENT_PARSING__SOURCE_SCOPE`, which overrides the
+  image config), and every document id is derived from it.
+  `s3://bucket/corpus` and `s3://bucket/corpus/` sync the same files but
+  give every document a different id, so switching between them indexes the
+  whole corpus again under new ids. Keep the spelling of the first run (the
+  examples above end in `/`). Ids are not normalized because that would
+  change the ids of existing indexes.
 - **Resume.** Start a new execution with the same input: the task skips the
   stages that completed. Checkpoints are uploaded after every stage and on
   SIGTERM (the container's stop timeout is 120 s; the stage's store writes

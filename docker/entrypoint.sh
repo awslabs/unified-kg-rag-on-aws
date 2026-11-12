@@ -18,6 +18,10 @@ if [[ "${UKR_SOURCE_DIRECTORY:-}" == s3://* ]]; then
         "${UKR_SOURCE_DIRECTORY}" "${LOCAL_SOURCE_DIR}"
     # Every corpus is staged in the same local dir, so incremental deletion is
     # scoped to the S3 source rather than the staging path (unless set).
+    # The URI is kept as typed: document ids derive from it, so
+    # s3://b/corpus and s3://b/corpus/ give the same files different ids and
+    # switching spelling indexes the corpus again (iac/README.md, "One
+    # spelling per corpus"). Normalizing it would change existing ids.
     export UKR__PROCESSING__DOCUMENT_PARSING__SOURCE_SCOPE="${UKR__PROCESSING__DOCUMENT_PARSING__SOURCE_SCOPE:-${UKR_SOURCE_DIRECTORY}}"
     export UKR_SOURCE_DIRECTORY="${LOCAL_SOURCE_DIR}"
     echo "[entrypoint] synced $(find "${LOCAL_SOURCE_DIR}" -type f | wc -l) file(s)"
