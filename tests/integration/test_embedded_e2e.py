@@ -321,8 +321,15 @@ def _ask_every_strategy(
         assert out.metadata["search_strategy"] == expected
 
 
-def _render(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, data: Path) -> int:
-    """Run ``run-visualization`` on ``data``; its exit code."""
+def _render(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    data: Path,
+    *renderers: str,
+    output: str = "rendered",
+) -> int:
+    """Run ``run-visualization`` on ``data`` (with ``--renderers`` when
+    ``renderers`` are given) into ``output``; its exit code."""
     config_path = tmp_path / "viz.yaml"
     config_path.write_text(
         yaml.safe_dump({"logging": {"log_to_file": False}}), encoding="utf-8"
@@ -335,16 +342,20 @@ def _render(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, data: Path) -> int:
             "--data-path",
             str(data),
             "--output-directory",
-            str(tmp_path / "rendered"),
+            str(tmp_path / output),
             "--config-path",
             str(config_path),
+            *(["--renderers", *renderers] if renderers else []),
         ],
     )
     return int(run_visualization.main())
 
 
 def test_local_mode_runs_end_to_end_on_the_embedded_stores(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_aws
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    no_aws,
 ) -> None:
     stores, viz = tmp_path / "stores", tmp_path / "viz-data"
     config = _config(stores, viz)
@@ -478,15 +489,23 @@ def test_local_mode_runs_end_to_end_on_the_embedded_stores(
     cited = {name for rank in results[0].retrieved_source_ids for name in rank}
     assert cited == {"logistics.txt", "freight.txt"}
 
-    # run-visualization renders the exported graph; on
-    # an install without the viz extra it stops with exit 2 instead.
+    # run-visualization renders the exported graph. Without the viz extra
+    # the default renderers leave out interactive with a WARNING and write
+    # the static charts; naming interactive still exits 2 naming the extra.
     data = viz / "visualization_data.json"
     assert data.is_file()
-    if VIZ_INSTALLED:
+    with caplog.at_level("WARNING"):
         assert _render(tmp_path, monkeypatch, data) == 0
-        assert sorted(p.name for p in (tmp_path / "rendered").iterdir())
+    rendered = sorted(p.name for p in (tmp_path / "rendered").iterdir())
+    assert "degree_distribution.html" in rendered
+    if VIZ_INSTALLED:
+        assert "interactive_graph.html" in rendered
     else:
-        assert _render(tmp_path, monkeypatch, data) == 2
+        assert "interactive_graph.html" not in rendered
+        assert "Skipping the 'interactive' renderer" in caplog.text
+        assert "--extra viz" in caplog.text
+        code = _render(tmp_path, monkeypatch, data, "interactive", output="explicit")
+        assert code == 2
 
 
 @pytest.fixture(params=backends(RETRIEVERS))
