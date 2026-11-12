@@ -17,7 +17,7 @@ from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
 from tests.fixtures.fakes.graph_query import FakeGraphQueryRetriever
-from tests.fixtures.fakes.retrievers import FakeRetriever
+from tests.fixtures.fakes.retrievers import FakeRetriever, StaticRetriever
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
 from tests.fixtures.fakes.tokens import WordTokenCounter
 from tests.unit.test_query_guardrail import _RecordingGuard
@@ -155,6 +155,31 @@ def test_port_surface_is_not_empty(fake: type, port: type) -> None:
     # Guards the discovery above: an empty list would make the parametrized
     # test vacuously pass. The smallest port (the guard) has one method.
     assert len(_port_methods(port)) >= 1
+
+
+# Fakes that stand in for a port with only the methods their tests call:
+# each of those keeps the port's shape.
+PARTIAL = [(StaticRetriever, BaseGraphRAGRetriever)]
+
+
+@pytest.mark.parametrize(
+    ("fake", "port", "method"),
+    [
+        pytest.param(fake, port, method, id=f"{fake.__name__}.{method}")
+        for fake, port in PARTIAL
+        for method in _port_methods(port)
+        if method in vars(fake)
+    ],
+)
+def test_a_partial_fakes_methods_match_the_port(
+    fake: type, port: type, method: str
+) -> None:
+    assert _shape(getattr(fake, method)) == _shape(getattr(port, method))
+
+
+@pytest.mark.parametrize(("fake", "port"), PARTIAL)
+def test_a_partial_fake_implements_some_port_method(fake: type, port: type) -> None:
+    assert set(_port_methods(port)) & set(vars(fake))
 
 
 def test_recording_guard_accepts_every_port_call() -> None:
