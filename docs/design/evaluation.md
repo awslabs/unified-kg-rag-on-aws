@@ -43,8 +43,9 @@ choices:
   each query by every run before the next, the runs' order reversed on
   every other query (ABBA) and again on every other repeat, each run with its own usage meter
   (`shared.usage.metering`) and span attributes; answered one run after
-  another, later runs answer later, and an A/A pair of one configuration
-  showed 0.5-5.8 s latency "differences". Each repeat extracts the query
+  another, later runs answer later, and runs of one configuration
+  showed 0.5 to 2.3 s latency "differences" a query on average
+  ([Defaults and evidence](../concepts/defaults-and-evidence.md#how-the-measurements-were-run)). Each repeat extracts the query
   again in its own extraction cache scope (`extraction_cache_scope`), so
   `repeat_stdev` includes that variance while the arms of a repeat still
   share keywords: the extraction cache tracks the extractions in flight per

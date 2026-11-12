@@ -420,8 +420,9 @@ strategies, or `--repeats`) saves every run's files and adds
   hit. Answered one run after another
   (`sequential`), every later run answers later, and a service whose
   latency drifts over the run, or caches warmed by the earlier runs, show
-  up as latency deltas: two runs of one configuration answered so differed
-  by 0.5-5.8 s per query. A comparison whose runs were not answered
+  up as latency deltas: runs of one configuration answered so differed by
+  0.5 to 2.3 s a query on average
+  ([Defaults and evidence](../concepts/defaults-and-evidence.md#how-the-measurements-were-run)). A comparison whose runs were not answered
   interleaved in one `run-eval` (a `sequential` run, `--from-results` of
   several invocations, any `--baseline-results`, runs saved before
   `run_order` was recorded) warns that its latency, and possibly usage,
@@ -527,6 +528,11 @@ The full rules of `--from-results`, `--baseline-results` and `--fail-if`
 How each evaluator scores. Which evaluators exist, what they need in the
 dataset and how a failure is handled:
 [Evaluation: Evaluators](../guides/evaluate.md#evaluators).
+
+`answer_match`, `graph_aware`, `ragas` and `assertion` read an answer
+without its `[n]` citation markers where the answer prompt asked for them
+(`search.citations` for the strategy it ran), and the pairwise judge always
+does, so a citations on/off comparison does not score the markers.
 
 ### `ragas` contexts
 
@@ -691,6 +697,15 @@ list, top level or under `metadata`, which wins), taking the maximum.
   substring (`AWS` matches `AWSは`, `2024` matches `2024年`; `AI` does not
   match `airport附近` nor `2` `12年`); next to Hangul the Korean rules
   above decide.
+- **Thai, Lao, Myanmar and Khmer** write no spaces between words either, so
+  they take the CJK substring path (`กรุงเทพ` matches
+  `อยู่ที่กรุงเทพ`, `Acme` matches `บริษัทAcmeตั้งอยู่`). **Hebrew and
+  Arabic** write their prefixed particles onto the next word: a run of up
+  to three of them (`LanguageProfile.proclitics`: Hebrew `ב ה ו כ ל מ ש`,
+  Arabic `و ف ب ل ك ال`) is tolerated before a gold word, as Korean
+  particles are after one (`ירושלים` matches `בירושלים`, `بيروت` matches
+  `وبيروت`, `القاهرة` matches `بالقاهرة`; the contracted `للقاهرة` is not
+  read).
 - **Structured golds.** An item's `metadata.answer_type` changes how
   `answer_contains` reads it: `number` reads the answer's first line that
   is no heading (its extracted span, with `extracted`) and scores 1.0 on
@@ -698,8 +713,11 @@ list, top level or under `metadata`, which wins), taking the maximum.
   - A gold other than 0 matches when that line writes it as a number,
     anywhere: digits (`−5`, a Unicode minus or en-dash, is -5; an
     em-dash is no minus: `3 vendors —2` writes 2), number words of the
-    answer's language (English's for a language without them), a Korean
-    native numeral before a counter (`세 곳`, `열두 개사`) or a Han or
+    answer's language (English's for a language without them; a form of
+    one that is also the article counts alone, with no word after it:
+    `Hay uno.`, `Il y en a un.`, `Nur einer.`, `Há um.`, not `Hay un
+    proveedor`), a Korean native numeral before a counter (`세 곳`, `열두
+    개사`) or alone (`하나입니다`, `셋이에요`; not `하나은행`), or a Han or
     Sino-Korean numeral with its
     multipliers (`三社`, `十二台`, `一万二千台`, `만 이천 대`; digits a
     multiplier scales: `1만 2천`, `3万`; `两`/`兩` is 2, and a space may
@@ -708,8 +726,8 @@ list, top level or under `metadata`, which wins), taking the maximum.
     match the gold 3.
   - A gold of 0 matches when the line states there is none and writes no
     number the question does not. The statements of none are `0`, a word
-    for none (`none`, `no`, `aucun`, `kein`, `ни одного`), `not one`, `not
-    a single`, a language's phrase of absence (`not ... any`, `no hay`, `il
+    for none (`none`, `no`, `aucun`, `kein`, `ни одного`, `ni uno`, `nem
+    um`), `not one`, `not a single` (`not a single one`), a language's phrase of absence (`not ... any`, `no hay`, `il
     n'y a pas de`, `Поставщиков нет`; Spanish and Portuguese `no` alone
     states no 0), and `없습니다`, `한 곳도`, `一社も`, `一家也`, `没有` and
     `いません`/`ありません` (not `問題ありません` or `ではありません`). So
@@ -730,7 +748,7 @@ list, top level or under `metadata`, which wins), taking the maximum.
     answer that declines in its own words is read like any other (`There
     is no information on lot 7` asked about lot 7 matches 0); one the
     pipeline marks `abstained` scores 0. These nuances are the LLM judges'
-    (`ragas`, `langchain`) in the same run. A dot groups no thousands
+    (`ragas`) in the same run. A dot groups no thousands
     (German `3.000` reads as 3), and a gold's digits before a scale word
     are read without it (the gold `2 million` is 2, so `2 billion` matches
     it).
@@ -749,11 +767,19 @@ list, top level or under `metadata`, which wins), taking the maximum.
   does not hold) a decline scores 1 on every `answer_match` metric. A
   Korean counter (`곳`, `군데`, `가지`, `개사`) keeps a number's value like a
   unit (`3` matches `3곳입니다`).
-- **Yes/no golds** (`yes`/`no`/`nope`, Korean `예`/`네`/`아니요`/`아니오`/
-  `아닙니다`, Chinese `是`/`对`/`否`/`不是`/`没有`, Japanese `はい`/`いいえ`) are
-  scored by the polarity of the first yes/no word that answers the question,
-  as in HotpotQA (`there is no clause`, `네 가지`, `(예: …)` and `No. 5` are
-  not answers, so `네, 맞습니다` answers yes but `네 맞습니다` does not).
+- **Yes/no golds** (each language's `LanguageProfile.polarity_words`:
+  `yes`/`no`/`nope`, Spanish `sí`/`no`, French `oui`/`non`, German
+  `ja`/`nein`, Italian `sì`/`no`, Portuguese `sim`/`não`, Russian `да`/`нет`,
+  Vietnamese `có`/`vâng`/`không`, Hindi `हाँ`/`नहीं`, Hebrew `כן`/`לא`, Arabic
+  `نعم`/`بلى`/`لا`/`كلا`, Korean `예`/`네`/`아니요`/`아니오`/`아닙니다`,
+  Chinese `是`/`对`/`否`/`不是`/`没有`, Japanese `はい`/`いいえ`; Thai has none,
+  as its unspaced text sets no yes/no word apart) are scored by the polarity
+  of the first yes/no word that answers the question, as in HotpotQA. A word
+  with a second meaning (`ambiguous_polarity_words`: `no`, `non`, `não`,
+  `sim`, `ja`, `нет`, `có`, `không`, `नहीं`, `לא`, `لا`, `네`, `예`) answers
+  only when punctuation or the line end follows it (`there is no clause`,
+  `não há dúvida`, `нет долгов`, `네 가지`, `(예: …)` and `No. 5` are not
+  answers, so `네, 맞습니다` answers yes but `네 맞습니다` does not).
 - **`exact_match` and `token_f1`** score the part of the answer
   `evaluation.answer_span` names. SQuAD, HotpotQA and MuSiQue score a short
   predicted answer (a span such as `Depot`) against the gold answer, while
@@ -790,7 +816,9 @@ list, top level or under `metadata`, which wins), taking the maximum.
   (`token_f1_tokens: script_aware_v2` in each report): a Han, Hangul or Kana
   letter is a token of its own, as the CMRC 2018 and KorQuAD 1.0 scripts
   score Chinese and Korean by character (they split Latin words and
-  numbers too; these stay whole), and a run of Korean particles or copula
+  numbers too; these stay whole), and so is a Thai, Lao, Myanmar or Khmer
+  letter or vowel sign; Hebrew and Arabic proclitics on a gold word
+  (`בירושלים` for `ירושלים`) cost nothing; a run of Korean particles or copula
   endings from their closed class attached to a gold word (`서울은`,
   `서울에서는`, `서울입니다` for `서울`) is dropped first, which KorQuAD
   does not do: so `東京都です` scores 0.75 against `東京都` and

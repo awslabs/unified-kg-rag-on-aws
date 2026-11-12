@@ -91,7 +91,7 @@ PROFILE = LanguageProfile(
     },
     number_conjunctions=("y",),
     compound_ones=("un", "una", "uno"),
-    zero_words=("ningún", "ninguno", "ninguna", "ningun"),
+    zero_words=("ningún", "ninguno", "ninguna", "ningun", "ni uno", "ni una", "ni un"),
     absence_phrases=("no hay", "no tiene", "no tienen", "no existe", "no existen"),
     month_words={
         "January": ("enero", "ene"),
@@ -119,6 +119,9 @@ PROFILE = LanguageProfile(
         "s de rl": "s de rl",
         "s de rl de cv": "s de rl de cv",
     },
+    # "No" is also the negation ("no lo hizo"): an answer before punctuation.
+    polarity_words={"sí": "yes", "no": "no"},
+    ambiguous_polarity_words={"no": ""},
     quote_pairs=(("«", "»"),),
     chars_per_token={CLAUDE_TOKENIZER: 2.84},
 )

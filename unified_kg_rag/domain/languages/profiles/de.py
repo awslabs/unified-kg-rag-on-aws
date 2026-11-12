@@ -66,7 +66,8 @@ PROFILE = LanguageProfile(
         "milliarden": 10**9,
     },
     number_conjunctions=("und",),
-    compound_ones=("ein", "eine"),
+    # And the pronoun's other cases, a one where alone ("Nur einer.").
+    compound_ones=("ein", "eine", "einer", "einen", "einem", "eines"),
     zero_words=("kein", "keine", "keinen", "keinem", "keiner", "keines"),
     ones_before_tens=True,
     month_words={
@@ -95,6 +96,9 @@ PROFILE = LanguageProfile(
     },
     # "kg" is also the kilogram ("500 kg").
     unit_like_legal_forms=("kg",),
+    # "Ja" is also a modal particle ("das ist ja geschlossen").
+    polarity_words={"ja": "yes", "nein": "no"},
+    ambiguous_polarity_words={"ja": ""},
     quote_pairs=(("„", "“"), ("‚", "‘"), ("»", "«")),
     chars_per_token={CLAUDE_TOKENIZER: 2.05},
 )

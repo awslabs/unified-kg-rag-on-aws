@@ -445,7 +445,9 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
         eval_dataset = Dataset.from_dict(
             {
                 "question": [q.question for q in queries],
-                "answer": [r.generated_answer for r in results],
+                # Without citation markers, as the other evaluators read it:
+                # answer_correctness embeds the answer.
+                "answer": [self.answer_words(r) for r in results],
                 "contexts": contexts,
                 "ground_truth": ground_truths,
             }

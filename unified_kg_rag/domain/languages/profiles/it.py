@@ -113,5 +113,8 @@ PROFILE = LanguageProfile(
     },
     # S.p.A. counts only with its dots (legal_forms), since "spa" is a word.
     legal_forms={"srl": "srl", "spa": "spa", "snc": "snc", "sapa": "sapa"},
+    # "No" also negates a word ("no comment").
+    polarity_words={"sì": "yes", "no": "no"},
+    ambiguous_polarity_words={"no": ""},
     quote_pairs=(("«", "»"),),
 )

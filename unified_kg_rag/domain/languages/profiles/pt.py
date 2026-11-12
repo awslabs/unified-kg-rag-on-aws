@@ -84,7 +84,7 @@ PROFILE = LanguageProfile(
     },
     number_conjunctions=("e",),
     compound_ones=("um", "uma"),
-    zero_words=("nenhum", "nenhuma"),
+    zero_words=("nenhum", "nenhuma", "nem um", "nem uma"),
     absence_phrases=("não há", "não tem", "não têm", "não existe", "não existem"),
     month_words={
         "January": ("janeiro",),
@@ -102,5 +102,9 @@ PROFILE = LanguageProfile(
     },
     date_fillers=("de",),
     legal_forms={"ltda": "ltda", "sa": "sa", "s/a": "sa", "eireli": "eireli"},
+    # "Não" is also the negation ("não há dúvida"), and "sim" an English
+    # word ("SIM card"), which every answer's polarity reads.
+    polarity_words={"sim": "yes", "não": "no"},
+    ambiguous_polarity_words={"sim": "", "não": ""},
     quote_pairs=(("«", "»"),),
 )

@@ -1,8 +1,9 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""The regression corpus of language detection, number reading, router
-answers and name folding: every case the query reviews rv9 to rv14 probed
-or reported, with the answer they stated as right.
+"""The regression corpus of language detection, number reading, answer
+containment, router answers and name folding: every case the query
+reviews rv9 to rv14 (and the evaluation reviews since) probed or
+reported, with the answer they stated as right.
 
 A case the code answers otherwise is a documented trade-off: it carries
 the answer the code gives and why (``Tradeoff``), so a change that moves
@@ -18,6 +19,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
 __all__ = [
+    "CONTAINS",
     "COVERS",
     "DETECTION",
     "NUMBERS",
@@ -43,7 +45,8 @@ class Case:
     states no number); ``context`` is the index language a detection falls
     back to, the answer language a number is read in, or the mention a
     stored name covers; ``question`` is the question a number answers
-    (``None``: read without one)."""
+    (``None``: read without one); ``gold`` is the gold answer a
+    containment case scores ``text`` against."""
 
     text: str
     expected: object
@@ -51,6 +54,7 @@ class Case:
     source: str
     tradeoff: Tradeoff | None = None
     question: str | None = None
+    gold: str | None = None
 
     @property
     def answer(self) -> object:
@@ -1388,7 +1392,27 @@ NUMBERS: tuple[Case, ...] = (
     Case("ciento uno", 101, "es", "rv10 probe"),
     Case("cien mil", 100000, "es", "rv10 probe"),
     Case("El vigésimo primero", None, "es", "rv10 probe"),
-    Case("una", None, "es", "rv10 probe"),
+    # Alone, with no word after it, a form of one is one (rv23 eval low:
+    # "Hay uno." answers 1); before a word it is the article.
+    Case("una", 1, "es", "rv10 probe, rv23 eval low"),
+    Case("Hay uno.", 1, "es", "rv23 eval low"),
+    Case("Solo uno.", 1, "es", "rv23 eval low"),
+    Case("Hay un proveedor.", None, "es", "rv23 eval low"),
+    Case("Ni uno solo.", 0, "es", "rv23 eval low", question="¿Cuántos proveedores?"),
+    Case("Il y en a un.", 1, "fr", "rv23 eval low"),
+    Case("C'è uno.", 1, "it", "rv23 eval low"),
+    Case("Nur einer.", 1, "de", "rv23 eval low"),
+    Case("Es gibt einen.", 1, "de", "rv23 eval low"),
+    Case("Bei einer Firma.", None, "de", "rv23 eval low"),
+    Case("Há um.", 1, "pt", "rv23 eval low"),
+    Case("Há um fornecedor.", None, "pt", "rv23 eval low"),
+    Case("Nem um.", 0, "pt", "rv23 eval low", question="Quantos fornecedores?"),
+    Case("하나입니다.", 1, "ko", "rv23 eval low"),
+    Case("하나도 없습니다.", 0, "ko", "rv23 eval low", question="몇 곳입니까?"),
+    Case("하나은행입니다.", None, "ko", "rv23 eval low"),
+    Case("셋이에요.", 3, "ko", "rv23 eval low"),
+    Case("Not a single one.", 0, "en", "rv23 eval low", question="How many suppliers?"),
+    Case("Not a single one but three.", 3, "en", "rv23 eval low"),
     Case("Dos o tres", None, "es", "rv10 probe", Tradeoff((2.0, 3.0), WORD_GAPS)),
     Case("quinientos", 500, "es", "rv10 probe"),
     Case("ciento cincuenta mil", 150000, "es", "rv10 probe"),
@@ -2400,4 +2424,64 @@ COVERS: tuple[Case, ...] = (
     Case("टीसीएस", False, "टाटा", "rv23 algo-ret 2"),
     Case("ธนาคารกรุงเทพ", True, "กรุงเทพ", "rv23 algo-ret 2"),
     Case("ธนาคารกสิกรไทย", False, "ธนาคารกรุงเทพ", "rv23 algo-ret 2"),
+)
+
+# Answer containment (``answer_contains``): ``text`` is the answer,
+# ``gold`` the gold answer, ``context`` the answer language and
+# ``expected`` the score.
+CONTAINS: tuple[Case, ...] = (
+    # Thai, Lao, Myanmar and Khmer write no spaces between words: a gold
+    # word is a substring of the answer's run, as in Chinese.
+    Case(
+        "บริษัท Acme ตั้งอยู่ที่กรุงเทพมหานคร",
+        1.0,
+        "th",
+        "rv23 eval 2",
+        gold="กรุงเทพมหานคร",
+    ),
+    Case("เขาอาศัยอยู่ที่กรุงเทพครับ", 1.0, "th", "rv23 eval 2", gold="กรุงเทพ"),
+    Case("บริษัทAcmeตั้งอยู่ที่นี่", 1.0, "th", "rv23 eval 2", gold="Acme"),
+    Case("เขาอาศัยอยู่ที่เชียงใหม่", 0.0, "th", "rv23 eval 2", gold="กรุงเทพ"),
+    Case("ລາວຢູ່ສະຫວັນ", 1.0, None, "rv23 eval 2", gold="ສະຫວັນ"),
+    Case("သူရန်ကုန်မှာ", 1.0, None, "rv23 eval 2", gold="ရန်ကုန်"),
+    Case("គាត់រស់នៅភ្នំពេញ", 1.0, None, "rv23 eval 2", gold="ភ្នំពេញ"),
+    # Hebrew and Arabic write their prefixed particles onto the word.
+    Case("Acme נמצאת בירושלים.", 1.0, "he", "rv23 eval 2", gold="ירושלים"),
+    Case("Acme נמצאת ובתל אביב.", 1.0, "he", "rv23 eval 2", gold="תל אביב"),
+    Case("Acme נמצאת בחיפה.", 0.0, "he", "rv23 eval 2", gold="ירושלים"),
+    Case("تقع شركة أكمي في القاهرة وبيروت.", 1.0, "ar", "rv23 eval 2", gold="بيروت"),
+    Case("تقع الشركة بالقاهرة.", 1.0, "ar", "rv23 eval 2", gold="القاهرة"),
+    Case("تقع الشركة في دمشق.", 0.0, "ar", "rv23 eval 2", gold="بيروت"),
+    # Hindi and Vietnamese are spaced: whole words, as before.
+    Case("Acme दिल्ली में स्थित है।", 1.0, "hi", "rv23 eval 2", gold="दिल्ली"),
+    Case("Acme ở Hà Nội.", 1.0, "vi", "rv23 eval 2", gold="Hà Nội"),
+    # A yes/no gold is the polarity of the first yes/no word that answers;
+    # a word with a second meaning answers only before punctuation.
+    Case("Sim, ele fez isso; não há dúvida.", 0.0, "pt", "rv23 eval 3", gold="não"),
+    Case("Não, ele não fez.", 1.0, "pt", "rv23 eval 3", gold="não"),
+    Case("Sim.", 1.0, "pt", "rv23 eval 3", gold="sim"),
+    Case("O cartão SIM não está incluído.", 0.0, "pt", "rv23 eval 3", gold="sim"),
+    Case("Да, у компании нет долгов.", 0.0, "ru", "rv23 eval 3", gold="нет"),
+    Case("Нет, долгов нет.", 1.0, "ru", "rv23 eval 3", gold="нет"),
+    Case("Долгов нет никаких, да.", 1.0, "ru", "rv23 eval 3", gold="да"),
+    Case("Não há dúvida: sim.", 1.0, "pt", "rv23 eval 3", gold="sim"),
+    Case("Oui, il n'y a non plus de retard.", 0.0, "fr", "rv23 eval 3", gold="non"),
+    Case("Non, il n'a pas signé.", 1.0, "fr", "rv23 eval 3", gold="non"),
+    Case("Ja, das Werk hat keine nein-Stimmen.", 0.0, "de", "rv23 eval 3", gold="nein"),
+    Case("Das Werk ist ja geschlossen.", 0.0, "de", "rv23 eval 3", gold="ja"),
+    Case("Nein, das Werk ist geschlossen.", 1.0, "de", "rv23 eval 3", gold="nein"),
+    Case("Sí, lo hizo.", 1.0, "es", "rv23 eval 3", gold="sí"),
+    Case("No lo hizo, sí lo anunció.", 1.0, "es", "rv23 eval 3", gold="sí"),
+    Case("Sì, non ci sono dubbi.", 0.0, "it", "rv23 eval 3", gold="no"),
+    Case("No, non ha firmato.", 1.0, "it", "rv23 eval 3", gold="no"),
+    Case("Không, công ty không có nợ.", 1.0, "vi", "rv23 eval 3", gold="không"),
+    Case("Công ty có 3 nhà máy.", 0.0, "vi", "rv23 eval 3", gold="có"),
+    Case("Có, công ty đã ký.", 1.0, "vi", "rv23 eval 3", gold="có"),
+    Case("नहीं, कंपनी ने हस्ताक्षर नहीं किए।", 1.0, "hi", "rv23 eval 3", gold="नहीं"),
+    Case("हाँ, कंपनी ने हस्ताक्षर किए।", 0.0, "hi", "rv23 eval 3", gold="नहीं"),
+    Case("לא, החברה לא חתמה.", 1.0, "he", "rv23 eval 3", gold="לא"),
+    Case("כן, החברה חתמה.", 1.0, "he", "rv23 eval 3", gold="כן"),
+    Case("نعم، لا يوجد دين.", 0.0, "ar", "rv23 eval 3", gold="لا"),
+    Case("لا، لم توقع الشركة.", 1.0, "ar", "rv23 eval 3", gold="لا"),
+    Case("いいえ、違います。", 0.0, "ja", "rv23 eval 3", gold="はい"),
 )

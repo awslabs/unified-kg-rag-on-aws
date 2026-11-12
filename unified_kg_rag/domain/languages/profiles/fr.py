@@ -105,5 +105,8 @@ PROFILE = LanguageProfile(
         "eurl": "eurl",
         "snc": "snc",
     },
+    # "Non" also negates a word ("non plus", "non signé").
+    polarity_words={"oui": "yes", "non": "no"},
+    ambiguous_polarity_words={"non": ""},
     quote_pairs=(("«", "»"), ("‹", "›")),
 )

@@ -11,6 +11,7 @@ from unified_kg_rag.adapters.llm.chain_factory import (
     FixingJsonOutputParser,
     create_json_output_parser,
 )
+from unified_kg_rag.adapters.retrieval.strategy_registry import citations_enabled
 from unified_kg_rag.domain.models import (
     Config,
     EvaluationMetricType,
@@ -21,6 +22,7 @@ from unified_kg_rag.domain.models import (
     ModelPurpose,
     ModelRole,
 )
+from unified_kg_rag.domain.retrieval.citations import strip_markers
 from unified_kg_rag.shared import get_logger
 
 # Also imported from here by the judges.
@@ -224,6 +226,16 @@ class BaseGraphRAGEvaluator:
 
     def validate_config(self) -> bool:
         return True
+
+    def answer_words(self, result: EvaluationResult) -> str:
+        """The answer an evaluator scores: without its citation markers
+        ([1]) when the answer prompt asked for them (``search.citations``,
+        for the strategy the answer ran), so a citations on/off comparison
+        does not score the markers."""
+        answer = result.generated_answer or ""
+        if citations_enabled(self.config, result.search_strategy):
+            return strip_markers(answer)
+        return answer
 
     @staticmethod
     def _extract_search_metadata(result: EvaluationResult) -> dict[str, Any]:

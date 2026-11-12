@@ -30,6 +30,9 @@ PROFILE = LanguageProfile(
         "cty": "cty",
         "tnhh": "tnhh",
     },
+    # "Có" is also "have", "không" the negation ("không có").
+    polarity_words={"có": "yes", "vâng": "yes", "không": "no"},
+    ambiguous_polarity_words={"có": "", "không": ""},
     quote_pairs=(("“", "”"),),
     chars_per_token={CLAUDE_TOKENIZER: 1.75},
 )

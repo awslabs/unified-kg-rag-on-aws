@@ -242,7 +242,9 @@ def _answer_scoring(manifest: dict[str, Any] | None) -> Any:
 def dataset_dense_script(
     manifests: Sequence[tuple[str, dict[str, Any] | None]],
 ) -> bool | None:
-    """Whether the runs' dataset holds Han, Hangul or Kana text, as their
+    """Whether the runs' dataset holds text the token-F1 tokenizations read
+    differently (``text_matching.tokenized_by_script``: Han, Hangul, Kana,
+    Thai, Hebrew, Arabic, ...), as their
     manifests record it (``dataset.dense_script``): ``True`` if one does,
     ``False`` if every one that records it says not, ``None`` when none
     records it (saved before it was recorded)."""
@@ -270,7 +272,9 @@ def check_answer_scoring(
     warnings for runs that do not record it. ``manifests`` are ``(label,
     run manifest)`` pairs.
 
-    The tokenizations differ only on Han, Hangul and Kana text, so
+    The tokenizations differ only on the text of some scripts
+    (``text_matching.tokenized_by_script``: Han, Hangul, Kana, Thai,
+    Hebrew, Arabic, ...), so
     ``token_f1_tokens`` is left out of the comparison when the dataset
     holds none: ``dense_script`` (the caller's dataset), else what the
     manifests record (``dataset_dense_script``); unknown, it is compared.

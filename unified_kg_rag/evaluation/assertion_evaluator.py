@@ -272,7 +272,7 @@ class AssertionEvaluator(BaseGraphRAGEvaluator):
             output = await self.chain.ainvoke(
                 {
                     "question": result.question,
-                    "answer": result.generated_answer,
+                    "answer": self.answer_words(result),
                     "assertions": _numbered(assertions, order),
                 }
             )

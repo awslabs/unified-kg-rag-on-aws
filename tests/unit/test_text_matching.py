@@ -15,6 +15,7 @@ from unified_kg_rag.evaluation.text_matching import (
     stated_numbers,
     strip_possessives,
     tokenize,
+    tokenized_by_script,
 )
 
 pytestmark = pytest.mark.unit
@@ -127,6 +128,17 @@ class TestPhraseInText:
         assert is_spaceless_script("서울")
         assert not is_spaceless_script("서울 특별시")
         assert not is_spaceless_script("Acme")
+        assert is_spaceless_script("กรุงเทพ")
+        assert is_spaceless_script("ພາສາລາວ")
+        assert not is_spaceless_script("ירושלים")
+
+    def test_the_scripts_token_f1_reads_by_script(self) -> None:
+        # The dataset flag the scoring check reads: the tokenizations
+        # differ on these scripts' text only.
+        for text in ("東京", "서울", "กรุงเทพ", "ירושלים", "القاهرة"):
+            assert tokenized_by_script(text), text
+        for text in ("Acme Corp", "Москва", "दिल्ली", "Hà Nội"):
+            assert not tokenized_by_script(text), text
 
 
 class TestLoneLetters:

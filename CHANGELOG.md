@@ -662,7 +662,8 @@ From a `main` checkout (formats and keys no release had):
   one report call per community and its embeddings, the report stage of a first build (no text unit is extracted
   again); later builds reuse them. An incremental run clusters and reports its own communities the new way (#618).
 - #627 citations: answers now cite their context with `[n]` markers (`search.citations.enabled`, on), so answer texts
-  and the LLM judges' scores differ from earlier runs (`answer_match` scores the words without the markers): compare
+  and the LLM judges' scores differ from earlier runs (`answer_match`, `graph_aware`, the `ragas` and `assertion`
+  judges and the pairwise judge read the words without the markers): compare
   runs of one setting, or set it `false` for the earlier context and prompt. `global` and `drift` answers no longer
   carry `[n]` markers or `RAGOutput.citations` by default, and their answer prompt drops the "cite where possible"
   instruction: set `search.citations.strategies: {global: true, drift: true}` to cite there again (with the plain
@@ -1267,7 +1268,15 @@ From a `main` checkout (formats and keys no release had):
   about lot 7 is 0, "No hay más de tres" no 0); a condition or comparative is not told from a count, so a line that
   writes the gold as either matches, a gold that states no number or several ("1990-1995", "3 (as of 2024)") is
   matched as a phrase, and a Unicode minus or en-dash is a minus ("−5" is -5) but an em-dash is not ("3 vendors —2"
-  states 2) (#324, #516, #606, #613).
+  states 2). Thai, Lao, Myanmar and Khmer, which write no spaces between words, are matched as substrings and
+  token-scored by letter as Chinese is, and a run of Hebrew or Arabic prefixed particles before a gold word
+  (`LanguageProfile.proclitics`: "בירושלים", "وبيروت") is tolerated as a Korean particle after one is, in
+  `answer_contains`, token F1, `graph_aware` coverage and the extracted-span check. A yes/no gold is read by
+  polarity in every profiled language but Thai (`LanguageProfile.polarity_words`: "sí", "oui"/"non", "ja"/"nein",
+  "sim"/"não", "да"/"нет", "có"/"không", "לא", "لا"); a word with a second meaning (`ambiguous_polarity_words`:
+  "no", "non", "não", "нет") answers only before punctuation, so "não há dúvida" is no answer. A form of one that
+  is also the article reads as one alone ("Hay uno.", "Nur einer.", "Há um."), as do Korean "하나입니다" and "Not a
+  single one." (0); "ni uno" and "nem um" are words for none (#324, #516, #606, #613).
 - Strategy comparison: `run-eval --search-strategy a,b --repeats N` with bootstrap intervals, `deltas_by_category`,
   a `--pairwise-judge` (LightRAG's verdicts with `evaluation.pairwise_overall`, `position_consistency`, a win-rate
   interval, `--judge-model`) and `prepare-benchmark musique` (#324, #516, #536). See
@@ -1538,8 +1547,8 @@ From a `main` checkout (formats and keys no release had):
   `--pool-runs` is given, with a warning naming what the pooled runs mix (#620).
 - `run-eval` answers the runs of a comparison interleaved: every query by every strategy and repeat before the next
   query, their order reversed on every other query (ABBA), in one batch. Answered one run after another, the later
-  runs answered later, and two runs of one configuration differed by 0.5-5.8 s of latency per query; the drift now
-  lands on every run alike. `--run-order sequential` (`evaluation.run_order`) keeps the earlier order, and a
+  runs answered later, and runs of one configuration differed by 0.5 to 2.3 s of latency a query on average; the
+  drift now lands on every run alike. `--run-order sequential` (`evaluation.run_order`) keeps the earlier order, and a
   comparison whose runs were not answered interleaved in one invocation (sequential, `--from-results` of several,
   `--baseline-results`) warns that its latency deltas measure time too. Each repeat extracts the query's entities and
   keywords again (`--repeat-extractions resample`, `evaluation.repeat_extractions`), so `repeat_stdev` includes the

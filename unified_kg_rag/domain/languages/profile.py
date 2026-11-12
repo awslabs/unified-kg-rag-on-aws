@@ -74,6 +74,11 @@ class LanguageProfile:
     # ("l'accord", "d'Avignon", "dell'accordo"): split from the next word
     # (an article among them is then dropped), and a sign of the language.
     elided_prefixes: frozenset[str] = frozenset()
+    # The words it writes onto the front of the next word (Hebrew "ב"
+    # "in", Arabic "و" "and", "ال" "the"): a match tolerates a run of up to
+    # three of them before a gold word ("בירושלים" holds "ירושלים",
+    # "وبيروت" "بيروت"), as it tolerates Korean particles after one.
+    proclitics: tuple[str, ...] = ()
     # Its number words with their values, which an answer states a count by
     # ("drei"): the words below twenty a tens word composes with
     # ("twenty-one"), and the ones it writes as one word below a hundred
@@ -104,8 +109,9 @@ class LanguageProfile:
     # The words that join the parts of a written number ("and" in "three
     # hundred and twelve", "y" in "treinta y dos", "und" in
     # "vierundzwanzig"), and the forms of one left out of ``number_words``
-    # as articles, which count inside a written number only ("vingt et
-    # un", "einhundert", "un millón").
+    # as articles, which count inside a written number ("vingt et un",
+    # "einhundert", "un millón") or alone, with no word after them ("Il y
+    # en a un.", "Nur einer.", "Há um."): an article goes before its noun.
     number_conjunctions: tuple[str, ...] = ()
     compound_ones: tuple[str, ...] = ()
     # Numerals that state a count only before one of its ``counters``
@@ -118,8 +124,18 @@ class LanguageProfile:
     # they are other words ("이" is "this").
     multiplier_numerals: Mapping[str, int] = field(default_factory=dict)
     counters: tuple[str, ...] = ()
+    # Numerals that state a count standing alone, with at most a particle
+    # or the copula after them ("하나입니다", "셋이에요"), by value; the forms
+    # before a counter that are other words alone ("한", "세", "네") are
+    # left out.
+    standalone_numerals: Mapping[str, int] = field(default_factory=dict)
     # Yes/no answer words, each with its polarity ("yes" or "no").
     polarity_words: Mapping[str, str] = field(default_factory=dict)
+    # Those of them with a second meaning (English "no" a determiner,
+    # Korean "네" the numeral four), which answer only when punctuation or
+    # the line end follows, each with the punctuation after which it is
+    # still the other word (Korean "예" before ":" or ")" is "e.g.").
+    ambiguous_polarity_words: Mapping[str, str] = field(default_factory=dict)
     # The quote pairs its text wraps a name in (opening, closing).
     quote_pairs: tuple[tuple[str, str], ...] = ()
     # Characters per token of a text in it (spaces and punctuation
