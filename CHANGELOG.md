@@ -1403,13 +1403,14 @@ From a `main` checkout (formats and keys no release had):
 - The document loading stage samples the corpus (the first 2,000 characters of its first 20 documents) and WARNs,
   naming `processing.translation.source_language`, when the sample disagrees with the setting: a Korean, Japanese,
   Chinese, Russian, Thai, Arabic or German corpus under the default `en` was extracted with prompts asking for
-  English and analyzed as English without a word. Each sampled document's language is read by the rule a query's is
-  (its script, and a Latin-script one's function words), and the sample reads as the language most of them read as
-  (four English documents and one Korean one read as English); a sample that reads as the setting is not reported,
-  however few of its letters are in its script (a Korean document that is mostly code). `run-prompt-tuning` writes the
-  `source_language` the sample reads as into its output (#629). Han, Hangul and Kana text reads by one rule
-  (`domain.languages.dense_language`): Korean when a tenth or more of those letters are Hangul (and no fewer than
-  Kana), so Korean written with Hanja reads as Korean, else Japanese when a tenth are Kana, else Chinese.
+  English and analyzed as English without a word. Each sampled document votes for the script most of its letters are
+  in, and for the language it reads as by the rule a query's is (a Latin-script one by its function words) only when
+  that language is written in that script; the sample reads as the language of the script most documents are in (four
+  English documents and one Korean one, or English documents quoting Korean file names, read as English); a sample
+  that reads as the setting is not reported, however few of its letters are in its script. `run-prompt-tuning` writes
+  the `source_language` the sample reads as into its output (#629). Han, Hangul and Kana text reads by one rule
+  (`domain.languages.dense_language`): Korean when a tenth or more of those letters are Hangul (and no fewer than Kana),
+  so Korean written with Hanja reads as Korean, else Japanese when a tenth are Kana, else Chinese.
 - `backend: local`: the refusals and retrieval logs of the embedded vector store name it ("The embedded SQLite search
   engine index ...") instead of OpenSearch, and a query where nothing was ingested reads an empty store with a
   WARNING naming `providers.vector.sqlite_path` instead of creating an empty `vector.sqlite3` (in the working
