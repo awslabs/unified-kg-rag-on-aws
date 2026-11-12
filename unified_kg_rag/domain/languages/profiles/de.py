@@ -66,7 +66,8 @@ PROFILE = LanguageProfile(
         "milliarden": 10**9,
     },
     number_conjunctions=("und",),
-    compound_ones=("ein", "eine"),
+    # And the pronoun's other cases, a one where alone ("Nur einer.").
+    compound_ones=("ein", "eine", "einer", "einen", "einem", "eines"),
     zero_words=("kein", "keine", "keinen", "keinem", "keiner", "keines"),
     ones_before_tens=True,
     month_words={

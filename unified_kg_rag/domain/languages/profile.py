@@ -109,8 +109,9 @@ class LanguageProfile:
     # The words that join the parts of a written number ("and" in "three
     # hundred and twelve", "y" in "treinta y dos", "und" in
     # "vierundzwanzig"), and the forms of one left out of ``number_words``
-    # as articles, which count inside a written number only ("vingt et
-    # un", "einhundert", "un millón").
+    # as articles, which count inside a written number ("vingt et un",
+    # "einhundert", "un millón") or alone, with no word after them ("Il y
+    # en a un.", "Nur einer.", "Há um."): an article goes before its noun.
     number_conjunctions: tuple[str, ...] = ()
     compound_ones: tuple[str, ...] = ()
     # Numerals that state a count only before one of its ``counters``
@@ -123,6 +124,11 @@ class LanguageProfile:
     # they are other words ("이" is "this").
     multiplier_numerals: Mapping[str, int] = field(default_factory=dict)
     counters: tuple[str, ...] = ()
+    # Numerals that state a count standing alone, with at most a particle
+    # or the copula after them ("하나입니다", "셋이에요"), by value; the forms
+    # before a counter that are other words alone ("한", "세", "네") are
+    # left out.
+    standalone_numerals: Mapping[str, int] = field(default_factory=dict)
     # Yes/no answer words, each with its polarity ("yes" or "no").
     polarity_words: Mapping[str, str] = field(default_factory=dict)
     # Those of them with a second meaning (English "no" a determiner,

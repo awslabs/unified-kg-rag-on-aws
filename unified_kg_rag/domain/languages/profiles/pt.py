@@ -84,7 +84,7 @@ PROFILE = LanguageProfile(
     },
     number_conjunctions=("e",),
     compound_ones=("um", "uma"),
-    zero_words=("nenhum", "nenhuma"),
+    zero_words=("nenhum", "nenhuma", "nem um", "nem uma"),
     absence_phrases=("não há", "não tem", "não têm", "não existe", "não existem"),
     month_words={
         "January": ("janeiro",),

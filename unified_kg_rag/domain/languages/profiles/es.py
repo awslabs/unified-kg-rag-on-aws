@@ -91,7 +91,7 @@ PROFILE = LanguageProfile(
     },
     number_conjunctions=("y",),
     compound_ones=("un", "una", "uno"),
-    zero_words=("ningún", "ninguno", "ninguna", "ningun"),
+    zero_words=("ningún", "ninguno", "ninguna", "ningun", "ni uno", "ni una", "ni un"),
     absence_phrases=("no hay", "no tiene", "no tienen", "no existe", "no existen"),
     month_words={
         "January": ("enero", "ene"),

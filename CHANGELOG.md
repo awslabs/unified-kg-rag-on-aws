@@ -1273,8 +1273,9 @@ From a `main` checkout (formats and keys no release had):
   `answer_contains`, token F1, `graph_aware` coverage and the extracted-span check. A yes/no gold is read by
   polarity in every profiled language but Thai (`LanguageProfile.polarity_words`: "sí", "oui"/"non", "ja"/"nein",
   "sim"/"não", "да"/"нет", "có"/"không", "לא", "لا"); a word with a second meaning (`ambiguous_polarity_words`:
-  "no", "non", "não", "нет") answers only before punctuation, so "não há dúvida" is no answer (#324, #516, #606,
-  #613).
+  "no", "non", "não", "нет") answers only before punctuation, so "não há dúvida" is no answer. A form of one that
+  is also the article reads as one alone ("Hay uno.", "Nur einer.", "Há um."), as do Korean "하나입니다" and "Not a
+  single one." (0); "ni uno" and "nem um" are words for none (#324, #516, #606, #613).
 - Strategy comparison: `run-eval --search-strategy a,b --repeats N` with bootstrap intervals, `deltas_by_category`,
   a `--pairwise-judge` (LightRAG's verdicts with `evaluation.pairwise_overall`, `position_consistency`, a win-rate
   interval, `--judge-model`) and `prepare-benchmark musique` (#324, #516, #536). See

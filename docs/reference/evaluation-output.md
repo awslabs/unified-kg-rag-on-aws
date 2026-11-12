@@ -708,8 +708,11 @@ list, top level or under `metadata`, which wins), taking the maximum.
   - A gold other than 0 matches when that line writes it as a number,
     anywhere: digits (`−5`, a Unicode minus or en-dash, is -5; an
     em-dash is no minus: `3 vendors —2` writes 2), number words of the
-    answer's language (English's for a language without them), a Korean
-    native numeral before a counter (`세 곳`, `열두 개사`) or a Han or
+    answer's language (English's for a language without them; a form of
+    one that is also the article counts alone, with no word after it:
+    `Hay uno.`, `Il y en a un.`, `Nur einer.`, `Há um.`, not `Hay un
+    proveedor`), a Korean native numeral before a counter (`세 곳`, `열두
+    개사`) or alone (`하나입니다`, `셋이에요`; not `하나은행`), or a Han or
     Sino-Korean numeral with its
     multipliers (`三社`, `十二台`, `一万二千台`, `만 이천 대`; digits a
     multiplier scales: `1만 2천`, `3万`; `两`/`兩` is 2, and a space may
@@ -718,8 +721,8 @@ list, top level or under `metadata`, which wins), taking the maximum.
     match the gold 3.
   - A gold of 0 matches when the line states there is none and writes no
     number the question does not. The statements of none are `0`, a word
-    for none (`none`, `no`, `aucun`, `kein`, `ни одного`), `not one`, `not
-    a single`, a language's phrase of absence (`not ... any`, `no hay`, `il
+    for none (`none`, `no`, `aucun`, `kein`, `ни одного`, `ni uno`, `nem
+    um`), `not one`, `not a single` (`not a single one`), a language's phrase of absence (`not ... any`, `no hay`, `il
     n'y a pas de`, `Поставщиков нет`; Spanish and Portuguese `no` alone
     states no 0), and `없습니다`, `한 곳도`, `一社も`, `一家也`, `没有` and
     `いません`/`ありません` (not `問題ありません` or `ではありません`). So

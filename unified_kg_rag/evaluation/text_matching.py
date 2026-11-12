@@ -714,6 +714,10 @@ def _phrases(words: Iterable[str]) -> str:
     return "(?:" + "|".join(map(phrase, sorted(words, key=len, reverse=True))) + ")"
 
 
+# No word after a written number on its line: punctuation or the line end.
+_NO_WORD_AFTER = re.compile(r"[^\S\n]*(?:$|[^\w\s])", re.MULTILINE)
+
+
 class _NumberGrammar:
     """How one language writes a number in words
     (``LanguageProfile.number_words``, ``number_tens``, ``number_scales``,
@@ -749,7 +753,9 @@ class _NumberGrammar:
 
     def value(self, match: re.Match[str]) -> int | None:
         """The number ``match`` writes, ``None`` when it is none: an
-        article alone ("un fournisseur"), or two numbers side by side."""
+        article before a word ("un fournisseur"; alone, with no word after
+        it, a form of one is one: "Il y en a un.", "Nur einer."), or two
+        numbers side by side."""
         text, parts, ones = match.group(), [], 0
         position = 0
         while position < len(text):
@@ -767,7 +773,8 @@ class _NumberGrammar:
             joined = self._join.match(text, token.end())
             position = joined.end() if joined else token.end()
         if ones == len(parts):
-            return None
+            alone = ones == 1 and _NO_WORD_AFTER.match(match.string, match.end())
+            return 1 if alone else None
         return _compose(parts, self.ones_before_tens)
 
 
@@ -810,6 +817,16 @@ _KOREAN_NUMBER = re.compile(
     + r")?\s?(?="
     + "|".join(_KOREAN_COUNTERS)
     + r")"
+)
+# A Korean native numeral standing alone ("하나입니다", "셋이에요"; Korean
+# ``standalone_numerals``): no Hangul before it, and after it at most a run
+# of particles or copula endings of their closed class (``_KOREAN_JOSA``),
+# so "하나은행" and "넷플릭스" are no number.
+_KOREAN_STANDALONE_ONES = dict(_KO.standalone_numerals)
+_KOREAN_STANDALONE = re.compile(
+    rf"(?<!{_HANGUL})("
+    + "|".join(sorted(_KOREAN_STANDALONE_ONES, key=len, reverse=True))
+    + rf")(?=(?:{_KOREAN_JOSA_RUN.pattern})?(?!{_HANGUL}))"
 )
 # "없습니다" on its own word ("벤더가 없습니다"), not closing a compound
 # adjective ("문제없습니다", no problem).
@@ -915,9 +932,10 @@ _ANY_COUNTER = (
 # Chinese and Japanese 第 before the number ("第三", "第3").
 _ORDINAL_AFTER = re.compile(rf"\s?{_ANY_COUNTER}?\s?(?:째|目)")
 _ORDINAL_BEFORE = re.compile(r"第\s?$")
-# "Not one vendor" and "not even one" state zero, unless "but" corrects
-# them ("not one but three") or a partitive follows ("is not one of them").
-_NOT_ONE_BEFORE = re.compile(r"\bnot\s+(?:even\s+)?$", re.IGNORECASE)
+# "Not one vendor", "not even one" and "not a single one" state zero,
+# unless "but" corrects them ("not one but three") or a partitive follows
+# ("is not one of them").
+_NOT_ONE_BEFORE = re.compile(r"\bnot\s+(?:even\s+)?(?:a\s+single\s+)?$", re.IGNORECASE)
 _BUT_AFTER = re.compile(r"(?:\s+\w+)?\s*,?\s*but\b|\s+of\b", re.IGNORECASE)
 _NOT_A_SINGLE = re.compile(
     r"\bnot\s+(?:even\s+)?a\s+single\b(?!(?:\s+\w+)?\s*,?\s*but\b)", re.IGNORECASE
@@ -1073,6 +1091,12 @@ def _number_forms(
     else:
         forms.append((grammar.pattern.finditer(body), grammar.value))
     forms.append((_KOREAN_NUMBER.finditer(body), korean))
+    forms.append(
+        (
+            _KOREAN_STANDALONE.finditer(body),
+            lambda match: _KOREAN_STANDALONE_ONES[match.group(1)],
+        )
+    )
     forms.append((_CJK_NUMBER.finditer(body), _cjk_value))
     return forms
 

@@ -57,6 +57,17 @@ PROFILE = LanguageProfile(
         "아홉": 9,
     },
     number_tens={"열": 10, "스물": 20, "스무": 20, "서른": 30, "마흔": 40},
+    standalone_numerals={
+        "하나": 1,
+        "둘": 2,
+        "셋": 3,
+        "넷": 4,
+        "다섯": 5,
+        "여섯": 6,
+        "일곱": 7,
+        "여덟": 8,
+        "아홉": 9,
+    },
     # Sino-Korean numerals ("십이 대", "만 이천 명").
     multiplier_numerals=dict(zip("일이삼사오육칠팔구", range(1, 10), strict=True)),
     numeral_multipliers={"십": 10, "백": 100, "천": 1000, "만": 10**4, "억": 10**8},
