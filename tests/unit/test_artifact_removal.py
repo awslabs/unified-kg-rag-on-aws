@@ -816,6 +816,60 @@ def test_a_strip_that_notes_again_keeps_the_earlier_notes_claims(mocker) -> None
     assert claim_ids == ["c-split"]
 
 
+def test_a_re_key_whose_strip_note_cannot_be_written_writes_nothing(mocker) -> None:
+    # The strip re-keys "e-old" (no claim to strip first): its note is
+    # written before any item. When that write fails the strip reports its
+    # items failed and writes none of them; the retry re-keys them.
+    from unified_kg_rag.domain.ingestion.derivation import Derived
+
+    manager, graph, vector = _manager()
+    stored = Entity(id="e-old", name="Acme", text_unit_ids=["t1", "t2"])
+    graph.upsert_entities([stored])
+    vector.upsert_entities([stored])
+    mocker.patch.object(
+        manager,
+        "derive",
+        return_value=Derived(
+            entities=[Entity(id="e-new", name="ACME", text_unit_ids=["t1"])],
+            id_remap={"e-old": "e-new"},
+        ),
+    )
+    write = vector.write_extraction_records
+
+    def no_strip_note(records, suffix=None):  # noqa: ANN001, ANN202
+        if "pending-strip" not in records:
+            return write(records, suffix=suffix)
+        stats = IndexingStats(total_items=1)
+        stats.add_error("store down", count=1)
+        return stats
+
+    patched = mocker.patch.object(
+        vector, "write_extraction_records", side_effect=no_strip_note
+    )
+
+    def strip() -> dict[str, IndexingStats]:
+        return manager.remove_text_units_from_shared(
+            "default", entity_ids=["e-old"], relationship_ids=[], text_unit_ids=["t2"]
+        )
+
+    results = strip()
+
+    failed = {key for key, stats in results.items() if stats and stats.failed_items}
+    assert failed == {"graph_read_default"}
+    assert results["graph_read_default"].failed_items == 1
+    assert graph.ids("entities") == {"e-old"}
+    assert set(vector.data["entities"]) == {"e-old"}
+    assert graph.read_entities(["e-old"])[0].text_unit_ids == ["t1", "t2"]
+    assert vector.read_extraction_records(["pending-strip"], suffix="default") == {}
+
+    mocker.stop(patched)
+    results = strip()
+
+    assert not any(stats.failed_items for stats in results.values() if stats)
+    assert graph.read_entities(["e-new"])[0].text_unit_ids == ["t1"]
+    assert "e-new" in vector.data["entities"]
+
+
 def test_a_removal_clears_a_note_whose_items_are_gone(mocker) -> None:
     # An earlier strip's note names an item this removal deletes outright
     # (it cites only the removed unit), so nothing is left to strip: the
