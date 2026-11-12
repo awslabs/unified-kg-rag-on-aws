@@ -1145,6 +1145,7 @@ def test_visualization_json_output_names_the_written_files(
         "output_directory": str(tmp_path / "out"),
         "files": [],
         "failed_renderers": {},
+        "skipped_renderers": {},
         "status": "failed",
         "exit_code": 1,
         "error_type": "RunFailed",

@@ -156,9 +156,10 @@ holds:
   (`runs`), the `comparison`, the failure-budget breaches
   (`failure_budget_breaches`) and the failed gates (`gate_failures`); a
   breach, a failed gate or an upload error exits `1`.
-- **`run-visualization`**: the `output_directory`, the written `files` and
-  the `failed_renderers` (each failed renderer's error); an empty list
-  (nothing rendered) or a failed renderer exits `1`.
+- **`run-visualization`**: the `output_directory`, the written `files`,
+  the `failed_renderers` (each failed renderer's error) and the
+  `skipped_renderers` (each default renderer left out for a missing extra,
+  with why); an empty list (nothing rendered) or a failed renderer exits `1`.
 - **`run-describe`**: the namespace's description (`suffix`, `namespace`,
   `build`, `build_record` (`present` or `missing`: then `artifacts` are
   what the config builds), `artifacts`, `methodologies`, `strategies`, `auto_routes`,

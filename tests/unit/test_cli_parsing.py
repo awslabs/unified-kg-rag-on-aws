@@ -1925,7 +1925,9 @@ def test_visualization_parser_defaults() -> None:
     args = run_visualization._build_parser().parse_args(["--data-path", "g.json"])
     assert args.data_path == Path("g.json")
     assert args.output_directory == Path("visualization_outputs")
-    assert isinstance(args.renderers, list) and args.renderers  # registry default
+    # None: every registered renderer, leaving out one whose extra is missing
+    # (a named list needs every extra it names).
+    assert args.renderers is None
 
 
 def test_visualization_parser_multiple_renderers() -> None:

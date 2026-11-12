@@ -18,11 +18,14 @@ run-visualization --data-path visualization_data.json --renderers interactive --
 ```
 
 The two renderers are **`interactive`** (pyvis; it needs the `viz` extra,
-`uv sync --inexact --extra viz`, [Install](../getting-started/aws.md#install)) and
-**`static`** (dependency-free HTML with inline SVG; it runs on a core
-install), configured under `graph.visualization` (`interactive.*`,
-`static.*`, `centrality.*`; every key: [Configuration
-Reference](../reference/configuration.md)).
+`uv sync --inexact --extra viz`,
+[Install](../getting-started/aws.md#install)) and **`static`**
+(dependency-free HTML with inline SVG; it runs on a core install). Without
+`--renderers` every renderer runs, and one whose extra is missing is left
+out with a WARNING (on a core install, `static` alone); a renderer
+`--renderers` names exits 2 without its extra. Both are configured under
+`graph.visualization` (`interactive.*`, `static.*`, `centrality.*`; every
+key: [Configuration Reference](../reference/configuration.md)).
 Ingestion itself renders nothing. Another renderer plugs in through
 `@register_renderer` ([Design Doc §15](./extend.md#15-extension-guide)).
 
