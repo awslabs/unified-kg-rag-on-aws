@@ -90,8 +90,10 @@ uv run --no-dev run-rag --backend local --search-strategy local --verbose --quer
 uv run --no-dev run-rag --backend local --search-strategy mix --verbose --query "How are Acme Robotics and Globex Sensors related?"
 ```
 
-`--verbose` prints, after the answer, the sources it used (text-unit ids
-with their scores) and the retrieval metrics. The commands log every step at `INFO`; prefix
+`--verbose` prints, after the answer, the query's extracted entities,
+every source it used (each numbered with its type, `entity`,
+`relationship` or `text`, its name or file, its score and a snippet) and
+the retrieval metrics. The commands log every step at `INFO`; prefix
 them with `UKR__LOGGING__LEVEL=WARNING` to keep only warnings and the
 result.
 

@@ -231,8 +231,10 @@ class CommandLineInterface:
         parser.add_argument(
             "--force-rebuild",
             action="store_true",
-            help="Recompute every stage, ignoring existing cached stage outputs "
-            "(the stage cache is rewritten with the new outputs)",
+            help="Recompute every stage, ignoring the cached stage outputs, the "
+            "stored extraction records and the LLM response cache: every model "
+            "call and embedding is paid again (the caches are rewritten with "
+            "the new outputs)",
         )
         parser.add_argument(
             "--s3-sync",

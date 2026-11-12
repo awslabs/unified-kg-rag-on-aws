@@ -8,7 +8,7 @@
 
 <img src="./assets/profile.png" alt="Unified Knowledge Graph RAG on AWS 로고" width="120" align="right">
 
-Unified Knowledge Graph RAG on AWS는 대규모 다국어 문서를 Amazon Neptune과 Amazon OpenSearch Service 위의 지식 그래프로 만들고 Amazon Bedrock으로 질문에 답하며, 답변 근거의 문서와 페이지를 `[n]` 인용으로 보여 줍니다(`global`과 `drift`는 기본값으로 인용 없이 답합니다). 공개된 네 가지 방법인 Microsoft GraphRAG, LightRAG, HippoRAG 2, 그리고 선택 사항인 RAPTOR를 하나의 인덱스에서 실행해 질문마다 고르게 하고, 쓰는 방법의 인덱스만 만듭니다. 원 논문에 더한 기능은 [이 프레임워크를 쓰는 이유](#이-프레임워크를-쓰는-이유)에 있습니다. AWS 계정 없이 로컬에서 실행해 볼 수 있으며([빠른 시작](#빠른-시작)), 약 6 GB의 모델을 내려받은 뒤 5분 정도 걸립니다.
+Unified Knowledge Graph RAG on AWS는 대규모 다국어 문서를 Amazon Neptune과 Amazon OpenSearch Service 위의 지식 그래프로 만들고 Amazon Bedrock으로 질문에 답하며, 답변 근거의 문서와 페이지를 `[n]` 인용으로 보여 줍니다(`global`과 `drift`는 기본값으로 인용 없이 답합니다). 공개된 네 가지 방법인 Microsoft GraphRAG, LightRAG, HippoRAG 2, 그리고 선택 사항인 RAPTOR를 하나의 인덱스에서 실행해 질문마다 고르게 하고, 쓰는 방법의 인덱스만 만듭니다. 원 논문에 더한 기능은 [이 프레임워크를 쓰는 이유](#이-프레임워크를-쓰는-이유)에 있습니다. AWS 계정 없이 로컬에서 실행해 볼 수 있으며([빠른 시작](#빠른-시작)), 약 6 GB의 모델을 내려받은 뒤 GPU나 Apple silicon에서 5분 정도 걸립니다(CPU만 있는 컴퓨터에서는 수집에 30분 정도 걸립니다).
 
 **이런 팀에 맞습니다.** 자기 AWS 계정에서 그래프 RAG(지식 그래프를 검색하는 검색 증강 생성)를 운영하면서 방법을 고르고, 성능을 측정하고, 문서가 바뀔 때마다 인덱스를 최신으로 유지해야 하는 팀.
 
@@ -104,7 +104,7 @@ UKR__LOGGING__LEVEL=WARNING uv run --no-dev run-rag --backend local --search-str
 
 `structured`(선택 사항, 논문의 방법이 아님)는 검증을 거친 읽기 전용 그래프 질의로 개수, 순위, 목록, 경로에 답하며, 그래프가 있는 모든 네임스페이스에서 쓸 수 있고 답을 못 만들면 `local`로 넘어갑니다([구조화 질의](./docs/guides/structured-queries.ko.md)). `iterative`는 `mix`나 `local`을 감싸, 멀티홉 질문의 연결 엔티티에 대해 정해진 횟수만큼 후속 검색을 더 합니다. 기본값인 `auto`에서는 LLM 라우터가 질의마다 `search.auto_routable_strategies`(기본값 `local`, `mix`, `global`, `iterative`) 중 하나를 고릅니다. 어떤 전략을 언제 쓰는지는 [검색](./docs/concepts/retrieval.ko.md#검색-전략-선택), 계층 구조·알고리즘·데이터 모델은 [설계 문서](./docs/design.md)(영문)에 있습니다.
 
-이 모든 작업을 내 컴퓨터의 브라우저에서 하려면 로컬 [콘솔](./docs/guides/console.ko.md)(`run-console`)을 시작하세요. 웹 클라이언트는 Node.js 20.19 이상으로 한 번 빌드하고(`cd console/web && npm ci && npm run build`), `uv run --no-dev --extra console --extra local python console/demo/demo.py --models fake`로 합성 코퍼스에서 바로 써 볼 수 있습니다.
+이 모든 작업을 내 컴퓨터의 브라우저에서 하려면 로컬 [콘솔](./docs/guides/console.ko.md)(`run-console`)을 시작하세요. 웹 클라이언트는 Node.js 20.19 이상으로 한 번 빌드하고(`(cd console/web && npm ci && npm run build)`), `uv run --no-dev --extra console --extra local python console/demo/demo.py --models fake`로 합성 코퍼스에서 바로 써 볼 수 있습니다.
 
 ## AWS에 배포(선택)
 

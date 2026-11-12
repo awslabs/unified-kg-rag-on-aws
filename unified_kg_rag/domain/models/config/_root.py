@@ -542,7 +542,11 @@ class PipelineConfig(BaseModel):
     )
     force_rebuild: bool = Field(
         default=False,
-        description="If true, ignores any existing cache and rebuilds all outputs.",
+        description=(
+            "If true, ignores the cached stage outputs, the stored extraction "
+            "records and the LLM response cache and rebuilds all outputs: every "
+            "model call and embedding is paid again."
+        ),
     )
     # The id names a local cache directory and an S3 prefix.
     pipeline_id: (

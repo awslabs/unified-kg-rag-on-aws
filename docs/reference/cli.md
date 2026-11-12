@@ -42,7 +42,7 @@ Guide: [Ingestion](../guides/ingest.md). Also takes the [provider flags](#provid
 | `--source-directory` | — | Directory of the source documents to process; required unless --verify-metadata (falls back to the UKR_SOURCE_DIRECTORY env var). |
 | `--output-directory` | — | Export each parsed document as <stem>.json to this directory for inspection (processing.document_parsing.target_directory; no export when omitted; must not be the source directory). |
 | `--cache-directory` | — | Directory of the pipeline cache and intermediate results (default: cache). |
-| `--force-rebuild` | off | Recompute every stage, ignoring existing cached stage outputs (the stage cache is rewritten with the new outputs). |
+| `--force-rebuild` | off | Recompute every stage, ignoring the cached stage outputs, the stored extraction records and the LLM response cache: every model call and embedding is paid again (the caches are rewritten with the new outputs). |
 | `--s3-sync` | off | Synchronize the cache with Amazon S3 (needs --s3-bucket-name or aws.s3.bucket_name). |
 | `--s3-bucket-name` | — | Amazon S3 bucket for cache synchronization with --s3-sync (default: aws.s3.bucket_name). |
 | `--s3-prefix` | `pipeline-runs` | S3 object key prefix for organizing cache files (default: pipeline-runs). |

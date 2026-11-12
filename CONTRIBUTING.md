@@ -296,12 +296,13 @@ to its page map, and link it from the pages around it.
   broken chunk: the draw.io command-line export (`drawio -x -e`) writes its zTXt chunk with a wrong CRC and no `IEND`,
   so rewrite the chunk CRCs and append `IEND` after such an export.
 
-**Korean pages.** User-facing documentation is in English. The Tier-1 pages, the ones most Korean readers use, have
-a Korean twin `<page>.ko.md` next to the English page. The one list of them is `TRANSLATED_PAGES` in
+**Korean pages.** User-facing documentation is in English. The Tier-1 pages, the ones most Korean readers use, have a
+Korean twin `<page>.ko.md` next to the English page. The one list of them is `TRANSLATED_PAGES` in
 [`scripts/check_docs.py`](./scripts/check_docs.py): `README.md`, `docs/index.md`, the two `getting-started/` pages,
 `concepts/overview.md`, `concepts/retrieval.md` and `concepts/scopes-and-namespaces.md`, and `guides/configure.md`,
-`ingest.md`, `multilingual.md`, `query.md`, `incremental.md`, `domain-adaptation.md` and `evaluate.md`. Every other page is English-only, and a Korean page that links one adds "(영문)" after
-the link.
+`ingest.md`, `multilingual.md`, `query.md`, `structured-queries.md`, `incremental.md`, `domain-adaptation.md`,
+`evaluate.md`, `mcp.md` and `console.md`. Every other page is English-only, and a Korean page that links one adds "(영문)"
+after the link.
 
 1. **Same pull request.** A change to a Tier-1 English page updates its `.ko.md` twin in the same pull request.
 2. **Lag note.** If you cannot write the Korean text, say so in the pull request description and add this note at

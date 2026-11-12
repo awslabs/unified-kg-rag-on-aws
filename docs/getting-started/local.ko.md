@@ -84,7 +84,8 @@ uv run --no-dev run-rag --backend local --search-strategy local --verbose --quer
 uv run --no-dev run-rag --backend local --search-strategy mix --verbose --query "How are Acme Robotics and Globex Sensors related?"
 ```
 
-`--verbose`는 답변 뒤에 답변에 쓴 근거(텍스트 단위 id와 점수)와 검색 지표를 출력합니다. 명령은 모든 단계를
+`--verbose`는 답변 뒤에 질의에서 추출한 엔티티, 답변에 쓴 근거 전체(번호마다 유형인 `entity`,
+`relationship`, `text`와 이름 또는 파일, 점수, 발췌)와 검색 지표를 출력합니다. 명령은 모든 단계를
 `INFO`로 기록하므로, 경고와 결과만 보려면 명령 앞에 `UKR__LOGGING__LEVEL=WARNING`을
 붙이세요.
 

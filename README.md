@@ -8,7 +8,7 @@
 
 <img src="./assets/profile.png" alt="Unified Knowledge Graph RAG on AWS logo" width="120" align="right">
 
-Unified Knowledge Graph RAG on AWS turns a large, multilingual document collection into a knowledge graph on Amazon Neptune and Amazon OpenSearch Service and answers questions over it with Amazon Bedrock, with `[n]` citations that name the documents and pages behind an answer (`global` and `drift` answer without them by default). It runs four published methods on one index, Microsoft GraphRAG, LightRAG, HippoRAG 2 and, opt-in, RAPTOR, chosen per question, and builds only the ones you use; [Why this framework](#why-this-framework) lists what it adds beyond the papers. You can try it locally without an AWS account ([Quickstart](#quickstart)): about five minutes, after a download of about 6 GB of models.
+Unified Knowledge Graph RAG on AWS turns a large, multilingual document collection into a knowledge graph on Amazon Neptune and Amazon OpenSearch Service and answers questions over it with Amazon Bedrock, with `[n]` citations that name the documents and pages behind an answer (`global` and `drift` answer without them by default). It runs four published methods on one index, Microsoft GraphRAG, LightRAG, HippoRAG 2 and, opt-in, RAPTOR, chosen per question, and builds only the ones you use; [Why this framework](#why-this-framework) lists what it adds beyond the papers. You can try it locally without an AWS account ([Quickstart](#quickstart)): about five minutes on a GPU or Apple silicon, after a download of about 6 GB of models (on a CPU-only machine, expect the ingestion to take about half an hour).
 
 **For** teams who want graph RAG (retrieval-augmented generation over a knowledge graph) in their own AWS account and need to pick a method, measure it and keep the index current as documents change.
 
@@ -104,7 +104,7 @@ Ingestion is a resumable 13-stage pipeline: parse, chunk, extract entities and r
 
 `structured` (opt-in, not one of the papers' methods) answers counts, rankings, lists and paths from a checked, read-only graph query on any namespace that holds the graph, and falls back to `local` without one ([Structured queries](./docs/guides/structured-queries.md)). `iterative` wraps `mix` or `local` with bounded follow-up rounds on the bridge entities of a multi-hop question. `auto`, the default, lets an LLM router pick one of `search.auto_routable_strategies` per query (default `local`, `mix`, `global`, `iterative`). [Retrieval](./docs/concepts/retrieval.md#search-strategies--when-to-use-which) explains when to use which strategy, and the [Design Doc](./docs/design.md) the layers, algorithms and data model.
 
-To do all of this in a browser on your machine, start the local [console](./docs/guides/console.md) (`run-console`). Build its web client once with Node.js 20.19 or later (`cd console/web && npm ci && npm run build`), then `uv run --no-dev --extra console --extra local python console/demo/demo.py --models fake` tries it on a synthetic corpus.
+To do all of this in a browser on your machine, start the local [console](./docs/guides/console.md) (`run-console`). Build its web client once with Node.js 20.19 or later (`(cd console/web && npm ci && npm run build)`), then `uv run --no-dev --extra console --extra local python console/demo/demo.py --models fake` tries it on a synthetic corpus.
 
 ## Deploy on AWS (optional)
 
