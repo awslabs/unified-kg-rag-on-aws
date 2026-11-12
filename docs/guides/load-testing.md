@@ -144,7 +144,7 @@ everything else.
 
 [`load-test`](../../.github/workflows/load-test.yml) runs
 `scripts/loadtest/nightly.py` every night on the embedded stores (and on
-demand, with `soak_seconds`): ingest the demo corpus, a sweep at
+demand): ingest the demo corpus, a sweep at
 concurrency 1, 4 and 16, a 10-minute soak at 8 with 30% memory turns, and three
 chaos scenarios on a 60-document synthetic corpus (30% 429s, then 15% 503s
 with 5% dropped connections, each followed by a clean run; a SIGKILL halfway

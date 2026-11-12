@@ -15,12 +15,8 @@ name: load-test
 on:
   schedule:
     - cron: "23 2 * * *" # daily 02:23 UTC
+  # No dispatch inputs: a run's parameters are the committed ones.
   workflow_dispatch:
-    inputs:
-      soak_seconds:
-        description: "Soak duration in seconds"
-        required: false
-        default: "600"
 
 permissions:
   contents: read
@@ -33,8 +29,6 @@ jobs:
   nightly:
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    env:
-      SOAK_SECONDS: ${{ inputs.soak_seconds || '600' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -51,7 +45,7 @@ jobs:
         run: uv sync --locked --no-dev --extra local
 
       - name: Load, soak and chaos run
-        run: uv run --frozen --no-dev python scripts/loadtest/nightly.py "$RUNNER_TEMP/loadtest" --soak-seconds "$SOAK_SECONDS"
+        run: uv run --frozen --no-dev python scripts/loadtest/nightly.py "$RUNNER_TEMP/loadtest"
 
       - name: Job summary
         if: always()

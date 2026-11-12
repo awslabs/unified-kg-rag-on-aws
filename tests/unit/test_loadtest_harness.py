@@ -13,11 +13,8 @@ from __future__ import annotations
 import importlib
 import json
 import math
-import sys
 import threading
 import time
-import urllib.error
-import urllib.request
 from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -375,64 +372,69 @@ def chaos_models() -> ModuleType:
 
 
 @pytest.fixture
-def server(chaos_models: ModuleType) -> Iterator[tuple[Any, str]]:
+def server(chaos_models: ModuleType) -> Iterator[tuple[Any, int]]:
     chaos = chaos_models.Chaos(seed=1)
     httpd = chaos_models.make_server(chaos)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     try:
-        yield chaos, f"http://127.0.0.1:{httpd.server_address[1]}"
+        yield chaos, httpd.server_address[1]
     finally:
         httpd.shutdown()
         httpd.server_close()
 
 
-def _post(url: str, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
-    request = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST")
-    try:
-        with urllib.request.urlopen(request, timeout=10) as response:  # noqa: S310
-            return response.status, json.loads(response.read())
-    except urllib.error.HTTPError as e:
-        return e.code, json.loads(e.read())
-
-
 def test_the_server_binds_loopback_and_answers_as_the_fake_models(
-    server: tuple[Any, str],
+    chaos_models: ModuleType, server: tuple[Any, int]
 ) -> None:
-    _, url = server
-    assert url.startswith("http://127.0.0.1:")
-    status, body = _post(f"{url}/api/embed", {"input": ["lidar unit"]})
+    chaos, port = server
+    status, body = chaos_models.call(port, "/api/embed", {"input": ["lidar unit"]})
     assert status == 200 and len(body["embeddings"][0]) == 64
+    assert chaos.stats["embed"] == 1
 
 
-def test_injected_errors_change_at_run_time(server: tuple[Any, str]) -> None:
-    chaos, url = server
-    status, knobs = _post(f"{url}/chaos", {"error_rate": 1.0, "error_status": 503})
+def test_the_server_listens_on_loopback_only(chaos_models: ModuleType) -> None:
+    httpd = chaos_models.make_server(chaos_models.Chaos())
+    try:
+        assert httpd.server_address[0] == "127.0.0.1"
+    finally:
+        httpd.server_close()
+
+
+def test_injected_errors_change_at_run_time(
+    chaos_models: ModuleType, server: tuple[Any, int]
+) -> None:
+    chaos, port = server
+    call = chaos_models.call
+    status, knobs = call(port, "/chaos", {"error_rate": 1.0, "error_status": 503})
     assert status == 200 and knobs["error_rate"] == 1.0
-    assert _post(f"{url}/api/embed", {"input": ["x"]})[0] == 503
-    _post(f"{url}/chaos", {"error_rate": 0.0})
-    assert _post(f"{url}/api/embed", {"input": ["x"]})[0] == 200
+    assert call(port, "/api/embed", {"input": ["x"]})[0] == 503
+    call(port, "/chaos", {"error_rate": 0.0})
+    assert call(port, "/api/embed", {"input": ["x"]})[0] == 200
     assert chaos.stats["embed"] == 2 and chaos.stats["errors"] == 1
     # the handler counts a request done after its response is sent
     deadline = time.monotonic() + 5
     while chaos.stats["inflight"] and time.monotonic() < deadline:
         time.sleep(0.01)
     assert chaos.stats["inflight"] == 0
-    with urllib.request.urlopen(f"{url}/stats", timeout=10) as response:  # noqa: S310
-        assert json.loads(response.read())["errors"] == 1
+    assert call(port, "/stats")[1]["errors"] == 1
 
 
-def test_an_unknown_knob_is_refused(server: tuple[Any, str]) -> None:
-    _, url = server
-    status, body = _post(f"{url}/chaos", {"eror_rate": 1.0})
+def test_an_unknown_knob_is_refused(
+    chaos_models: ModuleType, server: tuple[Any, int]
+) -> None:
+    _, port = server
+    status, body = chaos_models.call(port, "/chaos", {"eror_rate": 1.0})
     assert status == 400 and "eror_rate" in body["error"]
 
 
-def test_a_dropped_connection_gets_no_response(server: tuple[Any, str]) -> None:
-    chaos, url = server
+def test_a_dropped_connection_gets_no_response(
+    chaos_models: ModuleType, server: tuple[Any, int]
+) -> None:
+    chaos, port = server
     chaos.update({"drop_rate": 1.0})
-    with pytest.raises((urllib.error.URLError, ConnectionError, OSError)):
-        _post(f"{url}/api/embed", {"input": ["x"]})
+    with pytest.raises((ConnectionError, OSError)):
+        chaos_models.call(port, "/api/embed", {"input": ["x"]})
     assert chaos.stats["drops"] == 1
 
 
@@ -445,4 +447,3 @@ def test_the_fault_draws_follow_the_knobs(chaos_models: ModuleType) -> None:
     assert all(never.begin("chat")[1] is None for _ in range(50))
     with pytest.raises(ValueError):
         chaos_models.Chaos(typo=1.0)
-    assert sys.modules["chaos_models"] is chaos_models

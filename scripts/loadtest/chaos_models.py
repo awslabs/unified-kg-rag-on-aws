@@ -21,6 +21,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import random
 import sys
@@ -156,6 +157,21 @@ def make_server(
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     server.daemon_threads = True
     return server
+
+
+def call(
+    port: int, path: str, body: dict[str, Any] | None = None
+) -> tuple[int, dict[str, Any]]:
+    """A request to the server on 127.0.0.1:``port`` (POST with a body,
+    else GET): the status and the JSON answer."""
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    try:
+        data = None if body is None else json.dumps(body).encode()
+        connection.request("GET" if data is None else "POST", path, body=data)
+        response = connection.getresponse()
+        return response.status, json.loads(response.read() or b"{}")
+    finally:
+        connection.close()
 
 
 def main(argv: list[str] | None = None) -> int:

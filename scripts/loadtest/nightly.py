@@ -34,10 +34,10 @@ import signal
 import subprocess  # nosec B404 - runs this repository's scripts and console scripts
 import sys
 import time
-import urllib.request
 from pathlib import Path
 from typing import Any
 
+from chaos_models import call
 from compare_exports import EXACT, INCREMENTAL, Tolerance, compare_files, converged
 from harness import Gates, check_gates
 from workspace import write_workspace
@@ -90,15 +90,12 @@ class Models:
         self.port = int(port_file.read_text(encoding="utf-8"))
 
     def _call(self, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
-        data = None if body is None else json.dumps(body).encode()
-        request = urllib.request.Request(  # noqa: S310 - loopback http only
-            f"http://127.0.0.1:{self.port}{path}",
-            data=data,
-            method="POST" if data else "GET",
-        )
-        with urllib.request.urlopen(request, timeout=10) as response:  # nosec B310
-            result: dict[str, Any] = json.loads(response.read())
-            return result
+        status, answer = call(self.port, path, body)
+        if status != 200:
+            raise SystemExit(
+                f"the chaos model server answered {status} to {path}: {answer}"
+            )
+        return answer
 
     def chaos(self, **knobs: float) -> None:
         reset = {"error_rate": 0.0, "drop_rate": 0.0, "hang_rate": 0.0, "delay": 0.0}
