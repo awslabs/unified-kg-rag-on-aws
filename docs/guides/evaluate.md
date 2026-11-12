@@ -429,7 +429,10 @@ changes a default until a measured experiment decides
    (and a USD estimate with `evaluation.prices`). The questions and
    assertions are in `--language` (default
    `processing.translation.source_language`). The same seed and the same
-   model replies give the same files.
+   model replies give the same files. A failed call drops its item (counted
+   in the report); a run that generates no question writes nothing and
+   exits 1 naming the drops, and a model server it cannot reach stops it
+   at once.
 2. Score the answers on the assertions and judge them without length bias:
 
    ```bash

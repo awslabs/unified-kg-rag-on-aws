@@ -153,7 +153,9 @@ def run_assertion_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     """Generate, write and summarize; returns the generation report.
 
     Raises:
-        EvaluationException: The corpus holds no text, or generation failed.
+        EvaluationException: The corpus holds no text, or generation failed
+            or generated no question.
+        ModelUnreachableError: A model server could not be reached.
     """
     # The generator loads the model stack: imported here, not for --help.
     from unified_kg_rag.evaluation.benchmarks import autoq
@@ -188,8 +190,16 @@ def run_assertion_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     generated = event_loop.run(
         stoppable(generator.agenerate(corpus)), io_workers=config.processing.io_workers
     )
-    autoq.write_outputs(args.output_directory, generated)
     report = generated["report"]
+    if not generated["rows"]:
+        # An empty dataset run-eval refuses: a failed run, nothing written.
+        dropped = ", ".join(f"{k} {v}" for k, v in report["dropped"].items())
+        raise EvaluationException(
+            "prepare-benchmark assertions generated no question from "
+            f"{report['corpus']['sampled_units']} text units (dropped: "
+            f"{dropped or 'none'}); see the WARNINGs for the failed calls"
+        )
+    autoq.write_outputs(args.output_directory, generated)
     counts = ", ".join(f"{k} {v}" for k, v in report["questions"].items()) or "none"
     console.print(
         f"[green]Generated {len(generated['rows'])} questions ({markup_safe(counts)}) "

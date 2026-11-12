@@ -1311,22 +1311,20 @@ From a `main` checkout (formats and keys no release had):
   writes instead of the decline is replaced by the no-context reply (invoke and stream), and a streamed decline
   keeps the space at a chunk boundary after the token (#607). See
   [evaluate](docs/guides/evaluate.md#unanswerable-questions-and-declines).
-- Evaluation of open-ended answers, all opt-in: the
-  pairwise judge reports win rates per answer-length bucket in estimated tokens (symmetric in the log ratio) and
-  their correlation with length;
-  `evaluation.pairwise_mode: differential` (`run-eval --pairwise-mode differential`, model role
-  `models.roles.pairwise_overlap`, its output limit `models.default_max_output_tokens` above the judge effort's
-  thinking budget) judges only the statements unique to each answer, split in both answer slots and averaged
-  (`slots.<criterion>.slot_effect` reports the split model's slot preference: one slot gave an A/A pair 0.645), two
-  fast and four judge calls per pair; the `assertion` evaluator
+- Evaluation of open-ended answers, all opt-in: the pairwise judge reports win rates per answer-length bucket in
+  estimated tokens (symmetric in the log ratio) and their correlation with length; `evaluation.pairwise_mode:
+  differential` (`run-eval --pairwise-mode differential`, model role `models.roles.pairwise_overlap`, its output limit
+  `models.default_max_output_tokens` above the judge effort's thinking budget) judges only the statements unique to each
+  answer, split in both answer slots and averaged (`slots.<criterion>.slot_effect` reports the split model's slot
+  preference: one slot gave an A/A pair 0.645), two fast and four judge calls per pair; the `assertion` evaluator
   (`assertion_recall`, `assertion_contradiction_rate`, `negative_assertion_violation_rate`;
   `evaluation.assertion_trials`, a majority over trials in distinct assertion orders, every judge call within
-  `processing.max_concurrency`) scores a dataset's `assertions`; `prepare-benchmark assertions` generates questions
-  in five classes and source-cited assertions from your corpus, after Microsoft BenchmarkQED (MIT; no BenchmarkQED
-  data used); `run-eval --closed-book` adds an answer-model-only arm without retrieval, and `deltas_by_closed_book`
-  splits the other runs' deltas into the questions it knows (a primary-metric mean of at least 0.5 over its repeats,
-  a failed answer counting 0) and those it does not, exploratory (#595, #606). See
-  [evaluation](docs/guides/evaluate.md#assertions-length-control-and-a-closed-book-bound).
+  `processing.max_concurrency`) scores a dataset's `assertions`; `prepare-benchmark assertions` generates questions in
+  five classes and source-cited assertions from your corpus, after Microsoft BenchmarkQED (MIT; no BenchmarkQED data
+  used), and exits 1 writing nothing when it generates no question; `run-eval --closed-book` adds an answer-model-only
+  arm without retrieval, and `deltas_by_closed_book` splits the other runs' deltas into the questions it knows (a
+  primary-metric mean of at least 0.5 over its repeats, a failed answer counting 0) and those it does not, exploratory
+  (#595, #606). See [evaluation](docs/guides/evaluate.md#assertions-length-control-and-a-closed-book-bound).
 - Comparison cost: per strategy calls, tokens and latency per query (mean, p50, p95) with paired deltas, a USD
   estimate from an optional `evaluation.prices` table (cache read and write rates too), and per-query CSV and
   Markdown; a failed answer counts with what it spent (#526, #529, #533).

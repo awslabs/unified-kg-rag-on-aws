@@ -358,7 +358,9 @@ run-eval --data-path eval.json --search-strategy local,mix --repeats 2 \
    질문마다 한 번 부르고, 텍스트 단위를 최대 `--max-units`개 임베딩하며, 쓴 호출과 토큰을
    출력합니다(`evaluation.prices`가 있으면 USD 추정치도). 질문과 단언문은 `--language`
    (기본값 `processing.translation.source_language`)로 씁니다. 같은 시드와 같은 모델 응답이면
-   같은 파일이 나옵니다.
+   같은 파일이 나옵니다. 실패한 호출은 그 항목만 버리고 보고서에 셉니다. 질문을 하나도 만들지
+   못하면 아무것도 쓰지 않고 버린 항목을 밝히며 1로 종료하고, 모델 서버에 연결할 수 없으면 바로
+   멈춥니다.
 2. 답변을 단언문으로 채점하고 길이 편향 없이 맞비교합니다.
 
    ```bash
