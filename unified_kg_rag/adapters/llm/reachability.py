@@ -18,10 +18,13 @@ from __future__ import annotations
 import socket
 from urllib.parse import urlsplit
 
+from unified_kg_rag.adapters.llm.retry import _http_status, looks_transient
 from unified_kg_rag.domain.models import Config, ModelRole
 from unified_kg_rag.domain.models.provider_config import BEDROCK, OLLAMA
 from unified_kg_rag.shared.exceptions import (
     AWSServiceError,
+    GraphRAGException,
+    LanguageModelError,
     ModelUnreachableError,
     causes,
 )
@@ -184,3 +187,23 @@ def model_unreachable_error(
         f"A model server could not be reached ({type(exc).__name__}): {named}. "
         f"{_hint(config, servers)}"
     )
+
+
+def named_model_error(exc: BaseException, config: Config) -> BaseException:
+    """``exc`` as the package names a failed model call: a model server that
+    cannot be reached as the :class:`ModelUnreachableError` naming it
+    (:func:`model_unreachable_error`), a model client's own error that
+    reached the caller after its retries (one with an HTTP status, or a
+    transport error: Ollama's ``ResponseError``, httpx's
+    ``RemoteProtocolError`` or ``ReadTimeout``) as a
+    :class:`LanguageModelError`; any other (the package's own, a store's)
+    as is."""
+    if is_unreachable_error(exc):
+        return model_unreachable_error(exc, config)
+    if isinstance(exc, GraphRAGException):
+        return exc
+    if _http_status(exc) is not None or looks_transient(exc):
+        return LanguageModelError(
+            f"A language model call failed ({type(exc).__name__}): {exc}"
+        )
+    return exc

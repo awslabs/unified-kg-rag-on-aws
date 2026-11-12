@@ -124,8 +124,13 @@ async def find_entities(
     as the strategies link one (``linking.exact_links``: an Arabic alef
     without its hamza, ``ё`` as ``е``, a leading ``شركة``) is a ``name``
     match.
+
+    Raises:
+        IndexNotFoundError: Nothing was ingested under ``suffix`` (checked
+            first, as a query is: no retrieval logs its failure).
     """
     suffix = resolve_namespace(chain.config, suffix)
+    await require_namespace(chain, suffix)
     entity_id, iri, name = (
         unicodedata.normalize("NFC", v) if v else v for v in (entity_id, iri, name)
     )

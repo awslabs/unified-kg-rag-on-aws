@@ -25,8 +25,11 @@ import yaml
 from unified_kg_rag.application.config import ConfigLoader, env_var
 from unified_kg_rag.domain.models import Config, Methodology
 from unified_kg_rag.domain.models.config import unknown_keys
+from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import ConfigurationError
 from unified_kg_rag.shared.utils.files import atomic_write_text
+
+logger = get_logger(__name__)
 
 MASK = "********"
 # The tracing variables the observability panel reports as set or not.
@@ -511,4 +514,15 @@ class SettingsFile:
         if moved and sorted(confirm_directories or []) != sorted(moved):
             raise DirectoriesNotConfirmed(moved)
         atomic_write_text(self.path, text)
-        return {"sha": digest(text), **result}
+        sha = digest(text)
+        # What changed, when (the log line's time): key paths, never values.
+        logger.info(
+            "Saved the config file '%s' (sha %s, was %s); endpoints changed: "
+            "%s; directories changed: %s",
+            self.path.name,
+            sha[:12],
+            base_sha[:12],
+            ", ".join(changed) or "none",
+            ", ".join(moved) or "none",
+        )
+        return {"sha": sha, **result}

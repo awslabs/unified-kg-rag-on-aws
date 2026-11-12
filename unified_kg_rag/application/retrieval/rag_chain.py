@@ -19,7 +19,7 @@ from collections.abc import (
     Iterator,
 )
 from contextlib import AbstractContextManager, aclosing, nullcontext
-from typing import Any, Literal, TypeVar, cast
+from typing import Any, Literal, Self, TypeVar, cast
 
 from langchain_core.exceptions import OutputParserException
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
@@ -56,7 +56,7 @@ from unified_kg_rag.adapters.llm.chain_factory import (
 )
 from unified_kg_rag.adapters.llm.reachability import (
     is_unreachable_error,
-    model_unreachable_error,
+    named_model_error,
 )
 from unified_kg_rag.adapters.llm.retry import retry_deadline
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
@@ -1684,8 +1684,22 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             if runner is not None:
                 await asyncio.to_thread(runner.stop)
 
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *_: object) -> None:
+        await self.aclose()
+
     def close(self) -> None:
-        """Synchronous teardown of cached retrievers and the sync-API loop."""
+        """Synchronous teardown of cached retrievers and the sync-API loop
+        (``with GraphRAGChain(...) as chain:`` calls it; ``async with``
+        calls :meth:`aclose`)."""
         extractions = getattr(self, "_background_extractions", None)
         if extractions is not None:
             extractions.cancel()
@@ -2587,12 +2601,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 return output
         except Exception as raised:
             # A model server that cannot be reached, named (provider kind,
-            # base_url) rather than as its transport's error.
-            e = (
-                model_unreachable_error(raised, self.config)
-                if is_unreachable_error(raised)
-                else raised
-            )
+            # base_url), and a model client's own error as a
+            # LanguageModelError, rather than as its transport's error.
+            e = named_model_error(raised, self.config)
             if not self.ignore_errors:
                 if e is raised:
                     raise
@@ -3431,8 +3442,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                     text_digest(rag_input.query),
                     error_digest(e),
                 )
-                if is_unreachable_error(e):
-                    raise model_unreachable_error(e, self.config) from e
+                if (named := named_model_error(e, self.config)) is not e:
+                    raise named from e
                 raise
             logger.error(
                 "RAG stream failed for query %s after %s chunk(s): %s",

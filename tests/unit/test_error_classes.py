@@ -139,6 +139,32 @@ def test_an_unreachable_model_server_is_told_apart(
     assert is_unreachable_error(error) is unreachable
 
 
+def test_a_model_clients_own_error_is_named_a_language_model_error() -> None:
+    # Regression (rv24): ainvoke on a failing model raised Ollama's raw
+    # ResponseError or httpx's RemoteProtocolError / ReadTimeout, not the
+    # ModelError the API documents.
+    from unified_kg_rag.adapters.llm.reachability import named_model_error
+
+    class ResponseError(Exception):  # ollama's, with its status
+        status_code = 404
+
+    config = Config()
+    for raw in (
+        ResponseError("model 'x' not found"),
+        httpx.RemoteProtocolError("peer closed connection"),
+        httpx.ReadTimeout("timed out"),
+    ):
+        named = named_model_error(raw, config)
+        assert isinstance(named, x.LanguageModelError), raw
+        assert type(raw).__name__ in str(named)
+    assert isinstance(
+        named_model_error(httpx.ConnectError("refused"), config),
+        x.ModelUnreachableError,
+    )
+    for kept in (RuntimeError("a bug"), x.StoreConnectionError("down"), KeyError("k")):
+        assert named_model_error(kept, config) is kept
+
+
 def test_the_openai_clients_connection_error_is_unreachable_not_its_timeout() -> None:
     connection, timeout = _openai_errors()
     assert is_unreachable_error(connection)

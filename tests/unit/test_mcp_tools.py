@@ -1018,6 +1018,9 @@ async def test_exact_lookups_read_the_value_in_nfc(
         def _get_retriever(self, role: Any) -> Retriever:
             return Retriever()
 
+        async def _arequire_namespace(self, suffix: str | None) -> None:
+            return None
+
     async def artifacts(*_args: Any, **_kwargs: Any) -> frozenset[IndexArtifact]:
         return frozenset(IndexArtifact)
 

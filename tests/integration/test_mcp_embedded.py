@@ -253,15 +253,26 @@ async def test_kg_describe_schema_lists_what_the_namespace_holds(
 
 
 async def test_kg_describe_schema_of_a_namespace_nothing_was_ingested_under(
-    index: Index,
+    index: Index, caplog: pytest.LogCaptureFixture
 ) -> None:
     # It listed the config's methodologies and 11 strategies for a typo'd
     # namespace, with no exists field; a search on it is index_not_found.
+    import logging
+
+    from unified_kg_rag.shared.exceptions import IndexNotFoundError
+
     config = index.config.model_copy(deep=True)
     config.mcp.allowed_namespaces = ["nosuch"]
     chain = GraphRAGChain(config, providers=index.providers)
     try:
-        result = await KnowledgeGraphTools(chain).describe_schema(namespace="nosuch")
+        tools = KnowledgeGraphTools(chain)
+        result = await tools.describe_schema(namespace="nosuch")
+        # A graph tool checks the namespace first, as a query does: no
+        # retrieval failure is logged with its traceback for it.
+        with caplog.at_level(logging.ERROR):
+            with pytest.raises(IndexNotFoundError, match="nosuch"):
+                await tools.get_entity(name="Depot", namespace="nosuch")
+        assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
     finally:
         await chain.aclose()
     assert result.namespace == "nosuch" and not result.exists

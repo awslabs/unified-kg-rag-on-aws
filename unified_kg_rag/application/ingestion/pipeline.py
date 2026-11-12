@@ -14,7 +14,7 @@ from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, S
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from datetime import datetime
 from pathlib import Path
-from typing import Any, TypeVar, cast
+from typing import Any, Self, TypeVar, cast
 
 from pydantic import BaseModel
 from structlog.contextvars import bind_contextvars, reset_contextvars
@@ -660,8 +660,15 @@ class DataIngestionPipeline:
             )
         return True
 
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
+
     def close(self) -> None:
-        """Release backend clients owned by the pipeline's stages.
+        """Release backend clients owned by the pipeline's stages
+        (``with DataIngestionPipeline(...) as pipeline:`` calls it).
 
         Only the indexing stage holds long-lived Neptune/OpenSearch connections;
         every other stage's ``close`` is a no-op. Best-effort: never raises, so

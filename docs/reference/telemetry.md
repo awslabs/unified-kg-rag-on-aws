@@ -103,7 +103,9 @@ the Bedrock language model clients; a throttling error inside a response
 stream is not counted). So Bedrock's
 CloudWatch `Invocations` can exceed `llm_calls` by up to `request_retries +
 failed_calls`, plus any calls made outside a usage scope (the `run-eval`
-warm-up queries). A call that has not answered when the
+warm-up queries), plus every embedding call: the usage counts language
+model calls only (an embedding span has its text and character counts, no
+tokens or price). A call that has not answered when the
 usage is read (an `auto` query's unread extraction, still running in the
 background) or was cancelled in flight (by `search.query_timeout_seconds`,
 say) was sent and is billed, so it counts in `llm_calls` and in

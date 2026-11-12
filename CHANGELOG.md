@@ -2163,6 +2163,12 @@ CLIs, configuration and library.
   handler gets the plain message, and importing the package configures no logging and leaves `sys.path` alone (#178,
   #245, #251, #255, #528).
 - `index_settings` keys reach the indices in either spelling (#260, #404).
+- A query whose model client fails with its own error after its retries (Ollama's `ResponseError`, httpx's
+  `RemoteProtocolError` or `ReadTimeout`) raises a `LanguageModelError` (a `ModelError`, as documented), the client's
+  error as its cause; it raised the raw error. `GraphRAGChain` and `DataIngestionPipeline` are context managers
+  (`with`, and `async with` for the chain, close them), and the console logs each config file save (the key paths of
+  the endpoints and directories it changed, never values). The MCP graph tools check the namespace first, as a
+  query does: one nothing was ingested under no longer logs a retrieval failure with its traceback per call.
 
 Deployment (CDK).
 - With a `bedrock_region` other than the deploy region the dashboard's Bedrock widgets read that region, where the

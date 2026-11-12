@@ -214,3 +214,25 @@ async def test_global_search_on_a_namespace_without_reports_says_so() -> None:
     assert GraphRAGChain._no_context_reason(state) == "no_reports"
     result.metadata.pop("no_context_reason")
     assert GraphRAGChain._no_context_reason(state) == "no_context"
+
+
+async def test_a_chain_closes_at_the_end_of_its_with_block() -> None:
+    # The guide says "always close()/aclose()"; the chain had no context
+    # manager to do it.
+    chain = _chain(_Retriever({"default"}), _Factory(), Config())
+    release = chain.aclose
+    closed: list[str] = []
+    chain.aclose = lambda: _record(closed, "aclose")  # type: ignore[method-assign]
+    chain.close = lambda: closed.append("close")  # type: ignore[method-assign]
+    try:
+        async with chain as entered:
+            assert entered is chain
+        with chain as entered:
+            assert entered is chain
+    finally:
+        await release()
+    assert closed == ["aclose", "close"]
+
+
+async def _record(closed: list[str], name: str) -> None:
+    closed.append(name)

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import time
 from collections.abc import Iterator
@@ -840,7 +841,10 @@ def test_one_job_per_namespace_and_stop_ends_it_as_the_cli_stops(
 
 
 def test_settings_show_validate_diff_and_save_the_file(
-    client: Any, workspace: Path, restore_config: None
+    client: Any,
+    workspace: Path,
+    restore_config: None,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     view = client.get("/api/config").json()
     assert view["path"] == str(workspace / "config.yaml")
@@ -868,12 +872,17 @@ def test_settings_show_validate_diff_and_save_the_file(
         headers=HEADERS,
     )
     assert stale.status_code == 400 and "changed on disk" in stale.json()["error"]
-    saved = client.post(
-        "/api/config/save",
-        json={"text": preview["text"], "base_sha": view["sha"]},
-        headers=HEADERS,
-    )
+    with caplog.at_level(logging.INFO, logger="unified_kg_rag"):
+        saved = client.post(
+            "/api/config/save",
+            json={"text": preview["text"], "base_sha": view["sha"]},
+            headers=HEADERS,
+        )
     assert saved.status_code == 200, saved.text
+    # What changed, when: a log line of the save (it wrote none).
+    assert any(
+        "Saved the config file 'config.yaml'" in r.getMessage() for r in caplog.records
+    )
     assert (
         yaml.safe_load((workspace / "config.yaml").read_text())["processing"][
             "ignore_errors"

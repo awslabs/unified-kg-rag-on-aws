@@ -909,6 +909,32 @@ async def test_a_failed_query_is_counted_and_a_search_is_not(
     assert dimensions["Strategy"] == "simple"
 
 
+async def test_a_model_clients_own_error_reaches_the_caller_as_a_model_error() -> None:
+    from unified_kg_rag.shared.exceptions import LanguageModelError
+
+    class ResponseError(Exception):  # Ollama's: an unknown model
+        status_code = 404
+
+    class _Refused(GenericFakeChatModel):
+        def _generate(self, *args: Any, **kwargs: Any) -> Any:
+            raise ResponseError("model 'x' not found")
+
+        async def _agenerate(self, *args: Any, **kwargs: Any) -> Any:
+            raise ResponseError("model 'x' not found")
+
+    class _Factory(_FakeModelFactory):
+        def get_model(self, model_id: Any, **kwargs: Any) -> Any:
+            return _Refused(messages=iter(()))
+
+    chain = _simple_chain(model_factory=_Factory())
+    try:
+        with pytest.raises(LanguageModelError, match="ResponseError") as raised:
+            await chain.ainvoke(_SIMPLE_QUERY)
+    finally:
+        await chain.aclose()
+    assert isinstance(raised.value.__cause__, ResponseError)
+
+
 async def test_captured_query_span_carries_redacted_query_and_answer(
     tracing: Tracing,
 ) -> None:
