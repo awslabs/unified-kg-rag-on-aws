@@ -76,9 +76,12 @@ stored is read again: follow *Upgrading* in order.
   Ingestion renders nothing: see *Configuration*.
 
 #### Configuration
-- Unknown keys, in the file or as `UKR__` variables, fail the load; `--allow-unknown-keys` (every CLI but
-  `prepare-benchmark`) or `allow_unknown_keys=True` (`get_config`, `ConfigLoader`) warns instead (#335). A moved key
-  fails naming its replacement, a removed key loads with a WARNING and is ignored: the generated [Moved
+- Unknown keys, in the file or as `UKR__` variables, fail the load, and `Config.model_validate` refuses them too;
+  `--allow-unknown-keys` (every CLI but `prepare-benchmark`) or `allow_unknown_keys=True` (`get_config`,
+  `ConfigLoader`) warns and drops them instead (#335). A moved key fails naming its replacement
+  (`processing.chunk_concurrency` and `processing.batch_size` are `processing.max_concurrency`, one pool of in-flight
+  calls, #296; `indexing.cross_run_fuzzy_merge` is `processing.fuzzy_entity_resolution`, #214), a removed key loads
+  with a WARNING and is ignored: the generated [Moved
   keys](docs/reference/configuration.md#moved-keys) and [Removed keys](docs/reference/configuration.md#removed-keys)
   tables list them (#334, #344, #467, #468, #470, #577). [`config-template.yaml`](config-template.yaml) is a short
   starting file; every key is in the [configuration reference](docs/reference/configuration.md) (#468).
@@ -108,7 +111,6 @@ stored is read again: follow *Upgrading* in order.
   - `search.global_search.max_communities`, `map_batch_size`, `max_text_units`: use `community_depth` (2),
     `max_reports_per_level` (100), `map_context_tokens` (12000); `text_unit_slots` is an integer, default `0`
     (#318). `graph_timeout_seconds` has no replacement (#161).
-  - `indexing.cross_run_fuzzy_merge` is `processing.fuzzy_entity_resolution` (#214).
   - No replacement: `graph.community_detection.report_generation.include_statistics` / `include_key_entities`
     (#214); `processing.gleaning.quality_threshold`, `convergence_threshold`, `convergence_change_scale`,
     `min_improvement_threshold`, `quality_completeness_weight`, `initial_quality_entity_scale`,
@@ -117,8 +119,6 @@ stored is read again: follow *Upgrading* in order.
     search fuses in the retriever, #306); `indexing.opensearch.terms_batch_size`, `max_total_clauses`,
     `reserved_clauses` (a list filter is one `terms` query; more values than `max_terms_count` raise
     `InvalidFilterError`, #258); `processing.chunking.content_type` (plain text, #289).
-  - `processing.chunk_concurrency` and `processing.batch_size` are `processing.max_concurrency`, one pool of
-    in-flight calls (#296).
 - Removed settings that change behaviour where you had set them (each loads with a WARNING):
   `search.reranking.enabled: false` no longer turns reranking off (set `providers.rerank.kind: none`);
   `search.fusion.method: weighted` fuses by RRF (weighted fusion is gone); `fixing.enabled: false` no longer stops

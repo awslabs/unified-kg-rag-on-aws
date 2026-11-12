@@ -22,8 +22,9 @@ from typing import Any
 
 import yaml
 
-from unified_kg_rag.application.config import ConfigLoader, env_var, unknown_keys
+from unified_kg_rag.application.config import ConfigLoader, env_var
 from unified_kg_rag.domain.models import Config, Methodology
+from unified_kg_rag.domain.models.config import unknown_keys
 from unified_kg_rag.shared.exceptions import ConfigurationError
 from unified_kg_rag.shared.utils.files import atomic_write_text
 

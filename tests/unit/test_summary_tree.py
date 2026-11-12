@@ -12,7 +12,6 @@ import numpy as np
 import pytest
 
 from tests.fixtures.collapsed_tree import collapsed_tree_reference
-from unified_kg_rag.application.config import unknown_keys
 from unified_kg_rag.domain.ingestion.summary_tree import (
     Cluster,
     Leaf,
@@ -33,7 +32,7 @@ from unified_kg_rag.domain.ingestion.summary_tree import (
     summary_input_key,
     uniform_filters,
 )
-from unified_kg_rag.domain.models.config import Config, SummaryTreeConfig
+from unified_kg_rag.domain.models.config import Config, SummaryTreeConfig, unknown_keys
 
 pytestmark = pytest.mark.unit
 

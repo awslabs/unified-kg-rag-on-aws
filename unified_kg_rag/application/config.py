@@ -3,10 +3,9 @@
 import json
 import logging
 import os
-import types
 from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Union, cast, get_args, get_origin
+from typing import TYPE_CHECKING, Annotated, Any, cast, get_args, get_origin
 
 import yaml
 from dotenv import load_dotenv
@@ -18,7 +17,10 @@ from unified_kg_rag.domain.models.config import (
     REMOVED_KEYS,
     merge_over,
     moved_key_hint,
+    nested_model,
     removed_keys,
+    unknown_keys,
+    without_keys,
 )
 from unified_kg_rag.domain.models.provider_config import SQLITE
 from unified_kg_rag.shared.exceptions import ConfigurationError
@@ -29,53 +31,6 @@ if TYPE_CHECKING:
 
 # Stdlib logger, as the config models log (domain.models.config).
 _logger = logging.getLogger(__name__)
-
-
-def _nested_model(annotation: Any) -> type[BaseModel] | None:
-    """The BaseModel behind ``Model`` / ``Model | None`` (not dict/list values)."""
-    if get_origin(annotation) not in (None, Union, types.UnionType):
-        return None
-    for candidate in get_args(annotation) or (annotation,):
-        if isinstance(candidate, type) and issubclass(candidate, BaseModel):
-            return candidate
-    return None
-
-
-def unknown_keys(data: Any, model: type[BaseModel], prefix: str = "") -> list[str]:
-    """The config keys in ``data`` the model does not define (pydantic would
-    drop them), as dotted paths. Moved keys are left out (validation refuses
-    them, naming their replacement), and so are removed ones (ignored with a
-    warning)."""
-    if not isinstance(data, dict):
-        return []
-    found: list[str] = []
-    for key, value in data.items():
-        path = f"{prefix}{key}"
-        field = model.model_fields.get(key)
-        if field is None:
-            if path not in MOVED_KEYS and path not in REMOVED_KEYS:
-                found.extend(_unknown_in_gone_section(path, value))
-            continue
-        nested = _nested_model(field.annotation)
-        if nested is not None:
-            found.extend(unknown_keys(value, nested, f"{path}."))
-    return found
-
-
-def _unknown_in_gone_section(path: str, value: Any) -> list[str]:
-    """The unknown keys at ``path``, a key no model defines: none of a
-    section that only holds moved or removed keys (``graph.analysis``,
-    whose last settings went) but the keys in it that are neither, else
-    ``path`` itself."""
-    gone = [*MOVED_KEYS, *REMOVED_KEYS]
-    if not isinstance(value, dict) or not any(k.startswith(f"{path}.") for k in gone):
-        return [path]
-    found: list[str] = []
-    for key, inner in value.items():
-        inner_path = f"{path}.{key}"
-        if inner_path not in MOVED_KEYS and inner_path not in REMOVED_KEYS:
-            found.extend(_unknown_in_gone_section(inner_path, inner))
-    return found
 
 
 DOTENV_FILENAME = ".env"
@@ -200,7 +155,7 @@ def _env_path(name: str) -> tuple[str, ...] | None:
         field = model.model_fields.get(segment)
         if field is None:
             return None
-        nested = _nested_model(field.annotation)
+        nested = nested_model(field.annotation)
         rest = len(segments) - position - 1
         if nested is not None:
             model = nested
@@ -287,6 +242,9 @@ class ConfigLoader:
         )
         where = f" (in '{self.config_path}')" if self.config_path else ""
         unknown = unknown_keys(config_data, Config)
+        # Refused or warned on below (_check_unknown), after the errors the
+        # rest of the config has; the model refuses them too.
+        config_data = without_keys(config_data, unknown)
         for path in removed_keys(config_data):
             _warn_removed(f"'{path}'{where}", path)
         try:
@@ -471,7 +429,7 @@ def _mapping_path(path: tuple[str, ...]) -> tuple[str, ...] | None:
         field = model.model_fields[segment]
         if _is_mapping(field.annotation):
             return path[: position + 1]
-        nested = _nested_model(field.annotation)
+        nested = nested_model(field.annotation)
         if nested is None:
             return None
         model = nested

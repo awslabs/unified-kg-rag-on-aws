@@ -36,8 +36,9 @@ The file is validated when it loads. A wrong type or value
 (`Configuration validation error: ...`), invalid YAML, a missing
 `--config-path` file and an unknown key (in the file or as a `UKR__` variable)
 are usage errors (exit 2). Unknown keys are refused because a misspelled key
-silently keeps its default; `--allow-unknown-keys`
-(`allow_unknown_keys=True` for `get_config`) logs a WARNING per key instead.
+silently keeps its default (`Config.model_validate` in Python refuses them
+too); `--allow-unknown-keys` (`allow_unknown_keys=True` for `get_config`) logs
+a WARNING per key and drops it instead.
 A moved key fails naming its replacement
 ([Moved keys](../reference/configuration.md#moved-keys)).
 

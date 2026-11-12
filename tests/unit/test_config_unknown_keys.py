@@ -20,9 +20,9 @@ import pytest
 import yaml
 
 from tests.fixtures.config_template import uncommented_template
-from unified_kg_rag.application.config import ConfigLoader, env_var, unknown_keys
+from unified_kg_rag.application.config import ConfigLoader, env_var
 from unified_kg_rag.domain.models import Config
-from unified_kg_rag.domain.models.config import MOVED_KEYS, REMOVED_KEYS
+from unified_kg_rag.domain.models.config import MOVED_KEYS, REMOVED_KEYS, unknown_keys
 from unified_kg_rag.shared import ConfigurationError
 
 pytestmark = pytest.mark.unit
@@ -360,3 +360,34 @@ def test_the_old_output_cap_key_fails_naming_its_replacement(
     assert (
         ConfigLoader(config_file).load_config().models.default_max_output_tokens == 4096
     )
+
+
+def test_the_model_refuses_unknown_keys_without_the_loader() -> None:
+    # Config is public: a library caller validating a mapping got the
+    # default for a misspelled key.
+    from pydantic import ValidationError
+
+    data = {"search": {"local_search": {"entity_frequency_treshold": 5}}, "serch": {}}
+    with pytest.raises(ValidationError) as raised:
+        Config.model_validate(data)
+    message = str(raised.value)
+    assert "search.local_search.entity_frequency_treshold" in message
+    assert "serch" in message
+
+
+def test_a_removed_key_still_validates_and_is_ignored() -> None:
+    assert Config.model_validate({"fixing": {"enabled": False}}) == Config()
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("processing.chunk_concurrency", "processing.max_concurrency"),
+        ("processing.batch_size", "processing.max_concurrency (it counted"),
+        ("indexing.cross_run_fuzzy_merge", "processing.fuzzy_entity_resolution"),
+    ],
+)
+def test_the_renamed_0_2_3_keys_name_their_replacement(old: str, new: str) -> None:
+    section, key = old.split(".")
+    with pytest.raises(ValueError, match=re.escape(f"{old} -> {new}")):
+        Config.model_validate({section: {key: 4}})

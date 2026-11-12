@@ -41,7 +41,6 @@ from unified_kg_rag.adapters.search_strategies.lightrag_search import (
 from unified_kg_rag.adapters.search_strategies.local_search import (
     LocalSearchStrategy,
 )
-from unified_kg_rag.application.config import unknown_keys
 from unified_kg_rag.application.retrieval import query_processing
 from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
 from unified_kg_rag.domain.models import (
@@ -53,7 +52,7 @@ from unified_kg_rag.domain.models import (
     SearchResult,
     SearchStrategy,
 )
-from unified_kg_rag.domain.models.config import LanguageCode
+from unified_kg_rag.domain.models.config import LanguageCode, unknown_keys
 from unified_kg_rag.domain.models.methodology import METHODOLOGY_PROFILES
 from unified_kg_rag.shared import ConfigurationError
 

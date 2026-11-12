@@ -382,7 +382,8 @@ checks that its values are the defaults and each key is in the reference).
   layers: defaults < `backend` preset < file < environment. `UKR__<SECTION>__<KEY>`
   sets any key, resolved against the model tree (no variable table to keep in
   step); `AWS_PROFILE` / `AWS_REGION` fill only keys the file leaves unset. Unknown keys fail the
-  load unless `allow_unknown_keys`, a moved key (`MOVED_KEYS`) fails
+  load (`Config`'s own validator refuses them, `unknown_keys`) unless
+  `allow_unknown_keys`, which drops them first; a moved key (`MOVED_KEYS`) fails
   naming its replacement, and a removed key (`REMOVED_KEYS`) logs a warning
   and is ignored. `Config` keeps the input it was validated from, so
   `with_provider_overrides` (the CLI provider flags) rebuilds from it plus

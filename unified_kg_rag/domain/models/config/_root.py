@@ -45,7 +45,7 @@ from ._graph import GraphConfig
 from ._indexing import IndexingConfig
 from ._mcp import McpServerConfig
 from ._merge import _changes, _plain, merge_over
-from ._migration import moved_keys
+from ._migration import moved_keys, unknown_keys
 from ._models import (
     DEFAULT_MODEL_ID,
     FAST_MODEL_ID,
@@ -135,12 +135,19 @@ class Config(BaseModel):
     def _apply_backend_preset(
         cls, data: Any, handler: ModelWrapValidatorHandler["Config"]
     ) -> "Config":
-        """Refuse the moved keys, fill in the ``backend`` preset under the
-        keys the config sets, and keep the input it was given."""
+        """Refuse the moved and unknown keys, fill in the ``backend`` preset
+        under the keys the config sets, and keep the input it was given."""
         if not isinstance(data, dict):
             return handler(data)
         if moved := moved_keys(data):
             raise ValueError("settings moved; replace " + "; ".join(moved))
+        if unknown := unknown_keys(data, cls):
+            # A misspelled key would leave its setting at the default (a
+            # guardrail identifier under the wrong key leaves queries
+            # unscreened). ConfigLoader(allow_unknown_keys=True) strips them.
+            raise ValueError(
+                "unknown config keys: " + ", ".join(unknown) + " (fix or remove them)"
+            )
         config = handler(apply_backend_preset(data))
         config._input = _plain(data)
         return config

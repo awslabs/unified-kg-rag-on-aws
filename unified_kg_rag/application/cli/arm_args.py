@@ -24,13 +24,13 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from unified_kg_rag.application.config import (
-    ConfigLoader,
-    resolve_relative_paths,
-    unknown_keys,
-)
+from unified_kg_rag.application.config import ConfigLoader, resolve_relative_paths
 from unified_kg_rag.domain.models import Config, ModelRole
-from unified_kg_rag.domain.models.config import merge_over
+from unified_kg_rag.domain.models.config import (
+    merge_over,
+    unknown_keys,
+    without_keys,
+)
 from unified_kg_rag.shared.exceptions import ConfigurationError
 from unified_kg_rag.shared.utils.validation import format_validation_errors
 
@@ -141,6 +141,7 @@ def arm_config(
             f"{', '.join(repr(k) for k in unknown)} in '{path}' (fix or remove "
             "them, or pass --allow-unknown-keys)"
         )
+    data = without_keys(data, unknown)
     warnings = []
     if "evaluation" in data:
         warnings.append(

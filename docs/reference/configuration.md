@@ -1196,11 +1196,15 @@ These keys are refused at load with the key that replaced them.
 | `evaluation.ragas_max_attempts` | `retry.judge_max_attempts` |
 | `processing.max_retries` | `retry.max_attempts` |
 | `indexing.neptune.max_retries` | `retry.graph_store_max_attempts` |
+| `processing.chunk_concurrency` | `processing.max_concurrency` |
+| `processing.batch_size` | `processing.max_concurrency` |
+| `indexing.cross_run_fuzzy_merge` | `processing.fuzzy_entity_resolution` |
 
 Each takes the value of the key it replaces, except:
 
 - `processing.max_retries`: it had no effect; each model call made 5 attempts, the retry.max_attempts default.
 - `indexing.neptune.max_retries`: it counted retries, so max_retries N is graph_store_max_attempts N+1.
+- `processing.batch_size`: it counted the items of one batch, not calls in flight; max_concurrency caps the calls.
 
 ## Removed keys
 
