@@ -4,18 +4,22 @@
 ``processing.translation.source_language``.
 
 Pure: the sample's letters are counted by script (``shared.utils.scripts``)
-and its words kept, and the language is read by the rule a query's is
-(:func:`~unified_kg_rag.domain.languages.detection.script_language`): Han,
-Hangul and Kana by their shares (Korean written with Hanja is Korean), a
-script one language writes as that language (Cyrillic, Arabic, Thai, ...),
-and the languages of one script (Latin) by their function words. Wide
-margins keep a technical corpus quoting another script from being judged
-by its quotes.
+and its words kept, and each document's language is read by the rule a
+query's is (:func:`~unified_kg_rag.domain.languages.detection.script_language`):
+Han, Hangul and Kana by their shares (Korean written with Hanja is Korean),
+a script one language writes as that language (Cyrillic, Arabic, Thai, ...),
+and the languages of one script (Latin) by their function words. The corpus
+reads as the language most of its documents read as: pooled, one Korean
+document's Hangul runs outweighed the function words of several English
+ones. Wide margins keep a technical corpus quoting another script from
+being judged by its quotes.
 """
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Iterable
+from dataclasses import dataclass
 from itertools import islice
 
 from unified_kg_rag.domain.languages.codes import LanguageCode
@@ -54,16 +58,26 @@ _MINORITY = 0.2
 _MAJORITY = 0.5
 
 
-# A corpus sample: what its texts tell of their language.
-CorpusSample = TextEvidence
+@dataclass(frozen=True)
+class CorpusSample:
+    """What a corpus sample's texts tell of their language: the evidence of
+    each (``detection.text_evidence``) and of all of them."""
+
+    documents: tuple[TextEvidence, ...]
+    pooled: TextEvidence
+
+    @property
+    def counts(self) -> ScriptCounts:
+        """The letters of all the sampled texts, by script."""
+        return self.pooled.counts
 
 
 def corpus_sample(texts: Iterable[str]) -> CorpusSample:
     """The first :data:`SAMPLE_CHARS` characters of each of the first
-    :data:`SAMPLE_DOCUMENTS` texts, as the evidence of their language
-    (``detection.text_evidence``)."""
-    return text_evidence(
-        text[:SAMPLE_CHARS] for text in islice(texts, SAMPLE_DOCUMENTS)
+    :data:`SAMPLE_DOCUMENTS` texts, as the evidence of their language."""
+    sampled = [text[:SAMPLE_CHARS] for text in islice(texts, SAMPLE_DOCUMENTS)]
+    return CorpusSample(
+        tuple(text_evidence([text]) for text in sampled), text_evidence(sampled)
     )
 
 
@@ -83,19 +97,40 @@ def _script_label(group: str) -> str:
     return "Hangul, Kana or Han" if group == "dense" else group.capitalize()
 
 
-def corpus_language(
-    sample: CorpusSample, fallback: LanguageCode | None = None
+def _evidence_language(
+    evidence: TextEvidence, fallback: LanguageCode | None
 ) -> LanguageCode | None:
-    """The language ``sample`` reads as (``script_language``; ``fallback``
+    """The language ``evidence`` reads as (``script_language``; ``fallback``
     breaks a function-word tie), or ``None`` when its letters are too few or
     no script holds the majority of them."""
-    counts = sample.counts
+    counts = evidence.counts
     if counts.letters < _MIN_LETTERS:
         return None
     dominant = counts.dominant()
     if dominant is None or _share(counts, dominant) <= _MAJORITY:
         return None
-    return script_language(sample, fallback)
+    return script_language(evidence, fallback)
+
+
+def corpus_language(
+    sample: CorpusSample, fallback: LanguageCode | None = None
+) -> LanguageCode | None:
+    """The language most of ``sample``'s documents read as
+    (:func:`_evidence_language`; ``fallback`` among those tied, else
+    ``None``), or, when none of them decides alone (a corpus of a few short
+    sentences), the language all of them read as."""
+    votes = Counter(
+        language
+        for document in sample.documents
+        if (language := _evidence_language(document, fallback)) is not None
+    )
+    if not votes:
+        return _evidence_language(sample.pooled, fallback)
+    most = max(votes.values())
+    leaders = [language for language, count in votes.items() if count == most]
+    if len(leaders) == 1:
+        return leaders[0]
+    return fallback if fallback in leaders else None
 
 
 def source_language_mismatch(

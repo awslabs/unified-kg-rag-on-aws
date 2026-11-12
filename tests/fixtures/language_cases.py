@@ -1,9 +1,10 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""The regression corpus of language detection, number reading, answer
-containment, router answers and name folding: every case the query
-reviews rv9 to rv14 (and the evaluation reviews since) probed or
-reported, with the answer they stated as right.
+"""The regression corpus of language detection (a question's and a corpus
+sample's), number reading, answer containment, router answers and name
+folding: every case the query reviews rv9 to rv14 (and the evaluation and
+surfaces reviews since) probed or reported, with the answer they stated as
+right.
 
 A case the code answers otherwise is a documented trade-off: it carries
 the answer the code gives and why (``Tradeoff``), so a change that moves
@@ -20,12 +21,15 @@ from dataclasses import dataclass
 
 __all__ = [
     "CONTAINS",
+    "CORPORA",
     "COVERS",
     "DETECTION",
+    "DOCUMENT_BREAK",
     "NUMBERS",
     "ROUTER",
     "Case",
     "Tradeoff",
+    "corpus_documents",
     "corpus_score",
 ]
 
@@ -2484,4 +2488,62 @@ CONTAINS: tuple[Case, ...] = (
     Case("نعم، لا يوجد دين.", 0.0, "ar", "rv23 eval 3", gold="لا"),
     Case("لا، لم توقع الشركة.", 1.0, "ar", "rv23 eval 3", gold="لا"),
     Case("いいえ、違います。", 0.0, "ja", "rv23 eval 3", gold="はい"),
+)
+
+
+# A corpus case's documents are its text split on this character.
+DOCUMENT_BREAK = "\f"
+
+
+def corpus_documents(case: Case) -> list[str]:
+    """The documents of a corpus case (:data:`CORPORA`)."""
+    return case.text.split(DOCUMENT_BREAK)
+
+
+def _document(sentences: str) -> str:
+    """A document of 2,000 characters, the most a corpus sample reads of
+    each (``domain.languages.corpus.SAMPLE_CHARS``)."""
+    return (sentences * (2000 // len(sentences) + 1))[:2000]
+
+
+_ENGLISH_DOCUMENT = _document(
+    "The Vendor ships the spare parts to the Buyer within thirty days of the "
+    "order. If a delivery is late, the Buyer may claim a credit for each week "
+    "of delay, and the Vendor must repair or replace any part that fails "
+    "during the warranty period. "
+)
+_KOREAN_DOCUMENT = _document(
+    "공급자는 주문일로부터 삼십 일 이내에 예비 부품을 구매자에게 납품한다. "
+    "납품이 지연되면 구매자는 지연된 주마다 공제를 청구할 수 있으며, 공급자는 "
+    "보증 기간 중 고장 난 부품을 수리하거나 교체해야 한다. "
+)
+_JAPANESE_DOCUMENT = _document(
+    "供給者は注文日から三十日以内に予備部品を購入者に納品する。納品が遅れた場合、"
+    "購入者は遅延した週ごとに控除を請求でき、供給者は保証期間中に故障した部品を"
+    "修理または交換しなければならない。"
+)
+
+
+def _corpus(*documents: tuple[str, int]) -> str:
+    return DOCUMENT_BREAK.join(text for text, count in documents for _ in range(count))
+
+
+# Mixed corpora (the first documents a corpus sample reads): the language
+# most of the documents read as. Pooled, one Korean document's Hangul runs
+# outweighed the English function words of four to six English ones
+# (rv23 surfaces 2), so prompt tuning wrote source_language 'ko' for a
+# corpus that is about 85% English.
+CORPORA: tuple[Case, ...] = (
+    Case(_corpus((_ENGLISH_DOCUMENT, 4), (_KOREAN_DOCUMENT, 1)), "en", None, "rv23"),
+    Case(_corpus((_ENGLISH_DOCUMENT, 5), (_KOREAN_DOCUMENT, 1)), "en", None, "rv23"),
+    Case(_corpus((_ENGLISH_DOCUMENT, 6), (_KOREAN_DOCUMENT, 1)), "en", None, "rv23"),
+    Case(_corpus((_ENGLISH_DOCUMENT, 2), (_KOREAN_DOCUMENT, 1)), "en", None, "rv23"),
+    Case(_corpus((_ENGLISH_DOCUMENT, 8), (_KOREAN_DOCUMENT, 1)), "en", None, "rv23"),
+    Case(_corpus((_ENGLISH_DOCUMENT, 4), (_JAPANESE_DOCUMENT, 1)), "en", None, "rv23"),
+    Case(_corpus((_KOREAN_DOCUMENT, 4), (_ENGLISH_DOCUMENT, 1)), "ko", None, "rv23"),
+    Case(_corpus((_JAPANESE_DOCUMENT, 4), (_ENGLISH_DOCUMENT, 1)), "ja", None, "rv23"),
+    # As many documents of each: no language holds most of them.
+    Case(_corpus((_ENGLISH_DOCUMENT, 1), (_KOREAN_DOCUMENT, 1)), None, None, "rv23"),
+    # ... unless the index language is one of those tied.
+    Case(_corpus((_ENGLISH_DOCUMENT, 1), (_KOREAN_DOCUMENT, 1)), "ko", "ko", "rv23"),
 )
