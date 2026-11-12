@@ -1438,8 +1438,8 @@ From a `main` checkout (formats and keys no release had):
   alarms (CPU, old-generation heap, nodes, shards per GiB of heap, 5xx share, queues, dedicated masters), a yellow
   multi-node cluster, an unusable KMS key, Neptune reader CPU and replica lag, doc-status read throttles and system
   errors, ephemeral storage, `DocumentsNotIndexed`, and `QueryLatencyHigh` on `run-rag --metrics-sink cloudwatch`'s
-  `query_latency_ms`; each also notifies when it recovers, and the dashboard shows the stores' metrics and every
-  alarm's state (#330, #519, #528).
+  `query_latency_ms`, and `QueryFailures` on the failed share of queries (`query_failed`); each also notifies when
+  it recovers, and the dashboard shows the stores' metrics and every alarm's state (#330, #519, #528).
 - The package ships a `py.typed` marker (#568). `main` reports `0.3.0.dev0`, and a `v<version>` tag runs a release
   workflow that publishes a GitHub release: the tag must be on `main`, the notes are the section's introduction,
   *Highlights*, *Breaking changes*, *Upgrading* and *Security* with a link to the version's heading for the rest, and

@@ -859,3 +859,52 @@ def test_doc_status_read_throttles_and_system_errors_alarm() -> None:
         "UpdateTimeToLive",
     }
     assert called == set(DOC_STATUS_OPERATIONS)
+
+
+def test_failed_queries_alarm_on_their_share() -> None:
+    # Old behaviour: only latency alarmed, and a query that fails fast lowers
+    # the p90 instead of raising it.
+    from iac.stacks.observability_stack import (
+        QUERY_FAILED_METRIC,
+        QUERY_OUTCOME_METRICS,
+    )
+
+    for env in ("dev", "prod"):
+        alarm = _alarms({"env_name": env})["QueryFailures"]
+        (expression,) = [m for m in alarm["Metrics"] if "Expression" in m]
+        assert expression["Expression"] == "100 * FILL(failed, 0) / queries"
+        stats = {
+            m["Id"]: m["MetricStat"] for m in alarm["Metrics"] if "MetricStat" in m
+        }
+        assert stats["failed"]["Metric"]["MetricName"] == QUERY_FAILED_METRIC
+        assert stats["failed"]["Stat"] == "Sum"
+        assert stats["queries"]["Metric"]["MetricName"] == QUERY_LATENCY_METRIC
+        assert stats["queries"]["Stat"] == "SampleCount"
+        for stat in stats.values():
+            assert stat["Metric"]["Namespace"] == QUERY_NAMESPACE
+            assert stat["Metric"]["Dimensions"] == [
+                {"Name": "Environment", "Value": env}
+            ]
+        assert alarm["Threshold"] == 10
+        assert (alarm["EvaluationPeriods"], alarm["DatapointsToAlarm"]) == (3, 2)
+        assert alarm["TreatMissingData"] == "notBreaching"
+    body = json.dumps(_dashboard_body(_template()))
+    for name in QUERY_OUTCOME_METRICS:
+        assert f'"{QUERY_NAMESPACE}", "{name}"' in body
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="no surface emits the query outcome metrics yet: once one does, "
+    "this passes and the mark goes",
+)
+def test_the_query_outcome_metrics_are_emitted() -> None:
+    # The alarm and widget read names the package must emit: a drifted name
+    # would leave the alarm on a series nobody publishes.
+    from iac.stacks.observability_stack import QUERY_OUTCOME_METRICS
+
+    source = "\n".join(
+        path.read_text(encoding="utf-8") for path in sorted(_PACKAGE.rglob("*.py"))
+    )
+    for name in QUERY_OUTCOME_METRICS:
+        assert f'"{name}"' in source, name

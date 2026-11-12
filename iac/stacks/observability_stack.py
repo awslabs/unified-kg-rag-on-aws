@@ -97,6 +97,23 @@ EMF_NAMESPACE = "unified_kg_rag/ingestion"
 # per Environment and per Environment and Strategy (the search strategy).
 QUERY_NAMESPACE = "unified_kg_rag/query"
 QUERY_LATENCY_METRIC = "query_latency_ms"
+# Query outcomes, one count per query (read as Sum), under the same namespace
+# and dimensions: failed (no answer), degraded (answered with a part of the
+# retrieval or generation missing) and abstained (the answer says the context
+# does not hold one). The QueryFailures alarm reads the failed ones against
+# the queries' latency sample count, which every --mode rag query adds to,
+# failed ones included.
+QUERY_FAILED_METRIC = "query_failed"
+QUERY_DEGRADED_METRIC = "query_degraded"
+QUERY_ABSTAINED_METRIC = "query_abstained"
+QUERY_OUTCOME_METRICS: tuple[str, ...] = (
+    QUERY_FAILED_METRIC,
+    QUERY_DEGRADED_METRIC,
+    QUERY_ABSTAINED_METRIC,
+)
+# The failed share of queries (%) QueryFailures fires at, as AWS's
+# OpenSearch 5xx alarm fires at 10% of requests.
+QUERY_FAILED_SHARE = 10
 
 # Document- and file-level outcomes of an ingestion run, as run-ingestion
 # emits them (one value per run, read as Sum; the file counts after
@@ -481,8 +498,15 @@ class ObservabilityStack(Stack):
             cw.GraphWidget(
                 title="Query latency (ms)",
                 left=[
-                    self._query_latency(statistic)
+                    self._query_metric(QUERY_LATENCY_METRIC, statistic)
                     for statistic in ("p50", "p90", "p99")
+                ],
+            ),
+            cw.GraphWidget(
+                title="Query outcomes",
+                left=[self._query_metric(QUERY_LATENCY_METRIC, "SampleCount")],
+                right=[
+                    self._query_metric(name, "Sum") for name in QUERY_OUTCOME_METRICS
                 ],
             ),
         )
@@ -650,11 +674,12 @@ class ObservabilityStack(Stack):
             period=period or Duration.minutes(5),
         )
 
-    def _query_latency(self, statistic: str) -> cw.Metric:
-        """Latency of this deployment's run-rag queries, all strategies."""
+    def _query_metric(self, name: str, statistic: str) -> cw.Metric:
+        """A query metric of this deployment (its Environment series, all
+        strategies)."""
         return cw.Metric(
             namespace=QUERY_NAMESPACE,
-            metric_name=QUERY_LATENCY_METRIC,
+            metric_name=name,
             statistic=statistic,
             dimensions_map={"Environment": self.config.env_name},
             period=Duration.minutes(5),
@@ -778,7 +803,7 @@ class ObservabilityStack(Stack):
         latency = cw.Alarm(
             self,
             "QueryLatencyHigh",
-            metric=self._query_latency("p90"),
+            metric=self._query_metric(QUERY_LATENCY_METRIC, "p90"),
             threshold=threshold_ms,
             evaluation_periods=3,
             datapoints_to_alarm=2,
@@ -789,6 +814,27 @@ class ObservabilityStack(Stack):
             "periods (all search strategies)",
         )
         self._notify(latency)
+        # Failed queries: a query that fails fast (store access denied, an
+        # empty context) lowers the p90 instead of raising it, so the latency
+        # alarm misses it. A missing failed count is no failure; a period
+        # without queries yields no value (not breaching).
+        self._alarm(
+            "QueryFailures",
+            cw.MathExpression(
+                expression="100 * FILL(failed, 0) / queries",
+                using_metrics={
+                    "failed": self._query_metric(QUERY_FAILED_METRIC, "Sum"),
+                    "queries": self._query_metric(QUERY_LATENCY_METRIC, "SampleCount"),
+                },
+                label="Failed queries (%)",
+                period=Duration.minutes(5),
+            ),
+            QUERY_FAILED_SHARE,
+            f"At least {QUERY_FAILED_SHARE}% of queries failed in 2 of 3 "
+            "5-minute periods (all search strategies)",
+            evaluation_periods=3,
+            datapoints_to_alarm=2,
+        )
 
     def _notify(self, alarm: cw.Alarm) -> cw.Alarm:
         """Route ``alarm`` to the alarm topic when it fires and when it
@@ -829,6 +875,7 @@ class ObservabilityStack(Stack):
             cw.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD
         ),
         evaluation_periods: int = 1,
+        datapoints_to_alarm: int | None = None,
     ) -> cw.Alarm:
         """An alarm on ``metric`` that notifies the alarm topic; a period
         without data is not breaching."""
@@ -838,6 +885,7 @@ class ObservabilityStack(Stack):
             metric=metric,
             threshold=threshold,
             evaluation_periods=evaluation_periods,
+            datapoints_to_alarm=datapoints_to_alarm,
             comparison_operator=comparison,
             treat_missing_data=cw.TreatMissingData.NOT_BREACHING,
             alarm_description=description,

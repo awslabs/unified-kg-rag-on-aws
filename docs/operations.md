@@ -1433,13 +1433,18 @@ These fire between runs too, so degradation shows before a run breaks on it:
 |---|---|---|
 | `QueryLatencyHigh` | The p90 latency of `run-rag --metrics-sink cloudwatch` queries is above `query_latency_alarm_seconds` (default 60) in 2 of 3 5-minute periods | The dashboard's per-strategy widget shows which strategy is slow; check Bedrock latency and throttles and OpenSearch search latency. `global` and `drift` make many model calls per query by design. The metric's `Strategy` is the requested one, so `auto` covers the queries it routes to `iterative` (a controller call and up to `max_rounds` more searches: [Follow-up rounds](./guides/query.md#follow-up-rounds-for-multi-hop-questions); leave it out of `search.auto_routable_strategies` to opt out). `local` ranks text units by PageRank by default, which adds a text-unit search, a relationship kNN search, a Neptune edge read and a query embedding to each query ([Local PPR ranking](./concepts/defaults-and-evidence.md#local-ppr-ranking); `search.local_search.text_unit_ranking: support` drops them); DRIFT's follow-ups add them only with `search.drift_search.text_unit_ranking: ppr` |
 
+| `QueryFailures` | At least 10% of queries failed (`query_failed` against the count of `query_latency_ms` values) in 2 of 3 5-minute periods | A fast failure (store or rerank access denied, an empty context) lowers the p90 instead of raising it, so this alarm, not `QueryLatencyHigh`, shows it: read the failing queries' errors in the log |
+
 `run-rag` publishes `query_latency_ms` only with `--metrics-sink cloudwatch`
 (`--mode rag` queries, failed ones included: a query that ran past
 `search.query_timeout_seconds` records about the deadline, so timeouts raise
 the p90 rather than vanishing from it), under `unified_kg_rag/query`
 with the task's `Environment` and the requested `Strategy`. A serving layer
 that embeds `GraphRAGChain` publishes nothing; emit the same metric from it
-to use the alarm.
+to use the alarm. `QueryFailures` and the "Query outcomes" widget also read
+`query_failed`, `query_degraded` and `query_abstained`, one count per query
+under the same namespace and dimensions; where no surface publishes them,
+the alarm stays OK and the widget empty.
 
 The dashboard also lists every alarm's state, plots the stores' own signals
 (OpenSearch CPU, heap, indexing and search rates, 5xx and queues; Neptune CPU
