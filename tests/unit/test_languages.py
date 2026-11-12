@@ -135,6 +135,13 @@ def test_no_word_states_two_meanings_across_languages() -> None:
     for language in PROFILES.values():
         for word, value in language.polarity_words.items():
             assert polarity.setdefault(word, value) == value, word
+    # An ambiguous polarity word is one of its language's polarity words,
+    # with one second meaning in every language that writes it.
+    ambiguous: dict[str, str] = {}
+    for language in PROFILES.values():
+        for word, other in language.ambiguous_polarity_words.items():
+            assert word in language.polarity_words, word
+            assert ambiguous.setdefault(word, other) == other, word
 
 
 # What a profile has to hold for every consumer to cover its language, and
@@ -168,7 +175,9 @@ _GAPS: dict[str, set[str]] = {
     "month_words": {"en"} | _DIGIT_DATES | _NEW,
     # Korean and Chinese forms are in dense_legal_forms, Vietnamese ones lead.
     "legal_forms": {"ko", "vi", "zh"},
-    "polarity_words": {"de", "es", "fr", "it", "pt", "ru"} | _NEW,
+    # Thai writes no spaces, so no word boundary sets its yes/no words
+    # apart ("ใช่" is in "ไม่ใช่").
+    "polarity_words": {"th"},
     # Articles: the languages that write them (ru and the scripts without
     # articles wait).
     "articles": {"ja", "ko", "ru", "zh"} | _NEW,

@@ -758,11 +758,19 @@ list, top level or under `metadata`, which wins), taking the maximum.
   does not hold) a decline scores 1 on every `answer_match` metric. A
   Korean counter (`곳`, `군데`, `가지`, `개사`) keeps a number's value like a
   unit (`3` matches `3곳입니다`).
-- **Yes/no golds** (`yes`/`no`/`nope`, Korean `예`/`네`/`아니요`/`아니오`/
-  `아닙니다`, Chinese `是`/`对`/`否`/`不是`/`没有`, Japanese `はい`/`いいえ`) are
-  scored by the polarity of the first yes/no word that answers the question,
-  as in HotpotQA (`there is no clause`, `네 가지`, `(예: …)` and `No. 5` are
-  not answers, so `네, 맞습니다` answers yes but `네 맞습니다` does not).
+- **Yes/no golds** (each language's `LanguageProfile.polarity_words`:
+  `yes`/`no`/`nope`, Spanish `sí`/`no`, French `oui`/`non`, German
+  `ja`/`nein`, Italian `sì`/`no`, Portuguese `sim`/`não`, Russian `да`/`нет`,
+  Vietnamese `có`/`vâng`/`không`, Hindi `हाँ`/`नहीं`, Hebrew `כן`/`לא`, Arabic
+  `نعم`/`بلى`/`لا`/`كلا`, Korean `예`/`네`/`아니요`/`아니오`/`아닙니다`,
+  Chinese `是`/`对`/`否`/`不是`/`没有`, Japanese `はい`/`いいえ`; Thai has none,
+  as its unspaced text sets no yes/no word apart) are scored by the polarity
+  of the first yes/no word that answers the question, as in HotpotQA. A word
+  with a second meaning (`ambiguous_polarity_words`: `no`, `non`, `não`,
+  `sim`, `ja`, `нет`, `có`, `không`, `नहीं`, `לא`, `لا`, `네`, `예`) answers
+  only when punctuation or the line end follows it (`there is no clause`,
+  `não há dúvida`, `нет долгов`, `네 가지`, `(예: …)` and `No. 5` are not
+  answers, so `네, 맞습니다` answers yes but `네 맞습니다` does not).
 - **`exact_match` and `token_f1`** score the part of the answer
   `evaluation.answer_span` names. SQuAD, HotpotQA and MuSiQue score a short
   predicted answer (a span such as `Depot`) against the gold answer, while

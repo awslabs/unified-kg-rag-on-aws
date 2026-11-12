@@ -150,8 +150,8 @@ incremental run re-extracts every document of the scope).
 ## Evaluating Korean and CJK answers
 
 The `answer_match` evaluator tolerates Korean particles and units, ignores
-spacing next to CJK letters and reads Korean, Chinese and Japanese yes/no
-answers; under the default normalization token F1 counts a Han, Hangul or
+spacing next to CJK letters and reads the yes/no answers of every profiled
+language but Thai ("Não, ele não fez" answers no, "não há dúvida" does not); under the default normalization token F1 counts a Han, Hangul or
 Kana letter as a token (character F1), while exact match still under-counts
 an answer with a particle. Thai, Lao, Myanmar and Khmer, which write no
 spaces between words either, are matched and token-scored the same way, and

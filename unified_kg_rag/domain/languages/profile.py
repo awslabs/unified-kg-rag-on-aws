@@ -125,6 +125,11 @@ class LanguageProfile:
     counters: tuple[str, ...] = ()
     # Yes/no answer words, each with its polarity ("yes" or "no").
     polarity_words: Mapping[str, str] = field(default_factory=dict)
+    # Those of them with a second meaning (English "no" a determiner,
+    # Korean "네" the numeral four), which answer only when punctuation or
+    # the line end follows, each with the punctuation after which it is
+    # still the other word (Korean "예" before ":" or ")" is "e.g.").
+    ambiguous_polarity_words: Mapping[str, str] = field(default_factory=dict)
     # The quote pairs its text wraps a name in (opening, closing).
     quote_pairs: tuple[tuple[str, str], ...] = ()
     # Characters per token of a text in it (spaces and punctuation

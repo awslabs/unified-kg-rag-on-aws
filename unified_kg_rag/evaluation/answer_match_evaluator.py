@@ -36,11 +36,13 @@ records the span mode (``answer_span``) and the text scored
   and Hebrew and Arabic proclitics tolerated, substring match for
   single-word CJK and Thai phrases). Long-form RAG
   answers rarely equal a short gold span, so this is the headline
-  deterministic answer metric. A yes/no gold ("yes"/"no", Korean
-  "예"/"네"/"아니요"/"아니오"/"아닙니다", Chinese "是"/"对"/"否"/"不是"/"没有", Japanese
-  "はい"/"いいえ") is instead compared with the polarity of the first yes/no
-  word that answers the question (not a heading, not the determiner in
-  "there is no clause", not part of a longer word such as "예외"). An item
+  deterministic answer metric. A yes/no gold (a ``LanguageProfile.polarity_words``
+  word: "yes"/"no", "sí", "oui"/"non", "ja"/"nein", "sim"/"não",
+  "да"/"нет", Korean "예"/"네"/"아니요", Chinese "是"/"否", Japanese
+  "はい"/"いいえ", ...) is instead compared with the polarity of the first
+  yes/no word that answers the question (not a heading, not the determiner
+  in "there is no clause" or the negation in "não há dúvida", not part of a
+  longer word such as "예외"). An item
   whose ``metadata.answer_type`` is ``number`` is instead read in the
   answer's first line (its extracted span, with ``extracted``): a gold
   other than 0 matches when that line writes it anywhere, as digits, a
@@ -215,19 +217,24 @@ _POLARITY_WORD = re.compile(
     + "|".join(sorted(map(re.escape, _POLARITY), key=len, reverse=True))
     + r")(?![\w\u2010-])"
 )
-# Three words have a second meaning, so they answer a question only when
-# punctuation or the line end follows them ("No: it may not.", "**네**, 맞습니다."):
-# before a word, "no" is a determiner ("there is no clause") and "네" the
-# numeral four ("네 가지"); "예" also means "e.g." before ":" or ")" ("(예: …)").
-# Emphasis and quote marks around the word are skipped first; an opening
-# quote or emphasis after it starts the next word ("no **cap**", 'no "cap"'),
-# so neither counts as the punctuation. Known limit: other punctuation
-# before a word still reads as the answer ("no (explicit) cap", "no $500 cap").
-# Any other polarity word answers wherever it stands.
+# The words with a second meaning (``LanguageProfile.
+# ambiguous_polarity_words``) answer a question only when punctuation or the
+# line end follows them ("No: it may not.", "**네**, 맞습니다.", "Não, ele
+# não fez."): before a word, "no" is a determiner ("there is no clause"),
+# "네" the numeral four ("네 가지"), "não" and "нет" a negation ("não há
+# dúvida", "нет долгов"); "예" also means "e.g." before ":" or ")" ("(예:
+# …)"), the punctuation its profile lists. Emphasis and quote marks around
+# the word are skipped first; an opening quote or emphasis after it starts
+# the next word ("no **cap**", 'no "cap"'), so neither counts as the
+# punctuation. Known limit: other punctuation before a word still reads as
+# the answer ("no (explicit) cap", "no $500 cap"). Any other polarity word
+# answers wherever it stands.
 _AMBIGUOUS_ANSWER = {
-    "no": re.compile(r"\s*[*_\"'`]*\s*(?:$|[^\w\s*_\"'`“‘「『])"),
-    "네": re.compile(r"\s*[*_\"'`]*\s*(?:$|[^\w\s*_\"'`“‘「『])"),
-    "예": re.compile(r"\s*[*_\"'`]*\s*(?:$|[^\w\s*_\"'`“‘「『:)])"),
+    word: re.compile(
+        r"\s*[*_\"'`]*\s*(?:$|[^\w\s*_\"'`“‘「『" + re.escape(other) + "])"
+    )
+    for language in profiles()
+    for word, other in language.ambiguous_polarity_words.items()
 }
 # A word next to "/" names the options, not the answer ("Yes/No: No").
 _OPTION_SLASH = re.compile(r"\s*/")

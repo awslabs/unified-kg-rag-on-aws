@@ -68,6 +68,9 @@ PROFILE = LanguageProfile(
         "아니오": "no",
         "아닙니다": "no",
     },
+    # "네" is also the numeral four ("네 가지"), "예" also "e.g." before ":"
+    # or ")" ("(예: …)").
+    ambiguous_polarity_words={"네": "", "예": ":)"},
     quote_pairs=(("「", "」"), ("『", "』")),
     chars_per_token={CLAUDE_TOKENIZER: 1.0},
 )

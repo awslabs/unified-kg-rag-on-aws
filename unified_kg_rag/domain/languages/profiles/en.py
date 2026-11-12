@@ -90,6 +90,8 @@ PROFILE = LanguageProfile(
         "nv": "nv",
     },
     polarity_words={"yes": "yes", "no": "no", "nope": "no"},
+    # "No" is also a determiner ("there is no clause").
+    ambiguous_polarity_words={"no": ""},
     quote_pairs=(('"', '"'), ("“", "”")),
     chars_per_token={CLAUDE_TOKENIZER: 3.25},
 )

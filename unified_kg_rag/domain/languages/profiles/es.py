@@ -119,6 +119,9 @@ PROFILE = LanguageProfile(
         "s de rl": "s de rl",
         "s de rl de cv": "s de rl de cv",
     },
+    # "No" is also the negation ("no lo hizo"): an answer before punctuation.
+    polarity_words={"sí": "yes", "no": "no"},
+    ambiguous_polarity_words={"no": ""},
     quote_pairs=(("«", "»"),),
     chars_per_token={CLAUDE_TOKENIZER: 2.84},
 )

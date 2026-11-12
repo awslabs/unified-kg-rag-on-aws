@@ -95,6 +95,9 @@ PROFILE = LanguageProfile(
     },
     # "kg" is also the kilogram ("500 kg").
     unit_like_legal_forms=("kg",),
+    # "Ja" is also a modal particle ("das ist ja geschlossen").
+    polarity_words={"ja": "yes", "nein": "no"},
+    ambiguous_polarity_words={"ja": ""},
     quote_pairs=(("„", "“"), ("‚", "‘"), ("»", "«")),
     chars_per_token={CLAUDE_TOKENIZER: 2.05},
 )

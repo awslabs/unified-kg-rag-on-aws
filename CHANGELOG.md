@@ -1270,7 +1270,11 @@ From a `main` checkout (formats and keys no release had):
   states 2). Thai, Lao, Myanmar and Khmer, which write no spaces between words, are matched as substrings and
   token-scored by letter as Chinese is, and a run of Hebrew or Arabic prefixed particles before a gold word
   (`LanguageProfile.proclitics`: "בירושלים", "وبيروت") is tolerated as a Korean particle after one is, in
-  `answer_contains`, token F1, `graph_aware` coverage and the extracted-span check (#324, #516, #606, #613).
+  `answer_contains`, token F1, `graph_aware` coverage and the extracted-span check. A yes/no gold is read by
+  polarity in every profiled language but Thai (`LanguageProfile.polarity_words`: "sí", "oui"/"non", "ja"/"nein",
+  "sim"/"não", "да"/"нет", "có"/"không", "לא", "لا"); a word with a second meaning (`ambiguous_polarity_words`:
+  "no", "non", "não", "нет") answers only before punctuation, so "não há dúvida" is no answer (#324, #516, #606,
+  #613).
 - Strategy comparison: `run-eval --search-strategy a,b --repeats N` with bootstrap intervals, `deltas_by_category`,
   a `--pairwise-judge` (LightRAG's verdicts with `evaluation.pairwise_overall`, `position_consistency`, a win-rate
   interval, `--judge-model`) and `prepare-benchmark musique` (#324, #516, #536). See

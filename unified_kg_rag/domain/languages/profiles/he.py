@@ -19,6 +19,9 @@ PROFILE = LanguageProfile(
     legal_forms={"בעמ": "בעמ"},
     # The prefixed particles: "in", "the", "and", "as", "to", "from", "that".
     proclitics=("ב", "ה", "ו", "כ", "ל", "מ", "ש"),
+    # "לא" is also the negation ("לא נמצא").
+    polarity_words={"כן": "yes", "לא": "no"},
+    ambiguous_polarity_words={"לא": ""},
     quote_pairs=(("„", "”"), ('"', '"')),
     chars_per_token={CLAUDE_TOKENIZER: 1.54},
 )

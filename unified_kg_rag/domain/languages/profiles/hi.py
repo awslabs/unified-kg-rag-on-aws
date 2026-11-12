@@ -19,6 +19,9 @@ PROFILE = LanguageProfile(
         "प्राइवेट लिमिटेड": "pvt ltd",
         "लिमिटेड": "ltd",
     },
+    # "नहीं" is also the negation ("नहीं है").
+    polarity_words={"हाँ": "yes", "हां": "yes", "नहीं": "no"},
+    ambiguous_polarity_words={"नहीं": ""},
     quote_pairs=(("“", "”"),),
     chars_per_token={CLAUDE_TOKENIZER: 1.35},
 )

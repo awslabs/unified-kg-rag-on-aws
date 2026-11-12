@@ -202,6 +202,9 @@ PROFILE = LanguageProfile(
         "ао": "ао",
         "ип": "ип",
     },
+    # "Нет" also states absence ("нет долгов").
+    polarity_words={"да": "yes", "нет": "no"},
+    ambiguous_polarity_words={"нет": ""},
     quote_pairs=(("«", "»"), ("„", "“")),
     chars_per_token={CLAUDE_TOKENIZER: 2.45},
 )
