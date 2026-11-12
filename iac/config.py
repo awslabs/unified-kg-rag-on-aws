@@ -100,11 +100,15 @@ cannot leave its setting at the default:
                                        baseline guardrail; false = bring your own
   guardrail_identifier None            guardrail id the compute task USES
                                        (UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER); does NOT
-                                       disable creation
+                                       disable creation; unset = the created
+                                       guardrail when bedrock_region is the
+                                       deploy region (through SSM parameters)
   guardrail_version   None             published guardrail version the task
                                        applies (UKR__AWS__BEDROCK__GUARDRAIL__VERSION):
                                        the GuardrailVersion output; unset = the
-                                       app default, DRAFT (synth warns)
+                                       created guardrail's latest version in the
+                                       deploy region, else the app default,
+                                       DRAFT (synth warns)
   guardrail_contextual_grounding False  add a contextual grounding policy
                                        (GROUNDING + RELEVANCE, BLOCK) to the
                                        created guardrail and have the task send

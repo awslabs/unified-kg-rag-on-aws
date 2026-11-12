@@ -362,8 +362,9 @@ The version lives in one place, `__version__` in `unified_kg_rag/__init__.py`; `
    The tag push runs [.github/workflows/release.yml](./.github/workflows/release.yml). It fails unless the tagged
    commit is on `main`, the tag is `v` plus `__version__` and the changelog has a non-empty section for that version;
    it builds the sdist and wheel, runs `twine check --strict`, checks both carry LICENSE and NOTICE, installs the
-   wheel in a clean environment, and creates the GitHub release with both files and that changelog section as its
-   notes
+   wheel in a clean environment, writes a CycloneDX SBOM of the locked dependencies with each package's licence (read
+   from an environment synced with every extra, `.github/scripts/sbom_licenses.py`), and creates the GitHub release
+   with both files, their checksums, the SBOM and that changelog section as its notes
    (`scripts/changelog_section.py`; a release body resolves no relative link, so `--link-base` points the section's
    repo-relative links at the tagged tree, and a section longer than a release body allows ends with a link to the
    full changelog). A version with an `a`, `b`, `rc` or `.dev` segment is marked as a pre-release.
@@ -373,11 +374,28 @@ The version lives in one place, `__version__` in `unified_kg_rag/__init__.py`; `
 A failed release run creates no release; fix the cause on `main` and release a new version rather than moving a pushed
 tag.
 
-Publishing to PyPI is not set up yet. The planned addition is a `pypi` job in `release.yml` that needs the build job,
-runs in a protected `pypi` GitHub environment with `permissions: id-token: write` only, downloads the same artifacts
-and uploads them with the SHA-pinned `pypa/gh-action-pypi-publish` action through PyPI trusted publishing (OpenID
-Connect), so no API token is stored in the repository.
+Publishing to PyPI is prepared and off. The `publish-pypi` job of `release.yml` runs after the GitHub release, on a
+tag push only, and only when the repository variable `PYPI_PUBLISH` is `true`. It runs in the `pypi` GitHub
+environment with `permissions: id-token: write` only, downloads the build job's artifacts, verifies their checksums
+and uploads the sdist and wheel with the SHA-pinned `pypa/gh-action-pypi-publish` action through PyPI trusted
+publishing (OpenID Connect), so no API token is stored in the repository. A PyPI upload cannot be replaced or
+re-used under the same version, so a failed upload is fixed by releasing a new version.
 
+To turn it on, a maintainer does the following once:
+
+1. On PyPI, signed in to the account that will own the project (with two-factor authentication on), open "Your
+   projects" > "Publishing" and add a pending publisher (GitHub): PyPI project name `unified-kg-rag-on-aws`, owner
+   `awslabs`, repository `unified-kg-rag-on-aws`, workflow `release.yml`, environment `pypi`. No upload is needed:
+   the first upload from this workflow creates the project, and the pending publisher becomes its trusted publisher.
+   A pending publisher does not reserve the name: if someone else registers it first, the pending publisher is
+   invalidated, so publish soon after adding it.
+2. In the repository's settings, create the `pypi` environment. Restrict its deployment branches and tags to the tag
+   pattern `v*`, and add required reviewers when a second maintainer is available, so every upload waits for an
+   approval.
+3. In the repository's settings, add the variable `PYPI_PUBLISH` with the value `true` (Settings > Secrets and
+   variables > Actions > Variables). Deleting it, or any other value, turns publishing off again.
+
+The next tag push then uploads the release to PyPI.
 
 ## Finding contributions to work on
 

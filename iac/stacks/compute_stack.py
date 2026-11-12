@@ -46,6 +46,7 @@ from aws_cdk import aws_secretsmanager as secretsmanager
 from constructs import Construct
 
 from iac.config import DeploymentConfig
+from iac.stacks.guardrail_stack import GuardrailAttachment
 from iac.stacks.log_retention import set_retention
 from iac.stacks.networking_stack import NetworkingStack
 from iac.stacks.storage_stack import StorageStack
@@ -102,14 +103,20 @@ class ComputeStack(Stack):
         networking: NetworkingStack,
         storage: StorageStack,
         kms_key=None,
-        guardrail_identifier: str | None = None,
+        guardrail: GuardrailAttachment | None = None,
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
         self.config = config
         self.storage = storage
         self.kms_key = kms_key
-        self.guardrail_identifier = guardrail_identifier
+        self.guardrail = guardrail
+        if guardrail is not None and guardrail.source is not None:
+            # The task definitions read the guardrail's SSM parameters at
+            # deploy time; CloudFormation sees no reference to order by.
+            self.add_stack_dependency(
+                guardrail.source, "the task definitions read its SSM parameters"
+            )
         # Fixed names: a task definition in another stack refers to the
         # repository and the log group by name (build_task_definition).
         self.repository_name = f"{config.prefix}-app"
@@ -121,6 +128,16 @@ class ComputeStack(Stack):
         # the mutable "latest" default (dev iteration) must stay MUTABLE so it
         # can be re-pushed. So mutability tracks whether a real tag was pinned.
         pinned_image = config.image_tag != "latest"
+        if not pinned_image and not config.is_dev:
+            # Not immutable outside dev instead: `latest` could then be pushed
+            # only once, and the next push would fail. The tag decides.
+            Annotations.of(self).add_warning(
+                "image_tag is 'latest' outside dev: the repository's tags stay "
+                "mutable, so a push can replace the image the tasks run "
+                "without a deploy, and a rollback has no fixed image to go "
+                "back to. Push a unique tag and deploy it with "
+                "-c image_tag=<tag> (any other tag makes the tags immutable)."
+            )
         # Fixed physical names (repo, log group) must go with the stack when
         # removal_destroy is set, or the next deploy collides with the
         # retained copy. Outside dev they are kept (image provenance, logs).
@@ -205,7 +222,7 @@ class ComputeStack(Stack):
             if config.corpus_bucket_name
             else None
         )
-        if self.guardrail_identifier and not config.guardrail_version:
+        if self.guardrail is not None and not self.guardrail.version:
             Annotations.of(self).add_warning(
                 "guardrail_identifier is set without guardrail_version: the "
                 "tasks apply the guardrail's DRAFT, which changes with every "
@@ -508,10 +525,10 @@ class ComputeStack(Stack):
             )
 
     def _guardrail_arn(self) -> str | None:
-        """ARN of the guardrail the task uses (``guardrail_identifier``)."""
-        identifier = self.guardrail_identifier
-        if not identifier:
+        """ARN of the guardrail the task uses."""
+        if self.guardrail is None:
             return None
+        identifier = self.guardrail.identifier
         if identifier.startswith("arn:"):
             return identifier
         region = self.config.bedrock_region or self.region
@@ -640,15 +657,14 @@ class ComputeStack(Stack):
             environment["UKR__INDEXING__METHODOLOGIES"] = json.dumps(
                 list(self.config.methodologies)
             )
-        if self.guardrail_identifier:
+        guardrail = self.guardrail
+        if guardrail is not None:
             environment["UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER"] = (
-                self.guardrail_identifier
+                guardrail.identifier
             )
-        if self.config.guardrail_version:
-            environment["UKR__AWS__BEDROCK__GUARDRAIL__VERSION"] = (
-                self.config.guardrail_version
-            )
-        if self.guardrail_identifier and self.config.guardrail_contextual_grounding:
+            if guardrail.version:
+                environment["UKR__AWS__BEDROCK__GUARDRAIL__VERSION"] = guardrail.version
+        if guardrail is not None and self.config.guardrail_contextual_grounding:
             # The guardrail's grounding policy only scores an answer checked
             # with the retrieved context, which the app then sends.
             environment[
@@ -702,10 +718,18 @@ class ComputeStack(Stack):
             # and reaps the processes it leaves (pool workers, the
             # entrypoint's S3 sync); the CLI as PID 1 got no signal it
             # had no handler for and reaped nothing.
-            linux_parameters=ecs.LinuxParameters(
+            linux_parameters=self._linux_parameters(
                 task_def, "AppLinuxParameters", init_process_enabled=True
             ),
             readonly_root_filesystem=True,
+            # A policy change publishes a new guardrail version under the same
+            # SSM parameter: the digest changes the task definition, so its
+            # deploy reads the new one.
+            docker_labels=(
+                {"guardrail-policy": guardrail.revision}
+                if guardrail is not None and guardrail.revision
+                else None
+            ),
         )
         for name, path in WRITABLE_VOLUMES.items():
             task_def.add_volume(name=name)
@@ -725,6 +749,19 @@ class ComputeStack(Stack):
                 )
             )
         return task_def
+
+    @staticmethod
+    def _linux_parameters(
+        scope: Construct, construct_id: str, init_process_enabled: bool = False
+    ) -> ecs.LinuxParameters:
+        """Every Linux capability dropped, as docker/compose.local.yaml's
+        ``cap_drop: [ALL]``: the containers run as a non-root user, bind no
+        port below 1024 and change no ownership or network setting."""
+        parameters = ecs.LinuxParameters(
+            scope, construct_id, init_process_enabled=init_process_enabled or None
+        )
+        parameters.drop_capabilities(ecs.Capability.ALL)
+        return parameters
 
     # ------------------------------------------------ trace collector sidecar
     def _collector_image_repository(self) -> ecr.IRepository:
@@ -858,6 +895,9 @@ class ComputeStack(Stack):
             ),
             # Security Hub ECS.5, as the app: writes go to task volumes only.
             readonly_root_filesystem=True,
+            linux_parameters=self._linux_parameters(
+                task_def, "CollectorLinuxParameters"
+            ),
         )
         for name, path in COLLECTOR_VOLUMES.items():
             task_def.add_volume(name=name)

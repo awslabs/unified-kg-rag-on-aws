@@ -27,6 +27,17 @@ Prerequisites:
   reject the cloud assembly the locked `aws-cdk-lib` produces.
 - AWS credentials for the target account and region to bootstrap and deploy,
   and Docker to push the app image.
+- The OpenSearch service-linked role, once per account. An OpenSearch domain
+  in a VPC needs `AWSServiceRoleForAmazonOpenSearchService` (or the legacy
+  `AWSServiceRoleForAmazonElasticsearchService`), and in an account that has
+  never had either, the domain can fail to create with "Before you can
+  proceed, you must enable a service-linked role". Create it first (needs
+  `iam:CreateServiceLinkedRole`):
+  `aws iam create-service-linked-role --aws-service-name opensearchservice.amazonaws.com`.
+  When the role exists the command fails with `InvalidInput` ("has been
+  taken"), which is harmless. The stack does not create the role, because a
+  service-linked role that a stack creates fails the deploy in every account
+  that already has it.
 
 ```bash
 cd iac
@@ -214,7 +225,7 @@ did-you-mean hint.
 | `fargate_memory` | `8192` | Task memory (MiB), a size Fargate offers for `fargate_cpu` |
 | `ingestion_ephemeral_storage_gib` | `40` | Ingestion task disk (21-200 GiB): about twice the corpus plus the stage cache |
 | `fargate_cpu_architecture` | `x86_64` | CPU architecture of both task definitions: `x86_64`, or `arm64` (Graviton) for an image built with `--platform linux/arm64` ([Build and push](#2-build-and-push-the-app-image)) |
-| `image_tag` | `latest` | Image tag the tasks pull; any other tag makes the repository's tags immutable (the ECR lifecycle keeps it and the 10 newest images) |
+| `image_tag` | `latest` | Image tag the tasks pull; any other tag makes the repository's tags immutable (the ECR lifecycle keeps it and the 10 newest images); `latest` outside dev makes synth warn ([Build and push](#2-build-and-push-the-app-image)) |
 | `sfn_timeout_hours` | `6` | State machine timeout for a whole run, re-runs and their waits included |
 | `ingestion_fargate_spot` | `false` | Run the ingestion task on Fargate Spot; a task Spot interrupted runs again ([Fargate Spot](#fargate-spot)) |
 | `spot_interruption_retries` | `2` | Re-runs after Spot interruptions per execution (0-10); `ingestion_fargate_spot` only |
@@ -229,9 +240,9 @@ did-you-mean hint.
 | `removal_destroy` | `true` (dev) / `false` | `DESTROY` or `RETAIN` on stack deletion for the stores, keys, guardrail, ECR repository and fixed-name log groups. Retained fixed-name resources fail the next deploy on the duplicate name, so delete them by hand after a `cdk destroy`. Only a retained environment writes S3 server access logs for the cache bucket ([Teardown](#teardown)) |
 | `bedrock_model_arns` | — | Scope Bedrock `InvokeModel` to these ARNs (a list, or a comma-separated string). Foundation-model ARNs keep the `inference-profile/*` grants (models offered only through a profile, Claude 4.5 and later, are called by profile id and still authorized against the listed models); list them with a `*` region, since profiles route across regions. Any inference-profile ARN in the list makes it exact. `Rerank` and `ListInferenceProfiles` stay on `*`, but the Rerank API also checks `bedrock:InvokeModel` on the reranking model, so list its foundation-model ARN too (`amazon.rerank-v1:0` or `cohere.rerank-v3-5:0`), or reranking is denied and queries fall back to fusion without it. The missing grant shows as a `ValidationException` (`not authorized to perform: bedrock:InvokeModel on resource: ...rerank...`); a region that does not offer the model shows as an `AccessDeniedException` (`not authorized to invoke the Rerank operation`) |
 | `create_guardrail` | `true` | Create and keep a baseline guardrail in `bedrock_region`; `false` brings your own ([Guardrail](#guardrail)) |
-| `guardrail_identifier` | — | Guardrail id the task uses (`UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER`); the task role gets `bedrock:ApplyGuardrail` on it only |
-| `guardrail_version` | — | Published version the task applies (`UKR__AWS__BEDROCK__GUARDRAIL__VERSION`); unset applies the mutable `DRAFT` (synth warns) |
-| `guardrail_contextual_grounding` | `false` | Add a contextual grounding policy (GROUNDING and RELEVANCE filters, action `BLOCK`) to the created guardrail, and with `guardrail_identifier` set `UKR__AWS__BEDROCK__GUARDRAIL__CONTEXTUAL_GROUNDING__ENABLED=true` so the task sends the retrieved context with each answer's check ([Guardrail](#guardrail)) |
+| `guardrail_identifier` | — | Guardrail id the task uses (`UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER`); the task role gets `bedrock:ApplyGuardrail` on it only. Unset in the deploy region = the created guardrail ([Guardrail](#guardrail)) |
+| `guardrail_version` | — | Published version the task applies (`UKR__AWS__BEDROCK__GUARDRAIL__VERSION`); unset = the created guardrail's latest version in the deploy region, otherwise the mutable `DRAFT` (synth warns) |
+| `guardrail_contextual_grounding` | `false` | Add a contextual grounding policy (GROUNDING and RELEVANCE filters, action `BLOCK`) to the created guardrail, and with a guardrail attached `UKR__AWS__BEDROCK__GUARDRAIL__CONTEXTUAL_GROUNDING__ENABLED=true` so the task sends the retrieved context with each answer's check ([Guardrail](#guardrail)) |
 | `guardrail_grounding_threshold` | `0.7` | Minimum grounding and relevance score an answer needs (0-0.99); `guardrail_contextual_grounding` only |
 
 **Observability and tags**
@@ -326,43 +337,63 @@ image built for the other platform stops every task at start with
 ### Guardrail
 
 The guardrail must live in the Bedrock runtime region (`bedrock_region`),
-which can differ from the deploy region, so it is its own stack, and a
-two-step flow avoids cross-region CloudFormation references. The baseline
+which can differ from the deploy region, so it is its own stack. The baseline
 guardrail anonymizes email, phone and card numbers, in the screened query
 and answer both, but not `NAME`: names are
 corpus content, and anonymizing them in the screened query and answer removes
 the name a question retrieves by and puts `{NAME}` in answers.
 
-```bash
-# 0) once, when bedrock_region differs from the deploy region (needs network_mode=public)
-cdk bootstrap aws://<account>/us-west-2
-# 1) create the guardrail; note the GuardrailIdentifier and GuardrailVersion outputs
-cdk deploy GraphRagGuardrail -c network_mode=public -c bedrock_region=us-west-2 …
-# 2) pass both so the task definitions get them (deploy every stack)
-cdk deploy --all -c network_mode=public -c bedrock_region=us-west-2 \
-  -c guardrail_identifier=<id> -c guardrail_version=<version> …
-```
+- **Same region (the default, and every `private` deploy):** a plain
+  `cdk deploy --all` creates the guardrail and attaches it. The guardrail
+  stack writes its id and published version to the SSM parameters
+  `/<prefix>/guardrail/identifier` and `/<prefix>/guardrail/version`, and
+  both task definitions read them when they deploy
+  (`UKR__AWS__BEDROCK__GUARDRAIL__*`, and `bedrock:ApplyGuardrail` on that
+  guardrail only). Compute deploys after the guardrail stack. No
+  CloudFormation export is used, because a policy change publishes a new
+  version, and an export that another stack imports cannot change its
+  value. To change the baseline policy, edit `iac/stacks/guardrail_stack.py`
+  and run `cdk deploy --all`: a new version is published (the previous one is
+  kept), and the task definitions, whose `guardrail-policy` label carries the
+  policy digest, read it. `-c guardrail_version=<n>` pins an older version.
+  After replacing the guardrail outside this flow (for example, destroying
+  and redeploying only `GraphRagGuardrail`), redeploy compute and
+  orchestration with `--force`, because their templates did not change and
+  they still hold the old id.
+- **Another region (`network_mode=public`)** uses two steps, which avoid
+  cross-region CloudFormation references:
 
-- In `private` mode leave `bedrock_region` unset: the same two steps create
-  the guardrail in the deploy region, and step 0 is not needed.
-- **Pass both flags on every later deploy**, or compute stops injecting them
+  ```bash
+  # 0) once: bootstrap the Bedrock region
+  cdk bootstrap aws://<account>/us-west-2
+  # 1) create the guardrail; note the GuardrailIdentifier and GuardrailVersion outputs
+  cdk deploy GraphRagGuardrail -c network_mode=public -c bedrock_region=us-west-2 …
+  # 2) pass both so the task definitions get them (deploy every stack)
+  cdk deploy --all -c network_mode=public -c bedrock_region=us-west-2 \
+    -c guardrail_identifier=<id> -c guardrail_version=<version> …
+  ```
+
+  **Pass both flags on every later deploy**, or compute stops injecting them
   (without a version the task applies `DRAFT`, which every edit changes at
   once): a `cdk deploy --all` without `guardrail_identifier` removes the
   guardrail from the task definitions, and queries and answers are no longer
   screened. Synth warns whenever the stack owns a guardrail it does not
-  attach. Keeping both in the `context` of `cdk.json` makes them stick. To change the baseline policy, edit `iac/stacks/guardrail_stack.py`
-  and deploy `GraphRagGuardrail`: a new version is published and the previous
-  one kept, which the tasks apply until you redeploy with the new
+  attach. Keeping both in the `context` of `cdk.json` makes them stick. A
+  policy change publishes a new version, and the previous one is kept; the
+  tasks apply the previous one until you redeploy with the new
   `-c guardrail_version`.
+- A `guardrail_identifier` you pass always wins, in any region (the
+  same-region parameters are then not written).
 - **An external guardrail:** `-c create_guardrail=false
   -c guardrail_identifier=<id>` (and a version you published with
   `aws bedrock create-guardrail-version`); the stack then creates nothing.
   Setting only `guardrail_identifier` still creates the baseline guardrail
   (`create_guardrail` defaults to `true`), and synth warns.
 - **Contextual grounding (opt-in, English/French/Spanish only):**
-  `-c guardrail_contextual_grounding=true` on both steps adds GROUNDING and
-  RELEVANCE filters to the created guardrail (a policy change, so a new
-  version: pass the new `GuardrailVersion`) and turns the app's check on.
+  `-c guardrail_contextual_grounding=true` (on both steps across regions) adds
+  GROUNDING and RELEVANCE filters to the created guardrail (a policy change,
+  so a new version; across regions pass the new `GuardrailVersion`) and turns
+  the app's check on.
   The guardrail is Classic tier, which scores English, French and Spanish
   only: answers in any other language, Korean included, score low and are
   blocked, so leave it off for such a corpus. With `create_guardrail=false`
@@ -379,7 +410,8 @@ The stacks apply least-privilege IAM (Bedrock model and inference-profile
 ARNs, `neptune-db:connect`, domain-scoped `es:ESHttp*`), encryption in transit
 and at rest, Graviton instances, a lifecycle on the checkpoint prefixes, S3
 access logs (retained environments, [Teardown](#teardown)), Step Functions tracing and execution logs, and an SSL-only alarm
-topic; production hardening is opt-in through the flags above. Validate with:
+topic. Every container runs on a read-only root filesystem with every Linux
+capability dropped. Production hardening is opt-in through the flags above. Validate with:
 
 ```bash
 cdk synth -c enable_cdk_nag=true                       # dev
@@ -479,7 +511,10 @@ docker push "$REGISTRY/graphrag-app:latest"
 
 - Outside dev, push a unique version tag and deploy with
   `cdk deploy --all -c image_tag=<tag>`, so a pushed image cannot be swapped
-  under the running task definition.
+  under the running task definition. Synth warns when an environment other
+  than dev keeps `latest`. The repository is not made immutable for
+  `latest` instead, because `latest` could then be pushed only once; the
+  pinned tag makes the tags immutable.
 - Extras: the image installs none by default (`run-eval`'s default
   evaluators are LLM-free); add `--build-arg UV_EXTRAS="--extra eval"` for
   the ragas judge on the query task. The core install reads `.md` / `.html`
@@ -539,6 +574,15 @@ aws logs tail /graphrag/tasks --region "$REGION" --follow
   (`docker/entrypoint.sh`) syncs it to the task's disk first. `pipeline_id`
   takes letters, digits, `.`, `_` and `-`, starting with a letter or digit,
   without `..`, up to 128 characters.
+- **One spelling per corpus.** The entrypoint passes the URI, exactly as
+  given, as the run's `document_parsing.source_scope`
+  (`UKR__PROCESSING__DOCUMENT_PARSING__SOURCE_SCOPE`, which overrides the
+  image config), and every document id is derived from it.
+  `s3://bucket/corpus` and `s3://bucket/corpus/` sync the same files but
+  give every document a different id, so switching between them indexes the
+  whole corpus again under new ids. Keep the spelling of the first run (the
+  examples above end in `/`). Ids are not normalized because that would
+  change the ids of existing indexes.
 - **Resume.** Start a new execution with the same input: the task skips the
   stages that completed. Checkpoints are uploaded after every stage and on
   SIGTERM (the container's stop timeout is 120 s; the stage's store writes

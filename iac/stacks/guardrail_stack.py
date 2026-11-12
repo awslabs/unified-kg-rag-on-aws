@@ -7,11 +7,24 @@ A guardrail must exist in the same region the InvokeModel/Converse call is made
 against. Because this deployment runs Bedrock cross-region (``bedrock_region``,
 e.g. us-west-2) while Neptune/OpenSearch/KMS live in the deploy region (e.g.
 ap-northeast-2), the guardrail is its own region-pinned stack rather than part
-of the deploy-region SecurityStack. To avoid cross-region CloudFormation
-references, the identifier reaches the compute task through the
-``guardrail_identifier`` CDK context value (see ``iac/README.md``).
+of the deploy-region SecurityStack.
 
-"Create" and "use" are separate knobs so the documented two-step deploy is
+How the tasks get the guardrail (``GuardrailStack.attachment``):
+
+* Same region (``bedrock_region`` unset or the deploy region, which private
+  mode requires): the guardrail this stack owns is attached by default. Its id
+  and published version go into two SSM parameters, which the task
+  definitions read as CloudFormation dynamic references when they deploy. Not
+  CloudFormation exports: a policy change publishes a new version, and an
+  export in use cannot change value, so the guardrail deploy would fail. The
+  tasks' container carries the policy digest as a label, so a policy change
+  also changes the task definitions and they read the new version.
+* Another region, or an external guardrail: the identifier reaches compute
+  through the ``guardrail_identifier`` CDK context value (a cross-region
+  reference would rewrite every stack's export plumbing); see
+  ``iac/README.md``. A ``guardrail_identifier`` given always wins.
+
+"Create" and "use" are separate knobs so the cross-region two-step deploy is
 stable:
 
 * ``create_guardrail`` (default ``True``) decides whether THIS stack owns a
@@ -51,9 +64,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+from typing import NamedTuple
 
-from aws_cdk import Annotations, CfnOutput, RemovalPolicy, Stack
+from aws_cdk import (
+    Annotations,
+    CfnDynamicReference,
+    CfnDynamicReferenceService,
+    CfnOutput,
+    RemovalPolicy,
+    Stack,
+)
 from aws_cdk import aws_bedrock as bedrock
+from aws_cdk import aws_ssm as ssm
 from constructs import Construct
 
 from iac.config import DeploymentConfig
@@ -63,15 +85,41 @@ from iac.config import DeploymentConfig
 PII_ANONYMIZED = ("EMAIL", "PHONE", "CREDIT_DEBIT_CARD_NUMBER")
 
 
+class GuardrailAttachment(NamedTuple):
+    """The guardrail the tasks apply."""
+
+    identifier: str
+    # The published version; None applies the guardrail's DRAFT.
+    version: str | None
+    # Set when the values are read at deploy time from this stack's SSM
+    # parameters: the stack to deploy first, and the policy digest whose
+    # change makes the task definitions read them again.
+    source: Stack | None = None
+    revision: str | None = None
+
+
 class GuardrailStack(Stack):
     def __init__(
-        self, scope: Construct, construct_id: str, config: DeploymentConfig, **kwargs
+        self,
+        scope: Construct,
+        construct_id: str,
+        config: DeploymentConfig,
+        deploy_region: str | None = None,
+        **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
         self.config = config
         self.guardrail: bedrock.CfnGuardrail | None = None
         self.guardrail_version: bedrock.CfnGuardrailVersion | None = None
         self.guardrail_identifier: str | None
+        self.policy_digest: str | None = None
+        # What compute attaches: the context values when given, else the
+        # owned guardrail when it lives in the deploy region.
+        self.attachment: GuardrailAttachment | None = (
+            GuardrailAttachment(config.guardrail_identifier, config.guardrail_version)
+            if config.guardrail_identifier
+            else None
+        )
         if config.create_guardrail:
             self.guardrail = self._build_guardrail()
             self.guardrail_identifier = self.guardrail.attr_guardrail_id
@@ -93,26 +141,66 @@ class GuardrailStack(Stack):
                     "`-c create_guardrail=false` (or `-c create_guardrail=true` to "
                     "silence this warning)."
                 )
-            if not config.guardrail_identifier:
-                # A warning, not a note: the id reaches compute only through
-                # context, so a later deploy that omits it detaches the
-                # guardrail an earlier one attached, and the tasks then run
-                # with no screening.
+            if self.attachment is None and config.bedrock_region in (
+                None,
+                deploy_region,
+            ):
+                self.attachment = self._attach_owned()
+            elif self.attachment is None:
+                # A warning, not a note: across regions the id reaches
+                # compute only through context, so a later deploy that omits
+                # it detaches the guardrail an earlier one attached, and the
+                # tasks then run with no screening.
                 Annotations.of(self).add_warning(
                     "The guardrail this stack owns is not attached to compute: "
-                    "this synth gives the tasks no guardrail, so no query or "
-                    "answer is screened (a deploy of it detaches one an earlier "
-                    "deploy attached). Pass `-c guardrail_identifier="
-                    "<GuardrailIdentifier output> -c guardrail_version="
-                    "<GuardrailVersion output>` on every deploy, or keep both in "
-                    "the context of cdk.json; `-c create_guardrail=false` "
-                    "creates none."
+                    "bedrock_region differs from the deploy region, so the id "
+                    "reaches the tasks only through context and this synth "
+                    "gives them no guardrail; no query or answer is screened "
+                    "(a deploy of it detaches one an earlier deploy attached). "
+                    "Pass `-c guardrail_identifier=<GuardrailIdentifier output> "
+                    "-c guardrail_version=<GuardrailVersion output>` on every "
+                    "deploy, or keep both in the context of cdk.json; "
+                    "`-c create_guardrail=false` creates none."
                 )
         else:
             # Bring-your-own path: nothing is created; surface the external id.
             self.guardrail_identifier = config.guardrail_identifier
         if self.guardrail_identifier:
             CfnOutput(self, "GuardrailIdentifier", value=self.guardrail_identifier)
+
+    def _attach_owned(self) -> GuardrailAttachment:
+        """Hand the owned guardrail to compute through SSM parameters.
+
+        Read as dynamic references when a task definition deploys, so no
+        export pins the version (see the module docstring). An explicit
+        ``guardrail_version`` still pins the version the tasks apply.
+        """
+        assert self.guardrail is not None and self.guardrail_version is not None
+        values = {
+            "identifier": self.guardrail.attr_guardrail_id,
+            "version": self.guardrail_version.attr_version,
+        }
+        references = {}
+        for name, value in values.items():
+            # The literal name, not the parameter's Ref: a Ref read by another
+            # stack becomes an export.
+            parameter_name = f"/{self.config.prefix}/guardrail/{name}"
+            ssm.StringParameter(
+                self,
+                f"Attached{name.capitalize()}",
+                parameter_name=parameter_name,
+                string_value=value,
+                description=f"Guardrail {name} the compute tasks apply",
+            )
+            references[name] = CfnDynamicReference(
+                CfnDynamicReferenceService.SSM, parameter_name
+            ).to_string()
+        return GuardrailAttachment(
+            identifier=references["identifier"],
+            version=self.config.guardrail_version or references["version"],
+            source=self,
+            revision=self.policy_digest,
+        )
 
     def _build_guardrail(self) -> bedrock.CfnGuardrail:
         # Region-qualify the name: the guardrail lives in the Bedrock runtime
@@ -225,6 +313,7 @@ class GuardrailStack(Stack):
         digest = hashlib.sha256(
             json.dumps(policy, sort_keys=True).encode()
         ).hexdigest()[:16]
+        self.policy_digest = digest
         version = bedrock.CfnGuardrailVersion(
             self,
             "PublishedVersion",

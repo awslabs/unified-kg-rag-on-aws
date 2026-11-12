@@ -1407,8 +1407,9 @@ From a `main` checkout (formats and keys no release had):
   rejections, a yellow multi-node cluster, an unusable KMS key, ephemeral storage, `DocumentsNotIndexed`, and
   `QueryLatencyHigh` on `run-rag --metrics-sink cloudwatch`'s `query_latency_ms` (#330, #519, #528).
 - The package ships a `py.typed` marker (#568). `main` reports `0.3.0.dev0`, and a `v<version>` tag runs a release
-  workflow that publishes a GitHub release (nothing on PyPI yet): the tag must be on `main`, and the notes'
-  repo-relative links point at the tagged tree (#572, #588).
+  workflow that publishes a GitHub release: the tag must be on `main`, and the notes' repo-relative links point at
+  the tagged tree (#572, #588). Its PyPI upload (trusted publishing, `pypi` environment) stays off until the
+  repository variable `PYPI_PUBLISH` is `true` (CONTRIBUTING.md, "Releasing").
 - HippoRAG 2's Personalized PageRank (docs/design.md §6.4): the opt-in `ppr` strategy and `local`'s default
   text-unit order. The `ppr` search strategy (`search.ppr_search`; `auto` never routes to it, and
   `search.auto_routable_strategies` refuses it until a measurement shows where it wins) seeds a Personalized
@@ -1675,6 +1676,12 @@ From a `main` checkout (formats and keys no release had):
   #330); queries read Neptune through the reader endpoint, so with `neptune_instances` above 1 a query right after
   an ingestion can miss its last writes for the replica lag (#566); synth warns when the guardrail stack's guardrail
   is not given to compute (#566).
+- CDK: both task definitions drop every Linux capability (as `docker/compose.local.yaml`), and synth warns when an
+  environment other than dev deploys the mutable `latest` image tag.
+- CDK: a plain `cdk deploy --all` attaches the guardrail it creates when `bedrock_region` is the deploy region (every
+  private deploy): the tasks read its id and version from SSM parameters the guardrail stack writes, so queries and
+  answers are screened without `-c guardrail_identifier`; across regions, and for a given identifier, the context
+  path is unchanged. `-c create_guardrail=false` keeps a deployment without one.
 - CDK: the cache bucket is versioned (noncurrent versions expire after 30 days, 1 under `pipeline-runs/`); Neptune
   keeps maintenance and backups in set windows (#519); `OpenSearchJvmPressure` follows AWS's recommendation,
   `NeptuneHighCpu` needs 3 periods, `NeptuneLowFreeableMemory` is 1/32 of the class memory, `PipelineFailures`
@@ -2068,8 +2075,9 @@ Deployment (CDK).
   package from the copied source and fails unless the installed files are that source (uv's cache keys the project's
   wheel by its version, so a warm cache had put an earlier commit's code in an image); the image keeps the digest
   (`/app/.venv/unified-kg-rag-source.sha256`, `scripts/package_digest.py`), which the CI docker job checks.
-- Releases attach SHA-256 checksums and a CycloneDX SBOM of the locked dependencies, with a signed build provenance
-  attestation of the distributions (`gh attestation verify`) (#617).
+- Releases attach SHA-256 checksums and a CycloneDX SBOM of the locked dependencies with each package's licence and
+  the package version, with a signed build provenance attestation of the distributions (`gh attestation verify`)
+  (#617).
 - IaC: the ingestion role cannot change OpenSearch cluster settings or plugin configuration (writes under
   `_cluster`, `_plugins` and `_opendistro` are denied), nor write snapshot repositories, templates, ingest or search
   pipelines or stored scripts (`_snapshot`, `_index_template`, `_component_template`, `_template`, `_ingest`,

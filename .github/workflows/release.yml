@@ -2,12 +2,12 @@ name: release
 
 # Build the sdist and wheel for a version tag and publish them as a GitHub
 # release, with the notes from that version's CHANGELOG.md section, their
-# SHA-256 checksums, a CycloneDX SBOM of the locked dependencies and a
-# signed build provenance attestation (`gh attestation verify <file> --repo
-# awslabs/unified-kg-rag-on-aws`).
+# SHA-256 checksums, a CycloneDX SBOM of the locked dependencies (with their
+# licences) and a signed build provenance attestation (`gh attestation verify
+# <file> --repo awslabs/unified-kg-rag-on-aws`), then, once a maintainer turns
+# it on (repository variable PYPI_PUBLISH), upload them to PyPI.
 # workflow_dispatch is a dry run: it builds and checks the same artifacts (the
-# notes fall back to [Unreleased]) and publishes nothing. No PyPI upload yet;
-# CONTRIBUTING.md ("Releasing") describes the planned trusted-publishing job.
+# notes fall back to [Unreleased]) and publishes nothing.
 
 on:
   push:
@@ -128,16 +128,12 @@ jobs:
           "$RUNNER_TEMP/wheel-venv/bin/python" -c "import unified_kg_rag, sys; print(unified_kg_rag.__version__)"
           "$RUNNER_TEMP/wheel-venv/bin/run-rag" --help > /dev/null
 
-      - name: Write the checksums and the SBOM
+      - name: Write the checksums
         # Next to dist/, which holds only the two distributions (checked
-        # above). The SBOM lists every locked package of the runtime
-        # dependencies and all extras (no dev group), as uv.lock pins them.
+        # above).
         run: |
-          version="$(uv run --no-project python scripts/changelog_section.py --print-package-version)"
           mkdir release-assets
           (cd dist && sha256sum -- *.tar.gz *.whl) > release-assets/SHA256SUMS
-          uv export --quiet --frozen --no-dev --all-extras --format cyclonedx1.5 \
-            --output-file "release-assets/unified_kg_rag_on_aws-${version}.cdx.json"
           cat release-assets/SHA256SUMS
 
       - name: Upload the artifacts
@@ -150,10 +146,57 @@ jobs:
             release-notes.md
           if-no-files-found: error
 
+  sbom:
+    # A CycloneDX SBOM of every locked package of the runtime dependencies and
+    # all extras (no dev group), as uv.lock pins them, with each package's
+    # licence read from an environment synced from that lock (the licenses
+    # workflow's), and the package version on its root component. Its own job:
+    # syncing every extra pulls the CUDA build of torch, which the build job's
+    # cold environment does not need.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.12.23"
+          python-version: "3.12"
+          enable-cache: false
+
+      - name: Sync every extra
+        run: uv sync --locked --all-extras --no-dev --no-install-project
+
+      - name: Write the SBOM
+        # pip-licenses lists setuptools only with --with-system; a package of
+        # another platform (pywin32, colorama) is not installed here and keeps
+        # no licence (the step lists them).
+        shell: bash
+        run: |
+          version="$(uv run --no-project python scripts/changelog_section.py --print-package-version)"
+          sbom="sbom/unified_kg_rag_on_aws-${version}.cdx.json"
+          mkdir sbom
+          uv export --quiet --frozen --no-dev --all-extras --format cyclonedx1.5 \
+            --output-file "$sbom"
+          uv run --no-sync --with pip-licenses==5.5.5 \
+            pip-licenses --format=json --with-system > "$RUNNER_TEMP/licenses.json"
+          uv run --no-sync python .github/scripts/sbom_licenses.py \
+            "$sbom" "$RUNNER_TEMP/licenses.json" --version "$version"
+
+      - name: Upload the SBOM
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-sbom
+          path: sbom/
+          if-no-files-found: error
+
   github-release:
-    # Tag pushes only: the dry run stops after the build job.
+    # Tag pushes only: the dry run stops after the build and SBOM jobs.
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [build, sbom]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -165,6 +208,12 @@ jobs:
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-artifacts
+
+      - name: Download the SBOM
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-sbom
+          path: release-assets
 
       - name: Verify the checksums
         # The files this job publishes are the ones the build job hashed.
@@ -197,3 +246,38 @@ jobs:
             --title "$TAG" \
             --notes-file release-notes.md \
             "${prerelease[@]}"
+
+  publish-pypi:
+    # Off until a maintainer turns it on: runs only on a tag push and only
+    # when the repository variable PYPI_PUBLISH is 'true' (CONTRIBUTING.md,
+    # "Releasing", lists the one-time PyPI setup). After the GitHub release,
+    # so PyPI receives the files that release published; an upload cannot be
+    # replaced. PyPI trusted publishing (OpenID Connect): no API token is
+    # stored, and the pypi environment can require a reviewer.
+    if: >-
+      github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+      && vars.PYPI_PUBLISH == 'true'
+    needs: [build, github-release]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://pypi.org/project/unified-kg-rag-on-aws/
+    permissions:
+      id-token: write # the OIDC token PyPI trusted publishing exchanges
+    steps:
+      - name: Download the artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-artifacts
+
+      - name: Verify the checksums
+        # The files uploaded are the ones the build job hashed and the
+        # GitHub release published.
+        run: (cd dist && sha256sum --check --strict ../release-assets/SHA256SUMS)
+
+      - name: Publish to PyPI
+        # dist/ holds only the sdist and the wheel (the build job checks it).
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          packages-dir: dist/
