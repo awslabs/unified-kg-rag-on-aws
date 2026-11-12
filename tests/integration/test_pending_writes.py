@@ -1017,3 +1017,66 @@ def test_a_noted_edge_a_retried_document_states_again_is_written_once(
     assert harness.state() == expected_state(after, harness.config)
     assert harness.registry_problems(after) == []
     assert _note(harness) is None
+
+
+_ARTIFACT_WRITES = tuple(
+    f"{store}.upsert_{kind}"
+    for store in ("graph", "vector")
+    for kind in ("entities", "relationships", "claims")
+)
+
+
+@pytest.mark.parametrize(
+    "names",
+    [(_V, _D, "Xeno", "Yard"), ("한빛", "공급사", "제노", "ひかり")],
+    ids=["en", "mix"],
+)
+def test_a_note_joined_with_nothing_stored_is_derived_from_its_records(
+    names: tuple[str, str, str, str],
+) -> None:
+    # The first commit's every write of a.txt's and d.txt's entities, edge
+    # and claim is rejected (b.txt's are written: the commit is under the
+    # rate and records them all). The next commit removes d.txt and joins the
+    # note with none of its items stored: the noted items lost d.txt's units,
+    # so they are derived from their records, not written as the note holds
+    # them (a first build's delta, a full build over its records already).
+    hub, other, x, y = names
+    before: Corpus = {
+        "/corpus/a.txt": [[(hub, other, 1)]],
+        "/corpus/d.txt": [[(hub, other, 3)]],
+        "/corpus/b.txt": [[(x, y, 3)]],
+    }
+    after = {k: v for k, v in before.items() if k != "/corpus/d.txt"}
+    built = extract(before)
+    rejected = {
+        item.id
+        for item in [*built.entities, *built.relationships, *built.claims]
+        if hub
+        in (
+            getattr(item, "name", None),
+            getattr(item, "source_name", None),
+            getattr(item, "subject_name", None),
+        )
+        or other == getattr(item, "name", None)
+    }
+    harness = _harness()
+
+    harness.run(
+        before, fail=lambda at, i: at.startswith(_ARTIFACT_WRITES) and i in rejected
+    )
+
+    assert set(_statuses(harness).values()) == {DocStatus.PROCESSED}
+    assert set(harness.graph.ids("entities")) == {_id_of(before, x), _id_of(before, y)}
+    assert _note(harness) is not None
+
+    harness.run(after)
+
+    assert harness.extracted == []
+    assert harness.state() == expected_state(after, harness.config)
+    assert harness.registry_problems(after) == []
+    assert _note(harness) is None
+
+
+def _id_of(corpus: Corpus, name: str) -> str:
+    (entity,) = [e for e in extract(corpus).entities if e.name == name]
+    return entity.id
