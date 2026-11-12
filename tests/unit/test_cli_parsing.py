@@ -124,6 +124,62 @@ def test_rag_a_filter_key_repeated_across_filters_flags_is_a_usage_error(
     assert "--filters gives k more than once" in capsys.readouterr().err
 
 
+def test_rag_filters_json_gives_lists_and_ranges(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression (rv24): the CLI took scalar key:value pairs only, while the
+    # library, MCP and the console take lists and gte/lte ranges.
+    given = '{"start_date": {"gte": "2022-07-01"}, "category": ["a", "b"]}'
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run-rag",
+            "--query",
+            "q",
+            "--filters",
+            "in_schema:false",
+            "--filters-json",
+            given,
+        ],
+    )
+    args = run_rag_chain.CommandLineInterface().parse_args()
+    assert run_rag_chain.RAGChainRunner._parse_filters(
+        args.filters, args.filters_json
+    ) == {
+        "in_schema": False,
+        "start_date": {"gte": "2022-07-01"},
+        "category": ["a", "b"],
+    }
+
+
+@pytest.mark.parametrize(
+    ("given", "says"),
+    [
+        ("{not json", "invalid JSON"),
+        ("[1, 2]", "non-empty JSON object"),
+        ("{}", "non-empty JSON object"),
+        ('{"category": null}', "no value"),
+        ('{"k": "x"}', "k more than once"),
+    ],
+)
+def test_rag_filters_json_is_checked_before_any_query(
+    given: str,
+    says: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run-rag", "--query", "q", "--filters", "k:a", "--filters-json", given],
+    )
+    with pytest.raises(SystemExit) as exit_info:
+        run_rag_chain.CommandLineInterface().parse_args()
+    assert exit_info.value.code == 2
+    assert says in capsys.readouterr().err
+
+
 # --- run_rag_chain: RAGChainRunner validation ----------------------------
 
 

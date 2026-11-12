@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
 import sys
 import uuid
@@ -223,6 +224,21 @@ def _filter_pair(item: str) -> str:
     return item
 
 
+def _filters_json(value: str) -> dict[str, Any]:
+    """argparse ``type`` of ``--filters-json``: a non-empty JSON object
+    (its values checked as a query checks them, in ``parse_args``)."""
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as e:
+        raise argparse.ArgumentTypeError(f"invalid JSON: {e.msg}") from None
+    if not isinstance(parsed, dict) or not parsed:
+        raise argparse.ArgumentTypeError(
+            "expected a non-empty JSON object of filters, e.g. "
+            '\'{"start_date": {"gte": "2022-07-01"}}\''
+        )
+    return parsed
+
+
 # The hits --mode search prints without --verbose, and the files the
 # sources line of an answer names.
 _HITS_SHOWN = 20
@@ -334,16 +350,21 @@ class CommandLineInterface:
         self.parser = self._setup_arguments()
 
     @staticmethod
-    def _typed_filters(filter_args: list[str] | None) -> dict[str, Any]:
-        """``key:value`` pairs as a mapping, a boolean or numeric field's
-        value converted to its type (``in_schema:false`` is ``False``), as
-        the Python API would pass it.
+    def _typed_filters(
+        filter_args: list[str] | None, filters_json: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """``key:value`` pairs and the ``--filters-json`` object as one
+        mapping, a boolean or numeric field's value converted to its type
+        (``in_schema:false`` is ``False``), as the Python API would pass it.
 
         Raises:
-            InvalidFilterError: A value its field's type cannot take.
+            InvalidFilterError: A value its field's type cannot take, or one
+                a query refuses (a null, a nested list, an empty range).
         """
-        filters = dict(item.split(":", 1) for item in filter_args or [])
+        filters: dict[str, Any] = dict(item.split(":", 1) for item in filter_args or [])
+        filters.update(filters_json or {})
         _load_chain()
+        GraphRAGChain.check_filter_values(filters)
         return GraphRAGChain.typed_filter_values(filters) or {}
 
     @staticmethod
@@ -412,6 +433,16 @@ class CommandLineInterface:
             "repeated --filters adds its pairs); a boolean or numeric field "
             "takes its type's value (in_schema:false, rank:2)",
         )
+        parser.add_argument(
+            "--filters-json",
+            type=_filters_json,
+            metavar="JSON",
+            help="Filters as one JSON object, for the values a pair cannot "
+            "give: a list (any of its values) or a range with gt/gte/lt/lte "
+            '(\'{"start_date": {"gte": "2022-07-01"}, "category": ["a", "b"]}\'), '
+            "as the Python API and the MCP server take them; with --filters, "
+            "each key in one of the two",
+        )
         add_output_format_argument(parser)
         parser.add_argument(
             "--metrics-sink",
@@ -455,15 +486,16 @@ class CommandLineInterface:
                 "always generates answers; use --query for retrieval-only output"
             )
         keys = [pair.split(":", 1)[0] for pair in args.filters or []]
+        keys += list(args.filters_json or {})
         if repeated := sorted({key for key in keys if keys.count(key) > 1}):
             self.parser.error(
                 f"--filters gives {', '.join(repeated)} more than once; give "
-                "each key once"
+                "each key once (in --filters or --filters-json)"
             )
         try:
             # A value its field's type cannot take (in_schema:maybe) is a
             # usage error, not a filter matching nothing.
-            CommandLineInterface._typed_filters(args.filters)
+            CommandLineInterface._typed_filters(args.filters, args.filters_json)
         except InvalidFilterError as e:
             self.parser.error(f"--filters: {e}")
         if args.interactive and args.output_format == "json":
@@ -555,7 +587,9 @@ class RAGChainRunner:
                     self.args.query,
                     conversation_id=self.args.conversation_id,
                     use_memory=False,
-                    filters=self._parse_filters(self.args.filters),
+                    filters=self._parse_filters(
+                        self.args.filters, self.args.filters_json
+                    ),
                 )
 
                 result = await self._run_query(rag_input)
@@ -612,7 +646,7 @@ class RAGChainRunner:
         )
         console.print("---")
 
-        filters = self._parse_filters(self.args.filters)
+        filters = self._parse_filters(self.args.filters, self.args.filters_json)
         # A strategy the namespace cannot serve failed every question too.
         if self.rag_chain is not None:
             try:
@@ -856,11 +890,14 @@ class RAGChainRunner:
         console.print(Panel.fit("\n".join(config_lines), border_style="blue"))
 
     @staticmethod
-    def _parse_filters(filter_args: list[str] | None) -> dict[str, Any]:
-        """``--filters`` as a mapping (each pair checked by ``_filter_pair``),
-        boolean and numeric fields typed (``CommandLineInterface.parse_args``
-        refused a value that is not one)."""
-        return CommandLineInterface._typed_filters(filter_args)
+    def _parse_filters(
+        filter_args: list[str] | None, filters_json: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """``--filters`` and ``--filters-json`` as one mapping (each pair
+        checked by ``_filter_pair``), boolean and numeric fields typed
+        (``CommandLineInterface.parse_args`` refused a value that is not
+        one)."""
+        return CommandLineInterface._typed_filters(filter_args, filters_json)
 
     @staticmethod
     def _print_result(result: dict[str, Any], verbose: bool = False) -> None:

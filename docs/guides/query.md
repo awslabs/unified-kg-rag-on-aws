@@ -67,7 +67,10 @@ What the text output shows:
 
 `--filters key:value ...` (or `RAGInput.filters`) narrows what retrieval ranks;
 a pair without a key, a `:` or a value, a key given twice and a key no index the
-strategy reads declares are usage errors (exit 2).
+strategy reads declares are usage errors (exit 2). A list (any of its values)
+or a range goes in `--filters-json`, one JSON object as `RAGInput.filters`
+takes it (`'{"start_date": {"gte": "2022-07-01"}, "category": ["a", "b"]}'`),
+checked the same way; with `--filters`, each key in one of the two.
 
 - A filter applies only to the stores that declare its field
   (`type:person` leaves text units unfiltered). A key no store the selected

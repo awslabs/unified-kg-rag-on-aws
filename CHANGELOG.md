@@ -1429,6 +1429,9 @@ From a `main` checkout (formats and keys no release had):
   switch, and a running query service follows it without a restart (#466, #470, #473, #474).
 - `indexing.opensearch.vector_mode` / `compression_level`: on-disk quantized vectors on OpenSearch 2.17+ (#461).
 - `run-prompt-tuning` reads every format ingestion parses; each `run-*` `--help` ends with an example (#121).
+- `run-rag --filters-json '{"start_date": {"gte": "2022-07-01"}, "category": ["a", "b"]}'`: the list and range
+  filters the library, the MCP server and the console take, checked as a query checks them, beside `--filters`
+  (each key in one of the two). See [filters](docs/reference/filters.md).
 - `run-rag` text output: `--mode search` prints each hit (type, file or name, score, the start of its text) where it
   printed a header alone, and an answer is followed by one line naming its source files and counting its graph
   elements; `--verbose` lists every source with its score and text, in `--interactive` mode too (which printed
