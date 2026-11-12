@@ -506,7 +506,7 @@ export function QuestionTable({ refName, candidate, baseline }: { refName: strin
   return (
     <Sheet title={t("evaluate.questions")} pad={false}>
       <details onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}>
-        <summary style={{ padding: "12px 20px" }}>{t("evaluate.questionsShow", { metric: metric ?? t("evaluate.metric") })}</summary>
+        <summary style={{ padding: "12px 20px" }}>{t("evaluate.questionsShow")}</summary>
         {!open ? null : view.error ? (
           <ErrorText error={view.error} />
         ) : !data ? (
@@ -521,7 +521,7 @@ export function QuestionTable({ refName, candidate, baseline }: { refName: strin
               {compared ? (
                 <>
                   <p className="field-help" style={{ margin: 0, flex: "1 1 320px" }}>
-                    {t("evaluate.questionsHelp", { candidate: candidate!, baseline: baseline! })}
+                    {t("evaluate.questionsHelp", { metric: metric ?? "", candidate: candidate!, baseline: baseline! })}
                   </p>
                   <div className="chips" role="group" aria-label={t("evaluate.outcome")}>
                     {(["all", "win", "tie", "loss"] as const).map((o) => (
