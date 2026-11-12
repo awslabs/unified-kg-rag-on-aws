@@ -354,8 +354,9 @@ class ClaimExtractor(BaseProcessor):
                 )
             start_date = coerce_llm_text(claim_data.get("start_date"))
             end_date = coerce_llm_text(claim_data.get("end_date"))
+            description = coerce_llm_text(claim_data.get("description"), join=True)
             claim_id = self._generate_claim_id(
-                subject_name, object_name, claim_type, start_date, end_date
+                subject_name, object_name, claim_type, start_date, end_date, description
             )
             attributes = self._parse_attributes(claim_data.get("attributes"), text_unit)
 
@@ -370,7 +371,7 @@ class ClaimExtractor(BaseProcessor):
                 status=claim_status(raw_status),
                 start_date=start_date,
                 end_date=end_date,
-                description=coerce_llm_text(claim_data.get("description"), join=True),
+                description=description,
                 description_embedding=None,
                 text_unit_ids=[text_unit.id],
                 source_text=coerce_llm_text(claim_data.get("source_text"), join=True),
@@ -394,8 +395,10 @@ class ClaimExtractor(BaseProcessor):
         claim_type: str,
         start_date: str | None = None,
         end_date: str | None = None,
+        description: str | None = None,
     ) -> str:
-        """Provisional claim id from the names as extracted, and the type.
+        """Provisional claim id from the names as extracted, the type, the
+        dates and the statement.
 
         Only merges restatements within the extraction; ``ClaimResolver``
         replaces it with the id of the resolved entities
@@ -403,11 +406,13 @@ class ClaimExtractor(BaseProcessor):
         the same identity key as entity ids, so case/whitespace/quote variants
         of one name share an id. Known dates are part of the identity (see
         ``claim_identity_suffix``) so same-triple claims with different dates
-        are not collapsed into one keeping a single date.
+        are not collapsed into one keeping a single date, and so is the
+        statement.
         """
+        suffix = claim_identity_suffix(start_date, end_date, description)
         claim_id_content = (
             f"claim:{entity_key(subject_name)}:{entity_key(object_name)}:"
-            f"{claim_type}{claim_identity_suffix(start_date, end_date)}".lower()
+            f"{claim_type}{suffix}".lower()
         )
         return generate_stable_id(claim_id_content)
 

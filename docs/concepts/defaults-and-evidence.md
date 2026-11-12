@@ -735,7 +735,7 @@ the embedded stores measured:
 - **Time outside the model calls.** About 8 ms per text unit for parsing,
   resolution, community detection and indexing.
 
-Real units are longer (`fallback_chunk_size` 4,800 characters) and name more
+Real units are longer (`fallback_chunk_size` 1,200 tokens, about 4,800 English characters) and name more
 entities and relationships, so the runbook plans for 2-3 times the memory
 per unit. That factor is an estimate, not a measurement. The time excludes
 model latency and network writes to Neptune and OpenSearch.

@@ -95,10 +95,10 @@ processing:
   # max_concurrency: 40
   chunking:
     chunker_type: "intelligent"  # intelligent (LLM-guided) | simple
-    length_unit: "chars"  # chars | tokens (a local estimate, e.g. for CJK)
-    min_chunk_size: 1000
-    max_chunk_size: 8000
-    chunk_overlap: 500
+    length_unit: "tokens"  # tokens (a local estimate, any language) | chars
+    min_chunk_size: 250
+    max_chunk_size: 2000
+    chunk_overlap: 125
   translation:
     # Translation runs only when the languages differ.
     source_language: "en"

@@ -135,7 +135,9 @@ def test_a_noted_claim_the_delta_states_again_keeps_the_noted_statement() -> Non
             object_name=_BUYER.name,
             type="RATES",
             status=status,
-            description=f"Vendor rates Buyer in {unit}",
+            # One id, one statement (part of the id).
+            description="Vendor rates Buyer",
+            source_text=f"Vendor rated Buyer ({unit})",
             text_unit_ids=[unit],
         )
 
@@ -151,7 +153,8 @@ def test_a_noted_claim_the_delta_states_again_keeps_the_noted_statement() -> Non
     assert claims is not None
     (joined,) = claims
     assert joined.text_unit_ids == ["u1", "u2"]
-    assert joined.description == "Vendor rates Buyer in u1\nVendor rates Buyer in u2"
+    assert joined.description == "Vendor rates Buyer"
+    assert joined.source_text == "Vendor rated Buyer (u1)\nVendor rated Buyer (u2)"
     assert joined.status == "disputed"
 
 

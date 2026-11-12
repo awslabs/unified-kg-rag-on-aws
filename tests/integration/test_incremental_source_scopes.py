@@ -49,7 +49,7 @@ from unified_kg_rag.domain.models import (
     PipelineStageStatus,
     PipelineStageType,
 )
-from unified_kg_rag.domain.models.config import ChunkingStrategy
+from unified_kg_rag.domain.models.config import ChunkingStrategy, ChunkLengthUnit
 from unified_kg_rag.ports import DocStatusPort
 from unified_kg_rag.shared import ConfigurationError
 
@@ -116,6 +116,8 @@ def scope_test_config(base: Config | None = None) -> Config:
     config = base.model_copy(deep=True) if base is not None else Config()
     chunking = config.processing.chunking
     chunking.chunker_type = ChunkingStrategy.SIMPLE
+    # The sizes below count characters.
+    chunking.length_unit = ChunkLengthUnit.CHARS
     chunking.fallback_chunk_size = 400
     chunking.chunk_overlap = 0
     chunking.min_chunk_size = 1

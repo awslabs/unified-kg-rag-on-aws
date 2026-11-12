@@ -14,8 +14,9 @@ unified-kg-rag-on-aws's Pydantic domain models (no pandas):
   ``text_unit_ids`` and attributes; weight = sum of the per-text-unit
   extracted strengths (``relationship_weights``), as in a full build.
 
-- claims merge by id (it derives from subject, object, type and dates):
-  union description and source-text lines and ``text_unit_ids``.
+- claims merge by id (it derives from subject, object, type, dates and
+  statement): the statement's smallest spelling, the union of source-text
+  lines and ``text_unit_ids``.
 
 Communities and reports need no merge: their ids are content-derived, so a
 delta run's are upserted next to the existing ones (see ``community_content_id``).

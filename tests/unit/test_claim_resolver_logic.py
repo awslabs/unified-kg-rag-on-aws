@@ -289,7 +289,7 @@ class TestMergeClaims:
             object_name="B",
             type="WORKS_AT",
             status="TRUE",
-            description="first",
+            description="Works at B",
             text_unit_ids=["t1"],
             source_text="src one",
             attributes={"k1": "v1"},
@@ -304,7 +304,7 @@ class TestMergeClaims:
             object_name="B",
             type="WORKS_AT",
             status="TRUE",
-            description="second",
+            description="works at B.",
             text_unit_ids=["t2"],
             source_text="src two",
             attributes={"k2": "v2"},
@@ -314,8 +314,9 @@ class TestMergeClaims:
         # Identity fields come from the primary (first) claim.
         assert merged.id == "c-primary"
         assert merged.short_id == "1"
-        # Descriptions and source text concatenated; text_units unioned + sorted.
-        assert "first" in merged.description and "second" in merged.description
+        # One statement, its smallest spelling; source texts concatenated;
+        # text_units unioned + sorted.
+        assert merged.description == "Works at B"
         assert "src one" in merged.source_text and "src two" in merged.source_text
         assert merged.text_unit_ids == ["t1", "t2"]
         # Attributes merged; the status both state, as stored.
@@ -399,7 +400,7 @@ class TestResolveDedupIntegration:
         ents = [_entity("e-alice", "Alice"), _entity("e-acme", "Acme")]
         dup = [
             _claim("c1", "Alice", "Acme", type_="WORKS_AT", description="d1"),
-            _claim("c2", "Alice", "Acme", type_="WORKS_AT", description="d2"),
+            _claim("c2", "Alice", "Acme", type_="WORKS_AT", description="D1."),
         ]
         out, stats = _resolver().resolve(dup, ents)
         assert len(out) == 1
@@ -744,7 +745,7 @@ def test_words_that_are_no_month_stay_as_written(text: str) -> None:
 )
 def test_a_placeholder_in_the_corpus_language_is_an_unknown_date(text: str) -> None:
     assert claim_date_value(text) is None
-    assert claim_identity_suffix(text, text) == ""
+    assert claim_identity_suffix(text, text, None) == ""
 
 
 def test_a_written_cjk_or_dotted_date_reads_as_a_calendar_date() -> None:
@@ -864,3 +865,113 @@ def test_claim_statuses_merge_as_a_join() -> None:
         whole = merge_claim_statuses([a, b, c])
         assert merge_claim_statuses([merge_claim_statuses([a, b]), c]) == whole
         assert merge_claim_statuses([a, merge_claim_statuses([c, b])]) == whole
+
+
+# Undated, object-less claims of one type about one subject (the prompt's
+# NONE / UNKNOWN): distinct statements, which MS GraphRAG keeps one row each
+# for. Keyed without the statement they merged, and the merge mixed their
+# statuses ("accused of bribery" read as confirmed).
+_DISTINCT_STATEMENTS = {
+    "en": (
+        "Acme Corp",
+        "LEGAL",
+        [
+            ("TRUE", "Acme Corp was fined for pollution by the regulator."),
+            ("SUSPECTED", "Acme Corp is accused by a former employee of bribery."),
+        ],
+    ),
+    "ko": (
+        "가나전자",
+        "LEGAL",
+        [
+            ("TRUE", "가나전자는 환경법 위반으로 과징금을 부과받았다."),
+            ("SUSPECTED", "전 직원이 가나전자의 뇌물 제공 의혹을 제기했다."),
+            ("FALSE", "가나전자는 담합 혐의에서 무죄 판결을 받았다."),
+        ],
+    ),
+    "ja": (
+        "山田商事",
+        "FINANCIAL",
+        [
+            ("TRUE", "山田商事は2023年に黒字を計上した。"),
+            ("FALSE", "山田商事が倒産したという噂は否定された。"),
+        ],
+    ),
+    "zh": (
+        "华东贸易",
+        "LEGAL",
+        [
+            ("TRUE", "华东贸易因违反环保法规被罚款。"),
+            ("SUSPECTED", "前员工指控华东贸易行贿。"),
+        ],
+    ),
+}
+
+
+@pytest.mark.parametrize("language", sorted(_DISTINCT_STATEMENTS))
+def test_distinct_statements_of_one_subject_stay_distinct_claims(
+    language: str,
+) -> None:
+    subject, type_, statements = _DISTINCT_STATEMENTS[language]
+    units = tuple(f"u{i}" for i in range(len(statements)))
+    claims = [
+        _claim(
+            str(i),
+            subject,
+            "NONE",
+            type_=type_,
+            status=status,
+            description=description,
+            start_date="UNKNOWN",
+            end_date="UNKNOWN",
+            text_unit_ids=[units[i]],
+        )
+        for i, (status, description) in enumerate(statements)
+    ]
+    resolved, _ = ClaimResolver(Config()).resolve(
+        claims, [_entity("e1", subject, units)]
+    )
+    assert sorted((c.status, c.description) for c in resolved) == sorted(
+        (claim_status(status), description) for status, description in statements
+    )
+    assert len({c.id for c in resolved}) == len(statements)
+
+
+@pytest.mark.parametrize(
+    ("first", "again"),
+    [
+        ("Acme Corp was fined for pollution.", "ACME CORP  was fined for pollution"),
+        ("가나전자는 과징금을 부과받았다.", "가나전자는  과징금을 부과받았다"),
+        ("山田商事は黒字を計上した。", "山田商事は黒字を計上した"),
+    ],
+)
+def test_a_restatement_merges_whatever_order_it_comes_in(
+    first: str, again: str
+) -> None:
+    """The same statement (up to case, spacing and the closing stop) from two
+    units is one claim, its status merged, its description the smallest
+    spelling: the id the merged claim keeps is each statement's."""
+    subject = first[:2] if not first.isascii() else "Acme Corp"
+
+    def statement(i: str, status: str, description: str) -> Claim:
+        return _claim(
+            i,
+            subject,
+            "NONE",
+            type_="LEGAL",
+            status=status,
+            description=description,
+            text_unit_ids=[f"u{i}"],
+        )
+
+    entity = _entity("e1", subject, ("u1", "u2"))
+    for order in ((first, again), (again, first)):
+        resolved, _ = ClaimResolver(Config()).resolve(
+            [statement("1", "TRUE", order[0]), statement("2", "FALSE", order[1])],
+            [entity],
+        )
+        assert len(resolved) == 1
+        (claim,) = resolved
+        assert claim.status == "disputed"
+        assert claim.description == min(first, again)
+        assert claim.id == resolved_claim_id(claim)

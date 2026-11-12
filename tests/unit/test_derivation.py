@@ -899,7 +899,7 @@ def test_a_claim_keyed_by_the_id_an_earlier_rekey_replaced_is_its_claim(
 
 
 @pytest.mark.parametrize("stated", ["PAYS", "OWES"])
-@pytest.mark.parametrize("differ", ["type", "dates"])
+@pytest.mark.parametrize("differ", ["type", "dates", "statement"])
 @pytest.mark.parametrize(
     "names",
     [("Acme Inc", "Depot"), ("주식회사 한빛", "창고"), ("株式会社ひかり", "倉庫")],
@@ -921,6 +921,14 @@ def test_a_claim_no_resolved_claim_keys_takes_the_statement_of_its_fact(
     statements = [_claim(subject, obj, stated, ["u1"])]
     if differ == "type":
         statements.append(_claim(subject, obj, other, ["u1"]))
+    elif differ == "statement":
+        # Another statement of the same type about the same names (part of
+        # a claim's id): its own claim, not the given one's.
+        statements.append(
+            _claim(subject, obj, stated, ["u1"]).model_copy(
+                update={"id": "other", "description": f"{subject} {obj} 2"}
+            )
+        )
     else:
         dated = _claim(subject, obj, stated, ["u1"]).model_copy(
             update={"id": "dated", "start_date": "2024-03-01"}
@@ -935,6 +943,7 @@ def test_a_claim_no_resolved_claim_keys_takes_the_statement_of_its_fact(
 
     claim = {c.id: c for c in derived.claims}[derived.id_remap[given.id]]
     assert (claim.type.upper(), claim.start_date) == (stated, None)
+    assert claim.description == statements[0].description
 
 
 def test_a_claim_endpoint_no_underived_entity_holds_follows_its_unit() -> None:

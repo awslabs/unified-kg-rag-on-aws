@@ -765,3 +765,72 @@ def test_a_cut_lineage_is_read_from_the_descendants(harness: StoreHarness) -> No
         "top"
     ]
     assert expanded.keys() & {"u010", "u011"}, result.results
+
+
+def test_a_leaf_past_a_nodes_cut_lineage_takes_the_node(harness: StoreHarness) -> None:
+    # A unit placed directly under a higher node (a singleton cluster, or a
+    # member of a cluster whose summary failed) can fall past that node's
+    # lineage cut: listed in its child_ids, not in its text_unit_ids. Looked
+    # up by text_unit_ids only, the node survived the unit's removal and
+    # still paraphrased it. The real build, as the reviewer's probe: 201
+    # leaves in pairs and the last alone, then one cluster, capped at 100.
+    import numpy as np
+
+    from unified_kg_rag.domain.ingestion.summary_tree import (
+        Leaf,
+        Realized,
+        TreeSettings,
+        build_tree,
+    )
+
+    def partition(vectors: Any, split: Any, keys: list[str]) -> list[list[int]]:
+        n = len(keys)
+        if all(k.startswith("u") for k in keys):
+            pairs = [[i, i + 1] for i in range(0, n - 1, 2)]
+            return pairs + ([[n - 1]] if n % 2 else [])
+        return [list(range(n))]
+
+    rng = np.random.default_rng(0)
+    units = _units(201)
+    leaves = [
+        Leaf(id=u.id, text=u.text, vector=rng.normal(size=8), n_tokens=5) for u in units
+    ]
+
+    def realize(clusters: list[Any]) -> list[Realized]:
+        return [
+            Realized(
+                text="Summary " + "/".join(c.child_ids[:2]),
+                vector=rng.normal(size=8),
+                n_tokens=3,
+                input_key=str(i),
+            )
+            for i, c in enumerate(clusters)
+        ]
+
+    settings = TreeSettings(
+        max_lineage_text_units=100, max_cluster_tokens=10**6, min_level_shrink=0.0
+    )
+    nodes = build_tree(
+        leaves,
+        settings=settings,
+        realize=realize,
+        language="English",
+        partition=partition,
+    ).nodes
+    (top,) = [n for n in nodes if n.level == 2]
+    assert "u200" in top.child_ids and "u200" not in top.text_unit_ids
+    indexer = harness.vector_indexer
+
+    for delete in (
+        lambda: indexer.delete_summary_nodes_citing(["u200"], "default"),
+        lambda: indexer.delete_summary_nodes_outside(
+            [u.id for u in units[:200]], "default"
+        ),
+    ):
+        _tree(harness, nodes)
+        assert delete().failed_items == 0
+        left = indexer.read_summary_nodes(None, fields=["child_ids"]) or []
+        assert [n["id"] for n in left if "u200" in n.get("child_ids", [])] == []
+        assert top.id not in {n["id"] for n in left}
+        # The pairs' summaries, which hold no removed text, stay.
+        assert len(left) == len(nodes) - 1

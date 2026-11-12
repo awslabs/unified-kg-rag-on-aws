@@ -43,6 +43,7 @@ from unified_kg_rag.domain.ingestion.graph_builder import edge_relationships
 from unified_kg_rag.domain.ingestion.report_references import (
     DATASET_ENTITIES,
     DATASET_RELATIONSHIPS,
+    DATASET_REPORTS,
     split_data_references,
 )
 from unified_kg_rag.domain.ingestion.seed_graph import seed_only
@@ -910,7 +911,7 @@ class CommunityDetector:
         # their report summaries in (MS GraphRAG parity) so the synthesis of the
         # parts that did not fit is not lost. Bounded by its own token budget so
         # the prompt stays roughly within 2x the raw budget in the overflow case.
-        sub_reports = ""
+        sub_reports: list[dict[str, Any]] = []
         if truncated and reports_by_id:
             sub_reports = self._build_sub_community_context(
                 community, reports_by_id, token_budget
@@ -953,13 +954,16 @@ class CommunityDetector:
         community: Community,
         reports_by_id: dict[str, CommunityReport],
         token_budget: int,
-    ) -> str:
+    ) -> list[dict[str, Any]]:
         """Pack child sub-community report summaries into a token budget.
 
         Children are taken biggest-first (by report size, then id for stable
         ordering) so the largest sub-communities — whose raw detail is most
         likely to have overflowed the parent — are summarized first. Each entry
-        is the child's executive summary prefixed with its importance rating.
+        is the child's executive summary prefixed with its importance rating,
+        numbered in the prompt as the entities are (``Reports (n)``), with the
+        records its findings cite: a parent finding citing it cites those
+        (MS GraphRAG substitutes the child's content).
         """
         child_reports = [
             reports_by_id[cid]
@@ -967,24 +971,38 @@ class CommunityDetector:
             if cid in reports_by_id
         ]
         if not child_reports:
-            return ""
+            return []
 
         child_reports.sort(key=lambda r: (-(r.size or 0), r.id))
 
-        lines: list[str] = []
+        packed: list[dict[str, Any]] = []
         used = 0
         for report in child_reports:
             summary = (report.summary or report.full_content or "").strip()
             if not summary:
                 continue
             header = report.name or f"Sub-community {report.community_id}"
-            entry = f"- {header} (rating {report.rating:.1f}/10): {summary}"
-            cost = estimate_token_count(entry)
-            if lines and used + cost > token_budget:
+            line = f"{header} (rating {report.rating:.1f}/10): {summary}"
+            number = len(packed) + 1
+            cost = estimate_token_count(_bullet(number) + line)
+            if packed and used + cost > token_budget:
                 break
-            lines.append(entry)
+            packed.append(
+                {
+                    "id": report.id,
+                    "line": line,
+                    "entity_ids": list(
+                        dict.fromkeys(i for f in report.findings for i in f.entity_ids)
+                    ),
+                    "relationship_ids": list(
+                        dict.fromkeys(
+                            i for f in report.findings for i in f.relationship_ids
+                        )
+                    ),
+                }
+            )
             used += cost
-        return "\n".join(lines)
+        return packed
 
     @staticmethod
     def _format_entity_line(entity: dict[str, Any], number: int | None = None) -> str:
@@ -1047,7 +1065,10 @@ class CommunityDetector:
                     for n, rel in enumerate(r["relationships"], 1)
                 ),
                 "claims": cls._claims_section(r.get("claims", [])),
-                "sub_community_reports": r.get("sub_community_reports", ""),
+                "sub_community_reports": "\n".join(
+                    f"{_bullet(n)}{sub['line']}"
+                    for n, sub in enumerate(r.get("sub_community_reports", ()), 1)
+                ),
                 "content_length": r["content_length"],
                 "target_language": r["target_language"],
             }
@@ -1094,11 +1115,10 @@ class CommunityDetector:
             **graph_attributes,
         }
 
-        report_name = (
-            f"Report for {community.name}: {name}"
-            if name
-            else f"Report for {community.name}"
-        )
+        # The model's name, in the report's language: an English "Report
+        # for <community>:" prefix was embedded and searched with every
+        # report, whatever its language. The community's name without one.
+        report_name = name or community.name
 
         report = CommunityReport(
             id=report_id,
@@ -1129,17 +1149,22 @@ class CommunityDetector:
 
     @classmethod
     def _extract_rating(cls, result: dict[str, Any]) -> float:
-        """Parse the 0-10 importance rating, tolerating noisy LLM output."""
+        """Parse the 0-10 importance rating, tolerating noisy LLM output.
+
+        The first number, except that of a rating written beside its scale:
+        of two numbers one 10, the other ("10점 만점에 7점", "10点満点中7点"
+        and "满分10分，得7分" write the scale first; "7/10" and "7 out of 10"
+        after)."""
         raw = coerce_llm_text(result.get("rating"))
         if not raw:
             return 0.0
-        match = re.search(r"-?\d+(?:\.\d+)?", raw)
-        if not match:
+        numbers = [float(n) for n in re.findall(r"-?\d+(?:\.\d+)?", raw)]
+        if not numbers:
             return 0.0
-        try:
-            return max(0.0, min(10.0, float(match.group())))
-        except ValueError:
-            return 0.0
+        rating = numbers[0]
+        if len(numbers) == 2 and 10.0 in numbers:
+            rating = numbers[1] if numbers[0] == 10.0 else numbers[0]
+        return max(0.0, min(10.0, rating))
 
     @classmethod
     def _extract_findings(
@@ -1153,26 +1178,31 @@ class CommunityDetector:
         multiple to a list, so normalize both ``{"finding": {...}}`` and
         ``{"finding": [{...}, ...]}`` (and the rare bare-list) shapes.
 
-        A finding's ``[Data: Entities (...); Relationships (...)]``
-        references leave its text and become the ids of the records of
-        ``report_input`` they number (from 1, in packing order); a number
-        outside the input is dropped.
+        A finding's ``[Data: Reports (...); Entities (...); Relationships
+        (...)]`` references leave its text and become the ids of the records
+        of ``report_input`` they number (from 1, in packing order); a cited
+        sub-community report stands for the records its findings cite,
+        after the finding's own. A number outside the input is dropped.
         """
         packed = report_input or {}
+        sub_reports = list(packed.get("sub_community_reports") or ())
         records = {
             DATASET_ENTITIES: [e.get("id") for e in packed.get("entities", ())],
             DATASET_RELATIONSHIPS: [
                 r.get("id") for r in packed.get("relationships", ())
             ],
         }
+        sizes = {name: len(ids) for name, ids in records.items()}
+        sizes[DATASET_REPORTS] = len(sub_reports)
+
+        def numbered(numbers: list[int], items: list[Any]) -> list[Any]:
+            return [items[n - 1] for n in numbers if 0 < n <= len(items)]
 
         def resolve(cited: dict[str, list[int]], dataset: str) -> list[str]:
-            ids = records[dataset]
-            resolved = (
-                ids[number - 1]
-                for number in cited.get(dataset, ())
-                if 0 < number <= len(ids)
-            )
+            resolved = numbered(cited.get(dataset, []), records[dataset])
+            key = "entity_ids" if dataset == DATASET_ENTITIES else "relationship_ids"
+            for sub in numbered(cited.get(DATASET_REPORTS, []), sub_reports):
+                resolved += sub.get(key) or []
             return list(dict.fromkeys(str(i) for i in resolved if i))
 
         findings_block = result.get("findings")
@@ -1193,8 +1223,8 @@ class CommunityDetector:
             else:
                 summary = coerce_llm_text(item, join=True)
                 explanation = ""
-            summary, in_summary = split_data_references(summary)
-            explanation, cited = split_data_references(explanation)
+            summary, in_summary = split_data_references(summary, sizes)
+            explanation, cited = split_data_references(explanation, sizes)
             for dataset, numbers in in_summary.items():
                 cited[dataset] = list(dict.fromkeys(cited.get(dataset, []) + numbers))
             if summary or explanation:

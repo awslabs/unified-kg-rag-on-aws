@@ -222,8 +222,10 @@ class PPRRankingMixin(BaseSearchStrategy):
             "converged": result.converged if result else False,
         }
         if result is not None and not result.converged:
-            logger.debug(
-                "PPR did not converge in %s iterations (%s nodes)",
+            logger.warning(
+                "PPR did not converge in %s iterations (%s nodes): the passages "
+                "are ranked by the last iteration's scores; raise "
+                "search.ppr_search.max_iterations or tolerance",
                 result.iterations,
                 graph.node_count,
             )

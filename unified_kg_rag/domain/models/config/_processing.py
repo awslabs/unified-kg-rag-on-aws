@@ -111,72 +111,73 @@ class ChunkingConfig(BaseModel):
         ),
     )
     length_unit: ChunkLengthUnit = Field(
-        default=ChunkLengthUnit.CHARS,
+        default=ChunkLengthUnit.TOKENS,
         description=(
-            "What the six chunk size settings below count. chars (default) "
-            "counts characters. tokens counts a local token estimate (a "
-            "Han/Hangul/Kana character ~1 token, other text ~4 characters per "
-            "token, at least one per word; no model call), so one setting "
-            "keeps chunks inside the embedding and reranker token limits in "
-            "any language. Switching re-chunks and re-extracts the corpus; "
-            "set the sizes in tokens when you switch (e.g. min 250, max "
-            "2000, overlap 125, fallback 1200, pre-chunk 12500 and its "
-            "overlap 125)."
+            "What the six chunk size settings below count. tokens (default) "
+            "counts a local token estimate (a Han/Hangul/Kana character ~1 "
+            "token, other text ~4 characters per token, at least one per "
+            "word; no model call), so one setting keeps chunks inside the "
+            "embedding and reranker token limits in any language: English "
+            "chunks as with the character sizes four times as large, while "
+            "Korean, Japanese and Chinese chunks hold about a third of the "
+            "text they held at those. chars counts characters; set the sizes "
+            "in characters with it (e.g. min 1000, max 8000, overlap 500, "
+            "fallback 4800, pre-chunk 50000 and its overlap 500). Switching "
+            "re-chunks and re-extracts the corpus."
         ),
     )
     min_chunk_size: int = Field(
-        default=1000,
+        default=250,
         ge=1,
         description=(
-            "Minimum chunk size (length_unit, characters by default); shorter "
-            "pieces are merged into a "
-            "neighbour. Default 1,000 (~250 English tokens) keeps headings and "
-            "short trailing paragraphs from becoming chunks of their own."
+            "Minimum chunk size (length_unit, tokens by default); shorter "
+            "pieces are merged into a neighbour. Default 250 (~1,000 English "
+            "characters) keeps headings and short trailing paragraphs from "
+            "becoming chunks of their own."
         ),
     )
     max_chunk_size: int = Field(
-        default=8000,
+        default=2000,
         ge=1,
         description=(
-            "Maximum chunk size (length_unit, characters by default). Every "
-            "chunk is embedded whole "
-            "and reranked as one document, so it must fit the embedding "
-            "model's input (Titan Text Embeddings V2: 8,192 tokens) and the "
-            "reranker's per-document limit (Cohere Rerank 3.5: 4,096 tokens), "
-            "or its tail is never embedded or reranked. In characters, "
-            "English averages ~4 characters per token and a Han/Hangul/Kana "
-            "character ~1, so for CJK corpora with reranking use about half "
-            "the default sizes, or set length_unit: tokens."
+            "Maximum chunk size (length_unit, tokens by default). Every "
+            "chunk is embedded whole and reranked as one document, so it "
+            "must fit the embedding model's input (Titan Text Embeddings V2: "
+            "8,192 tokens) and the reranker's per-document limit (Cohere "
+            "Rerank 3.5: 4,096 tokens), or its tail is never embedded or "
+            "reranked. With length_unit: chars, English averages ~4 "
+            "characters per token and a Han/Hangul/Kana character ~1, so "
+            "size CJK corpora by their characters."
         ),
     )
     chunk_overlap: int = Field(
-        default=500,
+        default=125,
         ge=0,
         description=(
             "Overlap between consecutive chunks the size-based splitter cuts "
             "(the simple chunker, and the intelligent chunker's size "
-            "fallbacks), in length_unit (characters by default). The "
+            "fallbacks), in length_unit (tokens by default). The "
             "intelligent chunker's model-chosen boundaries cut between lines "
             "and share no text."
         ),
     )
     pre_chunk_size: int = Field(
-        default=50000,
+        default=12500,
         ge=1,
         description=(
-            "Pre-chunk size (length_unit, characters by default): the window "
+            "Pre-chunk size (length_unit, tokens by default): the window "
             "the intelligent chunker's "
             "LLM picks boundaries in. Not embedded itself (its chunks are capped "
             "by max_chunk_size), so it is sized for the chunking model's prompt."
         ),
     )
     pre_chunk_overlap: int = Field(
-        default=500,
+        default=125,
         ge=0,
-        description="Pre-chunk overlap (length_unit, characters by default)",
+        description="Pre-chunk overlap (length_unit, tokens by default)",
     )
     fallback_chunk_size: int = Field(
-        default=4800,
+        default=1200,
         ge=1,
         description=(
             "Target chunk size for the size-based splitter (the simple "
@@ -184,8 +185,8 @@ class ChunkingConfig(BaseModel):
             "exceeds max_chunk_size). It splits at paragraphs, then lines, "
             "then after CJK sentence terminators, then after a sentence's "
             "'.', '!', '?' or '…' before a space, then spaces "
-            "(length_unit, characters by default). 4,800 characters is ~1,200 "
-            "English tokens, the default chunk size of MS GraphRAG and "
+            "(length_unit, tokens by default). 1,200 tokens (~4,800 English "
+            "characters) is the default chunk size of MS GraphRAG and "
             "LightRAG."
         ),
     )

@@ -212,16 +212,21 @@ def _unit_records(
         apply_text_unit_weights(edge, {unit_id: float(strength)})
         relationships.append(edge)
         if strength == 3:
+            # One statement wherever it is stated (the statement is part of
+            # a claim's id): restatements across units and documents merge.
+            description = f"{source} rates {target}"
             claims.append(
                 Claim(
-                    id=ClaimExtractor._generate_claim_id(source, target, "RATES"),
+                    id=ClaimExtractor._generate_claim_id(
+                        source, target, "RATES", description=description
+                    ),
                     subject_id="",
                     subject_name=source,
                     object_id="",
                     object_name=target,
                     type="RATES",
                     status=_claim_status(where),
-                    description=f"{source} rates {target} in {where}",
+                    description=description,
                     source_text=f"{source} rated {target} ({where})",
                     text_unit_ids=[unit_id],
                 )

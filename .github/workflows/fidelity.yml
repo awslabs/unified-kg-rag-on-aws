@@ -28,6 +28,11 @@ concurrency:
 
 env:
   HYPOTHESIS_PROFILE: ci
+  # One BLAS thread per test process: pytest -n logical already runs one per
+  # core, and each numpy/scikit-learn call spawning a thread per core
+  # oversubscribed the runner (the RAPTOR recorded answers hit their timeout).
+  OMP_NUM_THREADS: "1"
+  OPENBLAS_NUM_THREADS: "1"
   # The commits and versions the parity tests were written against; bump them
   # together with the tests.
   HIPPORAG_REPO: https://github.com/OSU-NLP-Group/HippoRAG

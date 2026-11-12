@@ -143,8 +143,9 @@ custom_prompts:
 오버라이드에 파서가 읽는 태그(`<entities>`, `<relationships>`, `<source_text>`,
 `<community_name>`, `<summary>`, `<rating>`, `<rating_explanation>`, `<findings>`)가
 빠지면 빠진 태그를 알리는 경고를 남깁니다. 내장 `community_report` 프롬프트는 입력한
-엔티티와 관계에 번호를 붙이고, 발견 사항마다 `[Data: Entities (...); Relationships (...)]`
-참조를 요청하며, 리포트는 이 참조를 인용한 레코드 ID로 보관합니다. 이 규칙이 없는
+엔티티, 관계, 하위 커뮤니티 리포트에 번호를 붙이고, 발견 사항마다
+`[Data: Reports (...); Entities (...); Relationships (...)]` 참조를 요청하며, 리포트는 이
+참조를 인용한 레코드 ID로 보관합니다(하위 리포트는 그 발견 사항이 인용한 레코드로 보관합니다). 이 규칙이 없는
 오버라이드도 동작하지만, 발견 사항에 인용이 남지 않습니다.
 
 ### 재정의할 수 없는 프롬프트

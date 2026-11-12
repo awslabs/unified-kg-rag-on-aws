@@ -52,7 +52,7 @@ commands are in [`iac/README.md`](../iac/README.md#after-deploy).
 Peak memory of the ingestion task grows linearly with the text units of a
 run. Plan for about 85-125 KiB of task memory per text unit on top of about
 0.2 GiB, and about 11 KiB of stage cache per unit: an estimate for real
-units (`fallback_chunk_size` 4,800 characters), scaled from short units
+units (`fallback_chunk_size` 1,200 tokens, about 4,800 English characters), scaled from short units
 ([Defaults and evidence: Ingestion memory and run time](./concepts/defaults-and-evidence.md#ingestion-memory-and-run-time)):
 
 | `fargate_memory` | Text units per run (estimate) |

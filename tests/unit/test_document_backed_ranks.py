@@ -575,7 +575,7 @@ def test_a_parent_whose_child_has_no_report_rolls_up_raw_context() -> None:
 
     assert [r.community_id for r in reports] == ["root"] and failed == []
     (prepared,) = captured
-    assert prepared["sub_community_reports"] == ""
+    assert prepared["sub_community_reports"] == []
     # Its raw context leads with a document entity.
     assert prepared["entities"][0]["name"] in {"Vendor", "Buyer"}
 

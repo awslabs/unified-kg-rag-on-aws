@@ -185,7 +185,7 @@ stored is read again: follow *Upgrading* in order.
 | `aws.region_name` / `aws.bedrock.region_name` | `ap-northeast-2` / `us-west-2` | `us-west-2` / `null`, following `aws.region_name` (#148) |
 | `aws.s3.encryption.encryption_type` | `AES256` | `BUCKET_DEFAULT` (#105) |
 | `aws.dynamodb.table_name` | `unified-kg-rag-on-aws-doc-status` | `unified-kg-rag-on-aws-doc-status-v2` (#327) |
-| `processing.chunking.min_chunk_size` / `max_chunk_size` / `fallback_chunk_size` | 5000 / 50000 / 50000 | 1000 / 8000 / 4800 (#125) |
+| `processing.chunking.min_chunk_size` / `max_chunk_size` / `fallback_chunk_size` | 5000 / 50000 / 50000 characters | 250 / 2000 / 1200 tokens (`length_unit: tokens`; about 1000 / 8000 / 4800 English characters) (#125) |
 | `processing.max_concurrency` | 20 | 40, 20 under `backend: local` (#310) |
 | `processing.similarity_threshold` | 0.6 | 0.85; similarity matching is opt-in (`processing.fuzzy_entity_resolution`) (#214) |
 | `indexing.neptune.property_max_length` | 1000 | 4000 (#132) |
@@ -272,7 +272,10 @@ See [exit codes and JSON output](docs/reference/exit-codes-and-json.md) and the
   the joiners), read every dash as a space but a minus sign opening the name ("−40 °C" is not "40 °C"), drop a middle
   dot between Han, Hangul or Kana letters (and Korean's "ㆍ" between syllables), the Arabic and Hebrew vowel marks and
   a trailing "。" ("ジョン・スミス" is "ジョンスミス"); a key is its own key, and the fuzzy matcher reads a name's identifier
-  tokens from it as its compact key (a dotted "한·빛" has none, as "한빛"). Of spellings with one key, the one its key
+  tokens from its compact key, cut where a word passes between a Han, Hangul or Kana letter and another character
+  (a dotted "한·빛" has none, as "한빛"; "제3조" and "제 3 조" both 제, 3 and 조, so spacing variants with a number are
+  one entity, where they were two), and a word with a Han numeral is an identifier ("東京第一工場" never links
+  "東京第二工場"). Of spellings with one key, the one its key
   folds least names the entity on a tie ("토지", not "「토지」"). Entity and relationship `rank` come from node degree,
   and a relationship's weight sums its strengths per text unit (#189, #214, #574).
 - Entities have no `MemberOf` edges to communities; an entity lists its `community_ids` (#348).
@@ -510,19 +513,22 @@ From a `main` checkout (formats and keys no release had):
   by the next run deriving one of the edge's endpoints, or by a reset; a `pending-commit` note's `edge_entity_ids`
   (#694) is ignored.
 - Re-keyed once before 0.3.0: entity ids and name keys fold quotes, apostrophes, invisible characters, dashes (not a
-  leading minus), dense-script middle dots and Arabic and Hebrew marks and strip more legal forms (*Stored data and
-  reindexing*); the description summary and claim prompts changed and claims keep a `suspected` status (*Fixed*);
-  stage-cache keys hold the prompts in effect (a pipeline id resumed across a prompt change starts over); extraction
-  records under earlier keys (other description summary settings, #541-#556) and claims under an earlier reading of
-  their dates (#612, #624) are no longer looked up. Run one reset (`indexing.reset: true`) with a new or no
-  `--pipeline-id`: incremental runs keep stored entities under their earlier ids beside the new ones. That one reset
-  covers this item and every item below, and its cost depends on the index's age. On an index built with #565 or
-  later it reuses the stored graph extraction and gleaning records and the vectors (entity and relationship ids are
-  minted again from the names, as extraction mints them) and asks the model one summary, and one embedding, per entity
-  or relationship over the summary threshold, the reports of the communities whose input changed (most of them) and,
-  with claim extraction on, every unit's claims (one call per unit that states an entity). A record a build before
-  #556 stored under other summary settings or `models` tiers is extracted again, and on an index built before #565
-  the reset costs a first build (the #565 prompts below).
+  leading minus), dense-script middle dots and Arabic and Hebrew marks and strip more legal forms, and dense-script
+  spacing variants with a number are one entity (*Stored data and reindexing*); the description summary and claim
+  prompts changed, claims keep a `suspected` status and are keyed by their statement (*Fixed*); chunk sizes count
+  tokens (*Defaults*), which keeps English text units and re-chunks Korean, Japanese and Chinese ones; stage-cache keys
+  hold the prompts in effect (a pipeline id resumed across a prompt change starts over); extraction records under
+  earlier keys (other description summary settings, #541-#556) and claims under an earlier reading of their dates
+  (#612, #624) are no longer looked up. Run one reset (`indexing.reset: true`) with a new or no `--pipeline-id`:
+  incremental runs keep stored entities under their earlier ids beside the new ones. That one reset covers this item
+  and every item below, and its cost depends on the index's age. On an index built with #565 or later it reuses the
+  stored graph extraction and gleaning records and the vectors (entity and relationship ids are minted again from the
+  names, as extraction mints them) and asks the model one summary, and one embedding, per entity or relationship over
+  the summary threshold, every community's report (the report prompt cites sub-community reports now), with claim
+  extraction on every unit's claims (one call per unit that states an entity), with the `intelligent` chunker each
+  pre-chunk's boundaries once more (one fast-tier call each), and the extraction of a Korean, Japanese or Chinese
+  corpus's re-chunked units. A record a build before #556 stored under other summary settings or `models` tiers is
+  extracted again, and on an index built before #565 the reset costs a first build (the #565 prompts below).
 - Stored communities keep positional names (`Level 0 Community 3`) until the next reset, which renames them and asks
   every report once more; later resets reuse the answers (#539).
 - #640 claim statuses: claims stored before it keep the status the model wrote (`True.`, `Suspected`) until the
@@ -546,8 +552,8 @@ From a `main` checkout (formats and keys no release had):
 - An index built before vector digests embeds its items once more on its next incremental run (#527); a build record
   written earlier has no community counters until the next full build (#540); the first incremental run of each
   namespace reads its stores once to record their schema annotations, with no model call (#488).
-- `processing.chunking.length_unit: chars` (the default) keeps the chunks and ids of an index built before the
-  setting; `tokens` re-chunks and re-extracts the corpus (#460).
+- Chunk sizes count tokens by default (`processing.chunking.length_unit: tokens`, sizes 250 / 2000 / 125 / 1200 /
+  12500 / 125): a config that sets the sizes in characters must also set `length_unit: chars` (#460).
 - `run-eval` results saved before usage accounting count in `answers_without_usage` / `answers_without_latency` and
   fail a `usage/*` or `latency/*` gate; results saved before #563 carry the earlier `graph_aware` scores, which
   `--from-results` and `--baseline-results` reuse: run them again to compare (#526, #529, #563).
@@ -702,8 +708,7 @@ From a `main` checkout (formats and keys no release had):
   names with Devanagari or Thai vowel signs may resolve otherwise on that reset.
 - Token estimate: a Russian, Greek, Arabic, Hebrew, Hindi or Thai corpus is estimated at 1.7-2.7 times the
   tokens; with `length_unit: tokens` a reset re-chunks it and extracts it again, and the next run asks again the
-  description and tree summaries whose input now reads over or under their budgets (the default `chars` re-chunks
-  nothing).
+  description and tree summaries whose input now reads over or under their budgets (`chars` re-chunks nothing).
 
 ### Added
 - A query reports every step it answered without in `metadata["degraded"]` (each `step`, `reason`, `error_type`;
@@ -933,9 +938,10 @@ From a `main` checkout (formats and keys no release had):
   the namespace has an entities index (buckets `tree_text_units`, `tree_summaries`, `tree_graph_summaries`,
   `tree_graph_text_units`), reranks them together, keeps `max_nodes_per_level` summaries of a level and expands each
   to `expand_children` of its passages; a summary is reported with its lineage, keeps a document filter only when
-  all its documents share it, and goes, with every summary above it, when one of its text units is removed. Under a
-  filter key the text units store and the summary index does not (`community_ids`, `source_kinds`; not an entity
-  key, which leaves both unfiltered alike, #613) `tree` reads no summary (`metadata.summaries_skipped_for_filters`)
+  all its documents share it, and goes, with every summary above it, when one of its text units is removed (also
+  one it lists as a child past its lineage cut, in a removal and a full build's sweep alike). Under a filter key
+  the text units store and the summary index does not (`community_ids`, `source_kinds`; not an entity key, which
+  leaves both unfiltered alike, #613) `tree` reads no summary (`metadata.summaries_skipped_for_filters`)
   where it returned them unfiltered, the graph buckets run where the queried namespace holds the entities index
   (not where the config would build one), and their text units are the best-weighted that pass the filters (#607).
   Settings: `indexing.summary_tree`, `search.tree_search`, `search.token_manager.type_budgets.summary`; the
@@ -1366,7 +1372,8 @@ From a `main` checkout (formats and keys no release had):
   ids with `aws.bedrock.model_overrides`, reasoning effort per tier; a long-output ingestion prompt reserves its
   longest answer plus the thinking budget of the effort its call runs at (#113, #117, #127, #128, #162, #179);
   `aws.bedrock.query_prompt_cache_ttl: 1h` (#458). See [models](docs/reference/models.md).
-- `processing.chunking.length_unit: tokens`: chunk sizes in a script-aware token estimate (#460).
+- `processing.chunking.length_unit`: chunk sizes in a script-aware token estimate (`tokens`, the default) or in
+  characters (`chars`) (#460).
 - `indexing.neptune.vertex_ids: custom` (`<label>:<item id>` vertex ids); graph expansion reads either mode during a
   switch, and a running query service follows it without a restart (#466, #470, #473, #474).
 - `indexing.opensearch.vector_mode` / `compression_level`: on-disk quantized vectors on OpenSearch 2.17+ (#461).
@@ -1449,7 +1456,8 @@ From a `main` checkout (formats and keys no release had):
   keep `support` (`search.drift_search.text_unit_ranking`) (#607). Graph retrievers gain `aneighbourhood_edges`
   (Neptune, Gremlin Server, SQLite; the relationships index under a document filter and on Neptune, which reads every
   edge within the set, not one 100-edge page of them, before the per-vertex cap, paged by `search_after` in one
-  request per batch of sources), and `SearchQuery.max_hops` overrides the expansion depth (#597).
+  request per batch of sources), and `SearchQuery.max_hops` overrides the expansion depth (#597). A walk that stops at
+  `max_iterations` before it converges is logged at WARNING, naming the settings to raise.
 - CDK: `-c neptune_audit_log=true` turns on Neptune audit logs, exported to CloudWatch Logs
   (`/aws/neptune/<cluster id>/audit`, created before the instances) with the CMK and `log_retention_days`
   (`neptune_parameter_group_family` names the engine's family, `neptune1.4` by default); reboot the instances after
@@ -1622,10 +1630,15 @@ From a `main` checkout (formats and keys no release had):
 - Community reports: the prompt allows only what the data supports (MS GraphRAG's evidence rule, no "strategic
   value" or "actionable intelligence" asks), numbers the entities and relationships it packs and asks each finding
   for `[Data: Entities (...); Relationships (...)]` references, kept as the cited record ids on the finding
-  (`CommunityFinding.entity_ids` / `relationship_ids`) and taken out of the searched text (#618). The report stores
-  them (an unindexed `findings` field): a retrieved report, and its source's metadata (each finding's ids, not its
-  text), name the records each finding cites (`report_cited_ids`), pointed at the ids an incremental merge kept, and
-  a stored report at the new id of a record a later run re-keys (found by its `findings_record_ids` list,
+  (`CommunityFinding.entity_ids` / `relationship_ids`) and taken out of the searched text (#618). A parent's rolled-up
+  sub-community reports are numbered too and cited as `Reports (n)`, which a finding reads as the records the child's
+  findings cite (a parent's roll-up findings cited nothing, so `global` and `drift` attributed a parent report to the
+  few members packed raw); a range `(1-4)` reads as 1 to 4 and `【Data: ...】` as `[Data: ...]`. A report is titled
+  by its name alone (an English "Report for Level 0 Community ...:" was embedded with every report), and a rating
+  written beside its scale reads as the rating ("10점 만점에 7점" is 7, not 10). The report stores the cited ids (an
+  unindexed `findings` field): a retrieved report, and its source's metadata (each finding's ids, not its text),
+  name the records each finding cites (`report_cited_ids`), pointed at the ids an incremental merge kept, and a
+  stored report at the new id of a record a later run re-keys (found by its `findings_record_ids` list,
   `VectorIndexer.repoint_report_findings`); a removal leaves a removed record's id, which a query reading the records
   skips; a report stored before cites none until it is regenerated (#640, #643).
 - Claims resolve only against the entities of their own text units, and ties of names, types and statuses break
@@ -1657,7 +1670,8 @@ From a `main` checkout (formats and keys no release had):
   converts formatting to markdown, and fences the unit as data. It and the `intelligent` chunker's prompt are
   overridable (`custom_prompts.text_translation_*`, `custom_prompts.text_chunking_*`) (#608).
 - The splitter cuts a paragraph longer than a chunk after a Latin or Korean sentence end (".", "!", "?" or "…"
-  before a space) before it falls back to its last space (#608).
+  before a space) before it falls back to its last space (#608), and after the closing quotes or brackets of a CJK
+  sentence end ("。」"), where the next chunk began with "」と言った。".
 - The `graph_analysis` stage no longer computes the average clustering coefficient (about 10 s at 80,000 entities)
   or the diameter, which no stage read: `graph.analysis.statistics.calculate_clustering` and `calculate_diameter`
   load with a WARNING and are ignored (#608, #628).
@@ -1906,7 +1920,10 @@ Ingestion and incremental indexing.
   GraphRAG's claim prompt, built around the allegations a text reports, the prompt takes an allegation or suspicion
   the text reports as a `SUSPECTED` claim saying who alleges it, where it left out all speculation, and keeps
   `DISPUTED` for conflicting information; only the author's own opinions are left out. A `true` or `false` statement
-  settles a `suspected` claim, `true` and `false` together dispute it.
+  settles a `suspected` claim, `true` and `false` together dispute it. A claim's id holds its statement (the
+  description's entity key) beside its subject, object, type and dates: claims of one type about one subject with no
+  object or date were one claim, their statuses merged ("accused of bribery" read as confirmed by "fined for
+  pollution"), where MS GraphRAG keeps one row per statement; only a restatement merges.
 - An entity without relationships no longer adds a level to the community hierarchy: it made a single root over
   the other communities read as a partition, so global search's cut depths depended on it (#608).
 - A model answer that corrects itself is parsed by its last complete answer (each XML section keeps its last closed

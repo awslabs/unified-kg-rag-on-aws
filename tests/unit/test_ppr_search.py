@@ -6,6 +6,7 @@ neighbourhood-edge routing, over scripted stores (docs/design.md §6.4)."""
 from __future__ import annotations
 
 import functools
+import logging
 from typing import Any
 
 import pytest
@@ -744,3 +745,17 @@ async def test_local_ppr_ranks_as_the_measured_prototype(threshold: int) -> None
     reference = _prototype_rank(seeds, nodes, facts, passages, stored, edges, threshold)
     assert ours == reference
     assert stats["converged"]
+
+
+async def test_a_walk_that_does_not_converge_is_warned_of(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Reported at DEBUG only: an unconverged ranking was used unnoticed.
+    config = _config()
+    config.search.ppr_search.max_iterations = 1
+    documents, graph = _bridge_stores(config)
+    strategy = _strategy(SearchStrategy.PPR, config, documents, graph)
+    with caplog.at_level(logging.WARNING):
+        result = await strategy.asearch(SearchQuery(query="Where was Acme born?"))
+    assert not result.metadata["ppr"]["converged"]
+    assert [r for r in caplog.records if "did not converge" in r.getMessage()]

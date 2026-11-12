@@ -126,23 +126,26 @@ unit holds any more are deleted by the next full build
 
 ## Chunk sizes
 
-The chunk sizes count characters by default, and a Hangul, Han or Kana
-character is about one token, so an 8,000-character Korean chunk is ~6,000
-tokens: over the 4,096-token document limit of Cohere Rerank 3.5, which then
-never sees its tail. Halve the sizes, or count them in tokens with
-`processing.chunking.length_unit: tokens` (a local estimate, no model call)
-and give every size in tokens:
+The chunk sizes count tokens by default (`processing.chunking.length_unit:
+tokens`, a local estimate, no model call), so a Korean, Japanese or Chinese
+chunk holds as many tokens as an English one: at most 2,000, inside the
+4,096-token document limit of Cohere Rerank 3.5. English text chunks as it
+did at the character sizes four times as large. Counted in characters
+(`length_unit: chars`), a Hangul, Han or Kana character is about one token,
+so an 8,000-character Korean chunk is ~6,000 tokens and the reranker never
+sees its tail; give every size in characters then, and halve them for these
+scripts:
 
 ```yaml
 processing:
   chunking:
-    length_unit: tokens
-    min_chunk_size: 250
-    max_chunk_size: 2000
-    chunk_overlap: 125
-    fallback_chunk_size: 1200
-    pre_chunk_size: 12500
-    pre_chunk_overlap: 125
+    length_unit: chars
+    min_chunk_size: 500
+    max_chunk_size: 4000
+    chunk_overlap: 250
+    fallback_chunk_size: 2400
+    pre_chunk_size: 25000
+    pre_chunk_overlap: 250
 ```
 
 Switching the unit re-chunks the corpus and re-extracts its documents (an

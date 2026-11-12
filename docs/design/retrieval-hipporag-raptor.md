@@ -474,11 +474,15 @@ Unchanged clusters cost no call (`input_key` reuse) and no embedding
 (digest reuse).
 
 1. *Removal, fail-closed.* `IndexingManager.remove_text_units` first
-   deletes every summary node citing a removed text unit and every node
+   deletes every summary node citing a removed text unit, in its lineage
+   (`text_unit_ids`) or as a child (`child_ids`: a unit placed directly
+   under a higher node, a singleton cluster or a member of one whose
+   summary failed, can fall past that node's lineage cut), and every node
    above it (by `child_ids`, so a node whose lineage was cut is found
    too): a summary paraphrases its children, so it goes even where other
    children remain. A full build (reset, or a run without the registry)
-   deletes the nodes citing a text unit it did not write. Either deletion
+   deletes the nodes citing, the same two ways, a text unit it did not
+   write. Either deletion
    failing fails the indexing stage like any failed write.
 2. *Rebuild.* The `summary_tree` stage then builds the new tree from the
    leaves and swaps it in.

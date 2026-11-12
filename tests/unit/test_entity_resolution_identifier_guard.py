@@ -67,7 +67,8 @@ def _together(groups: list[set], a: str, b: str) -> bool:
         ("Model v2", {"v2"}),
         ("Acme Corporation", set()),
         ("Mix Studio", set()),  # "mix" is not a Roman numeral
-        ("가 나다", {"가"}),  # single letters of any script are designators
+        ("Party 가", {"가"}),  # single letters of any script are designators
+        ("가 나다", set()),  # a dense-script space is no word boundary
         ("Party 甲", {"甲"}),
         ("Party 을", {"을"}),
         ("Vendor α", {"α"}),

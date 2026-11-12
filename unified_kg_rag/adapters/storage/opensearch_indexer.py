@@ -3281,8 +3281,20 @@ class OpenSearchIndexer(VectorIndexer):
         if not text_unit_ids or not self._live_index(self._get_name(prefix, suffix)):
             return IndexingStats()
         try:
-            citing = self.find_documents(prefix, "text_unit_ids", text_unit_ids, suffix)
-            return self._delete_summary_nodes(set(citing or {}), suffix)
+            # By lineage, and as a child: a unit placed directly under a
+            # higher node (a singleton cluster, or a member of one whose
+            # summary failed) can fall past that node's lineage cut.
+            citing = {
+                *(
+                    self.find_documents(prefix, "text_unit_ids", text_unit_ids, suffix)
+                    or {}
+                ),
+                *(
+                    self.find_documents(prefix, "child_ids", text_unit_ids, suffix)
+                    or {}
+                ),
+            }
+            return self._delete_summary_nodes(citing, suffix)
         except NamespaceLeaseError:
             raise
         except Exception as e:  # noqa: BLE001 - reported as failed items
@@ -3301,10 +3313,15 @@ class OpenSearchIndexer(VectorIndexer):
             return IndexingStats()
         kept = set(text_unit_ids)
         try:
+            nodes = self._scan(prefix, suffix, ["text_unit_ids", "child_ids"])
+            node_ids = {str(node["id"]) for node in nodes}
+            # A child that is no node is a text unit (see
+            # delete_summary_nodes_citing): cited as the lineage is.
             stale = {
                 str(node["id"])
-                for node in self._scan(prefix, suffix, ["text_unit_ids"])
+                for node in nodes
                 if not set(node.get("text_unit_ids") or []) <= kept
+                or not set(node.get("child_ids") or []) - node_ids <= kept
             }
             return self._delete_summary_nodes(stale, suffix)
         except NamespaceLeaseError:

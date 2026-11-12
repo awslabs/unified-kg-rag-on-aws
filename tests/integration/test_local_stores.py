@@ -516,7 +516,7 @@ def test_local_mode_ingests_and_answers_through_the_registry(
         PipelineStageType,
         SearchStrategy,
     )
-    from unified_kg_rag.domain.models.config import ChunkingStrategy
+    from unified_kg_rag.domain.models.config import ChunkingStrategy, ChunkLengthUnit
 
     answer = "Depot stores widgets for Vendor."
     config = local_store_config()
@@ -526,6 +526,8 @@ def test_local_mode_ingests_and_answers_through_the_registry(
     config.providers.rerank.kind = "none"
     chunking = config.processing.chunking
     chunking.chunker_type = ChunkingStrategy.SIMPLE
+    # The sizes below count characters.
+    chunking.length_unit = ChunkLengthUnit.CHARS
     chunking.fallback_chunk_size = 60
     chunking.chunk_overlap = 0
     chunking.min_chunk_size = 1

@@ -209,3 +209,151 @@ def test_a_reports_cited_records_come_finding_by_finding() -> None:
         ("relationships", "r2"),
         ("entities", "e3"),
     ]
+
+
+@pytest.mark.parametrize(
+    ("text", "prose", "cited"),
+    [
+        # MS GraphRAG's parent reports cite their sub-reports.
+        (
+            "Vendor leads the region [Data: Reports (2, 1); Entities (3)].",
+            "Vendor leads the region.",
+            {"reports": [2, 1], "entities": [3]},
+        ),
+        # A range reads as every number in it.
+        (
+            "벤더가 공급한다 [Data: Entities (1-4); Relationships (2 – 3)]",
+            "벤더가 공급한다",
+            {"entities": [1, 2, 3, 4], "relationships": [2, 3]},
+        ),
+        # The lenticular brackets a model writing Japanese or Chinese uses.
+        (
+            "供給者が納入する【Data：Reports（1）；Entities（2～3）】。",
+            "供給者が納入する。",
+            {"reports": [1], "entities": [2, 3]},
+        ),
+        (
+            "供应商交付零件【Data: Relationships (1)】",
+            "供应商交付零件",
+            {"relationships": [1]},
+        ),
+    ],
+)
+def test_reports_ranges_and_lenticular_brackets_are_read(
+    text: str, prose: str, cited: dict[str, list[int]]
+) -> None:
+    assert split_data_references(text) == (prose, cited)
+
+
+def test_a_range_reads_only_the_numbers_the_input_has() -> None:
+    _, cited = split_data_references(
+        "x [Data: Entities (2-1000000000)]", sizes={"entities": 3}
+    )
+    assert cited == {"entities": [2, 3]}
+
+
+def _rollup_parent() -> tuple[CommunityDetector, Community, dict[str, Any]]:
+    """A parent over the entity cap with two reported children, its input."""
+    from unified_kg_rag.domain.models import CommunityFinding, CommunityReport
+
+    detector = _detector()
+    detector.community_detection_config.report_generation.max_entities_per_report = 1
+    parent = _community().model_copy(
+        update={"id": "p", "level": "1", "children": ["k1", "k2"]}
+    )
+
+    def child(cid: str, size: int, entity: str, relationship: str) -> Any:
+        return CommunityReport(
+            id=f"r-{cid}",
+            name=f"Child {cid}",
+            community_id=cid,
+            summary=f"{cid} summary",
+            size=size,
+            findings=[
+                CommunityFinding(
+                    summary="s", entity_ids=[entity], relationship_ids=[relationship]
+                )
+            ],
+        )
+
+    reports = {"k1": child("k1", 5, "b", "r-vb"), "k2": child("k2", 2, "p", "r-vp")}
+    return detector, parent, detector._prepare_report_input(parent, reports)
+
+
+def test_sub_reports_are_numbered_and_cited_by_their_findings_records() -> None:
+    detector, parent, report_input = _rollup_parent()
+    (chain_input,) = detector._create_report_chain_inputs([report_input])
+    lines = chain_input["sub_community_reports"].splitlines()
+    # Numbered in packing order (biggest first), as the entities are.
+    assert [line.split("] ")[0] for line in lines] == ["- [1", "- [2"]
+    assert "Child k1" in lines[0] and "Child k2" in lines[1]
+    result: dict[str, Any] = {
+        "community_name": "공급망",
+        "summary": "요약",
+        "rating": "5",
+        "findings": {
+            "finding": [
+                {
+                    "summary": "하위 커뮤니티가 공급을 맡는다",
+                    "explanation": "두 하위 보고서가 그렇다 "
+                    "[Data: Reports (2, 1, 7); Entities (1)].",
+                },
+                {
+                    "summary": "部品",
+                    "explanation": "部品は供給される【Data: Reports (1)】。",
+                },
+            ]
+        },
+    }
+    report = detector._create_community_report(
+        parent, result, {}, report_input=report_input
+    )
+    first, second = report.findings
+    own = report_input["entities"][0]["id"]
+    # The parent's own record first, then each cited child's records (7 is no
+    # sub-report: dropped).
+    assert first.entity_ids == [own, *[e for e in ("p", "b") if e != own]]
+    assert first.relationship_ids == ["r-vp", "r-vb"]
+    assert (second.entity_ids, second.relationship_ids) == (["b"], ["r-vb"])
+    assert second.explanation == "部品は供給される。"
+
+
+def test_the_prompt_lets_a_finding_cite_its_sub_reports() -> None:
+    system = CommunityReportPrompt.system_prompt_template
+    assert "Reports (" in system
+
+
+@pytest.mark.parametrize(
+    ("raw", "rating"),
+    [
+        ("7.5", 7.5),
+        ("Rating: 8", 8.0),
+        ("7 out of 10", 7.0),
+        ("7/10", 7.0),
+        ("10/10", 10.0),
+        # The scale written first, as Korean, Japanese and Chinese write it.
+        ("10점 만점에 7점", 7.0),
+        ("10点満点中6.5点", 6.5),
+        ("满分10分，得8分", 8.0),
+        ("12", 10.0),
+        ("none", 0.0),
+    ],
+)
+def test_a_rating_is_read_beside_its_scale(raw: str, rating: float) -> None:
+    assert CommunityDetector._extract_rating({"rating": raw}) == rating
+
+
+@pytest.mark.parametrize(
+    "name", ["벤더 공급망", "仕入先の供給網", "供应链", "Vendor supply chain"]
+)
+def test_a_report_is_titled_by_its_name_alone(name: str) -> None:
+    # "Report for Level 0 Community c0: ..." put English into every report's
+    # embedded and searched text.
+    detector = _detector()
+    community = _community()
+    result = {"community_name": name, "summary": "s", "rating": "5"}
+    report = detector._create_community_report(community, result, {})
+    assert report.name == name
+    assert report.full_content.startswith(f"# {name}\n")
+    untitled = detector._create_community_report(community, {"summary": "s"}, {})
+    assert untitled.name == community.name

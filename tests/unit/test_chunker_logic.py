@@ -34,6 +34,7 @@ from unified_kg_rag.domain.ingestion.contributions import (
 )
 from unified_kg_rag.domain.models import (
     ChunkingStrategy,
+    ChunkLengthUnit,
     Config,
     Document,
 )
@@ -332,7 +333,8 @@ class TestLineBoundaryProcessor:
 # --------------------------------------------------------------------------- #
 @pytest.fixture
 def simple_chunker(config: Config) -> SimpleTextChunker:
-    # Small sizes so a short test document actually splits.
+    # Small sizes so a short test document actually splits, in characters.
+    config.processing.chunking.length_unit = ChunkLengthUnit.CHARS
     config.processing.chunking.min_chunk_size = 20
     config.processing.chunking.max_chunk_size = 200
     config.processing.chunking.chunk_overlap = 0
@@ -548,6 +550,7 @@ class TestChunkerFactory:
 # --------------------------------------------------------------------------- #
 @pytest.fixture
 def intelligent_chunker(config: Config, _patch_bedrock) -> IntelligentTextChunker:
+    config.processing.chunking.length_unit = ChunkLengthUnit.CHARS
     config.processing.chunking.min_chunk_size = 10
     config.processing.chunking.max_chunk_size = 400
     config.processing.chunking.chunk_overlap = 0
@@ -871,6 +874,26 @@ class TestSplitterSeparators:
         assert all(c[-1] in "。！？；" for c in chunks[:-1]), chunks
         assert "".join(chunks) == text
 
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "彼は「明日は雨が降るでしょう。」と言った。" * 3
+            + "田中さんは「それは困りますね！」と答えた。" * 3,
+            "他说：“明天会下雨。”我们都很担心。" * 6,
+            "그는 『내일 비가 온다？』고 물었다。" * 6,
+            "引用は『二重の「括弧」。』で終わる。" * 6,
+        ],
+    )
+    def test_a_closing_quote_stays_with_its_sentence(self, text: str) -> None:
+        # The splitter cut between "。" and the bracket closing its sentence,
+        # so the next chunk began "」と言った。" (sentence_ends' closers).
+        from unified_kg_rag.shared.utils.sentences import CLOSERS
+
+        chunks = SimpleTextChunker._create_splitter(30, 0).split_text(text)
+        assert len(chunks) > 1
+        assert not [c for c in chunks if c[0] in CLOSERS], chunks
+        assert "".join(chunks) == text
+
     def test_full_width_stop_is_a_sentence_end(self) -> None:
         splitter = SimpleTextChunker._create_splitter(12, 0)
         chunks = splitter.split_text("あいうえおかきく．さしすせそたちつ．")
@@ -1039,6 +1062,7 @@ class TestBoundaryRecords:
         self, config, _patch_bedrock, mocker
     ) -> None:
         records = _Records()
+        config.processing.chunking.length_unit = ChunkLengthUnit.CHARS
         config.processing.chunking.min_chunk_size = 10
         config.processing.chunking.pre_chunk_size = 1000
         sizes = (400, 300)

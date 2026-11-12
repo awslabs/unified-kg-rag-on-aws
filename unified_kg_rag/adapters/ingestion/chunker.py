@@ -60,7 +60,11 @@ from unified_kg_rag.domain.prompts import TextChunkingPrompt
 from unified_kg_rag.domain.retrieval.store_names import index_suffix, namespace_suffix
 from unified_kg_rag.shared import ConfigurationError, DataProcessingError, get_logger
 from unified_kg_rag.shared.usage import record_cache_hit
-from unified_kg_rag.shared.utils.sentences import SPACED_STOPS, UNSPACED_STOPS
+from unified_kg_rag.shared.utils.sentences import (
+    CLOSERS,
+    SPACED_STOPS,
+    UNSPACED_STOPS,
+)
 
 logger = get_logger(__name__)
 
@@ -352,12 +356,20 @@ class LineBasedBoundaryProcessor:
 # sentences rather than at its last space that fits. The lookarounds are
 # zero-width, so the terminator stays at the end of its sentence; a "." not
 # followed by a space (3.5, e.g.) splits nothing, and a paragraph that fits
-# splits as with the defaults. The marks are shared.utils.sentences'.
+# splits as with the defaults. The marks are shared.utils.sentences'. A CJK
+# stop's closing quotes or brackets (up to two: "。」』") stay with its
+# sentence, as sentence_ends keeps them: a cut between "。" and "」" began
+# the next chunk with "」と言った。".
 _SPACED_STOP_SEPARATOR = f"(?<=[{re.escape(SPACED_STOPS)}])(?= )"
+_DENSE_STOPS = f"[{UNSPACED_STOPS}；]"
+_CLOSER = f"[{re.escape(CLOSERS)}]"
+_DENSE_STOP_SEPARATOR = "|".join(
+    f"(?<={_DENSE_STOPS}{_CLOSER * closers})(?!{_CLOSER})" for closers in range(3)
+)
 _SPLITTER_SEPARATORS = [
     "\n\n",
     "\n",
-    f"(?<=[{UNSPACED_STOPS}；])",
+    _DENSE_STOP_SEPARATOR,
     _SPACED_STOP_SEPARATOR,
     " ",
     "",

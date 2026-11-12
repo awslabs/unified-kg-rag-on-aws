@@ -100,22 +100,24 @@ processing:
 
 ## 청크 크기
 
-청크 크기는 기본값으로 문자 수를 셉니다. 한글·한자·가나 한 글자는 토큰 하나쯤이므로
-8,000자짜리 한국어 청크는 약 6,000토큰이 되어 Cohere Rerank 3.5의 문서당 한도 4,096토큰을
-넘고, 넘은 뒷부분은 재순위화(rerank)되지 않습니다. 크기를 절반으로 줄이거나,
-`processing.chunking.length_unit: tokens`로 토큰 수를 세게 하고 모든 크기를 토큰 단위로
-지정하세요. 토큰 수는 로컬 추정치이며 모델을 호출하지 않습니다.
+청크 크기는 기본값으로 토큰 수를 셉니다(`processing.chunking.length_unit: tokens`).
+토큰 수는 로컬 추정치이며 모델을 호출하지 않습니다. 그래서 한국어·일본어·중국어 청크도
+영어 청크와 같은 토큰 수, 최대 2,000토큰을 담아 Cohere Rerank 3.5의 문서당 한도
+4,096토큰 안에 들어갑니다. 영어 텍스트는 네 배 큰 문자 크기에서와 똑같이 나뉩니다.
+문자 수로 세면(`length_unit: chars`) 한글·한자·가나 한 글자가 토큰 하나쯤이므로
+8,000자짜리 한국어 청크는 약 6,000토큰이 되고, 한도를 넘은 뒷부분은 재순위화(rerank)되지
+않습니다. 이때는 모든 크기를 문자 단위로 지정하고 이 문자들에 맞게 절반으로 줄이세요.
 
 ```yaml
 processing:
   chunking:
-    length_unit: tokens
-    min_chunk_size: 250
-    max_chunk_size: 2000
-    chunk_overlap: 125
-    fallback_chunk_size: 1200
-    pre_chunk_size: 12500
-    pre_chunk_overlap: 125
+    length_unit: chars
+    min_chunk_size: 500
+    max_chunk_size: 4000
+    chunk_overlap: 250
+    fallback_chunk_size: 2400
+    pre_chunk_size: 25000
+    pre_chunk_overlap: 250
 ```
 
 단위를 바꾸면 코퍼스를 다시 청크로 나누고 문서를 다시 추출합니다(증분 실행은 범위의
