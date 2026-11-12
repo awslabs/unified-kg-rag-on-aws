@@ -1466,7 +1466,8 @@ From a `main` checkout (formats and keys no release had):
   keep `support` (`search.drift_search.text_unit_ranking`) (#607). Graph retrievers gain `aneighbourhood_edges`
   (Neptune, Gremlin Server, SQLite; the relationships index under a document filter and on Neptune, which reads every
   edge within the set, not one 100-edge page of them, before the per-vertex cap, paged by `search_after` in one
-  request per batch of sources), and `SearchQuery.max_hops` overrides the expansion depth (#597).
+  request per batch of sources), and `SearchQuery.max_hops` overrides the expansion depth (#597). A walk that stops at
+  `max_iterations` before it converges is logged at WARNING, naming the settings to raise.
 - CDK: `-c neptune_audit_log=true` turns on Neptune audit logs, exported to CloudWatch Logs
   (`/aws/neptune/<cluster id>/audit`, created before the instances) with the CMK and `log_retention_days`
   (`neptune_parameter_group_family` names the engine's family, `neptune1.4` by default); reboot the instances after
