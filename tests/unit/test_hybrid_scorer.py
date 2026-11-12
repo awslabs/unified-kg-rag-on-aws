@@ -252,6 +252,20 @@ class TestCrossStoreRankReinforcement:
         by_source = {r.source: r.score or 0.0 for r in fused}
         assert by_source["e-shared"] > by_source["e-vector-only"]
 
+    @pytest.mark.parametrize("first", ["graph", "vector"])
+    def test_the_first_buckets_copy_renders_a_fused_artifact(self, first: str) -> None:
+        # One artifact, two renderings (the walk's path, the index's text): the
+        # bucket listed first keeps its rendering; a later one only adds rank.
+        hits = {
+            "graph": self._graph_hit("e-shared", "Shared", 0.9),
+            "vector": self._vector_hit("e-shared", "Shared", 0.8),
+        }
+        later = "vector" if first == "graph" else "graph"
+        (fused,) = _scorer()._reciprocal_rank_fusion(
+            {first: [hits[first]], later: [hits[later]]}
+        )
+        assert fused.content == hits[first].content
+
     def test_distinct_entities_are_not_merged(self) -> None:
         scorer = _scorer()
         fused = scorer._reciprocal_rank_fusion(

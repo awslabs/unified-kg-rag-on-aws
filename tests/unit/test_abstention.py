@@ -466,6 +466,21 @@ async def test_abstain_declines_in_the_model_s_words_and_keeps_sources(
     assert out.sources
 
 
+async def test_a_decline_is_the_only_instruction_after_the_citations(
+    config: Config,
+) -> None:
+    # Declining replaces the answer: the mark and hedge texts (which ask for
+    # an answer, marked or hedged) are not given with it.
+    config.search.abstention.on_insufficient = "abstain"
+    config.search.abstention.mode = "mark"
+    chain, systems = _chain(config, _declining)
+    _flag_insufficient(chain)
+    await chain.ainvoke(_query())
+    assert systems[0].endswith(DECLINE_INSTRUCTIONS)
+    assert ABSTENTION_INSTRUCTIONS not in systems[0]
+    assert HEDGE_INSTRUCTIONS not in systems[0]
+
+
 async def test_abstain_counts_even_when_the_model_answers(config: Config) -> None:
     config.search.abstention.on_insufficient = "abstain"
     chain, _ = _chain(config, lambda _s: "Vendor supplies Buyer.")

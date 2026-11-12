@@ -23,7 +23,9 @@ from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
 from tests.fixtures.fakes.retrievers import StaticRetriever
 from unified_kg_rag.adapters.retrieval.token_manager import (
     EMPTY_CONTEXT_PLACEHOLDER,
+    ContextSection,
     OptimizedContext,
+    SectionType,
 )
 from unified_kg_rag.application.retrieval.rag_chain import (
     GraphRAGChain,
@@ -220,6 +222,48 @@ def test_sources_follow_retrieval_rank_not_section_type_order(
         "entity-1",
     ]
     assert [s["source"] for s in out.sources] == ["chunk-0", "entity-1", "chunk-2"]
+
+
+def test_a_section_without_a_result_index_is_reported_after_the_ranked_ones() -> None:
+    # A custom token manager's section names no result: it is reported from
+    # the section alone, after the sections retrieval ranked.
+    results = [_text_result(i, words=5, score=0.9 - i / 10) for i in range(2)]
+
+    def section(source_id: str, index: int | None) -> ContextSection:
+        return ContextSection(
+            content=source_id,
+            token_count=1,
+            priority=0.5,
+            section_type=SectionType.ENTITY,
+            source_id=source_id,
+            result_index=index,
+        )
+
+    sources = GraphRAGChain._sources_from_sections(
+        [section("custom", None), section("chunk-1", 1), section("chunk-0", 0)],
+        results,
+    )
+
+    assert [s["source"] for s in sources] == ["chunk-0", "chunk-1", "custom"]
+    assert sources[-1]["metadata"]["section_type"] == "entity"
+
+
+def test_a_retrievers_own_metadata_wins_over_the_provenance_keys() -> None:
+    # A retriever that sets a provenance key itself (its own document ids,
+    # score) is reported as it set it.
+    result = _text_result(0, words=5, score=0.9).model_copy(
+        update={
+            "metadata": {
+                "id": "chunk-0",
+                "document_ids": ["doc-0"],
+                "section_type": "passage",
+                "score": 0.42,
+            }
+        }
+    )
+    meta = GraphRAGChain._source_entry(result, "x", truncated=False)["metadata"]
+    assert (meta["section_type"], meta["score"]) == ("passage", 0.42)
+    assert meta["source_id"] == "chunk-0"
 
 
 def test_sources_exclude_synthesized_results(config: Config) -> None:
