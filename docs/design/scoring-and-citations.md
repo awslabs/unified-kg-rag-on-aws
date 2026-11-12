@@ -79,7 +79,10 @@ citations):
   reports and is added to entity and relationship lines (about 3 tokens; a
   section is counted with a `[999]` placeholder so the budget holds, and
   sections past the 999th get none: an answer's marker has at most three
-  digits). A
+  digits). Retrieved text in a numbered context reads its own
+  marker-shaped spans (a footnote `[2]`, `［１］`, `【1、2】`) in
+  parentheses (`(2)`, `neutralize_markers`), counted and rendered so, or an
+  answer copying the footnote would cite section 2. A
   synthesized section (global search's key points, DRIFT's intermediate
   answers) is model output, not evidence, and never a source; each point or
   answer is a section of its own carrying the lineage of what it was written

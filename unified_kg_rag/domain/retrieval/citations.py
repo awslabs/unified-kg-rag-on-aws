@@ -27,6 +27,7 @@ __all__ = [
     "MAX_RANGE",
     "CitationMarkerScanner",
     "cited_markers",
+    "neutralize_markers",
     "strip_markers",
 ]
 
@@ -58,9 +59,26 @@ _PENDING = re.compile(rf"[{re.escape(_OPEN)}][0-9\s,;、\-–~]*$")
 # to three digits: a bracketed year ("[2020]") is text, not a marker.
 _RAW_NUMBER = r"[0-9０-９]{1,3}"
 _RAW_ITEM = rf"{_RAW_NUMBER}(?:\s*[-–~～－]\s*{_RAW_NUMBER})?"
-_RAW_MARKER = re.compile(
-    rf"\s*[\[［【]\s*{_RAW_ITEM}(?:\s*[,，;；、]\s*{_RAW_ITEM})*\s*[\]］】]"
+_RAW_SPAN = re.compile(
+    rf"[\[［【]\s*{_RAW_ITEM}(?:\s*[,，;；、]\s*{_RAW_ITEM})*\s*[\]］】]"
 )
+# With the space before it, which strip_markers drops too.
+_RAW_MARKER = re.compile(rf"\s*{_RAW_SPAN.pattern}")
+
+
+# A bracket of a marker-shaped span and the parenthesis it reads as in
+# retrieved text (:func:`neutralize_markers`).
+_NEUTRAL_BRACKETS = str.maketrans(
+    {"[": "(", "]": ")", "［": "（", "］": "）", "【": "（", "】": "）"}
+)
+
+
+def neutralize_markers(text: str) -> str:
+    """``text`` with every span an answer's marker is read as ("[2]",
+    "［１］", "【1、2】") in parentheses ("(2)"), for retrieved text in a
+    numbered context: a footnote the model copies is then not read as
+    citing the context's section of that number."""
+    return _RAW_SPAN.sub(lambda m: m.group().translate(_NEUTRAL_BRACKETS), text)
 
 
 def strip_markers(text: str) -> str:

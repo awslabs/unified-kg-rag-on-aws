@@ -45,6 +45,7 @@ from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.citations import (
     CitationMarkerScanner,
     cited_markers,
+    neutralize_markers,
     strip_markers,
 )
 from unified_kg_rag.ports.guardrail import GuardAction, GuardSource, GuardVerdict
@@ -299,6 +300,63 @@ def test_a_synthesized_section_naming_its_evidence_is_numbered(
     assert "[4] Key point from the community reports" in context
     unnumbered = manager.optimize_context(results, "q")
     assert all(s.marker is None for s in unnumbered.sections)
+
+
+def test_bracketed_numbers_in_retrieved_text_are_not_citation_markers(
+    config: Config,
+) -> None:
+    # Regression (rv23): a footnoted passage ("audited in [2] and [3]")
+    # rendered its own brackets next to the real markers, so an answer that
+    # copied the phrase cited unrelated sections 2 and 3. In a numbered
+    # context a marker-shaped span of retrieved text reads as "(2)", in every
+    # bracket form an answer's marker is read in.
+    manager = _token_manager(config)
+    results = [
+        RetrievalResult(
+            content="Acme shipped late, as audited in [2] and [3].",
+            score=1.0,
+            source="tu-1",
+            retriever_type="text",
+            metadata={"id": "tu-1"},
+        ),
+        RetrievalResult(
+            content="倉庫は監査済み［１］【2、3】。In [2020] it opened.",
+            score=0.9,
+            source="tu-2",
+            retriever_type="text",
+            metadata={"id": "tu-2"},
+        ),
+        RetrievalResult(
+            content="Vendor ships to Buyer.",
+            score=0.8,
+            source="tu-3",
+            retriever_type="text",
+            metadata={"id": "tu-3"},
+        ),
+    ]
+    optimized = manager.optimize_context(results, "q", number_sections=True)
+    context = manager.build_context_string(optimized)
+    assert "[1] Acme shipped late, as audited in (2) and (3)." in context
+    assert "[2] 倉庫は監査済み（１）（2、3）。In [2020] it opened." in context
+    # Only the context's own markers remain readable as citations.
+    assert cited_markers(context) == [1, 2, 3]
+    copied = "Acme shipped late, as audited in (2) and (3) [1]."
+    assert cited_markers(copied, valid={1, 2, 3}) == [1]
+    # The section is counted as rendered.
+    for section in optimized.sections:
+        assert "[" not in section.content.replace("[2020]", "")
+    # An unnumbered context keeps the text as written.
+    plain = manager.build_context_string(manager.optimize_context(results, "q"))
+    assert "audited in [2] and [3]." in plain
+
+
+def test_marker_shaped_spans_are_neutralized() -> None:
+    assert neutralize_markers("see [2], [1-3] and [4, 5]") == (
+        "see (2), (1-3) and (4, 5)"
+    )
+    assert neutralize_markers("［１］【2】") == "（１）（2）"
+    # Not markers: a year, a word, empty brackets.
+    assert neutralize_markers("[2020] [note] []") == "[2020] [note] []"
 
 
 def test_an_unnumbered_context_is_as_before(config: Config) -> None:

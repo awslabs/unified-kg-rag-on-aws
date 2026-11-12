@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import Config, ModelRole, RetrievalResult
 from unified_kg_rag.domain.prompts import AnswerGenerationPrompt
+from unified_kg_rag.domain.retrieval.citations import neutralize_markers
 from unified_kg_rag.ports.model_factory import (
     LanguageModelInfo,
     effective_max_output_tokens,
@@ -350,7 +351,13 @@ class TokenManager:
         # A section is counted as build_context_string renders it, with its
         # "[source_id] " prefix where it has one (its "[n] " marker in a
         # numbered context, counted at the widest number), so the context
-        # stays within the budget.
+        # stays within the budget. A numbered context's retrieved text reads
+        # its own bracketed numbers ("[2]" footnotes) as "(2)", so an answer
+        # copying them cites no section of that number.
+        contents = [
+            neutralize_markers(result.content) if number_sections else result.content
+            for result in results
+        ]
         markers = [
             (
                 _MARKER_PLACEHOLDER
@@ -364,21 +371,21 @@ class TokenManager:
                 self._section_line(
                     self._section_type(result),
                     result.source or f"result_{index}",
-                    result.content,
+                    content,
                     marker=marker,
                     numbered=number_sections,
                 )
-                for index, (result, marker) in enumerate(
-                    zip(results, markers, strict=True)
+                for index, (result, content, marker) in enumerate(
+                    zip(results, contents, markers, strict=True)
                 )
             ]
         )
         return [
             self._create_context_section(
-                result, index, token_count=count, marker=marker
+                result, index, token_count=count, marker=marker, content=content
             )
-            for index, (result, count, marker) in enumerate(
-                zip(results, counts, markers, strict=True)
+            for index, (result, content, count, marker) in enumerate(
+                zip(results, contents, counts, markers, strict=True)
             )
         ]
 
@@ -409,17 +416,17 @@ class TokenManager:
         index: int,
         token_count: int | None = None,
         marker: int | None = None,
+        content: str | None = None,
     ) -> ContextSection:
         source_id = result.source or f"result_{index}"
         section_type = self._section_type(result)
+        content = result.content if content is None else content
 
         return ContextSection(
-            content=result.content,
+            content=content,
             token_count=(
                 self.count_tokens(
-                    self._section_line(
-                        section_type, source_id, result.content, marker=marker
-                    )
+                    self._section_line(section_type, source_id, content, marker=marker)
                 )
                 if token_count is None
                 else token_count
