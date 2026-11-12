@@ -17,8 +17,9 @@ PROFILE = LanguageProfile(
     no_value_words=("לאידוע", "אין", "לאצוין"),
     # Limited company (בע"מ, its quote mark dropped as entity keys drop it).
     legal_forms={"בעמ": "בעמ"},
-    # The prefixed particles: "in", "the", "and", "as", "to", "from", "that".
-    proclitics=("ב", "ה", "ו", "כ", "ל", "מ", "ש"),
+    # The prefixed particles, one letter each: "in", "the", "and", "as",
+    # "to", "from", "that".
+    proclitics=tuple("בהוכלמש"),
     # "לא" is also the negation ("לא נמצא").
     polarity_words={"כן": "yes", "לא": "no"},
     ambiguous_polarity_words={"לא": ""},
