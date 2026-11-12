@@ -304,6 +304,9 @@ class TestStatedNumbers:
             ("three hundred and twelve buyers", {312}),
             ("two thousand five hundred employees", {2500}),
             ("twenty-one hundred", {2100}),
+            # A hundreds place filled twice is no one number.
+            ("three hundred hundred vendors", set()),
+            ("trois cents cents", set()),
             ("As of 2024, it is unknown.", {2024}),
             ("No, it does not.", {0}),
             ("One of them, Acme, is the largest.", {1}),

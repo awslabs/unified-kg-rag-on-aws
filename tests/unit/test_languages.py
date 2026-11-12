@@ -391,6 +391,30 @@ def test_the_evidence_leaves_out_codes_compounds_and_names() -> None:
     assert text_evidence(["with 문"]).openings == {}
 
 
+@pytest.mark.parametrize(
+    "text", ["공급사는 the Depot", "倉庫は the Depot", "Lieferant 공급사 die Bahn"]
+)
+def test_an_article_before_a_names_last_word_opens_the_name(text: str) -> None:
+    # The name closes the text: its article is a part of it, no word.
+    words = text_evidence([text]).words
+    assert not {"the", "die", "depot", "bahn"} & set(words)
+    # Lowercase, it is no name: its words count.
+    assert {"the", "depot"} <= set(text_evidence(["공급사는 the depot"]).words)
+
+
+def test_a_script_no_profile_writes_falls_back_like_latin_text() -> None:
+    # Greek has no profile: a Latin-script index language is its fallback,
+    # another script's is not.
+    assert text_language("Ελληνικά", LanguageCode.DE) is LanguageCode.DE
+    assert text_language("Ελληνικά", LanguageCode.KO) is LanguageCode.EN
+
+
+@pytest.mark.parametrize("fallback", ["", "english", "??"])
+def test_a_fallback_that_is_no_language_code_reads_as_english(fallback: str) -> None:
+    assert text_language("Acme", fallback) is LanguageCode.EN
+    assert text_language("Acme", "de") is LanguageCode.DE
+
+
 def test_italian_tiene_is_no_spanish_word() -> None:
     # Regression (rv11 query low): "tiene" is Spanish and Italian.
     assert "tiene" not in profile(LanguageCode.ES).function_words
