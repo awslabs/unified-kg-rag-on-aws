@@ -4,10 +4,10 @@ name: release
 # release, with the notes from that version's CHANGELOG.md section, their
 # SHA-256 checksums, a CycloneDX SBOM of the locked dependencies (with their
 # licences) and a signed build provenance attestation (`gh attestation verify
-# <file> --repo awslabs/unified-kg-rag-on-aws`).
+# <file> --repo awslabs/unified-kg-rag-on-aws`), then, once a maintainer turns
+# it on (repository variable PYPI_PUBLISH), upload them to PyPI.
 # workflow_dispatch is a dry run: it builds and checks the same artifacts (the
-# notes fall back to [Unreleased]) and publishes nothing. No PyPI upload yet;
-# CONTRIBUTING.md ("Releasing") describes the planned trusted-publishing job.
+# notes fall back to [Unreleased]) and publishes nothing.
 
 on:
   push:
@@ -246,3 +246,38 @@ jobs:
             --title "$TAG" \
             --notes-file release-notes.md \
             "${prerelease[@]}"
+
+  publish-pypi:
+    # Off until a maintainer turns it on: runs only on a tag push and only
+    # when the repository variable PYPI_PUBLISH is 'true' (CONTRIBUTING.md,
+    # "Releasing", lists the one-time PyPI setup). After the GitHub release,
+    # so PyPI receives the files that release published; an upload cannot be
+    # replaced. PyPI trusted publishing (OpenID Connect): no API token is
+    # stored, and the pypi environment can require a reviewer.
+    if: >-
+      github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+      && vars.PYPI_PUBLISH == 'true'
+    needs: [build, github-release]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://pypi.org/project/unified-kg-rag-on-aws/
+    permissions:
+      id-token: write # the OIDC token PyPI trusted publishing exchanges
+    steps:
+      - name: Download the artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-artifacts
+
+      - name: Verify the checksums
+        # The files uploaded are the ones the build job hashed and the
+        # GitHub release published.
+        run: (cd dist && sha256sum --check --strict ../release-assets/SHA256SUMS)
+
+      - name: Publish to PyPI
+        # dist/ holds only the sdist and the wheel (the build job checks it).
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          packages-dir: dist/

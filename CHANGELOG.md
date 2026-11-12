@@ -1407,8 +1407,9 @@ From a `main` checkout (formats and keys no release had):
   rejections, a yellow multi-node cluster, an unusable KMS key, ephemeral storage, `DocumentsNotIndexed`, and
   `QueryLatencyHigh` on `run-rag --metrics-sink cloudwatch`'s `query_latency_ms` (#330, #519, #528).
 - The package ships a `py.typed` marker (#568). `main` reports `0.3.0.dev0`, and a `v<version>` tag runs a release
-  workflow that publishes a GitHub release (nothing on PyPI yet): the tag must be on `main`, and the notes'
-  repo-relative links point at the tagged tree (#572, #588).
+  workflow that publishes a GitHub release: the tag must be on `main`, and the notes' repo-relative links point at
+  the tagged tree (#572, #588). Its PyPI upload (trusted publishing, `pypi` environment) stays off until the
+  repository variable `PYPI_PUBLISH` is `true` (CONTRIBUTING.md, "Releasing").
 - HippoRAG 2's Personalized PageRank (docs/design.md §6.4): the opt-in `ppr` strategy and `local`'s default
   text-unit order. The `ppr` search strategy (`search.ppr_search`; `auto` never routes to it, and
   `search.auto_routable_strategies` refuses it until a measurement shows where it wins) seeds a Personalized
