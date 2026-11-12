@@ -63,6 +63,8 @@ __all__ = [
     "script_named",
     "script_of",
     "without_latin_accents",
+    "word_spans",
+    "words",
 ]
 
 
@@ -638,3 +640,32 @@ def drop_dense_script_spaces(text: str, *, spaceless: bool = False) -> str:
         return "" if joined else " "
 
     return _WHITESPACE.sub(replace, text)
+
+
+def _is_word_char(ch: str) -> bool:
+    # A letter, a number or a mark (Unicode L, N, M): "\w" leaves out the
+    # vowel signs of Devanagari or Thai ("टाटा", "กรุงเทพ"), which split a
+    # word into fragments, and takes "_".
+    return unicodedata.category(ch)[0] in "LNM"
+
+
+def word_spans(text: str) -> list[tuple[int, int]]:
+    """The ``(start, end)`` of every word of ``text``: a run of letters,
+    numbers and marks, in every script."""
+    spans: list[tuple[int, int]] = []
+    start: int | None = None
+    for i, ch in enumerate(text):
+        if _is_word_char(ch):
+            if start is None:
+                start = i
+        elif start is not None:
+            spans.append((start, i))
+            start = None
+    if start is not None:
+        spans.append((start, len(text)))
+    return spans
+
+
+def words(text: str) -> list[str]:
+    """The words of ``text`` (:func:`word_spans`)."""
+    return [text[start:end] for start, end in word_spans(text)]

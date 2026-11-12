@@ -103,7 +103,9 @@ answer-level result (§9.1) showed it better than the earlier order.
    (30) steps or until the L1 change is below `tolerance` (1e-6); the mass of
    a node without edges returns to the reset vector, as in igraph's
    (PRPACK) personalized PageRank HippoRAG calls. Nodes are ordered by id, so
-   a run is deterministic; ties rank by id.
+   a run is deterministic; ties (the passages no seed reaches all score 0,
+   as when the edge read degraded) rank in local's support order (the units
+   most graph entities cite first, `domain/retrieval/lineage.py`), then by id.
 7. *Fusion buckets* (`search.fusion.fusion_weights` keys):
    `ppr_passages` (text: the passages by PPR score, the first text quota
    `max(2 * top_k, 20)` of them that pass the caller's filters, fetched by

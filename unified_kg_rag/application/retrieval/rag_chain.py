@@ -1688,7 +1688,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         selection, so sources reflect exactly what the answer model was given.
         """
         try:
-            return self._optimize_context(state)
+            optimized = self._optimize_context(state)
         except Exception as e:
             if not self.ignore_errors:
                 raise
@@ -1703,6 +1703,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 sections_included=0,
                 sections_excluded=len(state["search_results"].results),
             )
+        if not optimized.sections and any(
+            r.content for r in state["search_results"].results
+        ):
+            # Retrieved evidence no section of which fits the budget: the
+            # decline that follows is the budget's, not "nothing found".
+            record_degradation(DegradationStep.CONTEXT_OPTIMIZATION, "context_budget")
+        return optimized
 
     def _context_building_step(self, state: dict[str, Any]) -> str:
         optimized: OptimizedContext | None = state.get("optimized_context")
@@ -2403,6 +2410,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 output: RAGOutput | SearchOutput = await runnable.ainvoke(
                     input_dict, config
                 )
+                answer_blocked = False
                 if isinstance(output, RAGOutput):
                     verdict = await self._screen_output(
                         output.answer,
@@ -2413,7 +2421,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                     output.answer = verdict.text
                     if verdict.grounding is not None:
                         output.metadata["grounding"] = verdict.grounding.model_dump()
-                    if verdict.action is GuardAction.BLOCKED:
+                    answer_blocked = verdict.action is GuardAction.BLOCKED
+                    if answer_blocked:
                         # A refused answer keeps none of the evidence behind it.
                         output.sources = []
                         output.citations = []
@@ -2435,7 +2444,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                     self._refresh_screened_copies(output, plan_texts)
                 if guard_records:
                     output.metadata["guardrail"] = guard_records
-                if isinstance(output, RAGOutput):
+                if isinstance(output, RAGOutput) and not answer_blocked:
+                    # A refused answer is no history either.
                     await self._save_memory(output, rag_input)
                 return output
         except Exception as raised:
@@ -3130,6 +3140,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         )
         chunks: list[str] = []
         delivered = False
+        # A refused answer, like a refused query, writes no memory.
+        answer_blocked = False
         guard_records: list[dict[str, Any]] = []
         try:
             # Bound for retrieval and context building only: they run before
@@ -3231,6 +3243,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                         ),
                     )
                 state["answer"] = verdict.text
+                answer_blocked = verdict.action is GuardAction.BLOCKED
                 if verdict.text:
                     delivered = True
                     yield verdict.text
@@ -3266,6 +3279,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             yield f"\n\n{DEFAULT_ERROR_MESSAGE}" if delivered else DEFAULT_ERROR_MESSAGE
             return
 
+        if answer_blocked:
+            return
         async with deadline.scope():
             await self._save_memory(self._format_output_step(state), rag_input)
 

@@ -238,6 +238,9 @@ async def test_a_cut_off_answer_is_not_repaired() -> None:
         ("戦略\uff1alocal", "local"),
         ("策略\uff1aglobal", "global"),
         ("Strategy\uff1alocal", "local"),
+        # Regression (rv23): a Hindi label is two words, its vowel signs
+        # part of them ("\\w" split it into four).
+        ("चयनित रणनीति: local", "local"),
         # Regression (rv11 query M2): prose whose words hold one name was
         # routed to it ("simple", "local", "global" are English words).
         ("This is a simple factual lookup.", None),

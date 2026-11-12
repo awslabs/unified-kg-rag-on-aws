@@ -2395,4 +2395,9 @@ COVERS: tuple[Case, ...] = (
     Case("İzmir Liman", True, "Izmir Liman", "rv12 query low"),
     Case("Izmir Liman", True, "İzmir Liman", "rv12 query low"),
     Case("Acme Supplies", False, "Zorblax Supplies", "rv11 probe"),
+    Case("टाटा मोटर्स", True, "टाटा", "rv23 algo-ret 2"),
+    Case("टी-सीरीज़", False, "टाटा", "rv23 algo-ret 2"),
+    Case("टीसीएस", False, "टाटा", "rv23 algo-ret 2"),
+    Case("ธนาคารกรุงเทพ", True, "กรุงเทพ", "rv23 algo-ret 2"),
+    Case("ธนาคารกสิกรไทย", False, "ธนาคารกรุงเทพ", "rv23 algo-ret 2"),
 )

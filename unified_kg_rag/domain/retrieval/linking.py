@@ -20,9 +20,12 @@ ratio entity resolution's ``processing.similarity_threshold`` sets, so
 "Bexly" finds "Bexley" while "Supplies" never stands for "Zorblax
 Supplies"). Terms are the words of the name's :func:`link_key`
 (NFKC-casefolded, legal-form designators such as "Inc", "株式会社" or
-"شركة" left out); a word in Han, Hangul or Kana is read as its character
-bigrams, since those scripts write compounds without spaces ("东芝" is
-covered by "东芝电子", "라마바상사" is not by "가나다상사").
+"شركة" left out); a word is a run of letters, numbers and marks in any
+script (``shared.utils.scripts.words``: "टाटा" is one word, not "ट" and
+"ट"), and a word in Han, Hangul, Kana or a spaceless alphabet (Thai, Lao,
+Myanmar, Khmer, Tai) is read as its character bigrams, since those scripts
+write compounds without spaces ("东芝" is covered by "东芝电子", "กรุงเทพ" by
+"ธนาคารกรุงเทพ", "라마바상사" is not by "가나다상사").
 
 :func:`link_key` is the ``compact_name_key`` (which already drops the
 marks a script writes at will, a middle dot between Han, Hangul or Kana
@@ -46,8 +49,10 @@ from unified_kg_rag.domain.models import RetrievalResult
 from unified_kg_rag.shared.utils import entity_key
 from unified_kg_rag.shared.utils.scripts import (
     DENSE_SCRIPT_LETTERS,
+    SPACELESS_SCRIPT_LETTERS,
     fold_letter_variants,
     without_latin_accents,
+    words,
 )
 
 __all__ = [
@@ -60,8 +65,9 @@ __all__ = [
     "name_terms",
 ]
 
-_WORD = re.compile(r"\w+")
-_DENSE_RUN = re.compile(f"[{DENSE_SCRIPT_LETTERS}]+")
+# A run of letters written without spaces between words: Han, Hangul and
+# Kana, and the spaceless alphabets (Thai, Lao, Myanmar, Khmer, Tai).
+_UNSPACED_RUN = re.compile(f"[{DENSE_SCRIPT_LETTERS}{SPACELESS_SCRIPT_LETTERS}]+")
 
 
 def hit_name(hit: RetrievalResult) -> str:
@@ -97,10 +103,10 @@ def name_terms(name: str) -> frozenset[str]:
     # A legal form is read as written, before the accents go ("Sá" is no
     # "SA", as ``latin_legal_form`` reads it).
     written = (w for w in link_key(name).split() if latin_legal_form(w) is None)
-    for word in _WORD.findall(without_latin_accents(" ".join(written))):
-        for run in _DENSE_RUN.findall(word):
+    for word in words(without_latin_accents(" ".join(written))):
+        for run in _UNSPACED_RUN.findall(word):
             terms.update(run[i : i + 2] for i in range(max(1, len(run) - 1)))
-        terms.update(_DENSE_RUN.sub(" ", word).split())
+        terms.update(_UNSPACED_RUN.sub(" ", word).split())
     return frozenset(terms)
 
 

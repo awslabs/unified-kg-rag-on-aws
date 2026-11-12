@@ -13,6 +13,7 @@ import json
 import math
 import re
 import time
+import unicodedata
 from typing import Any
 
 from langchain_core.exceptions import ContextOverflowError, OutputParserException
@@ -118,6 +119,8 @@ _MAP_POINT = re.compile(
     re.DOTALL,
 )
 _REPORT_ID = re.compile(r"[^\s,\"']+")
+# A number in a report id the map answer gives (``_credited``).
+_ORDINAL = re.compile(r"\d+")
 
 
 class _MapAnswer(BaseModel):
@@ -890,12 +893,18 @@ class GlobalSearchStrategy(BaseSearchStrategy):
     ) -> list[int]:
         """The ordinals in its batch of the reports ``point`` credits: those
         of its batch it cites by id (their ordinal in the batch,
-        ``_format_reports``), or its whole batch when it cites none of them
-        (no ids, or ids the batch does not hold)."""
+        ``_format_reports``, read as the numbers an id holds after NFKC:
+        "Report 2", "#2", "02", "２" and "2, 3" name ordinals), or its whole
+        batch when it cites none of them (no ids, or ids the batch does not
+        hold)."""
         if not 0 <= point.batch < len(batches):
             return []
         batch = batches[point.batch]
-        cited = set(point.report_ids)
+        cited = {
+            str(int(number))
+            for rid in point.report_ids
+            for number in _ORDINAL.findall(unicodedata.normalize("NFKC", rid))
+        }
         return [
             i for i in range(len(batch)) if cls._report_ordinal(i) in cited
         ] or list(range(len(batch)))

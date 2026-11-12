@@ -133,7 +133,9 @@ async def test_mix_mode_blends_chunks(config: Config) -> None:
     } <= prefixes
 
 
-def test_collect_linked_chunk_ids_reads_each_lineage_in_id_order() -> None:
+def test_collect_linked_chunk_ids_reads_each_lineage_in_citation_then_id_order() -> (
+    None
+):
     cls = _chunk_selector()
 
     def _hit(unit_ids: list[str]) -> RetrievalResult:
@@ -150,9 +152,9 @@ def test_collect_linked_chunk_ids_reads_each_lineage_in_id_order() -> None:
     entity_side, relation_side = cls._collect_linked_chunk_ids(
         entity_hits, rel_hits, limit=10
     )
-    # Each hit's chunks in id order, whatever order they are stored in, a
-    # chunk kept on its earliest hit only (no sort by how many hits cite it);
-    # the relationship side, a list of its own, drops the entity side's.
+    # Each hit's chunks by how many hits of the side cite them, then id,
+    # whatever order they are stored in, a chunk kept on its earliest hit
+    # only; the relationship side, a list of its own, drops the entity side's.
     assert entity_side == ["t1", "t2"]
     assert relation_side == ["t3"]
     # limit caps each side, not the two together.
@@ -160,6 +162,37 @@ def test_collect_linked_chunk_ids_reads_each_lineage_in_id_order() -> None:
         ["t1"],
         ["t2"],
     )
+
+
+@pytest.mark.parametrize("side", ["entity", "relationship"])
+def test_a_chunk_more_matched_hits_cite_comes_first_in_its_lineage(
+    side: str,
+) -> None:
+    # Regression (rv23): each hit's chunks were taken in id (hash) order,
+    # so a bridge chunk that hits A, B and C all cite, kept on A only, came
+    # after A's ten other chunks and never reached A's five slots. Upstream
+    # (operate.py _find_related_text_unit_from_entities / _from_relations)
+    # sorts each deduplicated lineage by how many matched hits cite a chunk;
+    # chunk id breaks ties, so a full and an incremental build agree.
+    def _hit(i: int, units: list[str]) -> RetrievalResult:
+        return RetrievalResult(
+            content=f"x{i}",
+            score=1.0,
+            source=f"x{i}",
+            retriever_type=side,
+            metadata={"id": f"x{i}", "text_unit_ids": units},
+        )
+
+    hub = [f"a{j:02d}" for j in range(11)] + ["z_bridge"]
+    hits = [_hit(0, hub), _hit(1, ["z_bridge", "b1"]), _hit(2, ["z_bridge", "c1"])]
+    entity_hits, rel_hits = (hits, []) if side == "entity" else ([], hits)
+    entity_side, relation_side = _chunk_selector()._collect_linked_chunk_ids(
+        entity_hits, rel_hits, limit=20
+    )
+    chosen = entity_side if side == "entity" else relation_side
+    assert chosen[0] == "z_bridge"
+    assert chosen[:5] == ["z_bridge", "a00", "a01", "a02", "a03"]
+    assert {"b1", "c1"} <= set(chosen)
 
 
 def test_collect_linked_chunk_ids_ignores_missing_lineage() -> None:

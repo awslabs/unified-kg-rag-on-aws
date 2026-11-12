@@ -731,6 +731,28 @@ async def test_a_point_of_reports_without_lineage_is_not_citable() -> None:
     assert out[0].metadata["text_unit_ids"] == []
 
 
+@pytest.mark.parametrize(
+    ("ids", "credited"),
+    [
+        (["Report 2"], ["c1"]),
+        (["#2"], ["c1"]),
+        (["02"], ["c1"]),
+        (["\uff12"], ["c1"]),  # full-width 2
+        (["2, 3"], ["c1", "c2"]),
+        (["report-3"], ["c2"]),
+    ],
+)
+async def test_a_point_credits_the_reports_its_ids_number(
+    ids: list[str], credited: list[str]
+) -> None:
+    # Regression (rv23): ids were matched as written, so "Report 2", "#2",
+    # "02", a full-width "２" or one "2, 3" string credited the whole batch.
+    point = {"description": "from a report", "score": 70, "report_ids": ids}
+    strat = _strategy(map_batch_size=4, map_outputs=[json.dumps({"points": [point]})])
+    out = await strat._apply_map_reduce(_communities(4), SearchQuery(query="q"))
+    assert [r.source for r in _evidence(out)] == credited
+
+
 @pytest.mark.parametrize("ids", [None, [], ["9"], ["cid-0"], "1"])
 async def test_a_point_without_valid_ids_credits_its_batch(ids: Any) -> None:
     point: dict[str, Any] = {"description": "somewhere", "score": 70}

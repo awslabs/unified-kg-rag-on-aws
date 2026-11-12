@@ -366,7 +366,8 @@ async def test_callers_callbacks_reach_the_query_llms_and_the_strategy(
         RAGInput(
             query="What does the Vendor owe?",
             search_strategy="auto",
-            target_language="English",  # explicit: the translation step runs
+            # A language the query is not written in: the translation runs.
+            target_language="Korean",
         ),
         {"callbacks": [handler]},
     )

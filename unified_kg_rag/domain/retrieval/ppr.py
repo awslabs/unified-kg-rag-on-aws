@@ -284,11 +284,13 @@ class PassageGraph:
         damping: float = DEFAULT_DAMPING,
         max_iterations: int = 30,
         tolerance: float = 1e-6,
+        tie_order: Sequence[str] = (),
     ) -> tuple[list[tuple[str, float]], PPRResult | None]:
-        """The passages by PPR score (best first, then by id) and the run;
-        ``([], None)`` when the reset vector has no mass or the graph no
-        passage. Reset entries name entities and passages by their own ids
-        (one not in the graph is added)."""
+        """The passages by PPR score (best first; equal scores in
+        ``tie_order``, then by id: the passages no seed reaches all score 0)
+        and the run; ``([], None)`` when the reset vector has no mass or the
+        graph no passage. Reset entries name entities and passages by their
+        own ids (one not in the graph is added)."""
         reset = {
             **{self._ENTITY + k: v for k, v in entity_reset.items() if v > 0},
             **{self._PASSAGE + k: v for k, v in passage_reset.items() if v > 0},
@@ -306,11 +308,16 @@ class PassageGraph:
             max_iterations=max_iterations,
             tolerance=tolerance,
         )
+        position = {unit_id: i for i, unit_id in enumerate(tie_order)}
         ranked = sorted(
             (
                 (unit_id, result.scores[self._PASSAGE + unit_id])
                 for unit_id in self._passages
             ),
-            key=lambda item: (-item[1], item[0]),
+            key=lambda item: (
+                -item[1],
+                position.get(item[0], len(position)),
+                item[0],
+            ),
         )
         return ranked, result

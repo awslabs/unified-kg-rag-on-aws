@@ -97,7 +97,7 @@ Ingestion is a resumable 13-stage pipeline: parse, chunk, extract entities and r
 
 | Method | Strategies | Strong at |
 |---|---|---|
-| GraphRAG (community summaries) | `local`, `global`, `drift`, `simple` | Thematic questions over the whole corpus (`global`, `drift`) and questions about specific entities (`local`) |
+| GraphRAG (community summaries) | `local`, `global`, `drift`, `simple` | Thematic questions across the corpus (`global`, `drift`; `global` maps at most 99 community reports a query by default, [evidence](./docs/concepts/defaults-and-evidence.md#limits-of-the-evidence)) and questions about specific entities (`local`) |
 | LightRAG (dual-level keywords) | `mix`, `hybrid`, `naive` | Keyword-driven lookups, and a fast chunk-only baseline (`naive`) |
 | HippoRAG 2 (Personalized PageRank) | `ppr` | Multi-hop questions at the lowest cost: one LLM call a query |
 | RAPTOR (summary tree, opt-in) | `tree` | A cheap index without graph extraction; on multi-hop questions it answered better than `naive`, below the graph strategies ([evidence](./docs/concepts/defaults-and-evidence.md#raptor-summary-tree)) |

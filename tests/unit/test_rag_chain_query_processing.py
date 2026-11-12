@@ -164,6 +164,50 @@ async def test_query_extractions_use_the_language_the_index_was_built_in(
     assert query_processing.query_language(chain, inputs) == expected
 
 
+@pytest.mark.parametrize(
+    ("enabled", "query", "requested", "translated_into"),
+    [
+        # Regression (rv23): a question in another language than the index
+        # was searched as written (BM25 on Korean text over English units).
+        (False, "공급사는 어디에 있나요?", None, "English"),
+        (False, "供給者はどこにありますか？", None, "English"),
+        # The opposite: after a ko->en ingest an English question paid a
+        # translator call into English.
+        (True, "Where is the vendor based?", None, None),
+        (True, "공급사는 어디에 있나요?", None, "English"),
+        # A requested language the query is already written in.
+        (False, "공급사는 어디에 있나요?", "ko", None),
+        (False, "Where is the vendor based?", "ko", "Korean"),
+    ],
+)
+async def test_a_query_is_translated_exactly_when_its_language_differs(
+    config: Config,
+    enabled: bool,
+    query: str,
+    requested: str | None,
+    translated_into: str | None,
+) -> None:
+    config.processing.translation.enabled = enabled
+    config.processing.translation.source_language = "ko" if enabled else "en"
+    config.processing.translation.target_language = "en"
+    chain = _chain(config)
+    seen: list[str] = []
+
+    async def translate(query, language, config=None):
+        seen.append(language)
+        return f"<{language}> {query}"
+
+    chain._translate_query = translate  # type: ignore[method-assign]
+    inputs = {"query": query}
+    if requested:
+        inputs["target_language"] = requested
+    tasks = chain._start_query_inputs(
+        inputs, entities=False, keywords=False, config=None
+    )
+    await asyncio.gather(*tasks.values())
+    assert seen == ([translated_into] if translated_into else [])
+
+
 async def test_translation_refusal_falls_back_to_original(config: Config) -> None:
     # Force a non-noop config so translation runs, but the LLM returns a refusal.
     config.processing.translation.source_language = "ja"

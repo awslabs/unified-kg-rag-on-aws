@@ -477,8 +477,9 @@ class LightRAGSearchConfig(BaseModel):
         description=(
             "How hybrid/mix pick the chunks the matched entities and "
             "relationships cite (LightRAG's `kg_chunk_pick_method`). weight: "
-            "related_chunk_number chunks per hit on a decreasing gradient, in "
-            "chunk id order, fetched by id. vector: per side (entities, then "
+            "related_chunk_number chunks per hit on a decreasing gradient, "
+            "those more matched hits cite first, then by chunk id (upstream's "
+            "order), fetched by id. vector: per side (entities, then "
             "relationships), the cited chunks the query matches best, by one "
             "search of the text units restricted to them (the request's "
             "search_type: BM25 + vector by default), "

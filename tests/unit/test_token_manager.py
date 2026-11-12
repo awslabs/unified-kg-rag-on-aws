@@ -969,3 +969,28 @@ def test_context_items_are_separated_by_a_blank_line(mocker) -> None:
     out = mgr.optimize_context(results, query="q", max_tokens=10000)
     rendered = TokenManager.build_context_string(out)
     assert "Description: sells\n\nEntity: Buyer" in rendered
+
+
+# --- an empty context the budget caused ----------------------------------------
+
+
+def _mixed_results() -> list[RetrievalResult]:
+    long = " ".join(["word"] * 30)
+    return [
+        _r("Vendor ships widgets", 1.0, "text", "tu-1"),
+        _r(long, 0.5, "entity", "e-1"),
+        _r(long, 0.5, "relationship", "r-1"),
+        _r(long, 0.5, "community", "c-1"),
+    ]
+
+
+def test_headers_are_paid_for_the_types_seated_only(mocker) -> None:
+    # Regression (rv23): a header was reserved for every type present, so a
+    # small budget (max_tokens=40 on local) went to four headers and nothing
+    # was seated, though the best passage fits beside its own header.
+    manager = _make_manager(mocker, max_context_tokens=100_000)
+    # 1 query token + the text header (3) + the passage with its prefix (4).
+    optimized = manager.optimize_context(_mixed_results(), "q", max_tokens=9)
+    assert [s.source_id for s in optimized.sections] == ["tu-1"]
+    context = manager.build_context_string(optimized)
+    assert len(context.split()) <= 9 - 1

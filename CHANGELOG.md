@@ -772,11 +772,13 @@ From a `main` checkout (formats and keys no release had):
   tenant's document is never named; the next units fill its place, in at most four reads), alongside the answer call.
   A number the context did not show is reported in `metadata.unknown_citation_markers`, never as a citation (a marker
   has at most three digits: a bracketed year such as `[2020]` is text, and sections past the 999th get no number); a
-  blocked answer has none. Earlier answers reach the follow-up rewrite without their markers. `CitationMarkerScanner`
-  reads the markers from streamed chunks; MCP `kg_answer` records carry their `citation` marker and `cited`, and a
-  cited key point or intermediate answer is a record of its own (`key_point`, `intermediate_answer`) with its
-  citation's documents and their text units. The document converter keeps where each PDF page starts and text units
-  store `page_start` / `page_end`, `relative_path` and `document_id` in their attributes (ids and texts unchanged).
+  bracketed number in retrieved text (a footnote `[2]`) reads `(2)` in a numbered context, so an answer copying it
+  cites no section; a blocked answer has none. Earlier answers reach the follow-up rewrite without their markers.
+  `CitationMarkerScanner` reads the markers from streamed chunks; MCP `kg_answer` records carry their `citation`
+  marker and `cited`, and a cited key point or intermediate answer is a record of its own (`key_point`,
+  `intermediate_answer`) with its citation's documents and their text units. The document converter keeps where each
+  PDF page starts and text units store `page_start` / `page_end`, `relative_path` and `document_id` in their
+  attributes (ids and texts unchanged).
   `run-rag` prints the cited sources and its JSON output carries every citation. The retrieval evaluator adds
   `citation_precision` and `citation_recall` against `reference_sources`, each cited citation weighted by its files (a
   graph section of ten lineage files counts a tenth per reference file, not 1 when any matches), and
@@ -1484,6 +1486,9 @@ From a `main` checkout (formats and keys no release had):
   still fails the query. A global map
   output that is not map JSON goes to the fixer, not to a second map call over its batch. A response cut inside
   its last object is not repaired.
+- A query is translated exactly when it is written in another language than the index language (or the requested
+  `target_language`): a Korean question on an English index is now searched in English (one fast-model call), and an
+  English question after a ko→en ingest no longer pays a translator call.
 - The query translation, the follow-up rewrite and the community relevance rating answer JSON: `{"translation": ...}`,
   `{"question": ...}`, and MS GraphRAG's `{"reason": ..., "rating": 0-5}` (`rate_prompt.py`; the rating is divided by
   5, so `relevance_threshold: 0.2` is still a rating of 1 or more). The router answers the strategy name, read from
@@ -1563,7 +1568,8 @@ From a `main` checkout (formats and keys no release had):
   a local query's retrieval took about half as long (`support` 19-20 s to 9-10 s, `ppr` 23-25 s to 11 s on a loaded
   host) for a tenth of the process CPU (#602).
 - Global search maps every report of one cut of the community hierarchy (packed by tokens, on the fast model), steps
-  down to a shallower cut over `max_reports_per_level`, credits key points only to their reports, and dynamic
+  down to a shallower cut over `max_reports_per_level`, credits key points only to their reports (the numbers their
+  ids hold after NFKC: "Report 2", "#2", "02", "２" and "2, 3" no longer credit the whole batch), and dynamic
   selection descends to the leaves; it makes no separate reduce call: the answer model reads the ranked key points
   (0.2.3 reduced them on `map_reduce_model_id`, Claude Haiku 4.5, into a `synthesized_summary` result) (#318, #347,
   #354).
@@ -1743,6 +1749,10 @@ Queries and retrieval.
   seeding ("Cafe" for "Café", "Nguyen Van An" for "Nguyễn Văn An", and the letters with a stroke, a ligature or no
   dot: "Dang" for "Đặng", "Lodz" for "Łódź", "Yildiz" for "Yıldız", "Gudmundsson" for "Guðmundsson", "Izmir" for
   "İzmir"); an entity written as asked links alone ("شركة النور", not also "النور"; "Acme GmbH", not also "Acme").
+  A word keeps its marks (Devanagari and Thai vowel signs: an absent "टाटा" no longer links "टीसीएस" through the
+  fragment "ट") and a Thai, Lao, Myanmar, Khmer or Tai word reads as character bigrams as Han, Hangul and Kana do
+  ("กรุงเทพ" links "ธนาคารกรุงเทพ"; an absent "ธนาคารกรุงเทพ" no longer links "ธนาคารกสิกรไทย"); the router reads a
+  label's words the same way.
   `graph_aware`'s retrieved coverage compares names the same way, and entity grounding folds those letters as it folds
   accents.
 - Local search orders its candidate text units by one shared rule (`domain/retrieval/lineage.py`, also the
@@ -1791,6 +1801,18 @@ Queries and retrieval.
 - LightRAG `mix`/`hybrid` context includes the chunks the matched relationships cite (offline hybrid one-hop
   gold-chunk recall 0.30, now 0.86, 0.96 with rerank), and incremental and full builds pick the same chunks (#521,
   #530).
+- An answer the output guardrail blocks writes no conversation memory, as a blocked query writes none (the refusal
+  was saved and read by the next turn's follow-up rewrite).
+- `structured` refused on a namespace without the graph (a `raptor`-only one) names the methodologies that build it
+  (graphrag, lightrag, hipporag), not "any methodology".
+- PPR passages of equal score (those no seed reaches, all 0 when the edge read degraded) rank in the support order
+  (the units most entities cite first), not by id, so the text quota no longer fills in id order.
+- A context budget no retrieved section fits is a `context_optimization` degradation (reason `context_budget`), not
+  a silent `no_context` decline, and a section-type header is paid only for a type seated: a small budget (`local` at
+  `max_tokens=40`) went to the headers of every type present and seated nothing.
+- LightRAG `mix`/`hybrid` (`kg_chunk_pick_method: weight`) take each matched hit's chunks as upstream does, those
+  more matched hits of the side cite first, then by chunk id: in id (hash) order a chunk three hits cite, kept on the
+  first, could miss that hit's slots. No run measured the change yet; one on `mix` and `hybrid` is queued.
 - Hybrid search on OpenSearch 2.13 keeps the `size`-th lexical hit, kNN on lucene uses `vector_search.ef_search`,
   and a filter on an attribute an index never mapped no longer fails vector and hybrid searches (#295, #306).
 - `auto` no longer routes to `global` or `drift` without community reports, and falls back to `local` only when it

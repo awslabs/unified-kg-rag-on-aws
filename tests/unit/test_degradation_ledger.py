@@ -234,6 +234,58 @@ def test_a_failed_context_budgeting_degrades_the_answer() -> None:
     assert out.metadata["degraded_error"] == "ValueError"
 
 
+def test_a_context_the_budget_empties_is_a_degradation() -> None:
+    # Regression (rv23): a budget no retrieved section fits (max_tokens=40
+    # on local) declined as if nothing was found, with no degradation.
+    from unified_kg_rag.adapters.retrieval.token_manager import TokenManager
+
+    chain = _ignoring_chain()
+    chain.config.search.token_manager.max_context_tokens = 100_000
+    chain.token_manager = TokenManager(chain.config, providers=None)
+    hit = RetrievalResult(
+        content=" ".join(["word"] * 200),
+        score=1.0,
+        source="tu-1",
+        retriever_type="text",
+    )
+
+    def _state(results: list[RetrievalResult]) -> dict[str, Any]:
+        return {
+            "search_results": SearchResult(
+                query=SearchQuery(query="q"),
+                results=results,
+                total_results=len(results),
+                search_strategy="local",
+                processing_time=0.0,
+            ),
+            "processed_query": ProcessedQuery(original_query="q", final_query="q"),
+            "max_tokens": 20,
+        }
+
+    with query_scope():
+        chain.token_manager.count_tokens = lambda text: len(  # type: ignore[method-assign]
+            (text or "").split()
+        )
+        chain.token_manager.count_tokens_many = lambda texts: [  # type: ignore[method-assign]
+            len((t or "").split()) for t in texts
+        ]
+        chain.token_manager.config.min_truncated_section_tokens = 50
+        assert chain._context_optimization_step(_state([hit])).sections == []
+        # Nothing retrieved: nothing lost.
+        chain._context_optimization_step(_state([]))
+        out = GraphRAGChain._format_output_step(
+            {
+                **_state([hit]),
+                "resolved_strategy": SearchStrategy.LOCAL,
+                "start_time": 0.0,
+                "answer": "a",
+            }
+        )
+    assert out.metadata["degraded"] == [
+        {"step": "context_optimization", "reason": "context_budget", "error_type": None}
+    ]
+
+
 def test_the_console_names_every_step() -> None:
     # Regression (rv9 query L12): the console showed the raw step ids. The
     # English catalog names each framework step (the vitest catalog test

@@ -68,6 +68,49 @@ def test_dense_scripts_compare_bigrams_and_latin_words() -> None:
     assert name_terms("東") == {"東"}
 
 
+def test_a_word_keeps_its_marks_and_a_spaceless_word_reads_as_bigrams() -> None:
+    # Regression (rv23): "\\w" leaves out Devanagari and Thai vowel signs,
+    # so "टाटा" was the fragments "ट", "ट", and a Thai word, written without
+    # spaces, was neither one word nor its bigrams.
+    assert name_terms("टाटा मोटर्स") == {"टाटा", "मोटर्स"}
+    assert name_terms("กรุงเทพ") == {"กร", "รุ", "ุง", "งเ", "เท", "ทพ"}
+
+
+@pytest.mark.parametrize(
+    ("name", "mention", "covered"),
+    [
+        # An absent name sharing a fragment or a word is not the entity.
+        ("टी-सीरीज़", "टाटा", False),
+        ("टीसीएस", "टाटा", False),
+        ("पंजाब नेशनल बैंक", "भारतीय स्टेट बैंक", False),
+        ("ธนาคารกสิกรไทย", "ธนาคารกรุงเทพ", False),
+        # A part of the name.
+        ("टाटा मोटर्स", "टाटा", True),
+        ("रिलायंस इंडस्ट्रीज", "रिलायंस", True),
+        ("ธนาคารกรุงเทพ", "กรุงเทพ", True),
+    ],
+)
+@pytest.mark.parametrize("similarity", [1.0, 0.85])
+def test_hindi_and_thai_names_link_by_their_words(
+    name: str, mention: str, covered: bool, similarity: float
+) -> None:
+    assert covers(name, mention, similarity) is covered
+    links = choose_links(
+        mention, [_hit(name, 1.0)], policy="cover", limit=3, similarity=similarity
+    )
+    assert bool(links) is covered
+
+
+@pytest.mark.parametrize(
+    ("focus", "name"),
+    [("भारतीय स्टेट बैंक", "पंजाब नेशनल बैंक"), ("ธนาคารกรุงเทพ", "ธนาคารกสิกรไทย")],
+)
+def test_the_rank_policy_refuses_a_hindi_or_thai_lookalike(
+    focus: str, name: str
+) -> None:
+    assert choose_links(focus, [_hit(name, 1.0)], policy="rank", similarity=0.85) == []
+
+
 def test_a_spelling_variant_covers_at_the_similarity() -> None:
     assert not covers("Bexley", "Bexly")
     assert covers("Bexley", "Bexly", 0.85)

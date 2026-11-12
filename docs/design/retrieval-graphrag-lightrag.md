@@ -342,14 +342,15 @@ relationships), truncated to their token budgets (`operate.py`
 on the answers or retrieval of `mix` and `hybrid` ([evidence](../concepts/defaults-and-evidence.md#retrieval-switches)), so the hits alone
 stay. `kg_chunk_pick_method`
 picks within a side: `weight` (the default) is upstream's `WEIGHT` method,
-weighted polling with every matched item at least one chunk, without
-upstream's per-item sort by how many matched items cite a chunk, and both
-sides fetched by id in one request; `vector` is its `VECTOR` method (upstream's
+weighted polling with every matched item at least one chunk, each item's
+chunks sorted as upstream sorts them (by how many matched items of the side
+cite a chunk), and both sides fetched by id in one request; `vector` is its `VECTOR` method (upstream's
 default), one search per side of the cited chunks for the query, under the
-request's `search_type`, keeping `related_chunk_number * hits / 2`. A lineage
-is read in chunk-id order, the order a full build stores; an incremental
-merge appends the delta's chunks in arrival order, so reading the stored
-order made the weighted pick depend on how the graph was built. `weight`
+request's `search_type`, keeping `related_chunk_number * hits / 2`. Chunk id
+breaks the sort's ties (upstream keeps the stored order there): a full build
+stores a lineage in chunk-id order while an incremental merge appends the
+delta's chunks in arrival order, so the stored order made the weighted pick
+depend on how the graph was built. `weight`
 stays the default because the two measured no significant difference
 (§9.1).
 

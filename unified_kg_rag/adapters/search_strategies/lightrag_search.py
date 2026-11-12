@@ -97,9 +97,9 @@ def _pick_by_weighted_polling(
     ``_find_related_text_unit_from_entities``/``_from_relations``; the
     ``VECTOR`` one is ``LightRAGSearchStrategy._vector_picked_chunks``).
     ``lineages`` is one chunk-id list per matched entity/relationship, already
-    in retrieval (importance) order; each list keeps its order (chunk id,
-    ``LightRAGSearchStrategy._lineages``), without upstream's sort of a hit's
-    chunks by how many matched hits cite them.
+    in retrieval (importance) order; each list keeps its order (most cited by
+    the matched hits first, then chunk id:
+    ``LightRAGSearchStrategy._collect_linked_chunk_ids``).
 
     The point of the gradient is the ``min_related_chunks=1`` floor: the LAST
     matched KG item still gets one chunk. A global "rank all lineage chunks by
@@ -591,13 +591,13 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
 
         Follows upstream LightRAG's two-stage selection
         (``_find_related_text_unit_from_entities`` then ``_from_relations``,
-        its ``WEIGHT`` method), without its per-hit occurrence sort: a hit's
-        chunks keep their id order (measured on dense graphs, the sort lowered
-        hybrid recall):
+        its ``WEIGHT`` method):
 
         1. per-hit lineages are deduplicated keeping the EARLIEST (most
            important) citing hit of the side, so a chunk occupies one item's
-           quota, not many;
+           quota, not many, and each is sorted by how many hits of the side
+           cite a chunk (upstream's occurrence sort), then by chunk id, so a
+           full and an incremental build pick alike;
         2. slots are allocated by :func:`_pick_by_weighted_polling`, which
            guarantees every matched hit at least one chunk, and each side is
            cut to ``limit`` (the chunk width);
@@ -616,10 +616,24 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         base = set(exclude or ())
 
         def _select(results: list[RetrievalResult], excluded: set[str]) -> list[str]:
+            lineages = [
+                [uid for uid in lineage if uid not in excluded]
+                for lineage in self._lineages(results)
+            ]
+            # The chunks more hits of the side cite first; a tie keeps the
+            # first-seen order, which within a hit's kept chunks is id order.
+            rank = {
+                uid: i
+                for i, uid in enumerate(merge_lineages(lineages, order="support"))
+            }
             deduped: list[list[str]] = []
-            for lineage in self._lineages(results):
-                keep = [uid for uid in lineage if uid not in excluded]
-                # Keep the chunk on its earliest (most important) citing hit only.
+            for lineage in lineages:
+                # Keep the chunk on its earliest (most important) citing hit
+                # only.
+                keep = sorted(
+                    (uid for uid in lineage if uid not in excluded),
+                    key=rank.__getitem__,
+                )
                 excluded.update(keep)
                 if keep:
                     deduped.append(keep)

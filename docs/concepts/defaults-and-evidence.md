@@ -317,6 +317,10 @@ On the 200 MuSiQue questions:
 
 No change was significantly better on the answers, so both defaults stayed
 ([Search strategies](./retrieval.md#search-strategies--when-to-use-which)).
+These runs took each hit's chunks in chunk-id order. `weight` now orders
+them as upstream LightRAG does, those more matched hits cite first, then by
+chunk id; no run compared the two orders yet, and a run on `mix` and
+`hybrid` is queued.
 
 ## Retrieval switches
 
@@ -1124,4 +1128,15 @@ excludes zero.
     GraphRAG's 20 and 3 (at most 27 model calls a query, against upstream's
     67);
   - `search.hybrid.lexical_weight` and `vector_weight`, 0.5 each, an equal
-    split no run compared with another.
+    split no run compared with another;
+  - `search.global_search.max_reports_per_level` 100, capped at
+    `indexing.opensearch.max_query_size` - 1 (99 by default): `global` maps
+    at most that many reports of a cut (or, under dynamic selection, of a
+    step), the most similar to the query when the cut and every shallower
+    one hold more, where MS GraphRAG maps every report of the
+    `community_level` cut, batched by tokens. On the MuSiQue-200 evidence
+    store the root cut holds 145 reports and the depth-2 cut 201, so no
+    shallower cut fits and every logged `global` query (202 of 202) mapped
+    the 99 of the 201 most similar to it; every `global` result on this page
+    ran with the default cap, not the whole cut. A run of the cap against
+    the whole cut is queued.

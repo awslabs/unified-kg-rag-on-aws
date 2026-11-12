@@ -20,6 +20,7 @@ from typing import Any, TypeVar, overload
 from pydantic import BaseModel, ValidationError
 
 from unified_kg_rag.shared.exceptions import ModelOutputCutOffError, ModelOutputError
+from unified_kg_rag.shared.utils.scripts import word_spans
 
 _M = TypeVar("_M", bound=BaseModel)
 
@@ -57,7 +58,6 @@ def strip_leading_reasoning(text: str) -> str:
     return text
 
 
-_NAME_WORD = re.compile(r"\w+")
 # The most words a label before a name holds ("Strategy: local", "Selected
 # strategy: local").
 _LABEL_WORDS = 2
@@ -89,16 +89,18 @@ def _line_name(line: str, names: Collection[str]) -> str | None:
     :data:`_LABEL_WORDS` words that name none, a colon, the name), read
     NFKC-normalized: a full-width colon ("戦略：local") is a colon."""
     line = unicodedata.normalize("NFKC", line)
-    spans = list(_NAME_WORD.finditer(line))
+    spans = word_spans(line)
     if not spans or len(spans) > _LABEL_WORDS + 1:
         return None
-    name: str = spans[-1].group().casefold()
+    name = line[slice(*spans[-1])].casefold()
     if name not in names:
         return None
     if len(spans) == 1:
         return name
-    label = line[spans[-2].end() : spans[-1].start()]
-    if ":" in label and not {w.group().casefold() for w in spans[:-1]} & set(names):
+    label = line[spans[-2][1] : spans[-1][0]]
+    if ":" in label and not {line[slice(*w)].casefold() for w in spans[:-1]} & set(
+        names
+    ):
         return name
     return None
 
