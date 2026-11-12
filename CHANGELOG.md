@@ -773,11 +773,12 @@ From a `main` checkout (formats and keys no release had):
   A number the context did not show is reported in `metadata.unknown_citation_markers`, never as a citation (a marker
   has at most three digits: a bracketed year such as `[2020]` is text, and sections past the 999th get no number); a
   bracketed number in retrieved text (a footnote `[2]`) reads `(2)` in a numbered context, so an answer copying it
-  cites no section; a blocked answer has none. Earlier answers reach the follow-up rewrite without their markers. `CitationMarkerScanner`
-  reads the markers from streamed chunks; MCP `kg_answer` records carry their `citation` marker and `cited`, and a
-  cited key point or intermediate answer is a record of its own (`key_point`, `intermediate_answer`) with its
-  citation's documents and their text units. The document converter keeps where each PDF page starts and text units
-  store `page_start` / `page_end`, `relative_path` and `document_id` in their attributes (ids and texts unchanged).
+  cites no section; a blocked answer has none. Earlier answers reach the follow-up rewrite without their markers.
+  `CitationMarkerScanner` reads the markers from streamed chunks; MCP `kg_answer` records carry their `citation`
+  marker and `cited`, and a cited key point or intermediate answer is a record of its own (`key_point`,
+  `intermediate_answer`) with its citation's documents and their text units. The document converter keeps where each
+  PDF page starts and text units store `page_start` / `page_end`, `relative_path` and `document_id` in their
+  attributes (ids and texts unchanged).
   `run-rag` prints the cited sources and its JSON output carries every citation. The retrieval evaluator adds
   `citation_precision` and `citation_recall` against `reference_sources`, each cited citation weighted by its files (a
   graph section of ten lineage files counts a tenth per reference file, not 1 when any matches), and
