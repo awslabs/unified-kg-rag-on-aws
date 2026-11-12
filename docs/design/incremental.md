@@ -155,6 +155,10 @@ unless noted.
    and a claim endpoint none of them takes follows the run's re-key: a
    retried strip derived that copy as itself and kept the claim at its old
    id, about an entity the run deleted, beside the one the re-key gave it.
+   Every claim endpoint is an entity the run writes or has stored: one a
+   claim derivation resolved outside the entities it was given (a part split
+   off a noted entity, which the strip's entity side, reading the graph, does
+   not write) has its claims derived again by the commit.
    The note is replaced
    by what still fails, or deleted. A commit over `max_failure_rate` notes
    its rejected items too, though it records no document: it wrote items of

@@ -731,6 +731,7 @@ class CrossRunMerge:
         """See :meth:`IndexingManager.derive`."""
         m = self._m
         items = (list(entities), list(relationships), list(claims))
+        given_entities = {e.id for e in entities}
         blocked: set[str] = set()
         # The records read so far: a record does not change during the
         # derivation, so each round reads only the units it adds.
@@ -814,6 +815,13 @@ class CrossRunMerge:
                 done = True
             if done:
                 m.underived_items += len(set(derived.underived))
+                if loose := {
+                    i
+                    for c in derived.claims
+                    for i in (c.subject_id, c.object_id)
+                    if i and i not in given_entities
+                }:
+                    m._claim_endpoints.setdefault(suffix, set()).update(loose)
                 return derived.model_copy(
                     update={
                         "rewired": rewired,
@@ -1501,7 +1509,9 @@ class CrossRunMerge:
         other spellings this run derived of a split-off, re-keyed or renamed
         entity's name (a claim naming it may sit on one of them), and the
         noted entities the delta joined (``PendingWrites.joined_entities``:
-        held like stored ones, they may merge into another id too)."""
+        held like stored ones, they may merge into another id too), and the
+        endpoints a claim derivation resolved outside the entities it was
+        given (one the strip derived from a noted entity it does not write)."""
         m = self._m
         split_from = m._split_from.get(suffix, {})
         derived = m._derived_entities.get(suffix, {})
@@ -1520,6 +1530,7 @@ class CrossRunMerge:
                 *m._renamed.get(suffix, set()),
                 *m._noted_commit_entities.get(suffix, set()),
                 *m._pending_writes.joined_entities().get(suffix, set()),
+                *m._claim_endpoints.get(suffix, set()),
             }
         )
 

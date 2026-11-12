@@ -1126,7 +1126,10 @@ From a `main` checkout (formats and keys no release had):
   touched it again. Not against the stored copy of an entity the run re-keyed away, though (it is still stored until its
   old id is deleted), and a claim endpoint none of the entities it derives takes follows the run's re-key: a retried
   strip derived that copy as itself and kept a claim about `Acme Corp` at its old id, beside the re-keyed one, about an
-  entity the run then deleted. The stored claims about a noted entity are derived again when the commit merges it into
+  entity the run then deleted. A claim endpoint a removal's claim derivation resolved outside the entities it was given
+  (a part split off a noted entity, which its entity side never writes) is derived again by the commit, so every claim
+  is about an entity written or stored: a strip stopped after writing such a claim left it about an id no run wrote.
+  The stored claims about a noted entity are derived again when the commit merges it into
   another spelling (one kept a claim at its old id), and only then: one written again under its own id keeps them, where
   a hub whose write kept failing had each claim about it read and rewritten on every run. A removal counts the text
   units of an entity's graph copy beside its vector copy, which a rejected write left stale: retried after a kill,
