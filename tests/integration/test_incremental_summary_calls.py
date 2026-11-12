@@ -66,6 +66,50 @@ def test_a_delta_summary_is_extended_not_made_again(tmp_path: Path) -> None:
     assert acme[4].split("\n")[-1] == "Summary of Acme."
 
 
+def _additions() -> list[dict[str, str]]:
+    """Eight documents on "Acme", then one more per run, three times."""
+    rounds = [{f"h{i}.txt": f"Acme and Buyer trade goods {i}." for i in range(8)}]
+    for i in range(3):
+        rounds.append({**rounds[-1], f"n{i}.txt": f"Acme and Depot trade goods {i}."})
+    return rounds
+
+
+def test_consecutive_additions_keep_extending_the_summary(tmp_path: Path) -> None:
+    # "Acme" is summarized from its eight lines; each later run adds one
+    # document. The first addition extends the summary with its line (under
+    # the threshold, so not summarized and not marked); the second found no
+    # summary stored and summarized all ten lines again, every second run.
+    calls: list[tuple[str, int]] = []
+
+    state = _state(tmp_path, _additions(), respond=_recording(calls), summarize=True)
+
+    # The extensions grow under the threshold for two runs; the third
+    # summarizes the summary and the three added lines, once.
+    assert [lines for name, lines in calls if name == "Acme"] == [8, 4]
+    stored = next(e for e in state["entities"] if e[1] == "Acme")
+    assert stored[4].startswith("Summary of Acme.")
+
+
+def test_a_resumed_run_keeps_the_summary_of_its_extension(tmp_path: Path) -> None:
+    # The run that summarizes the extension is killed once its entities are
+    # written; the resumed run derives the description that summary stands
+    # for and keeps it. Marked as made from the extended text, it was
+    # extended with the same lines again.
+    finished = _state(
+        tmp_path / "finished", _additions(), respond=_digesting, summarize=True
+    )
+    resumed = _state(
+        tmp_path / "resumed",
+        _additions(),
+        respond=_digesting,
+        summarize=True,
+        die_in=3,
+        die_at=("upsert_relationships", 1, False),
+    )
+
+    assert resumed == finished
+
+
 @pytest.mark.parametrize(
     ("spelling", "acme_calls"),
     [

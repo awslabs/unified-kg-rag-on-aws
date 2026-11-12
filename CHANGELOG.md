@@ -1911,7 +1911,10 @@ Ingestion and incremental indexing.
   build's (#640). Nor when the moved and the kept lines share a text unit (a delta that resolved `(주)벤더` into
   `벤더`): an edge with an endpoint the derivation split off is summarized from its lines (#644). Nor when the
   derivation folded another stored spelling into the item (a delta `Depot -> Vendor` edge that folds the stored
-  `Depot -> Vendor Inc` into it): the extended summary lost the folded edge's line (#648).
+  `Depot -> Vendor Inc` into it): the extended summary lost the folded edge's line (#648). An extended description
+  is marked as made from the lines it stands for, also under the summary threshold, where it was left unmarked and
+  every second run summarized all of the item's lines again (a hub in 600 documents: 28 KB of summary input every
+  second one-document run); a stored extension a run before this left unmarked is summarized once more.
 - A document's doc-status registry namespace and its artifacts' index suffix follow one rule
   (`store_names.index_suffix`): an `index` value no store accepts, which a pre-parsed `Document` JSON can carry,
   fails the loading stage naming it instead of keying the document's record under a namespace no index has (#628).

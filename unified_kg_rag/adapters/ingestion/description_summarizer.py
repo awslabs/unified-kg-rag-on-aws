@@ -168,7 +168,7 @@ def extend_summaries(
     added: Mapping[str, str | None],
     *,
     summarized: Collection[str] = (),
-) -> None:
+) -> dict[str, str]:
     """Summarize a grown item from its stored summary, not all its text.
 
     An item (by id) whose stored copy is a summary, that still cites every
@@ -184,8 +184,17 @@ def extend_summaries(
     ``summarized``: graph resolution summarized the run's own lines) takes
     the stored description followed by it even when the stored copy is not a
     summary, so that summary is used rather than made in vain.
+
+    An extended item is marked as made from its derived description (as
+    upstream GraphRAG's update summarizes the stored summary and the new
+    descriptions once), so the next run that adds to it extends it again
+    instead of summarizing every line, and one that derives the same
+    description keeps it. It carries no settings mark: a full build
+    summarizes the lines. Returns ``{id: that mark}`` of the extended items,
+    for the caller to keep on a summary made of the extended text.
     """
     by_id = {item.id: item for item in stored}
+    extended: dict[str, str] = {}
     for item in items:
         previous = by_id.get(item.id)
         new = added.get(item.id)
@@ -201,7 +210,22 @@ def extend_summaries(
             item.text_unit_ids or []
         ):
             continue
+        extended[item.id] = compute_hash(item.description or "")
         item.description = merge_descriptions([previous.description, new])
+        mark_extended(item, extended[item.id])
+    return extended
+
+
+def mark_extended(item: Entity | Relationship, source: str) -> None:
+    """Mark ``item``'s description as standing for the derived description
+    hashed as ``source`` (see :func:`extend_summaries`), in place."""
+    attributes = {
+        key: value
+        for key, value in (item.attributes or {}).items()
+        if key != SUMMARIZED_WITH_ATTRIBUTE
+    }
+    attributes[SUMMARIZED_FROM_ATTRIBUTE] = source
+    item.attributes = attributes
 
 
 class DescriptionSummarizer:
