@@ -36,7 +36,7 @@
 | 사용 방법 | [Extraction schema](./guides/extraction-schema.md), [Ontology](./guides/ontology.md), [Seed graphs](./guides/seed-graphs.md)(영문) | 스키마 모드, 유형과 패턴 선언, 저장하는 스키마 필드와 그 필터, 스키마를 바꾸면 다시 실행되는 것. OWL/RDFS 온톨로지에서 스키마 읽기. 이미 가진 지식 그래프 합치기, 시드가 스키마와 문서를 만날 때의 규칙, 수명 주기와 비용 |
 | 사용 방법 | [평가](./guides/evaluate.ko.md), [Benchmarks](./guides/benchmarks.md)(영문), [Visualization](./guides/visualize.md)(영문), [Inspect and export](./guides/inspect.md)(영문) | 평가기와 필요한 필드, 데이터 형식, 전략의 짝지은 비교, 비용과 가격, 다시 만들기·다시 판정하기·CI 게이트. MuSiQue를 코퍼스와 데이터셋으로 변환. 내보낸 그래프 렌더링. 네임스페이스가 담은 내용과 그래프를 GraphML·JSON Lines로 내보내기 |
 | 사용 방법 | [콘솔](./guides/console.ko.md) | 로컬 웹 콘솔(`run-console`): 그래프까지 이어지는 출처 추적과 함께 질문, 수집, 평가 비교, 그래프 탐색, 사용량과 비용, 설정. 데모와 포트 포워딩 |
-| 사용 방법 | [Guardrail](./guides/guardrail.md), [Observability](./guides/observability.md)(영문) | 질의와 답변 검사, 컨텍스트 근거 검사. Jaeger, Langfuse, Phoenix, CloudWatch로 추적, 전송 제한과 개인정보 |
+| 사용 방법 | [Guardrail](./guides/guardrail.md), [Observability](./guides/observability.md)(영문), [Load testing](./guides/load-testing.md)(영문) | 질의와 답변 검사, 컨텍스트 근거 검사. Jaeger, Langfuse, Phoenix, CloudWatch로 추적, 전송 제한과 개인정보. 가짜 모델로 하는 로컬 부하·장시간(soak)·장애 주입(chaos) 실행과 야간 게이트 |
 | 사용 방법 | [Using the library from Python](./guides/python-library.md)(영문) | Python에서 수집과 질의, 구분해 처리할 결과와 오류, 비동기 코드, 닫기, 로깅, 백엔드 주입 |
 | 사용 방법 | [Extension guide](./guides/extend.md)(영문) | 백엔드, 파서, 렌더러, 스키마, 시드 소스를 플러그인으로 추가하거나 전략, 평가기를 저장소 안에서 추가 |
 | 사용 방법 | [MCP 서버](./guides/mcp.ko.md) | 인덱스를 읽기 전용 MCP 도구로 에이전트에 제공. 도구와 레코드, 범위와 한도, 인증 프록시 뒤의 HTTP, 비용과 텔레메트리 |
@@ -63,6 +63,7 @@
 | 모델이나 설정 변경 | [설정](./guides/configure.ko.md), [모델 선택 참고 사항](./reference/models.md#model-selection-notes)(영문), [설정 레퍼런스](./reference/configuration.md)(영문) |
 | 질의와 답변 검사 | [Guardrail](./guides/guardrail.md)(영문) |
 | 질의와 수집 실행 추적 | [Observability](./guides/observability.md)(영문) |
+| 변경 사항을 로컬에서 부하·장시간·장애 주입 시험 | [Load testing](./guides/load-testing.md)(영문) |
 | 에이전트가 인덱스를 검색하거나 질의하게 하기 | [MCP 서버](./guides/mcp.ko.md) |
 | 코퍼스 수집, 재개, 재구축 | [수집](./guides/ingest.ko.md) |
 | 한국어나 여러 언어가 섞인 코퍼스 인덱싱 | [다국어 코퍼스](./guides/multilingual.ko.md) |

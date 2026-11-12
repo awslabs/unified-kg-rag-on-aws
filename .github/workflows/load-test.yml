@@ -1,0 +1,74 @@
+name: load-test
+
+# Nightly load, soak and chaos run on the embedded SQLite stores with the
+# fake model server (scripts/loadtest/nightly.py, docs/guides/load-testing.md):
+# no AWS, no model, nothing leaves the runner. A concurrency sweep and a
+# 10-minute soak over the demo corpus, then a 429 throttle, 503s with dropped
+# connections and a SIGKILL mid-run, each checked to converge with a full
+# build. Gates: 0 errors on the fixed corpus, event-loop lag p99 under
+# 100 ms, RSS growing under 10 MB/h, every chaos scenario converging. The
+# report (report.md, report.json, the logs and exports) is uploaded as an
+# artifact. It reports only: no branch protection requires it, and pull
+# requests do not run it (tests/unit/test_loadtest_harness.py keeps the
+# harness's arithmetic and verdicts checked there).
+
+on:
+  schedule:
+    - cron: "23 2 * * *" # daily 02:23 UTC
+  workflow_dispatch:
+    inputs:
+      soak_seconds:
+        description: "Soak duration in seconds"
+        required: false
+        default: "600"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: load-test
+  cancel-in-progress: false
+
+jobs:
+  nightly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      SOAK_SECONDS: ${{ inputs.soak_seconds || '600' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.12.23"
+          python-version: "3.12"
+
+      - name: Sync dependencies
+        # local: the Ollama client the fake model server is reached with.
+        run: uv sync --locked --no-dev --extra local
+
+      - name: Load, soak and chaos run
+        run: uv run --frozen --no-dev python scripts/loadtest/nightly.py "$RUNNER_TEMP/loadtest" --soak-seconds "$SOAK_SECONDS"
+
+      - name: Job summary
+        if: always()
+        run: |
+          report="$RUNNER_TEMP/loadtest/report.md"
+          if [ -f "$report" ]; then cat "$report" >> "$GITHUB_STEP_SUMMARY"; else echo "No report: the run stopped before the gates (see the logs artifact)." >> "$GITHUB_STEP_SUMMARY"; fi
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: load-test-report
+          path: |
+            ${{ runner.temp }}/loadtest/*.json
+            ${{ runner.temp }}/loadtest/*.jsonl
+            ${{ runner.temp }}/loadtest/*.md
+            ${{ runner.temp }}/loadtest/*.csv
+            ${{ runner.temp }}/loadtest/*.log
+          if-no-files-found: warn
+          retention-days: 30

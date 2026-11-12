@@ -1,0 +1,448 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""scripts/loadtest: the load harness's statistics, its nightly gates, the
+export comparison and the chaos model server.
+
+The nightly workflow (.github/workflows/load-test.yml) runs the harness
+itself; these keep its arithmetic and its verdicts right in every pull
+request, without a model, a store or a network beyond loopback.
+"""
+
+from __future__ import annotations
+
+import importlib
+import json
+import math
+import sys
+import threading
+import time
+import urllib.error
+import urllib.request
+from collections.abc import Iterator
+from pathlib import Path
+from types import ModuleType, SimpleNamespace
+from typing import Any
+
+import pytest
+
+pytestmark = pytest.mark.unit
+
+LOADTEST = Path(__file__).resolve().parents[2] / "scripts" / "loadtest"
+
+
+def _import(name: str) -> ModuleType:
+    with pytest.MonkeyPatch.context() as mp:
+        mp.syspath_prepend(str(LOADTEST))
+        return importlib.import_module(name)
+
+
+harness = _import("harness")
+compare_exports = _import("compare_exports")
+
+
+# -- statistics -------------------------------------------------------------
+
+
+def test_percentile_interpolates_between_ranks() -> None:
+    values = [4.0, 1.0, 3.0, 2.0]
+    assert harness.percentile(values, 0.0) == 1.0
+    assert harness.percentile(values, 1.0) == 4.0
+    assert harness.percentile(values, 0.5) == pytest.approx(2.5)
+    assert harness.percentile(list(range(101)), 0.99) == pytest.approx(99.0)
+    assert math.isnan(harness.percentile([], 0.5))
+
+
+def _histogram(values: list[float]) -> Any:
+    histogram = harness.Histogram()
+    for value in values:
+        histogram.add(value)
+    return histogram
+
+
+def test_the_histogram_reads_quantiles_to_its_bucket_width() -> None:
+    lags = [i / 1000 for i in range(1, 1001)]  # 1 ms .. 1 s
+    histogram = _histogram(lags)
+    assert histogram.count == 1000 and histogram.max == 1.0
+    width = histogram.width * 1.01  # to its bucket width
+    assert histogram.percentile(0.5) == pytest.approx(0.5, abs=width)
+    assert histogram.percentile(0.99) == pytest.approx(0.99, abs=width)
+    assert histogram.percentile(1.0) == 1.0
+    assert math.isnan(harness.Histogram().percentile(0.5))
+    # a value past the last bucket counts there and reads as the largest one
+    long = _histogram([0.001] * 98 + [30.0, 60.0])
+    assert long.percentile(0.5) == pytest.approx(0.002)  # its bucket's upper edge
+    assert long.percentile(0.99) == 60.0
+
+
+def test_the_histogram_keeps_its_size() -> None:
+    histogram = harness.Histogram()
+    size = len(histogram.counts)
+    for i in range(100_000):
+        histogram.add((i % 500) / 1000)
+    assert len(histogram.counts) == size and histogram.count == 100_000
+
+
+def test_summarize_counts_errors_by_class_and_strategy() -> None:
+    report = harness.summarize(
+        [0.1, 0.2, 0.3],
+        {"mix:timeout": 2, "local:timeout": 1, "local:store_unreachable": 1},
+        wall_seconds=2.0,
+        flags={"degraded:mix": 1},
+        loop_lag=_histogram([0.001, 0.002, 0.050]),
+    )
+    assert report["requests"] == 7
+    assert report["ok"] == 3
+    assert report["errors"] == 4
+    assert report["error_rate"] == pytest.approx(4 / 7, abs=1e-4)
+    assert report["errors_by_class"] == {"store_unreachable": 1, "timeout": 3}
+    assert report["errors_by_strategy"]["mix:timeout"] == 2
+    assert report["throughput_rps"] == 3.5
+    assert report["p50"] == 0.2
+    assert report["max"] == 0.3
+    assert report["flags"] == {"degraded:mix": 1}
+    assert report["loop_lag_max_ms"] == 50.0
+    assert 40 < report["loop_lag_p99_ms"] <= 50
+
+
+def test_summarize_of_nothing_reports_no_latency() -> None:
+    report = harness.summarize([], {}, wall_seconds=0.0)
+    assert report["requests"] == 0
+    assert report["p50"] is None and report["loop_lag_p99_ms"] is None
+    json.dumps(report, allow_nan=False)  # a report stays valid JSON
+
+
+def test_slope_is_the_least_squares_fit() -> None:
+    assert harness.slope([0, 1, 2, 3], [1, 3, 5, 7]) == pytest.approx(2.0)
+    assert harness.slope([0, 1], [0, 5]) == 0.0  # too few points
+    assert harness.slope([1, 1, 1], [0, 1, 2]) == 0.0  # no spread
+    with pytest.raises(ValueError):
+        harness.slope([0, 1, 2], [0, 1])
+
+
+def test_trends_use_the_second_half_per_hour() -> None:
+    # RSS jumps during warm-up, then grows 1 KB a second (3,600 KB an hour).
+    samples = [{"t": t, "rss_kb": 1000 + t * 50} for t in range(0, 10)]
+    samples += [{"t": t, "rss_kb": 5000 + t, "conversations": 3} for t in range(10, 20)]
+    trends = harness.trends_per_hour(samples)
+    assert trends["rss_kb"] == pytest.approx(3600.0)
+    # a key not in every sample of the second half is not reported
+    assert "fds" not in trends
+    assert harness.trends_per_hour([]) == {}
+
+
+# -- gates ------------------------------------------------------------------
+
+
+def _level(**overrides: Any) -> dict[str, Any]:
+    return {
+        "concurrency": 4,
+        "requests": 100,
+        "errors": 0,
+        "errors_by_strategy": {},
+        "loop_lag_p99_ms": 12.0,
+        **overrides,
+    }
+
+
+def _report(**overrides: Any) -> dict[str, Any]:
+    return {
+        "sweep": [_level(concurrency=1), _level(concurrency=16)],
+        "soak": {**_level(concurrency=8), "trends_per_hour": {"rss_kb": 4.5 * 1024}},
+        "chaos": [{"name": "kill", "converged": True, "detail": ""}],
+        **overrides,
+    }
+
+
+def test_a_clean_report_passes_the_gates() -> None:
+    assert harness.check_gates(_report()) == []
+
+
+@pytest.mark.parametrize(
+    ("report", "expected"),
+    [
+        (
+            _report(sweep=[_level(errors=1, errors_by_strategy={"mix:timeout": 1})]),
+            "1 errors",
+        ),
+        (_report(sweep=[_level(loop_lag_p99_ms=100.0)]), "event-loop lag p99 100.0 ms"),
+        (_report(sweep=[_level(loop_lag_p99_ms=None)]), "no event-loop lag"),
+        (_report(sweep=[_level(requests=0)]), "no requests ran"),
+        (
+            _report(soak={**_level(), "trends_per_hour": {"rss_kb": 10 * 1024}}),
+            "RSS grows 10.0 MB/h",
+        ),
+        (_report(soak={**_level(), "trends_per_hour": {}}), "no RSS trend"),
+        (
+            _report(chaos=[{"name": "throttle", "converged": False, "detail": "x"}]),
+            "chaos throttle: did not converge",
+        ),
+    ],
+)
+def test_each_gate_fails_its_report(report: dict[str, Any], expected: str) -> None:
+    failures = harness.check_gates(report)
+    assert len(failures) == 1, failures
+    assert expected in failures[0]
+
+
+def test_gate_thresholds_are_parameters() -> None:
+    report = _report(sweep=[_level(errors=2)])
+    assert harness.check_gates(report, harness.Gates(max_errors=2)) == []
+    no_convergence = harness.Gates(require_convergence=False)
+    failing = _report(chaos=[{"name": "kill", "converged": False}])
+    assert harness.check_gates(failing, no_convergence) == []
+
+
+# -- export comparison ------------------------------------------------------
+
+
+def _export(*records: dict[str, Any]) -> list[str]:
+    return [json.dumps(r) for r in records] + [""]
+
+
+ENTITY = {
+    "kind": "entity",
+    "id": "e1",
+    "name": "Acme Robotics",
+    "attributes": {
+        "entity_keys": ["acme robotics"],
+        "summarized_from": "4385",
+        "summarized_with": "cf82",
+    },
+    "community_ids": ["c1"],
+    "description": "A robot maker.",
+    "text_unit_ids": ["t1", "t2"],
+    "embedding_digests": {"name_embedding": "aa", "description_embedding": "bb"},
+    "updated_at": "2026-01-01",
+}
+COMMUNITY = {"kind": "community", "id": "c1", "name": "Acme network", "rank": 3}
+
+
+def _compare(
+    a: list[dict[str, Any]], b: list[dict[str, Any]], tolerance: Any = None
+) -> list[Any]:
+    index = compare_exports.index_records
+    tolerance = tolerance or compare_exports.EXACT
+    return compare_exports.compare(index(_export(*a)), index(_export(*b)), tolerance)
+
+
+def test_exports_converge_without_their_volatile_keys() -> None:
+    later = {**ENTITY, "updated_at": "2026-02-02", "pipeline_id": "p2"}
+    diffs = _compare([ENTITY, COMMUNITY], [later, COMMUNITY])
+    assert compare_exports.converged(diffs)
+    assert [d.kind for d in diffs] == ["community", "entity"]
+
+
+def test_a_missing_record_and_a_changed_key_are_differences() -> None:
+    changed = {**ENTITY, "description": "Another text."}
+    diffs = _compare([ENTITY, COMMUNITY], [changed])
+    assert not compare_exports.converged(diffs)
+    by_kind = {d.kind: d for d in diffs}
+    assert by_kind["community"].only_a == ["c1"]
+    assert by_kind["entity"].changed == {"e1": ["description"]}
+    assert "only in A: c1" in by_kind["community"].describe()
+
+
+def test_exact_comparison_keeps_list_order() -> None:
+    reordered = {**ENTITY, "text_unit_ids": ["t2", "t1"]}
+    assert not compare_exports.converged(_compare([ENTITY], [reordered]))
+
+
+def test_incremental_tolerance_is_the_documented_one() -> None:
+    recovered = {
+        **ENTITY,
+        "text_unit_ids": ["t2", "t1"],
+        "description": "A robot maker.\nIt buys lidar units.",
+        "embedding_digests": {"name_embedding": "aa", "description_embedding": "cc"},
+        "attributes": {"entity_keys": ["acme robotics"]},
+        "community_ids": ["c2"],
+    }
+    other_community = {**COMMUNITY, "name": "Another cut", "rank": 5}
+    incremental = compare_exports.INCREMENTAL
+    assert compare_exports.converged(
+        _compare([ENTITY, COMMUNITY], [recovered, other_community], incremental)
+    )
+    # ... but not past it: a lost text unit, a changed name embedding.
+    lost = {**recovered, "text_unit_ids": ["t1"]}
+    stale = {**recovered, "embedding_digests": {"name_embedding": "zz"}}
+    rekeyed = {**recovered, "attributes": {"entity_keys": ["acme"]}}
+    for record in (lost, stale, rekeyed):
+        assert not compare_exports.converged(_compare([ENTITY], [record], incremental))
+
+
+def test_nothing_built_does_not_converge() -> None:
+    assert not compare_exports.converged(_compare([], []))
+
+
+@pytest.mark.parametrize(
+    "lines",
+    [
+        [json.dumps({"kind": "entity"})],
+        [json.dumps(ENTITY), json.dumps(ENTITY)],
+    ],
+)
+def test_a_record_without_an_id_or_twice_is_refused(lines: list[str]) -> None:
+    with pytest.raises(ValueError):
+        compare_exports.index_records(lines)
+
+
+def test_the_cli_exits_by_the_verdict(tmp_path: Path) -> None:
+    a, b = tmp_path / "a.jsonl", tmp_path / "b.jsonl"
+    a.write_text("\n".join(_export(ENTITY)), encoding="utf-8")
+    b.write_text(
+        "\n".join(_export({**ENTITY, "text_unit_ids": ["t2", "t1"]})), encoding="utf-8"
+    )
+    assert compare_exports.main([str(a), str(a)]) == 0
+    assert compare_exports.main([str(a), str(b)]) == 1
+    assert compare_exports.main([str(a), str(b), "--incremental"]) == 0
+    assert compare_exports.main([str(a), str(tmp_path / "missing.jsonl")]) == 2
+
+
+# -- the load driver's guards -----------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def load() -> ModuleType:
+    return _import("load")
+
+
+def _config(backend: str = "local", **providers: Any) -> SimpleNamespace:
+    section = SimpleNamespace(kind="ollama", base_url="http://127.0.0.1:11500")
+    defaults = {
+        "llm": section,
+        "embedding": section,
+        "rerank": SimpleNamespace(kind="none"),
+        "graph": SimpleNamespace(kind="sqlite"),
+        "vector": SimpleNamespace(kind="sqlite"),
+    }
+    aws = SimpleNamespace(
+        neptune=SimpleNamespace(endpoint="localhost"),
+        opensearch=SimpleNamespace(
+            endpoint="https://search-x.us-west-2.es.amazonaws.com"
+        ),
+    )
+    return SimpleNamespace(
+        backend=backend, aws=aws, providers=SimpleNamespace(**{**defaults, **providers})
+    )
+
+
+def test_the_driver_refuses_anything_not_local(load: ModuleType) -> None:
+    load.refuse_remote(_config())
+    # the compose stores are on localhost
+    load.refuse_remote(_config(graph=SimpleNamespace(kind="gremlin")))
+    remote = SimpleNamespace(kind="ollama", base_url="http://models.example.com:11434")
+    for config in (
+        _config(llm=remote),
+        _config(embedding=SimpleNamespace(kind="bedrock")),
+        _config(rerank=SimpleNamespace(kind="bedrock")),
+        _config(vector=SimpleNamespace(kind="opensearch")),  # an AWS domain
+        _config(graph=SimpleNamespace(kind="neptune"), backend="aws"),
+        _config(backend="aws"),
+    ):
+        with pytest.raises(SystemExit):
+            load.refuse_remote(config)
+
+
+def test_the_query_mix_covers_every_strategy_and_language(load: ModuleType) -> None:
+    from unified_kg_rag.domain.models import SearchStrategy
+
+    strategies = {s for _, s in load.QUERIES}
+    assert strategies == {s.value for s in SearchStrategy}
+    text = " ".join(q for q, _ in load.QUERIES)
+    assert any("가" <= c <= "힣" for c in text)  # Korean
+    assert any("゠" <= c <= "ヿ" for c in text)  # Japanese katakana
+    assert {s for _, s in load.query_mix("ppr,mix")} == {"ppr", "mix"}
+    # a strategy without a query of its own asks every query
+    assert len(load.query_mix("ppr")) == 1
+
+
+def test_the_gate_mode_exits_one_on_a_failed_gate(
+    load: ModuleType, tmp_path: Path
+) -> None:
+    path = tmp_path / "report.json"
+    path.write_text(json.dumps(_report()), encoding="utf-8")
+    assert load.main(["gate", str(path)]) == 0
+    path.write_text(json.dumps(_report(sweep=[_level(errors=3)])), encoding="utf-8")
+    assert load.main(["gate", str(path)]) == 1
+    assert load.main(["gate", str(path), "--max-errors", "3"]) == 0
+
+
+# -- the chaos model server -------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def chaos_models() -> ModuleType:
+    return _import("chaos_models")
+
+
+@pytest.fixture
+def server(chaos_models: ModuleType) -> Iterator[tuple[Any, str]]:
+    chaos = chaos_models.Chaos(seed=1)
+    httpd = chaos_models.make_server(chaos)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield chaos, f"http://127.0.0.1:{httpd.server_address[1]}"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def _post(url: str, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    request = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST")
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:  # noqa: S310
+            return response.status, json.loads(response.read())
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read())
+
+
+def test_the_server_binds_loopback_and_answers_as_the_fake_models(
+    server: tuple[Any, str],
+) -> None:
+    _, url = server
+    assert url.startswith("http://127.0.0.1:")
+    status, body = _post(f"{url}/api/embed", {"input": ["lidar unit"]})
+    assert status == 200 and len(body["embeddings"][0]) == 64
+
+
+def test_injected_errors_change_at_run_time(server: tuple[Any, str]) -> None:
+    chaos, url = server
+    status, knobs = _post(f"{url}/chaos", {"error_rate": 1.0, "error_status": 503})
+    assert status == 200 and knobs["error_rate"] == 1.0
+    assert _post(f"{url}/api/embed", {"input": ["x"]})[0] == 503
+    _post(f"{url}/chaos", {"error_rate": 0.0})
+    assert _post(f"{url}/api/embed", {"input": ["x"]})[0] == 200
+    assert chaos.stats["embed"] == 2 and chaos.stats["errors"] == 1
+    # the handler counts a request done after its response is sent
+    deadline = time.monotonic() + 5
+    while chaos.stats["inflight"] and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert chaos.stats["inflight"] == 0
+    with urllib.request.urlopen(f"{url}/stats", timeout=10) as response:  # noqa: S310
+        assert json.loads(response.read())["errors"] == 1
+
+
+def test_an_unknown_knob_is_refused(server: tuple[Any, str]) -> None:
+    _, url = server
+    status, body = _post(f"{url}/chaos", {"eror_rate": 1.0})
+    assert status == 400 and "eror_rate" in body["error"]
+
+
+def test_a_dropped_connection_gets_no_response(server: tuple[Any, str]) -> None:
+    chaos, url = server
+    chaos.update({"drop_rate": 1.0})
+    with pytest.raises((urllib.error.URLError, ConnectionError, OSError)):
+        _post(f"{url}/api/embed", {"input": ["x"]})
+    assert chaos.stats["drops"] == 1
+
+
+def test_the_fault_draws_follow_the_knobs(chaos_models: ModuleType) -> None:
+    chaos = chaos_models.Chaos(seed=3, hang_rate=1.0, hang_seconds=5.0, delay=0.5)
+    wait, fault = chaos.begin("chat")
+    assert fault == "hang" and wait == pytest.approx(5.5)
+    chaos.end()
+    never = chaos_models.Chaos(seed=3)
+    assert all(never.begin("chat")[1] is None for _ in range(50))
+    with pytest.raises(ValueError):
+        chaos_models.Chaos(typo=1.0)
+    assert sys.modules["chaos_models"] is chaos_models
