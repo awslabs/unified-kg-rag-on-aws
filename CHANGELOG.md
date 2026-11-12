@@ -1744,6 +1744,10 @@ Queries and retrieval.
   seeding ("Cafe" for "Café", "Nguyen Van An" for "Nguyễn Văn An", and the letters with a stroke, a ligature or no
   dot: "Dang" for "Đặng", "Lodz" for "Łódź", "Yildiz" for "Yıldız", "Gudmundsson" for "Guðmundsson", "Izmir" for
   "İzmir"); an entity written as asked links alone ("شركة النور", not also "النور"; "Acme GmbH", not also "Acme").
+  A word keeps its marks (Devanagari and Thai vowel signs: an absent "टाटा" no longer links "टीसीएस" through the
+  fragment "ट") and a Thai, Lao, Myanmar, Khmer or Tai word reads as character bigrams as Han, Hangul and Kana do
+  ("กรุงเทพ" links "ธนาคารกรุงเทพ"; an absent "ธนาคารกรุงเทพ" no longer links "ธนาคารกสิกรไทย"); the router reads a
+  label's words the same way.
   `graph_aware`'s retrieved coverage compares names the same way, and entity grounding folds those letters as it folds
   accents.
 - Local search orders its candidate text units by one shared rule (`domain/retrieval/lineage.py`, also the

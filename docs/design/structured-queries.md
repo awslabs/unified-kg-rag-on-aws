@@ -129,8 +129,9 @@ the model-written plan text the output guardrail screens).
    the top `link_candidates` of a **lexical** (BM25) search of the name,
    above `link_min_score`, whose names cover the mention
    (`domain/retrieval/linking.py` `choose_links`, the rule `local`'s seeds
-   use too): every term of the mention's `link_key` (its words,
-   legal-form designators left out; a Han, Hangul or Kana word as its
+   use too): every term of the mention's `link_key` (its words, runs of
+   letters, numbers and marks in any script, legal-form designators left
+   out; a Han, Hangul, Kana or spaceless-alphabet word such as Thai as its
    character bigrams) is a term of the entity's name, or one at least
    `processing.similarity_threshold` alike (a spelling variant). A kNN
    search returns its nearest entities for any text and BM25 every name
