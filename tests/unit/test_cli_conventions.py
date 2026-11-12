@@ -6,6 +6,7 @@ codes (``application/cli/conventions.py``)."""
 from __future__ import annotations
 
 import argparse
+import asyncio
 import inspect
 import json
 import os
@@ -2204,28 +2205,108 @@ class TestStopsInTheLoop:
         assert events == ["next await", "cancelled"]
 
 
-@pytest.mark.parametrize(
-    ("module", "call"),
-    [
-        ("run_rag_chain", "asyncio.run(stoppable(async_main(args)))"),
-        ("run_rag_chain", "with interruptible():"),
-        ("run_evaluation", "stoppable(_run_and_close())"),
-        ("run_prompt_tuning", "stoppable(tuner.tune(texts, "),
-    ],
-)
-def test_each_query_cli_runs_its_coroutine_as_the_stoppable_task(
-    module: str, call: str
-) -> None:
-    # Without the wrapper a stop raises into the loop's own code (the hang
-    # the cancel replaced); without interruptible the prompt waits for a
-    # line before a SIGTERM takes effect.
-    import importlib
-    import inspect
+def _stopped_work(events: list[str]):  # noqa: ANN202
+    """A CLI's work: SIGTERM arrives while it awaits. Run as the stoppable
+    task, it is cancelled there (its ``finally`` blocks run); otherwise the
+    stop raises into the loop's own code and the work never hears of it."""
 
-    source = inspect.getsource(
-        importlib.import_module(f"unified_kg_rag.application.cli.{module}")
-    )
-    assert call in source
+    async def work(*_args: object, **_kwargs: object) -> int:
+        try:
+            os.kill(os.getpid(), signal.SIGTERM)
+            await asyncio.sleep(5)
+            events.append("slept")
+        except asyncio.CancelledError:
+            events.append("cancelled")
+            raise
+        return 0
+
+    return work
+
+
+@pytest.mark.parametrize("cli", ["run-rag", "run-eval", "run-prompt-tuning"])
+def test_a_stop_cancels_each_query_clis_work_and_closes_its_chain(
+    cli: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    events: list[str] = []
+    work = _stopped_work(events)
+    if cli == "run-rag":
+        monkeypatch.setattr(run_rag_chain, "async_main", work)
+        main, argv = run_rag_chain.main, ["run-rag", "--query", "Who ships?"]
+    elif cli == "run-eval":
+
+        class Chain:
+            def __init__(self, _config: Config) -> None:
+                pass
+
+            async def aclose(self) -> None:
+                events.append("chain closed")
+
+        class Runner:
+            def __init__(self, *_args: object) -> None:
+                pass
+
+            run = staticmethod(work)
+
+        monkeypatch.setattr(run_evaluation, "_load_evaluation", lambda: None)
+        monkeypatch.setattr(run_evaluation, "load_cli_config", lambda _a: Config())
+        monkeypatch.setattr(run_evaluation, "missing_endpoints_error", lambda *_a: None)
+        monkeypatch.setattr(run_evaluation, "GraphRAGChain", Chain, raising=False)
+        monkeypatch.setattr(run_evaluation, "EvaluationRunner", Runner)
+        data = tmp_path / "eval.json"
+        data.write_text("[]")
+        main, argv = run_evaluation.main, ["run-eval", "--data-path", str(data)]
+    else:
+
+        class Tuner:
+            def __init__(self, _config: Config) -> None:
+                pass
+
+            tune = staticmethod(work)
+
+        corpus = tmp_path / "corpus"
+        corpus.mkdir()
+        (corpus / "a.txt").write_text("Vendor ships parts to Buyer.")
+        monkeypatch.setattr(run_prompt_tuning, "load_cli_config", lambda _a: Config())
+        monkeypatch.setattr(run_prompt_tuning, "PromptTuner", Tuner)
+        main = run_prompt_tuning.main
+        argv = ["run-prompt-tuning", "--source-directory", str(corpus)]
+        argv += ["--output-path", str(tmp_path / "tuned.yaml")]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    with pytest.raises(SystemExit) as exc:
+        main()
+
+    assert exc.value.code == 143
+    closed = ["chain closed"] if cli == "run-eval" else []
+    assert events == ["cancelled", *closed]
+
+
+def test_a_stop_at_the_interactive_prompt_ends_the_session_at_once(mocker) -> None:
+    # The prompt blocks the loop's thread: a cancel would wait for a line,
+    # so the stop raises there.
+    import time
+
+    from tests.unit.test_cli_ux import _interactive_runner
+
+    events: list[str] = []
+    runner, _ = _interactive_runner(mocker, [])
+
+    def prompt(*_args: object) -> str:
+        os.kill(os.getpid(), signal.SIGTERM)
+        time.sleep(2)
+        events.append("a line read")
+        return "quit"
+
+    mocker.patch.object(run_rag_chain.console, "input", side_effect=prompt)
+
+    @exits_on_sigterm
+    def main() -> None:
+        asyncio.run(stoppable(runner._interactive_mode()))
+
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 143
+    assert events == []
 
 
 # --- one failure schema --------------------------------------------------
