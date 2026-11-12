@@ -32,6 +32,7 @@ from unified_kg_rag.application.cli.conventions import (
     failed,
     json_output,
     print_json,
+    refuse_overwrites,
     setup_cli_logging,
     usage_error,
 )
@@ -80,7 +81,15 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Also export the namespace's graph to this file (entities, "
         "relationships, communities, claims, with the text units and "
-        "documents they cite)",
+        "documents they cite). An existing file is refused unless --force, "
+        "and so are the --config-path file and the schema file the config "
+        "loads, always",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Let --output-path replace an existing file (never the "
+        "--config-path file or the schema file the config loads)",
     )
     parser.add_argument(
         "--export-format",
@@ -162,6 +171,12 @@ def main() -> int:
         with exit_on_config_error():
             config = load_cli_config(args)
         setup_cli_logging(config, args)
+        refuse_overwrites(
+            [("--output-path", args.output_path)],
+            force=args.force,
+            config_path=args.config_path,
+            config=config,
+        )
         if error := missing_extras_error(config, seeds=False):
             usage_error(error)
         description = describe_namespace(config, args.suffix)
@@ -181,6 +196,7 @@ def main() -> int:
                 format=args.export_format,
                 max_items=args.max_items,
                 include_text=args.include_text,
+                overwrite=True,  # refuse_overwrites checked it
             )
         if as_json:
             print_json(

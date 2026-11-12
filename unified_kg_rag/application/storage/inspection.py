@@ -44,6 +44,7 @@ from unified_kg_rag.shared import ConfigurationError, get_logger
 from unified_kg_rag.shared.exceptions import (
     DocStatusFormatError,
     DocStatusRegistryError,
+    ToolArgumentError,
 )
 from unified_kg_rag.shared.utils.files import atomic_open
 
@@ -261,6 +262,7 @@ def export_graph(
     page_size: int | None = None,
     max_items: int | None = None,
     include_text: bool = False,
+    overwrite: bool = False,
 ) -> GraphExport:
     """Write the graph of ``suffix``'s namespace to ``path``, streamed from
     the vector store a page at a time.
@@ -273,7 +275,8 @@ def export_graph(
     communities as nodes of type ``community`` linked to their parent, each
     with its text unit ids and documents as attributes (lists as JSON).
     ``max_items`` caps each kind (``truncated`` names the kinds it cut);
-    ``include_text`` adds each text unit's text (JSON Lines only).
+    ``include_text`` adds each text unit's text (JSON Lines only). An
+    existing ``path`` is replaced only with ``overwrite``.
 
     The provenance is what the stores hold: a text unit names its document
     (``file_path`` relative to the corpus root, or a seed graph's), every
@@ -282,6 +285,7 @@ def export_graph(
     Raises:
         ConfigurationError: An unknown ``format``, an unsafe ``suffix``, or
             a vector store that cannot page its items.
+        ToolArgumentError: ``path`` exists and ``overwrite`` is not set.
         StoreConnectionError: A store cannot be reached.
     """
     if format not in EXPORT_FORMATS:
@@ -290,9 +294,14 @@ def export_graph(
         )
     if max_items is not None and max_items < 1:
         raise ConfigurationError("max_items must be at least 1")
+    target = Path(path)
+    if target.exists() and not overwrite:
+        raise ToolArgumentError(
+            f"'{target}' exists: pass overwrite=True to replace it, or name "
+            "another file"
+        )
     name = resolve_namespace(config, suffix)
     providers = providers or build_providers(config)
-    target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     counts: dict[str, int] = {}
     truncated: list[str] = []

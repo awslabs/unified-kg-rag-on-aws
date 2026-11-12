@@ -19,7 +19,6 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from unified_kg_rag.adapters.source_files.locations import resolve_source_path
 from unified_kg_rag.application.cli.config_args import (
     add_config_arguments,
     exit_on_config_error,
@@ -35,6 +34,7 @@ from unified_kg_rag.application.cli.conventions import (
     failed,
     json_output,
     print_json,
+    refuse_overwrites,
     setup_cli_logging,
     stoppable,
     usage_error,
@@ -184,58 +184,6 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _same_file(a: Path, b: Path) -> bool:
-    if a.exists() and b.exists():
-        return a.samefile(b)
-    return a.resolve() == b.resolve()
-
-
-def _local_schema_path(source: str | None) -> Path | None:
-    """The local file the schema source ``source`` names (a plain path or
-    a ``file://`` URL), or None for none, S3 or another scheme."""
-    if not source:
-        return None
-    try:
-        resolved = resolve_source_path(source, refusal="")
-    except ConfigurationError:
-        return None
-    return resolved if isinstance(resolved, Path) else None
-
-
-def _check_outputs(args: argparse.Namespace, config: Config) -> None:
-    """Exit 2 before any model call when an output would replace the
-    ``--config-path`` file or the schema file the config loads, names an
-    existing file without ``--force``, or both outputs name one file."""
-    source = config.processing.graph_extraction.schema_source.path
-    loaded = _local_schema_path(source)
-    config_file = Path(args.config_path) if args.config_path else None
-    outputs = [("--output-path", args.output_path)]
-    if args.schema_out is not None:
-        outputs.append(("--schema-out", args.schema_out))
-    for flag, path in outputs:
-        if config_file is not None and _same_file(path, config_file):
-            usage_error(
-                f"{flag} '{path}' is the --config-path file; write the output "
-                "to another file and merge what you keep"
-            )
-        if loaded is not None and _same_file(path, loaded):
-            usage_error(
-                f"{flag} '{path}' is the schema file the config loads "
-                "(processing.graph_extraction.schema_source); write the draft "
-                "to another file and merge what you keep"
-            )
-    if args.schema_out is not None and _same_file(args.schema_out, args.output_path):
-        usage_error(
-            f"--schema-out and --output-path name one file: '{args.schema_out}'"
-        )
-    for flag, path in outputs:
-        if path.exists() and not args.force:
-            usage_error(
-                f"{flag} '{path}' exists; pass --force to replace it, or name "
-                "another file"
-            )
-
-
 def _schema_source_path(schema_out: Path, config_path: str | None) -> str:
     """The ``schema_source.path`` that names ``schema_out`` in the config
     file: relative to its directory, as the config loader resolves it (as
@@ -293,7 +241,13 @@ def main() -> int:
             ".yml",
         ):
             usage_error(f"--schema-out must end in .yaml or .yml: '{args.schema_out}'")
-        _check_outputs(args, config)
+        refuse_overwrites(
+            [("--output-path", args.output_path), ("--schema-out", args.schema_out)],
+            force=args.force,
+            config_path=args.config_path,
+            config=config,
+            remedy="write the output to another file and merge what you keep",
+        )
         if error := missing_extras_error(config, seeds=False):
             usage_error(error)
         setup_cli_logging(config, args)

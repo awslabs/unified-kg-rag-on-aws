@@ -20,6 +20,11 @@ run-describe --suffix tenant_a --output-path graph.graphml --export-format graph
 run-describe --suffix tenant_a --output-path graph.jsonl --max-items 10000
 ```
 
+An existing `--output-path` file is refused unless `--force`, and the
+`--config-path` file and the schema file the config loads are refused
+always; `export_graph` replaces an existing file only with
+`overwrite=True`.
+
 Every flag: [CLI Reference](../reference/cli.md#run-describe).
 
 ## What a description holds

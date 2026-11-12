@@ -160,7 +160,8 @@ Guide: [Inspect and export](../guides/inspect.md). Also takes the [provider flag
 | Flag | Default | Description |
 |---|---|---|
 | `--suffix` | — | Index suffix to describe (default: the config's processing.document_parsing.index_value, else 'default'). |
-| `--output-path` | — | Also export the namespace's graph to this file (entities, relationships, communities, claims, with the text units and documents they cite). |
+| `--output-path` | — | Also export the namespace's graph to this file (entities, relationships, communities, claims, with the text units and documents they cite). An existing file is refused unless --force, and so are the --config-path file and the schema file the config loads, always. |
+| `--force` | off | Let --output-path replace an existing file (never the --config-path file or the schema file the config loads). |
 | `--export-format` | `jsonl` | Export format: jsonl (one record per line, every stored field but the vectors) or graphml (entities as nodes, relationships as edges, communities as nodes linked to their parent). |
 | `--max-items` | — | Export at most this many items of each kind (default: all). |
 | `--include-text` | off | Export each text unit's text too (jsonl only). |

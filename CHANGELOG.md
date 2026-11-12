@@ -1065,8 +1065,10 @@ From a `main` checkout (formats and keys no release had):
   its graph streamed from the vector store as JSON Lines or GraphML with every item's text units and documents
   (a document by its path relative to the corpus root, else its file name, never the indexing host's path;
   `--output-path`, `--export-format`, `--max-items`; written atomically, so a failed export leaves the previous file
-  and no partial one); `VectorIndexer.describe_indices` and `scan_items` (#628). It, `kg_describe_schema` (which
-  adds `auto_routes`), the console and the chain's refusal read what a namespace holds by one rule
+  and no partial one; an existing file is replaced only with `--force`, `export_graph(overwrite=True)`, and never the
+  `--config-path` file or the schema file the config loads, by the guard `run-prompt-tuning` shares);
+  `VectorIndexer.describe_indices` and `scan_items` (#628). It, `kg_describe_schema` (which adds `auto_routes`), the
+  console and the chain's refusal read what a namespace holds by one rule
   (`NamespaceHoldings`): without a build record the console shows what the config builds, as queries are served, not
   nothing held. A registry the caller cannot read (the CDK query task's role has no DynamoDB access) is reported
   unavailable, with the reason in `registry_unavailable` and a warning, and the rest is still described (#636). A

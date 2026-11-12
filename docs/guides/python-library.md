@@ -134,7 +134,8 @@ if __name__ == "__main__":
 (methodologies, servable strategies, indices with their item counts and
 embedding model, the build record, the registry's records by status), and
 `export_graph(config, path, suffix=..., format="jsonl" | "graphml")`
-streams its graph with the provenance of every item to a file; both read
+streams its graph with the provenance of every item to a file (an existing
+file only with `overwrite=True`); both read
 the stores only. `run-describe` prints them
 ([Inspect and export](./inspect.md)).
 

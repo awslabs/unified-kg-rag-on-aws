@@ -175,6 +175,67 @@ def failure_rate(value: str) -> float:
     return rate
 
 
+def _same_file(a: Path, b: Path) -> bool:
+    if a.exists() and b.exists():
+        return a.samefile(b)
+    return a.resolve() == b.resolve()
+
+
+def _loaded_schema_file(config: Any) -> Path | None:
+    """The local file the config's extraction schema source names (a plain
+    path or a ``file://`` URL), or None for none, S3 or another scheme."""
+    from unified_kg_rag.adapters.source_files.locations import resolve_source_path
+    from unified_kg_rag.shared.exceptions import ConfigurationError
+
+    source = config.processing.graph_extraction.schema_source.path
+    if not source:
+        return None
+    try:
+        resolved = resolve_source_path(source, refusal="")
+    except ConfigurationError:
+        return None
+    return resolved if isinstance(resolved, Path) else None
+
+
+def refuse_overwrites(
+    outputs: list[tuple[str, Path | None]],
+    *,
+    force: bool,
+    config_path: str | None,
+    config: Any,
+    remedy: str = "write the output to another file",
+) -> None:
+    """Exit 2 (:func:`usage_error`) before a CLI writes anything when one of
+    its ``outputs`` (``(flag, path)``, a None path is not written) would
+    replace an input of the run, the ``--config-path`` file or the schema
+    file the config loads (always), names an existing file without
+    ``--force``, or when two outputs name one file (``remedy`` ends the
+    message of a refused input)."""
+    written = [(flag, path) for flag, path in outputs if path is not None]
+    inputs = [
+        (Path(config_path) if config_path else None, "the --config-path file"),
+        (
+            _loaded_schema_file(config),
+            "the schema file the config loads "
+            "(processing.graph_extraction.schema_source)",
+        ),
+    ]
+    for flag, path in written:
+        for source, name in inputs:
+            if source is not None and _same_file(path, source):
+                usage_error(f"{flag} '{path}' is {name}; {remedy}")
+    for i, (flag, path) in enumerate(written):
+        for other, other_path in written[i + 1 :]:
+            if _same_file(path, other_path):
+                usage_error(f"{flag} and {other} name one file: '{path}'")
+    for flag, path in written:
+        if path.exists() and not force:
+            usage_error(
+                f"{flag} '{path}' exists; pass --force to replace it, or name "
+                "another file"
+            )
+
+
 def is_loopback(host: str) -> bool:
     """Whether ``host`` names a loopback address (``127.0.0.0/8``, ``::1``,
     ``localhost``): reachable from this machine only."""
