@@ -115,10 +115,11 @@ model exists
 
 With the doc-status registry on, one run writes an index namespace at a
 time: it holds the namespace's write lease from its first stage to its end.
-`Index namespace '...' is being written by <host>:<pid>:<id>` means another
-run holds it: wait for that run and start again. A dead run's lease expires
-within `indexing.lease_seconds` (default 600 s) of its last renewal, and
-nothing needs cleaning up. `This run lost the write lease ...` means this
+`Index namespace '...' is being written by <host>:<pid>:<start>:<ns>:<id>` means
+another run holds it: wait for that run and start again. A dead run's lease
+expires within `indexing.lease_seconds` (default 600 s) of its last renewal
+(with the local SQLite registry, a killed run of the same host's lease is taken
+at once), and nothing needs cleaning up. `This run lost the write lease ...` means this
 run's renewals failed or another run took the lease over: re-run once the
 other run ended, and check that the registry is reachable
 ([Operator Runbook: Concurrent runs](./operations.md#concurrent-runs)).

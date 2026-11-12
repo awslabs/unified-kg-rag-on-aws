@@ -343,7 +343,9 @@ reuse them.
 With the registry, a run holds its index namespace's write lease from its
 first stage to its end; a second run on the same namespace stops with
 `NamespaceLeaseError` before it reads the stores or writes anything. Wait for
-the other run and start again. Without the registry nothing locks, so do not
+the other run and start again. With the local SQLite registry, the next run
+takes at once the lease of a run on the same host that was killed (`kill -9`)
+instead of waiting for it to expire. Without the registry nothing locks, so do not
 run two ingestions on one index suffix. The lease, its renewal and takeover
 after a crash: [Operator Runbook: Concurrent runs](../operations.md#concurrent-runs).
 
