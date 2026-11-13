@@ -104,7 +104,20 @@ exposes a best-effort `close()` / `aclose()` that never raises:
   entry points run on one chain-owned loop thread, so repeated sync calls reuse
   one set of clients. Blocking calls run in `asyncio.to_thread`, on a default
   executor sized to `processing.io_workers` (which bounds concurrent Bedrock
-  calls; `configure_event_loop` for async hosts).
+  calls; `configure_event_loop` for async hosts). A step that only computes
+  (parsing OpenSearch hits and fusing their lists, the citation lineages, PPR,
+  LightRAG's chunk pick, a traversal's rows) runs through `to_cpu_thread`
+  instead, on a pool of `os.cpu_count()` threads of its own: in the default
+  executor it waits behind blocking calls of seconds each. Measured on the
+  embedded stores with fake models, holding all 64 default-executor threads
+  with staggered 2 s blocking calls (stand-ins for Bedrock under load), twice
+  per setting, five queries each: the median query fell from 2.3-2.6 s to
+  1.9 s (local), from 1.9-2.0 s to 1.3-1.5 s (mix) and from 0.6 s to 0.45 s
+  (ppr). With 16 blocked threads, or none, it did not change (the pool was not
+  saturated). A step that calls a service (token counts that may be a request,
+  the rerank) stays in the default executor: a slow call would hold a CPU
+  thread. How often a deployed query task saturates `io_workers` is not
+  measured (it needs real Bedrock traffic).
 - Concurrent queries in one process share one interpreter lock: their
   Python work (fusion, MMR, the embedded engine's scoring) runs one at a
   time, so a query's latency under N concurrent ones grows with N times its

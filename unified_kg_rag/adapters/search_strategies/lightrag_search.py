@@ -31,7 +31,6 @@ and caching as the GraphRAG strategies — only the retrieval algorithm differs.
 
 from __future__ import annotations
 
-import asyncio
 import time
 from typing import Any
 
@@ -63,6 +62,7 @@ from unified_kg_rag.domain.retrieval.lineage import merge as merge_lineages
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import text_digest
 from unified_kg_rag.shared.utils.concurrency import gather_or_cancel
+from unified_kg_rag.shared.utils.event_loop import to_cpu_thread
 
 logger = get_logger(__name__)
 
@@ -686,7 +686,7 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         # text_unit_ids: a hub's cite thousands) runs on a worker thread,
         # as PPR does, so it never stalls the other queries on the loop.
         # The caller's id filter: no slot for a chunk the fetch removes.
-        exclude |= await asyncio.to_thread(
+        exclude |= await to_cpu_thread(
             self._disallowed_linked_ids,
             query.filters,
             [*entity_results, *relationship_results],
@@ -700,7 +700,7 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
                 query, entity_results, relationship_results, filters, limit, exclude
             )
         else:
-            entity_ids, relation_ids = await asyncio.to_thread(
+            entity_ids, relation_ids = await to_cpu_thread(
                 self._collect_linked_chunk_ids,
                 entity_results,
                 relationship_results,
@@ -796,7 +796,7 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
             )
 
         (entity_cited, entity_wanted), (relation_cited, relation_wanted) = (
-            await asyncio.to_thread(
+            await to_cpu_thread(
                 lambda: (side(entity_results), side(relationship_results))
             )
         )
@@ -855,7 +855,7 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         cap = self._lightrag_config.related_chunk_number
         lineages = [
             [unit for unit in lineage if unit not in exclude]
-            for lineage in await asyncio.to_thread(
+            for lineage in await to_cpu_thread(
                 self._lineages, [*entity_results, *relationship_results]
             )
         ]
@@ -867,7 +867,7 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         async def select() -> tuple[list[str], list[str]]:
             # Off the loop (_retrieve_linked_chunks); a copy of the failing
             # ids, which the loop's checks update.
-            return await asyncio.to_thread(
+            return await to_cpu_thread(
                 self._collect_linked_chunk_ids,
                 entity_results,
                 relationship_results,

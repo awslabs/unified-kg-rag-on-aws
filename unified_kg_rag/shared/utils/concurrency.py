@@ -171,9 +171,14 @@ async def single_flight(
         _drop(memo, key, outcome)
         outcome.set_result(_COMPUTE_AGAIN)
         raise
-    if not keep(result):
-        _drop(memo, key, outcome)
-    outcome.set_result(result)
+    kept = False
+    try:
+        kept = keep(result)
+    finally:
+        # A raising ``keep`` still resolves the waiters and frees the key.
+        if not kept:
+            _drop(memo, key, outcome)
+        outcome.set_result(result)
     return result
 
 
@@ -192,8 +197,12 @@ def _settle_shared(
     # Reading the error marks it retrieved: with every waiter cancelled no
     # one awaits the call, and asyncio would log "Task exception was never
     # retrieved". Waiters still awaiting it get the error as usual.
-    if done.cancelled() or done.exception() is not None or not keep(done.result()):
-        _drop(memo, key, done)
+    kept = False
+    try:
+        kept = not done.cancelled() and done.exception() is None and keep(done.result())
+    finally:
+        if not kept:
+            _drop(memo, key, done)
 
 
 async def discard(tasks: Sequence[asyncio.Future[Any]]) -> None:

@@ -97,8 +97,13 @@ only and a long one is judged by the rate.
 ```bash
 UKR_CONSOLE_TOKEN=... uv run run-console --config-path ws/config.yaml &   # needs the console extra
 UKR_CONSOLE_TOKEN=... uv run python scripts/loadtest/load.py http \
-  --console http://127.0.0.1:8501 --levels 1,8,32 --queries 80
+  --console http://127.0.0.1:8501 --levels 1,8,32 --queries 80 \
+  --strategies mix,local,naive
 ```
+
+The default mix includes `tree`, which the console's demo workspace does not
+index (its queries fail with `tree:not_indexed` and the gate fails):
+`--strategies` names the strategies the workspace holds.
 
 The sweep through the console's `/api/ask` stream, with the time to the
 first event (`first_event_p50`, `first_event_p95`). An error event counts
@@ -220,7 +225,7 @@ report with `load.py gate report.json` (`--max-errors`, `--max-flags`,
 `--max-loop-lag-ms`, `--max-rss-mb-per-hour`, `--rss-rise-floor-mb`). The
 gate reads any mode's report: an `http` report's levels pass the same gates,
 its lag the client's (`client_loop_lag_p99_ms`); a report holding none of
-`sweep`, `soak`, `http` and `chaos`, or only empty ones (`[]`, `null`),
+`sweep`, `soak`, `http` and `chaos`, or only empty ones (`[]`, `null`, `{}`),
 fails.
 
 ## Local baseline (fake models)

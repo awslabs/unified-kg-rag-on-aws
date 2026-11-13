@@ -769,6 +769,41 @@ async def test_a_graph_call_past_the_deadline_times_out(
         await tools.get_entity(name="Depot")
 
 
+@pytest.mark.parametrize(("stalls", "recorded"), [("chain", 1), ("shaping", 0)])
+async def test_a_backstop_timeout_counts_a_query_the_chain_did_not_record_once(
+    monkeypatch: pytest.MonkeyPatch, stalls: str, recorded: int
+) -> None:
+    """``kg_answer`` records a timed-out query as a failed one only when the
+    chain never returned: past the chain's answer its own metrics stand, and
+    a second record would count the query twice."""
+    import asyncio
+
+    monkeypatch.setattr(mcp_tools, "_BACKSTOP_GRACE_SECONDS", 0.05)
+    unrun: list[Any] = []
+
+    class StallingChain(FakeChain):
+        def record_unrun_query(self, query: Any, error: Any, *, started: float) -> None:
+            unrun.append(error)
+
+        async def ainvoke(self, rag_input: RAGInput) -> RAGOutput:
+            if stalls == "chain":
+                await asyncio.sleep(5)
+            return await super().ainvoke(rag_input)
+
+    config = Config()
+    config.search.query_timeout_seconds = 0.05
+    tools = KnowledgeGraphTools(StallingChain(config))  # type: ignore[arg-type]
+
+    async def slow(*_args: Any, **_kwargs: Any) -> Any:
+        await asyncio.sleep(5)
+
+    if stalls == "shaping":
+        monkeypatch.setattr(tools, "_shaped", slow)
+    with pytest.raises(QueryTimeoutError):
+        await tools.answer("q")
+    assert len(unrun) == recorded
+
+
 async def test_calls_beyond_the_concurrency_wait_for_a_slot() -> None:
     import asyncio
 

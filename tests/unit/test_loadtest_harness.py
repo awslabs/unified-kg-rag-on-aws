@@ -256,6 +256,15 @@ def test_a_report_without_a_known_section_fails(report: dict[str, Any]) -> None:
 
 def test_an_empty_section_beside_a_measured_one_is_not_checked() -> None:
     assert harness.check_gates({"sweep": [_level()], "soak": None, "chaos": []}) == []
+    # ``{}``, ``null`` and ``[]`` are each "not held", in every section.
+    for empty in ({}, None, []):
+        report = {"sweep": empty, "soak": empty, "http": empty, "chaos": empty}
+        assert harness.check_gates({**report, "sweep": [_level()]}) == []
+        assert harness.check_gates({**report, "soak": _soak(1, 0.5)}) == []
+        assert harness.check_gates({**report, "http": [_http_level()]}) == []
+        assert harness.check_gates({**report, "chaos": [{"converged": True}]}) == []
+        assert harness.check_gates(report) != []
+        assert harness.gate_notes(report) == []
     assert harness.gate_notes({"chaos": None}) == []
 
 
@@ -359,6 +368,7 @@ def test_incremental_tolerance_is_the_documented_one() -> None:
         "embedding_digests": {"name_embedding": "aa", "description_embedding": "cc"},
         "attributes": {"entity_keys": ["acme robotics"]},
         "community_ids": ["c2"],
+        "description_digest": "dd",
     }
     other_community = {**COMMUNITY, "name": "Another cut", "rank": 5}
     incremental = compare_exports.INCREMENTAL
@@ -371,6 +381,21 @@ def test_incremental_tolerance_is_the_documented_one() -> None:
     rekeyed = {**recovered, "attributes": {"entity_keys": ["acme"]}}
     for record in (lost, stale, rekeyed):
         assert not compare_exports.converged(_compare([ENTITY], [record], incremental))
+
+
+def test_the_descriptions_digest_alone_is_tolerated_incrementally() -> None:
+    """A rewritten description is tolerated, so the graph census's digest of
+    the descriptions is (kind graph): without it the faults scenario flakes."""
+    census = {"kind": "graph", "id": "graph", "description_digest": "aa", "edges": 3}
+    changed = {**census, "description_digest": "bb"}
+    assert not compare_exports.converged(_compare([census], [changed]))
+    assert compare_exports.converged(
+        _compare([census], [changed], compare_exports.INCREMENTAL)
+    )
+    other = {**changed, "edges": 4}
+    assert not compare_exports.converged(
+        _compare([census], [other], compare_exports.INCREMENTAL)
+    )
 
 
 def test_nothing_built_does_not_converge() -> None:
@@ -822,3 +847,57 @@ def test_the_nightly_soak_runs_with_two_malloc_arenas(
 
     assert calls == {"sweep": {}, "soak": {"MALLOC_ARENA_MAX": "2"}}
     assert nightly._env(**nightly.SOAK_ENV)["MALLOC_ARENA_MAX"] == "2"
+
+
+def test_the_soak_child_gets_its_environment_from_the_call(
+    nightly: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``load`` hands ``env`` to the ``load.py`` process: the soak's
+    ``MALLOC_ARENA_MAX`` must reach it, not only the call."""
+    seen: list[dict[str, str]] = []
+
+    def run(command: list[str], **kwargs: Any) -> Any:
+        seen.append(kwargs["env"])
+        report = Path(command[command.index("--output") + 1])
+        report.write_text("{}", encoding="utf-8")
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(nightly.subprocess, "run", run)
+    monkeypatch.delenv("MALLOC_ARENA_MAX", raising=False)
+    nightly.load("soak", tmp_path / "c.yaml", tmp_path, env=nightly.SOAK_ENV)
+    nightly.load("sweep", tmp_path / "c.yaml", tmp_path)
+    assert seen[0]["MALLOC_ARENA_MAX"] == "2"
+    assert "MALLOC_ARENA_MAX" not in seen[1]
+
+
+def test_the_chaos_scenarios_gate_on_injected_faults(
+    nightly: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A model server that injected nothing during a faulted run fails that
+    scenario (``injection_problem`` is wired into ``chaos_scenarios``)."""
+
+    class _Models:
+        port = 1
+
+        def chaos(self, **_: float) -> None: ...
+
+        def chat_calls(self) -> int:
+            return 10
+
+        def faults(self) -> int:
+            return 0
+
+    monkeypatch.setattr(nightly, "write_workspace", lambda *a, **k: None)
+    monkeypatch.setattr(nightly, "ingest", lambda *a, **k: _run())
+    monkeypatch.setattr(nightly, "export", lambda _ws, path: path)
+    monkeypatch.setattr(nightly, "reset", lambda _ws: None)
+    monkeypatch.setattr(nightly, "killed_run", lambda *a: (True, 5))
+    monkeypatch.setattr(
+        nightly, "compare_files", lambda *a: [SimpleNamespace(same=True)]
+    )
+    results = nightly.chaos_scenarios(_Models(), tmp_path, 4)
+    by_name = {r["name"]: r for r in results}
+    for name in ("throttle", "faults"):
+        assert by_name[name]["status"] == "not_converged"
+        assert "injected no fault" in by_name[name]["detail"]
+    assert by_name["kill"]["status"] == "converged"

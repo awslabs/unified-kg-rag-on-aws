@@ -5,11 +5,19 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Coroutine
+import contextvars
+import functools
+import os
+import threading
+from collections.abc import Callable, Coroutine
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, TypeVar
+from typing import Any, ParamSpec, TypeVar
 
 _T = TypeVar("_T")
+_P = ParamSpec("_P")
+
+_cpu_executor: ThreadPoolExecutor | None = None
+_cpu_executor_lock = threading.Lock()
 
 
 def configure_event_loop(
@@ -30,6 +38,36 @@ def configure_event_loop(
     )
     loop.set_default_executor(executor)
     return executor
+
+
+def _cpu_pool() -> ThreadPoolExecutor:
+    global _cpu_executor
+    with _cpu_executor_lock:
+        if _cpu_executor is None:
+            _cpu_executor = ThreadPoolExecutor(
+                max_workers=os.cpu_count() or 1, thread_name_prefix="graphrag-cpu"
+            )
+        return _cpu_executor
+
+
+async def to_cpu_thread(
+    func: Callable[_P, _T], /, *args: _P.args, **kwargs: _P.kwargs
+) -> _T:
+    """``asyncio.to_thread`` for a step that only computes (parsing hits,
+    fusing, citation lineages, PPR): it runs on a pool of its own, one thread
+    per CPU, and with the caller's context.
+
+    The default executor (:func:`configure_event_loop`) holds the blocking
+    model, store and rerank calls, seconds each: under load every one of its
+    threads can be inside such a call, and a step queued behind them waits
+    for the slowest although it needs a millisecond of CPU. A step that
+    calls a service stays on ``asyncio.to_thread``: a slow call would hold a
+    CPU thread. Measured with 64 blocked default-executor threads, a query's
+    p50 fell by 0.4 to 0.5 s of about 2 s (docs/design/aws-integration.md),
+    and did not change below saturation."""
+    context = contextvars.copy_context()
+    call = functools.partial(context.run, func, *args, **kwargs)
+    return await asyncio.get_running_loop().run_in_executor(_cpu_pool(), call)
 
 
 def abandon_default_executor(

@@ -387,3 +387,46 @@ def test_a_capped_neighbor_count_stops_at_the_cap(indexer) -> None:
     indexer.count_neighbors(["e-hub"], suffix="tenant-a", at_most=129)
 
     assert ("limit", (129,)) in _flatten_steps(steps)
+
+
+def test_the_census_scan_reads_page_size_ids_a_request(
+    indexer: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``page_size`` sets the ids of a ``valueMap`` request; without it the
+    configured ``indexing.neptune.batch_size`` does."""
+    monkeypatch.setattr(indexer, "_stored_ids", lambda *_: [f"e{i}" for i in range(5)])
+    requests: list[Any] = []
+
+    def execute(build: Any, *_: Any, **__: Any) -> list[Any]:
+        requests.append(build)
+        return []
+
+    monkeypatch.setattr(indexer, "_execute_with_retries", execute)
+    assert list(indexer.scan_census_rows("entities", page_size=2)) == [[]] * 3
+    assert len(requests) == 3
+    requests.clear()
+    indexer.neptune_config.batch_size = 4
+    assert len(list(indexer.scan_census_rows("entities"))) == 2
+    assert len(requests) == 2
+
+
+def test_a_census_row_defaults_what_the_item_does_not_hold() -> None:
+    """An item written without a rank or weight reads as the models'
+    default, and a stored zero stays zero (it is not "absent")."""
+    from unified_kg_rag.adapters.storage.neptune_codec import (
+        census_row_from_edge,
+        census_row_from_vertex,
+    )
+
+    bare = census_row_from_vertex({"id": ["e1"]})
+    assert bare is not None and bare.rank == Entity.model_fields["rank"].default
+    zero = census_row_from_vertex({"id": ["e1"], "rank": [0]})
+    assert zero is not None and zero.rank == 0
+    edge = census_row_from_edge({"id": "r1"}, "REL", "e1", "e2")
+    assert edge is not None
+    assert edge.rank == Relationship.model_fields["rank"].default
+    assert edge.weight == Relationship.model_fields["weight"].default
+    zero_edge = census_row_from_edge(
+        {"id": "r1", "rank": 0, "weight": 0.0}, "REL", "e1", "e2"
+    )
+    assert zero_edge is not None and (zero_edge.rank, zero_edge.weight) == (0, 0.0)

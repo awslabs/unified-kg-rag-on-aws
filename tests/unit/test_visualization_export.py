@@ -132,6 +132,29 @@ def test_the_export_reads_communities_and_edges_from_the_stores(
     assert [(e["source"], e["target"]) for e in data["edges"]] == [("e1", "e2")]
 
 
+def test_the_export_closes_both_stores_even_when_a_read_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    vector, graph = _stores(relationships_index=True)
+    closed: list[str] = []
+    monkeypatch.setattr(vector, "close", lambda: closed.append("vector"))
+    monkeypatch.setattr(graph, "close", lambda: closed.append("graph"))
+    write_visualization_data(_providers(vector, graph), "default", tmp_path / "v.json")
+    assert sorted(closed) == ["graph", "vector"]
+
+    closed.clear()
+
+    def broken(*_: Any, **__: Any) -> Any:
+        raise RuntimeError("read failed")
+
+    monkeypatch.setattr(vector, "read_build_record", broken)
+    with pytest.raises(RuntimeError):
+        write_visualization_data(
+            _providers(vector, graph), "default", tmp_path / "w.json"
+        )
+    assert sorted(closed) == ["graph", "vector"]
+
+
 def test_newest_export_of_a_namespace(tmp_path: Path) -> None:
     def write(name: str, namespace: str | None, mtime: int) -> Path:
         path = tmp_path / name / "visualization_data.json"

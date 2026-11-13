@@ -12,7 +12,6 @@ runs under the caller's suffix and filters with the request's
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
@@ -33,6 +32,7 @@ from unified_kg_rag.domain.retrieval.ppr import (
     passage_weights,
 )
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.utils.event_loop import to_cpu_thread
 
 logger = get_logger(__name__)
 
@@ -245,7 +245,7 @@ class PPRRankingMixin(BaseSearchStrategy):
             )
             return graph, len(linked), len(reset), [u for u, _ in ranked], result
 
-        graph, linked, seeds, ranked, result = await asyncio.to_thread(rank)
+        graph, linked, seeds, ranked, result = await to_cpu_thread(rank)
         stats: dict[str, Any] = {
             "entities": len(nodes),
             "relationships": len(edges),
