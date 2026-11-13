@@ -379,7 +379,8 @@ See [`iac/README.md`](iac/README.md).
   `embedding_dimension` and `rerank_model_id`; `ModelRole.GLOBAL_REDUCE` is gone (#334, #577).
 - `PipelineContext.unit_extractions` replaces `entities`, `relationships` and `rejected_entities` (#322).
 - An invalid assignment to a config setting (`config.search.max_concurrency = 0`) raises `ValidationError` and
-  keeps the old value, as every config section validates an assignment against its field (`ConfigSection`); a section
+  keeps the old value, as every config section validates an assignment against its field (`ConfigSection`), and
+  `Config` itself (`config.search = "x"` raises; a section a whole-config check refuses is not kept); a section
   validated on its own (`SearchConfig.model_validate`) refuses an unknown key. Change settings across sections with
   `Config.updated({"dotted.key": value}, overlay={...})`, which returns a changed config validated whole, so the checks
   across sections run (every CLI flag, schema source and console selection that changes a config uses it): an

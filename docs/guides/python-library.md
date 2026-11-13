@@ -83,7 +83,8 @@ guard.
   returns a new config validated whole, so the checks across sections run as they do at
   load. Assigning a setting (`config.search.max_concurrency = 5`) validates that
   field and its section's own checks, and an invalid value raises and
-  keeps the old one.
+  keeps the old one; assigning a whole section (`config.search = ...`)
+  validates it and runs the checks across sections.
 
 ## Documents from memory
 

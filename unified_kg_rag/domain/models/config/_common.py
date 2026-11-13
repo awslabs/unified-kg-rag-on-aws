@@ -8,7 +8,26 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 
-class ConfigSection(BaseModel):
+class _AssignmentChecked(BaseModel):
+    """A model whose assignment is validated against its field and the
+    model's own checks, the old value kept when they refuse the new one:
+    the base of ``Config`` and of every section (:class:`ConfigSection`)."""
+
+    model_config = ConfigDict(validate_assignment=True)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        before = self.__dict__.get(name)
+        try:
+            super().__setattr__(name, value)
+        except ValidationError:
+            # A model check (a model validator) that refuses the new value
+            # runs after pydantic has stored it: put the old one back.
+            if name in type(self).model_fields:
+                self.__dict__[name] = before
+            raise
+
+
+class ConfigSection(_AssignmentChecked):
     """The base of every configuration section: an assignment is validated
     against its field and the section's own checks
     (``config.search.max_concurrency = 0`` raises as loading it would, and leaves the
@@ -17,17 +36,6 @@ class ConfigSection(BaseModel):
     :meth:`Config.updated`."""
 
     model_config = ConfigDict(validate_assignment=True, extra="forbid")
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        before = self.__dict__.get(name)
-        try:
-            super().__setattr__(name, value)
-        except ValidationError:
-            # A section check (a model validator) that refuses the new value
-            # runs after pydantic has stored it: put the old one back.
-            if name in type(self).model_fields:
-                self.__dict__[name] = before
-            raise
 
 
 class PipelineStageType(Enum):

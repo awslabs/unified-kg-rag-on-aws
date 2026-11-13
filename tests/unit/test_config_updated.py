@@ -149,3 +149,20 @@ def test_the_evaluation_cli_changes_are_validated() -> None:
         with_pairwise_mode(Config(), "bogus")
     changed = with_pairwise_mode(Config(), "differential")
     assert changed.evaluation.pairwise_mode == "differential"
+
+
+def test_the_root_validates_an_assignment() -> None:
+    # Regression (rv26 architecture): Config itself took any value, so
+    # `config.search = "x"` broke every later read of the section.
+    config = Config()
+    with pytest.raises(ValidationError):
+        config.search = "x"  # type: ignore[assignment]
+    assert isinstance(config.search, SearchConfig)
+    # A whole config's checks run too, and a refused value is not kept.
+    lightrag = _lightrag_without_communities()
+    indexing = lightrag.indexing
+    with pytest.raises(ValidationError, match="indexing.methodologies"):
+        lightrag.indexing = indexing.model_copy(
+            update={"methodologies": [Methodology.GRAPHRAG]}
+        )
+    assert lightrag.indexing is indexing
