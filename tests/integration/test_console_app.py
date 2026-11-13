@@ -811,6 +811,38 @@ def test_a_changed_corpus_ingests_again_once_its_question_is_confirmed(
     assert any(s["file_name"] == "b.txt" for s in result["sources"])
 
 
+def test_a_rebuild_runs_in_one_job_without_the_integrity_question(
+    client: Any,
+) -> None:
+    files = {"a.txt": "Umbra Freight carries parts for Acme Robotics."}
+    assert _upload(client, "rebuilt", files).status_code == 200
+    first = _wait(
+        client,
+        client.post(
+            "/api/jobs/ingest", json={"corpus": "uploads:rebuilt"}, headers=HEADERS
+        ).json()["id"],
+    )
+    assert first["status"] == "succeeded", first["log"]
+    # The same pipeline id with --reset: every stage is recomputed, so the
+    # changed loading inputs are expected, not a question or a warning.
+    rebuilt = _wait(
+        client,
+        client.post(
+            "/api/jobs/ingest",
+            json={"corpus": "uploads:rebuilt", "reset": True},
+            headers=HEADERS,
+        ).json()["id"],
+    )
+    assert "--reset" in rebuilt["command"]
+    assert rebuilt["status"] == "succeeded", rebuilt["log"]
+    assert rebuilt.get("confirmation") is None
+    assert rebuilt["pipeline_id"] == first["pipeline_id"]
+    assert not any(
+        "Rewinding" in w or "inputs changed" in w or "cache holds no" in w
+        for w in rebuilt["warnings"]
+    ), rebuilt["warnings"]
+
+
 def test_ingestion_refuses_the_workspace_itself_and_a_file(client: Any) -> None:
     assert (
         client.post(

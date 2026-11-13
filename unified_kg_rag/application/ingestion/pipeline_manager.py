@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -567,7 +568,8 @@ class PipelineResumeManager:
                 for name in completed_stages
                 if _canonical_index(name) < _canonical_index(stage_name)
             ]
-            logger.warning(
+            logger.log(
+                self._rewind_level,
                 "Rewinding resume point from '%s' to '%s': it and every stage "
                 "downstream of it will be recomputed",
                 start_stage,
@@ -576,6 +578,14 @@ class PipelineResumeManager:
             return stage_name, verified
 
         return start_stage, completed_stages
+
+    @property
+    def _rewind_level(self) -> int:
+        """The level a rewind is logged at: a warning, except in a reset run
+        (``indexing.reset``), which rebuilds the namespace from every
+        document, so recomputing the stages its cache no longer backs is
+        what it asked for."""
+        return logging.INFO if self.config.indexing.reset else logging.WARNING
 
     def _missing_cache_keys(
         self, pipeline_id: str, stage_name: str, *, load: bool = False
@@ -645,7 +655,8 @@ class PipelineResumeManager:
                     cache_key,
                 )
             else:
-                logger.warning(
+                logger.log(
+                    self._rewind_level,
                     "Stage '%s' is recorded completed, but the cache holds no '%s' "
                     "for it under the current inputs (key '%s'): the inputs "
                     "changed since it ran, or the cache is incomplete",
