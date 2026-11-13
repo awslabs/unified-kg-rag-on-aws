@@ -51,25 +51,26 @@ A query's failure maps to its code by its class (`ErrorClass`, the same for
 `processing.ignore_errors` turned it into the error answer
 (`metadata.error_class`):
 
-| Class | Raised as | Exit code |
-|---|---|---|
-| `invalid_filter` | `InvalidFilterError` | `2` |
-| `invalid_argument` | `InvalidArgumentError` (`ToolArgumentError`), `DocumentNotFoundError`, a refused command line | `2` |
-| `not_indexed` | `MethodologyNotIndexedError` | `2` |
-| `index_not_found` | `IndexNotFoundError` | `2` |
-| `configuration` | `ConfigurationError` | `2` |
-| `timeout` | `QueryTimeoutError` | `1` |
-| `store_unreachable` | `StoreConnectionError` | `1` |
-| `model_unreachable` | `ModelUnreachableError` | `1` |
-| `failure` | any other | `1` |
+| Class | Raised as | Exit code | Console HTTP status |
+|---|---|---|---|
+| `invalid_filter` | `InvalidFilterError` | `2` | `400` |
+| `invalid_argument` | `InvalidArgumentError` (`ToolArgumentError`), `DocumentNotFoundError`, a refused command line | `2` | `400` (a refusal of its own: `403`, `409`, `413`, `415`, `422`) |
+| `not_indexed` | `MethodologyNotIndexedError` | `2` | `404` |
+| `index_not_found` | `IndexNotFoundError` | `2` | `404` |
+| `configuration` | `ConfigurationError` | `2` | `400` |
+| `timeout` | `QueryTimeoutError` | `1` | `504` |
+| `store_unreachable` | `StoreConnectionError` | `1` | `503` |
+| `model_unreachable` | `ModelUnreachableError` | `1` | `503` |
+| `failure` | any other | `1` | `500` |
 
 The class is the stable key a caller branches on, on every surface: the
 CLIs' JSON `error_class` ([Failures and interruptions](#failures-and-interruptions)),
 the MCP server's tool error, which names it in brackets
 (`Error executing tool kg_search: [store_unreachable] ...`) and then carries the message of the first four
 and `timeout` (a generic one for the rest, whose message may name an
-endpoint), and the console's `error_class` (an HTTP error's, `invalid_argument`
-for a request it refuses, and an Ask stream's error event). A new class may
+endpoint), and the console's `error_class`: an API error's, with the
+status of its class above (`invalid_argument` for a request it refuses), and
+an Ask stream's error event. A new class may
 be added; a value is never renamed. `run-rag`'s interactive session keeps
 going after any of them.
 
@@ -204,7 +205,8 @@ holds:
   `doc_id`, `file_path`, `status`, `error_info`, `failure_count`,
   `retry_count`, `attempt_count`, `written_by` and `updated_at`) and
   `export` (its `path`, `counts`, `truncated` and `missing` kinds, or `null`
-  without `--output-path`); a namespace that holds no index exits `2`
+  without `--output-path`); a namespace that holds no index exits `2`,
+  unless the registry holds records of it and nothing is exported
   ([Inspect and export](../guides/inspect.md)).
 - **`run-prompt-tuning`**: the `output_path`, the `profile` and, with
   `--schema-out`, the `schema_path`.

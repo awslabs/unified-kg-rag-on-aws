@@ -261,6 +261,32 @@ def test_prepare_benchmark_refuses_another_benchmarks_flags(
     assert not (tmp_path / "out").exists()
 
 
+def test_prepare_benchmark_names_a_flag_given_before_the_benchmark(
+    tmp_path: Path, capsys
+) -> None:
+    # Regression (rv25): "--output-format json structural ..." exited 2 with
+    # "argument benchmark: invalid choice: 'json'".
+    with pytest.raises(SystemExit) as exited:
+        prepare_benchmark.main(
+            ["--output-format", "json", "structural", "--output-directory", "d"]
+        )
+    assert exited.value.code == 2
+    err = capsys.readouterr().err
+    assert "--output-format: each benchmark takes its flags after its name" in err
+    assert "invalid choice" not in err
+    assert not (tmp_path / "d").exists()
+
+
+def test_prepare_benchmark_names_every_benchmark() -> None:
+    parser = prepare_benchmark._parser()
+    (subcommands,) = (
+        action
+        for action in parser._actions
+        if isinstance(action, argparse._SubParsersAction)
+    )
+    assert tuple(subcommands.choices) == prepare_benchmark.BENCHMARKS
+
+
 def test_the_mcp_server_offers_no_json_output() -> None:
     # Over stdio its stdout carries the protocol's messages only.
     assert "--output-format" not in _options(run_mcp_server.build_parser())

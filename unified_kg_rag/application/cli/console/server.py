@@ -70,6 +70,7 @@ from unified_kg_rag.application.cli.console.settings_api import (
 from unified_kg_rag.application.cli.console.store import ConsoleStore
 from unified_kg_rag.application.cli.conventions import host_without_port, is_loopback
 from unified_kg_rag.application.config import get_config
+from unified_kg_rag.application.plugins import load_plugins
 from unified_kg_rag.domain.ingestion.cache_keys import is_excluded_source_path
 from unified_kg_rag.domain.ingestion.visualization_data import (
     VISUALIZATION_DATA_FILENAME,
@@ -80,13 +81,15 @@ from unified_kg_rag.domain.models import (
     ModelRole,
     validate_safe_name,
 )
+from unified_kg_rag.domain.models.retrieval import MAX_SERVED_TOP_K
 from unified_kg_rag.domain.prompts.retrieval import STRATEGY_ROUTING_GUIDE
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import (
     ConfigurationError,
-    DataProcessingError,
     ErrorClass,
+    GraphRAGException,
+    InvalidArgumentError,
     classify,
 )
 from unified_kg_rag.shared.utils import event_loop
@@ -213,16 +216,16 @@ class SaveBody(_Request):
     confirm_directories: list[str] = Field(default_factory=list, max_length=200)
 
 
-class UploadTooLarge(ConfigurationError):
+class UploadTooLarge(InvalidArgumentError):
     """An upload over the size limit (or without a Content-Length)."""
 
 
-class UnsupportedUpload(ConfigurationError):
+class UnsupportedUpload(InvalidArgumentError):
     """An upload holding a file ingestion does not read: of a type it does
     not parse, or hidden (``is_excluded_source_path``)."""
 
 
-class UploadConflict(ConfigurationError):
+class UploadConflict(InvalidArgumentError):
     """An upload naming one path as a file and as a folder (two of its
     files, or one of its files and what the folder holds)."""
 
@@ -334,6 +337,10 @@ class ConsoleState:
             ConfigurationError: It does not load.
         """
         if self._config is None:
+            # The plugins first, as every CLI loads them before its config:
+            # a file type or a kind one registers is known to every page
+            # (a plugin that cannot be loaded is the config error shown).
+            load_plugins()
             self._config = get_config(
                 self.options.config_path,
                 allow_unknown_keys=self.options.allow_unknown_keys,
@@ -372,22 +379,58 @@ class ConsoleState:
         self._build_roots()
 
 
-def _error(status: int, code: str, message: str, **extra: Any) -> JSONResponse:
+# The HTTP status of an error of each class (docs/reference/exit-codes-and-json.md):
+# a request to change is a 4xx, as the CLIs exit 2 for it, a store or model
+# server out of reach a 503 and a passed deadline a 504.
+HTTP_STATUS: dict[ErrorClass, int] = {
+    ErrorClass.INVALID_FILTER: 400,
+    ErrorClass.INVALID_ARGUMENT: 400,
+    ErrorClass.NOT_INDEXED: 404,
+    ErrorClass.INDEX_NOT_FOUND: 404,
+    ErrorClass.CONFIGURATION: 400,
+    ErrorClass.TIMEOUT: 504,
+    ErrorClass.STORE_UNREACHABLE: 503,
+    ErrorClass.MODEL_UNREACHABLE: 503,
+    ErrorClass.FAILURE: 500,
+}
+
+
+def _error(
+    status: int,
+    code: str,
+    message: str,
+    *,
+    error_class: ErrorClass | None = None,
+    **extra: Any,
+) -> JSONResponse:
     """An API error: ``code`` for the page to name it in its language,
     ``error`` the detail, and ``error_class`` the :class:`ErrorClass` every
-    surface names a failure by: ``code`` when it is one, else
-    ``invalid_argument`` for a request the caller can fix (a 4xx) and
-    ``failure`` for the rest."""
-    try:
-        error_class = ErrorClass(code)
-    except ValueError:
-        error_class = (
-            ErrorClass.INVALID_ARGUMENT if status < 500 else ErrorClass.FAILURE
-        )
+    surface names a failure by: ``error_class`` when given, else ``code``
+    when it is one, else ``invalid_argument`` for a request the caller can
+    fix (a 4xx) and ``failure`` for the rest."""
+    if error_class is None:
+        try:
+            error_class = ErrorClass(code)
+        except ValueError:
+            error_class = (
+                ErrorClass.INVALID_ARGUMENT if status < 500 else ErrorClass.FAILURE
+            )
     return JSONResponse(
         {"error": message, "code": code, "error_class": error_class.value, **extra},
         status_code=status,
     )
+
+
+def _classified_error(e: Exception) -> JSONResponse:
+    """The API error of ``e`` by its class (:func:`classify`), as every
+    surface names it: its status from :data:`HTTP_STATUS`, ``code``
+    ``invalid`` for a request the caller can fix (the page's word for a
+    refusal) and the class otherwise."""
+    error_class = classify(e)
+    code = (
+        "invalid" if error_class is ErrorClass.INVALID_ARGUMENT else error_class.value
+    )
+    return _error(HTTP_STATUS[error_class], code, str(e), error_class=error_class)
 
 
 TOKEN_COOKIE = "ukr_console_token"
@@ -538,18 +581,28 @@ def create_app(
     async def _upload_conflict(_: Request, e: UploadConflict) -> JSONResponse:
         return _error(409, "upload_conflict", str(e))
 
-    @app.exception_handler(ConfigurationError)
-    async def _config(_: Request, e: ConfigurationError) -> JSONResponse:
-        # Its class (ErrorClass) as every surface names it: a methodology
-        # the namespace does not hold, a store or schema the configuration
-        # cannot serve. A plain one is the console refusing a value of the
-        # request itself: "invalid".
-        code = "invalid" if type(e) is ConfigurationError else classify(e).value
-        return _error(400, code, str(e))
+    @app.exception_handler(GraphRAGException)
+    async def _classified(_: Request, e: GraphRAGException) -> JSONResponse:
+        # Any other error of the package, by its class (ErrorClass) as every
+        # surface names it: an unreachable store is a 503 store_unreachable,
+        # a namespace without an index a 404 index_not_found.
+        if classify(e) is ErrorClass.FAILURE:
+            logger.error("Console request failed: %s", e, exc_info=e)
+        return _classified_error(e)
 
-    @app.exception_handler(DataProcessingError)
-    async def _data(_: Request, e: DataProcessingError) -> JSONResponse:
-        return _error(422, "unreadable", str(e))
+    @app.exception_handler(Exception)
+    async def _unexpected(_: Request, e: Exception) -> JSONResponse:
+        # The server logs it with its traceback (it is raised on).
+        return _classified_error(e)
+
+    async def _unreadable(_: Request, e: Exception) -> JSONResponse:
+        # A file the request named that is not what it should hold.
+        return _error(
+            422, "unreadable", str(e), error_class=ErrorClass.INVALID_ARGUMENT
+        )
+
+    for unreadable in (graph_api.GraphDataError, evaluations.EvaluationFileError):
+        app.add_exception_handler(unreadable, _unreadable)
 
     @app.exception_handler(HTTPException)
     async def _http(_: Request, e: HTTPException) -> JSONResponse:
@@ -596,6 +649,8 @@ def create_app(
                 else None
             ),
             "prices_configured": bool(config.evaluation.prices) if config else False,
+            # The largest top_k the Ask request takes.
+            "max_top_k": MAX_SERVED_TOP_K,
             "jobs": state.jobs.active(),
             "loopback": options.loopback,
             "sample_questions": options.sample_questions,
@@ -979,14 +1034,14 @@ def _suffix(value: str | None) -> str | None:
     """``value`` if it is a safe index namespace name.
 
     Raises:
-        ConfigurationError: It is not.
+        InvalidArgumentError: It is not.
     """
     if value is None:
         return None
     try:
         return validate_safe_name(value, "suffix")
     except ValueError as e:
-        raise ConfigurationError(str(e)) from e
+        raise InvalidArgumentError(str(e)) from e
 
 
 def _models(config: Config) -> dict[str, str | None]:

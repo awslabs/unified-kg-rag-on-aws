@@ -145,7 +145,7 @@ Guide: [Visualization](../guides/visualize.md). Also takes the [provider flags](
 | `--suffix` | — | Index namespace to render without --data-path (the name run-ingestion --suffix wrote it under; default: the config's index_value, else 'default'). |
 | `--cache-directory` | `cache` | The run-ingestion cache directory searched for an export without --data-path (default: cache). |
 | `--output-directory` | `visualization_outputs` | Directory to write visualization files. |
-| `--renderers` `RENDERER` | — | Renderers to run. Available: interactive, static (default: all of them, leaving out with a warning one whose extra is not installed; a renderer named here needs its extra). |
+| `--renderers` `RENDERER` | — | Renderers to run, any case: interactive, static or one a plugin registers (default: all of them, leaving out with a warning one whose extra is not installed; a renderer named here needs its extra). |
 | `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
 | `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing: the load fails on one by default, since a misspelled key would leave its setting at the default. |
 | `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |

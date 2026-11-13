@@ -464,7 +464,9 @@ class ProcessedQuery(BaseModel):
 
 class ConversationTurn(BaseModel):
     """One earlier message of a conversation a caller keeps itself
-    (``RAGInput.history``)."""
+    (``RAGInput.history``; an unknown key is refused, as on ``RAGInput``)."""
+
+    model_config = ConfigDict(extra="forbid")
 
     role: Literal["user", "assistant"] = Field(
         description="Who wrote it: the user, or the assistant (an earlier answer)"

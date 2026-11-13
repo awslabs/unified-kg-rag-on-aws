@@ -214,6 +214,57 @@ def test_describing_where_nothing_was_ingested_creates_no_store(
     assert not (tmp_path / "stores" / "doc-status.sqlite3").exists()
 
 
+def test_run_describe_lists_the_documents_of_a_namespace_without_an_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    # Regression (rv25): a first ingest whose model calls all failed left
+    # two pending records and no index; run-describe --documents refused
+    # it as index_not_found, the one case the runbook added it for.
+    from unified_kg_rag.adapters.doc_status.sqlite import SQLiteDocStatusStore
+    from unified_kg_rag.domain.ingestion.document_identity import (
+        config_registry_namespace,
+    )
+    from unified_kg_rag.domain.models import DocStatus, DocStatusRecord
+
+    config = embedded._config(tmp_path / "stores", tmp_path / "viz")
+    namespace = config_registry_namespace(config.indexing, None)
+    (tmp_path / "stores").mkdir(parents=True, exist_ok=True)
+    store = SQLiteDocStatusStore(config)
+    store.put_many(
+        DocStatusRecord(
+            doc_id=f"doc-{name}",
+            content_hash=f"hash-{name}",
+            status=DocStatus.PENDING,
+            suffix=namespace,
+            file_path=f"{name}.txt",
+        )
+        for name in ("a", "b")
+    )
+    store.close()
+    monkeypatch.setattr(run_describe, "load_cli_config", lambda _args: config)
+    argv = ["run-describe", "--documents", "failed,pending", "--output-format", "json"]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    assert run_describe.main() == 0
+    document = json.loads(capsys.readouterr().out)
+    assert document["exists"] is False
+    assert document["registry"] == {"pending": 2}
+    assert [d["file_path"] for d in document["documents"]] == ["a.txt", "b.txt"]
+    # In text, the records under a line saying no build finished.
+    monkeypatch.setattr(sys, "argv", argv[:3])
+    assert run_describe.main() == 0
+    out = " ".join(capsys.readouterr().out.split())
+    assert "No index" in out and "a.txt: pending" in out
+    # Nothing to export without an index.
+    monkeypatch.setattr(
+        sys, "argv", [*argv, "--output-path", str(tmp_path / "graph.jsonl")]
+    )
+    with pytest.raises(SystemExit) as exc:
+        run_describe.main()
+    assert exc.value.code == 2
+    assert json.loads(capsys.readouterr().out)["error_class"] == "index_not_found"
+
+
 # The registry adapter's own constructor (no_aws forbids building one).
 _DYNAMODB_INIT = DynamoDBDocStatusStore.__init__
 

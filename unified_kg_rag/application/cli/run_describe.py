@@ -165,6 +165,11 @@ def _print(description: NamespaceDescription) -> None:
             "build from before records): queries take the namespace to hold "
             "what their config builds until a run writes one[/yellow]"
         )
+    else:
+        console.print(
+            "[yellow]No index: no build finished in this namespace; the "
+            "doc-status registry's records below show how far one got[/yellow]"
+        )
     origin = (
         "" if description.artifacts_from == "build_record" else " (from the config)"
     )
@@ -227,7 +232,12 @@ def main() -> int:
                 "providers.doc_status.enabled"
             )
         description = describe_namespace(config, args.suffix, documents=args.documents)
-        if not description.exists:
+        # A namespace without an index is still described when the registry
+        # holds records of it: a failed first build, whose documents
+        # --documents lists. With neither, or to export, it is refused.
+        if not description.exists and (
+            not description.registry or args.output_path is not None
+        ):
             usage_error(
                 f"the index namespace '{description.namespace}' holds no index: "
                 "check --suffix (or the config's index_value)",

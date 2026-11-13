@@ -175,3 +175,78 @@ def test_a_cli_selects_a_kind_its_plugin_registers(tmp_path: Path) -> None:
         check=False,
     )
     assert "No llm provider is registered" in json.loads(done.stdout)["error"]
+
+
+_LOADER_PLUGIN = """
+from langchain_core.document_loaders import BaseLoader
+from langchain_core.documents import Document
+
+from unified_kg_rag.adapters.ingestion.parser import ParserFactory
+
+
+class SyntheticLoader(BaseLoader):
+    def __init__(self, file_path):
+        self.file_path = file_path
+
+    def lazy_load(self):
+        yield Document(page_content="x", metadata={"source": str(self.file_path)})
+
+
+ParserFactory.register_loader(".synthx", SyntheticLoader)
+"""
+
+
+@pytest.fixture
+def loader_plugin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    from unified_kg_rag.adapters.ingestion import parser
+
+    site = tmp_path / "loader-site"
+    site.mkdir()
+    (site / "ukr_synthetic_loader.py").write_text(_LOADER_PLUGIN, encoding="utf-8")
+    monkeypatch.syspath_prepend(str(site))
+    monkeypatch.setenv(plugins.PLUGINS_VARIABLE, "ukr_synthetic_loader")
+    monkeypatch.setattr(plugins, "_loaded", set())
+    yield
+    sys.modules.pop("ukr_synthetic_loader", None)
+    parser._LOADERS.unregister(".synthx")
+
+
+def test_the_console_loads_the_plugins_before_its_first_page(
+    loader_plugin: None, tmp_path: Path
+) -> None:
+    # Regression (rv25): run-console read the config with get_config, so a
+    # file type a plugin registers was refused by the upload ("ingestion
+    # does not read a.synthx") until a question had built the providers.
+    pytest.importorskip("fastapi")
+    pytest.importorskip("multipart")
+    from fastapi.testclient import TestClient
+
+    from unified_kg_rag.application.cli.console.server import ConsoleOptions, create_app
+
+    options = ConsoleOptions(workspace=tmp_path, cache_directory=tmp_path / "cache")
+    client = TestClient(create_app(options), base_url="http://127.0.0.1")
+    assert ".synthx" in client.get("/api/corpora").json()["extensions"]
+    uploaded = client.post(
+        "/api/uploads",
+        data={"name": "plugged"},
+        files=[("files", ("a.synthx", b"Vendor ships to Buyer.", "text/plain"))],
+        headers={"X-Console-Request": "1"},
+    )
+    assert uploaded.status_code == 200, uploaded.text
+
+
+def test_a_console_plugin_that_cannot_be_loaded_is_its_config_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from unified_kg_rag.application.cli.console.server import ConsoleOptions, create_app
+
+    monkeypatch.setenv(plugins.PLUGINS_VARIABLE, "ukr_no_such_plugin")
+    monkeypatch.setattr(plugins, "_loaded", set())
+    options = ConsoleOptions(workspace=tmp_path, cache_directory=tmp_path / "cache")
+    status = TestClient(create_app(options), base_url="http://127.0.0.1").get(
+        "/api/status"
+    )
+    assert "'ukr_no_such_plugin'" in status.json()["config_error"]

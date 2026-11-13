@@ -1637,8 +1637,8 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         raise IndexNotFoundError(
             f"No indices found for suffix '{shown}' (the text units index "
             f"'{alias}' does not exist). Did you run ingestion with "
-            f"processing.document_parsing.index_value '{shown}'? Query with the "
-            f"suffix the corpus was ingested under (run-rag/run-eval --suffix).{held}"
+            f"processing.document_parsing.index_value '{shown}'? Query the "
+            f"namespace (suffix) the corpus was ingested under.{held}"
         ) from cause
 
     async def _ingested_suffixes(self) -> list[str]:

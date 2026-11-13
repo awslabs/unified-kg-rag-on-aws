@@ -48,7 +48,8 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.domain.models.methodology import METHODOLOGY_PROFILES
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.evaluation.gates import parse_gate
-from unified_kg_rag.shared import ConfigurationError, get_logger
+from unified_kg_rag.shared import InvalidArgumentError, get_logger
+from unified_kg_rag.shared.utils.processes import process_gone, process_identity
 from unified_kg_rag.shared.utils.validation import format_validation_errors
 
 logger = get_logger(__name__)
@@ -81,7 +82,7 @@ class JobStatus(str, Enum):
 _ACTIVE = (JobStatus.RUNNING, JobStatus.STOPPING)
 
 
-class JobConflict(ConfigurationError):
+class JobConflict(InvalidArgumentError):
     """Another job runs in the namespace (the request is refused)."""
 
     def __init__(self, message: str, job_id: str) -> None:
@@ -89,7 +90,7 @@ class JobConflict(ConfigurationError):
         self.job_id = job_id
 
 
-class NarrowingNotConfirmed(ConfigurationError):
+class NarrowingNotConfirmed(InvalidArgumentError):
     """An ingestion that builds fewer methodologies than its namespace
     holds, not confirmed (the request is refused)."""
 
@@ -135,6 +136,7 @@ class Job:
     warning_count: int = 0
     warnings: list[str] = field(default_factory=list)
     process: asyncio.subprocess.Process | None = None
+    identity: str | None = None
     watcher: asyncio.Task[None] | None = None
 
     def record(self) -> dict[str, Any]:
@@ -161,6 +163,9 @@ class Job:
             "confirmation": self.confirmation,
             "warnings": {"count": self.warning_count, "lines": self.warnings},
             "pid": self.process.pid if self.process is not None else None,
+            # Its pid with its start time (process_identity): a later console
+            # tells it from a process that reused the pid.
+            "process": self.identity,
         }
 
 
@@ -185,20 +190,20 @@ def ingest_config(
     config's) runs with, and the methodologies' values.
 
     Raises:
-        ConfigurationError: An unknown methodology.
+        InvalidArgumentError: An unknown methodology.
     """
     if not methodologies:
         return config, None
     try:
         chosen = [Methodology(m).value for m in methodologies]
     except ValueError as e:
-        raise ConfigurationError(f"methodologies: {e}") from e
+        raise InvalidArgumentError(f"methodologies: {e}") from e
     try:
         # Validated whole: a selection a switch leaves nothing of is refused
         # here, as at load, not left with no methodology to build.
         updated = config.updated({"indexing.methodologies": chosen})
     except ValidationError as e:
-        raise ConfigurationError(
+        raise InvalidArgumentError(
             f"methodologies: {format_validation_errors('', e)}"
         ) from e
     return updated, chosen
@@ -271,7 +276,8 @@ class JobManager:
         (their child may still run; the namespace lease guards the stores)."""
         for record in self.store.jobs(limit=None, statuses=[s.value for s in _ACTIVE]):
             pid = record.get("pid")
-            alive = isinstance(pid, int) and _alive(pid)
+            identity = record.get("process")
+            alive = isinstance(identity, str) and not process_gone(identity)
             record.update(
                 status=JobStatus.LOST.value,
                 ended=record.get("ended") or time.time(),
@@ -363,7 +369,7 @@ class JobManager:
         Raises:
             JobConflict: A job runs in the namespace.
             NarrowingNotConfirmed: It narrows the namespace, unconfirmed.
-            ConfigurationError: An unknown methodology or a bad index value.
+            InvalidArgumentError: An unknown methodology or a bad index value.
         """
         config, chosen = ingest_config(self.load_config(), methodologies)
         env: dict[str, str] = {}
@@ -373,7 +379,7 @@ class JobManager:
             try:
                 index_value = validate_safe_name(index_value, "index value")
             except ValueError as e:
-                raise ConfigurationError(str(e)) from e
+                raise InvalidArgumentError(str(e)) from e
             env["UKR__PROCESSING__DOCUMENT_PARSING__INDEX_VALUE"] = index_value
         namespace = resolve_namespace(config, index_value)
         if not confirm_narrowing:
@@ -491,31 +497,33 @@ class JobManager:
 
         Raises:
             JobConflict: A job runs in the namespace.
-            ConfigurationError: An unknown strategy, a bad gate or repeat count.
+            InvalidArgumentError: An unknown strategy, a bad gate or repeat count.
         """
         config = self.load_config()
         if not strategies:
-            raise ConfigurationError("choose at least one strategy")
+            raise InvalidArgumentError("choose at least one strategy")
         try:
             chosen = [SearchStrategy(s).value for s in strategies]
         except ValueError as e:
-            raise ConfigurationError(f"strategies: {e}") from e
+            raise InvalidArgumentError(f"strategies: {e}") from e
         if len(set(chosen)) != len(chosen):
-            raise ConfigurationError("a strategy is listed twice")
+            raise InvalidArgumentError("a strategy is listed twice")
         if not 1 <= repeats <= MAX_REPEATS:
-            raise ConfigurationError(f"repeats must be between 1 and {MAX_REPEATS}")
+            raise InvalidArgumentError(f"repeats must be between 1 and {MAX_REPEATS}")
         gates = [g.strip() for g in fail_if or [] if g.strip()]
         for gate in gates:
             try:
                 parse_gate(gate)
             except ValueError as e:
-                raise ConfigurationError(f"gate '{gate}': {e}") from e
+                raise InvalidArgumentError(f"gate '{gate}': {e}") from e
         if gates and len(chosen) < 2:
-            raise ConfigurationError("a gate needs two or more strategies to compare")
+            raise InvalidArgumentError("a gate needs two or more strategies to compare")
         if pairwise_judge and len(chosen) + int(closed_book) < 2:
-            raise ConfigurationError("the pairwise judge needs two or more strategies")
+            raise InvalidArgumentError(
+                "the pairwise judge needs two or more strategies"
+            )
         if max_failure_rate is not None and not 0.0 <= max_failure_rate <= 1.0:
-            raise ConfigurationError("the failure budget must be between 0 and 1")
+            raise InvalidArgumentError("the failure budget must be between 0 and 1")
         if not await asyncio.to_thread(dataset.is_file):
             raise PathRefused(f"'{dataset_ref}' is not a file")
         namespace = resolve_namespace(config, None)
@@ -623,6 +631,7 @@ class JobManager:
                 start_new_session=True,
             )
         job.started = time.time()
+        job.identity = process_identity(job.process.pid)
         self.jobs[job.id] = job
         self.store.save_job(job.record())
         job.watcher = asyncio.create_task(self._watch(job), name=f"job-{job.id}")
@@ -650,6 +659,13 @@ class JobManager:
             job.status = JobStatus.STOPPED
         else:
             job.status = JobStatus.FAILED
+        if job.kind is JobKind.INGEST and self.on_ingest_end is not None:
+            # With its status, before any await: no question meets the
+            # replaced index through the old chain once the job reads ended.
+            try:
+                self.on_ingest_end()
+            except Exception as e:  # noqa: BLE001 - a refresh must not fail the job
+                logger.warning("Refreshing after job %s failed: %s", job.id, e)
         job.warning_count, job.warnings = await asyncio.to_thread(
             _log_warnings, job.log_path
         )
@@ -664,11 +680,6 @@ class JobManager:
             job.status.value,
             code,
         )
-        if job.kind is JobKind.INGEST and self.on_ingest_end is not None:
-            try:
-                self.on_ingest_end()
-            except Exception as e:  # noqa: BLE001 - a refresh must not fail the job
-                logger.warning("Refreshing after job %s failed: %s", job.id, e)
 
     # -- stopping ---------------------------------------------------------
 
@@ -801,16 +812,6 @@ def confirmation_needed(error: str | None) -> str | None:
         if flag in error:
             return name
     return None
-
-
-def _alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
 
 
 # The answer batch's lines run-eval logs (BatchProcessor, ProgressLogger),

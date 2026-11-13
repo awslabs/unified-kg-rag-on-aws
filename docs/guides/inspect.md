@@ -57,8 +57,10 @@ Every flag: [CLI Reference](../reference/cli.md#run-describe).
   (`registry_unavailable`), and the rest is still described.
 
 A namespace that holds no index exits 2 with the error on stderr (a
-mistyped `--suffix`, say); describing creates no store file where
-nothing was ingested.
+mistyped `--suffix`, say), unless the registry holds records of it: a
+first build that failed is still described (`exists: false`), so
+`--documents failed,pending` lists how far it got; exporting it exits 2.
+Describing creates no store file where nothing was ingested.
 
 ## Exported graph
 

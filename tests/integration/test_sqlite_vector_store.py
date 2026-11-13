@@ -338,6 +338,8 @@ def test_retriever_search_types_through_the_registry(tmp_path: Path) -> None:
             ),
         )
     assert "OpenSearch" not in str(raised.value)
+    # Nor a CLI's flag: MCP and the console name the namespace otherwise (rv25).
+    assert "--suffix" not in str(raised.value)
 
 
 def test_untranslated_korean_corpus_has_lexical_recall(tmp_path: Path) -> None:

@@ -19,7 +19,15 @@ import inspect
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Annotated, Any, Literal, cast
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, create_model
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    TypeAdapter,
+    ValidationError,
+    WithJsonSchema,
+    create_model,
+)
 
 from unified_kg_rag import __version__
 from unified_kg_rag.application.cli.mcp_tools import (
@@ -54,6 +62,14 @@ MCP_EXTRA_HINT = f"The MCP server needs {extra_hint('mcp')}."
 _Scalar = str | int | float | bool
 _Range = dict[Literal["gt", "gte", "lt", "lte"], str | int | float]
 FilterValue = _Scalar | list[_Scalar] | _Range
+# The filters argument: an object, its values published as FilterValue and
+# checked as every surface checks them (GraphRAGChain.check_filter_values),
+# so a malformed value is an [invalid_filter] with the one message, not
+# pydantic's union text as an [invalid_argument].
+Filters = Annotated[
+    dict[str, Any] | None,
+    WithJsonSchema(TypeAdapter(dict[str, FilterValue] | None).json_schema()),
+]
 
 
 def _sdk() -> tuple[Any, Any, Any]:
@@ -427,7 +443,7 @@ def build_mcp_server(
         _parameter(
             "filters",
             Annotated[
-                dict[str, FilterValue] | None,
+                Filters,
                 Field(
                     description=(
                         "Attribute filters (key: value, a list of values, or a "
@@ -443,7 +459,10 @@ def build_mcp_server(
     turn_chars = limits.max_response_chars
 
     class HistoryTurn(BaseModel):
-        """One earlier message of the caller's conversation."""
+        """One earlier message of the caller's conversation (an unknown key
+        is refused, as every argument is)."""
+
+        model_config = ConfigDict(extra="forbid")
 
         role: Literal["user", "assistant"] = Field(
             description="Who wrote it: the user, or the assistant"

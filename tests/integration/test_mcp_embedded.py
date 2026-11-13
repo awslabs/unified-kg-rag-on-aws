@@ -434,6 +434,18 @@ async def test_the_tools_over_the_protocol(tools: KnowledgeGraphTools) -> None:
         assert "[invalid_filter] Unknown filter key(s): category" in (
             as_text.content[0].text  # type: ignore[union-attr]
         )
+        # A malformed value is the one invalid_filter every surface names
+        # it by, with the library's message (rv25: a null was pydantic's
+        # union text as an invalid_argument).
+        for value in (None, [], [["a"]]):
+            malformed = await client.call_tool(
+                "kg_search",
+                {"query": "Depot", "strategy": "naive", "filters": {"type": value}},
+            )
+            text = malformed.content[0].text  # type: ignore[union-attr]
+            assert malformed.is_error and text.startswith(
+                "Error executing tool kg_search: [invalid_filter] Filter 'type' "
+            ), text
 
 
 @requires_mcp

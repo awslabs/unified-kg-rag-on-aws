@@ -1861,3 +1861,12 @@ def _kept_named(filters: dict[str, Any]) -> list[str]:
     traversal = NeptuneRetriever._apply_filters(__.identity(), scoped)
     steps = traversal.bytecode.step_instructions
     return [v["id"] for v in vertices if _matches(v, steps)]
+
+
+@pytest.mark.parametrize("value", [[["a"]], [{"gte": 1}], ["A", ["b"]]])
+def test_a_nested_value_of_a_lowercased_field_is_an_invalid_filter(value: Any) -> None:
+    # Regression (rv25): typed_filter_values deduplicated a nested list
+    # into a set and crashed (TypeError, a "failure" on every surface)
+    # before check_filter_values could refuse it.
+    with pytest.raises(InvalidFilterError, match="Filter 'type'"):
+        GraphRAGChain.check_filter_values({"type": value})

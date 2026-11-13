@@ -264,7 +264,8 @@ def test_a_refused_filter_is_reported_as_such(client: Any) -> None:
     assert events[-1]["kind"] == "error"
     assert events[-1]["error_kind"] == "invalid_filter"
     history = client.get("/api/history").json()["queries"]
-    assert history[0]["outcome"] == "failed"
+    # A filter to change: refused as asked, no error of the service.
+    assert history[0]["outcome"] == "refused"
 
 
 def test_strategies_mark_what_the_namespace_does_not_hold(client: Any) -> None:
@@ -756,6 +757,8 @@ def test_an_ingestion_job_reports_its_stages_and_refreshes_the_chain(
     ).json()
     assert job["pipeline_id"].startswith("console-fresh-")
     assert "graph_extraction" in job["plan"] and "gleaning" not in job["plan"]
+    # Its child named with its start time, as a later console tells it.
+    assert job["process"].split(":")[1] == str(job["pid"])
     done = _wait(client, job["id"])
     assert done["status"] == "succeeded", done["log"]
     stages = {s["name"]: s for s in done["progress"]["stages"]}
@@ -1206,29 +1209,6 @@ def test_an_upload_of_a_hidden_file_is_refused_as_ingestion_skips_it(
         assert response.status_code == 415, (path, response.text)
         assert path in response.json()["error"]
     assert not (workspace / "uploads" / "hidden").exists()
-
-
-def test_a_configuration_error_is_named_by_its_class(client: Any) -> None:
-    # Regression (rv8): every ConfigurationError answered code "invalid",
-    # a namespace without an index or a methodology it lacks included.
-    import asyncio
-
-    from unified_kg_rag.shared.exceptions import (
-        ConfigurationError,
-        MethodologyNotIndexedError,
-        StoreConfigurationError,
-    )
-
-    handler = client.app.exception_handlers[ConfigurationError]
-    for error, code in (
-        (MethodologyNotIndexedError("holds graphrag only"), "not_indexed"),
-        (StoreConfigurationError("the store refuses the mapping"), "configuration"),
-        # The console refusing a request's own value.
-        (ConfigurationError("choose at least one strategy"), "invalid"),
-    ):
-        answered = asyncio.run(handler(None, error))
-        assert answered.status_code == 400
-        assert json.loads(answered.body)["code"] == code
 
 
 def test_an_api_request_with_an_unknown_key_or_parameter_is_refused(

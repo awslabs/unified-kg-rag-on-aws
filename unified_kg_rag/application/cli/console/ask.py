@@ -50,14 +50,18 @@ from unified_kg_rag.domain.models import (
     SectionType,
     validate_safe_name,
 )
+from unified_kg_rag.domain.models.retrieval import MAX_SERVED_TOP_K
 from unified_kg_rag.domain.models.usage import LLMUsage
 from unified_kg_rag.domain.retrieval.citations import CitationMarkerScanner
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.evaluation.comparison import answer_cost_usd
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.exceptions import (
+    ErrorClass,
+    IndexNotFoundError,
     MethodologyNotIndexedError,
     classify,
+    error_class_of,
     query_failure_ids,
 )
 
@@ -93,7 +97,7 @@ class AskRequest(BaseModel):
     query: str = Field(min_length=1, max_length=MAX_QUESTION_CHARACTERS)
     search_strategy: SearchStrategy = SearchStrategy.AUTO
     search_type: SearchType = SearchType.HYBRID
-    top_k: int = Field(default=10, ge=1, le=100)
+    top_k: int = Field(default=10, ge=1, le=MAX_SERVED_TOP_K)
     history: list[AskTurn] | None = Field(default=None, max_length=MAX_HISTORY_TURNS)
     filters: dict[str, Any] | None = None
     suffix: str | None = Field(default=None, max_length=128)
@@ -132,7 +136,11 @@ def source_view(view: SourceView) -> dict[str, Any]:
         "id": view.id,
         "score": view.score,
         "excerpt": view.text[
-            : TABLE_CHARACTERS if view.kind == "query_result" else EXCERPT_CHARACTERS
+            : (
+                TABLE_CHARACTERS
+                if view.kind == SectionType.QUERY_RESULT
+                else EXCERPT_CHARACTERS
+            )
         ],
         "truncated": view.truncated,
         "document_ids": view.document_ids,
@@ -152,15 +160,15 @@ def source_view(view: SourceView) -> dict[str, Any]:
         # lists them: ``link_sources``).
         "stated_by_passages": SectionType.of(view.kind).stated_by_passages,
     }
-    if view.kind == "entity":
+    if view.kind == SectionType.ENTITY:
         shown.update(entity_type=view.type, node_ids=[view.id])
-    elif view.kind == "relationship":
+    elif view.kind == SectionType.RELATIONSHIP:
         shown.update(
             relation=view.type,
             node_ids=[e.id for e in view.entities],
             edge_id=view.id,
         )
-    elif view.kind == "query_result":
+    elif view.kind == SectionType.QUERY_RESULT:
         # The structured strategy's graph query: what it computed, how many
         # rows, whether the table is whole, and the entities it returned.
         rows = metadata.get("row_count")
@@ -171,7 +179,7 @@ def source_view(view: SourceView) -> dict[str, Any]:
             backend=metadata.get("backend"),
             node_ids=[e.id for e in view.entities],
         )
-    elif view.kind == "community":
+    elif view.kind == SectionType.COMMUNITY:
         shown.update(community_id=metadata.get("community_id"))
     return shown
 
@@ -331,16 +339,27 @@ class AskService:
         record ingestion wrote on it (``GraphRAGChain.aread_build_record``):
         ``recorded`` false when it has none that names its artifacts (never
         built, or built before methodology profiles), and ``held`` then the
-        methodologies the config builds, which queries are served by. A store
+        methodologies the config builds, which queries are served by;
+        ``indexed`` whether anything was ingested under it at all (a
+        question on it fails with ``index_not_found`` otherwise). A store
         error raises."""
         async with self._using() as (chain, config):
             record = await chain.aread_build_record(suffix)
             namespace = resolve_namespace(config, suffix)
+            indexed = True
+            try:
+                # The check every question makes first.
+                await chain.acheck_methodology(SearchStrategy.AUTO, suffix)
+            except IndexNotFoundError:
+                indexed = False
+            except MethodologyNotIndexedError:
+                pass  # indexed, without what auto routes to
         holdings = namespace_holdings(record, config)
         return {
             "namespace": namespace,
             "recorded": holdings.source == "build_record",
             "held": [m.value for m in holdings.methodologies],
+            "indexed": indexed,
         }
 
     async def ask(self, request: AskRequest) -> AsyncIterator[dict[str, Any]]:
@@ -378,7 +397,7 @@ class AskService:
                     strategy=result["strategy"],
                     latency_seconds=result["latency_seconds"],
                     outcome=(
-                        "error"
+                        _failed_outcome(error_class_of(result["error_kind"]), "error")
                         if result["error"]
                         else (
                             "blocked"
@@ -403,7 +422,9 @@ class AskService:
                 if kind == "failure":
                     logger.exception("Console question %s failed", query_id)
                 record.update(
-                    error=str(e), latency_seconds=time.perf_counter() - started
+                    outcome=_failed_outcome(classify(e), "failed"),
+                    error=str(e),
+                    latency_seconds=time.perf_counter() - started,
                 )
                 queue.put_nowait(
                     {
@@ -570,6 +591,14 @@ class AskService:
             "sources": sources,
             "namespace": resolve_namespace(config, suffix),
         }
+
+
+def _failed_outcome(error_class: ErrorClass, failed: str) -> str:
+    """The recorded outcome of a question that failed with ``error_class``:
+    ``refused`` for a request to change (an empty namespace's question,
+    say), which the dashboard does not count as an error, else
+    ``failed``."""
+    return "refused" if error_class.is_caller_error else failed
 
 
 def _error_kind(error: Exception) -> str:

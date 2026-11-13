@@ -26,7 +26,7 @@ from unified_kg_rag.application.config import ConfigLoader, env_var
 from unified_kg_rag.domain.models import Config, Methodology
 from unified_kg_rag.domain.models.config import unknown_keys
 from unified_kg_rag.shared import get_logger
-from unified_kg_rag.shared.exceptions import ConfigurationError
+from unified_kg_rag.shared.exceptions import ConfigurationError, InvalidArgumentError
 from unified_kg_rag.shared.utils.files import atomic_write_text
 
 logger = get_logger(__name__)
@@ -56,7 +56,7 @@ ENDPOINT_KEYS = frozenset({"base_url", "endpoint", "host", "port", "url"})
 ENDPOINT_SECTIONS = ("providers", "aws")
 
 
-class EndpointNotConfirmed(ConfigurationError):
+class EndpointNotConfirmed(InvalidArgumentError):
     """A save that changes a provider endpoint without confirming it."""
 
     def __init__(self, paths: list[str]) -> None:
@@ -78,7 +78,7 @@ class EndpointNotConfirmed(ConfigurationError):
 PATH_KEY_WORDS = ("path", "directory")
 
 
-class DirectoriesNotConfirmed(ConfigurationError):
+class DirectoriesNotConfirmed(InvalidArgumentError):
     """A save that moves a file or directory the console or its jobs use
     without confirming it."""
 
@@ -135,7 +135,7 @@ def directory_changes(old: dict[str, Any], new: dict[str, Any]) -> list[dict[str
     ]
 
 
-class SecretRefused(ConfigurationError):
+class SecretRefused(InvalidArgumentError):
     """A config file or edit sets a secret: not written, not shown."""
 
 
@@ -290,16 +290,16 @@ def parse(text: str) -> dict[str, Any]:
     """The mapping ``text`` holds.
 
     Raises:
-        ConfigurationError: Not YAML, or not a mapping.
+        InvalidArgumentError: Not YAML, or not a mapping.
     """
     try:
         data = yaml.safe_load(text) if text.strip() else {}
     except yaml.YAMLError as e:
-        raise ConfigurationError(f"not valid YAML: {e}") from e
+        raise InvalidArgumentError(f"not valid YAML: {e}") from e
     if data is None:
         return {}
     if not isinstance(data, dict):
-        raise ConfigurationError("the config file must hold a mapping")
+        raise InvalidArgumentError("the config file must hold a mapping")
     return data
 
 
@@ -349,14 +349,14 @@ def apply_changes(
     sets a key, ``"value": None`` with ``"unset": true`` removes it.
 
     Raises:
-        ConfigurationError: A malformed path.
+        InvalidArgumentError: A malformed path.
     """
     result = yaml.safe_load(yaml.safe_dump(data)) or {}
     for change in changes:
         path = str(change.get("path") or "")
         keys = [k for k in path.split(".") if k]
         if not keys or any(not k.replace("_", "").isalnum() for k in keys):
-            raise ConfigurationError(f"'{path}' is not a config key")
+            raise InvalidArgumentError(f"'{path}' is not a config key")
         target = result
         for key in keys[:-1]:
             child = target.get(key)
@@ -405,7 +405,7 @@ class SettingsFile:
         try:
             data = parse(text)
             secrets = set_secrets(data)
-        except ConfigurationError as e:
+        except InvalidArgumentError as e:
             parse_error = str(e)
         effective: dict[str, Any] | None = None
         load_error = None
@@ -439,7 +439,7 @@ class SettingsFile:
 
         Raises:
             SecretRefused: The file or the result sets a secret.
-            ConfigurationError: The text is not a YAML mapping.
+            InvalidArgumentError: The text is not a YAML mapping.
         """
         current = self.read()
         base = parse(current)
@@ -489,8 +489,9 @@ class SettingsFile:
 
         Raises:
             SecretRefused: ``text`` sets a secret.
-            ConfigurationError: No file to write, a changed file, or a
-                config that does not validate.
+            ConfigurationError: No file to write.
+            InvalidArgumentError: A changed file, or a config that does not
+                validate.
         """
         if self.path is None:
             raise ConfigurationError(
@@ -498,7 +499,7 @@ class SettingsFile:
             )
         current = self.read()
         if digest(current) != base_sha:
-            raise ConfigurationError(
+            raise InvalidArgumentError(
                 f"'{self.path.name}' changed on disk since it was loaded; reload it and redo the change"
             )
         data = parse(text)
@@ -506,7 +507,7 @@ class SettingsFile:
             raise _secret_error(secrets)
         result = validate(data, self.path)
         if not result["valid"]:
-            raise ConfigurationError("; ".join(result["errors"]))
+            raise InvalidArgumentError("; ".join(result["errors"]))
         changed = [c["path"] for c in endpoint_changes(parse(current), data)]
         if changed and sorted(confirm_endpoints or []) != changed:
             raise EndpointNotConfirmed(changed)

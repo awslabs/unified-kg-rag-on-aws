@@ -27,6 +27,10 @@ from typing import TYPE_CHECKING, Any
 import networkx as nx
 
 from unified_kg_rag.application.cli.console.paths import Roots, walk_files
+from unified_kg_rag.application.storage.visualization_export import (
+    export_build_time,
+    export_namespace,
+)
 from unified_kg_rag.domain.ingestion.visualization_data import (
     VISUALIZATION_DATA_FILENAME,
     displayed_graph,
@@ -115,9 +119,17 @@ def find_graphs(roots: Roots, names: tuple[str, ...]) -> list[dict[str, Any]]:
             if ref is None:
                 continue
             stat = path.stat()
+            # An export holds its namespace's whole graph: named by it, the
+            # run that wrote it beside (an export of an earlier release
+            # names no namespace).
+            namespace = export_namespace(path)
+            run = _label(path)
             found[path] = {
                 "ref": ref,
-                "label": _label(path),
+                "label": namespace or run,
+                "namespace": namespace,
+                "run": run,
+                "built_at": export_build_time(path),
                 "modified": stat.st_mtime,
                 "bytes": stat.st_size,
             }
@@ -155,11 +167,16 @@ _cache_lock = threading.Lock()
 
 
 def cached_graph(path: Path) -> LoadedGraph:
-    """The graph of ``path``, read again only when the file changed (its
-    modification time or size).
+    """The graph of an exported file, read again only when the file changed
+    (its modification time or size). Its ``page`` is what the page draws:
+    the drawn entities (``nodes``, at most :data:`MAX_DRAWN_NODES`, with
+    their ``layout``) and the edges between them in full, every other
+    entity as ``{id, name, degree}`` (``others``, most connected first), and
+    the communities and analysis of the whole graph.
 
     Raises:
-        GraphDataError: As :func:`load_graph`.
+        GraphDataError: The file is too large, not JSON, or not shaped like
+            an export.
     """
     stat = path.stat()
     key = (str(path.resolve()), stat.st_mtime_ns, stat.st_size)
@@ -173,20 +190,6 @@ def cached_graph(path: Path) -> LoadedGraph:
         while len(_cache) > CACHED_GRAPHS:
             _cache.popitem(last=False)
     return loaded
-
-
-def load_graph(path: Path) -> dict[str, Any]:
-    """The graph of an exported file, as the page draws it: the drawn
-    entities (``nodes``, at most :data:`MAX_DRAWN_NODES`, with their
-    ``layout``) and the edges between them in full, every other entity as
-    ``{id, name, degree}`` (``others``, most connected first), and the
-    communities and analysis of the whole graph.
-
-    Raises:
-        GraphDataError: The file is too large, not JSON, or not shaped like
-            an export.
-    """
-    return cached_graph(path).page
 
 
 def entity(path: Path, entity_id: str) -> dict[str, Any] | None:

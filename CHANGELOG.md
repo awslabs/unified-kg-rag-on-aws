@@ -376,14 +376,14 @@ See [`iac/README.md`](iac/README.md).
 - `Config` reads models through `model_id(ModelRole.X)`, `tier_model_id`, `model_tier`, `embedding_model_id`,
   `embedding_dimension` and `rerank_model_id`; `ModelRole.GLOBAL_REDUCE` is gone (#334, #577).
 - `PipelineContext.unit_extractions` replaces `entities`, `relationships` and `rejected_entities` (#322).
-- `RAGInput` and `PipelineConfig` refuse an unknown key instead of ignoring it, as `Config` does: a dict query with
-  MCP's `strategy` for `search_strategy` ran `auto` at full model cost, and `PipelineConfig(force_rebuld=True)` left
-  `force_rebuild` off. A dict query raises `InvalidArgumentError` before any model call; the console's API refuses
-  an unknown body key or query parameter too (422, `invalid_argument`), the Ask, graph and evaluation reads
-  included.
 - An invalid assignment to a config setting (`config.search.max_concurrency = 0`) raises `ValidationError` and
   keeps the old value; a section validated on its own (`SearchConfig.model_validate`) refuses an unknown key. Change
   settings across sections with `Config.updated`. The `search.hybrid` weights keep the values set (relative weights).
+- `RAGInput` (a `history` turn's too, also on MCP) and `PipelineConfig` refuse an unknown key instead of ignoring it,
+  as `Config` does: a dict query with MCP's `strategy` for `search_strategy` ran `auto` at full model cost, and
+  `PipelineConfig(force_rebuld=True)` left `force_rebuild` off. A dict query raises `InvalidArgumentError` before any
+  model call; the console's API refuses an unknown body key or query parameter too (422, `invalid_argument`), the
+  Ask, graph and evaluation reads included.
 
 #### Query behaviour
 - The guardrail no longer wraps every model call: it screens the user query and the final answer through
@@ -753,7 +753,9 @@ From a `main` checkout (formats and keys no release had):
   minutes and ended with "produced 0 outputs"); a query raises it at once, without the transient retries' backoff
   (the error answer under `ignore_errors`, which no fallback absorbs), and `run-rag` exits 1 without a traceback.
   `ErrorClass` and `classify_error` name the class of a failure, which every surface maps: the CLIs' exit codes, the
-  MCP server's caller messages and the console's error kind, also of an error answer (`metadata.error_class`).
+  MCP server's caller messages and the console's error kind, also of an error answer (`metadata.error_class`). A
+  malformed filter value (a null, an empty or nested list) is `invalid_filter` with one message on every surface,
+  `run-rag` naming the flag it came from.
 - `run-eval` comparisons adjust for the many deltas they read: every paired delta has a sign-flip randomization
   `p_value` (exact on few pairs), and `multiplicity` Holm-adjusts them in families: a primary metric declared in advance
   (`--primary-metric`, `evaluation.primary_metric`, default `answer_match/answer_contains`) over the compared strategies
@@ -924,7 +926,8 @@ From a `main` checkout (formats and keys no release had):
   question marked unanswerable read by whether each answer declined) and open saved runs; explore the namespace's
   graph, built from the stores when the Graph page opens and no export shows them, as no console job exports one
   (search, neighbourhoods, communities, degree, schema conformance, seed versus document evidence); a dashboard of
-  the questions and jobs run through it (time, tokens, cost per strategy, model and role); and edit the
+  the questions and jobs run through it (time, tokens, cost per strategy, model and role; a question refused as asked,
+  as on an empty namespace, counted apart from the errors); and edit the
   config file with validation, a diff before saving, a confirmation before a provider endpoint or a file or directory
   path changes (every config key that names one), and secrets never shown or written. Jobs run the unchanged
   `run-ingestion` and `run-eval` in child processes. It binds `127.0.0.1` (another address needs `--allow-remote`),
@@ -932,8 +935,8 @@ From a `main` checkout (formats and keys no release had):
   file ingestion does not read (another type, or hidden) or naming one path as a file and a folder, writes an
   upload all or none (a refused one leaves no folder) and atomically (a temporary file 0600 until the rename, a
   re-upload keeping the replaced file's mode; a name past its folder's limit is refused up front, `path_refused`),
-  names an error by its class (`ErrorClass`; `error_class` in every API error and Ask error event, `invalid_argument`
-  for a request it refuses), and loads
+  names an error by its class (`ErrorClass`; `error_class` in every API error, with the class's HTTP status, and Ask
+  error event; `invalid_argument` for a request it refuses, `store_unreachable` a 503), and loads
   nothing from another host. The web client
   (`console/web/`, Vite, React, TypeScript) is in English and nine more languages, in a light and a dark theme (the
   system's unless one is chosen in the top bar), set in Pretendard (Pretendard JP for Japanese, JetBrains Mono for
@@ -1113,7 +1116,8 @@ From a `main` checkout (formats and keys no release had):
   error on stderr, and describing creates no store file where nothing was ingested (#641). `--documents
   failed,quarantined` (`describe_namespace(documents=...)`) lists the registry's documents of those statuses with their
   `error_info`, counts, writer and time (every run write stamps `updated_at`, and `created_at` once; a record
-  written before has none); a run names the documents it deletes in one INFO line. See
+  written before has none), also of a namespace without an index whose first build failed (described with `exists:
+  false`, exit 0); a run names the documents it deletes in one INFO line. See
   [inspect and
   export](docs/guides/inspect.md).
 - Telemetry names the namespace (the tenant boundary) and ties a query to its logs: `kg_rag.namespace` on every span
@@ -1375,8 +1379,9 @@ From a `main` checkout (formats and keys no release had):
 - Strategy comparison: `run-eval --search-strategy a,b --repeats N` with bootstrap intervals, `deltas_by_category`,
   a `--pairwise-judge` (LightRAG's verdicts with `evaluation.pairwise_overall`, `position_consistency`, a win-rate
   interval, `--judge-model`) and `prepare-benchmark musique` (#324, #516, #536); each benchmark (`musique`,
-  `assertions`, `structural`) is a subcommand with its own flags, and another one's (`structural --limit`) exits 2
-  instead of being ignored. See [benchmarks](docs/guides/benchmarks.md).
+  `assertions`, `structural`) is a subcommand with its own flags, given after its name, and another one's (`structural
+  --limit`) exits 2 instead of being ignored, as a flag before the name does, naming it (it worked before 0.3.0). See
+  [benchmarks](docs/guides/benchmarks.md).
 - Unanswerable questions and declines (opt-in; defaults unchanged): `prepare-benchmark musique --unanswerable N`
   adds MuSiQue-Full unanswerable questions (`metadata.answerable: false`, the full dev split downloaded at a pinned
   revision, SHA-256 checked), leaving out any whose answerable twin is sampled or whose removed supporting

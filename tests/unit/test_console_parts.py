@@ -191,7 +191,7 @@ def test_changes_set_and_unset_keys(tmp_path: Path) -> None:
         ],
     )
     assert changed == {"search": {"top_k": 5}, "x": {"y": {"z": "v"}}}
-    with pytest.raises(settings_api.ConfigurationError):
+    with pytest.raises(settings_api.InvalidArgumentError):
         settings_api.apply_changes(data, [{"path": "a..b;rm", "value": 1}])
 
 
@@ -205,9 +205,9 @@ def test_a_preview_validates_like_a_run(tmp_path: Path) -> None:
     assert preview["valid"], preview
     assert preview["comments_dropped"]
     assert "+  level: DEBUG" in preview["diff"]
-    with pytest.raises(settings_api.ConfigurationError, match="YAML"):
+    with pytest.raises(settings_api.InvalidArgumentError, match="YAML"):
         file.preview(text="search: [1, 2\n", changes=None)
-    with pytest.raises(settings_api.ConfigurationError, match="mapping"):
+    with pytest.raises(settings_api.InvalidArgumentError, match="mapping"):
         file.preview(text="- 1\n", changes=None)
     unknown = file.preview(text="search:\n  nope: 1\n", changes=None)
     assert not unknown["valid"] and unknown["unknown_keys"] == ["search.nope"]

@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 
+from unified_kg_rag.application.cli.console import dashboard
 from unified_kg_rag.application.cli.console import jobs as jobs_module
 from unified_kg_rag.application.cli.console.ask import AskRequest, AskService
 from unified_kg_rag.application.cli.console.jobs import (
@@ -36,7 +37,7 @@ from unified_kg_rag.domain.models import (
     SearchResult,
     SearchStrategy,
 )
-from unified_kg_rag.shared.exceptions import StoreConnectionError
+from unified_kg_rag.shared.exceptions import IndexNotFoundError, StoreConnectionError
 
 pytestmark = pytest.mark.unit
 
@@ -111,6 +112,39 @@ def test_jobs_a_stopped_console_left_running_are_marked_lost(tmp_path: Path) -> 
     assert "stopped while this job ran" in by_id["a"]["error"]
     assert by_id["c"]["status"] == "succeeded"
     manager._claim("default", "new")  # the namespace is free again
+
+
+@pytest.mark.skipif(
+    not Path("/proc/self/stat").exists(), reason="needs /proc for start times"
+)
+def test_a_lost_job_s_process_is_told_from_one_that_reused_its_pid(
+    tmp_path: Path,
+) -> None:
+    # Regression (rv25): _alive(pid) took any process holding the pid for
+    # the job's, so a reused pid read "its process ... still runs".
+    from unified_kg_rag.shared.utils.processes import process_identity
+
+    me = process_identity()
+    host, pid, started, namespace = me.split(":")
+    reused = f"{host}:{pid}:{int(started) + 1}:{namespace}"
+    store = ConsoleStore(tmp_path / "console.sqlite3")
+    for job_id, identity in (("alive", me), ("reused", reused), ("old", None)):
+        store.save_job(
+            {
+                "id": job_id,
+                "kind": "ingest",
+                "namespace": job_id,
+                "created": time.time(),
+                "status": "running",
+                "pid": int(pid),
+                **({"process": identity} if identity else {}),
+            }
+        )
+    by_id = {j["id"]: j for j in _manager(tmp_path, store).all_jobs()}
+    assert "still runs" in by_id["alive"]["error"]
+    assert "still runs" not in by_id["reused"]["error"]
+    # A record of an earlier release, without the identity: not judged.
+    assert "still runs" not in by_id["old"]["error"]
 
 
 def test_jobs_past_the_newest_200_are_found_by_id_and_marked_lost(
@@ -497,6 +531,11 @@ class _RecordChain(_Chain):
     async def aread_build_record(self, suffix: str | None) -> Any:
         return self.records.get(suffix)
 
+    async def acheck_methodology(self, strategy: Any, suffix: str | None) -> Any:
+        if suffix == "empty":
+            raise IndexNotFoundError(f"No indices found for suffix '{suffix}'")
+        return ()
+
 
 async def test_held_methodologies_come_from_the_namespace_s_build_record(
     tmp_path: Path,
@@ -521,6 +560,12 @@ async def test_held_methodologies_come_from_the_namespace_s_build_record(
         assert held["recorded"] is False
         assert held["held"] == ["graphrag", "lightrag", "hipporag"]
     assert (await service.held_methodologies(None))["namespace"] == "default"
+    # Whether anything was ingested at all (rv25: the page read an empty
+    # namespace from "recorded", which an index from before build records
+    # lacks too).
+    assert (await service.held_methodologies("old"))["indexed"] is True
+    empty = await service.held_methodologies("empty")
+    assert (empty["indexed"], empty["recorded"]) == (False, False)
     await service.close()
 
 
@@ -601,7 +646,6 @@ class _FailingChain(_Chain):
 
 
 async def test_a_missing_index_is_reported_as_such(tmp_path: Path) -> None:
-    from unified_kg_rag.shared.exceptions import IndexNotFoundError
 
     service = AskService(
         Config,
@@ -611,6 +655,12 @@ async def test_a_missing_index_is_reported_as_such(tmp_path: Path) -> None:
     events = await _drain(service, "q")
     assert events[-1]["kind"] == "error"
     assert events[-1]["error_kind"] == "index_not_found"
+    # Recorded as refused, which the dashboard does not count as an error
+    # (rv25: an empty namespace's first question was one).
+    (row,) = service.store.queries()
+    assert row["outcome"] == "refused"
+    totals = dashboard.summarize([row], [], Config())["totals"]
+    assert (totals["errors"], totals["refused"]) == (0, 1)
     await service.close()
 
 
@@ -633,11 +683,11 @@ def test_a_question_s_suffix_must_be_a_safe_namespace_name(suffix: str) -> None:
 async def test_an_ingest_s_index_value_must_be_a_safe_namespace_name(
     tmp_path: Path, index_value: str
 ) -> None:
-    from unified_kg_rag.shared import ConfigurationError
+    from unified_kg_rag.shared import InvalidArgumentError
 
     corpus = tmp_path / "corpus"
     corpus.mkdir()
-    with pytest.raises(ConfigurationError, match="lowercase"):
+    with pytest.raises(InvalidArgumentError, match="lowercase"):
         await _manager(tmp_path).start_ingest(
             corpus=corpus, corpus_ref="workspace:corpus", index_value=index_value
         )
