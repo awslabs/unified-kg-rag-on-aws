@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import signal
 import sys
@@ -84,6 +85,7 @@ from unified_kg_rag.shared import (
     get_logger,
 )
 from unified_kg_rag.shared.exceptions import ErrorClass
+from unified_kg_rag.shared.logging import log_error
 from unified_kg_rag.shared.utils.validation import format_validation_errors
 
 if TYPE_CHECKING:
@@ -1150,7 +1152,7 @@ def main() -> None:
         sys.exit(EXIT_INTERRUPTED)
     except ConfigurationError as e:
         console.print(f"\n[red]Error: {markup_safe(e)}[/red]")
-        logger.error("Ingestion configuration error: %s", e)
+        log_error(logger, logging.ERROR, "Ingestion configuration error: %s", error=e)
         _print_failed(runner, EXIT_USAGE, e)
         sys.exit(EXIT_USAGE)
     except ConfirmationDeclinedError as e:
@@ -1168,9 +1170,14 @@ def main() -> None:
         console.print(f"\n[red]Error: {markup_safe(e)}[/red]")
         _print_failed(runner, EXIT_FAILURE, e)
         sys.exit(EXIT_FAILURE)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - logged, exits
         console.print(f"\n[red]An unexpected error occurred: {markup_safe(e)}[/red]")
-        logger.exception("Unexpected error during pipeline execution")
+        log_error(
+            logger,
+            logging.ERROR,
+            "Unexpected error during pipeline execution: %s",
+            error=e,
+        )
         _print_failed(runner, EXIT_FAILURE, e)
         sys.exit(EXIT_FAILURE)
 

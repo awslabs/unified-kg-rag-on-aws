@@ -5,6 +5,7 @@ import json
 import math
 import os
 import re
+import traceback
 import unicodedata
 import uuid
 from collections.abc import Iterable
@@ -171,6 +172,35 @@ def error_digest(error: BaseException) -> str:
     ``text_digest`` of its message, which may quote a model's reply, an
     answer, a query or corpus text. Log the error itself at DEBUG."""
     return f"{type(error).__name__} ({text_digest(str(error))})"
+
+
+def error_locator(error: BaseException, *, frames: int = 4, depth: int = 4) -> str:
+    """Where an unexpected ``error`` came from, without its message: the type
+    chain along ``__cause__``/``__context__`` (outermost first) and, for each,
+    its last ``frames`` ``file:line function`` frames (the package's files by
+    path from the package, others by their last two parts). Frames are code
+    locations (``traceback.extract_tb``), never the exception text, so it is
+    safe at INFO and above and locates a failure the surface only says
+    "the server log has the details" of. Empty for an error never raised."""
+    parts: list[str] = []
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen and len(parts) < depth:
+        seen.add(id(current))
+        located = []
+        for frame in traceback.extract_tb(current.__traceback__)[-frames:]:
+            path = Path(frame.filename).parts
+            keep = (
+                path[path.index("unified_kg_rag") :]
+                if "unified_kg_rag" in path
+                else path[-2:]
+            )
+            located.append(f"{'/'.join(keep)}:{frame.lineno} {frame.name}")
+        parts.append(f"{type(current).__name__} at {' > '.join(located) or '?'}")
+        current = current.__cause__ or (
+            None if current.__suppress_context__ else current.__context__
+        )
+    return " <- ".join(parts) if error.__traceback__ is not None else ""
 
 
 def ensure_list(data: Any, inner_key: str | None = None) -> list[Any]:

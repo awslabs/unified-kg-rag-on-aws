@@ -179,6 +179,9 @@ unless noted.
    text units already gone from the vector store, or a vector store that
    cannot tell) looks them up by text unit with
    `find_relationship_ids_citing`, on Neptune a scan of the suffix's edges.
+   A failed document's retry does not delete the text units that are
+   unchanged (the commit writes them back), so they never show as gone; the
+   pending-strip note finds the edges such a retry re-keyed.
    An item citing only removed text units is
    deleted from both stores, the vector copy first (a retry finds what to
    delete through the graph, so an interrupted run leaves a graph copy, not

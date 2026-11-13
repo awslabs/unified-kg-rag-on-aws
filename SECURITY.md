@@ -15,8 +15,10 @@ Log records at `INFO` and above carry only lengths, counts, ids and a short
 stable hash for user queries, corpus text (including entity names) and model
 output; the text itself is logged only at `DEBUG`, and exception messages do
 not include model output. An error whose text may come from a model provider
-or a library is logged at `INFO` and above as its type and a digest, its text
-and traceback only at `DEBUG`. `DEBUG` logs therefore contain user and corpus data
+or a library is logged at `INFO` and above as its type, a digest and where it
+happened (the type chain and `file:line` frames, never the message); its text
+and traceback only at `DEBUG`. An expected outcome with its own message (an
+unreachable store or model, the deadline, a refusal) is logged with its text. `DEBUG` logs therefore contain user and corpus data
 and must be handled with the same controls as that data. See the logging
 section of the [user guide](docs/guides/configure.md#what-the-logs-contain).
 

@@ -56,7 +56,7 @@ from unified_kg_rag.shared.exceptions import (
     query_failure_ids,
 )
 from unified_kg_rag.shared.extras import extra_hint
-from unified_kg_rag.shared.logging import log_failure
+from unified_kg_rag.shared.logging import log_error
 
 if TYPE_CHECKING:
     from mcp.server.mcpserver import MCPServer
@@ -243,13 +243,8 @@ def _tool_function(
             if not expected:
                 # Under the ids the caller's message names (query_id).
                 with bound_contextvars(**query_failure_ids(e)):
-                    log_failure(
-                        logger,
-                        logging.ERROR,
-                        "MCP tool %s failed: %s",
-                        name,
-                        error=e,
-                        traceback=True,
+                    log_error(
+                        logger, logging.ERROR, "MCP tool %s failed: %s", name, error=e
                     )
             raise tool_error(message) from None
 

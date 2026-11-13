@@ -659,8 +659,9 @@ of the documents plus the configured seeds. No model reads a seed.
   untouched (a cancellation, not a failed stage). Refusing every such
   reset was rejected: it would make the common case, a seed on the
   corpus, impossible to rebuild. The answer has its own input because
-  `--yes` also accepts a resume's integrity issues, which an ECS task
-  answering a reset must not accept blindly.
+  `--yes` also accepts a resume's integrity issues (a run that is not a
+  reset asks that question; a reset asks none), which an ECS task answering
+  a reset must not accept blindly.
 - **Empty corpus.** A corpus of seeds alone is a seed-only run only for a
   scope the registry holds no document of
   (`incremental._refuse_seeds_over_documents`, before any write, also

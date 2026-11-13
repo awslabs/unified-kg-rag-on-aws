@@ -62,7 +62,7 @@ extra가 없으면 `run-mcp-server`는 extra 이름을 알려 주고 종료 코�
 안정된 키입니다. `[invalid_argument]`, `[invalid_filter]`, `[not_indexed]`,
 `[index_not_found]`, `[timeout]`은 호출자를 위한 메시지(바꿀 인자, 나중에 다시 할 호출)를,
 `[store_unreachable]`, `[model_unreachable]`, `[configuration]`, `[failure]`는 일반
-메시지(자세한 내용은 서버 로그)를 담습니다. 그래서 에이전트가 다시 시도할 장애와 보고할 오류를
+메시지(자세한 내용은 서버 로그: 장애는 텍스트, 예기치 않은 실패는 유형과 발생 위치이며 텍스트는 `DEBUG`)를 담습니다. 그래서 에이전트가 다시 시도할 장애와 보고할 오류를
 구분할 수 있습니다. 도구가 받지 않는 인자는 무시하지 않고 거부합니다
 (`[invalid_argument] depth: Extra inputs are not permitted`. 모든 입력 스키마에
 `additionalProperties: false`가 있습니다).
@@ -189,7 +189,8 @@ app = build_mcp_app(chain, namespace="default", allowed_hosts=["mcp.example.com"
   `kg_rag.mcp.tool` 스팬이 생깁니다. 인자는 `observability.capture_content`를 켰을 때만
   `redact_patterns`를 적용한 뒤 기록합니다. 로그에는 질의 텍스트가 아니라 요약값(digest)만
   남습니다. 저장소나 모델 오류는 일반 메시지로 호출자에게 전달되고, 자세한 내용은 서버
-  로그에 있습니다. `--metrics-sink cloudwatch`를 주면 `kg_answer` 호출마다 질의 지표
+  로그에 있습니다(장애는 텍스트, 예기치 않은 실패는 유형과 발생 위치이며 텍스트와
+  traceback은 `DEBUG`). `--metrics-sink cloudwatch`를 주면 `kg_answer` 호출마다 질의 지표
   (`query_latency_ms`, `query_failed` 등)를 CloudWatch EMF로 로그와 함께 stderr에
   씁니다(stdout은 프로토콜용). CDK 스택의 `QueryLatencyHigh`, `QueryFailures` 경보가
   이 지표를 읽습니다([운영 가이드](../operations.md#alarms), 영문).

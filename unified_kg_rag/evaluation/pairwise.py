@@ -61,6 +61,7 @@ docs/design.md#93-length-controlled-judging-assertions-and-the-closed-book-arm
 from __future__ import annotations
 
 import asyncio
+import logging
 import math
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
@@ -69,7 +70,6 @@ from typing import Any
 import numpy as np
 
 from unified_kg_rag.adapters.evaluators.base import (
-    error_digest,
     judge_answers,
     judge_effort,
     judge_model_kwargs,
@@ -93,6 +93,7 @@ from unified_kg_rag.domain.prompts import (
 )
 from unified_kg_rag.domain.retrieval.citations import strip_markers
 from unified_kg_rag.shared import EvaluationException, get_logger, observability
+from unified_kg_rag.shared.logging import log_failure
 
 from .comparison import bootstrap_ci, sign_flip_p_value
 
@@ -614,12 +615,13 @@ class PairwiseJudge:
             return [(outcome, consistent)], None
         except Exception as e:  # noqa: BLE001 - a failed pair is counted, not fatal
             # The error may quote the judge's reply: a digest at WARNING.
-            logger.warning(
+            log_failure(
+                logger,
+                logging.WARNING,
                 "Pairwise judge failed for '%s': %s",
                 candidate.query_id,
-                error_digest(e),
+                error=e,
             )
-            logger.debug("Pairwise judge error for '%s': %s", candidate.query_id, e)
             return None
 
 

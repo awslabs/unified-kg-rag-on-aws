@@ -42,6 +42,7 @@ answer and assertions.
 from __future__ import annotations
 
 import asyncio
+import logging
 import math
 import random
 from collections.abc import Sequence
@@ -54,7 +55,6 @@ from unified_kg_rag.adapters.evaluators.base import (
     FAILED_METRICS_KEY,
     SKIPPED_METRICS_KEY,
     BaseGraphRAGEvaluator,
-    error_digest,
     judge_answers,
     judge_model_kwargs,
 )
@@ -74,6 +74,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.prompts import ASSERTION_VERDICTS, AssertionJudgementPrompt
 from unified_kg_rag.shared import EvaluationException, get_logger
+from unified_kg_rag.shared.logging import log_failure
 
 logger = get_logger(__name__)
 
@@ -328,30 +329,33 @@ class AssertionEvaluator(BaseGraphRAGEvaluator):
         # The error may quote the judge's reply: a digest at WARNING, the
         # text at DEBUG.
         if not trials:
-            logger.warning(
-                "Assertion judge failed every trial for '%s': %s",
-                query.query_id,
-                error_digest(errors[-1]) if errors else "no trial ran",
-            )
             if errors:
-                logger.debug(
-                    "Assertion judge error for '%s': %s", query.query_id, errors[-1]
+                log_failure(
+                    logger,
+                    logging.WARNING,
+                    "Assertion judge failed every trial for '%s': %s",
+                    query.query_id,
+                    error=errors[-1],
+                )
+            else:
+                logger.warning(
+                    "Assertion judge failed every trial for '%s': no trial ran",
+                    query.query_id,
                 )
             last = (str(errors[-1]) or type(errors[-1]).__name__) if errors else ""
             reason = f"Assertion judge failed: {last or 'no trial'}"
             metadata[FAILED_METRICS_KEY] = {m.value: reason for m in attempted}
             return self._report(query, [], metadata)
         if errors:
-            logger.warning(
+            log_failure(
+                logger,
+                logging.WARNING,
                 "Assertion judge failed %s of %s trials for '%s' (scored on the "
                 "rest): %s",
                 len(errors),
                 self.trials,
                 query.query_id,
-                error_digest(errors[-1]),
-            )
-            logger.debug(
-                "Assertion judge error for '%s': %s", query.query_id, errors[-1]
+                error=errors[-1],
             )
         aggregate = aggregate_trials(kinds, trials)
         metadata["assertion_labels"] = [

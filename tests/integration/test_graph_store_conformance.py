@@ -780,7 +780,13 @@ def test_a_census_is_the_same_on_every_backend(harness: StoreHarness) -> None:
     """``census_graph`` (``run-describe``'s ``graph``, the load test's
     convergence check) reads through the port alone: the same graph gives
     the same counts and digests on every backend, scoped to its suffix."""
-    from unified_kg_rag.application.storage.inspection import _digest, census_graph
+    from unified_kg_rag.application.storage.inspection import _Digest, census_graph
+
+    def _digest(rows: Any) -> str:
+        digest = _Digest()
+        for row in rows:
+            digest.add(row)
+        return digest.hexdigest()
 
     graph = harness.graph_indexer
     tenant = "census_t"

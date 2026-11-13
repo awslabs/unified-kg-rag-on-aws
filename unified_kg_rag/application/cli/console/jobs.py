@@ -19,6 +19,7 @@ import asyncio
 import contextlib
 import hashlib
 import json
+import logging
 import os
 import re
 import signal
@@ -49,6 +50,7 @@ from unified_kg_rag.domain.models.methodology import METHODOLOGY_PROFILES
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.evaluation.gates import parse_gate
 from unified_kg_rag.shared import InvalidArgumentError, get_logger
+from unified_kg_rag.shared.logging import log_error
 from unified_kg_rag.shared.utils.processes import process_gone, process_identity
 from unified_kg_rag.shared.utils.validation import format_validation_errors
 
@@ -423,7 +425,13 @@ class JobManager:
         try:
             held = await self.read_held(namespace)
         except Exception as e:  # noqa: BLE001 - the run reports a store error
-            logger.warning("Reading what namespace '%s' holds failed: %s", namespace, e)
+            log_error(
+                logger,
+                logging.WARNING,
+                "Reading what namespace '%s' holds failed: %s",
+                namespace,
+                error=e,
+            )
             return
         if dropped := dropped_methodologies(held or [], config):
             raise NarrowingNotConfirmed(namespace, dropped)
@@ -678,7 +686,13 @@ class JobManager:
             try:
                 self.on_ingest_end()
             except Exception as e:  # noqa: BLE001 - a refresh must not fail the job
-                logger.warning("Refreshing after job %s failed: %s", job.id, e)
+                log_error(
+                    logger,
+                    logging.WARNING,
+                    "Refreshing after job %s failed: %s",
+                    job.id,
+                    error=e,
+                )
         job.warning_count, job.warnings, job.reset_advised = await asyncio.to_thread(
             _log_warnings, job.log_path
         )

@@ -4,6 +4,7 @@ import contextlib
 import hashlib
 import importlib.util
 import json
+import logging
 import shutil
 import statistics
 import subprocess
@@ -23,7 +24,6 @@ from unified_kg_rag.adapters.evaluators.base import (
     FAILED_METRICS_KEY,
     SKIPPED_METRICS_KEY,
     BaseGraphRAGEvaluator,
-    error_digest,
     judge_effort,
 )
 from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED, BatchProcessor
@@ -79,6 +79,7 @@ from unified_kg_rag.shared.exceptions import (
     InvalidFilterError,
 )
 from unified_kg_rag.shared.extras import extra_hint
+from unified_kg_rag.shared.logging import log_error, log_failure
 from unified_kg_rag.shared.usage import (
     UsageMeter,
     current_meter,
@@ -87,7 +88,7 @@ from unified_kg_rag.shared.usage import (
     usage_scope,
 )
 from unified_kg_rag.shared.utils import safe_url
-from unified_kg_rag.shared.utils.files import atomic_write_text
+from unified_kg_rag.shared.utils.files import USER_TEXT_ENCODING, atomic_write_text
 
 from .answer_match_evaluator import (
     ANSWER_CANDIDATES_KEY,
@@ -420,13 +421,19 @@ class EvaluationManager:
             raise ConfigurationError("Evaluation data path is required.")
 
         try:
-            with open(eval_data_path, encoding="utf-8") as f:
+            with open(eval_data_path, encoding=USER_TEXT_ENCODING) as f:
                 data = json.load(f)
         except FileNotFoundError:
             logger.error("Evaluation data file not found: '%s'", eval_data_path)
             raise
         except json.JSONDecodeError as e:
-            logger.error("Error decoding JSON from '%s': %s", eval_data_path, e)
+            log_error(
+                logger,
+                logging.ERROR,
+                "Error decoding JSON from '%s': %s",
+                eval_data_path,
+                error=e,
+            )
             raise
 
         if not isinstance(data, list):
@@ -619,7 +626,7 @@ class EvaluationManager:
             )
             return results, reports, summary
         except Exception as e:
-            logger.error("Dataset evaluation failed: %s", e)
+            log_error(logger, logging.ERROR, "Dataset evaluation failed: %s", error=e)
             raise EvaluationException(f"Dataset evaluation failed: {e}") from e
 
     async def score_answers(
@@ -647,7 +654,7 @@ class EvaluationManager:
                 cli_args=cli_args,
             )
         except Exception as e:
-            logger.error("Dataset evaluation failed: %s", e)
+            log_error(logger, logging.ERROR, "Dataset evaluation failed: %s", error=e)
             raise EvaluationException(f"Dataset evaluation failed: {e}") from e
 
     async def _score(
@@ -733,10 +740,12 @@ class EvaluationManager:
             # fast.
             raise
         except Exception as e:  # noqa: BLE001 - a warm-up is best-effort
-            logger.warning(
-                "The warm-up query failed (%s); the first timed answers may "
-                "include the warm-up time",
-                e,
+            log_error(
+                logger,
+                logging.WARNING,
+                "The warm-up query failed, so the first timed answers may "
+                "include the warm-up time: %s",
+                error=e,
             )
 
     async def _generate_answers(
@@ -890,12 +899,14 @@ class EvaluationManager:
             except Exception as e:  # noqa: BLE001 - isolate one query's failure
                 # The error may quote the answer: a digest at ERROR, the
                 # traceback at DEBUG.
-                logger.error(
+                log_failure(
+                    logger,
+                    logging.ERROR,
                     "Failed to process result for query '%s': %s",
                     query.query_id,
-                    error_digest(e),
+                    error=e,
+                    traceback=True,
                 )
-                logger.debug("Result processing error", exc_info=True)
                 results.append(
                     EvaluationResult(
                         query_id=query.query_id,
@@ -941,12 +952,14 @@ class EvaluationManager:
                         sorted(wanted), suffix
                     )
                 except Exception as e:  # noqa: BLE001 - attribution is best-effort
-                    logger.warning(
+                    log_error(
+                        logger,
+                        logging.WARNING,
                         "Could not resolve %s text-unit ids to files (suffix "
                         "'%s'); those sources stay unattributable: %s",
                         len(wanted),
                         suffix,
-                        e,
+                        error=e,
                     )
         for query, result, sources in zip(queries, results, provenance, strict=True):
             mapping = resolved.get(query.metadata.get("suffix"), {})
@@ -1307,12 +1320,14 @@ class EvaluationManager:
             except Exception as e:  # noqa: BLE001 - recorded per query below
                 # The error may quote a judge's reply: a digest at ERROR, the
                 # traceback at DEBUG.
-                logger.error(
+                log_failure(
+                    logger,
+                    logging.ERROR,
                     "Failed to run '%s' evaluation: %s",
                     evaluator_type.value,
-                    error_digest(e),
+                    error=e,
+                    traceback=True,
                 )
-                logger.debug("Evaluation run error", exc_info=True)
                 # Every answer is already generated: record the crash per query
                 # (as the per-query path in BaseGraphRAGEvaluator does) so the results
                 # are still saved and the summary counts the metrics as failed;
@@ -1665,8 +1680,12 @@ class EvaluationManager:
             try:
                 builds[suffix] = await self.rag_chain.aread_build_record(suffix)
             except Exception as e:  # noqa: BLE001 - the manifest entry is optional
-                logger.warning(
-                    "Could not read the build record of suffix '%s': %s", suffix, e
+                log_error(
+                    logger,
+                    logging.WARNING,
+                    "Could not read the build record of suffix '%s': %s",
+                    suffix,
+                    error=e,
                 )
                 builds[suffix] = None
         return builds

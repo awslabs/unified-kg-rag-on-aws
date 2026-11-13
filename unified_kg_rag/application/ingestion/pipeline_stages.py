@@ -1,5 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import logging
 from abc import ABC, abstractmethod
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -175,6 +176,7 @@ from unified_kg_rag.shared import (
 )
 from unified_kg_rag.shared.exceptions import classify
 from unified_kg_rag.shared.genai import ERROR_TYPE
+from unified_kg_rag.shared.logging import log_error
 from unified_kg_rag.shared.write_fence import check_write_fence
 
 if TYPE_CHECKING:
@@ -393,11 +395,15 @@ class PipelineStage(ABC):
         except ConfirmationDeclinedError as e:
             # Not a failure: the run stops before it writes (the pipeline
             # records the stage and raises it on).
-            logger.warning("Stage '%s' stopped: %s", self.name, e)
+            log_error(
+                logger, logging.WARNING, "Stage '%s' stopped: %s", self.name, error=e
+            )
             raise
-        except Exception as raised:
+        except Exception as raised:  # noqa: BLE001 - logged, recorded, raised
             error, named_after = self._stage_error(raised, ledger)
-            logger.exception("Stage '%s' failed: %s", self.name, error)
+            log_error(
+                logger, logging.ERROR, "Stage '%s' failed: %s", self.name, error=error
+            )
             span.record_exception(error)
             span.set_attribute(ERROR_TYPE, type(error).__name__)
             end_time = datetime.now()
@@ -907,10 +913,12 @@ class DocumentLoadingStage(_RegistryStage):
             finally:
                 vector.close()
         except Exception as e:  # noqa: BLE001 - read as holding: the run asks
-            logger.warning(
+            log_error(
+                logger,
+                logging.WARNING,
                 "Could not tell whether the stores hold items of '%s' (%s)",
                 suffix,
-                e,
+                error=e,
             )
             return None
         return None if None in answers else False
@@ -1126,10 +1134,12 @@ class DocumentParsingStage(_RegistryStage):
                 parser, digests, self._doc_status, source_scope
             )
         except Exception as e:  # noqa: BLE001 - every file is parsed instead
-            logger.warning(
+            log_error(
+                logger,
+                logging.WARNING,
                 "Could not read the doc-status registry to skip unchanged files "
                 "(%s): parsing every file",
-                e,
+                error=e,
             )
             return digests, {}
 
@@ -1214,7 +1224,13 @@ class DocumentParsingStage(_RegistryStage):
             document.to_json_file(output_path)
             logger.debug("Saved parsed document: '%s'", output_path)
         except (OSError, ValueError) as e:
-            logger.error("Failed to save parsed document '%s': %s", output_path, e)
+            log_error(
+                logger,
+                logging.ERROR,
+                "Failed to save parsed document '%s': %s",
+                output_path,
+                error=e,
+            )
 
 
 class TextChunkingStage(PipelineStage):
@@ -1766,10 +1782,12 @@ class GraphResolutionStage(PipelineStage):
             finally:
                 graph.close()
         except Exception as e:  # noqa: BLE001 - the stored summaries are a cache
-            logger.warning(
+            log_error(
+                logger,
+                logging.WARNING,
                 "Reading the stored summaries failed; summarizing every "
                 "description over the threshold: %s",
-                e,
+                error=e,
             )
         if reused_entities or reused_relationships:
             logger.info(
@@ -2328,11 +2346,13 @@ class CommunityDetectionStage(_RegistryStage):
                 finally:
                     graph.close()
             except Exception as e:  # noqa: BLE001 - left unclustered
-                logger.warning(
+                log_error(
+                    logger,
+                    logging.WARNING,
                     "Could not read the stored graph around %s small delta "
                     "components; leaving them out of the communities: %s",
                     len(components),
-                    e,
+                    error=e,
                 )
                 return set()
             if unclustered:
@@ -2467,13 +2487,15 @@ class CommunityDetectionStage(_RegistryStage):
                 if vector is not None:
                     vector.close()
         except Exception as e:  # noqa: BLE001 - counted in reports_failed
-            logger.warning(
+            log_error(
+                logger,
+                logging.WARNING,
                 "Could not read the stored members of %s communities only seed "
                 "graphs state in this run; storing them without a report, "
                 "counted in reports_failed (indexing.reset: true reports "
                 "them): %s",
                 len(communities),
-                e,
+                error=e,
             )
             return _StoredMembers(None, {}, {})
         self._summarize_members(context, stripped)
@@ -2775,10 +2797,12 @@ class IndexingStage(_RegistryStage):
             except NamespaceLeaseError:
                 raise
             except Exception as e:  # noqa: BLE001 - written again after the registry
-                logger.warning(
+                log_error(
+                    logger,
+                    logging.WARNING,
                     "Writing the build record failed (%s); retried once the "
                     "documents are recorded",
-                    e,
+                    error=e,
                 )
             if counters is None:
                 logger.warning(
@@ -3129,11 +3153,13 @@ class IndexingStage(_RegistryStage):
             try:
                 held = self._artifacts_held(suffix)
             except Exception as e:  # noqa: BLE001 - best-effort, as the write
-                logger.warning(
+                log_error(
+                    logger,
+                    logging.WARNING,
                     "Not rewriting the missing build record of '%s': its "
                     "indices could not be described (%s)",
                     suffix,
-                    e,
+                    error=e,
                 )
                 return None
             incremental = False
@@ -3239,11 +3265,13 @@ class IndexingStage(_RegistryStage):
             except NamespaceLeaseError:
                 raise
             except Exception as e:  # noqa: BLE001 - best-effort, as the record
-                logger.warning(
+                log_error(
+                    logger,
+                    logging.WARNING,
                     "Could not read the unchanged documents' index suffixes; "
                     "only '%s' records the methodologies no longer built: %s",
                     ", ".join(sorted(suffixes)),
-                    e,
+                    error=e,
                 )
             else:
                 suffixes |= {r.suffix for r in records.values() if r.suffix}

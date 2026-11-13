@@ -407,8 +407,18 @@ _JUDGE_MODULES = (
     "application/prompts",
     # The surfaces' last-resort error lines: an unexpected failure's text.
     "application/cli/mcp_server.py",
-    "application/cli/console/ask.py",
-    "application/cli/console/server.py",
+    "application/cli/console",
+    "application/cli/run_rag_chain.py",
+    "application/cli/run_evaluation.py",
+    "application/cli/run_ingestion_pipeline.py",
+    "application/cli/run_prompt_tuning.py",
+    # The runs' own error lines, the stores' and the retrievers' (a store's
+    # or a provider's error may quote the query or a document).
+    "application/ingestion/pipeline.py",
+    "application/ingestion/pipeline_stages.py",
+    "adapters/retrieval",
+    "adapters/retrievers",
+    "evaluation",
 )
 _ERROR_NAMES = {"e", "err", "error", "errors", "exc", "outcome"}
 
@@ -550,3 +560,97 @@ def test_log_failure_logs_the_traceback_at_debug_only_when_asked(
     debug = [r for r in caplog.records if r.levelno == logging.DEBUG]
     assert all(r.exc_info is None for r in errors)
     assert [r.exc_info is not None for r in debug] == [False, True]
+
+
+def _raised_through_two_frames() -> RuntimeError:
+    def inner() -> None:
+        raise KeyError("Quokkasecret payroll")
+
+    def outer() -> None:
+        try:
+            inner()
+        except KeyError as cause:
+            raise RuntimeError("the provider said: Zebrapassword") from cause
+
+    try:
+        outer()
+    except RuntimeError as e:
+        return e
+    raise AssertionError("unreachable")
+
+
+def test_an_unexpected_failure_is_locatable_at_info_without_its_text(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Regression (rv28): at INFO a failure was only ``Type (len=, sha=)``, so
+    the surfaces' "the server log has the details" located nothing."""
+    from unified_kg_rag.shared import get_logger
+    from unified_kg_rag.shared.logging import log_failure
+    from unified_kg_rag.shared.utils import error_locator
+
+    error = _raised_through_two_frames()
+    with caplog.at_level("DEBUG"):
+        log_failure(
+            get_logger("probe"), logging.ERROR, "x: %s", error=error, traceback=True
+        )
+    (shown,) = [r for r in caplog.records if r.levelno == logging.ERROR]
+    text = shown.getMessage()
+    assert text.startswith("x: RuntimeError (len=")
+    # The type chain, outermost first, and each one's frames: file:line name.
+    assert "RuntimeError at " in text and " <- KeyError at " in text
+    assert "test_log_redaction.py:" in text
+    assert "outer" in text and "inner" in text
+    _assert_no_secret(caplog)
+    # An error never raised has no frames to name.
+    assert error_locator(RuntimeError("never raised")) == ""
+    # The text and traceback are DEBUG's.
+    debug = [r for r in caplog.records if r.levelno == logging.DEBUG]
+    assert "Zebrapassword" in debug[0].getMessage()
+
+
+def test_a_traceback_free_failure_log_adds_no_location(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from unified_kg_rag.shared import get_logger
+    from unified_kg_rag.shared.logging import log_failure
+
+    with caplog.at_level("INFO"):
+        log_failure(
+            get_logger("probe"),
+            logging.WARNING,
+            "x: %s",
+            error=_raised_through_two_frames(),
+        )
+    assert "<-" not in caplog.records[0].getMessage()
+    assert " at " not in caplog.records[0].getMessage()
+
+
+def test_log_error_logs_an_outage_with_its_text_and_a_failure_without(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The one rule of every surface's last-resort line: an expected outcome
+    with its own message (a store down: its endpoint is not user data) is
+    logged in full, an unexpected failure by type and location."""
+    from unified_kg_rag.shared import StoreConnectionError, get_logger
+    from unified_kg_rag.shared.logging import log_error
+
+    logger = get_logger("probe")
+    with caplog.at_level("INFO"):
+        log_error(
+            logger,
+            logging.ERROR,
+            "call failed: %s",
+            error=StoreConnectionError("cannot reach https://store.internal:9200"),
+        )
+        log_error(
+            logger,
+            logging.ERROR,
+            "call failed: %s",
+            error=_raised_through_two_frames(),
+        )
+    outage, failure = (r.getMessage() for r in caplog.records)
+    assert outage == (
+        "call failed: [store_unreachable] cannot reach https://store.internal:9200"
+    )
+    assert failure.startswith("call failed: RuntimeError (len=")
+    assert "Zebrapassword" not in failure

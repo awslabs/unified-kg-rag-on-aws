@@ -205,7 +205,8 @@ Each answer covers one question; keep only the ones the run asks:
   re-run drop the two reset lines. A reset is never checked for mass
   deletions, so with the reset on it changes nothing.
 
-Neither confirmation answers a resume's integrity check (`--yes` does).
+Neither confirmation answers a resume's integrity check (`--yes` does); a reset run
+asks none.
 
 An override lasts one task. The next state-machine run starts from the task
 definition's environment and the image config again, so a setting every run
@@ -973,7 +974,7 @@ and an ECS task has no terminal to ask on: the run stops at
 `document_loading`, before it writes (`... needs confirmation, but stdin
 is not a terminal. Re-run with --confirm-reset (or UKR_CONFIRM_RESET=1)
 to proceed.`, exit 1). `UKR_CONFIRM_RESET=1` answers that question only
-(not a resume's integrity check, which `--yes` answers). Run that one
+(not a resume's integrity check, which `--yes` answers; a reset run asks none). Run that one
 reset as a one-off task with `UKR__INDEXING__RESET=true` and
 `UKR_CONFIRM_RESET=1` as environment overrides
 ([Run a one-off ingestion task](#run-a-one-off-ingestion-task)).

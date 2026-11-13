@@ -155,7 +155,9 @@ class TextUnitRemoval:
             results[f"vector_summary_nodes_{suffix}"] = summaries
         if _rejected(results):
             # Strip nothing until the removed text units are gone: a retry
-            # tells a removal that got further by their missing copies.
+            # tells a removal that got further by their missing copies (not
+            # for a retry's unchanged units, which the commit rewrites and
+            # this does not delete: the pending-strip note covers those).
             return results
         deleted_communities = [i for i, u in citing.communities.items() if gone(u)]
         m.deleted_communities.setdefault(suffix, set()).update(deleted_communities)
@@ -344,6 +346,10 @@ class TextUnitRemoval:
         # have stripped the entities and re-keyed an edge whose old graph
         # copy it did not get to delete. Only then are the graph's edges
         # looked up by text unit (on Neptune a scan of the suffix's edges).
+        # A retry's unchanged units are not deleted (the commit writes them
+        # back), so they never show as missing: a removal that died after
+        # re-keying an edge of only those is found through the pending-strip
+        # note, and this lookup stays as defence in depth.
         still = vector.read_text_unit_ids(text_unit_ids, suffix=suffix)
         resumed = still is None or len(set(still)) < len(removed)
         edges = (

@@ -22,6 +22,7 @@ from unified_kg_rag.evaluation.saved_results import (
     load_saved_runs,
 )
 from unified_kg_rag.shared.exceptions import DataProcessingError, EvaluationException
+from unified_kg_rag.shared.utils.files import read_user_text
 
 MAX_DATASET_BYTES = 50 * 1024 * 1024
 MAX_RESULT_BYTES = 200 * 1024 * 1024
@@ -39,7 +40,7 @@ def _read_json(path: Path, limit: int) -> Any:
     if path.stat().st_size > limit:
         raise EvaluationFileError(f"'{path.name}' is over {limit // 2**20} MiB")
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(read_user_text(path))
     except (OSError, ValueError) as e:
         raise EvaluationFileError(f"'{path.name}' is not JSON: {e}") from e
 

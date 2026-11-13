@@ -500,6 +500,43 @@ async def test_a_store_failure_reaches_the_caller_without_its_details(
 
 
 @requires_mcp
+async def test_the_server_log_names_what_the_caller_is_sent_to_look_up(
+    tools: KnowledgeGraphTools,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The error says "the server log has the details": an outage's text (its
+    endpoint) and, of an unexpected failure, its type and where it happened
+    (never its text, which may quote a prompt) are in the log at INFO."""
+    import logging
+
+    from mcp import Client
+
+    from unified_kg_rag.application.cli.mcp_server import build_mcp_server
+    from unified_kg_rag.shared.exceptions import StoreConnectionError
+
+    errors: list[Exception] = [
+        StoreConnectionError("cannot reach https://vpc-secret.internal:8182"),
+        RuntimeError("ValidationException: prompt tail MARKER"),
+    ]
+
+    async def broken(*_args: Any, **_kwargs: Any) -> Any:
+        raise errors.pop(0)
+
+    monkeypatch.setattr(mcp_tools.graph_lookup, "find_entities", broken)
+    caplog.set_level(logging.INFO)
+    async with Client(build_mcp_server(tools)) as client:
+        for _ in range(2):
+            result = await client.call_tool("kg_get_entity", {"name": "Depot"})
+            assert result.is_error
+    lines = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
+    assert any("vpc-secret.internal:8182" in line for line in lines), lines
+    (unexpected,) = [line for line in lines if "RuntimeError" in line]
+    assert "MARKER" not in unexpected
+    assert "test_mcp_embedded.py:" in unexpected and "broken" in unexpected
+
+
+@requires_mcp
 async def test_an_unexpected_failure_is_logged_under_the_ids_the_caller_gets(
     tools: KnowledgeGraphTools, monkeypatch: pytest.MonkeyPatch
 ) -> None:

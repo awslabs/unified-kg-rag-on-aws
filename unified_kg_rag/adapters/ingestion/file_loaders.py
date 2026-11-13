@@ -48,13 +48,14 @@ from langchain_core.documents import Document as LangChainDocument
 
 from unified_kg_rag.shared.exceptions import DataProcessingError
 from unified_kg_rag.shared.extras import extra_hint
+from unified_kg_rag.shared.utils.files import USER_TEXT_ENCODING
 
 # What a text loader reads without an ``encoding``: UTF-8, not the locale's
 # preferred encoding (``open()``'s default), so a UTF-8 file reads the same
 # text, and keeps its source digest, under any locale. A leading byte-order
 # mark (Excel's "CSV UTF-8", common for Korean and Japanese exports) is not
 # text: a CSV's first header kept it in every row.
-DEFAULT_ENCODING = "utf-8-sig"
+DEFAULT_ENCODING = USER_TEXT_ENCODING
 
 
 class TextFileLoader(BaseLoader):

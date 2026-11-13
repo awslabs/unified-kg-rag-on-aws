@@ -88,6 +88,7 @@ Each report records the token-F1 tokenization (``token_f1_tokens``:
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 import unicodedata
 from collections import Counter
@@ -103,7 +104,6 @@ from unified_kg_rag.adapters.evaluators.base import (
     SKIP_REASON_EMPTY_REFERENCE,
     SKIPPED_METRICS_KEY,
     BaseGraphRAGEvaluator,
-    error_digest,
     judge_effort,
     judge_model_kwargs,
 )
@@ -126,6 +126,7 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.domain.prompts import NO_ANSWER_SPAN, AnswerSpanExtractionPrompt
 from unified_kg_rag.domain.retrieval.no_context import answer_language
 from unified_kg_rag.shared import EvaluationException, get_logger
+from unified_kg_rag.shared.logging import log_failure
 
 from .text_matching import (
     normalize_answer,
@@ -523,13 +524,14 @@ class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
             span = await self._extracted_span(result.question, answer)
         except Exception as e:  # noqa: BLE001 - scored on the first line instead
             # The error may quote the model's span: a digest at WARNING.
-            logger.warning(
+            log_failure(
+                logger,
+                logging.WARNING,
                 "Answer-span extraction failed for '%s' (scoring its first "
                 "line): %s",
                 query.query_id,
-                error_digest(e),
+                error=e,
             )
-            logger.debug("Answer-span extraction error for '%s': %s", query.query_id, e)
             return self._score(
                 query,
                 result,

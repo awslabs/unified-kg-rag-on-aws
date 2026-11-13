@@ -1130,8 +1130,9 @@ From a `main` checkout (formats and keys no release had):
   the one detected (cp1252 for a French file detected as cp1250); setting it parses those files again in the next
   incremental run, and no UTF-8 file. A text, CSV or HTML file is first read as UTF-8 under any locale (it was read
   in the locale's encoding, so a UTF-8 file decoded as Latin-1 text under a Latin-1 locale), without a leading
-  byte-order mark (a CSV saved as Excel's "CSV UTF-8" kept it in its first header on every row after the first). See
-  [ingest](docs/guides/ingest.md#large-and-heterogeneous-corpora).
+  byte-order mark (a CSV saved as Excel's "CSV UTF-8" kept it in its first header on every row after the first); an
+  evaluation dataset, a JSON schema file, a dataset uploaded to the console and `run-prompt-tuning`'s corpus text
+  are read without one too. See [ingest](docs/guides/ingest.md#large-and-heterogeneous-corpora).
 - Documents from memory: `DataIngestionPipeline.insert_documents([InputDocument(id=..., text=..., filters=...)])`
   adds or updates documents, `delete_documents(ids)` deletes them, through the incremental path of `run` (one run
   each, under the namespace lease); the source scope's other documents are kept (`DocumentDelta.kept`). Needs the
@@ -2341,9 +2342,12 @@ Deployment (CDK).
 - Logs carry no query text, entity names or model output at INFO, no local variables in tracebacks, no ANSI codes
   when piped, and no relationship endpoints or output previews from gleaning; an evaluator or judge error, and a
   model call's a query, a search strategy, an ingestion step or prompt tuning absorbs (rerank, translation, planner,
-  DRIFT, global and iterative steps, extraction, gleaning, chunking, reports, batch embedding), is logged as its type
-  and a digest (`log_failure`), its text and traceback at DEBUG; a unit test over those packages fails on a new INFO+
-  log call that passes them (#156, #173, #245, #255, #606).
+  DRIFT, global and iterative steps, extraction, gleaning, chunking, reports, batch embedding), is logged as its type,
+  a digest and where it happened (`log_failure`: the type chain and `file:line` frames, never the message), its text
+  and traceback at DEBUG; an outage, the deadline or a refusal has its own message and is logged with it
+  (`log_error`, one rule for MCP, the console, `run-rag`, `run-eval`, ingestion and the stores' and retrievers'
+  error lines); the console answers an error no handler claimed itself, so the server logs no raw exception; a unit
+  test over those packages fails on a new INFO+ log call that passes them (#156, #173, #245, #255, #606).
 - Spans carry an error's type and a digest of its message (`kg_rag.error_digest`), not its text or stack, unless
   `observability.capture_content` (then through `redact_patterns`): a judge's or parser's error quoting corpus text
   reached Langfuse or Phoenix with capture off. A model server that cannot be reached is named by its URL without

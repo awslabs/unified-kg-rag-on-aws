@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import functools
+import logging
 import secrets
 import signal
 import tempfile
@@ -162,13 +163,14 @@ from unified_kg_rag.shared.exceptions import (
     ModelUnreachableError,
     StoreConnectionError,
 )
+from unified_kg_rag.shared.logging import log_error, log_failure
 from unified_kg_rag.shared.metrics import MetricsSink, NullMetricsSink
 from unified_kg_rag.shared.store_lookups import (
     install_lookup_cache,
     remove_lookup_cache,
 )
 from unified_kg_rag.shared.usage import usage_scope
-from unified_kg_rag.shared.utils import compute_hash, error_digest
+from unified_kg_rag.shared.utils import compute_hash
 from unified_kg_rag.shared.write_fence import (
     check_fences_held,
     install_write_fence,
@@ -913,11 +915,13 @@ class DataIngestionPipeline:
                 return set()
             metadata = self.state_manager.load_pipeline_metadata(pipeline_id)
         except PipelineStateError as e:
-            logger.warning(
+            log_error(
+                logger,
+                logging.WARNING,
                 "Could not read the saved state of run '%s' (%s): its deleted "
                 "documents are not known",
                 pipeline_id,
-                e,
+                error=e,
             )
             return set()
         delta = metadata.get("incremental_delta")
@@ -1150,14 +1154,14 @@ class DataIngestionPipeline:
             # A question answered no (a reset not confirmed): nothing was
             # written and nothing failed, so no traceback.
             raise
-        except PipelineExecutionError:
+        except PipelineExecutionError as e:
             # Already says what failed (a refused resume, say): wrapped again
             # it read "Failed to run pipeline: Pipeline resume failed: ...".
-            logger.exception("Pipeline execution failed")
+            log_error(logger, logging.ERROR, "Pipeline execution failed: %s", error=e)
             raise
         except Exception as e:
             self._raise_if_stopped_by(e)
-            logger.exception("Pipeline execution failed: %s", e)
+            log_error(logger, logging.ERROR, "Pipeline execution failed: %s", error=e)
             raise PipelineExecutionError(f"Failed to run pipeline: {e}") from e
         finally:
             if self._reset_for_run:
@@ -1467,10 +1471,12 @@ class DataIngestionPipeline:
                     raise
                 close()
         except Exception as e:  # noqa: BLE001 - counted as a death at worst
-            logger.warning(
+            log_error(
+                logger,
+                logging.WARNING,
                 "Closing the run's processing attempts failed (%s); the next "
                 "run counts this one as a run that died",
-                e,
+                error=e,
             )
 
     def _resumes_past_loading(self, start_stage_name: str | None) -> bool:
@@ -1634,10 +1640,12 @@ class DataIngestionPipeline:
             check_fences_held()
         except NamespaceLeaseError as e:
             # Another run may write this pipeline's checkpoint now.
-            logger.warning(
+            log_error(
+                logger,
+                logging.WARNING,
                 "Run stopped without uploading the checkpoint of '%s': %s",
                 self._checkpoint_id,
-                e,
+                error=e,
             )
             return
         logger.warning(
@@ -1662,10 +1670,12 @@ class DataIngestionPipeline:
         try:
             self._sync_cache_with_s3(pipeline_id, "upload")
         except CacheSyncError as e:
-            logger.warning(
+            log_error(
+                logger,
+                logging.WARNING,
                 "Checkpoint upload failed for '%s'; the next upload retries it: %s",
                 pipeline_id,
-                e,
+                error=e,
             )
 
     @classmethod
@@ -1863,11 +1873,13 @@ class DataIngestionPipeline:
                 pipeline_id,
             )
         except Exception as e:
-            logger.error(
+            log_error(
+                logger,
+                logging.ERROR,
                 "Failed to sync cache %s S3 for pipeline '%s': %s",
                 direction,
                 pipeline_id,
-                e,
+                error=e,
             )
             raise
 
@@ -2139,7 +2151,12 @@ class DataIngestionPipeline:
         except (ConfigurationError, NamespaceLeaseError, StoreConnectionError):
             raise
         except Exception as e:  # noqa: BLE001 - the stages report the store
-            logger.warning("Checking the vector store's index creation failed: %s", e)
+            log_error(
+                logger,
+                logging.WARNING,
+                "Checking the vector store's index creation failed: %s",
+                error=e,
+            )
 
     def _start_index(self, start_stage_name: str | None) -> int:
         """Index in ``self.stages`` of the first stage to run.
@@ -2277,11 +2294,13 @@ class DataIngestionPipeline:
                 retried_unit_ids=retried,
             )
         except Exception as e:  # noqa: BLE001 - the run fails either way
-            logger.warning(
+            log_error(
+                logger,
+                logging.WARNING,
                 "Recording the documents stage '%s' failed on failed (%s); the "
                 "next run retries them without counting this failure",
                 stage.name,
-                e,
+                error=e,
             )
 
     def _run_stage(
@@ -2340,9 +2359,13 @@ class DataIngestionPipeline:
                     ),
                 )
             raise
-        except Exception as e:
-            logger.error(
-                "Unexpected error in stage '%s': %s", stage.name, e, exc_info=True
+        except Exception as e:  # noqa: BLE001 - logged, recorded, raised
+            log_error(
+                logger,
+                logging.ERROR,
+                "Unexpected error in stage '%s': %s",
+                stage.name,
+                error=e,
             )
             failed_result = PipelineStageResult(
                 stage_name=stage.name,
@@ -2431,8 +2454,12 @@ class DataIngestionPipeline:
                     ", ".join(saved_outputs),
                 )
         except Exception as e:  # noqa: BLE001 - the stage reruns on resume
-            logger.warning(
-                "Failed to save outputs to cache for stage '%s': %s", stage_name, e
+            log_error(
+                logger,
+                logging.WARNING,
+                "Failed to save outputs to cache for stage '%s': %s",
+                stage_name,
+                error=e,
             )
 
     def _should_stop_pipeline(self, result: PipelineStageResult) -> bool:
@@ -2508,8 +2535,12 @@ class DataIngestionPipeline:
                 return
             counts = write_visualization_data(self.providers, suffix, path)
         except Exception as e:  # noqa: BLE001 - the export is optional
-            logger.warning("Visualization data export failed: %s", error_digest(e))
-            logger.debug("Visualization data export error: %s", e)
+            log_failure(
+                logger,
+                logging.WARNING,
+                "Visualization data export failed: %s",
+                error=e,
+            )
             return
         context.visualization_data_path = str(path)
         self._upload_export(context.pipeline_id, path)
@@ -2607,8 +2638,11 @@ class DataIngestionPipeline:
         try:
             self.s3_cache_manager.upload_file(pipeline_id, cache_dir, path)
         except Exception as e:  # noqa: BLE001 - the export is optional
-            logger.warning(
-                "Uploading the visualization data failed: %s", error_digest(e)
+            log_failure(
+                logger,
+                logging.WARNING,
+                "Uploading the visualization data failed: %s",
+                error=e,
             )
 
     def _finalize_pipeline_execution(
@@ -2746,11 +2780,12 @@ class DataIngestionPipeline:
                 )
             return result
         except Exception as e:  # noqa: BLE001 - verification only reports
-            logger.error(
+            log_error(
+                logger,
+                logging.ERROR,
                 "Error during pipeline metadata verification for %s: %s",
                 pipeline_id,
-                e,
-                exc_info=True,
+                error=e,
             )
             return False
 

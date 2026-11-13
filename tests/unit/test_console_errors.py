@@ -151,3 +151,71 @@ def test_the_ask_request_s_top_k_bound_is_the_served_one(tmp_path: Path) -> None
         with pytest.raises(ValidationError):
             refused()
     assert _client(tmp_path).get("/api/status").json()["max_top_k"] == MAX_SERVED_TOP_K
+
+
+_UVICORN_SCRIPT = """
+import http.client, logging, socket, sys, threading, time
+from pathlib import Path
+
+import uvicorn
+
+from unified_kg_rag.application.cli.console.server import ConsoleOptions, create_app
+
+logging.basicConfig(level=logging.INFO, stream=sys.stderr)
+root = Path(sys.argv[1])
+app = create_app(
+    ConsoleOptions(workspace=root, cache_directory=root / "cache", config_path=None)
+)
+
+
+async def boom() -> None:
+    raise RuntimeError("ValidationException: prompt tail MARKER 가젯 arn:aws:x")
+
+
+app.add_api_route("/api/boom", boom)
+app.router.routes.insert(0, app.router.routes.pop())
+sock = socket.socket()
+sock.bind(("127.0.0.1", 0))
+server = uvicorn.Server(
+    uvicorn.Config(app, log_level="info", access_log=False, lifespan="on")
+)
+thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]})
+thread.start()
+while not server.started:
+    time.sleep(0.05)
+connection = http.client.HTTPConnection("127.0.0.1", sock.getsockname()[1])
+connection.request("GET", "/api/boom", headers={"Host": "127.0.0.1"})
+response = connection.getresponse()
+print(response.status, response.read().decode())
+server.should_exit = True
+thread.join()
+"""
+
+
+@pytest.mark.timeout(60)
+def test_an_unhandled_error_is_logged_once_without_its_text_under_uvicorn(
+    tmp_path: Path,
+) -> None:
+    # Regression (rv28): Starlette re-raises after an Exception handler, so
+    # uvicorn logged the raw text and traceback at ERROR, past log_failure.
+    import subprocess
+    import sys
+
+    done = subprocess.run(  # noqa: S603 - this interpreter, a fixed script
+        [sys.executable, "-c", _UVICORN_SCRIPT, str(tmp_path)],
+        capture_output=True,
+        text=True,
+        timeout=50,
+        check=False,
+    )
+    assert done.returncode == 0, done.stderr
+    status, _, body = done.stdout.strip().partition(" ")
+    assert status == "500"
+    assert "MARKER" not in body and INTERNAL_ERROR_MESSAGE in body
+    assert "MARKER" not in done.stderr and "arn:aws" not in done.stderr
+    # Locatable at INFO: the type, a digest and the raising frame.
+    assert "Console request failed: RuntimeError (len=" in done.stderr
+    assert "test_console_errors" not in done.stderr
+    assert "<string>:" in done.stderr
+    assert done.stderr.count("Console request failed") == 1
+    assert "Traceback" not in done.stderr

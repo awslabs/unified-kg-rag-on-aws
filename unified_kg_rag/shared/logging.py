@@ -12,7 +12,8 @@ import structlog
 from structlog.stdlib import LoggerFactory, ProcessorFormatter
 
 from . import observability
-from .utils.common import error_digest
+from .exceptions import ErrorClass, classify
+from .utils.common import error_digest, error_locator
 
 
 class LoggingSettings(Protocol):
@@ -256,10 +257,38 @@ def log_failure(
     ``level`` with :func:`error_digest` of ``error`` (its type and a hash of
     its text, which may quote a model's reply, a query or corpus text), and
     with the error itself at DEBUG, with its traceback when ``traceback``:
-    what the logging policy (SECURITY.md) allows at INFO and above. The one
-    way to log an error whose text may hold model output or corpus text."""
-    logger.log(level, message, *args, error_digest(error))
+    what the logging policy (SECURITY.md) allows at INFO and above. With
+    ``traceback`` the ``level`` line also says where it came from
+    (:func:`error_locator`: the type chain and ``file:line`` frames, no
+    message text), so an unexpected failure is locatable at the default
+    level. The one way to log an error whose text may hold model output or
+    corpus text."""
+    digest = error_digest(error)
+    if traceback and (where := error_locator(error)):
+        digest = f"{digest}; {where}"
+    logger.log(level, message, *args, digest)
     logger.debug(message, *args, error, exc_info=error if traceback else None)
+
+
+def log_error(
+    logger: Any,
+    level: int,
+    message: str,
+    *args: Any,
+    error: BaseException,
+) -> None:
+    """Log ``error`` (``message``'s last ``%s``) by its class, the one rule
+    of every surface's last-resort line (MCP, console, ``run-rag``,
+    ``run-eval``, ``run-ingestion``): an unexpected ``failure`` through
+    :func:`log_failure` (type, digest and where it came from at ``level``;
+    text and traceback at DEBUG), any other class (an unreachable store or
+    model, the deadline, a refusal: an expected outcome with its own
+    message, whose endpoint is not user data) with its text and class."""
+    error_class = classify(error)
+    if error_class is ErrorClass.FAILURE:
+        log_failure(logger, level, message, *args, error=error, traceback=True)
+    else:
+        logger.log(level, message, *args, f"[{error_class.value}] {error}")
 
 
 def warn_once(

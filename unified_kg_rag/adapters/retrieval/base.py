@@ -3,6 +3,7 @@
 import asyncio
 import functools
 import json
+import logging
 import math
 from abc import ABC, abstractmethod
 from collections import Counter
@@ -84,7 +85,7 @@ from unified_kg_rag.domain.retrieval.ppr import cap_edges_per_vertex
 from unified_kg_rag.domain.retrieval.store_names import graph_label, store_name
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.exceptions import InvalidFilterError
-from unified_kg_rag.shared.logging import warn_once
+from unified_kg_rag.shared.logging import log_error, warn_once
 from unified_kg_rag.shared.utils.common import compute_hash, safe_float_parse
 from unified_kg_rag.shared.utils.concurrency import (
     gather_bounded,
@@ -875,11 +876,13 @@ class BaseSearchStrategy(ABC):
             except Exception as e:
                 if is_fatal_retrieval_error(e):
                     raise
-                logger.error(
+                log_error(
+                    logger,
+                    logging.ERROR,
                     "%s: %s failed (degrading to empty results): %s",
                     type(self).__name__,
                     label,
-                    e,
+                    error=e,
                 )
                 span.record_exception(e)
                 span.set_attributes({"kg_rag.degraded": True, "kg_rag.hits": 0})
@@ -1132,12 +1135,14 @@ class BaseSearchStrategy(ABC):
             except Exception as e:
                 if is_fatal_retrieval_error(e):
                     raise
-                logger.warning(
+                log_error(
+                    logger,
+                    logging.WARNING,
                     "%s: the attribute filter check on '%s' failed; what it "
                     "could not check counts as failing: %s",
                     type(self).__name__,
                     prefix,
-                    e,
+                    error=e,
                 )
                 span.record_exception(e)
                 span.set_attributes({"kg_rag.degraded": True})
@@ -1802,10 +1807,12 @@ class BaseSearchStrategy(ABC):
                 except Exception as e:
                     if is_fatal_retrieval_error(e):
                         raise
-                    logger.error(
+                    log_error(
+                        logger,
+                        logging.ERROR,
                         "%s: neighbourhood edges failed (degrading to none): %s",
                         type(self).__name__,
-                        e,
+                        error=e,
                     )
                     span.record_exception(e)
                     span.set_attributes({"kg_rag.degraded": True})
