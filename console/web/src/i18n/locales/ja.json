@@ -100,6 +100,7 @@
   "ask.error.invalid_argument": "リクエストが拒否されました。引数を変更してください",
   "ask.error.configuration": "現在の構成ではこのクエリを処理できません",
   "ask.error.failure": "クエリに失敗しました",
+  "ask.error.failureHelp": "サーバー内で呼び出しが失敗しました（ストアまたはモデルのエラー）。詳細はサーバーログのクエリ ID {{query_id}} にあります。",
   "ask.meta.strategy": "戦略",
   "ask.meta.latency": "時間",
   "ask.meta.tokens": "入力 / 出力トークン",
@@ -628,5 +629,7 @@
   "error.unreadable": "読み取れません。",
   "error.not_found": "見つかりません。",
   "error.failed": "リクエストが失敗しました。",
+  "error.failure": "サーバー内でリクエストが失敗しました（ストアまたはモデルのエラー）。詳細はサーバーログにあります。",
+  "error.traceId": "トレース ID: {{trace_id}}",
   "error.network": "コンソールが応答しません。run-console が実行中か確認してください。"
 }

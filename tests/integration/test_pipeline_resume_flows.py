@@ -188,6 +188,26 @@ def test_a_failed_integrity_check_without_a_terminal_needs_yes(
     assert harness.run("--pipeline-id", "p1", "--yes") == 0
 
 
+def test_a_reset_rerun_needs_no_integrity_answer_and_warns_of_no_rewind(
+    harness: _Harness, caplog: pytest.LogCaptureFixture
+) -> None:
+    assert harness.run("--pipeline-id", "p1") == 0
+    # The first run's delta filtered the loading stage; a reset loads every
+    # document, so its loading inputs differ from the cached run's. That is
+    # what a reset asks for: no question (no terminal here) and no warning.
+    with caplog.at_level(logging.INFO):
+        assert harness.run("--pipeline-id", "p1", "--reset") == 0
+    rewinds = [r for r in caplog.records if "Rewinding" in r.getMessage()]
+    assert rewinds and all(r.levelno == logging.INFO for r in rewinds)
+    assert not [
+        r
+        for r in caplog.records
+        if r.levelno >= logging.WARNING
+        and ("cache holds no" in r.getMessage() or "inputs changed" in r.getMessage())
+    ]
+    assert harness.metadata("p1")["status"] == "completed"
+
+
 def test_force_rebuild_rewrites_the_stage_cache(harness: _Harness) -> None:
     # A full (non-incremental) run, so the rebuild re-extracts every document
     # instead of skipping them as unchanged in the registry.

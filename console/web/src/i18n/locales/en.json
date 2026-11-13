@@ -101,6 +101,7 @@
   "ask.error.invalid_argument": "The request was refused: an argument to change",
   "ask.error.configuration": "The configuration cannot serve this query",
   "ask.error.failure": "The query failed",
+  "ask.error.failureHelp": "The call failed inside the server (a store or model error). The server log has the details under query id {{query_id}}.",
   "ask.meta.strategy": "Strategy",
   "ask.meta.latency": "Time",
   "ask.meta.tokens": "Tokens in / out",
@@ -652,5 +653,7 @@
   "error.unreadable": "Could not be read.",
   "error.not_found": "Not found.",
   "error.failed": "The request failed.",
+  "error.failure": "The request failed inside the server (a store or model error); the server log has the details.",
+  "error.traceId": "Trace id: {{trace_id}}.",
   "error.network": "The console does not answer. Is run-console still running?"
 }

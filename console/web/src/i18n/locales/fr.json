@@ -102,6 +102,7 @@
   "ask.error.invalid_argument": "La requête a été refusée : un argument est à modifier",
   "ask.error.configuration": "La configuration ne permet pas de traiter cette requête",
   "ask.error.failure": "La requête a échoué",
+  "ask.error.failureHelp": "L’appel a échoué dans le serveur (une erreur de stockage ou de modèle). Le journal du serveur en donne le détail sous l’identifiant de requête {{query_id}}.",
   "ask.meta.strategy": "Stratégie",
   "ask.meta.latency": "Durée",
   "ask.meta.tokens": "Jetons en entrée / sortie",
@@ -676,5 +677,7 @@
   "error.unreadable": "Lecture impossible.",
   "error.not_found": "Introuvable.",
   "error.failed": "La requête a échoué.",
+  "error.failure": "La requête a échoué dans le serveur (une erreur de stockage ou de modèle) ; le journal du serveur en donne le détail.",
+  "error.traceId": "Identifiant de trace : {{trace_id}}.",
   "error.network": "La console ne répond pas. run-console est-il toujours lancé ?"
 }

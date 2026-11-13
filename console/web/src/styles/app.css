@@ -432,8 +432,15 @@ kbd {
 .nav:not([data-fold="0"]) .brand-sub {
   display: none;
 }
+/* Hidden visually, not from the tree: the language picker's label is its
+   select's accessible name. */
 .nav:is([data-fold="2"], [data-fold="3"]) .nav-tools .field-label {
-  display: none;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 .nav[data-fold="3"] .nav-inner {
   flex-wrap: wrap;
@@ -1014,7 +1021,8 @@ kbd {
 /* A row of figure cards: a small label over a large value. */
 .stat-row {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  /* The seven tiles share one row at 1280 px. */
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: var(--space-4);
 }
 .stat {
@@ -1022,7 +1030,7 @@ kbd {
   /* A label that wraps pushes no figure down: the figures share a line. */
   grid-template-rows: 1fr auto;
   gap: var(--space-1);
-  padding: var(--space-4) var(--space-5);
+  padding: var(--space-4);
   background: var(--sheet);
   border: 1px solid var(--rule);
   border-radius: var(--radius);

@@ -4,7 +4,8 @@
  * provenance trail into the graph, then every page, with no request to
  * another host and no error in the page. Skipped without a browser, except
  * in CI: a CI run without one would pass having tested nothing. */
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { chromium, expect, test } from "@playwright/test";
 
 const browser = process.env.CHROMIUM_PATH ?? chromium.executablePath();
@@ -150,8 +151,10 @@ for (const locale of ["en", "de", "fr", "ru", "es"]) {
 // Regression (rv26): narrowing the window folded the top bar into its menu,
 // skipping the compaction steps (each step was measured as the row's
 // scrollWidth, never under its width at load). Loaded wide and narrowed,
-// the row takes the step it takes when loaded at that width.
-for (const locale of ["en", "ko", "de"]) {
+// the row takes the step it takes when loaded at that width (rv27: loaded
+// folded, Japanese measured every step 8 px wide, the folded row's padding,
+// and folded at 1180 px where a narrowed window fits).
+for (const locale of ["en", "ko", "de", "ja"]) {
   test(`the top bar compacts as the window narrows in ${locale}`, async ({ browser, baseURL }) => {
     const origin = new URL(baseURL ?? "http://127.0.0.1:8501").origin;
     const token = new URL(process.env.CONSOLE_URL ?? origin).searchParams.get("token") ?? process.env.CONSOLE_TOKEN;
@@ -178,5 +181,33 @@ for (const locale of ["en", "ko", "de"]) {
       await direct.context.close();
     }
     await wide.context.close();
+  });
+}
+
+// Regression (rv27): at the compaction step that hides the pickers' field
+// labels (1280 px in English and German), the language picker lost its
+// accessible name with its label's text. axe-core finds no violation there.
+const axeSource = readFileSync(createRequire(import.meta.url).resolve("axe-core/axe.min.js"), "utf8");
+for (const locale of ["en", "de"]) {
+  test(`no accessibility violation at 1280 px in ${locale}`, async ({ page, baseURL }) => {
+    const origin = new URL(baseURL ?? "http://127.0.0.1:8501").origin;
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.addInitScript((code) => window.localStorage.setItem("ukr-console-locale", code), locale);
+    const token = new URL(process.env.CONSOLE_URL ?? origin).searchParams.get("token") ?? process.env.CONSOLE_TOKEN;
+    const statusRead = page.waitForResponse((response) => response.url().includes("/api/status"));
+    await page.goto(token ? `/ask?token=${encodeURIComponent(token)}` : "/ask");
+    await statusRead;
+    await page.evaluate(() => document.fonts.ready.then(() => undefined));
+    await page.waitForTimeout(100);
+    expect(await page.locator("header.nav").getAttribute("data-fold")).toBe("2");
+    await expect(page.locator("#locale")).toHaveAccessibleName(locale === "de" ? "Sprache" : "Language");
+    // Evaluated, not a script tag: the page's CSP allows no inline script.
+    await page.evaluate(axeSource);
+    const violations = await page.evaluate(async () => {
+      const axe = (window as unknown as { axe: { run: (context: Document) => Promise<{ violations: { id: string; nodes: { target: string[] }[] }[] }> } }).axe;
+      const { violations } = await axe.run(document);
+      return violations.map((violation) => `${violation.id}: ${violation.nodes.map((node) => node.target.join(" ")).join(", ")}`);
+    });
+    expect(violations).toEqual([]);
   });
 }

@@ -43,8 +43,19 @@ def _add(target: dict[str, float], counts: Mapping[str, Any]) -> None:
 _UNSERVED = ("cancelled", "refused")
 
 
+# Questions served that ended in no answer: raised (``failed``) or returned
+# an error (``error``). Neither could decline.
+_FAILED = ("failed", "error")
+
+
 def _served(query: Mapping[str, Any]) -> bool:
     return query.get("outcome") not in _UNSERVED
+
+
+def _could_decline(query: Mapping[str, Any]) -> bool:
+    """Whether the question was served and ended in an answer or a decline:
+    the decline rate's denominator."""
+    return _served(query) and query.get("outcome") not in _FAILED
 
 
 def _latency(query: Mapping[str, Any]) -> float | None:
@@ -92,20 +103,24 @@ def summarize(
     priced_queries = 0
     for query in queries:
         strategy = query.get("strategy") or query.get("requested_strategy") or "unknown"
-        row = by_strategy[strategy]
         latency = _latency(query)
-        row["queries"] += 1
-        row["abstained"] += int(bool(query.get("abstained")))
-        row["errors"] += int(query.get("outcome") in ("failed", "error"))
-        if latency is not None:
-            row["latencies"].append(latency)
         usage = query.get("usage") or {}
-        row["tokens"] += int(usage.get("input_tokens") or 0) + int(
-            usage.get("output_tokens") or 0
-        )
+        # A question refused as asked ran no strategy: it is counted in the
+        # totals (``refused``), not as one of a strategy's questions.
+        if query.get("outcome") != "refused":
+            row = by_strategy[strategy]
+            row["queries"] += 1
+            row["abstained"] += int(bool(query.get("abstained")))
+            row["errors"] += int(query.get("outcome") in _FAILED)
+            if latency is not None:
+                row["latencies"].append(latency)
+            row["tokens"] += int(usage.get("input_tokens") or 0) + int(
+                usage.get("output_tokens") or 0
+            )
+            if query.get("cost_usd") is not None:
+                row["cost_usd"] += query["cost_usd"]
+                row["priced"] += 1
         if query.get("cost_usd") is not None:
-            row["cost_usd"] += query["cost_usd"]
-            row["priced"] += 1
             total_cost += query["cost_usd"]
             priced_queries += 1
         for model, counts in (usage.get("by_model") or {}).items():
@@ -174,16 +189,17 @@ def summarize(
                 "cost_usd": _job_cost(job),
             }
         )
-    served = sum(map(_served, queries))
+    decided = sum(map(_could_decline, queries))
     abstained = sum(bool(q.get("abstained")) for q in queries)
     return {
         "totals": {
             "queries": len(queries),
             "answered": sum(q["outcome"] == "answered" for q in queries),
             "abstained": abstained,
-            # Of the questions served: neither refused nor cancelled.
-            "decline_rate": abstained / served if served else None,
-            "errors": sum(q["outcome"] in ("failed", "error") for q in queries),
+            # Of the questions served that answered or declined: neither
+            # refused, cancelled nor failed.
+            "decline_rate": abstained / decided if decided else None,
+            "errors": sum(q["outcome"] in _FAILED for q in queries),
             # Questions refused as asked (a namespace without an index, a
             # filter to change): the caller's to fix, not errors, and left
             # out of the latencies and the decline rate.

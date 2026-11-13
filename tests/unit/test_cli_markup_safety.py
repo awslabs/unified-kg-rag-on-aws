@@ -219,6 +219,7 @@ def test_run_ingestion_prints_integrity_errors_literally(
     runner.args = argparse.Namespace(
         pipeline_id="p1", force_rebuild=False, source_directory="."
     )
+    runner.config = Config()
 
     class _Pipeline:
         class state_manager:

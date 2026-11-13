@@ -17,11 +17,27 @@ export class ApiError extends Error {
   }
 }
 
+type Translate = (key: string, vars?: Record<string, string | number>) => string;
+
+/** What the page says of a failure inside the server (error class
+ * ``failure``), whose detail the server keeps in its log: in the page's
+ * language, with the ids the server sent (a question's ``query_id``, its
+ * ``trace_id``) to find its log lines and trace by. */
+export function failureHelp(t: Translate, ids: { query_id?: unknown; trace_id?: unknown }): string {
+  const named = (value: unknown) => (typeof value === "string" && value ? value : undefined);
+  const queryId = named(ids.query_id);
+  const traceId = named(ids.trace_id);
+  const help = queryId ? t("ask.error.failureHelp", { query_id: queryId }) : t("error.failure");
+  return traceId ? `${help} ${t("error.traceId", { trace_id: traceId })}` : help;
+}
+
 /** An error as the page shows it: what kind of refusal it is, in the
  * page's language (a request's own kind, else its error class as the Ask
- * page names it), then the server's detail. */
-export function errorMessage(t: (key: string) => string, error: unknown): string {
+ * page names it), then the server's detail; a failure inside the server
+ * as :func:`failureHelp` says it (its detail is the server log's). */
+export function errorMessage(t: Translate, error: unknown): string {
   if (error instanceof ApiError) {
+    if (error.code === "failure") return failureHelp(t, error.body);
     const key = `error.${error.code}`;
     const kind = t(key);
     if (kind !== key) return `${kind} ${error.message}`;

@@ -54,7 +54,8 @@ not assets:
   main component), labels set at 12 px in screen space, the focused,
   selected and traced nodes' always, the other lit nodes' most connected
   first at the first clear side of the node (right, left, above, below:
-  inside the canvas, over no other label or drawn node) until
+  inside the canvas, over no other label or drawn node; when none is, over
+  less connected nodes only, so a dense centre's hubs are named) until
   labels cover 10% of the canvas (so zooming in labels more), the rest
   dimmed, directed edges with arrows that fade as they multiply, the edge's
   relationship shown on hover, a click that centres and zooms, a legend whose
@@ -106,7 +107,13 @@ line height and Korean keeps words whole (`word-break: keep-all`). User
 content (a question, an answer, a passage, a name) whose dominant script is
 not the page's carries its own `lang`, so it breaks by its language's rules;
 dominant, not any: a screen reader picks its voice by `lang`, and an English
-answer quoting one Korean name must not be read in a Korean voice.
+answer quoting one Korean name must not be read in a Korean voice. Dominant
+by words (`Intl.Segmenter`), not letters, as the backend's script counts
+weigh letters by the tokens they carry: a Korean or Japanese sentence quoting
+English names is the CJK language's, and a name its particle is written onto
+("Labs가", "Sensorsは") counts with the CJK words; a tie goes to the CJK
+script. Latin content on a CJK page is not marked: the script does not say
+which language it is.
 
 Space: a 4px base. Radius: 6px controls, 8px cards, pills for chips and
 badges. Cards carry a hairline border and the faintest shadow; raised

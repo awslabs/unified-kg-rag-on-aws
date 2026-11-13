@@ -172,3 +172,33 @@ def test_the_graph_page_builds_one_provider_bundle_per_config(
         raise ValueError("no config")
 
     assert builder.current(broken) == graph_api.CurrentGraph("failed", None)
+
+
+def test_a_failed_build_keeps_the_recorded_build_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """rv27: a build that raised (an unwritable output folder) dropped the
+    build record's time, so the older export the page then shows was not
+    marked outdated."""
+    from unified_kg_rag.application.storage import visualization_export
+    from unified_kg_rag.domain.models import Config
+
+    monkeypatch.setattr(
+        visualization_export,
+        "stored_export",
+        lambda bundle, suffix: ("2026-11-15T00:00:00Z", None),
+    )
+
+    def unwritable(*args: Any) -> Any:
+        raise PermissionError("read-only folder")
+
+    monkeypatch.setattr(visualization_export, "current_visualization_data", unwritable)
+    current = graph_api.current_graph(Config(), tmp_path, lambda: object())
+    assert current == graph_api.CurrentGraph(
+        "failed", "default", "2026-11-15T00:00:00Z"
+    )
+    graphs: list[dict[str, Any]] = [
+        {"namespace": "default", "built_at": "2026-11-13T00:00:00Z"}
+    ]
+    graph_api.mark_outdated(graphs, current)
+    assert graphs[0]["outdated"] is True

@@ -8,7 +8,7 @@ import { get } from "./lib/api";
 import { navigate, PAGES, useRoute, type Page } from "./lib/router";
 import type { NamespaceHeld, Status } from "./lib/types";
 import { useApi } from "./lib/useApi";
-import { useCompactNav } from "./lib/useCompactNav";
+import { NAV_FOLDED, useCompactNav } from "./lib/useCompactNav";
 import { AskPage } from "./pages/AskPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { EvaluatePage } from "./pages/EvaluatePage";
@@ -27,6 +27,9 @@ export function App() {
   // The row compacts in steps (tagline, field labels) and folds the links
   // into the menu only when it still does not fit, whatever the width.
   const fold = useCompactNav(navRow, [locale, running > 0, status.data?.namespace]);
+  // Unfolded, the menu closes: folded again, it starts closed (its hidden
+  // button kept aria-expanded true).
+  if (menuOpen && fold !== NAV_FOLDED) setMenuOpen(false);
   // Whether the namespace holds an index (read again as jobs start and end).
   const held = useApi(
     () => (status.data?.namespace ? get<NamespaceHeld>("namespace/methodologies").catch(() => null) : Promise.resolve(null)),

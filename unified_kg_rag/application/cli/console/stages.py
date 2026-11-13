@@ -56,18 +56,29 @@ def stage_progress(
     after it.
 
     A resumed run keeps the results of the stages an earlier run finished;
-    those started before ``started_after`` (ISO time) are ``restored``.
+    those started before ``started_after`` (ISO time) are ``restored``. A
+    run that ended before it started any stage (at a question it asks
+    first, say) restored nothing either: its stages are all ``not_run``.
     """
     results = {
         str(r.get("stage_name")): r
         for r in (metadata or {}).get("stage_results") or []
         if isinstance(r, dict)
     }
-    stages: list[dict[str, Any]] = []
-    current_found = False
     names = list(plan) + [n for n in results if n not in plan]
     order = [s.value for s in PipelineStageType]
     names.sort(key=lambda n: order.index(n) if n in order else len(order))
+    if (
+        started_after
+        and not running
+        and results
+        and not any(
+            str(r.get("start_time") or "") >= started_after for r in results.values()
+        )
+    ):
+        return [{"name": name, "status": "not_run"} for name in names]
+    stages: list[dict[str, Any]] = []
+    current_found = False
     for name in names:
         result = results.get(name)
         if result is not None:

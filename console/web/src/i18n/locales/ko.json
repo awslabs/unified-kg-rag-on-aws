@@ -100,6 +100,7 @@
   "ask.error.invalid_argument": "요청이 거부되었습니다. 인수를 바꿔야 합니다",
   "ask.error.configuration": "현재 구성으로는 이 쿼리를 처리할 수 없습니다",
   "ask.error.failure": "쿼리가 실패했습니다",
+  "ask.error.failureHelp": "서버 안에서 호출이 실패했습니다(저장소나 모델 오류). 자세한 내용은 서버 로그의 쿼리 ID {{query_id}} 항목에 있습니다.",
   "ask.meta.strategy": "전략",
   "ask.meta.latency": "시간",
   "ask.meta.tokens": "입력 / 출력 토큰",
@@ -628,5 +629,7 @@
   "error.unreadable": "읽을 수 없습니다.",
   "error.not_found": "찾을 수 없습니다.",
   "error.failed": "요청이 실패했습니다.",
+  "error.failure": "서버 안에서 요청이 실패했습니다(저장소나 모델 오류). 자세한 내용은 서버 로그에 있습니다.",
+  "error.traceId": "트레이스 ID: {{trace_id}}",
   "error.network": "콘솔이 응답하지 않습니다. run-console이 실행 중인지 확인하세요."
 }

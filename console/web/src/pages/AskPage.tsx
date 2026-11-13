@@ -6,7 +6,7 @@ import { EvidenceTrace } from "../components/EvidenceTrace";
 import { StrategyPicker } from "../components/StrategyPicker";
 import { Notice, PageHead, Sheet } from "../components/ui";
 import { useI18n } from "../i18n/i18n";
-import { errorMessage, get, stream } from "../lib/api";
+import { errorMessage, failureHelp, get, stream } from "../lib/api";
 import { navigate } from "../lib/router";
 import { useTrail } from "../lib/trail";
 import type { AskEvent, AskResult, Citation, Degradation, NamespaceHeld, Source, Status, StrategyInfo } from "../lib/types";
@@ -22,6 +22,10 @@ interface Turn {
   result?: AskResult;
   error?: { kind: string; message: string };
   traceUrl?: string | null;
+  /** The ids the server logs and traces the question by (its start event's;
+   * an error event's when it names them). */
+  queryId?: string;
+  traceId?: string | null;
 }
 
 // The earlier turns a follow-up sends (the chain bounds them further by
@@ -106,11 +110,18 @@ export function AskPage({ status }: { status: Status | null }) {
         },
         controller.signal,
       )) {
-        if (event.kind === "start") update(id, (turn) => ({ ...turn, traceUrl: event.trace_url }));
+        if (event.kind === "start") update(id, (turn) => ({ ...turn, traceUrl: event.trace_url, queryId: event.query_id, traceId: event.trace_id }));
         else if (event.kind === "chunk") update(id, (turn) => ({ ...turn, text: turn.text + event.text }));
         else if (event.kind === "result") {
           update(id, (turn) => ({ ...turn, status: "done", result: event, text: event.answer }));
-        } else if (event.kind === "error") update(id, (turn) => ({ ...turn, status: "error", error: { kind: event.error_kind, message: event.message } }));
+        } else if (event.kind === "error")
+          update(id, (turn) => {
+            const ids = { query_id: event.query_id ?? turn.queryId, trace_id: event.trace_id ?? turn.traceId };
+            // A failure's detail stays in the server log: the page names
+            // the ids to find it by, in its language.
+            const message = event.error_kind === "failure" ? failureHelp(t, ids) : event.message;
+            return { ...turn, status: "error", error: { kind: event.error_kind, message }, queryId: ids.query_id, traceId: ids.trace_id };
+          });
       }
     } catch (e) {
       if (controller.signal.aborted) update(id, (turn) => ({ ...turn, status: "stopped" }));
@@ -417,7 +428,7 @@ function TurnView({
         {result?.error ? (
           <div style={{ marginTop: 12 }}>
             <Notice tone="bad" title={result.error_kind ? t(`ask.error.${result.error_kind}`) : t("ask.degraded")}>
-              {result.error_message}
+              {result.error_kind === "failure" ? failureHelp(t, { query_id: turn.queryId, trace_id: result.trace_id ?? turn.traceId }) : result.error_message}
             </Notice>
           </div>
         ) : null}

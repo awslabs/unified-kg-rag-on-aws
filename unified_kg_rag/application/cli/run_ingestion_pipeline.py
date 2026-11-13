@@ -322,7 +322,9 @@ class CommandLineInterface:
             "--pipeline-id whose inputs changed since its stages ran (or "
             "whose cache is incomplete): continue, recomputing those stages; "
             "nothing else. Without it (or --yes), the question is asked on "
-            "the terminal, and the run stops (exit 1) when stdin is not one",
+            "the terminal, and the run stops (exit 1) when stdin is not one. "
+            "A --force-rebuild or --reset run asks no such question: it "
+            "recomputes what changed by design",
         )
         parser.add_argument(
             "--continue-on-error",
@@ -404,7 +406,9 @@ class CommandLineInterface:
             action="store_true",
             help="Rebuild the namespace from the whole corpus instead of "
             "applying a delta (indexing.reset: true for this run only, so a "
-            "config file need not be edited back)",
+            "config file need not be edited back). A resumed --pipeline-id "
+            "continues past the integrity check (the reset recomputes every "
+            "stage its cache no longer backs)",
         )
         add_config_arguments(parser)
         add_output_format_argument(parser)
@@ -722,10 +726,15 @@ class IngestionPipelineRunner:
         if not self.pipeline:
             raise ValueError("Pipeline not initialized")
 
-        # A force rebuild reads no cached output, so there is nothing to check.
+        # A force rebuild reads no cached output, so there is nothing to
+        # check; a reset (--reset, indexing.reset) rebuilds the namespace
+        # from every document, so loading inputs that changed since the
+        # cached run (its delta filter) are expected, and the resume
+        # recomputes from the first stage whose output is missing.
         if (
             self.args.pipeline_id
             and not self.args.force_rebuild
+            and not self.config.indexing.reset
             and self.pipeline.state_manager.pipeline_exists(self.args.pipeline_id)
         ):
             # Checked under the cache keys the run will read (they include the

@@ -69,11 +69,12 @@ function measure(element: HTMLElement | null, needed: MutableRefObject<number[]>
   const { width, maxWidth } = element.style;
   element.style.width = "max-content";
   element.style.maxWidth = "none";
-  // As scrollWidth reads an overflowing row: the content may run into the
-  // end padding.
-  const end = parseFloat(getComputedStyle(element).paddingInlineEnd) || 0;
   needed.current = Array.from({ length: NAV_FOLDED }, (_, step) => {
     header.dataset.fold = String(step);
+    // As scrollWidth reads an overflowing row: the content may run into
+    // the end padding. Read at the step: the folded row's padding is less
+    // (read while folded, it measured every step 8 px wide).
+    const end = parseFloat(getComputedStyle(element).paddingInlineEnd) || 0;
     return Math.ceil(element.getBoundingClientRect().width - end);
   });
   element.style.width = width;

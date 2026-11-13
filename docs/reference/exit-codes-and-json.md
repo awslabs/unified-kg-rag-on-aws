@@ -295,5 +295,6 @@ instead:
 One run prints no JSON: a `run-ingestion` resume whose cached stages fail
 the integrity check asks "Continue despite integrity issues?" on the
 terminal, and an answer of no exits `0` with nothing on stdout. Pass `--yes`
-to continue; without a terminal the question stops the run with exit `1` and
-the status document.
+(or `--confirm-integrity`) to continue; without a terminal the question stops
+the run with exit `1` and the status document. A `--force-rebuild` or
+`--reset` run (`indexing.reset`) asks no such question.

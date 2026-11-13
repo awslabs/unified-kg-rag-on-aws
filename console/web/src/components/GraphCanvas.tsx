@@ -172,12 +172,14 @@ function sides(c: LabelCandidate): PlacedLabel[] {
 
 const overlaps = (a: PlacedLabel, b: PlacedLabel) => !(a.x + a.width <= b.x || b.x + b.width <= a.x || a.y + a.height <= b.y || b.y + b.height <= a.y);
 
-/** A drawn node's disc on screen (a label box must not cover it). */
+/** A drawn node's disc on screen (a label box must not cover it, unless
+ * the label's node is more connected: ``degree``, 0 when not given). */
 export interface Disc {
   id: string;
   cx: number;
   cy: number;
   r: number;
+  degree?: number;
 }
 
 /** Whether the box covers any of the disc (its nearest point is inside). */
@@ -191,7 +193,7 @@ function covers(box: PlacedLabel, disc: Disc): boolean {
 // tested against the discs near it only.
 const CELL = 32;
 
-function discGrid(discs: Disc[]): (box: PlacedLabel, own: string) => boolean {
+function discGrid(discs: Disc[]): (box: PlacedLabel, own: string, under?: number) => boolean {
   const cells = new Map<string, Disc[]>();
   const span = (low: number, high: number) => [Math.floor(low / CELL), Math.floor(high / CELL)] as const;
   for (const d of discs) {
@@ -205,11 +207,14 @@ function discGrid(discs: Disc[]): (box: PlacedLabel, own: string) => boolean {
         else cells.set(key, [d]);
       }
   }
-  return (box, own) => {
+  // Whether the box covers a disc other than ``own``'s, leaving out the
+  // discs of fewer connections than ``under`` when it is given.
+  return (box, own, under) => {
     const [x0, x1] = span(box.x, box.x + box.width);
     const [y0, y1] = span(box.y, box.y + box.height);
     for (let x = x0; x <= x1; x++)
-      for (let y = y0; y <= y1; y++) for (const d of cells.get(`${x},${y}`) ?? []) if (d.id !== own && covers(box, d)) return true;
+      for (let y = y0; y <= y1; y++)
+        for (const d of cells.get(`${x},${y}`) ?? []) if (d.id !== own && (under === undefined || (d.degree ?? 0) >= under) && covers(box, d)) return true;
     return false;
   };
 }
@@ -226,10 +231,11 @@ export interface LabelBounds {
 
 /** The labels to draw, greedily: the strong ones, then the most connected
  * first, each at the first of its four sides inside the canvas and clear of
- * the drawn nodes and of the labels already placed (skipped when none is),
- * until the labels cover ``area`` square pixels (a density bound; the strong
- * ones always count and are always placed, inside the canvas when a side
- * is). */
+ * the drawn nodes and of the labels already placed, else at the first that
+ * covers only nodes less connected than its own (a hub in a dense centre is
+ * named over its leaves), skipped when none is, until the labels cover
+ * ``area`` square pixels (a density bound; the strong ones always count and
+ * are always placed, inside the canvas when a side is). */
 export function placeLabels(candidates: LabelCandidate[], { area = Infinity, width = Infinity, height = Infinity, discs = [] }: LabelBounds = {}): PlacedLabel[] {
   const order = [...candidates].sort((a, b) => Number(b.strong) - Number(a.strong) || b.degree - a.degree);
   const overNode = discGrid(discs);
@@ -241,7 +247,8 @@ export function placeLabels(candidates: LabelCandidate[], { area = Infinity, wid
     const size = c.width * c.height;
     if (!c.strong && covered + size > area) continue;
     const options = sides(c);
-    const clear = options.find((o) => inside(o) && !overNode(o, c.id) && placed.every((p) => !overlaps(o, p)));
+    const free = (o: PlacedLabel) => inside(o) && placed.every((p) => !overlaps(o, p));
+    const clear = options.find((o) => free(o) && !overNode(o, c.id)) ?? options.find((o) => free(o) && !overNode(o, c.id, c.degree));
     if (!clear && !c.strong) continue;
     placed.push(clear ?? options.find(inside) ?? (options[0] as PlacedLabel));
     covered += size;
@@ -487,8 +494,9 @@ export function GraphCanvas({ data, colorOf, selected, highlighted, traced, trac
 
   // The labels, after every node and edge: in screen pixels, of the lit
   // nodes on screen, placed most connected first beside, then above or below
-  // their node, inside the canvas and over no other label or drawn node, up
-  // to a share of the canvas (the focused, selected and traced ones always).
+  // their node, inside the canvas and over no other label or drawn node
+  // (else over less connected nodes only), up to a share of the canvas (the
+  // focused, selected and traced ones always).
   const labels = (ctx: CanvasRenderingContext2D, scale: number) => {
     const dpr = window.devicePixelRatio || 1;
     const { width, height } = size;
@@ -504,7 +512,7 @@ export function GraphCanvas({ data, colorOf, selected, highlighted, traced, trac
       const [cx, cy] = toScreen(view, n.x ?? 0, n.y ?? 0, dpr);
       const r = radius(n, scale) * scale;
       if (cx + r < 0 || cx - r > width || cy + r < 0 || cy - r > height) continue;
-      discs.push({ id, cx, cy, r });
+      discs.push({ id, cx, cy, r, degree: n.degree });
       if (!isLit(id) || cx < 0 || cx > width || cy < 0 || cy > height) continue;
       const strong = id === focus || id === selected || traced.has(id);
       const key = `${palette.font}\u0000${n.name}`;
