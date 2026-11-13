@@ -181,7 +181,10 @@ app = build_mcp_app(chain, namespace="default", allowed_hosts=["mcp.example.com"
   `kg_rag.mcp.tool` 스팬이 생깁니다. 인자는 `observability.capture_content`를 켰을 때만
   `redact_patterns`를 적용한 뒤 기록합니다. 로그에는 질의 텍스트가 아니라 요약값(digest)만
   남습니다. 저장소나 모델 오류는 일반 메시지로 호출자에게 전달되고, 자세한 내용은 서버
-  로그에 있습니다.
+  로그에 있습니다. `--metrics-sink cloudwatch`를 주면 `kg_answer` 호출마다 질의 지표
+  (`query_latency_ms`, `query_failed` 등)를 CloudWatch EMF로 로그와 함께 stderr에
+  씁니다(stdout은 프로토콜용). CDK 스택의 `QueryLatencyHigh`, `QueryFailures` 경보가
+  이 지표를 읽습니다([운영 가이드](../operations.md#alarms), 영문).
 - **신뢰할 수 없는 텍스트.** 청크 텍스트, 설명, 답변은 코퍼스나 모델에서 나옵니다. 도구
   설명은 에이전트에게 이를 지시가 아닌 데이터로 다루라고 알리고, 도구는 이를 구조화된
   필드로 돌려줍니다. 서버에는 쓰기 경로가 없으므로 심어 둔 텍스트로 서버가 무언가를 바꾸게

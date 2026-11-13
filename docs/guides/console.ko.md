@@ -39,6 +39,9 @@ uv run run-console --config-path config.yaml --source-directory ./workspace
 - `--trace-url http://localhost:16686/trace/{trace_id}`는 각 답변을 그
   트레이스로 연결합니다(이 예는 Jaeger). `observability.backend: langfuse`와
   `LANGFUSE_HOST`를 설정했다면 이 플래그 없이도 Langfuse로 연결됩니다.
+- `--metrics-sink cloudwatch`를 주면 질문마다 질의 지표(`query_latency_ms`,
+  `query_failed` 등)를 CloudWatch EMF로 stdout에 써서 CDK 스택의 질의 경보가
+  읽게 합니다([운영 가이드](../operations.md#alarms), 영문).
 - 작업 공간의 `sample-questions.json`(문자열의 JSON 목록)은 질문 페이지의
   추천 질문이 됩니다.
 

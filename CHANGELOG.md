@@ -1528,6 +1528,8 @@ From a `main` checkout (formats and keys no release had):
   the query metrics itself, through the new `Providers.metrics_sink`, so a library host, MCP app or console counts
   too: per answer `query_latency_ms` and the outcome `query_failed`, `query_degraded`, `query_abstained` (0 or 1),
   per `Strategy` that ran (`auto` queries no longer land under `auto`), with `Namespace` a log property.
+  `run-mcp-server` and `run-console` take `--metrics-sink cloudwatch` as `run-rag` does (the MCP server's EMF on
+  stderr, as stdout is the protocol's), one sink builder for every CLI.
 - The package ships a `py.typed` marker (#568). `main` reports `0.3.0.dev0`, and a `v<version>` tag runs a release
   workflow that publishes a GitHub release: the tag must be on `main`, the notes are the section's introduction,
   *Highlights*, *Breaking changes*, *Upgrading* and *Security* with a link to the version's heading for the rest, and

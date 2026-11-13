@@ -1836,22 +1836,24 @@ def test_ingestion_create_pipeline_config_defaults_all_stages(
     assert set(pc.stages_enabled.keys()) == set(PipelineStageType)
 
 
-def test_ingestion_build_metrics_sink(config, mocker, tmp_path) -> None:
+def test_ingestion_build_metrics_sink(tmp_path, monkeypatch) -> None:
+    from unified_kg_rag.application.cli.metrics_args import build_metrics_sink
     from unified_kg_rag.shared import CloudWatchEMFSink, NullMetricsSink
 
-    mocker.patch.object(run_ingestion_pipeline, "load_cli_config", return_value=config)
     src = tmp_path / "src"
     src.mkdir()
-
+    monkeypatch.setenv("UKR_METRICS_ENVIRONMENT", "dev")
     args_none = _ing_parser().parse_args(["--source-directory", str(src)])
-    runner = run_ingestion_pipeline.IngestionPipelineRunner(args_none)
-    assert isinstance(runner._build_metrics_sink(), NullMetricsSink)
-
+    assert isinstance(
+        build_metrics_sink(args_none.metrics_sink, query=False), NullMetricsSink
+    )
     args_cw = _ing_parser().parse_args(
         ["--source-directory", str(src), "--metrics-sink", "cloudwatch"]
     )
-    runner_cw = run_ingestion_pipeline.IngestionPipelineRunner(args_cw)
-    assert isinstance(runner_cw._build_metrics_sink(), CloudWatchEMFSink)
+    sink = build_metrics_sink(args_cw.metrics_sink, query=False)
+    assert isinstance(sink, CloudWatchEMFSink)
+    # Pipeline metrics: the Environment aggregate only, no Strategy series.
+    assert (sink._environment, sink._dimension_keys) == ("dev", ())
 
 
 # --- run_prompt_tuning: parser + load_corpus_texts -----------------------

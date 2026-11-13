@@ -271,6 +271,7 @@ Guide: [MCP server](../guides/mcp.md). Also takes the [provider flags](#provider
 | `--host` | `127.0.0.1` | Address the HTTP transport binds (default 127.0.0.1, this machine only); a non-loopback address needs --allow-remote. |
 | `--port` | `8000` | Port of the HTTP transport (default 8000). |
 | `--allow-remote` | off | Let the HTTP transport bind a non-loopback address. The server authenticates no caller: put it behind a proxy or gateway that authenticates every request, and keep the port unreachable otherwise. |
+| `--metrics-sink` | `none` | Where to send query metrics: 'none' (default) or 'cloudwatch' (CloudWatch EMF to stderr, with the logs, as stdout is the protocol's: query_latency_ms and the outcome counts query_failed, query_degraded and query_abstained of each kg_answer call under unified_kg_rag/query, with an Environment dimension when UKR_METRICS_ENVIRONMENT is set and the Strategy that ran), which the CDK stack's query alarms read. |
 | `--log-level` | — | Log level of this run (default: logging.level, INFO; DEBUG logs hold user and corpus text). With --output-format text the logs are plain lines unless logging.log_format is set. One of `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. |
 | `--version` | — | Print the version and exit. |
 | `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
@@ -290,6 +291,7 @@ Guide: [Console](../guides/console.md).
 | `--port` | `8501` | Port to bind (default 8501; 0 picks a free one). |
 | `--allow-remote` | off | Allow a --host other than a loopback address. Anyone who can reach the port can then query, ingest and edit the configuration. |
 | `--trace-url` `TEMPLATE` | — | Link each answer to its trace: a URL with {trace_id}, e.g. http://localhost:16686/trace/{trace_id} for Jaeger (default with observability.backend langfuse: LANGFUSE_HOST/trace/{trace_id}). |
+| `--metrics-sink` | `none` | Where to send the questions' query metrics: 'none' (default) or 'cloudwatch' (CloudWatch EMF to stdout: query_latency_ms and the outcome counts query_failed, query_degraded and query_abstained under unified_kg_rag/query, with an Environment dimension when UKR_METRICS_ENVIRONMENT is set and the Strategy that ran; not with --output-format json). |
 | `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
 | `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing: the load fails on one by default, since a misspelled key would leave its setting at the default. |
 | `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |

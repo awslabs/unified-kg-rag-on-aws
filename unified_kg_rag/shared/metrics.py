@@ -40,6 +40,9 @@ QUERY_LATENCY_METRIC = "query_latency_ms"
 QUERY_FAILED_METRIC = "query_failed"
 QUERY_DEGRADED_METRIC = "query_degraded"
 QUERY_ABSTAINED_METRIC = "query_abstained"
+# The dimension keys of the query metrics' series (each value a billed
+# custom-metric series: never a per-query or per-namespace key).
+QUERY_METRICS_DIMENSION_KEYS: tuple[str, ...] = ("Strategy", "Environment")
 
 
 @runtime_checkable

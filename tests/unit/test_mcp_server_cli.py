@@ -240,3 +240,45 @@ async def test_a_served_namespace_without_an_index_is_warned_of_at_start(
     assert checked == ["nosuch", "default"]
     warned = [r.getMessage() for r in caplog.records]
     assert len(warned) == 1 and "Namespace 'nosuch' holds no index" in warned[0]
+
+
+@pytest.mark.parametrize("choice", ["none", "cloudwatch"])
+def test_the_mcp_server_publishes_query_metrics_on_stderr(
+    choice: str,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Old behaviour: the chain had no metrics sink, so the long-running
+    # serving surface never published query_latency_ms or query_failed and
+    # the QueryLatencyHigh and QueryFailures alarms stayed OK forever.
+    import asyncio
+    import logging
+
+    from unified_kg_rag.shared.metrics import CloudWatchEMFSink, NullMetricsSink
+
+    # A fresh EMF logger, bound to this test's captured stderr.
+    monkeypatch.setattr(logging.getLogger("unified_kg_rag.emf.stderr"), "handlers", [])
+    built: list[dict[str, object]] = []
+
+    class _Built(Exception):
+        pass
+
+    def chain(**kwargs: object) -> None:
+        built.append(kwargs)
+        raise _Built
+
+    monkeypatch.setattr(run_mcp_server, "GraphRAGChain", chain)
+    args = run_mcp_server.parse_args(["--metrics-sink", choice])
+    with pytest.raises(_Built):
+        asyncio.run(run_mcp_server.serve(args, Config()))
+    sink = built[0]["providers"].metrics_sink  # type: ignore[attr-defined]
+    if choice == "none":
+        assert isinstance(sink, NullMetricsSink)
+        return
+    assert isinstance(sink, CloudWatchEMFSink)
+    assert set(sink._dimension_keys) == {"Strategy", "Environment"}
+    sink.emit("unified_kg_rag/query", {"query_latency_ms": 5.0}, {"Strategy": "local"})
+    out = capsys.readouterr()
+    # stdout is the stdio protocol's: the EMF record goes to stderr.
+    assert out.out == ""
+    assert '"query_latency_ms": 5.0' in out.err

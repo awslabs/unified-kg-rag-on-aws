@@ -20,6 +20,7 @@ import asyncio
 import sys
 from typing import Any
 
+from unified_kg_rag.application.bootstrap import build_providers
 from unified_kg_rag.application.cli.config_args import (
     add_config_arguments,
     exit_on_config_error,
@@ -46,6 +47,10 @@ from unified_kg_rag.application.cli.mcp_server import (
     mcp_extra_error,
 )
 from unified_kg_rag.application.cli.mcp_tools import KnowledgeGraphTools
+from unified_kg_rag.application.cli.metrics_args import (
+    add_metrics_sink_argument,
+    build_metrics_sink,
+)
 from unified_kg_rag.application.cli.preflight import (
     missing_endpoints_error,
     missing_extras_error,
@@ -139,6 +144,15 @@ def build_parser() -> argparse.ArgumentParser:
         "authenticates no caller: put it behind a proxy or gateway that "
         "authenticates every request, and keep the port unreachable otherwise",
     )
+    add_metrics_sink_argument(
+        parser,
+        "Where to send query metrics: 'none' (default) or 'cloudwatch' "
+        "(CloudWatch EMF to stderr, with the logs, as stdout is the protocol's: "
+        "query_latency_ms and the outcome counts query_failed, query_degraded "
+        "and query_abstained of each kg_answer call under unified_kg_rag/query, "
+        "with an Environment dimension when UKR_METRICS_ENVIRONMENT is set and "
+        "the Strategy that ran), which the CDK stack's query alarms read",
+    )
     add_log_level_and_version_arguments(parser)
     add_config_arguments(parser)
     add_provider_arguments(parser)
@@ -207,7 +221,13 @@ async def serve(args: argparse.Namespace, config: Config) -> int:
     """Build the chain and the server, and serve until the transport ends."""
     loop = asyncio.get_running_loop()
     executor = event_loop.configure_event_loop(loop, config.processing.io_workers)
-    chain = GraphRAGChain(config=config, allowed_strategies=config.mcp.strategies)
+    # The query metrics go to stderr: stdout is the stdio protocol's.
+    sink = build_metrics_sink(args.metrics_sink, query=True, stream=sys.stderr)
+    chain = GraphRAGChain(
+        config=config,
+        providers=build_providers(config, metrics_sink=sink),
+        allowed_strategies=config.mcp.strategies,
+    )
     try:
         tools = KnowledgeGraphTools(chain, namespace=args.suffix)
         await warn_of_missing_namespaces(chain, tools.namespaces)

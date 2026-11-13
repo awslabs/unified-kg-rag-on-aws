@@ -1447,8 +1447,9 @@ These fire between runs too, so degradation shows before a run breaks on it:
 
 `GraphRAGChain` publishes each answer's `query_latency_ms` and its outcome
 (`query_failed`, `query_degraded`, `query_abstained`: 0 or 1) through the
-metrics sink of its `Providers` (`run-rag --metrics-sink cloudwatch`; a
-serving layer passes its `MetricsSink`: `Providers(config, metrics_sink=...)`),
+metrics sink of its `Providers` (`--metrics-sink cloudwatch` of `run-rag`,
+`run-mcp-server`, whose EMF goes to stderr, and `run-console`; a serving
+layer passes its `MetricsSink`: `Providers(config, metrics_sink=...)`),
 answers only (a `--mode search` query is not counted), failed ones included:
 a query that ran past `search.query_timeout_seconds` records about the
 deadline, so timeouts raise the p90 rather than vanishing from it. They go
