@@ -1274,11 +1274,12 @@ From a `main` checkout (formats and keys no release had):
   with a note when they differ within it (#645).
 - Query deadline: `search.query_timeout_seconds` bounds every query and stream, from its admission on (the one
   build-record read of a query, where a stalled store held a new chain's first query before the deadline began); a
-  stream must send a first chunk within `search.model_timeout_seconds`. Past it the query raises
-  `QueryTimeoutError` (`run-rag` exits 1, `run-eval` counts a failure; under `processing.ignore_errors` the error
-  answer, one past the deadline during the admission too); query-time model calls get their own clients (`search.model_timeout_seconds`, `model_max_attempts`; `backend:
-  local` presets 300 s and a 900 s deadline), and Bedrock CountTokens uses them. No retry, OpenSearch request or
-  global map call starts past the deadline; global map calls are cancelled with the query (#522, #530, #567, #579).
+  stream must send a first chunk within `search.model_timeout_seconds`. Past it the query raises `QueryTimeoutError`
+  (`run-rag` exits 1, `run-eval` counts a failure; under `processing.ignore_errors` the error answer, one past the
+  deadline during the admission too); query-time model calls get their own clients (`search.model_timeout_seconds`,
+  `model_max_attempts`; `backend: local` presets 300 s and a 900 s deadline), and Bedrock CountTokens uses them. No
+  retry, OpenSearch request or global map call starts past the deadline; global map calls are cancelled with the query
+  (#522, #530, #567, #579).
 - Query-path options: `search.answer_prompt_style` (the comprehensive answer prompt,
   `custom_prompts.comprehensive_answer_*`), `search.global_search.evidence_tokens` (caps the cited report text after
   the key points; `0` sends key points only), `search.lightrag_search.kg_chunk_pick_method: vector` (upstream's
@@ -1920,11 +1921,11 @@ Queries and retrieval.
   a query for about half an hour (#522).
 - Neptune reconnects after a closed websocket, a lost connection no longer leaks threads or hangs a write, and
   concurrent queries share one connection attempt (#258, #261, #263, #266, #267).
-- A short OpenSearch throttling burst no longer fails a query or a bulk write (#263, #264), and a throttled Neptune
-  or Gremlin read no longer empties a query's graph expansion: it is retried within the query deadline, as an
-  OpenSearch query request is, for throttling, memory-limit, concurrent-modification and temporary server errors
-  only (a deterministic traversal error fails on the first attempt); a long question no longer fails its lexical search, and long list filters no longer
-  multiply searches (#258, #260).
+- A short OpenSearch throttling burst no longer fails a query or a bulk write (#263, #264), and a throttled Neptune or
+  Gremlin read no longer empties a query's graph expansion: it is retried within the query deadline, as an OpenSearch
+  query request is, for throttling, memory-limit, concurrent-modification and temporary server errors only (a
+  deterministic traversal error fails on the first attempt); a long question no longer fails its lexical search, and
+  long list filters no longer multiply searches (#258, #260).
 - The text-units section is no longer empty for a corpus translated into five or more languages (#264).
 - The answer context stays within `max_tokens`, a small budget no longer yields an empty context, and CJK sections
   truncate at a character (#247, #258); an entity hit renders as `Entity` / `Type` / `Description` lines and items
