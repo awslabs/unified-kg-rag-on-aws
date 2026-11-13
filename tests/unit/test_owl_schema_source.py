@@ -135,8 +135,7 @@ def test_reregistering_a_kind_replaces_its_requirement() -> None:
         register_schema_source(kind)(lambda context: SchemaDocument())
         assert schema_source_requirement(kind) is None
     finally:
-        schema_registry._REGISTRY.pop(kind, None)
-        schema_registry._REQUIRES.pop(kind, None)
+        schema_registry._KINDS.unregister(kind)
 
 
 def test_the_options_are_the_mapping_options_and_the_reader_options() -> None:

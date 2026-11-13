@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 from langchain_core.document_loaders import BaseLoader
 
+from tests.fixtures.registries import isolate_loaders
 from unified_kg_rag.adapters.ingestion.parser import ParserFactory
 from unified_kg_rag.adapters.local.search_engine import analyzers
 from unified_kg_rag.adapters.provider_registry import (
@@ -123,9 +124,7 @@ def test_every_registry_follows_the_rule(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_file_loaders_follow_the_rule(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        ParserFactory, "_loader_configs", dict(ParserFactory._loader_configs)
-    )
+    isolate_loaders(monkeypatch)
     ParserFactory.register_loader(".RuleProbe", _Loader)
     assert ParserFactory.loader_spec(".ruleprobe")[0] is _Loader
     with pytest.raises(ValueError, match="Cannot register a file loader"):

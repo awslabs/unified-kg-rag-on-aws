@@ -17,7 +17,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from rich.panel import Panel
 from rich.table import Table
 
@@ -109,6 +109,7 @@ from unified_kg_rag.shared.usage import usage_scope
 from unified_kg_rag.shared.utils import event_loop
 from unified_kg_rag.shared.utils.files import atomic_write_text
 from unified_kg_rag.shared.utils.s3_uri import is_s3_uri
+from unified_kg_rag.shared.utils.validation import format_validation_errors
 
 if TYPE_CHECKING:
     from langchain_core.runnables import Runnable
@@ -352,15 +353,19 @@ def extraction_settings(config: Config) -> dict[str, Any]:
     }
 
 
+def _changed(config: Config, changes: dict[str, Any]) -> Config:
+    """``config.updated(changes)``, a refused value as a ``ConfigurationError``."""
+    try:
+        return config.updated(changes)
+    except ValidationError as e:
+        raise ConfigurationError(format_validation_errors("", e)) from e
+
+
 def with_judge_model(config: Config, model_id: str | None) -> Config:
     """``config`` with ``models.roles.evaluation`` set to ``model_id``."""
     if not model_id:
         return config
-    models = config.models
-    roles = models.roles.model_copy(update={"evaluation": model_id})
-    return config.model_copy(
-        update={"models": models.model_copy(update={"roles": roles})}
-    )
+    return _changed(config, {"models.roles.evaluation": model_id})
 
 
 def _evaluator_list(value: str) -> list[EvaluatorType]:
@@ -387,18 +392,14 @@ def with_evaluators(config: Config, evaluators: list[EvaluatorType] | None) -> C
     """``config`` with ``evaluation.enabled_evaluators`` set to ``evaluators``."""
     if evaluators is None:
         return config
-    evaluation = config.evaluation.model_copy(
-        update={"enabled_evaluators": list(evaluators)}
-    )
-    return config.model_copy(update={"evaluation": evaluation})
+    return _changed(config, {"evaluation.enabled_evaluators": list(evaluators)})
 
 
 def with_pairwise_mode(config: Config, mode: str | None) -> Config:
     """``config`` with ``evaluation.pairwise_mode`` set to ``mode``."""
     if not mode:
         return config
-    evaluation = config.evaluation.model_copy(update={"pairwise_mode": mode})
-    return config.model_copy(update={"evaluation": evaluation})
+    return _changed(config, {"evaluation.pairwise_mode": mode})
 
 
 def failure_budget_breaches(

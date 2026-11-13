@@ -112,7 +112,7 @@ def _unloaded_keys(config: Config) -> dict[str, str]:
 def custom_kind() -> Iterator[str]:
     kind = "synthetic_service"
     yield kind
-    schema_registry._REGISTRY.pop(kind, None)
+    schema_registry._KINDS.unregister(kind)
 
 
 # --- registry ------------------------------------------------------------------
@@ -338,7 +338,7 @@ def test_the_pipeline_loads_the_schema_once(tmp_path: Path, mocker: Any) -> None
         calls.append(context)
         return load_file(context)
 
-    mocker.patch.dict(schema_registry._REGISTRY, {"file": counting})
+    mocker.patch.dict(schema_registry._KINDS.entries, {"file": counting})
     config = Config.model_validate(
         {
             "backend": "local",

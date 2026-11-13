@@ -17,6 +17,7 @@ import pytest
 
 from tests.fixtures.fakes.model_servers import FakeOllama
 from tests.fixtures.fakes.rerank import FakeCrossEncoder
+from tests.fixtures.registries import isolate_loaders
 from tests.integration.test_embedded_e2e import (
     ANSWER,
     DIM,
@@ -203,8 +204,7 @@ def test_another_parser_parses_every_file_again(
     class OtherTextLoader(TextFileLoader):
         """Another loader for .txt: the same text, another parser."""
 
-    configs = dict(parser_module.ParserFactory._loader_configs)
-    monkeypatch.setattr(parser_module.ParserFactory, "_loader_configs", configs)
+    isolate_loaders(monkeypatch)
     parser_module.ParserFactory.register_loader(".txt", OtherTextLoader, {}, "Text")
     parsed.clear()
     context = _run(config, providers, source, tmp_path / "run-2")
@@ -304,8 +304,7 @@ def test_a_loader_that_does_not_pickle_parses_in_process(
     class LocalLoader(TextFileLoader):
         """Defined in a function: no worker can import it."""
 
-    configs = dict(parser_module.ParserFactory._loader_configs)
-    monkeypatch.setattr(parser_module.ParserFactory, "_loader_configs", configs)
+    isolate_loaders(monkeypatch)
     parser_module.ParserFactory.register_loader(".txt", LocalLoader)
     monkeypatch.setattr(source_parsing, "_POOL_START_SECONDS", -1.0)
     monkeypatch.setattr(source_parsing, "default_max_workers", lambda: 2)

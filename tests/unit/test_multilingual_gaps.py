@@ -102,7 +102,7 @@ class TestNonUtf8Recovery:
         from unified_kg_rag.adapters.ingestion.parser import _ENCODING_AWARE_LOADERS
 
         for ext in (".txt", ".csv"):
-            loader_class = ParserFactory._loader_configs[ext][0]
+            loader_class = ParserFactory.loader_spec(ext).loader_class
             assert issubclass(loader_class, _ENCODING_AWARE_LOADERS)
 
     def test_document_from_json_file_reads_cp949(self, tmp_path: Path) -> None:

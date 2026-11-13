@@ -27,7 +27,6 @@ from pydantic import ValidationError
 from unified_kg_rag.application.config import ConfigLoader, resolve_relative_paths
 from unified_kg_rag.domain.models import Config, ModelRole
 from unified_kg_rag.domain.models.config import (
-    merge_over,
     unknown_keys,
     without_keys,
 )
@@ -150,7 +149,7 @@ def arm_config(
         )
         data = {k: v for k, v in data.items() if k != "evaluation"}
     try:
-        config = Config.model_validate(merge_over(base.as_input(), data))
+        config = base.updated(overlay=data)
     except ValidationError as e:
         raise ConfigurationError(
             f"--arm {spec['name']}: {format_validation_errors('', e)} (in '{path}')"

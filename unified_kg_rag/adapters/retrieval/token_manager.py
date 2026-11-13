@@ -447,27 +447,14 @@ class TokenManager:
     # sub-budgets and pack each type independently, so text chunks (which hold the
     # multi-hop answer) are guaranteed representation and can't be crowded out by a
     # flat greedy fill of near-tie RRF scores. The shares themselves are
-    # configurable (`search.token_manager.type_budgets`); this maps the enum onto
-    # that model's field names so a new SectionType is a compile-time concern
-    # rather than a silent zero share.
-    _BUDGET_FIELDS: ClassVar[dict[SectionType, str]] = {
-        SectionType.TEXT: "text",
-        SectionType.ENTITY: "entity",
-        SectionType.RELATIONSHIP: "relationship",
-        SectionType.CLAIM: "claim",
-        SectionType.COMMUNITY: "community",
-        SectionType.GENERAL: "general",
-        SectionType.SUMMARY: "summary",
-        SectionType.QUERY_RESULT: "query_result",
-    }
+    # configurable (`search.token_manager.type_budgets`, one share per
+    # SectionType: ContextTypeBudgetConfig.share).
 
     def _type_budget_shares(
         self, present: list[SectionType]
     ) -> dict[SectionType, float]:
         configured = self.config.type_budgets
-        return {
-            t: float(getattr(configured, self._BUDGET_FIELDS[t], 0.0)) for t in present
-        }
+        return {t: configured.share(t) for t in present}
 
     def _type_budgets(
         self, present: list[SectionType], token_budget: int

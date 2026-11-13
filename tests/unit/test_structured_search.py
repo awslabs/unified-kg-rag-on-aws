@@ -798,9 +798,8 @@ async def test_the_profile_is_read_once_per_suffix_and_ttl() -> None:
 def test_the_query_result_section_is_budgeted() -> None:
     config = Config()
     assert config.search.token_manager.type_budgets.query_result == 0.25
-    from unified_kg_rag.adapters.retrieval.token_manager import TokenManager
-
-    assert TokenManager._BUDGET_FIELDS[SectionType.QUERY_RESULT] == "query_result"
+    budget = config.search.token_manager.type_budgets
+    assert budget.share(SectionType.QUERY_RESULT) == 0.25
     assert IndexArtifact.GRAPH in get_strategy_spec(SearchStrategy.STRUCTURED).required_artifacts  # type: ignore[operator]
 
 

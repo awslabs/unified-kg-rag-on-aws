@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.fixtures.registries import isolate_loaders
 from unified_kg_rag.adapters.ingestion import parser as parser_module
 from unified_kg_rag.adapters.ingestion.file_loaders import TextFileLoader
 from unified_kg_rag.application.ingestion.source_parsing import SourceFileParser
@@ -51,7 +52,7 @@ def test_the_parser_fingerprint_follows_the_loader(
     class OtherLoader(TextFileLoader):
         pass
 
-    monkeypatch.setattr(factory, "_loader_configs", dict(factory._loader_configs))
+    isolate_loaders(monkeypatch)
     factory.register_loader(".txt", OtherLoader, {}, "Text")
     assert factory.parser_fingerprint(".txt") != text
     factory.register_loader(".txt", TextFileLoader, {"encoding": "utf-8"}, "Text")

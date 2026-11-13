@@ -4,13 +4,23 @@
 
 import re
 from enum import Enum
+from typing import Annotated
 
 from pydantic import (
+    BeforeValidator,
     Field,
+    StringConstraints,
     field_validator,
 )
 
 from ._common import ConfigSection
+
+# A logging level name, in any case (stored in upper case).
+LogLevel = Annotated[
+    str,
+    StringConstraints(pattern="^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$"),
+    BeforeValidator(lambda v: v.upper() if isinstance(v, str) else v),
+]
 
 
 class MemoryConfig(ConfigSection):
@@ -83,11 +93,10 @@ class CacheConfig(ConfigSection):
 
 
 class LoggingConfig(ConfigSection):
-    level: str = Field(
+    level: LogLevel = Field(
         default="INFO",
-        pattern="^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$",
         description=(
-            "Log level: DEBUG, INFO, WARNING, ERROR or CRITICAL. DEBUG logs "
+            "Log level: DEBUG, INFO, WARNING, ERROR or CRITICAL (any case). DEBUG logs "
             "contain user and corpus text."
         ),
     )
@@ -115,7 +124,7 @@ class LoggingConfig(ConfigSection):
         max_length=255,
         description="Log file path (CLIs only); relative to the working directory",
     )
-    library_levels: dict[str, str] = Field(
+    library_levels: dict[str, LogLevel] = Field(
         default_factory=lambda: {
             "langchain_aws": "WARNING",
             "botocore": "WARNING",
@@ -135,7 +144,7 @@ class LoggingConfig(ConfigSection):
         },
         description=(
             "Per-logger levels for chatty third-party libraries (logger name "
-            "-> level). In a config file the key replaces the whole map; an "
+            "-> level, one of the names level takes). In a config file the key replaces the whole map; an "
             "environment variable sets one entry over the defaults."
         ),
     )

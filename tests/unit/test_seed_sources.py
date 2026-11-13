@@ -123,8 +123,7 @@ def procure_jsonl(tmp_path: Path) -> Path:
 def custom_kind() -> Iterator[str]:
     kind = "synthetic_service"
     yield kind
-    seed_registry._REGISTRY.pop(kind, None)
-    seed_registry._REQUIRES.pop(kind, None)
+    seed_registry._KINDS.unregister(kind)
 
 
 # --- configuration ---------------------------------------------------------------

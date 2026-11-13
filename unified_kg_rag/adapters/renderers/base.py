@@ -56,8 +56,7 @@ class BaseRenderer(ABC):
         ...
 
 
-_RENDERERS: Registry[str, type[BaseRenderer]] = Registry("renderer")
-_REGISTRY = _RENDERERS.entries
+_RENDERERS: Registry[type[BaseRenderer]] = Registry("renderer")
 
 RendererT = TypeVar("RendererT", bound="type[BaseRenderer]")
 

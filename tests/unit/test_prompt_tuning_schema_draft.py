@@ -542,7 +542,7 @@ def test_the_tuner_names_the_source_without_a_credential(
     # A custom kind's path may be a URL carrying a token: the draft header
     # shows it without the userinfo, the query and the fragment.
     monkeypatch.setitem(
-        schema_registry._REGISTRY,
+        schema_registry._KINDS.entries,
         "synthetic_service",
         lambda context: SchemaDocument(relationship_types=["SUPPLIES"]),
     )

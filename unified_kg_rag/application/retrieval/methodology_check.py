@@ -29,11 +29,13 @@ from unified_kg_rag.adapters.retrieval.strategy_registry import (
 from unified_kg_rag.domain.ingestion.methodologies import (
     NamespaceHoldings,
     namespace_holdings,
+    stages_for,
 )
 from unified_kg_rag.domain.models import (
     Config,
     IndexArtifact,
     Methodology,
+    PipelineStageType,
     SearchStrategy,
 )
 from unified_kg_rag.domain.models.methodology import (
@@ -53,6 +55,10 @@ logger = get_logger(__name__)
 # How long a suffix's held artifacts are reused before the build record
 # is read again (a refusal reads it again first).
 HELD_TTL_SECONDS = 300.0
+
+# The stage whose model calls a rebuild repeats (and an added methodology
+# needing none of its output does not).
+_EXTRACTION = PipelineStageType.GRAPH_EXTRACTION
 
 
 async def namespace_artifacts(
@@ -227,19 +233,21 @@ def not_indexed_message(
     ]
     holds = ", ".join(m.value for m in held) or "no methodology"
     instead = f"; its strategies: {', '.join(serving)}, or auto" if serving else ""
-    if methodology is Methodology.RAPTOR:
-        # The tree is built from the stored text units: no rebuild. A tree
-        # run without raptor selected is refused, so the command names it.
+    missing = METHODOLOGY_PROFILES[methodology].required - artifacts
+    if _EXTRACTION not in stages_for(missing):
+        # Built from the stored text units (the summary tree): no rebuild.
+        # A run without the methodology selected is refused, so the command
+        # names it.
         listed = [m.value for m in config.indexing.methodologies]
         selected = ",".join(dict.fromkeys([*listed, methodology.value]))
         how = (
             "re-run ingestion (run-ingestion --methodologies "
-            f"{selected}): the summary tree is built from the stored text "
-            "units, with no re-extraction."
+            f"{selected}): what {methodology.value} adds is built from the "
+            "stored text units, with no re-extraction."
         )
     elif source_scopes and len(source_scopes) > 1:
         how = rebuild_advice(f"what {methodology.value} adds", source_scopes)
-    elif set(held) <= {Methodology.RAPTOR}:
+    elif _EXTRACTION not in stages_for(artifacts):
         # Nothing extracted yet: the graph costs a first build.
         how = (
             "re-run ingestion: the namespace holds no graph, so every text "

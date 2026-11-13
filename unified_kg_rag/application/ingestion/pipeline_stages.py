@@ -29,10 +29,7 @@ from unified_kg_rag.adapters.ingestion.graph_extractor import (
     GraphExtractor,
 )
 from unified_kg_rag.adapters.ingestion.loader import DirectoryLoader
-from unified_kg_rag.adapters.ingestion.parser import (
-    MISSING_EXTRA_FORMATS,
-    ParserFactory,
-)
+from unified_kg_rag.adapters.ingestion.parser import ParserFactory
 from unified_kg_rag.adapters.ingestion.translator import TextUnitTranslator
 from unified_kg_rag.adapters.llm.reachability import (
     is_unreachable_error,
@@ -1095,11 +1092,10 @@ class DocumentParsingStage(_RegistryStage):
                 skipped_files.append(str(file_path))
 
         if skipped:
-            others = sorted(s for s in skipped if s not in MISSING_EXTRA_FORMATS)
+            hints = {s: ParserFactory.install_hint(s) for s in sorted(skipped)}
+            others = [suffix for suffix, hint in hints.items() if hint is None]
             remedies = [
-                f"for {suffix}, {MISSING_EXTRA_FORMATS[suffix]}"
-                for suffix in sorted(skipped)
-                if suffix in MISSING_EXTRA_FORMATS
+                f"for {suffix}, {hint}" for suffix, hint in hints.items() if hint
             ]
             if others:
                 remedies.append(

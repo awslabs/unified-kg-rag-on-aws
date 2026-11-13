@@ -66,7 +66,6 @@ from unified_kg_rag.domain.models.config import (
     INLINE_SCHEMA_SOURCE,
     SchemaSourceConfig,
     SeedGraphConfig,
-    merge_over,
 )
 from unified_kg_rag.ports.guardrail import ContentGuardPort
 from unified_kg_rag.shared import ConfigurationError, get_logger
@@ -227,13 +226,16 @@ def resolve_extraction_schema(
         raise SchemaSourceError(
             f"Both the config and {where} set entity_types; keep one"
         )
-    data = merge_over(config.as_input(), {"processing": {"graph_extraction": keys}})
-    # Replaced, not merged: the source's options would survive a merge.
-    data["processing"]["graph_extraction"]["schema_source"] = SchemaSourceConfig(
-        kind=INLINE_SCHEMA_SOURCE
-    ).model_dump(mode="json")
     try:
-        resolved = Config.model_validate(data)
+        resolved = config.updated(
+            # Replaced, not merged: the source's options would survive a merge.
+            {
+                "processing.graph_extraction.schema_source": SchemaSourceConfig(
+                    kind=INLINE_SCHEMA_SOURCE
+                )
+            },
+            overlay={"processing": {"graph_extraction": keys}},
+        )
     except ValidationError as e:
         raise SchemaSourceError(
             f"The schema of {where} is invalid: {format_validation_errors('', e)}"
@@ -381,33 +383,22 @@ def with_provider_overrides(
     environment or the caller set. Returns ``config`` itself when nothing is
     given.
     """
-    overrides: dict[str, dict[str, Any]] = {}
-
-    def put(path: str, value: Any) -> None:
-        if value is None:
-            return
-        *parents, key = path.split(".")
-        node = overrides
-        for part in parents:
-            node = node.setdefault(part, {})
-        node[key] = value
-
-    put("providers.llm.kind", llm_kind)
-    put("providers.llm.base_url", base_url)
-    put("providers.embedding.kind", embedding_kind)
-    put("providers.embedding.base_url", base_url)
-    put("providers.rerank.kind", rerank_kind)
-    put("models.default", llm_model_id)
-    put("models.embedding.model_id", embedding_model_id)
-    put("models.embedding.dimension", embedding_dimension)
-    if backend is None and not overrides:
+    given = {
+        "backend": backend,
+        "providers.llm.kind": llm_kind,
+        "providers.llm.base_url": base_url,
+        "providers.embedding.kind": embedding_kind,
+        "providers.embedding.base_url": base_url,
+        "providers.rerank.kind": rerank_kind,
+        "models.default": llm_model_id,
+        "models.embedding.model_id": embedding_model_id,
+        "models.embedding.dimension": embedding_dimension,
+    }
+    changes = {key: value for key, value in given.items() if value is not None}
+    if not changes:
         return config
-    data = config.as_input()
-    if backend is not None:
-        data["backend"] = backend
-    data = merge_over(data, overrides)
     try:
-        return Config.model_validate(data)
+        return config.updated(changes)
     except ValidationError as e:
         raise ConfigurationError(
             f"Invalid provider settings: {format_validation_errors('', e)}"

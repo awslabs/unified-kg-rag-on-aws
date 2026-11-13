@@ -20,6 +20,7 @@ from typing import Any
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.domain.models.usage import LLMUsage, LLMUsageCounts
 from unified_kg_rag.evaluation.comparison import answer_cost_usd
+from unified_kg_rag.shared.utils.stats import quantile
 
 _COUNTERS = (
     "llm_calls",
@@ -29,14 +30,6 @@ _COUNTERS = (
     "failed_calls",
     "rerank_calls",
 )
-
-
-def _percentile(values: list[float], q: float) -> float | None:
-    if not values:
-        return None
-    ordered = sorted(values)
-    index = min(len(ordered) - 1, max(0, round(q * (len(ordered) - 1))))
-    return ordered[index]
 
 
 def _add(target: dict[str, float], counts: Mapping[str, Any]) -> None:
@@ -122,8 +115,8 @@ def summarize(
             "queries": row["queries"],
             "abstained": row["abstained"],
             "errors": row["errors"],
-            "latency_p50": _percentile(row["latencies"], 0.5),
-            "latency_p95": _percentile(row["latencies"], 0.95),
+            "latency_p50": quantile(row["latencies"], 0.5),
+            "latency_p95": quantile(row["latencies"], 0.95),
             "tokens_per_query": row["tokens"] / row["queries"] if row["queries"] else 0,
             "cost_usd": row["cost_usd"] if row["priced"] else None,
             "cost_per_query": (
@@ -142,7 +135,7 @@ def summarize(
             "day": day,
             "queries": row["queries"],
             "cost_usd": row["cost_usd"],
-            "latency_p50": _percentile(row["latencies"], 0.5),
+            "latency_p50": quantile(row["latencies"], 0.5),
         }
         for day, row in sorted(days.items())
     ]
@@ -174,8 +167,8 @@ def summarize(
             "answered": sum(q["outcome"] == "answered" for q in queries),
             "abstained": sum(bool(q.get("abstained")) for q in queries),
             "errors": sum(q["outcome"] in ("failed", "error") for q in queries),
-            "latency_p50": _percentile(latencies, 0.5),
-            "latency_p95": _percentile(latencies, 0.95),
+            "latency_p50": quantile(latencies, 0.5),
+            "latency_p95": quantile(latencies, 0.95),
             "latency_mean": statistics.fmean(latencies) if latencies else None,
             "cost_usd": total_cost if priced_queries else None,
             "priced_queries": priced_queries,

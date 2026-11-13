@@ -610,7 +610,7 @@ Hybrid search configuration
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `lexical_weight` | number (≥ 0.0, ≤ 1.0) | `0.5` | Weight of the lexical side of a hybrid search. A hybrid search runs a lexical and a kNN search on each index, each fetching at least normalization_window hits, min-max normalizes each over its hits, takes their weighted mean (lexical_weight, vector_weight) and keeps the requested number, so the ranking does not depend on how many hits a query asks for. |
-| `vector_weight` | number (≥ 0.0, ≤ 1.0) | `0.5` | Weight for vector search results |
+| `vector_weight` | number (≥ 0.0, ≤ 1.0) | `0.5` | Weight of the vector (kNN) side of a hybrid search. The two weights are relative (each side counts its weight over their sum), and their sum must be above 0. |
 | `normalization_window` | integer (≥ 1) | `50` | Hits each side of a hybrid search fetches at least (capped by the index's max_result_window) for the min-max normalization before the cut to the requested number: normalized over only the hits returned, a hit's fused score, and so the ranking, depended on how many were asked for. A larger window costs store work per search. Unmeasured choice (no A/B in docs/concepts/defaults-and-evidence.md). |
 
 ### `search.fusion`
@@ -895,11 +895,11 @@ Logging system configuration
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `level` | string | `"INFO"` | Log level: DEBUG, INFO, WARNING, ERROR or CRITICAL. DEBUG logs contain user and corpus text. |
+| `level` | string | `"INFO"` | Log level: DEBUG, INFO, WARNING, ERROR or CRITICAL (any case). DEBUG logs contain user and corpus text. |
 | `log_format` | string | `"structured"` | structured (JSON records, for CloudWatch and other log stores) or plain. |
 | `log_to_file` | boolean | `false` | Also write the CLIs' logs to log_file_path (dated per day; a relative path resolves against the working directory, which must then be writable). Off by default: the console (or the container's log driver) carries every record. The package configures no handler when imported as a library. |
 | `log_file_path` | string (min length 1) | `"logs/log.txt"` | Log file path (CLIs only); relative to the working directory |
-| `library_levels` | dict[string, string] | see [Long defaults](#long-defaults) | Per-logger levels for chatty third-party libraries (logger name -> level). In a config file the key replaces the whole map; an environment variable sets one entry over the defaults. |
+| `library_levels` | dict[string, string] | see [Long defaults](#long-defaults) | Per-logger levels for chatty third-party libraries (logger name -> level, one of the names level takes). In a config file the key replaces the whole map; an environment variable sets one entry over the defaults. |
 
 ## `observability`
 

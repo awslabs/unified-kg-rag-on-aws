@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.fixtures.registries import isolate_loaders
 from unified_kg_rag.adapters.ingestion import parser
 from unified_kg_rag.adapters.ingestion.file_loaders import DOCX_INSTALL_HINT
 from unified_kg_rag.application.ingestion.pipeline_stages import DocumentParsingStage
@@ -30,7 +31,11 @@ _OPTIONAL = {".docx"}
 @pytest.fixture(autouse=True)
 def _without_the_docx_extra(monkeypatch: pytest.MonkeyPatch) -> None:
     # Behave as if the optional 'docx' extra is not installed.
-    monkeypatch.setitem(parser.MISSING_EXTRA_FORMATS, ".docx", DOCX_INSTALL_HINT)
+    isolate_loaders(monkeypatch).register(
+        ".docx",
+        parser.ParserFactory.loader_spec(".pdf"),
+        requires=("synthetic_absent_module", DOCX_INSTALL_HINT),
+    )
 
 
 def _stage(source: Path) -> DocumentParsingStage:

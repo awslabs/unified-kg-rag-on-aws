@@ -33,9 +33,9 @@ RDF_SEED_MAX_BYTES = 32 * 1024 * 1024
 class SeedGraphConfig(ConfigSection):
     """A knowledge graph imported as virtual documents of the corpus."""
 
-    # A list item: the unknown-key check of the config loader walks nested
-    # sections, not list items, so forbid makes a misspelled key an error.
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    # A list item, frozen (ConfigSection refuses an unknown key: the config
+    # loader's check walks nested sections, not list items).
+    model_config = ConfigDict(frozen=True)
 
     name: str = Field(
         min_length=1,

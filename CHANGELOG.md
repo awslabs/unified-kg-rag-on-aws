@@ -337,7 +337,7 @@ See [`iac/README.md`](iac/README.md).
   library guide](docs/guides/python-library.md). The registries keyed by a name (providers, renderers, schema and
   seed sources, analyzers, file loaders) follow one rule: a name is case-insensitive, a later registration replaces
   (a renderer's too), and an optional package is declared with `requires=` (a renderer's as well, in place of
-  `BaseRenderer.check_dependencies`).
+  `BaseRenderer.check_dependencies`; a file loader's through `ParserFactory.register_loader(..., requires=...)`).
 - `GraphRAGChain`: retrieval-only queries are `search()` / `asearch()`, returning a `SearchOutput`; `ChainMode` and
   `mode=` are gone (`GraphRAGChain(cfg).asearch(q)`, read `out.search_results.results`) (#333). It rejects unknown
   keyword arguments, and only `Providers` / `build_providers` take `boto_session` (`providers=Providers(config,
@@ -378,6 +378,9 @@ See [`iac/README.md`](iac/README.md).
   `force_rebuild` off. A dict query raises `InvalidArgumentError` before any model call; the console's API refuses
   an unknown body key or query parameter too (422, `invalid_argument`), the Ask, graph and evaluation reads
   included.
+- An invalid assignment to a config setting (`config.search.max_concurrency = 0`) raises `ValidationError` and
+  keeps the old value; a section validated on its own (`SearchConfig.model_validate`) refuses an unknown key. Change
+  settings across sections with `Config.updated`. The `search.hybrid` weights keep the values set (relative weights).
 
 #### Query behaviour
 - The guardrail no longer wraps every model call: it screens the user query and the final answer through
@@ -1567,9 +1570,10 @@ From a `main` checkout (formats and keys no release had):
 
 ### Changed
 - Every config section validates an assignment against its field (`ConfigSection`), and `Config.updated({"dotted.key":
-  value})` returns a changed config validated whole, so the checks across sections run (the console's methodology
-  selection, `run-eval --arm` and the re-scoring use it): an assignment let the console run a methodology the
-  config's switches leave nothing of. The two `search.hybrid` weights, normalized as a pair, are set together with it.
+  value}, overlay={...})` returns a changed config validated whole, so the checks across sections run (every CLI
+  flag, schema source and console selection that changes a config uses it): an assignment let the console run a
+  methodology the config's switches leave nothing of. The `search.hybrid` weights are relative (their sum must be
+  above 0).
 - `auto` falls back to the first routable of `local`, then `mix`, when the router's answer names no routable
   strategy, as it does when nothing configured is served and as `structured` falls back (one order,
   `GENERAL_FALLBACKS`, from the per-strategy `STRATEGY_TRAITS`); without `local` it took the first routable strategy.

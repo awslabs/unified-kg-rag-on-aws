@@ -29,7 +29,6 @@ from typing import Generic, TypeVar
 
 NAME_PATTERN = re.compile(r"[a-z][a-z0-9_]*")
 
-K = TypeVar("K", bound=str)
 V = TypeVar("V")
 
 
@@ -41,7 +40,7 @@ def module_installed(module: str) -> bool:
         return False
 
 
-class Registry(Generic[K, V]):
+class Registry(Generic[V]):
     """Entries by name under the module's rule.
 
     Attributes:
@@ -68,7 +67,7 @@ class Registry(Generic[K, V]):
         return name.strip().lower()
 
     def register(
-        self, name: K, entry: V, *, requires: tuple[str, str] | None = None
+        self, name: str, entry: V, *, requires: tuple[str, str] | None = None
     ) -> str:
         """Register ``entry`` under ``name`` (replacing an earlier one and
         its requirement); return the normalized name.
@@ -84,6 +83,12 @@ class Registry(Generic[K, V]):
         else:
             self.requires[key] = requires
         return key
+
+    def unregister(self, name: str) -> None:
+        """Remove ``name``'s entry and requirement, if registered."""
+        key = self.normalize(name)
+        self.entries.pop(key, None)
+        self.requires.pop(key, None)
 
     def check_name(self, name: str) -> str:
         """``name`` normalized, if it may be registered.

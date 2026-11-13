@@ -20,6 +20,7 @@ import pytest
 
 from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
+from tests.fixtures.registries import isolate_loaders
 from unified_kg_rag.adapters.ingestion.file_loaders import TextFileLoader
 from unified_kg_rag.adapters.ingestion.parser import ParserFactory
 from unified_kg_rag.application.cli import run_ingestion_pipeline
@@ -243,12 +244,11 @@ def test_a_file_skipped_for_its_type_is_kept_not_deleted(
     (root / "a.txt").write_text("Vendor ships goods.")
     (root / "b.note").write_text("Buyer pays invoices.")
     store = FakeDocStatusStore()
-    monkeypatch.setitem(
-        ParserFactory._loader_configs, ".note", (TextFileLoader, {}, "Note")
-    )
+    loaders = isolate_loaders(monkeypatch)
+    ParserFactory.register_loader(".note", TextFileLoader, {}, "Note")
     _run(root, store, mocker)
     assert len(all_records(store)) == 2
-    monkeypatch.delitem(ParserFactory._loader_configs, ".note")
+    loaders.unregister(".note")
 
     context = _run(root, store, mocker)
 

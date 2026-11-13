@@ -91,7 +91,7 @@ class ProviderEntry(NamedTuple):
 
 
 # One registry per role, under the one registry rule (``shared.registry``).
-_REGISTRIES: dict[ProviderRole, Registry[str, ProviderEntry]] = {
+_REGISTRIES: dict[ProviderRole, Registry[ProviderEntry]] = {
     role: Registry(f"{role.value} provider") for role in ProviderRole
 }
 
@@ -130,10 +130,7 @@ def register_provider(
 
 def unregister_provider(role: ProviderRole, kind: str) -> None:
     """Remove ``kind``'s registration for ``role`` (a test's own kind)."""
-    registry = _REGISTRIES[role]
-    key = registry.normalize(kind)
-    registry.entries.pop(key, None)
-    registry.requires.pop(key, None)
+    _REGISTRIES[role].unregister(kind)
 
 
 def provider_endpoint(role: ProviderRole, kind: str) -> tuple[str, str] | None:
