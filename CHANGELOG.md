@@ -1514,14 +1514,15 @@ From a `main` checkout (formats and keys no release had):
   `log_retention_days`, the stores' maintenance windows, and `observability_secret_arn` / `_keys` for Langfuse or
   OTLP credentials (same-region only in private mode) (#157, #211, #319, #328, #345, #457, #459, #519, #528, #541,
   #566).
-- IaC alarms: `BedrockThrottling` (the share of this deployment's model requests throttled), `IngestionTaskMemory` and
+- IaC alarms: `BedrockThrottling` (the share of this deployment's model requests throttled, in a 5-minute period of
+  at least 50 requests, so a stage of a few calls does not page), `IngestionTaskMemory` and
   `QueryTaskMemory`, OpenSearch snapshot failures, blocked writes, thread-pool and indexing-pressure rejections (where
   OpenSearch 2.x counts bulk 429s), the rest of AWS's recommended OpenSearch alarms (CPU, old-generation heap, nodes,
   shards per GiB of heap, 5xx share, queues, dedicated masters), a yellow multi-node cluster, an unusable KMS key,
   Neptune reader CPU and replica lag, doc-status read throttles and system errors, ephemeral storage,
   `DocumentsNotIndexed`, and `QueryLatencyHigh` on `run-rag --metrics-sink cloudwatch`'s `query_latency_ms`, and
   `QueryFailures` on the failed share of queries (`query_failed`); each also notifies when it recovers, and the
-  dashboard shows the stores' metrics and every alarm's state (#330, #519, #528).
+  dashboard shows the stores' metrics and, on top, every alarm's state (#330, #519, #528).
 - IaC alarms: `BedrockThrottling`, `IngestionTaskMemory`, OpenSearch snapshot failures, blocked writes, thread-pool
   rejections, a yellow multi-node cluster, an unusable KMS key, ephemeral storage, `DocumentsNotIndexed`, and
   `QueryLatencyHigh` on `run-rag --metrics-sink cloudwatch`'s `query_latency_ms` (#330, #519, #528). The chain emits

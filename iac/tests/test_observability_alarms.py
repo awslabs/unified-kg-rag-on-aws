@@ -386,7 +386,11 @@ def test_bedrock_throttling_alarms_on_this_deployments_share() -> None:
     for context in ({}, {"bedrock_region": "us-east-1", "network_mode": "public"}):
         alarm = _alarms(context)["BedrockThrottling"]
         (expression,) = [m for m in alarm["Metrics"] if "Expression" in m]
-        assert expression["Expression"] == "100 * FILL(throttled, 0) / requests"
+        # Regression (rv25): a stage of 3 requests with one throttled resend
+        # (33%) paged; a period needs a minimum volume before it counts.
+        assert expression["Expression"] == (
+            "IF(requests >= 50, 100 * FILL(throttled, 0) / requests, 0)"
+        )
         stats = {
             m["Id"]: m["MetricStat"]["Metric"]
             for m in alarm["Metrics"]
@@ -811,6 +815,10 @@ def test_the_dashboard_shows_every_store_and_the_alarm_status(readers: bool) -> 
     (status,) = [w for w in body["widgets"] if w["type"] == "alarm"]
     # Every alarm of the stack is listed.
     assert len(status["properties"]["alarms"]) == len(_alarms(context))
+    # Old behaviour: 3 units high at the bottom of the dashboard, so most of
+    # the alarms needed scrolling to.
+    assert (status["x"], status["y"]) == (0, 0)
+    assert status["height"] >= len(_alarms(context)) / 4
 
 
 def test_neptune_reader_alarms_with_a_reader_only() -> None:
