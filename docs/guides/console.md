@@ -41,6 +41,9 @@ keeps it in an HttpOnly cookie, and every request without it is refused.
 - `--trace-url http://localhost:16686/trace/{trace_id}` links each answer to
   its trace (Jaeger here). With `observability.backend: langfuse` and
   `LANGFUSE_HOST` set, answers link to Langfuse without it.
+- `--metrics-sink cloudwatch` publishes each question's query metrics
+  (`query_latency_ms`, `query_failed`, ...) as CloudWatch EMF on stdout, for
+  the CDK stack's query alarms ([runbook](../operations.md#alarms)).
 - A `sample-questions.json` (a JSON list of strings) in the workspace
   becomes the Ask page's suggested questions.
 

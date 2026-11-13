@@ -37,7 +37,7 @@ from unified_kg_rag.adapters.aws.bedrock_retry import (
     is_bedrock_item_error,
     is_transient_bedrock_error,
 )
-from unified_kg_rag.adapters.aws.bedrock_throttles import count_throttled_requests
+from unified_kg_rag.adapters.aws.bedrock_throttles import count_requests
 from unified_kg_rag.adapters.aws.token_counter import BedrockTokenCounter
 from unified_kg_rag.adapters.llm.langchain import with_callback
 from unified_kg_rag.adapters.llm.reachability import is_unreachable_error
@@ -237,12 +237,8 @@ class BaseBedrockModelFactory(Generic[ModelIdT, ModelInfoT, WrapperT], ABC):
             self.boto_session, assumed_role_arn=config.aws.bedrock.assumed_role_arn
         )
         self.region_name = region_name or config.aws.bedrock_region
-        self._client = self._new_client(
-            self._boto_config(read_timeout=self.BOTO_READ_TIMEOUT),
-            ModelPurpose.INGESTION,
-        )
-        # The clients of query-time and evaluation calls (_client_for), built
-        # on first use.
+        # One client per purpose of the calls (_client_for), built on first
+        # use: a query process never builds the ingestion one.
         self._purpose_clients: dict[ModelPurpose, Any] = {}
         self._purpose_clients_lock = threading.Lock()
         logger.debug(
@@ -260,23 +256,28 @@ class BaseBedrockModelFactory(Generic[ModelIdT, ModelInfoT, WrapperT], ABC):
         self._instrument_client(client, purpose)
         return client
 
+    def _usage_role(self, purpose: ModelPurpose) -> str:
+        """The usage role (``shared.usage``) a runtime client of
+        ``purpose``'s calls counts its requests under: the purpose here."""
+        return purpose.value
+
     def _instrument_client(self, client: Any, purpose: ModelPurpose) -> None:
-        """Hook for a subclass to attach event handlers to a new runtime
-        client of ``purpose``'s calls (none here)."""
+        """Count every request a new runtime client of ``purpose``'s calls
+        sends, and those throttled (``sent_requests``,
+        ``throttled_requests``), which botocore retries inside a call."""
+        count_requests(client, self._get_boto_service_name(), self._usage_role(purpose))
 
     def _client_for(self, purpose: ModelPurpose) -> Any:
         """The runtime client for a call made for ``purpose``, one per
-        purpose.
+        purpose, built on first use.
 
         Query calls get the query's read timeout and attempts
         (``search.model_timeout_seconds``, ``search.model_max_attempts``): on
         the ingestion client's 330 s and 6 requests, one stalled call held a
         query for 33 minutes. Evaluation calls get a client of their own with
-        the ingestion settings, so what a client counts (the language model
-        factory's throttled requests) is its purpose's.
+        the ingestion settings, so what a client counts (its requests and the
+        throttled ones) is its purpose's.
         """
-        if purpose is ModelPurpose.INGESTION:
-            return self._client
         with self._purpose_clients_lock:
             client = self._purpose_clients.get(purpose)
             if client is None:
@@ -579,6 +580,9 @@ class BedrockEmbeddingModelFactory(
     def _get_boto_service_name(self) -> str:
         return "bedrock-runtime"
 
+    def _usage_role(self, purpose: ModelPurpose) -> str:
+        return "embedding"
+
     @staticmethod
     def _catalog_id(model_id: EmbeddingModelId | str) -> EmbeddingModelId | None:
         """The catalog member behind a model id, profile id or profile ARN."""
@@ -688,11 +692,6 @@ class BedrockLanguageModelFactory(
 
     def _get_boto_service_name(self) -> str:
         return "bedrock-runtime"
-
-    def _instrument_client(self, client: Any, purpose: ModelPurpose) -> None:
-        # The model calls' throttled requests, which botocore retries inside
-        # a call, count in the usage scopes (throttled_requests).
-        count_throttled_requests(client, self._get_boto_service_name(), purpose.value)
 
     # Whether an error is worth a retry: the ingestion batch retries and the
     # query-chain retry of ``setup_chain``.
@@ -1117,6 +1116,9 @@ class BedrockRerankModelFactory(
 
     def _get_boto_service_name(self) -> str:
         return "bedrock-agent-runtime"
+
+    def _usage_role(self, purpose: ModelPurpose) -> str:
+        return "rerank"
 
     def get_model_info(self, model_id: str) -> RerankModelInfo | None:
         return _RERANK_MODEL_INFO.get(model_id)

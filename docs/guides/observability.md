@@ -25,7 +25,9 @@ counters are in the [Telemetry reference](../reference/telemetry.md).
 - Every span of a query carries `session.id` (`RAGInput.conversation_id`)
   and, when set, `user.id` (`RAGInput.user_id`), which Langfuse and Phoenix
   group traces by; pass an opaque user id, not an e-mail address. Log records
-  written inside a span carry its `trace_id` and `span_id`.
+  written inside a span carry its `trace_id` and `span_id`, and a result its
+  `metadata.trace_id`, when the span was sampled (`sample_rate`): an
+  unsampled one is never exported, so it gives none.
 - Spans carry no query text, passages or model output unless
   `capture_content: true`.
 

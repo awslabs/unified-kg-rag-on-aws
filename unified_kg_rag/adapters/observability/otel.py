@@ -234,7 +234,9 @@ class OTelTracerBackend:
 
     def trace_ids(self) -> tuple[str, str] | None:
         context = trace.get_current_span().get_span_context()
-        if not context.is_valid:
+        # An unsampled span is never exported (observability.sample_rate):
+        # its ids would name a trace no backend holds.
+        if not context.is_valid or not context.trace_flags.sampled:
             return None
         return format(context.trace_id, "032x"), format(context.span_id, "016x")
 

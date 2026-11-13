@@ -33,7 +33,8 @@ EMBED_V4 = EmbeddingModelId.EMBED_V4.value
 class _StubbedBedrockSession:
     """A session whose ``bedrock`` client lists ``profiles`` through a Stubber.
 
-    ``bedrock-runtime`` gets an opaque object: no embedding is invoked here.
+    ``bedrock-runtime`` gets a real client, which the factory instruments
+    (its request counting); no embedding is invoked here.
     """
 
     profile_name = "default"
@@ -81,7 +82,9 @@ class _StubbedBedrockSession:
         self.stubber.activate()
 
     def client(self, service_name: str, **kwargs: Any) -> Any:
-        return self.bedrock if service_name == "bedrock" else object()
+        if service_name == "bedrock":
+            return self.bedrock
+        return self._session.client(service_name, **kwargs)
 
     def get_credentials(self) -> Any:
         return None

@@ -203,10 +203,14 @@ class DocStatusRecord(BaseModel):
         "the content and settings checks decide",
     )
     created_at: str | None = Field(
-        default=None, description="ISO timestamp when first registered"
+        default=None,
+        description="When a run first registered the document (UTC, ISO 8601); "
+        "None for a record written before runs stamped it, or by the direct API",
     )
     updated_at: str | None = Field(
-        default=None, description="ISO timestamp of the last status change"
+        default=None,
+        description="When a run last wrote the record (UTC, ISO 8601): its "
+        "status, attempt or lineage changed",
     )
 
 

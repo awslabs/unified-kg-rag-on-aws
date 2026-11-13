@@ -17,6 +17,7 @@ import os
 import secrets
 import socket
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +37,10 @@ from unified_kg_rag.application.cli.conventions import (
 )
 from unified_kg_rag.application.cli.display import console, markup_safe
 from unified_kg_rag.application.cli.help_text import doc_epilog
+from unified_kg_rag.application.cli.metrics_args import (
+    add_metrics_sink_argument,
+    build_metrics_sink,
+)
 from unified_kg_rag.application.config import get_config, load_cli_dotenv
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import ConfigurationError, get_logger
@@ -140,6 +145,15 @@ def _build_parser() -> argparse.ArgumentParser:
         "http://localhost:16686/trace/{trace_id} for Jaeger (default with "
         "observability.backend langfuse: LANGFUSE_HOST/trace/{trace_id})",
     )
+    add_metrics_sink_argument(
+        parser,
+        "Where to send the questions' query metrics: 'none' (default) or "
+        "'cloudwatch' (CloudWatch EMF to stdout: query_latency_ms and the "
+        "outcome counts query_failed, query_degraded and query_abstained under "
+        "unified_kg_rag/query, with an Environment dimension when "
+        "UKR_METRICS_ENVIRONMENT is set and the Strategy that ran; not with "
+        "--output-format json)",
+    )
     add_config_arguments(parser)
     add_output_format_argument(parser)
     return parser
@@ -180,11 +194,31 @@ def _bind(host: str, port: int) -> socket.socket:
     return sock
 
 
+def _chain_factory(metrics_sink: str) -> Callable[[Config], Any] | None:
+    """The questions' chain builder publishing their query metrics to the
+    ``--metrics-sink`` sink (None, without one: the console's default)."""
+    if metrics_sink == "none":
+        return None
+    from unified_kg_rag.application.bootstrap import build_providers
+    from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
+
+    sink = build_metrics_sink(metrics_sink, query=True)
+    return lambda config: GraphRAGChain(
+        config=config, providers=build_providers(config, metrics_sink=sink)
+    )
+
+
 @exits_on_sigterm
 def main(argv: list[str] | None = None) -> int:
     load_cli_dotenv()
     args = _build_parser().parse_args(argv)
     as_json = json_output(args)
+    if as_json and args.metrics_sink == "cloudwatch":
+        # EMF records go to stdout, where the JSON status goes.
+        usage_error(
+            "--output-format json cannot be combined with --metrics-sink "
+            "cloudwatch: both write to stdout"
+        )
     if missing := missing_extra():
         usage_error(
             f"run-console needs {extra_hint('console')}; missing: "
@@ -270,7 +304,7 @@ def main(argv: list[str] | None = None) -> int:
 
     server = uvicorn.Server(
         uvicorn.Config(
-            create_app(options),
+            create_app(options, chain_factory=_chain_factory(args.metrics_sink)),
             # Uvicorn's own records: --log-level when given.
             log_level=(args.log_level or "WARNING").lower(),
             access_log=False,

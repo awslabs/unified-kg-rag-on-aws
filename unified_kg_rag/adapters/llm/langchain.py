@@ -27,7 +27,7 @@ from unified_kg_rag.adapters.llm.retry import record_failure
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
-from unified_kg_rag.shared.utils.common import text_digest
+from unified_kg_rag.shared.utils.common import error_digest, text_digest
 from unified_kg_rag.shared.utils.concurrency import (
     ContextThreadPoolExecutor,
     cancel_on_exit,
@@ -443,12 +443,21 @@ class BatchProcessor(BaseModel):
         return inputs
 
     def _failed(self, task_name: str, error: BaseException) -> Any:
+        # The error's digest: a provider's message may quote the item's text
+        # (the error itself at DEBUG).
         if self._is_retryable(error):
-            logger.error("Item failed every attempt in '%s': %s", task_name, error)
+            logger.error(
+                "Item failed every attempt in '%s': %s",
+                task_name,
+                error_digest(error),
+            )
         else:
             logger.error(
-                "Item failed in '%s' with a non-retryable error: %s", task_name, error
+                "Item failed in '%s' with a non-retryable error: %s",
+                task_name,
+                error_digest(error),
             )
+        logger.debug("Item error in '%s': %s", task_name, error)
         return BATCH_ITEM_FAILED
 
     @staticmethod

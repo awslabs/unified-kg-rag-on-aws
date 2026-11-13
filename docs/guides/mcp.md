@@ -200,6 +200,11 @@ app = build_mcp_app(chain, namespace="default", allowed_hosts=["mcp.example.com"
   `observability.capture_content`, after `redact_patterns`. Logs carry a
   digest of the query, not its text. A store or model failure reaches the
   caller as a generic message; the server log has the details.
+  `--metrics-sink cloudwatch` publishes each `kg_answer` call's query
+  metrics (`query_latency_ms`, `query_failed`, ...) as CloudWatch EMF on
+  stderr, with the logs (stdout is the protocol's), for the CDK stack's
+  `QueryLatencyHigh` and `QueryFailures` alarms
+  ([runbook](../operations.md#alarms)).
 - **Untrusted text.** Chunk text, descriptions and answers come from the
   corpus or a model. The tool descriptions tell the agent to treat them as
   data, and the tools return them in structured fields. The server offers

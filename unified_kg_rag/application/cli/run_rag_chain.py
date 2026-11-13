@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import os
 import sys
 import uuid
 from collections.abc import Callable
@@ -49,6 +48,10 @@ from unified_kg_rag.application.cli.display import (
 )
 from unified_kg_rag.application.cli.help_text import doc_epilog
 from unified_kg_rag.application.cli.lazy import lazy_names
+from unified_kg_rag.application.cli.metrics_args import (
+    add_metrics_sink_argument,
+    build_metrics_sink,
+)
 from unified_kg_rag.application.cli.preflight import (
     missing_endpoints_error,
     missing_extras_error,
@@ -66,12 +69,9 @@ from unified_kg_rag.application.config import load_cli_dotenv
 from unified_kg_rag.domain.models import Citation, SearchStrategy
 from unified_kg_rag.domain.retrieval.store_names import namespace_suffix
 from unified_kg_rag.shared import (
-    CloudWatchEMFSink,
     ConfigurationError,
     InvalidFilterError,
     MethodologyNotIndexedError,
-    MetricsSink,
-    NullMetricsSink,
     get_logger,
 )
 from unified_kg_rag.shared.exceptions import (
@@ -444,11 +444,9 @@ class CommandLineInterface:
             "each key in one of the two",
         )
         add_output_format_argument(parser)
-        parser.add_argument(
-            "--metrics-sink",
-            choices=["none", "cloudwatch"],
-            default="none",
-            help="Where to send query metrics: 'none' (default) or 'cloudwatch' "
+        add_metrics_sink_argument(
+            parser,
+            "Where to send query metrics: 'none' (default) or 'cloudwatch' "
             "(CloudWatch EMF to stdout: query_latency_ms and the outcome counts "
             "query_failed, query_degraded and query_abstained of each --mode rag "
             "query under unified_kg_rag/query, with an Environment dimension "
@@ -526,7 +524,7 @@ class RAGChainRunner:
         # status lines and logs all go to stderr; only the JSON goes to stdout.
         self.json_output = json_output(args)
         setup_cli_logging(self.config, args)
-        self.metrics_sink = self._build_metrics_sink()
+        self.metrics_sink = build_metrics_sink(args.metrics_sink, query=True)
         self.rag_chain: GraphRAGChain | None = None
         self.interactive_commands: dict[str, Callable[..., Any]] = {
             "help": self._handle_help,
@@ -535,15 +533,6 @@ class RAGChainRunner:
             "clear-filters": self._handle_clear_filters,
             "show-config": self._handle_show_config,
         }
-
-    def _build_metrics_sink(self) -> MetricsSink:
-        if self.args.metrics_sink == "cloudwatch":
-            # Set by the CDK stack to its env_name, which its alarms filter on.
-            return CloudWatchEMFSink(
-                environment=os.getenv("UKR_METRICS_ENVIRONMENT") or None,
-                dimension_keys=("Strategy", "Environment"),
-            )
-        return NullMetricsSink()
 
     def _get_suffix_display(self) -> str:
         """The namespace line: what the store names end in, the index suffix

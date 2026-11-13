@@ -10,10 +10,10 @@ when the provider reports them), finish reasons and ``error.type`` on a
 failed call. Cost is not recorded: the package has no model price table to
 derive it from.
 
-A ``session_id`` / ``user_id`` in the run's metadata (``config={"metadata":
-...}``) becomes ``session.id`` / ``user.id``, so a streamed answer, whose model
-call can outlive the caller's ``bind_identity`` block, still groups with its
-session.
+A ``session_id`` / ``user_id`` / ``namespace`` in the run's metadata
+(``config={"metadata": ...}``) becomes ``session.id`` / ``user.id`` /
+``kg_rag.namespace``, so a streamed answer, whose model call can outlive the
+caller's ``bind_identity`` block, still groups with its session and tenant.
 
 A cancelled ``ainvoke`` / ``agenerate`` gets no callback from LangChain
 (``astream`` reports it through ``on_llm_error``): its span is ended as an
@@ -71,6 +71,9 @@ from unified_kg_rag.shared.observability import (
 )
 
 MODEL_PURPOSE = "kg_rag.model.purpose"
+# The index namespace a run's metadata names (a streamed answer's call,
+# which outlives its query span's bind_attributes).
+NAMESPACE = "kg_rag.namespace"
 
 
 _ROLES = {"human": "user", "ai": "assistant", "system": "system", "tool": "tool"}
@@ -176,6 +179,7 @@ class GenAITracingCallbackHandler(BaseCallbackHandler):
             MODEL_PURPOSE: self.purpose,
             SESSION_ID: metadata.get("session_id"),
             USER_ID: metadata.get("user_id"),
+            NAMESPACE: metadata.get("namespace"),
         }
         policy = observability.content_policy()
         if policy.capture_content and messages:

@@ -40,6 +40,12 @@ QUERY_LATENCY_METRIC = "query_latency_ms"
 QUERY_FAILED_METRIC = "query_failed"
 QUERY_DEGRADED_METRIC = "query_degraded"
 QUERY_ABSTAINED_METRIC = "query_abstained"
+# Of the query's requests, those Bedrock throttled (its usage's
+# throttled_requests): a query slowed by throttling, told apart.
+QUERY_THROTTLED_METRIC = "query_throttled_requests"
+# The dimension keys of the query metrics' series (each value a billed
+# custom-metric series: never a per-query or per-namespace key).
+QUERY_METRICS_DIMENSION_KEYS: tuple[str, ...] = ("Strategy", "Environment")
 
 
 @runtime_checkable

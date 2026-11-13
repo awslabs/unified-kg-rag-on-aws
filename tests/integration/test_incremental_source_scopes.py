@@ -661,14 +661,16 @@ def test_runs_a_stage_stops_before_indexing_keep_retrying_the_delta(
         (new,) = records.values()
         assert {r.attempt_count for r in (kept, new)} == {0}
         assert {r.attempt_batch for r in (kept, new)} == {None}
-        # Only the attempt fields change (and the pipeline id writing them),
-        # and the consecutive runs failed for an error not their own.
+        # Only the attempt fields change (and the pipeline id and time
+        # writing them), and the consecutive runs failed for an error not
+        # their own.
         attempt = {
             "attempted_hash",
             "attempt_count",
             "attempt_batch",
             "crash_batch",
             "written_by",
+            "updated_at",
             "retry_count",
         }
         assert kept.model_dump(exclude=attempt) == indexed.model_dump(exclude=attempt)

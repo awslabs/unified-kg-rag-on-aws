@@ -58,6 +58,7 @@ from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.exceptions import (
     MethodologyNotIndexedError,
     classify,
+    query_failure_ids,
 )
 
 logger = get_logger(__name__)
@@ -410,6 +411,9 @@ class AskService:
                         "error_kind": kind,
                         "error_class": kind,
                         "message": str(e),
+                        # The ids of its log lines and trace.
+                        "query_id": query_id,
+                        **query_failure_ids(e),
                     }
                 )
             finally:

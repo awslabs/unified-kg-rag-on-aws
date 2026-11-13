@@ -1432,7 +1432,7 @@ These fire between runs too, so degradation shows before a run breaks on it:
 
 | Alarm | Fires when | What to do |
 |---|---|---|
-| `BedrockThrottling` | At least 10% of this deployment's model requests in a run stage were throttled (`llm_throttles` over `llm_requests`, the app's own usage accounting as each stage finishes; other Bedrock users in the account do not count, and it works with any `bedrock_region`) | Throttled requests are retried, so the run slows rather than fails: lower `processing.max_concurrency` or ask for a higher quota. The dashboard's "LLM throttled requests by stage" widget shows which stage, and its account-wide "Bedrock throttles" widget whether other callers share the quota |
+| `BedrockThrottling` | At least 10% of this deployment's model requests were throttled in a 5-minute period of 50 requests or more (`llm_throttles` over `llm_requests`, the app's own usage accounting as each stage finishes, the embedding and rerank models' requests included; a smaller period reads 0, so a stage of a few calls does not page; other Bedrock users in the account do not count, and it works with any `bedrock_region`) | Throttled requests are retried, so the run slows rather than fails: lower `processing.max_concurrency` or ask for a higher quota. The dashboard's "LLM throttled requests by stage" widget shows which stage, and its account-wide "Bedrock throttles" widget whether other callers share the quota |
 | `IngestionTaskMemory` | The ingestion task used at least 90% of its memory for 3 minutes (Container Insights) | Fargate kills a task over its memory, losing the running stage: raise `fargate_memory` ([Capacity sizing](#capacity-sizing)) |
 | `QueryTaskMemory` | The query task (`run-rag`, `run-eval`) used at least 90% of its memory for 3 minutes (Container Insights) | The task is killed over its memory, with the `run-eval` run in it: raise `fargate_memory` (both task definitions share it) |
 | `IngestionTaskEphemeralStorage` | The ingestion task used at least 90% of its ephemeral storage (image included) for 5 minutes (Container Insights) | A full disk fails the running stage: raise `ingestion_ephemeral_storage_gib` (up to 200) |
@@ -1447,14 +1447,24 @@ These fire between runs too, so degradation shows before a run breaks on it:
 
 `GraphRAGChain` publishes each answer's `query_latency_ms` and its outcome
 (`query_failed`, `query_degraded`, `query_abstained`: 0 or 1) through the
-metrics sink of its `Providers` (`run-rag --metrics-sink cloudwatch`; a
-serving layer passes its `MetricsSink`: `Providers(config, metrics_sink=...)`),
-answers only (a `--mode search` query is not counted), failed ones included:
-a query that ran past `search.query_timeout_seconds` records about the
-deadline, so timeouts raise the p90 rather than vanishing from it. They go
-under `unified_kg_rag/query` with the task's `Environment` and the `Strategy`
-that ran (the requested one for a query that failed before one did), the
-namespace as a log property. `QueryFailures` and the "Query outcomes" widget
+metrics sink of its `Providers` (`--metrics-sink cloudwatch` of `run-rag`,
+`run-mcp-server`, whose EMF goes to stderr, and `run-console`; a serving
+layer passes its `MetricsSink`: `Providers(config, metrics_sink=...)`),
+answers only (a `--mode search` query is not counted), streamed ones and
+failed ones included, a failure in the query's admission (a build-record
+read, the deadline) too: a query that ran past
+`search.query_timeout_seconds` records about the deadline, so timeouts raise
+the p90 rather than vanishing from it. A caller's error (`invalid_argument`,
+`invalid_filter`, `index_not_found`, `not_indexed`: a typo'd namespace, an
+empty question) is not counted in `query_failed`, so a client's mistake
+does not page; every failure names its class in the record's `error_class`
+property. A cancelled query (an MCP client that disconnects, a task
+cancelled by its host) records nothing. `query_throttled_requests` counts
+the requests Bedrock throttled for the query, which tells a query slowed by
+throttling apart. They go under `unified_kg_rag/query` with the task's
+`Environment` and the `Strategy` that ran (the requested one for a query
+that failed before one did), the `namespace` as a log property (the key of
+the ingestion records too). `QueryFailures` and the "Query outcomes" widget
 read them; where no surface publishes them, the alarm stays OK and the
 widget empty.
 
@@ -1487,8 +1497,9 @@ Corpus coverage metrics, one value per run (Sum):
 | `total_units_failed` | run end | Text units a stage failed on, full builds included (JSON `units_failed`) |
 | `total_unrecognised_claim_statuses` | `claim_extraction` | Extracted claims whose status the model wrote outside the words the claim reader knows (stored as `unknown`) |
 
-Model usage metrics, emitted right after each stage that called a model or
-was served from the LLM response cache (Sum; a model-free stage emits none,
+Model usage metrics, emitted right after each stage that called a model,
+sent a Bedrock request (an embedding-only stage such as `indexing`) or was
+served from the LLM response cache (Sum; a model-free stage emits none,
 so it creates no metric series). They come from the app's own usage
 accounting, tracing on or off, and count only this deployment's runs, unlike
 the account-wide Bedrock widgets; `run-ingestion --output-format json` has the
@@ -1499,8 +1510,8 @@ same counts in `token_usage`:
 | `llm_calls_<stage>` | Model calls that returned (retries included, failed calls not) |
 | `llm_input_tokens_<stage>` | Input tokens the responses reported, prompt-cache reads and writes included |
 | `llm_output_tokens_<stage>` | Output tokens the responses reported |
-| `llm_throttles_<stage>` | Requests Bedrock throttled (HTTP 429), each attempt once: resent inside a call or the last attempt of a failed one |
-| `llm_throttles`, `llm_requests` | The throttled requests and every request sent (returned and failed calls plus the requests resent inside them), summed over the stages: `BedrockThrottling` reads their ratio |
+| `llm_throttles_<stage>` | Requests Bedrock throttled (HTTP 429), each attempt once: resent inside a call or the last attempt of a failed one; the language, embedding and rerank models' alike |
+| `llm_throttles`, `llm_requests` | The throttled requests and every request sent to Bedrock (each attempt once, the embedding and rerank models' too: `sent_requests` in `token_usage`), summed over the stages: `BedrockThrottling` reads their ratio |
 | `llm_cache_hits` | Responses the run's LLM response cache served instead of a call (a resumed stage), chunk-boundary and community report answers the extraction store served, and description summaries a full build took from their stored copies, summed over the stages |
 
 To check them against Bedrock's own counts, compare a run's sums with the
@@ -1541,7 +1552,7 @@ are this stack's own choices, not measured, which the table says.
 | `NeptuneLowFreeableMemory` | 1/32 of the instance's memory (512 MiB on `db.r6g.large`), 512 MiB on Serverless at its maximum | This stack's choice |
 | `NeptuneReplicaLag` | 1 s, 3 consecutive 5-minute periods | This stack's choice: readers share the writer's storage and normally lag it by far less |
 | `NeptuneGremlinErrors` | Any error in 3 consecutive minutes | This stack's choice: retried write conflicts come in short bursts |
-| `BedrockThrottling` | 10% of the deployment's requests in a run stage | This stack's choice, not measured: a throttled request is retried, so it costs run time, not results |
+| `BedrockThrottling` | 10% of the deployment's requests, in a period of at least 50 | This stack's choice, neither value measured: a throttled request is retried, so it costs run time, not results |
 | `QueryLatencyHigh` | `query_latency_alarm_seconds` (60) at p90, 2 of 3 periods | This stack's choice; set it to the latency your users accept |
 | `QueryFailures` | 10% of queries, 2 of 3 periods | This stack's choice, the share AWS uses for OpenSearch 5xx |
 | The pipeline alarms, `DocStatusWriteThrottled`, `DocStatusReadThrottled`, `DocStatusSystemErrors`, `NeptuneServerlessAtMaxCapacity` | Any occurrence (at maximum capacity: 3 periods) | Each is a loss or a limit nobody should miss |

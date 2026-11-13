@@ -48,6 +48,10 @@ from unified_kg_rag.application.cli.display import (
 )
 from unified_kg_rag.application.cli.help_text import doc_epilog
 from unified_kg_rag.application.cli.lazy import lazy_names
+from unified_kg_rag.application.cli.metrics_args import (
+    add_metrics_sink_argument,
+    build_metrics_sink,
+)
 from unified_kg_rag.application.cli.preflight import (
     missing_endpoints_error,
     missing_extras_error,
@@ -70,12 +74,10 @@ from unified_kg_rag.domain.models import (
     validate_path_segment,
 )
 from unified_kg_rag.shared import (
-    CloudWatchEMFSink,
     ConfigurationError,
     ConfirmationDeclinedError,
     MetricsSink,
     ModelUnreachableError,
-    NullMetricsSink,
     PipelineExecutionError,
     PipelineInterrupted,
     StoreConnectionError,
@@ -350,12 +352,9 @@ class CommandLineInterface:
             type=lambda s: [item.strip() for item in s.split(",")],
             help="Comma-separated list of pipeline stages to enable (e.g., 'DOCUMENT_PARSING,TEXT_CHUNKING'). If not specified, all stages are enabled.",
         )
-        parser.add_argument(
-            "--metrics-sink",
-            type=str,
-            choices=["none", "cloudwatch"],
-            default="none",
-            help="Where to forward pipeline metrics: 'none' (default) or "
+        add_metrics_sink_argument(
+            parser,
+            "Where to forward pipeline metrics: 'none' (default) or "
             "'cloudwatch' (CloudWatch EMF to stdout, auto-extracted by "
             "CloudWatch Logs, with an Environment dimension when "
             "UKR_METRICS_ENVIRONMENT is set; pipeline_id is a log property, not "
@@ -555,15 +554,8 @@ class IngestionPipelineRunner:
         console.print(Panel.fit(info_content, border_style="blue"))
 
     def _build_metrics_sink(self) -> MetricsSink:
-        if self.args.metrics_sink == "cloudwatch":
-            # Set by the CDK stack to its env_name, which its alarms filter on.
-            environment = os.getenv("UKR_METRICS_ENVIRONMENT") or None
-            logger.info(
-                "Forwarding pipeline metrics to CloudWatch (EMF), environment '%s'",
-                environment or "-",
-            )
-            return CloudWatchEMFSink(environment=environment)
-        return NullMetricsSink()
+        """The pipeline's sink (``--metrics-sink``)."""
+        return build_metrics_sink(self.args.metrics_sink, query=False)
 
     def _create_pipeline_config(self) -> PipelineConfig:
         all_stages = {stage.name: stage for stage in PipelineStageType}

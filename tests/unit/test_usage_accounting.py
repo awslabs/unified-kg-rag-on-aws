@@ -142,6 +142,7 @@ def test_a_cached_response_is_a_cache_hit_not_a_call(tmp_path: Path) -> None:
             "cache_read_input_tokens": 0,
             "cache_write_input_tokens": 0,
             "request_retries": 0,
+            "sent_requests": 0,
             "throttled_requests": 0,
             "failed_calls": 0,
             "rerank_calls": 0,
@@ -637,6 +638,8 @@ def test_throttled_bedrock_requests_count_per_attempt_and_role(monkeypatch) -> N
             client.converse(modelId="vendor.model-a", messages=message)
         snapshot = meter.snapshot()
         assert snapshot["throttled_requests"] == throttles
+        # Every attempt is a request sent, throttled or not.
+        assert snapshot["sent_requests"] == throttles + 1
         if throttles:
             assert snapshot["by_role"] == {
                 purpose.value: {**snapshot["by_role"][purpose.value]}
@@ -650,5 +653,116 @@ def test_throttled_bedrock_requests_count_per_attempt_and_role(monkeypatch) -> N
     with usage.usage_scope() as meter, pytest.raises(Exception, match="Throttling"):
         client.converse(modelId="vendor.model-a", messages=message)
     assert meter.snapshot()["throttled_requests"] == factory.BOTO_MAX_ATTEMPTS + 1
+    assert meter.snapshot()["sent_requests"] == factory.BOTO_MAX_ATTEMPTS + 1
     # Validated as part of the usage record.
     assert LLMUsage.model_validate(meter.snapshot()).throttled_requests == 6
+
+
+def test_embedding_and_rerank_requests_count_like_the_chat_models(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression (rv25): only the language model clients were counted, so an
+    # embedding-heavy stage (indexing) reported 0 throttled requests of 0
+    # sent although Bedrock throttled them, and the throttling alarm, which
+    # reads this deployment's share, never saw it.
+    import json
+    import time
+
+    import boto3
+    from botocore.awsrequest import AWSResponse
+
+    from unified_kg_rag.adapters.aws.bedrock import (
+        BedrockEmbeddingModelFactory,
+        BedrockRerankModelFactory,
+    )
+
+    monkeypatch.setenv("AWS_EC2_METADATA_DISABLED", "true")
+    monkeypatch.setattr(time, "sleep", lambda _seconds: None)  # retry backoff
+    session = boto3.Session(
+        aws_access_key_id="testing",
+        aws_secret_access_key="testing",
+        region_name="us-east-1",
+    )
+
+    def responder(throttles: int, answer: dict[str, Any]) -> Any:
+        sent: list[int] = []
+
+        def before_send(request: Any, **_: Any) -> AWSResponse:
+            sent.append(1)
+            if len(sent) <= throttles:
+                return AWSResponse(
+                    request.url,
+                    429,
+                    {"x-amzn-ErrorType": "ThrottlingException"},
+                    _Raw(b'{"message": "Too many requests"}'),
+                )
+            return AWSResponse(request.url, 200, {}, _Raw(json.dumps(answer).encode()))
+
+        return before_send
+
+    embedding = BedrockEmbeddingModelFactory(Config(), boto_session=session)
+    client = embedding._client_for(ModelPurpose.INGESTION)
+    client.meta.events.register(
+        "before-send.bedrock-runtime",
+        responder(2, {"embedding": [0.1], "inputTextTokenCount": 1}),
+    )
+    with usage.usage_scope() as meter:
+        client.invoke_model(
+            modelId="amazon.titan-embed-text-v2:0",
+            body=json.dumps({"inputText": "hi"}),
+        )
+    snapshot = meter.snapshot()
+    assert (snapshot["sent_requests"], snapshot["throttled_requests"]) == (3, 2)
+    assert snapshot["by_role"]["embedding"]["throttled_requests"] == 2
+    assert snapshot["by_model"]["amazon.titan-embed-text-v2:0"]["sent_requests"] == 3
+
+    rerank = BedrockRerankModelFactory(Config(), boto_session=session)
+    client = rerank._client_for(ModelPurpose.QUERY)
+    client.meta.events.register(
+        "before-send.bedrock-agent-runtime",
+        # A query client: search.model_max_attempts (2) requests at most.
+        responder(1, {"results": []}),
+    )
+    model_arn = "arn:aws:bedrock:us-east-1::foundation-model/cohere.rerank-v3-5:0"
+    with usage.usage_scope() as meter:
+        client.rerank(
+            queries=[{"type": "TEXT", "textQuery": {"text": "q"}}],
+            sources=[
+                {
+                    "type": "INLINE",
+                    "inlineDocumentSource": {
+                        "type": "TEXT",
+                        "textDocument": {"text": "d"},
+                    },
+                }
+            ],
+            rerankingConfiguration={
+                "type": "BEDROCK_RERANKING_MODEL",
+                "bedrockRerankingConfiguration": {
+                    "modelConfiguration": {"modelArn": model_arn}
+                },
+            },
+        )
+    snapshot = meter.snapshot()
+    assert (snapshot["sent_requests"], snapshot["throttled_requests"]) == (2, 1)
+    # Under the role and model id the rerank calls are recorded under.
+    assert snapshot["by_role"]["rerank"]["throttled_requests"] == 1
+    assert snapshot["by_model"]["cohere.rerank-v3-5:0"]["sent_requests"] == 2
+
+
+def test_a_factory_builds_only_the_clients_its_calls_use() -> None:
+    # Old behaviour: every factory built the ingestion client eagerly, so a
+    # query process (run-rag, run-mcp-server) paid for one it never used.
+    import boto3
+
+    from unified_kg_rag.adapters.aws.bedrock import BedrockLanguageModelFactory
+
+    session = boto3.Session(
+        aws_access_key_id="testing",
+        aws_secret_access_key="testing",
+        region_name="us-east-1",
+    )
+    factory = BedrockLanguageModelFactory(Config(), boto_session=session)
+    assert factory._purpose_clients == {}
+    factory._client_for(ModelPurpose.QUERY)
+    assert set(factory._purpose_clients) == {ModelPurpose.QUERY}

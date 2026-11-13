@@ -126,7 +126,9 @@ holds:
   `degraded_error`, `citations_unresolved` (the lineage reads that failed,
   in the same shape), `error_class` (of the error answer under
   `processing.ignore_errors`, else `null`) and an answer's `written` (the
-  model-written sections it may cite).
+  model-written sections it may cite). Its `metadata.query_id` and
+  `metadata.trace_id` are the ids of the query's log lines and trace (no
+  trace id when tracing is off or the trace was not sampled).
 - **`run-ingestion`**: with `--verify-metadata`, `pipeline_id` and
   `"metadata_valid": true` (a missing or corrupt record exits `1` with the
   status document below). Otherwise the pipeline id, the status, the model
@@ -241,6 +243,7 @@ shows the failure:
 | `error` | The message, when there is one |
 | `error_class` | The class of the failure ([`ErrorClass`](#exit-code-2): `invalid_argument` for a refused command line, `configuration` for a config that does not load, `failure` for a run that failed without an exception); the stable key to branch on. A stopped run has none |
 | `error_type` | Informational, may change between releases: the exception's class name (`ConfigurationError`, `QueryTimeoutError`, `StoreConnectionError`, `ModelUnreachableError`, `PipelineExecutionError`, ...), `UsageError` for a refused command line, `FailureBudgetExceeded` or `RegressionGateFailed` for `run-eval`, `RunFailed` for a run that failed without an exception (nothing rendered), `Interrupted` for a stopped run |
+| `query_id`, `trace_id` | A failed query's only (`run-rag`): the ids of its log lines and trace, when known (`trace_id` with a sampled trace). The MCP server ends a tool error's message with them (`(query_id: ..., trace_id: ...)`) and the console's error event carries them |
 
 A run that printed its result prints nothing more; the result shows the
 failure with these keys: a failed `run-rag` query (also with
@@ -263,7 +266,10 @@ instead:
   `exit_code`, `error_class` and `error_type`: the first failed stage's, its
   items' dominant cause when they failed (`model_unreachable` and
   `ModelUnreachableError`, naming the server, when every call was refused by
-  a model server that was down; each stage also has its `error_class`). `run-ingestion` adds the `pipeline_id` to resume with
+  a model server that was down; the throttling, server error or timeout that
+  outlasted the calls' retries, by its type, error code and HTTP status and
+  how many calls it ended, as the model's, its quota's or the service's, not
+  the documents'; each stage also has its `error_class`). `run-ingestion` adds the `pipeline_id` to resume with
   (once the run resolved it) and, when a stopped run's next run on the
   namespace must wait for writes possibly still in flight (this run's, or
   those of the run whose expired lease it took over),

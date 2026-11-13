@@ -17,6 +17,8 @@ SNS topic.
 
 from __future__ import annotations
 
+import math
+
 from aws_cdk import Annotations, Duration, Stack
 from aws_cdk import aws_cloudwatch as cw
 from aws_cdk import aws_cloudwatch_actions as cw_actions
@@ -205,6 +207,10 @@ NEPTUNE_REPLICA_LAG_MS = 1000
 LLM_THROTTLES_METRIC = "llm_throttles"
 LLM_REQUESTS_METRIC = "llm_requests"
 LLM_THROTTLED_SHARE = 10
+# The requests a 5-minute period needs before its throttled share counts:
+# a stage of a few calls (one throttled resend of 3 requests is 33%) must not
+# page. Not measured (docs/operations.md, "Where each threshold comes from").
+LLM_THROTTLE_MIN_REQUESTS = 50
 
 # OpenSearch 7.1+ indexing-pressure rejections ("Monitoring OpenSearch
 # cluster metrics with Amazon CloudWatch": totals since the node's process
@@ -394,6 +400,17 @@ class ObservabilityStack(Stack):
         # Dashboard: execution health + a couple of EMF pipeline metrics.
         dashboard = cw.Dashboard(
             self, "Dashboard", dashboard_name=f"{config.prefix}-dashboard"
+        )
+        # Which alarm is in ALARM, at a glance: every alarm of the stack, on
+        # top, tall enough to list them (about four to a row at full width).
+        alarms = list(self.alarms)
+        dashboard.add_widgets(
+            cw.AlarmStatusWidget(
+                title="Alarms",
+                alarms=alarms,
+                width=24,
+                height=2 + math.ceil(len(alarms) / 4),
+            )
         )
         dashboard.add_widgets(
             cw.GraphWidget(
@@ -589,10 +606,6 @@ class ObservabilityStack(Stack):
         opensearch_widgets, neptune_widgets, dynamodb_widgets = self._store_widgets()
         dashboard.add_widgets(*opensearch_widgets, *dynamodb_widgets)
         dashboard.add_widgets(*neptune_widgets)
-        # Which alarm is in ALARM, at a glance: every alarm of the stack.
-        dashboard.add_widgets(
-            cw.AlarmStatusWidget(title="Alarms", alarms=list(self.alarms), width=24)
-        )
         self.dashboard = dashboard
 
     def _store_widgets(
@@ -761,11 +774,15 @@ class ObservabilityStack(Stack):
         # rather than fails; a high share means processing.max_concurrency
         # is above the account's quota. Unlike Bedrock's InvocationThrottles
         # (the dashboard's account-wide widget) it counts no other caller and
-        # is published in the deploy region whatever bedrock_region is.
+        # is published in the deploy region whatever bedrock_region is. A
+        # period of fewer than LLM_THROTTLE_MIN_REQUESTS requests reads 0.
         self._alarm(
             "BedrockThrottling",
             cw.MathExpression(
-                expression="100 * FILL(throttled, 0) / requests",
+                expression=(
+                    f"IF(requests >= {LLM_THROTTLE_MIN_REQUESTS}, "
+                    "100 * FILL(throttled, 0) / requests, 0)"
+                ),
                 using_metrics={
                     "throttled": self._emf(LLM_THROTTLES_METRIC),
                     "requests": self._emf(LLM_REQUESTS_METRIC),
@@ -775,8 +792,9 @@ class ObservabilityStack(Stack):
             ),
             LLM_THROTTLED_SHARE,
             f"Bedrock throttled at least {LLM_THROTTLED_SHARE}% of this "
-            "deployment's model requests in a run stage: lower "
-            "processing.max_concurrency or raise the quota",
+            f"deployment's model requests (of {LLM_THROTTLE_MIN_REQUESTS} or "
+            "more in 5 minutes): lower processing.max_concurrency or raise "
+            "the quota",
         )
         # Memory pressure: Fargate kills a task that exceeds its memory (exit
         # 137, OutOfMemoryError), which loses the running stage.

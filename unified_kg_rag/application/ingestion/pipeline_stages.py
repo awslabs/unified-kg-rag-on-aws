@@ -35,7 +35,12 @@ from unified_kg_rag.adapters.llm.reachability import (
     is_unreachable_error,
     model_unreachable_error,
 )
-from unified_kg_rag.adapters.llm.retry import FailureLedger, failure_ledger
+from unified_kg_rag.adapters.llm.retry import (
+    FailureLedger,
+    describe_cause,
+    failure_ledger,
+    item_error_predicate,
+)
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.ingestion.extraction_store import (
@@ -240,6 +245,17 @@ def _build_knowledge_graph(context: PipelineContext) -> Any:
     ).build()
 
 
+def _failed_files_note(failed_files: Sequence[str]) -> str:
+    """`` It failed on N files: a, b ...`` (the first ten), or nothing."""
+    if not failed_files:
+        return ""
+    return (
+        f" It failed on {len(failed_files)} files: "
+        + ", ".join(failed_files[:10])
+        + (" ..." if len(failed_files) > 10 else "")
+    )
+
+
 class PipelineStage(ABC):
     MUST_HAVE_INPUT_STAGES = {
         PipelineStageType.COMMUNITY_DETECTION,
@@ -379,7 +395,7 @@ class PipelineStage(ABC):
             logger.warning("Stage '%s' stopped: %s", self.name, e)
             raise
         except Exception as raised:
-            error = self._stage_error(raised, ledger)
+            error, named_after = self._stage_error(raised, ledger)
             logger.exception("Stage '%s' failed: %s", self.name, error)
             span.record_exception(error)
             span.set_attribute(ERROR_TYPE, type(error).__name__)
@@ -394,7 +410,8 @@ class PipelineStage(ABC):
                 error_message=str(error),
             )
             result.error_class = classify(error)
-            result.error_type = type(error).__name__
+            # The model's error a stage failure was named after, else its own.
+            result.error_type = type(named_after or error).__name__
             return result
         finally:
             reset_contextvars(**tokens)
@@ -405,29 +422,55 @@ class PipelineStage(ABC):
     ) -> tuple[int, int, dict[str, Any] | None]:
         pass
 
-    def _stage_error(self, error: Exception, ledger: FailureLedger) -> Exception:
+    def _stage_error(
+        self, error: Exception, ledger: FailureLedger
+    ) -> tuple[Exception, BaseException | None]:
         """What the stage failed with: ``error``, or, when it failed because
         its model calls did (a critical stage that produced nothing), their
         dominant cause (``ledger``): a model server that could not be
         reached as the ``ModelUnreachableError`` naming it, a store as its
-        ``StoreConnectionError``, and a failure a known-good request met too
-        as the model's or a setting's, not the documents'."""
+        ``StoreConnectionError``, a failure a known-good request met too as
+        the model's or a setting's, and one that is no item's own (the
+        throttling, server error or timeout that outlasted the retries) as
+        the model's, its quota's or the service's, with how many calls it
+        ended; not the documents'. With the error a named failure was named
+        after (its ``error_type``), else ``None``."""
         if is_unreachable_error(error):
-            return model_unreachable_error(error, self.config)
-        dominant = ledger.dominant() if isinstance(error, PipelineStageError) else None
-        if dominant is None:
-            return error
+            return model_unreachable_error(error, self.config), None
+        found = ledger.dominant_count()
+        if not isinstance(error, PipelineStageError) or found is None:
+            return error, None
+        dominant, count = found
         if is_unreachable_error(dominant):
-            return model_unreachable_error(dominant, self.config)
+            return model_unreachable_error(dominant, self.config), None
         if isinstance(dominant, StoreConnectionError):
-            return dominant
+            return dominant, None
+        # Named by its type, code and status, never its message, which may
+        # quote the request's text; the error itself is the cause.
+        cause = describe_cause(dominant)
         if ledger.model_failed:
-            return PipelineStageError(
+            named = PipelineStageError(
                 f"Stage '{self.name}' failed: every model call and a known-good "
-                f"request failed alike ({type(dominant).__name__}), a failure of "
-                f"the model or a setting, not of the documents: {dominant}"
+                f"request failed alike ({cause}), a failure of the model or a "
+                "setting, not of the documents."
+                + _failed_files_note(error.failed_files),
+                failed_files=error.failed_files,
             )
-        return error
+        elif not item_error_predicate(self.providers.llm_factory)(dominant):
+            # Throttling, a 5xx or a timeout that outlasted the retries: the
+            # known-good request is sent only for the items' own errors.
+            named = PipelineStageError(
+                f"Stage '{self.name}' failed: {count} of its "
+                f"{ledger.failures} failed model calls ended in {cause} after "
+                "their retries, a failure of the model, its quota or the "
+                "service, not of the documents."
+                + _failed_files_note(error.failed_files),
+                failed_files=error.failed_files,
+            )
+        else:
+            return error, None
+        named.__cause__ = dominant
+        return named, dominant
 
     def _allows_empty_output(self, context: PipelineContext) -> bool:
         """Stages may opt out of the zero-output critical check for valid cases.
@@ -497,13 +540,10 @@ class PipelineStage(ABC):
                 f"{input_count} inputs but produced 0 outputs. Check the stage "
                 f"configuration and input data quality."
             )
-            if failed_files:
-                error_msg += (
-                    f" It failed on {len(failed_files)} files: "
-                    + ", ".join(failed_files[:10])
-                    + (" ..." if len(failed_files) > 10 else "")
-                )
-            raise PipelineStageError(error_msg)
+            raise PipelineStageError(
+                error_msg + _failed_files_note(failed_files),
+                failed_files=list(failed_files),
+            )
 
         if output_count == 0:
             logger.warning(

@@ -1112,14 +1112,18 @@ From a `main` checkout (formats and keys no release had):
   warning, and the rest is still described (#636). A missing extra and a namespace that holds no index exit 2 with the
   error on stderr, and describing creates no store file where nothing was ingested (#641). `--documents
   failed,quarantined` (`describe_namespace(documents=...)`) lists the registry's documents of those statuses with their
-  `error_info`, counts, writer and time; a run names the documents it deletes in one INFO line. See
+  `error_info`, counts, writer and time (every run write stamps `updated_at`, and `created_at` once; a record
+  written before has none); a run names the documents it deletes in one INFO line. See
   [inspect and
   export](docs/guides/inspect.md).
 - Telemetry names the namespace (the tenant boundary) and ties a query to its logs: `kg_rag.namespace` on every span
   of a query or ingestion run, `namespace` in their log context and an ingestion run's EMF properties; the
   ingestion root span has `kg_rag.mode` and the delta counts, the query span `kg_rag.degraded` and
   `kg_rag.error_class`; a result's `metadata.query_id` and `metadata.trace_id` (also MCP's `query_id` /
-  `trace_id`) are the ids of its log lines and trace, and a console question's log lines carry its id.
+  `trace_id`) are the ids of its log lines and trace (a trace id only when the trace was sampled, so exported), and a
+  console question's log lines carry its id. A query that raises carries them too (`exc.query_id`, `exc.trace_id`):
+  `run-rag`'s failure document, an MCP tool error and the console's error event name them. A streamed answer's spans,
+  its model call's included, name the namespace as `ainvoke`'s do, and admission log lines carry the query id.
 - Observability: the `observability` section and `otel` extra, spans for runs, stages, batches and query steps,
   GenAI model-call spans, OTLP, Langfuse and Phoenix exporters with redacted content capture (an IPv6 endpoint keeps
   its brackets in the logged URL); CDK `enable_cloudwatch_tracing` with an ADOT sidecar (#207, #208, #211, #219,
@@ -1321,7 +1325,8 @@ From a `main` checkout (formats and keys no release had):
   not two named ones. See
   [query](docs/guides/query.md#follow-up-rounds-for-multi-hop-questions).
 - LLM usage accounting, tracing or not: calls, input and output tokens, prompt-cache reads and writes, resent,
-  throttled and failed requests and cache hits per model role and id, in `RAGOutput` / `SearchOutput.metadata["usage"]`,
+  sent and throttled requests (every Bedrock client's: the language, embedding and rerank models'), failed calls and
+  cache hits per model role and id, in `RAGOutput` / `SearchOutput.metadata["usage"]`,
   `EvaluationResult.usage`, `run-ingestion`'s JSON `token_usage` and per-stage EMF metrics on the CDK dashboard. A
   call counts from its start, so cancelled and background calls are billed at an estimated input; a response that
   reports no tokens keeps its resent requests and an output estimated from its text (#526, #530, #532, #533, #541,
@@ -1513,20 +1518,26 @@ From a `main` checkout (formats and keys no release had):
   `log_retention_days`, the stores' maintenance windows, and `observability_secret_arn` / `_keys` for Langfuse or
   OTLP credentials (same-region only in private mode) (#157, #211, #319, #328, #345, #457, #459, #519, #528, #541,
   #566).
-- IaC alarms: `BedrockThrottling` (the share of this deployment's model requests throttled), `IngestionTaskMemory` and
+- IaC alarms: `BedrockThrottling` (the share of this deployment's model requests throttled, in a 5-minute period of
+  at least 50 requests, so a stage of a few calls does not page), `IngestionTaskMemory` and
   `QueryTaskMemory`, OpenSearch snapshot failures, blocked writes, thread-pool and indexing-pressure rejections (where
   OpenSearch 2.x counts bulk 429s), the rest of AWS's recommended OpenSearch alarms (CPU, old-generation heap, nodes,
   shards per GiB of heap, 5xx share, queues, dedicated masters), a yellow multi-node cluster, an unusable KMS key,
   Neptune reader CPU and replica lag, doc-status read throttles and system errors, ephemeral storage,
   `DocumentsNotIndexed`, and `QueryLatencyHigh` on `run-rag --metrics-sink cloudwatch`'s `query_latency_ms`, and
   `QueryFailures` on the failed share of queries (`query_failed`); each also notifies when it recovers, and the
-  dashboard shows the stores' metrics and every alarm's state (#330, #519, #528).
+  dashboard shows the stores' metrics and, on top, every alarm's state (#330, #519, #528).
 - IaC alarms: `BedrockThrottling`, `IngestionTaskMemory`, OpenSearch snapshot failures, blocked writes, thread-pool
   rejections, a yellow multi-node cluster, an unusable KMS key, ephemeral storage, `DocumentsNotIndexed`, and
   `QueryLatencyHigh` on `run-rag --metrics-sink cloudwatch`'s `query_latency_ms` (#330, #519, #528). The chain emits
   the query metrics itself, through the new `Providers.metrics_sink`, so a library host, MCP app or console counts
   too: per answer `query_latency_ms` and the outcome `query_failed`, `query_degraded`, `query_abstained` (0 or 1),
-  per `Strategy` that ran (`auto` queries no longer land under `auto`), with `Namespace` a log property.
+  per `Strategy` that ran (`auto` queries no longer land under `auto`), with `namespace` (the ingestion records'
+  key) and a failure's `error_class` log properties, and `query_throttled_requests`. Streamed answers and failed
+  admissions (a build-record read, the deadline) count; a caller's error (`ErrorClass.is_caller_error`: an invalid
+  argument or filter, a namespace without the index or methodology) is not a `query_failed`. `run-mcp-server` and
+  `run-console` take `--metrics-sink cloudwatch` as `run-rag` does (the MCP server's EMF on stderr, as stdout is
+  the protocol's), one sink builder for every CLI.
 - The package ships a `py.typed` marker (#568). `main` reports `0.3.0.dev0`, and a `v<version>` tag runs a release
   workflow that publishes a GitHub release: the tag must be on `main`, the notes are the section's introduction,
   *Highlights*, *Breaking changes*, *Upgrading* and *Security* with a link to the version's heading for the rest, and
@@ -2004,9 +2015,12 @@ Ingestion and incremental indexing.
   1`) cut the spaces between words into units of their own, and the run failed with `missing embeddings`.
 - A stage that failed because its model calls did keeps their dominant cause: a model server that was down fails
   it as the `ModelUnreachableError` naming the server (`error_class` `model_unreachable` on the stage result, the
-  `run-ingestion` JSON and the run span), a store as its `StoreConnectionError`, and a failure a known-good request
-  met too as the model's or a setting's; it said "produced 0 outputs. Check the stage configuration", class
-  `failure`. The failed-units summary of a run that stopped before indexing no longer says they were indexed.
+  `run-ingestion` JSON and the run span), a store as its `StoreConnectionError`, a failure a known-good request
+  met too as the model's or a setting's, and throttling, a server error or a timeout that outlasted the retries as
+  the model's, its quota's or the service's, with how many calls it ended (`error_type` the model error's, named by
+  type, code and status, never its text); it said "produced 0 outputs. Check the stage configuration", class
+  `failure`. A failed batch item logs its error's digest, not its text, which may quote the item. The failed-units
+  summary of a run that stopped before indexing no longer says they were indexed.
 - An extraction, claims, gleaning, report-findings or chunk-boundary section that lists elements reads as empty when
   it holds a short "nothing here" marker, in any language (one line of at most three estimated tokens:
   `<relationships>없음</relationships>`, `なし`, `None.`, `Keine`): only `None`, `N/A`, `null`, `nil` and `-` did,

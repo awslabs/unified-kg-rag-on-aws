@@ -60,6 +60,8 @@ from unified_kg_rag.shared.exceptions import (
     QueryTimeoutError,
     classify,
     error_class_of,
+    query_failure_ids,
+    tag_query_failure,
 )
 from unified_kg_rag.shared.usage import usage_scope
 from unified_kg_rag.shared.utils import strip_invisible, text_digest
@@ -354,13 +356,8 @@ class _AbsorbedQueryError(GraphRAGException):
 # argument, a filter or a strategy to change, a namespace without an index,
 # the deadline. The others' may name an endpoint (a store, a model server).
 _CALLER_CLASSES = frozenset(
-    {
-        ErrorClass.INVALID_ARGUMENT,
-        ErrorClass.INVALID_FILTER,
-        ErrorClass.NOT_INDEXED,
-        ErrorClass.INDEX_NOT_FOUND,
-        ErrorClass.TIMEOUT,
-    }
+    {error_class for error_class in ErrorClass if error_class.is_caller_error}
+    | {ErrorClass.TIMEOUT}
 )
 INTERNAL_ERROR_MESSAGE = (
     "The call failed inside the server (a store or model error); the server "
@@ -374,13 +371,22 @@ def describe_error(exc: BaseException) -> tuple[str, bool]:
     a caller branches on: retry a ``timeout`` or an unreachable store, fix
     an argument), and whether it is one the caller can act on. Any other
     error gets a generic message after its class, so a store endpoint or a
-    stack frame never reaches the caller (the server logs it)."""
+    stack frame never reaches the caller (the server logs it). The ids of
+    the query it failed, when it carries them (``query_failure_ids``), end
+    the message: ``(query_id: ..., trace_id: ...)``, which find its log
+    lines and trace."""
     error_class = (
         exc.error_class if isinstance(exc, _AbsorbedQueryError) else classify(exc)
     )
+    ids = query_failure_ids(exc)
+    suffix = (
+        " (" + ", ".join(f"{name}: {value}" for name, value in ids.items()) + ")"
+        if ids
+        else ""
+    )
     if error_class in _CALLER_CLASSES:
-        return f"[{error_class.value}] {exc}", True
-    return f"[{error_class.value}] {INTERNAL_ERROR_MESSAGE}", False
+        return f"[{error_class.value}] {exc}{suffix}", True
+    return f"[{error_class.value}] {INTERNAL_ERROR_MESSAGE}{suffix}", False
 
 
 def _cut(text: str, limit: int) -> tuple[str, bool]:
@@ -766,13 +772,18 @@ class KnowledgeGraphTools:
         if outcome.error_class is None:
             return outcome
         error_class = error_class_of(outcome.error_class)
-        if error_class in _CALLER_CLASSES:
-            raise _AbsorbedQueryError(
-                outcome.error_message or "The query was refused.", error_class
-            )
-        raise _AbsorbedQueryError(
-            "The query failed (processing.ignore_errors).", error_class
+        error = _AbsorbedQueryError(
+            (
+                outcome.error_message or "The query was refused."
+                if error_class in _CALLER_CLASSES
+                else "The query failed (processing.ignore_errors)."
+            ),
+            error_class,
         )
+        tag_query_failure(
+            error, output.metadata.get("query_id"), output.metadata.get("trace_id")
+        )
+        raise error
 
     @staticmethod
     def _query_fields(

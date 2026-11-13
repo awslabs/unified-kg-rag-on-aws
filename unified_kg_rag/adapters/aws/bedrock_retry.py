@@ -21,19 +21,26 @@ import re
 
 from botocore import exceptions as boto_exc
 
+# The error codes Bedrock runtime (bedrock-runtime, bedrock-agent-runtime)
+# throttles a request with (HTTP 429): what adapters.aws.bedrock_throttles
+# counts.
+THROTTLING_ERROR_CODES: frozenset[str] = frozenset({"ThrottlingException"})
+
 # Error codes Bedrock runtime returns for conditions that resolve on their own.
 # ThrottlingException / ServiceUnavailableException / InternalServerException
 # are normally absorbed by botocore's own retries; they are listed so a burst
 # that outlasts botocore's attempts still gets the backoff.
-TRANSIENT_BEDROCK_ERROR_CODES: frozenset[str] = frozenset(
-    {
-        "ModelErrorException",
-        "ModelNotReadyException",
-        "ModelTimeoutException",
-        "ServiceUnavailableException",
-        "InternalServerException",
-        "ThrottlingException",
-    }
+TRANSIENT_BEDROCK_ERROR_CODES: frozenset[str] = (
+    frozenset(
+        {
+            "ModelErrorException",
+            "ModelNotReadyException",
+            "ModelTimeoutException",
+            "ServiceUnavailableException",
+            "InternalServerException",
+        }
+    )
+    | THROTTLING_ERROR_CODES
 )
 
 

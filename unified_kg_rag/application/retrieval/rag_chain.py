@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import concurrent.futures
+import contextlib
 import contextvars
 import functools
 import threading
@@ -17,8 +18,10 @@ from collections.abc import (
     Callable,
     Collection,
     Iterator,
+    Mapping,
 )
 from contextlib import AbstractContextManager, aclosing, nullcontext
+from dataclasses import dataclass
 from typing import Any, Literal, Self, TypeVar, cast
 
 from langchain_core.exceptions import OutputParserException
@@ -203,9 +206,12 @@ from unified_kg_rag.shared import (
 )
 from unified_kg_rag.shared.exceptions import (
     ERROR_CLASS_KEY,
+    ErrorClass,
     InvalidArgumentError,
     MethodologyNotIndexedError,
     classify,
+    error_class_of,
+    tag_query_failure,
 )
 from unified_kg_rag.shared.genai import ERROR_TYPE, GEN_AI_CONVERSATION_ID
 from unified_kg_rag.shared.metrics import (
@@ -214,8 +220,9 @@ from unified_kg_rag.shared.metrics import (
     QUERY_FAILED_METRIC,
     QUERY_LATENCY_METRIC,
     QUERY_METRICS_NAMESPACE,
+    QUERY_THROTTLED_METRIC,
 )
-from unified_kg_rag.shared.usage import usage_scope
+from unified_kg_rag.shared.usage import UsageMeter, usage_scope
 from unified_kg_rag.shared.utils import (
     configure_event_loop,
     error_digest,
@@ -693,6 +700,20 @@ class SearchOutput(BaseModel):
     metadata: dict[str, Any] = Field(
         default_factory=dict, description="Additional metadata about the search"
     )
+
+
+@dataclass
+class _StreamOutcome:
+    """What a streamed query's metrics and failure read (``astream``): its
+    id, its trace's, the input once admitted, and the class of the failure
+    its error answer absorbed (``processing.ignore_errors``)."""
+
+    query_id: str
+    trace_id: str | None = None
+    rag_input: RAGInput | None = None
+    error_class: ErrorClass | None = None
+    # The strategy that ran (auto's route), once retrieval did.
+    ran: Any = None
 
 
 class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
@@ -2343,12 +2364,26 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         search: bool,
     ) -> RAGOutput | SearchOutput:
         # Fixed when the query starts: its admission (the build-record read
-        # of the methodology check, a store round trip) counts too.
+        # of the methodology check, a store round trip) counts too, in the
+        # deadline and the latency.
         deadline = _QueryDeadline(self.config.search.query_timeout_seconds)
-        rag_input, input_dict = await self._admit_query(input, deadline)
-        log_context = self._log_context(rag_input)
-        log_tokens = bind_contextvars(**log_context)
         started = time.monotonic()
+        query_id = self._query_id()
+        # The admission's log lines carry the query's id too.
+        admission_tokens = bind_contextvars(query_id=query_id)
+        try:
+            rag_input, input_dict = await self._admit_query(input, deadline)
+        except Exception as e:
+            tag_query_failure(e, query_id)
+            if not search:
+                self._record_query_metrics(started, input, error=e)
+            raise
+        finally:
+            reset_contextvars(**admission_tokens)
+        log_context = self._log_context(rag_input, query_id)
+        log_tokens = bind_contextvars(**log_context)
+        ids: tuple[str, str] | None = None
+        meter: UsageMeter | None = None
         try:
             # The root span of a query trace: the strategy, retrieval, fusion,
             # rerank, context build and model calls nest under it, each
@@ -2364,6 +2399,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 query_scope(),
             ):
                 ids = observability.current_trace_ids()
+                assert meter is not None
                 leftovers: list[asyncio.Future[Any]] = []
                 token = _LEFTOVER_EXTRACTIONS.set(leftovers)
                 try:
@@ -2394,59 +2430,105 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                         ),
                     }
                 )
-        except Exception:
+        except Exception as e:
+            tag_query_failure(e, query_id, ids[0] if ids else None)
             if not search:
-                self._record_query_metrics(rag_input, started, None)
+                self._record_query_metrics(
+                    started,
+                    rag_input,
+                    error=e,
+                    usage=meter.snapshot() if meter is not None else None,
+                )
             raise
         finally:
             reset_contextvars(**log_tokens)
         if not search:
-            self._record_query_metrics(rag_input, started, result)
+            self._record_query_metrics(
+                started, rag_input, result=result, usage=result.metadata.get("usage")
+            )
         return result
 
     @staticmethod
-    def _log_context(rag_input: RAGInput) -> dict[str, Any]:
-        """What every log line of a query carries: its id (one bound by the
-        caller, as the console's, else a new one), its conversation and its
-        namespace (``rag_input.suffix``, resolved)."""
+    def _query_id() -> str:
+        """A query's id: one bound by the caller (as the console's), else a
+        new one."""
+        return str(get_contextvars().get("query_id") or uuid.uuid4().hex[:12])
+
+    @staticmethod
+    def _log_context(rag_input: RAGInput, query_id: str) -> dict[str, Any]:
+        """What every log line of a query carries: its id, its conversation
+        and its namespace (``rag_input.suffix``, resolved)."""
         return {
-            "query_id": get_contextvars().get("query_id") or uuid.uuid4().hex[:12],
+            "query_id": query_id,
             "conversation_id": rag_input.conversation_id,
             "namespace": rag_input.suffix,
         }
 
     def _record_query_metrics(
         self,
-        rag_input: RAGInput,
         started: float,
-        result: RAGOutput | SearchOutput | None,
+        query: RAGInput | dict[str, Any],
+        *,
+        result: RAGOutput | SearchOutput | None = None,
+        error: BaseException | None = None,
+        error_class: ErrorClass | None = None,
+        usage: Mapping[str, Any] | None = None,
+        ran: Any = None,
     ) -> None:
         """Publish an answered query's latency and outcome through the
-        providers' metrics sink (``Providers.metrics_sink``: ``run-rag
-        --metrics-sink cloudwatch``, or a host's), per strategy that ran (the
-        requested one when none did): ``query_failed`` (raised, or the error
-        answer of ``processing.ignore_errors``), ``query_degraded`` (answered
-        without a step) and ``query_abstained``, 0 or 1 each. Answers only, so
-        a retrieval-only search does not lower the answer latency."""
+        providers' metrics sink (``Providers.metrics_sink``: ``--metrics-sink
+        cloudwatch``, or a host's), per strategy that ran (the requested one
+        when none did): ``query_failed`` (raised, its admission included, or
+        the error answer of ``processing.ignore_errors``; not a caller's
+        error, ``ErrorClass.is_caller_error``, whose class the
+        ``error_class`` property names as any failure's), ``query_degraded``
+        (answered without a step) and ``query_abstained``, 0 or 1 each, and
+        ``query_throttled_requests`` (the requests Bedrock throttled, when
+        the usage is known). Answers only, so a retrieval-only search does
+        not lower the answer latency. ``query``: the admitted input, or the
+        one the admission refused; ``ran``: the strategy that ran, when no
+        ``result`` names it (a streamed answer's)."""
         metadata = result.metadata if result is not None else {}
-        strategy = rag_input.search_strategy.value
-        if result is not None and not metadata.get("error"):
+        if error is not None:
+            error_class = classify(error)
+        elif metadata.get("error"):
+            error_class = error_class_of(metadata.get(ERROR_CLASS_KEY))
+        requested = (
+            query.get("search_strategy")
+            if isinstance(query, dict)
+            else query.search_strategy
+        )
+        strategy = str(getattr(requested, "value", requested) or "auto")
+        if result is not None:
             ran = result.search_results.search_strategy
-            strategy = getattr(ran, "value", ran) or strategy
+        if ran is not None and error_class is None:
+            strategy = str(getattr(ran, "value", ran) or strategy)
+        namespace = query.get("suffix") if isinstance(query, dict) else query.suffix
+        with contextlib.suppress(Exception):
+            # Resolved as the admission resolves it (a refused input's too).
+            namespace = resolve_namespace(self.config, namespace)
+        metrics = {
+            QUERY_LATENCY_METRIC: (time.monotonic() - started) * 1000,
+            QUERY_FAILED_METRIC: float(
+                error_class is not None and not error_class.is_caller_error
+            ),
+            QUERY_DEGRADED_METRIC: float(bool(DegradationReport.of(metadata).degraded)),
+            QUERY_ABSTAINED_METRIC: float(bool(metadata.get("abstained"))),
+        }
+        if usage is not None:
+            metrics[QUERY_THROTTLED_METRIC] = float(
+                usage.get("throttled_requests") or 0
+            )
+        # Log properties, not dimensions (QUERY_METRICS_DIMENSION_KEYS): the
+        # namespace by the key the ingestion records use.
+        properties = {"Strategy": strategy}
+        if namespace:
+            properties["namespace"] = str(namespace)
+        if error_class is not None:
+            properties["error_class"] = error_class.value
         try:
             self.providers.metrics_sink.emit(
-                QUERY_METRICS_NAMESPACE,
-                {
-                    QUERY_LATENCY_METRIC: (time.monotonic() - started) * 1000,
-                    QUERY_FAILED_METRIC: float(
-                        result is None or bool(metadata.get("error"))
-                    ),
-                    QUERY_DEGRADED_METRIC: float(
-                        bool(DegradationReport.of(metadata).degraded)
-                    ),
-                    QUERY_ABSTAINED_METRIC: float(bool(metadata.get("abstained"))),
-                },
-                {"Strategy": str(strategy), "Namespace": str(rag_input.suffix)},
+                QUERY_METRICS_NAMESPACE, metrics, properties
             )
         except Exception as e:  # noqa: BLE001 - metrics never fail a query
             logger.warning("Query metrics emission failed: %s", error_digest(e))
@@ -3289,19 +3371,40 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         memory exactly as ``ainvoke`` would. With a guardrail, a blocked query
         yields the blocked message once, and with ``check_output`` the answer
         is generated in full, screened, and yielded as one chunk.
+
+        A streamed answer publishes its query metrics as ``ainvoke``'s do
+        (latency to its end, ``query_failed`` on an exception), the query
+        span and its log lines name its namespace and query id, and an
+        exception it raises carries them (``tag_query_failure``). A stream
+        the caller stops reading early (``aclose``) is no failure; a
+        cancelled one, as a cancelled ``ainvoke``, records no metrics.
         """
         started = time.monotonic()
         # The speculative extractions its route did not read (see ainvoke).
         leftovers: list[asyncio.Future[Any]] = []
+        outcome = _StreamOutcome(query_id=self._query_id())
+        stopped: BaseException | None = None
         try:
             async with aclosing(
-                self._astream(input, config, leftovers, **kwargs)
+                self._astream(input, config, leftovers, outcome, **kwargs)
             ) as chunks:
                 async for chunk in chunks:
                     yield chunk
-        except BaseException:
+        except BaseException as e:
+            stopped = e
+            if isinstance(e, Exception):
+                tag_query_failure(e, outcome.query_id, outcome.trace_id)
             await discard(leftovers)
             raise
+        finally:
+            if stopped is None or isinstance(stopped, Exception | GeneratorExit):
+                self._record_query_metrics(
+                    started,
+                    outcome.rag_input or input,
+                    error=stopped if isinstance(stopped, Exception) else None,
+                    error_class=outcome.error_class,
+                    ran=outcome.ran,
+                )
         self._background_extractions.keep(leftovers, self._time_left(started))
 
     async def _astream(
@@ -3309,17 +3412,25 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         input: RAGInput,
         config: RunnableConfig | None,
         leftovers: list[asyncio.Future[Any]],
+        outcome: _StreamOutcome,
         **kwargs: Any,
     ) -> AsyncGenerator[str, None]:
         """The answer chunks of :meth:`astream`; the speculative extractions
-        the route did not read go to ``leftovers``."""
+        the route did not read go to ``leftovers``, and what its metrics
+        read to ``outcome``."""
         search_config = self.config.search
         deadline = _QueryDeadline(
             search_config.query_timeout_seconds,
             first_chunk_seconds=search_config.model_timeout_seconds,
         )
-        # Admitted within the deadline (_query).
-        rag_input, input_dict = await self._admit_query(input, deadline)
+        # Admitted within the deadline (_query), its log lines under the
+        # query's id.
+        admission_tokens = bind_contextvars(query_id=outcome.query_id)
+        try:
+            rag_input, input_dict = await self._admit_query(input, deadline)
+        finally:
+            reset_contextvars(**admission_tokens)
+        outcome.rag_input = rag_input
         chunks: list[str] = []
         delivered = False
         # A refused answer, like a refused query, writes no memory.
@@ -3330,18 +3441,21 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             # the first yield, in one context. Each later step of the generator
             # may run in another (stream() resumes it in a new task), where the
             # binding would not hold and its reset would fail.
-            tokens = bind_contextvars(**self._log_context(rag_input))
+            tokens = bind_contextvars(**self._log_context(rag_input, outcome.query_id))
             leftovers_token = _LEFTOVER_EXTRACTIONS.set(leftovers)
             try:
                 # Only the steps before the first yield are traced here, for the
                 # same reason; the streamed answer call gets its own model span.
                 with (
                     self._identity(rag_input),
+                    observability.bind_attributes(namespace=rag_input.suffix),
                     observability.span(
                         "kg_rag.query",
                         self._query_span_attributes(rag_input, search=False),
                     ) as span,
                 ):
+                    ids = observability.current_trace_ids()
+                    outcome.trace_id = ids[0] if ids else None
                     async with deadline.scope():
                         self._raise_missing_namespace(input_dict)
                         blocking = await self._screen_input(
@@ -3359,6 +3473,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                                     input_dict, config
                                 )
                             )
+                            outcome.ran = state.get("resolved_strategy")
             finally:
                 _LEFTOVER_EXTRACTIONS.reset(leftovers_token)
                 reset_contextvars(**tokens)
@@ -3370,7 +3485,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             # in a trace of its own; its run metadata carries the session and
             # user so the tracing callback can still group it.
             answer_config = merge_configs(
-                config, {"metadata": self._identity_metadata(rag_input)}
+                config,
+                {
+                    "metadata": {
+                        **self._identity_metadata(rag_input),
+                        "namespace": rag_input.suffix,
+                    }
+                },
             )
             # The first chunk (text or not: a thinking model streams its
             # reasoning first) must come within the model timeout of the call,
@@ -3453,6 +3574,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 error_digest(e),
             )
             logger.debug("RAG stream error: %s", e)
+            # Counted as ainvoke's error answer is.
+            outcome.error_class = classify(e)
             # Mirror ainvoke's degraded answer. If part of the answer was
             # already delivered, append the notice so the truncation is visible.
             yield f"\n\n{DEFAULT_ERROR_MESSAGE}" if delivered else DEFAULT_ERROR_MESSAGE

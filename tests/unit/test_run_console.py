@@ -265,3 +265,29 @@ def test_the_cli_loads_no_web_package_before_it_checks_the_extra() -> None:
         "sys.exit('fastapi' in sys.modules or 'uvicorn' in sys.modules)"
     )
     assert subprocess.run([sys.executable, "-c", code], check=False).returncode == 0
+
+
+def test_the_console_questions_publish_query_metrics_when_asked(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Old behaviour: the console's chain had no metrics sink, so its
+    # questions never reached the CDK stack's query alarms.
+    from unified_kg_rag.application.retrieval import rag_chain
+    from unified_kg_rag.domain.models import Config
+    from unified_kg_rag.shared.metrics import CloudWatchEMFSink
+
+    assert run_console._chain_factory("none") is None
+    built: list[dict[str, Any]] = []
+    monkeypatch.setattr(rag_chain, "GraphRAGChain", lambda **kw: built.append(kw))
+    factory = run_console._chain_factory("cloudwatch")
+    assert factory is not None
+    factory(Config())
+    sink = built[0]["providers"].metrics_sink
+    assert isinstance(sink, CloudWatchEMFSink)
+    assert set(sink._dimension_keys) == {"Strategy", "Environment"}
+    # Both would write to stdout.
+    monkeypatch.setattr(run_console, "missing_extra", lambda: [])
+    with pytest.raises(SystemExit) as exc:
+        run_console.main(["--metrics-sink", "cloudwatch", "--output-format", "json"])
+    assert exc.value.code == 2
+    assert "both write to stdout" in capsys.readouterr().err

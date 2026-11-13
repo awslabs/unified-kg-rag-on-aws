@@ -29,6 +29,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple
 
@@ -1322,6 +1323,8 @@ class IncrementalIndexer:
                 file_path=lineage.file_path,
                 text_unit_ids=lineage.text_unit_ids,
                 source_digest=lineage.source_digest,
+                # When the document was first registered (_written_by).
+                created_at=existing.created_at if existing else None,
             )
             records.append(record)
         unrecorded = sorted(set(self._pending) - {r.doc_id for r in records})
@@ -2271,9 +2274,22 @@ def _confirm_mass_deletion(
 def _written_by(
     records: Iterable[DocStatusRecord], pipeline_id: str | None
 ) -> list[DocStatusRecord]:
-    """``records`` stamped with the pipeline id of the run writing them
-    (None: unknown, as a record written before the field existed)."""
-    return [record.model_copy(update={"written_by": pipeline_id}) for record in records]
+    """``records`` stamped as the run writes them: with its pipeline id
+    (None: unknown, as a record written before the field existed), the
+    time (``updated_at``, UTC ISO 8601) and, for a record first registered
+    now, ``created_at``. Every record a run writes goes through here, so
+    ``run-describe --documents`` can say when."""
+    now = datetime.now(UTC).isoformat(timespec="seconds")
+    return [
+        record.model_copy(
+            update={
+                "written_by": pipeline_id,
+                "updated_at": now,
+                "created_at": record.created_at or now,
+            }
+        )
+        for record in records
+    ]
 
 
 def open_attempts(

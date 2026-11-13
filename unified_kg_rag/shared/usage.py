@@ -13,7 +13,8 @@ no scope is open is not recorded: the callback costs one context-variable
 read.
 
 Counts are kept per model role (the purpose the model was built for:
-``query``, ``ingestion``, ``evaluation``; ``rerank`` for the reranker) and
+``query``, ``ingestion``, ``evaluation``; ``embedding`` and ``rerank`` for
+the embedding model's and reranker's requests) and
 per model id. A rerank request is no model call: it counts in
 ``rerank_calls`` and its billed ``rerank_search_units``. A response the
 ingestion response cache served, a chunk-boundary answer the extraction
@@ -33,11 +34,11 @@ Bedrock call running on a worker thread), so it is billed. One that ends
 later settles in the scopes still open (a ``run-eval`` run's); a snapshot
 already taken keeps the estimate. Retries are calls too, but the requests
 the SDK resends inside one call (botocore's own retries) are not: they are
-counted apart, in ``request_retries``; of all the requests, those Bedrock
-throttled are counted in ``throttled_requests`` (a botocore hook of the
-language model clients, ``adapters.aws.bedrock_throttles``, records each one
-as it comes back). ``input_tokens`` includes the prompt
-cache reads and writes, also counted apart
+counted apart, in ``request_retries``. A botocore hook of every Bedrock
+runtime client (``adapters.aws.bedrock_throttles``: the language, embedding
+and rerank models') counts each request as it comes back, in
+``sent_requests``, and those Bedrock throttled in ``throttled_requests``.
+``input_tokens`` includes the prompt cache reads and writes, also counted apart
 (``cache_read_input_tokens`` / ``cache_write_input_tokens``) since they are
 billed at other rates.
 
@@ -68,7 +69,7 @@ __all__ = [
     "record_cache_hit",
     "record_llm_call",
     "record_rerank_call",
-    "record_throttled_request",
+    "record_request",
     "rerank_search_units",
     "start_llm_call",
     "usage_scope",
@@ -84,6 +85,7 @@ COUNT_FIELDS: tuple[str, ...] = (
     "cache_read_input_tokens",
     "cache_write_input_tokens",
     "request_retries",
+    "sent_requests",
     "throttled_requests",
     "failed_calls",
     "rerank_calls",
@@ -114,6 +116,7 @@ class _Counts:
     cache_read_input_tokens: int = 0
     cache_write_input_tokens: int = 0
     request_retries: int = 0
+    sent_requests: int = 0
     throttled_requests: int = 0
     failed_calls: int = 0
     rerank_calls: int = 0
@@ -354,10 +357,11 @@ def record_rerank_call(
     _record("rerank", model, _Counts(rerank_calls=1, rerank_search_units=units))
 
 
-def record_throttled_request(role: str, model: str) -> None:
-    """Record one request the provider throttled (HTTP 429): an attempt, not
-    a call, whether the SDK resent it or the call failed on it."""
-    _record(role, model, _Counts(throttled_requests=1))
+def record_request(role: str, model: str, *, throttled: bool = False) -> None:
+    """Record one request sent to the provider (an attempt, not a call: the
+    SDK's resends of one call count each), and whether it was throttled
+    (HTTP 429), whether the SDK resent it or the call failed on it."""
+    _record(role, model, _Counts(sent_requests=1, throttled_requests=int(throttled)))
 
 
 def record_cache_hit(role: str, model: str) -> None:
