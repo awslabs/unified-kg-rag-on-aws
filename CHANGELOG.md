@@ -550,8 +550,10 @@ From a `main` checkout (formats and keys no release had):
   (most others are kept); stage-cache keys
   hold the prompts in effect (a pipeline id resumed across a prompt change starts over); extraction records under
   earlier keys (other description summary settings, #541-#556) and claims under an earlier reading of their dates
-  (#612, #624) are no longer looked up. Run one reset (`indexing.reset: true`) with a new or no `--pipeline-id`:
-  incremental runs keep stored entities under their earlier ids beside the new ones. That one reset covers this item
+  (#612, #624) are no longer looked up; a CSV or HTML file saved with a UTF-8 byte-order mark reads without it, so
+  its text changes (an incremental run re-extracts it as a changed document; no other file changes). Run one reset
+  (`indexing.reset: true`) with a new or no `--pipeline-id`: incremental runs keep stored entities under their
+  earlier ids beside the new ones. That one reset covers this item
   and every item below, and its cost depends on the index's age. On an index built with #565 or later it reuses the
   stored graph extraction and gleaning records and the vectors (entity and relationship ids are minted again from the
   names, as extraction mints them) and asks the model one summary, and one embedding, per entity or relationship over
@@ -1124,7 +1126,8 @@ From a `main` checkout (formats and keys no release had):
 - `processing.document_parsing.encoding`: the encoding the text formats that are not UTF-8 are read in instead of
   the one detected (cp1252 for a French file detected as cp1250); setting it parses those files again in the next
   incremental run, and no UTF-8 file. A text, CSV or HTML file is first read as UTF-8 under any locale (it was read
-  in the locale's encoding, so a UTF-8 file decoded as Latin-1 text under a Latin-1 locale). See
+  in the locale's encoding, so a UTF-8 file decoded as Latin-1 text under a Latin-1 locale), without a leading
+  byte-order mark (a CSV saved as Excel's "CSV UTF-8" kept it in its first header on every row after the first). See
   [ingest](docs/guides/ingest.md#large-and-heterogeneous-corpora).
 - Documents from memory: `DataIngestionPipeline.insert_documents([InputDocument(id=..., text=..., filters=...)])`
   adds or updates documents, `delete_documents(ids)` deletes them, through the incremental path of `run` (one run

@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""The direct file loaders parse exactly what the langchain-community ones did.
+"""The direct file loaders parse what the langchain-community ones did, but
+for the files ``_REREAD`` lists (a UTF-8 byte-order mark is not text).
 
 The change hash and ``document_id`` of a source document derive from its
 parsed ``page_content``, so a loader that read one byte differently (a CRLF
@@ -59,15 +60,16 @@ _COMMUNITY = importlib.util.find_spec("langchain_community") is not None
 # name -> (text hash, document_id relative to the corpus root), as the
 # langchain-community TextLoader/CSVLoader/PyPDFLoader parsed the corpus.
 # latin1.txt depends on what charset-normalizer detects for it (a Baltic
-# code page); that is the parser's behaviour, kept as it was.
+# code page); that is the parser's behaviour, kept as it was. bom.csv is
+# read without its byte-order mark (``_REREAD``).
 _GOLDEN: dict[str, tuple[str, str]] = {
     "bare_cr.txt": (
         "48022b44dbc640a5239e29701d5c2644",
         "159af2a5-1234-5893-b83c-d739b47b9461",
     ),
     "bom.csv": (
-        "7c5d3bf901b5ccbf5132206d8975dbc9",
-        "d3944451-e41f-570a-a94e-c7e34e17cf27",
+        "9704bcac855d0fbc89a4e652f09191ae",
+        "9d60e550-2111-56b7-a9e2-5a0dca6a355e",
     ),
     "bom.txt": (
         "24c635ca5da6dfc77acba7c4c62e3226",
@@ -108,6 +110,17 @@ _GOLDEN: dict[str, tuple[str, str]] = {
     "utf16.txt": (
         "8befaa97aeb650ddd628a13b603e705f",
         "5e939a18-df90-5e0b-a7cd-a9daaf39aae7",
+    ),
+}
+
+# The files the parser reads otherwise than langchain-community did, as it
+# did: CSVLoader kept a UTF-8 byte-order mark in the first header of every
+# row after the first (``\ufeffkey: beta``); the parser drops it, so these
+# files are re-extracted once as changed documents (CHANGELOG, Upgrading).
+_REREAD: dict[str, tuple[str, str]] = {
+    "bom.csv": (
+        "7c5d3bf901b5ccbf5132206d8975dbc9",
+        "d3944451-e41f-570a-a94e-c7e34e17cf27",
     ),
 }
 
@@ -305,8 +318,14 @@ def test_same_documents_as_the_community_loaders(corpus: Path, monkeypatch) -> N
         loader_class, kwargs = _community_loaders()[path.suffix]
         old = FileParser(Config(), loader_class, kwargs).parse_file(path)
         new = _parse(path)
-        assert new.page_content == old.page_content, path.name
-        assert new.document_id == old.document_id, path.name
+        if path.name in _REREAD:
+            # Only the byte-order mark differs.
+            assert compute_text_hash(old.page_content) == _REREAD[path.name][0]
+            assert new.page_content == old.page_content.replace("\ufeff", "")
+            assert new.page_content != old.page_content, path.name
+        else:
+            assert new.page_content == old.page_content, path.name
+            assert new.document_id == old.document_id, path.name
         assert new.metadata == old.metadata, path.name
         compared += 1
     assert compared == len(_goldens())
@@ -344,7 +363,7 @@ def _run(root: Path, store: FakeDocStatusStore, mocker) -> PipelineContext:
 
 
 @pytest.mark.parametrize("indexed_by", ["golden", "community"])
-def test_rerun_after_switch_reports_no_changed_document(
+def test_rerun_after_switch_changes_only_the_reread_files(
     corpus: Path, mocker, monkeypatch, indexed_by: str
 ) -> None:
     store = FakeDocStatusStore()
@@ -365,7 +384,7 @@ def test_rerun_after_switch_reports_no_changed_document(
     else:
         # The corpus as the old loaders recorded it: their content hashes.
         first = _run(corpus, store, mocker)
-        goldens = _goldens()
+        goldens = {**_goldens(), **_REREAD}
         for record in all_records(store):
             name = Path(record.file_path or "").name
             if name in goldens:
@@ -376,5 +395,7 @@ def test_rerun_after_switch_reports_no_changed_document(
 
     rerun = _run(corpus, store, mocker).incremental_delta
     assert rerun is not None
-    assert (rerun.new, rerun.changed, rerun.deleted) == ([], [], [])
-    assert len(rerun.unchanged) == indexed
+    assert (rerun.new, rerun.deleted) == ([], [])
+    changed = store.get_many(rerun.changed).values()
+    assert sorted(Path(r.file_path or "").name for r in changed) == sorted(_REREAD)
+    assert len(rerun.unchanged) == indexed - len(_REREAD)
