@@ -201,6 +201,43 @@ def test_each_gate_fails_its_report(report: dict[str, Any], expected: str) -> No
     assert expected in failures[0]
 
 
+def _http_level(**overrides: Any) -> dict[str, Any]:
+    """An ``http`` level as load.py writes it: the loop lag is the client's."""
+    level = _level(**overrides)
+    level["client_loop_lag_p99_ms"] = level.pop("loop_lag_p99_ms")
+    return level
+
+
+def test_an_http_report_is_gated() -> None:
+    clean = {"http": [_http_level(concurrency=1), _http_level(concurrency=8)]}
+    assert harness.check_gates(clean) == []
+    errors = {"http": [_http_level(errors=30, errors_by_strategy={"mix:http_503": 30})]}
+    assert harness.check_gates(errors) == [
+        "http concurrency 4: 30 errors (max 0): {'mix:http_503': 30}"
+    ]
+    flagged = {"http": [_http_level(flags={"no_sources:mix": 2})]}
+    assert "2 flagged answers" in harness.check_gates(flagged)[0]
+    lagging = {"http": [_http_level(loop_lag_p99_ms=250.0)]}
+    assert harness.check_gates(lagging) == [
+        "http concurrency 4: client event-loop lag p99 250.0 ms (limit 100.0 ms)"
+    ]
+    # its lag is read under the client's name, not the in-process one
+    unmeasured = {"http": [_level()]}
+    assert harness.check_gates(unmeasured) == [
+        "http concurrency 4: no client event-loop lag measured"
+    ]
+    assert harness.check_gates({"http": [_http_level(requests=0)]}) == [
+        "http concurrency 4: no requests ran"
+    ]
+
+
+@pytest.mark.parametrize("report", [{}, {"warm_up": _level()}, {"environment": {}}])
+def test_a_report_without_a_known_section_fails(report: dict[str, Any]) -> None:
+    assert harness.check_gates(report) == [
+        "the report holds none of sweep, soak, http, chaos: nothing was measured"
+    ]
+
+
 def test_a_short_soak_fails_on_rss_only_past_the_floor() -> None:
     # The clean 10-minute soak that failed the rate alone: about 1 MB over
     # its 300-second second half is 12 MB/h, and allocator noise.
@@ -469,6 +506,10 @@ def test_the_gate_mode_exits_one_on_a_failed_gate(
     path.write_text(json.dumps(_report(soak=_soak(30, 9))), encoding="utf-8")
     assert load.main(["gate", str(path)]) == 1
     assert load.main(["gate", str(path), "--rss-rise-floor-mb", "10"]) == 0
+    path.write_text(json.dumps({"http": [_http_level(errors=30)]}), encoding="utf-8")
+    assert load.main(["gate", str(path)]) == 1
+    path.write_text("{}", encoding="utf-8")
+    assert load.main(["gate", str(path)]) == 1
 
 
 # -- the chaos model server -------------------------------------------------
@@ -602,3 +643,112 @@ def test_the_nightly_workspace_ingests_and_exports(tmp_path: Path) -> None:
         "gate_failures": [],
     }
     assert "Gates: passed" in nightly.markdown(report)
+
+
+@pytest.fixture(scope="module")
+def nightly() -> ModuleType:
+    return _import("nightly")
+
+
+def _run(**overrides: Any) -> dict[str, Any]:
+    """An ``ingest`` outcome: exit code and run-ingestion's JSON fields."""
+    return {
+        "exit": 0,
+        "status": "completed",
+        "error_type": None,
+        "failed_documents": 0,
+        "units_failed": 0,
+        **overrides,
+    }
+
+
+@pytest.mark.parametrize("text", [None, "", "not json", "[1, 2]"])
+def test_a_run_that_printed_no_report_has_every_outcome_key(
+    nightly: ModuleType, tmp_path: Path, text: str | None
+) -> None:
+    path = tmp_path / "run.json"
+    if text is not None:
+        path.write_text(text, encoding="utf-8")
+    outcome = nightly._outcome(path)
+    assert outcome == dict.fromkeys(nightly.OUTCOME_KEYS)
+    # ... so each scenario's verdict reads it without a KeyError
+    resume = {"exit": 0, **outcome}
+    assert nightly.kill_problem(True, resume) == "the resume printed no report"
+    assert (
+        nightly.recovery_problem(resume) == "the clean run after it printed no report"
+    )
+    assert nightly.not_exercised(resume, 3) == ""
+
+
+def test_the_kill_scenario_names_why_it_did_not_test_a_resume(
+    nightly: ModuleType,
+) -> None:
+    assert nightly.kill_problem(True, _run()) == ""
+    assert "ended before the kill" in nightly.kill_problem(False, _run())
+    held = _run(exit=1, status="failed", error_type="NamespaceLeaseError")
+    assert nightly.kill_problem(True, held) == (
+        "the resume found the killed run's lease held (NamespaceLeaseError)"
+    )
+    assert nightly.kill_problem(True, _run(exit=1, status="failed")) == (
+        "the resume exited 1"
+    )
+
+
+def test_a_recovery_must_exit_zero_with_no_document_failed(
+    nightly: ModuleType,
+) -> None:
+    assert nightly.recovery_problem(_run()) == ""
+    assert nightly.recovery_problem(_run(exit=1)) == "the clean run after it exited 1"
+    assert nightly.recovery_problem(_run(failed_documents=2)) == (
+        "2 documents still failed"
+    )
+
+
+def test_a_faulted_run_that_failed_nothing_did_not_exercise_recovery(
+    nightly: ModuleType,
+) -> None:
+    for exercised in (
+        _run(exit=1, status="failed"),
+        _run(failed_documents=3),
+        _run(units_failed=1),
+    ):
+        assert nightly.not_exercised(exercised, 5) == ""
+    assert nightly.not_exercised(_run(), 4) == (
+        "the faulted run failed no document and exited 0 "
+        "(all 4 injected faults were retried)"
+    )
+    assert "injected no fault" in nightly.not_exercised(_run(), 0)
+
+
+def test_an_unexercised_scenario_is_reported_not_failed(
+    nightly: ModuleType,
+) -> None:
+    untested = nightly.scenario_result(
+        "faults", [], "incremental", True, "", "the faulted run failed no document"
+    )
+    assert untested["status"] == "not_exercised" and untested["converged"]
+    diverged = nightly.scenario_result(
+        "throttle", [], "incremental", False, "entity: DIFF", "no fault"
+    )
+    assert diverged["status"] == "not_converged"
+    kill = nightly.scenario_result("kill", [], "exact", True, "")
+    assert kill["status"] == "converged"
+    report = _report(chaos=[untested, diverged, kill])
+    failures = harness.check_gates(report)
+    assert len(failures) == 1 and "chaos throttle" in failures[0]
+    assert harness.gate_notes(report) == [
+        "chaos faults: not exercised: the faulted run failed no document"
+    ]
+    assert harness.gate_notes(_report()) == []
+    timed = {"throughput_rps": 1.0, "p50": 0.1, "p99": 0.2}
+    text = nightly.markdown(
+        {
+            "sweep": [{**_level(), **timed}],
+            "soak": {**_soak(1, 0.5), **timed, "duration_seconds": 60},
+            "chaos": [untested],
+            "gate_failures": [],
+            "gate_notes": harness.gate_notes({"chaos": [untested]}),
+        }
+    )
+    assert "| faults | not_exercised |" in text
+    assert "Not tested this run (not a failure):" in text

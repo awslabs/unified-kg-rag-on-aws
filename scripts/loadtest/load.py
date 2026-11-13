@@ -24,8 +24,9 @@ Modes:
 - ``http``: ``sweep`` through a running console's ``/api/ask`` (server-sent
   events), with the time to the first event; its loop lag is this
   client's (``client_loop_lag_*``), not the console's.
-- ``gate``: check a report against the nightly gates (harness.Gates); exit 1
-  naming each failure.
+- ``gate``: check a report (any mode's, or the nightly's) against the
+  nightly gates (harness.Gates); exit 1 naming each failure, and name what
+  the run left untested (a chaos scenario ``not_exercised``) without failing.
 
 Usage::
 
@@ -61,6 +62,7 @@ from harness import (
     Gates,
     Histogram,
     check_gates,
+    gate_notes,
     local_only_env,
     percentile,
     second_half_rise,
@@ -535,11 +537,12 @@ def main(argv: list[str] | None = None) -> int:
             rss_rise_floor_mb=args.rss_rise_floor_mb,
             max_flags=args.max_flags,
         )
-        failures = check_gates(
-            json.loads(args.report.read_text(encoding="utf-8")), gates
-        )
+        checked = json.loads(args.report.read_text(encoding="utf-8"))
+        failures = check_gates(checked, gates)
         for failure in failures:
             print(f"GATE FAILED: {failure}")
+        for note in gate_notes(checked):
+            print(f"NOT TESTED: {note}")
         print("gates passed" if not failures else f"{len(failures)} gate(s) failed")
         return 1 if failures else 0
     # Before anything builds a model or store client (gate reads a file).

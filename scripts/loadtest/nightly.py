@@ -11,10 +11,15 @@ on the embedded SQLite stores and the fake models; nothing leaves the host.
    ``throttle`` (a share of model calls answered 429) and ``faults`` (503s
    and dropped connections), each followed by a clean run that must
    converge with the reference within what incremental indexing documents
-   (``compare_exports.INCREMENTAL``); ``kill`` (SIGKILL in the middle of a
-   run, then at once a resume under the same pipeline id, which takes the
-   dead run's lease over: the SQLite registry hands on the lease of a holder
-   of this host whose process has exited), which must converge exactly.
+   (``compare_exports.INCREMENTAL``); a faulted run that failed no document
+   and exited 0 (every injected fault retried away) left the recovery path
+   untested, and its scenario is ``not_exercised``: reported, not failed
+   (an estimated one night in twenty draws so few faults); ``kill``
+   (SIGKILL in the middle of a run, then at once a resume under the same
+   pipeline id, which takes the dead run's lease over: the SQLite registry
+   hands on the lease of a holder of this host whose process has exited),
+   which must converge exactly. Every comparison includes the graph
+   store's census (``run-describe``'s ``graph`` records).
 4. Check the gates (``harness.Gates``) and write ``report.json`` and
    ``report.md`` into the output directory; exit 1 when a gate fails.
 
@@ -40,7 +45,7 @@ from typing import Any
 
 from chaos_models import call
 from compare_exports import EXACT, INCREMENTAL, Tolerance, compare_files, converged
-from harness import Gates, check_gates, local_only_env
+from harness import Gates, check_gates, gate_notes, local_only_env
 from workspace import write_workspace
 
 HERE = Path(__file__).resolve().parent
@@ -100,6 +105,11 @@ class Models:
     def chat_calls(self) -> int:
         return int(self._call("/stats")["chat"])
 
+    def faults(self) -> int:
+        """The faults the server injected so far (errors, drops, hangs)."""
+        stats = self._call("/stats")
+        return sum(int(stats[k]) for k in ("errors", "drops", "hangs"))
+
     def close(self) -> None:
         self.process.terminate()
         self.process.wait(timeout=10)
@@ -138,15 +148,61 @@ def ingest(workspace: Path, tag: str, *extra: str) -> dict[str, Any]:
     }
 
 
+# What a run's outcome holds: run-ingestion's JSON fields, None each when
+# the run printed none (it crashed before its report, or was killed).
+OUTCOME_KEYS = ("status", "error_type", "failed_documents", "units_failed")
+
+
 def _outcome(path: Path) -> dict[str, Any]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return {"status": None}
-    return {
-        k: data.get(k)
-        for k in ("status", "error_type", "failed_documents", "units_failed")
-    }
+        data = None
+    if not isinstance(data, dict):
+        return dict.fromkeys(OUTCOME_KEYS)
+    return {k: data.get(k) for k in OUTCOME_KEYS}
+
+
+def recovery_problem(recovery: dict[str, Any]) -> str:
+    """Why the clean run after a faulted one did not recover ("": it did):
+    it must exit 0 and leave no document failed."""
+    if recovery["exit"]:
+        return f"the clean run after it exited {recovery['exit']}"
+    if recovery["status"] is None:
+        return "the clean run after it printed no report"
+    if recovery["failed_documents"]:
+        return f"{recovery['failed_documents']} documents still failed"
+    return ""
+
+
+def not_exercised(faulted: dict[str, Any], faults: int) -> str:
+    """Why a faulted run left the recovery path untested ("": it did not):
+    it exited 0 and failed no document and no text unit, so the clean run
+    after it had nothing to recover. ``faults``: what the server injected
+    meanwhile (none: it ignored its knobs; some: every one was retried)."""
+    if faulted["exit"] or faulted["failed_documents"] or faulted["units_failed"]:
+        return ""
+    if faulted["status"] is None:
+        return ""  # no report: recovery_problem's run decides
+    cause = (
+        "the model server injected no fault"
+        if not faults
+        else f"all {faults} injected faults were retried"
+    )
+    return f"the faulted run failed no document and exited 0 ({cause})"
+
+
+def kill_problem(killed: bool, resume: dict[str, Any]) -> str:
+    """Why the kill scenario did not test a resume ("": it did)."""
+    if not killed:
+        return "the run ended before the kill: raise --chaos-docs"
+    if resume["error_type"] == "NamespaceLeaseError":
+        return "the resume found the killed run's lease held (NamespaceLeaseError)"
+    if resume["exit"]:
+        return f"the resume exited {resume['exit']}"
+    if resume["status"] is None:
+        return "the resume printed no report"
+    return ""
 
 
 def export(workspace: Path, path: Path) -> Path:
@@ -255,7 +311,11 @@ def chaos_scenarios(models: Models, out: Path, docs: int) -> list[dict[str, Any]
     results = []
 
     def result(
-        name: str, runs: list[dict[str, Any]], tolerance: Tolerance, problem: str = ""
+        name: str,
+        runs: list[dict[str, Any]],
+        tolerance: Tolerance,
+        problem: str = "",
+        untested: str = "",
     ) -> dict[str, Any]:
         diffs = compare_files(
             reference, export(ws, out / f"chaos-{name}.jsonl"), tolerance
@@ -263,13 +323,14 @@ def chaos_scenarios(models: Models, out: Path, docs: int) -> list[dict[str, Any]
         detail = "; ".join(
             d.describe(limit=2).replace("\n", " |") for d in diffs if not d.same
         )
-        return {
-            "name": name,
-            "runs": runs,
-            "compared": "exact" if tolerance == EXACT else "incremental",
-            "converged": converged(diffs) and not problem,
-            "detail": "; ".join(p for p in (problem, detail) if p),
-        }
+        return scenario_result(
+            name,
+            runs,
+            "exact" if tolerance == EXACT else "incremental",
+            converged(diffs) and not problem,
+            "; ".join(p for p in (problem, detail) if p),
+            untested,
+        )
 
     for name, knobs in (
         ("throttle", {"error_rate": 0.3, "error_status": 429}),
@@ -277,22 +338,23 @@ def chaos_scenarios(models: Models, out: Path, docs: int) -> list[dict[str, Any]
     ):
         reset(ws)
         models.chaos(**knobs)
+        before = models.faults()
         runs = [{**ingest(ws, f"{name}-faults"), "knobs": knobs}]
+        faults = models.faults() - before
+        runs[0]["faults_injected"] = faults
         models.chaos()
         runs.append(ingest(ws, f"{name}-recovery"))
         # The faulted run may fail (a stage over its failure budget exits 1);
         # the clean run after it must not, and must leave no document failed.
-        recovery = runs[-1]
-        problem = (
-            f"the clean run after it exited {recovery['exit']}"
-            if recovery["exit"]
-            else (
-                f"{recovery['failed_documents']} documents still failed"
-                if recovery["failed_documents"]
-                else ""
+        results.append(
+            result(
+                name,
+                runs,
+                INCREMENTAL,
+                recovery_problem(runs[-1]),
+                not_exercised(runs[0], faults),
             )
         )
-        results.append(result(name, runs, INCREMENTAL, problem))
 
     reset(ws)
     # Slowed down so the kill lands in the middle of a stage.
@@ -302,16 +364,33 @@ def chaos_scenarios(models: Models, out: Path, docs: int) -> list[dict[str, Any]
     # At once: the killed run's lease is handed on, not waited out.
     resume = ingest(ws, "kill-resume", "--pipeline-id", "kill")
     resume.update(chat_calls_before_kill=calls, chat_calls_full_build=full_calls)
-    if not killed:
-        problem = "the run ended before the kill: raise --chaos-docs"
-    elif resume["error_type"] == "NamespaceLeaseError":
-        problem = "the resume found the killed run's lease held (NamespaceLeaseError)"
-    elif resume["exit"]:
-        problem = f"the resume exited {resume['exit']}"
-    else:
-        problem = ""
-    results.append(result("kill", [resume], EXACT, problem))
+    results.append(result("kill", [resume], EXACT, kill_problem(killed, resume)))
     return results
+
+
+def scenario_result(
+    name: str,
+    runs: list[dict[str, Any]],
+    compared: str,
+    same: bool,
+    detail: str,
+    untested: str = "",
+) -> dict[str, Any]:
+    """A chaos scenario's entry of the report. ``status``: ``converged``,
+    ``not_converged`` (a gate failure) or ``not_exercised`` (converged, but
+    the faults it injects never reached the recovery path: ``untested``
+    says why; the gates report it, see ``harness.gate_notes``)."""
+    status = (
+        "not_converged" if not same else "not_exercised" if untested else "converged"
+    )
+    return {
+        "name": name,
+        "runs": runs,
+        "compared": compared,
+        "converged": same,
+        "status": status,
+        "detail": "; ".join(p for p in (detail, untested) if p),
+    }
 
 
 def markdown(report: dict[str, Any]) -> str:
@@ -342,9 +421,9 @@ def markdown(report: dict[str, Any]) -> str:
         f"`{json.dumps(report['soak'].get('second_half_rise'))}`",
         "",
     ]
-    lines += ["| Chaos scenario | Converged | Detail |", "|---|---|---|"]
+    lines += ["| Chaos scenario | Status | Detail |", "|---|---|---|"]
     lines += [
-        f"| {c['name']} | {c['converged']} | {c['detail'] or ''} |"
+        f"| {c['name']} | {c.get('status', c['converged'])} | {c['detail'] or ''} |"
         for c in report["chaos"]
     ]
     lines += [
@@ -353,6 +432,9 @@ def markdown(report: dict[str, Any]) -> str:
         "",
     ]
     lines += [f"- {failure}" for failure in report["gate_failures"]]
+    if report.get("gate_notes"):
+        lines += ["", "Not tested this run (not a failure):", ""]
+        lines += [f"- {note}" for note in report["gate_notes"]]
     return "\n".join(lines) + "\n"
 
 
@@ -417,6 +499,10 @@ def main(argv: list[str] | None = None) -> int:
         "chaos": chaos,
     }
     report["gate_failures"] = check_gates(report, Gates())
+    report["gate_notes"] = gate_notes(report)
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        for note in report["gate_notes"]:
+            print(f"::warning title=load test::{note}")
     (out / "report.json").write_text(
         json.dumps(report, indent=1, ensure_ascii=False) + "\n", encoding="utf-8"
     )
