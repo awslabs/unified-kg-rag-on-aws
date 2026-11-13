@@ -11,7 +11,7 @@ from langchain_core.runnables import RunnableConfig
 from unified_kg_rag.adapters.retrieval.base import scope_filters, units_by_support
 from unified_kg_rag.adapters.retrieval.ppr_ranking import (
     PPRRankingMixin,
-    document_unit_ids,
+    cites_more_than,
     endpoint_ids,
     entity_id,
 )
@@ -355,19 +355,17 @@ class LocalSearchStrategy(PPRRankingMixin):
             if end not in reached
         ]
         nodes = [*entity_nodes, *await self._entities_by_id(query, endpoints)]
-        counts = {entity_id(node): self._text_unit_count(node) for node in nodes}
         own: dict[str, float] = {}
         for hit in seed_hits:
             key = entity_id(hit)
             own[key] = own.get(key, 0.0) + float(hit.score or 0.0)
+        facts = [(float(hit.score or 0.0), endpoint_ids(hit)) for hit in fact_hits]
         ranked, stats = await self._ppr_rank(
             query,
             nodes,
-            summed_seed_weights(
-                own,
-                [(float(hit.score or 0.0), endpoint_ids(hit)) for hit in fact_hits],
-                counts,
-            ),
+            # Over the document units each cites (counted with the graph,
+            # off the event loop).
+            lambda counts: summed_seed_weights(own, facts, counts),
             passage_hits,
             frequency_threshold=self.config.search.local_search.entity_frequency_threshold,
         )
@@ -832,13 +830,6 @@ class LocalSearchStrategy(PPRRankingMixin):
         ranked = await units_by_support(entity_nodes)
         return [unit_id for unit_id in ranked if not is_seed_unit(unit_id)]
 
-    @staticmethod
-    def _text_unit_count(node: RetrievalResult) -> int:
-        # The document units it cites, each once (``document_unit_ids``, as
-        # the ppr strategy counts them): an entity a seed graph states is
-        # not more generic for it, nor one whose lineage repeats an id.
-        return len(document_unit_ids(node))
-
     @classmethod
     def _filter_entities(
         cls,
@@ -856,8 +847,12 @@ class LocalSearchStrategy(PPRRankingMixin):
         filtered_nodes = [
             node
             for node in expanded_entity_nodes
+            # The document units it cites, each once, as the ppr strategy
+            # counts them (an entity a seed graph states is not more generic
+            # for it, nor one whose lineage repeats an id), read only up to
+            # the threshold: a hub cites thousands.
             if entity_id(node) in seed_ids
-            or cls._text_unit_count(node) <= frequency_threshold
+            or not cites_more_than(node, frequency_threshold)
         ]
 
         original_count = len(expanded_entity_nodes)

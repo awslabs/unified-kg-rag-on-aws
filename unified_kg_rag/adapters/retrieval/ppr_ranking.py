@@ -13,7 +13,7 @@ runs under the caller's suffix and filters with the request's
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from unified_kg_rag.adapters.retrieval.base import BaseSearchStrategy
@@ -39,13 +39,38 @@ logger = get_logger(__name__)
 PPR_SEED_TEXT_UNITS = "ppr_seed_text_units"
 
 
+def _cited_ids(node: RetrievalResult) -> list[Any]:
+    ids = (node.metadata or {}).get("text_unit_ids") or []
+    return ids if isinstance(ids, list) else []
+
+
 def document_unit_ids(node: RetrievalResult) -> list[str]:
     """The document text units an entity (or relationship) cites, each once,
     in id order: a seed graph's units are no passages."""
-    ids = (node.metadata or {}).get("text_unit_ids") or []
-    if not isinstance(ids, list):
-        return []
-    return sorted({str(u) for u in ids if u and not is_seed_unit(str(u))})
+    return sorted(_document_units(node))
+
+
+def _document_units(node: RetrievalResult) -> set[str]:
+    return {str(u) for u in _cited_ids(node) if u and not is_seed_unit(str(u))}
+
+
+def document_unit_count(node: RetrievalResult) -> int:
+    """How many document units ``node`` cites (``document_unit_ids``'
+    length, without the sort)."""
+    return len(_document_units(node))
+
+
+def cites_more_than(node: RetrievalResult, limit: int) -> bool:
+    """Whether ``node`` cites more than ``limit`` document units
+    (``document_unit_count(node) > limit``), read only until it is known: a
+    hub cites thousands, the frequency threshold is tens."""
+    seen: set[str] = set()
+    for unit in _cited_ids(node):
+        if unit and not is_seed_unit(key := str(unit)):
+            seen.add(key)
+            if len(seen) > limit:
+                return True
+    return False
 
 
 def entity_id(node: RetrievalResult) -> str:
@@ -154,7 +179,7 @@ class PPRRankingMixin(BaseSearchStrategy):
         self,
         query: SearchQuery,
         entities: Sequence[RetrievalResult],
-        entity_reset: Mapping[str, float],
+        entity_reset: Callable[[Mapping[str, int]], Mapping[str, float]],
         passage_hits: Sequence[RetrievalResult],
         *,
         frequency_threshold: int,
@@ -164,10 +189,11 @@ class PPRRankingMixin(BaseSearchStrategy):
         The graph: ``entities`` (each once), the relationships between them
         (``_neighbourhood_edges``), the document units each cites (none for
         an entity citing more than ``frequency_threshold``, a seed too) and
-        the ``passage_hits``. The reset: ``entity_reset`` (entity ids; only
-        those in the graph) and the passage hits at
-        ``search.ppr_search.passage_node_weight`` times their min-max
-        normalized score. ``([], stats)`` when nothing seeds a passage.
+        the ``passage_hits``. The reset: ``entity_reset`` of each entity's
+        document-unit count (entity ids; only those in the graph) and the
+        passage hits at ``search.ppr_search.passage_node_weight`` times
+        their min-max normalized score. ``([], stats)`` when nothing seeds a
+        passage.
         """
         settings = self.config.search.ppr_search
         nodes: dict[str, RetrievalResult] = {}
@@ -177,27 +203,33 @@ class PPRRankingMixin(BaseSearchStrategy):
         edges: list[GraphEdge] = await self._neighbourhood_edges(
             query, list(nodes), settings.max_edges_per_vertex
         )
-        graph = PassageGraph()
-        for edge in edges:
-            graph.add_relationship(edge.source_id, edge.target_id)
-        linked: list[tuple[list[str], float]] = []
-        for key, node in nodes.items():
-            graph.add_entity(key)
-            units = document_unit_ids(node)
-            if units and len(units) <= frequency_threshold:
-                graph.link_passages(key, units)
-                linked.append((units, float(node.score or 0.0)))
         hits = {
             str(hit.source): float(hit.score or 0.0)
             for hit in passage_hits
             if hit.source and not is_seed_unit(str(hit.source))
         }
-        for unit in hits:
-            graph.add_passage(unit)
-        reset = {k: v for k, v in entity_reset.items() if k in nodes and v > 0}
 
-        def rank() -> tuple[list[tuple[str, float]], PPRResult | None]:
-            return graph.rank_passages(
+        def rank() -> tuple[PassageGraph, int, int, list[str], PPRResult | None]:
+            # The entities' lineages (a hub cites thousands of units), the
+            # graph, the numpy and the lineage merge: all off the event loop.
+            graph = PassageGraph()
+            for edge in edges:
+                graph.add_relationship(edge.source_id, edge.target_id)
+            counts: dict[str, int] = {}
+            linked: list[tuple[list[str], float]] = []
+            for key, node in nodes.items():
+                graph.add_entity(key)
+                counts[key] = document_unit_count(node)
+                if 0 < counts[key] <= frequency_threshold:
+                    units = document_unit_ids(node)
+                    graph.link_passages(key, units)
+                    linked.append((units, float(node.score or 0.0)))
+            for unit in hits:
+                graph.add_passage(unit)
+            reset = {
+                k: v for k, v in entity_reset(counts).items() if k in nodes and v > 0
+            }
+            ranked, result = graph.rank_passages(
                 reset,
                 passage_weights(hits, settings.passage_node_weight),
                 damping=settings.damping,
@@ -211,16 +243,15 @@ class PPRRankingMixin(BaseSearchStrategy):
                     scores=[score for _, score in linked],
                 ),
             )
+            return graph, len(linked), len(reset), [u for u, _ in ranked], result
 
-        # Milliseconds of numpy, and the lineage merge, off the event loop
-        # (tens on thousands of passages).
-        ranked, result = await asyncio.to_thread(rank)
+        graph, linked, seeds, ranked, result = await asyncio.to_thread(rank)
         stats: dict[str, Any] = {
             "entities": len(nodes),
             "relationships": len(edges),
-            "linked_entities": len(linked),
+            "linked_entities": linked,
             "passages": len(graph.passages),
-            "entity_seeds": len(reset),
+            "entity_seeds": seeds,
             "passage_seeds": len(hits),
             "iterations": result.iterations if result else 0,
             "converged": result.converged if result else False,
@@ -233,7 +264,7 @@ class PPRRankingMixin(BaseSearchStrategy):
                 result.iterations,
                 graph.node_count,
             )
-        return [unit for unit, _ in ranked], stats
+        return ranked, stats
 
     async def _passages_in_order(
         self,

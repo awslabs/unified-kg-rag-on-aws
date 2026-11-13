@@ -51,6 +51,10 @@ answer-level result (§9.1) showed it better than the earlier order.
   queries in one process that work waits on the interpreter lock, which
   the embedded engine's id and exclusion lookups, the dense-script test and
   the query CLIs' one BLAS thread (`launch.one_blas_thread`) keep small.
+  The entities' lineages (a hub cites thousands of units) are read on a
+  worker thread with the PageRank graph, once per entity for both the
+  links and the seed weights; on the event loop only the frequency filter
+  reads them, each up to its threshold (`cites_more_than`).
 
 **Data flow of `ppr`.**
 

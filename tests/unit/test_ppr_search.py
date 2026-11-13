@@ -7,11 +7,17 @@ from __future__ import annotations
 
 import functools
 import logging
+import threading
 from typing import Any
 
 import pytest
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401
+from unified_kg_rag.adapters.retrieval import ppr_ranking
+from unified_kg_rag.adapters.retrieval.ppr_ranking import (
+    cites_more_than,
+    document_unit_count,
+)
 from unified_kg_rag.adapters.retrieval.strategy_registry import get_strategy_spec
 from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
 from unified_kg_rag.adapters.retrievers.sqlite_graph_retriever import (
@@ -303,8 +309,11 @@ async def test_the_seed_balance_does_not_depend_on_the_score_scale() -> None:
         async def spy(
             query: Any, entities: Any, reset: Any, *args: Any, _rank: Any, **kw: Any
         ):
-            resets.append(dict(reset))
-            return await _rank(query, entities, reset, *args, **kw)
+            def recorded(counts: Any) -> Any:
+                resets.append(dict(reset(counts)))
+                return resets[-1]
+
+            return await _rank(query, entities, recorded, *args, **kw)
 
         strategy._ppr_rank = functools.partial(  # type: ignore[method-assign]
             spy, _rank=strategy._ppr_rank
@@ -409,7 +418,11 @@ async def test_unreached_passages_rank_by_their_support() -> None:
     strategy = _strategy(SearchStrategy.PPR, config, documents, graph)
     entities = [_hit("entity", e, 0.5, text_unit_ids=u) for e, u in units.items()]
     ranked, _ = await strategy._ppr_rank(
-        SearchQuery(query="q"), entities, {"ann": 1.0}, [], frequency_threshold=10
+        SearchQuery(query="q"),
+        entities,
+        lambda counts: {"ann": 1.0},
+        [],
+        frequency_threshold=10,
     )
     assert ranked == ["u-ann", "u-b", "u-a"]
 
@@ -519,8 +532,10 @@ def test_an_entity_s_repeated_text_unit_counts_once() -> None:
     # and the frequency threshold read the same count.
     local = get_strategy_spec(SearchStrategy.LOCAL).strategy_class
     node = _hit("entity", "ann", 0.5, text_unit_ids=["u-1", "u-1", "u-2"])
-    assert local._text_unit_count(node) == 2
+    assert document_unit_count(node) == 2
+    assert not cites_more_than(node, 2) and cites_more_than(node, 1)
     assert local._filter_entities([node], frequency_threshold=2) == [node]
+    assert local._filter_entities([node], frequency_threshold=1) == []
 
 
 async def test_local_ppr_seeds_relationship_hits_and_reads_their_endpoints() -> None:
@@ -540,6 +555,32 @@ async def test_local_ppr_seeds_relationship_hits_and_reads_their_endpoints() -> 
     ]
     assert sorted(endpoints.filters["id"]) == ["acme", "bob", "lund"]
     assert "u-bob" in {r.source for r in buckets["text_units"]}
+
+
+@pytest.mark.parametrize("strategy_type", [SearchStrategy.LOCAL, SearchStrategy.PPR])
+async def test_the_lineages_are_read_off_the_event_loop(
+    strategy_type: SearchStrategy, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Regression (rv26 perf 1): local's default ppr ranking and the ppr
+    # strategy read every entity's lineage (a hub cites thousands of units)
+    # on the event loop three times a query; the frequency filter now reads
+    # up to its threshold and the counts run with the PageRank's graph.
+    config = _config(local_search__text_unit_ranking="ppr")
+    documents, graph = _bridge_stores(config)
+    strategy = _strategy(strategy_type, config, documents, graph)
+    loop_thread = threading.get_ident()
+    threads: list[int] = []
+    for name in ("document_unit_ids", "document_unit_count"):
+        read = getattr(ppr_ranking, name)
+
+        def recording(node: Any, _read: Any = read) -> Any:
+            threads.append(threading.get_ident())
+            return _read(node)
+
+        monkeypatch.setattr(ppr_ranking, name, recording)
+    result = await strategy.asearch(SearchQuery(query="q", entity_focus=["Ann"]))
+    assert result.metadata["ppr"]["linked_entities"]
+    assert threads and loop_thread not in threads
 
 
 # --- neighbourhood edges ------------------------------------------------------

@@ -21,6 +21,7 @@ import pytest
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
 from unified_kg_rag.adapters.ingestion.community_detector import CommunityDetector
+from unified_kg_rag.adapters.retrieval.ppr_ranking import document_unit_count
 from unified_kg_rag.adapters.search_strategies.local_search import LocalSearchStrategy
 from unified_kg_rag.adapters.storage import neptune_codec
 from unified_kg_rag.application.ingestion.incremental import IncrementalIndexer
@@ -630,4 +631,4 @@ def test_local_frequency_counts_document_units_only() -> None:
     ]
     kept = LocalSearchStrategy._filter_entities(nodes, frequency_threshold=2)
     assert [n.source for n in kept] == ["seeded", "single"]
-    assert LocalSearchStrategy._text_unit_count(_node("one", ["u1"])) == 1
+    assert document_unit_count(_node("one", ["u1"])) == 1
