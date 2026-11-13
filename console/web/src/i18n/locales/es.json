@@ -102,6 +102,7 @@
   "ask.error.invalid_argument": "Se rechazó la solicitud: hay que cambiar un argumento",
   "ask.error.configuration": "La configuración no permite atender esta consulta",
   "ask.error.failure": "La consulta falló",
+  "ask.error.failureHelp": "La llamada falló dentro del servidor (un error de almacén o de modelo). El registro del servidor tiene los detalles con el id de consulta {{query_id}}.",
   "ask.meta.strategy": "Estrategia",
   "ask.meta.latency": "Tiempo",
   "ask.meta.tokens": "Tokens de entrada / salida",
@@ -676,5 +677,7 @@
   "error.unreadable": "No se pudo leer.",
   "error.not_found": "No encontrado.",
   "error.failed": "La solicitud falló.",
+  "error.failure": "La solicitud falló dentro del servidor (un error de almacén o de modelo); el registro del servidor tiene los detalles.",
+  "error.traceId": "Id de la traza: {{trace_id}}.",
   "error.network": "La consola no responde. ¿Sigue ejecutándose run-console?"
 }

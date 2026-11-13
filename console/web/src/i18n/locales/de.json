@@ -101,6 +101,7 @@
   "ask.error.invalid_argument": "Die Anfrage wurde abgelehnt: ein Argument ist zu ändern",
   "ask.error.configuration": "Mit dieser Konfiguration lässt sich die Abfrage nicht ausführen",
   "ask.error.failure": "Die Abfrage ist fehlgeschlagen",
+  "ask.error.failureHelp": "Der Aufruf ist im Server fehlgeschlagen (ein Speicher- oder Modellfehler). Einzelheiten stehen im Server-Log unter der Abfrage-ID {{query_id}}.",
   "ask.meta.strategy": "Strategie",
   "ask.meta.latency": "Zeit",
   "ask.meta.tokens": "Token ein / aus",
@@ -652,5 +653,7 @@
   "error.unreadable": "Konnte nicht gelesen werden.",
   "error.not_found": "Nicht gefunden.",
   "error.failed": "Die Anfrage ist fehlgeschlagen.",
+  "error.failure": "Die Anfrage ist im Server fehlgeschlagen (ein Speicher- oder Modellfehler); Einzelheiten stehen im Server-Log.",
+  "error.traceId": "Trace-ID: {{trace_id}}.",
   "error.network": "Die Konsole antwortet nicht. Läuft run-console noch?"
 }

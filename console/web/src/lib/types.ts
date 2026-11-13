@@ -171,7 +171,7 @@ export type AskEvent =
   | { kind: "start"; query_id: string; trace_id: string | null; trace_url: string | null }
   | { kind: "chunk"; text: string; markers: number[] }
   | ({ kind: "result" } & AskResult)
-  | { kind: "error"; error_kind: string; message: string };
+  | { kind: "error"; error_kind: string; message: string; query_id?: string | null; trace_id?: string | null };
 
 export interface StageProgress {
   name: string;

@@ -102,6 +102,7 @@
   "ask.error.invalid_argument": "A solicitação foi recusada: um argumento precisa ser alterado",
   "ask.error.configuration": "A configuração não permite atender esta consulta",
   "ask.error.failure": "A consulta falhou",
+  "ask.error.failureHelp": "A chamada falhou dentro do servidor (um erro de armazenamento ou de modelo). O log do servidor tem os detalhes sob o ID da consulta {{query_id}}.",
   "ask.meta.strategy": "Estratégia",
   "ask.meta.latency": "Tempo",
   "ask.meta.tokens": "Tokens de entrada / saída",
@@ -676,5 +677,7 @@
   "error.unreadable": "Não foi possível ler.",
   "error.not_found": "Não encontrado.",
   "error.failed": "O pedido falhou.",
+  "error.failure": "A solicitação falhou dentro do servidor (um erro de armazenamento ou de modelo); o log do servidor tem os detalhes.",
+  "error.traceId": "ID do rastreamento: {{trace_id}}.",
   "error.network": "A consola não responde. O run-console ainda está em execução?"
 }

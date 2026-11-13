@@ -102,6 +102,7 @@
   "ask.error.invalid_argument": "La richiesta è stata rifiutata: un argomento va cambiato",
   "ask.error.configuration": "La configurazione non consente di eseguire questa query",
   "ask.error.failure": "La query non è riuscita",
+  "ask.error.failureHelp": "La chiamata non è riuscita nel server (un errore di archivio o di modello). Il log del server riporta i dettagli sotto l’ID della query {{query_id}}.",
   "ask.meta.strategy": "Strategia",
   "ask.meta.latency": "Tempo",
   "ask.meta.tokens": "Token in ingresso / uscita",
@@ -676,5 +677,7 @@
   "error.unreadable": "Impossibile leggere.",
   "error.not_found": "Non trovato.",
   "error.failed": "La richiesta non è riuscita.",
+  "error.failure": "La richiesta non è riuscita nel server (un errore di archivio o di modello); il log del server riporta i dettagli.",
+  "error.traceId": "ID della traccia: {{trace_id}}.",
   "error.network": "La console non risponde. run-console è ancora in esecuzione?"
 }
