@@ -1128,7 +1128,8 @@ From a `main` checkout (formats and keys no release had):
 - Incremental indexing: the extraction-settings fingerprint (#224, #332); `indexing.max_document_failures` with
   own-error accounting and `documents_retrying` (#175, #431); source scopes and `--retire-source-scope` (#134,
   #192), a scope's first run into a namespace that holds other scopes' documents recorded as the incremental build it
-  is (#640); the namespace write lease (with the SQLite registry, a killed run's lease is taken at once on its host)
+  is (#640); the namespace write lease (with the SQLite registry, a killed run's lease is taken at once on its host,
+  and with every store embedded its first write does not wait for late writes)
   and quarantine (`indexing.max_document_attempts`) (#331, #346); the commit's
   note (`pending-commit`), which lists the old ids its derivation retires, so when a write fails, or the run dies,
   the next commit derives the items still stored under them again and deletes the old copies of those it re-keyed
