@@ -411,6 +411,18 @@ def _fsync_directory(directory: Path) -> None:
         os.close(fd)
 
 
+# What a file a user supplies (a dataset, a schema, corpus text) is read as:
+# UTF-8 without a leading byte-order mark, which Excel's "CSV UTF-8" and
+# Notepad write (common for Korean and Japanese files) and ``json.loads``
+# refuses.
+USER_TEXT_ENCODING = "utf-8-sig"
+
+
+def read_user_text(path: Path | str) -> str:
+    """The text of a file the user supplied, as :data:`USER_TEXT_ENCODING`."""
+    return Path(path).read_text(encoding=USER_TEXT_ENCODING)
+
+
 def atomic_write_text(path: Path, text: str, *, fsync: bool = False) -> None:
     """Write ``text`` to ``path`` so a reader sees the old file or the new one.
 
