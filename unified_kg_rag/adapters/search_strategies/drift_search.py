@@ -18,6 +18,7 @@
 """
 
 import asyncio
+import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -59,6 +60,7 @@ from unified_kg_rag.domain.prompts import (
 )
 from unified_kg_rag.domain.retrieval.degradation import DegradationStep
 from unified_kg_rag.shared import get_logger, observability
+from unified_kg_rag.shared.logging import log_failure
 from unified_kg_rag.shared.utils import (
     parse_llm_score,
     text_digest,
@@ -528,7 +530,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
         """
         if is_fatal_retrieval_error(error):
             raise error
-        logger.error("%s failed: %s", label, error)
+        log_failure(logger, logging.ERROR, "%s failed: %s", label, error=error)
         record_degradation(step, label, error)
 
     # ------------------------------------------------------------------ #

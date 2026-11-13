@@ -12,6 +12,7 @@ import structlog
 from structlog.stdlib import LoggerFactory, ProcessorFormatter
 
 from . import observability
+from .utils.common import error_digest
 
 
 class LoggingSettings(Protocol):
@@ -241,6 +242,18 @@ def get_logger(name: str) -> structlog.stdlib.BoundLogger:
 
 _warned_once: set[Hashable] = set()
 _warned_once_lock = threading.Lock()
+
+
+def log_failure(
+    logger: Any, level: int, message: str, *args: Any, error: BaseException
+) -> None:
+    """Log ``message`` (``%``-formatted, its last ``%s`` the error) at
+    ``level`` with :func:`error_digest` of ``error`` (its type and a hash of
+    its text, which may quote a model's reply, a query or corpus text), and
+    with the error itself at DEBUG: what the logging policy (SECURITY.md)
+    allows at INFO and above."""
+    logger.log(level, message, *args, error_digest(error))
+    logger.debug(message, *args, error)
 
 
 def warn_once(

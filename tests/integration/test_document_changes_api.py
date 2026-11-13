@@ -491,7 +491,7 @@ def test_a_deletion_names_the_documents_it_removes(
     (audit,) = [
         r.getMessage()
         for r in caplog.records
-        if r.levelno == logging.INFO and "obsolete documents" in r.getMessage()
+        if r.levelno == logging.INFO and "changed documents" in r.getMessage()
     ]
-    assert "of 1 obsolete documents from 'default': ticket-2" in audit
+    assert "of 1 deleted or changed documents from 'default': ticket-2" in audit
     assert "ticket-1" not in audit

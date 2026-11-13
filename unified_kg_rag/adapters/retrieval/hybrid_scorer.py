@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import copy
+import logging
 import sys
 import time
 from collections import defaultdict
@@ -19,6 +20,7 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.domain.retrieval.hybrid_normalization import combine_min_max
 from unified_kg_rag.ports.model_factory import RerankFactoryPort
 from unified_kg_rag.shared import RerankModelError, get_logger
+from unified_kg_rag.shared.logging import log_failure
 from unified_kg_rag.shared.usage import record_rerank_call, rerank_search_units
 from unified_kg_rag.shared.utils import compute_hash
 from unified_kg_rag.shared.utils.scripts import word_terms
@@ -666,7 +668,12 @@ class HybridScorer:
                 if isinstance(e, RerankModelError):
                     raise
                 raise RerankModelError(f"Reranking failed: {e}") from e
-            logger.error("Reranking failed; keeping the fused order: %s", e)
+            log_failure(
+                logger,
+                logging.ERROR,
+                "Reranking failed; keeping the fused order: %s",
+                error=e,
+            )
             return results, self._stage(
                 scope, RerankStatus.FAILED, f"rerank call failed: {_cause_name(e)}"
             )
