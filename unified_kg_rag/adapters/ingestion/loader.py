@@ -111,17 +111,22 @@ class DirectoryLoader:
             )
 
     def discover_files(self) -> list[Path]:
-        files = [p for p in self.source_directory.rglob("*") if self._is_valid_file(p)]
+        resolved_root = self.source_directory.resolve()
+        files = [
+            p
+            for p in self.source_directory.rglob("*")
+            if self._is_valid_file(p, resolved_root)
+        ]
         return sorted(files)
 
-    def _is_valid_file(self, path: Path) -> bool:
+    def _is_valid_file(self, path: Path, resolved_root: Path | None = None) -> bool:
         # Hidden paths and __pycache__ follow the rule discovery and the
         # corpus fingerprint use; only the part below the root is tested, so
         # a hidden ancestor of the source directory does not hide the corpus.
         return (
             path.is_file()
             and path.suffix.lower() in self.SUPPORTED_EXTENSIONS
-            and not is_excluded_source_path(path, self.source_directory)
+            and not is_excluded_source_path(path, self.source_directory, resolved_root)
         )
 
     def _load_files_concurrently(

@@ -170,6 +170,35 @@ def test_symlinks_leading_out_of_the_corpus_are_skipped_with_a_warning(
     ]
 
 
+def test_a_scan_resolves_only_the_paths_with_a_symlink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # rv25 perf 2: the symlink rule resolved every file and the root again,
+    # which doubled the cost of a corpus scan. A file with no symlink below
+    # the root needs no resolve.
+    root = tmp_path / "corpus"
+    (root / "sub").mkdir(parents=True)
+    for i in range(20):
+        (root / "sub" / f"d{i}.txt").write_text(f"Vendor {i} ships goods.")
+    outside = tmp_path / "secret.txt"
+    outside.write_text("Not corpus text.")
+    (root / "outside.txt").symlink_to(outside)
+    resolved: list[str] = []
+    resolve = Path.resolve
+
+    def counted(self: Path, strict: bool = False) -> Path:
+        resolved.append(self.name)
+        return resolve(self, strict)
+
+    monkeypatch.setattr(Path, "resolve", counted)
+    files, _ = _stage(root)._discover_source_files()
+    assert len(files) == 20
+    assert {name for name in resolved if name.endswith(".txt")} == {"outside.txt"}
+    resolved.clear()
+    corpus_manifest_fingerprint(root, [".txt"], [root / "cache"])
+    assert {name for name in resolved if name.endswith(".txt")} == {"outside.txt"}
+
+
 def test_hidden_corpus_root_is_not_excluded(tmp_path: Path) -> None:
     root = tmp_path / ".cache" / "corpus"
     root.mkdir(parents=True)

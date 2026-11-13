@@ -56,6 +56,7 @@ from __future__ import annotations
 import functools
 import hashlib
 import json
+import os
 from collections.abc import Callable, Collection, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -804,7 +805,39 @@ def _file_digest(path: Path) -> str:
     return digest.hexdigest()
 
 
-def is_excluded_source_path(path: Path, root: Path) -> bool:
+def _below(path: Path, root: Path) -> list[str] | None:
+    """The components of ``path`` below ``root``, or ``None`` when it is not
+    under it as written. String operations: ``Path.relative_to`` cost more
+    than the rest of a scan's per-file checks."""
+    prefix = _prefix(root)
+    text = os.fspath(path)
+    if not text.startswith(prefix) or text == prefix:
+        return None
+    return text[len(prefix) :].split(os.sep)
+
+
+def _prefix(root: Path) -> str:
+    """What every path under ``root`` starts with as written (nothing for
+    the current directory, which ``Path`` writes as ``"."``)."""
+    text = os.fspath(root)
+    return "" if text == "." else text.rstrip(os.sep) + os.sep
+
+
+def _links_below(root: Path, parts: list[str]) -> bool:
+    """Whether a component of ``root`` joined with ``parts`` is a symlink or
+    ``..``: only then may the path resolve outside ``root``."""
+    current = _prefix(root)
+    for part in parts:
+        current += part
+        if part == ".." or os.path.islink(current):
+            return True
+        current += os.sep
+    return False
+
+
+def is_excluded_source_path(
+    path: Path, root: Path, resolved_root: Path | None = None
+) -> bool:
     """Whether a file found under the corpus ``root`` is outside the corpus.
 
     Any component of its path below ``root`` that starts with ``.`` (a hidden
@@ -812,22 +845,39 @@ def is_excluded_source_path(path: Path, root: Path) -> bool:
     so does a path that resolves outside ``root`` (:func:`leaves_source_root`:
     a symlink to ``/etc/hostname`` is not corpus text). Discovery, the
     document loader and the corpus fingerprint share this rule, so a file is
-    parsed exactly when it counts toward the fingerprint.
+    parsed exactly when it counts toward the fingerprint. A scan passes
+    ``resolved_root`` (``root.resolve()``, once per scan).
     """
-    try:
-        parts = path.relative_to(root).parts
-    except ValueError:
-        parts = path.parts
+    parts = _below(path, root)
+    shown = path.parts if parts is None else parts
     return any(
-        part.startswith(".") or part == "__pycache__" for part in parts
-    ) or leaves_source_root(path, root)
+        part.startswith(".") or part == "__pycache__" for part in shown
+    ) or leaves_source_root(path, root, resolved_root)
 
 
-def leaves_source_root(path: Path, root: Path) -> bool:
+def real_source_path(path: Path, root: Path, resolved_root: Path | None = None) -> Path:
+    """``path`` (found under the corpus ``root``) resolved, at the cost of
+    one ``lstat`` per component below ``root`` when none is a symlink: then
+    it is ``resolved_root`` (``root.resolve()``; a scan resolves it once)
+    with the same components. Resolving every file and the root again
+    doubled the cost of a corpus scan."""
+    parts = _below(path, root)
+    if parts is None or _links_below(root, parts):
+        return path.resolve()
+    return (resolved_root or root.resolve()).joinpath(*parts)
+
+
+def leaves_source_root(
+    path: Path, root: Path, resolved_root: Path | None = None
+) -> bool:
     """Whether ``path``, found under the corpus ``root``, resolves outside it
     (a symlink, or one of its directories, leading elsewhere); a symlink to
-    another file of the corpus stays in."""
-    return not path.resolve().is_relative_to(root.resolve())
+    another file of the corpus stays in. Only a path with a symlink below
+    ``root`` is resolved; ``resolved_root`` as for :func:`real_source_path`."""
+    parts = _below(path, root)
+    if parts is not None and not _links_below(root, parts):
+        return False
+    return not path.resolve().is_relative_to(resolved_root or root.resolve())
 
 
 def corpus_manifest_fingerprint(
@@ -866,8 +916,11 @@ def corpus_manifest_fingerprint(
             if (
                 not path.is_file()
                 or path.suffix.lower() not in suffixes
-                or is_excluded_source_path(path, root)
-                or any(path.resolve().is_relative_to(d) for d in excluded)
+                or is_excluded_source_path(path, root, root)
+                or any(
+                    real_source_path(path, root, root).is_relative_to(d)
+                    for d in excluded
+                )
             ):
                 continue
             entries.append(
