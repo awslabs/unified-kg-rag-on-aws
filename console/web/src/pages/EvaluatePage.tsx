@@ -5,7 +5,7 @@ import { DeltaPlot, higherIsBetter, MetricName } from "../components/charts";
 import { JobPanel } from "../components/JobPanel";
 import { StrategyPicker } from "../components/StrategyPicker";
 import { Empty, ErrorText, Loading, Notice, PageHead, Pager, Sheet } from "../components/ui";
-import { useI18n } from "../i18n/i18n";
+import { useI18n, type I18n } from "../i18n/i18n";
 import { errorMessage, get, send } from "../lib/api";
 import type { Comparison, JobRecord, QuestionScores, SavedRun, Status, StrategyInfo } from "../lib/types";
 import { useApi } from "../lib/useApi";
@@ -469,26 +469,54 @@ export type Outcome = "win" | "tie" | "loss";
  * better, equal or worse by the metric's direction; null when either has no
  * score or the metric has no direction. */
 export function outcomeOf(metric: string, candidate: number | undefined, baseline: number | undefined): Outcome | null {
-  const direction = higherIsBetter(metric);
-  if (candidate == null || baseline == null || direction === null) return null;
+  return outcomeBy(higherIsBetter(metric), candidate, baseline);
+}
+
+function outcomeBy(higher: boolean | null, candidate: number | null | undefined, baseline: number | null | undefined): Outcome | null {
+  if (candidate == null || baseline == null || higher === null) return null;
   if (candidate === baseline) return "tie";
-  return candidate > baseline === direction ? "win" : "loss";
+  return candidate > baseline === higher ? "win" : "loss";
+}
+
+type Answer = QuestionScores["questions"][number]["answers"][string];
+
+/** The share of the repeats that answered a question and declined (null:
+ * none answered it). */
+function declinedShare(answer: Answer | undefined): number | null {
+  return answer?.repeats ? answer.declined / answer.repeats : null;
+}
+
+/** A question's outcome for `candidate` against `baseline`: on `metric`,
+ * or, for a question marked unanswerable, by the share of repeats that
+ * declined (a decline is its right answer). */
+export function questionOutcome(question: QuestionScores["questions"][number], metric: string | null, candidate: string, baseline: string): Outcome | null {
+  if (question.unanswerable) return outcomeBy(true, declinedShare(question.answers[candidate]), declinedShare(question.answers[baseline]));
+  return metric ? outcomeOf(metric, question.scores[candidate], question.scores[baseline]) : null;
 }
 
 const OUTCOME_TONES: Record<Outcome, string> = { win: "badge-good", tie: "", loss: "badge-bad" };
 
-/** How an answer to a question marked unanswerable did: declined (right) or
- * not (wrong); nothing for a failed or missing answer. */
-function DeclineBadge({ answer, style }: { answer: { abstained: boolean; error: string | null } | undefined; style?: CSSProperties }) {
+/** How the repeats that answered a question declined: "declined" (or
+ * "declined k/n" over several repeats); nothing when none declined. */
+function declinedLabel(answer: Answer, t: I18n["t"]): string {
+  return answer.repeats > 1 ? t("evaluate.declinedOf", { declined: answer.declined, repeats: answer.repeats }) : t("evaluate.answerDeclined");
+}
+
+/** How the answers to a question marked unanswerable did, over every
+ * repeat: all declined (right), none (wrong) or some; nothing when no
+ * repeat answered it. */
+function DeclineBadge({ answer, style }: { answer: Answer | undefined; style?: CSSProperties }) {
   const { t } = useI18n();
-  if (!answer || answer.error) return <>—</>;
-  return answer.abstained ? (
-    <span className="badge badge-good" style={style}>
-      {t("evaluate.answerDeclined")}
-    </span>
-  ) : (
-    <span className="badge badge-bad" style={style}>
-      {t("evaluate.didNotDecline")}
+  if (!answer?.repeats) return <>—</>;
+  if (!answer.declined)
+    return (
+      <span className="badge badge-bad" style={style}>
+        {t("evaluate.didNotDecline")}
+      </span>
+    );
+  return (
+    <span className={`badge ${answer.declined === answer.repeats ? "badge-good" : "badge-warn"}`} style={style}>
+      {declinedLabel(answer, t)}
     </span>
   );
 }
@@ -512,7 +540,7 @@ export function QuestionTable({ refName, candidate, baseline }: { refName: strin
     () =>
       (data?.questions ?? []).map((q) => ({
         ...q,
-        outcome: compared && metric ? outcomeOf(metric, q.scores[candidate!], q.scores[baseline!]) : null,
+        outcome: compared ? questionOutcome(q, metric, candidate!, baseline!) : null,
       })),
     [data, compared, metric, candidate, baseline],
   );
@@ -540,6 +568,7 @@ export function QuestionTable({ refName, candidate, baseline }: { refName: strin
                 <>
                   <p className="field-help" style={{ margin: 0, flex: "1 1 320px" }}>
                     {t("evaluate.questionsHelp", { metric: metric ?? "", candidate: candidate!, baseline: baseline! })}
+                    {rows.some((r) => r.unanswerable) ? ` ${t("evaluate.questionsHelpDecline")}` : ""}
                   </p>
                   <div className="chips" role="group" aria-label={t("evaluate.outcome")}>
                     {(["all", "win", "tie", "loss"] as const).map((o) => (
@@ -606,12 +635,13 @@ export function QuestionTable({ refName, candidate, baseline }: { refName: strin
                               return (
                                 <div key={s} className="answer-card">
                                   <div className="field-label">
-                                    <span className="mono">{s}</span> · {number(q.scores[s] ?? null, { maximumFractionDigits: 3 })}
+                                    <span className="mono">{s}</span>
+                                    {q.scores[s] != null ? ` · ${number(q.scores[s], { maximumFractionDigits: 3 })}` : null}
                                     {q.unanswerable ? (
                                       <DeclineBadge answer={a} style={{ marginLeft: 6 }} />
-                                    ) : a?.abstained ? (
+                                    ) : a?.declined ? (
                                       <span className="badge" style={{ marginLeft: 6 }}>
-                                        {t("evaluate.answerDeclined")}
+                                        {declinedLabel(a, t)}
                                       </span>
                                     ) : null}
                                   </div>

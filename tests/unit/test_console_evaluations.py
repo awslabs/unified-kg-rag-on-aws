@@ -96,4 +96,22 @@ def test_a_question_marked_unanswerable_says_so(tmp_path: Path) -> None:
     }
     assert by_id["q1"]["unanswerable"] is False
     assert by_id["q2"]["unanswerable"] is True
-    assert by_id["q2"]["answers"]["local"]["abstained"] is True
+    assert by_id["q2"]["answers"]["local"]["declined"] == 1
+    assert by_id["q2"]["answers"]["local"]["repeats"] == 1
+
+
+def test_declines_are_counted_over_every_repeat(tmp_path: Path) -> None:
+    """The decline badge reads every repeat, as the scores beside it do,
+    not the first repeat's answer alone."""
+    for repeat, declined in enumerate((False, True, True)):
+        stamp = f"20261101_10000{repeat}"
+        _save(tmp_path, "local", stamp, {"q1": 0.0})
+        path = next(tmp_path.glob(f"evaluation_results_local_{stamp}_*.json"))
+        results = json.loads(path.read_text())
+        results[0]["metadata"] = {"answerable": False}
+        results[0]["abstained"] = declined
+        path.write_text(json.dumps(results))
+    _save(tmp_path, "local", "20261101_100009", {"q1": None})  # failed: not read
+    (question,) = evaluations.question_scores(tmp_path, None)["questions"]
+    assert question["answers"]["local"]["declined"] == 2
+    assert question["answers"]["local"]["repeats"] == 3

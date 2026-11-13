@@ -314,7 +314,9 @@ export interface QuestionScores {
      * the right answer. Absent from an older server. */
     unanswerable?: boolean;
     scores: Record<string, number>;
-    answers: Record<string, { text: string; error: string | null; abstained: boolean }>;
+    /** The first repeat's answer, and how many of the repeats that
+     * answered it declined (``declined`` of ``repeats``). */
+    answers: Record<string, { text: string; error: string | null; declined: number; repeats: number }>;
   }[];
 }
 
