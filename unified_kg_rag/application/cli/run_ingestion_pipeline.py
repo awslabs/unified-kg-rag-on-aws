@@ -69,7 +69,6 @@ from unified_kg_rag.domain.models import (
     RetrieverRole,
     validate_path_segment,
 )
-from unified_kg_rag.domain.models.config import merge_over
 from unified_kg_rag.shared import (
     CloudWatchEMFSink,
     ConfigurationError,
@@ -165,20 +164,17 @@ def apply_namespace_arguments(config: Config, args: argparse.Namespace) -> Confi
         ConfigurationError: A value the configuration refuses (an unknown
             methodology, a selection a switch leaves nothing of).
     """
-    overrides: dict[str, Any] = {}
+    changes: dict[str, Any] = {}
     if suffix := getattr(args, "suffix", None):
-        overrides["processing"] = {"document_parsing": {"index_value": suffix}}
-    indexing: dict[str, Any] = {}
+        changes["processing.document_parsing.index_value"] = suffix
     if methodologies := getattr(args, "methodologies", None):
-        indexing["methodologies"] = methodologies
+        changes["indexing.methodologies"] = methodologies
     if getattr(args, "reset", False):
-        indexing["reset"] = True
-    if indexing:
-        overrides["indexing"] = indexing
-    if not overrides:
+        changes["indexing.reset"] = True
+    if not changes:
         return config
     try:
-        updated = Config.model_validate(merge_over(config.as_input(), overrides))
+        updated = config.updated(changes)
     except ValidationError as e:
         raise ConfigurationError(format_validation_errors("", e)) from e
     if config_path := getattr(args, "config_path", None):

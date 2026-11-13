@@ -72,8 +72,10 @@ guard.
   answering and returns a `SearchOutput` (`search_results`,
   `processed_query`, `metadata`).
 - To change a loaded config, use `config.updated({"indexing.methodologies":
-  ["lightrag"], "search.citations.enabled": False})`: it returns a new
-  config validated whole, so the checks across sections run as they do at
+  ["lightrag"], "search.citations.enabled": False})` (dotted keys, each
+  replacing its setting) or `config.updated(overlay={"search": {...}})` (a
+  nested mapping merged over the config as a config file's keys): it
+  returns a new config validated whole, so the checks across sections run as they do at
   load. Assigning a setting (`config.search.top_k = 5`) validates that
   field and its section's own checks, and an invalid value raises and
   keeps the old one.

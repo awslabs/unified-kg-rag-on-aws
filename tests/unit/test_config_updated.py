@@ -124,3 +124,27 @@ def test_the_library_log_levels_are_checked() -> None:
     )
     assert config.logging.level == "DEBUG"
     assert config.logging.library_levels == {"botocore": "ERROR"}
+
+
+def test_updated_merges_an_overlay_then_sets_the_dotted_keys() -> None:
+    config = Config.model_validate({"search": {"citations": {"enabled": False}}})
+    changed = config.updated(
+        {"search.max_concurrency": 7},
+        overlay={"search": {"local_search": {"entity_frequency_threshold": 3}}},
+    )
+    assert changed.search.max_concurrency == 7
+    assert changed.search.local_search.entity_frequency_threshold == 3
+    # Merged into the section: what the config set there stays.
+    assert changed.search.citations.enabled is False
+    with pytest.raises(ValidationError, match="unknown config keys"):
+        config.updated(overlay={"search": {"no_such_key": 1}})
+
+
+def test_the_evaluation_cli_changes_are_validated() -> None:
+    # They were model_copy updates: a bogus value was kept unvalidated.
+    from unified_kg_rag.application.cli.run_evaluation import with_pairwise_mode
+
+    with pytest.raises(ConfigurationError, match="pairwise_mode"):
+        with_pairwise_mode(Config(), "bogus")
+    changed = with_pairwise_mode(Config(), "differential")
+    assert changed.evaluation.pairwise_mode == "differential"

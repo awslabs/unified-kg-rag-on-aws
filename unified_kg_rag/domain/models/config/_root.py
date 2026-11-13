@@ -177,18 +177,30 @@ class Config(BaseModel):
         built = type(self).model_validate(copy.deepcopy(self._input))
         return merge_over(copy.deepcopy(self._input), _changes(built, self))
 
-    def updated(self, changes: Mapping[str, Any]) -> "Config":
-        """A new config: this one with each dotted key of ``changes`` set
-        (``{"indexing.methodologies": ["graphrag"]}``), validated whole, so
-        the checks across sections run as they do at load (an assignment
-        validates only its own field). This config is unchanged.
+    def updated(
+        self,
+        changes: Mapping[str, Any] | None = None,
+        *,
+        overlay: Mapping[str, Any] | None = None,
+    ) -> "Config":
+        """A new config: this one with ``overlay`` merged over it (nested
+        keys as in a config file: ``{"processing": {"graph_extraction":
+        {...}}}``, a mapping merged into its section) and then each dotted
+        key of ``changes`` set (``{"indexing.methodologies": ["graphrag"]}``,
+        the value replacing the setting's), validated whole, so the checks
+        across sections run as they do at load (an assignment validates only
+        its own section). The one way to build a changed config. This config
+        is unchanged.
 
         Raises:
-            ValueError: A key names no setting.
-            pydantic.ValidationError: The changed config is invalid.
+            ValueError: A key of ``changes`` names no setting.
+            pydantic.ValidationError: The changed config is invalid (an
+                unknown key of ``overlay`` included).
         """
         data = self.as_input()
-        for dotted, value in changes.items():
+        if overlay:
+            data = merge_over(data, _plain(dict(overlay)))
+        for dotted, value in (changes or {}).items():
             model: type[BaseModel] | None = type(self)
             node = data
             parts = dotted.split(".")

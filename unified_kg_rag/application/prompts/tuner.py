@@ -50,7 +50,7 @@ from unified_kg_rag.domain.models import (
     TextUnit,
     TextUnitExtraction,
 )
-from unified_kg_rag.domain.models.config import INLINE_SCHEMA_SOURCE, merge_over
+from unified_kg_rag.domain.models.config import INLINE_SCHEMA_SOURCE
 from unified_kg_rag.domain.models.schema import (
     EntityTypeItem,
     EntityTypeSpec,
@@ -412,12 +412,10 @@ class PromptTuner:
         already configured."""
         if not entity_types or self.schema_configured:
             return self.config
-        data = merge_over(
-            self.config.as_input(),
-            {"processing": {"graph_extraction": {"entity_types": entity_types}}},
-        )
         try:
-            return Config.model_validate(data)
+            return self.config.updated(
+                {"processing.graph_extraction.entity_types": entity_types}
+            )
         except ValidationError as e:
             logger.warning(
                 "Extracting the examples with the configured entity types: "

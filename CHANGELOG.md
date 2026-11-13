@@ -1570,9 +1570,9 @@ From a `main` checkout (formats and keys no release had):
 
 ### Changed
 - Every config section validates an assignment against its field (`ConfigSection`), and `Config.updated({"dotted.key":
-  value})` returns a changed config validated whole, so the checks across sections run (the console's methodology
-  selection, `run-eval --arm` and the re-scoring use it): an assignment let the console run a methodology the
-  config's switches leave nothing of. The `search.hybrid` weights are relative (their sum must be above 0) and
+  value}, overlay={...})` returns a changed config validated whole, so the checks across sections run (every CLI
+  flag, schema source and console selection that changes a config uses it): an assignment let the console run a
+  methodology the config's switches leave nothing of. The `search.hybrid` weights are relative (their sum must be above 0) and
   `logging.library_levels` takes level names only.
 - `auto` falls back to the first routable of `local`, then `mix`, when the router's answer names no routable
   strategy, as it does when nothing configured is served and as `structured` falls back (one order,
