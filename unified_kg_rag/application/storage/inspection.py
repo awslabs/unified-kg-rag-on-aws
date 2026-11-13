@@ -9,14 +9,17 @@ doc-status registry's records. :func:`export_graph` streams every kind of
 item the namespace stores (text units, entities, relationships, communities'
 reports, claims, RAPTOR summary nodes), with the text units each cites and
 each text unit's document, from the vector store
-into JSON Lines or GraphML, a page at a time. ``run-describe`` drives both.
+into JSON Lines or GraphML, a page at a time, and takes a census of the
+graph store's vertices and edges (:func:`census_graph`). ``run-describe``
+drives both.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections import Counter
-from collections.abc import Collection, Iterator
+from collections.abc import Collection, Iterable, Iterator
 from pathlib import Path
 from typing import IO, Any, Literal
 from xml.sax.saxutils import escape, quoteattr
@@ -43,7 +46,12 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
-from unified_kg_rag.ports.indexer import STORED_ITEM_KINDS, StoredItemKind
+from unified_kg_rag.ports.indexer import (
+    STORED_ITEM_KINDS,
+    AnnotatedKind,
+    GraphIndexer,
+    StoredItemKind,
+)
 from unified_kg_rag.shared import ConfigurationError, get_logger
 from unified_kg_rag.shared.exceptions import (
     DocStatusFormatError,
@@ -55,6 +63,8 @@ from unified_kg_rag.shared.utils.files import atomic_open
 logger = get_logger(__name__)
 
 ExportFormat = Literal["jsonl", "graphml"]
+# The ``kind`` of a JSON Lines export's graph-store census records.
+GRAPH_RECORD_KIND = "graph"
 EXPORT_FORMATS: tuple[ExportFormat, ...] = ("jsonl", "graphml")
 
 # The index ``_meta`` keys of the embeddings and the build record
@@ -130,6 +140,33 @@ class NamespaceDescription(NamespaceSummary):
     )
 
 
+class GraphKindCensus(BaseModel):
+    """The graph store's vertices (or edges) of a namespace, counted and
+    digested (:func:`census_graph`)."""
+
+    count: int = Field(description="How many the graph store holds")
+    by_type: dict[str, int] = Field(
+        description="How many of each type (an entity's type, an edge's "
+        "label); '(untyped)': without one"
+    )
+    digest: str = Field(
+        description="SHA-256 of their ids with their types, in id order: "
+        "equal for two stores holding the same ones"
+    )
+    rank_digest: str = Field(
+        description="SHA-256 of their ids with their stored ranks, in id order"
+    )
+
+
+class GraphCensus(BaseModel):
+    """What the graph store holds of a namespace: its entity vertices and
+    the relationship edges between them (communities are compared through
+    their reports, which the export holds)."""
+
+    vertices: GraphKindCensus = Field(description="The entity vertices")
+    edges: GraphKindCensus = Field(description="The relationship edges")
+
+
 class GraphExport(BaseModel):
     """What :func:`export_graph` wrote."""
 
@@ -146,6 +183,11 @@ class GraphExport(BaseModel):
     missing: list[str] = Field(
         default_factory=list,
         description="The record kinds without a live index (not exported)",
+    )
+    graph: GraphCensus | None = Field(
+        default=None,
+        description="The graph store's census (None: no graph store, or one "
+        "that cannot list its items)",
     )
 
 
@@ -294,6 +336,62 @@ def _unit_document(unit: dict[str, Any]) -> str | None:
     return source_fields.relative_path(unit) or source_fields.file_name(unit)
 
 
+_UNTYPED = "(untyped)"
+# The graph-store kinds a census reads, each with its census field.
+_CENSUS_KINDS: tuple[tuple[AnnotatedKind, str], ...] = (
+    ("entities", "vertices"),
+    ("relationships", "edges"),
+)
+
+
+def census_graph(
+    graph: GraphIndexer, suffix: str | None, *, page_size: int | None = None
+) -> GraphCensus | None:
+    """Count and digest the entity vertices and relationship edges
+    ``suffix``'s graph store holds, through the port (any backend that lists
+    its items: ``read_schema_annotations``, then their ranks a page of
+    ``page_size`` ids at a time). Two stores of the same graph give the same
+    census; a lost or extra vertex or edge, a changed type or rank, does not.
+    ``None`` when the backend cannot list its items (no graph store).
+
+    Raises:
+        StoreConnectionError: The graph store cannot be reached (or the
+            backend's typed read error).
+    """
+    kinds: dict[str, GraphKindCensus] = {}
+    size = max(page_size or 1000, 1)
+    for kind, field in _CENSUS_KINDS:
+        listed = graph.read_schema_annotations(kind, suffix)
+        if listed is None:
+            return None
+        ids = sorted(listed)
+        ranks: dict[str, Any] = {}
+        for start in range(0, len(ids), size):
+            page = ids[start : start + size]
+            items = (
+                graph.read_entities(page, suffix)
+                if kind == "entities"
+                else graph.read_relationships(page, suffix)
+            )
+            ranks.update((item.id, item.rank) for item in items)
+        types = [listed[i].type or _UNTYPED for i in ids]
+        kinds[field] = GraphKindCensus(
+            count=len(ids),
+            by_type=dict(sorted(Counter(types).items())),
+            digest=_digest(zip(ids, types, strict=True)),
+            rank_digest=_digest((i, ranks.get(i)) for i in ids),
+        )
+    return GraphCensus.model_validate(kinds)
+
+
+def _digest(rows: Iterable[tuple[Any, ...]]) -> str:
+    """SHA-256 of ``rows``, one JSON array a line."""
+    sha = hashlib.sha256()
+    for row in rows:
+        sha.update(json.dumps(list(row), ensure_ascii=False).encode() + b"\n")
+    return sha.hexdigest()
+
+
 def export_graph(
     config: Config,
     path: str | Path,
@@ -320,6 +418,11 @@ def export_graph(
     ``max_items`` caps each kind (``truncated`` names the kinds it cut);
     ``include_text`` adds each text unit's text (JSON Lines only). An
     existing ``path`` is replaced only with ``overwrite``.
+
+    ``graph`` is the graph store's :func:`census_graph` (never cut by
+    ``max_items``); JSON Lines also ends with it, one record of kind
+    ``graph`` for the ``vertices`` and one for the ``edges``, so comparing
+    two exports compares the graph stores too.
 
     The provenance is what the stores hold: a text unit names its document
     (``file_path`` relative to the corpus root, or a seed graph's), every
@@ -351,6 +454,7 @@ def export_graph(
     missing: list[str] = []
     units: dict[str, str] = {}
     vector = providers.build_vector_indexer()
+    graph = providers.build_graph_indexer()
     try:
         with atomic_open(target, newline="\n") as out:
             writer: _Writer = (
@@ -372,9 +476,12 @@ def export_graph(
                     truncated.append(record_kind)
                 if not live:
                     missing.append(record_kind)
+            census = census_graph(graph, name, page_size=page_size)
+            writer.census(census)
             writer.end()
     finally:
         vector.close()
+        graph.close()
     if SectionType.RELATIONSHIP.value in missing and counts.get(
         SectionType.ENTITY.value
     ):
@@ -392,6 +499,7 @@ def export_graph(
         counts=counts,
         truncated=truncated,
         missing=missing,
+        graph=census,
     )
 
 
@@ -426,6 +534,8 @@ class _Writer:
 
     def item(self, kind: str, item: dict[str, Any], documents: list[str]) -> None: ...
 
+    def census(self, census: GraphCensus | None) -> None: ...
+
     def end(self) -> None: ...
 
 
@@ -452,6 +562,13 @@ class _JsonLines(_Writer):
         else:
             record["documents"] = documents
         self.out.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+
+    def census(self, census: GraphCensus | None) -> None:
+        if census is None:
+            return
+        for field, counted in census:
+            record = {"kind": GRAPH_RECORD_KIND, "id": field, **counted.model_dump()}
+            self.out.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
 # GraphML attributes, one <key> each: (id, for, name).

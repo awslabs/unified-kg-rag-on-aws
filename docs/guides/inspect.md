@@ -83,6 +83,20 @@ The export's `counts`, `truncated` and `missing` (in `run-describe
   parent by `parent_of` edges; type, description, rank, weight, IRIs, text
   unit ids and documents as attributes (lists as JSON strings).
 
+Both read the graph store too: the export's `graph` (in the
+`--output-format json` document, under `export`) is a census of its entity
+vertices and the relationship edges between them, each with its `count`,
+`by_type` (an entity's type, an edge's label) and two SHA-256 digests, of
+the ids with their types (`digest`) and with their stored ranks
+(`rank_digest`). A JSON Lines export ends with it, as two records of kind
+`graph` (ids `vertices` and `edges`). It is read through the graph store's
+port, the same for the embedded SQLite store and Neptune, is never cut by
+`--max-items`, and is `null` without a graph store (a `raptor`-only
+build). Two stores of the same graph give the same census; a lost or extra
+vertex or edge, or a changed type or rank, does not, though the vector
+store's copies are unchanged. Communities are compared through their
+reports.
+
 Provenance is what the stores hold: a text unit names its document
 (`file_path`: a document given from memory by its id, a file by the path
 it was ingested from), and every other item the text units it was

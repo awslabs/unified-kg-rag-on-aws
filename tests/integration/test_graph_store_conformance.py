@@ -774,3 +774,43 @@ def test_relationship_ranks_are_set_in_place(harness: StoreHarness) -> None:
     assert (stats.total_items, stats.successful_items, stats.failed_items) == (1, 1, 0)
     (twice,) = graph.read_relationships(["a-b"], suffix="t1")
     assert twice.rank == 5
+
+
+def test_a_census_is_the_same_on_every_backend(harness: StoreHarness) -> None:
+    """``census_graph`` (``run-describe``'s ``graph``, the load test's
+    convergence check) reads through the port alone: the same graph gives
+    the same counts and digests on every backend, scoped to its suffix."""
+    from unified_kg_rag.application.storage.inspection import _digest, census_graph
+
+    graph = harness.graph_indexer
+    tenant = "census_t"
+    entities = [
+        _entity("a", tenant, type="ORGANIZATION", rank=2),
+        _entity("b", tenant, type="조직", rank=1),
+        _entity("c", tenant, rank=1),
+    ]
+    rels = [
+        _rel("a-b", "a", "b", tenant, type="SUPPLIES", rank=3),
+        _rel("a-c", "a", "c", tenant, type="SHIPS_TO", rank=3),
+    ]
+    assert graph.upsert_entities(entities).failed_items == 0
+    assert graph.upsert_relationships(rels).failed_items == 0
+    # Another suffix's items are not counted.
+    _graph(harness, [("x", "y")], "census_other")
+
+    census = census_graph(graph, tenant, page_size=1)
+
+    assert census is not None
+    assert census.vertices.count == 3 and census.edges.count == 2
+    assert census.vertices.by_type == {"(untyped)": 1, "ORGANIZATION": 1, "조직": 1}
+    assert census.edges.by_type == {"SHIPS_TO": 1, "SUPPLIES": 1}
+    assert census.vertices.digest == _digest(
+        [["a", "ORGANIZATION"], ["b", "조직"], ["c", "(untyped)"]]
+    )
+    assert census.edges.rank_digest == _digest([["a-b", 3], ["a-c", 3]])
+    assert census.vertices.rank_digest == _digest([["a", 2], ["b", 1], ["c", 1]])
+    graph.delete_by_id(["a-c"], suffix=tenant)
+    after = census_graph(graph, tenant)
+    assert after is not None and after.edges.count == 1
+    assert after.edges.digest != census.edges.digest
+    assert after.vertices == census.vertices
