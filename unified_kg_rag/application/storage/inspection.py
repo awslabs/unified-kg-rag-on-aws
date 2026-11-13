@@ -273,6 +273,20 @@ def describe_namespace(
     )
 
 
+def ingested_namespaces(
+    config: Config, *, providers: Providers | None = None
+) -> list[str] | None:
+    """The index namespaces the vector store holds an index for, for the
+    error naming one it does not (as a query's ``IndexNotFoundError``
+    lists them); ``None`` when the store cannot tell."""
+    providers = providers or build_providers(config)
+    vector = providers.build_vector_indexer()
+    try:
+        return vector.ingested_suffixes()
+    finally:
+        vector.close()
+
+
 def _registry_records(
     providers: Providers, namespace: str
 ) -> tuple[list[DocStatusRecord] | None, str | None]:

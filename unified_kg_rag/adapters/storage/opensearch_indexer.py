@@ -66,7 +66,10 @@ from unified_kg_rag.domain.models.config import (
 from unified_kg_rag.domain.models.provider_config import BEDROCK
 from unified_kg_rag.domain.retrieval.filters import ATTRIBUTE_KEY_PREFIX
 from unified_kg_rag.domain.retrieval.index_prefixes import index_artifacts
-from unified_kg_rag.domain.retrieval.store_names import namespace_suffix
+from unified_kg_rag.domain.retrieval.store_names import (
+    namespace_suffix,
+    suffixes_of_aliases,
+)
 from unified_kg_rag.ports.indexer import (
     STORED_ITEM_KINDS,
     AnnotatedKind,
@@ -3028,6 +3031,20 @@ class OpenSearchIndexer(VectorIndexer):
                 )
             described.append(entry)
         return described
+
+    def ingested_suffixes(self) -> list[str] | None:
+        """The suffixes a text units alias exists for (see the port)."""
+        base = self.opensearch_config.text_units_index_prefix
+        try:
+            indices = self.opensearch_client.get_aliases_by_index(f"{base}-*")
+        except Exception as e:  # noqa: BLE001 - only the error's hint
+            logger.debug("Listing the ingested suffixes failed: %s", e)
+            return None
+        return suffixes_of_aliases(
+            (name for aliases in indices.values() for name in aliases),
+            base,
+            self.config.indexing.additional_suffix,
+        )
 
     def scan_items(
         self,

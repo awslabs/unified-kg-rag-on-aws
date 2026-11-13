@@ -89,3 +89,19 @@ def test_an_unsafe_suffix_is_refused_by_the_registry_as_by_the_stores(value) -> 
         BaseIndexer.get_suffix(SimpleNamespace(attributes={"index": value}))
     with pytest.raises(ConfigurationError, match="index suffix"):
         assign_document_identity(document, "/corpus")
+
+
+def test_the_suffixes_of_aliases_read_store_name_back() -> None:
+    from unified_kg_rag.domain.retrieval.store_names import suffixes_of_aliases
+
+    names = [
+        store_name("graphrag-text-units", "tenant-a", "v2"),
+        store_name("graphrag-text-units", "default", "v2"),
+        store_name("graphrag-text-units", "other"),  # no additional suffix
+        store_name("graphrag-entities", "tenant-b", "v2"),
+    ]
+    assert suffixes_of_aliases(names, "graphrag-text-units", "v2") == [
+        "default",
+        "tenant-a",
+    ]
+    assert suffixes_of_aliases(names[2:], "graphrag-text-units") == ["other"]

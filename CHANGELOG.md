@@ -1143,13 +1143,12 @@ From a `main` checkout (formats and keys no release had):
   `IndexNotFoundError`, not a methodology refusal naming the config's). A registry the caller cannot read (the CDK
   query task's role has no DynamoDB access) is reported unavailable, with the reason in `registry_unavailable` and a
   warning, and the rest is still described (#636). A missing extra and a namespace that holds no index exit 2 with the
-  error on stderr, and describing creates no store file where nothing was ingested (#641). `--documents
-  failed,quarantined` (`describe_namespace(documents=...)`) lists the registry's documents of those statuses with their
-  `error_info`, counts, writer and time (every run write stamps `updated_at`, and `created_at` once; a record
-  written before has none), also of a namespace without an index whose first build failed (described with `exists:
-  false`, exit 0); a run names the documents it deletes in one INFO line. See
-  [inspect and
-  export](docs/guides/inspect.md).
+  error on stderr (listing the namespaces the store holds, as `run-rag` does), and describing creates no store file
+  where nothing was ingested (#641). `--documents failed,quarantined` (`describe_namespace(documents=...)`) lists the
+  registry's documents of those statuses with their `error_info`, counts, writer and time (every run write stamps
+  `updated_at`, and `created_at` once; a record written before has none), also of a namespace without an index whose
+  first build failed (described with `exists: false`, exit 0); a run names the documents it deletes in one INFO line.
+  See [inspect and export](docs/guides/inspect.md).
 - Telemetry names the namespace (the tenant boundary) and ties a query to its logs: `kg_rag.namespace` on every span
   of a query or ingestion run (an MCP tool call's and a console question's root span included), `namespace` in their
   log context and an ingestion run's EMF properties; the ingestion root span has `kg_rag.mode` and the delta counts,

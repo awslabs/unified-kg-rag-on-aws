@@ -23,7 +23,9 @@ Exit code `2` covers:
 
 - **Usage.** A bad flag.
 - **What the run reads.** A `run-rag` or `run-eval` `--suffix` nothing was
-  ingested under (the message lists the ingested ones); a filter key no
+  ingested under (the message lists the ingested ones; the error answer of
+  `processing.ignore_errors` does not, since a surface serving some
+  namespaces only must not name the others); a filter key no
   index declares; a `run-rag` or `run-eval`
   `--search-strategy` (or a `run-eval` query's own strategy) whose
   methodology the index namespace does not hold
@@ -216,8 +218,9 @@ holds:
   `config`), with `--documents` the `documents` of those statuses, each with
   `doc_id`, `file_path`, `status`, `error_info`, `failure_count`,
   `retry_count`, `attempt_count`, `written_by` and `updated_at`) and
-  `export` (its `path`, `counts`, `truncated` and `missing` kinds, or `null`
-  without `--output-path`); a namespace that holds no index exits `2`,
+  `export` (its `path`, `format`, `suffix`, `counts`, `truncated` and
+  `missing` kinds and `graph`, the graph store's census of its entity
+  vertices and relationship edges, or `null` without `--output-path`); a namespace that holds no index exits `2`,
   unless the registry holds records of it and nothing is exported
   ([Inspect and export](../guides/inspect.md)).
 - **`run-prompt-tuning`**: the `output_path`, the `profile` and, with

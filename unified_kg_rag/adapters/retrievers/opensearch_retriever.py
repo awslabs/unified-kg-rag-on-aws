@@ -67,7 +67,10 @@ from unified_kg_rag.domain.retrieval.index_prefixes import (
     index_artifact_of,
 )
 from unified_kg_rag.domain.retrieval.source_fields import id_list
-from unified_kg_rag.domain.retrieval.store_names import namespace_suffix
+from unified_kg_rag.domain.retrieval.store_names import (
+    namespace_suffix,
+    suffixes_of_aliases,
+)
 from unified_kg_rag.ports.model_factory import EmbeddingFactoryPort
 from unified_kg_rag.shared import (
     ConfigurationError,
@@ -1645,28 +1648,19 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         """The suffixes a text units alias exists for (each ingested
         namespace has one), for the error of a suffix none exists for;
         ``None`` when the store cannot tell."""
-        prefix = f"{self._opensearch_config.text_units_index_prefix}-"
-        additional = self._config.indexing.additional_suffix
+        base = self._opensearch_config.text_units_index_prefix
         try:
             indices = await asyncio.to_thread(
-                self._opensearch_client.get_aliases_by_index, f"{prefix}*"
+                self._opensearch_client.get_aliases_by_index, f"{base}-*"
             )
         except Exception as e:  # noqa: BLE001 - only the error's hint
             logger.debug("Listing the ingested suffixes failed: %s", e)
             return None
-        suffixes: set[str] = set()
-        for aliases in indices.values():
-            for name in aliases:
-                if not name.startswith(prefix):
-                    continue
-                rest = name[len(prefix) :]
-                if additional:
-                    if not rest.endswith(f"-{additional}"):
-                        continue
-                    rest = rest[: -len(additional) - 1]
-                if rest:
-                    suffixes.add(rest)
-        return sorted(suffixes)
+        return suffixes_of_aliases(
+            (name for aliases in indices.values() for name in aliases),
+            base,
+            self._config.indexing.additional_suffix,
+        )
 
     def _parse_hits(self, hits: list[dict[str, Any]]) -> list[RetrievalResult]:
         return [self._parse_hit(hit) for hit in hits]
