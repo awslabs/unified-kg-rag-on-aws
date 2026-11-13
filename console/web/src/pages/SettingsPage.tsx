@@ -52,7 +52,7 @@ export function SettingsPage({ onSaved }: { onSaved: () => void }) {
   const [yaml, setYaml] = useState<string | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [previewing, setPreviewing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [saved, setSaved] = useState(false);
   const [endpointsConfirmed, setEndpointsConfirmed] = useState(false);
   const [directoriesConfirmed, setDirectoriesConfirmed] = useState(false);
@@ -78,7 +78,7 @@ export function SettingsPage({ onSaved }: { onSaved: () => void }) {
       );
     } catch (e) {
       setPreview(null);
-      setError(errorMessage(t, e));
+      setError(e);
     } finally {
       setPreviewing(false);
     }
@@ -101,7 +101,7 @@ export function SettingsPage({ onSaved }: { onSaved: () => void }) {
       await view.reload();
       onSaved();
     } catch (e) {
-      setError(errorMessage(t, e));
+      setError(e);
     }
   }
 
@@ -199,7 +199,7 @@ export function SettingsPage({ onSaved }: { onSaved: () => void }) {
               {!data.writable ? <span className="field-help">{t("settings.notWritable")}</span> : null}
             </div>
           </Sheet>
-          {error ? <Notice tone="bad" title={t("settings.refused")}>{error}</Notice> : null}
+          {error ? <Notice tone="bad" title={t("settings.refused")}>{errorMessage(t, error)}</Notice> : null}
           {preview ? (
             <Sheet title={t("settings.diff")}>
               <div className="stack">

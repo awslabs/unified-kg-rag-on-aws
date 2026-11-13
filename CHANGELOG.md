@@ -942,7 +942,8 @@ From a `main` checkout (formats and keys no release had):
   record holds; a run that would drop a held methodology for every corpus in the namespace starts only once
   confirmed), with live stage progress, the run's WARNINGs (a run that extracted no entity flagged; one whose
   warnings advise a rebuild offers it), a rebuild of the namespace for one run (`--reset`, one job: it asks
-  no integrity question) and a stop the pipeline checkpoints; run and compare evaluations (progress per answer;
+  no integrity question; nor does a run after files were added or edited) and a stop the pipeline checkpoints;
+  run and compare evaluations (progress per answer;
   paired deltas called by their
   Holm-adjusted p-value with the family's simultaneous interval and the primary metric marked, falling back to the
   interval for older comparisons; gates, cost, declines, win rates by answer length, each metric described on hover,
@@ -951,12 +952,13 @@ From a `main` checkout (formats and keys no release had):
   namespace's graph, built from the stores (one provider bundle per config) when the Graph page opens and no export
   shows them, as no console job exports one (each export named by build time, namespace and run, a replaced one
   marked outdated; without one, the page says why: nothing ingested, no build record, or the export off; a build
-  that failed is said over the newest export, still marked against the build record; search,
+  that failed is said over the newest export, still marked against the build record, and names what failed: the
+  config, the stores or the export folder; search,
   neighbourhoods, communities, degree, schema conformance, seed versus document evidence); a dashboard of the
   questions and jobs run through it (time, tokens, cost per strategy, model and role; a question refused as asked,
   as on an empty namespace, counted apart from the errors and, like a cancelled one, left out of every time and of
   the decline rate, and of the strategies' questions; a failed one, which could not decline, out of the decline
-  rate too); and edit the
+  rate too; the Questions figure says so when one was refused); and edit the
   config file with validation, a diff before saving, a confirmation before a provider endpoint or a file or directory
   path changes (every config key that names one), each save logged (the key paths of the endpoints and directories it
   changed, never values), and secrets never shown or written. Jobs run the unchanged
@@ -984,9 +986,10 @@ From a `main` checkout (formats and keys no release had):
   Bedrock models, and stops before it writes anything without the `console` extra, the built web client, or the
   `local` extra the fake and Ollama models need, or with a `UKR_CONSOLE_TOKEN` under 16 characters; a SIGTERM to it
   stops its console ([Console](docs/guides/console.md)).
-- `run-ingestion --confirm-integrity` answers only the question of a run that resumes a pipeline id whose inputs
-  changed (#631). A `--reset` (`indexing.reset`) run asks none, and logs the stages it recomputes at INFO: it
-  rebuilds by design.
+- `run-ingestion --confirm-integrity` answers only the question of a run that resumes a pipeline id whose settings
+  changed or whose cache is incomplete (#631). A corpus that changed under an incremental pipeline id asks none (the
+  delta decides what is processed), nor does a `--reset` (`indexing.reset`) run, which logs the stages it recomputes
+  at INFO: it rebuilds by design.
 - `GraphRAGChain.ainvoke(on_answer_chunk=...)` hands the answer's text chunks to a callback as the answer model
   streams them (the output, its citations included, is that of an unstreamed answer), and an `auto` query's output
   carries `metadata["routing"]` (how the strategy was chosen, among which candidates) (#631).

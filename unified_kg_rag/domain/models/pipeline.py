@@ -596,6 +596,12 @@ class PipelineContext(BaseModel):
         "computed with. The delta is saved with the run's metadata, not with "
         "that output: a resume restores both only when they match.",
     )
+    incremental_loading_settings_key: str | None = Field(
+        default=None,
+        description="The same key without the corpus: a later run whose "
+        "loading key differs but whose settings key matches changed only "
+        "its documents, which an incremental run expects.",
+    )
     incremental_retired_scopes: list[str] | None = Field(
         default=None,
         description="The indexing.retire_source_scopes values the delta "

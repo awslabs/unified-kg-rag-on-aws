@@ -28,7 +28,7 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
   const [confirmIntegrity, setConfirmIntegrity] = useState(false);
   const [confirmNarrowing, setConfirmNarrowing] = useState(false);
   const [jobId, setJobId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [uploadName, setUploadName] = useState("");
   // What was picked; the upload holds the files ingestion reads, filtered
   // again once the corpora list (its extensions) has loaded.
@@ -91,7 +91,7 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
       onJobsChanged();
       void jobs.reload();
     } catch (e) {
-      setError(errorMessage(t, e));
+      setError(e);
     }
   }
 
@@ -115,7 +115,7 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
       await corpora.reload();
       setCorpus(result.corpus);
     } catch (e) {
-      setError(errorMessage(t, e));
+      setError(e);
     } finally {
       setUploading(false);
     }
@@ -283,7 +283,7 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
                   </label>
                 </Notice>
               ) : null}
-              {error ? <Notice tone="bad">{error}</Notice> : null}
+              {error ? <Notice tone="bad">{errorMessage(t, error)}</Notice> : null}
               <div>
                 <button className="button button-primary" disabled={!corpus || !chosen.length || !!active || (dropped.length > 0 && !confirmNarrowing)} onClick={() => void start()}>
                   {t("ingest.start")}

@@ -248,4 +248,35 @@ describe("GraphPage when building the graph failed", () => {
     // The build time and the mark first: a narrow select cuts the end.
     expect(screen.getByRole("option", { name: /^[^·]+ \(outdated\) · default · a$/ })).toBeInTheDocument();
   });
+
+  it.each([
+    ["read", /Reading the namespace's stores failed/],
+    ["write", /Writing the graph's export folder failed/],
+    ["config", /The config could not be read/],
+  ])("names what failed: %s", async (reason, text) => {
+    const older = { ref: "cache:a/visualization/visualization_data.json", label: "default", namespace: "default", run: "a", built_at: "2026-11-13T00:00:00Z", modified: 1, bytes: 10, outdated: true };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) =>
+        String(url).includes("graphs/data")
+          ? new Promise<Response>(() => undefined)
+          : Promise.resolve(new Response(JSON.stringify({ graphs: [older], current: { state: "failed", namespace: "default", built_at: null, reason } }), { status: 200 })),
+      ),
+    );
+    renderIn(
+      <TrailProvider>
+        <GraphPage params={new URLSearchParams()} />
+      </TrailProvider>,
+    );
+    expect(await screen.findByText(text)).toBeInTheDocument();
+  });
+
+  it("names it without an export to show, too", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(new Response(JSON.stringify({ graphs: [], current: { state: "failed", namespace: "default", built_at: null, reason: "write" } }), { status: 200 }))),
+    );
+    renderIn(<GraphPage params={new URLSearchParams()} />);
+    expect(await screen.findByText(/Writing the graph's export folder failed/)).toBeInTheDocument();
+  });
 });

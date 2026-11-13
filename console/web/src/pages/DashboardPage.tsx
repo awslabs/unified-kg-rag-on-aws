@@ -97,6 +97,7 @@ export function DashboardPage() {
             <Stat label={t("dashboard.refused")} value={number(d.totals.refused)} />
             <Stat label={t("dashboard.cost")} value={d.totals.cost_usd != null ? usd(d.totals.cost_usd) : "—"} />
           </div>
+          {d.totals.refused ? <p className="field-help">{t("dashboard.questionsHint")}</p> : null}
           {!d.prices_configured ? (
             <Notice title={t("dashboard.noPricesTitle")}>{t("dashboard.noPrices")}</Notice>
           ) : d.unpriced_models.length ? (

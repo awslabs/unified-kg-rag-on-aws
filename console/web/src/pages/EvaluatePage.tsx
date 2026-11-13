@@ -45,7 +45,7 @@ export function EvaluatePage({ status, onJobsChanged }: { status: Status | null;
   const [gates, setGates] = useState("");
   const [budget, setBudget] = useState("");
   const [jobId, setJobId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [run, setRun] = useState<string | null>(null);
 
   const datasetRef = dataset || datasets.data?.datasets[0]?.ref || "";
@@ -72,7 +72,7 @@ export function EvaluatePage({ status, onJobsChanged }: { status: Status | null;
       onJobsChanged();
       void jobs.reload();
     } catch (e) {
-      setError(errorMessage(t, e));
+      setError(e);
     }
   }
 
@@ -147,7 +147,7 @@ export function EvaluatePage({ status, onJobsChanged }: { status: Status | null;
                 </label>
               </div>
             </details>
-            {error ? <Notice tone="bad">{error}</Notice> : null}
+            {error ? <Notice tone="bad">{errorMessage(t, error)}</Notice> : null}
             <div className="row">
               <button className="button button-primary" disabled={!datasetRef || !chosen.length || !!active} onClick={() => void start()}>
                 {t("evaluate.start")}

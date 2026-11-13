@@ -319,9 +319,10 @@ class CommandLineInterface:
             "--confirm-integrity",
             action="store_true",
             help="Answer yes to the question of a run that resumes a "
-            "--pipeline-id whose inputs changed since its stages ran (or "
+            "--pipeline-id whose settings changed since its stages ran (or "
             "whose cache is incomplete): continue, recomputing those stages; "
-            "nothing else. Without it (or --yes), the question is asked on "
+            "nothing else. A changed corpus asks nothing when the doc-status "
+            "registry is on (the delta decides what is processed). Without it (or --yes), the question is asked on "
             "the terminal, and the run stops (exit 1) when stdin is not one. "
             "A --force-rebuild or --reset run asks no such question: it "
             "recomputes what changed by design",

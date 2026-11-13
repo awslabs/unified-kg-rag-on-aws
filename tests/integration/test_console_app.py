@@ -15,6 +15,7 @@ import asyncio
 import json
 import logging
 import os
+import shutil
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -608,6 +609,7 @@ def test_the_graph_page_brings_the_namespace_s_graph_up_to_date(
     response = client.get("/api/graphs")
     assert response.status_code == 200 and response.json()["graphs"]
     assert response.json()["current"]["state"] == "failed"
+    assert response.json()["current"]["reason"] == "read"
     assert asked == [workspace / "cache"]
 
 
@@ -769,46 +771,57 @@ def test_an_ingestion_job_reports_its_stages_and_refreshes_the_chain(
     assert state.ask._chain is None  # rebuilt at the next question
 
 
-def test_a_changed_corpus_ingests_again_once_its_question_is_confirmed(
+def _ingest(client: Any, corpus: str, **options: Any) -> dict[str, Any]:
+    started = client.post(
+        "/api/jobs/ingest", json={"corpus": corpus, **options}, headers=HEADERS
+    ).json()
+    return _wait(client, started["id"])
+
+
+def test_a_changed_corpus_ingests_again_in_one_run(
     client: Any, workspace: Path
 ) -> None:
     files = {"a.txt": "Umbra Freight carries parts for Acme Robotics."}
     assert _upload(client, "changing", files).status_code == 200
-    first = _wait(
-        client,
-        client.post(
-            "/api/jobs/ingest", json={"corpus": "uploads:changing"}, headers=HEADERS
-        ).json()["id"],
-    )
+    first = _ingest(client, "uploads:changing")
     assert first["status"] == "succeeded", first["log"]
     (workspace / "uploads" / "changing" / "b.txt").write_text(
         "Kestrel Depot stores parts for Globex Sensors.", encoding="utf-8"
     )
-    second = _wait(
-        client,
-        client.post(
-            "/api/jobs/ingest", json={"corpus": "uploads:changing"}, headers=HEADERS
-        ).json()["id"],
-    )
-    # The pipeline id's inputs changed: the run asks before it writes, and
-    # the job names the question instead of failing for good.
-    assert second["status"] == "failed"
-    assert second["confirmation"] == "integrity", second["error"]
-    third = _wait(
-        client,
-        client.post(
-            "/api/jobs/ingest",
-            json={"corpus": "uploads:changing", "confirm_integrity": True},
-            headers=HEADERS,
-        ).json()["id"],
-    )
-    assert "--confirm-integrity" in third["command"]
-    assert third["status"] == "succeeded", third["log"]
-    assert third["pipeline_id"] == first["pipeline_id"]
+    # The same pipeline id over another corpus: the delta decides what is
+    # processed, so the run asks nothing and warns of nothing.
+    second = _ingest(client, "uploads:changing")
+    assert second["status"] == "succeeded", second["log"]
+    assert second.get("confirmation") is None
+    assert second["pipeline_id"] == first["pipeline_id"]
+    assert not any(
+        text in w
+        for w in second["warnings"]
+        for text in ("Missing cache", "inputs changed", "cache holds no", "Rewinding")
+    ), second["warnings"]
     result = _ask(
         client, query="What does Kestrel Depot store?", search_strategy="naive"
     )[-1]
     assert any(s["file_name"] == "b.txt" for s in result["sources"])
+
+
+def test_an_incomplete_cache_ingests_again_once_its_question_is_confirmed(
+    client: Any, workspace: Path
+) -> None:
+    files = {"a.txt": "Umbra Freight carries parts for Acme Robotics."}
+    assert _upload(client, "damaged", files).status_code == 200
+    first = _ingest(client, "uploads:damaged")
+    assert first["status"] == "succeeded", first["log"]
+    shutil.rmtree(workspace / "cache" / first["pipeline_id"] / "text_chunking")
+    # A completed stage whose output the cache lost: the run asks before it
+    # writes, and the job names the question instead of failing for good.
+    second = _ingest(client, "uploads:damaged")
+    assert second["status"] == "failed"
+    assert second["confirmation"] == "integrity", second["error"]
+    third = _ingest(client, "uploads:damaged", confirm_integrity=True)
+    assert "--confirm-integrity" in third["command"]
+    assert third["status"] == "succeeded", third["log"]
+    assert third["pipeline_id"] == first["pipeline_id"]
 
 
 def test_a_rebuild_runs_in_one_job_without_the_integrity_question(

@@ -2315,6 +2315,9 @@ class DataIngestionPipeline:
                     "documents",
                     self.corpus_fingerprint,
                 )
+                context.incremental_loading_settings_key = stage_cache_key(
+                    self.config, PipelineStageType.DOCUMENT_LOADING, "documents"
+                )
             with self._checkpoint_write():
                 self.state_manager.update_stage_result(context, result)
                 if result.status == PipelineStageStatus.COMPLETED:

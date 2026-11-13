@@ -13,6 +13,7 @@ filesystem stand in for the real S3/local cache; no AWS or network is touched.
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -715,3 +716,69 @@ def test_validate_integrity_names_changed_loading_inputs(tmp_path) -> None:
     assert ok is False
     assert len(errors) == 1
     assert "document_loading inputs changed" in errors[0]
+
+
+def _saved_loading(tmp_path, corpus: str | None, settings_key: bool = True):
+    """A pipeline whose delta was computed over ``corpus``, plus the manager
+    of a later run (with the unchanged config) over another corpus."""
+    state = PipelineStateManager(_StubCacheManager(tmp_path))
+    resume = PipelineResumeManager(state)
+    resume.corpus_fingerprint = "corpus-b"
+    context = _context(
+        "pid",
+        [
+            _stage_result("document_parsing", "completed"),
+            _stage_result("document_loading", "completed"),
+        ],
+    )
+    context.incremental_delta = DocumentDelta(new=["d1"])
+    loading = PipelineStageType.DOCUMENT_LOADING
+    context.incremental_loading_key = stage_cache_key(
+        resume.config, loading, "documents", corpus
+    )
+    if settings_key:
+        context.incremental_loading_settings_key = stage_cache_key(
+            resume.config, loading, "documents"
+        )
+    state.save_pipeline_metadata(context)
+    return resume
+
+
+def test_validate_integrity_expects_a_changed_corpus_of_an_incremental_run(
+    tmp_path,
+) -> None:
+    # Only the documents differ from those the delta was computed over: every
+    # cache key names the corpus, none is missing by tampering, and the run
+    # recomputes them under the delta: nothing to ask.
+    resume = _saved_loading(tmp_path, "corpus-a")
+    assert resume.validate_pipeline_integrity("pid") == (True, [])
+    resume.determine_resume_strategy("pid")
+    assert resume._rewind_level == logging.INFO
+
+
+def test_validate_integrity_asks_when_a_setting_changed_with_the_corpus(
+    tmp_path,
+) -> None:
+    resume = _saved_loading(tmp_path, "corpus-a")
+    resume.config.indexing.max_document_attempts += 1
+    ok, errors = resume.validate_pipeline_integrity("pid")
+    assert ok is False and "document_loading inputs changed" in errors[0]
+    resume.determine_resume_strategy("pid")
+    assert resume._rewind_level == logging.WARNING
+
+
+def test_validate_integrity_asks_for_metadata_without_the_settings_key(
+    tmp_path,
+) -> None:
+    # A run saved before the settings key existed cannot say what changed.
+    resume = _saved_loading(tmp_path, "corpus-a", settings_key=False)
+    ok, errors = resume.validate_pipeline_integrity("pid")
+    assert ok is False and "document_loading inputs changed" in errors[0]
+
+
+def test_validate_integrity_still_checks_the_cache_of_an_unchanged_corpus(
+    tmp_path,
+) -> None:
+    resume = _saved_loading(tmp_path, "corpus-b")
+    ok, errors = resume.validate_pipeline_integrity("pid")
+    assert ok is False and all("Missing cache" in e for e in errors)
