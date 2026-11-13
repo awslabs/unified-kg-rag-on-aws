@@ -1442,13 +1442,13 @@ These fire between runs too, so degradation shows before a run breaks on it:
 | Alarm | Fires when | What to do |
 |---|---|---|
 | `QueryLatencyHigh` | The p90 latency of the answers `GraphRAGChain` publishes (`run-rag --metrics-sink cloudwatch`) is above `query_latency_alarm_seconds` (default 60) in 2 of 3 5-minute periods | The dashboard's per-strategy widget shows which strategy is slow; check Bedrock latency and throttles and OpenSearch search latency. `global` and `drift` make many model calls per query by design. The metric's `Strategy` is the one that ran, so the queries `auto` routes to `iterative` show under it (a controller call and up to `max_rounds` more searches: [Follow-up rounds](./guides/query.md#follow-up-rounds-for-multi-hop-questions); leave it out of `search.auto_routable_strategies` to opt out). `local` ranks text units by PageRank by default, which adds a text-unit search, a relationship kNN search, a Neptune edge read and a query embedding to each query ([Local PPR ranking](./concepts/defaults-and-evidence.md#local-ppr-ranking); `search.local_search.text_unit_ranking: support` drops them); DRIFT's follow-ups add them only with `search.drift_search.text_unit_ranking: ppr` |
-
-| `QueryFailures` | At least 10% of queries failed (`query_failed` against the count of `query_latency_ms` values) in 2 of 3 5-minute periods | A fast failure (store or rerank access denied, an empty context) lowers the p90 instead of raising it, so this alarm, not `QueryLatencyHigh`, shows it: read the failing queries' errors in the log |
+| `QueryFailures` | At least 10% of queries failed (`query_failed` against the count of `query_latency_ms` values), in 5-minute periods of at least 10 queries, in 2 of 3 of them | A fast failure (store or rerank access denied, an empty context) lowers the p90 instead of raising it, so this alarm, not `QueryLatencyHigh`, shows it: read the failing queries' errors in the log |
 
 `GraphRAGChain` publishes each answer's `query_latency_ms` and its outcome
 (`query_failed`, `query_degraded`, `query_abstained`: 0 or 1) through the
 metrics sink of its `Providers` (`--metrics-sink cloudwatch` of `run-rag`,
-`run-mcp-server`, whose EMF goes to stderr, and `run-console`; a serving
+`run-mcp-server`, whose EMF goes to stderr, and `run-console`; with
+`--output-format json` the EMF goes to stderr too; a serving
 layer passes its `MetricsSink`: `Providers(config, metrics_sink=...)`),
 answers only (a `--mode search` query is not counted), streamed ones and
 failed ones included, a failure in the query's admission (a build-record
@@ -1463,10 +1463,11 @@ cancelled by its host) records nothing. `query_throttled_requests` counts
 the requests Bedrock throttled for the query, which tells a query slowed by
 throttling apart. They go under `unified_kg_rag/query` with the task's
 `Environment` and the `Strategy` that ran (the requested one for a query
-that failed before one did), the `namespace` as a log property (the key of
-the ingestion records too). `QueryFailures` and the "Query outcomes" widget
-read them; where no surface publishes them, the alarm stays OK and the
-widget empty.
+that failed before one did; `invalid` for a refused input that names no
+strategy), the `namespace` as a log property (the key of the ingestion
+records too). `QueryFailures` and the "Query outcomes" widget (the outcomes
+and `query_throttled_requests`, as sums) read them; where no surface
+publishes them, the alarm stays OK and the widget empty.
 
 The dashboard also lists every alarm's state, plots the stores' own signals
 (OpenSearch CPU, heap, indexing and search rates, 5xx and queues; Neptune CPU
@@ -1500,7 +1501,8 @@ Corpus coverage metrics, one value per run (Sum):
 Model usage metrics, emitted right after each stage that called a model,
 sent a Bedrock request (an embedding-only stage such as `indexing`) or was
 served from the LLM response cache (Sum; a model-free stage emits none,
-so it creates no metric series). They come from the app's own usage
+so it creates no metric series, and an embedding-only stage no calls or
+token series). They come from the app's own usage
 accounting, tracing on or off, and count only this deployment's runs, unlike
 the account-wide Bedrock widgets; `run-ingestion --output-format json` has the
 same counts in `token_usage`:
@@ -1554,7 +1556,7 @@ are this stack's own choices, not measured, which the table says.
 | `NeptuneGremlinErrors` | Any error in 3 consecutive minutes | This stack's choice: retried write conflicts come in short bursts |
 | `BedrockThrottling` | 10% of the deployment's requests, in a period of at least 50 | This stack's choice, neither value measured: a throttled request is retried, so it costs run time, not results |
 | `QueryLatencyHigh` | `query_latency_alarm_seconds` (60) at p90, 2 of 3 periods | This stack's choice; set it to the latency your users accept |
-| `QueryFailures` | 10% of queries, 2 of 3 periods | This stack's choice, the share AWS uses for OpenSearch 5xx |
+| `QueryFailures` | 10% of queries, in a period of at least 10, 2 of 3 periods | This stack's choice: the share AWS uses for OpenSearch 5xx; the minimum of 10 queries is not measured (one failed query on a quiet host must not page) |
 | The pipeline alarms, `DocStatusWriteThrottled`, `DocStatusReadThrottled`, `DocStatusSystemErrors`, `NeptuneServerlessAtMaxCapacity` | Any occurrence (at maximum capacity: 3 periods) | Each is a loss or a limit nobody should miss |
 
 ## Query deadlines and model timeouts
@@ -1623,8 +1625,11 @@ global map step, DRIFT). Lower `processing.max_concurrency` for the
 evaluation, lower `models.default_max_output_tokens` (it is reserved
 whether used or not; the short query calls reserve `search.output_ceilings`
 instead), or ask for a higher quota; raising the deadline only
-lets queries queue longer. The `BedrockThrottling` alarm and the dashboard's
-throttle widget show whether this is the cause.
+lets queries queue longer. The dashboard's "Query outcomes" widget
+(`query_throttled_requests`: the requests Bedrock throttled for this
+deployment's queries) and its "Bedrock throttles (all models)" widget (every
+caller in the account and region) show whether this is the cause; the
+`BedrockThrottling` alarm reads the ingestion stages' requests only.
 
 ## Query access and tenant isolation
 

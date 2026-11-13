@@ -92,6 +92,19 @@ def _http_status(exc: BaseException) -> int | None:
     return status if isinstance(status, int) else None
 
 
+def _reported_status(exc: BaseException) -> int | None:
+    """The HTTP status a failure reports, botocore's ``ClientError`` (its
+    response metadata) included: what names a cause (:func:`_cause`). The
+    retry and item classifiers read :func:`_http_status` only, as Bedrock's
+    factory classifies its own errors by code."""
+    if (status := _http_status(exc)) is not None:
+        return status
+    response = getattr(exc, "response", None)
+    metadata = response.get("ResponseMetadata") if isinstance(response, dict) else None
+    found = metadata.get("HTTPStatusCode") if isinstance(metadata, dict) else None
+    return found if isinstance(found, int) else None
+
+
 def looks_transient(exc: BaseException) -> bool:
     """Whether ``exc`` looks like a failure a new attempt can get past.
 
@@ -167,7 +180,7 @@ def _cause(exc: BaseException) -> tuple[str, str, int | None]:
     rejection names the request's token counts)."""
     if isinstance(exc, OutputParserException | LLMOutputTruncatedError):
         return "output", "", None
-    return type(exc).__name__, _error_code(exc), _http_status(exc)
+    return type(exc).__name__, _error_code(exc), _reported_status(exc)
 
 
 class FailureLedger:
@@ -229,14 +242,6 @@ def describe_cause(error: BaseException) -> str:
     name, code, status = _cause(error)
     if name == "output":
         return "output that does not parse or was cut off"
-    if status is None:
-        # botocore's ClientError keeps it in its response metadata.
-        response = getattr(error, "response", None)
-        metadata = (
-            response.get("ResponseMetadata") if isinstance(response, dict) else None
-        )
-        found = metadata.get("HTTPStatusCode") if isinstance(metadata, dict) else None
-        status = found if isinstance(found, int) else None
     parts = [name if code in ("", name) else f"{name} {code}"]
     if status is not None:
         parts.append(f"HTTP {status}")
