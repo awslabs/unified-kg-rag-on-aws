@@ -622,6 +622,7 @@
   "error.job_conflict": "この名前空間で別のジョブが実行中です。",
   "error.narrowing": "開始されませんでした：先にこの実行で削除される手法を確認してください。",
   "error.too_large": "大きすぎます。",
+  "error.unsupported": "アップロードしていません：取り込みで読まない形式のファイルがあります。",
   "error.upload_conflict": "アップロードしていません：ファイルとフォルダーの名前が同じです。",
   "error.invalid": "受け付けられません。",
   "error.unreadable": "読み取れません。",

@@ -622,6 +622,7 @@
   "error.job_conflict": "此命名空间中正在运行另一个任务。",
   "error.narrowing": "未开始：请先确认此次运行要移除的方法论。",
   "error.too_large": "过大。",
+  "error.unsupported": "未上传：包含摄取无法读取的文件类型。",
   "error.upload_conflict": "未上传：文件与文件夹同名。",
   "error.invalid": "不被接受。",
   "error.unreadable": "无法读取。",

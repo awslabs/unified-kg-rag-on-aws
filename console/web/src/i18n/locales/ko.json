@@ -622,6 +622,7 @@
   "error.job_conflict": "이 네임스페이스에서 다른 작업이 실행 중입니다.",
   "error.narrowing": "시작하지 않았습니다: 먼저 이 실행이 제거하는 방법론을 확인하세요.",
   "error.too_large": "너무 큽니다.",
+  "error.unsupported": "업로드하지 않았습니다: 수집에서 읽지 않는 형식의 파일이 있습니다.",
   "error.upload_conflict": "업로드하지 않았습니다: 파일과 폴더의 이름이 같습니다.",
   "error.invalid": "받아들일 수 없습니다.",
   "error.unreadable": "읽을 수 없습니다.",

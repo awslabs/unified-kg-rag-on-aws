@@ -670,6 +670,7 @@
   "error.job_conflict": "Une autre tâche s’exécute dans cet espace de noms.",
   "error.narrowing": "Non démarré : confirmez d’abord les méthodologies que l’exécution retire.",
   "error.too_large": "Trop volumineux.",
+  "error.unsupported": "Non envoyé : un fichier d’un type que l’ingestion ne lit pas.",
   "error.upload_conflict": "Non envoyé : un fichier et un dossier portent le même nom.",
   "error.invalid": "Non accepté.",
   "error.unreadable": "Lecture impossible.",

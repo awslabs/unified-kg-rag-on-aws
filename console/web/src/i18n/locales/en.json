@@ -646,6 +646,7 @@
   "error.job_conflict": "Another job runs in this namespace.",
   "error.narrowing": "Not started: confirm the methodologies the run removes first.",
   "error.too_large": "Too large.",
+  "error.unsupported": "Not uploaded: a file of a type ingestion does not read.",
   "error.upload_conflict": "Not uploaded: a file and a folder share a name.",
   "error.invalid": "Not accepted.",
   "error.unreadable": "Could not be read.",

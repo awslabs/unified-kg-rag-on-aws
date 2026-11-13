@@ -670,6 +670,7 @@
   "error.job_conflict": "Otro trabajo se está ejecutando en este espacio de nombres.",
   "error.narrowing": "No se inició: confirma primero las metodologías que elimina la ejecución.",
   "error.too_large": "Demasiado grande.",
+  "error.unsupported": "No se subió: un archivo de un tipo que la ingesta no lee.",
   "error.upload_conflict": "No se subió: un archivo y una carpeta tienen el mismo nombre.",
   "error.invalid": "No aceptado.",
   "error.unreadable": "No se pudo leer.",

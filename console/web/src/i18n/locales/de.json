@@ -646,6 +646,7 @@
   "error.job_conflict": "In diesem Namespace läuft ein anderer Job.",
   "error.narrowing": "Nicht gestartet: Bestätigen Sie zuerst die Methodiken, die der Lauf entfernt.",
   "error.too_large": "Zu groß.",
+  "error.unsupported": "Nicht hochgeladen: eine Datei eines Typs, den der Import nicht liest.",
   "error.upload_conflict": "Nicht hochgeladen: Eine Datei und ein Ordner tragen denselben Namen.",
   "error.invalid": "Nicht angenommen.",
   "error.unreadable": "Konnte nicht gelesen werden.",

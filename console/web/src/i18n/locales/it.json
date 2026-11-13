@@ -670,6 +670,7 @@
   "error.job_conflict": "Un altro job è in esecuzione in questo namespace.",
   "error.narrowing": "Non avviato: conferma prima le metodologie che l’esecuzione rimuove.",
   "error.too_large": "Troppo grande.",
+  "error.unsupported": "Non caricato: un file di un tipo che l’ingestione non legge.",
   "error.upload_conflict": "Non caricato: un file e una cartella hanno lo stesso nome.",
   "error.invalid": "Non accettato.",
   "error.unreadable": "Impossibile leggere.",
