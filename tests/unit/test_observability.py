@@ -1090,6 +1090,79 @@ async def test_a_streamed_query_names_its_namespace_and_publishes_its_metrics(
     assert values[metrics.QUERY_FAILED_METRIC] == 0.0
 
 
+class _DegradingRetriever(_FakeRetriever):
+    """Answers, recording a step it answered without (as a failed rerank)."""
+
+    async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+        from unified_kg_rag.adapters.retrieval.base import record_degradation
+        from unified_kg_rag.domain.retrieval.degradation import DegradationStep
+
+        record_degradation(DegradationStep.RETRIEVAL, "reranker down", "Down")
+        return await super().aretrieve(query)
+
+
+def _throttled_request() -> None:
+    from unified_kg_rag.shared.usage import record_request
+
+    record_request("query", "vendor.model-v1", throttled=True)
+
+
+class _ThrottledChat(GenericFakeChatModel):
+    """Answers, streamed or not, after one throttled request (a 429)."""
+
+    async def _agenerate(self, *args: Any, **kwargs: Any) -> Any:
+        _throttled_request()
+        return await super()._agenerate(*args, **kwargs)
+
+    async def _astream(self, *args: Any, **kwargs: Any) -> Any:
+        _throttled_request()
+        async for chunk in super()._astream(*args, **kwargs):
+            yield chunk
+
+
+class _AbstainingFactory(_FakeModelFactory):
+    def get_model(self, model_id: Any, **kwargs: Any) -> Any:
+        return _ThrottledChat(
+            messages=itertools.repeat(AIMessage(content="[NO_ANSWER]"))
+        )
+
+
+@pytest.mark.parametrize("streamed", [False, True], ids=["invoke", "stream"])
+async def test_a_streamed_query_counts_degraded_abstained_and_throttled_as_invoke(
+    streamed: bool,
+) -> None:
+    # Regression (rv26): astream published query_degraded=0 and
+    # query_abstained=0 whatever its answer was, and never
+    # query_throttled_requests, so streamed answers were missing from the
+    # "Query outcomes" widget's degraded, abstained and throttled series.
+    from unified_kg_rag.shared import metrics
+
+    chain = _simple_chain(_AbstainingFactory())
+    chain.config.search.abstention.mode = "mark"
+    chain.providers._retriever_builders[RetrieverRole.DOCUMENT] = _DegradingRetriever
+    sink = _RecordingSink()
+    chain.providers.metrics_sink = sink
+    try:
+        if streamed:
+            async for _ in chain.astream(_SIMPLE_QUERY):
+                pass
+        else:
+            await chain.ainvoke(_SIMPLE_QUERY)
+    finally:
+        await chain.aclose()
+    ((_, values, properties),) = sink.emitted
+    assert [
+        values.get(name)
+        for name in (
+            metrics.QUERY_FAILED_METRIC,
+            metrics.QUERY_DEGRADED_METRIC,
+            metrics.QUERY_ABSTAINED_METRIC,
+            metrics.QUERY_THROTTLED_METRIC,
+        )
+    ] == [0.0, 1.0, 1.0, 1.0]
+    assert properties == {"Strategy": "simple", "namespace": "default"}
+
+
 async def test_admission_failures_count_but_a_callers_error_is_not_a_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1126,6 +1199,34 @@ async def test_admission_failures_count_but_a_callers_error_is_not_a_failure(
         "error_class": "store_unreachable",
     }
     assert len(raised.value.query_id) == 12  # type: ignore[attr-defined]
+
+
+async def test_a_refused_inputs_metrics_keep_its_error_and_one_strategy_series() -> (
+    None
+):
+    # Old behaviour: a refused dict input put its raw search_strategy string
+    # into the Strategy dimension (a new billed series per string), and an
+    # input that was neither a dict nor a RAGInput made the metrics' own
+    # AttributeError replace the caller's error.
+    from unified_kg_rag.shared import metrics
+    from unified_kg_rag.shared.exceptions import InvalidArgumentError
+
+    chain = _simple_chain()
+    sink = _RecordingSink()
+    chain.providers.metrics_sink = sink
+    try:
+        with pytest.raises(InvalidArgumentError):
+            await chain.ainvoke({"query": "Vendor?", "search_strategy": "made-up"})
+        with pytest.raises(AttributeError) as odd:
+            await chain.ainvoke("Vendor?")  # type: ignore[arg-type]
+    finally:
+        await chain.aclose()
+    # The admission's own error, not the metrics' reading of the input.
+    assert "search_strategy" not in str(odd.value)
+    (_, first, first_properties), (_, second, second_properties) = sink.emitted
+    assert first_properties["Strategy"] == "invalid"
+    assert second_properties["Strategy"] == "auto"
+    assert first[metrics.QUERY_FAILED_METRIC] == 0.0
 
 
 async def test_a_model_clients_own_error_reaches_the_caller_as_a_model_error() -> None:
