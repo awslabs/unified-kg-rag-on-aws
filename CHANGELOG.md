@@ -140,10 +140,12 @@ stored is read again: follow *Upgrading* in order.
   `context_precision`, `context_recall`, `faithfulness`); another fails the load instead of the evaluator.
 - Visualization: ingestion only writes `visualization_data.json` (`graph.visualization.export_data`, default
   `true`), at the end of a full build, from the namespace's stores once the run gave up the namespace's lease, and
-  prints its path; an incremental run writes none (a scan of the whole graph per run: 36% of a one-document run at
-  3,200 entities), and any run that wrote nothing reports an export naming the build the stores hold (`built_at`),
-  local or uploaded by the S3 cache sync from the run the build record names (`visualization_export_run`), so a
-  no-change run at 10k text units, a deployed task's on an empty disk too, no longer rewrites a 59 MB file;
+  prints its path: the whole namespace's graph (other source scopes' documents too), not the run's own delta or
+  corpus (or none, or `Communities must be detected before exporting`) (#640); an incremental run writes none (a
+  scan of the whole graph per run: 36% of a one-document run at 3,200 entities), and any run that wrote nothing
+  reports an export naming the build the stores hold (`built_at`), local or uploaded by the S3 cache sync from the
+  run the build record names (`visualization_export_run`), so a no-change run at 10k text units, a deployed task's
+  on an empty disk too, no longer rewrites a 59 MB file;
   `run-visualization` renders it (without `--data-path` the namespace's newest export when it shows the build the
   stores hold, else one it builds from the stores, as the console's Graph page does when opened; it
   takes the provider flags again) with a seeded spring layout, and the embedding layouts (UMAP, t-SNE, PCA) are
@@ -178,6 +180,11 @@ stored is read again: follow *Upgrading* in order.
   `opensearch_expanded_community_reports` (in its template), is dropped with a WARNING, as no strategy emits them
   (#584, #588). A `lightrag_linked_chunks` weight weighs only the chunks the matched entities cite; the
   relationships' chunks are their own `lightrag_relation_chunks` stream, 1.0 unless set (#521, #530).
+- An invalid assignment in code raises a `ValidationError`, as loading the value would (`config.search.top_k = -1`):
+  every config section validates an assignment against its field (`ConfigSection`), and `Config.updated({"dotted.key":
+  value})` returns a changed config validated whole, so the checks across sections run (the console's methodology
+  selection, `run-eval --arm` and the re-scoring use it): an assignment let the console run a methodology the
+  config's switches leave nothing of. The two `search.hybrid` weights, normalized as a pair, are set together with it.
 - Defaults (set the 0.2.3 value to keep its behaviour; the measured ones are explained in [defaults and
   evidence](docs/concepts/defaults-and-evidence.md)):
 
@@ -841,7 +848,8 @@ From a `main` checkout (formats and keys no release had):
   `allowed_strategies`: `auto` routes, and falls back, only within it, and is refused before any model call when the
   namespace serves none of it); every call runs under `search.query_timeout_seconds` and returns its model `usage`.
   `kg_get_entity` matches a name folded as local search's seeds are.
-  The graph tools read the stores through the chain's retrievers and make no model call; they look names, IRIs and
+  The graph tools read the stores through the chain's retrievers and make no model call, and check the namespace
+  first, as a query does (one nothing was ingested under logs no retrieval failure per call); they look names, IRIs and
   ids up in NFC (and a name again in NFKC), as search composes a query. Over HTTP only POST is served (405
   otherwise), and on any loopback address the `Host` and `Origin` headers must name it or a loopback name (421/403).
   `build_mcp_server` and `build_mcp_app` (package root; the latter the stateless ASGI application, its
@@ -883,8 +891,9 @@ From a `main` checkout (formats and keys no release had):
   WARNING, not as a compiler bug; a type the sampled profile missed is refused saying so, and a count over a symmetric
   `both` pattern says it counts each pair twice. Without a structured
   answer the query runs `search.structured.fallback_strategy` (`local`) and records why in `metadata["structured"]`;
-  `mode: augment` runs it beside the graph query. Served by every namespace holding the graph, on every graph store;
-  `auto` routes to it only once it is in `search.auto_routable_strategies`. With the output guardrail on, the
+  `mode: augment` runs it beside the graph query. Served by every namespace holding the graph, on every graph
+  store (refused on one without it, a `raptor`-only one, naming the methodologies that build it: graphrag, lightrag,
+  hipporag); `auto` routes to it only once it is in `search.auto_routable_strategies`. With the output guardrail on, the
   model-written plan text is screened wherever it is returned: the search and answer metadata, the result table and
   the query-result source the console, MCP and `run-rag` JSON show (#635). `GraphQueryPort` is exported for custom graph
   backends, and `search.token_manager.type_budgets.query_result` sizes the result's context share (docs/design.md
@@ -929,7 +938,8 @@ From a `main` checkout (formats and keys no release had):
   the questions and jobs run through it (time, tokens, cost per strategy, model and role; a question refused as asked,
   as on an empty namespace, counted apart from the errors); and edit the
   config file with validation, a diff before saving, a confirmation before a provider endpoint or a file or directory
-  path changes (every config key that names one), and secrets never shown or written. Jobs run the unchanged
+  path changes (every config key that names one), each save logged (the key paths of the endpoints and directories it
+  changed, never values), and secrets never shown or written. Jobs run the unchanged
   `run-ingestion` and `run-eval` in child processes. It binds `127.0.0.1` (another address needs `--allow-remote`),
   requires a per-launch access token, refuses paths outside its directories, cross-site requests and uploads of a
   file ingestion does not read (another type, or hidden) or naming one path as a file and a folder, writes an
@@ -956,6 +966,8 @@ From a `main` checkout (formats and keys no release had):
 - `GraphRAGChain.ainvoke(on_answer_chunk=...)` hands the answer's text chunks to a callback as the answer model
   streams them (the output, its citations included, is that of an unstreamed answer), and an `auto` query's output
   carries `metadata["routing"]` (how the strategy was chosen, among which candidates) (#631).
+- `GraphRAGChain` and `DataIngestionPipeline` are context managers (`with`, and `async with` for the chain, close
+  them).
 - RAPTOR summary tree, opt-in (#599): on 100 MuSiQue multi-hop questions, one repeat, `tree` answered about 8
   points of `answer_contains` above `naive` (unadjusted interval) and well below the graph strategies
   ([evidence](docs/concepts/defaults-and-evidence.md#raptor-summary-tree)). The `raptor` methodology adds a
@@ -1102,6 +1114,8 @@ From a `main` checkout (formats and keys no release had):
   strategies it serves, each index's item count and embedding model, the build record, the registry's records), and
   its graph streamed from the vector store as JSON Lines (each record's `kind` the section type its sources name:
   `text`, `entity`, `relationship`, `community`, `claim`) or GraphML with every item's text units and documents (a
+  its graph (every kind the vector store keeps, RAPTOR summary nodes too) streamed from the vector store as JSON
+  Lines or GraphML with every item's text units and documents (a
   document by its path relative to the corpus root, else its file name, never the indexing host's path;
   `--output-path`, `--export-format`, `--max-items`; written atomically, so a failed export leaves the previous file
   and no partial one; an existing file is replaced only with `--force`, `export_graph(overwrite=True)`, and never the
@@ -1565,7 +1579,9 @@ From a `main` checkout (formats and keys no release had):
   (Neptune, Gremlin Server, SQLite; the relationships index under a document filter and on Neptune, which reads every
   edge within the set, not one 100-edge page of them, before the per-vertex cap, paged by `search_after` in one
   request per batch of sources), and `SearchQuery.max_hops` overrides the expansion depth (#597). A walk that stops at
-  `max_iterations` before it converges is logged at WARNING, naming the settings to raise.
+  `max_iterations` before it converges is logged at WARNING, naming the settings to raise. Passages of equal score
+  (those no seed reaches, all 0 when the edge read degraded) rank in the support order (the units most entities cite
+  first), not by id, so the text quota does not fill in id order.
 - CDK: `-c neptune_audit_log=true` turns on Neptune audit logs, exported to CloudWatch Logs
   (`/aws/neptune/<cluster id>/audit`, created before the instances) with the CMK and `log_retention_days`
   (`neptune_parameter_group_family` names the engine's family, `neptune1.4` by default); reboot the instances after
@@ -1596,8 +1612,11 @@ From a `main` checkout (formats and keys no release had):
 - A local load, soak and chaos harness (`scripts/loadtest/`, [Load testing](docs/guides/load-testing.md)) on the
   fake models: concurrency sweeps with latency quantiles, errors by `ErrorClass` and event-loop lag, soaks with
   resource slopes, the console over HTTP, and model faults (429, 500, 503, drops, hangs), store pauses and kills,
-  each checked to converge with a full build. A nightly `load-test` workflow runs it on the embedded stores; it
-  gates on errors, loop lag, RSS growth and convergence, and only reports.
+  each checked to converge with a full build (every kind of item the vector store keeps). A nightly `load-test`
+  workflow runs it on the embedded stores; it gates on errors, answers without evidence (no sources, abstained,
+  empty) or degraded, loop lag, RSS growth past both a rate and an 8 MB floor (a short soak's slope alone failed a
+  clean run), and convergence, the kill's resume started at once (the dead run's lease handed on), and only reports.
+  `load.py` refuses a store or model kind that is not local, and reads no `~/.aws` profile.
 
 ### Changed
 - Every config section validates an assignment against its field (`ConfigSection`), and `Config.updated({"dotted.key":
@@ -1977,10 +1996,6 @@ Queries and retrieval.
   seconds a query, stalling every concurrent one.
 - An answer the output guardrail blocks writes no conversation memory, as a blocked query writes none (the refusal
   was saved and read by the next turn's follow-up rewrite).
-- `structured` refused on a namespace without the graph (a `raptor`-only one) names the methodologies that build it
-  (graphrag, lightrag, hipporag), not "any methodology".
-- PPR passages of equal score (those no seed reaches, all 0 when the edge read degraded) rank in the support order
-  (the units most entities cite first), not by id, so the text quota no longer fills in id order.
 - A context budget no retrieved section fits is a `context_optimization` degradation (reason `context_budget`), not
   a silent `no_context` decline, and a section-type header is paid only for a type seated: a small budget (`local` at
   `max_tokens=40`) went to the headers of every type present and seated nothing.
@@ -2033,9 +2048,6 @@ Ingestion and incremental indexing.
   as prose: it gets one output-fixer call, and a repair that still holds text only is read as empty, counted
   (`sections_read_empty_from_text` in the graph and claim extraction stats) and logged with the section and its
   length.
-- The graph `run-visualization` and the console show is the whole namespace's, read from its stores, not a run's
-  own delta or corpus (or none, or `Communities must be detected before exporting`): a full build into a namespace
-  that holds other source scopes' documents exports it, and after an incremental run they build it (#640).
 - With description summaries on, an incremental run no longer extends a stored summary with a delta edge's
   description when the derivation moved part of it to another edge (a delta that resolved `Vendor Inc` into `Vendor`
   where the stored graph keeps them apart): the summary held a line the edge no longer states, unlike a full
@@ -2224,10 +2236,7 @@ CLIs, configuration and library.
 - `index_settings` keys reach the indices in either spelling (#260, #404).
 - A query whose model client fails with its own error after its retries (Ollama's `ResponseError`, httpx's
   `RemoteProtocolError` or `ReadTimeout`) raises a `LanguageModelError` (a `ModelError`, as documented), the client's
-  error as its cause; it raised the raw error. `GraphRAGChain` and `DataIngestionPipeline` are context managers
-  (`with`, and `async with` for the chain, close them), and the console logs each config file save (the key paths of
-  the endpoints and directories it changed, never values). The MCP graph tools check the namespace first, as a
-  query does: one nothing was ingested under no longer logs a retrieval failure with its traceback per call.
+  error as its cause; it raised the raw error.
 
 Deployment (CDK).
 - With a `bedrock_region` other than the deploy region the dashboard's Bedrock widgets read that region, where the
