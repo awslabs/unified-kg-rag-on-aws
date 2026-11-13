@@ -1163,6 +1163,37 @@ async def test_a_streamed_query_counts_degraded_abstained_and_throttled_as_invok
     assert properties == {"Strategy": "simple", "namespace": "default"}
 
 
+@pytest.mark.parametrize("streamed", [False, True])
+async def test_a_step_outside_the_strategy_degrades_a_streamed_query_too(
+    streamed: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Pins rv27 quality o2: a degradation only the query's ledger holds (a
+    # chain step, not the strategy's result metadata) reached a streamed
+    # answer's metrics only through the ledger's metadata.
+    from unified_kg_rag.shared import metrics
+
+    chain = _simple_chain()
+    chain.ignore_errors = True
+
+    def unbudgeted(state: dict[str, Any]) -> Any:
+        raise RuntimeError("context optimizer down")
+
+    monkeypatch.setattr(chain, "_optimize_context", unbudgeted)
+    sink = _RecordingSink()
+    chain.providers.metrics_sink = sink
+    try:
+        if streamed:
+            async for _ in chain.astream(_SIMPLE_QUERY):
+                pass
+        else:
+            await chain.ainvoke(_SIMPLE_QUERY)
+    finally:
+        await chain.aclose()
+    ((_, values, _),) = sink.emitted
+    assert values[metrics.QUERY_FAILED_METRIC] == 0.0
+    assert values[metrics.QUERY_DEGRADED_METRIC] == 1.0
+
+
 async def test_admission_failures_count_but_a_callers_error_is_not_a_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
