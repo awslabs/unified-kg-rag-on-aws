@@ -934,8 +934,10 @@ From a `main` checkout (formats and keys no release had):
   nothing from another host. The web client
   (`console/web/`, Vite, React, TypeScript) is in English and nine more languages, in a light and a dark theme (the
   system's unless one is chosen in the top bar), set in Pretendard (Pretendard JP for Japanese, JetBrains Mono for
-  figures; self-hosted, SIL OFL), with a force-directed canvas graph (the focused node and its neighbours labelled
-  in screen pixels without overlaps, the rest dimmed, edges fading as they multiply; the 600 best-connected entities
+  figures; self-hosted, SIL OFL), with a force-directed canvas graph (laid out warm from the server's packed layout
+  with a weak pull to the centre; labels in screen pixels, the focused node's and its neighbours' first, at the first
+  clear side of each node, up to a share of the canvas; the rest dimmed, edges fading as they multiply, nodes edged
+  at 3:1 in the light theme; the 600 best-connected entities
   drawn and sent whole, the rest by name, found by search or in a paged table and read on demand; a file read once
   per version), to the brief in `console/web/DESIGN.md`; `console/demo/demo.py` prepares a synthetic corpus of
   the formats the core install parses (multi-page PDFs, whose citations name their page, Markdown, HTML, CSV, JSON

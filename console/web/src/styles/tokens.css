@@ -54,6 +54,9 @@
   --tooltip-ink: #ffffff;
   --grid-dot: rgb(28 33 40 / 10%);
   --canvas-bg: #fbfcfd;
+  /* A node's edge on the canvas: series 3-5 and "other" are under 3:1 on
+   * it, so the edge carries the node's 3:1 (3.3:1). */
+  --node-edge: var(--control-edge);
   --shadow-card: 0 1px 2px rgb(28 33 40 / 6%);
   --shadow-raised: 0 4px 16px rgb(28 33 40 / 12%);
 
@@ -67,7 +70,7 @@
 
   /* Chart and graph series: the validated categorical order (dataviz
    * reference); a ninth folds into "other". Slots 3-5 are under 3:1 on the
-   * sheet, so nodes keep their labels and a legend. */
+   * sheet, so a node carries a --node-edge, a label and a legend entry. */
   --series-1: #2a78d6;
   --series-2: #eb6834;
   --series-3: #1baf7a;
@@ -115,6 +118,9 @@
   --tooltip-ink: #0e1117;
   --grid-dot: rgb(230 233 238 / 7%);
   --canvas-bg: #0e1117;
+  /* Every dark series is 3:1 on the canvas: the edge only separates
+   * overlapping nodes. */
+  --node-edge: var(--canvas-bg);
   --shadow-card: 0 1px 2px rgb(0 0 0 / 30%);
   --shadow-raised: 0 4px 16px rgb(0 0 0 / 45%);
 
