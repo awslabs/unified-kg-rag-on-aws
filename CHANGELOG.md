@@ -753,7 +753,9 @@ From a `main` checkout (formats and keys no release had):
   minutes and ended with "produced 0 outputs"); a query raises it at once, without the transient retries' backoff
   (the error answer under `ignore_errors`, which no fallback absorbs), and `run-rag` exits 1 without a traceback.
   `ErrorClass` and `classify_error` name the class of a failure, which every surface maps: the CLIs' exit codes, the
-  MCP server's caller messages and the console's error kind, also of an error answer (`metadata.error_class`).
+  MCP server's caller messages and the console's error kind, also of an error answer (`metadata.error_class`). A
+  malformed filter value (a null, an empty or nested list) is `invalid_filter` with one message on every surface,
+  `run-rag` naming the flag it came from.
 - `run-eval` comparisons adjust for the many deltas they read: every paired delta has a sign-flip randomization
   `p_value` (exact on few pairs), and `multiplicity` Holm-adjusts them in families: a primary metric declared in advance
   (`--primary-metric`, `evaluation.primary_metric`, default `answer_match/answer_contains`) over the compared strategies
@@ -1113,7 +1115,8 @@ From a `main` checkout (formats and keys no release had):
   error on stderr, and describing creates no store file where nothing was ingested (#641). `--documents
   failed,quarantined` (`describe_namespace(documents=...)`) lists the registry's documents of those statuses with their
   `error_info`, counts, writer and time (every run write stamps `updated_at`, and `created_at` once; a record
-  written before has none); a run names the documents it deletes in one INFO line. See
+  written before has none), also of a namespace without an index whose first build failed (described with `exists:
+  false`, exit 0); a run names the documents it deletes in one INFO line. See
   [inspect and
   export](docs/guides/inspect.md).
 - Telemetry names the namespace (the tenant boundary) and ties a query to its logs: `kg_rag.namespace` on every span

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import json
 import re
 import sys
 from datetime import datetime
@@ -178,6 +179,37 @@ def test_rag_filters_json_is_checked_before_any_query(
         run_rag_chain.CommandLineInterface().parse_args()
     assert exit_info.value.code == 2
     assert says in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("flags", "flag"),
+    [
+        (["--filters-json", '{"type": null}'], "--filters-json"),
+        (["--filters-json", '{"type": []}'], "--filters-json"),
+        (["--filters", "in_schema:maybe"], "--filters"),
+    ],
+)
+def test_a_malformed_filter_is_an_invalid_filter_naming_its_flag(
+    flags: list[str],
+    flag: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Regression (rv25): the CLI named a null value invalid_argument (MCP
+    # did too, the console and the library invalid_filter), and a refused
+    # --filters-json value "--filters: ...".
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run-rag", "--query", "q", *flags, "--output-format", "json"],
+    )
+    with pytest.raises(SystemExit) as exit_info:
+        run_rag_chain.main()
+    assert exit_info.value.code == 2
+    status = json.loads(capsys.readouterr().out)
+    assert status["error_class"] == "invalid_filter"
+    assert status["error_type"] == "InvalidFilterError"
+    assert status["error"].startswith(f"{flag}: ")
 
 
 # --- run_rag_chain: RAGChainRunner validation ----------------------------
@@ -2013,16 +2045,41 @@ def test_visualization_parser_multiple_renderers() -> None:
     assert args.renderers == ["interactive", "static"]
 
 
-def test_visualization_parser_rejects_unknown_renderer(
+def test_visualization_renderers_are_checked_after_the_plugins_load(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    # Validated only after loading the data and computing centrality before.
-    with pytest.raises(SystemExit) as excinfo:
-        run_visualization._build_parser().parse_args(
-            ["--data-path", "g.json", "--renderers", "interactive", "bogus"]
-        )
+    # Regression (rv25): argparse choices, built before load_cli_config
+    # loaded the plugins, refused a plugin's renderer and any other case
+    # ("Static") the registry takes.
+    from unified_kg_rag.adapters.renderers import (
+        BaseRenderer,
+        RenderContext,
+        register_renderer,
+    )
+    from unified_kg_rag.adapters.renderers.base import _RENDERERS
+
+    args = run_visualization._build_parser().parse_args(
+        ["--data-path", "g.json", "--renderers", "Plugged_Probe", "bogus"]
+    )
+    assert args.renderers == ["Plugged_Probe", "bogus"]
+
+    @register_renderer("plugged_probe")
+    class _Plugged(BaseRenderer):
+        def render(self, context: RenderContext, output_dir: Path) -> list[Path]:
+            return []
+
+    try:
+        assert run_visualization._requested_renderers(
+            ["Static", "plugged_probe", "static", "PLUGGED_PROBE"]
+        ) == ["static", "plugged_probe"]
+        with pytest.raises(SystemExit) as excinfo:
+            run_visualization._requested_renderers(["interactive", "bogus"])
+    finally:
+        _RENDERERS.entries.pop("plugged_probe", None)
     assert excinfo.value.code == 2
-    assert "invalid choice: 'bogus'" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "--renderers: No renderer registered for 'bogus'" in err
+    assert "static" in err
 
 
 def test_visualization_hierarchy_entries_from_dict() -> None:

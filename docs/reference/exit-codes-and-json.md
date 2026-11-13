@@ -205,7 +205,8 @@ holds:
   `doc_id`, `file_path`, `status`, `error_info`, `failure_count`,
   `retry_count`, `attempt_count`, `written_by` and `updated_at`) and
   `export` (its `path`, `counts`, `truncated` and `missing` kinds, or `null`
-  without `--output-path`); a namespace that holds no index exits `2`
+  without `--output-path`); a namespace that holds no index exits `2`,
+  unless the registry holds records of it and nothing is exported
   ([Inspect and export](../guides/inspect.md)).
 - **`run-prompt-tuning`**: the `output_path`, the `profile` and, with
   `--schema-out`, the `schema_path`.

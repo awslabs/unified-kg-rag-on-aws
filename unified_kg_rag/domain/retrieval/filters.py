@@ -546,6 +546,9 @@ def _lowercased(value: Any) -> Any:
     if isinstance(value, str):
         return value if value == value.lower() else [value, value.lower()]
     if isinstance(value, list):
+        if any(isinstance(v, list | dict) for v in value):
+            # Nested: left for check_filter_values to refuse, not a crash.
+            return value
         return list(
             dict.fromkeys(
                 form

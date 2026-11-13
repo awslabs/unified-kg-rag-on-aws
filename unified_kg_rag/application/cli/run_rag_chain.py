@@ -9,7 +9,7 @@ import sys
 import uuid
 from collections.abc import Callable
 from types import ModuleType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NoReturn
 
 from rich.panel import Panel
 
@@ -222,6 +222,29 @@ def _filter_pair(item: str) -> str:
             f"invalid filter '{item}': expected 'key:value'"
         )
     return item
+
+
+def _refuse_filter(flag: str, error: InvalidFilterError) -> NoReturn:
+    """Exit 2 on a filter ``flag`` gave, of the class every surface names a
+    malformed filter by (``invalid_filter``), naming the flag."""
+    usage_error(
+        f"{flag}: {error}",
+        error_type=type(error).__name__,
+        error_class=ErrorClass.INVALID_FILTER,
+    )
+
+
+def _filters_by_flag(
+    args: argparse.Namespace, filters: dict[str, Any]
+) -> list[tuple[str, dict[str, Any]]]:
+    """``filters`` split by the flag each key came from (``--filters`` or
+    ``--filters-json``; parse_args refused a key given in both)."""
+    pairs = {pair.split(":", 1)[0] for pair in args.filters or []}
+    split = [
+        ("--filters", {k: v for k, v in filters.items() if k in pairs}),
+        ("--filters-json", {k: v for k, v in filters.items() if k not in pairs}),
+    ]
+    return [(flag, given) for flag, given in split if given]
 
 
 def _filters_json(value: str) -> dict[str, Any]:
@@ -490,12 +513,16 @@ class CommandLineInterface:
                 f"--filters gives {', '.join(repeated)} more than once; give "
                 "each key once (in --filters or --filters-json)"
             )
-        try:
-            # A value its field's type cannot take (in_schema:maybe) is a
-            # usage error, not a filter matching nothing.
-            CommandLineInterface._typed_filters(args.filters, args.filters_json)
-        except InvalidFilterError as e:
-            self.parser.error(f"--filters: {e}")
+        for flag, pairs, given in (
+            ("--filters", args.filters, None),
+            ("--filters-json", None, args.filters_json),
+        ):
+            try:
+                # A value its field's type cannot take (in_schema:maybe) is a
+                # usage error, not a filter matching nothing.
+                CommandLineInterface._typed_filters(pairs, given)
+            except InvalidFilterError as e:
+                _refuse_filter(flag, e)
         if args.interactive and args.output_format == "json":
             self.parser.error(
                 "--output-format json is not supported with --interactive, a "
@@ -649,12 +676,13 @@ class RAGChainRunner:
                 usage_error(e)
         # An undeclared key failed every question of the session.
         if filters and self.rag_chain is not None:
-            try:
-                self.rag_chain.check_filter_keys(
-                    filters, SearchStrategy(self.args.search_strategy)
-                )
-            except InvalidFilterError as e:
-                usage_error(f"--filters: {e}")
+            for flag, given in _filters_by_flag(self.args, filters):
+                try:
+                    self.rag_chain.check_filter_keys(
+                        given, SearchStrategy(self.args.search_strategy)
+                    )
+                except InvalidFilterError as e:
+                    _refuse_filter(flag, e)
         state = {
             "conversation_id": self.args.conversation_id or str(uuid.uuid4()),
             "filters": filters or {},

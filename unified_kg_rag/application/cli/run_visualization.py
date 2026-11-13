@@ -30,6 +30,7 @@ import networkx as nx
 
 from unified_kg_rag.adapters.renderers import (
     RenderContext,
+    get_renderer_class,
     registered_renderers,
     render_resolved,
     resolve_renderers,
@@ -83,6 +84,7 @@ from unified_kg_rag.shared import (
     StoreConnectionError,
     get_logger,
 )
+from unified_kg_rag.shared.registry import Registry
 
 logger = get_logger(__name__)
 
@@ -322,6 +324,22 @@ def _namespace_data(config: Any, args: argparse.Namespace) -> Path:
     return path
 
 
+def _requested_renderers(names: list[str]) -> list[str]:
+    """``--renderers`` as registered names, each once, checked against the
+    registry once the plugins are loaded (a plugin's renderer is one, and a
+    name in any case, the registry rule); exit 2 naming an unknown one."""
+    requested: list[str] = []
+    for name in names:
+        try:
+            get_renderer_class(name)
+        except ValueError as e:
+            usage_error(f"--renderers: {e}")
+        key = Registry.normalize(name)
+        if key not in requested:
+            requested.append(key)
+    return requested
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = ArgumentParser(
         allow_abbrev=False,
@@ -368,12 +386,13 @@ def _build_parser() -> argparse.ArgumentParser:
         "--renderers",
         nargs="+",
         default=None,
-        # Rejected here, before the data is loaded and centrality computed.
-        choices=registered_renderers(),
+        # Checked once the plugins are loaded (_requested_renderers), before
+        # the data is loaded and centrality computed.
         metavar="RENDERER",
-        help=f"Renderers to run. Available: {', '.join(registered_renderers())} "
-        "(default: all of them, leaving out with a warning one whose extra is "
-        "not installed; a renderer named here needs its extra)",
+        help=f"Renderers to run, any case: {', '.join(registered_renderers())} "
+        "or one a plugin registers (default: all of them, leaving out with a "
+        "warning one whose extra is not installed; a renderer named here "
+        "needs its extra)",
     )
     add_config_arguments(parser)
     add_output_format_argument(parser)
@@ -390,6 +409,8 @@ def main() -> int:
         with exit_on_config_error():
             config = load_cli_config(args)
         setup_cli_logging(config, args)
+        if args.renderers is not None:
+            args.renderers = _requested_renderers(args.renderers)
         if args.data_path is None:
             args.data_path = _namespace_data(config, args)
         if not args.data_path.is_file():
