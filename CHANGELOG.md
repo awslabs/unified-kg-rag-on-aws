@@ -845,7 +845,8 @@ From a `main` checkout (formats and keys no release had):
   else `index_value`) unless `mcp.allowed_namespaces` lists others; `mcp.tools`, `mcp.strategies` and the
   `mcp.max_*` bounds limit what a call may ask and costs (`mcp.strategies` binds the chain's new
   `allowed_strategies`: `auto` routes, and falls back, only within it, and is refused before any model call when the
-  namespace serves none of it); every call runs under `search.query_timeout_seconds` and returns its model `usage`.
+  namespace serves none of it); every call runs under `search.query_timeout_seconds` (a query past it times out in the
+  chain, so it is counted in the query metrics and names its ids) and returns its model `usage`.
   `kg_get_entity` matches a name folded as local search's seeds are.
   The graph tools read the stores through the chain's retrievers and make no model call, and check the namespace
   first, as a query does (one nothing was ingested under logs no retrieval failure per call); they look names, IRIs and

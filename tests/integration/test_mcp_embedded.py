@@ -498,6 +498,53 @@ async def test_a_store_failure_reaches_the_caller_without_its_details(
     assert "vpc-secret" not in text and mcp_tools.INTERNAL_ERROR_MESSAGE in text
 
 
+class _Metrics:
+    def __init__(self) -> None:
+        self.rows: list[tuple[dict[str, float], dict[str, str]]] = []
+
+    def emit(
+        self,
+        namespace: str,
+        metrics: dict[str, float],
+        dimensions: dict[str, str] | None = None,
+    ) -> None:
+        self.rows.append((dict(metrics), dict(dimensions or {})))
+
+
+async def test_a_kg_answer_past_the_deadline_is_recorded_by_the_chain(
+    index: Index, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+
+    from unified_kg_rag.shared.exceptions import QueryTimeoutError, query_failure_ids
+
+    metrics = _Metrics()
+    monkeypatch.setattr(index.providers, "metrics_sink", metrics)
+    real_screen = GraphRAGChain._screen_input
+
+    async def slow_screen(self: GraphRAGChain, *args: Any, **kwargs: Any) -> Any:
+        await asyncio.sleep(3)
+        return await real_screen(self, *args, **kwargs)
+
+    monkeypatch.setattr(GraphRAGChain, "_screen_input", slow_screen)
+    config = index.config.updated({"search.query_timeout_seconds": 0.5})
+    chain = GraphRAGChain(config, providers=index.providers)
+    try:
+        with pytest.raises(QueryTimeoutError) as raised:
+            await KnowledgeGraphTools(chain).answer(
+                "가젯을 보관하는 곳은?", strategy="local"
+            )
+    finally:
+        await chain.aclose()
+    # The chain's own deadline fired (the call's, passed in), not the
+    # server's backstop: the query is counted, with its class and its ids.
+    assert "The query did not finish within 0.5 s" in str(raised.value)
+    assert query_failure_ids(raised.value).get("query_id")
+    ((values, dimensions),) = metrics.rows
+    assert values["query_failed"] == 1.0
+    assert dimensions["error_class"] == "timeout"
+
+
 @requires_mcp
 async def test_only_the_configured_tools_are_listed(index: Index) -> None:
     from mcp import Client

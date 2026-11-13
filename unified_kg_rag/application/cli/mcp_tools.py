@@ -37,6 +37,7 @@ from unified_kg_rag.application.retrieval.rag_chain import (
     RAGInput,
     RAGOutput,
     SearchOutput,
+    caller_deadline,
 )
 from unified_kg_rag.domain.models import (
     GraphEdge,
@@ -76,6 +77,10 @@ _T = TypeVar("_T")
 MAX_TEXT_UNIT_IDS = 20
 # Filter keys one call may give.
 MAX_FILTER_KEYS = 20
+# How long after the call's deadline its own timeout cancels it: the chain
+# times a query out at the deadline itself (and records it), so this only
+# ends work that does not watch the deadline.
+_BACKSTOP_GRACE_SECONDS = 1.0
 # A graph query result (``query_result``) is its table: a record keeps it
 # whole up to this many characters (or ``mcp.max_text_chars``, if more), as
 # the console shows it.
@@ -618,12 +623,23 @@ class KnowledgeGraphTools:
         """``run`` in a call slot (``mcp.max_concurrent_calls``), the wait
         for the slot and the work under one deadline
         (``search.query_timeout_seconds``): a call never takes longer, the
-        chain's own deadline inside it included."""
+        chain's own deadline inside it included.
+
+        The chain gets the call's deadline (``caller_deadline``), so a query
+        past it ends in the chain's own timeout, recorded with its metrics
+        and ids; this timeout is a backstop ``_BACKSTOP_GRACE_SECONDS`` later
+        for work that does not watch the deadline."""
         seconds = self._deadline
+        at = None if seconds is None else time.monotonic() + seconds
         try:
             async with asyncio.timeout(seconds) as scope:
                 async with self._slots:
-                    return await run()
+                    if seconds is not None:
+                        when = scope.when()
+                        assert when is not None
+                        scope.reschedule(when + _BACKSTOP_GRACE_SECONDS)
+                    with caller_deadline(at):
+                        return await run()
         except QueryTimeoutError:
             raise
         except TimeoutError:

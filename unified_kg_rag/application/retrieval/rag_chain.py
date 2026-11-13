@@ -4049,9 +4049,35 @@ def _release_cached_resources(
             runner.stop()
 
 
+# An absolute deadline (``time.monotonic()``) a caller set for the queries it
+# runs (``caller_deadline``): a query's own deadline is never later.
+_CALLER_DEADLINE: contextvars.ContextVar[float | None] = contextvars.ContextVar(
+    "kg_rag_caller_deadline", default=None
+)
+
+
+@contextlib.contextmanager
+def caller_deadline(at: float | None) -> Iterator[None]:
+    """Queries started in this context end by ``at`` (``time.monotonic()``),
+    if it comes before their own ``search.query_timeout_seconds``.
+
+    A surface that bounds a whole call (the MCP server: the wait for a call
+    slot and the query under one deadline) passes its deadline here, so the
+    chain's own timeout fires first and the query is recorded as a timed-out
+    one (metrics, ids, the span's ``error_class``) instead of being cancelled
+    from outside unrecorded.
+    """
+    token = _CALLER_DEADLINE.set(at)
+    try:
+        yield
+    finally:
+        _CALLER_DEADLINE.reset(token)
+
+
 class _QueryDeadline:
     """The deadline of one query (``search.query_timeout_seconds``), fixed
-    when the query starts; ``None`` seconds is no deadline.
+    when the query starts; ``None`` seconds is no deadline. A caller's
+    earlier deadline (:func:`caller_deadline`) wins.
 
     ``async with`` it bounds the awaits inside to the time left: past it the
     task is cancelled (and, through ``gather_or_cancel``, the calls it fans
@@ -4067,6 +4093,11 @@ class _QueryDeadline:
         self.seconds = seconds
         self.first_chunk_seconds = first_chunk_seconds
         self.at = None if seconds is None else time.monotonic() + seconds
+        caller = _CALLER_DEADLINE.get()
+        if caller is not None and (self.at is None or caller < self.at):
+            self.at = caller
+            if seconds is None:
+                self.seconds = max(0.0, caller - time.monotonic())
         self._scope: _DeadlineScope | None = None
 
     def scope(self, first_chunk_from: float | None = None) -> "_DeadlineScope":

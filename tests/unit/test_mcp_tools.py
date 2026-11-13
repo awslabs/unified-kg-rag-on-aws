@@ -980,9 +980,13 @@ async def test_the_schema_is_resolved_once_and_its_error_returned(
 async def test_one_deadline_covers_the_slot_wait_and_the_work() -> None:
     import asyncio
 
+    from unified_kg_rag.application.retrieval.rag_chain import _QueryDeadline
+
     class SlowChain(FakeChain):
         async def asearch(self, rag_input: RAGInput) -> SearchOutput:
-            await asyncio.sleep(0.3)
+            # The chain's own deadline, as its queries keep it.
+            async with _QueryDeadline(self.config.search.query_timeout_seconds):
+                await asyncio.sleep(0.3)
             return await super().asearch(rag_input)
 
     config = Config()
@@ -992,13 +996,41 @@ async def test_one_deadline_covers_the_slot_wait_and_the_work() -> None:
         settings=McpServerConfig(max_concurrent_calls=1),
     )
     # The second call waits 0.3 s for the slot, then works 0.3 s: past the
-    # 0.5 s deadline in all, though each part is within it.
+    # 0.5 s deadline in all, though each part is within it. The chain's own
+    # deadline ends it (so the chain records it), not the server's backstop.
+    started = asyncio.get_running_loop().time()
     first, second = await asyncio.gather(
         tools.search("q"), tools.search("q"), return_exceptions=True
     )
     assert not isinstance(first, BaseException)
     assert isinstance(second, QueryTimeoutError)
+    assert "The query did not finish within 0.5 s" in str(second)
+    assert asyncio.get_running_loop().time() - started < 0.5 + 0.25
+
+
+async def test_a_slot_wait_past_the_deadline_times_out_at_the_deadline() -> None:
+    import asyncio
+
+    class SlowChain(FakeChain):
+        async def asearch(self, rag_input: RAGInput) -> SearchOutput:
+            await asyncio.sleep(0.4)
+            return await super().asearch(rag_input)
+
+    config = Config()
+    config.search.query_timeout_seconds = 0.2
+    tools = KnowledgeGraphTools(
+        SlowChain(config),  # type: ignore[arg-type]
+        settings=McpServerConfig(max_concurrent_calls=1),
+    )
+    first, second = await asyncio.gather(
+        tools.search("q"), tools.search("q"), return_exceptions=True
+    )
+    # The second never got a slot: the server times it out at the deadline.
+    assert isinstance(second, QueryTimeoutError)
     assert "slot" in str(second)
+    # The first does not watch the deadline: only the backstop, a grace
+    # later, would end it.
+    assert not isinstance(first, BaseException)
 
 
 async def test_fetched_items_report_no_relevance_score(

@@ -112,7 +112,9 @@ extra가 없으면 `run-mcp-server`는 extra 이름을 알려 주고 종료 코�
 | `mcp.max_concurrent_calls` | `4` | 동시에 실행하는 호출 수. 나머지는 제한 시간 안에서 기다림 |
 
 모든 호출은 `search.query_timeout_seconds`(기본 180초) 안에서 실행되고, 넘으면 시간
-초과 메시지로 실패합니다. 호출 슬롯을 기다린 시간도 여기에 포함됩니다. 응답의 레코드는
+초과 메시지로 실패합니다. 호출 슬롯을 기다린 시간도 여기에 포함됩니다. `kg_search`나
+`kg_answer`가 이 시간을 넘기면 체인 자체의 시간 초과로 끝나므로 질의 지표에 집계되고
+`query_id`가 붙습니다. 응답의 레코드는
 `mcp.max_response_chars`로 제한되지만 MCP 메시지는 결과를 두 번(구조화된 콘텐츠와 그 JSON
 텍스트) 담으므로 실제 메시지는 그 2~4배까지 될 수 있습니다. 도구는 대화 메모리를 유지하지 않습니다. 후속
 질문이면 `kg_answer`에 지금까지의 대화를 `history`로 넘깁니다. `{role: user | assistant, content}`
