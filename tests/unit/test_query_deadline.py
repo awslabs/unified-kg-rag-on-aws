@@ -741,3 +741,22 @@ async def test_ignore_errors_answers_a_timeout_during_the_admission(
         assert out.answer == DEFAULT_ERROR_MESSAGE and out.metadata["error"] is True
         assert "search.query_timeout_seconds" in out.search_results.metadata["error"]
     assert time.monotonic() - started < 5
+
+
+def test_a_caller_deadline_bounds_a_query_without_its_own_timeout() -> None:
+    """With ``search.query_timeout_seconds`` unset, a caller's deadline
+    (``caller_deadline``, the MCP server's) is the query's, its seconds
+    what is left of it; an earlier one of the query's own wins."""
+    from unified_kg_rag.application.retrieval.rag_chain import (
+        _QueryDeadline,
+        caller_deadline,
+    )
+
+    at = time.monotonic() + 30
+    with caller_deadline(at):
+        unbounded = _QueryDeadline(None)
+        own = _QueryDeadline(5.0)
+    assert unbounded.at == at and unbounded.seconds is not None
+    assert 0 < unbounded.seconds <= 30
+    assert own.seconds == 5.0 and own.at is not None and own.at < at
+    assert _QueryDeadline(None).at is None
