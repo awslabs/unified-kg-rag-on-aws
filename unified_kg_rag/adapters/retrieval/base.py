@@ -310,11 +310,6 @@ def entity_content(node: dict[str, Any], path_names: list[str]) -> str:
     return "\n".join(parts)
 
 
-def _text_unit_ids(result: RetrievalResult) -> list[str]:
-    """The ``text_unit_ids`` a result cites."""
-    return [str(i) for i in (result.metadata or {}).get("text_unit_ids") or []]
-
-
 def _units_by_support(results: Sequence[RetrievalResult]) -> list[str]:
     return merge_lineages(
         (
@@ -1283,7 +1278,9 @@ class BaseSearchStrategy(ABC):
             passed = await self._one_text_unit_passes(
                 query,
                 {
-                    str(r.source): _text_unit_ids(r)
+                    str(r.source): source_fields.listed(
+                        r.metadata or {}, "text_unit_ids"
+                    )
                     for r in others
                     if str(r.source) in passed
                 },
@@ -1676,7 +1673,9 @@ class BaseSearchStrategy(ABC):
             vouched = await self._one_text_unit_passes(
                 query,
                 {
-                    str(e.source): _text_unit_ids(e)
+                    str(e.source): source_fields.listed(
+                        e.metadata or {}, "text_unit_ids"
+                    )
                     for e in entities
                     if str(e.source) not in seed_set
                 },
@@ -1877,7 +1876,12 @@ class BaseSearchStrategy(ABC):
         document each), as the entity check is."""
         vouched = await self._one_text_unit_passes(
             query,
-            {self._relationship_identity(e): _text_unit_ids(e) for e in edges},
+            {
+                self._relationship_identity(e): source_fields.listed(
+                    e.metadata or {}, "text_unit_ids"
+                )
+                for e in edges
+            },
             filters,
         )
         return [e for e in edges if self._relationship_identity(e) in vouched]
