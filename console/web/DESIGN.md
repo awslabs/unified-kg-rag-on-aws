@@ -53,7 +53,8 @@ not assets:
   layout with a weak pull toward the centre (so its islands stay beside the
   main component), labels set at 12 px in screen space, the focused,
   selected and traced nodes' always, the other lit nodes' most connected
-  first at the first clear side of the node (right, left, above, below) until
+  first at the first clear side of the node (right, left, above, below:
+  inside the canvas, over no other label or drawn node) until
   labels cover 10% of the canvas (so zooming in labels more), the rest
   dimmed, directed edges with arrows that fade as they multiply, the edge's
   relationship shown on hover, a click that centres and zooms, a legend whose

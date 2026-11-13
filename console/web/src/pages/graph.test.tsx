@@ -126,10 +126,27 @@ describe("graph legibility", () => {
 
   it("stops at the density bound, but always places the strong ones", () => {
     const many = Array.from({ length: 10 }, (_, i) => label(`n${i}`, i * 100, 10 - i));
-    expect(placeLabels(many, 40 * 16 * 3)).toHaveLength(3);
-    const placed = placeLabels([...many, label("focus", 2000, 0, true)], 40 * 16 * 3);
+    expect(placeLabels(many, { area: 40 * 16 * 3 })).toHaveLength(3);
+    const placed = placeLabels([...many, label("focus", 2000, 0, true)], { area: 40 * 16 * 3 });
     expect(ids(placed)).toContain("focus");
     expect(placed).toHaveLength(3);
+  });
+
+  it("keeps labels inside the canvas and off the drawn nodes", () => {
+    // At the right edge: its right side would be cut, so it goes left.
+    const [edge] = placeLabels([{ ...label("edge", 280, 1), cy: 50 }], { width: 300, height: 100, discs: [] });
+    expect(edge?.x).toBe(280 - 4 - 2 - 40);
+    // A node right of "hub" is under its right side: the label goes left.
+    const discs = [
+      { id: "hub", cx: 100, cy: 50, r: 4 },
+      { id: "near", cx: 125, cy: 50, r: 4 },
+    ];
+    const [hub] = placeLabels([{ ...label("hub", 100, 9), cy: 50 }], { width: 300, height: 100, discs });
+    expect(hub?.x).toBe(100 - 4 - 2 - 40);
+    // No side inside the canvas and clear: skipped, unless strong.
+    const cornered = { ...label("cornered", 2, 1), cy: 2 };
+    expect(placeLabels([cornered], { width: 10, height: 10 })).toEqual([]);
+    expect(ids(placeLabels([{ ...cornered, strong: true }], { width: 10, height: 10 }))).toEqual(["cornered"]);
   });
 
   it("always places the focused label", () => {
