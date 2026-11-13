@@ -324,6 +324,13 @@ class ScriptCounts:
         Latin letters carry ten, as ten Han characters do."""
         return sum(self._weights().values())
 
+    def share(self, group: str) -> float:
+        """The share of what the letters carry (:attr:`carried`) that the
+        letters of ``group`` (a script name, or ``"dense"``) carry: the
+        measure :meth:`dominant` ranks the groups by."""
+        carried = self.carried
+        return self._weights().get(group, 0.0) / carried if carried else 0.0
+
     def dominant(self, without: Collection[str] = ()) -> str | None:
         """The script most of the text is in, weighed by what its letters
         carry (:attr:`carried`), the dense scripts together

@@ -1500,13 +1500,15 @@ From a `main` checkout (formats and keys no release had):
   the raw question as its keyword when it is shorter than `raw_query_fallback_max_len` characters, as upstream
   LightRAG does (the entry's reason says whether it did), and a WARNING names the model role and model that
   answered. It failed the whole `mix`, `hybrid` or `iterative` query with the parser's `Expecting value` (#629).
-- The document loading stage samples the corpus (the first 2,000 characters of its first 20 documents) and WARNs,
-  naming `processing.translation.source_language`, when the sample disagrees with the setting: a Korean, Japanese,
-  Chinese, Russian, Thai, Arabic or German corpus under the default `en` was extracted with prompts asking for
-  English and analyzed as English without a word. Each sampled document votes for the script most of its letters are
-  in, and for the language it reads as by the rule a query's is (a Latin-script one by its function words) only when
-  that language is written in that script; the sample reads as the language of the script most documents are in (four
-  English documents and one Korean one, or English documents quoting Korean file names, read as English); a document
+- The document loading stage samples the corpus (the first 2,000 characters of 20 documents; an incremental run
+  takes the unchanged ones from their stored text, each part its share of the corpus) and WARNs, naming
+  `processing.translation.source_language`, when the sample disagrees with the setting: a Korean, Japanese, Chinese,
+  Russian, Thai, Arabic or German corpus under the default `en` was extracted with prompts asking for English and
+  analyzed as English without a word. Each sampled document votes for the script most of its text is in (by what its
+  letters carry in tokens), and for the language it reads as by the rule a query's is (a Latin-script one by its
+  function words) only when that language is written in that script; the sample reads as the language of the
+  script most documents are in (four English documents and one Korean one, or English documents quoting Korean file
+  names, read as English); a document
   votes once its letters carry ten tokens by the token estimate's rates (forty Latin letters, ten Han characters); a
   sample that reads as the setting is not reported, however few of its letters are in its script.
   `run-prompt-tuning` writes the `source_language` the sample reads as into its output (#629). Han, Hangul and Kana

@@ -129,6 +129,7 @@ from unified_kg_rag.domain.ingestion.seed_graph import (
 )
 from unified_kg_rag.domain.languages.corpus import (
     corpus_sample,
+    sample_split,
     source_language_mismatch,
 )
 from unified_kg_rag.domain.models import (
@@ -652,19 +653,53 @@ class DocumentLoadingStage(_RegistryStage):
         # incremental indexing is enabled; built lazily otherwise.
         self._doc_status = doc_status
 
-    def _warn_of_another_script(self, documents: list[Document]) -> None:
+    def _warn_of_another_script(
+        self, documents: list[Document], context: PipelineContext
+    ) -> None:
         """WARN when a sample of the corpus is written in another script
         than processing.translation.source_language says (a Korean corpus
         under the default 'en' is extracted with English prompts and
-        analyzed as English); the run goes on."""
+        analyzed as English); the run goes on. An incremental run reads
+        only its delta: the unchanged documents are sampled from their
+        stored text, each part its share of the corpus (``sample_split``)."""
         source_language = self.config.processing.translation.source_language
-        sample = corpus_sample(
+        texts = [
             document.page_content
             for document in documents
-            if not is_seed_document(document)
+            if not is_seed_document(document) and document.page_content
+        ]
+        delta = context.incremental_delta
+        of_read, of_stored = sample_split(
+            len(texts), len(delta.unchanged) if delta is not None else 0
         )
+        stored = self._stored_texts(of_stored) if of_stored else []
+        sample = corpus_sample([*texts[:of_read], *stored] if stored else texts)
         if reason := source_language_mismatch(sample, source_language):
             logger.warning("Corpus language: %s", reason)
+
+    def _stored_texts(self, limit: int) -> list[str]:
+        """The stored text of up to ``limit`` documents of the namespace, a
+        text unit of each, from one page of its text units; none when the
+        store cannot page them or a read fails (the sample is the run's)."""
+        suffix = resolve_namespace(self.config, None)
+        try:
+            indexer = self.providers.build_vector_indexer()
+            try:
+                pages = indexer.scan_text_unit_pages(
+                    suffix, fields=["text", "document_ids"], page_size=limit * 5
+                )
+                page = next(iter(pages), []) if pages is not None else []
+            finally:
+                indexer.close()
+        except Exception as e:  # noqa: BLE001 - the warning is advisory
+            logger.debug("Not sampling the stored text of '%s': %s", suffix, e)
+            return []
+        texts: dict[str, str] = {}
+        for row in page:
+            text, documents = row.get("text"), row.get("document_ids") or [row["id"]]
+            if isinstance(text, str) and text and len(texts) < limit:
+                texts.setdefault(str(documents[0]), text)
+        return list(texts.values())
 
     def _execute_core(
         self, context: PipelineContext
@@ -749,7 +784,7 @@ class DocumentLoadingStage(_RegistryStage):
         context.documents = documents
         output_count = len(context.documents)
         seeds_kept = sum(1 for document in documents if is_seed_document(document))
-        self._warn_of_another_script(documents)
+        self._warn_of_another_script(documents, context)
 
         if failed_files:
             logger.warning("Failed to load %s files", len(failed_files))

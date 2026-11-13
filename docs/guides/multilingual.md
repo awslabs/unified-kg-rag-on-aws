@@ -80,12 +80,15 @@ unit holds any more are deleted by the next full build
   single tokens. Changing it changes the mapping: an incremental run stops
   (`was built for other language settings`) until one `indexing.reset: true`
   run. The loading stage samples the corpus (the first 2,000 characters of
-  its first 20 documents) and logs a WARNING naming
+  20 documents; an incremental run, which reads only its new and changed
+  documents, takes the unchanged ones from their stored text, each part
+  its share of the corpus) and logs a WARNING naming
   `processing.translation.source_language` when the sample disagrees with
-  it: it reads as another language (it suggests that one's code), or few
-  of its letters are in the setting's script (not when the sample still
+  it: it reads as another language (it suggests that one's code), or
+  little of its text is in the setting's script (not when the sample still
   reads as that language). Each document votes for the script most of its
-  letters are in, and for a language only of that script, so an English
+  text is in (by what its letters carry in tokens: a Hangul syllable
+  outweighs a Latin letter), and for a language only of that script, so an English
   document quoting a Korean file name, or too terse to name a language,
   is an English (Latin) one; the sample reads as the language of the
   script most documents are in, so one Korean document among English ones
