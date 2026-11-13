@@ -38,8 +38,10 @@ not assets:
   GitHub-style status colours with a label.
 - **A top-bar shell**: the brand at the left, the pages as icon-and-label
   links with the current one filled in the accent, the index and the
-  preferences at the right; when the row does not fit (measured: the
-  labels' width follows the language), it drops the tagline, then the
+  preferences at the right (the namespace chip's dot filled once the
+  namespace holds an index, hollow while nothing is ingested, its name
+  saying so too); when the row does not fit (measured at its content's own
+  width: the labels' width follows the language), it drops the tagline, then the
   pickers' field labels, and only then folds the pages under a menu button.
 - **A chat-style answer view**: the question as the asker's bubble at the
   right, the answer as a card at the left with its cited sources as chips,
