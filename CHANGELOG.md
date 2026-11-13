@@ -1977,7 +1977,8 @@ Queries and retrieval.
   as entity linking does (`word_terms`: punctuation ignored, and Han, Hangul, Kana, Thai, Lao, Myanmar, Khmer and Tai
   runs by character bigrams), so a Thai or Khmer near-duplicate is no longer kept as distinct (#567); its words are
   read by one compiled pattern, the characters of a non-ASCII gap alone checked for marks (a walk over every
-  character made the terms 5.6 times the cost of the old whitespace split).
+  character made the terms 5.6 times the cost of the old whitespace split); that gain is ASCII text's: Korean
+  bigrams cost what they did, and Devanagari, whose vowel signs split the pattern's runs, up to 1.4 times more.
 - A query is translated only when ingestion translates or the caller asks (`RAGInput.target_language`), and its
   entities and keywords are extracted in the index language even when the caller asks for another: only the text
   units carry the requested language, so they matched no entity, relationship or report (#567, #583, #619).
