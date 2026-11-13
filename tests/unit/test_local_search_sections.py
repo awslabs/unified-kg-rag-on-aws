@@ -27,6 +27,7 @@ from unified_kg_rag.domain.models import (
     RetrieverRole,
     SearchQuery,
     SearchStrategy,
+    SectionType,
 )
 from unified_kg_rag.domain.models.config import removed_keys
 from unified_kg_rag.shared.exceptions import IndexNotFoundError
@@ -571,7 +572,7 @@ class _FindingsDocuments(FakeRetriever):
                     content="",
                     score=1.0,
                     source="e-f",
-                    retriever_type="document",
+                    retriever_type=SectionType.TEXT,
                     metadata={
                         "id": "e-f",
                         "text_unit_ids": ["tu-f"],

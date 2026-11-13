@@ -66,7 +66,7 @@ The export streams the vector store's items a page at a time, so its
 memory does not grow with the namespace; `--max-items` caps each kind.
 
 - **JSON Lines** (`jsonl`, the default): one object per line, `kind`
-  `text_unit`, `entity`, `relationship`, `community` (its report: level,
+  `text` (a text unit), `entity`, `relationship`, `community` (its report: level,
   parent and child communities, title, summary) or `claim`, with every
   stored field but the vectors, plus `documents`: the documents of the
   text units the item cites. `--include-text` adds the text units' text.

@@ -4,7 +4,7 @@ import copy
 import sys
 import time
 from collections import defaultdict
-from typing import Any
+from typing import Any, Literal
 
 from langchain_core.documents import Document
 
@@ -16,6 +16,7 @@ from unified_kg_rag.domain.models import (
     RerankStatus,
     RetrievalResult,
 )
+from unified_kg_rag.domain.retrieval.hybrid_normalization import combine_min_max
 from unified_kg_rag.ports.model_factory import RerankFactoryPort
 from unified_kg_rag.shared import RerankModelError, get_logger
 from unified_kg_rag.shared.usage import record_rerank_call, rerank_search_units
@@ -23,6 +24,10 @@ from unified_kg_rag.shared.utils import compute_hash
 from unified_kg_rag.shared.utils.scripts import word_terms
 
 logger = get_logger(__name__)
+
+# How fusion scores the buckets (``fuse_and_rerank_results``): ``rrf`` by
+# rank, ``min_max`` by each bucket's min-max normalized native score.
+FusionMethod = Literal["rrf", "min_max"]
 
 
 def _with_top_n(model: Any, top_n: int) -> Any:
@@ -181,8 +186,15 @@ class HybridScorer:
         per_type_quota: dict[str, int] | None = None,
         rerank_only_types: set[str] | None = None,
         rerank_trace: RerankTrace | None = None,
+        fusion: FusionMethod = "rrf",
     ) -> list[RetrievalResult]:
         """Fuse, rerank, diversify and cut ``results_dict`` to ``top_k``.
+
+        ``fusion`` ``rrf`` (reciprocal rank fusion) rewards an item several
+        buckets rank; ``min_max`` scores each item by its bucket's min-max
+        normalized native score (``combine_min_max``, the hybrid search's own
+        normalization), for buckets that never share an item (one per index),
+        where RRF is a round-robin of the buckets whatever their scores.
 
         The stages run in that order, as upstream LightRAG reranks every chunk
         candidate before it truncates: diversity filtering before the rerank
@@ -194,7 +206,11 @@ class HybridScorer:
         The rerank step's outcome is recorded on ``rerank_trace`` when given.
         """
         start_time = time.time()
-        combined_results = self._reciprocal_rank_fusion(results_dict)
+        combined_results = (
+            self._min_max_fusion(results_dict)
+            if fusion == "min_max"
+            else self._reciprocal_rank_fusion(results_dict)
+        )
 
         scope = (
             "all" if rerank_only_types is None else ",".join(sorted(rerank_only_types))
@@ -382,6 +398,35 @@ class HybridScorer:
             objects[key].score = score
 
         return list(objects.values())
+
+    def _min_max_fusion(
+        self, result_map: dict[str, list[RetrievalResult]]
+    ) -> list[RetrievalResult]:
+        """Each item scored by ``combine_min_max`` over the buckets' native
+        scores, a bucket weighted by its ``fusion_weights`` entry (1.0 when
+        absent): the weighted mean of its normalized score in every bucket
+        (0 where a bucket did not return it). A bucket whose hits fall off
+        steeply seats fewer than one whose top is level, where rank fusion
+        seats as many of each."""
+        weights = self.fusion_config.fusion_weights
+        names = list(result_map)
+        objects: dict[str, RetrievalResult] = {}
+        sub_results: list[list[tuple[str, float]]] = []
+        for name in names:
+            hits: list[tuple[str, float]] = []
+            for result in self._once_per_bucket(result_map[name]):
+                key = self._get_result_key(result)
+                hits.append((key, float(result.score or 0.0)))
+                if key not in objects:
+                    objects[key] = result.model_copy()
+            sub_results.append(hits)
+        fused: list[RetrievalResult] = []
+        for key, score in combine_min_max(
+            sub_results, [weights.get(name, 1.0) for name in names]
+        ):
+            objects[key].score = score
+            fused.append(objects[key])
+        return fused
 
     @classmethod
     def _once_per_bucket(cls, results: list[RetrievalResult]) -> list[RetrievalResult]:

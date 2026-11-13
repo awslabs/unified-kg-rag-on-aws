@@ -25,6 +25,7 @@ from unified_kg_rag.domain.models import (
     RetrieverRole,
     SearchQuery,
     SearchStrategy,
+    SectionType,
 )
 
 pytestmark = pytest.mark.unit
@@ -73,7 +74,7 @@ class _Documents(FakeRetriever):
                 content=f"report of {cid}",
                 score=0.0,
                 source=f"r-{cid}",
-                retriever_type="document",
+                retriever_type=SectionType.COMMUNITY,
                 metadata={"id": f"r-{cid}", "community_id": cid, "rank": rank},
             )
             for cid, rank in _REPORTS.items()
@@ -148,7 +149,7 @@ def test_equal_matches_rank_by_report_rank() -> None:
             content=cid,
             score=0.0,
             source=cid,
-            retriever_type="document",
+            retriever_type=SectionType.COMMUNITY,
             metadata={"community_id": cid, "rank": rank},
         )
         for cid, rank in (("low", 1.0), ("high", 8.0), ("low", 1.0))

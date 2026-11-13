@@ -399,7 +399,7 @@ def _record(
         view.text,
         (
             max(max_text_chars, MAX_TABLE_CHARS)
-            if kind == "query_result"
+            if kind == SectionType.QUERY_RESULT
             else max_text_chars
         ),
     )
@@ -416,7 +416,7 @@ def _record(
     return SupportingContent(
         rank=view.rank,
         kind=kind,
-        chunk_id=view.chunk_id if kind == "text" else None,
+        chunk_id=view.chunk_id if kind == SectionType.TEXT else None,
         name=view.title if named else None,
         type=view.type,
         text=text,
@@ -441,12 +441,12 @@ def _cite_entities(records: list[SupportingContent]) -> None:
     list its chunk among their text units."""
     citing: dict[str, list[EntityRef]] = {}
     for record in records:
-        if record.kind != "entity":
+        if record.kind != SectionType.ENTITY:
             continue
         for unit_id in record.text_unit_ids:
             citing.setdefault(unit_id, []).extend(record.entities)
     for record in records:
-        if record.kind == "text" and record.chunk_id in citing:
+        if record.kind == SectionType.TEXT and record.chunk_id in citing:
             record.entities = citing[record.chunk_id]
 
 
@@ -697,7 +697,8 @@ class KnowledgeGraphTools:
         resolved = [
             r
             for r in records
-            if r.kind != "text" and not (r.synthesized and r.citation is not None)
+            if r.kind != SectionType.TEXT
+            and not (r.synthesized and r.citation is not None)
         ]
         units = [unit for record in resolved for unit in record.text_unit_ids]
         if not units:
@@ -1000,7 +1001,7 @@ class KnowledgeGraphTools:
         source, target = names.get(edge.source_id), names.get(edge.target_id)
         return SupportingContent(
             rank=rank,
-            kind="relationship",
+            kind=SectionType.RELATIONSHIP,
             name=f"{source or '?'} -> {target or '?'}",
             text="",
             source_id=edge.id,

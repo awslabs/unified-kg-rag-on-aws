@@ -61,6 +61,7 @@ from unified_kg_rag.domain.models import (
     RetrieverRole,
     SearchQuery,
     SearchStrategy,
+    SectionType,
 )
 from unified_kg_rag.domain.models.config import TransientRetryConfig
 from unified_kg_rag.evaluation import EvaluationManager
@@ -149,7 +150,7 @@ class _Retriever:
                 content="Vendor and Buyer signed the supply agreement.",
                 score=0.9,
                 source="supply.txt",
-                retriever_type="document",
+                retriever_type=SectionType.TEXT,
                 metadata={"id": "doc-1", "text_unit_ids": []},
             )
         ]
@@ -701,3 +702,26 @@ def test_an_abandoned_executor_does_not_hold_asyncio_run() -> None:
         assert not ended.is_set()
     finally:
         release.set()
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_ignore_errors_answers_a_timeout_during_the_admission(
+    stream: bool,
+) -> None:
+    # Regression (rv25): a deadline passing during the admission (the
+    # build-record read) raised QueryTimeoutError under ignore_errors, where
+    # every later timeout gives the error answer (the console and MCP got an
+    # exception).
+    config = _config(query_timeout_seconds=0.3)
+    config.processing.ignore_errors = True
+    chain = _chain_on(config, _StalledRecordRetriever(stall=60))
+    started = time.monotonic()
+    if stream:
+        chunks = [c async for c in chain.astream(_query())]
+        assert "".join(chunks) == DEFAULT_ERROR_MESSAGE
+    else:
+        out = await asyncio.wait_for(chain.ainvoke(_query()), timeout=10)
+        assert isinstance(out, RAGOutput)
+        assert out.answer == DEFAULT_ERROR_MESSAGE and out.metadata["error"] is True
+        assert "search.query_timeout_seconds" in out.search_results.metadata["error"]
+    assert time.monotonic() - started < 5

@@ -5,14 +5,14 @@ names the units its graph items rest on."""
 
 from __future__ import annotations
 
+import threading
+
 import pytest
 
-from unified_kg_rag.adapters.retrieval.base import evidence_lineage
+from unified_kg_rag.adapters.retrieval import base
+from unified_kg_rag.adapters.retrieval.base import evidence_lineage, units_by_support
 from unified_kg_rag.adapters.search_strategies.local_search import (
     LocalSearchStrategy,
-)
-from unified_kg_rag.adapters.search_strategies.structured_search import (
-    StructuredSearchStrategy,
 )
 from unified_kg_rag.domain.models import RetrievalResult
 from unified_kg_rag.domain.retrieval.lineage import merge
@@ -64,18 +64,38 @@ def test_support_ranks_by_citing_items_then_the_best_score() -> None:
     assert merge([["x", "x"], ["y"], ["y"]], order="support") == ["y", "x"]
 
 
-def test_local_and_structured_rank_their_units_alike() -> None:
+async def test_local_and_structured_rank_their_units_alike() -> None:
     """The unify probe: local ranked (count, best score), structured
-    (count, id), so one result's citation and chunk fetch disagreed."""
+    (count, id), so one result's citation and chunk fetch disagreed. Both
+    now rank through ``units_by_support``."""
     expected = ["u3", "u1", "u9", "u2"]
-    assert LocalSearchStrategy._rank_text_unit_ids(ENTITIES) == expected
-    assert StructuredSearchStrategy._lineage(ENTITIES) == expected
+    assert await units_by_support(ENTITIES) == expected
+    assert await LocalSearchStrategy._rank_text_unit_ids(ENTITIES) == expected
 
 
-def test_a_json_text_lineage_is_read_as_its_list() -> None:
+async def test_a_json_text_lineage_is_read_as_its_list() -> None:
     """A graph store may return the list as its JSON text: local dropped it,
     structured split it into characters."""
     nodes = [_entity(4, 0.9, '["u7", "u8"]')]
     assert evidence_lineage(nodes)["text_unit_ids"] == ["u7", "u8"]
-    assert LocalSearchStrategy._rank_text_unit_ids(nodes) == ["u7", "u8"]
-    assert StructuredSearchStrategy._lineage(nodes) == ["u7", "u8"]
+    assert await units_by_support(nodes) == ["u7", "u8"]
+    assert await LocalSearchStrategy._rank_text_unit_ids(nodes) == ["u7", "u8"]
+
+
+async def test_the_support_merge_runs_off_the_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression (rv25): local search merged its hub lineages (thousands of
+    # units per hub entity) on the event loop, 160-615 ms per query that
+    # stalled every concurrent one; LightRAG's pick already ran on a thread.
+    loop_thread = threading.get_ident()
+    threads: list[int] = []
+    merge_units = base._units_by_support
+
+    def recording(results: list[RetrievalResult]) -> list[str]:
+        threads.append(threading.get_ident())
+        return merge_units(results)
+
+    monkeypatch.setattr(base, "_units_by_support", recording)
+    assert await LocalSearchStrategy._rank_text_unit_ids(ENTITIES)
+    assert threads and loop_thread not in threads

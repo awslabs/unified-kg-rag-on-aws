@@ -28,7 +28,12 @@ from unified_kg_rag.adapters.search_strategies.global_search import (
     GlobalSearchStrategy,
     _MapPoint,
 )
-from unified_kg_rag.domain.models import Config, RetrievalResult, SearchQuery
+from unified_kg_rag.domain.models import (
+    Config,
+    RetrievalResult,
+    SearchQuery,
+    SectionType,
+)
 from unified_kg_rag.domain.retrieval.degradation import DegradationLedger
 
 pytestmark = pytest.mark.unit
@@ -1181,7 +1186,7 @@ class _RecordStore:
                 content="",
                 score=1.0,
                 source=record_id,
-                retriever_type="document",
+                retriever_type=SectionType.TEXT,
                 metadata={"id": record_id, **stored[record_id]},
             )
             for record_id in (query.filters or {}).get("id") or []

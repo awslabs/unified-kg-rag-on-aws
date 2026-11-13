@@ -71,6 +71,47 @@ def is_permanent_neptune_error(exc: BaseException) -> bool:
     return isinstance(exc, ValueError | TypeError)
 
 
+# Neptune engine error codes a later try of the same request may pass (the
+# same guide's "retry: yes" codes): the store was busy, not the request
+# wrong. TimeLimitExceededException is one too, but a traversal stopped at its
+# time limit takes as long again (``is_evaluation_timeout``).
+TRANSIENT_NEPTUNE_ERROR_CODES: frozenset[str] = frozenset(
+    {
+        "ConcurrentModificationException",
+        "InternalFailureException",
+        "MemoryLimitExceededException",
+        "QueryLimitExceededException",
+        "ThrottlingException",
+    }
+)
+# Gremlin Server's (and so a local backend's) statuses for the same: 429
+# TOO_MANY_REQUESTS and 596 SERVER_ERROR_TEMPORARY.
+_TRANSIENT_GREMLIN_STATUSES = frozenset({429, 596})
+
+
+def is_transient_neptune_error(exc: BaseException) -> bool:
+    """Whether a failed Gremlin request may pass on another try: an approved
+    list, as OpenSearch query reads retry only theirs (``_aws.py``
+    ``query_store``). A Neptune code of ``TRANSIENT_NEPTUNE_ERROR_CODES``, a
+    Gremlin Server status of ``_TRANSIENT_GREMLIN_STATUSES``, or an HTTP 429
+    or 5xx answer to the websocket handshake. Anything else (a traversal
+    error such as Gremlin Server's 597 "does not map to a value", an
+    unknown processor, an error naming no code) fails the same way on every
+    try. A lost connection or a timeout is not one either: it makes the store
+    unusable (``is_connection_lost``, ``is_timeout``)."""
+    for current in causes(exc):
+        if isinstance(current, GremlinServerError):
+            message = str(current.status_message)
+            return getattr(
+                current, "status_code", None
+            ) in _TRANSIENT_GREMLIN_STATUSES or any(
+                code in message for code in TRANSIENT_NEPTUNE_ERROR_CODES
+            )
+        if isinstance(current, aiohttp.ClientResponseError):
+            return current.status == 429 or current.status >= 500
+    return False
+
+
 # What gremlinpython raises on a websocket that is gone (the server closed it,
 # or restarted, or failed over): the pooled connection is never reopened.
 # "Client is closed": a request on a connection ``reset`` already closed.

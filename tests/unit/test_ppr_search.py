@@ -430,10 +430,10 @@ def _local(config: Config, documents: _Documents, graph: _Graph):
     return strategy, captured
 
 
-def strategy_support_first(config: Config, nodes: list[RetrievalResult]) -> str:
+async def strategy_support_first(config: Config, nodes: list[RetrievalResult]) -> str:
     """The text unit local's support ranking puts first."""
     local = get_strategy_spec(SearchStrategy.LOCAL).strategy_class
-    return local._rank_text_unit_ids(nodes)[0]
+    return (await local._rank_text_unit_ids(nodes))[0]
 
 
 def test_local_ranks_by_pagerank_by_default() -> None:
@@ -474,7 +474,7 @@ async def test_local_ppr_ranks_the_text_units_by_pagerank() -> None:
     expanded = await graph.aretrieve(
         SearchQuery(query="", filters={"id": ["ann", "bob"]})
     )
-    assert strategy_support_first(config, expanded) == "u-noise"
+    assert await strategy_support_first(config, expanded) == "u-noise"
     strategy, buckets = _local(config, documents, graph)
     result = await strategy.asearch(SearchQuery(query="q", entity_focus=["Ann", "Bob"]))
     meta = result.metadata

@@ -34,6 +34,7 @@ from unified_kg_rag.domain.models import (
     RetrieverRole,
     SearchQuery,
     SearchStrategy,
+    SectionType,
 )
 
 pytestmark = pytest.mark.unit
@@ -85,7 +86,7 @@ class _FakeRetriever:
                 content="Vendor and Buyer signed the supply agreement.",
                 score=0.9,
                 source="doc-1",
-                retriever_type="document",
+                retriever_type=SectionType.TEXT,
                 metadata={"id": "doc-1", "text_unit_ids": []},
             )
         ]

@@ -106,7 +106,14 @@ names it).
 ## Per-strategy applicability
 
 A filter applies only to the stores that declare its field
-(`type:person` leaves text units unfiltered). A key no store the
+(`type:person` leaves text units unfiltered). `community_ids` lists the
+communities of a text unit or an entity vertex; a community report states
+its own as `community_id`, so `community_ids` leaves the reports
+unfiltered: filter reports by `community_id`. A strategy that reads the summary tree
+(`simple`, `tree`) instead leaves the summaries out under a key the text
+units declare and the summary nodes do not (`community_ids`,
+`source_kinds`): a summary is written from text units the filter may keep
+out. A key no store the
 selected strategy reads declares (e.g. `category`, or `type` with `naive`
 or `global`) raises `InvalidFilterError`, listing the filterable keys
 (`unified_kg_rag/domain/retrieval/filters.py`). `naive` reads text

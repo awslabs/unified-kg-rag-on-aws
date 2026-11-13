@@ -230,14 +230,17 @@ def _opening_script(text: str) -> str | None:
 def _name_words(text: str, words: list[re.Match[str]]) -> set[int]:
     """The indexes of ``words`` (in order) inside a name: a run of two or
     more of them with spaces alone between, opening and closing on a
-    capitalised word or a code, with the lowercase words inside it ("Bank
-    of America", "Procter and Gamble", "The Walt Disney Company", "iPhone
-    and iPad"); a capitalised word alone (a question's first word, a German
-    noun) is no name, and nor does a function word open one
-    (:func:`_opens_name`: "Why did Orion Labs drop" holds the name "Orion
-    Labs")."""
+    capitalised word or a code, with connectives inside it ("Bank of
+    America", "Procter and Gamble", "The Walt Disney Company", "iPhone
+    and iPad", "Universidad de la República"; :func:`_connects`); a
+    capitalised word alone (a question's first word, a German noun) is no
+    name, and nor does a function word open one (:func:`_opens_name`: "Why
+    did Orion Labs drop" holds the name "Orion Labs"). Any other lowercase
+    word ends the run: "Umbra Freight delivers the units to Kestrel Depot"
+    holds two names, not one of eight words."""
     names: set[int] = set()
     run: list[int] = []
+    gap: list[str] = []
 
     def close() -> None:
         while run and not _is_name_word(words[run[-1]].group()):
@@ -248,13 +251,31 @@ def _name_words(text: str, words: list[re.Match[str]]) -> set[int]:
 
     for i, word in enumerate(words):
         joined = bool(run) and _adjacent(text, words[run[-1]], word)
+        if joined and not _is_name_word(word.group()):
+            joined = _connects(gap, word.group().lower())
+            gap.append(word.group().lower())
         if not joined:
             close()
+            gap.clear()
             if not _opens_name(text, words, i):
                 continue
+        if _is_name_word(word.group()):
+            gap.clear()
         run.append(i)
     close()
     return names
+
+
+def _connects(gap: list[str], word: str) -> bool:
+    """Whether the lowercase ``word``, after the lowercase words ``gap``
+    since the run's last capitalised one, may stand inside a name: a
+    function word ("of", "and", "de", "von"), and after one only an
+    article ("of the", "de la"). A lowercase content word ("delivers",
+    "approved") or a longer string of function words ("is in the") is a
+    sentence's, not a name's."""
+    if word not in _FUNCTION_WORDS:
+        return False
+    return not gap or (len(gap) == 1 and gap[0] not in _ARTICLES and word in _ARTICLES)
 
 
 def _is_name_word(word: str) -> bool:

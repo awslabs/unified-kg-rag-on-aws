@@ -88,6 +88,10 @@ class SimpleSearchStrategy(BaseSearchStrategy):
             top_k=query.top_k,
             retrieval_multiplier=query.retrieval_multiplier,
             query=query.query,
+            # One bucket per index, never sharing an item: by rank (RRF) they
+            # took equal shares whatever their scores, which a reranker
+            # corrects but a run without one kept.
+            fusion="min_max",
         )
 
         processing_time = time.time() - start_time
@@ -114,7 +118,8 @@ class SimpleSearchStrategy(BaseSearchStrategy):
         self, query: SearchQuery
     ) -> dict[str, list[RetrievalResult]]:
         """One fusion bucket per index swept (``_BUCKETS``), each its own
-        ``top_k * retrieval_multiplier`` best: fused by RRF, reranked as one
+        ``top_k * retrieval_multiplier`` best: fused by their normalized
+        scores (``combine_min_max``), reranked as one
         pool and cut to ``top_k`` (``_fuse_and_rerank``). One search over
         every index kept only ``top_k * retrieval_multiplier`` hits across
         them all, about two or three of each index before the reranker

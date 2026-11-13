@@ -2345,8 +2345,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         # Fixed when the query starts: its admission (the build-record read
         # of the methodology check, a store round trip) counts too.
         deadline = _QueryDeadline(self.config.search.query_timeout_seconds)
-        async with deadline.scope():
-            rag_input, input_dict = await self._admit_query(input)
+        rag_input, input_dict = await self._admit_query(input, deadline)
         log_context = self._log_context(rag_input)
         log_tokens = bind_contextvars(**log_context)
         started = time.monotonic()
@@ -3122,16 +3121,37 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         return search_results
 
     async def _admit_query(
-        self, inputs: RAGInput | dict[str, Any]
+        self, inputs: RAGInput | dict[str, Any], deadline: "_QueryDeadline"
     ) -> tuple[RAGInput, dict[str, Any]]:
         """``inputs`` checked before any model call (``_prepare_invoke``),
         with its namespace resolved once (``resolve_namespace``: a query
         without a suffix reads the config's ``index_value``), the methodology
-        and the filter keys checked against what the namespace holds."""
+        and the filter keys checked against what the namespace holds, within
+        the query's ``deadline``.
+
+        A deadline that passes during the checks is the query's
+        ``QueryTimeoutError``, raised before its first model call as a
+        namespace check a store failed is (``_raise_missing_namespace``):
+        under ``ignore_errors`` the error answer, as a timeout later in the
+        query gives. A refused strategy or filter still raises: a usage
+        error, not a failed query."""
         rag_input, input_dict = self._prepare_invoke(inputs)
         rag_input.suffix = input_dict["suffix"] = resolve_namespace(
             self.config, rag_input.suffix
         )
+        try:
+            async with deadline.scope():
+                await self._check_holdings(rag_input, input_dict)
+        except QueryTimeoutError as e:
+            input_dict["held_artifacts"] = frozenset()
+            input_dict[_MISSING_NAMESPACE] = e
+        return rag_input, input_dict
+
+    async def _check_holdings(
+        self, rag_input: RAGInput, input_dict: dict[str, Any]
+    ) -> None:
+        """The namespace, methodology and filter-key checks of
+        ``_admit_query``; the namespace's holdings go to ``input_dict``."""
         try:
             await self._arequire_namespace(rag_input.suffix)
         except Exception as e:  # noqa: BLE001 - raised by the query below
@@ -3142,7 +3162,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             # error answer) before any model call.
             input_dict["held_artifacts"] = frozenset()
             input_dict[_MISSING_NAMESPACE] = e
-            return rag_input, input_dict
+            return
         # What auto routes among and the strategy reads: one read of the
         # build record a query (a failed one is not kept, nor paid twice).
         holdings = await methodology_check.check_strategy_holdings(
@@ -3155,13 +3175,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         filter_validation.check_requested_filter_keys(
             self, rag_input, input_dict["held_artifacts"]
         )
-        return rag_input, input_dict
 
     @staticmethod
     def _raise_missing_namespace(input_dict: dict[str, Any]) -> None:
         """Raise the error the admission's namespace check met
-        (``_admit_query``: nothing ingested under the query's suffix, or a
-        store that could not be reached)."""
+        (``_admit_query``: nothing ingested under the query's suffix, a
+        store that could not be reached, or the query's deadline)."""
         if (missing := input_dict.pop(_MISSING_NAMESPACE, None)) is not None:
             raise missing
 
@@ -3300,8 +3319,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             first_chunk_seconds=search_config.model_timeout_seconds,
         )
         # Admitted within the deadline (_query).
-        async with deadline.scope():
-            rag_input, input_dict = await self._admit_query(input)
+        rag_input, input_dict = await self._admit_query(input, deadline)
         chunks: list[str] = []
         delivered = False
         # A refused answer, like a refused query, writes no memory.

@@ -6,10 +6,18 @@ import json
 import math
 from abc import ABC, abstractmethod
 from collections import Counter
-from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
+from collections.abc import (
+    Awaitable,
+    Callable,
+    Collection,
+    Iterable,
+    Iterator,
+    Mapping,
+    Sequence,
+)
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Any, ClassVar, final
+from typing import Any, ClassVar, Protocol, final
 
 from langchain_core.callbacks import (
     AsyncCallbackManagerForRetrieverRun,
@@ -307,6 +315,30 @@ def _text_unit_ids(result: RetrievalResult) -> list[str]:
     return [str(i) for i in (result.metadata or {}).get("text_unit_ids") or []]
 
 
+def _units_by_support(results: Sequence[RetrievalResult]) -> list[str]:
+    return merge_lineages(
+        (
+            source_fields.listed(result.metadata or {}, "text_unit_ids")
+            for result in results
+        ),
+        order="support",
+        scores=[float(result.score or 0.0) for result in results],
+    )
+
+
+async def units_by_support(results: Sequence[RetrievalResult]) -> list[str]:
+    """The text units ``results`` cite (``text_unit_ids``), by support
+    (``domain.retrieval.lineage``: the units most of them cite first, then
+    the best-scored citing result's, then first seen). A lineage a graph
+    store returns as its JSON text is read as the list it encodes.
+
+    On a worker thread: a hub entity cites thousands of units, and merging
+    tens of hubs took hundreds of milliseconds, which stalled every
+    concurrent query on the event loop (local and structured search; the
+    LightRAG chunk pick and PPR's ranking run off the loop the same way)."""
+    return await asyncio.to_thread(_units_by_support, list(results))
+
+
 def evidence_lineage(
     results: Iterable[RetrievalResult],
     reports: Mapping[str, dict[str, list[str]]] | None = None,
@@ -539,6 +571,67 @@ def scope_filters(
         values = value if isinstance(value, list) else [value]
         merged[key] = [v for v in values if v in allowed]
     return merged or None
+
+
+class _IdBatchLimits(Protocol):
+    @property
+    def id_batch_size(self) -> int: ...
+
+
+class IdFetchReader(Protocol):
+    """What a fetch by id reads of a retriever (``fetch_by_ids``)."""
+
+    async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]: ...
+
+    async def aindex_limits(
+        self, prefix: str, suffix: str | None
+    ) -> _IdBatchLimits: ...
+
+
+async def fetch_by_ids(
+    retriever: IdFetchReader,
+    query: SearchQuery,
+    ids: Iterable[str],
+    *,
+    max_concurrency: int,
+    key: str = "id",
+    retrieve: Callable[[SearchQuery], Awaitable[list[RetrievalResult]]] | None = None,
+) -> list[tuple[list[str], list[RetrievalResult]]]:
+    """``query`` (no text) asked for ``ids`` (each once, in order; ``key``
+    a field each hit holds one value of) in batches one search returns in
+    full: at most ``IndexLimits.id_batch_size`` ids of every index it reads
+    (``aindex_limits``), each batch's ``filters[key]`` scoped to it
+    (``scope_filters``: the query's own ``key`` values narrow it) with a
+    ``top_k`` of its ids, at most ``max_concurrency`` at once, through
+    ``retrieve`` (``retriever.aretrieve`` by default). Asked at once, ids
+    past the window came back as the window's worth in the store's order,
+    not the best-ranked ones. Each batch with its hits, in order: the one
+    batched read of the strategies (``BaseSearchStrategy._fetch_by_ids``)
+    and the text-unit fetch (``application.retrieval.text_units``)."""
+    wanted = list(dict.fromkeys(ids))
+    if not wanted:
+        return []
+    prefixes = source_fields.id_list(query.index_prefixes)
+    limits = [await retriever.aindex_limits(p, query.suffix) for p in prefixes]
+    size = max(1, min((lim.id_batch_size for lim in limits), default=len(wanted)))
+    batches = [wanted[i : i + size] for i in range(0, len(wanted), size)]
+    read = retrieve or retriever.aretrieve
+    parts = await gather_bounded(
+        max_concurrency,
+        (
+            read(
+                query.model_copy(
+                    update={
+                        "filters": scope_filters(query.filters, **{key: batch}),
+                        "top_k": len(batch),
+                        "retrieval_multiplier": 1,
+                    }
+                )
+            )
+            for batch in batches
+        ),
+    )
+    return list(zip(batches, parts, strict=True))
 
 
 class BaseSearchStrategy(ABC):
@@ -798,40 +891,28 @@ class BaseSearchStrategy(ABC):
     ) -> list[RetrievalResult]:
         """``query``, a fetch by id (no text, ``filters[key]`` listing the
         ids; ``key`` a field each hit holds one value of, ``id`` by default),
-        through ``_safe_aretrieve`` in batches one search returns in
-        full: at most ``IndexLimits.id_batch_size`` ids of every index it
-        reads (``aindex_limits``), each batch with a ``top_k`` of its ids, at
-        most ``search.max_concurrency`` at once. Asked at once, ids past the
-        window came back as the window's worth in the store's order, not the
-        best-ranked ones. The hits come back batch after batch, each id once
-        (a repeated id would be asked, and returned, by two batches).
+        through ``_safe_aretrieve`` in the batches of ``fetch_by_ids``, at
+        most ``search.max_concurrency`` at once. The hits come back batch
+        after batch, each id once (a repeated id would be asked, and
+        returned, by two batches).
         ``failures`` collects the errors of the batches that failed; each is
         recorded as ``step`` (``_safe_aretrieve``)."""
-        ids = list(dict.fromkeys((query.filters or {}).get(key) or ()))
-        prefixes = source_fields.id_list(query.index_prefixes)
-        limits = [await retriever.aindex_limits(p, query.suffix) for p in prefixes]
-        size = max(1, min((lim.id_batch_size for lim in limits), default=len(ids)))
-        parts = await gather_bounded(
-            self.config.search.max_concurrency,
-            (
-                self._safe_aretrieve(
-                    retriever,
-                    query.model_copy(
-                        update={
-                            "filters": {**(query.filters or {}), key: batch},
-                            "top_k": len(batch),
-                            "retrieval_multiplier": 1,
-                        }
-                    ),
-                    label,
-                    failures,
-                    step=step,
-                    unresolved=unresolved,
-                )
-                for batch in (ids[i : i + size] for i in range(0, len(ids), size))
+        parts = await fetch_by_ids(
+            retriever,
+            query,
+            (query.filters or {}).get(key) or (),
+            max_concurrency=self.config.search.max_concurrency,
+            key=key,
+            retrieve=lambda batch: self._safe_aretrieve(
+                retriever,
+                batch,
+                label,
+                failures,
+                step=step,
+                unresolved=unresolved,
             ),
         )
-        return [hit for part in parts for hit in part]
+        return [hit for _, hits in parts for hit in hits]
 
     async def _findings_lineages(
         self,

@@ -639,32 +639,62 @@ def drop_dense_script_spaces(text: str, *, spaceless: bool = False) -> str:
     return _WHITESPACE.sub(replace, text)
 
 
-def _is_word_char(ch: str) -> bool:
-    # A letter, a number or a mark (Unicode L, N, M): "\w" leaves out the
-    # vowel signs of Devanagari or Thai ("टाटा", "กรุงเทพ"), which split a
-    # word into fragments, and takes "_".
-    return unicodedata.category(ch)[0] in "LNM"
+def _is_mark(ch: str) -> bool:
+    return unicodedata.category(ch)[0] == "M"
+
+
+# A run of letters and numbers (Unicode L and N: "[^\W_]" is exactly them).
+_LETTERS_AND_NUMBERS = re.compile(r"[^\W_]+")
 
 
 def word_spans(text: str) -> list[tuple[int, int]]:
     """The ``(start, end)`` of every word of ``text``: a run of letters,
-    numbers and marks, in every script."""
+    numbers and marks (Unicode L, N, M), in every script. "\\w" leaves out
+    the vowel signs of Devanagari or Thai ("टाटा", "กรุงเทพ"), which split
+    a word into fragments, and takes "_".
+
+    The letters and numbers by one compiled pattern; only a non-ASCII gap
+    between them is read a character at a time, for its marks (ASCII holds
+    none): a walk over every character with ``unicodedata`` cost 5.6 times
+    the old whitespace split on long passages (MMR compares every
+    candidate's terms)."""
+    if text.isascii():
+        return [match.span() for match in _LETTERS_AND_NUMBERS.finditer(text)]
     spans: list[tuple[int, int]] = []
-    start: int | None = None
-    for i, ch in enumerate(text):
-        if _is_word_char(ch):
-            if start is None:
-                start = i
-        elif start is not None:
-            spans.append((start, i))
-            start = None
-    if start is not None:
-        spans.append((start, len(text)))
+
+    def add(start: int, end: int) -> None:
+        if spans and spans[-1][1] == start:
+            spans[-1] = (spans[-1][0], end)
+        else:
+            spans.append((start, end))
+
+    def marks(low: int, high: int) -> None:
+        if low >= high or text[low:high].isascii():
+            return
+        i = low
+        while i < high:
+            if not _is_mark(text[i]):
+                i += 1
+                continue
+            j = i + 1
+            while j < high and _is_mark(text[j]):
+                j += 1
+            add(i, j)
+            i = j
+
+    position = 0
+    for match in _LETTERS_AND_NUMBERS.finditer(text):
+        marks(position, match.start())
+        add(*match.span())
+        position = match.end()
+    marks(position, len(text))
     return spans
 
 
 def words(text: str) -> list[str]:
     """The words of ``text`` (:func:`word_spans`)."""
+    if text.isascii():
+        return _LETTERS_AND_NUMBERS.findall(text)
     return [text[start:end] for start, end in word_spans(text)]
 
 
@@ -678,8 +708,14 @@ def word_terms(text: str) -> frozenset[str]:
     each run of a script written without spaces (Han, Hangul, Kana, Thai,
     Lao, Myanmar, Khmer, Tai) split into its character bigrams (a run of
     one letter kept whole), as such a run is a clause, not a word."""
+    found = words(text)
+    if _UNSPACED_RUN.search(text) is None:
+        return frozenset(found)
     terms: set[str] = set()
-    for word in words(text):
+    for word in found:
+        if _UNSPACED_RUN.search(word) is None:
+            terms.add(word)
+            continue
         for run in _UNSPACED_RUN.findall(word):
             terms.update(run[i : i + 2] for i in range(max(1, len(run) - 1)))
         terms.update(_UNSPACED_RUN.sub(" ", word).split())

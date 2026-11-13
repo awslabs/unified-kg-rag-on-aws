@@ -85,3 +85,26 @@ def test_type_quota_slots_are_section_types() -> None:
     slots = TypeQuotaConfig().slots(10)
     assert set(slots) == {"text", "entity", "relationship", "community", "claim"}
     assert all(SectionType(k) for k in slots)
+
+
+def test_test_results_name_a_section_type() -> None:
+    # Regression (rv25): fakes built results of retriever_type "document",
+    # "graph" or "text_unit", which read as GENERAL, so a test of a
+    # text-only path (rerank-only types, lineage ranking) passed without
+    # reaching it. A literal kind in a test is a SectionType value; an
+    # unknown one on purpose ("t", "test") is spelt SectionType.GENERAL;
+    # this file tests the coercion of other spellings itself.
+    import re
+    from pathlib import Path
+
+    kinds = {kind.value for kind in SectionType}
+    root = Path(__file__).resolve().parents[1]
+    literal = re.compile(r"retriever_type=[\"']([^\"']*)[\"']")
+    unknown = sorted(
+        f"{path.relative_to(root)}: {match.group(1)!r}"
+        for path in root.rglob("*.py")
+        if path != Path(__file__).resolve()
+        for match in literal.finditer(path.read_text(encoding="utf-8"))
+        if match.group(1) not in kinds
+    )
+    assert not unknown, unknown

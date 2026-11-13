@@ -50,6 +50,7 @@ from unified_kg_rag.domain.models import (
     SearchQuery,
     SearchResult,
     SearchStrategy,
+    SectionType,
 )
 from unified_kg_rag.domain.models.config import GuardrailConfig
 from unified_kg_rag.ports import (
@@ -371,7 +372,7 @@ class _Retriever:
                 content="Vendor and Buyer signed the supply agreement.",
                 score=0.9,
                 source="doc-1",
-                retriever_type="document",
+                retriever_type=SectionType.TEXT,
                 metadata={"id": "doc-1", "text_unit_ids": []},
             )
         ]

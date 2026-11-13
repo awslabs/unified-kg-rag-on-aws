@@ -38,6 +38,7 @@ from unified_kg_rag.domain.models import (
     Config,
     DocStatus,
     DocStatusRecord,
+    SectionType,
 )
 from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
@@ -268,12 +269,14 @@ _EXPORT_KINDS: tuple[StoredItemKind, ...] = (
     "community_reports",
     "claims",
 )
-_RECORD_TYPE = {
-    "text_units": "text_unit",
-    "entities": "entity",
-    "relationships": "relationship",
-    "community_reports": "community",
-    "claims": "claim",
+# Each record's ``kind``: the section type a source of it names
+# (``SectionType``), a text unit's ``text``.
+_RECORD_TYPE: dict[StoredItemKind, SectionType] = {
+    "text_units": SectionType.TEXT,
+    "entities": SectionType.ENTITY,
+    "relationships": SectionType.RELATIONSHIP,
+    "community_reports": SectionType.COMMUNITY,
+    "claims": SectionType.CLAIM,
 }
 
 
@@ -303,7 +306,7 @@ def export_graph(
     """Write the graph of ``suffix``'s namespace to ``path``, streamed from
     the vector store a page at a time.
 
-    ``jsonl``: one JSON object per line, ``kind`` ``text_unit``, ``entity``,
+    ``jsonl``: one JSON object per line, ``kind`` ``text``, ``entity``,
     ``relationship``, ``community`` (a community report: level, parent and
     child communities, summary) or ``claim``, with the stored fields (no
     vector) and ``documents``, the files of the text units it cites.
@@ -426,7 +429,7 @@ class _JsonLines(_Writer):
     def item(self, kind: str, item: dict[str, Any], documents: list[str]) -> None:
         # "kind": an entity's or relationship's own "type" is a field.
         record = {"kind": kind, **item}
-        if kind == "text_unit":
+        if kind == SectionType.TEXT:
             if not self.include_text:
                 record.pop("text", None)
                 for key in [k for k in record if k.startswith("translated_text_")]:
@@ -493,11 +496,11 @@ class _GraphML(_Writer):
         )
 
     def item(self, kind: str, item: dict[str, Any], documents: list[str]) -> None:
-        if kind == "entity":
+        if kind == SectionType.ENTITY:
             data = self._data(
                 "n",
                 {
-                    "kind": "entity",
+                    "kind": SectionType.ENTITY.value,
                     "type": item.get("type"),
                     "name": item.get("name"),
                     "description": item.get("description"),
@@ -508,7 +511,7 @@ class _GraphML(_Writer):
                 },
             )
             self.out.write(f"    <node id={quoteattr(str(item['id']))}>{data}</node>\n")
-        elif kind == "relationship":
+        elif kind == SectionType.RELATIONSHIP:
             data = self._data(
                 "e",
                 {
@@ -525,13 +528,13 @@ class _GraphML(_Writer):
                 f"source={quoteattr(str(item.get('source_id')))} "
                 f"target={quoteattr(str(item.get('target_id')))}>{data}</edge>\n"
             )
-        elif kind == "community":
+        elif kind == SectionType.COMMUNITY:
             community = str(item.get("community_id") or item["id"])
             node = f"community:{community}"
             data = self._data(
                 "n",
                 {
-                    "kind": "community",
+                    "kind": SectionType.COMMUNITY.value,
                     "name": item.get("name"),
                     "description": item.get("summary"),
                     "rank": item.get("rank"),

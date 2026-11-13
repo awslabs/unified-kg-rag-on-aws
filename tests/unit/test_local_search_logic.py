@@ -19,7 +19,12 @@ import pytest
 from unified_kg_rag.adapters.retrieval.base import BaseSearchStrategy
 from unified_kg_rag.adapters.search_strategies.local_search import LocalSearchStrategy
 from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
-from unified_kg_rag.domain.models import RetrievalResult, SearchQuery, SearchType
+from unified_kg_rag.domain.models import (
+    RetrievalResult,
+    SearchQuery,
+    SearchType,
+    SectionType,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -34,7 +39,7 @@ def _result(
         content="c",
         score=score,
         source=source,
-        retriever_type="document",
+        retriever_type=SectionType.TEXT,
         metadata=metadata or {},
     )
 
@@ -509,35 +514,35 @@ async def test_retrieve_documents_swallows_retriever_error() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_rank_text_unit_ids_orders_by_entity_support() -> None:
+async def test_rank_text_unit_ids_orders_by_entity_support() -> None:
     # "shared" is referenced by two entities, "solo" by one -> shared ranks first.
     nodes = [
         _result("e1", score=0.4, metadata={"text_unit_ids": ["shared", "solo"]}),
         _result("e2", score=0.9, metadata={"text_unit_ids": ["shared"]}),
     ]
-    assert LocalSearchStrategy._rank_text_unit_ids(nodes)[0] == "shared"
+    assert (await LocalSearchStrategy._rank_text_unit_ids(nodes))[0] == "shared"
 
 
-def test_rank_text_unit_ids_breaks_ties_by_best_entity_score() -> None:
+async def test_rank_text_unit_ids_breaks_ties_by_best_entity_score() -> None:
     nodes = [
         _result("e1", score=0.2, metadata={"text_unit_ids": ["low"]}),
         _result("e2", score=0.8, metadata={"text_unit_ids": ["high"]}),
     ]
-    assert LocalSearchStrategy._rank_text_unit_ids(nodes) == ["high", "low"]
+    assert (await LocalSearchStrategy._rank_text_unit_ids(nodes)) == ["high", "low"]
 
 
-def test_rank_text_unit_ids_handles_a_single_id() -> None:
+async def test_rank_text_unit_ids_handles_a_single_id() -> None:
     uuid = "8c1f2a70-1111-2222-3333-444455556666"
     nodes = [_result("e1", score=0.5, metadata={"text_unit_ids": [uuid]})]
-    assert LocalSearchStrategy._rank_text_unit_ids(nodes) == [uuid]
+    assert (await LocalSearchStrategy._rank_text_unit_ids(nodes)) == [uuid]
 
 
-def test_rank_text_unit_ids_dedups_across_entities() -> None:
+async def test_rank_text_unit_ids_dedups_across_entities() -> None:
     nodes = [
         _result("e1", score=0.5, metadata={"text_unit_ids": ["a", "b"]}),
         _result("e2", score=0.5, metadata={"text_unit_ids": ["a"]}),
     ]
-    assert sorted(LocalSearchStrategy._rank_text_unit_ids(nodes)) == ["a", "b"]
+    assert sorted(await LocalSearchStrategy._rank_text_unit_ids(nodes)) == ["a", "b"]
 
 
 def test_restore_rank_reorders_fetched_batch_to_ranked_order() -> None:

@@ -178,9 +178,8 @@ class SearchConfig(ConfigSection):
             "retries start no new call past the deadline). A streamed answer "
             "must also deliver its first chunk within model_timeout_seconds "
             "of its model call. Under processing.ignore_errors the query "
-            "returns the error answer instead, unless the deadline passes "
-            "during its admission, which raises as a refused strategy or "
-            "filter does. null disables both deadlines."
+            "returns the error answer instead, a deadline that passes during "
+            "its admission too. null disables both deadlines."
         ),
     )
     model_timeout_seconds: float = Field(

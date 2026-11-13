@@ -13,7 +13,6 @@ runs under the caller's suffix and filters with the request's
 from __future__ import annotations
 
 import asyncio
-import functools
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -27,7 +26,11 @@ from unified_kg_rag.domain.models import (
     SearchType,
 )
 from unified_kg_rag.domain.retrieval.lineage import merge as merge_lineages
-from unified_kg_rag.domain.retrieval.ppr import PassageGraph, passage_weights
+from unified_kg_rag.domain.retrieval.ppr import (
+    PassageGraph,
+    PPRResult,
+    passage_weights,
+)
 from unified_kg_rag.shared import get_logger
 
 logger = get_logger(__name__)
@@ -192,11 +195,9 @@ class PPRRankingMixin(BaseSearchStrategy):
         for unit in hits:
             graph.add_passage(unit)
         reset = {k: v for k, v in entity_reset.items() if k in nodes and v > 0}
-        # Milliseconds of numpy, off the event loop (tens on thousands of
-        # passages).
-        ranked, result = await asyncio.to_thread(
-            functools.partial(
-                graph.rank_passages,
+
+        def rank() -> tuple[list[tuple[str, float]], PPRResult | None]:
+            return graph.rank_passages(
                 reset,
                 passage_weights(hits, settings.passage_node_weight),
                 damping=settings.damping,
@@ -210,7 +211,10 @@ class PPRRankingMixin(BaseSearchStrategy):
                     scores=[score for _, score in linked],
                 ),
             )
-        )
+
+        # Milliseconds of numpy, and the lineage merge, off the event loop
+        # (tens on thousands of passages).
+        ranked, result = await asyncio.to_thread(rank)
         stats: dict[str, Any] = {
             "entities": len(nodes),
             "relationships": len(edges),

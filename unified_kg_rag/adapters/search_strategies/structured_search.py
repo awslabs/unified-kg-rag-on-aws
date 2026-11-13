@@ -42,6 +42,7 @@ from unified_kg_rag.adapters.retrieval.base import (
     BaseSearchStrategy,
     entity_content,
     record_degradation,
+    units_by_support,
 )
 from unified_kg_rag.adapters.retrieval.strategy_registry import (
     QueryInput,
@@ -85,7 +86,6 @@ from unified_kg_rag.domain.models.graph_query import (
 from unified_kg_rag.domain.models.schema import ExtractionSchema
 from unified_kg_rag.domain.prompts import GraphQueryPlanPrompt
 from unified_kg_rag.domain.prompts.graph_query import REPAIR_FEEDBACK, schema_text
-from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.abstention import (
     CONTEXT_SUFFICIENT_KEY,
     INSUFFICIENCY_REASON_KEY,
@@ -113,7 +113,6 @@ from unified_kg_rag.domain.retrieval.graph_query import (
     with_condition,
 )
 from unified_kg_rag.domain.retrieval.index_prefixes import held_artifacts_of
-from unified_kg_rag.domain.retrieval.lineage import merge as merge_lineages
 from unified_kg_rag.domain.retrieval.linking import choose_links, hit_name
 from unified_kg_rag.domain.retrieval.source_fields import LIST_FIELDS, seed_provenance
 from unified_kg_rag.ports.graph_query import GraphQueryPort
@@ -975,7 +974,10 @@ class StructuredSearchStrategy(BaseSearchStrategy):
             if vertex_id in result.vertices
         ]
         provenance = self._provenance(entities)
-        lineage = self._lineage(entities)
+        # By support, off the event loop (``units_by_support``): the query
+        # result's lineage, which its citation resolves to documents under
+        # the caller's filters.
+        lineage = await units_by_support(entities)
         names = {
             str(e.source): str(name)
             for e in entities
@@ -1016,7 +1018,7 @@ class StructuredSearchStrategy(BaseSearchStrategy):
         relationships_task = asyncio.ensure_future(
             self._path_relationships(query, answer, result)
         )
-        passages_task = asyncio.ensure_future(self._passages(query, entities))
+        passages_task = asyncio.ensure_future(self._passages(query, entities, lineage))
         await gather_or_cancel([relationships_task, passages_task])
         relationships, passages = relationships_task.result(), passages_task.result()
         if relationships:
@@ -1048,21 +1050,6 @@ class StructuredSearchStrategy(BaseSearchStrategy):
             source=vertex_id,
             retriever_type=SectionType.ENTITY,
             metadata=node,
-        )
-
-    @staticmethod
-    def _lineage(entities: list[RetrievalResult]) -> list[str]:
-        """The text units the evidence entities cite, by support
-        (``domain.retrieval.lineage``: the ones most of them cite first,
-        then the best-ranked entity's): the query result's lineage, which
-        its citation resolves to documents under the caller's filters."""
-        return merge_lineages(
-            (
-                source_fields.listed(entity.metadata, "text_unit_ids")
-                for entity in entities
-            ),
-            order="support",
-            scores=[float(entity.score or 0.0) for entity in entities],
         )
 
     @staticmethod
@@ -1144,7 +1131,7 @@ class StructuredSearchStrategy(BaseSearchStrategy):
         ]
 
     async def _passages(
-        self, query: SearchQuery, entities: list[RetrievalResult]
+        self, query: SearchQuery, entities: list[RetrievalResult], lineage: list[str]
     ) -> dict[str, list[RetrievalResult]]:
         """The supporting passages: the document text units the returned
         entities cite, by how many cite each (under the caller's filters),
@@ -1153,7 +1140,7 @@ class StructuredSearchStrategy(BaseSearchStrategy):
         documents = self.document_retriever
         if count == 0 or documents is None or not entities:
             return {}
-        ranked = [unit for unit in self._lineage(entities) if not is_seed_unit(unit)]
+        ranked = [unit for unit in lineage if not is_seed_unit(unit)]
         if not ranked:
             return {}
         prefix = self.config.indexing.opensearch.text_units_index_prefix

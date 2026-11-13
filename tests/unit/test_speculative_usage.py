@@ -49,6 +49,7 @@ from unified_kg_rag.domain.models import (
     RetrieverRole,
     SearchQuery,
     SearchStrategy,
+    SectionType,
 )
 from unified_kg_rag.shared.usage import usage_scope
 
@@ -147,7 +148,7 @@ class _Retriever:
                 content="Vendor and Buyer signed the supply agreement.",
                 score=0.9,
                 source="supply.txt",
-                retriever_type="document",
+                retriever_type=SectionType.TEXT,
                 metadata={"id": "doc-1", "text_unit_ids": []},
             )
         ]

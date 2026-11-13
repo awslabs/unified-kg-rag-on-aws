@@ -34,6 +34,7 @@ from unified_kg_rag.domain.models import (
     SearchQuery,
     SearchStrategy,
     SearchType,
+    SectionType,
 )
 from unified_kg_rag.domain.retrieval.filters import (
     FilterFields,
@@ -143,7 +144,7 @@ def test_collect_linked_chunk_ids_reads_each_lineage_in_citation_then_id_order()
             content="x",
             score=1.0,
             source="s",
-            retriever_type="document",
+            retriever_type=SectionType.TEXT,
             metadata={"id": "i", "text_unit_ids": unit_ids},
         )
 
@@ -198,7 +199,7 @@ def test_a_chunk_more_matched_hits_cite_comes_first_in_its_lineage(
 def test_collect_linked_chunk_ids_ignores_missing_lineage() -> None:
     cls = _chunk_selector()
     no_lineage = RetrievalResult(
-        content="x", score=1.0, source="s", retriever_type="document", metadata={}
+        content="x", score=1.0, source="s", retriever_type=SectionType.TEXT, metadata={}
     )
     assert cls._collect_linked_chunk_ids([no_lineage], [], limit=10) == ([], [])
 
@@ -223,7 +224,7 @@ class LineageRetriever:
                 content=f"{prefix} result",
                 score=1.0,
                 source=f"{prefix}-1",
-                retriever_type="document",
+                retriever_type=SectionType.TEXT,
                 metadata={"id": f"{prefix}-id", "text_unit_ids": ["chunk-A"]},
             )
         ]
@@ -326,14 +327,14 @@ def test_relationship_endpoint_ids_collects_both_endpoints() -> None:
             content="r",
             score=1.0,
             source="rel-1",
-            retriever_type="document",
+            retriever_type=SectionType.RELATIONSHIP,
             metadata={"source_id": "e1", "target_id": "e2"},
         ),
         RetrievalResult(
             content="r",
             score=1.0,
             source="rel-2",
-            retriever_type="document",
+            retriever_type=SectionType.RELATIONSHIP,
             metadata={"source_id": "e3"},  # missing target_id is tolerated
         ),
     ]
@@ -356,7 +357,7 @@ class RelationshipEndpointRetriever:
                 content="rel",
                 score=1.0,
                 source="rel-1",
-                retriever_type="document",
+                retriever_type=SectionType.RELATIONSHIP,
                 metadata={"id": "rel-1", "source_id": "e1", "target_id": "e2"},
             )
         ]
@@ -1408,7 +1409,7 @@ class _ConcurrencyProbe:
                 content="hit",
                 score=1.0,
                 source="hit-1",
-                retriever_type="document",
+                retriever_type=SectionType.TEXT,
                 metadata={"id": "hit-1", "source_id": "e1", "target_id": "e2"},
             )
         ]

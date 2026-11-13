@@ -1088,7 +1088,8 @@ From a `main` checkout (formats and keys no release had):
   library](docs/guides/python-library.md#documents-from-memory).
 - `run-describe` (and `describe_namespace`, `export_graph`): what an index namespace holds (methodologies, the
   strategies it serves, each index's item count and embedding model, the build record, the registry's records), and
-  its graph streamed from the vector store as JSON Lines or GraphML with every item's text units and documents (a
+  its graph streamed from the vector store as JSON Lines (each record's `kind` the section type its sources name:
+  `text`, `entity`, `relationship`, `community`, `claim`) or GraphML with every item's text units and documents (a
   document by its path relative to the corpus root, else its file name, never the indexing host's path;
   `--output-path`, `--export-format`, `--max-items`; written atomically, so a failed export leaves the previous file
   and no partial one; an existing file is replaced only with `--force`, `export_graph(overwrite=True)`, and never the
@@ -1274,11 +1275,12 @@ From a `main` checkout (formats and keys no release had):
   with a note when they differ within it (#645).
 - Query deadline: `search.query_timeout_seconds` bounds every query and stream, from its admission on (the one
   build-record read of a query, where a stalled store held a new chain's first query before the deadline began); a
-  stream must send a first chunk within `search.model_timeout_seconds`. Past it the query raises
-  `QueryTimeoutError` (`run-rag` exits 1, `run-eval` counts a failure);
-  query-time model calls get their own clients (`search.model_timeout_seconds`, `model_max_attempts`; `backend:
-  local` presets 300 s and a 900 s deadline), and Bedrock CountTokens uses them. No retry, OpenSearch request or
-  global map call starts past the deadline; global map calls are cancelled with the query (#522, #530, #567, #579).
+  stream must send a first chunk within `search.model_timeout_seconds`. Past it the query raises `QueryTimeoutError`
+  (`run-rag` exits 1, `run-eval` counts a failure; under `processing.ignore_errors` the error answer, one past the
+  deadline during the admission too); query-time model calls get their own clients (`search.model_timeout_seconds`,
+  `model_max_attempts`; `backend: local` presets 300 s and a 900 s deadline), and Bedrock CountTokens uses them. No
+  retry, OpenSearch request or global map call starts past the deadline; global map calls are cancelled with the query
+  (#522, #530, #567, #579).
 - Query-path options: `search.answer_prompt_style` (the comprehensive answer prompt,
   `custom_prompts.comprehensive_answer_*`), `search.global_search.evidence_tokens` (caps the cited report text after
   the key points; `0` sends key points only), `search.lightrag_search.kg_chunk_pick_method: vector` (upstream's
@@ -1640,7 +1642,8 @@ From a `main` checkout (formats and keys no release had):
   Latin-script language claims the question with its function words, one more when the question opens on a capitalised
   Latin word, and another script with its runs; the larger claim wins, a tie the Latin words. Acronyms and codes
   ("AI", "OS", "ES6", "iPhone"), parts of compounds ("to-do", "AIとは"), of URLs, emails, paths and dotted names
-  ("example.com", "admin@example.es", "/usr/bin/the") and the words of a quoted name ("Bank of America和…") are no
+  ("example.com", "admin@example.es", "/usr/bin/the") and the words of a quoted name ("Bank of America和…":
+  capitalised words joined by a connective and an article at most, not by a sentence's other words) are no
   function words, so "AI 모델 추천", "AIとは", "OS 설치" and "example.com 无法访问" are Korean, Japanese, Korean and Chinese,
   "Who is the CEO of 한빛전자?" and "Compare 한빛전자 and 아크미" English, "with 문 사용법" Korean; a shouted text (three or more
   words, all in capitals; beside another script one longer than two letters, so "AS IS / TO BE 비교" is Korean)
@@ -1901,7 +1904,9 @@ Queries and retrieval.
   (#176, #218).
 - Korean BM25 recall, CJK fuzziness and NFC normalization in retrieval (#175, #177); MMR diversity compares words
   as entity linking does (`word_terms`: punctuation ignored, and Han, Hangul, Kana, Thai, Lao, Myanmar, Khmer and Tai
-  runs by character bigrams), so a Thai or Khmer near-duplicate is no longer kept as distinct (#567).
+  runs by character bigrams), so a Thai or Khmer near-duplicate is no longer kept as distinct (#567); its words are
+  read by one compiled pattern, the characters of a non-ASCII gap alone checked for marks (a walk over every
+  character made the terms 5.6 times the cost of the old whitespace split).
 - A query is translated only when ingestion translates or the caller asks (`RAGInput.target_language`), and its
   entities and keywords are extracted in the index language even when the caller asks for another: only the text
   units carry the requested language, so they matched no entity, relationship or report (#567, #583, #619).
@@ -1917,10 +1922,11 @@ Queries and retrieval.
   a query for about half an hour (#522).
 - Neptune reconnects after a closed websocket, a lost connection no longer leaks threads or hangs a write, and
   concurrent queries share one connection attempt (#258, #261, #263, #266, #267).
-- A short OpenSearch throttling burst no longer fails a query or a bulk write (#263, #264), and a throttled Neptune
-  or Gremlin read no longer empties a query's graph expansion: it is retried within the query deadline, as an
-  OpenSearch query request is; a long question no longer fails its lexical search, and long list filters no longer
-  multiply searches (#258, #260).
+- A short OpenSearch throttling burst no longer fails a query or a bulk write (#263, #264), and a throttled Neptune or
+  Gremlin read no longer empties a query's graph expansion: it is retried within the query deadline, as an OpenSearch
+  query request is, for throttling, memory-limit, concurrent-modification and temporary server errors only (a
+  deterministic traversal error fails on the first attempt); a long question no longer fails its lexical search, and
+  long list filters no longer multiply searches (#258, #260).
 - The text-units section is no longer empty for a corpus translated into five or more languages (#264).
 - The answer context stays within `max_tokens`, a small budget no longer yields an empty context, and CJK sections
   truncate at a character (#247, #258); an entity hit renders as `Entity` / `Type` / `Description` lines and items
@@ -1929,14 +1935,16 @@ Queries and retrieval.
   stores the type (`RELATED_TO` when untyped; not a filter key) and the line reads `A -[TYPE]-> B` (#562).
 - With MMR on, `local` and `drift` keep every reserved text-chunk slot (#247).
 - `simple` no longer ranks hits of different indexes by raw score, and each index brings its own `top_k` ×
-  `retrieval_multiplier` candidates, fused and reranked as one pool before the `top_k` cut (one search kept that many
-  across every index, two or three each, and lost to `naive`); it reads the summary tree where RAPTOR is built.
+  `retrieval_multiplier` candidates, fused on each index's min-max normalized score (rank fusion gave every index the
+  same share without a reranker) and reranked as one pool before the `top_k` cut (one search kept that many across
+  every index, two or three each, and lost to `naive`); it reads the summary tree where RAPTOR is built.
   Local and LightRAG incident-edge expansion keep no arbitrary hub edges; LightRAG keeps every typed edge between two
   entities; `hybrid` without keywords warns (#295, #317).
 - LightRAG `mix`/`hybrid` context includes the chunks the matched relationships cite (offline hybrid one-hop
   gold-chunk recall 0.30, now 0.86, 0.96 with rerank), and incremental and full builds pick the same chunks (#521,
-  #530); the pick runs on a worker thread, as PPR does: on a corpus whose hub entities cite thousands of units it held
-  the event loop for up to seconds a query, stalling every concurrent one.
+  #530); the pick, `local`'s and `structured`'s support ranking of their entities' units and PPR's tie order run on
+  a worker thread: on a corpus whose hub entities cite thousands of units each held the event loop for 0.2 s to
+  seconds a query, stalling every concurrent one.
 - An answer the output guardrail blocks writes no conversation memory, as a blocked query writes none (the refusal
   was saved and read by the next turn's follow-up rewrite).
 - `structured` refused on a namespace without the graph (a `raptor`-only one) names the methodologies that build it

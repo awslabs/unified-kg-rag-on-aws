@@ -24,6 +24,7 @@ from unified_kg_rag.domain.models import (
     RetrieverRole,
     SearchQuery,
     SearchStrategy,
+    SectionType,
 )
 from unified_kg_rag.shared import AWSServiceError
 from unified_kg_rag.shared.exceptions import (
@@ -103,7 +104,7 @@ class _OkRetriever:
                 content="Vendor supplies Buyer",
                 score=1.0,
                 source="entity-1",
-                retriever_type="document",
+                retriever_type=SectionType.ENTITY,
                 metadata={"id": "entity-1", "text_unit_ids": ["chunk-1"]},
             )
         ]
