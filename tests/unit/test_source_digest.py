@@ -41,6 +41,29 @@ def test_the_digest_is_of_the_bytes_however_they_are_read() -> None:
     assert compute_source_digest([raw], "parser-b") != whole
 
 
+def test_a_configured_encoding_keys_only_bytes_that_are_not_utf8() -> None:
+    # rv25 algo-index 2: the encoding a file that is not UTF-8 is read in
+    # (processing.document_parsing.encoding) changes its parse, so its digest;
+    # a UTF-8 file, split mid-character across reads too, keeps its digest.
+    utf8 = "가나다 Genève".encode()
+    chunks = [utf8[:1], utf8[1:8], utf8[8:]]
+    assert compute_source_digest(chunks, "p", "cp1252") == compute_source_digest(
+        [utf8], "p"
+    )
+    latin = "à Genève".encode("cp1252")
+    detected = compute_source_digest([latin], "p")
+    assert compute_source_digest([latin], "p", "cp1252") != detected
+    assert compute_source_digest([latin], "p", "cp1250") not in {
+        detected,
+        compute_source_digest([latin], "p", "cp1252"),
+    }
+    # A truncated multi-byte character at the end is not UTF-8 either.
+    cut = utf8[:2]
+    assert compute_source_digest([cut], "p", "cp1252") != (
+        compute_source_digest([cut], "p")
+    )
+
+
 def test_the_parser_fingerprint_follows_the_loader(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

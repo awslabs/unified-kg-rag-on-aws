@@ -1079,7 +1079,8 @@ From a `main` checkout (formats and keys no release had):
   finance document whose extracted `category` was `hardware`) (#446, #661). See
   [filters](docs/reference/filters.md).
 - `processing.document_parsing.encoding`: the encoding the text formats that are not UTF-8 are read in instead of
-  the one detected (cp1252 for a French file detected as cp1250). See
+  the one detected (cp1252 for a French file detected as cp1250); setting it parses those files again in the next
+  incremental run, and no UTF-8 file. See
   [ingest](docs/guides/ingest.md#large-and-heterogeneous-corpora).
 - Documents from memory: `DataIngestionPipeline.insert_documents([InputDocument(id=..., text=..., filters=...)])`
   adds or updates documents, `delete_documents(ids)` deletes them, through the incremental path of `run` (one run

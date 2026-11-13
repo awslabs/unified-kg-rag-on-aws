@@ -42,6 +42,7 @@ outside the pipeline); the pipeline stages re-derive the id against the root.
 
 from __future__ import annotations
 
+import codecs
 import hashlib
 import json
 import re
@@ -111,14 +112,39 @@ def compute_text_hash(text: str) -> str:
     return compute_hash(text, length=_ID_HASH_LENGTH)
 
 
-def compute_source_digest(raw: Iterable[bytes], parser_fingerprint: str) -> str:
+def compute_source_digest(
+    raw: Iterable[bytes],
+    parser_fingerprint: str,
+    non_utf8_encoding: str | None = None,
+) -> str:
     """The digest of a source file's bytes (``raw``, in order) as
     ``parser_fingerprint`` (the parser's identity and version) reads them:
-    equal digests give equal parsed text."""
+    equal digests give equal parsed text.
+
+    ``non_utf8_encoding`` is the encoding the parser reads bytes in that do
+    not decode as UTF-8 (``processing.document_parsing.encoding``, for a
+    loader that takes one): bytes that do not are keyed with it too, so
+    setting or changing it parses those files again. Bytes that decode as
+    UTF-8 are read as UTF-8 whatever it is, and keep their digest; ``None``
+    (detected per file) keys none."""
     digest = hashlib.sha256(parser_fingerprint.encode("utf-8"))
     digest.update(b"\0")
+    decoder = codecs.getincrementaldecoder("utf-8")() if non_utf8_encoding else None
+    utf8 = True
     for chunk in raw:
         digest.update(chunk)
+        if decoder is not None and utf8:
+            try:
+                decoder.decode(chunk)
+            except UnicodeDecodeError:
+                utf8 = False
+    if decoder is not None and utf8:
+        try:
+            decoder.decode(b"", final=True)
+        except UnicodeDecodeError:
+            utf8 = False
+    if not utf8:
+        digest.update(b"\0encoding=" + str(non_utf8_encoding).encode("utf-8"))
     return digest.hexdigest()[:_ID_HASH_LENGTH]
 
 

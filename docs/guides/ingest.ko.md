@@ -152,7 +152,8 @@ temperature, 추론 설정입니다.
   `.md`, `.csv`, `.json`, `.html`)은 UTF-8로 읽고, 아니면 charset-normalizer가 감지한
   인코딩으로 읽습니다. 인코딩을 감지하지 못한 파일(텍스트 확장자를 단 바이너리 파일)은
   파싱에 실패하고 실패로 집계됩니다. 감지가 비슷한 다른 인코딩을 고르면(프랑스어 cp1252
-  파일을 cp1250으로) `processing.document_parsing.encoding`을 지정하세요.
+  파일을 cp1250으로) `processing.document_parsing.encoding`을 지정하세요. 다음 실행은
+  UTF-8이 아닌 파일만 다시 파싱합니다(UTF-8 파일은 기록을 그대로 둡니다).
 - **다국어:** [다국어 코퍼스](./multilingual.ko.md)를 참고하세요.
 - **이질적인 도메인:** `entity_types`를 여러 도메인의 합집합으로 맞추거나, 도메인마다
   [인덱스 접미사](../concepts/scopes-and-namespaces.ko.md#인덱스-접미사)를 따로 두세요.
