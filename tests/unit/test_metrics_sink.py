@@ -149,6 +149,7 @@ def test_cli_sink_takes_the_environment_from_the_task(monkeypatch) -> None:  # t
     monkeypatch.setenv("UKR_METRICS_ENVIRONMENT", "prod")
     runner = cli.IngestionPipelineRunner.__new__(cli.IngestionPipelineRunner)
     runner.args = SimpleNamespace(metrics_sink="cloudwatch")
+    runner.json_output = False
     sink = runner._build_metrics_sink()
     assert isinstance(sink, CloudWatchEMFSink)
     assert sink._environment == "prod"

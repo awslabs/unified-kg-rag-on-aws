@@ -148,8 +148,9 @@ def build_parser() -> argparse.ArgumentParser:
         parser,
         "Where to send query metrics: 'none' (default) or 'cloudwatch' "
         "(CloudWatch EMF to stderr, with the logs, as stdout is the protocol's: "
-        "query_latency_ms and the outcome counts query_failed, query_degraded "
-        "and query_abstained of each kg_answer call under unified_kg_rag/query, "
+        "query_latency_ms, the outcome counts query_failed, query_degraded "
+        "and query_abstained, and query_throttled_requests of each kg_answer "
+        "call under unified_kg_rag/query, "
         "with an Environment dimension when UKR_METRICS_ENVIRONMENT is set and "
         "the Strategy that ran), which the CDK stack's query alarms read",
     )
@@ -222,7 +223,7 @@ async def serve(args: argparse.Namespace, config: Config) -> int:
     loop = asyncio.get_running_loop()
     executor = event_loop.configure_event_loop(loop, config.processing.io_workers)
     # The query metrics go to stderr: stdout is the stdio protocol's.
-    sink = build_metrics_sink(args.metrics_sink, query=True, stream=sys.stderr)
+    sink = build_metrics_sink(args.metrics_sink, query=True, stdout_taken=True)
     chain = GraphRAGChain(
         config=config,
         providers=build_providers(config, metrics_sink=sink),

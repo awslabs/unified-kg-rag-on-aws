@@ -285,9 +285,10 @@ def test_the_console_questions_publish_query_metrics_when_asked(
     sink = built[0]["providers"].metrics_sink
     assert isinstance(sink, CloudWatchEMFSink)
     assert set(sink._dimension_keys) == {"Strategy", "Environment"}
-    # Both would write to stdout.
-    monkeypatch.setattr(run_console, "missing_extra", lambda: [])
-    with pytest.raises(SystemExit) as exc:
-        run_console.main(["--metrics-sink", "cloudwatch", "--output-format", "json"])
-    assert exc.value.code == 2
-    assert "both write to stdout" in capsys.readouterr().err
+    assert not sink._emf_logger.name.endswith(".stderr")
+    # With --output-format json, stdout carries the status: EMF on stderr.
+    stderr_factory = run_console._chain_factory("cloudwatch", stdout_taken=True)
+    assert stderr_factory is not None
+    stderr_factory(Config())
+    emf_logger = built[1]["providers"].metrics_sink._emf_logger
+    assert emf_logger.name.endswith(".stderr")

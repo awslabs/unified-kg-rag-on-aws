@@ -1094,7 +1094,11 @@ async def test_neptune_query_reads_retry_what_another_attempt_may_fix(
         (596, "temporary", 2),
         (429, "too many requests", 2),
         (500, json.dumps({"code": "ConcurrentModificationException"}), 2),
-        (500, json.dumps({"code": "InternalFailureException"}), 2),
+        # Neptune's guide (rv26): TooManyRequestsException is "Ok to Retry?
+        # Yes" whatever status the websocket carries; InternalFailureException
+        # is "No".
+        (500, json.dumps({"code": "TooManyRequestsException"}), 2),
+        (500, json.dumps({"code": "InternalFailureException"}), 1),
     ],
 )
 async def test_neptune_query_reads_retry_only_the_approved_errors(

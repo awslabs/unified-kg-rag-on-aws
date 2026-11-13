@@ -763,3 +763,30 @@ def test_the_known_good_warning_says_whether_the_errors_count(
         assert "indexed without them, counted for none" in warning
     else:
         assert "counted against their documents" in warning
+
+
+def test_a_client_errors_http_status_is_part_of_its_cause() -> None:
+    # Old behaviour (rv26): only describe_cause read a botocore ClientError's
+    # status from its response metadata, so the ledger's cause key held
+    # none and a 500 and a 503 of one code were counted as one cause.
+    from unified_kg_rag.adapters.llm.retry import FailureLedger, describe_cause
+
+    def client_error(status: int) -> boto_exc.ClientError:
+        return boto_exc.ClientError(
+            {
+                "Error": {"Code": "ServiceUnavailableException", "Message": "x"},
+                "ResponseMetadata": {"HTTPStatusCode": status},
+            },
+            "Converse",
+        )
+
+    ledger = FailureLedger()
+    for status in (500, 503, 503):
+        ledger.record(client_error(status))
+    found = ledger.dominant_count()
+    assert found is not None
+    error, count = found
+    assert count == 2
+    assert describe_cause(error) == (
+        "ClientError ServiceUnavailableException, HTTP 503"
+    )

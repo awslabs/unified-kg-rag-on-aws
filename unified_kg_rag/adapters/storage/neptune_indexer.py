@@ -1769,7 +1769,9 @@ class NeptuneIndexer(GraphIndexer):
         a new one. With ``results`` its results are returned, else ``[]``.
         The final failure is logged at ``exhausted_level``. Unless it only
         reads (``fenced=False``), each attempt checks the run's write fence
-        first, so a run that lost its lease stops between attempts.
+        first, so a run that lost its lease stops between attempts. Every
+        error but a permanent one is retried, wider than a query read's
+        approved list (``is_transient_neptune_error`` says why).
         """
         max_attempts = self.config.retry.graph_store_max_attempts
         delay = self.config.retry.base_delay_seconds

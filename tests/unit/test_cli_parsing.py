@@ -513,26 +513,29 @@ def test_rag_runner_builds_the_cloudwatch_sink_of_the_task(
     assert set(sink._dimension_keys) == {"Strategy", "Environment"}
 
 
-def test_rag_cli_rejects_json_output_with_the_cloudwatch_metrics_sink(
-    monkeypatch: pytest.MonkeyPatch,
+def test_rag_cli_sends_its_emf_to_stderr_with_json_output(
+    config, mocker, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # EMF records go to stdout, where the JSON result goes.
+    # Old behaviour: --output-format json with --metrics-sink cloudwatch was
+    # refused (both wrote to stdout), so a JSON-reading host could not
+    # publish query metrics; the EMF now goes to stderr, as the MCP server's.
+    from unified_kg_rag.shared.metrics import CloudWatchEMFSink
+
     monkeypatch.setattr(
         sys,
         "argv",
-        [
-            "run-rag",
-            "-q",
-            "hi",
-            "--output-format",
-            "json",
-            "--metrics-sink",
-            "cloudwatch",
-        ],
+        ["run-rag", "-q", "hi", "--output-format", "json"]
+        + ["--metrics-sink", "cloudwatch"],
     )
-    with pytest.raises(SystemExit) as exc:
-        run_rag_chain.CommandLineInterface().parse_args()
-    assert exc.value.code == 2
+    args = run_rag_chain.CommandLineInterface().parse_args()
+    mocker.patch.object(run_rag_chain, "load_cli_config", return_value=config)
+    sink = run_rag_chain.RAGChainRunner(args).metrics_sink
+    assert isinstance(sink, CloudWatchEMFSink)
+    assert sink._emf_logger.name == "unified_kg_rag.emf.stderr"
+    text = run_rag_chain.RAGChainRunner(
+        _rag_parser().parse_args(["-q", "hi", "--metrics-sink", "cloudwatch"])
+    ).metrics_sink
+    assert text._emf_logger.name != "unified_kg_rag.emf.stderr"
 
 
 async def test_rag_runner_exits_non_zero_on_error_fallback(

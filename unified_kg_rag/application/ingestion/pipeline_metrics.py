@@ -304,8 +304,9 @@ def stage_usage_metrics(context: PipelineContext, stage_name: str) -> dict[str, 
     """The flat LLM usage metrics of a stage that called a model, sent a
     model request (an embedding stage's) or was served from the response
     cache (none for a model-free stage, so no custom-metric series is
-    created for it): ``llm_calls_<stage>``, ``llm_input_tokens_<stage>``,
-    ``llm_output_tokens_<stage>``, ``llm_throttles_<stage>`` (requests the
+    created for it): ``llm_calls_<stage>``, ``llm_input_tokens_<stage>``
+    and ``llm_output_tokens_<stage>`` (a stage that called a language model
+    only), ``llm_throttles_<stage>`` (requests the
     provider throttled), and, summed over the stages by a Sum statistic,
     ``llm_cache_hits``, ``llm_throttles`` and ``llm_requests`` (every
     request sent to Bedrock, the language, embedding and rerank models'
@@ -325,15 +326,21 @@ def stage_usage_metrics(context: PipelineContext, stage_name: str) -> dict[str, 
     ):
         return {}
     throttles = usage.get("throttled_requests", 0)
-    return {
-        f"llm_calls_{stage_name}": usage.get("llm_calls", 0),
-        f"llm_input_tokens_{stage_name}": usage.get("input_tokens", 0),
-        f"llm_output_tokens_{stage_name}": usage.get("output_tokens", 0),
+    metrics = {
         f"llm_throttles_{stage_name}": throttles,
         "llm_cache_hits": usage.get("cache_hits", 0),
         "llm_throttles": throttles,
         "llm_requests": usage.get("sent_requests", 0),
     }
+    if any(usage.get(name) for name in ("llm_calls", "cache_hits", "failed_calls")):
+        # Only a stage that called a language model (not one that only
+        # embeds, as indexing): always-zero series are billed too.
+        metrics |= {
+            f"llm_calls_{stage_name}": usage.get("llm_calls", 0),
+            f"llm_input_tokens_{stage_name}": usage.get("input_tokens", 0),
+            f"llm_output_tokens_{stage_name}": usage.get("output_tokens", 0),
+        }
+    return metrics
 
 
 def calculate_stage_performance(

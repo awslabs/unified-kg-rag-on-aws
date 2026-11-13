@@ -366,4 +366,10 @@ def test_throttled_requests_are_emitted_even_when_every_call_failed() -> None:
         context({"sent_requests": 40, "throttled_requests": 3}), "graph_extraction"
     )
     assert (embedding["llm_throttles"], embedding["llm_requests"]) == (3, 40)
+    # Regression (rv26): with always-zero calls and token series (billed).
+    assert not any(
+        name.startswith(("llm_calls_", "llm_input_tokens_", "llm_output_tokens_"))
+        for name in embedding
+    )
+    assert failed["llm_calls_graph_extraction"] == 0
     assert stage_usage_metrics(context({}), "graph_extraction") == {}

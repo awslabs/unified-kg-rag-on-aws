@@ -149,11 +149,11 @@ def _build_parser() -> argparse.ArgumentParser:
     add_metrics_sink_argument(
         parser,
         "Where to send the questions' query metrics: 'none' (default) or "
-        "'cloudwatch' (CloudWatch EMF to stdout: query_latency_ms and the "
-        "outcome counts query_failed, query_degraded and query_abstained under "
+        "'cloudwatch' (CloudWatch EMF to stdout, to stderr with --output-format "
+        "json: query_latency_ms, the outcome counts query_failed, "
+        "query_degraded and query_abstained, and query_throttled_requests under "
         "unified_kg_rag/query, with an Environment dimension when "
-        "UKR_METRICS_ENVIRONMENT is set and the Strategy that ran; not with "
-        "--output-format json)",
+        "UKR_METRICS_ENVIRONMENT is set and the Strategy that ran)",
     )
     add_config_arguments(parser)
     add_output_format_argument(parser)
@@ -195,15 +195,18 @@ def _bind(host: str, port: int) -> socket.socket:
     return sock
 
 
-def _chain_factory(metrics_sink: str) -> Callable[[Config], Any] | None:
+def _chain_factory(
+    metrics_sink: str, *, stdout_taken: bool = False
+) -> Callable[[Config], Any] | None:
     """The questions' chain builder publishing their query metrics to the
-    ``--metrics-sink`` sink (None, without one: the console's default)."""
+    ``--metrics-sink`` sink (None, without one: the console's default), on
+    stderr when ``stdout_taken`` (``--output-format json``)."""
     if metrics_sink == "none":
         return None
     from unified_kg_rag.application.bootstrap import build_providers
     from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
 
-    sink = build_metrics_sink(metrics_sink, query=True)
+    sink = build_metrics_sink(metrics_sink, query=True, stdout_taken=stdout_taken)
     return lambda config: GraphRAGChain(
         config=config, providers=build_providers(config, metrics_sink=sink)
     )
@@ -214,12 +217,6 @@ def main(argv: list[str] | None = None) -> int:
     load_cli_dotenv()
     args = _build_parser().parse_args(argv)
     as_json = json_output(args)
-    if as_json and args.metrics_sink == "cloudwatch":
-        # EMF records go to stdout, where the JSON status goes.
-        usage_error(
-            "--output-format json cannot be combined with --metrics-sink "
-            "cloudwatch: both write to stdout"
-        )
     if missing := missing_extra():
         usage_error(
             f"run-console needs {extra_hint('console')}; missing: "
@@ -306,7 +303,10 @@ def main(argv: list[str] | None = None) -> int:
 
     server = uvicorn.Server(
         uvicorn.Config(
-            create_app(options, chain_factory=_chain_factory(args.metrics_sink)),
+            create_app(
+                options,
+                chain_factory=_chain_factory(args.metrics_sink, stdout_taken=as_json),
+            ),
             # Uvicorn's own records: --log-level when given.
             log_level=(args.log_level or "WARNING").lower(),
             access_log=False,

@@ -99,8 +99,9 @@ inside one call (its `RetryAttempts`): the call counts once in `llm_calls`,
 but a request resent after a read timeout or a server error is a Bedrock
 invocation of its own (a resent throttled one is not). `sent_requests`
 counts every request sent to Bedrock and `throttled_requests` those Bedrock
-throttled, each attempt once (a botocore hook of every Bedrock runtime
-client, the language, embedding and rerank models'; a throttling error
+throttled, each attempt once (a botocore hook of the model clients: the
+language, embedding and rerank models'; not the CountTokens client, whose
+free calls would dilute the share, nor the guardrail's; a throttling error
 inside a response stream is not counted). So Bedrock's
 CloudWatch `Invocations` can exceed `llm_calls` by up to `request_retries +
 failed_calls`, plus any calls made outside a usage scope (the `run-eval`

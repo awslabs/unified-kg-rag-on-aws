@@ -21,7 +21,7 @@ from collections.abc import (
     Mapping,
 )
 from contextlib import AbstractContextManager, aclosing, nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal, Self, TypeVar, cast
 
 from langchain_core.exceptions import OutputParserException
@@ -222,7 +222,7 @@ from unified_kg_rag.shared.metrics import (
     QUERY_METRICS_NAMESPACE,
     QUERY_THROTTLED_METRIC,
 )
-from unified_kg_rag.shared.usage import UsageMeter, usage_scope
+from unified_kg_rag.shared.usage import UsageMeter, metering, usage_scope
 from unified_kg_rag.shared.utils import (
     configure_event_loop,
     error_digest,
@@ -704,11 +704,26 @@ class SearchOutput(BaseModel):
     )
 
 
+def _strategy_dimension(value: Any, default: str = "auto") -> str:
+    """The ``Strategy`` value of a query's metrics: ``value``'s
+    ``SearchStrategy`` (``default`` when it names none), or ``invalid`` for
+    a value that is no strategy (a refused input's), so a caller's string
+    never opens a new billed series."""
+    if value is None or value == "":
+        return default
+    try:
+        return SearchStrategy(getattr(value, "value", value)).value
+    except (TypeError, ValueError):
+        return "invalid"
+
+
 @dataclass
 class _StreamOutcome:
     """What a streamed query's metrics and failure read (``astream``): its
-    id, its trace's, the input once admitted, and the class of the failure
-    its error answer absorbed (``processing.ignore_errors``)."""
+    id, its trace's, the input once admitted, the class of the failure its
+    error answer absorbed (``processing.ignore_errors``), its usage meter
+    and its answer's metadata (degraded steps, abstention), as ``ainvoke``'s
+    ``RAGOutput`` carries them."""
 
     query_id: str
     trace_id: str | None = None
@@ -716,6 +731,10 @@ class _StreamOutcome:
     error_class: ErrorClass | None = None
     # The strategy that ran (auto's route), once retrieval did.
     ran: Any = None
+    # The query's model calls and requests, once retrieval started.
+    meter: UsageMeter | None = None
+    # The streamed answer's metadata, once it was formatted.
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
@@ -2476,6 +2495,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         error_class: ErrorClass | None = None,
         usage: Mapping[str, Any] | None = None,
         ran: Any = None,
+        metadata: Mapping[str, Any] | None = None,
     ) -> None:
         """Publish an answered query's latency and outcome through the
         providers' metrics sink (``Providers.metrics_sink``: ``--metrics-sink
@@ -2488,24 +2508,25 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         ``query_throttled_requests`` (the requests Bedrock throttled, when
         the usage is known). Answers only, so a retrieval-only search does
         not lower the answer latency. ``query``: the admitted input, or the
-        one the admission refused; ``ran``: the strategy that ran, when no
-        ``result`` names it (a streamed answer's)."""
-        metadata = result.metadata if result is not None else {}
+        one the admission refused; ``ran`` and ``metadata``: the strategy
+        that ran and the answer's metadata, when no ``result`` carries them
+        (a streamed answer's). The ``Strategy`` dimension is a
+        ``SearchStrategy`` value, or ``invalid`` for a refused input that
+        names none (one series, not one per string)."""
+        if result is not None:
+            metadata = result.metadata
+            ran = result.search_results.search_strategy
+        metadata = metadata or {}
         if error is not None:
             error_class = classify(error)
         elif metadata.get("error"):
             error_class = error_class_of(metadata.get(ERROR_CLASS_KEY))
-        requested = (
-            query.get("search_strategy")
-            if isinstance(query, dict)
-            else query.search_strategy
-        )
-        strategy = str(getattr(requested, "value", requested) or "auto")
-        if result is not None:
-            ran = result.search_results.search_strategy
+        # Any input, a refused one too: never an error here in its place.
+        fields = query if isinstance(query, dict) else getattr(query, "__dict__", {})
+        strategy = _strategy_dimension(fields.get("search_strategy"))
         if ran is not None and error_class is None:
-            strategy = str(getattr(ran, "value", ran) or strategy)
-        namespace = query.get("suffix") if isinstance(query, dict) else query.suffix
+            strategy = _strategy_dimension(ran, strategy)
+        namespace = fields.get("suffix")
         with contextlib.suppress(Exception):
             # Resolved as the admission resolves it (a refused input's too).
             namespace = resolve_namespace(self.config, namespace)
@@ -3405,7 +3426,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                     outcome.rag_input or input,
                     error=stopped if isinstance(stopped, Exception) else None,
                     error_class=outcome.error_class,
+                    usage=outcome.meter.snapshot() if outcome.meter else None,
                     ran=outcome.ran,
+                    metadata=outcome.metadata,
                 )
         self._background_extractions.keep(leftovers, self._time_left(started))
 
@@ -3455,7 +3478,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                         "kg_rag.query",
                         self._query_span_attributes(rag_input, search=False),
                     ) as span,
+                    # Its usage and degradation ledger, as _query's; the
+                    # answer's later steps meter into it again (metering).
+                    usage_scope() as outcome.meter,
+                    query_scope(),
                 ):
+                    ledger = current_ledger()
                     ids = observability.current_trace_ids()
                     outcome.trace_id = ids[0] if ids else None
                     async with deadline.scope():
@@ -3482,6 +3510,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             if blocking is not None:
                 yield blocking.text
                 return
+            meter = outcome.meter
+            assert meter is not None
             answer_runnable = self._answer_generation_step(state)
             # The answer's model span starts after the query span has ended,
             # in a trace of its own; its run metadata carries the session and
@@ -3513,11 +3543,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             # answer the model wrote instead becomes the fixed reply.
             declining = marker is not None and self._declines_insufficient(state)
             while True:
-                async with deadline.scope(started):
-                    try:
-                        chunk = await anext(stream)
-                    except StopAsyncIteration:
-                        break
+                with metering(meter):
+                    async with deadline.scope(started):
+                        try:
+                            chunk = await anext(stream)
+                        except StopAsyncIteration:
+                            break
                 started = None
                 text = str(chunk)
                 if not text:
@@ -3534,16 +3565,17 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             self._abstention_step(state)
             if self._screen_outputs:
                 # Nothing was delivered yet: the user sees only screened text.
-                async with deadline.scope():
-                    verdict = await self._screen_output(
-                        state["answer"],
-                        guard_records,
-                        grounding=(
-                            self._grounding_context(state)
-                            if self._ground_outputs
-                            else None
-                        ),
-                    )
+                with metering(meter):
+                    async with deadline.scope():
+                        verdict = await self._screen_output(
+                            state["answer"],
+                            guard_records,
+                            grounding=(
+                                self._grounding_context(state)
+                                if self._ground_outputs
+                                else None
+                            ),
+                        )
                 state["answer"] = verdict.text
                 answer_blocked = verdict.action is GuardAction.BLOCKED
                 if verdict.text:
@@ -3583,10 +3615,17 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             yield f"\n\n{DEFAULT_ERROR_MESSAGE}" if delivered else DEFAULT_ERROR_MESSAGE
             return
 
+        output = self._format_output_step(state)
+        # The query's degraded steps, as _query's ledger reports them; its
+        # degradation and abstention go to the query metrics.
+        if ledger is not None:
+            output.metadata.update(ledger.metadata())
+        outcome.metadata = output.metadata
         if answer_blocked:
             return
-        async with deadline.scope():
-            await self._save_memory(self._format_output_step(state), rag_input)
+        with metering(meter):
+            async with deadline.scope():
+                await self._save_memory(output, rag_input)
 
 
 # The state key of the answer context's section sources, with the context

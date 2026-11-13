@@ -470,11 +470,12 @@ class CommandLineInterface:
         add_metrics_sink_argument(
             parser,
             "Where to send query metrics: 'none' (default) or 'cloudwatch' "
-            "(CloudWatch EMF to stdout: query_latency_ms and the outcome counts "
-            "query_failed, query_degraded and query_abstained of each --mode rag "
-            "query under unified_kg_rag/query, with an Environment dimension "
-            "when UKR_METRICS_ENVIRONMENT is set and the Strategy that ran; not "
-            "with --output-format json)",
+            "(CloudWatch EMF to stdout, to stderr with --output-format json: "
+            "query_latency_ms, the outcome counts query_failed, query_degraded "
+            "and query_abstained, and query_throttled_requests of each --mode "
+            "rag query under unified_kg_rag/query, with an Environment "
+            "dimension when UKR_METRICS_ENVIRONMENT is set and the Strategy "
+            "that ran)",
         )
         parser.add_argument(
             "--verbose",
@@ -528,12 +529,6 @@ class CommandLineInterface:
                 "--output-format json is not supported with --interactive, a "
                 "chat on the terminal; use --query for JSON output"
             )
-        if args.output_format == "json" and args.metrics_sink == "cloudwatch":
-            # EMF records go to stdout, where the JSON result goes.
-            self.parser.error(
-                "--output-format json cannot be combined with --metrics-sink "
-                "cloudwatch: both write to stdout"
-            )
         return args
 
 
@@ -551,7 +546,9 @@ class RAGChainRunner:
         # status lines and logs all go to stderr; only the JSON goes to stdout.
         self.json_output = json_output(args)
         setup_cli_logging(self.config, args)
-        self.metrics_sink = build_metrics_sink(args.metrics_sink, query=True)
+        self.metrics_sink = build_metrics_sink(
+            args.metrics_sink, query=True, stdout_taken=self.json_output
+        )
         self.rag_chain: GraphRAGChain | None = None
         self.interactive_commands: dict[str, Callable[..., Any]] = {
             "help": self._handle_help,

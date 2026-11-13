@@ -10,9 +10,11 @@ client: one remembers the call's model, the other counts every attempt
 (``needs-retry`` fires once per attempt, the last one included) in the open
 ``shared.usage`` scopes, under the client's role and that model, as
 ``sent_requests``, and the attempts that came back throttled (HTTP 429 or a
-throttling error code) as ``throttled_requests`` too. Every Bedrock runtime
-client is counted (the language, embedding and rerank models'), so the
-throttled share has one denominator whatever the model. The handlers run in
+throttling error code) as ``throttled_requests`` too. The model clients
+are counted (the language, embedding and rerank models'), so the throttled
+share has one denominator whatever the model; the CountTokens client is not
+(its calls are free and would dilute the share), nor the guardrail's
+(``ApplyGuardrail``, no model request). The handlers run in
 the calling thread, whose context holds the scopes (as the usage callback's
 do). A throttling error raised inside an event stream, after the response
 started, is not a request botocore retries and is not counted.

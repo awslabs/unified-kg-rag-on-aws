@@ -1016,18 +1016,26 @@ def test_every_cli_main_handles_sigterm(main: Callable[..., object]) -> None:
     assert getattr(main, "__wrapped__", None) is not None
 
 
-def test_ingestion_rejects_json_with_the_cloudwatch_metrics_sink(
+def test_ingestion_sends_its_emf_to_stderr_with_json_output(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # CloudWatch EMF records go to stdout, where the JSON result goes.
+    # Old behaviour: refused, as both wrote to stdout; the EMF now goes to
+    # stderr, where the logs of a JSON run go.
+    from unified_kg_rag.shared.metrics import CloudWatchEMFSink
+
     monkeypatch.setattr(
         sys,
         "argv",
         ["run-ingestion", "--output-format", "json", "--metrics-sink", "cloudwatch"],
     )
-    with pytest.raises(SystemExit) as exc:
-        run_ingestion_pipeline.CommandLineInterface().parse_args()
-    assert exc.value.code == 2
+    args = run_ingestion_pipeline.CommandLineInterface().parse_args()
+    runner = run_ingestion_pipeline.IngestionPipelineRunner.__new__(
+        run_ingestion_pipeline.IngestionPipelineRunner
+    )
+    runner.args, runner.json_output = args, True
+    sink = runner._build_metrics_sink()
+    assert isinstance(sink, CloudWatchEMFSink)
+    assert sink._emf_logger.name == "unified_kg_rag.emf.stderr"
 
 
 def test_ingestion_json_result_lists_each_stage(

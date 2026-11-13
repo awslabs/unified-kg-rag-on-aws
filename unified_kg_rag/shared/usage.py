@@ -34,9 +34,10 @@ Bedrock call running on a worker thread), so it is billed. One that ends
 later settles in the scopes still open (a ``run-eval`` run's); a snapshot
 already taken keeps the estimate. Retries are calls too, but the requests
 the SDK resends inside one call (botocore's own retries) are not: they are
-counted apart, in ``request_retries``. A botocore hook of every Bedrock
-runtime client (``adapters.aws.bedrock_throttles``: the language, embedding
-and rerank models') counts each request as it comes back, in
+counted apart, in ``request_retries``. A botocore hook of the Bedrock
+model clients (``adapters.aws.bedrock_throttles``: the language, embedding
+and rerank models', not CountTokens' or the guardrail's) counts each
+request as it comes back, in
 ``sent_requests``, and those Bedrock throttled in ``throttled_requests``.
 ``input_tokens`` includes the prompt cache reads and writes, also counted apart
 (``cache_read_input_tokens`` / ``cache_write_input_tokens``) since they are

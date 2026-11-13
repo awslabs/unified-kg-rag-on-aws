@@ -26,6 +26,7 @@ from iac.stacks.observability_stack import (
     QUERY_FAILED_METRIC,
     QUERY_LATENCY_METRIC,
     QUERY_NAMESPACE,
+    QUERY_THROTTLED_METRIC,
     SUMMARY_TREE_METRICS,
     ObservabilityStack,
 )
@@ -653,6 +654,7 @@ def test_query_latency_alarm_reads_the_run_rag_metric() -> None:
         ("FAILED", QUERY_FAILED_METRIC),
         ("DEGRADED", QUERY_DEGRADED_METRIC),
         ("ABSTAINED", QUERY_ABSTAINED_METRIC),
+        ("THROTTLED", QUERY_THROTTLED_METRIC),
     ):
         assert f'QUERY_{name}_METRIC = "{metric}"' in source
     for env, seconds in (("dev", 60), ("prod", 30)):
@@ -894,12 +896,20 @@ def test_doc_status_read_throttles_and_system_errors_alarm() -> None:
 def test_failed_queries_alarm_on_their_share() -> None:
     # Old behaviour: only latency alarmed, and a query that fails fast lowers
     # the p90 instead of raising it.
-    from iac.stacks.observability_stack import QUERY_OUTCOME_METRICS
+    from iac.stacks.observability_stack import (
+        QUERY_FAILURES_MIN_QUERIES,
+        QUERY_OUTCOME_METRICS,
+    )
 
+    # A quiet host's one failed query must not page (rv26).
+    assert QUERY_FAILURES_MIN_QUERIES > 1
     for env in ("dev", "prod"):
         alarm = _alarms({"env_name": env})["QueryFailures"]
         (expression,) = [m for m in alarm["Metrics"] if "Expression" in m]
-        assert expression["Expression"] == "100 * FILL(failed, 0) / queries"
+        assert expression["Expression"] == (
+            f"IF(queries >= {QUERY_FAILURES_MIN_QUERIES}, "
+            "100 * FILL(failed, 0) / queries, 0)"
+        )
         stats = {
             m["Id"]: m["MetricStat"] for m in alarm["Metrics"] if "MetricStat" in m
         }
@@ -916,7 +926,8 @@ def test_failed_queries_alarm_on_their_share() -> None:
         assert (alarm["EvaluationPeriods"], alarm["DatapointsToAlarm"]) == (3, 2)
         assert alarm["TreatMissingData"] == "notBreaching"
     body = json.dumps(_dashboard_body(_template()))
-    for name in QUERY_OUTCOME_METRICS:
+    # The throttled requests too (rv26: emitted, billed, read by nothing).
+    for name in (*QUERY_OUTCOME_METRICS, QUERY_THROTTLED_METRIC):
         assert f'"{QUERY_NAMESPACE}", "{name}"' in body
 
 
