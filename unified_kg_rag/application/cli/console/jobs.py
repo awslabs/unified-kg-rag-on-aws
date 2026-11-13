@@ -659,6 +659,13 @@ class JobManager:
             job.status = JobStatus.STOPPED
         else:
             job.status = JobStatus.FAILED
+        if job.kind is JobKind.INGEST and self.on_ingest_end is not None:
+            # With its status, before any await: no question meets the
+            # replaced index through the old chain once the job reads ended.
+            try:
+                self.on_ingest_end()
+            except Exception as e:  # noqa: BLE001 - a refresh must not fail the job
+                logger.warning("Refreshing after job %s failed: %s", job.id, e)
         job.warning_count, job.warnings = await asyncio.to_thread(
             _log_warnings, job.log_path
         )
@@ -673,11 +680,6 @@ class JobManager:
             job.status.value,
             code,
         )
-        if job.kind is JobKind.INGEST and self.on_ingest_end is not None:
-            try:
-                self.on_ingest_end()
-            except Exception as e:  # noqa: BLE001 - a refresh must not fail the job
-                logger.warning("Refreshing after job %s failed: %s", job.id, e)
 
     # -- stopping ---------------------------------------------------------
 
