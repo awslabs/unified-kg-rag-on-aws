@@ -456,24 +456,28 @@ class SQLiteGraphStore:
         self, label: str, ids: Iterable[str]
     ) -> list[tuple[str, str, str, dict[str, Any]]]:
         """``(id, source_id, target_id, props)`` of every edge of ``label``
-        between two of ``ids``: one indexed read of the edges leaving each
-        batch of them, the targets kept in the set here (any such edge
-        leaves one of them)."""
+        between two of ``ids``, one statement per pair of batches of them:
+        the edges leaving the sources are read off the index
+        (``edges_source_target``) and their targets checked there, so only
+        the edges within the set are read and decoded (a hub's thousands of
+        others are index entries). The ``+`` keeps SQLite from seeking every
+        source-target pair instead, which costs the square of the set's
+        size where the index read costs the sources' degrees."""
         members = list(dict.fromkeys(str(i) for i in ids))
-        wanted = set(members)
         found: list[tuple[str, str, str, dict[str, Any]]] = []
         with self.read("read neighbourhood edges") as connection:
-            for batch in batches(members):
-                rows = connection.execute(
-                    "SELECT id, source_id, target_id, props FROM edges "  # nosec B608 - ? marks only, values bound
-                    f"WHERE label = ? AND source_id IN ({placeholders(batch)})",
-                    [label, *batch],
-                ).fetchall()
-                found.extend(
-                    (edge_id, source, target, json.loads(props))
-                    for edge_id, source, target, props in rows
-                    if target in wanted
-                )
+            for sources in batches(members):
+                for targets in batches(members):
+                    rows = connection.execute(
+                        "SELECT id, source_id, target_id, props FROM edges "  # nosec B608 - ? marks only, values bound
+                        f"WHERE label = ? AND source_id IN ({placeholders(sources)}) "
+                        f"AND +target_id IN ({placeholders(targets)})",
+                        [label, *sources, *targets],
+                    ).fetchall()
+                    found.extend(
+                        (edge_id, source, target, json.loads(props))
+                        for edge_id, source, target, props in rows
+                    )
         return found
 
     def traverse(

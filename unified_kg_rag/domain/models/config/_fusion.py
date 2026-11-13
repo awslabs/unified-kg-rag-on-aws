@@ -137,7 +137,9 @@ class FusionConfig(ConfigSection):
         default_factory=dict,
         description=(
             "Per-source-bucket weights: reciprocal rank fusion scales each "
-            "bucket's 1/(rrf_k + rank) term. Keys are the source buckets the search "
+            "bucket's 1/(rrf_k + rank) term; simple's min-max fusion weighs "
+            "each bucket's min-max normalized score in the weighted mean "
+            "(divided by the weights' sum). Keys are the source buckets the search "
             "strategies emit: local (graph_entities, text_units, relationships, "
             "bridge_relationships, community_reports, claims), LightRAG "
             "(lightrag_entities, lightrag_relationships, "

@@ -917,12 +917,13 @@ def corpus_manifest_fingerprint(
                 not path.is_file()
                 or path.suffix.lower() not in suffixes
                 or is_excluded_source_path(path, root, root)
-                or any(
-                    real_source_path(path, root, root).is_relative_to(d)
-                    for d in excluded
-                )
             ):
                 continue
+            if excluded:
+                # Resolved once per file, not once per excluded directory.
+                real = real_source_path(path, root, root)
+                if any(real.is_relative_to(d) for d in excluded):
+                    continue
             entries.append(
                 f"{relative.as_posix()}\t{path.stat().st_size}\t{file_digest(path)}"
             )

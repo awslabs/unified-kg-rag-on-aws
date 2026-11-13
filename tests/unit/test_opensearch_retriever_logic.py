@@ -12,6 +12,7 @@ attributes the methods touch are set.
 from __future__ import annotations
 
 import asyncio
+import threading
 from collections import OrderedDict
 from typing import Any
 
@@ -721,6 +722,38 @@ async def test_hybrid_fuses_the_two_searches_client_side(
     assert [r.source for r in results] == ["c", "a", "b"]
     for r in results:
         assert r.score == pytest.approx(expected[r.source])
+
+
+@pytest.mark.parametrize("search_type", [SearchType.HYBRID, SearchType.LEXICAL])
+async def test_hits_are_parsed_off_the_event_loop(
+    retriever, config, mocker, search_type
+) -> None:
+    # Regression (rv26 perf low): the parse validates each hit's id lists
+    # (a hub's thousands of text_unit_ids), about 32 ms of every local query
+    # on the event loop.
+    prefix = config.indexing.opensearch.text_units_index_prefix
+    client = _Client({prefix: [("a", 9.0), ("b", 5.0)]}, {prefix: [("a", 0.9)]})
+    object.__setattr__(retriever, "_opensearch_client", client)
+    mocker.patch.object(
+        OpenSearchRetriever, "_get_query_vector", mocker.AsyncMock(return_value=[0.1])
+    )
+    mocker.patch.object(OpenSearchRetriever, "_check_embedding_settings")
+    retriever._unit_kind_mapped.add(retriever._get_name(prefix, None))
+    loop_thread = threading.get_ident()
+    threads: list[int] = []
+    parse = OpenSearchRetriever._parse_hit
+
+    def recording(self: OpenSearchRetriever, hit: dict[str, Any]) -> Any:
+        threads.append(threading.get_ident())
+        return parse(self, hit)
+
+    mocker.patch.object(OpenSearchRetriever, "_parse_hit", recording)
+    results = await retriever.aretrieve(
+        SearchQuery(
+            query="x", top_k=2, index_prefixes=[prefix], search_type=search_type
+        )
+    )
+    assert results and threads and loop_thread not in threads
 
 
 async def test_hybrid_ranking_does_not_depend_on_the_hits_asked_for(

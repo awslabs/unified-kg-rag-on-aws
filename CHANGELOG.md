@@ -379,7 +379,8 @@ See [`iac/README.md`](iac/README.md).
   `embedding_dimension` and `rerank_model_id`; `ModelRole.GLOBAL_REDUCE` is gone (#334, #577).
 - `PipelineContext.unit_extractions` replaces `entities`, `relationships` and `rejected_entities` (#322).
 - An invalid assignment to a config setting (`config.search.max_concurrency = 0`) raises `ValidationError` and
-  keeps the old value, as every config section validates an assignment against its field (`ConfigSection`); a section
+  keeps the old value, as every config section validates an assignment against its field (`ConfigSection`), and
+  `Config` itself (`config.search = "x"` raises; a section a whole-config check refuses is not kept); a section
   validated on its own (`SearchConfig.model_validate`) refuses an unknown key. Change settings across sections with
   `Config.updated({"dotted.key": value}, overlay={...})`, which returns a changed config validated whole, so the checks
   across sections run (every CLI flag, schema source and console selection that changes a config uses it): an
@@ -1600,8 +1601,11 @@ From a `main` checkout (formats and keys no release had):
   request per batch of sources), and `SearchQuery.max_hops` overrides the expansion depth (#597). A walk that stops at
   `max_iterations` before it converges is logged at WARNING, naming the settings to raise. Passages of equal score
   (those no seed reaches, all 0 when the edge read degraded) rank in the support order (the units most entities cite
-  first), not by id, so the text quota does not fill in id order; that order is computed on a worker thread, off the
-  event loop.
+  first), not by id, so the text quota does not fill in id order; that order, the PageRank graph and the entities'
+  unit counts are computed on a worker thread, off the event loop, and local's frequency filter reads a lineage only
+  up to its threshold; SQLite reads only the edges within the set, not every edge leaving a hub (13 hubs of 4,200
+  edges: 220-260 ms to 20-50 ms). On that corpus `local`'s p50 went from 2.0-2.5 s to 1.55 s, `ppr`'s from 0.5 s to
+  0.2 s, with the ranked units unchanged.
 - CDK: `-c neptune_audit_log=true` turns on Neptune audit logs, exported to CloudWatch Logs
   (`/aws/neptune/<cluster id>/audit`, created before the instances) with the CMK and `log_retention_days`
   (`neptune_parameter_group_family` names the engine's family, `neptune1.4` by default); reboot the instances after
@@ -1707,7 +1711,10 @@ From a `main` checkout (formats and keys no release had):
   ("AI", "OS", "ES6", "iPhone"), parts of compounds ("to-do", "AIとは"), of URLs, emails, paths and dotted names
   ("example.com", "admin@example.es", "/usr/bin/the") and the words of a quoted name ("Bank of America和…":
   capitalised words joined by a connective and an article at most, not by a sentence's other words) are no
-  function words, so "AI 모델 추천", "AIとは", "OS 설치" and "example.com 无法访问" are Korean, Japanese, Korean and Chinese,
+  function words (in a text with Latin words outside its names, its capitalised first word before an article opens
+  no name, and a name's opening article after such a word counts: "List the Globex Sensors contracts signed in 東京"
+  and "Show the Acme Robotics orders for 서울" are English, "Alexander the Great 의 업적은?" Korean), so
+  "AI 모델 추천", "AIとは", "OS 설치" and "example.com 无法访问" are Korean, Japanese, Korean and Chinese,
   "Who is the CEO of 한빛전자?" and "Compare 한빛전자 and 아크미" English, "with 문 사용법" Korean; a shouted text (three or more
   words, all in capitals; beside another script one longer than two letters, so "AS IS / TO BE 비교" is Korean)
   reads its words lowercased, so "QUI A SIGNÉ LE CONTRAT ?" is French; a colon joins a word only before "//", a digit
@@ -1970,7 +1977,8 @@ Queries and retrieval.
   as entity linking does (`word_terms`: punctuation ignored, and Han, Hangul, Kana, Thai, Lao, Myanmar, Khmer and Tai
   runs by character bigrams), so a Thai or Khmer near-duplicate is no longer kept as distinct (#567); its words are
   read by one compiled pattern, the characters of a non-ASCII gap alone checked for marks (a walk over every
-  character made the terms 5.6 times the cost of the old whitespace split).
+  character made the terms 5.6 times the cost of the old whitespace split); that gain is ASCII text's: Korean
+  bigrams cost what they did, and Devanagari, whose vowel signs split the pattern's runs, up to 1.4 times more.
 - A query is translated only when ingestion translates or the caller asks (`RAGInput.target_language`), and its
   entities and keywords are extracted in the index language even when the caller asks for another: only the text
   units carry the requested language, so they matched no entity, relationship or report (#567, #583, #619).

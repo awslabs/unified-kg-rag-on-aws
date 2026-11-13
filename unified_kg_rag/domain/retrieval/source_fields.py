@@ -54,17 +54,23 @@ def id_list(value: Any) -> list[str]:
     return [] if value is None else [str(value)]
 
 
+_STR = frozenset({str})
+
+
+def _decoded(value: Any) -> bool:
+    """Whether ``value`` is a list of non-empty strings already. Checked
+    in C (a hub entity's lineage holds thousands of ids, read on every
+    hit): every item truthy, and of type ``str``."""
+    return isinstance(value, list) and all(value) and set(map(type, value)) <= _STR
+
+
 def decode_list_fields(metadata: dict[str, Any]) -> dict[str, Any]:
     """``metadata`` with every :data:`LIST_FIELDS` value a ``list[str]``
     (itself when it already is: no copy)."""
     stale = [
         key
         for key in LIST_FIELDS.intersection(metadata)
-        if metadata[key] is not None
-        and not (
-            isinstance(metadata[key], list)
-            and all(isinstance(v, str) and v for v in metadata[key])
-        )
+        if metadata[key] is not None and not _decoded(metadata[key])
     ]
     if not stale:
         return metadata

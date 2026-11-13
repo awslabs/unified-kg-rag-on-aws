@@ -14,13 +14,13 @@ HippoRAG 2 (Gutiérrez et al., ICML 2025; OSU-NLP-Group/HippoRAG, MIT).
 from __future__ import annotations
 
 import time
+from collections.abc import Mapping
 
 from langchain_core.runnables import RunnableConfig
 
 from unified_kg_rag.adapters.retrieval.ppr_ranking import (
     PPR_SEED_TEXT_UNITS,
     PPRRankingMixin,
-    document_unit_ids,
     endpoint_ids,
     entity_id,
 )
@@ -109,14 +109,17 @@ class PPRSearchStrategy(PPRRankingMixin):
         seed_ids = list(budget)
 
         entities = await self._neighbourhood(query, seed_ids, budget)
-        counts = {entity_id(node): len(document_unit_ids(node)) for node in entities}
-        # Only entities in the graph seed (and take a link_top_k slot), as
-        # HippoRAG 2 seeds the phrases its graph holds.
-        reset = seed_weights(
-            [(score, [e for e in ends if e in counts]) for score, ends in scored],
-            counts,
-            settings.link_top_k,
-        )
+
+        def reset(counts: Mapping[str, int]) -> dict[str, float]:
+            # Only entities in the graph seed (and take a link_top_k slot), as
+            # HippoRAG 2 seeds the phrases its graph holds; weighed over the
+            # document units each cites (counted off the event loop).
+            return seed_weights(
+                [(score, [e for e in ends if e in counts]) for score, ends in scored],
+                counts,
+                settings.link_top_k,
+            )
+
         ranked, stats = await self._ppr_rank(
             query,
             entities,

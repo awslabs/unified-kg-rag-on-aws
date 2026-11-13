@@ -1390,9 +1390,12 @@ class TestStoredReportAnswers:
 
         # The report settings key the answers too.
         cd, batch = self._detector({"e1": "one", "e2": "two"})
-        # Unvalidated: a template the loader would refuse, to vary the key.
         cd.config.custom_prompts = cd.config.custom_prompts.model_copy(
-            update={"community_report_human": "Report {community_id}: {entities}"}
+            update={
+                "community_report_human": (
+                    "Report {community_id}: {entities} {relationships}"
+                )
+            }
         )
         cd.generate_reports(self._communities(), records=records)
         assert batch.asked == ["c1", "c2"]

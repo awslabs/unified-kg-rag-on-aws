@@ -40,7 +40,7 @@ from ..retrieval import (
     validate_path_segment,
 )
 from ._aws import AWSConfig, RetryConfig
-from ._common import ChunkLengthUnit, PipelineStageType
+from ._common import ChunkLengthUnit, PipelineStageType, _AssignmentChecked
 from ._evaluation import EvaluationConfig
 from ._graph import GraphConfig
 from ._indexing import IndexingConfig
@@ -66,7 +66,7 @@ from ._runtime import CacheConfig, LoggingConfig, MemoryConfig, ObservabilityCon
 from ._search import SearchConfig
 
 
-class Config(BaseModel):
+class Config(_AssignmentChecked):
     backend: Backend = Field(
         default=Backend.AWS,
         description=(

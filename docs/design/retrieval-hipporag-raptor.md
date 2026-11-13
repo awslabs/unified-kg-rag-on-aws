@@ -51,6 +51,10 @@ answer-level result (§9.1) showed it better than the earlier order.
   queries in one process that work waits on the interpreter lock, which
   the embedded engine's id and exclusion lookups, the dense-script test and
   the query CLIs' one BLAS thread (`launch.one_blas_thread`) keep small.
+  The entities' lineages (a hub cites thousands of units) are read on a
+  worker thread with the PageRank graph, once per entity for both the
+  links and the seed weights; on the event loop only the frequency filter
+  reads them, each up to its threshold (`cites_more_than`).
 
 **Data flow of `ppr`.**
 
@@ -180,10 +184,15 @@ cannot tell; the strategy then reads the relationships index.
   `scans_incident_edges` and, where the relationship vector index is
   built, the strategies read the edges from it as below (both endpoints in
   one terms query, no per-vertex scan); the graph serves them without it.
-- SQLite (`SQLiteGraphRetriever`): one indexed `IN` read of the edges
-  leaving each batch of 400 vertices (an edge within the set leaves one of
-  them), the target kept when in the set, the first `n` per vertex by id in
-  Python (`cap_edges_per_vertex`, once, in `aneighbourhood_edges`).
+- SQLite (`SQLiteGraphRetriever`): one read per pair of batches of 400
+  vertices, the edges leaving the source batch (an edge within the set
+  leaves one of them) read off the `(label, source_id, target_id)` index
+  with the target checked there, so only the edges within the set are read
+  and decoded (13 hubs of 4,200 edges: 220-260 ms to 20-50 ms for 60-310
+  vertices); the target is not a
+  seek key (`+target_id`), which would probe every pair, the square of the
+  set's size. The first `n` per vertex by id in Python
+  (`cap_edges_per_vertex`, once, in `aneighbourhood_edges`).
 - Under a document filter (and from a graph that scans incident edges)
   the graph cannot tell which edges a passing document states, so the
   edges come from the relationships index
