@@ -317,6 +317,23 @@ class ErrorClass(StrEnum):
     MODEL_UNREACHABLE = "model_unreachable"
     FAILURE = "failure"
 
+    @property
+    def is_caller_error(self) -> bool:
+        """Whether the caller's request is at fault (an argument, a filter,
+        a namespace without an index, a strategy it does not hold), not the
+        service: the query metrics do not count it in ``query_failed``."""
+        return self in _CALLER_ERRORS
+
+
+_CALLER_ERRORS = frozenset(
+    {
+        ErrorClass.INVALID_FILTER,
+        ErrorClass.INVALID_ARGUMENT,
+        ErrorClass.NOT_INDEXED,
+        ErrorClass.INDEX_NOT_FOUND,
+    }
+)
+
 
 # Most specific first: MethodologyNotIndexedError is a ConfigurationError,
 # a ModelUnreachableError and a StoreConnectionError ConnectionErrors.
@@ -356,3 +373,31 @@ def error_class_of(value: object) -> ErrorClass:
 
 # The public name of :func:`classify` (``unified_kg_rag.classify_error``).
 classify_error = classify
+
+# The ids a query failure carries (:func:`tag_query_failure`): the query's
+# log lines' ``query_id`` and its trace's ``trace_id``.
+QUERY_FAILURE_IDS = ("query_id", "trace_id")
+
+
+def tag_query_failure(
+    exc: BaseException, query_id: str | None, trace_id: str | None = None
+) -> None:
+    """Attach the ids of the query ``exc`` failed (``exc.query_id``,
+    ``exc.trace_id``), so a surface reporting it ties it to the query's log
+    lines and trace (:func:`query_failure_ids`). An id already attached (by
+    an inner query) is kept; an exception that takes no attribute keeps
+    none."""
+    for name, value in zip(QUERY_FAILURE_IDS, (query_id, trace_id), strict=True):
+        if value and not getattr(exc, name, None):
+            try:
+                setattr(exc, name, value)
+            except (AttributeError, TypeError):
+                return
+
+
+def query_failure_ids(exc: BaseException | str | None) -> dict[str, str]:
+    """The ids :func:`tag_query_failure` attached to ``exc`` (none: ``{}``)."""
+    if not isinstance(exc, BaseException):
+        return {}
+    ids = {name: getattr(exc, name, None) for name in QUERY_FAILURE_IDS}
+    return {name: value for name, value in ids.items() if isinstance(value, str)}

@@ -1450,12 +1450,21 @@ These fire between runs too, so degradation shows before a run breaks on it:
 metrics sink of its `Providers` (`--metrics-sink cloudwatch` of `run-rag`,
 `run-mcp-server`, whose EMF goes to stderr, and `run-console`; a serving
 layer passes its `MetricsSink`: `Providers(config, metrics_sink=...)`),
-answers only (a `--mode search` query is not counted), failed ones included:
-a query that ran past `search.query_timeout_seconds` records about the
-deadline, so timeouts raise the p90 rather than vanishing from it. They go
-under `unified_kg_rag/query` with the task's `Environment` and the `Strategy`
-that ran (the requested one for a query that failed before one did), the
-namespace as a log property. `QueryFailures` and the "Query outcomes" widget
+answers only (a `--mode search` query is not counted), streamed ones and
+failed ones included, a failure in the query's admission (a build-record
+read, the deadline) too: a query that ran past
+`search.query_timeout_seconds` records about the deadline, so timeouts raise
+the p90 rather than vanishing from it. A caller's error (`invalid_argument`,
+`invalid_filter`, `index_not_found`, `not_indexed`: a typo'd namespace, an
+empty question) is not counted in `query_failed`, so a client's mistake
+does not page; every failure names its class in the record's `error_class`
+property. A cancelled query (an MCP client that disconnects, a task
+cancelled by its host) records nothing. `query_throttled_requests` counts
+the requests Bedrock throttled for the query, which tells a query slowed by
+throttling apart. They go under `unified_kg_rag/query` with the task's
+`Environment` and the `Strategy` that ran (the requested one for a query
+that failed before one did), the `namespace` as a log property (the key of
+the ingestion records too). `QueryFailures` and the "Query outcomes" widget
 read them; where no surface publishes them, the alarm stays OK and the
 widget empty.
 

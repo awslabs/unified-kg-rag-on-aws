@@ -875,7 +875,9 @@ async def test_a_query_is_tied_to_its_namespace_logs_trace_and_metrics(
             metrics.QUERY_ABSTAINED_METRIC,
         )
     ] == [0.0, 0.0, 0.0]
-    assert dimensions == {"Strategy": "simple", "Namespace": "default"}
+    assert values[metrics.QUERY_THROTTLED_METRIC] == 0.0
+    # The namespace by the key the ingestion records use (one spelling).
+    assert dimensions == {"Strategy": "simple", "namespace": "default"}
 
 
 async def test_a_failed_query_is_counted_and_a_search_is_not(
@@ -907,6 +909,151 @@ async def test_a_failed_query_is_counted_and_a_search_is_not(
     ((_, values, dimensions),) = sink.emitted
     assert values[metrics.QUERY_FAILED_METRIC] == 1.0
     assert dimensions["Strategy"] == "simple"
+    assert dimensions["error_class"] == "failure"
+
+
+class _DownChat(GenericFakeChatModel):
+    def _generate(self, *args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("model down")
+
+    async def _agenerate(self, *args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("model down")
+
+    async def _astream(self, *args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("model down")
+        yield  # pragma: no cover - an async generator
+
+
+class _DownFactory(_FakeModelFactory):
+    def get_model(self, model_id: Any, **kwargs: Any) -> Any:
+        return _DownChat(messages=iter(()))
+
+
+async def test_a_raised_query_failure_carries_its_query_and_trace_ids(
+    tracing: Tracing,
+) -> None:
+    # Old behaviour: only an answer named its query_id and trace_id, so the
+    # failure that most needed its log lines and trace named neither, on
+    # any surface (run-rag's failure document, MCP tool errors, the console).
+    from unified_kg_rag.application.cli.conventions import failure_fields
+    from unified_kg_rag.application.cli.mcp_tools import describe_error
+
+    exporter = tracing()
+    chain = _simple_chain(model_factory=_DownFactory())
+    try:
+        with pytest.raises(RuntimeError, match="model down") as raised:
+            await chain.ainvoke(_SIMPLE_QUERY)
+    finally:
+        await chain.aclose()
+    query = _one(exporter, "kg_rag.query")
+    error = raised.value
+    trace_id = format(query.context.trace_id, "032x")
+    assert (error.query_id, error.trace_id) == (  # type: ignore[attr-defined]
+        error.query_id,  # type: ignore[attr-defined]
+        trace_id,
+    )
+    assert len(error.query_id) == 12  # type: ignore[attr-defined]
+    fields = failure_fields(1, error)
+    assert (fields["query_id"], fields["trace_id"]) == (error.query_id, trace_id)  # type: ignore[attr-defined]
+    message, expected = describe_error(error)
+    assert not expected and f"trace_id: {trace_id}" in message
+    assert "model down" not in message
+
+
+async def test_a_streamed_query_names_its_namespace_and_publishes_its_metrics(
+    tracing: Tracing,
+) -> None:
+    # Regression (rv25): stream/astream bound no namespace on their spans
+    # and published no query metrics, so a host serving streamed answers
+    # got neither tenant filtering nor alarms.
+    from unified_kg_rag.shared import metrics
+
+    exporter = tracing()
+    # Its answer's model span too, which ends after the query span.
+    chain = _simple_chain(_TracedModelFactory())
+    sink = _RecordingSink()
+    chain.providers.metrics_sink = sink
+    try:
+        chunks = [chunk async for chunk in chain.astream(_SIMPLE_QUERY)]
+    finally:
+        await chain.aclose()
+    assert "".join(chunks)
+    _one(exporter, "chat vendor.model-v1")
+    spans = exporter.get_finished_spans()
+    assert spans and all(
+        _attrs(span).get("kg_rag.namespace") == "default" for span in spans
+    ), [(s.name, _attrs(s).get("kg_rag.namespace")) for s in spans]
+    ((namespace, values, properties),) = sink.emitted
+    assert namespace == metrics.QUERY_METRICS_NAMESPACE
+    assert values[metrics.QUERY_LATENCY_METRIC] > 0
+    assert values[metrics.QUERY_FAILED_METRIC] == 0.0
+    assert properties == {"Strategy": "simple", "namespace": "default"}
+
+    # A failed stream counts, and its error carries the ids.
+    failing = _simple_chain(model_factory=_DownFactory())
+    sink = _RecordingSink()
+    failing.providers.metrics_sink = sink
+    try:
+        with pytest.raises(Exception, match="model down") as raised:
+            async for _ in failing.astream(_SIMPLE_QUERY):
+                pass
+    finally:
+        await failing.aclose()
+    ((_, values, properties),) = sink.emitted
+    assert values[metrics.QUERY_FAILED_METRIC] == 1.0
+    assert properties["error_class"] == "failure"
+    assert len(raised.value.query_id) == 12  # type: ignore[attr-defined]
+
+    # A stream the caller stops reading early is no failure.
+    chain = _simple_chain()
+    sink = _RecordingSink()
+    chain.providers.metrics_sink = sink
+    try:
+        stream = chain.astream(_SIMPLE_QUERY)
+        await anext(stream)
+        await stream.aclose()
+    finally:
+        await chain.aclose()
+    ((_, values, _),) = sink.emitted
+    assert values[metrics.QUERY_FAILED_METRIC] == 0.0
+
+
+async def test_admission_failures_count_but_a_callers_error_is_not_a_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Old behaviour: a failure in the query's admission (a build-record read,
+    # the deadline) published no metric, while a caller's mistake (a typo'd
+    # namespace, an empty question) counted in query_failed and paged.
+    from unified_kg_rag.application.retrieval import methodology_check
+    from unified_kg_rag.shared import StoreConnectionError, metrics
+    from unified_kg_rag.shared.exceptions import InvalidArgumentError
+
+    chain = _simple_chain()
+    sink = _RecordingSink()
+    chain.providers.metrics_sink = sink
+
+    async def unreadable(*_: Any, **__: Any) -> Any:
+        raise StoreConnectionError("build record unreadable")
+
+    try:
+        with pytest.raises(InvalidArgumentError):
+            await chain.ainvoke({"query": "  "})
+        with monkeypatch.context() as patch:
+            patch.setattr(methodology_check, "check_strategy_holdings", unreadable)
+            with pytest.raises(StoreConnectionError) as raised:
+                await chain.ainvoke(_SIMPLE_QUERY)
+    finally:
+        await chain.aclose()
+    (_, refused, refused_properties), (_, failed, failed_properties) = sink.emitted
+    assert refused[metrics.QUERY_FAILED_METRIC] == 0.0
+    assert refused_properties["error_class"] == "invalid_argument"
+    assert failed[metrics.QUERY_FAILED_METRIC] == 1.0
+    assert failed_properties == {
+        "Strategy": "simple",
+        "namespace": "default",
+        "error_class": "store_unreachable",
+    }
+    assert len(raised.value.query_id) == 12  # type: ignore[attr-defined]
 
 
 async def test_a_model_clients_own_error_reaches_the_caller_as_a_model_error() -> None:

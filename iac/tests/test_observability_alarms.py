@@ -21,6 +21,9 @@ from iac.stacks.observability_stack import (
     DOCUMENT_METRICS,
     EMF_NAMESPACE,
     NOT_INDEXED_METRICS,
+    QUERY_ABSTAINED_METRIC,
+    QUERY_DEGRADED_METRIC,
+    QUERY_FAILED_METRIC,
     QUERY_LATENCY_METRIC,
     QUERY_NAMESPACE,
     SUMMARY_TREE_METRICS,
@@ -645,6 +648,13 @@ def test_query_latency_alarm_reads_the_run_rag_metric() -> None:
     source = (_PACKAGE / "shared" / "metrics.py").read_text(encoding="utf-8")
     assert f'QUERY_METRICS_NAMESPACE = "{QUERY_NAMESPACE}"' in source
     assert f'QUERY_LATENCY_METRIC = "{QUERY_LATENCY_METRIC}"' in source
+    # The outcome counts the QueryFailures alarm and the widget read too.
+    for name, metric in (
+        ("FAILED", QUERY_FAILED_METRIC),
+        ("DEGRADED", QUERY_DEGRADED_METRIC),
+        ("ABSTAINED", QUERY_ABSTAINED_METRIC),
+    ):
+        assert f'QUERY_{name}_METRIC = "{metric}"' in source
     for env, seconds in (("dev", 60), ("prod", 30)):
         context: dict[str, Any] = {"env_name": env}
         if seconds != 60:
@@ -884,10 +894,7 @@ def test_doc_status_read_throttles_and_system_errors_alarm() -> None:
 def test_failed_queries_alarm_on_their_share() -> None:
     # Old behaviour: only latency alarmed, and a query that fails fast lowers
     # the p90 instead of raising it.
-    from iac.stacks.observability_stack import (
-        QUERY_FAILED_METRIC,
-        QUERY_OUTCOME_METRICS,
-    )
+    from iac.stacks.observability_stack import QUERY_OUTCOME_METRICS
 
     for env in ("dev", "prod"):
         alarm = _alarms({"env_name": env})["QueryFailures"]

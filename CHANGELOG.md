@@ -1120,7 +1120,9 @@ From a `main` checkout (formats and keys no release had):
   ingestion root span has `kg_rag.mode` and the delta counts, the query span `kg_rag.degraded` and
   `kg_rag.error_class`; a result's `metadata.query_id` and `metadata.trace_id` (also MCP's `query_id` /
   `trace_id`) are the ids of its log lines and trace (a trace id only when the trace was sampled, so exported), and a
-  console question's log lines carry its id.
+  console question's log lines carry its id. A query that raises carries them too (`exc.query_id`, `exc.trace_id`):
+  `run-rag`'s failure document, an MCP tool error and the console's error event name them. A streamed answer's spans,
+  its model call's included, name the namespace as `ainvoke`'s do, and admission log lines carry the query id.
 - Observability: the `observability` section and `otel` extra, spans for runs, stages, batches and query steps,
   GenAI model-call spans, OTLP, Langfuse and Phoenix exporters with redacted content capture (an IPv6 endpoint keeps
   its brackets in the logged URL); CDK `enable_cloudwatch_tracing` with an ADOT sidecar (#207, #208, #211, #219,
@@ -1529,8 +1531,10 @@ From a `main` checkout (formats and keys no release had):
   `QueryLatencyHigh` on `run-rag --metrics-sink cloudwatch`'s `query_latency_ms` (#330, #519, #528). The chain emits
   the query metrics itself, through the new `Providers.metrics_sink`, so a library host, MCP app or console counts
   too: per answer `query_latency_ms` and the outcome `query_failed`, `query_degraded`, `query_abstained` (0 or 1),
-  per `Strategy` that ran (`auto` queries no longer land under `auto`), with `Namespace` a log property.
-  `run-mcp-server` and `run-console` take `--metrics-sink cloudwatch` as `run-rag` does (the MCP server's EMF on
+  per `Strategy` that ran (`auto` queries no longer land under `auto`), with `namespace` (the ingestion records'
+  key) and a failure's `error_class` log properties, and `query_throttled_requests`. Streamed answers and failed
+  admissions (a build-record read, the deadline) count; a caller's error (`ErrorClass.is_caller_error`: an invalid
+  argument or filter, a namespace without the index or methodology) is not a `query_failed`. `run-mcp-server` and `run-console` take `--metrics-sink cloudwatch` as `run-rag` does (the MCP server's EMF on
   stderr, as stdout is the protocol's), one sink builder for every CLI.
 - The package ships a `py.typed` marker (#568). `main` reports `0.3.0.dev0`, and a `v<version>` tag runs a release
   workflow that publishes a GitHub release: the tag must be on `main`, the notes are the section's introduction,
