@@ -214,8 +214,12 @@ class NamespaceLease:
             raise NamespaceLeaseError(
                 f"Index namespace '{self.namespace}' is being written by {who} "
                 f"(its lease runs until {_when(until)} unless renewed). Wait "
-                "for that run to finish; a run that died stops renewing, and "
-                f"its lease expires within indexing.lease_seconds ({self.seconds:g}s)."
+                "for that run to finish. A run that died stops renewing: its "
+                "lease expires within indexing.lease_seconds "
+                f"({self.seconds:g}s). The local SQLite registry hands on at "
+                "once the lease of a holder of this host whose process exited, "
+                "so a holder it names is still running, or on another host or "
+                "pid namespace."
             )
         self._renewed_at = sent
         logger.info(
