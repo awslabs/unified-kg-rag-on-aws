@@ -2013,9 +2013,11 @@ Ingestion and incremental indexing.
   1`) cut the spaces between words into units of their own, and the run failed with `missing embeddings`.
 - A stage that failed because its model calls did keeps their dominant cause: a model server that was down fails
   it as the `ModelUnreachableError` naming the server (`error_class` `model_unreachable` on the stage result, the
-  `run-ingestion` JSON and the run span), a store as its `StoreConnectionError`, and a failure a known-good request
-  met too as the model's or a setting's; it said "produced 0 outputs. Check the stage configuration", class
-  `failure`. The failed-units summary of a run that stopped before indexing no longer says they were indexed.
+  `run-ingestion` JSON and the run span), a store as its `StoreConnectionError`, a failure a known-good request
+  met too as the model's or a setting's, and throttling, a server error or a timeout that outlasted the retries as
+  the model's, its quota's or the service's, with how many calls it ended (`error_type` the model error's, named by
+  type, code and status, never its text); it said "produced 0 outputs. Check the stage configuration", class
+  `failure`. A failed batch item logs its error's digest, not its text, which may quote the item. The failed-units summary of a run that stopped before indexing no longer says they were indexed.
 - An extraction, claims, gleaning, report-findings or chunk-boundary section that lists elements reads as empty when
   it holds a short "nothing here" marker, in any language (one line of at most three estimated tokens:
   `<relationships>없음</relationships>`, `なし`, `None.`, `Keine`): only `None`, `N/A`, `null`, `nil` and `-` did,

@@ -27,6 +27,7 @@ from unified_kg_rag.domain.models.config import TransientRetryConfig
 from unified_kg_rag.domain.models.text_unit import TextUnit
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
+from unified_kg_rag.shared.utils.common import error_digest
 
 if TYPE_CHECKING:
     from unified_kg_rag.adapters.llm.langchain import BatchProcessor
@@ -180,27 +181,66 @@ class FailureLedger:
     too: the ledger is in the context they copy) and
     :func:`item_failed_indices` marks a known-good request that failed; the
     stage then fails with the dominant cause (:meth:`dominant`).
+
+    It keeps a count per cause and the first error of each, not every
+    error: an outage across a large stage would otherwise hold a traceback
+    per item.
     """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self.errors: list[BaseException] = []
+        self._counts: Counter[tuple[str, str, int | None]] = Counter()
+        self._first: dict[tuple[str, str, int | None], BaseException] = {}
         self.model_failed = False
 
     def record(self, error: BaseException) -> None:
+        cause = _cause(error)
         with self._lock:
-            self.errors.append(error)
+            self._counts[cause] += 1
+            self._first.setdefault(cause, error)
+
+    @property
+    def failures(self) -> int:
+        """The failed calls recorded."""
+        with self._lock:
+            return sum(self._counts.values())
 
     def dominant(self) -> BaseException | None:
-        """The first error of the most frequent cause (:func:`_cause`), or
-        ``None`` when no call failed."""
+        """The first error of the most frequent cause (:func:`_cause`; the
+        first recorded of equally frequent ones), or ``None`` when no call
+        failed."""
+        found = self.dominant_count()
+        return found[0] if found is not None else None
+
+    def dominant_count(self) -> tuple[BaseException, int] | None:
+        """:meth:`dominant` and how many calls failed of its cause."""
         with self._lock:
-            errors = list(self.errors)
-        if not errors:
-            return None
-        counts = Counter(_cause(error) for error in errors)
-        cause = max(counts, key=counts.__getitem__)
-        return next(error for error in errors if _cause(error) == cause)
+            if not self._counts:
+                return None
+            # most_common keeps the first-recorded order among ties.
+            cause, count = self._counts.most_common(1)[0]
+            return self._first[cause], count
+
+
+def describe_cause(error: BaseException) -> str:
+    """Log-safe name of an error's cause (:func:`_cause`): its type, error
+    code and HTTP status (``ClientError ThrottlingException, HTTP 429``),
+    never its message, which may quote the request's text."""
+    name, code, status = _cause(error)
+    if name == "output":
+        return "output that does not parse or was cut off"
+    if status is None:
+        # botocore's ClientError keeps it in its response metadata.
+        response = getattr(error, "response", None)
+        metadata = (
+            response.get("ResponseMetadata") if isinstance(response, dict) else None
+        )
+        found = metadata.get("HTTPStatusCode") if isinstance(metadata, dict) else None
+        status = found if isinstance(found, int) else None
+    parts = [name if code in ("", name) else f"{name} {code}"]
+    if status is not None:
+        parts.append(f"HTTP {status}")
+    return ", ".join(parts)
 
 
 _LEDGER: contextvars.ContextVar[FailureLedger | None] = contextvars.ContextVar(
@@ -297,7 +337,7 @@ def item_failed_indices(
                 "for an error of each document's own, %s",
                 task,
                 len(documents),
-                first,
+                error_digest(first),
                 outcome,
             )
             return list(own)
@@ -319,7 +359,7 @@ def item_failed_indices(
                 "taken for a model or configuration failure, counted against "
                 "no document",
                 task,
-                first,
+                error_digest(first),
             )
             if (ledger := _LEDGER.get()) is not None:
                 ledger.model_failed = True
@@ -328,7 +368,7 @@ def item_failed_indices(
             "%s: every item failed alike (%s) but a known-good request was "
             "answered: %s",
             task,
-            first,
+            error_digest(first),
             outcome,
         )
     return list(own)

@@ -441,12 +441,15 @@ def _stage(
     outcome: Callable[[], tuple[int, int]],
     metrics: dict[str, Any] | None = None,
 ):
+    from unified_kg_rag.adapters.providers import Providers
     from unified_kg_rag.application.ingestion.pipeline_stages import PipelineStage
 
     class _Stage(PipelineStage):
-        def __init__(self) -> None:  # no boto session / providers
+        def __init__(self) -> None:  # no boto session
             self.config = Config()
             self.stage_type = stage_type
+            # A factory without is_item_error: the generic classifier.
+            self.providers = Providers(self.config, llm_factory=object())  # type: ignore[arg-type]
 
         def _execute_core(
             self, context: PipelineContext
@@ -509,20 +512,89 @@ def test_a_stage_whose_model_server_is_down_fails_naming_it(tracing: Tracing) ->
     assert "Check the stage configuration" not in (result.error_message or "")
 
 
+class _StatusError(Exception):
+    """A provider error with an HTTP status (as openai's and httpx's)."""
+
+    def __init__(self, message: str, status_code: int) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
 def test_a_stage_the_model_refuses_alike_says_so(tracing: Tracing) -> None:
     tracing()
     refused = _failing_items_stage(
-        RuntimeError("HTTP 500 from the server"), known_good_failed=True
+        _StatusError("rejected: Vendor Corp secret text", 400),
+        known_good_failed=True,
     ).execute(_empty_context())
-    assert "a known-good request failed alike (RuntimeError)" in (
+    assert "a known-good request failed alike (_StatusError, HTTP 400)" in (
         refused.error_message or ""
     )
-    assert refused.error_class == "failure"
-    # Without a known-good request that failed, the documents may be at
-    # fault: the stage keeps its own error.
-    own = _failing_items_stage(RuntimeError("bad item")).execute(_empty_context())
+    # Named by its type and status, never its text (it may quote the input).
+    assert "secret text" not in (refused.error_message or "")
+    assert (refused.error_class, refused.error_type) == ("failure", "_StatusError")
+    # An item's own error without a known-good request that failed: the
+    # documents may be at fault, so the stage keeps its own error.
+    own = _failing_items_stage(_StatusError("bad item", 400)).execute(_empty_context())
     assert "produced 0 outputs" in (own.error_message or "")
     assert own.error_type == "PipelineStageError"
+
+
+@pytest.mark.parametrize(
+    ("error", "named"),
+    [
+        (_StatusError("server error quoting the item", 500), "_StatusError, HTTP 500"),
+        (_StatusError("slow down", 429), "_StatusError, HTTP 429"),
+        (TimeoutError("read timed out"), "TimeoutError"),
+    ],
+)
+def test_a_stage_whose_calls_failed_for_no_item_of_theirs_blames_the_model(
+    tracing: Tracing, error: Exception, named: str
+) -> None:
+    # Regression (rv25): every call answered HTTP 500 (or was throttled past
+    # its retries) and the stage said "produced 0 outputs. Check the stage
+    # configuration and input data quality", sending the operator to the
+    # documents: the known-good request is sent only for items' own errors.
+    tracing()
+    result = _failing_items_stage(error).execute(_empty_context())
+    message = result.error_message or ""
+    assert f"3 of its 3 failed model calls ended in {named}" in message
+    assert "not of the documents" in message
+    assert "produced 0 outputs" not in message
+    assert "quoting the item" not in message
+    assert result.error_type == type(error).__name__
+
+
+def test_the_failure_ledger_counts_per_cause_and_keeps_the_first_of_each() -> None:
+    # Old behaviour: every failed item's exception was kept, tracebacks
+    # included, for the whole stage.
+    from unified_kg_rag.adapters.llm.retry import FailureLedger
+
+    ledger = FailureLedger()
+    assert ledger.dominant() is None and ledger.failures == 0
+    first = _StatusError("a", 500)
+    ledger.record(first)
+    ledger.record(ValueError("b"))
+    for _ in range(3):
+        ledger.record(_StatusError("c", 500))
+    assert ledger.failures == 5
+    assert ledger.dominant_count() == (first, 4)
+    assert not hasattr(ledger, "errors")
+
+
+def test_a_failed_batch_item_logs_its_error_digest_not_its_text(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Regression (rv25): a provider error quoting the item's text reached the
+    # ERROR log of every item that failed.
+    def call(_: dict[str, int]) -> Any:
+        raise RuntimeError("cannot process: Vendor Corp confidential terms")
+
+    with caplog.at_level("ERROR"):
+        BatchProcessor(max_concurrency=1, max_attempts=1).execute_with_fallback(
+            [1], lambda items: [{"x": i} for i in items], call, "t", show_progress=False
+        )
+    assert "Item failed" in caplog.text
+    assert "confidential terms" not in caplog.text
 
 
 @pytest.mark.parametrize("stop", [PipelineInterrupted(15), RuntimeError("boom")])

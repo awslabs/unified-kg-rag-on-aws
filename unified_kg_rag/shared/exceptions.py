@@ -230,7 +230,11 @@ class PipelineResumeError(GraphRAGException):
 
 
 class PipelineStageError(PipelineExecutionError):
-    pass
+    """A stage failed; ``failed_files``: the files its items failed on."""
+
+    def __init__(self, *args: object, failed_files: list[str] | None = None) -> None:
+        super().__init__(*args)
+        self.failed_files = list(failed_files or ())
 
 
 class PipelineStateError(GraphRAGException):
