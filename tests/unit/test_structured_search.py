@@ -364,7 +364,24 @@ async def test_a_count_is_answered_from_the_graph() -> None:
     assert "llm_calls" in structured["usage"]
 
 
-async def test_rows_bring_their_entities_provenance_and_passages() -> None:
+async def test_rows_bring_their_entities_provenance_and_passages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import threading
+
+    from unified_kg_rag.adapters.retrieval import base
+
+    # The lineage merge (a hub cites thousands of units) runs off the event
+    # loop, as local search's does (rv25).
+    loop_thread = threading.get_ident()
+    threads: list[int] = []
+    merge_units = base._units_by_support
+
+    def recording(results: list[Any]) -> list[str]:
+        threads.append(threading.get_ident())
+        return merge_units(results)
+
+    monkeypatch.setattr(base, "_units_by_support", recording)
     plan = {
         "nodes": [
             {
@@ -395,6 +412,7 @@ async def test_rows_bring_their_entities_provenance_and_passages() -> None:
     assert acme.metadata["attributes"]["filters"]["seed_graph"] == ["procure"]
     passages = [r for r in result.results if r.retriever_type == "text"]
     assert {p.source for p in passages} == {"tu-v1", "tu-v3"}
+    assert threads and loop_thread not in threads
 
 
 async def test_the_passage_search_lists_at_most_max_terms_count_ids() -> None:

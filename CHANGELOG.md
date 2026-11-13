@@ -1935,8 +1935,9 @@ Queries and retrieval.
   entities; `hybrid` without keywords warns (#295, #317).
 - LightRAG `mix`/`hybrid` context includes the chunks the matched relationships cite (offline hybrid one-hop
   gold-chunk recall 0.30, now 0.86, 0.96 with rerank), and incremental and full builds pick the same chunks (#521,
-  #530); the pick runs on a worker thread, as PPR does: on a corpus whose hub entities cite thousands of units it held
-  the event loop for up to seconds a query, stalling every concurrent one.
+  #530); the pick, `local`'s and `structured`'s support ranking of their entities' units and PPR's tie order run on
+  a worker thread: on a corpus whose hub entities cite thousands of units each held the event loop for 0.2 s to
+  seconds a query, stalling every concurrent one.
 - An answer the output guardrail blocks writes no conversation memory, as a blocked query writes none (the refusal
   was saved and read by the next turn's follow-up rewrite).
 - `structured` refused on a namespace without the graph (a `raptor`-only one) names the methodologies that build it

@@ -307,6 +307,30 @@ def _text_unit_ids(result: RetrievalResult) -> list[str]:
     return [str(i) for i in (result.metadata or {}).get("text_unit_ids") or []]
 
 
+def _units_by_support(results: Sequence[RetrievalResult]) -> list[str]:
+    return merge_lineages(
+        (
+            source_fields.listed(result.metadata or {}, "text_unit_ids")
+            for result in results
+        ),
+        order="support",
+        scores=[float(result.score or 0.0) for result in results],
+    )
+
+
+async def units_by_support(results: Sequence[RetrievalResult]) -> list[str]:
+    """The text units ``results`` cite (``text_unit_ids``), by support
+    (``domain.retrieval.lineage``: the units most of them cite first, then
+    the best-scored citing result's, then first seen). A lineage a graph
+    store returns as its JSON text is read as the list it encodes.
+
+    On a worker thread: a hub entity cites thousands of units, and merging
+    tens of hubs took hundreds of milliseconds, which stalled every
+    concurrent query on the event loop (local and structured search; the
+    LightRAG chunk pick and PPR's ranking run off the loop the same way)."""
+    return await asyncio.to_thread(_units_by_support, list(results))
+
+
 def evidence_lineage(
     results: Iterable[RetrievalResult],
     reports: Mapping[str, dict[str, list[str]]] | None = None,

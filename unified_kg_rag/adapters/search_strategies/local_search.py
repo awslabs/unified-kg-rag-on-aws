@@ -8,7 +8,7 @@ from typing import Any, ClassVar
 
 from langchain_core.runnables import RunnableConfig
 
-from unified_kg_rag.adapters.retrieval.base import scope_filters
+from unified_kg_rag.adapters.retrieval.base import scope_filters, units_by_support
 from unified_kg_rag.adapters.retrieval.ppr_ranking import (
     PPRRankingMixin,
     document_unit_ids,
@@ -31,7 +31,6 @@ from unified_kg_rag.domain.models import (
     SearchType,
     SectionType,
 )
-from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.filters import (
     KindsRule,
     Range,
@@ -40,7 +39,6 @@ from unified_kg_rag.domain.retrieval.filters import (
     parse_filters,
 )
 from unified_kg_rag.domain.retrieval.index_prefixes import configured_index_prefixes
-from unified_kg_rag.domain.retrieval.lineage import merge as merge_lineages
 from unified_kg_rag.domain.retrieval.linking import choose_links
 from unified_kg_rag.domain.retrieval.ppr import summed_seed_weights
 from unified_kg_rag.shared import get_logger
@@ -275,7 +273,7 @@ class LocalSearchStrategy(PPRRankingMixin):
                 query, filtered_entity_nodes, candidate_hits, passage_hits, fact_hits
             )
         if not ranked_unit_ids:
-            ranked_unit_ids = self._rank_text_unit_ids(filtered_entity_nodes)
+            ranked_unit_ids = await self._rank_text_unit_ids(filtered_entity_nodes)
         logger.debug(
             "Found %s text units: '%s%s'",
             len(ranked_unit_ids),
@@ -807,8 +805,8 @@ class LocalSearchStrategy(PPRRankingMixin):
             )
         return relationships
 
-    @classmethod
-    def _rank_text_unit_ids(cls, entity_nodes: list[RetrievalResult]) -> list[str]:
+    @staticmethod
+    async def _rank_text_unit_ids(entity_nodes: list[RetrievalResult]) -> list[str]:
         # Chunk candidates used to come from
         # `_get_ids(nodes, "text_unit_ids")`, which unions them into a SET — so
         # all ordering was lost, and `_retrieve_documents` then fetches them by
@@ -826,19 +824,12 @@ class LocalSearchStrategy(PPRRankingMixin):
         # by graph support instead (``domain.retrieval.lineage``): each chunk
         # by the number of expanded entities citing it, then the best citing
         # entity's score, then first seen, so downstream truncation keeps the
-        # chunks most entities point to. A lineage a graph store returns as
-        # its JSON text is read as the list it encodes.
+        # chunks most entities point to.
         #
         # A seed graph's units are no text chunks (the retriever leaves them
         # out of every text search too): they take no slot of the quota.
-        ranked = merge_lineages(
-            (
-                source_fields.listed(node.metadata, "text_unit_ids")
-                for node in entity_nodes
-            ),
-            order="support",
-            scores=[float(node.score or 0.0) for node in entity_nodes],
-        )
+        # Off the event loop (``units_by_support``): a hub cites thousands.
+        ranked = await units_by_support(entity_nodes)
         return [unit_id for unit_id in ranked if not is_seed_unit(unit_id)]
 
     @staticmethod

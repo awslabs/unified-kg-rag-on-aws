@@ -326,10 +326,10 @@ def _hit(name: str, units: list[str], score: float = 1.0) -> RetrievalResult:
     )
 
 
-def test_local_search_ranks_document_units_only() -> None:
+async def test_local_search_ranks_document_units_only() -> None:
     nodes = [_hit("Vendor", ["u2", SEED, "u1"], 0.9), _hit("Port", [SEED], 0.8)]
     nodes.append(_hit("Buyer", ["u1"], 0.5))
-    assert LocalSearchStrategy._rank_text_unit_ids(nodes) == ["u1", "u2"]
+    assert await LocalSearchStrategy._rank_text_unit_ids(nodes) == ["u1", "u2"]
 
 
 class _SeedLineageGraph(FakeRetriever):
