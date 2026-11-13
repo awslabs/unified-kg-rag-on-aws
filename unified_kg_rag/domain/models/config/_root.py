@@ -67,6 +67,12 @@ from ._search import SearchConfig
 
 
 class Config(_AssignmentChecked):
+    """The whole configuration. Its ``backend`` preset is filled in when a
+    config is validated from its input (the loader, ``Config(...)``,
+    :meth:`updated`): assigning ``config.backend`` applies no preset, so
+    build the config for another backend with
+    ``config.updated({"backend": "local"})``."""
+
     backend: Backend = Field(
         default=Backend.AWS,
         description=(
