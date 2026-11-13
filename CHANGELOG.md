@@ -2210,6 +2210,8 @@ Ingestion and incremental indexing.
   (#564).
 
 Evaluation, visualization and tuning.
+- A judged context built from a hit's fields (one without `content`) holds the unit's translation into the index
+  language: its field was named after the `LanguageCode` itself (`translated_text_LanguageCode.KO`), so none was read.
 - Judge failures are recorded per query and failed scoring exits non-zero; a failed RAGAS run marks only its own
   metrics (#158, #210, #219).
 - RAGAS skips `faithfulness` without context, counts each context once per batch, judges with its own metric

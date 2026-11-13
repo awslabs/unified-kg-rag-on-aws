@@ -40,7 +40,7 @@ from unified_kg_rag.application.retrieval.rag_chain import (
     RAGOutput,
     extraction_cache_scope,
 )
-from unified_kg_rag.domain.ingestion.cache_keys import answer_settings
+from unified_kg_rag.domain.ingestion.cache_keys import answer_settings, index_language
 from unified_kg_rag.domain.models import (
     Config,
     EvaluationGroundTruth,
@@ -64,6 +64,7 @@ from unified_kg_rag.domain.retrieval.abstention import (
     INSUFFICIENCY_REASON_KEY,
 )
 from unified_kg_rag.domain.retrieval.degradation import DegradationReport
+from unified_kg_rag.domain.retrieval.filters import translated_text_field
 from unified_kg_rag.domain.retrieval.lineage import merge as merge_lineages
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.ports.guardrail import GuardAction
@@ -1125,9 +1126,9 @@ class EvaluationManager:
         self, sources_list: list[dict[str, Any]]
     ) -> list[str]:
         lean_contexts = []
-        translated_key = (
-            f"translated_text_{self.config.processing.translation.target_language}"
-        )
+        # The translation a hit's text field holds in the index language
+        # (the retriever renders the same one).
+        translated_key = translated_text_field(index_language(self.config))
         desired_fields = [
             "description",
             "full_content",
