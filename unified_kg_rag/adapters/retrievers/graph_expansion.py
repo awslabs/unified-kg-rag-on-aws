@@ -25,6 +25,7 @@ with Gremlin::
 The seeds themselves come back as rows with a path of length 1.
 """
 
+import asyncio
 import time
 from abc import abstractmethod
 from collections.abc import Callable, Mapping
@@ -198,7 +199,11 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
                 )
                 return []
             traversal_results = await self._traverse(seed_ids, query)
-            results = self._process_traversal_results(traversal_results, query)
+            # Pure over the rows; a hub's thousands of lineage ids are
+            # validated as its result is made, so off the event loop.
+            results = await asyncio.to_thread(
+                self._process_traversal_results, traversal_results, query
+            )
 
             processing_time = time.time() - start_time
             logger.info(

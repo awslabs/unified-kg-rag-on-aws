@@ -718,3 +718,34 @@ async def test_a_filter_the_stores_refuse_fails_before_the_traversal(
     with pytest.raises(InvalidFilterError):
         await retriever.aretrieve(query)
     assert traversed == []
+
+
+async def test_the_traversal_rows_are_processed_off_the_event_loop(
+    config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Regression (rv27 perf low): a hub entity's result validated its
+    # thousands of lineage ids on the event loop, about 4 ms of each query.
+    retriever = NeptuneRetriever(config=config, neptune_client=MagicMock())
+    rows = [
+        {
+            "node": {"id": ["e1"], "name": ["Vendor"], "text_unit_ids": ["u1"]},
+            "path": [],
+        }
+    ]
+
+    async def traverse(seed_ids: list[Any], query: SearchQuery) -> list[Any]:
+        return rows
+
+    retriever._traverse = traverse  # type: ignore[method-assign]
+    loop_thread = threading.get_ident()
+    threads: list[int] = []
+    process = NeptuneRetriever._process_traversal_results
+
+    def recording(self: NeptuneRetriever, *args: Any) -> Any:
+        threads.append(threading.get_ident())
+        return process(self, *args)
+
+    monkeypatch.setattr(NeptuneRetriever, "_process_traversal_results", recording)
+    results = await retriever.aretrieve(SearchQuery(query="q", filters={"id": ["e1"]}))
+    assert [r.source for r in results] == ["e1"]
+    assert threads and loop_thread not in threads
