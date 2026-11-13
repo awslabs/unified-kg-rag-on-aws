@@ -469,8 +469,11 @@ class StructuredSearchStrategy(BaseSearchStrategy):
                 except Exception as e:
                     if is_fatal_retrieval_error(e):
                         raise
-                    logger.warning(
-                        "Structured search: reading the graph profile failed: %s", e
+                    log_failure(
+                        logger,
+                        logging.WARNING,
+                        "Structured search: reading the graph profile failed: %s",
+                        error=e,
                     )
                     observed = None
                 else:
@@ -541,7 +544,9 @@ class StructuredSearchStrategy(BaseSearchStrategy):
                 return error
             if error is None:
                 return None
-            logger.info("Structured search: plan refused (%s)", error.splitlines()[0])
+            # The checker's reason may quote names the model chose.
+            logger.info("Structured search: plan refused (%s)", text_digest(error))
+            logger.debug("Structured search: plan refused (%s)", error)
             feedback = REPAIR_FEEDBACK.format(error=error[:1500])
         # The last answer decides: still no JSON is a degraded step, a plan
         # the checks refuse a designed fallback.
@@ -716,7 +721,12 @@ class StructuredSearchStrategy(BaseSearchStrategy):
         try:
             result = await self.graph_query.aexecute(request)
         except GraphQueryExecutionError as e:
-            logger.warning("Structured search: the graph query failed: %s", e)
+            log_failure(
+                logger,
+                logging.WARNING,
+                "Structured search: the graph query failed: %s",
+                error=e,
+            )
             run.fall_back("timeout" if e.timed_out else "execution_error", e)
             return None
         except GraphQueryCompileError as e:
@@ -725,7 +735,12 @@ class StructuredSearchStrategy(BaseSearchStrategy):
         except Exception as e:
             if is_fatal_retrieval_error(e):
                 raise
-            logger.warning("Structured search: the graph query failed: %s", e)
+            log_failure(
+                logger,
+                logging.WARNING,
+                "Structured search: the graph query failed: %s",
+                error=e,
+            )
             run.fall_back("execution_error", e)
             return None
         run.backend, run.compiled_digest = result.backend, result.compiled_digest
@@ -810,7 +825,12 @@ class StructuredSearchStrategy(BaseSearchStrategy):
             except Exception as e:
                 if is_fatal_retrieval_error(e):
                     raise
-                logger.warning("Structured search: checking a value failed: %s", e)
+                log_failure(
+                    logger,
+                    logging.WARNING,
+                    "Structured search: checking a value failed: %s",
+                    error=e,
+                )
                 return True
             if op.scan:
                 answer, _ = await self._scanned(query, check, result, unapplied)
@@ -871,7 +891,12 @@ class StructuredSearchStrategy(BaseSearchStrategy):
         except Exception as e:
             if is_fatal_retrieval_error(e):
                 raise
-            logger.warning("Structured search: reading the evidence failed: %s", e)
+            log_failure(
+                logger,
+                logging.WARNING,
+                "Structured search: reading the evidence failed: %s",
+                error=e,
+            )
             return [], result
         vertices = {**found.vertices, **result.vertices}
         ids = evidence_vertex_ids(plan, answer, found.rows, vertices)

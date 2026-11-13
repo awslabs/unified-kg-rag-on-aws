@@ -42,6 +42,7 @@ controller judged what it returns, whose verdict is unknown. ``search.abstention
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -86,6 +87,7 @@ from unified_kg_rag.domain.retrieval.abstention import (
 from unified_kg_rag.domain.retrieval.degradation import DegradationStep
 from unified_kg_rag.domain.retrieval.linking import link_key
 from unified_kg_rag.shared import get_logger, observability
+from unified_kg_rag.shared.logging import log_failure
 from unified_kg_rag.shared.usage import usage_scope
 from unified_kg_rag.shared.utils import interleave, text_digest
 from unified_kg_rag.shared.utils.concurrency import gather_or_cancel
@@ -619,7 +621,9 @@ class IterativeSearchStrategy(BaseSearchStrategy):
         answer reads what the earlier ones found."""
         if is_fatal_retrieval_error(error):
             raise error
-        logger.error("Iterative search: %s: %s", reason, error)
+        log_failure(
+            logger, logging.ERROR, "Iterative search: %s: %s", reason, error=error
+        )
         run.degraded = run.stop_reason = reason
         record_degradation(DegradationStep.ITERATIVE_CONTROLLER, reason, error)
 

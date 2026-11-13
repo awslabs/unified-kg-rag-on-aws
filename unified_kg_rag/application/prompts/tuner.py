@@ -20,6 +20,7 @@ relationship types the source lacks.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import unicodedata
 from collections import Counter, defaultdict
@@ -66,13 +67,13 @@ from unified_kg_rag.domain.prompts import (
     GraphExtractionPrompt,
 )
 from unified_kg_rag.shared import LanguageModelError, get_logger
+from unified_kg_rag.shared.logging import log_failure
 from unified_kg_rag.shared.utils import (
     entity_key,
     generate_stable_id,
     text_digest,
 )
 from unified_kg_rag.shared.utils.sentences import sentence_ends
-from unified_kg_rag.shared.utils.validation import format_validation_errors
 
 logger = get_logger(__name__)
 
@@ -417,10 +418,12 @@ class PromptTuner:
                 {"processing.graph_extraction.entity_types": entity_types}
             )
         except ValidationError as e:
-            logger.warning(
+            log_failure(
+                logger,
+                logging.WARNING,
                 "Extracting the examples with the configured entity types: "
                 "the profile's are not a valid schema (%s)",
-                format_validation_errors("", e),
+                error=e,
             )
             return self.config
 
@@ -533,7 +536,12 @@ class PromptTuner:
             extractor.show_progress = False
             records, _ = extractor.extract_units(text_units)
         except Exception as exc:  # noqa: BLE001 - examples are best-effort
-            logger.warning("Corpus-grounded example extraction failed: %s", exc)
+            log_failure(
+                logger,
+                logging.WARNING,
+                "Corpus-grounded example extraction failed: %s",
+                error=exc,
+            )
             return text_units, []
         return text_units, records
 

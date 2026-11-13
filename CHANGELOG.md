@@ -2312,9 +2312,10 @@ Deployment (CDK).
   #211, #319, #345).
 - Logs carry no query text, entity names or model output at INFO, no local variables in tracebacks, no ANSI codes
   when piped, and no relationship endpoints or output previews from gleaning; an evaluator or judge error, and a
-  model call's a query or an ingestion step absorbs (rerank, translation, planner, DRIFT step, extraction, reports,
-  batch embedding; `log_failure`), is logged as its type and a digest, its text at DEBUG; a unit test fails on a new
-  INFO+ log call that passes them (#156, #173, #245, #255, #606).
+  model call's a query, a search strategy, an ingestion step or prompt tuning absorbs (rerank, translation, planner,
+  DRIFT, global and iterative steps, extraction, gleaning, chunking, reports, batch embedding), is logged as its type
+  and a digest (`log_failure`), its text and traceback at DEBUG; a unit test over those packages fails on a new INFO+
+  log call that passes them (#156, #173, #245, #255, #606).
 - Spans carry an error's type and a digest of its message (`kg_rag.error_digest`), not its text or stack, unless
   `observability.capture_content` (then through `redact_patterns`): a judge's or parser's error quoting corpus text
   reached Langfuse or Phoenix with capture off. A model server that cannot be reached is named by its URL without

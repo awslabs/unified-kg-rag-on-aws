@@ -1,5 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import logging
 import time
 from collections import defaultdict
 from typing import Any
@@ -36,6 +37,7 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.domain.prompts import TextTranslationPrompt
 from unified_kg_rag.ports.indexer import BaseIndexer
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.logging import log_failure
 from unified_kg_rag.shared.usage import record_cache_hit
 
 logger = get_logger(__name__)
@@ -305,11 +307,13 @@ class TextUnitTranslator:
         except Exception as e:
             if not self.ignore_errors:
                 raise
-            logger.error(
+            log_failure(
+                logger,
+                logging.ERROR,
                 "Translation to '%s' failed: %s",
                 target_language.value,
-                e,
-                exc_info=True,
+                error=e,
+                traceback=True,
             )
             # Count the whole batch as failed so a fully-failed language does not
             # read as a quiet success.

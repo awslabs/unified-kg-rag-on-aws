@@ -391,17 +391,20 @@ def test_no_info_log_call_passes_corpus_or_model_text() -> None:
 
 # Modules whose errors come from model replies or answers: the parsers quote
 # the reply in their error message, so an INFO+ log passes
-# ``error_digest(e)``, never the exception itself.
+# ``error_digest(e)`` (``log_failure``), never the exception itself.
 _JUDGE_MODULES = (
     "adapters/evaluators",
     "evaluation/answer_match_evaluator.py",
     "evaluation/assertion_evaluator.py",
     "evaluation/benchmarks/autoq.py",
     "evaluation/pairwise.py",
-    # A failed query or claim extraction step's error can quote the query,
-    # the model's reply or the text unit it was given.
-    "application/retrieval/rag_chain.py",
-    "adapters/ingestion/claim_extractor.py",
+    # A failed query, search strategy, ingestion or prompt-tuning step's
+    # error can quote the query, the model's reply or the text unit it was
+    # given (a provider's error quotes the prompt's tail).
+    "adapters/search_strategies",
+    "adapters/ingestion",
+    "application/retrieval",
+    "application/prompts",
 )
 _ERROR_NAMES = {"e", "err", "error", "errors", "exc", "outcome"}
 
@@ -415,7 +418,7 @@ def _passes_raw_error(node: ast.AST) -> bool:
     if (
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id in {"error_digest", "len", "type"}
+        and node.func.id in {"error_digest", "text_digest", "len", "type"}
     ):
         return False
     if isinstance(node, ast.IfExp):
@@ -424,6 +427,10 @@ def _passes_raw_error(node: ast.AST) -> bool:
 
 
 def _logs_raw_error(call: ast.Call) -> list[str]:
+    # ``logger.exception`` logs the traceback, and so the message, as
+    # ``exc_info`` does.
+    if isinstance(call.func, ast.Attribute) and call.func.attr == "exception":
+        return ["exception"]
     if any(kw.arg == "exc_info" for kw in call.keywords):
         return ["exc_info"]
     return [
@@ -464,6 +471,8 @@ def test_static_error_guard_flags_a_raw_exception() -> None:
     for source, leaky in [
         ("logger.warning('failed for %s: %s', qid, e)", True),
         ("logger.error('failed: %s', e, exc_info=True)", True),
+        ("logger.exception('Question %s failed', qid)", True),
+        ("logger.info('refused (%s)', text_digest(error))", False),
         ("logger.warning('failed: %s', errors[-1])", True),
         ("logger.warning('failed: %s', error_digest(e))", False),
         ("logger.warning('failed %s', len(errors))", False),
@@ -516,3 +525,24 @@ def test_log_failure_logs_a_digest_at_its_level_and_the_text_at_debug(
     assert warned.getMessage() == f"Step 3 failed: {error_digest(error)}"
     assert "Quokkasecret" not in warned.getMessage()
     assert debug.getMessage() == "Step 3 failed: the model said: Quokkasecret"
+
+
+def test_log_failure_logs_the_traceback_at_debug_only_when_asked(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from unified_kg_rag.shared import get_logger
+    from unified_kg_rag.shared.logging import log_failure
+
+    try:
+        raise RuntimeError("the provider said: Quokkasecret")
+    except RuntimeError as e:
+        error = e
+    with caplog.at_level("DEBUG"):
+        log_failure(get_logger("probe"), logging.ERROR, "x %s", error=error)
+        log_failure(
+            get_logger("probe"), logging.ERROR, "x %s", error=error, traceback=True
+        )
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+    debug = [r for r in caplog.records if r.levelno == logging.DEBUG]
+    assert all(r.exc_info is None for r in errors)
+    assert [r.exc_info is not None for r in debug] == [False, True]

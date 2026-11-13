@@ -245,15 +245,21 @@ _warned_once_lock = threading.Lock()
 
 
 def log_failure(
-    logger: Any, level: int, message: str, *args: Any, error: BaseException
+    logger: Any,
+    level: int,
+    message: str,
+    *args: Any,
+    error: BaseException,
+    traceback: bool = False,
 ) -> None:
     """Log ``message`` (``%``-formatted, its last ``%s`` the error) at
     ``level`` with :func:`error_digest` of ``error`` (its type and a hash of
     its text, which may quote a model's reply, a query or corpus text), and
-    with the error itself at DEBUG: what the logging policy (SECURITY.md)
-    allows at INFO and above."""
+    with the error itself at DEBUG, with its traceback when ``traceback``:
+    what the logging policy (SECURITY.md) allows at INFO and above. The one
+    way to log an error whose text may hold model output or corpus text."""
     logger.log(level, message, *args, error_digest(error))
-    logger.debug(message, *args, error)
+    logger.debug(message, *args, error, exc_info=error if traceback else None)
 
 
 def warn_once(

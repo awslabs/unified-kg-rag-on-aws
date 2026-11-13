@@ -1,5 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import logging
 import time
 from datetime import datetime
 from typing import Any
@@ -48,6 +49,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.prompts import GraphRefinementPrompt
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.logging import log_failure
 from unified_kg_rag.shared.utils import (
     clean_display_name,
     ensure_list,
@@ -424,11 +426,13 @@ class GraphGleaner(BaseProcessor):
                     config_for_task,
                 )
             except Exception as e:  # noqa: BLE001 - isolate one unit's failure
-                logger.error(
+                log_failure(
+                    logger,
+                    logging.ERROR,
                     "Error preparing gleaning input for unit '%s': %s",
                     unit.id,
-                    e,
-                    exc_info=True,
+                    error=e,
+                    traceback=True,
                 )
 
         # Only the units whose input prep succeeded are processed, and
@@ -454,7 +458,12 @@ class GraphGleaner(BaseProcessor):
         except Exception as e:
             if not self.ignore_errors:
                 raise
-            logger.error("Error during graph refinement: %s", e)
+            log_failure(
+                logger,
+                logging.ERROR,
+                "Error during graph refinement: %s",
+                error=e,
+            )
             self._failed_unit_ids.extend(u.id for u in prepared_units)
             results = [BATCH_ITEM_FAILED] * len(prepared_units)
         self._item_failed_unit_ids.update(

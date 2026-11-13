@@ -24,6 +24,7 @@ and every non-description field is left untouched.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Collection, Mapping, Sequence
 from functools import cached_property
 from typing import TYPE_CHECKING, TypeVar
@@ -52,6 +53,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.prompts import DescriptionSummarizationPrompt
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.logging import log_failure
 from unified_kg_rag.shared.usage import record_cache_hit
 from unified_kg_rag.shared.utils import compute_hash
 
@@ -469,10 +471,12 @@ class DescriptionSummarizer:
             )
         except Exception as e:  # noqa: BLE001 - the concatenated descriptions are kept
             # The whole pass failed (not a per-item error): keep all originals.
-            logger.warning(
+            log_failure(
+                logger,
+                logging.WARNING,
                 "Description summarization failed; keeping concatenated "
                 "descriptions: %s",
-                e,
+                error=e,
             )
             return [None] * len(inputs)
 

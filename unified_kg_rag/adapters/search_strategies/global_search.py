@@ -10,6 +10,7 @@ the ranked points, packed into a token budget, are the answer context.
 
 import asyncio
 import json
+import logging
 import math
 import re
 import time
@@ -63,6 +64,7 @@ from unified_kg_rag.shared import (
     get_logger,
     observability,
 )
+from unified_kg_rag.shared.logging import log_failure
 from unified_kg_rag.shared.utils import (
     parse_llm_score,
     parse_model_object,
@@ -581,7 +583,12 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                     rated += 1
                     score = threshold  # MS GraphRAG keeps a report it could not rate
                     if isinstance(outcome, Exception):
-                        logger.warning("Community rating failed: %s", outcome)
+                        log_failure(
+                            logger,
+                            logging.WARNING,
+                            "Community rating failed: %s",
+                            error=outcome,
+                        )
                         record_degradation(
                             DegradationStep.COMMUNITY_RATING,
                             "community rating failed",
@@ -828,7 +835,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             # ignore_errors, as DRIFT's.
             if not self.ignore_errors or is_fatal_retrieval_error(e):
                 raise
-            logger.error("Map phase failed: %s", e)
+            log_failure(logger, logging.ERROR, "Map phase failed: %s", error=e)
             record_degradation(DegradationStep.GLOBAL_MAP, "map phase failed", e)
             map_points, unrated = [], list(reports)
 

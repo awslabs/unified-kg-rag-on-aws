@@ -1,5 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import logging
 import time
 from collections.abc import Callable
 from concurrent.futures import as_completed
@@ -12,6 +13,7 @@ from unified_kg_rag.domain.ingestion.cache_keys import is_excluded_source_path
 from unified_kg_rag.domain.models import Document
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import ConfigurationError
+from unified_kg_rag.shared.logging import log_failure
 from unified_kg_rag.shared.utils import default_max_workers
 from unified_kg_rag.shared.utils.concurrency import (
     ContextThreadPoolExecutor,
@@ -151,8 +153,13 @@ class DirectoryLoader:
                     else:
                         failed_paths.append(path)
                 except Exception as e:  # noqa: BLE001 - isolate one file's failure
-                    logger.error(
-                        "Error processing file '%s': %s", path, e, exc_info=True
+                    log_failure(
+                        logger,
+                        logging.ERROR,
+                        "Error processing file '%s': %s",
+                        path,
+                        error=e,
+                        traceback=True,
                     )
                     failed_paths.append(path)
 
@@ -171,7 +178,13 @@ class DirectoryLoader:
             )
             return doc
         except Exception as e:  # noqa: BLE001 - isolate one file's failure
-            logger.warning("Failed to load document '%s': %s", file_path, e)
+            log_failure(
+                logger,
+                logging.WARNING,
+                "Failed to load document '%s': %s",
+                file_path,
+                error=e,
+            )
             return None
 
     def load_single(self, file_path: Path) -> Document:
@@ -250,10 +263,12 @@ class DirectoryLoader:
                         minhashes[result[0]] = result[1]
                 except Exception as e:  # noqa: BLE001 - isolate one document's failure
                     failures += 1
-                    logger.warning(
+                    log_failure(
+                        logger,
+                        logging.WARNING,
                         "MinHash computation failed for document %s: %s",
                         tasks[future],
-                        e,
+                        error=e,
                     )
 
         # A document with no MinHash is silently excluded from the LSH index and
