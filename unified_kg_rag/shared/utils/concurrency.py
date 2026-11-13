@@ -1,8 +1,8 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Thread pools that keep the submitter's ``contextvars``, process pools that
-never fork a threaded process, and asyncio tasks cancelled with the block
-that awaits them."""
+never fork a threaded process, asyncio tasks cancelled with the block that
+awaits them, and calls concurrent callers share (:func:`single_flight`)."""
 
 from __future__ import annotations
 
@@ -15,8 +15,10 @@ from collections.abc import (
     AsyncIterator,
     Awaitable,
     Callable,
+    Hashable,
     Iterable,
     Iterator,
+    MutableMapping,
     Sequence,
 )
 from concurrent.futures import (
@@ -118,6 +120,80 @@ async def await_shared(future: asyncio.Future[_T]) -> _T:
         if not future.done() or future.cancelled() or future.exception() is not e:
             raise
         raise waiter_copy(e) from e
+
+
+# The outcome a failed call hands its waiters under ``share_failure=False``:
+# compute it yourself.
+_COMPUTE_AGAIN: Any = object()
+
+
+def _never(_: Any) -> bool:
+    return False
+
+
+async def single_flight(
+    memo: MutableMapping[Any, asyncio.Future[Any]],
+    key: Hashable,
+    compute: Callable[[], Awaitable[_T]],
+    *,
+    share_failure: bool,
+    keep: Callable[[_T], bool] = _never,
+) -> _T:
+    """``compute()``'s result, one call per ``key`` in flight at a time (an
+    in-flight cache): a concurrent caller of ``key`` awaits the call in
+    ``memo[key]``, shielded (one waiter's cancellation cancels no other's),
+    and gets its result. After the call ``memo`` keeps its future while
+    ``keep(result)`` says so (later callers reuse it), else drops it.
+
+    A failed call is never kept. ``share_failure=True``: the call runs as a
+    task of its own, so a cancelled first caller does not end it, and its
+    error reaches each waiter as a copy of its own (:func:`await_shared`:
+    the waiters are different queries). ``share_failure=False``: the call
+    runs in the first caller's task, and when it raises or is cancelled
+    each waiter runs ``compute`` itself."""
+    pending = memo.get(key)
+    if share_failure:
+        if pending is None:
+            pending = asyncio.ensure_future(compute())
+            memo[key] = pending
+            pending.add_done_callback(
+                functools.partial(_settle_shared, memo, key, keep)
+            )
+        return await await_shared(pending)
+    if pending is not None:
+        shared = await asyncio.shield(pending)
+        return await compute() if shared is _COMPUTE_AGAIN else shared
+    outcome: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+    memo[key] = outcome
+    try:
+        result = await compute()
+    except BaseException:
+        _drop(memo, key, outcome)
+        outcome.set_result(_COMPUTE_AGAIN)
+        raise
+    if not keep(result):
+        _drop(memo, key, outcome)
+    outcome.set_result(result)
+    return result
+
+
+def _drop(memo: MutableMapping[Any, Any], key: Hashable, future: Any) -> None:
+    """Remove ``memo[key]`` when it is still ``future``."""
+    if memo.get(key) is future:
+        del memo[key]
+
+
+def _settle_shared(
+    memo: MutableMapping[Any, Any],
+    key: Hashable,
+    keep: Callable[[Any], bool],
+    done: asyncio.Future[Any],
+) -> None:
+    # Reading the error marks it retrieved: with every waiter cancelled no
+    # one awaits the call, and asyncio would log "Task exception was never
+    # retrieved". Waiters still awaiting it get the error as usual.
+    if done.cancelled() or done.exception() is not None or not keep(done.result()):
+        _drop(memo, key, done)
 
 
 async def discard(tasks: Sequence[asyncio.Future[Any]]) -> None:

@@ -86,9 +86,28 @@ from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.exceptions import InvalidFilterError
 from unified_kg_rag.shared.logging import warn_once
 from unified_kg_rag.shared.utils.common import compute_hash, safe_float_parse
-from unified_kg_rag.shared.utils.concurrency import gather_bounded, gather_or_cancel
+from unified_kg_rag.shared.utils.concurrency import (
+    gather_bounded,
+    gather_or_cancel,
+    single_flight,
+)
 
 logger = get_logger(__name__)
+
+
+class _PartialEdges(Exception):
+    """An incident-edge ask a request of which failed: its edges are its
+    caller's alone (``_incident_relationships``)."""
+
+    def __init__(self, edges: list[RetrievalResult], full: tuple[str, ...]) -> None:
+        super().__init__("an incident-edge request failed")
+        self.edges = edges
+        self.full = full
+
+
+def _always(_: Any) -> bool:
+    return True
+
 
 # Source ids recorded per retrieval span; the hit count is always complete.
 _MAX_SPAN_SOURCE_IDS = 50
@@ -1986,7 +2005,8 @@ class BaseSearchStrategy(ABC):
         then by id, so equal edges do not follow the order of the two
         requests. Within a query (``query_scope``) the same edges are asked
         once (DRIFT's follow-ups expand the same seeds); a concurrent caller
-        waits for the request in flight. A failed request is not kept.
+        waits for the request in flight (:func:`single_flight`). A failed
+        request is not kept, nor shared: each waiter asks again.
         """
         retriever = self.document_retriever
         if not retriever or not entity_ids:
@@ -2022,41 +2042,37 @@ class BaseSearchStrategy(ABC):
             ),
             length=64,
         )
-        if memo is not None:
-            if (pending := memo.get(key)) is not None:
-                shared = await asyncio.shield(pending)
-                if shared is not None:
-                    return list(shared[0]), shared[1]
-            else:
-                outcome: asyncio.Future[Any] = (
-                    asyncio.get_running_loop().create_future()
-                )
-                memo[key] = outcome
-                try:
-                    edges, full, failed = await self._ask_incident(
-                        query,
-                        batches,
-                        source_fields,
-                        size,
-                        ends,
-                        away,
-                        warn_full,
-                        page_through,
-                    )
-                except BaseException:
-                    del memo[key]
-                    outcome.set_result(None)  # the waiters ask for themselves
-                    raise
-                if failed:
-                    del memo[key]
-                    outcome.set_result(None)
-                else:
-                    outcome.set_result((edges, full))
-                return list(edges), full
-        edges, full, _ = await self._ask_incident(
-            query, batches, source_fields, size, ends, away, warn_full, page_through
+        ask = functools.partial(
+            self._ask_incident,
+            query,
+            batches,
+            source_fields,
+            size,
+            ends,
+            away,
+            warn_full,
+            page_through,
         )
-        return edges, full
+        if memo is None:
+            edges, full, _ = await ask()
+            return edges, full
+
+        async def whole() -> tuple[list[RetrievalResult], tuple[str, ...]]:
+            edges, full, failed = await ask()
+            if failed:
+                raise _PartialEdges(edges, full)
+            return edges, full
+
+        # The query's other sub-searches share the ask in flight and its
+        # later repeats; one a request of which failed is the caller's own
+        # (each waiter asks again).
+        try:
+            edges, full = await single_flight(
+                memo, key, whole, share_failure=False, keep=_always
+            )
+        except _PartialEdges as partial:
+            edges, full = partial.edges, partial.full
+        return list(edges), full
 
     async def _ask_incident(
         self,

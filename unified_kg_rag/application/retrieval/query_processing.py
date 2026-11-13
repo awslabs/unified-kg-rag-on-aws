@@ -61,6 +61,7 @@ from unified_kg_rag.shared import LanguageModelError, get_logger
 from unified_kg_rag.shared.logging import log_failure
 from unified_kg_rag.shared.usage import record_cache_hit
 from unified_kg_rag.shared.utils import text_digest
+from unified_kg_rag.shared.utils.concurrency import single_flight
 
 if TYPE_CHECKING:
     from unified_kg_rag.application.retrieval.rag_chain import (
@@ -437,21 +438,20 @@ async def shared_extraction(
     if (cached := chain._cached_extraction(key)) is not None:
         return cached
     cache: _ExtractionCache | None = getattr(chain, "_extractions", None)
-    if cache is None or not hasattr(cache, "claim"):
+    inflight = getattr(cache, "inflight", None)
+    if inflight is None:
         return await extract()
-    future, owner = cache.claim(key)
-    if not owner and future is not None:
-        value = await asyncio.shield(future)
-        if value is not None:
-            _record_hit(chain, key)
-            return value
+    extracted = False
+
+    async def own() -> Any:
+        nonlocal extracted
+        extracted = True
         return await extract()
-    value = None
-    try:
-        value = await extract()
-        return value
-    finally:
-        cache.release(key, future, value)
+
+    value = await single_flight(inflight, key, own, share_failure=False)
+    if not extracted:
+        _record_hit(chain, key)
+    return value
 
 
 def extraction_key(
