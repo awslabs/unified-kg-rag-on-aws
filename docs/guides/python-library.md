@@ -76,7 +76,7 @@ guard.
   replacing its setting) or `config.updated(overlay={"search": {...}})` (a
   nested mapping merged over the config as a config file's keys): it
   returns a new config validated whole, so the checks across sections run as they do at
-  load. Assigning a setting (`config.search.top_k = 5`) validates that
+  load. Assigning a setting (`config.search.max_concurrency = 5`) validates that
   field and its section's own checks, and an invalid value raises and
   keeps the old one.
 

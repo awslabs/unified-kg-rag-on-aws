@@ -318,6 +318,17 @@ dependency:
 - `SeedGraph` / `SeedNode` / `SeedEdge` (`seed_graph.py`): what a seed source
   reads, before conversion (§4.5).
 
+**Item kinds and strategy traits.** A retrieved item's kind is a
+`SectionType` (`domain/retrieval/section_types.py`: text, entity,
+relationship, claim, community, summary, query result, general; the stored
+and wire value), and what each kind is lives in one `SECTION_TRAITS` row:
+whether its files are its lineage's (`lineage_attributed`), whether its
+text units state it (`stated_by_passages`) and whether its title names it
+(`named`). What the chain, the router, the config checks and the evaluator
+need of a search strategy is its `STRATEGY_TRAITS` row
+(`domain/models/retrieval.py`). Readers ask a trait instead of listing
+kinds or strategies, so a new one is a row (`docs/guides/extend.md`).
+
 **Lineage is the core data.** Entities and relationships record the
 `text_unit_ids` they were stated in. This lineage, not a token-overlap
 heuristic, decides whether an entity relates to a text unit, in any
