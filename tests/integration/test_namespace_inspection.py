@@ -119,6 +119,56 @@ def test_jsonl_export_streams_every_kind_with_provenance(
     assert "ko/공급.txt" in path.read_text("utf-8")
 
 
+def test_the_export_holds_every_stored_kind(ingested, tmp_path: Path) -> None:
+    """Every kind the vector store keeps is exported (the RAPTOR summary
+    nodes too), so a comparison of two exports sees each index."""
+    from unified_kg_rag.domain.models import SummaryNode
+    from unified_kg_rag.ports.indexer import STORED_ITEM_KINDS
+
+    assert set(inspection._EXPORT_KINDS) == set(STORED_ITEM_KINDS)
+    assert inspection._EXPORT_KINDS[0] == "text_units"
+    config, providers = ingested
+    vector = providers.build_vector_indexer()
+    try:
+        units = sorted(
+            str(u["id"])
+            for page in vector.scan_items("text_units", "default")
+            for u in page
+        )
+        node = SummaryNode(
+            id="s1",
+            level=1,
+            text="공급 요약: Vendor supplies Buyer",
+            child_ids=units,
+            text_unit_ids=units,
+            n_leaves=len(units),
+            n_tokens=6,
+            language="Korean",
+            input_key="k1",
+        )
+        (embedding,) = vector.embed_summary_texts([node.text], "default")
+        stats = vector.write_summary_tree([node], {"s1": embedding}, "default", {})
+        assert stats.failed_items == 0, stats.errors
+    finally:
+        vector.close()
+    path = tmp_path / "graph.jsonl"
+
+    exported = export_graph(config, path, providers=providers)
+
+    assert exported.counts["summary_nodes"] == 1
+    (record,) = [
+        r
+        for r in map(json.loads, path.read_text("utf-8").splitlines())
+        if r["kind"] == "summary"
+    ]
+    assert record["text"] == node.text and record["level"] == 1
+    assert set(record["documents"]) == {
+        "contracts/supply.txt",
+        "ko/공급.txt",
+        "ticket-1",
+    }
+
+
 def test_graphml_export_reads_back_as_a_graph(ingested, tmp_path: Path) -> None:
     config, providers = ingested
     path = tmp_path / "graph.graphml"

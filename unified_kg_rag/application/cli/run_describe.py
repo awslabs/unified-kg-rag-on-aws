@@ -85,8 +85,8 @@ def _build_parser() -> argparse.ArgumentParser:
         "--output-path",
         type=Path,
         help="Also export the namespace's graph to this file (entities, "
-        "relationships, communities, claims, with the text units and "
-        "documents they cite). An existing file is refused unless --force, "
+        "relationships, communities, claims, summary nodes, with the text "
+        "units and documents they cite). An existing file is refused unless --force, "
         "and so are the --config-path file and the schema file the config "
         "loads, always",
     )
