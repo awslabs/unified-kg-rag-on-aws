@@ -100,6 +100,7 @@ from unified_kg_rag.shared.utils.concurrency import (
     gather_or_cancel,
     single_flight,
 )
+from unified_kg_rag.shared.utils.event_loop import to_cpu_thread
 from unified_kg_rag.shared.utils.scripts import (
     has_dense_script,
     is_dense_script_char,
@@ -1422,8 +1423,8 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                     return await self._degraded_search(alias, suffix, found)
             # The parse validates every id list (a hub's lineage holds
             # thousands): off the event loop, as the fusion's.
-            return await asyncio.to_thread(self._parse_hits, found)
-        return await asyncio.to_thread(self._fuse, responses, size)
+            return await to_cpu_thread(self._parse_hits, found)
+        return await to_cpu_thread(self._fuse, responses, size)
 
     async def _next_pages(
         self,

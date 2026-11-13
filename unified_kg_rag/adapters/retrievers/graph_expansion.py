@@ -25,7 +25,6 @@ with Gremlin::
 The seeds themselves come back as rows with a path of length 1.
 """
 
-import asyncio
 import logging
 import time
 from abc import abstractmethod
@@ -69,6 +68,7 @@ from unified_kg_rag.domain.retrieval.ppr import cap_edges_per_vertex
 from unified_kg_rag.shared import InvalidFilterError, StoreConnectionError, get_logger
 from unified_kg_rag.shared.logging import log_error
 from unified_kg_rag.shared.utils import safe_float_parse, text_digest
+from unified_kg_rag.shared.utils.event_loop import to_cpu_thread
 
 logger = get_logger(__name__)
 
@@ -203,7 +203,7 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
             traversal_results = await self._traverse(seed_ids, query)
             # Pure over the rows; a hub's thousands of lineage ids are
             # validated as its result is made, so off the event loop.
-            results = await asyncio.to_thread(
+            results = await to_cpu_thread(
                 self._process_traversal_results, traversal_results, query
             )
 

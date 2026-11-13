@@ -92,6 +92,7 @@ from unified_kg_rag.shared.utils.concurrency import (
     gather_or_cancel,
     single_flight,
 )
+from unified_kg_rag.shared.utils.event_loop import to_cpu_thread
 
 logger = get_logger(__name__)
 
@@ -351,7 +352,7 @@ async def units_by_support(results: Sequence[RetrievalResult]) -> list[str]:
     tens of hubs took hundreds of milliseconds, which stalled every
     concurrent query on the event loop (local and structured search; the
     LightRAG chunk pick and PPR's ranking run off the loop the same way)."""
-    return await asyncio.to_thread(_units_by_support, list(results))
+    return await to_cpu_thread(_units_by_support, list(results))
 
 
 def evidence_lineage(

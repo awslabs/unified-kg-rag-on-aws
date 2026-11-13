@@ -658,3 +658,43 @@ def test_calls_racing_stop_never_hang() -> None:
         runner.stop()
     assert not any(thread.is_alive() for thread in threads)
     assert len(outcomes) == 400
+
+
+async def test_a_cpu_step_runs_beside_a_saturated_default_executor() -> None:
+    """``to_cpu_thread`` has threads of its own: every thread of the default
+    executor inside a blocking call does not delay it, and it runs with the
+    caller's context."""
+    import contextvars
+    import os
+    import threading
+
+    from unified_kg_rag.shared.utils import event_loop
+
+    marker: contextvars.ContextVar[str] = contextvars.ContextVar("marker")
+    marker.set("caller")
+    release = threading.Event()
+    loop = asyncio.get_running_loop()
+    executor = event_loop.configure_event_loop(loop, 2)
+    try:
+        held = [loop.run_in_executor(None, release.wait, 10) for _ in range(2)]
+        # A third call to the default executor would queue behind them.
+        queued = asyncio.ensure_future(asyncio.to_thread(lambda: "queued"))
+        found = await asyncio.wait_for(
+            event_loop.to_cpu_thread(
+                lambda scale: (
+                    marker.get(),
+                    threading.current_thread().name,
+                    scale,
+                ),
+                scale=3,
+            ),
+            timeout=5,
+        )
+        assert found[0] == "caller" and found[2] == 3
+        assert found[1].startswith("graphrag-cpu")
+        assert not queued.done()
+        assert event_loop._cpu_pool()._max_workers == (os.cpu_count() or 1)
+    finally:
+        release.set()
+        await asyncio.gather(*held, queued)
+        executor.shutdown(wait=False)

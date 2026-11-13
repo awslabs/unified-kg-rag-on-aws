@@ -20,7 +20,6 @@ docs/design.md §7.1.
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from itertools import islice
@@ -39,6 +38,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.citations import cited_markers
+from unified_kg_rag.shared.utils.event_loop import to_cpu_thread
 
 __all__ = [
     "MAX_LINEAGE_PAGES",
@@ -285,12 +285,12 @@ async def aresolve_documents(
     pages = _Pages(graph, known, limit)
     scale = 1
     for _ in range(MAX_LINEAGE_PAGES):
-        missing = await asyncio.to_thread(pages.page, scale)
+        missing = await to_cpu_thread(pages.page, scale)
         if not missing:
             break
         pages.read(missing, await fetch(missing))
         scale *= 2
-    await asyncio.to_thread(pages.attach)
+    await to_cpu_thread(pages.attach)
 
 
 def mark_cited(
