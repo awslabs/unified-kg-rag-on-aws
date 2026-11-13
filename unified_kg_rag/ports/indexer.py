@@ -143,6 +143,27 @@ class StoredAnnotation(BaseModel):
     )
 
 
+class GraphCensusRow(BaseModel):
+    """The fields of one stored entity vertex or relationship edge a graph
+    census digests (``GraphIndexer.scan_census_rows``), decoded as the full
+    reads decode them (an absent rank or weight is the model's default)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    type: str | None = Field(
+        default=None, description="An entity's type, an edge's label"
+    )
+    rank: int | None = Field(default=None, description="The stored rank")
+    description: str | None = Field(default=None, description="As stored")
+    text_unit_ids: list[str] = Field(
+        default_factory=list, description="The text units it cites, sorted"
+    )
+    source_id: str | None = Field(default=None, description="An edge's source")
+    target_id: str | None = Field(default=None, description="An edge's target")
+    weight: float | None = Field(default=None, description="An edge's weight")
+
+
 class BaseIndexer(ABC):
     def __init__(self, config: Config) -> None:
         self.config = config
@@ -445,6 +466,27 @@ class GraphIndexer(BaseIndexer):
         reset rewrites them. Adapters that override it (and
         :meth:`write_schema_annotations`, see ``rewrites_schema_annotations``)
         read in bounded requests, and raise when a read fails.
+        """
+        return None
+
+    def scan_census_rows(
+        self,
+        kind: AnnotatedKind,
+        suffix: str | None = None,
+        *,
+        page_size: int | None = None,
+    ) -> Iterator[list[GraphCensusRow]] | None:
+        """Pages of the census fields (:class:`GraphCensusRow`) of every
+        stored item of ``kind`` in ``suffix``'s graph, at most ``page_size``
+        ids a page (``None``: the backend's own bound), the pages in
+        ascending id order (a page's rows in any order).
+
+        A projection: the store returns only those fields, no full item is
+        decoded. Every stored copy is a row, so a store holding two edges of
+        one id yields both (the copies of an id come in one page). Default
+        returns ``None``: the backend cannot enumerate its items (no census).
+        Adapters that override it read in bounded requests and raise when a
+        read fails.
         """
         return None
 

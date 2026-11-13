@@ -15,11 +15,12 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Iterator, Mapping
 from pathlib import Path
 from typing import Any, ClassVar
 
 from unified_kg_rag.adapters.local.sqlite_graph import (
+    BATCH_SIZE,
     SQLiteGraphStore,
     batches,
     placeholders,
@@ -28,6 +29,8 @@ from unified_kg_rag.adapters.storage.neptune_codec import (
     BUILD_TAG_PROPERTY,
     IRI_PROPERTY,
     NAME_KEY_PROPERTY,
+    census_row_from_edge,
+    census_row_from_vertex,
     community_properties,
     entity_from_vertex,
     entity_properties,
@@ -43,6 +46,7 @@ from unified_kg_rag.domain.ingestion.seed_graph import (
 from unified_kg_rag.domain.models import Community, Config, Entity, Relationship
 from unified_kg_rag.ports.indexer import (
     AnnotatedKind,
+    GraphCensusRow,
     GraphIndexer,
     IndexingStats,
     SchemaAnnotation,
@@ -67,6 +71,21 @@ def vertex_value_map(vertex_id: str, props: dict[str, Any]) -> dict[str, list[An
         if values:
             value_map[key] = values
     return value_map
+
+
+# The stored properties a census row reads (``CENSUS_PROPERTIES`` but the
+# id, a column), in the order of the ``json_extract`` paths below.
+_CENSUS_KEYS = ("type", "rank", "description", "text_unit_ids", "weight")
+# One keyset page of an entity label's vertices (or its edges), by id, with
+# the _CENSUS_KEYS projected.
+_CENSUS_QUERIES: dict[AnnotatedKind, str] = {
+    "entities": "SELECT id, NULL, NULL, NULL, json_extract(props, '$.type', "
+    "'$.rank', '$.description', '$.text_unit_ids', '$.weight') FROM vertices "
+    "WHERE label = ? AND id > ? ORDER BY id LIMIT ?",
+    "relationships": "SELECT id, type, source_id, target_id, json_extract(props, "
+    "'$.type', '$.rank', '$.description', '$.text_unit_ids', '$.weight') FROM "
+    "edges WHERE label = ? AND id > ? ORDER BY id LIMIT ?",
+}
 
 
 class SQLiteGraphIndexer(GraphIndexer):
@@ -537,6 +556,50 @@ class SQLiteGraphIndexer(GraphIndexer):
             )
             annotations[item_id] = stored_annotation(props, kind, item_type)
         return annotations
+
+    def scan_census_rows(
+        self,
+        kind: AnnotatedKind,
+        suffix: str | None = None,
+        *,
+        page_size: int | None = None,
+    ) -> Iterator[list[GraphCensusRow]]:
+        """The census fields of every entity (or edge) of ``suffix``, a page
+        of ``page_size`` ids at a time, each page its own read: the stored
+        JSON is projected (``json_extract``), not decoded whole."""
+        return self._census_pages(
+            kind, self._entity_label(suffix), max(page_size or BATCH_SIZE, 1)
+        )
+
+    def _census_pages(
+        self, kind: AnnotatedKind, label: str, size: int
+    ) -> Iterator[list[GraphCensusRow]]:
+        query = _CENSUS_QUERIES[kind]
+        after = ""
+        while True:
+            with self.store.read("scan census rows") as connection:
+                rows = connection.execute(query, (label, after, size)).fetchall()
+            if not rows:
+                return
+            page = []
+            for item_id, edge_type, source_id, target_id, values in rows:
+                value_map = {
+                    "id": item_id,
+                    **dict(zip(_CENSUS_KEYS, json.loads(values), strict=True)),
+                }
+                row = (
+                    census_row_from_vertex(value_map)
+                    if kind == "entities"
+                    else census_row_from_edge(
+                        value_map, edge_type, source_id, target_id
+                    )
+                )
+                if row is not None:
+                    page.append(row)
+            yield page
+            if len(rows) < size:
+                return
+            after = rows[-1][0]
 
     def holds_any_item(self, suffix: str | None = None) -> bool:
         """Whether the label holds a vertex (an edge joins two of them)."""

@@ -19,6 +19,8 @@ from typing import Any, Literal
 from unified_kg_rag.adapters.storage.neptune_codec import (
     IRI_PROPERTY,
     NAME_KEY_PROPERTY,
+    census_row_from_edge,
+    census_row_from_vertex,
     entity_from_vertex,
     entity_properties,
     relationship_from_edge,
@@ -46,6 +48,7 @@ from unified_kg_rag.ports.indexer import (
     STORED_ITEM_KINDS,
     AnnotatedKind,
     BaseIndexer,
+    GraphCensusRow,
     IndexingStats,
     SchemaAnnotation,
     StoredAnnotation,
@@ -359,6 +362,31 @@ class FakeGraphStore:
             for (s, item_id), row in self.data.get(kind, {}).items()
             if s == scope
         }
+
+    def scan_census_rows(
+        self,
+        kind: AnnotatedKind,
+        suffix: str | None = None,
+        *,
+        page_size: int | None = None,
+    ) -> Iterator[list[GraphCensusRow]]:
+        scope = suffix or Constants.DEFAULT_SUFFIX.value
+        bucket = self.data.get(kind, {})
+        ids = sorted(i for s, i in bucket if s == scope)
+        size = max(page_size or 1000, 1)
+        for start in range(0, len(ids), size):
+            rows = [bucket[(scope, i)] for i in ids[start : start + size]]
+            page = (
+                (
+                    census_row_from_vertex(row)
+                    if kind == "entities"
+                    else census_row_from_edge(
+                        row["props"], row["label"], row["source_id"], row["target_id"]
+                    )
+                )
+                for row in rows
+            )
+            yield [row for row in page if row is not None]
 
     def holds_any_item(self, suffix: str | None = None) -> bool:
         scope = suffix or Constants.DEFAULT_SUFFIX.value

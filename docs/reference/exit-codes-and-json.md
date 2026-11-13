@@ -219,8 +219,10 @@ holds:
   `doc_id`, `file_path`, `status`, `error_info`, `failure_count`,
   `retry_count`, `attempt_count`, `written_by` and `updated_at`) and
   `export` (its `path`, `format`, `suffix`, `counts`, `truncated` and
-  `missing` kinds and `graph`, the graph store's census of its entity
-  vertices and relationship edges, or `null` without `--output-path`); a namespace that holds no index exits `2`,
+  `missing` kinds, `graph`, the graph store's census of its entity vertices
+  and relationship edges, and `graph_unavailable`, why it could not be read,
+  else `null`; or `null` without `--output-path`); a namespace that holds no
+  index exits `2`,
   unless the registry holds records of it and nothing is exported
   ([Inspect and export](../guides/inspect.md)).
 - **`run-prompt-tuning`**: the `output_path`, the `profile` and, with

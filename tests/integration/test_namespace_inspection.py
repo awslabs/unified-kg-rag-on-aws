@@ -22,7 +22,11 @@ from unified_kg_rag import describe_namespace, export_graph
 from unified_kg_rag.adapters.doc_status.dynamodb import DynamoDBDocStatusStore
 from unified_kg_rag.application.cli import run_describe
 from unified_kg_rag.application.storage import inspection
-from unified_kg_rag.shared.exceptions import ConfigurationError, ToolArgumentError
+from unified_kg_rag.shared.exceptions import (
+    ConfigurationError,
+    StoreConnectionError,
+    ToolArgumentError,
+)
 
 pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("no_aws")]
 
@@ -258,6 +262,111 @@ def test_the_census_reads_ranks_and_types(ingested) -> None:
     assert inspection.census_graph(NullGraphIndexer(config), "default") is None
 
 
+class _Closing:
+    """A store's close() counted, its other calls passed on."""
+
+    def __init__(self, store: Any, closed: list[str], name: str) -> None:
+        self._store, self._closed, self._name = store, closed, name
+
+    def __getattr__(self, attr: str) -> Any:
+        return getattr(self._store, attr)
+
+    def close(self) -> None:
+        self._closed.append(self._name)
+        self._store.close()
+
+
+def _unreachable(*_args: Any, **_kwargs: Any) -> Any:
+    raise StoreConnectionError("graph store at localhost:1 refused the connection")
+
+
+def test_an_unreachable_graph_store_exports_without_the_census(
+    ingested, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    """The export reads the vector store: without the graph store it is
+    written with ``graph: null`` and why (as a description without the
+    registry), and still differs from an export that holds the census."""
+    config, providers = ingested
+    compare = _compare_exports()
+    full = export_graph(config, tmp_path / "full.jsonl", providers=providers)
+    closed: list[str] = []
+    build_vector = providers.build_vector_indexer
+    monkeypatch.setattr(
+        providers,
+        "build_vector_indexer",
+        lambda: _Closing(build_vector(), closed, "vector"),
+    )
+    build_graph = providers.build_graph_indexer
+
+    def unreadable() -> Any:
+        graph = _Closing(build_graph(), closed, "graph")
+        graph.scan_census_rows = _unreachable  # type: ignore[method-assign]
+        return graph
+
+    for build in (unreadable, _unreachable):
+        closed.clear()
+        monkeypatch.setattr(providers, "build_graph_indexer", build)
+        path = tmp_path / f"{build.__name__}.jsonl"
+
+        exported = export_graph(config, path, providers=providers)
+
+        assert exported.graph is None
+        assert "refused the connection" in (exported.graph_unavailable or "")
+        assert exported.counts == full.counts
+        # Every store it opened is closed, a graph store it failed to open too.
+        assert sorted(closed) == (
+            ["graph", "vector"] if build is unreadable else ["vector"]
+        )
+        diffs = compare.compare_files(Path(full.path), path)
+        assert [d.kind for d in diffs if not d.same] == ["graph"]
+
+    # run-describe exits 0 and says the graph store is unavailable.
+    monkeypatch.setattr(run_describe, "load_cli_config", lambda _args: config)
+    monkeypatch.setattr(inspection, "build_providers", lambda _c: providers)
+    out = tmp_path / "cli.jsonl"
+    argv = ["run-describe", "--output-path", str(out)]
+    monkeypatch.setattr(sys, "argv", [*argv, "--output-format", "json"])
+    assert run_describe.main() == 0
+    document = json.loads(capsys.readouterr().out)["export"]
+    assert document["graph"] is None
+    assert "refused the connection" in document["graph_unavailable"]
+    monkeypatch.setattr(sys, "argv", [*argv, "--force"])
+    assert run_describe.main() == 0
+    assert "Graph store: unavailable" in " ".join(capsys.readouterr().out.split())
+
+
+def test_a_sample_export_opens_no_graph_store(
+    ingested, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config, providers = ingested
+    monkeypatch.setattr(providers, "build_graph_indexer", _unreachable)
+    exported = export_graph(
+        config, tmp_path / "s.jsonl", providers=providers, max_items=2
+    )
+    assert (exported.graph, exported.graph_unavailable) == (None, None)
+
+
+def test_visualization_data_closes_the_vector_store_when_the_graph_store_fails(
+    ingested, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from unified_kg_rag.application.storage.visualization_export import (
+        write_visualization_data,
+    )
+
+    config, providers = ingested
+    closed: list[str] = []
+    build_vector = providers.build_vector_indexer
+    monkeypatch.setattr(
+        providers,
+        "build_vector_indexer",
+        lambda: _Closing(build_vector(), closed, "vector"),
+    )
+    monkeypatch.setattr(providers, "build_graph_indexer", _unreachable)
+    with pytest.raises(StoreConnectionError):
+        write_visualization_data(providers, "default", tmp_path / "v.json")
+    assert closed == ["vector"]
+
+
 def test_graphml_export_reads_back_as_a_graph(ingested, tmp_path: Path) -> None:
     config, providers = ingested
     path = tmp_path / "graph.graphml"
@@ -286,6 +395,8 @@ def test_max_items_bounds_each_kind(ingested, tmp_path: Path) -> None:
     )
     assert exported.counts["entity"] == 1
     assert "entity" in exported.truncated
+    # A sample takes no census: it would read the whole graph store.
+    assert exported.graph is None and exported.graph_unavailable is None
     with pytest.raises(ConfigurationError, match="format"):
         export_graph(config, tmp_path / "g.x", providers=providers, format="csv")  # type: ignore[arg-type]
 
@@ -311,7 +422,17 @@ def test_run_describe_prints_one_json_document(
     graph = document["export"]["graph"]
     assert graph["vertices"]["count"] == 3
     assert graph["vertices"]["by_type"] == {"organization": 3}
-    assert set(graph["edges"]) == {"count", "by_type", "digest", "rank_digest"}
+    assert set(graph["edges"]) == {
+        "count",
+        "by_type",
+        "digest",
+        "rank_digest",
+        "provenance_digest",
+        "description_digest",
+        "topology_digest",
+    }
+    assert graph["vertices"]["topology_digest"] is None
+    assert document["export"]["graph_unavailable"] is None
     assert out.is_file()
     # The text report names the graph store's census too.
     monkeypatch.setattr(

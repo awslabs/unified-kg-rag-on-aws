@@ -7,9 +7,11 @@ Two namespaces converge when they hold the same records of every kind (by
 ``kind`` and ``id``) with the same content once the keys a rebuild may
 change without changing what the index says (:data:`VOLATILE`: build times,
 run ids) are removed. Lists keep their order. The export ends with the graph
-store's census (kind ``graph``: per-type counts and digests of its vertices
-and edges), compared like any record under either tolerance, so a graph
-store that lost writes the vector store kept does not converge.
+store's census (kind ``graph``: per-type counts of its vertices and edges,
+and digests of their types, ranks, provenance, descriptions and, for the
+edges, endpoints and weights), compared like any record under either
+tolerance, so a graph store that lost writes the vector store kept does
+not converge.
 
 A run resumed after a crash must converge exactly. A clean incremental run
 after one that failed some documents re-indexes them as a delta, so it
@@ -18,9 +20,9 @@ converges with a full build only up to what incremental indexing documents
 and appends its communities, a merged description keeps the stored summary
 and appends the delta's lines, and lists of ids may come in another order.
 ``--incremental`` (:data:`INCREMENTAL`) compares within that: communities
-and community memberships, descriptions (with their embedding and the
-record of the summary they were made from) are left out, and lists of ids
-are compared as multisets.
+and community memberships, descriptions (with their embedding, the record
+of the summary they were made from and the census's ``description_digest``)
+are left out, and lists of ids are compared as multisets.
 
 Usage::
 
@@ -74,6 +76,8 @@ INCREMENTAL = Tolerance(
         {
             "community_ids",
             "description",
+            # The graph census's digest of the descriptions (kind graph).
+            "description_digest",
             "embedding_digests.description_embedding",
             "attributes.summarized_from",
             "attributes.summarized_with",

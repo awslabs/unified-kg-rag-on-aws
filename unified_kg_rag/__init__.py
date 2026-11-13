@@ -184,6 +184,7 @@ _EXPORTS: dict[str, str] = {
     "IndexBuildRecord": "unified_kg_rag.domain.models",
     "IndexingStats": "unified_kg_rag.ports",
     "StoredAnnotation": "unified_kg_rag.ports.indexer",
+    "GraphCensusRow": "unified_kg_rag.ports.indexer",
     "DocStatusRecord": "unified_kg_rag.domain.models",
     "DocumentDelta": "unified_kg_rag.domain.models",
     "ExtractionSettings": "unified_kg_rag.domain.models",
@@ -322,7 +323,7 @@ if TYPE_CHECKING:
         VectorIndexer,
     )
     from unified_kg_rag.ports.guardrail import GroundingContext
-    from unified_kg_rag.ports.indexer import StoredAnnotation
+    from unified_kg_rag.ports.indexer import GraphCensusRow, StoredAnnotation
     from unified_kg_rag.ports.model_factory import LanguageModelInfo
     from unified_kg_rag.shared.exceptions import (
         ConfigurationError,

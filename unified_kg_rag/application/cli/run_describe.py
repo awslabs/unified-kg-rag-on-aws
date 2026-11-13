@@ -107,7 +107,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--max-items",
         type=positive_int,
-        help="Export at most this many items of each kind (default: all)",
+        help="Export at most this many items of each kind (default: all); a "
+        "sample export takes no graph-store census",
     )
     parser.add_argument(
         "--include-text",
@@ -282,6 +283,11 @@ def main() -> int:
                             f"{census.vertices.by_type}, {census.edges.count} "
                             f"edges {census.edges.by_type}"
                         )
+                    )
+                elif exported.graph_unavailable is not None:
+                    console.print(
+                        "[yellow]Graph store: unavailable, no census "
+                        f"({markup_safe(exported.graph_unavailable)})[/yellow]"
                     )
         return 0
     except KeyboardInterrupt:

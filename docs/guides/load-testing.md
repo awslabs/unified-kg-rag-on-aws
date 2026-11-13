@@ -128,9 +128,11 @@ same place, wiping `stores/` and `cache/` between builds). The export holds
 every kind of item the vector store keeps (text units, entities,
 relationships, community reports, claims, RAPTOR summary nodes), so every
 methodology's index is compared, and ends with the graph store's census
-(the `graph` records: per-type counts and digests of the ids and ranks of
-its vertices and edges, see [Inspect](./inspect.md#exported-graph)), so a
-resume that lost graph writes the vector store kept does not converge.
+(the `graph` records: per-type counts of its vertices and edges and digests
+of their types, ranks, provenance, descriptions, endpoints and weights, see
+[Inspect](./inspect.md#exported-graph)), so a resume that lost graph writes
+the vector store kept does not converge. `--incremental` leaves out the
+descriptions' digest, as it leaves out the descriptions.
 
 ```bash
 cd ws && uv run run-describe --config-path config.yaml --output-path ../reference.jsonl --include-text && cd ..

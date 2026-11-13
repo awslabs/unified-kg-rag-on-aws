@@ -29,7 +29,7 @@ array reads back as the decoded value.
 from __future__ import annotations
 
 import json
-from collections.abc import Collection, Mapping
+from collections.abc import Callable, Collection, Mapping
 from typing import Any
 
 from unified_kg_rag.domain.ingestion.names import compact_name_key
@@ -39,7 +39,11 @@ from unified_kg_rag.domain.ingestion.seed_graph import (
 )
 from unified_kg_rag.domain.models import Community, Constants, Entity, Relationship
 from unified_kg_rag.domain.retrieval.filters import ATTRIBUTE_KEY_PREFIX
-from unified_kg_rag.ports.indexer import AnnotatedKind, StoredAnnotation
+from unified_kg_rag.ports.indexer import (
+    AnnotatedKind,
+    GraphCensusRow,
+    StoredAnnotation,
+)
 from unified_kg_rag.shared import get_logger
 
 logger = get_logger(__name__)
@@ -323,3 +327,63 @@ def relationship_from_edge(
     if kinds:
         fields[SOURCE_KINDS_FIELD] = sorted(kinds)
     return Relationship.model_validate(fields)
+
+
+# What an absent rank or weight reads as (the full reads keep the model's
+# default): a census row decodes them alike.
+_ENTITY_RANK = Entity.model_fields["rank"].default
+_EDGE_RANK = Relationship.model_fields["rank"].default
+_EDGE_WEIGHT = Relationship.model_fields["weight"].default
+# The properties a census row reads (``GraphIndexer.scan_census_rows``).
+CENSUS_PROPERTIES: tuple[str, ...] = (
+    "id",
+    "type",
+    "rank",
+    "description",
+    "text_unit_ids",
+    "weight",
+)
+
+
+def _or_default(value: Any, default: Any, cast: Callable[[Any], Any]) -> Any:
+    value = _single(value)
+    return default if value is None else cast(value)
+
+
+def _text(value: Any) -> str | None:
+    value = _single(value)
+    return None if value is None else str(value)
+
+
+def census_row_from_vertex(value_map: Mapping[Any, Any]) -> GraphCensusRow | None:
+    """The census row of an entity vertex's ``valueMap()``; None without id."""
+    entity_id = _single(value_map.get("id"))
+    if entity_id is None:
+        return None
+    return GraphCensusRow(
+        id=str(entity_id),
+        type=_text(value_map.get("type")),
+        rank=_or_default(value_map.get("rank"), _ENTITY_RANK, int),
+        description=_text(value_map.get("description")),
+        text_unit_ids=sorted(_vertex_list(value_map.get("text_unit_ids")) or ()),
+    )
+
+
+def census_row_from_edge(
+    value_map: Mapping[Any, Any], label: Any, source_id: Any, target_id: Any
+) -> GraphCensusRow | None:
+    """The census row of a relationship edge's ``valueMap()``, label and
+    endpoints; None without id."""
+    rel_id = _single(value_map.get("id"))
+    if rel_id is None:
+        return None
+    return GraphCensusRow(
+        id=str(rel_id),
+        type=None if label is None else str(label),
+        rank=_or_default(value_map.get("rank"), _EDGE_RANK, int),
+        description=_text(value_map.get("description")),
+        text_unit_ids=sorted(edge_text_unit_ids(value_map.get("text_unit_ids"))),
+        source_id=_text(source_id),
+        target_id=_text(target_id),
+        weight=_or_default(value_map.get("weight"), _EDGE_WEIGHT, float),
+    )

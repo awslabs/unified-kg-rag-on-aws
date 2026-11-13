@@ -137,6 +137,7 @@ PUBLIC_API = sorted(
         "GraphEdge",
         "GraphProfile",
         "GraphQueryRequest",
+        "GraphCensusRow",
         "GraphQueryResult",
         "GroundingContext",
         "IndexArtifact",

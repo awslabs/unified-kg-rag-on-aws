@@ -1147,11 +1147,13 @@ From a `main` checkout (formats and keys no release had):
   `--output-path`, `--export-format`, `--max-items`; written atomically, so a failed export leaves the previous file
   and no partial one; an existing file is replaced only with `--force`, `export_graph(overwrite=True)`, and never the
   `--config-path` file or the schema file the config loads, by the guard `run-prompt-tuning` shares), with the
-  graph store's census (`graph`: per-type counts and digests of the ids, types and ranks of its vertices and edges,
-  read through `GraphIndexer`); `VectorIndexer.describe_indices` and `scan_items` (#628). It, `kg_describe_schema`
-  (which adds `auto_routes`), the console and the chain's refusal read what a namespace holds by one rule
-  (`NamespaceHoldings`): without a build
-  record the console shows what the config builds, as queries are served, not nothing held; a namespace nothing was
+  graph store's census (`graph`: per-type counts, every stored copy counted, and digests of the types, ranks, cited
+  text units, descriptions and edge endpoints and weights of its vertices and edges, from a projected read,
+  `GraphIndexer.scan_census_rows`; none with `--max-items`; a graph store that cannot be read leaves `graph` null and
+  `graph_unavailable` saying why, and the export stands); `VectorIndexer.describe_indices` and `scan_items` (#628).
+  It, `kg_describe_schema` (which adds `auto_routes`), the console and the chain's refusal read what a namespace
+  holds by one rule (`NamespaceHoldings`): without a build record the console shows what the config builds, as
+  queries are served, not nothing held; a namespace nothing was
   ingested under holds nothing (`exists: false`, also in `kg_describe_schema`; `acheck_methodology` and a query raise
   `IndexNotFoundError`, not a methodology refusal naming the config's). A registry the caller cannot read (the CDK
   query task's role has no DynamoDB access) is reported unavailable, with the reason in `registry_unavailable` and a
