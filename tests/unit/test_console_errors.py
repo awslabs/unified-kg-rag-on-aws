@@ -97,6 +97,30 @@ def test_an_error_answers_with_its_class_and_the_class_s_status(
     assert body["error"] == shown
 
 
+def test_an_unexpected_error_is_logged_by_its_class_never_its_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The page shows an unexpected error masked, so the server log is the
+    one place that says what failed: its class at ERROR, its text not."""
+    import logging
+
+    client = _client(tmp_path)
+    text = "arn:aws:iam::111111111111:role/SECRET-ROLE-MARKER"
+
+    async def raises(*_: Any, **__: Any) -> Any:
+        raise PipelineExecutionError(text)
+
+    monkeypatch.setattr(client.app.state.console.ask, "held_methodologies", raises)
+    with caplog.at_level(logging.INFO):
+        response = client.get("/api/namespace/methodologies")
+    assert response.status_code == 500
+    errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert any("PipelineExecutionError" in r.getMessage() for r in errors), [
+        r.getMessage() for r in caplog.records
+    ]
+    assert all("SECRET-ROLE-MARKER" not in r.getMessage() for r in caplog.records)
+
+
 def test_every_error_class_has_a_status() -> None:
     from unified_kg_rag.application.cli.console.server import HTTP_STATUS
 

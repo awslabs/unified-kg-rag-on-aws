@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from pathlib import Path
 from typing import Any
@@ -757,6 +758,32 @@ async def test_an_unexpected_failure_shows_no_text_and_keeps_its_ids(
     (row,) = service.store.queries()
     assert row["trace_id"] == "trace-1"
     assert "secret" not in str(row)
+    await service.close()
+
+
+async def test_a_hidden_failure_is_logged_under_the_id_the_page_shows(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An unexpected error's text is masked on the page, so the server log is
+    where it can be found: a record carries the ``query_id`` the page shows
+    (and only the error's digest at INFO)."""
+    error = RuntimeError("arn:aws:bedrock:region:000000000000:secret detail")
+    service = AskService(
+        Config,
+        ConsoleStore(tmp_path / "s.sqlite3"),
+        chain_factory=lambda _c: _FailingChain(error),
+    )
+    with caplog.at_level(logging.INFO):
+        events = await _drain(service, "q")
+    query_id = events[-1]["query_id"]
+    logged = [
+        r
+        for r in caplog.records
+        if r.levelno >= logging.ERROR
+        and (query_id in r.getMessage() or getattr(r, "query_id", None) == query_id)
+    ]
+    assert logged, [r.getMessage() for r in caplog.records]
+    assert all("secret" not in r.getMessage() for r in caplog.records)
     await service.close()
 
 
