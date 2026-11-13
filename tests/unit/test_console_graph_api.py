@@ -12,6 +12,7 @@ import pytest
 
 from tests.fixtures.graph_exports import write_export
 from unified_kg_rag.application.cli.console import graph_api
+from unified_kg_rag.shared.exceptions import StoreConnectionError
 
 pytestmark = pytest.mark.unit
 
@@ -171,7 +172,17 @@ def test_the_graph_page_builds_one_provider_bundle_per_config(
     def broken() -> Config:
         raise ValueError("no config")
 
-    assert builder.current(broken) == graph_api.CurrentGraph("failed", None)
+    assert builder.current(broken) == graph_api.CurrentGraph(
+        "failed", None, reason="config"
+    )
+
+    def unreadable(config: object, cache: Path, providers: Any) -> object:
+        raise StoreConnectionError("graph store down")
+
+    monkeypatch.setattr(graph_api, "current_graph", unreadable)
+    assert builder.current(lambda: first) == graph_api.CurrentGraph(
+        "failed", "default", reason="read"
+    )
 
 
 def test_a_failed_build_keeps_the_recorded_build_time(
@@ -190,13 +201,20 @@ def test_a_failed_build_keeps_the_recorded_build_time(
     )
 
     def unwritable(*args: Any) -> Any:
-        raise PermissionError("read-only folder")
+        raise visualization_export.ExportWriteError("read-only folder")
 
     monkeypatch.setattr(visualization_export, "current_visualization_data", unwritable)
     current = graph_api.current_graph(Config(), tmp_path, lambda: object())
     assert current == graph_api.CurrentGraph(
-        "failed", "default", "2026-11-15T00:00:00Z"
+        "failed", "default", "2026-11-15T00:00:00Z", reason="write"
     )
+
+    def unreadable(*args: Any) -> Any:
+        raise PermissionError("the store's own file")
+
+    monkeypatch.setattr(visualization_export, "current_visualization_data", unreadable)
+    current = graph_api.current_graph(Config(), tmp_path, lambda: object())
+    assert current.reason == "read" and current.view()["reason"] == "read"
     graphs: list[dict[str, Any]] = [
         {"namespace": "default", "built_at": "2026-11-13T00:00:00Z"}
     ]

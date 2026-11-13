@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { I18nProvider, type Locale } from "../i18n/i18n";
+import { I18nProvider, useI18n, type Locale } from "../i18n/i18n";
 import { ApiError, errorMessage } from "../lib/api";
 import { TrailProvider } from "../lib/trail";
 import type { Status } from "../lib/types";
-import { AskPage } from "./AskPage";
+import { AskPage, turnErrorText } from "./AskPage";
 
 const status = { config_path: "c.yaml", namespace: "default", jobs: [], sample_questions: ["Who ships parts?"], max_top_k: 40 } as unknown as Status;
 
@@ -101,6 +101,37 @@ describe("a failure inside the server", () => {
     renderAsk();
     fireEvent.click(await screen.findByText("Who ships parts?"));
     expect(await screen.findByText("The call failed inside the server (a store or model error). The server log has the details under query id 0a1b2c3d4e5f.")).toBeInTheDocument();
+  });
+
+  it("is said again in the new language when the page's language switches", async () => {
+    serveStream([
+      { kind: "start", query_id: "9b5c9b39e6d7", trace_id: null, trace_url: null },
+      { kind: "error", error_kind: "failure", message: masked, query_id: "9b5c9b39e6d7", trace_id: "4bf92f3577b34da6" },
+    ]);
+    function Switch() {
+      const { setLocale } = useI18n();
+      return <button onClick={() => setLocale("ko")}>to-ko</button>;
+    }
+    render(
+      <I18nProvider initial="en">
+        <TrailProvider>
+          <Switch />
+          <AskPage status={status} />
+        </TrailProvider>
+      </I18nProvider>,
+    );
+    fireEvent.click(await screen.findByText("Who ships parts?"));
+    expect(await screen.findByText(/under query id 9b5c9b39e6d7/)).toBeInTheDocument();
+    fireEvent.click(screen.getByText("to-ko"));
+    expect(await screen.findByText(/쿼리 ID 9b5c9b39e6d7/)).toHaveTextContent("트레이스 ID: 4bf92f3577b34da6");
+    expect(screen.queryByText(/under query id/)).not.toBeInTheDocument();
+  });
+
+  it("says a question the network lost in the new language, too", () => {
+    const t = (key: string) => key;
+    expect(turnErrorText(t, { error: { kind: "failure", cause: new TypeError("fetch failed") } })).toBe("error.network");
+    expect(turnErrorText(t, { error: { kind: "incomplete" } })).toBe("ask.incomplete");
+    expect(turnErrorText(t, { error: { kind: "index_not_found", message: "no index" } })).toBe("no index");
   });
 
   it("of another request is not called a query's", () => {

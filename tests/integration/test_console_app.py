@@ -609,6 +609,7 @@ def test_the_graph_page_brings_the_namespace_s_graph_up_to_date(
     response = client.get("/api/graphs")
     assert response.status_code == 200 and response.json()["graphs"]
     assert response.json()["current"]["state"] == "failed"
+    assert response.json()["current"]["reason"] == "read"
     assert asked == [workspace / "cache"]
 
 

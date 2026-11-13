@@ -312,5 +312,15 @@ def test_the_console_builds_the_graph_an_incremental_run_did_not_export(
     assert graph_api.current_graph(config, cache).path == path
     assert path.stat().st_mtime_ns == written
     assert len(exports) == 1  # the full build's
+    # The stores changed and the export folder cannot be written: a failure
+    # of the folder (not of the stores), the older export still named.
+    (source / "port.txt").write_text("Port ships crates for Depot.")
+    e2e._ingest(config, providers, source, tmp_path / "run-3")
+    blocker = tmp_path / "not-a-folder"
+    blocker.write_text("a file where the folder should be")
+    config.graph.visualization.outputs_directory = str(blocker / "graphs")
+    failed = graph_api.current_graph(config, cache)
+    assert (failed.state, failed.reason) == ("failed", "write")
+    assert failed.built_at
     config.graph.visualization.export_data = False
     assert graph_api.current_graph(config, cache).state == "export_off"

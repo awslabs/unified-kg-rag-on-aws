@@ -32,12 +32,18 @@ interface GraphFile {
 
 /** Why the config's namespace has a graph or not: ``current`` (shown),
  * ``export_off`` (graph.visualization.export_data off), ``unrecorded`` (no
- * build record) or ``failed`` (building it raised; the log says why). */
+ * build record) or ``failed`` (building it raised; the log says why, and
+ * ``reason`` which part: the ``config``, the stores read or the export folder
+ * written). */
 interface CurrentGraph {
   state: "current" | "export_off" | "unrecorded" | "failed";
   namespace: string | null;
   built_at: string | null;
+  reason?: "config" | "read" | "write" | null;
 }
+
+/** The catalog key of what a failed build says: the part that failed. */
+const failedKey = (reason: CurrentGraph["reason"]) => (reason === "write" ? "graph.failedWrite" : reason === "config" ? "graph.failedConfig" : "graph.failed");
 
 type Panel = "entity" | "communities" | "analysis";
 
@@ -85,10 +91,10 @@ export function GraphPage({ params }: { params: URLSearchParams }) {
         }
       />
       <ErrorText error={files.error ?? graph.error} />
-      {none ? <NoGraph state={files.data!.current.state} indexed={held.data?.indexed ?? null} namespace={files.data!.current.namespace} /> : null}
+      {none ? <NoGraph state={files.data!.current.state} reason={files.data!.current.reason} indexed={held.data?.indexed ?? null} namespace={files.data!.current.namespace} /> : null}
       {/* Building failed with exports to show: the newest is drawn, marked
           outdated in the picker when the namespace was built since. */}
-      {!none && files.data?.current.state === "failed" ? <Notice tone="warn" title={t("graph.failedTitle")}>{t("graph.failed")}</Notice> : null}
+      {!none && files.data?.current.state === "failed" ? <Notice tone="warn" title={t("graph.failedTitle")}>{t(failedKey(files.data.current.reason))}</Notice> : null}
       {files.loading || (unrecorded && held.loading) || (graph.loading && ref) ? <Loading /> : null}
       {graph.data && ref ? <GraphExplorer key={ref} graphRef={ref} data={graph.data} params={params} /> : null}
     </>
@@ -98,7 +104,7 @@ export function GraphPage({ params }: { params: URLSearchParams }) {
 /** Why there is no graph to show, and the way to one: Settings when the
  * export is off, Ingest for an empty namespace or one to rebuild once (no
  * build record), nothing more to do when building it failed. */
-function NoGraph({ state, indexed, namespace }: { state: CurrentGraph["state"]; indexed: boolean | null; namespace: string | null }) {
+function NoGraph({ state, reason, indexed, namespace }: { state: CurrentGraph["state"]; reason: CurrentGraph["reason"]; indexed: boolean | null; namespace: string | null }) {
   const { t } = useI18n();
   if (state === "unrecorded" && indexed === null) return null;
   const why = state === "export_off" ? "exportOff" : state === "failed" ? "failed" : indexed ? "unrecorded" : "none";
@@ -114,7 +120,7 @@ function NoGraph({ state, indexed, namespace }: { state: CurrentGraph["state"]; 
     );
   return (
     <Empty title={t(`graph.${why}Title`, { namespace: namespace ?? "" })} action={action}>
-      {t(`graph.${why}`)}
+      {t(why === "failed" ? failedKey(reason) : `graph.${why}`)}
     </Empty>
   );
 }

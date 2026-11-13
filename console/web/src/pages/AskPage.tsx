@@ -20,12 +20,31 @@ interface Turn {
   text: string;
   status: "streaming" | "done" | "error" | "stopped";
   result?: AskResult;
-  error?: { kind: string; message: string };
+  /** What failed: its kind, and either the server's own message or what the
+   * page says of it at render time (``cause``: an error it caught;
+   * ``incomplete``; a ``failure``, by the turn's ids), so a switch of the
+   * page's language says it in the new one. */
+  error?: { kind: string; message?: string; cause?: unknown };
   traceUrl?: string | null;
   /** The ids the server logs and traces the question by (its start event's;
    * an error event's when it names them). */
   queryId?: string;
   traceId?: string | null;
+}
+
+type Translate = (key: string, vars?: Record<string, string | number>) => string;
+
+/** What the page says of a turn's failure, in its language now: a failure
+ * inside the server by the ids its log lines carry, an error the page caught
+ * as :func:`errorMessage` says it, and a stream that ended without an answer;
+ * any other kind with the server's own message. */
+export function turnErrorText(t: Translate, turn: Pick<Turn, "error" | "queryId" | "traceId">): string {
+  const error = turn.error;
+  if (!error) return "";
+  if (error.cause !== undefined) return errorMessage(t, error.cause);
+  if (error.kind === "incomplete") return t("ask.incomplete");
+  if (error.kind === "failure") return failureHelp(t, { query_id: turn.queryId, trace_id: turn.traceId });
+  return error.message ?? "";
 }
 
 // The earlier turns a follow-up sends (the chain bounds them further by
@@ -118,18 +137,17 @@ export function AskPage({ status }: { status: Status | null }) {
           update(id, (turn) => {
             const ids = { query_id: event.query_id ?? turn.queryId, trace_id: event.trace_id ?? turn.traceId };
             // A failure's detail stays in the server log: the page names
-            // the ids to find it by, in its language.
-            const message = event.error_kind === "failure" ? failureHelp(t, ids) : event.message;
-            return { ...turn, status: "error", error: { kind: event.error_kind, message }, queryId: ids.query_id, traceId: ids.trace_id };
+            // the ids to find it by, in its language (see turnErrorText).
+            return { ...turn, status: "error", error: { kind: event.error_kind, message: event.message }, queryId: ids.query_id, traceId: ids.trace_id };
           });
       }
     } catch (e) {
       if (controller.signal.aborted) update(id, (turn) => ({ ...turn, status: "stopped" }));
-      else update(id, (turn) => ({ ...turn, status: "error", error: { kind: "failure", message: errorMessage(t, e) } }));
+      else update(id, (turn) => ({ ...turn, status: "error", error: { kind: "failure", cause: e } }));
     } finally {
       // A stream that ended with neither its result nor an error (the
       // server stopped) leaves no turn waiting.
-      update(id, (turn) => (turn.status === "streaming" ? { ...turn, status: "error", error: { kind: "incomplete", message: t("ask.incomplete") } } : turn));
+      update(id, (turn) => (turn.status === "streaming" ? { ...turn, status: "error", error: { kind: "incomplete" } } : turn));
       abort.current = null;
     }
   }
@@ -397,7 +415,7 @@ function TurnView({
                 {t("common.goIngest")}
               </button>
             ) : (
-              turn.error.message
+              turnErrorText(t, turn)
             )}
           </Notice>
         ) : (

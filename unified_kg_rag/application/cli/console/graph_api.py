@@ -76,18 +76,22 @@ class CurrentGraph:
     by a release before build records, whose graph cannot be told current);
     ``failed`` when building it raised (:class:`GraphBuilder`), with the
     build's ``built_at`` once the build record was read, so the exports
-    older than it are still marked outdated."""
+    older than it are still marked outdated, and its ``reason``: what failed
+    (``config`` the config could not be read, ``read`` the stores, ``write``
+    the export folder)."""
 
     state: str
     namespace: str | None
     built_at: str | None = None
     path: Path | None = None
+    reason: str | None = None
 
     def view(self) -> dict[str, Any]:
         return {
             "state": self.state,
             "namespace": self.namespace,
             "built_at": self.built_at,
+            "reason": self.reason,
         }
 
 
@@ -106,7 +110,8 @@ def current_graph(
     provider bundle) with ``graph.visualization.export_data`` off or no
     build recorded (an empty namespace). ``providers`` gives the bundle to
     read the stores with (default: one built for ``config``). A build that
-    raises is ``failed`` (logged), with the recorded ``built_at``.
+    raises is ``failed`` (logged), with the recorded ``built_at`` and the
+    reason (``write`` for the export folder, else ``read``).
 
     Raises:
         ConfigurationError: The vector store cannot page its items.
@@ -114,6 +119,7 @@ def current_graph(
     """
     from unified_kg_rag.application.bootstrap import build_providers
     from unified_kg_rag.application.storage.visualization_export import (
+        ExportWriteError,
         current_visualization_data,
         stored_export,
     )
@@ -140,7 +146,8 @@ def current_graph(
         )
     except Exception as e:  # noqa: BLE001 - the page lists the exports there are
         logger.warning("Building the graph of '%s' failed: %s", suffix, e)
-        return CurrentGraph("failed", suffix, built_at)
+        reason = "write" if isinstance(e, ExportWriteError) else "read"
+        return CurrentGraph("failed", suffix, built_at, reason=reason)
     return CurrentGraph("current", suffix, built_at, path)
 
 
@@ -161,15 +168,17 @@ class GraphBuilder:
         exports there are."""
         with self._lock:
             namespace = None
+            reason = "config"
             try:
                 config = load_config()
                 namespace = resolve_namespace(config, None)
+                reason = "read"
                 return current_graph(
                     config, self.cache_directory, lambda: self._bundle(config)
                 )
             except Exception as e:  # noqa: BLE001 - the page still lists the exports
                 logger.warning("Building the graph for the Graph page failed: %s", e)
-                return CurrentGraph("failed", namespace)
+                return CurrentGraph("failed", namespace, reason=reason)
 
     def _bundle(self, config: Config) -> Providers:
         from unified_kg_rag.application.bootstrap import build_providers

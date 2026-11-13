@@ -30,13 +30,19 @@ from unified_kg_rag.domain.ingestion.visualization_data import (
 )
 from unified_kg_rag.domain.models import Claim, Entity, Relationship
 from unified_kg_rag.ports.indexer import GraphIndexer, StoredItemKind, VectorIndexer
-from unified_kg_rag.shared import ConfigurationError, get_logger
+from unified_kg_rag.shared import ConfigurationError, DataProcessingError, get_logger
 from unified_kg_rag.shared.utils.files import atomic_write_text
 
 if TYPE_CHECKING:
     from unified_kg_rag.adapters.providers import Providers
 
 logger = get_logger(__name__)
+
+
+class ExportWriteError(DataProcessingError, OSError):
+    """The export file (or its folder) could not be written, as distinct from
+    the stores it was read from failing: a caller says which of the two."""
+
 
 # Ids one graph-store read takes (as the incremental merge reads them).
 _READ_BATCH = 500
@@ -111,6 +117,7 @@ def write_visualization_data(
     Raises:
         ConfigurationError: The vector store cannot page its items.
         StoreConnectionError: A store cannot be reached.
+        ExportWriteError: ``path`` (or its folder) cannot be written.
     """
     with ExitStack() as stores:
         vector = providers.build_vector_indexer()
@@ -130,8 +137,11 @@ def write_visualization_data(
         namespace=suffix,
         built_at=built_at,
     )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_text(path, json.dumps(data, default=str))
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(path, json.dumps(data, default=str))
+    except OSError as e:
+        raise ExportWriteError(f"Cannot write '{path}': {e}") from e
     return {
         "nodes": len(data["nodes"]),
         "edges": len(data["edges"]),

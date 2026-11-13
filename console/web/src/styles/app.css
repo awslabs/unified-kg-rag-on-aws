@@ -1025,6 +1025,13 @@ kbd {
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: var(--space-4);
 }
+/* Between a phone and 1280 px the seven tiles take two even rows (4 + 3), where
+   the fitted columns left one tile alone on the second. */
+@media (min-width: 700px) and (max-width: 1279px) {
+  .stat-row {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
 .stat {
   display: grid;
   /* A label that wraps pushes no figure down: the figures share a line. */
