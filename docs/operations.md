@@ -1487,8 +1487,9 @@ Corpus coverage metrics, one value per run (Sum):
 | `total_units_failed` | run end | Text units a stage failed on, full builds included (JSON `units_failed`) |
 | `total_unrecognised_claim_statuses` | `claim_extraction` | Extracted claims whose status the model wrote outside the words the claim reader knows (stored as `unknown`) |
 
-Model usage metrics, emitted right after each stage that called a model or
-was served from the LLM response cache (Sum; a model-free stage emits none,
+Model usage metrics, emitted right after each stage that called a model,
+sent a Bedrock request (an embedding-only stage such as `indexing`) or was
+served from the LLM response cache (Sum; a model-free stage emits none,
 so it creates no metric series). They come from the app's own usage
 accounting, tracing on or off, and count only this deployment's runs, unlike
 the account-wide Bedrock widgets; `run-ingestion --output-format json` has the
@@ -1499,8 +1500,8 @@ same counts in `token_usage`:
 | `llm_calls_<stage>` | Model calls that returned (retries included, failed calls not) |
 | `llm_input_tokens_<stage>` | Input tokens the responses reported, prompt-cache reads and writes included |
 | `llm_output_tokens_<stage>` | Output tokens the responses reported |
-| `llm_throttles_<stage>` | Requests Bedrock throttled (HTTP 429), each attempt once: resent inside a call or the last attempt of a failed one |
-| `llm_throttles`, `llm_requests` | The throttled requests and every request sent (returned and failed calls plus the requests resent inside them), summed over the stages: `BedrockThrottling` reads their ratio |
+| `llm_throttles_<stage>` | Requests Bedrock throttled (HTTP 429), each attempt once: resent inside a call or the last attempt of a failed one; the language, embedding and rerank models' alike |
+| `llm_throttles`, `llm_requests` | The throttled requests and every request sent to Bedrock (each attempt once, the embedding and rerank models' too: `sent_requests` in `token_usage`), summed over the stages: `BedrockThrottling` reads their ratio |
 | `llm_cache_hits` | Responses the run's LLM response cache served instead of a call (a resumed stage), chunk-boundary and community report answers the extraction store served, and description summaries a full build took from their stored copies, summed over the stages |
 
 To check them against Bedrock's own counts, compare a run's sums with the

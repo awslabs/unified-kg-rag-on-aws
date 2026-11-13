@@ -301,14 +301,15 @@ def emit_stage_metrics(
 
 
 def stage_usage_metrics(context: PipelineContext, stage_name: str) -> dict[str, float]:
-    """The flat LLM usage metrics of a stage that called a model or was
-    served from the response cache (none for a model-free stage, so no
-    custom-metric series is created for it): ``llm_calls_<stage>``,
-    ``llm_input_tokens_<stage>``, ``llm_output_tokens_<stage>``,
-    ``llm_throttles_<stage>`` (requests the provider throttled), and,
-    summed over the stages by a Sum statistic, ``llm_cache_hits``,
-    ``llm_throttles`` and ``llm_requests`` (the requests sent: returned and
-    failed calls and the requests resent inside them), whose ratio the CDK
+    """The flat LLM usage metrics of a stage that called a model, sent a
+    model request (an embedding stage's) or was served from the response
+    cache (none for a model-free stage, so no custom-metric series is
+    created for it): ``llm_calls_<stage>``, ``llm_input_tokens_<stage>``,
+    ``llm_output_tokens_<stage>``, ``llm_throttles_<stage>`` (requests the
+    provider throttled), and, summed over the stages by a Sum statistic,
+    ``llm_cache_hits``, ``llm_throttles`` and ``llm_requests`` (every
+    request sent to Bedrock, the language, embedding and rerank models'
+    alike, each attempt once: ``sent_requests``), whose ratio the CDK
     stack's throttling alarm reads."""
     usage = next(
         (
@@ -318,8 +319,9 @@ def stage_usage_metrics(context: PipelineContext, stage_name: str) -> dict[str, 
         ),
         None,
     )
-    if not usage or not (
-        usage.get("llm_calls") or usage.get("cache_hits") or usage.get("failed_calls")
+    if not usage or not any(
+        usage.get(name)
+        for name in ("llm_calls", "cache_hits", "failed_calls", "sent_requests")
     ):
         return {}
     throttles = usage.get("throttled_requests", 0)
@@ -330,9 +332,7 @@ def stage_usage_metrics(context: PipelineContext, stage_name: str) -> dict[str, 
         f"llm_throttles_{stage_name}": throttles,
         "llm_cache_hits": usage.get("cache_hits", 0),
         "llm_throttles": throttles,
-        "llm_requests": usage.get("llm_calls", 0)
-        + usage.get("failed_calls", 0)
-        + usage.get("request_retries", 0),
+        "llm_requests": usage.get("sent_requests", 0),
     }
 
 

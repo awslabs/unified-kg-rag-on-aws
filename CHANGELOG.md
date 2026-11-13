@@ -1321,7 +1321,8 @@ From a `main` checkout (formats and keys no release had):
   not two named ones. See
   [query](docs/guides/query.md#follow-up-rounds-for-multi-hop-questions).
 - LLM usage accounting, tracing or not: calls, input and output tokens, prompt-cache reads and writes, resent,
-  throttled and failed requests and cache hits per model role and id, in `RAGOutput` / `SearchOutput.metadata["usage"]`,
+  sent and throttled requests (every Bedrock client's: the language, embedding and rerank models'), failed calls and
+  cache hits per model role and id, in `RAGOutput` / `SearchOutput.metadata["usage"]`,
   `EvaluationResult.usage`, `run-ingestion`'s JSON `token_usage` and per-stage EMF metrics on the CDK dashboard. A
   call counts from its start, so cancelled and background calls are billed at an estimated input; a response that
   reports no tokens keeps its resent requests and an output estimated from its text (#526, #530, #532, #533, #541,

@@ -335,15 +335,35 @@ def test_throttled_requests_are_emitted_even_when_every_call_failed() -> None:
         return SimpleNamespace(stage_results=[result])
 
     failed = stage_usage_metrics(
-        context({"failed_calls": 2, "request_retries": 10, "throttled_requests": 12}),
+        context(
+            {
+                "failed_calls": 2,
+                "request_retries": 10,
+                "sent_requests": 12,
+                "throttled_requests": 12,
+            }
+        ),
         "graph_extraction",
     )
     assert failed["llm_throttles_graph_extraction"] == 12
     # Every request sent: 2 failed calls of 6 requests each, all throttled.
     assert (failed["llm_throttles"], failed["llm_requests"]) == (12, 12)
     mixed = stage_usage_metrics(
-        context({"llm_calls": 8, "request_retries": 2, "throttled_requests": 1}),
+        context(
+            {
+                "llm_calls": 8,
+                "request_retries": 2,
+                "sent_requests": 10,
+                "throttled_requests": 1,
+            }
+        ),
         "graph_extraction",
     )
     assert (mixed["llm_throttles"], mixed["llm_requests"]) == (1, 10)
+    # Regression (rv25): a stage that only embeds (indexing) made no model
+    # call, so its requests and throttles were never emitted.
+    embedding = stage_usage_metrics(
+        context({"sent_requests": 40, "throttled_requests": 3}), "graph_extraction"
+    )
+    assert (embedding["llm_throttles"], embedding["llm_requests"]) == (3, 40)
     assert stage_usage_metrics(context({}), "graph_extraction") == {}
