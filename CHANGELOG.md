@@ -1824,8 +1824,8 @@ From a `main` checkout (formats and keys no release had):
   `unified_kg_rag.domain.ingestion.community_clustering`), not the pipeline's, chain's or indexing manager's; filter
   on the subpackage prefix (`unified_kg_rag.application.ingestion`, ...) (#586, #587, #590).
 - Dependencies: pydantic 2.14, langchain-core 1.7.3, `langchain-aws>=1.8.1`, langchain-openai 1.7, langsmith 0.14,
-  datasets 5.1, tiktoken 0.14, tenacity 9.2, boto3 1.43.122; aws-cdk-lib 2.275 in the CDK lock (#241, #251, #265,
-  #438, #465, #489).
+  datasets 5.1, tiktoken 0.14, tenacity 9.2, boto3 1.43.122, soupsieve 4.1 (2.10 on Python before 3.11.5) for
+  CVE-2026-126190 and CVE-2026-126192; aws-cdk-lib 2.275 in the CDK lock (#241, #251, #265, #438, #465, #489).
 - Documentation restructured around a hub ([docs/index.md](docs/index.md)) with tutorials, concepts, guides and
   references, Korean twins of the main pages and checked links; the 0.2.3 user guide is replaced by those pages
   (#337-#342, #351, #469, #542-#557, #582, #583).
