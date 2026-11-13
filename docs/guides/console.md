@@ -229,7 +229,8 @@ question**, read once opened, lists each question with every strategy's
 score on the primary metric (the mean over its repeats) and its outcome
 (win, tie or loss) for the shown candidate against its baseline, filterable
 by outcome; a question opens the reference answer and every strategy's
-answer side by side. A job's gates show as passed or failed.
+answer side by side. A question marked unanswerable shows whether each
+answer declined, the right answer to it. A job's gates show as passed or failed.
 
 **Graph.** A `visualization_data.json` of the namespace (the newest by
 default): a full build writes the namespace's whole graph, and no console

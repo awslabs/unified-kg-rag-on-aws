@@ -233,7 +233,9 @@ def question_scores(
 ) -> dict[str, Any]:
     """Per question of a saved run: each strategy's score on one metric
     (its mean over the repeats that scored it; a failed answer has none and
-    shows its error) and its answer (the first repeat's).
+    shows its error) and its answer (the first repeat's), and whether the
+    question is marked unanswerable (its answers are then read by whether
+    they declined).
 
     The metric is the comparison's primary one, else
     ``answer_match/answer_contains`` when scored, else the first scored.
@@ -268,6 +270,8 @@ def question_scores(
                     "id": result.query_id,
                     "question": result.question,
                     "ground_truth": result.ground_truth,
+                    # Marked metadata.answerable=false: a decline is right.
+                    "unanswerable": result.metadata.get("answerable") is False,
                     "scores": {},
                     "answers": {},
                 },

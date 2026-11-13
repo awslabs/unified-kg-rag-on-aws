@@ -66,4 +66,26 @@ describe("QuestionTable", () => {
     expect(screen.getByText("The answer failed: timed out")).toBeInTheDocument();
     expect(screen.getByText("May")).toBeInTheDocument();
   });
+
+  it("reads a question marked unanswerable by whether each answer declined", async () => {
+    const unanswerable: QuestionScores = {
+      ...view,
+      questions: [
+        { id: "q4", question: "Who audits the moon?", ground_truth: "", unanswerable: true, scores: {}, answers: { local: { text: "I cannot tell.", error: null, abstained: true }, mix: { text: "The Vendor.", error: null, abstained: false } } },
+      ],
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(unanswerable), { status: 200 })));
+    const { container } = renderIn(<QuestionTable refName="outputs:run" candidate="mix" baseline="local" />);
+    const details = container.querySelector("details") as HTMLDetailsElement;
+    details.open = true;
+    fireEvent(details, new Event("toggle"));
+    await waitFor(() => expect(screen.getByText("Who audits the moon?")).toBeInTheDocument());
+    // The scores' cells say how each did instead of an empty dash.
+    const cells = [...container.querySelectorAll("tbody tr td.num")].map((td) => td.textContent);
+    expect(cells).toEqual(["declined", "did not decline"]);
+    fireEvent.click(screen.getByRole("button", { name: "Who audits the moon?" }));
+    expect(screen.getByText("Should decline: the question is marked unanswerable.")).toBeInTheDocument();
+    expect(container.querySelectorAll(".answers-side .badge-good")).toHaveLength(1);
+    expect(container.querySelectorAll(".answers-side .badge-bad")).toHaveLength(1);
+  });
 });

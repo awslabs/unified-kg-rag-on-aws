@@ -917,11 +917,11 @@ From a `main` checkout (formats and keys no release had):
   pipeline checkpoints; run and compare evaluations (progress per answer; paired deltas called by their
   Holm-adjusted p-value with the family's simultaneous interval and the primary metric marked, falling back to the
   interval for older comparisons; gates, cost, declines, win rates by answer length, each metric described on hover,
-  and per question every strategy's primary-metric score, its win, tie or loss and the answers side by side) and
-  open saved runs; explore the namespace's graph, built from the stores when the Graph page opens and no export
-  shows them, as no console job exports one (search, neighbourhoods, communities, degree, schema conformance, seed
-  versus document evidence); a dashboard of the questions and jobs run through it (time, tokens, cost per strategy,
-  model and role); and edit the
+  and per question every strategy's primary-metric score, its win, tie or loss and the answers side by side, a
+  question marked unanswerable read by whether each answer declined) and open saved runs; explore the namespace's
+  graph, built from the stores when the Graph page opens and no export shows them, as no console job exports one
+  (search, neighbourhoods, communities, degree, schema conformance, seed versus document evidence); a dashboard of
+  the questions and jobs run through it (time, tokens, cost per strategy, model and role); and edit the
   config file with validation, a diff before saving, a confirmation before a provider endpoint or a file or directory
   path changes (every config key that names one), and secrets never shown or written. Jobs run the unchanged
   `run-ingestion` and `run-eval` in child processes. It binds `127.0.0.1` (another address needs `--allow-remote`),

@@ -1,6 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-import { useMemo, useState } from "react";
+import { useMemo, useState, type CSSProperties } from "react";
 import { DeltaPlot, higherIsBetter, MetricName } from "../components/charts";
 import { JobPanel } from "../components/JobPanel";
 import { StrategyPicker } from "../components/StrategyPicker";
@@ -418,6 +418,7 @@ function RunView({ refName }: { refName: string }) {
           </div>
           <p className="field-help" style={{ padding: "0 20px" }}>
             {t("evaluate.abstentionHelp")}
+            {abstention.every(({ stats }) => stats?.precision == null && stats?.recall == null) ? ` ${t("evaluate.abstentionUnmarked")}` : null}
           </p>
         </Sheet>
         <Sheet title={t("evaluate.lengths")} pad={!lengths}>
@@ -474,6 +475,22 @@ export function outcomeOf(metric: string, candidate: number | undefined, baselin
 }
 
 const OUTCOME_TONES: Record<Outcome, string> = { win: "badge-good", tie: "", loss: "badge-bad" };
+
+/** How an answer to a question marked unanswerable did: declined (right) or
+ * not (wrong); nothing for a failed or missing answer. */
+function DeclineBadge({ answer, style }: { answer: { abstained: boolean; error: string | null } | undefined; style?: CSSProperties }) {
+  const { t } = useI18n();
+  if (!answer || answer.error) return <>—</>;
+  return answer.abstained ? (
+    <span className="badge badge-good" style={style}>
+      {t("evaluate.answerDeclined")}
+    </span>
+  ) : (
+    <span className="badge badge-bad" style={style}>
+      {t("evaluate.didNotDecline")}
+    </span>
+  );
+}
 // Questions the table shows at once.
 export const QUESTION_PAGE = 50;
 
@@ -567,7 +584,7 @@ export function QuestionTable({ refName, candidate, baseline }: { refName: strin
                         </td>
                         {strategies.map((s) => (
                           <td key={s} className="num">
-                            {number(q.scores[s] ?? null, { maximumFractionDigits: 3 })}
+                            {q.unanswerable && q.scores[s] == null ? <DeclineBadge answer={q.answers[s]} /> : number(q.scores[s] ?? null, { maximumFractionDigits: 3 })}
                           </td>
                         ))}
                         {compared ? <td>{q.outcome ? <span className={`badge ${OUTCOME_TONES[q.outcome]}`}>{t(`evaluate.outcome.${q.outcome}`)}</span> : "—"}</td> : null}
@@ -581,7 +598,7 @@ export function QuestionTable({ refName, candidate, baseline }: { refName: strin
                           <div className="answers-side">
                             <div className="answer-card">
                               <div className="field-label">{t("evaluate.reference")}</div>
-                              <p>{q.ground_truth}</p>
+                              {q.unanswerable ? <p>{t("evaluate.shouldDecline")}</p> : <p>{q.ground_truth}</p>}
                             </div>
                             {strategies.map((s) => {
                               const a = q.answers[s];
@@ -589,7 +606,13 @@ export function QuestionTable({ refName, candidate, baseline }: { refName: strin
                                 <div key={s} className="answer-card">
                                   <div className="field-label">
                                     <span className="mono">{s}</span> · {number(q.scores[s] ?? null, { maximumFractionDigits: 3 })}
-                                    {a?.abstained ? <span className="badge" style={{ marginLeft: 6 }}>{t("evaluate.answerDeclined")}</span> : null}
+                                    {q.unanswerable ? (
+                                      <DeclineBadge answer={a} style={{ marginLeft: 6 }} />
+                                    ) : a?.abstained ? (
+                                      <span className="badge" style={{ marginLeft: 6 }}>
+                                        {t("evaluate.answerDeclined")}
+                                      </span>
+                                    ) : null}
                                   </div>
                                   {a?.error ? <p className="muted">{t("evaluate.answerFailed", { error: a.error })}</p> : <p>{a?.text ?? "—"}</p>}
                                 </div>
