@@ -50,6 +50,28 @@ from unified_kg_rag.shared import AWSServiceError
 pytestmark = pytest.mark.unit
 
 
+def test_a_failure_recorded_alike_is_one_entry() -> None:
+    """A retriever that fails the same way on each of its calls (simple's
+    per-index pools call it four times) is one entry, in the search and the
+    query; a different reason or error type is another."""
+    query = DegradationLedger()
+    for _ in range(2):
+        search = DegradationLedger(parent=query)
+        for _ in range(4):
+            search.record(DegradationStep.RETRIEVAL, "reranker down", "Down")
+        search.record_unresolved(DegradationStep.FINDINGS_LINEAGE, "lineage", "X")
+        search.record_unresolved(DegradationStep.FINDINGS_LINEAGE, "lineage", "X")
+        assert len(search.entries) == len(search.unresolved) == 1
+    query.record(DegradationStep.RETRIEVAL, "reranker down", "Timeout")
+    query.record(DegradationStep.RETRIEVAL, "Entity search", "Down")
+    assert [(e.reason, e.error_type) for e in query.entries] == [
+        ("reranker down", "Down"),
+        ("reranker down", "Timeout"),
+        ("Entity search", "Down"),
+    ]
+    assert len(query.unresolved) == 1
+
+
 def test_a_ledger_passes_its_entries_to_the_one_it_opened_in() -> None:
     query = DegradationLedger()
     search = DegradationLedger(parent=query)

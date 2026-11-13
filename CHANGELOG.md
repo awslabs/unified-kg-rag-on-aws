@@ -745,7 +745,8 @@ From a `main` checkout (formats and keys no release had):
   `degraded_error` stays the first error type): a store read a strategy absorbed (simple and naive reported a clean
   empty search), global's rating and map calls, DRIFT's and iterative's model calls, and the chain's
   `processing.ignore_errors` fallbacks (auto's router, the follow-up rewrite, query processing, the context budget),
-  from one per-query ledger (`DegradationLedger`). A failed findings-lineage read of a strategy whose answers do not
+  from one per-query ledger (`DegradationLedger`; a failure recorded alike, as by a retriever on each of its calls, is
+  one entry). A failed findings-lineage read of a strategy whose answers do not
   cite (global and DRIFT by default), or of the documents of the answer's graph citations, is listed in
   `metadata.citations_unresolved` instead, in the same shape. `run-eval` records `degraded_steps` per answer,
   `degraded_step_counts` and `degraded_queries`, which `--max-failure-rate` counts. The answer view (`AnswerView`)
@@ -1903,10 +1904,10 @@ From a `main` checkout (formats and keys no release had):
   is not given to compute (#566).
 - CDK: both task definitions drop every Linux capability (as `docker/compose.local.yaml`), and synth warns when an
   environment other than dev deploys the mutable `latest` image tag.
-- CDK: a plain `cdk deploy --all` attaches the guardrail it creates when `bedrock_region` is the deploy region (every
 - CDK: the `awslogs` delivery mode is set, not left to the account's ECS default (non-blocking, which drops lines
   past its buffer): the ingestion task's app logs `blocking`, so the EMF records its alarms read are not dropped; the
   query task's app and the trace collectors `non-blocking` with a 25 MiB buffer.
+- CDK: a plain `cdk deploy --all` attaches the guardrail it creates when `bedrock_region` is the deploy region (every
   private deploy): the tasks read its id and version from SSM parameters the guardrail stack writes, so queries and
   answers are screened without `-c guardrail_identifier`; across regions, and for a given identifier, the context
   path is unchanged. `-c create_guardrail=false` keeps a deployment without one.
