@@ -1,5 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import logging
 import re
 import time
 from collections.abc import Callable
@@ -50,10 +51,10 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.domain.prompts import ClaimExtractionPrompt
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
+from unified_kg_rag.shared.logging import log_failure
 from unified_kg_rag.shared.utils import (
     ensure_list,
     entity_key,
-    error_digest,
     generate_stable_id,
 )
 
@@ -211,8 +212,9 @@ class ClaimExtractor(BaseProcessor):
         except Exception as e:
             if not self.ignore_errors:
                 raise
-            logger.error("Error during claim extraction: %s", error_digest(e))
-            logger.debug("Claim extraction error: %s", e)
+            log_failure(
+                logger, logging.ERROR, "Error during claim extraction: %s", error=e
+            )
             for unit in units_to_process:
                 self._record_failure(unit)
             return {}, self.stats
@@ -257,12 +259,14 @@ class ClaimExtractor(BaseProcessor):
                     unit, entities_by_unit.get(unit.id, []), config_for_task
                 )
             except Exception as e:  # noqa: BLE001 - isolate one unit's failure
-                logger.error(
+                log_failure(
+                    logger,
+                    logging.ERROR,
                     "Error preparing claim input for unit '%s': %s",
                     unit.id,
-                    error_digest(e),
+                    error=e,
+                    traceback=True,
                 )
-                logger.debug("Claim input error: %s", e, exc_info=True)
 
         return unit_to_input
 
@@ -293,12 +297,13 @@ class ClaimExtractor(BaseProcessor):
                         discard()
                     self._record_failure(text_unit)
                     self.stats.item_failed_text_unit_ids.append(text_unit.id)
-                    logger.warning(
+                    log_failure(
+                        logger,
+                        logging.WARNING,
                         "Failed to parse extraction result for text unit '%s': %s",
                         text_unit.id,
-                        error_digest(e),
+                        error=e,
                     )
-                    logger.debug("Claim extraction result error: %s", e)
             else:
                 self._record_failure(text_unit)
                 logger.debug(
@@ -380,12 +385,13 @@ class ClaimExtractor(BaseProcessor):
                 updated_at=datetime.now(),
             )
         except Exception as e:  # noqa: BLE001 - isolate one malformed claim
-            logger.warning(
+            log_failure(
+                logger,
+                logging.WARNING,
                 "Error creating claim object from text unit '%s': %s",
                 text_unit.id,
-                error_digest(e),
+                error=e,
             )
-            logger.debug("Claim object error: %s", e)
             return None
 
     @staticmethod
