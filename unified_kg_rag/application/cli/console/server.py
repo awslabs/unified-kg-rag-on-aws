@@ -86,6 +86,7 @@ from unified_kg_rag.domain.prompts.retrieval import STRATEGY_ROUTING_GUIDE
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import (
+    INTERNAL_ERROR_MESSAGE,
     ConfigurationError,
     ErrorClass,
     GraphRAGException,
@@ -430,7 +431,9 @@ def _classified_error(e: Exception) -> JSONResponse:
     code = (
         "invalid" if error_class is ErrorClass.INVALID_ARGUMENT else error_class.value
     )
-    return _error(HTTP_STATUS[error_class], code, str(e), error_class=error_class)
+    # An unexpected error's text (botocore's, with ARNs) stays in the log.
+    message = INTERNAL_ERROR_MESSAGE if error_class is ErrorClass.FAILURE else str(e)
+    return _error(HTTP_STATUS[error_class], code, message, error_class=error_class)
 
 
 TOKEN_COOKIE = "ukr_console_token"

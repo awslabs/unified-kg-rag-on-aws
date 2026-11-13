@@ -28,6 +28,7 @@ from pydantic import (
     WithJsonSchema,
     create_model,
 )
+from structlog.contextvars import bound_contextvars
 
 from unified_kg_rag import __version__
 from unified_kg_rag.application.cli.mcp_tools import (
@@ -48,7 +49,11 @@ from unified_kg_rag.application.retrieval.rag_chain import (
 from unified_kg_rag.domain.models import SearchType
 from unified_kg_rag.domain.models.config import McpServerConfig
 from unified_kg_rag.shared import get_logger
-from unified_kg_rag.shared.exceptions import ConfigurationError, ErrorClass
+from unified_kg_rag.shared.exceptions import (
+    ConfigurationError,
+    ErrorClass,
+    query_failure_ids,
+)
 from unified_kg_rag.shared.extras import extra_hint
 
 if TYPE_CHECKING:
@@ -233,7 +238,9 @@ def _tool_function(
         except Exception as e:
             message, expected = describe_error(e)
             if not expected:
-                logger.error("MCP tool %s failed: %s", name, e, exc_info=True)
+                # Under the ids the caller's message names (query_id).
+                with bound_contextvars(**query_failure_ids(e)):
+                    logger.error("MCP tool %s failed: %s", name, e, exc_info=True)
             raise tool_error(message) from None
 
     tool.__name__ = name

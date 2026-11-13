@@ -1127,3 +1127,30 @@ def test_every_named_record_carries_its_name(
 
     view = SourceView.of(1, kind, "text", source=None, score=0.5, metadata=metadata)
     assert _record(view, 1000).name == name
+
+
+async def test_a_failed_calls_log_line_carries_the_ids_its_error_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from structlog.contextvars import get_contextvars
+
+    from unified_kg_rag.shared.exceptions import tag_query_failure
+
+    # What the log line is emitted under: its record's context fields.
+    lines: list[tuple[str, dict[str, Any]]] = []
+    monkeypatch.setattr(
+        mcp_tools.logger,
+        "info",
+        lambda message, *_args: lines.append((message, get_contextvars())),
+    )
+
+    class FailingChain(FakeChain):
+        async def asearch(self, rag_input: RAGInput) -> SearchOutput:
+            error = StoreConnectionError("down")
+            tag_query_failure(error, "q-logged", "t-logged")
+            raise error
+
+    with pytest.raises(StoreConnectionError):
+        await _tools(FailingChain()).search("q")
+    (context,) = [context for message, context in lines if "failed after" in message]
+    assert context == {"query_id": "q-logged", "trace_id": "t-logged"}

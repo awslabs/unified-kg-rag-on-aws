@@ -15,6 +15,7 @@ import yaml
 
 from tests.fixtures.console_demo import requires_console
 from unified_kg_rag.shared.exceptions import (
+    INTERNAL_ERROR_MESSAGE,
     ConfigurationError,
     ErrorClass,
     IndexNotFoundError,
@@ -90,7 +91,10 @@ def test_an_error_answers_with_its_class_and_the_class_s_status(
     body = response.json()
     assert body["code"] == code
     assert body["error_class"] == (error_class or code)
-    assert body["error"] == str(error)
+    # An unexpected error's own text (a provider's, an endpoint, ARNs) stays
+    # in the server log, as MCP keeps it.
+    shown = INTERNAL_ERROR_MESSAGE if code == "failure" else str(error)
+    assert body["error"] == shown
 
 
 def test_every_error_class_has_a_status() -> None:

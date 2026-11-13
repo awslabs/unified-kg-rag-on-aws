@@ -375,6 +375,14 @@ def error_class_of(value: object) -> ErrorClass:
         return ErrorClass.FAILURE
 
 
+# What a surface (an MCP tool error, the console) says of a failure it does
+# not describe, so a store endpoint or a provider's text never reaches the
+# caller; the server logs the error under the ids the surface names.
+INTERNAL_ERROR_MESSAGE = (
+    "The call failed inside the server (a store or model error); the server "
+    "log has the details."
+)
+
 # The public name of :func:`classify` (``unified_kg_rag.classify_error``).
 classify_error = classify
 

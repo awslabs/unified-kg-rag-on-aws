@@ -498,6 +498,38 @@ async def test_a_store_failure_reaches_the_caller_without_its_details(
     assert "vpc-secret" not in text and mcp_tools.INTERNAL_ERROR_MESSAGE in text
 
 
+@requires_mcp
+async def test_an_unexpected_failure_is_logged_under_the_ids_the_caller_gets(
+    tools: KnowledgeGraphTools, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from mcp import Client
+    from structlog.contextvars import get_contextvars
+
+    from unified_kg_rag.application.cli import mcp_server
+    from unified_kg_rag.application.cli.mcp_server import build_mcp_server
+    from unified_kg_rag.shared.exceptions import tag_query_failure
+
+    async def broken(*_args: Any, **_kwargs: Any) -> Any:
+        error = RuntimeError("internal detail")
+        tag_query_failure(error, "q-traceback", "t-traceback")
+        raise error
+
+    logged: list[dict[str, Any]] = []
+    monkeypatch.setattr(mcp_tools.graph_lookup, "find_entities", broken)
+    monkeypatch.setattr(
+        mcp_server.logger,
+        "error",
+        lambda *_args, **_kwargs: logged.append(get_contextvars()),
+    )
+    async with Client(build_mcp_server(tools)) as client:
+        result = await client.call_tool("kg_get_entity", {"name": "Depot"})
+    assert result.is_error
+    text = " ".join(getattr(c, "text", "") for c in result.content)
+    assert "q-traceback" in text
+    # The traceback's line names the id the caller was told to look for.
+    assert logged == [{"query_id": "q-traceback", "trace_id": "t-traceback"}]
+
+
 class _Metrics:
     def __init__(self) -> None:
         self.rows: list[tuple[dict[str, float], dict[str, str]]] = []

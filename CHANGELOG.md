@@ -759,7 +759,8 @@ From a `main` checkout (formats and keys no release had):
   minutes and ended with "produced 0 outputs"); a query raises it at once, without the transient retries' backoff
   (the error answer under `ignore_errors`, which no fallback absorbs), and `run-rag` exits 1 without a traceback.
   `ErrorClass` and `classify_error` name the class of a failure, which every surface maps: the CLIs' exit codes, the
-  MCP server's caller messages and the console's error kind, also of an error answer (`metadata.error_class`). A
+  MCP server's caller messages and the console's error kind, also of an error answer (`metadata.error_class`); a
+  `failure` reaches an MCP caller or the console with a generic message, its text only in the server log. A
   malformed filter value (a null, an empty or nested list) is `invalid_filter` with one message on every surface,
   `run-rag` naming the flag it came from.
 - `run-eval` comparisons adjust for the many deltas they read: every paired delta has a sign-flip randomization
@@ -1135,14 +1136,15 @@ From a `main` checkout (formats and keys no release had):
   [inspect and
   export](docs/guides/inspect.md).
 - Telemetry names the namespace (the tenant boundary) and ties a query to its logs: `kg_rag.namespace` on every span
-  of a query or ingestion run, `namespace` in their log context and an ingestion run's EMF properties; the
-  ingestion root span has `kg_rag.mode` and the delta counts, the query span `kg_rag.degraded` and
-  `kg_rag.error_class`; a result's `metadata.query_id` and `metadata.trace_id` (also MCP's `query_id` /
-  `trace_id`) are the ids of its log lines and trace (a trace id only when the trace was sampled, so exported), and a
-  console question's log lines carry its id. A query that raises carries them too (`exc.query_id`, `exc.trace_id`;
-  its own error, also when concurrent queries share a query embedding in flight): `run-rag`'s failure document,
-  an MCP tool error and the console's error event name them. A streamed answer's spans,
-  its model call's included, name the namespace as `ainvoke`'s do, and admission log lines carry the query id.
+  of a query or ingestion run (an MCP tool call's and a console question's root span included), `namespace` in their
+  log context and an ingestion run's EMF properties; the ingestion root span has `kg_rag.mode` and the delta counts,
+  the query span `kg_rag.degraded` and `kg_rag.error_class`; a result's `metadata.query_id` and `metadata.trace_id`
+  (also MCP's `query_id` / `trace_id`) are the ids of its log lines and trace (a trace id only when the trace was
+  sampled, so exported), and a console question's log lines carry its id. A query that raises carries them too
+  (`exc.query_id`, `exc.trace_id`; its own error, also when concurrent queries share a query embedding in flight):
+  `run-rag`'s failure document, an MCP tool error (and the server's log line of it) and the console's error event and
+  history name them. A streamed answer's spans, its model call's included, name the namespace as `ainvoke`'s do, and
+  admission log lines carry the query id.
 - Observability: the `observability` section and `otel` extra, spans for runs, stages, batches and query steps,
   GenAI model-call spans, OTLP, Langfuse and Phoenix exporters with redacted content capture (an IPv6 endpoint keeps
   its brackets in the logged URL); CDK `enable_cloudwatch_tracing` with an ADOT sidecar (#207, #208, #211, #219,

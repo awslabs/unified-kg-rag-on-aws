@@ -24,6 +24,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any, Literal, TypeVar
 
 from pydantic import BaseModel, Field
+from structlog.contextvars import bound_contextvars
 
 from unified_kg_rag.application.presentation.answer_view import (
     AnswerView,
@@ -54,6 +55,7 @@ from unified_kg_rag.domain.retrieval.source_fields import EntityRef
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.exceptions import (
+    INTERNAL_ERROR_MESSAGE,
     ConfigurationError,
     ErrorClass,
     GraphRAGException,
@@ -365,10 +367,6 @@ _CALLER_CLASSES = frozenset(
     {error_class for error_class in ErrorClass if error_class.is_caller_error}
     | {ErrorClass.TIMEOUT}
 )
-INTERNAL_ERROR_MESSAGE = (
-    "The call failed inside the server (a store or model error); the server "
-    "log has the details."
-)
 
 
 def describe_error(exc: BaseException) -> tuple[str, bool]:
@@ -654,12 +652,17 @@ class KnowledgeGraphTools:
             ) from None
 
     async def _call(
-        self, tool: str, arguments: dict[str, Any], run: Callable[[], Awaitable[_R]]
+        self,
+        tool: str,
+        arguments: dict[str, Any],
+        run: Callable[[], Awaitable[_R]],
+        namespace: str | None = None,
     ) -> _R:
         """Run one tool call: a slot, a ``kg_rag.mcp.tool`` span (the
         arguments as ``input.value`` only under
-        ``observability.capture_content``, redacted) and a log line with a
-        digest of the query, never its text."""
+        ``observability.capture_content``, redacted; ``kg_rag.namespace``
+        when the call reads a served one, ``namespace`` or the server's) and
+        a log line with a digest of the query, never its text."""
         policy = observability.content_policy()
         attributes: dict[str, Any] = {"mcp.tool.name": tool}
         if policy.capture_content:
@@ -668,17 +671,21 @@ class KnowledgeGraphTools:
             )
         started = time.perf_counter()
         query = arguments.get("query") or arguments.get("name") or ""
+        served = self.namespace if namespace is None else namespace
+        if served in self.namespaces:
+            attributes["kg_rag.namespace"] = served
         with observability.span("kg_rag.mcp.tool", attributes) as span:
             try:
                 result = await self._within_deadline(run)
             except BaseException as e:
-                logger.info(
-                    "MCP tool %s failed after %.2fs (%s): %s",
-                    tool,
-                    time.perf_counter() - started,
-                    type(e).__name__,
-                    text_digest(str(query)),
-                )
+                with bound_contextvars(**query_failure_ids(e)):
+                    logger.info(
+                        "MCP tool %s failed after %.2fs (%s): %s",
+                        tool,
+                        time.perf_counter() - started,
+                        type(e).__name__,
+                        text_digest(str(query)),
+                    )
                 raise
             records = getattr(result, "records", None)
             span.set_attributes(
@@ -857,6 +864,7 @@ class KnowledgeGraphTools:
             "kg_search",
             {"query": query, "strategy": strategy, "filters": filters},
             run,
+            namespace,
         )
 
     async def answer(
@@ -953,6 +961,7 @@ class KnowledgeGraphTools:
                 "history_turns": len(history or []),
             },
             run,
+            namespace,
         )
 
     # -- the graph tools -------------------------------------------------
@@ -1020,7 +1029,10 @@ class KnowledgeGraphTools:
             )
 
         return await self._call(
-            "kg_get_entity", {"name": name, "iri": iri, "id": entity_id}, run
+            "kg_get_entity",
+            {"name": name, "iri": iri, "id": entity_id},
+            run,
+            namespace,
         )
 
     def _edge_record(
@@ -1115,7 +1127,10 @@ class KnowledgeGraphTools:
             return result
 
         return await self._call(
-            "kg_neighbors", {"name": name, "iri": iri, "id": entity_id}, run
+            "kg_neighbors",
+            {"name": name, "iri": iri, "id": entity_id},
+            run,
+            namespace,
         )
 
     async def describe_schema(
@@ -1159,7 +1174,9 @@ class KnowledgeGraphTools:
                 },
             )
 
-        return await self._call("kg_describe_schema", {"namespace": namespace}, run)
+        return await self._call(
+            "kg_describe_schema", {"namespace": namespace}, run, namespace
+        )
 
     async def aclose(self) -> None:
         """Close the chain (its store connections)."""

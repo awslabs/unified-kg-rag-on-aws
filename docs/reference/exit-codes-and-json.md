@@ -70,7 +70,8 @@ the MCP server's tool error, which names it in brackets
 and `timeout` (a generic one for the rest, whose message may name an
 endpoint), and the console's `error_class`: an API error's, with the
 status of its class above (`invalid_argument` for a request it refuses), and
-an Ask stream's error event. A new class may
+an Ask stream's error event (a `failure`'s message is the generic one, as on
+the MCP server; the ids find its logged error). A new class may
 be added; a value is never renamed. `run-rag`'s interactive session keeps
 going after any of them.
 
