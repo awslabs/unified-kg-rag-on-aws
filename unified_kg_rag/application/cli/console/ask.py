@@ -50,6 +50,7 @@ from unified_kg_rag.domain.models import (
     SectionType,
     validate_safe_name,
 )
+from unified_kg_rag.domain.models.retrieval import MAX_SERVED_TOP_K
 from unified_kg_rag.domain.models.usage import LLMUsage
 from unified_kg_rag.domain.retrieval.citations import CitationMarkerScanner
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
@@ -93,7 +94,7 @@ class AskRequest(BaseModel):
     query: str = Field(min_length=1, max_length=MAX_QUESTION_CHARACTERS)
     search_strategy: SearchStrategy = SearchStrategy.AUTO
     search_type: SearchType = SearchType.HYBRID
-    top_k: int = Field(default=10, ge=1, le=100)
+    top_k: int = Field(default=10, ge=1, le=MAX_SERVED_TOP_K)
     history: list[AskTurn] | None = Field(default=None, max_length=MAX_HISTORY_TURNS)
     filters: dict[str, Any] | None = None
     suffix: str | None = Field(default=None, max_length=128)

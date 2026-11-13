@@ -203,6 +203,12 @@ class Source(TypedDict, total=False):
     metadata: Annotated[dict[str, Any], AfterValidator(decode_list_fields)]
 
 
+# The largest top_k a served surface takes from its caller: the console's
+# Ask request, and the most mcp.max_top_k may allow (a library or CLI query
+# has no bound).
+MAX_SERVED_TOP_K = 100
+
+
 class SearchQuery(BaseModel):
     query: str = Field(description="Search query text to be processed")
     search_type: SearchType = Field(

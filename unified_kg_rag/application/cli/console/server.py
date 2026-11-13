@@ -81,6 +81,7 @@ from unified_kg_rag.domain.models import (
     ModelRole,
     validate_safe_name,
 )
+from unified_kg_rag.domain.models.retrieval import MAX_SERVED_TOP_K
 from unified_kg_rag.domain.prompts.retrieval import STRATEGY_ROUTING_GUIDE
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.shared import get_logger
@@ -648,6 +649,8 @@ def create_app(
                 else None
             ),
             "prices_configured": bool(config.evaluation.prices) if config else False,
+            # The largest top_k the Ask request takes.
+            "max_top_k": MAX_SERVED_TOP_K,
             "jobs": state.jobs.active(),
             "loopback": options.loopback,
             "sample_questions": options.sample_questions,

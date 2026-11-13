@@ -255,3 +255,14 @@ async def test_a_search_reads_the_history(config: Config) -> None:
     out = await chain.asearch(_query(_TURNS))
     assert out.processed_query.standalone_query is not None
     assert store.queries[0] == out.processed_query.standalone_query
+
+
+def test_a_turn_with_an_unknown_key_is_refused() -> None:
+    # Regression (rv25): {"name": "bob"} was dropped silently here and on
+    # MCP, while the console's Ask request refused it.
+    with pytest.raises(ValidationError, match="name"):
+        ConversationTurn.model_validate({"role": "user", "content": "q", "name": "bob"})
+    with pytest.raises(ValueError, match="name"):
+        RAGInput.checked(
+            query="q", history=[{"role": "user", "content": "q", "name": "bob"}]
+        )

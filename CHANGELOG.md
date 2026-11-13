@@ -384,6 +384,11 @@ See [`iac/README.md`](iac/README.md).
 - An invalid assignment to a config setting (`config.search.max_concurrency = 0`) raises `ValidationError` and
   keeps the old value; a section validated on its own (`SearchConfig.model_validate`) refuses an unknown key. Change
   settings across sections with `Config.updated`. The `search.hybrid` weights keep the values set (relative weights).
+- `RAGInput` (a `history` turn's too, also on MCP) and `PipelineConfig` refuse an unknown key instead of ignoring it,
+  as `Config` does: a dict query with MCP's `strategy` for `search_strategy` ran `auto` at full model cost, and
+  `PipelineConfig(force_rebuld=True)` left `force_rebuild` off. A dict query raises `InvalidArgumentError` before any
+  model call; the console's API refuses an unknown body key or query parameter too (422, `invalid_argument`), the
+  Ask, graph and evaluation reads included.
 
 #### Query behaviour
 - The guardrail no longer wraps every model call: it screens the user query and the final answer through
@@ -1378,8 +1383,9 @@ From a `main` checkout (formats and keys no release had):
 - Strategy comparison: `run-eval --search-strategy a,b --repeats N` with bootstrap intervals, `deltas_by_category`,
   a `--pairwise-judge` (LightRAG's verdicts with `evaluation.pairwise_overall`, `position_consistency`, a win-rate
   interval, `--judge-model`) and `prepare-benchmark musique` (#324, #516, #536); each benchmark (`musique`,
-  `assertions`, `structural`) is a subcommand with its own flags, and another one's (`structural --limit`) exits 2
-  instead of being ignored. See [benchmarks](docs/guides/benchmarks.md).
+  `assertions`, `structural`) is a subcommand with its own flags, given after its name, and another one's (`structural
+  --limit`) exits 2 instead of being ignored, as a flag before the name does, naming it (it worked before 0.3.0). See
+  [benchmarks](docs/guides/benchmarks.md).
 - Unanswerable questions and declines (opt-in; defaults unchanged): `prepare-benchmark musique --unanswerable N`
   adds MuSiQue-Full unanswerable questions (`metadata.answerable: false`, the full dev split downloaded at a pinned
   revision, SHA-256 checked), leaving out any whose answerable twin is sampled or whose removed supporting

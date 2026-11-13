@@ -128,3 +128,22 @@ def test_an_unreachable_store_is_a_503_store_unreachable(tmp_path: Path) -> None
     response = _client(tmp_path, config).get("/api/namespace/methodologies")
     assert response.status_code == 503, response.text
     assert response.json()["error_class"] == "store_unreachable"
+
+
+def test_the_ask_request_s_top_k_bound_is_the_served_one(tmp_path: Path) -> None:
+    # One bound for the served surfaces (rv25: the console's 100 was a
+    # literal of its own), and the page reads it from the status.
+    from pydantic import ValidationError
+
+    from unified_kg_rag.application.cli.console.ask import AskRequest
+    from unified_kg_rag.domain.models.config import McpServerConfig
+    from unified_kg_rag.domain.models.retrieval import MAX_SERVED_TOP_K
+
+    assert AskRequest(query="q", top_k=MAX_SERVED_TOP_K).top_k == MAX_SERVED_TOP_K
+    for refused in (
+        lambda: AskRequest(query="q", top_k=MAX_SERVED_TOP_K + 1),
+        lambda: McpServerConfig(max_top_k=MAX_SERVED_TOP_K + 1),
+    ):
+        with pytest.raises(ValidationError):
+            refused()
+    assert _client(tmp_path).get("/api/status").json()["max_top_k"] == MAX_SERVED_TOP_K

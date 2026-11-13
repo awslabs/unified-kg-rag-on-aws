@@ -459,7 +459,10 @@ def build_mcp_server(
     turn_chars = limits.max_response_chars
 
     class HistoryTurn(BaseModel):
-        """One earlier message of the caller's conversation."""
+        """One earlier message of the caller's conversation (an unknown key
+        is refused, as every argument is)."""
+
+        model_config = ConfigDict(extra="forbid")
 
         role: Literal["user", "assistant"] = Field(
             description="Who wrote it: the user, or the assistant"

@@ -10,6 +10,7 @@ from pydantic import (
 )
 
 from ..retrieval import (
+    MAX_SERVED_TOP_K,
     SearchStrategy,
     validate_safe_name,
 )
@@ -70,7 +71,7 @@ class McpServerConfig(ConfigSection):
     max_top_k: int = Field(
         default=20,
         ge=1,
-        le=100,
+        le=MAX_SERVED_TOP_K,
         description="Largest top_k (and kg_get_entity limit) a call may ask",
     )
     max_hops: int = Field(

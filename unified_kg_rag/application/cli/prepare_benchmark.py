@@ -197,8 +197,31 @@ def _musique_parser(benchmarks: Any) -> None:
     )
 
 
+# The subcommands, in the order _parser adds them.
+BENCHMARKS = ("musique", "assertions", "structural")
+# The flags of the command itself, given before a benchmark name.
+_OWN_FLAGS = frozenset({"-h", "--help", "--version"})
+
+
+def _flag_before_benchmark(argv: list[str]) -> str | None:
+    """The first flag of a benchmark given before its name
+    (``--output-format json musique``), which argparse reads as the name."""
+    for arg in argv:
+        if arg in BENCHMARKS:
+            return None
+        if arg.startswith("-"):
+            return None if arg in _OWN_FLAGS else arg
+    return None
+
+
 @exits_on_sigterm
 def main(argv: list[str] | None = None) -> None:
+    given = sys.argv[1:] if argv is None else argv
+    if flag := _flag_before_benchmark(given):
+        usage_error(
+            f"{flag}: each benchmark takes its flags after its name "
+            f"(prepare-benchmark {{{','.join(BENCHMARKS)}}} {flag} ...)"
+        )
     args = _parser().parse_args(argv)
     as_json = json_output(args)
     if args.benchmark != "assertions":  # which loads its configuration
