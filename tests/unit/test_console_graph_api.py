@@ -20,7 +20,7 @@ def test_a_large_graph_lays_out_only_the_drawn_nodes(
     tmp_path: Path, extra: int
 ) -> None:
     total = graph_api.MAX_DRAWN_NODES + extra
-    data = graph_api.load_graph(write_export(tmp_path / "v.json", total))
+    data = graph_api.cached_graph(write_export(tmp_path / "v.json", total)).page
     assert len(data["layout"]) == graph_api.MAX_DRAWN_NODES
     assert "n0" in data["layout"]  # the best-connected is drawn
     assert data["stats"]["nodes"] == total
@@ -31,7 +31,9 @@ def test_an_exported_layout_larger_than_the_cap_is_cut_to_it(
 ) -> None:
     total = graph_api.MAX_DRAWN_NODES + 50
     layout = {f"n{i}": [float(i), 0.0] for i in range(total)}
-    data = graph_api.load_graph(write_export(tmp_path / "v.json", total, layout=layout))
+    data = graph_api.cached_graph(
+        write_export(tmp_path / "v.json", total, layout=layout)
+    ).page
     assert len(data["layout"]) == graph_api.MAX_DRAWN_NODES
     assert data["layout"]["n0"] == [0.0, 0.0]
 
@@ -40,7 +42,7 @@ def test_the_page_gets_the_drawn_entities_in_full_and_the_rest_by_name(
     tmp_path: Path,
 ) -> None:
     total = graph_api.MAX_DRAWN_NODES + 30
-    data = graph_api.load_graph(write_export(tmp_path / "v.json", total))
+    data = graph_api.cached_graph(write_export(tmp_path / "v.json", total)).page
     drawn = {n["id"] for n in data["nodes"]}
     assert drawn == set(data["layout"])
     assert len(data["others"]) == total - graph_api.MAX_DRAWN_NODES
@@ -61,7 +63,7 @@ def test_an_undrawn_entity_is_read_with_every_edge_that_touches_it(
 ) -> None:
     total = graph_api.MAX_DRAWN_NODES + 30
     path = write_export(tmp_path / "v.json", total)
-    undrawn = graph_api.load_graph(path)["others"][0]["id"]
+    undrawn = graph_api.cached_graph(path).page["others"][0]["id"]
     found = graph_api.entity(path, undrawn)
     assert found is not None and found["node"]["id"] == undrawn
     assert found["node"]["name"] == f"Entity {undrawn}"
@@ -84,7 +86,6 @@ def test_a_graph_is_read_again_only_when_its_file_changes(
     path = write_export(tmp_path / "v.json", 20)
     first = graph_api.cached_graph(path)
     assert graph_api.cached_graph(path) is first
-    assert graph_api.load_graph(path) is first.page
     assert len(reads) == 1
     write_export(path, 21)
     assert graph_api.cached_graph(path).page["stats"]["nodes"] == 21

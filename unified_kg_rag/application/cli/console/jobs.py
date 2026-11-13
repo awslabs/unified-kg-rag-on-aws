@@ -49,6 +49,7 @@ from unified_kg_rag.domain.models.methodology import METHODOLOGY_PROFILES
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.evaluation.gates import parse_gate
 from unified_kg_rag.shared import InvalidArgumentError, get_logger
+from unified_kg_rag.shared.utils.processes import process_gone, process_identity
 from unified_kg_rag.shared.utils.validation import format_validation_errors
 
 logger = get_logger(__name__)
@@ -135,6 +136,7 @@ class Job:
     warning_count: int = 0
     warnings: list[str] = field(default_factory=list)
     process: asyncio.subprocess.Process | None = None
+    identity: str | None = None
     watcher: asyncio.Task[None] | None = None
 
     def record(self) -> dict[str, Any]:
@@ -161,6 +163,9 @@ class Job:
             "confirmation": self.confirmation,
             "warnings": {"count": self.warning_count, "lines": self.warnings},
             "pid": self.process.pid if self.process is not None else None,
+            # Its pid with its start time (process_identity): a later console
+            # tells it from a process that reused the pid.
+            "process": self.identity,
         }
 
 
@@ -271,7 +276,8 @@ class JobManager:
         (their child may still run; the namespace lease guards the stores)."""
         for record in self.store.jobs(limit=None, statuses=[s.value for s in _ACTIVE]):
             pid = record.get("pid")
-            alive = isinstance(pid, int) and _alive(pid)
+            identity = record.get("process")
+            alive = isinstance(identity, str) and not process_gone(identity)
             record.update(
                 status=JobStatus.LOST.value,
                 ended=record.get("ended") or time.time(),
@@ -625,6 +631,7 @@ class JobManager:
                 start_new_session=True,
             )
         job.started = time.time()
+        job.identity = process_identity(job.process.pid)
         self.jobs[job.id] = job
         self.store.save_job(job.record())
         job.watcher = asyncio.create_task(self._watch(job), name=f"job-{job.id}")
@@ -803,16 +810,6 @@ def confirmation_needed(error: str | None) -> str | None:
         if flag in error:
             return name
     return None
-
-
-def _alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
 
 
 # The answer batch's lines run-eval logs (BatchProcessor, ProgressLogger),

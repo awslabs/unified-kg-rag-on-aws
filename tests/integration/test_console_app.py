@@ -756,6 +756,8 @@ def test_an_ingestion_job_reports_its_stages_and_refreshes_the_chain(
     ).json()
     assert job["pipeline_id"].startswith("console-fresh-")
     assert "graph_extraction" in job["plan"] and "gleaning" not in job["plan"]
+    # Its child named with its start time, as a later console tells it.
+    assert job["process"].split(":")[1] == str(job["pid"])
     done = _wait(client, job["id"])
     assert done["status"] == "succeeded", done["log"]
     stages = {s["name"]: s for s in done["progress"]["stages"]}

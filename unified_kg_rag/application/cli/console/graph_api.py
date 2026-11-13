@@ -155,11 +155,16 @@ _cache_lock = threading.Lock()
 
 
 def cached_graph(path: Path) -> LoadedGraph:
-    """The graph of ``path``, read again only when the file changed (its
-    modification time or size).
+    """The graph of an exported file, read again only when the file changed
+    (its modification time or size). Its ``page`` is what the page draws:
+    the drawn entities (``nodes``, at most :data:`MAX_DRAWN_NODES`, with
+    their ``layout``) and the edges between them in full, every other
+    entity as ``{id, name, degree}`` (``others``, most connected first), and
+    the communities and analysis of the whole graph.
 
     Raises:
-        GraphDataError: As :func:`load_graph`.
+        GraphDataError: The file is too large, not JSON, or not shaped like
+            an export.
     """
     stat = path.stat()
     key = (str(path.resolve()), stat.st_mtime_ns, stat.st_size)
@@ -173,20 +178,6 @@ def cached_graph(path: Path) -> LoadedGraph:
         while len(_cache) > CACHED_GRAPHS:
             _cache.popitem(last=False)
     return loaded
-
-
-def load_graph(path: Path) -> dict[str, Any]:
-    """The graph of an exported file, as the page draws it: the drawn
-    entities (``nodes``, at most :data:`MAX_DRAWN_NODES`, with their
-    ``layout``) and the edges between them in full, every other entity as
-    ``{id, name, degree}`` (``others``, most connected first), and the
-    communities and analysis of the whole graph.
-
-    Raises:
-        GraphDataError: The file is too large, not JSON, or not shaped like
-            an export.
-    """
-    return cached_graph(path).page
 
 
 def entity(path: Path, entity_id: str) -> dict[str, Any] | None:

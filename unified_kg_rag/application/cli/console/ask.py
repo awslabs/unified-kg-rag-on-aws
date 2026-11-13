@@ -133,7 +133,11 @@ def source_view(view: SourceView) -> dict[str, Any]:
         "id": view.id,
         "score": view.score,
         "excerpt": view.text[
-            : TABLE_CHARACTERS if view.kind == "query_result" else EXCERPT_CHARACTERS
+            : (
+                TABLE_CHARACTERS
+                if view.kind == SectionType.QUERY_RESULT
+                else EXCERPT_CHARACTERS
+            )
         ],
         "truncated": view.truncated,
         "document_ids": view.document_ids,
@@ -153,15 +157,15 @@ def source_view(view: SourceView) -> dict[str, Any]:
         # lists them: ``link_sources``).
         "stated_by_passages": SectionType.of(view.kind).stated_by_passages,
     }
-    if view.kind == "entity":
+    if view.kind == SectionType.ENTITY:
         shown.update(entity_type=view.type, node_ids=[view.id])
-    elif view.kind == "relationship":
+    elif view.kind == SectionType.RELATIONSHIP:
         shown.update(
             relation=view.type,
             node_ids=[e.id for e in view.entities],
             edge_id=view.id,
         )
-    elif view.kind == "query_result":
+    elif view.kind == SectionType.QUERY_RESULT:
         # The structured strategy's graph query: what it computed, how many
         # rows, whether the table is whole, and the entities it returned.
         rows = metadata.get("row_count")
@@ -172,7 +176,7 @@ def source_view(view: SourceView) -> dict[str, Any]:
             backend=metadata.get("backend"),
             node_ids=[e.id for e in view.entities],
         )
-    elif view.kind == "community":
+    elif view.kind == SectionType.COMMUNITY:
         shown.update(community_id=metadata.get("community_id"))
     return shown
 

@@ -40,10 +40,11 @@ def _pid_namespace() -> str:
         return ""
 
 
-def process_identity() -> str:
-    """This process as ``host:pid:start:namespace`` (the last two empty
+def process_identity(pid: int | None = None) -> str:
+    """This process (or the process ``pid`` of this host and pid namespace,
+    a child it started) as ``host:pid:start:namespace`` (the last two empty
     where ``/proc`` does not tell); no field holds a colon."""
-    pid = os.getpid()
+    pid = os.getpid() if pid is None else pid
     host = socket.gethostname().replace(":", "-")
     return f"{host}:{pid}:{_start_time(pid)}:{_pid_namespace()}"
 

@@ -113,6 +113,39 @@ def test_jobs_a_stopped_console_left_running_are_marked_lost(tmp_path: Path) -> 
     manager._claim("default", "new")  # the namespace is free again
 
 
+@pytest.mark.skipif(
+    not Path("/proc/self/stat").exists(), reason="needs /proc for start times"
+)
+def test_a_lost_job_s_process_is_told_from_one_that_reused_its_pid(
+    tmp_path: Path,
+) -> None:
+    # Regression (rv25): _alive(pid) took any process holding the pid for
+    # the job's, so a reused pid read "its process ... still runs".
+    from unified_kg_rag.shared.utils.processes import process_identity
+
+    me = process_identity()
+    host, pid, started, namespace = me.split(":")
+    reused = f"{host}:{pid}:{int(started) + 1}:{namespace}"
+    store = ConsoleStore(tmp_path / "console.sqlite3")
+    for job_id, identity in (("alive", me), ("reused", reused), ("old", None)):
+        store.save_job(
+            {
+                "id": job_id,
+                "kind": "ingest",
+                "namespace": job_id,
+                "created": time.time(),
+                "status": "running",
+                "pid": int(pid),
+                **({"process": identity} if identity else {}),
+            }
+        )
+    by_id = {j["id"]: j for j in _manager(tmp_path, store).all_jobs()}
+    assert "still runs" in by_id["alive"]["error"]
+    assert "still runs" not in by_id["reused"]["error"]
+    # A record of an earlier release, without the identity: not judged.
+    assert "still runs" not in by_id["old"]["error"]
+
+
 def test_jobs_past_the_newest_200_are_found_by_id_and_marked_lost(
     tmp_path: Path,
 ) -> None:
