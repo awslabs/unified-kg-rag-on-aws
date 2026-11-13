@@ -1604,9 +1604,9 @@ From a `main` checkout (formats and keys no release had):
   (those no seed reaches, all 0 when the edge read degraded) rank in the support order (the units most entities cite
   first), not by id, so the text quota does not fill in id order; that order, the PageRank graph and the entities'
   unit counts are computed on a worker thread, off the event loop, and local's frequency filter reads a lineage only
-  up to its threshold; SQLite reads only the edges within the set, not every edge leaving a hub (13 hubs of 4,200
-  edges: 220-260 ms to 20-50 ms). On that corpus `local`'s p50 went from 2.0-2.5 s to 1.55 s, `ppr`'s from 0.5 s to
-  0.2 s, with the ranked units unchanged.
+  up to its threshold; SQLite reads only the edges within the set, in one statement, not every edge leaving a hub
+  (13 hubs of 4,200 edges: 220-260 ms to 20-50 ms; 2,000 members 350 ms to 255 ms). On that corpus `local`'s p50
+  went from 2.0-2.5 s to 1.55 s, `ppr`'s from 0.5 s to 0.2 s, with the ranked units unchanged.
 - CDK: `-c neptune_audit_log=true` turns on Neptune audit logs, exported to CloudWatch Logs
   (`/aws/neptune/<cluster id>/audit`, created before the instances) with the CMK and `log_retention_days`
   (`neptune_parameter_group_family` names the engine's family, `neptune1.4` by default); reboot the instances after
@@ -2015,7 +2015,8 @@ Queries and retrieval.
   gold-chunk recall 0.30, now 0.86, 0.96 with rerank), and incremental and full builds pick the same chunks (#521,
   #530); the pick and `local`'s support ranking of its entities' units run on a worker thread: on a corpus whose hub
   entities cite thousands of units each held the event loop for 0.2 s to seconds a query, stalling every concurrent
-  one.
+  one; so do the citations' lineage reads and graph expansion's results (16-39 ms of each `local` and `mix` query on
+  13 hubs).
 - An answer the output guardrail blocks writes no conversation memory, as a blocked query writes none (the refusal
   was saved and read by the next turn's follow-up rewrite).
 - A context budget no retrieved section fits is a `context_optimization` degradation (reason `context_budget`), not
