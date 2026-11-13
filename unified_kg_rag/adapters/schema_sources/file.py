@@ -34,6 +34,7 @@ from unified_kg_rag.adapters.source_files.locations import (
 )
 from unified_kg_rag.domain.models.schema import SchemaDocument
 from unified_kg_rag.shared.exceptions import SchemaSourceError
+from unified_kg_rag.shared.utils.files import read_user_text
 from unified_kg_rag.shared.utils.validation import format_validation_errors
 
 from .registry import SchemaSourceContext, register_schema_source
@@ -84,7 +85,7 @@ def load_schema_file(context: SchemaSourceContext) -> SchemaDocument:
             f"Schema file '{path}' must end in {', '.join(_SUFFIXES)}"
         )
     try:
-        text = path.read_text(encoding="utf-8")
+        text = read_user_text(path)
     except FileNotFoundError as e:
         raise SchemaSourceError(f"Schema file '{path}' not found") from e
     except UnicodeDecodeError as e:
