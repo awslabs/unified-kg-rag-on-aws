@@ -9,7 +9,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from unified_kg_rag.adapters.retrieval.hybrid_scorer import HybridScorer
-from unified_kg_rag.domain.models import Config, RetrievalResult
+from unified_kg_rag.domain.models import Config, RetrievalResult, SectionType
 
 pytestmark = pytest.mark.property
 
@@ -22,7 +22,7 @@ def _scorer() -> HybridScorer:
 
 def _result(content: str, score: float) -> RetrievalResult:
     return RetrievalResult(
-        content=content, score=score, source=content, retriever_type="t"
+        content=content, score=score, source=content, retriever_type=SectionType.GENERAL
     )
 
 
@@ -131,7 +131,7 @@ def _candidates(contents: list[list[str]]) -> list[RetrievalResult]:
             content=" ".join(words),
             score=1.0 - i / n,
             source=f"item{i}",
-            retriever_type="t",
+            retriever_type=SectionType.GENERAL,
         )
         for i, words in enumerate(contents)
     ]

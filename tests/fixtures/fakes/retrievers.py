@@ -22,6 +22,7 @@ from unified_kg_rag.domain.models import (
     GraphEdge,
     RetrievalResult,
     SearchQuery,
+    SectionType,
 )
 from unified_kg_rag.domain.retrieval.filters import (
     ITEM_FILTER_FIELDS,
@@ -86,7 +87,7 @@ def hit(content: str, source: str = "doc-1", score: float = 0.9) -> RetrievalRes
         content=content,
         score=score,
         source=source,
-        retriever_type="document",
+        retriever_type=SectionType.TEXT,
         metadata={"id": source, "text_unit_ids": []},
     )
 

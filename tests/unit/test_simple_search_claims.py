@@ -44,7 +44,10 @@ class FakeRetriever:
         self.calls.append(query)
         return [
             RetrievalResult(
-                content="result", score=1.0, source="s-1", retriever_type="document"
+                content="result",
+                score=1.0,
+                source="s-1",
+                retriever_type=SectionType.TEXT,
             )
         ]
 
@@ -240,7 +243,7 @@ class _CuttingRetriever(FakeRetriever):
                 content=f"{prefix} {rank}",
                 score=1.0 / (rank + 1),
                 source=f"{prefix}-{rank}",
-                retriever_type="document",
+                retriever_type=SectionType.TEXT,
             )
             for rank in range(5)
             for prefix in prefixes

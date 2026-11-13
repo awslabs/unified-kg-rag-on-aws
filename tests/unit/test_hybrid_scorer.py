@@ -12,7 +12,7 @@ import pytest
 
 from unified_kg_rag.adapters.retrieval.hybrid_scorer import HybridScorer
 from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
-from unified_kg_rag.domain.models import Config, RetrievalResult
+from unified_kg_rag.domain.models import Config, RetrievalResult, SectionType
 from unified_kg_rag.domain.models import config as config_module
 
 pytestmark = pytest.mark.unit
@@ -27,7 +27,7 @@ def _scorer(config: Config | None = None) -> HybridScorer:
 
 def _r(content: str, score: float | None, source: str) -> RetrievalResult:
     return RetrievalResult(
-        content=content, score=score, source=source, retriever_type="test"
+        content=content, score=score, source=source, retriever_type=SectionType.GENERAL
     )
 
 

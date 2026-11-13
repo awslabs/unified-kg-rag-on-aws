@@ -19,7 +19,12 @@ import pytest
 from unified_kg_rag.adapters.retrieval.base import BaseSearchStrategy
 from unified_kg_rag.adapters.search_strategies.local_search import LocalSearchStrategy
 from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
-from unified_kg_rag.domain.models import RetrievalResult, SearchQuery, SearchType
+from unified_kg_rag.domain.models import (
+    RetrievalResult,
+    SearchQuery,
+    SearchType,
+    SectionType,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -34,7 +39,7 @@ def _result(
         content="c",
         score=score,
         source=source,
-        retriever_type="document",
+        retriever_type=SectionType.TEXT,
         metadata=metadata or {},
     )
 

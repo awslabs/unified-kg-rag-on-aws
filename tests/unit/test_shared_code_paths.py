@@ -22,6 +22,7 @@ from unified_kg_rag.domain.models import (
     EvaluationResult,
     EvaluatorType,
     Relationship,
+    SectionType,
 )
 from unified_kg_rag.ports import GraphIndexer
 from unified_kg_rag.ports.indexer import IndexingStats
@@ -218,7 +219,7 @@ def _loop_recording_retriever(config: Config) -> Any:
                     content=f"about {query.query}",
                     score=0.5,
                     source="doc-1",
-                    retriever_type="text_unit",
+                    retriever_type=SectionType.TEXT,
                 )
             ]
 

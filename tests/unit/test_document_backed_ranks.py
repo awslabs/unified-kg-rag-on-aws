@@ -46,6 +46,7 @@ from unified_kg_rag.domain.models import (
     PipelineStageStatus,
     Relationship,
     RetrievalResult,
+    SectionType,
     TextUnit,
 )
 from unified_kg_rag.shared.exceptions import PipelineStageError
@@ -616,7 +617,7 @@ def _node(name: str, units: list[str]) -> RetrievalResult:
         content=name,
         source=name,
         score=1.0,
-        retriever_type="graph",
+        retriever_type=SectionType.ENTITY,
         metadata={"id": name, "text_unit_ids": units},
     )
 

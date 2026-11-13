@@ -37,6 +37,7 @@ from unified_kg_rag.domain.models import (
     SearchQuery,
     SearchResult,
     SearchStrategy,
+    SectionType,
 )
 from unified_kg_rag.domain.retrieval.degradation import DegradationStep
 
@@ -177,7 +178,7 @@ def _search_result() -> SearchResult:
                 content="c1",
                 score=0.9,
                 source="doc-1",
-                retriever_type="document",
+                retriever_type=SectionType.TEXT,
                 metadata={"k": "v"},
             )
         ],
