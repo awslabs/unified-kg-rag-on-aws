@@ -1573,7 +1573,7 @@ From a `main` checkout (formats and keys no release had):
   value}, overlay={...})` returns a changed config validated whole, so the checks across sections run (every CLI
   flag, schema source and console selection that changes a config uses it): an assignment let the console run a
   methodology the config's switches leave nothing of. The `search.hybrid` weights are relative (their sum must be
-  above 0) and `logging.library_levels` takes level names only.
+  above 0).
 - `auto` falls back to the first routable of `local`, then `mix`, when the router's answer names no routable
   strategy, as it does when nothing configured is served and as `structured` falls back (one order,
   `GENERAL_FALLBACKS`, from the per-strategy `STRATEGY_TRAITS`); without `local` it took the first routable strategy.
