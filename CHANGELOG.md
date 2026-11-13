@@ -1275,8 +1275,8 @@ From a `main` checkout (formats and keys no release had):
 - Query deadline: `search.query_timeout_seconds` bounds every query and stream, from its admission on (the one
   build-record read of a query, where a stalled store held a new chain's first query before the deadline began); a
   stream must send a first chunk within `search.model_timeout_seconds`. Past it the query raises
-  `QueryTimeoutError` (`run-rag` exits 1, `run-eval` counts a failure);
-  query-time model calls get their own clients (`search.model_timeout_seconds`, `model_max_attempts`; `backend:
+  `QueryTimeoutError` (`run-rag` exits 1, `run-eval` counts a failure; under `processing.ignore_errors` the error
+  answer, one past the deadline during the admission too); query-time model calls get their own clients (`search.model_timeout_seconds`, `model_max_attempts`; `backend:
   local` presets 300 s and a 900 s deadline), and Bedrock CountTokens uses them. No retry, OpenSearch request or
   global map call starts past the deadline; global map calls are cancelled with the query (#522, #530, #567, #579).
 - Query-path options: `search.answer_prompt_style` (the comprehensive answer prompt,
