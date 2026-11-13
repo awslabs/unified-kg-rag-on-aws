@@ -36,8 +36,11 @@ from unified_kg_rag.adapters.aws.neptune import (
 )
 from unified_kg_rag.adapters.storage.neptune_codec import (
     BUILD_TAG_PROPERTY,
+    CENSUS_PROPERTIES,
     IRI_PROPERTY,
     NAME_KEY_PROPERTY,
+    census_row_from_edge,
+    census_row_from_vertex,
     community_properties,
     edge_text_unit_ids,
     entity_from_vertex,
@@ -59,6 +62,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.ports.indexer import (
     AnnotatedKind,
+    GraphCensusRow,
     GraphIndexer,
     IndexingStats,
     SchemaAnnotation,
@@ -610,15 +614,10 @@ class NeptuneIndexer(GraphIndexer):
         label = self._label(self.neptune_config.entity_label_prefix, suffix)
         iri = IRI_PROPERTY[kind]
         try:
+            ids = self._stored_ids(kind, label, "read_schema_annotations (ids)")
             if kind == "entities":
-                ids = self._execute_with_retries(
-                    lambda g: g.V().hasLabel(label).values("id"),
-                    "read_schema_annotations (ids)",
-                    results=True,
-                    fenced=False,
-                )
                 rows = self._read_batches(
-                    sorted({str(i) for i in ids}),
+                    ids,
                     lambda g, batch: self._vertices(g, (label,), batch).valueMap(
                         "id", "type", "in_schema", iri
                     ),
@@ -626,21 +625,8 @@ class NeptuneIndexer(GraphIndexer):
                 )
                 pairs = [(row, (row.get("type") or [None])[0]) for row in rows]
             else:
-                # Between the label's entities only: an older build's
-                # MemberOf edges lead to its communities, and another
-                # suffix's edges may share an id.
-                ids = self._execute_with_retries(
-                    lambda g: g.V()
-                    .hasLabel(label)
-                    .outE()
-                    .where(__.inV().hasLabel(label))
-                    .values("id"),
-                    "read_schema_annotations (ids)",
-                    results=True,
-                    fenced=False,
-                )
                 rows = self._read_batches(
-                    sorted({str(i) for i in ids}),
+                    ids,
                     lambda g, batch: g.E()
                     .has("id", P.within(batch))
                     .where(__.outV().hasLabel(label))
@@ -665,6 +651,108 @@ class NeptuneIndexer(GraphIndexer):
                     value_map, kind, item_type
                 )
         return annotations
+
+    def _stored_ids(self, kind: AnnotatedKind, label: str, operation: str) -> list[str]:
+        """The distinct ids of the label's entity vertices (or of the
+        relationship edges between them), sorted: one read of the ids alone."""
+        if kind == "entities":
+            ids = self._execute_with_retries(
+                lambda g: g.V().hasLabel(label).values("id"),
+                operation,
+                results=True,
+                fenced=False,
+            )
+        else:
+            # Between the label's entities only: an older build's MemberOf
+            # edges lead to its communities, and another suffix's edges may
+            # share an id.
+            ids = self._execute_with_retries(
+                lambda g: g.V()
+                .hasLabel(label)
+                .outE()
+                .where(__.inV().hasLabel(label))
+                .values("id"),
+                operation,
+                results=True,
+                fenced=False,
+            )
+        return sorted({str(i) for i in ids})
+
+    def scan_census_rows(
+        self,
+        kind: AnnotatedKind,
+        suffix: str | None = None,
+        *,
+        page_size: int | None = None,
+    ) -> Iterator[list[GraphCensusRow]]:
+        """The census fields of every entity vertex (or relationship edge)
+        of ``suffix`` (see the port), in either vertex-id mode: one read of
+        the ids, then a ``valueMap`` of the census properties alone for
+        ``page_size`` ids a request (default ``indexing.neptune.batch_size``,
+        each retried). Every copy of an id is read, so a duplicate shows.
+
+        Raises:
+            AWSServiceError: A read failed.
+        """
+        label = self._label(self.neptune_config.entity_label_prefix, suffix)
+        try:
+            ids = self._stored_ids(kind, label, "scan_census_rows (ids)")
+        except NamespaceLeaseError:
+            raise
+        except Exception as e:
+            raise AWSServiceError(f"Neptune scan_census_rows failed: {e}") from e
+        size = max(page_size or self.neptune_config.batch_size, 1)
+        return self._census_pages(kind, label, ids, size)
+
+    def _census_pages(
+        self, kind: AnnotatedKind, label: str, ids: list[str], size: int
+    ) -> Iterator[list[GraphCensusRow]]:
+        def query(g: GraphTraversalSource, batch: list[str]) -> Traversal:
+            if kind == "entities":
+                return self._vertices(g, (label,), batch).valueMap(*CENSUS_PROPERTIES)
+            return (
+                g.E()
+                .has("id", P.within(batch))
+                .where(__.outV().hasLabel(label))
+                .where(__.inV().hasLabel(label))
+                .project("props", "label", "source_id", "target_id")
+                .by(__.valueMap(*CENSUS_PROPERTIES))
+                .by(__.label())
+                .by(__.outV().values("id"))
+                .by(__.inV().values("id"))
+            )
+
+        for start in range(0, len(ids), size):
+            batch = ids[start : start + size]
+
+            def build(g: GraphTraversalSource, batch: list[str] = batch) -> Traversal:
+                return query(g, batch)
+
+            try:
+                rows = self._execute_with_retries(
+                    build,
+                    "scan_census_rows",
+                    results=True,
+                    fenced=False,
+                )
+            except NamespaceLeaseError:
+                raise
+            except Exception as e:
+                raise AWSServiceError(f"Neptune scan_census_rows failed: {e}") from e
+            page = (
+                (
+                    census_row_from_vertex(row)
+                    if kind == "entities"
+                    else census_row_from_edge(
+                        row.get("props") or {},
+                        row.get("label"),
+                        row.get("source_id"),
+                        row.get("target_id"),
+                    )
+                )
+                for row in rows
+            )
+            yield [row for row in page if row is not None]
 
     def holds_any_item(self, suffix: str | None = None) -> bool:
         """Whether the label holds a vertex (see the port): one bounded

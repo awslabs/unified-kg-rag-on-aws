@@ -164,7 +164,7 @@ Guide: [Inspect and export](../guides/inspect.md). Also takes the [provider flag
 | `--output-path` | — | Also export the namespace's graph to this file (entities, relationships, communities, claims, summary nodes, with the text units and documents they cite). An existing file is refused unless --force, and so are the --config-path file and the schema file the config loads, always. |
 | `--force` | off | Let --output-path replace an existing file (never the --config-path file or the schema file the config loads). |
 | `--export-format` | `jsonl` | Export format: jsonl (one record per line, every stored field but the vectors) or graphml (entities as nodes, relationships as edges, communities as nodes linked to their parent). |
-| `--max-items` | — | Export at most this many items of each kind (default: all). |
+| `--max-items` | — | Export at most this many items of each kind (default: all); a sample export takes no graph-store census. |
 | `--include-text` | off | Export each text unit's text too (jsonl only). |
 | `--documents` `STATUSES` |  | Also list the doc-status registry's documents of these comma-separated statuses (failed, quarantined, pending, processed): file, status, error_info, failure, retry and attempt counts, the pipeline id that wrote the record and when (needs providers.doc_status.enabled). |
 | `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |

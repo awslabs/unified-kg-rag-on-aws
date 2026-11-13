@@ -1396,6 +1396,18 @@ stages). The task tags them with an `Environment` dimension (`env_name`), and
 the alarms and dashboard read only that series, so dev runs do not trip prod's
 alarms; runs without `UKR_METRICS_ENVIRONMENT` publish a series no alarm reads.
 
+**Log delivery.** Every EMF-based alarm depends on the task's log lines
+reaching CloudWatch Logs. Both task definitions ship the app container's
+stdout and stderr with the `awslogs` driver, its delivery mode set rather
+than left to the account's ECS default (non-blocking, which drops lines past
+a buffer): the ingestion task's app is `blocking`, so a slow CloudWatch Logs
+stalls the run's writes instead of dropping the end-of-stage records the
+indexing alarms read; the query task's app, and every trace collector, is
+`non-blocking` with a 25 MiB buffer (`LOG_BUFFER` in
+`iac/stacks/compute_stack.py`), so queries never wait on log delivery. The
+buffer size is not measured: a log-heavy query task (DEBUG logging under
+load) can still drop lines past it.
+
 **Store health**
 
 These fire between runs too, so degradation shows before a run breaks on it:

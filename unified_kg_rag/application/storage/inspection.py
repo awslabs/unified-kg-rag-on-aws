@@ -19,7 +19,8 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import Counter
-from collections.abc import Collection, Iterable, Iterator
+from collections.abc import Callable, Collection, Iterable, Iterator
+from contextlib import ExitStack
 from pathlib import Path
 from typing import IO, Any, Literal
 from xml.sax.saxutils import escape, quoteattr
@@ -45,14 +46,16 @@ from unified_kg_rag.domain.models import (
     SectionType,
 )
 from unified_kg_rag.domain.retrieval import source_fields
+from unified_kg_rag.domain.retrieval.filters import TRANSLATED_TEXT_PREFIX
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.ports.indexer import (
     STORED_ITEM_KINDS,
     AnnotatedKind,
+    GraphCensusRow,
     GraphIndexer,
     StoredItemKind,
 )
-from unified_kg_rag.shared import ConfigurationError, get_logger
+from unified_kg_rag.shared import AWSServiceError, ConfigurationError, get_logger
 from unified_kg_rag.shared.exceptions import (
     DocStatusFormatError,
     DocStatusRegistryError,
@@ -156,6 +159,19 @@ class GraphKindCensus(BaseModel):
     rank_digest: str = Field(
         description="SHA-256 of their ids with their stored ranks, in id order"
     )
+    provenance_digest: str = Field(
+        description="SHA-256 of their ids with their sorted text_unit_ids (the "
+        "text units each cites), in id order"
+    )
+    description_digest: str = Field(
+        description="SHA-256 of their ids with their stored descriptions, in "
+        "id order"
+    )
+    topology_digest: str | None = Field(
+        default=None,
+        description="Edges: SHA-256 of their ids with their source, target and "
+        "weight, in id order; None for vertices",
+    )
 
 
 class GraphCensus(BaseModel):
@@ -186,8 +202,14 @@ class GraphExport(BaseModel):
     )
     graph: GraphCensus | None = Field(
         default=None,
-        description="The graph store's census (None: no graph store, or one "
-        "that cannot list its items)",
+        description="The graph store's census (None: with max_items, without "
+        "a graph store or one that cannot list its items, or when it could "
+        "not be read: see graph_unavailable)",
+    )
+    graph_unavailable: str | None = Field(
+        default=None,
+        description="Why the graph store could not be read for the census "
+        "(unreachable, access denied, ...); None when it was read or not asked",
     )
 
 
@@ -362,48 +384,80 @@ def census_graph(
     graph: GraphIndexer, suffix: str | None, *, page_size: int | None = None
 ) -> GraphCensus | None:
     """Count and digest the entity vertices and relationship edges
-    ``suffix``'s graph store holds, through the port (any backend that lists
-    its items: ``read_schema_annotations``, then their ranks a page of
-    ``page_size`` ids at a time). Two stores of the same graph give the same
-    census; a lost or extra vertex or edge, a changed type or rank, does not.
-    ``None`` when the backend cannot list its items (no graph store).
+    ``suffix``'s graph store holds, through the port's projected read
+    (``scan_census_rows``, a page of ``page_size`` ids at a time; any backend
+    that lists its items). Two stores of the same graph give the same
+    census; a lost, extra or duplicate vertex or edge, a changed type, rank,
+    provenance (text units cited), description, endpoint or weight, does
+    not. Every stored copy counts, so a duplicate id shows. ``None`` when
+    the backend cannot list its items (no graph store).
 
     Raises:
         StoreConnectionError: The graph store cannot be reached (or the
             backend's typed read error).
     """
     kinds: dict[str, GraphKindCensus] = {}
-    size = max(page_size or 1000, 1)
     for kind, field in _CENSUS_KINDS:
-        listed = graph.read_schema_annotations(kind, suffix)
-        if listed is None:
+        pages = graph.scan_census_rows(kind, suffix, page_size=page_size)
+        if pages is None:
             return None
-        ids = sorted(listed)
-        ranks: dict[str, Any] = {}
-        for start in range(0, len(ids), size):
-            page = ids[start : start + size]
-            items = (
-                graph.read_entities(page, suffix)
-                if kind == "entities"
-                else graph.read_relationships(page, suffix)
-            )
-            ranks.update((item.id, item.rank) for item in items)
-        types = [listed[i].type or _UNTYPED for i in ids]
-        kinds[field] = GraphKindCensus(
-            count=len(ids),
-            by_type=dict(sorted(Counter(types).items())),
-            digest=_digest(zip(ids, types, strict=True)),
-            rank_digest=_digest((i, ranks.get(i)) for i in ids),
-        )
+        kinds[field] = _kind_census(pages, edges=kind == "relationships")
     return GraphCensus.model_validate(kinds)
 
 
-def _digest(rows: Iterable[tuple[Any, ...]]) -> str:
-    """SHA-256 of ``rows``, one JSON array a line."""
-    sha = hashlib.sha256()
+# Each census digest, with the fields of a row it hashes after the id.
+_ROW_DIGESTS: dict[str, Callable[[GraphCensusRow], tuple[Any, ...]]] = {
+    "digest": lambda row: (row.type or _UNTYPED,),
+    "rank_digest": lambda row: (row.rank,),
+    "provenance_digest": lambda row: (row.text_unit_ids,),
+    "description_digest": lambda row: (row.description,),
+}
+_EDGE_DIGESTS: dict[str, Callable[[GraphCensusRow], tuple[Any, ...]]] = {
+    "topology_digest": lambda row: (row.source_id, row.target_id, row.weight),
+}
+
+
+def _kind_census(
+    pages: Iterable[list[GraphCensusRow]], *, edges: bool
+) -> GraphKindCensus:
+    """The census of one kind from its pages (ascending ids), one pass: the
+    memory is a page's."""
+    fields = {**_ROW_DIGESTS, **(_EDGE_DIGESTS if edges else {})}
+    digests = {name: _Digest() for name in fields}
+    types: Counter[str] = Counter()
+    count = 0
+    for page in pages:
+        for row in sorted(page, key=lambda r: r.id):
+            count += 1
+            types[row.type or _UNTYPED] += 1
+            for name, read in fields.items():
+                digests[name].add((row.id, *read(row)))
+    return GraphKindCensus(
+        count=count,
+        by_type=dict(sorted(types.items())),
+        **{name: digest.hexdigest() for name, digest in digests.items()},
+    )
+
+
+class _Digest:
+    """SHA-256 of rows, one JSON array a line."""
+
+    def __init__(self) -> None:
+        self._sha = hashlib.sha256()
+
+    def add(self, row: Iterable[Any]) -> None:
+        self._sha.update(json.dumps(list(row), ensure_ascii=False).encode() + b"\n")
+
+    def hexdigest(self) -> str:
+        return self._sha.hexdigest()
+
+
+def _digest(rows: Iterable[Iterable[Any]]) -> str:
+    """SHA-256 of ``rows``, one JSON array a line (:class:`_Digest`)."""
+    digest = _Digest()
     for row in rows:
-        sha.update(json.dumps(list(row), ensure_ascii=False).encode() + b"\n")
-    return sha.hexdigest()
+        digest.add(row)
+    return digest.hexdigest()
 
 
 def export_graph(
@@ -433,10 +487,12 @@ def export_graph(
     ``include_text`` adds each text unit's text (JSON Lines only). An
     existing ``path`` is replaced only with ``overwrite``.
 
-    ``graph`` is the graph store's :func:`census_graph` (never cut by
-    ``max_items``); JSON Lines also ends with it, one record of kind
-    ``graph`` for the ``vertices`` and one for the ``edges``, so comparing
-    two exports compares the graph stores too.
+    ``graph`` is the graph store's :func:`census_graph`; JSON Lines also
+    ends with it, one record of kind ``graph`` for the ``vertices`` and one
+    for the ``edges``, so comparing two exports compares the graph stores
+    too. A sample export (``max_items``) takes none: the census reads the
+    whole graph. When the graph store cannot be read, the export is written
+    without it (``graph`` None) and ``graph_unavailable`` says why.
 
     The provenance is what the stores hold: a text unit names its document
     (``file_path`` relative to the corpus root, or a seed graph's), every
@@ -446,7 +502,7 @@ def export_graph(
         ConfigurationError: An unknown ``format``, an unsafe ``suffix``, or
             a vector store that cannot page its items.
         InvalidArgumentError: ``path`` exists and ``overwrite`` is not set.
-        StoreConnectionError: A store cannot be reached.
+        StoreConnectionError: The vector store cannot be reached.
     """
     if format not in EXPORT_FORMATS:
         raise ConfigurationError(
@@ -467,9 +523,11 @@ def export_graph(
     truncated: list[str] = []
     missing: list[str] = []
     units: dict[str, str] = {}
-    vector = providers.build_vector_indexer()
-    graph = providers.build_graph_indexer()
-    try:
+    census: GraphCensus | None = None
+    unavailable: str | None = None
+    with ExitStack() as stores:
+        vector = providers.build_vector_indexer()
+        stores.callback(vector.close)
         with atomic_open(target, newline="\n") as out:
             writer: _Writer = (
                 _JsonLines(out, include_text) if format == "jsonl" else _GraphML(out)
@@ -490,12 +548,10 @@ def export_graph(
                     truncated.append(record_kind)
                 if not live:
                     missing.append(record_kind)
-            census = census_graph(graph, name, page_size=page_size)
+            if max_items is None:
+                census, unavailable = _read_census(providers, stores, name, page_size)
             writer.census(census)
             writer.end()
-    finally:
-        vector.close()
-        graph.close()
     if SectionType.RELATIONSHIP.value in missing and counts.get(
         SectionType.ENTITY.value
     ):
@@ -514,7 +570,28 @@ def export_graph(
         truncated=truncated,
         missing=missing,
         graph=census,
+        graph_unavailable=unavailable,
     )
+
+
+def _read_census(
+    providers: Providers, stores: ExitStack, name: str, page_size: int | None
+) -> tuple[GraphCensus | None, str | None]:
+    """The graph store's census of ``name``, or why it could not be read:
+    the export (the vector store's items) stands without it, as a
+    description stands without the registry; the comparison of two exports
+    still tells a missing census from a present one."""
+    try:
+        graph = providers.build_graph_indexer()
+        stores.callback(graph.close)
+        return census_graph(graph, name, page_size=page_size), None
+    except (AWSServiceError, ConfigurationError) as e:
+        reason = str(e)
+        logger.warning(
+            "The graph store is unavailable; exporting without its census: %s",
+            reason,
+        )
+        return None, reason
 
 
 def _write_kind(
@@ -564,7 +641,7 @@ class _JsonLines(_Writer):
         if kind == SectionType.TEXT:
             if not self.include_text:
                 record.pop("text", None)
-                for key in [k for k in record if k.startswith("translated_text_")]:
+                for key in [k for k in record if k.startswith(TRANSLATED_TEXT_PREFIX)]:
                     record.pop(key)
             document = _unit_document(item)
             attributes = item.get("attributes")

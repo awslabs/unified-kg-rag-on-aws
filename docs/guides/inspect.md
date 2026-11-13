@@ -65,8 +65,11 @@ Describing creates no store file where nothing was ingested.
 
 ## Exported graph
 
-The export streams the vector store's items a page at a time, so its
-memory does not grow with the namespace; `--max-items` caps each kind.
+The export streams the vector store's items a page at a time; `--max-items`
+caps each kind. Its memory grows with the namespace only by the map of text
+unit ids to documents it keeps to name each item's documents, and the graph
+census below holds one page of the graph store (plus, on Neptune, the list
+of ids it pages through).
 The export's `counts`, `truncated` and `missing` (in `run-describe
 --output-format json`'s `export`) name the kinds as its records do (`text`,
 `entity`, ...); `indices[].kind` names an index (`text_units`, `entities`,
@@ -87,16 +90,27 @@ The export's `counts`, `truncated` and `missing` (in `run-describe
 Both read the graph store too: the export's `graph` (in the
 `--output-format json` document, under `export`) is a census of its entity
 vertices and the relationship edges between them, each with its `count`,
-`by_type` (an entity's type, an edge's label) and two SHA-256 digests, of
-the ids with their types (`digest`) and with their stored ranks
-(`rank_digest`). A JSON Lines export ends with it, as two records of kind
-`graph` (ids `vertices` and `edges`). It is read through the graph store's
-port, the same for the embedded SQLite store and Neptune, is never cut by
-`--max-items`, and is `null` without a graph store (a `raptor`-only
-build). Two stores of the same graph give the same census; a lost or extra
-vertex or edge, or a changed type or rank, does not, though the vector
-store's copies are unchanged. Communities are compared through their
-reports.
+`by_type` (an entity's type, an edge's label) and SHA-256 digests of the
+ids in id order with their types (`digest`), their stored ranks
+(`rank_digest`), the text units they cite (`provenance_digest`), their
+descriptions (`description_digest`) and, for the edges, their source,
+target and weight (`topology_digest`; `null` for the vertices). A JSON
+Lines export ends with it, as two records of kind `graph` (ids `vertices`
+and `edges`). It is read through the graph store's port, which returns
+only those fields (the same for the embedded SQLite store and Neptune).
+Two stores of the same graph give the same census; a lost, extra or
+duplicate vertex or edge (every stored copy is counted), or a changed
+type, rank, provenance, description, endpoint or weight, does not, though
+the vector store's copies are unchanged. Communities are compared through
+their reports.
+
+A sample export (`--max-items`) takes no census (`graph` is `null`): the
+census reads the whole graph store. `graph` is also `null` for a graph
+backend that cannot list its items. When the graph store cannot be read
+(unreachable, access denied), the export is still written, from the vector
+store, with `graph: null` and why in `graph_unavailable` (logged as a
+WARNING), as a description is without the registry; comparing it with an
+export that holds the census does not converge.
 
 Provenance is what the stores hold: a text unit names its document
 (`file_path`: a document given from memory by its id, a file by the path

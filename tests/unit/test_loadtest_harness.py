@@ -231,11 +231,32 @@ def test_an_http_report_is_gated() -> None:
     ]
 
 
-@pytest.mark.parametrize("report", [{}, {"warm_up": _level()}, {"environment": {}}])
+@pytest.mark.parametrize(
+    "report",
+    [
+        {},
+        {"warm_up": _level()},
+        {"environment": {}},
+        # An empty section is one the report does not hold (load.py sweep
+        # --levels "" writes the first).
+        {"sweep": []},
+        {"http": []},
+        {"chaos": []},
+        {"soak": None},
+        {"soak": {}},
+        {"sweep": [], "soak": None, "http": [], "chaos": []},
+    ],
+)
 def test_a_report_without_a_known_section_fails(report: dict[str, Any]) -> None:
     assert harness.check_gates(report) == [
-        "the report holds none of sweep, soak, http, chaos: nothing was measured"
+        "the report holds none of sweep, soak, http, chaos (or only empty ones): "
+        "nothing was measured"
     ]
+
+
+def test_an_empty_section_beside_a_measured_one_is_not_checked() -> None:
+    assert harness.check_gates({"sweep": [_level()], "soak": None, "chaos": []}) == []
+    assert harness.gate_notes({"chaos": None}) == []
 
 
 def test_a_short_soak_fails_on_rss_only_past_the_floor() -> None:
@@ -717,7 +738,18 @@ def test_a_faulted_run_that_failed_nothing_did_not_exercise_recovery(
         "the faulted run failed no document and exited 0 "
         "(all 4 injected faults were retried)"
     )
-    assert "injected no fault" in nightly.not_exercised(_run(), 0)
+    # None injected is a failure (a broken chaos server), not a note.
+    assert nightly.not_exercised(_run(), 0) == ""
+
+
+def test_a_faulted_run_without_an_injected_fault_fails(nightly: ModuleType) -> None:
+    assert nightly.injection_problem(3) == ""
+    problem = nightly.injection_problem(0)
+    assert "injected no fault" in problem
+    broken = nightly.scenario_result("throttle", [], "incremental", False, problem)
+    assert broken["status"] == "not_converged"
+    failures = harness.check_gates(_report(chaos=[broken]))
+    assert len(failures) == 1 and "injected no fault" in failures[0]
 
 
 def test_an_unexercised_scenario_is_reported_not_failed(
@@ -752,3 +784,41 @@ def test_an_unexercised_scenario_is_reported_not_failed(
     )
     assert "| faults | not_exercised |" in text
     assert "Not tested this run (not a failure):" in text
+
+
+def test_the_nightly_soak_runs_with_two_malloc_arenas(
+    nightly: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """glibc's per-thread arenas grow by tens of MB in a soak's first
+    minutes once queries use worker threads: the soak alone runs with
+    ``MALLOC_ARENA_MAX=2`` so the RSS gate sees what the code holds."""
+    calls: dict[str, dict[str, str]] = {}
+
+    class _Models:
+        port = 1
+
+        def __init__(self, out: Path) -> None: ...
+
+        def close(self) -> None: ...
+
+    def load(mode: str, *_args: Any, env: dict[str, str] | None = None) -> Any:
+        calls[mode] = dict(env or {})
+        timed = {"throughput_rps": 1.0, "p50": 0.1, "p99": 0.2}
+        if mode == "sweep":
+            return {"sweep": [{**_level(), **timed}]}
+        return {"soak": {**_soak(1, 0.5), **timed, "duration_seconds": 60}}
+
+    monkeypatch.setattr(nightly, "Models", _Models)
+    monkeypatch.setattr(nightly, "write_workspace", lambda *a, **k: tmp_path / "c")
+    monkeypatch.setattr(nightly, "ingest", lambda *a, **k: _run())
+    monkeypatch.setattr(nightly, "load", load)
+    monkeypatch.setattr(
+        nightly,
+        "chaos_scenarios",
+        lambda *a: [nightly.scenario_result("kill", [], "exact", True, "")],
+    )
+
+    assert nightly.main([str(tmp_path / "out")]) == 0
+
+    assert calls == {"sweep": {}, "soak": {"MALLOC_ARENA_MAX": "2"}}
+    assert nightly._env(**nightly.SOAK_ENV)["MALLOC_ARENA_MAX"] == "2"

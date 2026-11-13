@@ -785,12 +785,29 @@ def test_a_census_is_the_same_on_every_backend(harness: StoreHarness) -> None:
     graph = harness.graph_indexer
     tenant = "census_t"
     entities = [
-        _entity("a", tenant, type="ORGANIZATION", rank=2),
-        _entity("b", tenant, type="조직", rank=1),
+        _entity(
+            "a",
+            tenant,
+            type="ORGANIZATION",
+            rank=2,
+            description="공급업체",
+            text_unit_ids=["t2", "t1"],
+        ),
+        _entity("b", tenant, type="조직", rank=1, text_unit_ids=["t1"]),
         _entity("c", tenant, rank=1),
     ]
     rels = [
-        _rel("a-b", "a", "b", tenant, type="SUPPLIES", rank=3),
+        _rel(
+            "a-b",
+            "a",
+            "b",
+            tenant,
+            type="SUPPLIES",
+            rank=3,
+            weight=2.5,
+            description="供应",
+            text_unit_ids=["t2", "t1"],
+        ),
         _rel("a-c", "a", "c", tenant, type="SHIPS_TO", rank=3),
     ]
     assert graph.upsert_entities(entities).failed_items == 0
@@ -809,8 +826,90 @@ def test_a_census_is_the_same_on_every_backend(harness: StoreHarness) -> None:
     )
     assert census.edges.rank_digest == _digest([["a-b", 3], ["a-c", 3]])
     assert census.vertices.rank_digest == _digest([["a", 2], ["b", 1], ["c", 1]])
+    # Provenance sorted, descriptions as stored, endpoints and weights (an
+    # absent weight reads as the model's default, as the full reads do).
+    assert census.vertices.provenance_digest == _digest(
+        [["a", ["t1", "t2"]], ["b", ["t1"]], ["c", []]]
+    )
+    assert census.edges.provenance_digest == _digest(
+        [["a-b", ["t1", "t2"]], ["a-c", []]]
+    )
+    assert census.vertices.description_digest == _digest(
+        [["a", "공급업체"], ["b", None], ["c", None]]
+    )
+    assert census.edges.description_digest == _digest([["a-b", "供应"], ["a-c", None]])
+    assert census.edges.topology_digest == _digest(
+        [["a-b", "a", "b", 2.5], ["a-c", "a", "c", 1.0]]
+    )
+    assert census.vertices.topology_digest is None
+    # A rewritten weight, endpoint or provenance changes only its digest.
+    for update, changed in (
+        ({"weight": 9.0}, "topology_digest"),
+        ({"target_id": "c"}, "topology_digest"),
+        ({"text_unit_ids": ["t1"]}, "provenance_digest"),
+        ({"description": "다른 설명"}, "description_digest"),
+    ):
+        assert (
+            graph.upsert_relationships([rels[0].model_copy(update=update)]).failed_items
+            == 0
+        )
+        edited = census_graph(graph, tenant)
+        assert edited is not None and edited.edges.count == 2, update
+        differs = {
+            name for name, value in edited.edges if value != getattr(census.edges, name)
+        }
+        assert differs == {changed}, update
+        assert graph.upsert_relationships([rels[0]]).failed_items == 0
+        assert census_graph(graph, tenant) == census
     graph.delete_by_id(["a-c"], suffix=tenant)
     after = census_graph(graph, tenant)
     assert after is not None and after.edges.count == 1
     assert after.edges.digest != census.edges.digest
     assert after.vertices == census.vertices
+
+
+def test_the_sqlite_census_projects_every_census_property() -> None:
+    from unified_kg_rag.adapters.storage import sqlite_graph_indexer as sqlite
+    from unified_kg_rag.adapters.storage.neptune_codec import CENSUS_PROPERTIES
+
+    assert ("id", *sqlite._CENSUS_KEYS) == CENSUS_PROPERTIES
+    paths = ", ".join(f"'$.{k}'" for k in sqlite._CENSUS_KEYS)
+    for query in sqlite._CENSUS_QUERIES.values():
+        assert f"json_extract(props, {paths})" in query
+
+
+def test_a_census_counts_every_stored_copy(harness: StoreHarness) -> None:
+    """A Gremlin store can hold two edges of one id (a retried rewrite
+    without transactions): the census counts rows, not distinct ids, so the
+    duplicate shows (SQLite keys an edge by its id: it cannot hold one)."""
+    from gremlin_python.process.graph_traversal import __
+
+    from unified_kg_rag.application.storage.inspection import census_graph
+
+    graph = harness.graph_indexer
+    if not hasattr(graph, "_execute_with_retries"):
+        pytest.skip("only a Gremlin store can hold a duplicate edge")
+    tenant = "census_dup"
+    _graph(harness, [("a", "b"), ("a", "c")], tenant)
+    census = census_graph(graph, tenant)
+    assert census is not None and census.edges.count == 2
+    label = graph._label(graph.neptune_config.entity_label_prefix, tenant)
+    (edge,) = graph.read_relationships(["a-b"], tenant)
+    graph._execute_with_retries(
+        lambda g: g.V()
+        .has("id", "a")
+        .hasLabel(label)
+        .addE(edge.type or "RELATED")
+        .to(__.V().has("id", "b").hasLabel(label))
+        .property("id", "a-b")
+        .property("rank", edge.rank),
+        "duplicate edge",
+        results=True,
+    )
+
+    doubled = census_graph(graph, tenant, page_size=1)
+
+    assert doubled is not None
+    assert doubled.edges.count == 3
+    assert doubled.edges.digest != census.edges.digest
+    assert doubled.vertices == census.vertices

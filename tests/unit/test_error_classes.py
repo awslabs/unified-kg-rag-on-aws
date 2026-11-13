@@ -414,6 +414,20 @@ async def test_waiters_of_a_shared_call_each_get_their_own_failure() -> None:
     assert {x.query_failure_ids(e)["query_id"] for e in raised} == {"q-1", "q-2"}
 
 
+def test_an_error_that_cannot_be_rebuilt_from_its_args_is_shared_as_is() -> None:
+    class Pair(Exception):
+        def __new__(cls, left: str, right: str) -> Pair:
+            return super().__new__(cls, f"{left}/{right}")
+
+        def __init__(self, left: str, right: str) -> None:
+            super().__init__(f"{left}/{right}")
+
+    error = Pair("a", "b")
+    assert x.waiter_copy(error) is error
+    copied = x.waiter_copy(ValueError("v"))
+    assert type(copied) is ValueError and str(copied) == "v"
+
+
 async def test_a_waiters_own_cancellation_is_not_copied() -> None:
     import asyncio
 

@@ -97,6 +97,8 @@ class DegradationLedger:
 
     A ledger opened inside another (``parent``) passes each entry on to it:
     a strategy's search reports its own entries, the query all of them.
+    An entry equal to one it holds (the same step, reason and error type:
+    one retriever failing alike on each of its calls) is recorded once.
     Safe to record into from the query's tasks and worker threads.
     """
 
@@ -129,7 +131,10 @@ class DegradationLedger:
 
     def _add(self, entry: Degradation, *, unresolved: bool) -> None:
         with self._lock:
-            (self._unresolved if unresolved else self._entries).append(entry)
+            entries = self._unresolved if unresolved else self._entries
+            if entry in entries:
+                return
+            entries.append(entry)
         if self._parent is not None:
             self._parent._add(entry, unresolved=unresolved)
 

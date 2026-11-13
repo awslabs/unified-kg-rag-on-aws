@@ -192,6 +192,10 @@ class OrchestrationStack(Stack):
             "IngestionTask",
             compute.task_role,
             ephemeral_storage_gib=config.ingestion_ephemeral_storage_gib,
+            # A batch run, not latency-bound: its log lines wait for
+            # CloudWatch Logs rather than drop the EMF records the indexing
+            # alarms read.
+            blocking_logs=True,
         )
         definition = self._build_definition()
         self.state_machine = sfn.StateMachine(

@@ -230,24 +230,25 @@ def check_gates(report: Mapping[str, Any], gates: Gates = Gates()) -> list[str]:
     or a ``load.py`` report: ``sweep`` and ``http``, lists of level reports;
     ``soak``, a soak report; ``chaos``, scenario results with
     ``converged``); an empty list passes. A section the report does not
-    hold is not checked, but a report holding none of
-    :data:`REPORT_SECTIONS` fails, and so does a level that holds no
-    requests: a run that measured nothing does not pass. An ``http`` level's
+    hold, or holds empty (``[]``, ``null``, ``{}``), is not checked, but a
+    report holding none of :data:`REPORT_SECTIONS` fails, and so does a
+    level that holds no requests: a run that measured nothing does not
+    pass. An ``http`` level's
     lag is the client's (``client_loop_lag_p99_ms``): a client loop that
     lags inflates the latencies it measures."""
-    if not any(section in report for section in REPORT_SECTIONS):
+    if not any(report.get(section) for section in REPORT_SECTIONS):
         return [
             "the report holds none of "
             + ", ".join(REPORT_SECTIONS)
-            + ": nothing was measured"
+            + " (or only empty ones): nothing was measured"
         ]
     failures: list[str] = []
     # (name, level, its lag key, what the lag is of)
     levels = [
         (f"concurrency {level.get('concurrency')}", level, "loop_lag_p99_ms", "")
-        for level in report.get("sweep", [])
+        for level in report.get("sweep") or []
     ]
-    soak = report.get("soak")
+    soak = report.get("soak") or None
     if soak is not None:
         levels.append(
             (f"concurrency soak {soak.get('concurrency')}", soak, "loop_lag_p99_ms", "")
@@ -259,7 +260,7 @@ def check_gates(report: Mapping[str, Any], gates: Gates = Gates()) -> list[str]:
             "client_loop_lag_p99_ms",
             "client ",
         )
-        for level in report.get("http", [])
+        for level in report.get("http") or []
     ]
     for name, level, lag_key, lag_of in levels:
         if not level.get("requests"):
@@ -301,7 +302,7 @@ def check_gates(report: Mapping[str, Any], gates: Gates = Gates()) -> list[str]:
                 f"{gates.rss_rise_floor_mb} MB)"
             )
     if gates.require_convergence:
-        for scenario in report.get("chaos", []):
+        for scenario in report.get("chaos") or []:
             if not scenario.get("converged"):
                 failures.append(
                     f"chaos {scenario.get('name')}: did not converge with a full "
@@ -316,6 +317,6 @@ def gate_notes(report: Mapping[str, Any]) -> list[str]:
     the recovery path, so the convergence proves nothing about it)."""
     return [
         f"chaos {scenario.get('name')}: not exercised: {scenario.get('detail')}"
-        for scenario in report.get("chaos", [])
+        for scenario in report.get("chaos") or []
         if scenario.get("status") == "not_exercised"
     ]

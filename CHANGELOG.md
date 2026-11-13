@@ -745,7 +745,8 @@ From a `main` checkout (formats and keys no release had):
   `degraded_error` stays the first error type): a store read a strategy absorbed (simple and naive reported a clean
   empty search), global's rating and map calls, DRIFT's and iterative's model calls, and the chain's
   `processing.ignore_errors` fallbacks (auto's router, the follow-up rewrite, query processing, the context budget),
-  from one per-query ledger (`DegradationLedger`). A failed findings-lineage read of a strategy whose answers do not
+  from one per-query ledger (`DegradationLedger`; a failure recorded alike, as by a retriever on each of its calls, is
+  one entry). A failed findings-lineage read of a strategy whose answers do not
   cite (global and DRIFT by default), or of the documents of the answer's graph citations, is listed in
   `metadata.citations_unresolved` instead, in the same shape. `run-eval` records `degraded_steps` per answer,
   `degraded_step_counts` and `degraded_queries`, which `--max-failure-rate` counts. The answer view (`AnswerView`)
@@ -853,10 +854,9 @@ From a `main` checkout (formats and keys no release had):
   `mcp.max_*` bounds limit what a call may ask and costs (`mcp.strategies` binds the chain's new
   `allowed_strategies`: `auto` routes, and falls back, only within it, and is refused before any model call when the
   namespace serves none of it); every call runs under `search.query_timeout_seconds` (a query past it times out in the
-  chain; a `kg_answer` past it, the wait for a call slot included, is one query in the query metrics, and every failed
-  call's error names its `query_id`) and returns its model `usage`.
-  chain, so it is counted in the query metrics and names its ids, and its error states the time the query had after
-  its wait for a call slot) and returns its model `usage`.
+  chain; a `kg_answer` past it, the wait for a call slot included, is one query in the query metrics, its error states
+  the time the query had after that wait, and every failed call's error names its `query_id`) and returns its model
+  `usage`.
   `kg_get_entity` matches a name folded as local search's seeds are.
   The graph tools read the stores through the chain's retrievers and make no model call, and check the namespace
   first, as a query does (one nothing was ingested under logs no retrieval failure per call; its error names only the
@@ -1147,11 +1147,13 @@ From a `main` checkout (formats and keys no release had):
   `--output-path`, `--export-format`, `--max-items`; written atomically, so a failed export leaves the previous file
   and no partial one; an existing file is replaced only with `--force`, `export_graph(overwrite=True)`, and never the
   `--config-path` file or the schema file the config loads, by the guard `run-prompt-tuning` shares), with the
-  graph store's census (`graph`: per-type counts and digests of the ids, types and ranks of its vertices and edges,
-  read through `GraphIndexer`); `VectorIndexer.describe_indices` and `scan_items` (#628). It, `kg_describe_schema`
-  (which adds `auto_routes`), the console and the chain's refusal read what a namespace holds by one rule
-  (`NamespaceHoldings`): without a build
-  record the console shows what the config builds, as queries are served, not nothing held; a namespace nothing was
+  graph store's census (`graph`: per-type counts, every stored copy counted, and digests of the types, ranks, cited
+  text units, descriptions and edge endpoints and weights of its vertices and edges, from a projected read,
+  `GraphIndexer.scan_census_rows`; none with `--max-items`; a graph store that cannot be read leaves `graph` null and
+  `graph_unavailable` saying why, and the export stands); `VectorIndexer.describe_indices` and `scan_items` (#628).
+  It, `kg_describe_schema` (which adds `auto_routes`), the console and the chain's refusal read what a namespace
+  holds by one rule (`NamespaceHoldings`): without a build record the console shows what the config builds, as
+  queries are served, not nothing held; a namespace nothing was
   ingested under holds nothing (`exists: false`, also in `kg_describe_schema`; `acheck_methodology` and a query raise
   `IndexNotFoundError`, not a methodology refusal naming the config's). A registry the caller cannot read (the CDK
   query task's role has no DynamoDB access) is reported unavailable, with the reason in `registry_unavailable` and a
@@ -1654,9 +1656,11 @@ From a `main` checkout (formats and keys no release had):
   census). A nightly `load-test` workflow runs it on the embedded stores; it gates on errors, answers without
   evidence (no sources, abstained, empty) or degraded, loop lag, RSS growth past both a rate and an 8 MB floor (a
   short soak's slope alone failed a clean run), and convergence, the kill's resume started at once (the dead run's
-  lease handed on), and only reports; a faulted run that failed nothing is reported `not_exercised`. `load.py gate`
-  checks any mode's report (an `http` one by the client's loop lag) and fails one that measured nothing. `load.py`
-  refuses a store or model kind that is not local, and reads no `~/.aws` profile.
+  lease handed on), and only reports; a faulted run that failed nothing is reported `not_exercised`, one during which
+  the model server injected no fault fails. The soak runs with `MALLOC_ARENA_MAX=2`: glibc's per-thread arenas grew
+  RSS 22.5 MB in a 300 s soak once queries used worker threads (2.6 MB with two arenas). `load.py gate` checks any
+  mode's report (an `http` one by the client's loop lag) and fails one that measured nothing (or holds only empty
+  sections). `load.py` refuses a store or model kind that is not local, and reads no `~/.aws` profile.
 
 ### Changed
 - `auto` falls back to the first routable of `local`, then `mix`, when the router's answer names no routable
@@ -1899,6 +1903,9 @@ From a `main` checkout (formats and keys no release had):
   is not given to compute (#566).
 - CDK: both task definitions drop every Linux capability (as `docker/compose.local.yaml`), and synth warns when an
   environment other than dev deploys the mutable `latest` image tag.
+- CDK: the `awslogs` delivery mode is set, not left to the account's ECS default (non-blocking, which drops lines
+  past its buffer): the ingestion task's app logs `blocking`, so the EMF records its alarms read are not dropped; the
+  query task's app and the trace collectors `non-blocking` with a 25 MiB buffer.
 - CDK: a plain `cdk deploy --all` attaches the guardrail it creates when `bedrock_region` is the deploy region (every
   private deploy): the tasks read its id and version from SSM parameters the guardrail stack writes, so queries and
   answers are screened without `-c guardrail_identifier`; across regions, and for a given identifier, the context

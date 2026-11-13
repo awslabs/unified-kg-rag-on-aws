@@ -36,7 +36,7 @@ from __future__ import annotations
 import json
 from typing import NamedTuple
 
-from aws_cdk import Annotations, CfnOutput, Duration, RemovalPolicy, Stack
+from aws_cdk import Annotations, CfnOutput, Duration, RemovalPolicy, Size, Stack
 from aws_cdk import aws_ecr as ecr
 from aws_cdk import aws_ecs as ecs
 from aws_cdk import aws_iam as iam
@@ -54,6 +54,33 @@ from iac.stacks.storage_stack import StorageStack
 # Cache-bucket prefix the query role may read and write: run-eval's datasets
 # and result files.
 EVAL_PREFIX = "eval/"
+
+# The awslogs delivery buffer of a non-blocking container (the query task's
+# app, every collector): lines past it are dropped, so it is set rather than
+# left to the ECS default (docs/operations.md, "Log delivery"). Not measured.
+LOG_BUFFER = Size.mebibytes(25)
+
+
+def log_driver(
+    log_group: logs.ILogGroup, stream_prefix: str, *, blocking: bool
+) -> ecs.LogDriver:
+    """The awslogs driver of a container, its delivery mode explicit (left
+    unset, ECS takes it from an account setting, non-blocking by default):
+    ``blocking``, a write waits for CloudWatch Logs and no line is lost;
+    otherwise lines go through a :data:`LOG_BUFFER` buffer."""
+    if blocking:
+        return ecs.LogDriver.aws_logs(
+            stream_prefix=stream_prefix,
+            log_group=log_group,
+            mode=ecs.AwsLogDriverMode.BLOCKING,
+        )
+    return ecs.LogDriver.aws_logs(
+        stream_prefix=stream_prefix,
+        log_group=log_group,
+        mode=ecs.AwsLogDriverMode.NON_BLOCKING,
+        max_buffer_size=LOG_BUFFER,
+    )
+
 
 # ADOT collector v0.51.0, pinned by the multi-arch index digest (linux/amd64
 # and linux/arm64, so it runs with either fargate_cpu_architecture) so a
@@ -576,10 +603,13 @@ class ComputeStack(Stack):
         role: iam.Role,
         ephemeral_storage_gib: int | None = None,
         neptune_reader: bool = False,
+        blocking_logs: bool = False,
     ) -> ecs.FargateTaskDefinition:
         """A data-plane task definition in ``scope`` (this stack or another
         one of the same app and environment), running ``role``; with
-        ``neptune_reader``, against the Neptune reader endpoint."""
+        ``neptune_reader``, against the Neptune reader endpoint; with
+        ``blocking_logs``, its app's log lines (the EMF records the alarms
+        read among them) are never dropped (:func:`log_driver`)."""
         storage = self.storage
         neptune = storage.neptune_cluster
         neptune_endpoint = (
@@ -703,9 +733,7 @@ class ComputeStack(Stack):
             image=ecs.ContainerImage.from_ecr_repository(
                 imports.repository, self.config.image_tag
             ),
-            logging=ecs.LogDriver.aws_logs(
-                stream_prefix="app", log_group=imports.log_group
-            ),
+            logging=log_driver(imports.log_group, "app", blocking=blocking_logs),
             environment=environment,
             secrets=secrets,
             # On SIGTERM (StopTask, a Step Functions timeout) run-ingestion
@@ -883,9 +911,8 @@ class ComputeStack(Stack):
             memory_limit_mib=512,
             # ADOT reads its YAML (JSON is YAML) from this variable.
             environment={"AOT_CONFIG_CONTENT": json.dumps(collector_config)},
-            logging=ecs.LogDriver.aws_logs(
-                stream_prefix="otel-collector", log_group=log_group
-            ),
+            # Losing a collector line loses no run: never blocks on it.
+            logging=log_driver(log_group, "otel-collector", blocking=False),
             health_check=ecs.HealthCheck(
                 command=["CMD", "/healthcheck"],
                 interval=Duration.seconds(30),

@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Iterable, Iterator
+from contextlib import ExitStack
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -111,17 +112,16 @@ def write_visualization_data(
         ConfigurationError: The vector store cannot page its items.
         StoreConnectionError: A store cannot be reached.
     """
-    vector = providers.build_vector_indexer()
-    graph = providers.build_graph_indexer()
-    try:
+    with ExitStack() as stores:
+        vector = providers.build_vector_indexer()
+        stores.callback(vector.close)
+        graph = providers.build_graph_indexer()
+        stores.callback(graph.close)
         built_at = _built_at(vector, suffix)
         entities = _entities(vector, graph, suffix)
         relationships = _relationships(vector, graph, suffix, [e.id for e in entities])
         claims = [Claim.model_validate(c) for c in _scan(vector, "claims", suffix)]
         reports = _scan(vector, "community_reports", suffix)
-    finally:
-        vector.close()
-        graph.close()
     data = stored_visualization_data(
         entities,
         relationships,

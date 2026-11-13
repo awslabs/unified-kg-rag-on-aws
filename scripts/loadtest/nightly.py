@@ -4,17 +4,19 @@
 on the embedded SQLite stores and the fake models; nothing leaves the host.
 
 1. Ingest the demo corpus with every methodology; ``load.py sweep`` and
-   ``load.py soak`` query it.
+   ``load.py soak`` query it (the soak with ``MALLOC_ARENA_MAX=2``,
+   :data:`SOAK_ENV`).
 2. Build a synthetic corpus once in full, as the reference.
 3. Chaos, on that corpus in the same workspace, reset between scenarios
    (record ids name the source path):
    ``throttle`` (a share of model calls answered 429) and ``faults`` (503s
    and dropped connections), each followed by a clean run that must
    converge with the reference within what incremental indexing documents
-   (``compare_exports.INCREMENTAL``); a faulted run that failed no document
-   and exited 0 (every injected fault retried away) left the recovery path
-   untested, and its scenario is ``not_exercised``: reported, not failed
-   (an estimated one night in twenty draws so few faults); ``kill``
+   (``compare_exports.INCREMENTAL``); a faulted run during which the server
+   injected no fault fails (the chaos server is broken), and one that failed
+   no document and exited 0 (every injected fault retried away) left the
+   recovery path untested: its scenario is ``not_exercised``, reported, not
+   failed (an estimated one night in twenty draws so few faults); ``kill``
    (SIGKILL in the middle of a run, then at once a resume under the same
    pipeline id, which takes the dead run's lease over: the SQLite registry
    hands on the lease of a holder of this host whose process has exited),
@@ -53,8 +55,17 @@ HERE = Path(__file__).resolve().parent
 KEEP = frozenset({"corpus", "config.yaml", "eval.json"})
 
 
-def _env() -> dict[str, str]:
-    return {**local_only_env(os.environ), "UKR__LOGGING__LEVEL": "WARNING"}
+def _env(**extra: str) -> dict[str, str]:
+    return {**local_only_env(os.environ), "UKR__LOGGING__LEVEL": "WARNING", **extra}
+
+
+# The soak's allocator: glibc's per-thread arenas grow by tens of MB over
+# the first minutes once the queries' CPU-bound steps run on worker threads
+# (RSS +22.5 MB over a 300 s soak, levelling off near +32 MB after ~700 s,
+# while the Python heap grew 0.55 MB; +2.6 MB with 2 arenas), which the RSS
+# gate would read as a leak. Two arenas keep that noise below the gate's
+# floor, so it sees what the code holds (docs/guides/load-testing.md).
+SOAK_ENV = {"MALLOC_ARENA_MAX": "2"}
 
 
 def _script(name: str) -> str:
@@ -175,21 +186,31 @@ def recovery_problem(recovery: dict[str, Any]) -> str:
     return ""
 
 
+def injection_problem(faults: int) -> str:
+    """Why a faulted run's faults prove nothing ("": the server injected
+    some): at the scenarios' rates a server that injected none during a
+    whole run ignored its knobs (a broken chaos server), not luck."""
+    if faults:
+        return ""
+    return "the model server injected no fault during the faulted run"
+
+
 def not_exercised(faulted: dict[str, Any], faults: int) -> str:
     """Why a faulted run left the recovery path untested ("": it did not):
     it exited 0 and failed no document and no text unit, so the clean run
-    after it had nothing to recover. ``faults``: what the server injected
-    meanwhile (none: it ignored its knobs; some: every one was retried)."""
+    after it had nothing to recover although the server injected ``faults``
+    (every one was retried). None injected is :func:`injection_problem`'s
+    failure, not this."""
+    if not faults:
+        return ""
     if faulted["exit"] or faulted["failed_documents"] or faulted["units_failed"]:
         return ""
     if faulted["status"] is None:
         return ""  # no report: recovery_problem's run decides
-    cause = (
-        "the model server injected no fault"
-        if not faults
-        else f"all {faults} injected faults were retried"
+    return (
+        "the faulted run failed no document and exited 0 "
+        f"(all {faults} injected faults were retried)"
     )
-    return f"the faulted run failed no document and exited 0 ({cause})"
 
 
 def kill_problem(killed: bool, resume: dict[str, Any]) -> str:
@@ -237,7 +258,11 @@ def reset(workspace: Path) -> None:
             shutil.rmtree(entry) if entry.is_dir() else entry.unlink()
 
 
-def load(mode: str, config: Path, out: Path, *args: str) -> dict[str, Any]:
+def load(
+    mode: str, config: Path, out: Path, *args: str, env: dict[str, str] | None = None
+) -> dict[str, Any]:
+    """``load.py <mode>`` in a process of its own (``env``: added to its
+    environment), its report read back."""
     report = out / f"{mode}.json"
     with (out / f"{mode}.log").open("w", encoding="utf-8") as log:
         subprocess.run(  # nosec B603 - fixed argv
@@ -251,7 +276,7 @@ def load(mode: str, config: Path, out: Path, *args: str) -> dict[str, Any]:
                 str(report),
                 *args,
             ],
-            env=_env(),
+            env=_env(**(env or {})),
             stdout=subprocess.DEVNULL,
             stderr=log,
             check=True,
@@ -351,7 +376,11 @@ def chaos_scenarios(models: Models, out: Path, docs: int) -> list[dict[str, Any]
                 name,
                 runs,
                 INCREMENTAL,
-                recovery_problem(runs[-1]),
+                "; ".join(
+                    p
+                    for p in (injection_problem(faults), recovery_problem(runs[-1]))
+                    if p
+                ),
                 not_exercised(runs[0], faults),
             )
         )
@@ -482,6 +511,7 @@ def main(argv: list[str] | None = None) -> int:
             "0.3",
             "--csv",
             str(out / "soak.csv"),
+            env=SOAK_ENV,
         )
         chaos = chaos_scenarios(models, out, args.chaos_docs)
     finally:
