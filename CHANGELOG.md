@@ -1710,8 +1710,9 @@ From a `main` checkout (formats and keys no release had):
   ("example.com", "admin@example.es", "/usr/bin/the") and the words of a quoted name ("Bank of America和…":
   capitalised words joined by a connective and an article at most, not by a sentence's other words) are no
   function words (in a text with Latin words outside its names, its capitalised first word before an article opens
-  no name, and a name's opening article after such a word counts: "List the Globex Sensors contracts signed in 東京"
-  and "Show the Acme Robotics orders for 서울" are English, "Alexander the Great 의 업적은?" Korean), so
+  no name, and the article it governs counts: "List the Globex Sensors contracts signed in 東京" and "Show the Acme
+  Robotics orders for 서울" are English, "Alexander the Great 의 업적은?" and "Seller 의 liability under the
+  Agreement 한도는?" Korean, a lowercase "find the …" command too), so
   "AI 모델 추천", "AIとは", "OS 설치" and "example.com 无法访问" are Korean, Japanese, Korean and Chinese,
   "Who is the CEO of 한빛전자?" and "Compare 한빛전자 and 아크미" English, "with 문 사용법" Korean; a shouted text (three or more
   words, all in capitals; beside another script one longer than two letters, so "AS IS / TO BE 비교" is Korean)

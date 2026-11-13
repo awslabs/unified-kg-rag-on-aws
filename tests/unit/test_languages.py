@@ -393,11 +393,11 @@ def test_the_evidence_leaves_out_codes_compounds_and_names() -> None:
         ]
     )
     # "the AI" and "Bank of America" are names, "to-do" and "ES6" compounds;
-    # the article after "sells" is the sentence's, so it stays a word.
+    # only a command's article ("List the ...") is the sentence's word, so
+    # the one after "sells" stays in the name it opens.
     assert evidence.words == (
         "who",
         "sells",
-        "the",
         "kit",
         "a",
         "app",
