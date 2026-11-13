@@ -633,11 +633,11 @@ def test_a_question_s_suffix_must_be_a_safe_namespace_name(suffix: str) -> None:
 async def test_an_ingest_s_index_value_must_be_a_safe_namespace_name(
     tmp_path: Path, index_value: str
 ) -> None:
-    from unified_kg_rag.shared import ConfigurationError
+    from unified_kg_rag.shared import InvalidArgumentError
 
     corpus = tmp_path / "corpus"
     corpus.mkdir()
-    with pytest.raises(ConfigurationError, match="lowercase"):
+    with pytest.raises(InvalidArgumentError, match="lowercase"):
         await _manager(tmp_path).start_ingest(
             corpus=corpus, corpus_ref="workspace:corpus", index_value=index_value
         )

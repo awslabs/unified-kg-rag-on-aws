@@ -1208,29 +1208,6 @@ def test_an_upload_of_a_hidden_file_is_refused_as_ingestion_skips_it(
     assert not (workspace / "uploads" / "hidden").exists()
 
 
-def test_a_configuration_error_is_named_by_its_class(client: Any) -> None:
-    # Regression (rv8): every ConfigurationError answered code "invalid",
-    # a namespace without an index or a methodology it lacks included.
-    import asyncio
-
-    from unified_kg_rag.shared.exceptions import (
-        ConfigurationError,
-        MethodologyNotIndexedError,
-        StoreConfigurationError,
-    )
-
-    handler = client.app.exception_handlers[ConfigurationError]
-    for error, code in (
-        (MethodologyNotIndexedError("holds graphrag only"), "not_indexed"),
-        (StoreConfigurationError("the store refuses the mapping"), "configuration"),
-        # The console refusing a request's own value.
-        (ConfigurationError("choose at least one strategy"), "invalid"),
-    ):
-        answered = asyncio.run(handler(None, error))
-        assert answered.status_code == 400
-        assert json.loads(answered.body)["code"] == code
-
-
 def test_an_api_request_with_an_unknown_key_or_parameter_is_refused(
     client: Any,
 ) -> None:

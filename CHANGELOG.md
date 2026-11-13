@@ -932,8 +932,8 @@ From a `main` checkout (formats and keys no release had):
   file ingestion does not read (another type, or hidden) or naming one path as a file and a folder, writes an
   upload all or none (a refused one leaves no folder) and atomically (a temporary file 0600 until the rename, a
   re-upload keeping the replaced file's mode; a name past its folder's limit is refused up front, `path_refused`),
-  names an error by its class (`ErrorClass`; `error_class` in every API error and Ask error event, `invalid_argument`
-  for a request it refuses), and loads
+  names an error by its class (`ErrorClass`; `error_class` in every API error, with the class's HTTP status, and Ask
+  error event; `invalid_argument` for a request it refuses, `store_unreachable` a 503), and loads
   nothing from another host. The web client
   (`console/web/`, Vite, React, TypeScript) is in English and nine more languages, in a light and a dark theme (the
   system's unless one is chosen in the top bar), set in Pretendard (Pretendard JP for Japanese, JetBrains Mono for

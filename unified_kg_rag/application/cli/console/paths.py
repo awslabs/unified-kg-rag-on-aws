@@ -18,7 +18,7 @@ import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
-from unified_kg_rag.shared.exceptions import ConfigurationError
+from unified_kg_rag.shared.exceptions import InvalidArgumentError
 from unified_kg_rag.shared.utils.files import NAME_MAX, name_max
 
 # What one uploaded path segment may hold: no separator, no control
@@ -26,7 +26,7 @@ from unified_kg_rag.shared.utils.files import NAME_MAX, name_max
 _UNSAFE_SEGMENT = re.compile(r"[\x00-\x1f\x7f/\\:]")
 
 
-class PathRefused(ConfigurationError):
+class PathRefused(InvalidArgumentError):
     """A path a client named is outside the console's directories (or
     malformed): the request is refused, nothing is read or written."""
 

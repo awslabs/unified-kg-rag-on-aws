@@ -11,7 +11,7 @@ from pydantic import BaseModel, ValidationError
 from unified_kg_rag.application.cli.console.jobs import ingest_config
 from unified_kg_rag.domain.models import Config, Methodology
 from unified_kg_rag.domain.models.config import ConfigSection, SearchConfig
-from unified_kg_rag.shared import ConfigurationError
+from unified_kg_rag.shared import ConfigurationError, InvalidArgumentError
 
 pytestmark = pytest.mark.unit
 
@@ -95,7 +95,8 @@ def test_updated_refuses_a_key_that_names_no_setting() -> None:
 
 
 def test_the_console_refuses_a_methodology_the_config_cannot_build() -> None:
-    with pytest.raises(ConfigurationError, match="methodologies"):
+    # The console refusing the request's selection: invalid_argument.
+    with pytest.raises(InvalidArgumentError, match="methodologies"):
         ingest_config(_lightrag_without_communities(), ["graphrag"])
     config, chosen = ingest_config(Config(), ["lightrag"])
     assert chosen == ["lightrag"]
