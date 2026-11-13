@@ -11,6 +11,8 @@ traversal does.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +20,7 @@ import pytest
 from langchain_core.runnables import RunnableConfig
 
 from tests.fixtures.fakes.stores import FakeGraphStore
+from unified_kg_rag.adapters.local import sqlite_graph
 from unified_kg_rag.adapters.local.sqlite_graph import SQLiteGraphStore
 from unified_kg_rag.adapters.provider_registry import ProviderRole, provider_endpoint
 from unified_kg_rag.adapters.providers import Providers
@@ -444,6 +447,56 @@ def test_matches_the_fake_graph_store(config: Config) -> None:
     real = _replay(SQLiteGraphIndexer(config))
     assert real == fake
     assert fake[0] == ["bz"]  # the sequence exercises a failed edge
+
+
+# --- neighbourhood edges ------------------------------------------------------
+
+
+def test_edges_within_reads_a_hubs_edges_inside_the_set_only(
+    indexer: SQLiteGraphIndexer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Regression (rv26 perf 2): every edge leaving each vertex was read and
+    # decoded and the targets kept in Python, under the store's read lock:
+    # a hub of 4,200 edges read 54,600 rows to return 104.
+    leaves = [f"n{i:04d}" for i in range(2000)]
+    # More members than one batch, with edges between batches.
+    members = ["hub", *leaves[: sqlite_graph.BATCH_SIZE + 50]]
+    edges = [("hub", leaf) for leaf in leaves] + [
+        (members[i], members[-i]) for i in range(1, 40)
+    ]
+    _graph(indexer, edges)
+    read: list[int] = []
+    snapshot = sqlite_graph.read_snapshot
+
+    class _Counting:
+        def __init__(self, connection: sqlite3.Connection) -> None:
+            self._connection = connection
+
+        def execute(self, sql: str, params: Any = ()) -> Any:
+            rows = self._connection.execute(sql, params).fetchall()
+            read.append(len(rows))
+            return _Rows(rows)
+
+    class _Rows:
+        def __init__(self, rows: list[Any]) -> None:
+            self._rows = rows
+
+        def fetchall(self) -> list[Any]:
+            return self._rows
+
+    @contextmanager
+    def counting(connection: sqlite3.Connection) -> Iterator[Any]:
+        with snapshot(connection) as inner:
+            yield _Counting(inner)
+
+    monkeypatch.setattr(sqlite_graph, "read_snapshot", counting)
+    found = _store(indexer).edges_within(LABEL, members)
+    wanted = set(members)
+    expected = {(a, b) for a, b in edges if a in wanted and b in wanted}
+    assert {(source, target) for _, source, target, _ in found} == expected
+    assert len(found) == len(expected)
+    # The hub's 1,550 edges that leave the set are not read.
+    assert sum(read) == len(expected)
 
 
 # --- traversal ---------------------------------------------------------------

@@ -1600,8 +1600,11 @@ From a `main` checkout (formats and keys no release had):
   request per batch of sources), and `SearchQuery.max_hops` overrides the expansion depth (#597). A walk that stops at
   `max_iterations` before it converges is logged at WARNING, naming the settings to raise. Passages of equal score
   (those no seed reaches, all 0 when the edge read degraded) rank in the support order (the units most entities cite
-  first), not by id, so the text quota does not fill in id order; that order is computed on a worker thread, off the
-  event loop.
+  first), not by id, so the text quota does not fill in id order; that order, the PageRank graph and the entities'
+  unit counts are computed on a worker thread, off the event loop, and local's frequency filter reads a lineage only
+  up to its threshold; SQLite reads only the edges within the set, not every edge leaving a hub (13 hubs of 4,200
+  edges: 220-260 ms to 20-50 ms). On that corpus `local`'s p50 went from 2.0-2.5 s to 1.55 s, `ppr`'s from 0.5 s to
+  0.2 s, with the ranked units unchanged.
 - CDK: `-c neptune_audit_log=true` turns on Neptune audit logs, exported to CloudWatch Logs
   (`/aws/neptune/<cluster id>/audit`, created before the instances) with the CMK and `log_retention_days`
   (`neptune_parameter_group_family` names the engine's family, `neptune1.4` by default); reboot the instances after

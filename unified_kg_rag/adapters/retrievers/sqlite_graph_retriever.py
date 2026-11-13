@@ -124,6 +124,8 @@ class SQLiteGraphRetriever(GraphExpansionRetriever):
         per_vertex: int,
         kinds: KindsRule | None,
     ) -> list[GraphEdge]:
+        # The store reads only the edges within the set (a hub's others stay
+        # index entries), so ``scans_incident_edges`` is False here.
         rows = await asyncio.to_thread(self._store.edges_within, label, ids)
         edges = [
             GraphEdge(
