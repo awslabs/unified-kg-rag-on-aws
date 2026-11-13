@@ -117,6 +117,13 @@ LOWERCASE_COMMAND = (
     'phrase quoted in a Korean question ("with the Globex Sensors 계약 조건은?"): '
     "no rule tells the two apart without a word list of verbs (rv27 algo-ret 1)."
 )
+NOUN_LED_FRAGMENT = (
+    'A noun-led English fragment in a CJK frame ("Kestrel the Group report 의 '
+    '조건은?") reads as English: a capitalised head, an article and an English '
+    'word outside the names is the shape of "List the Vendors", and no rule '
+    "tells the two apart without a word list of verbs. The head is "
+    "ungrammatical English, so the case is expected to be rare (rv28 algo-ret)."
+)
 QUOTING = (
     "An English question quoting a name reads as English: the rv11 M5 "
     'matrix pins "Who is the CEO of {n}?" so for every script (the probe\'s '
@@ -1296,6 +1303,22 @@ DETECTION: tuple[Case, ...] = (
         "en",
         "rv27 algo-ret 1",
         Tradeoff("ko", LOWERCASE_COMMAND),
+    ),
+    # The command trade-off's other side: a capitalised noun, not a verb,
+    # before the article (rv28 algo-ret).
+    Case(
+        "Kestrel the Group report 의 조건은?",
+        "ko",
+        "en",
+        "rv28 algo-ret",
+        Tradeoff("en", NOUN_LED_FRAGMENT),
+    ),
+    Case(
+        "Warranty the Seller provides の条件は？",
+        "ja",
+        "en",
+        "rv28 algo-ret",
+        Tradeoff("en", NOUN_LED_FRAGMENT),
     ),
 )
 
