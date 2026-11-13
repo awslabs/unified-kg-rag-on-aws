@@ -983,7 +983,9 @@ From a `main` checkout (formats and keys no release had):
   Settings: `indexing.summary_tree`, `search.tree_search`, `search.token_manager.type_budgets.summary`; the
   `VectorIndexer` port gains the summary-tree methods (each with a "cannot" default). Differential tests against the
   original code ship with recorded fixtures. The build record keeps naming a live tree while a run rebuilds it (the
-  summaries citing removed text deleted first), so `tree` is served during and after a write run, and is refused
+  summaries citing removed text deleted first, which marks the tree record `pruned`: a FAILED document reprocessed
+  writes its text units back unchanged, and the tree is rebuilt all the same), so `tree` is served during and after
+  a write run, and is refused
   only once a tree build fails; a full build without `raptor` deletes the tree's indices; a partial tree is built
   again under `refresh: on_reset`; the leaves' vectors are read as float32 arrays (about 15 KiB per leaf read instead
   of 40-60 KiB, about 50 KiB at the build's peak) and `max_leaves_in_memory` is checked before they are read, at a

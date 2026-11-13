@@ -754,18 +754,21 @@ class VectorIndexer(BaseIndexer):
     ) -> IndexingStats:
         """Delete every summary node of ``suffix`` citing one of
         ``text_unit_ids`` and every node above it: a summary paraphrases
-        its children, so it goes with any of them (a removal). Default
-        deletes nothing; adapters that override it report a failed read as
-        failed items."""
+        its children, so it goes with any of them (a removal). A deletion
+        marks the tree's record ``pruned`` (``SummaryTreeRecord.pruned``)
+        first, so the next build rebuilds it over the same text units too.
+        Default deletes nothing; adapters that override it report a failed
+        read as failed items."""
         return IndexingStats()
 
     def delete_summary_nodes_outside(
         self, text_unit_ids: Collection[str], suffix: str
     ) -> IndexingStats:
         """Delete every summary node of ``suffix`` citing a text unit not in
-        ``text_unit_ids`` (all a full build wrote), and every node above it.
-        Default deletes nothing; adapters that override it report a failed
-        read as failed items."""
+        ``text_unit_ids`` (all a full build wrote), and every node above it,
+        marking the record ``pruned`` as :meth:`delete_summary_nodes_citing`
+        does. Default deletes nothing; adapters that override it report a
+        failed read as failed items."""
         return IndexingStats()
 
     def delete_summary_tree(self, suffix: str) -> IndexingStats:
