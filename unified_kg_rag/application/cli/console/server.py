@@ -93,7 +93,7 @@ from unified_kg_rag.shared.exceptions import (
     classify,
     shown_error_text,
 )
-from unified_kg_rag.shared.logging import log_failure
+from unified_kg_rag.shared.logging import log_error, log_failure
 from unified_kg_rag.shared.utils import event_loop
 from unified_kg_rag.shared.utils.files import open_temporary, replace_together
 
@@ -422,6 +422,35 @@ def _classified_error(e: Exception) -> JSONResponse:
     return _error(HTTP_STATUS[error_class], code, message, error_class=error_class)
 
 
+class _ContainUnexpected:
+    """The app's innermost ASGI layer: an error no handler claimed is logged
+    once, by its class (``log_error``: an unexpected failure's type and
+    where it happened, its text at DEBUG), and answered with the masked
+    classified response. Starlette's own ``Exception`` handler re-raises, so
+    uvicorn would log the exception's text and traceback at ERROR."""
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        started = False
+
+        async def watch(message: Any) -> None:
+            nonlocal started
+            started = started or message["type"] == "http.response.start"
+            await send(message)
+
+        try:
+            await self.app(scope, receive, watch)
+        except Exception as e:  # noqa: BLE001 - logged and answered by class
+            log_error(logger, logging.ERROR, "Console request failed: %s", error=e)
+            if not started:
+                await _classified_error(e)(scope, receive, send)
+
+
 TOKEN_COOKIE = "ukr_console_token"
 TOKEN_HEADER = "X-Console-Token"
 _UNAUTHORIZED_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
@@ -465,6 +494,7 @@ def create_app(
         dependencies=[Depends(_refuse_unknown_query)],
     )
     app.state.console = state
+    app.add_middleware(_ContainUnexpected)
 
     @app.middleware("http")
     async def guard(
@@ -583,11 +613,6 @@ def create_app(
                 error=e,
                 traceback=True,
             )
-        return _classified_error(e)
-
-    @app.exception_handler(Exception)
-    async def _unexpected(_: Request, e: Exception) -> JSONResponse:
-        # The server logs it with its traceback (it is raised on).
         return _classified_error(e)
 
     async def _unreadable(_: Request, e: Exception) -> JSONResponse:
