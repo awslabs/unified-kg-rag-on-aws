@@ -19,31 +19,20 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
 
-from unified_kg_rag.adapters.retrieval.base import scope_filters
+from unified_kg_rag.adapters.retrieval.base import IdFetchReader, fetch_by_ids
 from unified_kg_rag.domain.models import (
     Config,
-    RetrievalResult,
     SearchQuery,
     SearchType,
 )
 from unified_kg_rag.domain.retrieval.filters import FilterFields
-from unified_kg_rag.shared.utils.concurrency import gather_bounded
 
 # What a caller needs of a stored unit unless it asks for more.
 DEFAULT_FIELDS = ("id", "document_ids", "attributes")
 
 
-class _IndexLimits(Protocol):
-    @property
-    def id_batch_size(self) -> int: ...
-
-
-class TextUnitReader(Protocol):
+class TextUnitReader(IdFetchReader, Protocol):
     """The document retriever's reads a text-unit fetch uses."""
-
-    async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]: ...
-
-    async def aindex_limits(self, prefix: str, suffix: str | None) -> _IndexLimits: ...
 
     def filter_fields_for(self, prefixes: Collection[str]) -> FilterFields | None: ...
 
@@ -88,29 +77,23 @@ async def fetch_text_units(
             for key, value in filters.items()
             if declared is None or declared.declares(key)
         }
-    size = max(1, (await retriever.aindex_limits(prefix, suffix)).id_batch_size)
-    batches = [wanted[i : i + size] for i in range(0, len(wanted), size)]
     returned = list(fields) if fields is not None else None
-    parts = await gather_bounded(
-        config.search.max_concurrency,
-        (
-            retriever.aretrieve(
-                SearchQuery(
-                    query="",
-                    search_type=SearchType.LEXICAL,
-                    top_k=len(batch),
-                    index_prefixes=[prefix],
-                    suffix=suffix,
-                    filters=scope_filters(applied, id=batch),
-                    source_fields=returned,
-                )
-            )
-            for batch in batches
+    parts = await fetch_by_ids(
+        retriever,
+        SearchQuery(
+            query="",
+            search_type=SearchType.LEXICAL,
+            index_prefixes=[prefix],
+            suffix=suffix,
+            filters=applied or None,
+            source_fields=returned,
         ),
+        wanted,
+        max_concurrency=config.search.max_concurrency,
     )
     asked = set(wanted)
     found: dict[str, dict[str, Any]] = {}
-    for hits in parts:
+    for _, hits in parts:
         for hit in hits:
             metadata = hit.metadata or {}
             unit_id = str(metadata.get("id") or hit.source)
@@ -118,7 +101,7 @@ async def fetch_text_units(
                 found.setdefault(unit_id, metadata)
     after = max(1, (await retriever.aindex_limits(prefix, suffix)).id_batch_size)
     settled = set(found)
-    for batch, hits in zip(batches, parts, strict=True):
+    for batch, hits in parts:
         if hits and len(batch) <= after:
             settled.update(batch)
     return TextUnitFetch(
