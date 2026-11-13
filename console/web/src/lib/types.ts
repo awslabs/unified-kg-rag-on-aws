@@ -204,7 +204,9 @@ export interface JobRecord {
   total_runs: number;
   confirmation?: "integrity" | "reset" | "deletions" | null;
   // The WARNING events of its log once it ended: how many, and the last ones.
-  warnings?: { count: number; lines: string[] };
+  /** Its WARNINGs once ended: how many, the last ones, and whether one
+   * advises rebuilding the namespace (the run's ``--reset``). */
+  warnings?: { count: number; lines: string[]; reset_advised?: boolean };
   // An evaluation's answers so far (from its log) beside its saved runs.
   progress?: { stages?: StageProgress[]; done: number; total: number; answers?: { done: number; total: number } | null } | null;
   log?: string[];

@@ -190,6 +190,7 @@ class IngestBody(_Request):
     methodologies: list[str] | None = None
     index_value: str | None = Field(default=None, max_length=128)
     force_rebuild: bool = False
+    reset: bool = False
     confirm_reset: bool = False
     confirm_deletions: bool = False
     confirm_integrity: bool = False
@@ -863,6 +864,7 @@ def create_app(
             methodologies=body.methodologies,
             index_value=body.index_value,
             force_rebuild=body.force_rebuild,
+            reset=body.reset,
             confirm_reset=body.confirm_reset,
             confirm_deletions=body.confirm_deletions,
             confirm_integrity=body.confirm_integrity,

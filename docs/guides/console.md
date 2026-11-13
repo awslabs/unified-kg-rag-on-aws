@@ -175,7 +175,9 @@ listed, and the run starts only once you confirm removing them: the
 namespace then stops serving their strategies for every corpus in it, not
 only this one (the API refuses it as `narrowing` without
 `confirm_narrowing`). Under more options: another
-index namespace, a forced recompute and the answers to the two questions a
+index namespace, a rebuild of the namespace from the whole corpus for this
+run only (`--reset`, so no setting has to be switched back; what the corpus
+does not hold is dropped from the namespace), a forced recompute and the answers to the two questions a
 run can ask (a reset that drops another source's content, a mass
 deletion). Start runs `run-ingestion` with a pipeline id per corpus folder
 (its name and a hash of its path and namespace), so running the same corpus
@@ -188,7 +190,9 @@ beforehand. The run's
 stages appear as a column of stations as they finish (from the pipeline's
 own metadata), with their time, outputs and model calls, each failed
 stage's error and failed files, and the log's tail. A finished run counts
-the WARNINGs it logged and lists the last 20, and flags a run that
+the WARNINGs it logged and lists the last 20 (one that advises a rebuild,
+community drift or re-clustering due, offers to start the run again with
+the rebuild), and flags a run that
 processed documents but extracted no entity from them. Stop sends the CLI
 the stop it is built for: the finished stages are kept and the next run of
 the corpus resumes. A job a console left running when it stopped is shown

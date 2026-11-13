@@ -22,6 +22,7 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
   const [methodologies, setMethodologies] = useState<string[] | null>(null);
   const [indexValue, setIndexValue] = useState("");
   const [forceRebuild, setForceRebuild] = useState(false);
+  const [reset, setReset] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const [confirmDeletions, setConfirmDeletions] = useState(false);
   const [confirmIntegrity, setConfirmIntegrity] = useState(false);
@@ -62,19 +63,20 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
   const active = ingestJobs.find((j) => j.status === "running" || j.status === "stopping");
   const shownJob = jobId ?? active?.id ?? null;
 
-  async function start(answer?: { job: JobRecord; question: string }) {
-    if (!corpus && !answer) return;
+  async function start(again?: { job: JobRecord; flag: string }) {
+    if (!corpus && !again) return;
     setError(null);
-    // Answering a run's question starts it again as it was, with that
-    // question's flag added.
-    const params = answer?.job.params as Record<string, unknown> | undefined;
+    // Answering a run's question (or its warnings' advice to rebuild)
+    // starts it again as it was, with that one flag added.
+    const params = again?.job.params as Record<string, unknown> | undefined;
     const body = params
-      ? { ...params, [`confirm_${answer?.question}`]: true }
+      ? { ...params, [again?.flag as string]: true }
       : {
           corpus,
           methodologies: chosen,
           index_value: indexValue.trim() || null,
           force_rebuild: forceRebuild,
+          reset,
           confirm_reset: confirmReset,
           confirm_deletions: confirmDeletions,
           confirm_integrity: confirmIntegrity,
@@ -231,6 +233,12 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
                     <span className="field-help">{t("ingest.indexValueHelp")}</span>
                   </label>
                   <label className="check">
+                    <input type="checkbox" checked={reset} onChange={(e) => setReset(e.target.checked)} />
+                    <span>
+                      {t("ingest.reset")} <span className="field-help">{t("ingest.resetHelp")}</span>
+                    </span>
+                  </label>
+                  <label className="check">
                     <input type="checkbox" checked={forceRebuild} onChange={(e) => setForceRebuild(e.target.checked)} />
                     <span>
                       {t("ingest.forceRebuild")} <span className="field-help">{t("ingest.forceRebuildHelp")}</span>
@@ -296,8 +304,16 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
                     {job.confirmation && job.status === "failed" ? (
                       <Notice tone="warn" title={t(`ingest.question.${job.confirmation}`)}>
                         <p style={{ margin: "0 0 8px" }}>{t(`ingest.question.${job.confirmation}Help`)}</p>
-                        <button className="button button-primary button-small" disabled={!!active} onClick={() => void start({ job, question: job.confirmation as string })}>
+                        <button className="button button-primary button-small" disabled={!!active} onClick={() => void start({ job, flag: `confirm_${job.confirmation}` })}>
                           {t(`ingest.answer.${job.confirmation}`)}
+                        </button>
+                      </Notice>
+                    ) : null}
+                    {job.status === "succeeded" && job.warnings?.reset_advised && !job.params.reset ? (
+                      <Notice tone="warn" title={t("ingest.resetAdvisedTitle")}>
+                        <p style={{ margin: "0 0 8px" }}>{t("ingest.resetAdvised")}</p>
+                        <button className="button button-small" disabled={!!active} onClick={() => void start({ job, flag: "reset" })}>
+                          {t("ingest.reset")}
                         </button>
                       </Notice>
                     ) : null}
