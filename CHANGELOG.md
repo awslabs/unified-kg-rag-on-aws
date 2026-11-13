@@ -1472,10 +1472,11 @@ From a `main` checkout (formats and keys no release had):
   that language is written in that script; the sample reads as the language of the script most documents are in (four
   English documents and one Korean one, or English documents quoting Korean file names, read as English); a document
   votes once its letters carry ten tokens by the token estimate's rates (forty Latin letters, ten Han characters); a
-  sample that reads as the setting is not reported, however few of its letters are in its script. `run-prompt-tuning` writes
-  the `source_language` the sample reads as into its output (#629). Han, Hangul and Kana text reads by one rule
-  (`domain.languages.dense_language`): Korean when a tenth or more of those letters are Hangul (and no fewer than Kana),
-  so Korean written with Hanja reads as Korean, else Japanese when a tenth are Kana, else Chinese.
+  sample that reads as the setting is not reported, however few of its letters are in its script.
+  `run-prompt-tuning` writes the `source_language` the sample reads as into its output (#629). Han, Hangul and Kana
+  text reads by one rule (`domain.languages.dense_language`): Korean when a tenth or more of those letters are Hangul
+  (and no fewer than Kana), so Korean written with Hanja reads as Korean, else Japanese when a tenth are Kana, else
+  Chinese.
 - `backend: local`: the refusals and retrieval logs of the embedded vector store name it ("The embedded SQLite search
   engine index ...") instead of OpenSearch, and a query where nothing was ingested reads an empty store with a
   WARNING naming `providers.vector.sqlite_path` instead of creating an empty `vector.sqlite3` (in the working
