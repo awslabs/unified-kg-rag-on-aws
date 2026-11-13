@@ -850,7 +850,9 @@ From a `main` checkout (formats and keys no release had):
   chain, so it is counted in the query metrics and names its ids) and returns its model `usage`.
   `kg_get_entity` matches a name folded as local search's seeds are.
   The graph tools read the stores through the chain's retrievers and make no model call, and check the namespace
-  first, as a query does (one nothing was ingested under logs no retrieval failure per call); they look names, IRIs and
+  first, as a query does (one nothing was ingested under logs no retrieval failure per call; its error names only the
+  served namespaces that hold an index: `IndexNotFoundError.ingested` holds the store's, out of the message, which
+  `run-rag` and the console add); they look names, IRIs and
   ids up in NFC (and a name again in NFKC), as search composes a query. Over HTTP only POST is served (405
   otherwise), and on any loopback address the `Host` and `Origin` headers must name it or a loopback name (421/403).
   `build_mcp_server` and `build_mcp_app` (package root; the latter the stateless ASGI application, its

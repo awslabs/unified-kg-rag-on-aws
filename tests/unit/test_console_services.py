@@ -687,11 +687,15 @@ async def test_a_missing_index_is_reported_as_such(tmp_path: Path) -> None:
     service = AskService(
         Config,
         ConsoleStore(tmp_path / "s.sqlite3"),
-        chain_factory=lambda _c: _FailingChain(IndexNotFoundError("no index 'x'")),
+        chain_factory=lambda _c: _FailingChain(
+            IndexNotFoundError("no index 'x'.", ingested=["tenant-a"])
+        ),
     )
     events = await _drain(service, "q")
     assert events[-1]["kind"] == "error"
     assert events[-1]["error_kind"] == "index_not_found"
+    # The console (one operator's) names the namespaces the store holds.
+    assert events[-1]["message"].endswith("Suffixes ingested on this store: tenant-a.")
     # Recorded as refused, which the dashboard does not count as an error
     # (rv25: an empty namespace's first question was one).
     (row,) = service.store.queries()

@@ -101,7 +101,9 @@ The namespace is fixed when the server starts, on the server's side, as
 [a tenant's suffix must be](../concepts/scopes-and-namespaces.md#not-an-access-control-boundary).
 A tool call can read another one only if `mcp.allowed_namespaces` lists it
 (the tools then take a `namespace` argument; without the list they have
-none), so list only namespaces every caller may read. Filters only narrow
+none), so list only namespaces every caller may read; an `index_not_found`
+error names only the served namespaces that hold an index, never the
+store's others. Filters only narrow
 a search and are not an isolation boundary: an entity's description merges
 every document that mentions it. Serve a tenant whose data others must not
 read from its own server and namespace, with the store roles of the

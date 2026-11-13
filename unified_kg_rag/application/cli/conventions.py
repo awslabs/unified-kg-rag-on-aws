@@ -54,7 +54,12 @@ from unified_kg_rag import __version__
 from unified_kg_rag.application.cli.display import console
 from unified_kg_rag.application.cli.launch import wants_json
 from unified_kg_rag.shared import observability, setup_logging
-from unified_kg_rag.shared.exceptions import ErrorClass, classify, query_failure_ids
+from unified_kg_rag.shared.exceptions import (
+    ErrorClass,
+    classify,
+    error_text,
+    query_failure_ids,
+)
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
@@ -132,7 +137,8 @@ def usage_error(
     (:func:`error_class_for`) of the JSON status unless they are given; a
     text is a :data:`USAGE_ERROR` of class ``invalid_argument`` by
     default."""
-    print(f"{Path(sys.argv[0]).name}: error: {message}", file=sys.stderr)
+    text = error_text(message) if isinstance(message, BaseException) else message
+    print(f"{Path(sys.argv[0]).name}: error: {text}", file=sys.stderr)
     print_status(EXIT_USAGE, message, error_type=error_type, error_class=error_class)
     raise SystemExit(EXIT_USAGE)
 
@@ -176,7 +182,7 @@ def failure_fields(
     document shows a failure merges them into it."""
     fields: dict[str, Any] = {"status": "failed", "exit_code": exit_code}
     if isinstance(error, str | Exception) and str(error):
-        fields["error"] = str(error)
+        fields["error"] = error if isinstance(error, str) else error_text(error)
     fields["error_class"] = (error_class or error_class_for(exit_code, error)).value
     fields["error_type"] = error_type or error_type_of(exit_code, error)
     fields.update(query_failure_ids(error))

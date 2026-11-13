@@ -63,6 +63,7 @@ from unified_kg_rag.shared.exceptions import (
     MethodologyNotIndexedError,
     classify,
     error_class_of,
+    error_text,
     query_failure_ids,
 )
 
@@ -317,7 +318,7 @@ class AskService:
             except MethodologyNotIndexedError as e:
                 available, reason = False, str(e)
             except Exception as e:  # noqa: BLE001 - shown, not fatal
-                available, reason = False, str(e)
+                available, reason = False, error_text(e)
             methodology = None
             if strategy is not SearchStrategy.AUTO:
                 with contextlib.suppress(Exception):
@@ -422,7 +423,7 @@ class AskService:
                 kind = _error_kind(e)
                 # An unexpected error's text (a provider's, an endpoint) stays
                 # in the server log, under the ids the page shows.
-                message = str(e)
+                message = error_text(e)
                 if kind == "failure":
                     logger.exception("Console question %s failed", query_id)
                     message = INTERNAL_ERROR_MESSAGE

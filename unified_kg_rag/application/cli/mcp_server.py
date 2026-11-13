@@ -213,6 +213,7 @@ def _tool_function(
     returns: type[BaseModel],
     run: Callable[..., Awaitable[BaseModel]],
     tool_error: type[Exception],
+    namespaces: list[str],
 ) -> Callable[..., Awaitable[BaseModel]]:
     """An async function with the signature the SDK publishes as the
     tool's input schema, calling ``run``. A caller-correctable error keeps
@@ -236,7 +237,7 @@ def _tool_function(
         try:
             return await run(**checked)
         except Exception as e:
-            message, expected = describe_error(e)
+            message, expected = describe_error(e, namespaces)
             if not expected:
                 # Under the ids the caller's message names (query_id).
                 with bound_contextvars(**query_failure_ids(e)):
@@ -580,7 +581,9 @@ def build_mcp_server(
     for name in limits.tools:
         parameters, returns, run = specs[name]
         server.add_tool(
-            _tool_function(name, parameters, returns, run, tool_error),
+            _tool_function(
+                name, parameters, returns, run, tool_error, tools.namespaces
+            ),
             name=name,
             description=f"{descriptions[name]} {UNTRUSTED_NOTE}",
             annotations=read_only,

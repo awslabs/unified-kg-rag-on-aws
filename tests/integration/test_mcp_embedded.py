@@ -530,6 +530,40 @@ async def test_an_unexpected_failure_is_logged_under_the_ids_the_caller_gets(
     assert logged == [{"query_id": "q-traceback", "trace_id": "t-traceback"}]
 
 
+@requires_mcp
+async def test_a_missing_namespace_names_only_the_namespaces_served(
+    index: Index, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from mcp import Client
+
+    from unified_kg_rag.application.cli.mcp_server import build_mcp_server
+    from unified_kg_rag.shared.exceptions import IndexNotFoundError
+
+    async def missing(*_args: Any, **_kwargs: Any) -> Any:
+        raise IndexNotFoundError(
+            "No indices found for suffix 'typo'.",
+            ingested=["default", "tenant-secret-co"],
+        )
+
+    monkeypatch.setattr(mcp_tools.graph_lookup, "find_entities", missing)
+    chain = index.chain()
+    try:
+        tools = KnowledgeGraphTools(
+            chain, settings=McpServerConfig(allowed_namespaces=["typo"])
+        )
+        async with Client(build_mcp_server(tools)) as client:
+            result = await client.call_tool(
+                "kg_get_entity", {"name": "Depot", "namespace": "typo"}
+            )
+    finally:
+        await chain.aclose()
+    assert result.is_error
+    text = " ".join(getattr(c, "text", "") for c in result.content)
+    assert "[index_not_found]" in text
+    assert "tenant-secret-co" not in text
+    assert "Namespaces served here that hold an index: default." in text
+
+
 class _Metrics:
     def __init__(self) -> None:
         self.rows: list[tuple[dict[str, float], dict[str, str]]] = []

@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Collection
 from typing import Any, Literal, TypeVar
 
 from pydantic import BaseModel, Field
@@ -63,6 +63,7 @@ from unified_kg_rag.shared.exceptions import (
     QueryTimeoutError,
     classify,
     error_class_of,
+    error_text,
     query_failure_ids,
     tag_query_failure,
 )
@@ -369,7 +370,9 @@ _CALLER_CLASSES = frozenset(
 )
 
 
-def describe_error(exc: BaseException) -> tuple[str, bool]:
+def describe_error(
+    exc: BaseException, namespaces: Collection[str] = ()
+) -> tuple[str, bool]:
     """The message a tool error carries for ``exc``, prefixed with its
     error class (``[store_unreachable] ...``, the :class:`ErrorClass` value
     a caller branches on: retry a ``timeout`` or an unreachable store, fix
@@ -378,7 +381,8 @@ def describe_error(exc: BaseException) -> tuple[str, bool]:
     stack frame never reaches the caller (the server logs it). The ids of
     the query it failed, when it carries them (``query_failure_ids``), end
     the message: ``(query_id: ..., trace_id: ...)``, which find its log
-    lines and trace."""
+    lines and trace. Of the namespaces an error names (the ingested ones of
+    ``IndexNotFoundError``), only ``namespaces``, the ones served."""
     error_class = (
         exc.error_class if isinstance(exc, _AbsorbedQueryError) else classify(exc)
     )
@@ -389,7 +393,7 @@ def describe_error(exc: BaseException) -> tuple[str, bool]:
         else ""
     )
     if error_class in _CALLER_CLASSES:
-        return f"[{error_class.value}] {exc}{suffix}", True
+        return f"[{error_class.value}] {error_text(exc, namespaces)}{suffix}", True
     return f"[{error_class.value}] {INTERNAL_ERROR_MESSAGE}{suffix}", False
 
 

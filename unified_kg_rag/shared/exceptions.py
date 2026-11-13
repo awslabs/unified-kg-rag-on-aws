@@ -1,6 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator
 from enum import StrEnum
 
 
@@ -15,7 +15,12 @@ def causes(exc: BaseException) -> Iterator[BaseException]:
 
 
 class GraphRAGException(Exception):
-    pass
+    def described(self, namespaces: Collection[str] | None = None) -> str:
+        """The message a surface shows (:func:`error_text`): the message and
+        what the error holds as data for its reader (the namespaces of
+        :class:`IndexNotFoundError`), naming only ``namespaces`` of them
+        when given."""
+        return str(self)
 
 
 class AWSServiceError(GraphRAGException):
@@ -139,7 +144,35 @@ class EmbeddingModelError(ModelError):
 
 
 class IndexNotFoundError(GraphRAGException):
-    """No store index exists for the queried suffix (not ingested, or a typo)."""
+    """No store index exists for the queried suffix (not ingested, or a typo).
+
+    ``ingested`` lists the suffixes the store holds an index for (``None``:
+    it could not tell). They are data, not part of the message, which
+    reaches logs, error answers and callers who may not read the other
+    namespaces: a surface adds them (:meth:`described`), the MCP server
+    only those it serves."""
+
+    def __init__(self, message: str, *, ingested: list[str] | None = None) -> None:
+        super().__init__(message)
+        self.ingested = ingested
+
+    def described(self, namespaces: Collection[str] | None = None) -> str:
+        if self.ingested is None:
+            return str(self)
+        if namespaces is None:
+            held = self.ingested
+            what = "Suffixes ingested on this store"
+        else:
+            held = [name for name in self.ingested if name in namespaces]
+            what = "Namespaces served here that hold an index"
+        if not held:
+            nothing = (
+                "No suffix was ingested on this store"
+                if namespaces is None
+                else "No namespace served here holds an index"
+            )
+            return f"{self} {nothing}."
+        return f"{self} {what}: {', '.join(held)}."
 
 
 class DocumentNotFoundError(GraphRAGException, LookupError):
@@ -405,6 +438,15 @@ def tag_query_failure(
                 setattr(exc, name, value)
             except (AttributeError, TypeError):
                 return
+
+
+def error_text(exc: BaseException, namespaces: Collection[str] | None = None) -> str:
+    """The message a surface shows for ``exc``: with what a package error
+    holds for its reader (:meth:`GraphRAGException.described`; only the
+    ``namespaces`` given of the ones it names)."""
+    if isinstance(exc, GraphRAGException):
+        return exc.described(namespaces)
+    return str(exc)
 
 
 def waiter_copy(exc: BaseException) -> BaseException:
