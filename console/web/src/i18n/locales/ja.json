@@ -487,6 +487,7 @@
   "dashboard.latencyP95": "p95 時間",
   "dashboard.declineRate": "拒否",
   "dashboard.errors": "エラー",
+  "dashboard.refused": "拒否",
   "dashboard.cost": "コスト",
   "dashboard.noPricesTitle": "コストの表示には料金が必要です",
   "dashboard.noPrices": "設定の evaluation.prices にモデルの料金を追加すると、USD でコストが表示されます。それまではトークンのみを集計します。",

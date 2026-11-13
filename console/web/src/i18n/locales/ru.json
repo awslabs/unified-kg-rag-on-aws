@@ -553,6 +553,7 @@
   "dashboard.latencyP95": "Время p95",
   "dashboard.declineRate": "Отказы",
   "dashboard.errors": "Ошибки",
+  "dashboard.refused": "Отклонены",
   "dashboard.cost": "Стоимость",
   "dashboard.noPricesTitle": "Для расчёта стоимости нужны цены",
   "dashboard.noPrices": "Добавьте цены моделей в evaluation.prices в настройках, чтобы видеть стоимость в USD; до тех пор дашборд учитывает только токены.",

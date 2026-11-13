@@ -604,6 +604,44 @@ def test_the_dashboard_prices_usage_and_leaves_unpriced_models_out(
     store.close()
 
 
+def test_questions_not_served_stay_out_of_every_latency_and_the_decline_rate() -> None:
+    """A refused or cancelled question was never served: it has no latency
+    to report (totals, per strategy, per day alike) and could not decline."""
+
+    def query(outcome: str, latency: float, abstained: bool = False) -> dict:
+        return {
+            "created": 1000.0,
+            "strategy": "local",
+            "outcome": outcome,
+            "abstained": abstained,
+            "latency_seconds": latency,
+        }
+
+    summary = dashboard.summarize(
+        [
+            query("answered", 2.0),
+            query("abstained", 4.0, abstained=True),
+            query("refused", 0.001),
+            query("cancelled", 30.0),
+        ],
+        [],
+        Config(),
+    )
+    totals = summary["totals"]
+    assert (totals["refused"], totals["errors"]) == (1, 0)
+    assert totals["decline_rate"] == pytest.approx(0.5)
+    assert totals["latency_p50"] == pytest.approx(3.0)
+    (strategy,) = summary["strategies"]
+    assert strategy["latency_p50"] == pytest.approx(3.0)
+    assert summary["timeline"][0]["latency_p50"] == pytest.approx(3.0)
+    assert (
+        dashboard.summarize([query("refused", 0.1)], [], Config())["totals"][
+            "decline_rate"
+        ]
+        is None
+    )
+
+
 def test_a_saved_run_is_traced_to_the_console_job_that_wrote_it(tmp_path: Path) -> None:
     from unified_kg_rag.application.cli.console.evaluations import console_job_of
 

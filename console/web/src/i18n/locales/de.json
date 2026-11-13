@@ -509,6 +509,7 @@
   "dashboard.latencyP95": "p95-Zeit",
   "dashboard.declineRate": "Abgelehnt",
   "dashboard.errors": "Fehler",
+  "dashboard.refused": "Abgewiesen",
   "dashboard.cost": "Kosten",
   "dashboard.noPricesTitle": "Kosten brauchen Preise",
   "dashboard.noPrices": "Tragen Sie die Modellpreise in den Einstellungen unter evaluation.prices ein, um Kosten in USD zu sehen; bis dahin zählt das Dashboard nur Token.",

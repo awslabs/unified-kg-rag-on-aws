@@ -22,7 +22,9 @@ interface Dashboard {
     queries: number;
     answered: number;
     abstained: number;
+    decline_rate: number | null;
     errors: number;
+    refused: number;
     latency_p50: number | null;
     latency_p95: number | null;
     cost_usd: number | null;
@@ -90,8 +92,9 @@ export function DashboardPage() {
             <Stat label={t("dashboard.questions")} value={number(d.totals.queries)} />
             <Stat label={t("dashboard.latencyP50")} value={seconds(d.totals.latency_p50)} />
             <Stat label={t("dashboard.latencyP95")} value={seconds(d.totals.latency_p95)} />
-            <Stat label={t("dashboard.declineRate")} value={percent(d.totals.queries ? d.totals.abstained / d.totals.queries : null, 1)} />
+            <Stat label={t("dashboard.declineRate")} value={percent(d.totals.decline_rate, 1)} />
             <Stat label={t("dashboard.errors")} value={number(d.totals.errors)} />
+            <Stat label={t("dashboard.refused")} value={number(d.totals.refused)} />
             <Stat label={t("dashboard.cost")} value={d.totals.cost_usd != null ? usd(d.totals.cost_usd) : "—"} />
           </div>
           {!d.prices_configured ? (

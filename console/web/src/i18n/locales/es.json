@@ -531,6 +531,7 @@
   "dashboard.latencyP95": "Tiempo p95",
   "dashboard.declineRate": "Rechazadas",
   "dashboard.errors": "Errores",
+  "dashboard.refused": "Rechazadas",
   "dashboard.cost": "Coste",
   "dashboard.noPricesTitle": "Los costes necesitan precios",
   "dashboard.noPrices": "Añade los precios de los modelos en evaluation.prices, en Configuración, para ver los costes en USD; hasta entonces el panel solo cuenta tokens.",

@@ -487,6 +487,7 @@
   "dashboard.latencyP95": "p95 시간",
   "dashboard.declineRate": "거절",
   "dashboard.errors": "오류",
+  "dashboard.refused": "거부됨",
   "dashboard.cost": "비용",
   "dashboard.noPricesTitle": "비용을 보려면 가격이 필요합니다",
   "dashboard.noPrices": "설정의 evaluation.prices에 모델 가격을 추가하면 USD 비용이 표시됩니다. 그전까지는 토큰만 집계합니다.",

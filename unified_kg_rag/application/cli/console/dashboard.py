@@ -37,6 +37,22 @@ def _add(target: dict[str, float], counts: Mapping[str, Any]) -> None:
         target[name] = target.get(name, 0) + int(counts.get(name) or 0)
 
 
+# Questions that were not served: cancelled before an answer, or refused as
+# asked (a namespace without an index, a filter to change). Neither has a
+# latency to report or could have declined.
+_UNSERVED = ("cancelled", "refused")
+
+
+def _served(query: Mapping[str, Any]) -> bool:
+    return query.get("outcome") not in _UNSERVED
+
+
+def _latency(query: Mapping[str, Any]) -> float | None:
+    """A served question's latency (``None`` for one not served)."""
+    latency = query.get("latency_seconds")
+    return latency if latency is not None and _served(query) else None
+
+
 def _model_cost(model: str, counts: Mapping[str, Any], config: Config) -> float | None:
     if model not in config.evaluation.prices:
         return None
@@ -54,11 +70,7 @@ def summarize(
 ) -> dict[str, Any]:
     """The dashboard's figures over ``queries`` (store rows) and ``jobs``."""
     now = now or time.time()
-    latencies = [
-        q["latency_seconds"]
-        for q in queries
-        if q.get("latency_seconds") is not None and q["outcome"] != "cancelled"
-    ]
+    latencies = [t for t in map(_latency, queries) if t is not None]
     by_strategy: dict[str, dict[str, Any]] = defaultdict(
         lambda: {
             "queries": 0,
@@ -81,11 +93,12 @@ def summarize(
     for query in queries:
         strategy = query.get("strategy") or query.get("requested_strategy") or "unknown"
         row = by_strategy[strategy]
+        latency = _latency(query)
         row["queries"] += 1
         row["abstained"] += int(bool(query.get("abstained")))
         row["errors"] += int(query.get("outcome") in ("failed", "error"))
-        if query.get("latency_seconds") is not None:
-            row["latencies"].append(query["latency_seconds"])
+        if latency is not None:
+            row["latencies"].append(latency)
         usage = query.get("usage") or {}
         row["tokens"] += int(usage.get("input_tokens") or 0) + int(
             usage.get("output_tokens") or 0
@@ -106,8 +119,8 @@ def summarize(
         day = datetime.fromtimestamp(query["created"]).strftime("%Y-%m-%d")
         days[day]["queries"] += 1
         days[day]["cost_usd"] += query.get("cost_usd") or 0.0
-        if query.get("latency_seconds") is not None:
-            days[day]["latencies"].append(query["latency_seconds"])
+        if latency is not None:
+            days[day]["latencies"].append(latency)
 
     strategies = [
         {
@@ -161,14 +174,19 @@ def summarize(
                 "cost_usd": _job_cost(job),
             }
         )
+    served = sum(map(_served, queries))
+    abstained = sum(bool(q.get("abstained")) for q in queries)
     return {
         "totals": {
             "queries": len(queries),
             "answered": sum(q["outcome"] == "answered" for q in queries),
-            "abstained": sum(bool(q.get("abstained")) for q in queries),
+            "abstained": abstained,
+            # Of the questions served: neither refused nor cancelled.
+            "decline_rate": abstained / served if served else None,
             "errors": sum(q["outcome"] in ("failed", "error") for q in queries),
             # Questions refused as asked (a namespace without an index, a
-            # filter to change): the caller's to fix, not errors.
+            # filter to change): the caller's to fix, not errors, and left
+            # out of the latencies and the decline rate.
             "refused": sum(q["outcome"] == "refused" for q in queries),
             "latency_p50": quantile(latencies, 0.5),
             "latency_p95": quantile(latencies, 0.95),

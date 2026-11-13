@@ -254,8 +254,9 @@ both). A table of every entity is under the graph.
 
 **Dashboard.** Over the last day, week, month or year: the questions asked
 through the console, their median and 95th percentile time, the decline
-and error counts (a question refused as asked, on an empty namespace or
-with a filter to change, is counted apart, not as an error) and the cost;
+rate, the errors and the refused questions (refused as asked, on an empty
+namespace or with a filter to change: not errors, and like a cancelled
+one left out of every time and of the decline rate) and the cost;
 questions and median time per day; per
 strategy, model and role the calls, tokens and cost; and the jobs with
 their duration, calls, tokens and cost. Costs need `evaluation.prices`

@@ -487,6 +487,7 @@
   "dashboard.latencyP95": "p95 时间",
   "dashboard.declineRate": "拒答",
   "dashboard.errors": "错误",
+  "dashboard.refused": "已拒绝",
   "dashboard.cost": "费用",
   "dashboard.noPricesTitle": "计算费用需要价格",
   "dashboard.noPrices": "在设置的 evaluation.prices 下添加模型价格，即可查看以 USD 计的费用；在此之前，仪表板只统计 Token。",
