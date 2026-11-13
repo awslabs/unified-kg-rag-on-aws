@@ -15,6 +15,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -569,6 +570,24 @@ class TestCorpusManifest:
             },
         )
         assert self._fingerprint(root, (root / "cache",)) == baseline
+
+    def test_each_file_is_resolved_once_whatever_the_excluded_dirs(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        # Regression (rv26 perf low): the file was resolved once per
+        # excluded directory.
+        root = _write_corpus(tmp_path / "src", {"a.txt": "A.", "b/c.txt": "C."})
+        excluded = tuple(root / name for name in ("cache", "export", "parsed"))
+        resolved: list[Path] = []
+        real = cache_keys.real_source_path
+
+        def counting(path: Path, *args: Any) -> Path:
+            resolved.append(path)
+            return real(path, *args)
+
+        monkeypatch.setattr(cache_keys, "real_source_path", counting)
+        self._fingerprint(root, excluded)
+        assert sorted(p.name for p in resolved) == ["a.txt", "c.txt"]
 
     def test_changed_corpus_does_not_resume_stale_output(self, tmp_path) -> None:
         cache_manager = _cache_manager(tmp_path / "cache")

@@ -38,6 +38,10 @@ pytestmark = pytest.mark.unit
         (["u1", "", None], ["u1"]),
         ("[not json", ["[not json"]),
         ([], []),
+        # A list the fast check passes back unread decodes item by item.
+        (["u1", 0, False], ["u1", "0", "False"]),
+        (["u1", 7], ["u1", "7"]),
+        (["u1", ""], ["u1"]),
     ],
 )
 def test_id_lists_are_decoded_where_a_result_is_made(stored: Any, decoded: list) -> None:  # type: ignore[type-arg]

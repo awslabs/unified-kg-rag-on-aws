@@ -1424,8 +1424,10 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 found = await self._next_pages(alias, bodies[0], found, wanted)
                 if isinstance(found, Exception):
                     return await self._degraded_search(alias, suffix, found)
-            return [self._parse_hit(hit) for hit in found]
-        return self._fuse(responses, size)
+            # The parse validates every id list (a hub's lineage holds
+            # thousands): off the event loop, as the fusion's.
+            return await asyncio.to_thread(self._parse_hits, found)
+        return await asyncio.to_thread(self._fuse, responses, size)
 
     async def _next_pages(
         self,
@@ -1665,6 +1667,9 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 if rest:
                     suffixes.add(rest)
         return sorted(suffixes)
+
+    def _parse_hits(self, hits: list[dict[str, Any]]) -> list[RetrievalResult]:
+        return [self._parse_hit(hit) for hit in hits]
 
     def _parse_hit(self, hit: dict[str, Any]) -> RetrievalResult:
         source = hit.get("_source", {})
