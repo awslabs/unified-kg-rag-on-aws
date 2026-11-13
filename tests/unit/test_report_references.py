@@ -275,6 +275,26 @@ def test_reference_syntax_variants_are_read(
     assert {k: [n for n in v if n <= 9] for k, v in found.items()} == cited
 
 
+@pytest.mark.parametrize(
+    ("ids", "size", "cited"),
+    [
+        # Regression (rv25 algo-index low): read as 12345, past the 400
+        # records, the valid citations 12 and 345 were lost.
+        ("12,345", 400, [12, 345]),
+        ("12,345", 20000, [12345]),
+        ("2,000", 9, [2000]),  # 0 is no record: one number, cited later by none
+        ("1,200-1,203", 4000, [1200, 1201, 1202, 1203]),
+    ],
+)
+def test_a_thousands_separator_past_the_input_lists_numbers(
+    ids: str, size: int, cited: list[int]
+) -> None:
+    _, found = split_data_references(
+        f"x [Data: Entities ({ids})]", sizes={"entities": size}
+    )
+    assert found == {"entities": cited}
+
+
 def test_a_range_reads_only_the_numbers_the_input_has() -> None:
     _, cited = split_data_references(
         "x [Data: Entities (2-1000000000)]", sizes={"entities": 3}

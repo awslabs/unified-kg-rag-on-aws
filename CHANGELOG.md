@@ -1737,7 +1737,8 @@ From a `main` checkout (formats and keys no release had):
   findings cite (a parent's roll-up findings cited nothing, so `global` and `drift` attributed a parent report to the
   few members packed raw); a range `(1-4)` reads as 1 to 4 (never past the records the input numbered),
   `【Data: ...】` as `[Data: ...]`, `Entities [1, 2]` and `Report 1` as `Entities (1, 2)` and `Reports (1)`, and
-  `(2,000)` as one number, not 2 and 0. A report is titled by its name alone (an English "Report for Level 0
+  `(2,000)` as one number, not 2 and 0, unless past the input and each listed number is a record (`(12,345)` of 400
+  records cites 12 and 345). A report is titled by its name alone (an English "Report for Level 0
   Community ...:" was embedded with every report), and a rating written beside its scale reads as the rating ("10점
   만점에 7점" is 7, not 10; "10 (3 key risks)" is 10, not 3). The report stores the cited ids (an
   unindexed `findings` field): a retrieved report, and its source's metadata (each finding's ids, not its text),

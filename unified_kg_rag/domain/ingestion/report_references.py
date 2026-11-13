@@ -74,7 +74,10 @@ _REFERENCE = re.compile(
 # A number: digits, with a thousands separator ("2,000") or not.
 _NUMBER = r"\d{1,3}(?:,\d{3})+(?!\d)|\d+"
 # A number, or a range of them ("1-4", "2 – 3", "2～3").
-_NUMBERS = re.compile(rf"(?P<lo>{_NUMBER})(?:\s*[-‐‑–—~～〜]\s*(?P<hi>{_NUMBER}))?")
+_RANGE = r"\s*[-‐‑–—~～〜]\s*"
+_NUMBERS = re.compile(rf"(?P<lo>{_NUMBER})(?:{_RANGE}(?P<hi>{_NUMBER}))?")
+# The same without thousands separators: "12,345" is 12 and 345.
+_PLAIN_NUMBERS = re.compile(rf"(?P<lo>\d+)(?:{_RANGE}(?P<hi>\d+))?")
 # A dataset's numbers in parentheses or square brackets, or one number or
 # range without them ("Report 1").
 _DATASET = re.compile(
@@ -94,6 +97,28 @@ def _dataset(name: str) -> str | None:
     return None
 
 
+def _numbers(text: str, size: int) -> list[re.Match[str]]:
+    """The numbers and ranges of ``text``. A number with thousands
+    separators past ``size`` (no record has it) is the list its commas
+    separate when each number of that list is a record's (numbered from 1):
+    "12,345" of 400 records is 12 and 345, "2,000" of 9 stays 2000 (0 is
+    none), which cites nothing."""
+    found: list[re.Match[str]] = []
+    for match in _NUMBERS.finditer(text):
+        ends = [end for end in (match["lo"], match["hi"]) if end]
+        listed = list(_PLAIN_NUMBERS.finditer(match[0]))
+        if any("," in end and int(end.replace(",", "")) > size for end in ends) and all(
+            0 < int(end) <= size
+            for item in listed
+            for end in (item["lo"], item["hi"])
+            if end
+        ):
+            found.extend(listed)
+        else:
+            found.append(match)
+    return found
+
+
 def split_data_references(
     text: str, sizes: Mapping[str, int]
 ) -> tuple[str, dict[str, list[int]]]:
@@ -101,10 +126,12 @@ def split_data_references(
     numbers they cite by dataset (:data:`DATASET_ENTITIES`,
     :data:`DATASET_RELATIONSHIPS`, :data:`DATASET_REPORTS`; others, such
     as ``Claims``, are dropped), each in first-cited order without repeats.
-    ``+more`` is no number, "2,000" one; a range is each number in it, up
-    to the dataset's size in ``sizes`` (the records the input numbered;
-    none for a dataset it does not name), so a model's "1-200000" costs no
-    more than the input."""
+    ``+more`` is no number. "2,000" is one, unless it is past the dataset's
+    size in ``sizes`` (the records the input numbered; none for a dataset
+    it does not name) and the numbers its commas separate are all records
+    ("(12,345)" of 400 records cites 12 and 345: :func:`_numbers`). A range
+    is each number in it, up to the dataset's size, so a model's "1-200000"
+    costs no more than the input."""
     cited: dict[str, dict[int, None]] = {}
 
     def take(match: re.Match[str]) -> str:
@@ -114,15 +141,14 @@ def split_data_references(
                 continue
             numbers = cited.setdefault(name, {})
             ids = dataset.group("ids")
-            for found in _NUMBERS.finditer(
-                dataset.group("bare") if ids is None else ids
-            ):
+            size = sizes.get(name, 0)
+            for found in _numbers(dataset.group("bare") if ids is None else ids, size):
                 low = int(found["lo"].replace(",", ""))
                 high = int(found["hi"].replace(",", "")) if found["hi"] else low
                 if high < low:  # written backwards: its two ends
                     span = [low, high]
                 else:
-                    span = list(range(low, max(low, min(high, sizes.get(name, 0))) + 1))
+                    span = list(range(low, max(low, min(high, size)) + 1))
                 numbers.update(dict.fromkeys(span))
         return ""
 
