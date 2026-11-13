@@ -410,8 +410,9 @@ See [`iac/README.md`](iac/README.md).
   ingested under raises `IndexNotFoundError` (#178).
 - A `name` filter matches an entity's whole name exactly on every store (`name.keyword`; OpenSearch matched one
   analyzed token, so `name:Acme` matched nothing and a partial Korean name matched), and a filter on analyzed text
-  (`description`, `text`, `summary`, the relationship and claim names, ...) or on the seed properties raises
-  `InvalidFilterError` (#661).
+  (`description`, `text`, `summary`, the relationship and claim names, ...) or on the seed properties
+  (`attributes.seed_properties...`, kept unindexed) raises `InvalidFilterError`; community reports no longer take
+  `name` (#661).
 
 ### Upgrading
 From 0.2.3; the sub-list after it is for a `main` checkout since. The runbook's
@@ -1129,9 +1130,11 @@ From a `main` checkout (formats and keys no release had):
   document by its path relative to the corpus root, else its file name, never the indexing host's path;
   `--output-path`, `--export-format`, `--max-items`; written atomically, so a failed export leaves the previous file
   and no partial one; an existing file is replaced only with `--force`, `export_graph(overwrite=True)`, and never the
-  `--config-path` file or the schema file the config loads, by the guard `run-prompt-tuning` shares);
-  `VectorIndexer.describe_indices` and `scan_items` (#628). It, `kg_describe_schema` (which adds `auto_routes`), the
-  console and the chain's refusal read what a namespace holds by one rule (`NamespaceHoldings`): without a build
+  `--config-path` file or the schema file the config loads, by the guard `run-prompt-tuning` shares), with the
+  graph store's census (`graph`: per-type counts and digests of the ids, types and ranks of its vertices and edges,
+  read through `GraphIndexer`); `VectorIndexer.describe_indices` and `scan_items` (#628). It, `kg_describe_schema`
+  (which adds `auto_routes`), the console and the chain's refusal read what a namespace holds by one rule
+  (`NamespaceHoldings`): without a build
   record the console shows what the config builds, as queries are served, not nothing held; a namespace nothing was
   ingested under holds nothing (`exists: false`, also in `kg_describe_schema`; `acheck_methodology` and a query raise
   `IndexNotFoundError`, not a methodology refusal naming the config's). A registry the caller cannot read (the CDK
@@ -1553,30 +1556,26 @@ From a `main` checkout (formats and keys no release had):
   `log_retention_days`, the stores' maintenance windows, and `observability_secret_arn` / `_keys` for Langfuse or
   OTLP credentials (same-region only in private mode) (#157, #211, #319, #328, #345, #457, #459, #519, #528, #541,
   #566).
-- IaC alarms: `BedrockThrottling` (the share of this deployment's model requests throttled, in a 5-minute period of
-  at least 50 requests, so a stage of a few calls does not page), `IngestionTaskMemory` and
-  `QueryTaskMemory`, OpenSearch snapshot failures, blocked writes, thread-pool and indexing-pressure rejections (where
-  OpenSearch 2.x counts bulk 429s), the rest of AWS's recommended OpenSearch alarms (CPU, old-generation heap, nodes,
-  shards per GiB of heap, 5xx share, queues, dedicated masters), a yellow multi-node cluster, an unusable KMS key,
-  Neptune reader CPU and replica lag, doc-status read throttles and system errors, ephemeral storage,
-  `DocumentsNotIndexed`, and `QueryLatencyHigh` on `run-rag --metrics-sink cloudwatch`'s `query_latency_ms`, and
-  `QueryFailures` on the failed share of queries (`query_failed`, in a period of at least 10 queries); each also
-  notifies when it recovers, and the dashboard shows the stores' metrics and, on top, every alarm's state (#330,
-  #519, #528).
-- IaC alarms: `BedrockThrottling`, `IngestionTaskMemory`, OpenSearch snapshot failures, blocked writes, thread-pool
-  rejections, a yellow multi-node cluster, an unusable KMS key, ephemeral storage, `DocumentsNotIndexed`, and
-  `QueryLatencyHigh` on `run-rag --metrics-sink cloudwatch`'s `query_latency_ms` (#330, #519, #528). The chain emits
-  the query metrics itself, through the new `Providers.metrics_sink`, so a library host, MCP app or console counts
-  too: per answer `query_latency_ms` and the outcome `query_failed`, `query_degraded`, `query_abstained` (0 or 1),
-  per `Strategy` that ran (`auto` queries no longer land under `auto`), with `namespace` (the ingestion records'
-  key) and a failure's `error_class` log properties, and `query_throttled_requests` (on the "Query outcomes"
-  widget too). Streamed answers (their degraded, abstained and throttled counts as `ainvoke`'s) and failed
-  admissions (a build-record read, the deadline) count; a caller's error (`ErrorClass.is_caller_error`: an invalid
-  argument or filter, a namespace without the index or methodology) is not a `query_failed`, and a refused input
-  that names no strategy counts under `Strategy` `invalid`. `run-mcp-server` and `run-console` take
-  `--metrics-sink cloudwatch` as `run-rag` does, one sink builder for every CLI; its EMF goes to stderr where
-  stdout carries the protocol or `--output-format json`, which `run-rag`, `run-ingestion` and `run-console` no
-  longer refuse with it. An embedding-only stage emits no always-zero `llm_calls_<stage>` or token series.
+- IaC alarms: `BedrockThrottling` (the share of this deployment's model requests throttled, in a 5-minute period of at
+  least 50 requests, so a stage of a few calls does not page), `IngestionTaskMemory` and `QueryTaskMemory`, OpenSearch
+  snapshot failures, blocked writes, thread-pool and indexing-pressure rejections (where OpenSearch 2.x counts bulk
+  429s), the rest of AWS's recommended OpenSearch alarms (CPU, old-generation heap, nodes, shards per GiB of heap, 5xx
+  share, queues, dedicated masters), a yellow multi-node cluster, an unusable KMS key, Neptune reader CPU and replica
+  lag, doc-status read throttles and system errors, ephemeral storage, `DocumentsNotIndexed`, and `QueryLatencyHigh`
+  on `run-rag --metrics-sink cloudwatch`'s `query_latency_ms`, and `QueryFailures` on the failed share of queries
+  (`query_failed`, in a period of at least 10 queries); each also notifies when it recovers, and the dashboard shows
+  the stores' metrics and, on top, every alarm's state (#330, #519, #528). The chain emits the query metrics itself,
+  through the new `Providers.metrics_sink`, so a library host, MCP app or console counts too: per answer
+  `query_latency_ms` and the outcome `query_failed`, `query_degraded`, `query_abstained` (0 or 1), per `Strategy` that
+  ran (`auto` queries no longer land under `auto`), with `namespace` (the ingestion records' key) and a failure's
+  `error_class` log properties, and `query_throttled_requests` (on the "Query outcomes" widget too). Streamed answers
+  (their degraded, abstained and throttled counts as `ainvoke`'s) and failed admissions (a build-record read, the
+  deadline) count; a caller's error (`ErrorClass.is_caller_error`: an invalid argument or filter, a namespace without
+  the index or methodology) is not a `query_failed`, and a refused input that names no strategy counts under
+  `Strategy` `invalid`. `run-mcp-server` and `run-console` take `--metrics-sink cloudwatch` as `run-rag` does, one
+  sink builder for every CLI; its EMF goes to stderr where stdout carries the protocol or `--output-format json`,
+  which `run-rag`, `run-ingestion` and `run-console` no longer refuse with it. An embedding-only stage emits no
+  always-zero `llm_calls_<stage>` or token series.
 - The package ships a `py.typed` marker (#568). `main` reports `0.3.0.dev0`, and a `v<version>` tag runs a release
   workflow that publishes a GitHub release: the tag must be on `main`, the notes are the section's introduction,
   *Highlights*, *Breaking changes*, *Upgrading* and *Security* with a link to the version's heading for the rest, and
@@ -1636,11 +1635,13 @@ From a `main` checkout (formats and keys no release had):
 - A local load, soak and chaos harness (`scripts/loadtest/`, [Load testing](docs/guides/load-testing.md)) on the
   fake models: concurrency sweeps with latency quantiles, errors by `ErrorClass` and event-loop lag, soaks with
   resource slopes, the console over HTTP, and model faults (429, 500, 503, drops, hangs), store pauses and kills,
-  each checked to converge with a full build (every kind of item the vector store keeps). A nightly `load-test`
-  workflow runs it on the embedded stores; it gates on errors, answers without evidence (no sources, abstained,
-  empty) or degraded, loop lag, RSS growth past both a rate and an 8 MB floor (a short soak's slope alone failed a
-  clean run), and convergence, the kill's resume started at once (the dead run's lease handed on), and only reports.
-  `load.py` refuses a store or model kind that is not local, and reads no `~/.aws` profile.
+  each checked to converge with a full build (every kind of item the vector store keeps, and the graph store's
+  census). A nightly `load-test` workflow runs it on the embedded stores; it gates on errors, answers without
+  evidence (no sources, abstained, empty) or degraded, loop lag, RSS growth past both a rate and an 8 MB floor (a
+  short soak's slope alone failed a clean run), and convergence, the kill's resume started at once (the dead run's
+  lease handed on), and only reports; a faulted run that failed nothing is reported `not_exercised`. `load.py gate`
+  checks any mode's report (an `http` one by the client's loop lag) and fails one that measured nothing. `load.py`
+  refuses a store or model kind that is not local, and reads no `~/.aws` profile.
 
 ### Changed
 - `auto` falls back to the first routable of `local`, then `mix`, when the router's answer names no routable
@@ -1655,11 +1656,6 @@ From a `main` checkout (formats and keys no release had):
 - `run-eval` exits 2 for a filter key no index declares, as `run-rag` does, and `run-rag` exits by the class of a
   failure `processing.ignore_errors` absorbed (2 for a `--suffix` nothing was ingested under; it exited 1).
 - Global search on a namespace without community reports declines with `abstention_reason: no_reports`.
-- A `name` filter matches an entity's whole name exactly on every store (`name.keyword` on the entities index):
-  OpenSearch matched it against one analyzed token (`name:Acme` matched nothing, `name:가나다` matched
-  `가나다 상사`), a graph the whole name. A filter on analyzed text (`description`, `text`, `summary`, the
-  relationship and claim names, ...) raises `InvalidFilterError`, as does one on the seed properties
-  (`attributes.seed_properties...`, kept unindexed), and community reports no longer take `name`.
 - Local and LightRAG ask the relationships incident to their entities in one request naming both endpoint fields,
   the best twice `max_query_size` of them, where each end got its own page of `max_query_size`. `SearchQuery` gains
   `any_of` (filter groups one of which a hit passes; a graph retriever refuses them) and `page_through` (a text-less
