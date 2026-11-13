@@ -164,6 +164,21 @@ def test_a_two_sentence_corpus_still_decides() -> None:
     assert reason is not None and "set it to 'ko'" in reason
 
 
+def test_a_short_dense_document_votes_by_what_its_letters_carry() -> None:
+    # Regression (rv25 algo-index low): the threshold counted letters, so a
+    # Han character weighed as one Latin letter and a short Chinese document
+    # of 38 characters cast no vote. It counts tokens now (ScriptCounts.
+    # carried, the token estimate's rates): ten Han characters carry what
+    # forty Latin letters do.
+    short = "供应商向买方供应零件，并在合同中约定交货期和价格。买方按期付款，供应商开具发票。"
+    sample = corpus_sample([short])
+    assert sample.counts.letters < 40 and sample.counts.carried >= 10
+    assert corpus_language(sample, None) is LanguageCode.ZH
+    # Fewer than ten tokens' worth still decide nothing, in any script.
+    assert corpus_language(corpus_sample(["供应商向买方"]), None) is None
+    assert corpus_language(corpus_sample(["The vendor ships."]), None) is None
+
+
 def test_the_sample_is_bounded() -> None:
     # The first documents' first characters only: a corpus is not read whole.
     sample = corpus_sample([ENGLISH * 100] * 30 + [KOREAN * 100])
