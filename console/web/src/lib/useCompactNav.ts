@@ -11,7 +11,11 @@ import { useEffect, useLayoutEffect, useRef, useState, type DependencyList, type
  * English ones) and the namespace chip. ``deps`` are what changes those
  * widths; the row is measured laid out at each step (``data-fold`` on its
  * header) before paint whenever they change or the web fonts finish loading,
- * and the widths are compared with the row's on resize.
+ * and the widths are compared with the row's on resize. A step's width is
+ * the content's own (the row laid out at ``max-content``, less its end
+ * padding, as an overflowing row's ``scrollWidth`` reads), not the row's
+ * ``scrollWidth``: that never reads under the row's current width, so a
+ * row measured wide would fit nothing once narrowed.
  */
 export const NAV_FOLDED = 3;
 
@@ -62,10 +66,18 @@ function measure(element: HTMLElement | null, needed: MutableRefObject<number[]>
   const header = element?.closest<HTMLElement>("[data-fold]");
   if (!element || !header) return;
   const shown = header.dataset.fold;
+  const { width, maxWidth } = element.style;
+  element.style.width = "max-content";
+  element.style.maxWidth = "none";
+  // As scrollWidth reads an overflowing row: the content may run into the
+  // end padding.
+  const end = parseFloat(getComputedStyle(element).paddingInlineEnd) || 0;
   needed.current = Array.from({ length: NAV_FOLDED }, (_, step) => {
     header.dataset.fold = String(step);
-    return element.scrollWidth;
+    return Math.ceil(element.getBoundingClientRect().width - end);
   });
+  element.style.width = width;
+  element.style.maxWidth = maxWidth;
   header.dataset.fold = shown;
   setFold(fitting(needed.current, element.clientWidth));
 }

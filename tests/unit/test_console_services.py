@@ -355,6 +355,34 @@ def test_run_ingestion_has_a_flag_for_the_integrity_question_alone() -> None:
     assert args.confirm_integrity and not args.yes and not args.confirm_reset
 
 
+async def test_an_ingest_job_can_rebuild_its_namespace_for_one_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``reset`` passes ``--reset`` (indexing.reset for this run only), so
+    the warnings that ask for a rebuild need no Settings edit to undo."""
+    from unified_kg_rag.application.cli.run_ingestion_pipeline import (
+        CommandLineInterface,
+    )
+
+    manager = _manager(tmp_path)
+
+    async def launch(job: Any) -> None:
+        manager.jobs[job.id] = job
+
+    monkeypatch.setattr(manager, "_launch", launch)
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    parser = CommandLineInterface._setup_arguments()
+    for reset in (True, False):
+        job = await manager.start_ingest(
+            corpus=corpus, corpus_ref="w:corpus", reset=reset
+        )
+        flags = job.argv[job.argv.index("--source-directory") :]
+        assert parser.parse_args(flags).reset is reset
+        assert job.params["reset"] is reset
+        manager.jobs.clear()
+
+
 class _StreamingChain(_Chain):
     """Streams its answer in chunks that split a citation marker."""
 
@@ -821,6 +849,22 @@ async def test_an_ingestion_job_exports_no_graph_of_its_own(
     assert built == []
 
 
+def test_the_rebuild_warnings_advise_the_reset_the_console_offers() -> None:
+    """The warnings that ask for a rebuild (community drift, re-clustering
+    due) name it as the console reads it (jobs.RESET_ADVICE)."""
+    import inspect
+
+    from unified_kg_rag.application.ingestion.incremental import IncrementalIndexer
+    from unified_kg_rag.application.ingestion.pipeline_stages import IndexingStage
+
+    for advising in (
+        IncrementalIndexer._measure_drift,
+        IndexingStage._check_community_counters,
+    ):
+        source = " ".join(inspect.getsource(advising).split())
+        assert jobs_module.RESET_ADVICE in source.replace('" "', ""), advising
+
+
 def _event(level: str, text: str) -> str:
     return json.dumps({"event": text, "logger": "x", "level": level})
 
@@ -844,6 +888,24 @@ async def test_a_job_records_its_warnings_and_a_stopped_one_no_error(
     await manager._watch(job)
     assert job.record()["warnings"]["count"] == 25
     assert job.record()["warnings"]["lines"] == [f"warning {i}" for i in range(5, 25)]
+
+    assert job.record()["warnings"]["reset_advised"] is False
+
+    # A warning that advises a rebuild, even one past the lines kept, points
+    # the page at "Rebuild the namespace" (--reset).
+    advised = _ingest_job(manager, tmp_path, '{"visualization_data": null}')
+    advised.log_path.write_text(
+        "\n".join(
+            [
+                _event("warning", "Community drift: ... indexing.reset: true."),
+                *log,
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    await manager._watch(advised)
+    assert advised.record()["warnings"]["reset_advised"] is True
 
     stopped = _ingest_job(manager, tmp_path, '{"status": "interrupted"}', code=143)
     stopped.log_path.write_text("\n".join(log) + "\n", encoding="utf-8")

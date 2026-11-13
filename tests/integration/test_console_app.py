@@ -600,13 +600,14 @@ def test_the_graph_page_brings_the_namespace_s_graph_up_to_date(
 
     asked: list[Path] = []
 
-    def current(config: Any, cache: Path) -> None:
+    def current(config: Any, cache: Path, providers: Any = None) -> None:
         asked.append(cache)
         raise StoreConnectionError("graph store down")
 
     monkeypatch.setattr(graph_api, "current_graph", current)
     response = client.get("/api/graphs")
     assert response.status_code == 200 and response.json()["graphs"]
+    assert response.json()["current"]["state"] == "failed"
     assert asked == [workspace / "cache"]
 
 

@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import { fireEvent, render, screen } from "@testing-library/react";
 import type { ReactElement } from "react";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { drawnGraph, linkAlpha, placeLabels, settle, type LabelCandidate } from "../components/GraphCanvas";
 import { I18nProvider } from "../i18n/i18n";
 import type { GraphData, GraphNode } from "../lib/types";
-import { EntityTable, rankMatches, TABLE_PAGE } from "./GraphPage";
+import { EntityTable, GraphPage, rankMatches, TABLE_PAGE } from "./GraphPage";
 
 const renderIn = (ui: ReactElement) => render(<I18nProvider initial="en">{ui}</I18nProvider>);
 
@@ -126,10 +126,27 @@ describe("graph legibility", () => {
 
   it("stops at the density bound, but always places the strong ones", () => {
     const many = Array.from({ length: 10 }, (_, i) => label(`n${i}`, i * 100, 10 - i));
-    expect(placeLabels(many, 40 * 16 * 3)).toHaveLength(3);
-    const placed = placeLabels([...many, label("focus", 2000, 0, true)], 40 * 16 * 3);
+    expect(placeLabels(many, { area: 40 * 16 * 3 })).toHaveLength(3);
+    const placed = placeLabels([...many, label("focus", 2000, 0, true)], { area: 40 * 16 * 3 });
     expect(ids(placed)).toContain("focus");
     expect(placed).toHaveLength(3);
+  });
+
+  it("keeps labels inside the canvas and off the drawn nodes", () => {
+    // At the right edge: its right side would be cut, so it goes left.
+    const [edge] = placeLabels([{ ...label("edge", 280, 1), cy: 50 }], { width: 300, height: 100, discs: [] });
+    expect(edge?.x).toBe(280 - 4 - 2 - 40);
+    // A node right of "hub" is under its right side: the label goes left.
+    const discs = [
+      { id: "hub", cx: 100, cy: 50, r: 4 },
+      { id: "near", cx: 125, cy: 50, r: 4 },
+    ];
+    const [hub] = placeLabels([{ ...label("hub", 100, 9), cy: 50 }], { width: 300, height: 100, discs });
+    expect(hub?.x).toBe(100 - 4 - 2 - 40);
+    // No side inside the canvas and clear: skipped, unless strong.
+    const cornered = { ...label("cornered", 2, 1), cy: 2 };
+    expect(placeLabels([cornered], { width: 10, height: 10 })).toEqual([]);
+    expect(ids(placeLabels([{ ...cornered, strong: true }], { width: 10, height: 10 }))).toEqual(["cornered"]);
   });
 
   it("always places the focused label", () => {
@@ -154,5 +171,36 @@ describe("rankMatches", () => {
     ];
     expect(rankMatches(entities, "Entity 77").map((e) => e.id)).toEqual(["b", "d", "a", "c"]);
     expect(rankMatches(entities, "  ")).toEqual([]);
+  });
+});
+
+describe("GraphPage without a graph", () => {
+  const serve = (current: { state: string; namespace: string; built_at: null }, indexed: boolean) =>
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        const body = String(url).includes("namespace/methodologies") ? { namespace: "default", recorded: false, indexed, held: [], dropped: [] } : { graphs: [], current };
+        return new Response(JSON.stringify(body), { status: 200 });
+      }),
+    );
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("sends an off export to Settings, not to Ingest", async () => {
+    serve({ state: "export_off", namespace: "default", built_at: null }, true);
+    renderIn(<GraphPage params={new URLSearchParams()} />);
+    expect(await screen.findByText("The graph is turned off")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open Settings" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Go to Ingest" })).not.toBeInTheDocument();
+  });
+
+  it("tells an empty namespace from one indexed before build records", async () => {
+    serve({ state: "unrecorded", namespace: "default", built_at: null }, false);
+    const { unmount } = renderIn(<GraphPage params={new URLSearchParams()} />);
+    expect(await screen.findByText("Nothing is indexed in “default” yet")).toBeInTheDocument();
+    unmount();
+    serve({ state: "unrecorded", namespace: "default", built_at: null }, true);
+    renderIn(<GraphPage params={new URLSearchParams()} />);
+    expect(await screen.findByText("“default” has no build record")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Go to Ingest" })).toBeInTheDocument();
   });
 });

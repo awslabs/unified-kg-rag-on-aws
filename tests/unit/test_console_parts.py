@@ -604,6 +604,44 @@ def test_the_dashboard_prices_usage_and_leaves_unpriced_models_out(
     store.close()
 
 
+def test_questions_not_served_stay_out_of_every_latency_and_the_decline_rate() -> None:
+    """A refused or cancelled question was never served: it has no latency
+    to report (totals, per strategy, per day alike) and could not decline."""
+
+    def query(outcome: str, latency: float, abstained: bool = False) -> dict:
+        return {
+            "created": 1000.0,
+            "strategy": "local",
+            "outcome": outcome,
+            "abstained": abstained,
+            "latency_seconds": latency,
+        }
+
+    summary = dashboard.summarize(
+        [
+            query("answered", 2.0),
+            query("abstained", 4.0, abstained=True),
+            query("refused", 0.001),
+            query("cancelled", 30.0),
+        ],
+        [],
+        Config(),
+    )
+    totals = summary["totals"]
+    assert (totals["refused"], totals["errors"]) == (1, 0)
+    assert totals["decline_rate"] == pytest.approx(0.5)
+    assert totals["latency_p50"] == pytest.approx(3.0)
+    (strategy,) = summary["strategies"]
+    assert strategy["latency_p50"] == pytest.approx(3.0)
+    assert summary["timeline"][0]["latency_p50"] == pytest.approx(3.0)
+    assert (
+        dashboard.summarize([query("refused", 0.1)], [], Config())["totals"][
+            "decline_rate"
+        ]
+        is None
+    )
+
+
 def test_a_saved_run_is_traced_to_the_console_job_that_wrote_it(tmp_path: Path) -> None:
     from unified_kg_rag.application.cli.console.evaluations import console_job_of
 
@@ -611,3 +649,26 @@ def test_a_saved_run_is_traced_to_the_console_job_that_wrote_it(tmp_path: Path) 
     assert console_job_of(job) == job.name
     assert console_job_of(job / "run_20261107_000001_12345678") == job.name
     assert console_job_of(tmp_path / "elsewhere" / "run_1") is None
+
+
+def test_every_console_error_code_is_named_in_the_page_s_language() -> None:
+    """The page names a refusal by its ``code`` (``error.<code>``, else the
+    Ask page's ``ask.error.<code>``); a code without one showed the server's
+    English message in every locale (rv26: 415 ``unsupported``)."""
+    import re
+
+    from unified_kg_rag.application.cli.console import server
+
+    root = Path(__file__).parents[2]
+    catalog = json.loads(
+        (root / "console/web/src/i18n/locales/en.json").read_text(encoding="utf-8")
+    )
+    source = Path(server.__file__).read_text(encoding="utf-8")
+    codes = set(re.findall(r'_error\(\s*[\w.\[\]]+,\s*"([a-z_]+)"', source))
+    assert "unsupported" in codes
+    unnamed = sorted(
+        c
+        for c in codes
+        if f"error.{c}" not in catalog and f"ask.error.{c}" not in catalog
+    )
+    assert unnamed == []

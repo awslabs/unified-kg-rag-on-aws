@@ -12,18 +12,23 @@ export interface Status {
   methodologies: string[];
   observability: { enabled: boolean; backend: string } | null;
   prices_configured: boolean;
+  /** The largest ``top_k`` an Ask request takes. */
+  max_top_k: number;
   jobs: JobRecord[];
   loopback: boolean;
   sample_questions: string[];
 }
 
 /** `/api/namespace/methodologies`: what an index namespace holds, as its
- * build record names it (`recorded` false: no build record, so nothing was
- * ingested into it), and which of those an ingestion of the picked
- * methodologies would no longer serve. */
+ * build record names it (`recorded` false: no build record, as before the
+ * first ingestion or one of an earlier release), whether anything was
+ * ingested into it at all (`indexed` false: a question on it is refused),
+ * and which of those an ingestion of the picked methodologies would no
+ * longer serve. */
 export interface NamespaceHeld {
   namespace: string;
   recorded: boolean;
+  indexed: boolean;
   held: string[];
   dropped: string[];
 }
@@ -199,7 +204,9 @@ export interface JobRecord {
   total_runs: number;
   confirmation?: "integrity" | "reset" | "deletions" | null;
   // The WARNING events of its log once it ended: how many, and the last ones.
-  warnings?: { count: number; lines: string[] };
+  /** Its WARNINGs once ended: how many, the last ones, and whether one
+   * advises rebuilding the namespace (the run's ``--reset``). */
+  warnings?: { count: number; lines: string[]; reset_advised?: boolean };
   // An evaluation's answers so far (from its log) beside its saved runs.
   progress?: { stages?: StageProgress[]; done: number; total: number; answers?: { done: number; total: number } | null } | null;
   log?: string[];
@@ -307,7 +314,9 @@ export interface QuestionScores {
      * the right answer. Absent from an older server. */
     unanswerable?: boolean;
     scores: Record<string, number>;
-    answers: Record<string, { text: string; error: string | null; abstained: boolean }>;
+    /** The first repeat's answer, and how many of the repeats that
+     * answered it declined (``declined`` of ``repeats``). */
+    answers: Record<string, { text: string; error: string | null; declined: number; repeats: number }>;
   }[];
 }
 

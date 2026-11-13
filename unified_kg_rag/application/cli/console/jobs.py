@@ -132,9 +132,10 @@ class Job:
     # The question a failed ingestion stopped at, unanswered (its flag).
     confirmation: str | None = None
     # The WARNING events of its log once it ended (_log_warnings): how many,
-    # and the last ones.
+    # the last ones, and whether one advises rebuilding the namespace.
     warning_count: int = 0
     warnings: list[str] = field(default_factory=list)
+    reset_advised: bool = False
     process: asyncio.subprocess.Process | None = None
     identity: str | None = None
     watcher: asyncio.Task[None] | None = None
@@ -161,7 +162,11 @@ class Job:
             "plan": self.plan,
             "total_runs": self.total_runs,
             "confirmation": self.confirmation,
-            "warnings": {"count": self.warning_count, "lines": self.warnings},
+            "warnings": {
+                "count": self.warning_count,
+                "lines": self.warnings,
+                "reset_advised": self.reset_advised,
+            },
             "pid": self.process.pid if self.process is not None else None,
             # Its pid with its start time (process_identity): a later console
             # tells it from a process that reused the pid.
@@ -351,12 +356,15 @@ class JobManager:
         methodologies: list[str] | None = None,
         index_value: str | None = None,
         force_rebuild: bool = False,
+        reset: bool = False,
         confirm_reset: bool = False,
         confirm_deletions: bool = False,
         confirm_integrity: bool = False,
         confirm_narrowing: bool = False,
     ) -> Job:
-        """Start ``run-ingestion`` over ``corpus`` (a resolved directory).
+        """Start ``run-ingestion`` over ``corpus`` (a resolved directory);
+        ``reset`` rebuilds the namespace from the whole corpus for this run
+        only (``--reset``), as a warning about drift or re-clustering asks.
 
         A question the run may ask is answered only by its own flag:
         ``confirm_integrity`` (continue a pipeline id whose inputs changed),
@@ -397,6 +405,7 @@ class JobManager:
                 methodologies,
                 index_value,
                 force_rebuild,
+                reset,
                 confirm_reset,
                 confirm_deletions,
                 confirm_integrity,
@@ -430,6 +439,7 @@ class JobManager:
         methodologies: list[str] | None,
         index_value: str | None,
         force_rebuild: bool,
+        reset: bool,
         confirm_reset: bool,
         confirm_deletions: bool,
         confirm_integrity: bool,
@@ -452,6 +462,8 @@ class JobManager:
         ]
         if force_rebuild:
             argv.append("--force-rebuild")
+        if reset:
+            argv.append("--reset")
         if confirm_reset:
             argv.append("--confirm-reset")
         if confirm_deletions:
@@ -468,6 +480,7 @@ class JobManager:
                 or [m.value for m in config.effective_methodologies],
                 "index_value": index_value,
                 "force_rebuild": force_rebuild,
+                "reset": reset,
                 "confirm_reset": confirm_reset,
                 "confirm_deletions": confirm_deletions,
                 "confirm_integrity": confirm_integrity,
@@ -666,7 +679,7 @@ class JobManager:
                 self.on_ingest_end()
             except Exception as e:  # noqa: BLE001 - a refresh must not fail the job
                 logger.warning("Refreshing after job %s failed: %s", job.id, e)
-        job.warning_count, job.warnings = await asyncio.to_thread(
+        job.warning_count, job.warnings, job.reset_advised = await asyncio.to_thread(
             _log_warnings, job.log_path
         )
         if job.status is JobStatus.FAILED:
@@ -919,21 +932,30 @@ def _log_event(line: str) -> dict[str, Any] | None:
     return None
 
 
-def _log_warnings(log_path: Path) -> tuple[int, list[str]]:
-    """How many WARNING events a job's log holds, and the last
-    :data:`WARNING_LINES` of them (their messages)."""
-    count, last = 0, []
+# How a run's warnings advise rebuilding the namespace (community drift,
+# re-clustering due, ...): the setting ``--reset`` sets for one run, which
+# the Ingest page offers as "Rebuild the namespace".
+RESET_ADVICE = "indexing.reset: true"
+
+
+def _log_warnings(log_path: Path) -> tuple[int, list[str], bool]:
+    """How many WARNING events a job's log holds, the last
+    :data:`WARNING_LINES` of them (their messages), and whether any of them
+    advises a rebuild (:data:`RESET_ADVICE`)."""
+    count, last, reset_advised = 0, [], False
     try:
         with log_path.open("r", encoding="utf-8", errors="replace") as handle:
             for line in handle:
                 event = _log_event(line)
                 if event is not None and event["level"] == "warning":
                     count += 1
-                    last.append(str(event.get("event", "")))
+                    message = str(event.get("event", ""))
+                    reset_advised = reset_advised or RESET_ADVICE in message
+                    last.append(message)
                     del last[:-WARNING_LINES]
     except OSError:
-        return 0, []
-    return count, last
+        return 0, [], False
+    return count, last, reset_advised
 
 
 def _last_error(lines: list[str]) -> str | None:

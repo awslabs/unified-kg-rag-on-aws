@@ -16,7 +16,11 @@ from unified_kg_rag.evaluation.comparison import (
     DEFAULT_PRIMARY_METRIC,
     per_query_means,
 )
-from unified_kg_rag.evaluation.saved_results import group_runs, load_saved_runs
+from unified_kg_rag.evaluation.saved_results import (
+    SavedRun,
+    group_runs,
+    load_saved_runs,
+)
 from unified_kg_rag.shared.exceptions import DataProcessingError, EvaluationException
 
 MAX_DATASET_BYTES = 50 * 1024 * 1024
@@ -233,9 +237,10 @@ def question_scores(
 ) -> dict[str, Any]:
     """Per question of a saved run: each strategy's score on one metric
     (its mean over the repeats that scored it; a failed answer has none and
-    shows its error) and its answer (the first repeat's), and whether the
-    question is marked unanswerable (its answers are then read by whether
-    they declined).
+    shows its error), its answer (the first repeat's) and how many of the
+    repeats that answered it declined (``declined`` of ``repeats``), and
+    whether the question is marked unanswerable (its answers are then read
+    by whether they declined).
 
     The metric is the comparison's primary one, else
     ``answer_match/answer_contains`` when scored, else the first scored.
@@ -263,6 +268,7 @@ def question_scores(
     )
     questions: dict[str, dict[str, Any]] = {}
     for strategy, saved in grouped.items():
+        declines = _declines(saved)
         for result in saved[0].results:
             entry = questions.setdefault(
                 result.query_id,
@@ -276,10 +282,13 @@ def question_scores(
                     "answers": {},
                 },
             )
+            declined, answered = declines.get(result.query_id, (0, 0))
             entry["answers"][strategy] = {
                 "text": _text(result.generated_answer),
                 "error": result.error_message if result.error else None,
-                "abstained": bool(result.abstained),
+                # Over every repeat that answered it, as the scores are.
+                "declined": declined,
+                "repeats": answered,
             }
         for qid, value in (means[strategy].get(metric or "") or {}).items():
             if qid in questions:
@@ -289,6 +298,22 @@ def question_scores(
         "strategies": list(grouped),
         "questions": list(questions.values()),
     }
+
+
+def _declines(saved: list[SavedRun]) -> dict[str, tuple[int, int]]:
+    """Per question id: how many of the repeats ``saved`` that answered it
+    (without an error) declined, and how many answered it."""
+    counts: dict[str, tuple[int, int]] = {}
+    for run in saved:
+        for result in run.results:
+            if result.error:
+                continue
+            declined, answered = counts.get(result.query_id, (0, 0))
+            counts[result.query_id] = (
+                declined + int(bool(result.abstained)),
+                answered + 1,
+            )
+    return counts
 
 
 def _text(value: str | None) -> str:

@@ -13,13 +13,14 @@ of those by id (:func:`entity`).
 An ingestion job exports nothing of its own (an incremental run writes no
 graph): the page, once opened, gets the namespace's graph as
 ``run-visualization`` does (:func:`current_graph`), rebuilt from the stores
-only when no export shows the build they hold."""
+only when no export shows the build they hold (:class:`GraphBuilder`)."""
 
 from __future__ import annotations
 
 import json
 import threading
 from collections import Counter, OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -37,10 +38,17 @@ from unified_kg_rag.domain.ingestion.visualization_data import (
 )
 from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
+from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import DataProcessingError
 
 if TYPE_CHECKING:
     from unified_kg_rag.domain.models import Config
+
+# A provider bundle (``build_providers``'s): the console names no adapter
+# module, even for typing (tests/unit/test_run_console.py).
+Providers = Any
+
+logger = get_logger(__name__)
 
 # The node attributes the page reads; the rest stay on the server.
 MAX_DESCRIPTION = 1200
@@ -61,16 +69,44 @@ class GraphDataError(DataProcessingError):
     """The file is not exported visualization data."""
 
 
-def current_graph(config: Config, cache_directory: Path) -> Path | None:
+@dataclass(frozen=True)
+class CurrentGraph:
+    """The Graph page's graph of the config's index namespace
+    (:func:`current_graph`). ``state``: ``current`` (``path`` shows what the
+    stores hold, from the build that finished at ``built_at``),
+    ``export_off`` (``graph.visualization.export_data`` off: nothing is
+    built) or ``unrecorded`` (no build record: nothing ingested, or indexed
+    by a release before build records, whose graph cannot be told current);
+    ``failed`` when building it raised (:class:`GraphBuilder`)."""
+
+    state: str
+    namespace: str | None
+    built_at: str | None = None
+    path: Path | None = None
+
+    def view(self) -> dict[str, Any]:
+        return {
+            "state": self.state,
+            "namespace": self.namespace,
+            "built_at": self.built_at,
+        }
+
+
+def current_graph(
+    config: Config,
+    cache_directory: Path,
+    providers: Callable[[], Providers] | None = None,
+) -> CurrentGraph:
     """The visualization data of the config's index namespace that shows
     what its stores hold (``current_visualization_data``, the builder
     ``run-visualization`` uses): the newest export under the cache (and
     ``graph.visualization.outputs_directory``) that names the build its
     build record names, else one built from the stores into
     ``graph.visualization.outputs_directory``, else
-    ``<cache>/console-graphs/<namespace>/``. ``None``, building nothing,
-    with ``graph.visualization.export_data`` off or no build recorded (an
-    empty namespace).
+    ``<cache>/console-graphs/<namespace>/``. Nothing is built (nor a
+    provider bundle) with ``graph.visualization.export_data`` off or no
+    build recorded (an empty namespace). ``providers`` gives the bundle to
+    read the stores with (default: one built for ``config``).
 
     Raises:
         ConfigurationError: The vector store cannot page its items.
@@ -82,13 +118,13 @@ def current_graph(config: Config, cache_directory: Path) -> Path | None:
         stored_export,
     )
 
-    if not config.graph.visualization.export_data:
-        return None
     suffix = resolve_namespace(config, None)
-    providers = build_providers(config)
-    built_at, _ = stored_export(providers, suffix)
+    if not config.graph.visualization.export_data:
+        return CurrentGraph("export_off", suffix)
+    bundle = providers() if providers is not None else build_providers(config)
+    built_at, _ = stored_export(bundle, suffix)
     if built_at is None:
-        return None
+        return CurrentGraph("unrecorded", suffix)
     configured = config.graph.visualization.outputs_directory
     directory = (
         Path(configured)
@@ -96,12 +132,63 @@ def current_graph(config: Config, cache_directory: Path) -> Path | None:
         else cache_directory / ON_DEMAND_DIRECTORY / suffix
     )
     path, _ = current_visualization_data(
-        providers,
+        bundle,
         suffix,
         [cache_directory, *([Path(configured)] if configured else [])],
         directory / VISUALIZATION_DATA_FILENAME,
     )
-    return path
+    return CurrentGraph("current", suffix, built_at, path)
+
+
+class GraphBuilder:
+    """Brings the Graph page's graph up to date when the page opens
+    (:func:`current_graph`), one build at a time, reading the stores with
+    one provider bundle per config: the console keeps its config object
+    until Settings saves another, so opening the page again builds none."""
+
+    def __init__(self, cache_directory: Path) -> None:
+        self.cache_directory = cache_directory
+        self._lock = threading.Lock()
+        self._providers: tuple[Config, Providers] | None = None
+
+    def current(self, load_config: Callable[[], Config]) -> CurrentGraph:
+        """:func:`current_graph` of the config ``load_config`` reads;
+        ``failed`` (logged) when either raises, the page then listing the
+        exports there are."""
+        with self._lock:
+            namespace = None
+            try:
+                config = load_config()
+                namespace = resolve_namespace(config, None)
+                return current_graph(
+                    config, self.cache_directory, lambda: self._bundle(config)
+                )
+            except Exception as e:  # noqa: BLE001 - the page still lists the exports
+                logger.warning("Building the graph for the Graph page failed: %s", e)
+                return CurrentGraph("failed", namespace)
+
+    def _bundle(self, config: Config) -> Providers:
+        from unified_kg_rag.application.bootstrap import build_providers
+
+        if self._providers is None or self._providers[0] is not config:
+            self._providers = (config, build_providers(config))
+        return self._providers[1]
+
+
+def mark_outdated(graphs: list[dict[str, Any]], current: CurrentGraph) -> None:
+    """Mark each of ``graphs`` (:func:`find_graphs`) ``outdated`` when a
+    later build of its namespace exists: the build record's, for the
+    config's namespace once it is known, else the latest an export of the
+    namespace names. An export that names no namespace is never marked."""
+    latest: dict[str, str] = {}
+    for g in graphs:
+        if g["namespace"] and g["built_at"]:
+            latest[g["namespace"]] = max(latest.get(g["namespace"], ""), g["built_at"])
+    if current.namespace is not None and current.built_at is not None:
+        latest[current.namespace] = current.built_at
+    for g in graphs:
+        build = latest.get(g["namespace"]) if g["namespace"] else None
+        g["outdated"] = build is not None and g["built_at"] != build
 
 
 def find_graphs(roots: Roots, names: tuple[str, ...]) -> list[dict[str, Any]]:

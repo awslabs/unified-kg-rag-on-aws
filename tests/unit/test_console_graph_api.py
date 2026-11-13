@@ -6,6 +6,7 @@ exported ``visualization_data.json`` (no app, no stores)."""
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -120,3 +121,54 @@ def test_a_graph_file_is_named_by_its_namespace_not_the_last_run(
     # An export of an earlier release names no namespace: its run then.
     assert found["older-run"]["label"] == "older-run"
     assert found["older-run"]["namespace"] is None
+
+
+def test_an_export_older_than_its_namespace_s_build_is_outdated() -> None:
+    def export(namespace: str | None, built_at: str | None) -> dict[str, object]:
+        return {"namespace": namespace, "built_at": built_at}
+
+    graphs = [
+        export("default", "2026-11-02T00:00:00Z"),
+        export("default", "2026-11-01T00:00:00Z"),
+        export("tenant-a", "2026-11-01T00:00:00Z"),
+        export("tenant-a", "2026-10-01T00:00:00Z"),
+        export(None, None),
+    ]
+    # The build record names a later build than any export of "default".
+    current = graph_api.CurrentGraph("current", "default", "2026-11-03T00:00:00Z")
+    graph_api.mark_outdated(graphs, current)
+    assert [g["outdated"] for g in graphs] == [True, True, False, True, False]
+    graph_api.mark_outdated(graphs, graph_api.CurrentGraph("failed", None))
+    assert [g["outdated"] for g in graphs] == [False, True, False, True, False]
+
+
+def test_the_graph_page_builds_one_provider_bundle_per_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Opening the page again reuses the bundle (rv26 architecture: it was
+    built, and logged, on every open); a saved config builds another."""
+    from unified_kg_rag.application import bootstrap
+    from unified_kg_rag.domain.models import Config
+
+    built: list[object] = []
+    monkeypatch.setattr(
+        bootstrap, "build_providers", lambda config: built.append(config) or config
+    )
+    read: list[object] = []
+
+    def current(config: object, cache: Path, providers: Any) -> object:
+        read.append(providers())
+        return graph_api.CurrentGraph("unrecorded", "default")
+
+    monkeypatch.setattr(graph_api, "current_graph", current)
+    builder = graph_api.GraphBuilder(tmp_path)
+    first, second = Config(), Config()
+    for config in (first, first, second):
+        assert builder.current(lambda c=config: c).state == "unrecorded"
+    assert built == [first, second]
+    assert read == [first, first, second]
+
+    def broken() -> Config:
+        raise ValueError("no config")
+
+    assert builder.current(broken) == graph_api.CurrentGraph("failed", None)

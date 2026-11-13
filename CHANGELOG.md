@@ -931,16 +931,20 @@ From a `main` checkout (formats and keys no release had):
   source `stated_by_passages`), file, seed graph and IRI and into the
   graph; ingest a workspace folder or an upload with a methodology profile (starting from what the namespace's build
   record holds; a run that would drop a held methodology for every corpus in the namespace starts only once
-  confirmed), with live stage progress, the run's WARNINGs (a run that extracted no entity flagged) and a stop the
+  confirmed), with live stage progress, the run's WARNINGs (a run that extracted no entity flagged; one whose
+  warnings advise a rebuild offers it), a rebuild of the namespace for one run (`--reset`) and a stop the
   pipeline checkpoints; run and compare evaluations (progress per answer; paired deltas called by their
   Holm-adjusted p-value with the family's simultaneous interval and the primary metric marked, falling back to the
   interval for older comparisons; gates, cost, declines, win rates by answer length, each metric described on hover,
   and per question every strategy's primary-metric score, its win, tie or loss and the answers side by side, a
-  question marked unanswerable read by whether each answer declined) and open saved runs; explore the namespace's
-  graph, built from the stores when the Graph page opens and no export shows them, as no console job exports one
-  (search, neighbourhoods, communities, degree, schema conformance, seed versus document evidence); a dashboard of
-  the questions and jobs run through it (time, tokens, cost per strategy, model and role; a question refused as asked,
-  as on an empty namespace, counted apart from the errors); and edit the
+  question marked unanswerable read by the share of its repeats that declined) and open saved runs; explore the
+  namespace's graph, built from the stores (one provider bundle per config) when the Graph page opens and no export
+  shows them, as no console job exports one (each export named by namespace, run and build time, a replaced one
+  marked outdated; without one, the page says why: nothing ingested, no build record, or the export off; search,
+  neighbourhoods, communities, degree, schema conformance, seed versus document evidence); a dashboard of the
+  questions and jobs run through it (time, tokens, cost per strategy, model and role; a question refused as asked,
+  as on an empty namespace, counted apart from the errors and, like a cancelled one, left out of every time and of
+  the decline rate); and edit the
   config file with validation, a diff before saving, a confirmation before a provider endpoint or a file or directory
   path changes (every config key that names one), each save logged (the key paths of the endpoints and directories it
   changed, never values), and secrets never shown or written. Jobs run the unchanged
@@ -956,8 +960,8 @@ From a `main` checkout (formats and keys no release had):
   system's unless one is chosen in the top bar), set in Pretendard (Pretendard JP for Japanese, JetBrains Mono for
   figures; self-hosted, SIL OFL), with a force-directed canvas graph (laid out warm from the server's packed layout
   with a weak pull to the centre; labels in screen pixels, the focused node's and its neighbours' first, at the first
-  clear side of each node, up to a share of the canvas; the rest dimmed, edges fading as they multiply, nodes edged
-  at 3:1 in the light theme; the 600 best-connected entities
+  clear side of each node, inside the canvas and over no drawn node, up to a share of the canvas; the rest dimmed,
+  edges fading as they multiply, nodes edged at 3:1 in the light theme; the 600 best-connected entities
   drawn and sent whole, the rest by name, found by search or in a paged table and read on demand; a file read once
   per version), to the brief in `console/web/DESIGN.md`; `console/demo/demo.py` prepares a synthetic corpus of
   the formats the core install parses (multi-page PDFs, whose citations name their page, Markdown, HTML, CSV, JSON

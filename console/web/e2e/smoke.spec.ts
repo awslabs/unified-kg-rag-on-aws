@@ -146,3 +146,37 @@ for (const locale of ["en", "de", "fr", "ru", "es"]) {
     });
   }
 }
+
+// Regression (rv26): narrowing the window folded the top bar into its menu,
+// skipping the compaction steps (each step was measured as the row's
+// scrollWidth, never under its width at load). Loaded wide and narrowed,
+// the row takes the step it takes when loaded at that width.
+for (const locale of ["en", "ko", "de"]) {
+  test(`the top bar compacts as the window narrows in ${locale}`, async ({ browser, baseURL }) => {
+    const origin = new URL(baseURL ?? "http://127.0.0.1:8501").origin;
+    const token = new URL(process.env.CONSOLE_URL ?? origin).searchParams.get("token") ?? process.env.CONSOLE_TOKEN;
+    const open = async (width: number) => {
+      const context = await browser.newContext({ viewport: { width, height: 900 } });
+      await context.addInitScript((code) => window.localStorage.setItem("ukr-console-locale", code), locale);
+      const page = await context.newPage();
+      const statusRead = page.waitForResponse((response) => response.url().includes("/api/status"));
+      await page.goto(token ? `/ask?token=${encodeURIComponent(token)}` : "/ask");
+      await statusRead;
+      await page.evaluate(() => document.fonts.ready.then(() => undefined));
+      await page.waitForTimeout(100);
+      return { context, page };
+    };
+    const fold = (page: import("@playwright/test").Page) => page.locator("header.nav").getAttribute("data-fold");
+    const wide = await open(1920);
+    for (const width of [1280, 1180]) {
+      await wide.page.setViewportSize({ width, height: 900 });
+      await wide.page.waitForTimeout(200);
+      const direct = await open(width);
+      expect(await fold(wide.page), `${width} px`).toBe(await fold(direct.page));
+      const overflow = await wide.page.locator(".nav-inner").evaluate((row) => row.scrollWidth - row.clientWidth);
+      expect(overflow).toBeLessThanOrEqual(0);
+      await direct.context.close();
+    }
+    await wide.context.close();
+  });
+}

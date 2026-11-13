@@ -9,7 +9,7 @@ import { useI18n } from "../i18n/i18n";
 import { get } from "../lib/api";
 import { navigate } from "../lib/router";
 import { useTrail } from "../lib/trail";
-import type { GraphData, GraphEntity, GraphEntityRef, GraphNode } from "../lib/types";
+import type { GraphData, GraphEntity, GraphEntityRef, GraphNode, NamespaceHeld } from "../lib/types";
 import { useApi } from "../lib/useApi";
 import { contentLang } from "../lib/contentLang";
 
@@ -19,8 +19,24 @@ const GraphCanvas = lazy(() => import("../components/GraphCanvas").then((m) => (
 interface GraphFile {
   ref: string;
   label: string;
+  /** The namespace the export holds (null: an export of an earlier release),
+   * the run that wrote it and the build it shows (its finish time). */
+  namespace: string | null;
+  run: string;
+  built_at: string | null;
+  /** A later build of its namespace exists. */
+  outdated: boolean;
   modified: number;
   bytes: number;
+}
+
+/** Why the config's namespace has a graph or not: ``current`` (shown),
+ * ``export_off`` (graph.visualization.export_data off), ``unrecorded`` (no
+ * build record) or ``failed`` (building it raised; the log says why). */
+interface CurrentGraph {
+  state: "current" | "export_off" | "unrecorded" | "failed";
+  namespace: string | null;
+  built_at: string | null;
 }
 
 type Panel = "entity" | "communities" | "analysis";
@@ -31,10 +47,20 @@ const OTHER_GROUPS = "\u0000other";
 
 export function GraphPage({ params }: { params: URLSearchParams }) {
   const { t, date } = useI18n();
-  const files = useApi(() => get<{ graphs: GraphFile[] }>("graphs"), []);
+  const files = useApi(() => get<{ graphs: GraphFile[]; current: CurrentGraph }>("graphs"), []);
   const [chosen, setChosen] = useState<string | null>(params.get("graph"));
   const ref = chosen ?? files.data?.graphs[0]?.ref ?? null;
   const graph = useApi(() => (ref ? get<GraphData>("graphs/data", { ref }) : Promise.resolve(null)), [ref]);
+  const none = !!files.data && !files.data.graphs.length;
+  // No build record: an empty namespace, or one indexed before build
+  // records were written (the stores answer, yet no graph is current).
+  const unrecorded = none && files.data?.current.state === "unrecorded";
+  const held = useApi(() => (unrecorded ? get<NamespaceHeld>("namespace/methodologies").catch(() => null) : Promise.resolve(null)), [unrecorded]);
+  const fileLabel = (g: GraphFile) => {
+    const built = g.built_at ? Date.parse(g.built_at) / 1000 : NaN;
+    const parts = [g.label, ...(g.run !== g.label ? [g.run] : []), date(Number.isNaN(built) ? g.modified : built)];
+    return `${parts.join(" · ")}${g.outdated ? ` (${t("graph.outdated")})` : ""}`;
+  };
 
   return (
     <>
@@ -48,7 +74,7 @@ export function GraphPage({ params }: { params: URLSearchParams }) {
               <select className="select" value={ref ?? ""} onChange={(e) => setChosen(e.target.value)}>
                 {files.data.graphs.map((g) => (
                   <option key={g.ref} value={g.ref}>
-                    {g.label} · {date(g.modified)}
+                    {fileLabel(g)}
                   </option>
                 ))}
               </select>
@@ -57,21 +83,34 @@ export function GraphPage({ params }: { params: URLSearchParams }) {
         }
       />
       <ErrorText error={files.error ?? graph.error} />
-      {files.data && !files.data.graphs.length ? (
-        <Empty
-          title={t("graph.noneTitle")}
-          action={
-            <button className="button" onClick={() => navigate("ingest")}>
-              {t("common.goIngest")}
-            </button>
-          }
-        >
-          {t("graph.none")}
-        </Empty>
-      ) : null}
-      {graph.loading && ref ? <Loading /> : null}
+      {none ? <NoGraph state={files.data!.current.state} indexed={held.data?.indexed ?? null} namespace={files.data!.current.namespace} /> : null}
+      {files.loading || (unrecorded && held.loading) || (graph.loading && ref) ? <Loading /> : null}
       {graph.data && ref ? <GraphExplorer key={ref} graphRef={ref} data={graph.data} params={params} /> : null}
     </>
+  );
+}
+
+/** Why there is no graph to show, and the way to one: Settings when the
+ * export is off, Ingest for an empty namespace or one to rebuild once (no
+ * build record), nothing more to do when building it failed. */
+function NoGraph({ state, indexed, namespace }: { state: CurrentGraph["state"]; indexed: boolean | null; namespace: string | null }) {
+  const { t } = useI18n();
+  if (state === "unrecorded" && indexed === null) return null;
+  const why = state === "export_off" ? "exportOff" : state === "failed" ? "failed" : indexed ? "unrecorded" : "none";
+  const action =
+    why === "exportOff" ? (
+      <button className="button" onClick={() => navigate("settings")}>
+        {t("graph.openSettings")}
+      </button>
+    ) : why === "failed" ? undefined : (
+      <button className="button" onClick={() => navigate("ingest")}>
+        {t("common.goIngest")}
+      </button>
+    );
+  return (
+    <Empty title={t(`graph.${why}Title`, { namespace: namespace ?? "" })} action={action}>
+      {t(`graph.${why}`)}
+    </Empty>
   );
 }
 

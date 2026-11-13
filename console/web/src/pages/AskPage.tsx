@@ -60,6 +60,10 @@ export function AskPage({ status }: { status: Status | null }) {
   // Whether the namespace holds anything yet (read again after an ingestion).
   const ingested = (status?.jobs ?? []).filter((j) => j.kind === "ingest" && j.status === "succeeded").length;
   const held = useApi(() => get<NamespaceHeld>("namespace/methodologies").catch(() => null), [status?.config_path, ingested]);
+  // Nothing ingested: a question would be refused. (A namespace indexed
+  // before build records were written has none, yet answers.)
+  const empty = held.data ? !held.data.indexed : false;
+  const maxTopK = status?.max_top_k ?? 100;
   const [query, setQuery] = useState("");
   const [strategy, setStrategy] = useState("auto");
   const [followUp, setFollowUp] = useState(true);
@@ -173,9 +177,9 @@ export function AskPage({ status }: { status: Status | null }) {
                   <circle cx="22" cy="19" r="3.5" />
                   <circle className="lit" cx="14" cy="7" r="3.5" />
                 </svg>
-                {held.data && !held.data.recorded ? (
+                {empty ? (
                   <>
-                    <p className="welcome-title">{t("ask.emptyNamespaceTitle", { namespace: held.data.namespace })}</p>
+                    <p className="welcome-title">{t("ask.emptyNamespaceTitle", { namespace: held.data?.namespace ?? "" })}</p>
                     <span>{t("ask.emptyNamespace")}</span>
                     <button type="button" className="button button-primary" onClick={() => navigate("ingest")}>
                       {t("common.goIngest")}
@@ -184,7 +188,7 @@ export function AskPage({ status }: { status: Status | null }) {
                 ) : (
                   <p className="welcome-title">{t("ask.evidenceEmptyTitle")}</p>
                 )}
-                {status?.sample_questions.length && !(held.data && !held.data.recorded) ? (
+                {status?.sample_questions.length && !empty ? (
                   <>
                     <span>{t("ask.samples")}</span>
                     <div className="samples">
@@ -248,7 +252,7 @@ export function AskPage({ status }: { status: Status | null }) {
                     <div className="grid-cols" style={{ gap: 12 }}>
                       <label className="field">
                         <span className="field-label">{t("ask.topK")}</span>
-                        <input className="input" type="number" min={1} max={100} value={topK} onChange={(e) => setTopK(Math.max(1, Math.min(100, Number(e.target.value) || 10)))} />
+                        <input className="input" type="number" min={1} max={maxTopK} value={topK} onChange={(e) => setTopK(Math.max(1, Math.min(maxTopK, Number(e.target.value) || 10)))} />
                       </label>
                       <label className="field">
                         <span className="field-label">{t("ask.searchType")}</span>

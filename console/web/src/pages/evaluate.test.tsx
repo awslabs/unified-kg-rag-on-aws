@@ -14,9 +14,9 @@ const view: QuestionScores = {
   metric: "answer_match/answer_contains",
   strategies: ["local", "mix"],
   questions: [
-    { id: "q1", question: "Who ships parts?", ground_truth: "Vendor", scores: { local: 1, mix: 0 }, answers: { local: { text: "Vendor ships them.", error: null, abstained: false }, mix: { text: "Buyer.", error: null, abstained: false } } },
-    { id: "q2", question: "Who pays?", ground_truth: "Buyer", scores: { local: 0, mix: 1 }, answers: { local: { text: "Nobody.", error: null, abstained: false }, mix: { text: "Buyer pays.", error: null, abstained: false } } },
-    { id: "q3", question: "When?", ground_truth: "May", scores: { local: 1 }, answers: { local: { text: "In May.", error: null, abstained: false }, mix: { text: "", error: "timed out", abstained: false } } },
+    { id: "q1", question: "Who ships parts?", ground_truth: "Vendor", scores: { local: 1, mix: 0 }, answers: { local: { text: "Vendor ships them.", error: null, declined: 0, repeats: 1 }, mix: { text: "Buyer.", error: null, declined: 0, repeats: 1 } } },
+    { id: "q2", question: "Who pays?", ground_truth: "Buyer", scores: { local: 0, mix: 1 }, answers: { local: { text: "Nobody.", error: null, declined: 0, repeats: 1 }, mix: { text: "Buyer pays.", error: null, declined: 0, repeats: 1 } } },
+    { id: "q3", question: "When?", ground_truth: "May", scores: { local: 1 }, answers: { local: { text: "In May.", error: null, declined: 0, repeats: 1 }, mix: { text: "", error: "timed out", declined: 0, repeats: 0 } } },
   ],
 };
 
@@ -71,7 +71,7 @@ describe("QuestionTable", () => {
     const unanswerable: QuestionScores = {
       ...view,
       questions: [
-        { id: "q4", question: "Who audits the moon?", ground_truth: "", unanswerable: true, scores: {}, answers: { local: { text: "I cannot tell.", error: null, abstained: true }, mix: { text: "The Vendor.", error: null, abstained: false } } },
+        { id: "q4", question: "Who audits the moon?", ground_truth: "", unanswerable: true, scores: {}, answers: { local: { text: "I cannot tell.", error: null, declined: 1, repeats: 1 }, mix: { text: "The Vendor.", error: null, declined: 0, repeats: 1 } } },
       ],
     };
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(unanswerable), { status: 200 })));
@@ -87,5 +87,25 @@ describe("QuestionTable", () => {
     expect(screen.getByText("Should decline: the question is marked unanswerable.")).toBeInTheDocument();
     expect(container.querySelectorAll(".answers-side .badge-good")).toHaveLength(1);
     expect(container.querySelectorAll(".answers-side .badge-bad")).toHaveLength(1);
+    // Its outcome is read from the declines: mix declined less than local.
+    expect(screen.getByRole("button", { name: "Loss 1" })).toBeInTheDocument();
+  });
+
+  it("reads declines over every repeat and compares their shares", async () => {
+    const repeated: QuestionScores = {
+      ...view,
+      questions: [
+        { id: "q5", question: "Who audits the sun?", ground_truth: "", unanswerable: true, scores: {}, answers: { local: { text: "The Vendor.", error: null, declined: 1, repeats: 3 }, mix: { text: "The Buyer.", error: null, declined: 2, repeats: 3 } } },
+      ],
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(repeated), { status: 200 })));
+    const { container } = renderIn(<QuestionTable refName="outputs:run" candidate="mix" baseline="local" />);
+    const details = container.querySelector("details") as HTMLDetailsElement;
+    details.open = true;
+    fireEvent(details, new Event("toggle"));
+    await waitFor(() => expect(screen.getByText("Who audits the sun?")).toBeInTheDocument());
+    const cells = [...container.querySelectorAll("tbody tr td.num")].map((td) => td.textContent);
+    expect(cells).toEqual(["declined 1/3", "declined 2/3"]);
+    expect(screen.getByRole("button", { name: "Win 1" })).toBeInTheDocument();
   });
 });

@@ -302,12 +302,23 @@ kbd {
   font-size: var(--text-xs);
   color: var(--ink);
 }
+/* The dot says whether the namespace holds an index: filled green once it
+   does, hollow while nothing is ingested (the chip's name says so too),
+   grey until known. */
 .namespace-chip::before {
   content: "";
+  box-sizing: border-box;
   width: 7px;
   height: 7px;
   border-radius: 50%;
+  background: var(--graphite);
+}
+.namespace-chip[data-indexed="true"]::before {
   background: var(--good);
+}
+.namespace-chip[data-indexed="false"]::before {
+  background: transparent;
+  border: 1.5px solid var(--graphite);
 }
 
 /* The theme toggle: one group of three. */

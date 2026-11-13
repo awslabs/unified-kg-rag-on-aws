@@ -172,21 +172,78 @@ function sides(c: LabelCandidate): PlacedLabel[] {
 
 const overlaps = (a: PlacedLabel, b: PlacedLabel) => !(a.x + a.width <= b.x || b.x + b.width <= a.x || a.y + a.height <= b.y || b.y + b.height <= a.y);
 
+/** A drawn node's disc on screen (a label box must not cover it). */
+export interface Disc {
+  id: string;
+  cx: number;
+  cy: number;
+  r: number;
+}
+
+/** Whether the box covers any of the disc (its nearest point is inside). */
+function covers(box: PlacedLabel, disc: Disc): boolean {
+  const dx = disc.cx - Math.max(box.x, Math.min(disc.cx, box.x + box.width));
+  const dy = disc.cy - Math.max(box.y, Math.min(disc.cy, box.y + box.height));
+  return dx * dx + dy * dy < disc.r * disc.r;
+}
+
+// The discs are bucketed in square cells of this many pixels, so a box is
+// tested against the discs near it only.
+const CELL = 32;
+
+function discGrid(discs: Disc[]): (box: PlacedLabel, own: string) => boolean {
+  const cells = new Map<string, Disc[]>();
+  const span = (low: number, high: number) => [Math.floor(low / CELL), Math.floor(high / CELL)] as const;
+  for (const d of discs) {
+    const [x0, x1] = span(d.cx - d.r, d.cx + d.r);
+    const [y0, y1] = span(d.cy - d.r, d.cy + d.r);
+    for (let x = x0; x <= x1; x++)
+      for (let y = y0; y <= y1; y++) {
+        const key = `${x},${y}`;
+        const cell = cells.get(key);
+        if (cell) cell.push(d);
+        else cells.set(key, [d]);
+      }
+  }
+  return (box, own) => {
+    const [x0, x1] = span(box.x, box.x + box.width);
+    const [y0, y1] = span(box.y, box.y + box.height);
+    for (let x = x0; x <= x1; x++)
+      for (let y = y0; y <= y1; y++) for (const d of cells.get(`${x},${y}`) ?? []) if (d.id !== own && covers(box, d)) return true;
+    return false;
+  };
+}
+
+/** Where labels may go: a density bound (``area`` square pixels), the
+ * canvas (``width`` × ``height``: a box must lie inside it) and the drawn
+ * nodes' ``discs`` (a box must cover none). */
+export interface LabelBounds {
+  area?: number;
+  width?: number;
+  height?: number;
+  discs?: Disc[];
+}
+
 /** The labels to draw, greedily: the strong ones, then the most connected
- * first, each at the first of its four sides clear of those already placed
- * (skipped when none is), until the labels cover ``area`` square pixels (a
- * density bound; the strong ones always count and are always placed). */
-export function placeLabels(candidates: LabelCandidate[], area = Infinity): PlacedLabel[] {
+ * first, each at the first of its four sides inside the canvas and clear of
+ * the drawn nodes and of the labels already placed (skipped when none is),
+ * until the labels cover ``area`` square pixels (a density bound; the strong
+ * ones always count and are always placed, inside the canvas when a side
+ * is). */
+export function placeLabels(candidates: LabelCandidate[], { area = Infinity, width = Infinity, height = Infinity, discs = [] }: LabelBounds = {}): PlacedLabel[] {
   const order = [...candidates].sort((a, b) => Number(b.strong) - Number(a.strong) || b.degree - a.degree);
+  const overNode = discGrid(discs);
+  // Unbounded without a canvas size.
+  const inside = (o: PlacedLabel) => (o.x >= 0 || width === Infinity) && (o.y >= 0 || height === Infinity) && o.x + o.width <= width && o.y + o.height <= height;
   const placed: PlacedLabel[] = [];
   let covered = 0;
   for (const c of order) {
     const size = c.width * c.height;
     if (!c.strong && covered + size > area) continue;
     const options = sides(c);
-    const clear = options.find((o) => placed.every((p) => !overlaps(o, p)));
+    const clear = options.find((o) => inside(o) && !overNode(o, c.id) && placed.every((p) => !overlaps(o, p)));
     if (!clear && !c.strong) continue;
-    placed.push(clear ?? (options[0] as PlacedLabel));
+    placed.push(clear ?? options.find(inside) ?? (options[0] as PlacedLabel));
     covered += size;
   }
   return placed;
@@ -430,8 +487,8 @@ export function GraphCanvas({ data, colorOf, selected, highlighted, traced, trac
 
   // The labels, after every node and edge: in screen pixels, of the lit
   // nodes on screen, placed most connected first beside, then above or below
-  // their node without overlapping, up to a share of the canvas (the
-  // focused, selected and traced ones always).
+  // their node, inside the canvas and over no other label or drawn node, up
+  // to a share of the canvas (the focused, selected and traced ones always).
   const labels = (ctx: CanvasRenderingContext2D, scale: number) => {
     const dpr = window.devicePixelRatio || 1;
     const { width, height } = size;
@@ -441,22 +498,25 @@ export function GraphCanvas({ data, colorOf, selected, highlighted, traced, trac
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.font = `600 ${LABEL_PX}px ${palette.font}`;
+    const discs: Disc[] = [];
     for (const n of graphData.nodes) {
       const id = n.id;
-      if (!isLit(id)) continue;
-      const strong = id === focus || id === selected || traced.has(id);
       const [cx, cy] = toScreen(view, n.x ?? 0, n.y ?? 0, dpr);
-      if (cx < 0 || cx > width || cy < 0 || cy > height) continue;
+      const r = radius(n, scale) * scale;
+      if (cx + r < 0 || cx - r > width || cy + r < 0 || cy - r > height) continue;
+      discs.push({ id, cx, cy, r });
+      if (!isLit(id) || cx < 0 || cx > width || cy < 0 || cy > height) continue;
+      const strong = id === focus || id === selected || traced.has(id);
       const key = `${palette.font}\u0000${n.name}`;
       let textWidth = widths.current.get(key);
       if (textWidth === undefined) {
         textWidth = ctx.measureText(n.name).width;
         widths.current.set(key, textWidth);
       }
-      candidates.push({ id, cx, cy, r: radius(n, scale) * scale, width: textWidth + 4, height: LABEL_PX + 4, strong, degree: n.degree });
+      candidates.push({ id, cx, cy, r, width: textWidth + 4, height: LABEL_PX + 4, strong, degree: n.degree });
       names.set(id, { name: n.name, strong });
     }
-    const placed = placeLabels(candidates, width * height * LABEL_COVER);
+    const placed = placeLabels(candidates, { area: width * height * LABEL_COVER, width, height, discs });
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";

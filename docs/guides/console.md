@@ -127,8 +127,8 @@ port can query the index, start jobs and edit the configuration.
 
 **Ask.** A question box with the strategy picker: `auto` and the strategies
 grouped by methodology, those the index namespace does not hold disabled
-with the reason. A namespace nothing was ingested into yet (no build
-record) says so before the first question, with a way to Ingest, and a
+with the reason. A namespace nothing was ingested into yet says so
+before the first question, with a way to Ingest, and a
 question to it names the same. The answer streams in as the answer model writes it; the
 final answer then replaces it (it is the one a decline or the output
 guardrail decided). Under it: for `auto`, the strategy it chose and how
@@ -175,7 +175,9 @@ listed, and the run starts only once you confirm removing them: the
 namespace then stops serving their strategies for every corpus in it, not
 only this one (the API refuses it as `narrowing` without
 `confirm_narrowing`). Under more options: another
-index namespace, a forced recompute and the answers to the two questions a
+index namespace, a rebuild of the namespace from the whole corpus for this
+run only (`--reset`, so no setting has to be switched back; what the corpus
+does not hold is dropped from the namespace), a forced recompute and the answers to the two questions a
 run can ask (a reset that drops another source's content, a mass
 deletion). Start runs `run-ingestion` with a pipeline id per corpus folder
 (its name and a hash of its path and namespace), so running the same corpus
@@ -188,7 +190,9 @@ beforehand. The run's
 stages appear as a column of stations as they finish (from the pipeline's
 own metadata), with their time, outputs and model calls, each failed
 stage's error and failed files, and the log's tail. A finished run counts
-the WARNINGs it logged and lists the last 20, and flags a run that
+the WARNINGs it logged and lists the last 20 (one that advises a rebuild,
+community drift or re-clustering due, offers to start the run again with
+the rebuild), and flags a run that
 processed documents but extracted no entity from them. Stop sends the CLI
 the stop it is built for: the finished stages are kept and the next run of
 the corpus resumes. A job a console left running when it stopped is shown
@@ -233,14 +237,19 @@ question**, read once opened, lists each question with every strategy's
 score on the primary metric (the mean over its repeats) and its outcome
 (win, tie or loss) for the shown candidate against its baseline, filterable
 by outcome; a question opens the reference answer and every strategy's
-answer side by side. A question marked unanswerable shows whether each
-answer declined, the right answer to it. A job's gates show as passed or failed.
+answer side by side. A question marked unanswerable shows how many of each
+strategy's repeats declined, the right answer to it, and its outcome compares
+those shares. A job's gates show as passed or failed.
 
 **Graph.** A `visualization_data.json` of the namespace (the newest by
 default): a full build writes the namespace's whole graph, and no console
 job exports one, so when the page opens and no export shows what the stores
 hold (after an incremental job) the console builds it from them, as
-`run-visualization` does. It is drawn with a seeded layout per connected component: pan with a
+`run-visualization` does. The picker names each export's namespace, run and
+build time, and marks one a later build of its namespace replaced as
+outdated. Without a graph the page says why: nothing ingested yet, a
+namespace indexed before build records (rebuild it once), or
+`graph.visualization.export_data` off (Settings). It is drawn with a seeded layout per connected component: pan with a
 drag or the arrow keys, zoom with the wheel or `+`/`-`. Colour by community
 or by type (the eight largest groups, the rest grey, named in the legend).
 Find an entity by name; selecting one shows its type, description,
@@ -254,8 +263,9 @@ both). A table of every entity is under the graph.
 
 **Dashboard.** Over the last day, week, month or year: the questions asked
 through the console, their median and 95th percentile time, the decline
-and error counts (a question refused as asked, on an empty namespace or
-with a filter to change, is counted apart, not as an error) and the cost;
+rate, the errors and the refused questions (refused as asked, on an empty
+namespace or with a filter to change: not errors, and like a cancelled
+one left out of every time and of the decline rate) and the cost;
 questions and median time per day; per
 strategy, model and role the calls, tokens and cost; and the jobs with
 their duration, calls, tokens and cost. Costs need `evaluation.prices`
