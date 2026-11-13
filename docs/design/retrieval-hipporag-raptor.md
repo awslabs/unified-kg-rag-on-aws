@@ -494,7 +494,11 @@ Unchanged clusters cost no call (`input_key` reuse) and no embedding
    id as the same leaf (its stored text, translation into the index
    language and document filters equal the delta's: a FAILED document's
    retry): the tree over it is unchanged, so its summaries stay, none is
-   asked again and `refresh: on_reset` loses none. Ids hold the document
+   asked again and `refresh: on_reset` loses none. Such a unit is not
+   deleted either (the commit's upsert replaces it), so a run killed or a
+   write-back rejected before the commit leaves the stored leaf for the
+   next removal to compare, and no summary cites a unit the store lost.
+   Ids hold the document
    version, so a changed document's units are removed; a chunking or
    translation change changes the leaf, so its summaries go; a failed read
    of the stored leaves deletes them (fail-closed). A full build (reset, or a run without the registry)

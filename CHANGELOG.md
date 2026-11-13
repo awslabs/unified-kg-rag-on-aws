@@ -1021,8 +1021,9 @@ From a `main` checkout (formats and keys no release had):
   `VectorIndexer` port gains the summary-tree methods (each with a "cannot" default). Differential tests against the
   original code ship with recorded fixtures. The build record keeps naming a live tree while a run rebuilds it (the
   summaries citing removed text deleted first, which marks the tree record `pruned`, so the tree is rebuilt over the
-  same text units too; a FAILED document's retry that writes its text units back as the same leaves keeps their
-  summaries and asks for none), so `tree` is served during and after a write run, and is refused
+  same text units too; a FAILED document's retry that writes its text units back as the same leaves does not delete
+  them (its commit replaces them) and keeps their summaries, asking for none, also when the run dies before the
+  write-back under `refresh: on_reset`), so `tree` is served during and after a write run, and is refused
   only once a tree build fails; a full build without `raptor` deletes the tree's indices; a partial tree is built
   again under `refresh: on_reset`; the leaves' vectors are read as float32 arrays (about 15 KiB per leaf read instead
   of 40-60 KiB, about 50 KiB at the build's peak) and `max_leaves_in_memory` is checked before they are read, at a
