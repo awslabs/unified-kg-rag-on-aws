@@ -439,6 +439,12 @@ def _kind_census(
     )
 
 
+# ``json.dumps(..., ensure_ascii=False)`` builds an encoder per call: a census
+# of 50,000 edges makes 250,000 of them, so the one encoder is shared (the
+# same text).
+_ENCODE = json.JSONEncoder(ensure_ascii=False).encode
+
+
 class _Digest:
     """SHA-256 of rows, one JSON array a line."""
 
@@ -446,7 +452,7 @@ class _Digest:
         self._sha = hashlib.sha256()
 
     def add(self, row: Iterable[Any]) -> None:
-        self._sha.update(json.dumps(list(row), ensure_ascii=False).encode() + b"\n")
+        self._sha.update(_ENCODE(list(row)).encode() + b"\n")
 
     def hexdigest(self) -> str:
         return self._sha.hexdigest()
