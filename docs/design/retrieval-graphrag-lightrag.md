@@ -105,7 +105,10 @@ the methodology: GraphRAG's (§6.1) and LightRAG's (§6.2), the wrapper
 - **simple** — vector and lexical search over every index the namespace holds,
   no graph: each index is searched for its own `top_k` × `retrieval_multiplier`
   candidates (one fusion bucket per index, `simple_<index>`), the union is
-  fused by RRF, reranked and cut to `top_k`. The claims index joins the sweep
+  fused on each bucket's min-max normalized score (`combine_min_max`, weighted
+  by `fusion_weights`; RRF over buckets that share no item is a round-robin,
+  so a run without a reranker gave every index the same share), reranked and
+  cut to `top_k`. The claims index joins the sweep
   only when claim extraction is on, the summary tree's when RAPTOR is built
   (left out under a filter key it does not store, as `tree` does).
 - **local** — candidate entities → graph expansion → frequency filter → their

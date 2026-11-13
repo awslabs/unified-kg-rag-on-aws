@@ -23,6 +23,7 @@ from unified_kg_rag.domain.models import (
     RetrieverRole,
     SearchQuery,
     SearchStrategy,
+    SectionType,
 )
 from unified_kg_rag.domain.retrieval.index_prefixes import all_index_prefixes
 
@@ -300,3 +301,51 @@ async def test_the_summary_tree_joins_the_sweep_where_it_is_built(
         SearchQuery(query="q", metadata={"held_artifacts": ["text_units"]})
     )
     assert _swept(os_r) == [o.text_units_index_prefix]
+
+
+class _ShapedRetriever(FakeRetriever):
+    """The text units' hits level, the entities' falling off steeply."""
+
+    LEVEL = [0.9, 0.89, 0.88, 0.87, 0.86]
+    STEEP = [0.9, 0.2, 0.1, 0.05, 0.01]
+
+    async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+        self.calls.append(query)
+        assert isinstance(query.index_prefixes, list)
+        prefix = query.index_prefixes[0]
+        text = prefix.endswith("text-units")
+        kind = SectionType.TEXT if text else SectionType.ENTITY
+        return [
+            RetrievalResult(
+                content=f"{prefix} hit {rank}",
+                score=score,
+                source=f"{prefix}-{rank}",
+                retriever_type=kind,
+            )
+            for rank, score in enumerate(self.LEVEL if text else self.STEEP)
+        ]
+
+
+async def test_without_a_reranker_the_indexes_share_slots_by_score(
+    config: Config,
+) -> None:
+    # Regression (rv25): fused by rank (RRF), buckets that never share an
+    # item took equal shares (a round-robin) whatever their scores, and a
+    # run without a reranker kept that. They fuse on each bucket's min-max
+    # normalized score: the level text units seat more than one entity
+    # after the entities' best.
+    config.search.fusion.diversity_lambda = 1.0
+    o = config.indexing.opensearch
+    strategy = get_strategy_spec(SearchStrategy.SIMPLE).strategy_class(
+        config=config,
+        retrievers={RetrieverRole.DOCUMENT.value: _ShapedRetriever()},
+    )
+    strategy.hybrid_scorer.rerank_model = None
+    prefixes = [o.text_units_index_prefix, o.entities_index_prefix]
+
+    out = await strategy.asearch(
+        SearchQuery(query="q", top_k=4, index_prefixes=prefixes)
+    )
+
+    kinds = [r.retriever_type for r in out.results]
+    assert kinds.count(SectionType.TEXT) == 3 and kinds.count(SectionType.ENTITY) == 1

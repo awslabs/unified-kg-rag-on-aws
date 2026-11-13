@@ -1930,8 +1930,9 @@ Queries and retrieval.
   stores the type (`RELATED_TO` when untyped; not a filter key) and the line reads `A -[TYPE]-> B` (#562).
 - With MMR on, `local` and `drift` keep every reserved text-chunk slot (#247).
 - `simple` no longer ranks hits of different indexes by raw score, and each index brings its own `top_k` ×
-  `retrieval_multiplier` candidates, fused and reranked as one pool before the `top_k` cut (one search kept that many
-  across every index, two or three each, and lost to `naive`); it reads the summary tree where RAPTOR is built.
+  `retrieval_multiplier` candidates, fused on each index's min-max normalized score (rank fusion gave every index the
+  same share without a reranker) and reranked as one pool before the `top_k` cut (one search kept that many across
+  every index, two or three each, and lost to `naive`); it reads the summary tree where RAPTOR is built.
   Local and LightRAG incident-edge expansion keep no arbitrary hub edges; LightRAG keeps every typed edge between two
   entities; `hybrid` without keywords warns (#295, #317).
 - LightRAG `mix`/`hybrid` context includes the chunks the matched relationships cite (offline hybrid one-hop
