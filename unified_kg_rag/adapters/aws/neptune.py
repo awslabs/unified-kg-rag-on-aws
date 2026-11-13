@@ -71,17 +71,21 @@ def is_permanent_neptune_error(exc: BaseException) -> bool:
     return isinstance(exc, ValueError | TypeError)
 
 
-# Neptune engine error codes a later try of the same request may pass (the
-# same guide's "retry: yes" codes): the store was busy, not the request
-# wrong. TimeLimitExceededException is one too, but a traversal stopped at its
-# time limit takes as long again (``is_evaluation_timeout``).
+# Neptune engine error codes a later try of the same read may pass (the
+# same guide's "Ok to Retry? Yes" codes a read can meet): the store was busy,
+# not the request wrong. The guide's other "Yes" codes are a write's
+# (ConstraintViolationException), a client's (CancelledByUserException) or a
+# query's own fail() step (FailureByQueryException); its "Maybe",
+# TimeLimitExceededException, stops a traversal that takes as long again
+# (``is_evaluation_timeout``). InternalFailureException is "No".
 TRANSIENT_NEPTUNE_ERROR_CODES: frozenset[str] = frozenset(
     {
         "ConcurrentModificationException",
-        "InternalFailureException",
         "MemoryLimitExceededException",
         "QueryLimitExceededException",
         "ThrottlingException",
+        # HTTP 429; on the websocket it may come with another status.
+        "TooManyRequestsException",
     }
 )
 # Gremlin Server's (and so a local backend's) statuses for the same: 429
@@ -98,7 +102,16 @@ def is_transient_neptune_error(exc: BaseException) -> bool:
     error such as Gremlin Server's 597 "does not map to a value", an
     unknown processor, an error naming no code) fails the same way on every
     try. A lost connection or a timeout is not one either: it makes the store
-    unusable (``is_connection_lost``, ``is_timeout``)."""
+    unusable (``is_connection_lost``, ``is_timeout``).
+
+    The query path's rule (``NeptuneRetriever``). The indexer's writes keep
+    the wider one, every error but ``PERMANENT_NEPTUNE_ERROR_CODES``
+    (``is_permanent_neptune_error``), on purpose: a write that gives up
+    loses its items until the next run re-extracts or re-writes them, and it
+    must outlast a failover (a lost connection, an unclassified 5xx),
+    whereas a read that gives up only answers one query without those rows,
+    within a query deadline that a deterministic error's retries would
+    spend."""
     for current in causes(exc):
         if isinstance(current, GremlinServerError):
             message = str(current.status_message)
