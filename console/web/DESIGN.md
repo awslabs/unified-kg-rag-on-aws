@@ -102,7 +102,11 @@ package by `console/web/scripts/gen-fonts.mjs`. Licences are in
 tracking (Korean too; no serif display face, which clashed with Hangul).
 Scale (px): 12 labels, 13 small, 14 body compact (tables, forms, nav), 15
 answers, 18 card headings, 22 sections, 28 page titles; CJK text takes a 1.7
-line height and Korean keeps words whole (`word-break: keep-all`).
+line height and Korean keeps words whole (`word-break: keep-all`). User
+content (a question, an answer, a passage, a name) whose dominant script is
+not the page's carries its own `lang`, so it breaks by its language's rules;
+dominant, not any: a screen reader picks its voice by `lang`, and an English
+answer quoting one Korean name must not be read in a Korean voice.
 
 Space: a 4px base. Radius: 6px controls, 8px cards, pills for chips and
 badges. Cards carry a hairline border and the faintest shadow; raised

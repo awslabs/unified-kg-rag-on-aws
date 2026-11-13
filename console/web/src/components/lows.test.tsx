@@ -60,6 +60,12 @@ describe("contentLang", () => {
     expect(contentLang("Kestrel Depot", "ko")).toBeUndefined();
     expect(contentLang(null, "en")).toBeUndefined();
   });
+
+  it("follows the dominant script, not one quoted name", () => {
+    expect(contentLang("Umbra Freight carries the lidar units to Kestrel Depot (케스트럴 창고) within 10 business days.", "en")).toBeUndefined();
+    expect(contentLang("The supplier is Globex Sensors (グローベックス・センサーズ), which warrants each unit.", "en")).toBeUndefined();
+    expect(contentLang("Umbra Freight가 라이다 장치를 케스트럴 창고까지 운송합니다.", "en")).toBe("ko");
+  });
 });
 
 describe("the top bar's steps", () => {
