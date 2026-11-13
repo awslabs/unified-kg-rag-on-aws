@@ -85,17 +85,19 @@ def test_designator_alone_is_not_stripped(method) -> None:
 @pytest.mark.parametrize(
     ("name", "expected"),
     [
-        ("(주)가나다", set()),
-        ("㈜가나다", set()),
-        ("가나다 (유)", set()),
-        ("(株)そらいろ", set()),
-        ("(주)가나다 2공장", {"2"}),
-        ("Vendor A Inc.", {"a"}),
-        ("Acme Co", set()),
+        ("(주)가나다", ()),
+        ("㈜가나다", ()),
+        ("가나다 (유)", ()),
+        ("(株)そらいろ", ()),
+        ("(주)가나다 2공장", ("2",)),
+        ("Vendor A Inc.", ("a",)),
+        ("Acme Co", ()),
     ],
 )
-def test_legal_form_is_not_a_discriminator(name: str, expected: set[str]) -> None:
-    assert discriminator_tokens(name) == frozenset(expected)
+def test_legal_form_is_not_a_discriminator(
+    name: str, expected: tuple[str, ...]
+) -> None:
+    assert discriminator_tokens(name) == expected
 
 
 @pytest.mark.parametrize(

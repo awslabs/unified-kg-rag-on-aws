@@ -21,6 +21,8 @@ spellings of one entity apart ("제3조" and "제 3 조" had {제3조} and
 
 from __future__ import annotations
 
+import unicodedata
+
 import pytest
 from hypothesis import example, given
 from hypothesis import strategies as st
@@ -57,6 +59,9 @@ _PARTS = st.sampled_from(
         "kg",
         "500",
         "04",
+        "١٠",
+        "۲",
+        "४",
         "Inc",
         " Ltd",
         " Co.",
@@ -162,6 +167,20 @@ def test_a_space_between_letters_and_digits_keys_alike(
     )
     assert compact_name_key(spaced) == compact_name_key(joined)
     assert discriminator_tokens(spaced) == discriminator_tokens(joined)
+
+
+@given(name=_NAMES)
+@example(name="PO١٠٠٢")
+@example(name="شركة ۱۲۳")
+@example(name="२०२४ 보고서")
+def test_digits_of_every_script_key_as_ascii_digits(name: str) -> None:
+    # Regression (rv25 algo-index low): "PO١٠٠٢" (Arabic-Indic digits) was
+    # not "PO 1002", where NFKC already read a full-width "１" as "1".
+    ascii_digits = "".join(
+        str(unicodedata.decimal(ch)) if ch.isdecimal() else ch for ch in name
+    )
+    assert entity_key(name) == entity_key(ascii_digits)
+    assert compact_name_key(name) == compact_name_key(ascii_digits)
 
 
 @pytest.mark.parametrize(

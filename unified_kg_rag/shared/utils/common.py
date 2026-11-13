@@ -275,6 +275,14 @@ _RE_KEY_DASHES = re.compile(
 _RE_KEY_TRAILING_PUNCT = re.compile(r"[\s.;:!?\u3002]+$")
 
 
+# A decimal digit of any script (str patterns match Unicode digits).
+_RE_DIGIT = re.compile(r"\d")
+
+
+def _ascii_digit(match: re.Match[str]) -> str:
+    return str(unicodedata.decimal(match[0]))
+
+
 def _key_dash(match: re.Match[str]) -> str:
     return "-" if match["sign"] is not None else " "
 
@@ -308,7 +316,9 @@ def entity_key(name: str | None) -> str:
     (``APOSTROPHE_STAND_INS``), then NFKC + casefold, quote marks of every
     script, apostrophes and commas removed, the marks a script writes at
     will dropped (Arabic short vowels and tatweel, Hebrew points:
-    ``drop_optional_marks``), ``_`` and every dash treated as spaces but a
+    ``drop_optional_marks``), the decimal digits of every script read as
+    ASCII digits ("PO١٠٠٢" is "po1002", as NFKC reads a full-width "１"),
+    ``_`` and every dash treated as spaces but a
     minus sign opening the name before a digit ("−40" is "-40"), a middle dot between Han,
     Hangul or Kana letters removed ("ジョン・スミス" is "ジョンスミス",
     "한ㆍ미" "한미": ``join_dense_middle_dots``), whitespace collapsed, and
@@ -331,6 +341,8 @@ def entity_key(name: str | None) -> str:
         "NFKC",
         unicodedata.normalize("NFKC", name.translate(_KEY_BEFORE_NFKC)).casefold(),
     )
+    if not folded.isascii():
+        folded = _RE_DIGIT.sub(_ascii_digit, folded)
     key = _RE_KEY_DROP_CHARS.sub("", drop_optional_marks(folded))
     key = join_dense_middle_dots(_RE_KEY_DASHES.sub(_key_dash, key))
     key = strip_trailing_punctuation(" ".join(key.split()))

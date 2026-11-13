@@ -280,8 +280,10 @@ See [exit codes and JSON output](docs/reference/exit-codes-and-json.md) and the
   tokens from its compact key, cut where a word passes between a Han, Hangul or Kana letter and another character
   (a dotted "한·빛" has none, as "한빛"; "제3조" and "제 3 조" both 제, 3 and 조, so spacing variants with a number are
   one entity, where they were two), with a space where a letter meets a digit ("PO1002" is "PO 1002", "ISO9001"
-  "ISO 9001"), and a numeral is an identifier of its own ("東京第一工場" never links "東京第二工場", and "百度" or
-  "三菱商事" no longer hold one whole-word identifier that kept every variant apart). Of spellings with one key, the
+  "ISO 9001"; the decimal digits of every script read as ASCII digits, so "PO١٠٠٢" is too), and a numeral is an
+  identifier of its own ("東京第一工場" never links "東京第二工場", and "百度" or "三菱商事" no longer hold one
+  whole-word identifier that kept every variant apart), in the order the name writes them ("Version 1.2" never links
+  "Version 2.1", nor "2024-03-04" "2024-04-03"). Of spellings with one key, the
   one its key folds least names the entity on a tie ("토지", not "「토지」"). Entity and relationship `rank` come from
   node degree, and a relationship's weight sums its strengths per text unit (#189, #214, #574).
 - Entities have no `MemberOf` edges to communities; an entity lists its `community_ids` (#348).
@@ -532,8 +534,8 @@ From a `main` checkout (formats and keys no release had):
   (#694) is ignored.
 - Re-keyed once before 0.3.0: entity ids and name keys fold quotes, apostrophes, invisible characters, dashes (not a
   leading minus), dense-script middle dots and Arabic and Hebrew marks and strip more legal forms, and dense-script
-  spacing variants with a number and a letter run into a digit ("PO1002", "PO 1002") are one entity (*Stored data and
-  reindexing*); the description summary and claim
+  spacing variants with a number and a letter run into a digit ("PO1002", "PO 1002") are one entity, as are the
+  digits of every script ("PO١٠٠٢") (*Stored data and reindexing*); the description summary and claim
   prompts changed, claims keep a `suspected` status and are keyed by their statement (*Fixed*); chunk sizes count
   tokens (*Defaults*), which re-chunks Korean, Japanese and Chinese text units and English ones of short or long words
   (most others are kept); stage-cache keys

@@ -59,27 +59,27 @@ def _together(groups: list[set], a: str, b: str) -> bool:
 @pytest.mark.parametrize(
     ("name", "expected"),
     [
-        ("Purchase Order 1001", {"1001"}),
-        ("Vendor A", {"a"}),
-        ("Phase II", {"ii"}),
-        ("Phase 2", {"2"}),
-        ("Section 4.2", {"4", "2"}),
-        ("Model v2", {"v", "2"}),  # keyed "model v 2", as "Model v 2" is
-        ("Acme Corporation", set()),
-        ("Mix Studio", set()),  # "mix" is not a Roman numeral
-        ("Party 가", {"가"}),  # single letters of any script are designators
-        ("가 나다", set()),  # a dense-script space is no word boundary
-        ("Party 甲", {"甲"}),
-        ("Party 을", {"을"}),
-        ("Vendor α", {"α"}),
-        ("Supplier Ä", {"ä"}),
-        ("Vendor Ａ", {"a"}),  # full-width letter NFKC-folds to ASCII
-        ("Phase IV", {"iv"}),  # multi-letter Roman numerals are kept
-        ("계약 당사자", set()),  # multi-character words are not designators
+        ("Purchase Order 1001", ("1001",)),
+        ("Vendor A", ("a",)),
+        ("Phase II", ("ii",)),
+        ("Phase 2", ("2",)),
+        ("Section 4.2", ("4", "2")),
+        ("Model v2", ("v", "2")),  # keyed "model v 2", as "Model v 2" is
+        ("Acme Corporation", ()),
+        ("Mix Studio", ()),  # "mix" is not a Roman numeral
+        ("Party 가", ("가",)),  # single letters of any script are designators
+        ("가 나다", ()),  # a dense-script space is no word boundary
+        ("Party 甲", ("甲",)),
+        ("Party 을", ("을",)),
+        ("Vendor α", ("α",)),
+        ("Supplier Ä", ("ä",)),
+        ("Vendor Ａ", ("a",)),  # full-width letter NFKC-folds to ASCII
+        ("Phase IV", ("iv",)),  # multi-letter Roman numerals are kept
+        ("계약 당사자", ()),  # multi-character words are not designators
     ],
 )
-def test_discriminator_tokens(name: str, expected: set[str]) -> None:
-    assert discriminator_tokens(name) == frozenset(expected)
+def test_discriminator_tokens(name: str, expected: tuple[str, ...]) -> None:
+    assert discriminator_tokens(name) == expected
 
 
 @pytest.mark.parametrize(
@@ -105,6 +105,28 @@ def test_find_all_matches_drops_identifier_conflicts(method) -> None:
     matched = {name for name, _ in matcher.find_all_matches("Purchase Order 1001")}
     assert "Purchase Order 1002" not in matched
     assert "Purchase Order 1003" not in matched
+
+
+@pytest.mark.parametrize(
+    ("stored", "other"),
+    [
+        ("2024-03-04", "2024-04-03"),
+        ("3월 4일", "4월 3일"),
+        ("Version 1.2", "Version 2.1"),
+        ("Lot 1A2B", "Lot 2A1B"),
+    ],
+)
+@pytest.mark.parametrize(
+    "method", [ResolutionMethod.MINHASH, ResolutionMethod.SEQUENCE_MATCHER]
+)
+def test_identifiers_in_another_order_name_another_thing(
+    stored: str, other: str, method: ResolutionMethod
+) -> None:
+    # Regression (rv25 algo-index low): the discriminators were a set, so
+    # the same numbers in another order linked under sequence_matcher.
+    assert discriminator_tokens(stored) != discriminator_tokens(other)
+    matcher = FuzzyMatcher([stored], resolution_method=method, similarity_threshold=0.5)
+    assert matcher.find_all_matches(other) == []
 
 
 @pytest.mark.parametrize(

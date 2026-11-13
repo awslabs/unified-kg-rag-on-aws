@@ -159,7 +159,7 @@ def _is_discriminator(token: str) -> bool:
     )
 
 
-def discriminator_tokens(name: str | None) -> frozenset[str]:
+def discriminator_tokens(name: str | None) -> tuple[str, ...]:
     """Return the tokens of ``name`` that identify *which* instance it denotes.
 
     Character-shingle similarity cannot tell "purchase order 1001" from
@@ -187,6 +187,10 @@ def discriminator_tokens(name: str | None) -> frozenset[str]:
     Tokens are already NFKC-normalized and casefolded, so a precomposed or
     full-width designator is one character here.
 
+    They are kept in the order the name writes them: "2024-03-04" and
+    "2024-04-03", "Version 1.2" and "Version 2.1" or "Lot 1A2B" and "Lot
+    2A1B" hold the same identifiers and name different things.
+
     Requiring *equality* (not overlap) keeps the relation transitive, so a
     cluster built from guarded links can never contain two members whose
     discriminators differ. The rule is deliberately conservative: a variant
@@ -194,8 +198,8 @@ def discriminator_tokens(name: str | None) -> frozenset[str]:
     separate entity rather than risking a wrong merge.
     """
     if not name:
-        return frozenset()
-    return frozenset(
+        return ()
+    return tuple(
         discriminator
         for word in normalize_name(compact_name_key(name)).split()
         for run in _script_runs(word)

@@ -220,7 +220,7 @@ class FuzzyMatcher:
             matches = list(scores.items())
         return matches
 
-    def _discriminators_of(self, candidate: str) -> frozenset[str]:
+    def _discriminators_of(self, candidate: str) -> tuple[str, ...]:
         cached = self.discriminator_index.get(candidate)
         return cached if cached is not None else discriminator_tokens(candidate)
 
