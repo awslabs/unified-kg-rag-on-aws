@@ -180,11 +180,6 @@ stored is read again: follow *Upgrading* in order.
   `opensearch_expanded_community_reports` (in its template), is dropped with a WARNING, as no strategy emits them
   (#584, #588). A `lightrag_linked_chunks` weight weighs only the chunks the matched entities cite; the
   relationships' chunks are their own `lightrag_relation_chunks` stream, 1.0 unless set (#521, #530).
-- An invalid assignment in code raises a `ValidationError`, as loading the value would (`config.search.top_k = -1`):
-  every config section validates an assignment against its field (`ConfigSection`), and `Config.updated({"dotted.key":
-  value})` returns a changed config validated whole, so the checks across sections run (the console's methodology
-  selection, `run-eval --arm` and the re-scoring use it): an assignment let the console run a methodology the
-  config's switches leave nothing of. The two `search.hybrid` weights, normalized as a pair, are set together with it.
 - Defaults (set the 0.2.3 value to keep its behaviour; the measured ones are explained in [defaults and
   evidence](docs/concepts/defaults-and-evidence.md)):
 
@@ -384,8 +379,12 @@ See [`iac/README.md`](iac/README.md).
   `embedding_dimension` and `rerank_model_id`; `ModelRole.GLOBAL_REDUCE` is gone (#334, #577).
 - `PipelineContext.unit_extractions` replaces `entities`, `relationships` and `rejected_entities` (#322).
 - An invalid assignment to a config setting (`config.search.max_concurrency = 0`) raises `ValidationError` and
-  keeps the old value; a section validated on its own (`SearchConfig.model_validate`) refuses an unknown key. Change
-  settings across sections with `Config.updated`. The `search.hybrid` weights keep the values set (relative weights).
+  keeps the old value, as every config section validates an assignment against its field (`ConfigSection`); a section
+  validated on its own (`SearchConfig.model_validate`) refuses an unknown key. Change settings across sections with
+  `Config.updated({"dotted.key": value}, overlay={...})`, which returns a changed config validated whole, so the checks
+  across sections run (every CLI flag, schema source and console selection that changes a config uses it): an
+  assignment let the console run a methodology the config's switches leave nothing of. The `search.hybrid` weights
+  keep the values set (relative weights; their sum must be above 0).
 - `RAGInput` (a `history` turn's too, also on MCP) and `PipelineConfig` refuse an unknown key instead of ignoring it,
   as `Config` does: a dict query with MCP's `strategy` for `search_strategy` ran `auto` at full model cost, and
   `PipelineConfig(force_rebuld=True)` left `force_rebuild` off. A dict query raises `InvalidArgumentError` before any
@@ -880,8 +879,9 @@ From a `main` checkout (formats and keys no release had):
   and paths it names (with seed provenance) and their passages are fused (buckets `structured_query_result`,
   `structured_entities`, `structured_relationships`, `structured_text_units`, `structured_text_hits`), the table
   numbered `[n]` like any evidence section and its citation naming the documents of its evidence rows (the units most of
-  them cite first, as `local` orders its text units); counts are exact unless a document filter or seed-property
-  condition makes code check up to `max_scan_rows` matches ("at least N" past it), and a count cites its first matches
+  them cite first, as `local` orders its text units, ranked on a worker thread); counts are exact unless a document
+  filter or seed-property condition makes code check up to `max_scan_rows` matches ("at least N" past it), and a
+  count cites its first matches
   as entities, a minimum or a maximum the entities holding it and groups by a property their listed groups'. Filter keys
   are checked against the fallback that would run too. A count of 0 or a "no" over a string
   value no vertex holds (misspelled or translated) is no answer (`unknown_value`); a failed planner or store call and a
@@ -1112,10 +1112,9 @@ From a `main` checkout (formats and keys no release had):
   library](docs/guides/python-library.md#documents-from-memory).
 - `run-describe` (and `describe_namespace`, `export_graph`): what an index namespace holds (methodologies, the
   strategies it serves, each index's item count and embedding model, the build record, the registry's records), and
-  its graph streamed from the vector store as JSON Lines (each record's `kind` the section type its sources name:
-  `text`, `entity`, `relationship`, `community`, `claim`) or GraphML with every item's text units and documents (a
-  its graph (every kind the vector store keeps, RAPTOR summary nodes too) streamed from the vector store as JSON
-  Lines or GraphML with every item's text units and documents (a
+  its graph (every kind the vector store keeps) streamed from the vector store as JSON Lines (each record's `kind`
+  the section type its sources name: `text`, `entity`, `relationship`, `community`, `claim`, `summary`, a RAPTOR
+  summary node) or GraphML with every item's text units and documents (a
   document by its path relative to the corpus root, else its file name, never the indexing host's path;
   `--output-path`, `--export-format`, `--max-items`; written atomically, so a failed export leaves the previous file
   and no partial one; an existing file is replaced only with `--force`, `export_graph(overwrite=True)`, and never the
@@ -1581,7 +1580,8 @@ From a `main` checkout (formats and keys no release had):
   request per batch of sources), and `SearchQuery.max_hops` overrides the expansion depth (#597). A walk that stops at
   `max_iterations` before it converges is logged at WARNING, naming the settings to raise. Passages of equal score
   (those no seed reaches, all 0 when the edge read degraded) rank in the support order (the units most entities cite
-  first), not by id, so the text quota does not fill in id order.
+  first), not by id, so the text quota does not fill in id order; that order is computed on a worker thread, off the
+  event loop.
 - CDK: `-c neptune_audit_log=true` turns on Neptune audit logs, exported to CloudWatch Logs
   (`/aws/neptune/<cluster id>/audit`, created before the instances) with the CMK and `log_retention_days`
   (`neptune_parameter_group_family` names the engine's family, `neptune1.4` by default); reboot the instances after
@@ -1619,11 +1619,6 @@ From a `main` checkout (formats and keys no release had):
   `load.py` refuses a store or model kind that is not local, and reads no `~/.aws` profile.
 
 ### Changed
-- Every config section validates an assignment against its field (`ConfigSection`), and `Config.updated({"dotted.key":
-  value}, overlay={...})` returns a changed config validated whole, so the checks across sections run (every CLI
-  flag, schema source and console selection that changes a config uses it): an assignment let the console run a
-  methodology the config's switches leave nothing of. The `search.hybrid` weights are relative (their sum must be
-  above 0).
 - `auto` falls back to the first routable of `local`, then `mix`, when the router's answer names no routable
   strategy, as it does when nothing configured is served and as `structured` falls back (one order,
   `GENERAL_FALLBACKS`, from the per-strategy `STRATEGY_TRAITS`); without `local` it took the first routable strategy.
@@ -1991,9 +1986,9 @@ Queries and retrieval.
   entities; `hybrid` without keywords warns (#295, #317).
 - LightRAG `mix`/`hybrid` context includes the chunks the matched relationships cite (offline hybrid one-hop
   gold-chunk recall 0.30, now 0.86, 0.96 with rerank), and incremental and full builds pick the same chunks (#521,
-  #530); the pick, `local`'s and `structured`'s support ranking of their entities' units and PPR's tie order run on
-  a worker thread: on a corpus whose hub entities cite thousands of units each held the event loop for 0.2 s to
-  seconds a query, stalling every concurrent one.
+  #530); the pick and `local`'s support ranking of its entities' units run on a worker thread: on a corpus whose hub
+  entities cite thousands of units each held the event loop for 0.2 s to seconds a query, stalling every concurrent
+  one.
 - An answer the output guardrail blocks writes no conversation memory, as a blocked query writes none (the refusal
   was saved and read by the next turn's follow-up rewrite).
 - A context budget no retrieved section fits is a `context_optimization` degradation (reason `context_budget`), not
