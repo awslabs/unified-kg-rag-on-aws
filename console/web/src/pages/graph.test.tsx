@@ -5,6 +5,7 @@ import type { ReactElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { drawnGraph, linkAlpha, placeLabels, settle, type LabelCandidate } from "../components/GraphCanvas";
 import { I18nProvider } from "../i18n/i18n";
+import { TrailProvider } from "../lib/trail";
 import type { GraphData, GraphNode } from "../lib/types";
 import { EntityTable, GraphPage, rankMatches, TABLE_PAGE } from "./GraphPage";
 
@@ -228,14 +229,21 @@ describe("GraphPage when building the graph failed", () => {
 
   it("says so over the older export it shows, marked outdated", async () => {
     const older = { ref: "cache:a/visualization/visualization_data.json", label: "default", namespace: "default", run: "a", built_at: "2026-11-13T00:00:00Z", modified: 1, bytes: 10, outdated: true };
+    // The export's data never arrives: the notice and the picker are the
+    // page's, drawn before it (the explorer and its canvas are tested apart).
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (url: string) => {
-        const body = String(url).includes("graphs/data") ? graph(3, 3) : { graphs: [older], current: { state: "failed", namespace: "default", built_at: "2026-11-15T00:00:00Z" } };
-        return new Response(JSON.stringify(body), { status: 200 });
-      }),
+      vi.fn((url: string) =>
+        String(url).includes("graphs/data")
+          ? new Promise<Response>(() => undefined)
+          : Promise.resolve(new Response(JSON.stringify({ graphs: [older], current: { state: "failed", namespace: "default", built_at: "2026-11-15T00:00:00Z" } }), { status: 200 })),
+      ),
     );
-    renderIn(<GraphPage params={new URLSearchParams()} />);
+    renderIn(
+      <TrailProvider>
+        <GraphPage params={new URLSearchParams()} />
+      </TrailProvider>,
+    );
     expect(await screen.findByText("The graph could not be built")).toBeInTheDocument();
     // The build time and the mark first: a narrow select cuts the end.
     expect(screen.getByRole("option", { name: /^[^·]+ \(outdated\) · default · a$/ })).toBeInTheDocument();
