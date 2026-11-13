@@ -412,44 +412,46 @@ kbd {
   align-items: center;
 }
 
-@media (max-width: 1180px) {
-  .nav-tools .field-label {
-    display: none;
-  }
+/* The top bar compacts in steps when its row does not fit (useCompactNav
+   measures each: the links' width follows the language): 1 drops the
+   tagline, 2 also the pickers' field labels, 3 folds into the menu. */
+.nav:not([data-fold="0"]) .brand-sub {
+  display: none;
 }
-/* The top bar collapses into its menu when its row does not fit
-   (useCompactNav measures it: the links' width follows the language). */
-.nav[data-compact="true"] .nav-inner {
+.nav:is([data-fold="2"], [data-fold="3"]) .nav-tools .field-label {
+  display: none;
+}
+.nav[data-fold="3"] .nav-inner {
   flex-wrap: wrap;
   height: auto;
   min-height: var(--nav-height);
   padding: var(--space-2) var(--space-4);
   row-gap: var(--space-2);
 }
-.nav[data-compact="true"] .nav-menu {
+.nav[data-fold="3"] .nav-menu {
   display: inline-flex;
   align-items: center;
 }
-.nav[data-compact="true"] .nav-list,
-.nav[data-compact="true"] .nav-tools {
+.nav[data-fold="3"] .nav-list,
+.nav[data-fold="3"] .nav-tools {
   display: none;
   width: 100%;
   order: 3;
 }
-.nav[data-compact="true"][data-open="true"] .nav-list {
+.nav[data-fold="3"][data-open="true"] .nav-list {
   display: grid;
   gap: 2px;
   margin: 0;
   padding-bottom: var(--space-2);
 }
-.nav[data-compact="true"][data-open="true"] .nav-tools {
+.nav[data-fold="3"][data-open="true"] .nav-tools {
   display: flex;
   flex-wrap: wrap;
   padding: var(--space-2) 0 var(--space-3);
   border-top: 1px solid var(--rule);
   order: 4;
 }
-.nav[data-compact="true"] .nav-tools .field-label {
+.nav[data-fold="3"] .nav-tools .field-label {
   display: inline;
 }
 @media (max-width: 1040px) {

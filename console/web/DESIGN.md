@@ -38,8 +38,9 @@ not assets:
   GitHub-style status colours with a label.
 - **A top-bar shell**: the brand at the left, the pages as icon-and-label
   links with the current one filled in the accent, the index and the
-  preferences at the right; on a narrow screen the pages fold under a menu
-  button.
+  preferences at the right; when the row does not fit (measured: the
+  labels' width follows the language), it drops the tagline, then the
+  pickers' field labels, and only then folds the pages under a menu button.
 - **A chat-style answer view**: the question as the asker's bubble at the
   right, the answer as a card at the left with its cited sources as chips,
   the composer docked at the foot of the conversation, a welcome with sample

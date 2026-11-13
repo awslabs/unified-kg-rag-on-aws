@@ -8,6 +8,7 @@ import type { Source } from "../lib/types";
 import { EvidenceTrace } from "./EvidenceTrace";
 import { stageName } from "./JobPanel";
 import { formatBytes } from "./ui";
+import { fitting, NAV_FOLDED } from "../lib/useCompactNav";
 
 describe("small copy", () => {
   it("names every stage in every locale, an unknown one by its id", () => {
@@ -44,5 +45,17 @@ describe("EvidenceTrace details", () => {
     expect(details.open).toBe(false);
     expect(details).toContainElement(screen.getByText("0d4c-uuid"));
     expect(details).toContainElement(screen.getByText("2 passages"));
+  });
+});
+
+describe("the top bar's steps", () => {
+  it("takes the first step that fits, then folds", () => {
+    // Widths the row needs in full, without the tagline, without the labels.
+    const needed = [1520, 1300, 1230];
+    expect(fitting(needed, 1600)).toBe(0);
+    expect(fitting(needed, 1440)).toBe(1);
+    expect(fitting(needed, 1250)).toBe(2);
+    expect(fitting(needed, 1000)).toBe(NAV_FOLDED);
+    expect(fitting([], 1000)).toBe(NAV_FOLDED);
   });
 });

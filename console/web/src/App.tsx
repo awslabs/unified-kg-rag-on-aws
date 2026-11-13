@@ -24,8 +24,9 @@ export function App() {
   const running = status.data?.jobs.length ?? 0;
   const [menuOpen, setMenuOpen] = useState(false);
   const navRow = useRef<HTMLDivElement>(null);
-  // The links collapse into the menu when the row does not fit, whatever the width.
-  const compact = useCompactNav(navRow, [locale, running > 0, status.data?.namespace]);
+  // The row compacts in steps (tagline, field labels) and folds the links
+  // into the menu only when it still does not fit, whatever the width.
+  const fold = useCompactNav(navRow, [locale, running > 0, status.data?.namespace]);
 
   useEffect(() => {
     document.title = `${t(`nav.${route.page}`)} · ${t("app.name")}`;
@@ -47,7 +48,7 @@ export function App() {
       <a className="skip-link" href="#main">
         {t("app.skip")}
       </a>
-      <header className="nav" data-open={menuOpen} data-compact={compact}>
+      <header className="nav" data-open={menuOpen} data-fold={fold}>
         <div className="nav-inner" ref={navRow}>
           <a
             className="brand"

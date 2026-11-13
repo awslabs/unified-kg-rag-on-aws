@@ -108,9 +108,11 @@ test("ask, follow the trail into the graph, visit every page", async ({ page, ba
 });
 
 // Regression (rv7): the top bar overflowed in English at 1200-1365 px and in
-// German at every width up to 1440 (a fixed breakpoint). It collapses into
-// its menu when its row does not fit, so nothing is cut at any width.
-for (const locale of ["en", "de"]) {
+// German at every width up to 1440 (a fixed breakpoint). It compacts in
+// steps (tagline, field labels) when its row does not fit, and folds into
+// its menu only after them, so nothing is cut at any width (rv25: German,
+// French and Russian folded at every width, the row being capped at 1440).
+for (const locale of ["en", "de", "fr", "ru", "es"]) {
   for (const width of [1280, 1440]) {
     test(`the top bar fits at ${width} px in ${locale}`, async ({ page, baseURL }) => {
       const origin = new URL(baseURL ?? "http://127.0.0.1:8501").origin;
@@ -126,13 +128,15 @@ for (const locale of ["en", "de"]) {
       await statusRead;
       await page.evaluate(() => document.fonts.ready.then(() => undefined));
       await page.waitForTimeout(100);
-      const { overflow, compact } = await row.evaluate((element) => ({
+      const { overflow, fold } = await row.evaluate((element) => ({
         overflow: element.scrollWidth - element.clientWidth,
-        compact: element.closest("header")?.getAttribute("data-compact"),
+        fold: element.closest("header")?.getAttribute("data-fold"),
       }));
       expect(overflow).toBeLessThanOrEqual(0);
-      if (compact === "true") {
-        // Collapsed: the menu opens every page link.
+      // At the widest content width every language keeps its links inline.
+      if (width === 1440) expect(fold).not.toBe("3");
+      if (fold === "3") {
+        // Folded: the menu opens every page link.
         await page.locator(".nav-menu").click();
         await expect(page.locator(".nav-list .nav-link")).toHaveCount(6);
         await expect(page.locator(".nav-list .nav-link").last()).toBeVisible();
