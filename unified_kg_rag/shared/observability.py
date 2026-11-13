@@ -319,7 +319,9 @@ def start_span(
 
 
 def current_trace_ids() -> tuple[str, str] | None:
-    """``(trace_id, span_id)`` of the active span, for log correlation."""
+    """``(trace_id, span_id)`` of the active span, for log correlation and
+    a result's ``trace_id``; ``None`` without one, or when it was not
+    sampled (it is never exported)."""
     backend = _active_backend()
     if backend is None:
         return None

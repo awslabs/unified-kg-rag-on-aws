@@ -1799,3 +1799,25 @@ async def test_run_eval_root_spans_name_the_run_strategy_and_repeat(
         assert all(s.parent is None for s in spans[name]), name
         assert tagged(name) == runs, name
     assert tagged("probe") == runs
+
+
+def test_an_unsampled_span_gives_no_trace_ids() -> None:
+    # Old behaviour: with observability.sample_rate below 1 an unsampled
+    # query still returned its trace_id, so metadata.trace_id and the MCP
+    # and console links named a trace that was never exported.
+    from opentelemetry.sdk.trace.sampling import ALWAYS_OFF
+
+    provider = TracerProvider(sampler=ALWAYS_OFF)
+    configure_observability(ObservabilityConfig(enabled=True), tracer_provider=provider)
+    try:
+        with observability.span("kg_rag.query"):
+            assert observability.current_trace_ids() is None
+    finally:
+        observability.uninstall()
+
+
+def test_a_sampled_span_gives_its_trace_ids(tracing: Tracing) -> None:
+    tracing()
+    with observability.span("kg_rag.query"):
+        ids = observability.current_trace_ids()
+    assert ids is not None and len(ids[0]) == 32
