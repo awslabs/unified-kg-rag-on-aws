@@ -148,10 +148,13 @@ calls are retried inside the deadline, so a quota too small for the load
 shows up as timeouts rather than as slower answers. Lower
 `processing.max_concurrency` (for `run-eval`) or `search.max_concurrency`,
 lower `models.default_max_output_tokens`, or ask for a higher quota.
-The dashboard's "Query outcomes" widget (`query_throttled_requests`, this
-deployment's queries) and "Bedrock throttles (all models)" widget (every
-caller in the account) show whether this is the cause; the
-`BedrockThrottling` alarm reads the ingestion stages only. Raise the
+Whether this is the cause: the `throttled_requests` of a `run-eval`
+result's usage (the summary's `usage.answer_generation`, each answer's
+`usage`; it publishes no query metrics), the dashboard's "Bedrock throttles (all
+models)" widget (every caller in the account), or, for `run-rag`,
+`run-mcp-server` and `run-console` with `--metrics-sink cloudwatch`, its
+"Query outcomes" widget (`query_throttled_requests`, this deployment's
+queries). The `BedrockThrottling` alarm reads the ingestion stages only. Raise the
 deadline only for queries that are slow on their own (`drift`, long answers)
 ([Operator Runbook: Query deadlines and model timeouts](./operations.md#query-deadlines-and-model-timeouts)).
 

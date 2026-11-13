@@ -137,7 +137,12 @@ twice (structured content and its JSON text), so it is up to about 2-4
 times that on the wire. Each call runs under one deadline
 (`search.query_timeout_seconds`) that covers the wait for one of the
 `mcp.max_concurrent_calls` slots and the work, the chain's own deadline
-inside it included, so no call takes longer. The tools are stateless: no conversation memory (`use_memory` is
+inside it included. Work that does not watch the deadline (the graph tools'
+store calls) ends at a backstop `_BACKSTOP_GRACE_SECONDS` (1 s) past it. A
+`kg_answer` that times out in the slot queue or at the backstop has no
+query metric of the chain's own, so the tool records one
+(`GraphRAGChain.record_unrun_query`); the call's `query_id`, bound when it
+starts, is the one the chain's query uses and the one its error names. The tools are stateless: no conversation memory (`use_memory` is
 off), so no caller reaches another caller's history.
 
 **Usage, telemetry and redaction.** `kg_search` and `kg_answer` return the
@@ -152,13 +157,22 @@ caller-correctable error (an invalid argument or filter, a strategy the
 namespace does not hold, the deadline) is returned as a tool error with its
 message, also under `processing.ignore_errors`, whose error answer names
 the error's type and class (`metadata.error_type`, `metadata.error_class`);
-any other failure returns a generic message and is logged with its
-traceback on the server, so a store or model endpoint or a stack trace
-never reaches the caller. Every surface reads one classification of a
-failure (`shared/exceptions.py` `classify` → `ErrorClass`) and maps the
-class itself: the CLIs to an exit code (`cli/conventions.py` `EXIT_CODES`),
-the MCP server to the caller-correctable classes above, the console to the
-error kind its Ask page names.
+any other failure returns a generic message and is logged on the server
+(its type and a digest at ERROR, its text and traceback at DEBUG), so a
+store or model endpoint or a stack trace never reaches the caller. Every
+surface reads one classification of a failure (`shared/exceptions.py`
+`classify` → `ErrorClass`) and maps the class itself: the CLIs to an exit
+code (`cli/conventions.py` `EXIT_CODES`), the MCP server to the
+caller-correctable classes above, the console to the error kind its Ask
+page names. Which error text a surface shows is one rule,
+`shown_error_text(error, audience=...)`: an MCP `caller` sees the text of
+the caller-correctable classes and the deadline; the console's `operator`,
+who configured the stores and models, sees every class's text but an
+unexpected `failure`'s (a provider's or a library's, which may quote a
+prompt or an ARN). The console applies it to its API errors, the Ask
+error event, an absorbed error answer's `error_message` in the result
+event and the history, and a strategy's "not available" reason; each Ask
+event carries the `query_id` (and `trace_id`) that find its log lines.
 
 **Untrusted text.** Chunk text, descriptions and answers are corpus or model
 text, and the server instructions and every tool description say to treat
@@ -203,7 +217,7 @@ error naming what it holds.
 | An argument out of bounds, an unknown namespace or strategy, a bad filter | tool error naming the argument |
 | A strategy the namespace does not hold | tool error with the chain's message (what it holds, how to add it) |
 | The deadline passes | tool error `QueryTimeoutError`; the chain cancels its calls |
-| A store or model failure | tool error with a generic message, logged with its traceback |
+| A store or model failure | tool error with a generic message, logged as a digest (its traceback at DEBUG) |
 | The client closes stdin (stdio) | the server exits 0; SIGTERM exits 143, Ctrl-C 130 |
 
 **Cost.** `kg_search` costs what `run-rag --mode search` costs for the same

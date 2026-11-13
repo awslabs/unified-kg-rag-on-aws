@@ -17,7 +17,6 @@ from hypothesis import strategies as st
 from unified_kg_rag.adapters.retrieval.base import graph_relevance
 from unified_kg_rag.application.cli import mcp_tools
 from unified_kg_rag.application.cli.mcp_tools import (
-    INTERNAL_ERROR_MESSAGE,
     KnowledgeGraphTools,
     describe_error,
 )
@@ -40,6 +39,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.models.config import McpServerConfig
 from unified_kg_rag.shared.exceptions import (
+    INTERNAL_ERROR_MESSAGE,
     ConfigurationError,
     ErrorClass,
     InvalidFilterError,
@@ -931,7 +931,12 @@ async def test_a_refusal_the_error_answer_absorbed_keeps_its_message() -> None:
     refusal = "auto may run only local, and none of them serves it"
     with pytest.raises(mcp_tools._AbsorbedQueryError) as raised:
         await _tools(Absorbing("MethodologyNotIndexedError", refusal)).search("q")
-    assert describe_error(raised.value) == (f"[not_indexed] {refusal}", True)
+    # The call's query_id ends it, as every failed call's.
+    query_id = raised.value.query_id  # type: ignore[attr-defined]
+    assert describe_error(raised.value) == (
+        f"[not_indexed] {refusal} (query_id: {query_id})",
+        True,
+    )
     assert raised.value.error_class is ErrorClass.NOT_INDEXED
     for internal, name in (
         ("StoreConnectionError", "store_unreachable"),
@@ -941,7 +946,8 @@ async def test_a_refusal_the_error_answer_absorbed_keeps_its_message() -> None:
         with pytest.raises(mcp_tools._AbsorbedQueryError) as failed:
             await _tools(Absorbing(internal, "https://vpc-x")).search("q")
         assert describe_error(failed.value) == (
-            f"[{name}] {INTERNAL_ERROR_MESSAGE}",
+            f"[{name}] {INTERNAL_ERROR_MESSAGE} "
+            f"(query_id: {failed.value.query_id})",  # type: ignore[attr-defined]
             False,
         )
 

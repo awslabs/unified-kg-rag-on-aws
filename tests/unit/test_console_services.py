@@ -760,6 +760,59 @@ async def test_an_unexpected_failure_shows_no_text_and_keeps_its_ids(
     await service.close()
 
 
+@pytest.mark.parametrize(
+    ("error_class", "shown"),
+    [("failure", False), ("store_unreachable", True), ("not_indexed", True)],
+)
+async def test_an_absorbed_failure_shows_text_by_the_raised_ones_rule(
+    tmp_path: Path, error_class: str, shown: bool
+) -> None:
+    # Regression (rv27): under processing.ignore_errors the result event
+    # and the history carried a failure's provider text (an ARN) that the
+    # error event of a raised one masks.
+    from unified_kg_rag.shared.exceptions import INTERNAL_ERROR_MESSAGE
+
+    text = "AccessDenied for arn:aws:iam::111111111111:role/SECRET-ROLE-MARKER"
+    output = _output(error=True, error_type="ResponseError", error_class=error_class)
+    output.search_results.metadata["error"] = text
+    service = AskService(
+        Config,
+        ConsoleStore(tmp_path / "s.sqlite3"),
+        chain_factory=lambda _c: _Chain(output),
+    )
+    events = await _drain(service, "q")
+    (result,) = [e for e in events if e["kind"] == "result"]
+    assert result["error_kind"] == error_class
+    assert result["error_message"] == (text if shown else INTERNAL_ERROR_MESSAGE)
+    # The ids the page shows with it.
+    (start,) = [e for e in events if e["kind"] == "start"]
+    assert result["query_id"] == start["query_id"]
+    (row,) = service.store.queries()
+    assert ("SECRET-ROLE-MARKER" in str(row)) is shown
+    await service.close()
+
+
+async def test_a_strategy_s_reason_shows_no_unexpected_failure_s_text(
+    tmp_path: Path,
+) -> None:
+    from unified_kg_rag.shared.exceptions import INTERNAL_ERROR_MESSAGE
+
+    class Checking(_Chain):
+        async def acheck_methodology(self, strategy: Any, suffix: Any) -> None:
+            raise RuntimeError("provider said: SECRET-MARKER")
+
+    service = AskService(
+        Config,
+        ConsoleStore(tmp_path / "s.sqlite3"),
+        chain_factory=lambda _c: Checking(_output()),
+    )
+    views = await service.strategies()
+    assert views and all(
+        v["reason"] == INTERNAL_ERROR_MESSAGE and not v["available"] for v in views
+    )
+    await service.close()
+
+
 # The stores' rule (validate_safe_name): a name the console took but the
 # config refuses started a job whose subprocess failed loading its config.
 _UNSAFE_NAMESPACES = ["../etc", "a/b", "", "x" * 129, "a..b", "Docs", "docs.v2"]

@@ -327,11 +327,13 @@ class GraphExtractor(BaseProcessor):
                 )
             except Exception as e:  # noqa: BLE001 - isolate one unit's failure
                 failed_preparations += 1
-                logger.error(
+                log_failure(
+                    logger,
+                    logging.ERROR,
                     "Failed to prepare input for text unit '%s': %s",
                     text_unit.id,
-                    str(e),
-                    exc_info=True,
+                    error=e,
+                    traceback=True,
                 )
                 # Append a sentinel (empty input) rather than skipping, so the
                 # returned inputs stay 1:1 with text_units. execute_with_fallback
@@ -389,10 +391,12 @@ class GraphExtractor(BaseProcessor):
                 self.stats.num_failed_extractions += 1
                 self.stats.failed_text_unit_ids.append(text_unit.id)
                 self.stats.item_failed_text_unit_ids.append(text_unit.id)
-                logger.error(
+                log_failure(
+                    logger,
+                    logging.ERROR,
                     "Failed to parse extraction result for text unit '%s': %s",
                     text_unit.id,
-                    str(e),
+                    error=e,
                 )
 
         entities = [e for record in records for e in record.entities]

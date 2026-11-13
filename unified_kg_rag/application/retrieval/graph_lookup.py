@@ -15,6 +15,7 @@ The functions take the chain they read for, like ``methodology_check``.
 from __future__ import annotations
 
 import asyncio
+import logging
 import math
 import unicodedata
 from typing import TYPE_CHECKING, Any, Literal
@@ -43,6 +44,7 @@ from unified_kg_rag.shared.exceptions import (
     IndexNotFoundError,
     MethodologyNotIndexedError,
 )
+from unified_kg_rag.shared.logging import log_failure
 from unified_kg_rag.shared.utils import safe_float_parse
 
 if TYPE_CHECKING:
@@ -361,7 +363,12 @@ async def resolve_schema(
         )
         return resolved.processing.graph_extraction.extraction_schema(), None
     except Exception as e:  # noqa: BLE001 - reported, not fatal
-        logger.warning("Could not resolve the extraction schema: %s", e)
+        log_failure(
+            logger,
+            logging.WARNING,
+            "Could not resolve the extraction schema: %s",
+            error=e,
+        )
         return None, type(e).__name__
 
 

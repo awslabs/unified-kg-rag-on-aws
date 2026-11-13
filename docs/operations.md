@@ -1625,10 +1625,13 @@ global map step, DRIFT). Lower `processing.max_concurrency` for the
 evaluation, lower `models.default_max_output_tokens` (it is reserved
 whether used or not; the short query calls reserve `search.output_ceilings`
 instead), or ask for a higher quota; raising the deadline only
-lets queries queue longer. The dashboard's "Query outcomes" widget
-(`query_throttled_requests`: the requests Bedrock throttled for this
-deployment's queries) and its "Bedrock throttles (all models)" widget (every
-caller in the account and region) show whether this is the cause; the
+lets queries queue longer. For `run-eval`, which publishes no query
+metrics, the `throttled_requests` of its usage (the summary's
+`usage.answer_generation`, each answer's `usage`) or the dashboard's "Bedrock throttles (all models)" widget (every
+caller in the account and region) shows whether this is the cause. For
+`run-rag`, `run-mcp-server` and `run-console` with `--metrics-sink
+cloudwatch`, the "Query outcomes" widget (`query_throttled_requests`: the
+requests Bedrock throttled for this deployment's queries) does too. The
 `BedrockThrottling` alarm reads the ingestion stages' requests only.
 
 ## Query access and tenant isolation

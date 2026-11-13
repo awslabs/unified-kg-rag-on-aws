@@ -13,6 +13,7 @@ the strategy instances (``_get_strategy_instance``), and it keeps
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Collection
 from typing import TYPE_CHECKING, Any
 
@@ -33,6 +34,7 @@ from unified_kg_rag.domain.retrieval.filters import (
 from unified_kg_rag.domain.retrieval.index_prefixes import readable_index_prefixes
 from unified_kg_rag.shared import InvalidFilterError, get_logger
 from unified_kg_rag.shared.exceptions import SchemaSourceError
+from unified_kg_rag.shared.logging import log_failure
 
 if TYPE_CHECKING:
     from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain, RAGInput
@@ -207,21 +209,24 @@ def _schema_annotation_fields(chain: GraphRAGChain) -> frozenset[str] | None:
         ).processing.graph_extraction.extraction_schema()
     except SchemaSourceError as e:
         chain._schema_fields_unreadable = True
-        logger.warning(
+        log_failure(
+            logger,
+            logging.WARNING,
             "Not checking schema filter keys against the extraction schema: %s",
-            e,
+            error=e,
         )
         return None
     # A loader that breaks its contract (raises something else) must not
     # fail, and reload on, every filtered query: the check is advisory.
     except Exception as e:  # noqa: BLE001 - the check is advisory
         chain._schema_fields_unreadable = True
-        logger.warning(
+        log_failure(
+            logger,
+            logging.WARNING,
             "Not checking schema filter keys against the extraction schema: "
-            "loading the schema source failed (%s: %s)",
-            type(e).__name__,
-            e,
-            exc_info=True,
+            "loading the schema source failed (%s)",
+            error=e,
+            traceback=True,
         )
         return None
     fields = SchemaAnnotator(schema).fields

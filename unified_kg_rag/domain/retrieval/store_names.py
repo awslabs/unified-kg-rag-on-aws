@@ -6,6 +6,7 @@ Indexers write and retrievers read the same OpenSearch aliases and Neptune
 vertex labels, so both sides derive the names here.
 """
 
+from collections.abc import Iterable
 from datetime import datetime
 from typing import Any
 
@@ -88,6 +89,27 @@ def store_name(
         now = datetime.now()
         name = f"{name}-{now:%Y%m%d%H%M%S}{now.microsecond // 1000:03d}"
     return name
+
+
+def suffixes_of_aliases(
+    aliases: Iterable[str], base: str, additional_suffix: str | None = None
+) -> list[str]:
+    """The suffixes ``aliases`` name under ``base`` (``store_name`` read
+    back: ``<base>-<suffix>[-<additional_suffix>]``), sorted: the
+    namespaces a store holds an index of ``base`` for."""
+    prefix = f"{base}-"
+    suffixes: set[str] = set()
+    for name in aliases:
+        if not name.startswith(prefix):
+            continue
+        rest = name[len(prefix) :]
+        if additional_suffix:
+            if not rest.endswith(f"-{additional_suffix}"):
+                continue
+            rest = rest[: -len(additional_suffix) - 1]
+        if rest:
+            suffixes.add(rest)
+    return sorted(suffixes)
 
 
 def graph_label(

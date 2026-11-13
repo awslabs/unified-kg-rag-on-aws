@@ -623,6 +623,15 @@ class FakeVectorStore(_Recorder):
             key=lambda item: str(item.id),
         )
 
+    def ingested_suffixes(self) -> list[str] | None:
+        # The suffixes a text unit is stored under.
+        return sorted(
+            {
+                BaseIndexer.get_suffix(item) or Constants.DEFAULT_SUFFIX.value
+                for item in self.data.get("text_units", {}).values()
+            }
+        )
+
     def describe_indices(self, suffix: str | None) -> list[dict[str, Any]]:
         # One "index" per kind that holds an item of the suffix.
         name = suffix or Constants.DEFAULT_SUFFIX.value

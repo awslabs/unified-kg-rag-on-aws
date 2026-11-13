@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import secrets
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -85,14 +86,14 @@ from unified_kg_rag.domain.prompts.retrieval import STRATEGY_ROUTING_GUIDE
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import (
-    INTERNAL_ERROR_MESSAGE,
     ConfigurationError,
     ErrorClass,
     GraphRAGException,
     InvalidArgumentError,
     classify,
-    error_text,
+    shown_error_text,
 )
+from unified_kg_rag.shared.logging import log_failure
 from unified_kg_rag.shared.utils import event_loop
 from unified_kg_rag.shared.utils.files import open_temporary, replace_together
 
@@ -417,9 +418,7 @@ def _classified_error(e: Exception) -> JSONResponse:
         "invalid" if error_class is ErrorClass.INVALID_ARGUMENT else error_class.value
     )
     # An unexpected error's text (botocore's, with ARNs) stays in the log.
-    message = (
-        INTERNAL_ERROR_MESSAGE if error_class is ErrorClass.FAILURE else error_text(e)
-    )
+    message = shown_error_text(e, audience="operator")
     return _error(HTTP_STATUS[error_class], code, message, error_class=error_class)
 
 
@@ -577,7 +576,13 @@ def create_app(
         # surface names it: an unreachable store is a 503 store_unreachable,
         # a namespace without an index a 404 index_not_found.
         if classify(e) is ErrorClass.FAILURE:
-            logger.error("Console request failed: %s", e, exc_info=e)
+            log_failure(
+                logger,
+                logging.ERROR,
+                "Console request failed: %s",
+                error=e,
+                traceback=True,
+            )
         return _classified_error(e)
 
     @app.exception_handler(Exception)

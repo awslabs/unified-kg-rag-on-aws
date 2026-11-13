@@ -1472,7 +1472,7 @@ def test_a_schema_load_failing_otherwise_is_not_retried_either(
     finally:
         registry._KINDS.unregister("test_broken_source")
     assert len(calls) == 1
-    assert "ValueError: a loader bug" in caplog.text
+    assert "loading the schema source failed (ValueError" in caplog.text
 
 
 def _eval_dataset(tmp_path: Any, filters: dict[str, Any], **metadata: Any) -> Any:

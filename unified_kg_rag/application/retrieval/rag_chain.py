@@ -5,6 +5,7 @@ import concurrent.futures
 import contextlib
 import contextvars
 import functools
+import logging
 import threading
 import time
 import unicodedata
@@ -214,6 +215,7 @@ from unified_kg_rag.shared.exceptions import (
     tag_query_failure,
 )
 from unified_kg_rag.shared.genai import ERROR_TYPE, GEN_AI_CONVERSATION_ID
+from unified_kg_rag.shared.logging import log_failure
 from unified_kg_rag.shared.metrics import (
     QUERY_ABSTAINED_METRIC,
     QUERY_DEGRADED_METRIC,
@@ -1077,12 +1079,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             record_degradation(
                 DegradationStep.ROUTING, f"routed to '{strategy.value}'", e
             )
-            logger.warning(
+            log_failure(
+                logger,
+                logging.WARNING,
                 "Strategy auto-selection failed, using '%s' as fallback: %s",
                 strategy.value,
-                error_digest(e),
+                error=e,
             )
-            logger.debug("Strategy auto-selection error: %s", e)
 
         state["resolved_strategy"] = strategy
         state[ROUTING_KEY] = {"decided_by": decided_by, "candidates": candidates}
@@ -1287,8 +1290,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         except Exception as e:
             if not self.ignore_errors or is_unreachable_error(e):
                 raise
-            logger.warning("Query processing failed: %s", error_digest(e))
-            logger.debug("Query processing error: %s", e)
+            log_failure(logger, logging.WARNING, "Query processing failed: %s", error=e)
             record_degradation(
                 DegradationStep.QUERY_PROCESSING, "searched the question as is", e
             )
@@ -1392,10 +1394,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         except Exception as e:
             if not self.ignore_errors or is_unreachable_error(e):
                 raise
-            logger.warning(
-                "Follow-up rewrite failed; using the query as is: %s", error_digest(e)
+            log_failure(
+                logger,
+                logging.WARNING,
+                "Follow-up rewrite failed; using the query as is: %s",
+                error=e,
             )
-            logger.debug("Follow-up rewrite error: %s", e)
             record_degradation(
                 DegradationStep.FOLLOW_UP_REWRITE, "searched the follow-up as is", e
             )
@@ -1785,8 +1789,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         except Exception as e:
             if not self.ignore_errors:
                 raise
-            logger.warning("Context optimization failed: %s", error_digest(e))
-            logger.debug("Context optimization error: %s", e, exc_info=True)
+            log_failure(
+                logger,
+                logging.WARNING,
+                "Context optimization failed: %s",
+                error=e,
+                traceback=True,
+            )
             record_degradation(
                 DegradationStep.CONTEXT_OPTIMIZATION, "answered without context", e
             )
@@ -2057,12 +2066,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         except QueryTimeoutError:
             raise
         except Exception as e:  # noqa: BLE001 - citations never fail an answer
-            logger.warning(
+            log_failure(
+                logger,
+                logging.WARNING,
                 "Could not read the text units of the answer's graph "
                 "citations; they name no document: %s",
-                error_digest(e),
+                error=e,
+                traceback=True,
             )
-            logger.debug("Citation lineage read error", exc_info=True)
             record_degradation(
                 DegradationStep.CITATION_LINEAGE,
                 "graph citations name no document",
@@ -2471,9 +2482,21 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
 
     @staticmethod
     def _query_id() -> str:
-        """A query's id: one bound by the caller (as the console's), else a
-        new one."""
-        return str(get_contextvars().get("query_id") or uuid.uuid4().hex[:12])
+        """A query's id: one bound by the caller (as the console's or an MCP
+        call's, :func:`new_query_id`), else a new one."""
+        return str(get_contextvars().get("query_id") or new_query_id())
+
+    def record_unrun_query(
+        self, query: Mapping[str, Any], error: BaseException, *, started: float
+    ) -> None:
+        """Publish the query metrics of an answer a host gave up on before
+        or while the chain ran it, so no query metric was recorded (an MCP
+        ``kg_answer`` that timed out waiting for a call slot, or at the
+        backstop past the chain's deadline): one failed query, as
+        :meth:`ainvoke` records its own. ``query``: the fields known
+        (``search_strategy``, ``suffix``); ``started``: the
+        ``time.monotonic()`` the call began."""
+        self._record_query_metrics(started, dict(query), error=error)
 
     @staticmethod
     def _log_context(rag_input: RAGInput, query_id: str) -> dict[str, Any]:
@@ -2696,12 +2719,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                     raise
                 raise e from raised
 
-            logger.error(
+            log_failure(
+                logger,
+                logging.ERROR,
                 "RAG chain execution failed for query %s: %s",
                 text_digest(rag_input.query),
-                error_digest(e),
+                error=e,
             )
-            logger.debug("RAG chain execution error: %s", e)
             # The degraded answer is still a failed query: mark its span so.
             span.record_exception(e)
             span.set_error(type(e).__name__)
@@ -3342,12 +3366,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             )
             await self.memory_manager.add_turn(key, query, output.answer)
         except Exception as e:  # noqa: BLE001 - memory never fails an answer
-            logger.error(
+            log_failure(
+                logger,
+                logging.ERROR,
                 "Failed to save conversation memory for conversation '%s': %s",
                 output.conversation_id,
-                error_digest(e),
+                error=e,
+                traceback=True,
             )
-            logger.debug("Conversation memory error: %s", e, exc_info=True)
 
     # Streaming yields answer TEXT chunks (str), not RAGOutput: callers of a
     # streamed answer want tokens as they arrive. Sources/metadata stay on the
@@ -3601,13 +3627,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 if (named := named_model_error(e, self.config)) is not e:
                     raise named from e
                 raise
-            logger.error(
+            log_failure(
+                logger,
+                logging.ERROR,
                 "RAG stream failed for query %s after %s chunk(s): %s",
                 text_digest(rag_input.query),
                 len(chunks),
-                error_digest(e),
+                error=e,
             )
-            logger.debug("RAG stream error: %s", e)
             # Counted as ainvoke's error answer is.
             outcome.error_class = classify(e)
             # Mirror ainvoke's degraded answer. If part of the answer was
@@ -4054,6 +4081,13 @@ def _release_cached_resources(
 _CALLER_DEADLINE: contextvars.ContextVar[float | None] = contextvars.ContextVar(
     "kg_rag_caller_deadline", default=None
 )
+
+
+def new_query_id() -> str:
+    """A new query id (the ``query_id`` of a query's log lines, metrics and
+    errors); a host that binds one before calling the chain (as
+    ``query_id`` in the structlog context) has the chain use it."""
+    return uuid.uuid4().hex[:12]
 
 
 @contextlib.contextmanager

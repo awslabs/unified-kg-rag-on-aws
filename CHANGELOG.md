@@ -761,8 +761,10 @@ From a `main` checkout (formats and keys no release had):
   minutes and ended with "produced 0 outputs"); a query raises it at once, without the transient retries' backoff
   (the error answer under `ignore_errors`, which no fallback absorbs), and `run-rag` exits 1 without a traceback.
   `ErrorClass` and `classify_error` name the class of a failure, which every surface maps: the CLIs' exit codes, the
-  MCP server's caller messages and the console's error kind, also of an error answer (`metadata.error_class`); a
-  `failure` reaches an MCP caller or the console with a generic message, its text only in the server log. A
+  MCP server's caller messages and the console's error kind, also of an error answer (`metadata.error_class`). One
+  rule (`shown_error_text`) decides the text each surface shows: an MCP caller sees a refusal's and the deadline's,
+  the console all but a `failure`'s, also for an error answer, in the history and a strategy's reason; the hidden text
+  is logged as a digest, in full at DEBUG, under the `query_id` every Ask event carries. A
   malformed filter value (a null, an empty or nested list) is `invalid_filter` with one message on every surface,
   `run-rag` naming the flag it came from.
 - `run-eval` comparisons adjust for the many deltas they read: every paired delta has a sign-flip randomization
@@ -849,7 +851,8 @@ From a `main` checkout (formats and keys no release had):
   `mcp.max_*` bounds limit what a call may ask and costs (`mcp.strategies` binds the chain's new
   `allowed_strategies`: `auto` routes, and falls back, only within it, and is refused before any model call when the
   namespace serves none of it); every call runs under `search.query_timeout_seconds` (a query past it times out in the
-  chain, so it is counted in the query metrics and names its ids) and returns its model `usage`.
+  chain; a `kg_answer` past it, the wait for a call slot included, is one query in the query metrics, and every failed
+  call's error names its `query_id`) and returns its model `usage`.
   `kg_get_entity` matches a name folded as local search's seeds are.
   The graph tools read the stores through the chain's retrievers and make no model call, and check the namespace
   first, as a query does (one nothing was ingested under logs no retrieval failure per call; its error names only the
@@ -1140,13 +1143,12 @@ From a `main` checkout (formats and keys no release had):
   `IndexNotFoundError`, not a methodology refusal naming the config's). A registry the caller cannot read (the CDK
   query task's role has no DynamoDB access) is reported unavailable, with the reason in `registry_unavailable` and a
   warning, and the rest is still described (#636). A missing extra and a namespace that holds no index exit 2 with the
-  error on stderr, and describing creates no store file where nothing was ingested (#641). `--documents
-  failed,quarantined` (`describe_namespace(documents=...)`) lists the registry's documents of those statuses with their
-  `error_info`, counts, writer and time (every run write stamps `updated_at`, and `created_at` once; a record
-  written before has none), also of a namespace without an index whose first build failed (described with `exists:
-  false`, exit 0); a run names the documents it deletes in one INFO line. See
-  [inspect and
-  export](docs/guides/inspect.md).
+  error on stderr (listing the namespaces the store holds, as `run-rag` does), and describing creates no store file
+  where nothing was ingested (#641). `--documents failed,quarantined` (`describe_namespace(documents=...)`) lists the
+  registry's documents of those statuses with their `error_info`, counts, writer and time (every run write stamps
+  `updated_at`, and `created_at` once; a record written before has none), also of a namespace without an index whose
+  first build failed (described with `exists: false`, exit 0); a run names the documents it deletes in one INFO line.
+  See [inspect and export](docs/guides/inspect.md).
 - Telemetry names the namespace (the tenant boundary) and ties a query to its logs: `kg_rag.namespace` on every span
   of a query or ingestion run (an MCP tool call's and a console question's root span included), `namespace` in their
   log context and an ingestion run's EMF properties; the ingestion root span has `kg_rag.mode` and the delta counts,
@@ -2311,9 +2313,10 @@ Deployment (CDK).
   #211, #319, #345).
 - Logs carry no query text, entity names or model output at INFO, no local variables in tracebacks, no ANSI codes
   when piped, and no relationship endpoints or output previews from gleaning; an evaluator or judge error, and a
-  model call's a query or an ingestion step absorbs (rerank, translation, planner, DRIFT step, extraction, reports,
-  batch embedding; `log_failure`), is logged as its type and a digest, its text at DEBUG; a unit test fails on a new
-  INFO+ log call that passes them (#156, #173, #245, #255, #606).
+  model call's a query, a search strategy, an ingestion step or prompt tuning absorbs (rerank, translation, planner,
+  DRIFT, global and iterative steps, extraction, gleaning, chunking, reports, batch embedding), is logged as its type
+  and a digest (`log_failure`), its text and traceback at DEBUG; a unit test over those packages fails on a new INFO+
+  log call that passes them (#156, #173, #245, #255, #606).
 - Spans carry an error's type and a digest of its message (`kg_rag.error_digest`), not its text or stack, unless
   `observability.capture_content` (then through `redact_patterns`): a judge's or parser's error quoting corpus text
   reached Langfuse or Phoenix with capture off. A model server that cannot be reached is named by its URL without

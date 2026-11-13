@@ -13,6 +13,9 @@ strategy cites at all (``search.citations``), its sources with their
 provenance and context markers, then the model-written sections it may cite,
 the steps it was given without (``degraded``: a partial answer), how
 ``auto`` routed, rerank status, usage, cost and latency) or ``error``.
+``result`` and ``error`` carry the ``query_id`` and ``trace_id`` too; an
+error's text, a raised or an absorbed one's, is shown by the console's one
+rule (``shown_error_text``, the ``operator`` audience).
 
 A follow-up carries the conversation itself (``RAGInput.history``): the
 page keeps its turns, so a chain rebuilt after a settings save or an
@@ -23,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import os
 import time
 import uuid
@@ -57,15 +61,16 @@ from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.evaluation.comparison import answer_cost_usd
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.exceptions import (
-    INTERNAL_ERROR_MESSAGE,
     ErrorClass,
     IndexNotFoundError,
     MethodologyNotIndexedError,
     classify,
     error_class_of,
-    error_text,
     query_failure_ids,
+    shown_error_text,
+    shows_error_text,
 )
+from unified_kg_rag.shared.logging import log_failure
 
 logger = get_logger(__name__)
 
@@ -289,7 +294,9 @@ class AskService:
         try:
             await chain.aclose()
         except Exception as e:  # noqa: BLE001 - a close must not fail anything
-            logger.warning("Closing a replaced chain failed: %s", e)
+            log_failure(
+                logger, logging.WARNING, "Closing a replaced chain failed: %s", error=e
+            )
 
     async def close(self) -> None:
         chains = [*self._retired, *([self._chain] if self._chain else [])]
@@ -315,10 +322,11 @@ class AskService:
             available, reason = True, None
             try:
                 await chain.acheck_methodology(strategy, suffix)
-            except MethodologyNotIndexedError as e:
-                available, reason = False, str(e)
             except Exception as e:  # noqa: BLE001 - shown, not fatal
-                available, reason = False, error_text(e)
+                # A store error's text by the console's one rule, an
+                # unexpected one's never (it may quote a provider's).
+                available = False
+                reason = shown_error_text(e, audience="operator")
             methodology = None
             if strategy is not SearchStrategy.AUTO:
                 with contextlib.suppress(Exception):
@@ -391,6 +399,9 @@ class AskService:
                 result = self._result(
                     output, config, time.perf_counter() - started, request.suffix
                 )
+                # The ids the page shows to find the answer's log lines
+                # and trace.
+                result["query_id"] = query_id
                 result["trace_id"] = trace_id
                 result["trace_url"] = trace_url(
                     record.get("trace_id"), self.trace_url_template, config
@@ -420,16 +431,23 @@ class AskService:
                 )
                 raise
             except Exception as e:  # noqa: BLE001 - reported to the page
+                error_class = classify(e)
                 kind = _error_kind(e)
-                # An unexpected error's text (a provider's, an endpoint) stays
-                # in the server log, under the ids the page shows.
-                message = error_text(e)
-                if kind == "failure":
-                    logger.exception("Console question %s failed", query_id)
-                    message = INTERNAL_ERROR_MESSAGE
+                # An unexpected error's text (a provider's) stays in the
+                # server log, under the ids the page shows.
+                message = shown_error_text(e, audience="operator")
+                if not shows_error_text(error_class, "operator"):
+                    log_failure(
+                        logger,
+                        logging.ERROR,
+                        "Console question %s failed: %s",
+                        query_id,
+                        error=e,
+                        traceback=True,
+                    )
                 ids = {**query_failure_ids(e), "query_id": query_id}
                 record.update(
-                    outcome=_failed_outcome(classify(e), "failed"),
+                    outcome=_failed_outcome(error_class, "failed"),
                     error=message,
                     latency_seconds=time.perf_counter() - started,
                     trace_id=ids.get("trace_id") or record.get("trace_id"),
@@ -582,7 +600,17 @@ class AskService:
             # The class of a failure the chain absorbed (ignore_errors), as
             # an error event names a raised one (_error_kind).
             "error_kind": view.error_class,
-            "error_message": view.error_message,
+            # By the rule of a raised one's (an absorbed provider error's
+            # text stays in the server log).
+            "error_message": (
+                shown_error_text(
+                    error_class_of(view.error_class),
+                    view.error_message,
+                    audience="operator",
+                )
+                if view.error_message
+                else view.error_message
+            ),
             # What the answer was given without: a partial answer.
             **view.outcome_fields(),
             "rerank": view.rerank,

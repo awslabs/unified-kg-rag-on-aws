@@ -630,7 +630,9 @@ class TestIntelligentChunkerHelpers:
                 "body", {"chunk_boundaries": {"line_number": 2}}
             )
         assert out is None
-        assert "parser bug" in caplog.text
+        # Named by type and digest (log_failure); its text only at DEBUG.
+        assert "Failed LLM line-based boundary chunking: RuntimeError" in caplog.text
+        assert "parser bug" not in caplog.text
 
     def test_chunk_with_boundaries_splits(self, intelligent_chunker) -> None:
         text = "first line here\nsecond chunk begins now and is fairly long indeed"

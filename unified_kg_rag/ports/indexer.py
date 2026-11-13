@@ -639,6 +639,13 @@ class VectorIndexer(BaseIndexer):
         read fails."""
         return None
 
+    def ingested_suffixes(self) -> list[str] | None:
+        """The suffixes the store holds a text units index for (each
+        ingested namespace has one), sorted, for the error naming a suffix
+        none exists for; ``None`` (the default) when the backend cannot
+        tell. Best-effort: a failed read is ``None``."""
+        return None
+
     def scan_items(
         self,
         kind: StoredItemKind,

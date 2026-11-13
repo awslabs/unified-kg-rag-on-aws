@@ -1,5 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import logging
 import re
 import statistics
 import time
@@ -59,6 +60,7 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.domain.prompts import TextChunkingPrompt
 from unified_kg_rag.domain.retrieval.store_names import index_suffix, namespace_suffix
 from unified_kg_rag.shared import ConfigurationError, DataProcessingError, get_logger
+from unified_kg_rag.shared.logging import log_failure
 from unified_kg_rag.shared.usage import record_cache_hit
 from unified_kg_rag.shared.utils.sentences import (
     CLOSERS,
@@ -621,7 +623,12 @@ class BaseChunker(ABC):
             self._log_completion_summary(time.time() - start_time)
             return all_text_units
         except Exception as e:
-            logger.error("Failed to chunk documents: %s", e)
+            log_failure(
+                logger,
+                logging.ERROR,
+                "Failed to chunk documents: %s",
+                error=e,
+            )
             raise DataProcessingError(f"Failed to chunk documents: {e}") from e
 
     def _process_document_with_stats(
@@ -647,8 +654,12 @@ class BaseChunker(ABC):
                 logger.warning("No chunks generated for document '%s'", doc.file_name)
                 self.stats.num_failed_documents += 1
         except DataProcessingError as e:
-            logger.error(
-                "Failed to chunk document '%s': %s", doc.file_name, e, exc_info=False
+            log_failure(
+                logger,
+                logging.ERROR,
+                "Failed to chunk document '%s': %s",
+                doc.file_name,
+                error=e,
             )
             self.stats.num_failed_documents += 1
         finally:
@@ -1052,8 +1063,13 @@ class IntelligentTextChunker(BaseChunker):
                 show_progress=self.show_progress,
             )
         except Exception as e:  # noqa: BLE001 - split by size instead
-            logger.error(
-                "Failed to get boundary results for %s: %s", label, e, exc_info=True
+            log_failure(
+                logger,
+                logging.ERROR,
+                "Failed to get boundary results for %s: %s",
+                label,
+                error=e,
+                traceback=True,
             )
             results = [None] * len(requests)
         new_records: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
@@ -1210,7 +1226,12 @@ class IntelligentTextChunker(BaseChunker):
 
         except Exception as e:  # noqa: BLE001 - the pre-chunk is split by size instead
             # The pre-chunk is split by size instead (_handle_llm_failure).
-            logger.warning("Failed LLM line-based boundary chunking: %s", e)
+            log_failure(
+                logger,
+                logging.WARNING,
+                "Failed LLM line-based boundary chunking: %s",
+                error=e,
+            )
             return None
 
     def _extract_chunks_from_line_indices(
@@ -1241,7 +1262,12 @@ class IntelligentTextChunker(BaseChunker):
         try:
             return self.pre_splitter.split_text(content)
         except Exception as e:  # noqa: BLE001 - the document stays one pre-chunk
-            logger.warning("Failed to create pre-chunks: %s", e)
+            log_failure(
+                logger,
+                logging.WARNING,
+                "Failed to create pre-chunks: %s",
+                error=e,
+            )
             return [content] if content else []
 
     def _create_fallback_chunks(self, pre_chunk: str) -> list[str]:

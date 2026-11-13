@@ -49,6 +49,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.models.config import McpServerConfig
 from unified_kg_rag.shared.exceptions import (
+    INTERNAL_ERROR_MESSAGE,
     GraphRAGException,
     MethodologyNotIndexedError,
 )
@@ -495,7 +496,7 @@ async def test_a_store_failure_reaches_the_caller_without_its_details(
         result = await client.call_tool("kg_get_entity", {"name": "Depot"})
     assert result.is_error
     text = " ".join(getattr(c, "text", "") for c in result.content)
-    assert "vpc-secret" not in text and mcp_tools.INTERNAL_ERROR_MESSAGE in text
+    assert "vpc-secret" not in text and INTERNAL_ERROR_MESSAGE in text
 
 
 @requires_mcp
@@ -516,9 +517,10 @@ async def test_an_unexpected_failure_is_logged_under_the_ids_the_caller_gets(
 
     logged: list[dict[str, Any]] = []
     monkeypatch.setattr(mcp_tools.graph_lookup, "find_entities", broken)
+    # log_failure: the ERROR line (a digest) through logger.log.
     monkeypatch.setattr(
         mcp_server.logger,
-        "error",
+        "log",
         lambda *_args, **_kwargs: logged.append(get_contextvars()),
     )
     async with Client(build_mcp_server(tools)) as client:

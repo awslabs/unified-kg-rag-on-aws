@@ -24,7 +24,7 @@ from collections.abc import Awaitable, Callable, Collection
 from typing import Any, Literal, TypeVar
 
 from pydantic import BaseModel, Field
-from structlog.contextvars import bound_contextvars
+from structlog.contextvars import bound_contextvars, get_contextvars
 
 from unified_kg_rag.application.presentation.answer_view import (
     AnswerView,
@@ -39,6 +39,7 @@ from unified_kg_rag.application.retrieval.rag_chain import (
     RAGOutput,
     SearchOutput,
     caller_deadline,
+    new_query_id,
 )
 from unified_kg_rag.domain.models import (
     GraphEdge,
@@ -55,7 +56,6 @@ from unified_kg_rag.domain.retrieval.source_fields import EntityRef
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.exceptions import (
-    INTERNAL_ERROR_MESSAGE,
     ConfigurationError,
     ErrorClass,
     GraphRAGException,
@@ -65,6 +65,8 @@ from unified_kg_rag.shared.exceptions import (
     error_class_of,
     error_text,
     query_failure_ids,
+    shown_error_text,
+    shows_error_text,
     tag_query_failure,
 )
 from unified_kg_rag.shared.usage import usage_scope
@@ -353,21 +355,11 @@ class SchemaToolResult(BaseModel):
 class _AbsorbedQueryError(GraphRAGException):
     """The chain's error answer (``processing.ignore_errors``), raised with
     the class of the failure it absorbed (``error_class``): the message of
-    a caller-correctable one (``_CALLER_CLASSES``) is the caller's."""
+    a caller-correctable one (``shows_error_text``) is the caller's."""
 
     def __init__(self, message: str, error_class: ErrorClass) -> None:
         super().__init__(message)
         self.error_class = error_class
-
-
-# The error classes (ErrorClass) whose message is for the caller: a
-# refusal (an argument, a filter or a strategy to change, a namespace
-# without an index) and the deadline. The others' may name an endpoint (a
-# store, a model server).
-_CALLER_CLASSES = frozenset(
-    {error_class for error_class in ErrorClass if error_class.is_caller_error}
-    | {ErrorClass.TIMEOUT}
-)
 
 
 def describe_error(
@@ -392,9 +384,11 @@ def describe_error(
         if ids
         else ""
     )
-    if error_class in _CALLER_CLASSES:
-        return f"[{error_class.value}] {error_text(exc, namespaces)}{suffix}", True
-    return f"[{error_class.value}] {INTERNAL_ERROR_MESSAGE}{suffix}", False
+    text = shown_error_text(error_class, error_text(exc, namespaces), audience="caller")
+    return (
+        f"[{error_class.value}] {text}{suffix}",
+        shows_error_text(error_class, "caller"),
+    )
 
 
 def _cut(text: str, limit: int) -> tuple[str, bool]:
@@ -621,16 +615,22 @@ class KnowledgeGraphTools:
 
     # -- the call wrapper ------------------------------------------------
 
-    async def _within_deadline(self, run: Callable[[], Awaitable[_R]]) -> _R:
+    async def _within_deadline(
+        self,
+        run: Callable[[], Awaitable[_R]],
+        on_timeout: Callable[[QueryTimeoutError], None] | None = None,
+    ) -> _R:
         """``run`` in a call slot (``mcp.max_concurrent_calls``), the wait
         for the slot and the work under one deadline
-        (``search.query_timeout_seconds``): a call never takes longer, the
-        chain's own deadline inside it included.
+        (``search.query_timeout_seconds``).
 
         The chain gets the call's deadline (``caller_deadline``), so a query
         past it ends in the chain's own timeout, recorded with its metrics
-        and ids; this timeout is a backstop ``_BACKSTOP_GRACE_SECONDS`` later
-        for work that does not watch the deadline."""
+        and ids. This timeout covers the wait for a slot, and is a backstop
+        ``_BACKSTOP_GRACE_SECONDS`` later for work that does not watch the
+        deadline (the graph tools, a store call past it): such a call ends
+        by the deadline plus that grace. ``on_timeout`` gets the error of
+        either before it is raised (``kg_answer`` records it as a query)."""
         seconds = self._deadline
         at = None if seconds is None else time.monotonic() + seconds
         try:
@@ -648,12 +648,15 @@ class KnowledgeGraphTools:
             if not scope.expired():
                 raise
             assert seconds is not None
-            raise QueryTimeoutError(
+            error = QueryTimeoutError(
                 f"The call did not finish within {seconds:g} s "
                 "(search.query_timeout_seconds, the wait for a call slot "
                 "included).",
                 timeout_seconds=seconds,
-            ) from None
+            )
+            if on_timeout is not None:
+                on_timeout(error)
+            raise error from None
 
     async def _call(
         self,
@@ -661,12 +664,16 @@ class KnowledgeGraphTools:
         arguments: dict[str, Any],
         run: Callable[[], Awaitable[_R]],
         namespace: str | None = None,
+        on_timeout: Callable[[QueryTimeoutError], None] | None = None,
     ) -> _R:
         """Run one tool call: a slot, a ``kg_rag.mcp.tool`` span (the
         arguments as ``input.value`` only under
         ``observability.capture_content``, redacted; ``kg_rag.namespace``
         when the call reads a served one, ``namespace`` or the server's) and
-        a log line with a digest of the query, never its text."""
+        a log line with a digest of the query, never its text. The call's
+        ``query_id`` is bound from the start (the chain's query takes it),
+        so an error raised before the chain runs, as a timeout waiting for
+        a slot, carries it and the call's ``trace_id`` too."""
         policy = observability.content_policy()
         attributes: dict[str, Any] = {"mcp.tool.name": tool}
         if policy.capture_content:
@@ -678,10 +685,17 @@ class KnowledgeGraphTools:
         served = self.namespace if namespace is None else namespace
         if served in self.namespaces:
             attributes["kg_rag.namespace"] = served
-        with observability.span("kg_rag.mcp.tool", attributes) as span:
+        with (
+            bound_contextvars(query_id=new_query_id()),
+            observability.span("kg_rag.mcp.tool", attributes) as span,
+        ):
             try:
-                result = await self._within_deadline(run)
+                result = await self._within_deadline(run, on_timeout)
             except BaseException as e:
+                ids = observability.current_trace_ids()
+                tag_query_failure(
+                    e, get_contextvars().get("query_id"), ids[0] if ids else None
+                )
                 with bound_contextvars(**query_failure_ids(e)):
                     logger.info(
                         "MCP tool %s failed after %.2fs (%s): %s",
@@ -803,7 +817,7 @@ class KnowledgeGraphTools:
         error = _AbsorbedQueryError(
             (
                 outcome.error_message or "The query was refused."
-                if error_class in _CALLER_CLASSES
+                if shows_error_text(error_class, "caller")
                 else "The query failed (processing.ignore_errors)."
             ),
             error_class,
@@ -892,7 +906,22 @@ class KnowledgeGraphTools:
         far, oldest turn first (``RAGInput.history``): a follow-up such as
         "and its price?" is rewritten from it into a standalone question."""
 
+        started = time.monotonic()
+        # Whether the chain returned its answer (and recorded its metrics).
+        answered = False
+
+        def on_timeout(error: QueryTimeoutError) -> None:
+            # A call that timed out waiting for a slot, or at the backstop
+            # while the chain ran, has no query metric of the chain's own.
+            if not answered:
+                self.chain.record_unrun_query(
+                    {"search_strategy": strategy, "suffix": namespace},
+                    error,
+                    started=started,
+                )
+
         async def run() -> AnswerToolResult:
+            nonlocal answered
             if records not in ANSWER_RECORDS:
                 raise InvalidArgumentError(
                     f"records must be one of {', '.join(ANSWER_RECORDS)}, "
@@ -908,6 +937,7 @@ class KnowledgeGraphTools:
                 self._history(history),
             )
             output = await self.chain.ainvoke(rag_input)
+            answered = True
             outcome = self._checked(output)
             view = AnswerView.from_output(output)
             # The model-written sections first, then the sources as the
@@ -966,6 +996,7 @@ class KnowledgeGraphTools:
             },
             run,
             namespace,
+            on_timeout,
         )
 
     # -- the graph tools -------------------------------------------------
