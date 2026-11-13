@@ -134,9 +134,16 @@ class TextUnitRemoval:
             if found is not None and reads_back(m.graph_indexer)
             else set()
         )
-        # Read before the delete below removes the stored leaves.
+        # A unit the commit writes back as the same leaf is not deleted: the
+        # commit's upsert replaces it, and a run killed or rejected before
+        # that leaves the stored leaf for the next removal to compare (else
+        # it finds none and deletes the summaries, which on_reset never
+        # builds again).
         rewritten = self._rewritten_leaves(suffix, text_unit_ids)
-        results = m.delete_documents({suffix: doomed}, {suffix: vector_only})
+        results = m.delete_documents(
+            {suffix: [i for i in doomed if i not in rewritten]},
+            {suffix: vector_only},
+        )
         # A summary of the tree paraphrases what it covers: one citing a
         # removed text unit goes, and every summary above it (fail-closed:
         # the next summary_tree build writes the tree again). Not for a unit

@@ -4,9 +4,9 @@
 registry on; docs/design/retrieval-hipporag-raptor.md, "Removal").
 
 Run 1 fails one document's extraction (cut-off output) and records it
-FAILED; run 2 retries it. The retry removes the document's text units and
-writes them back under the same ids with the same text: the summaries
-citing them are kept (no summary asked again, ``refresh: on_reset`` loses
+FAILED; run 2 retries it. The retry writes the document's text units back
+under the same ids with the same text: the removal leaves them stored (the
+commit's upsert replaces them) and keeps the summaries citing them (no summary asked again, ``refresh: on_reset`` loses
 none), while a real deletion in the same run still deletes and marks the
 tree pruned. Every outcome, a run killed at any write included, converges
 with a fresh build of the same corpus, in English, Korean and Japanese.
@@ -109,6 +109,15 @@ def _state(providers: Providers) -> tuple[Any, list[str]]:
     return rt.shape(rt.tree_nodes(providers)), sorted(e2e._entity_names(providers))
 
 
+def _dangling(config: Config, providers: Providers) -> list[str]:
+    """The summary nodes citing a text unit the store does not hold."""
+    prefix = config.indexing.opensearch.text_units_index_prefix
+    units = {hit["_id"] for hit in e2e._stored(config, providers, prefix)}
+    return [
+        n["id"] for n in rt.tree_nodes(providers) if set(n["text_unit_ids"]) - units
+    ]
+
+
 # A run whose only document fails again has no extraction output and fails:
 # another document changes in that run.
 _EXTRA = ("mill.txt", "Mill makes iron for Vendor.\n\nMill has an office in the east.")
@@ -168,6 +177,50 @@ def test_a_retry_keeps_the_summaries_of_text_it_writes_back_unchanged(
     assert calls.since(before)["summary"] == 0, calls.since(before)
     assert not (rt.tree_record(providers) or {}).get("pruned")
     assert _state(providers) == _fresh(tmp_path / "fresh", lang, cut=False)
+
+
+@pytest.mark.parametrize("lang", ["en", "ko", "ja"])
+@pytest.mark.parametrize("refresh", ["every_run", "on_reset"])
+@pytest.mark.parametrize("size", [40, 90])
+def test_a_retry_whose_leaves_change_under_their_ids_deletes_their_summaries(
+    tmp_path: Path, no_aws, lang: str, refresh: str, size: int  # noqa: F811
+) -> None:
+    # The removal compares each written-back unit with its stored leaf: a
+    # chunking change keeps some ids (the chunk's position) with other
+    # text, so their summaries go. Under on_reset, which builds no tree on
+    # this run, none may cite them after it.
+    config, providers, source, _, state = _failed_first(tmp_path, lang, refresh)
+    prefix = config.indexing.opensearch.text_units_index_prefix
+
+    def units() -> dict[str, str]:
+        return {
+            hit["_id"]: hit["_source"]["text"]
+            for hit in e2e._stored(config, providers, prefix)
+        }
+
+    before = units()
+    state["cut"] = False
+    config.processing.chunking.fallback_chunk_size = size
+    context = rt.ingest(config, providers, source, tmp_path / "run-2")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    after = units()
+    changed = {i for i in before if i in after and before[i] != after[i]}
+    assert changed, "the chunking change keeps some ids with other text"
+    assert not _dangling(config, providers)
+    if refresh == "on_reset":
+        nodes = rt.tree_nodes(providers)
+        assert not [n["id"] for n in nodes if set(n["text_unit_ids"]) & changed]
+    else:
+        # The tree built again summarizes the new text.
+        fresh, fresh_providers, fresh_source, _ = _setup(
+            tmp_path / "fresh", lang, "every_run", {"cut": False}
+        )
+        fresh.processing.chunking.fallback_chunk_size = size
+        context = rt.ingest(
+            fresh, fresh_providers, fresh_source, tmp_path / "fresh" / "run-1"
+        )
+        assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+        assert _state(providers) == _state(fresh_providers)
 
 
 @pytest.mark.parametrize("lang", ["en", "ko"])
@@ -242,32 +295,51 @@ def test_a_failed_read_of_the_stored_leaves_deletes_their_summaries(
 
 
 # (method, nth call, kill after the call, owner): every write of the retry's
-# removal, commit and tree build, and the new read of the stored leaves.
+# removal, commit and tree build, and the new read of the stored leaves. The
+# removal deletes nothing else: the document's units are written back, and
+# its failed extraction stored nothing.
 KILLS = [
     ("_rewritten_leaves", 1, False, TextUnitRemoval),
     ("_rewritten_leaves", 1, True, TextUnitRemoval),
     ("read_text_unit_fields", 1, True, OpenSearchIndexer),
     ("delete_summary_nodes_citing", 1, False, OpenSearchIndexer),
     ("delete_summary_nodes_citing", 1, True, OpenSearchIndexer),
-    ("delete_by_id", 1, True, OpenSearchIndexer),
-    ("delete_by_id", 2, True, OpenSearchIndexer),
+    ("upsert_text_units", 1, False, OpenSearchIndexer),
+    ("upsert_text_units", 1, True, OpenSearchIndexer),
     ("upsert_entities", 1, True, OpenSearchIndexer),
+    ("upsert_entities", 1, True, SQLiteGraphIndexer),
     ("upsert_relationships", 1, True, SQLiteGraphIndexer),
+    ("upsert_community_reports", 1, False, OpenSearchIndexer),
     ("_execute_core", 1, False, SummaryTreeStage),
 ]
 
 
+def _kill_id(kill: tuple[Any, ...]) -> str:
+    return f"{kill[3].__name__}.{kill[0]}#{kill[1]}{'after' if kill[2] else 'before'}"
+
+
+SWEEP = [
+    pytest.param(refresh, kill, id=f"{refresh}-{_kill_id(kill)}")
+    for refresh in ("every_run", "on_reset")
+    for kill in KILLS
+]
+
+
 @pytest.mark.parametrize("lang", ["en", "ko", "ja"])
-@pytest.mark.parametrize(
-    "kill",
-    KILLS,
-    ids=lambda k: f"{k[3].__name__}.{k[0]}#{k[1]}{'after' if k[2] else 'before'}",
-)
+@pytest.mark.parametrize(("refresh", "kill"), SWEEP)
 @pytest.mark.parametrize("resume", [True, False])
 def test_a_retry_killed_anywhere_converges(
-    tmp_path: Path, no_aws, lang: str, kill: tuple[Any, ...], resume: bool  # noqa: F811
+    tmp_path: Path,
+    no_aws,  # noqa: F811 - the fixture
+    lang: str,
+    kill: tuple[Any, ...],
+    resume: bool,
+    refresh: str,
 ) -> None:
-    config, providers, source, _, state = _failed_first(tmp_path, lang, "every_run")
+    # Under on_reset the next run builds no tree: it converges only because
+    # the killed removal left the units it writes back stored, so the next
+    # removal still finds them the same leaves and keeps their summaries.
+    config, providers, source, _, state = _failed_first(tmp_path, lang, refresh)
     state["cut"] = False
     method, nth, after, owner = kill
     with patch.object(owner, method, _dying(method, nth, after, owner=owner)):
@@ -276,6 +348,7 @@ def test_a_retry_killed_anywhere_converges(
     run = "run-2" if resume else "run-3"
     context = rt.ingest(config, providers, source, tmp_path / run)
     assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert not _dangling(config, providers)
     assert _state(providers) == _fresh(tmp_path / "fresh", lang, cut=False)
     assert not (rt.tree_record(providers) or {}).get("pruned")
 
@@ -287,11 +360,16 @@ def test_a_text_unit_reads_back_as_the_leaf_the_removal_predicts(
     # unit_leaf_entry predicts what the store writes: compared with the
     # stored row, an unchanged unit matches and any change to the text the
     # tree reads (its translation into the index language) or to its
-    # filters does not, so its summaries are deleted.
+    # filters does not, so its summaries are deleted. Untranslated, the
+    # index language (the source, Korean) is not among the stored
+    # translations: a translation into it the unit carries is not stored,
+    # so the tree reads the text.
     config = Config()
     config.providers.vector.kind = "sqlite"
     config.providers.vector.sqlite_path = str(tmp_path / "vector.sqlite3")
-    language = LanguageCode.EN.value
+    config.processing.translation.source_language = LanguageCode.KO
+    config.processing.translation.target_language = LanguageCode.EN
+    language = LanguageCode.KO.value
     if translation:
         config.processing.translation.enabled = True
         config.processing.translation.source_language = LanguageCode.EN

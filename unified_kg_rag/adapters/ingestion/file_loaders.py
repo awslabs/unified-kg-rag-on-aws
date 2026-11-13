@@ -51,8 +51,10 @@ from unified_kg_rag.shared.extras import extra_hint
 
 # What a text loader reads without an ``encoding``: UTF-8, not the locale's
 # preferred encoding (``open()``'s default), so a UTF-8 file reads the same
-# text, and keeps its source digest, under any locale.
-DEFAULT_ENCODING = "utf-8"
+# text, and keeps its source digest, under any locale. A leading byte-order
+# mark (Excel's "CSV UTF-8", common for Korean and Japanese exports) is not
+# text: a CSV's first header kept it in every row.
+DEFAULT_ENCODING = "utf-8-sig"
 
 
 class TextFileLoader(BaseLoader):

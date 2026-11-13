@@ -26,6 +26,8 @@ from unified_kg_rag.adapters.ingestion.file_loaders import (
     HtmlFileLoader,
     TextFileLoader,
 )
+from unified_kg_rag.adapters.ingestion.parser import ParserFactory
+from unified_kg_rag.domain.models import Config
 
 pytestmark = pytest.mark.unit
 
@@ -47,7 +49,7 @@ def test_a_loader_without_an_encoding_reads_utf8(
 
     monkeypatch.setattr(file_loaders, "open", recording, raising=False)
     documents = loader(path).load()
-    assert encodings == [DEFAULT_ENCODING] == ["utf-8"]
+    assert encodings == [DEFAULT_ENCODING] == ["utf-8-sig"]
     assert _KOREAN in "\n".join(d.page_content for d in documents)
     # A given encoding is read in.
     encodings.clear()
@@ -105,3 +107,41 @@ def test_a_utf8_file_parses_alike_under_a_latin1_locale(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr.decode("utf-8", "replace")
     assert "8859" in result.stderr.decode("utf-8", "replace")
     assert result.stdout.decode("utf-8") == _KOREAN
+
+
+_BOM = b"\xef\xbb\xbf"
+
+
+@pytest.mark.parametrize(
+    ("name", "text"),
+    [
+        ("vendors.csv", "name,note\n조르빅스,부품\nゾルビクス,部品\n"),
+        (
+            "contract.txt",
+            "조르빅스와 Vendor는 부품을 거래한다.\n\nゾルビクスは南部にある。\n",
+        ),
+        ("page.html", "<html><body><p>조르빅스</p><p>ゾルビクス</p></body></html>"),
+    ],
+)
+def test_a_byte_order_mark_is_not_text(tmp_path: Path, name: str, text: str) -> None:
+    # rv27: Excel's "CSV UTF-8" (common for Korean and Japanese exports)
+    # starts with a byte-order mark; read as plain UTF-8 it stayed in the
+    # first header of every row after the first ("\ufeffname: ..."), as the
+    # converter strips only a leading one. The file parses as it does
+    # without the mark, and a file without one parses as plain UTF-8 reads it.
+    plain, marked = tmp_path / "plain", tmp_path / "marked"
+    plain.mkdir()
+    marked.mkdir()
+    (plain / name).write_bytes(text.encode("utf-8"))
+    (marked / name).write_bytes(_BOM + text.encode("utf-8"))
+    config = Config()
+
+    def parsed(path: Path) -> str:
+        return ParserFactory.create_parser(path, config).parse_file(path).page_content
+
+    without = parsed(plain / name)
+    assert "\ufeff" not in parsed(marked / name)
+    assert parsed(marked / name) == without
+    assert ("조르빅스" in without) and ("ゾルビクス" in without)
+    if name.endswith(".csv"):
+        assert without.count("name: ") == 2, without
