@@ -138,8 +138,10 @@ the model for none of them.
 
 An incremental run clusters only its delta and appends its communities, and
 stored communities and reports keep an entity's old id after it took its
-current name's id. Two signals tell you when a rebuild is due. Neither resets
-anything on its own.
+current name's id. A merged entity or relationship keeps its stored
+description (a summary stays as it was) and appends the delta's new lines,
+and its text unit ids are a full build's, possibly in another order. Two
+signals tell you when a rebuild is due. Neither resets anything on its own.
 
 ### Community drift (per run)
 
