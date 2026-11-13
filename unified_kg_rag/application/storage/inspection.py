@@ -136,13 +136,16 @@ class GraphExport(BaseModel):
     path: str
     format: ExportFormat
     suffix: str
-    counts: dict[str, int] = Field(description="Items written, by kind")
+    counts: dict[str, int] = Field(
+        description="Items written, by record kind (a record's kind: text, "
+        "entity, relationship, community, claim, summary)"
+    )
     truncated: list[str] = Field(
-        default_factory=list, description="The kinds cut at max_items"
+        default_factory=list, description="The record kinds cut at max_items"
     )
     missing: list[str] = Field(
         default_factory=list,
-        description="The kinds without a live index (not exported)",
+        description="The record kinds without a live index (not exported)",
     )
 
 
@@ -362,15 +365,19 @@ def export_graph(
                         "exported"
                     )
                 written, cut, live = _write_kind(writer, kind, pages, units, max_items)
-                counts[kind] = written
+                # Keyed as the records name their kind.
+                record_kind = _RECORD_TYPE[kind].value
+                counts[record_kind] = written
                 if cut:
-                    truncated.append(kind)
+                    truncated.append(record_kind)
                 if not live:
-                    missing.append(kind)
+                    missing.append(record_kind)
             writer.end()
     finally:
         vector.close()
-    if "relationships" in missing and counts.get("entities"):
+    if SectionType.RELATIONSHIP.value in missing and counts.get(
+        SectionType.ENTITY.value
+    ):
         logger.warning(
             "The namespace '%s' has no relationships index "
             "(indexing.opensearch.build_relationship_vector_index): the "

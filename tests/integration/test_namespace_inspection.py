@@ -95,7 +95,8 @@ def test_jsonl_export_streams_every_kind_with_provenance(
     by_type: dict[str, list[dict[str, Any]]] = {}
     for record in records:
         by_type.setdefault(record["kind"], []).append(record)
-    assert exported.counts["text_units"] == 3 and exported.counts["entities"] == 3
+    # Keyed by the kind its records name (run-describe's one vocabulary).
+    assert exported.counts["text"] == 3 and exported.counts["entity"] == 3
     assert {r["documents"][0] for r in by_type["text"]} == {
         "contracts/supply.txt",
         "ko/공급.txt",
@@ -155,7 +156,7 @@ def test_the_export_holds_every_stored_kind(ingested, tmp_path: Path) -> None:
 
     exported = export_graph(config, path, providers=providers)
 
-    assert exported.counts["summary_nodes"] == 1
+    assert exported.counts["summary"] == 1
     (record,) = [
         r
         for r in map(json.loads, path.read_text("utf-8").splitlines())
@@ -195,8 +196,8 @@ def test_max_items_bounds_each_kind(ingested, tmp_path: Path) -> None:
     exported = export_graph(
         config, tmp_path / "g.jsonl", providers=providers, max_items=1, page_size=1
     )
-    assert exported.counts["entities"] == 1
-    assert "entities" in exported.truncated
+    assert exported.counts["entity"] == 1
+    assert "entity" in exported.truncated
     with pytest.raises(ConfigurationError, match="format"):
         export_graph(config, tmp_path / "g.x", providers=providers, format="csv")  # type: ignore[arg-type]
 
@@ -218,7 +219,7 @@ def test_run_describe_prints_one_json_document(
 
     document = json.loads(capsys.readouterr().out)
     assert document["methodologies"] == ["graphrag", "lightrag", "hipporag"]
-    assert document["export"]["counts"]["entities"] == 3
+    assert document["export"]["counts"]["entity"] == 3
     assert out.is_file()
     # A namespace without an index is a usage error (exit 2), of the type
     # run-rag names it by (it said UsageError).

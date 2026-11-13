@@ -1118,7 +1118,8 @@ From a `main` checkout (formats and keys no release had):
   strategies it serves, each index's item count and embedding model, the build record, the registry's records), and
   its graph (every kind the vector store keeps) streamed from the vector store as JSON Lines (each record's `kind`
   the section type its sources name: `text`, `entity`, `relationship`, `community`, `claim`, `summary`, a RAPTOR
-  summary node) or GraphML with every item's text units and documents (a
+  summary node, which also keys the export's `counts`, `truncated` and `missing`) or GraphML with every item's text
+  units and documents (a
   document by its path relative to the corpus root, else its file name, never the indexing host's path;
   `--output-path`, `--export-format`, `--max-items`; written atomically, so a failed export leaves the previous file
   and no partial one; an existing file is replaced only with `--force`, `export_graph(overwrite=True)`, and never the

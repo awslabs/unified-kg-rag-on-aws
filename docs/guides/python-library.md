@@ -61,7 +61,12 @@ guard.
   ([index suffix](../concepts/scopes-and-namespaces.md#index-suffix)),
   `filters`, `conversation_id`, `use_memory`, `history`, `target_language`);
   a plain dict works too. An unknown key is refused (a dict's with
-  `InvalidArgumentError`), not ignored. What each option does: [Querying](./query.md);
+  `InvalidArgumentError`), not ignored. `RAGInput(...)` raises pydantic's
+  `ValidationError` for a value it refuses (an empty query, `top_k` out of
+  range), which `classify_error` names `failure`; build a query from a
+  caller's arguments with `RAGInput.checked(...)`, which raises
+  `InvalidArgumentError` (`invalid_argument`) naming each field, as the
+  CLIs, the MCP server and the console do. What each option does: [Querying](./query.md);
   `history` is the conversation of a caller that keeps it itself
   ([History from the caller](./query.md#history-from-the-caller)).
 - `output.citations` lists the numbered context sections the answer's `[n]`

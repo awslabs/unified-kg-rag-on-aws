@@ -129,6 +129,7 @@ def usage_error(
     error_type: str | None = None,
     *,
     error_class: ErrorClass | None = None,
+    **fields: Any,
 ) -> NoReturn:
     """Report a usage or configuration error as argparse does and exit 2.
 
@@ -136,10 +137,12 @@ def usage_error(
     names the ``error_type`` (its class) and the ``error_class``
     (:func:`error_class_for`) of the JSON status unless they are given; a
     text is a :data:`USAGE_ERROR` of class ``invalid_argument`` by
-    default."""
+    default. ``fields`` (a query's ids) are added to the status."""
     text = error_text(message) if isinstance(message, BaseException) else message
     print(f"{Path(sys.argv[0]).name}: error: {text}", file=sys.stderr)
-    print_status(EXIT_USAGE, message, error_type=error_type, error_class=error_class)
+    print_status(
+        EXIT_USAGE, message, error_type=error_type, error_class=error_class, **fields
+    )
     raise SystemExit(EXIT_USAGE)
 
 
