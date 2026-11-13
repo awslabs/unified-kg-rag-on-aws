@@ -286,24 +286,29 @@ def test_a_new_task_on_an_empty_disk_keeps_the_uploaded_export(
 def test_the_console_builds_the_graph_an_incremental_run_did_not_export(
     tmp_path: Path, mocker
 ) -> None:
-    from types import SimpleNamespace
-
-    from unified_kg_rag.application.cli.console import jobs as console_jobs
+    # No console job exports one (rv25 perf 4): the Graph page, once
+    # opened, builds it from the stores when no export shows them.
+    from unified_kg_rag.application.cli.console import graph_api
 
     config, providers, source = _setup(tmp_path)
     config.graph.visualization.outputs_directory = None
+    cache = tmp_path / "cache"
+    # An empty namespace (no build recorded): nothing to build.
+    assert graph_api.current_graph(config, cache) is None
     exports = _exports(mocker)
     e2e._ingest(config, providers, source, tmp_path / "run-1")
     (source / "carrier.txt").write_text("Carrier ships widgets for Depot.")
     e2e._ingest(config, providers, source, tmp_path / "run-2")
-    job = SimpleNamespace(namespace="default", pipeline_id="console-2")
-    cache = tmp_path / "cache"
 
-    path = console_jobs._current_graph(config, job, cache)
+    path = graph_api.current_graph(config, cache)
 
-    assert path == cache / "console-2" / "visualization" / VISUALIZATION_DATA_FILENAME
+    assert path == cache / "console-graphs" / "default" / VISUALIZATION_DATA_FILENAME
     names = {n["attributes"]["name"] for n in json.loads(path.read_text())["nodes"]}
     assert "Carrier" in names and "Vendor" in names
     # It shows the stores now: found again, not built.
-    assert console_jobs._current_graph(config, job, cache) == path
+    written = path.stat().st_mtime_ns
+    assert graph_api.current_graph(config, cache) == path
+    assert path.stat().st_mtime_ns == written
     assert len(exports) == 1  # the full build's
+    config.graph.visualization.export_data = False
+    assert graph_api.current_graph(config, cache) is None

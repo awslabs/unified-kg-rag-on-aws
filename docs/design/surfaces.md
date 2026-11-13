@@ -231,7 +231,7 @@ namespace's graph and community hierarchy, read from the stores, as JSON
 (`graph.visualization.export_data`,
 `application/storage/visualization_export.py` over
 `domain/ingestion/visualization_data.py`); an incremental run writes none,
-and `run-visualization` (and the console after an ingestion job) builds it
+and `run-visualization` (and the console's Graph page when opened) builds it
 with the same `write_visualization_data` when no export names the build
 the stores hold (`current_visualization_data`), so the file is the whole
 namespace. `run-visualization` renders that

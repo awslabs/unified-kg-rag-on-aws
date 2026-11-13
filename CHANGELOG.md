@@ -145,7 +145,7 @@ stored is read again: follow *Upgrading* in order.
   local or uploaded by the S3 cache sync from the run the build record names (`visualization_export_run`), so a
   no-change run at 10k text units, a deployed task's on an empty disk too, no longer rewrites a 59 MB file;
   `run-visualization` renders it (without `--data-path` the namespace's newest export when it shows the build the
-  stores hold, else one it builds from the stores, as the console does after an ingestion that exported none; it
+  stores hold, else one it builds from the stores, as the console's Graph page does when opened; it
   takes the provider flags again) with a seeded spring layout, and the embedding layouts (UMAP, t-SNE, PCA) are
   gone.
   `graph.visualization.interactive` and `static` are typed sections: a misspelled setting is an unknown key (#344,
@@ -917,8 +917,9 @@ From a `main` checkout (formats and keys no release had):
   pipeline checkpoints; run and compare evaluations (progress per answer; paired deltas called by their
   Holm-adjusted p-value with the family's simultaneous interval and the primary metric marked, falling back to the
   interval for older comparisons; gates, cost, declines, win rates by answer length, each metric described on hover,
-  and per question every strategy's primary-metric score, its win, tie or loss and the answers side by side) and open
-  saved runs; explore the exported graph (search, neighbourhoods, communities, degree, schema conformance, seed
+  and per question every strategy's primary-metric score, its win, tie or loss and the answers side by side) and
+  open saved runs; explore the namespace's graph, built from the stores when the Graph page opens and no export
+  shows them, as no console job exports one (search, neighbourhoods, communities, degree, schema conformance, seed
   versus document evidence); a dashboard of the questions and jobs run through it (time, tokens, cost per strategy,
   model and role); and edit the
   config file with validation, a diff before saving, a confirmation before a provider endpoint or a file or directory
