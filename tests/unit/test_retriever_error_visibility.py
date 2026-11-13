@@ -1083,6 +1083,37 @@ async def test_neptune_query_reads_retry_what_another_attempt_may_fix(
     assert results == (["row"] if attempts == 2 else [])
 
 
+@pytest.mark.parametrize(
+    ("status", "message", "attempts"),
+    # Regression (rv25): anything off a list of permanent codes was retried,
+    # so a deterministic traversal error paid every attempt and its backoff.
+    [
+        (597, "The provided traverser does not map to a value: v[1]", 1),
+        (499, "Invalid OpProcessor requested", 1),
+        (500, "failed", 1),
+        (596, "temporary", 2),
+        (429, "too many requests", 2),
+        (500, json.dumps({"code": "ConcurrentModificationException"}), 2),
+        (500, json.dumps({"code": "InternalFailureException"}), 2),
+    ],
+)
+async def test_neptune_query_reads_retry_only_the_approved_errors(
+    config: Config,
+    monkeypatch: pytest.MonkeyPatch,
+    status: int,
+    message: str,
+    attempts: int,
+) -> None:
+    monkeypatch.setattr("asyncio.sleep", _no_sleep)
+    retriever = _neptune_retriever(config, _ClientWithLocalGraph())
+    flaky = _FlakyTraversal(
+        GremlinServerError({"code": status, "message": message, "attributes": {}}),
+        1,
+    )
+    await retriever._execute_traversal(flaky)  # type: ignore[arg-type]
+    assert flaky.calls == attempts
+
+
 async def test_neptune_query_reads_stop_at_query_store_max_attempts(
     config: Config, monkeypatch: pytest.MonkeyPatch
 ) -> None:

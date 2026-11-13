@@ -1919,7 +1919,8 @@ Queries and retrieval.
   concurrent queries share one connection attempt (#258, #261, #263, #266, #267).
 - A short OpenSearch throttling burst no longer fails a query or a bulk write (#263, #264), and a throttled Neptune
   or Gremlin read no longer empties a query's graph expansion: it is retried within the query deadline, as an
-  OpenSearch query request is; a long question no longer fails its lexical search, and long list filters no longer
+  OpenSearch query request is, for throttling, memory-limit, concurrent-modification and temporary server errors
+  only (a deterministic traversal error fails on the first attempt); a long question no longer fails its lexical search, and long list filters no longer
   multiply searches (#258, #260).
 - The text-units section is no longer empty for a corpus translated into five or more languages (#264).
 - The answer context stays within `max_tokens`, a small budget no longer yields an empty context, and CJK sections

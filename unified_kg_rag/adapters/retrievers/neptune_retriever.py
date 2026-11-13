@@ -20,7 +20,7 @@ from unified_kg_rag.adapters.aws.neptune import (
     CUSTOM_VERTEX_IDS,
     NeptuneClient,
     is_evaluation_timeout,
-    is_permanent_neptune_error,
+    is_transient_neptune_error,
     neptune_pool_size,
     neptune_request_error,
     sample_vertex_query,
@@ -634,15 +634,17 @@ class NeptuneRetriever(GraphExpansionRetriever):
         return projected
 
     def _retryable_read(self, exc: BaseException) -> bool:
-        """Whether another attempt of a failed read may succeed: one that
-        leaves the store usable (throttling, a memory limit, a concurrent
-        modification), not a checker refusal, a request a retry cannot fix
-        (``is_permanent_neptune_error``), a traversal stopped at its time
-        limit (as long again) nor an unusable store, which fails the query
-        (``is_fatal_retrieval_error``: a timeout, a lost connection)."""
+        """Whether another attempt of a failed read may succeed: only an
+        error of the approved list (``is_transient_neptune_error``:
+        throttling, a memory limit, a concurrent modification), never a
+        checker refusal, a traversal stopped at its time limit (as long
+        again) nor an unusable store, which fails the query
+        (``is_fatal_retrieval_error``: a timeout, a lost connection). A
+        deterministic traversal error paid every attempt and its backoff
+        when anything off a list of permanent codes was retried."""
         if not isinstance(exc, Exception) or isinstance(exc, GraphQueryError):
             return False
-        if is_permanent_neptune_error(exc) or is_evaluation_timeout(exc):
+        if not is_transient_neptune_error(exc) or is_evaluation_timeout(exc):
             return False
         return not is_fatal_retrieval_error(self._request_error(exc))
 
