@@ -237,7 +237,50 @@ def _name_words(text: str, words: list[re.Match[str]]) -> set[int]:
     name, and nor does a function word open one (:func:`_opens_name`: "Why
     did Orion Labs drop" holds the name "Orion Labs"). Any other lowercase
     word ends the run: "Umbra Freight delivers the units to Kestrel Depot"
-    holds two names, not one of eight words."""
+    holds two names, not one of eight words.
+
+    In a text written in these words (one stands outside the names), its
+    capitalised first word directly before an article is the sentence's
+    capital, not a name's ("List the Globex Sensors contracts signed in
+    東京"; "Alexander the Great 의 업적" stays a name), and a name's opening
+    article directly after a word outside the names is that phrase's word
+    ("Show the Acme Robotics orders for 서울": "the" is evidence; "공급사는
+    the Depot", "Lieferant 공급사 die Bahn" keep it in the name)."""
+    names = _name_runs(text, words)
+    if len(names) < len(words) and _sentence_capital(text, words):
+        names = _name_runs(text, words, opens_none=0)
+    return {
+        i
+        for i in names
+        if not (
+            i > 0
+            and i - 1 not in names
+            and words[i].group().lower() in _ARTICLES
+            and _adjacent(text, words[i - 1], words[i])
+        )
+    }
+
+
+def _sentence_capital(text: str, words: list[re.Match[str]]) -> bool:
+    """Whether ``text`` opens on a capitalised word (no code) directly
+    before an article: a sentence's capital, as in "List the ..."."""
+    if len(words) < 2 or any(ch.isalpha() for ch in text[: words[0].start()]):
+        return False
+    first = words[0].group()
+    return (
+        first[0].isupper()
+        and not _is_code(first)
+        and first.lower() not in _FUNCTION_WORDS
+        and words[1].group().lower() in _ARTICLES
+        and _adjacent(text, words[0], words[1])
+    )
+
+
+def _name_runs(
+    text: str, words: list[re.Match[str]], opens_none: int | None = None
+) -> set[int]:
+    """The indexes of ``words`` in name runs (:func:`_name_words`), the
+    word at ``opens_none`` opening none."""
     names: set[int] = set()
     run: list[int] = []
     gap: list[str] = []
@@ -257,7 +300,7 @@ def _name_words(text: str, words: list[re.Match[str]]) -> set[int]:
         if not joined:
             close()
             gap.clear()
-            if not _opens_name(text, words, i):
+            if i == opens_none or not _opens_name(text, words, i):
                 continue
         if _is_name_word(word.group()):
             gap.clear()

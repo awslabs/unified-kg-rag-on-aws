@@ -105,6 +105,12 @@ TITLE_RUN = (
     '"has", "¿Por qué Orion Labs", "List The Vendors Of" are not): the '
     "run's words count for nothing."
 )
+COMMAND_NAME = (
+    'A command whose other words are all a name ("Explain the Kestrel Depot '
+    '物流") reads as a name of a capitalised word, an article and a capitalised '
+    'word ("Alexander the Great 의 업적은?"): no rule tells the verb from the '
+    "name's first word without a word list of verbs (rv26 algo-ret 1)."
+)
 QUOTING = (
     "An English question quoting a name reads as English: the rv11 M5 "
     'matrix pins "Who is the CEO of {n}?" so for every script (the probe\'s '
@@ -1166,6 +1172,104 @@ DETECTION: tuple[Case, ...] = (
     # A connective and an article still join a name.
     Case("Bank of the West와 Universidad de la República 비교", "ko", "en", "rv25"),
     Case("Museum of Modern Artの展示は？", "ja", "en", "rv25"),
+    # A command's capitalised first word before an article opens no name,
+    # and the article it governs is the sentence's word (rv26 algo-ret 1).
+    Case(
+        "List the Globex Sensors contracts signed in 東京",
+        "en",
+        "en",
+        "rv26 algo-ret 1",
+    ),
+    Case(
+        "List the Globex Sensors contracts signed in 東京",
+        "en",
+        "ko",
+        "rv26 algo-ret 1",
+    ),
+    Case(
+        "List the Globex Sensors contracts signed in 東京",
+        "en",
+        "ja",
+        "rv26 algo-ret 1",
+    ),
+    Case(
+        "List the Globex Sensors contracts signed in 東京",
+        "en",
+        "zh",
+        "rv26 algo-ret 1",
+    ),
+    Case(
+        "Summarize the Acme Robotics report on 東京 sales",
+        "en",
+        "en",
+        "rv26 algo-ret 1",
+    ),
+    Case(
+        "Summarize the Acme Robotics report on 東京 sales",
+        "en",
+        "ko",
+        "rv26 algo-ret 1",
+    ),
+    Case(
+        "Summarize the Acme Robotics report on 東京 sales",
+        "en",
+        "ja",
+        "rv26 algo-ret 1",
+    ),
+    Case(
+        "Summarize the Acme Robotics report on 東京 sales",
+        "en",
+        "zh",
+        "rv26 algo-ret 1",
+    ),
+    Case(
+        "Compare the Acme Robotics and Globex Sensors offers for 東京",
+        "en",
+        "en",
+        "rv26 algo-ret 1",
+    ),
+    Case(
+        "Compare the Acme Robotics and Globex Sensors offers for 東京",
+        "en",
+        "ko",
+        "rv26 algo-ret 1",
+    ),
+    Case(
+        "Compare the Acme Robotics and Globex Sensors offers for 東京",
+        "en",
+        "ja",
+        "rv26 algo-ret 1",
+    ),
+    Case(
+        "Compare the Acme Robotics and Globex Sensors offers for 東京",
+        "en",
+        "zh",
+        "rv26 algo-ret 1",
+    ),
+    Case("Explain the Kestrel Depot 物流 process", "en", "en", "rv26 algo-ret 1"),
+    Case("Explain the Kestrel Depot 物流 process", "en", "ko", "rv26 algo-ret 1"),
+    Case("Explain the Kestrel Depot 物流 process", "en", "ja", "rv26 algo-ret 1"),
+    Case("Explain the Kestrel Depot 物流 process", "en", "zh", "rv26 algo-ret 1"),
+    Case("Describe the Umbra Freight 東京 route", "en", "en", "rv26 algo-ret 1"),
+    Case("Describe the Umbra Freight 東京 route", "en", "ko", "rv26 algo-ret 1"),
+    Case("Describe the Umbra Freight 東京 route", "en", "ja", "rv26 algo-ret 1"),
+    Case("Describe the Umbra Freight 東京 route", "en", "zh", "rv26 algo-ret 1"),
+    Case("Show the Acme Robotics orders for 서울", "en", "en", "rv26 algo-ret 1"),
+    Case("Show the Acme Robotics orders for 서울", "en", "ko", "rv26 algo-ret 1"),
+    Case("Show the Acme Robotics orders for 서울", "en", "ja", "rv26 algo-ret 1"),
+    Case("Show the Acme Robotics orders for 서울", "en", "zh", "rv26 algo-ret 1"),
+    # Without a word of the sentence after it, a command reads as a name
+    # opening on a capital word and an article, as the controls do.
+    Case(
+        "Explain the Kestrel Depot 物流",
+        "en",
+        "en",
+        "rv26 algo-ret 1",
+        Tradeoff("zh", COMMAND_NAME),
+    ),
+    Case("Alexander the Great 의 업적은?", "ko", "en", "rv26 algo-ret 1"),
+    Case("Jack the Ripper は誰？", "ja", "en", "rv26 algo-ret 1"),
+    Case("Alexander the Great conquered 페르시아", "en", "ko", "rv26 algo-ret 1"),
 )
 
 NUMBERS: tuple[Case, ...] = (

@@ -392,8 +392,19 @@ def test_the_evidence_leaves_out_codes_compounds_and_names() -> None:
             "Who sells the AI kit, iPhone, a to-do app and ES6 books to Bank of America 은행?"
         ]
     )
-    # "the AI" and "Bank of America" are names, "to-do" and "ES6" compounds.
-    assert evidence.words == ("who", "sells", "kit", "a", "app", "and", "books", "to")
+    # "the AI" and "Bank of America" are names, "to-do" and "ES6" compounds;
+    # the article after "sells" is the sentence's, so it stays a word.
+    assert evidence.words == (
+        "who",
+        "sells",
+        "the",
+        "kit",
+        "a",
+        "app",
+        "and",
+        "books",
+        "to",
+    )
     assert evidence.openings == {"latin": 1}
     # A text opening on an acronym or a lowercase word opens on no sentence.
     assert text_evidence(["AI 모델"]).openings == {}
