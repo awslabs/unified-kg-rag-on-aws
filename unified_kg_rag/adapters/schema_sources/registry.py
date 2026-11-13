@@ -51,13 +51,9 @@ class SchemaSourceContext(SourceContextBase[SchemaSourceConfig]):
 SchemaLoader = Callable[[SchemaSourceContext], SchemaDocument]
 LoaderT = TypeVar("LoaderT", bound=SchemaLoader)
 
-_KINDS: Registry[str, SchemaLoader] = Registry(
+_KINDS: Registry[SchemaLoader] = Registry(
     "schema source", reserved={INLINE_SCHEMA_SOURCE}
 )
-_REGISTRY = _KINDS.entries
-# Kind -> (module, how to install it) of the optional dependency its loader
-# imports.
-_REQUIRES = _KINDS.requires
 
 
 def register_schema_source(

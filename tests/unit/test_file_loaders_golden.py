@@ -22,6 +22,7 @@ import pytest
 from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.loader_corpus import write_loader_corpus
+from tests.fixtures.registries import isolate_loaders
 from unified_kg_rag.adapters.ingestion.file_loaders import (
     CsvFileLoader,
     PdfFileLoader,
@@ -236,13 +237,13 @@ def test_csv_rows_follow_dictreader_shapes(corpus: Path) -> None:
 
 
 def test_registered_loaders_are_the_direct_ones() -> None:
-    configs = ParserFactory._loader_configs
-    assert configs[".txt"][0] is TextFileLoader
-    assert configs[".csv"][0] is CsvFileLoader
-    assert configs[".pdf"][0] is PdfFileLoader
+    spec = ParserFactory.loader_spec
+    assert spec(".txt").loader_class is TextFileLoader
+    assert spec(".csv").loader_class is CsvFileLoader
+    assert spec(".pdf").loader_class is PdfFileLoader
     if _UNSTRUCTURED_AVAILABLE:
-        assert configs[".md"][:2] == (UnstructuredPartitionLoader, {"partition": "md"})
-        assert configs[".htm"][:2] == (
+        assert spec(".md")[:2] == (UnstructuredPartitionLoader, {"partition": "md"})
+        assert spec(".htm")[:2] == (
             UnstructuredPartitionLoader,
             {"partition": "html"},
         )
@@ -357,10 +358,9 @@ def test_rerun_after_switch_reports_no_changed_document(
                 "unified_kg_rag.adapters.ingestion.parser._ENCODING_AWARE_LOADERS",
                 (CSVLoader, TextLoader),
             )
-            configs = dict(ParserFactory._loader_configs)
+            isolate_loaders(patch)
             for ext, (loader_class, kwargs) in _community_loaders().items():
-                configs[ext] = (loader_class, kwargs, ext)
-            patch.setattr(ParserFactory, "_loader_configs", configs)
+                ParserFactory.register_loader(ext, loader_class, kwargs, ext)
             first = _run(corpus, store, mocker)
     else:
         # The corpus as the old loaders recorded it: their content hashes.

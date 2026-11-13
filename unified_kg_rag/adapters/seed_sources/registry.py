@@ -160,11 +160,7 @@ def statement_problems(error: ValidationError) -> str:
 SeedLoader = Callable[[SeedSourceContext], SeedGraph]
 LoaderT = TypeVar("LoaderT", bound=SeedLoader)
 
-_KINDS: Registry[str, SeedLoader] = Registry("seed source")
-_REGISTRY = _KINDS.entries
-# Kind -> (module, how to install it) of the optional dependency its loader
-# imports.
-_REQUIRES = _KINDS.requires
+_KINDS: Registry[SeedLoader] = Registry("seed source")
 
 
 def register_seed_source(

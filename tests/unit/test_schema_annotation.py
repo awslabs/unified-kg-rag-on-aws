@@ -1109,7 +1109,7 @@ def test_a_manager_loads_a_schema_source_with_the_run_session(
         sessions.append(context.boto_session())
         return SchemaDocument(relationship_types=["SUPPLIES"])
 
-    monkeypatch.setitem(schema_registry._REGISTRY, "c69_session", load)
+    monkeypatch.setitem(schema_registry._KINDS.entries, "c69_session", load)
     config = _config(schema_source={"kind": "c69_session"})
     session = object()
     providers = Providers(config, boto_session=session)  # type: ignore[arg-type]

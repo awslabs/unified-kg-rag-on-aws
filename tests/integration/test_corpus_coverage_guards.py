@@ -21,7 +21,7 @@ import pytest
 
 from tests.integration import test_embedded_e2e as e2e
 from unified_kg_rag.adapters.ingestion.file_loaders import TextFileLoader
-from unified_kg_rag.adapters.ingestion.parser import ParserFactory
+from unified_kg_rag.adapters.ingestion.parser import _LOADERS, ParserFactory
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.ingestion import pipeline_stages as ps
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
@@ -106,13 +106,11 @@ class _Corpus:
 
 
 def _with_plugin_loader(corpus: _Corpus, sink: _Sink | None = None) -> None:
-    saved = dict(ParserFactory._loader_configs)
     ParserFactory.register_loader(_PLUGIN, TextFileLoader, {}, "Note")
     try:
         corpus.run(sink)
     finally:
-        ParserFactory._loader_configs.clear()
-        ParserFactory._loader_configs.update(saved)
+        _LOADERS.unregister(_PLUGIN)
     assert _PLUGIN not in ParserFactory.get_supported_extensions()
 
 

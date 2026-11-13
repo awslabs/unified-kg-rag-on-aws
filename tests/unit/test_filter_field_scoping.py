@@ -1437,7 +1437,7 @@ def test_a_schema_filter_loads_the_source_once_with_the_chains_session(
         for _ in range(3):
             chain.check_filter_keys({"type_iri": "x"}, SearchStrategy.LOCAL)
     finally:
-        registry._REGISTRY.pop("test_unreadable_source", None)
+        registry._KINDS.unregister("test_unreadable_source")
     # Loaded with the session the chain's providers hold (not one built
     # from config.aws), and a failed load is not retried on each query.
     assert sessions == [chain.providers.boto_session]
@@ -1470,7 +1470,7 @@ def test_a_schema_load_failing_otherwise_is_not_retried_either(
             for _ in range(3):
                 chain.check_filter_keys({"type_iri": "x"}, SearchStrategy.LOCAL)
     finally:
-        registry._REGISTRY.pop("test_broken_source", None)
+        registry._KINDS.unregister("test_broken_source")
     assert len(calls) == 1
     assert "ValueError: a loader bug" in caplog.text
 

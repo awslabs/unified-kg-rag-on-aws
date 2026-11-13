@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from tests.fixtures.extras import requires_docx
+from tests.fixtures.registries import isolate_loaders
 from unified_kg_rag.adapters.ingestion import parser as parser_module
 from unified_kg_rag.adapters.ingestion.file_loaders import (
     DOCX_INSTALL_HINT,
@@ -117,11 +118,12 @@ def test_a_skipped_format_names_the_extra_that_reads_it(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    # An install without the docx extra: .docx is not registered.
-    configs = dict(parser_module.ParserFactory._loader_configs)
-    configs.pop(".docx", None)
-    monkeypatch.setattr(parser_module.ParserFactory, "_loader_configs", configs)
-    monkeypatch.setitem(parser_module.MISSING_EXTRA_FORMATS, ".docx", DOCX_INSTALL_HINT)
+    # An install without the docx extra: its requirement is missing.
+    isolate_loaders(monkeypatch).register(
+        ".docx",
+        parser_module.ParserFactory.loader_spec(".pdf"),
+        requires=("synthetic_absent_module", DOCX_INSTALL_HINT),
+    )
     (tmp_path / "notes.md").write_text("# Notes\n\nVendor ships.\n", encoding="utf-8")
     (tmp_path / "report.docx").write_bytes(b"PK")
     (tmp_path / "data.xyz").write_text("x", encoding="utf-8")

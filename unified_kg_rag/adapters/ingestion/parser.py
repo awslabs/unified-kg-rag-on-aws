@@ -2,13 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 import functools
 import hashlib
-import importlib.util
 import inspect
 import re
 import sys
 from importlib import metadata
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from langchain_core.document_loaders import BaseLoader
 
@@ -28,24 +27,17 @@ from unified_kg_rag.adapters.ingestion.json_loader import JsonTextLoader
 from unified_kg_rag.domain.models import Config, Document
 from unified_kg_rag.shared import DataProcessingError, get_logger
 from unified_kg_rag.shared.exceptions import causes
-from unified_kg_rag.shared.registry import Registry
+from unified_kg_rag.shared.registry import Registry, module_installed
 
 logger = get_logger(__name__)
 
 # Markdown and HTML are read in the core install (Markdown as written, HTML
 # through the standard library's parser); with the optional `unstructured`
 # extra installed, its partitioners read them instead (the richer parser:
-# Markdown rendered to its text, HTML elements by their layout). Detected once:
-# its loader imports fine without the package and would fail at .load().
-_UNSTRUCTURED_AVAILABLE = importlib.util.find_spec("unstructured") is not None
-# .docx needs the optional `docx` extra (python-docx), registered only when it
-# is importable; without it a .docx is skipped naming the extra.
-_DOCX_AVAILABLE = importlib.util.find_spec("docx") is not None
-# The formats an optional extra adds that this install cannot read, and how
-# to install the extra.
-MISSING_EXTRA_FORMATS: dict[str, str] = (
-    {} if _DOCX_AVAILABLE else {".docx": DOCX_INSTALL_HINT}
-)
+# Markdown rendered to its text, HTML elements by their layout). A preference,
+# not a requirement, detected once: its loader imports fine without the
+# package and would fail at .load().
+_UNSTRUCTURED_AVAILABLE = module_installed("unstructured")
 
 
 class FileParser:
@@ -155,9 +147,56 @@ _ENCODING_AWARE_LOADERS = (
 )
 
 
-# The names ParserFactory.register_loader takes: a file extension.
-_EXTENSIONS: Registry[str, None] = Registry(
+class LoaderSpec(NamedTuple):
+    """What a file extension is read with: ``loader_class(file_path=...,
+    **loader_kwargs)``, named ``file_type_name`` in logs."""
+
+    loader_class: type[BaseLoader]
+    loader_kwargs: dict[str, Any]
+    file_type_name: str
+
+
+# The document loaders by file extension, under the one registry rule
+# (shared.registry); a loader of an optional extra declares it (requires=),
+# and a file of its extension is skipped naming the extra when it is missing.
+_LOADERS: Registry[LoaderSpec] = Registry(
     "file loader", pattern=re.compile(r"\.[a-z0-9][a-z0-9_+-]*")
+)
+for _extension, _spec in {
+    ".csv": LoaderSpec(CsvFileLoader, {}, "CSV"),
+    ".htm": LoaderSpec(HtmlFileLoader, {}, "HTML"),
+    ".html": LoaderSpec(HtmlFileLoader, {}, "HTML"),
+    # Stdlib-only: LangChain's JSONLoader needs the optional `jq` package.
+    ".json": LoaderSpec(JsonTextLoader, {}, "JSON"),
+    ".markdown": LoaderSpec(TextFileLoader, {}, "Markdown"),
+    ".md": LoaderSpec(TextFileLoader, {}, "Markdown"),
+    ".pdf": LoaderSpec(PdfFileLoader, {}, "PDF"),
+    ".txt": LoaderSpec(TextFileLoader, {}, "Text"),
+    # The richer Markdown/HTML parser in place of the core ones.
+    **(
+        {
+            ".htm": LoaderSpec(
+                UnstructuredPartitionLoader, {"partition": "html"}, "HTML"
+            ),
+            ".html": LoaderSpec(
+                UnstructuredPartitionLoader, {"partition": "html"}, "HTML"
+            ),
+            ".markdown": LoaderSpec(
+                UnstructuredPartitionLoader, {"partition": "md"}, "Markdown"
+            ),
+            ".md": LoaderSpec(
+                UnstructuredPartitionLoader, {"partition": "md"}, "Markdown"
+            ),
+        }
+        if _UNSTRUCTURED_AVAILABLE
+        else {}
+    ),
+}.items():
+    _LOADERS.register(_extension, _spec)
+_LOADERS.register(
+    ".docx",
+    LoaderSpec(DocxFileLoader, {}, "Word"),
+    requires=("docx", DOCX_INSTALL_HINT),
 )
 
 
@@ -170,36 +209,6 @@ class ParserFactory:
     override a format with :meth:`register_loader`.
     """
 
-    # Loaders with no heavy optional deps — always available.
-    _loader_configs: dict[str, tuple[type[BaseLoader], dict[str, Any], str]] = {
-        ".csv": (CsvFileLoader, {}, "CSV"),
-        ".htm": (HtmlFileLoader, {}, "HTML"),
-        ".html": (HtmlFileLoader, {}, "HTML"),
-        # Stdlib-only: LangChain's JSONLoader needs the optional `jq` package.
-        ".json": (JsonTextLoader, {}, "JSON"),
-        ".markdown": (TextFileLoader, {}, "Markdown"),
-        ".md": (TextFileLoader, {}, "Markdown"),
-        ".pdf": (PdfFileLoader, {}, "PDF"),
-        ".txt": (TextFileLoader, {}, "Text"),
-    }
-    if _DOCX_AVAILABLE:
-        _loader_configs[".docx"] = (DocxFileLoader, {}, "Word")
-    # The richer Markdown/HTML parser, in place of the core ones, when the
-    # optional `unstructured` package is importable.
-    if _UNSTRUCTURED_AVAILABLE:
-        _loader_configs.update(
-            {
-                ".htm": (UnstructuredPartitionLoader, {"partition": "html"}, "HTML"),
-                ".html": (UnstructuredPartitionLoader, {"partition": "html"}, "HTML"),
-                ".markdown": (
-                    UnstructuredPartitionLoader,
-                    {"partition": "md"},
-                    "Markdown",
-                ),
-                ".md": (UnstructuredPartitionLoader, {"partition": "md"}, "Markdown"),
-            }
-        )
-
     @classmethod
     def register_loader(
         cls,
@@ -207,6 +216,8 @@ class ParserFactory:
         loader_class: type[BaseLoader],
         loader_kwargs: dict[str, Any] | None = None,
         file_type_name: str | None = None,
+        *,
+        requires: tuple[str, str] | None = None,
     ) -> None:
         """Register a custom loader for a file extension (extension seam).
 
@@ -236,10 +247,11 @@ class ParserFactory:
                 file path), e.g. ``{"text_mode": "strings"}`` for ``JsonTextLoader``.
             file_type_name: human-readable name for logs (defaults to the
                 extension without its dot, upper-cased).
+            requires: ``(module, how to install it)`` of the optional package
+                the loader imports: without it, a file of the extension is
+                skipped with that hint.
         """
-        # The one registry rule (shared.registry): case-insensitive, a later
-        # registration replaces; the entries are the class's own table.
-        ext = _EXTENSIONS.check_name(extension)
+        ext = _LOADERS.check_name(extension)
         if not (
             isinstance(loader_class, type) and issubclass(loader_class, BaseLoader)
         ):
@@ -247,43 +259,51 @@ class ParserFactory:
                 f"loader_class must be a langchain BaseLoader subclass, got "
                 f"{loader_class!r}"
             )
-        cls._loader_configs[ext] = (
-            loader_class,
-            loader_kwargs or {},
-            file_type_name or ext.lstrip(".").upper(),
+        _LOADERS.register(
+            ext,
+            LoaderSpec(
+                loader_class,
+                loader_kwargs or {},
+                file_type_name or ext.lstrip(".").upper(),
+            ),
+            requires=requires,
         )
 
     @classmethod
     def create_parser(cls, file_path: str | Path, config: Config) -> FileParser:
-        extension = Path(file_path).suffix.lower()
-
-        if extension not in cls._loader_configs:
-            hint = ""
-            if extension in MISSING_EXTRA_FORMATS:
-                hint = f"; to parse it, {MISSING_EXTRA_FORMATS[extension]}"
-            raise DataProcessingError(f"Unsupported file type: '{extension}'{hint}")
-
-        loader_class, loader_kwargs, file_type_name = cls._loader_configs[extension]
+        loader_class, loader_kwargs, file_type_name = cls.loader_spec(
+            Path(file_path).suffix
+        )
         return FileParser(config, loader_class, loader_kwargs, file_type_name)
 
     @classmethod
     def get_supported_extensions(cls) -> list[str]:
-        return list(cls._loader_configs.keys())
+        """The extensions a loader of this install reads."""
+        return [ext for ext in _LOADERS if _LOADERS.missing(ext) is None]
+
+    @staticmethod
+    def install_hint(extension: str) -> str | None:
+        """How to install the extra that reads ``extension``, when a loader
+        of it declares one this install lacks."""
+        missing = _LOADERS.missing(extension)
+        return None if missing is None else missing[1]
 
     @classmethod
-    def loader_spec(
-        cls, extension: str
-    ) -> tuple[type[BaseLoader], dict[str, Any], str]:
+    def loader_spec(cls, extension: str) -> LoaderSpec:
         """The ``(loader_class, loader_kwargs, file_type_name)`` registered for
         ``extension``, what :meth:`create_parser` builds a parser from.
 
         Raises:
-            DataProcessingError: No loader reads the extension.
+            DataProcessingError: No loader of this install reads the
+                extension (naming the extra to install, if one does).
         """
         ext = extension.lower()
-        if ext not in cls._loader_configs:
-            raise DataProcessingError(f"Unsupported file type: '{ext}'")
-        return cls._loader_configs[ext]
+        spec = _LOADERS.get(ext)
+        hint = cls.install_hint(ext)
+        if spec is None or hint is not None:
+            remedy = f"; to parse it, {hint}" if hint else ""
+            raise DataProcessingError(f"Unsupported file type: '{ext}'{remedy}")
+        return spec
 
     @classmethod
     def parser_fingerprint(cls, extension: str) -> str:

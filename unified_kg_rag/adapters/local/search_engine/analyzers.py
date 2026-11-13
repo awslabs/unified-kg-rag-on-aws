@@ -78,7 +78,7 @@ Analyzer = Callable[[str], list[str]]
 STANDARD = "standard"
 
 # Under the one registry rule (``shared.registry``).
-_ANALYZERS: Registry[str, Analyzer] = Registry("analyzer")
+_ANALYZERS: Registry[Analyzer] = Registry("analyzer")
 
 # Code point ranges by their part in a word under Unicode word boundaries
 # (UAX #29, which OpenSearch's standard tokenizer follows), read from

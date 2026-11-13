@@ -289,18 +289,16 @@ def _offline_inference_profiles(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
-def restore_renderer_registry() -> Iterator[None]:
+def restore_renderer_registry(monkeypatch: pytest.MonkeyPatch) -> None:
     """Undo renderers a test registers with ``@register_renderer``.
 
     The registry is module-level, so a test-only renderer would otherwise stay
     registered for the rest of the session.
     """
+    from tests.fixtures.registries import isolate
     from unified_kg_rag.adapters.renderers import base
 
-    saved = dict(base._REGISTRY)
-    yield
-    base._REGISTRY.clear()
-    base._REGISTRY.update(saved)
+    isolate(monkeypatch, base._RENDERERS)
 
 
 @pytest.fixture

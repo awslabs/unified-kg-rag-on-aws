@@ -19,6 +19,7 @@ import pypdf  # noqa: F401
 import pytest
 
 from tests.fixtures.extras import DOCX_INSTALLED
+from tests.fixtures.registries import isolate_loaders
 from unified_kg_rag.adapters.ingestion.file_loaders import (
     DocxFileLoader,
     HtmlFileLoader,
@@ -27,7 +28,6 @@ from unified_kg_rag.adapters.ingestion.file_loaders import (
 )
 from unified_kg_rag.adapters.ingestion.parser import (
     _UNSTRUCTURED_AVAILABLE,
-    MISSING_EXTRA_FORMATS,
     FileParser,
     ParserFactory,
 )
@@ -46,24 +46,42 @@ def test_core_formats_always_supported() -> None:
 def test_markdown_and_html_need_no_extra() -> None:
     exts = set(ParserFactory.get_supported_extensions())
     assert {".md", ".markdown", ".html", ".htm"} <= exts
-    configs = ParserFactory._loader_configs
     # unstructured, when installed, is the richer parser and takes them over.
     expected = (
         (UnstructuredPartitionLoader, UnstructuredPartitionLoader)
         if _UNSTRUCTURED_AVAILABLE
         else (TextFileLoader, HtmlFileLoader)
     )
-    assert (configs[".md"][0], configs[".html"][0]) == expected
+    assert (
+        ParserFactory.loader_spec(".md").loader_class,
+        ParserFactory.loader_spec(".html").loader_class,
+    ) == expected
 
 
 def test_docx_follows_its_extra() -> None:
     exts = set(ParserFactory.get_supported_extensions())
     if DOCX_INSTALLED:
-        assert ".docx" in exts and ".docx" not in MISSING_EXTRA_FORMATS
+        assert ".docx" in exts and ParserFactory.install_hint(".docx") is None
         return
     assert ".docx" not in exts
     with pytest.raises(DataProcessingError, match="extra docx"):
         ParserFactory.create_parser("report.docx", Config())
+
+
+def test_a_loader_declares_the_extra_it_needs(monkeypatch) -> None:
+    isolate_loaders(monkeypatch)
+    ParserFactory.register_loader(
+        ".xyz", _DummyLoader, requires=("synthetic_absent_module", "install xyz")
+    )
+    assert ".xyz" not in ParserFactory.get_supported_extensions()
+    assert ParserFactory.install_hint(".XYZ") == "install xyz"
+    with pytest.raises(DataProcessingError, match="to parse it, install xyz"):
+        ParserFactory.create_parser("data.xyz", Config())
+    ParserFactory.register_loader(".xyz", _DummyLoader, requires=("json", "-"))
+    assert ".xyz" in ParserFactory.get_supported_extensions()
+    assert ParserFactory.create_parser("data.xyz", Config()).loader_class is (
+        _DummyLoader
+    )
 
 
 def test_a_docx_without_its_extra_fails_naming_it(tmp_path, monkeypatch) -> None:
@@ -155,12 +173,10 @@ from langchain_core.document_loaders import BaseLoader  # noqa: E402
 
 
 @pytest.fixture
-def _restore_loader_configs():
-    # register_loader mutates class-level _loader_configs; snapshot + restore so
+def _restore_loader_configs(monkeypatch):
+    # register_loader mutates the module-level registry: isolated so
     # registration tests don't leak into others.
-    saved = dict(ParserFactory._loader_configs)
-    yield
-    ParserFactory._loader_configs = saved
+    isolate_loaders(monkeypatch)
 
 
 class _DummyLoader(BaseLoader):
