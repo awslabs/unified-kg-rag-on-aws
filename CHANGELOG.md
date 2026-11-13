@@ -854,10 +854,9 @@ From a `main` checkout (formats and keys no release had):
   `mcp.max_*` bounds limit what a call may ask and costs (`mcp.strategies` binds the chain's new
   `allowed_strategies`: `auto` routes, and falls back, only within it, and is refused before any model call when the
   namespace serves none of it); every call runs under `search.query_timeout_seconds` (a query past it times out in the
-  chain; a `kg_answer` past it, the wait for a call slot included, is one query in the query metrics, and every failed
-  call's error names its `query_id`) and returns its model `usage`.
-  chain, so it is counted in the query metrics and names its ids, and its error states the time the query had after
-  its wait for a call slot) and returns its model `usage`.
+  chain; a `kg_answer` past it, the wait for a call slot included, is one query in the query metrics, its error states
+  the time the query had after that wait, and every failed call's error names its `query_id`) and returns its model
+  `usage`.
   `kg_get_entity` matches a name folded as local search's seeds are.
   The graph tools read the stores through the chain's retrievers and make no model call, and check the namespace
   first, as a query does (one nothing was ingested under logs no retrieval failure per call; its error names only the
