@@ -853,6 +853,8 @@ From a `main` checkout (formats and keys no release had):
   namespace serves none of it); every call runs under `search.query_timeout_seconds` (a query past it times out in the
   chain; a `kg_answer` past it, the wait for a call slot included, is one query in the query metrics, and every failed
   call's error names its `query_id`) and returns its model `usage`.
+  chain, so it is counted in the query metrics and names its ids, and its error states the time the query had after
+  its wait for a call slot) and returns its model `usage`.
   `kg_get_entity` matches a name folded as local search's seeds are.
   The graph tools read the stores through the chain's retrievers and make no model call, and check the namespace
   first, as a query does (one nothing was ingested under logs no retrieval failure per call; its error names only the
@@ -1604,9 +1606,9 @@ From a `main` checkout (formats and keys no release had):
   (those no seed reaches, all 0 when the edge read degraded) rank in the support order (the units most entities cite
   first), not by id, so the text quota does not fill in id order; that order, the PageRank graph and the entities'
   unit counts are computed on a worker thread, off the event loop, and local's frequency filter reads a lineage only
-  up to its threshold; SQLite reads only the edges within the set, not every edge leaving a hub (13 hubs of 4,200
-  edges: 220-260 ms to 20-50 ms). On that corpus `local`'s p50 went from 2.0-2.5 s to 1.55 s, `ppr`'s from 0.5 s to
-  0.2 s, with the ranked units unchanged.
+  up to its threshold; SQLite reads only the edges within the set, in one statement, not every edge leaving a hub
+  (13 hubs of 4,200 edges: 220-260 ms to 20-50 ms; 2,000 members 350 ms to 255 ms). On that corpus `local`'s p50
+  went from 2.0-2.5 s to 1.55 s, `ppr`'s from 0.5 s to 0.2 s, with the ranked units unchanged.
 - CDK: `-c neptune_audit_log=true` turns on Neptune audit logs, exported to CloudWatch Logs
   (`/aws/neptune/<cluster id>/audit`, created before the instances) with the CMK and `log_retention_days`
   (`neptune_parameter_group_family` names the engine's family, `neptune1.4` by default); reboot the instances after
@@ -1710,8 +1712,9 @@ From a `main` checkout (formats and keys no release had):
   ("example.com", "admin@example.es", "/usr/bin/the") and the words of a quoted name ("Bank of America和…":
   capitalised words joined by a connective and an article at most, not by a sentence's other words) are no
   function words (in a text with Latin words outside its names, its capitalised first word before an article opens
-  no name, and a name's opening article after such a word counts: "List the Globex Sensors contracts signed in 東京"
-  and "Show the Acme Robotics orders for 서울" are English, "Alexander the Great 의 업적은?" Korean), so
+  no name, and the article it governs counts: "List the Globex Sensors contracts signed in 東京" and "Show the Acme
+  Robotics orders for 서울" are English, "Alexander the Great 의 업적은?" and "Seller 의 liability under the
+  Agreement 한도는?" Korean, a lowercase "find the …" command too), so
   "AI 모델 추천", "AIとは", "OS 설치" and "example.com 无法访问" are Korean, Japanese, Korean and Chinese,
   "Who is the CEO of 한빛전자?" and "Compare 한빛전자 and 아크미" English, "with 문 사용법" Korean; a shouted text (three or more
   words, all in capitals; beside another script one longer than two letters, so "AS IS / TO BE 비교" is Korean)
@@ -2014,7 +2017,8 @@ Queries and retrieval.
   gold-chunk recall 0.30, now 0.86, 0.96 with rerank), and incremental and full builds pick the same chunks (#521,
   #530); the pick and `local`'s support ranking of its entities' units run on a worker thread: on a corpus whose hub
   entities cite thousands of units each held the event loop for 0.2 s to seconds a query, stalling every concurrent
-  one.
+  one; so do the citations' lineage reads and graph expansion's results (16-39 ms of each `local` and `mix` query on
+  13 hubs).
 - An answer the output guardrail blocks writes no conversation memory, as a blocked query writes none (the refusal
   was saved and read by the next turn's follow-up rewrite).
 - A context budget no retrieved section fits is a `context_optimization` degradation (reason `context_budget`), not
@@ -2206,6 +2210,8 @@ Ingestion and incremental indexing.
   (#564).
 
 Evaluation, visualization and tuning.
+- A judged context built from a hit's fields (one without `content`) holds the unit's translation into the index
+  language: its field was named after the `LanguageCode` itself (`translated_text_LanguageCode.KO`), so none was read.
 - Judge failures are recorded per query and failed scoring exits non-zero; a failed RAGAS run marks only its own
   metrics (#158, #210, #219).
 - RAGAS skips `faithfulness` without context, counts each context once per batch, judges with its own metric

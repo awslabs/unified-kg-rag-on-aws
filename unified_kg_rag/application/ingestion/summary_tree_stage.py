@@ -41,7 +41,6 @@ from unified_kg_rag.domain.ingestion.summary_tree import (
     stored_leaf_entry,
     stored_leaf_filters,
     stored_leaf_text,
-    translated_leaf_field,
 )
 from unified_kg_rag.domain.models import (
     Config,
@@ -53,6 +52,7 @@ from unified_kg_rag.domain.models import (
     SummaryNode,
     SummaryTreeRecord,
 )
+from unified_kg_rag.domain.retrieval.filters import translated_text_field
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.ports.indexer import BaseIndexer, VectorIndexer
 from unified_kg_rag.shared import (
@@ -464,7 +464,7 @@ class SummaryTreeStage(_RegistryStage):
             vector = row.get("text_embedding")
             if isinstance(vector, list):
                 vector = np.asarray(vector, dtype=np.float32)
-            text = self._leaf_text(row)
+            text = stored_leaf_text(row, self._translated_field)
             if not isinstance(vector, np.ndarray) or not vector.size or not text:
                 skipped += 1
                 continue
@@ -493,7 +493,7 @@ class SummaryTreeStage(_RegistryStage):
     def _translated_field(self) -> str:
         """The text-unit field holding the translation into the index
         language."""
-        return translated_leaf_field(index_language(self.config))
+        return translated_text_field(index_language(self.config))
 
     @staticmethod
     def _pages_by_id(
@@ -524,11 +524,6 @@ class SummaryTreeStage(_RegistryStage):
                 yield sorted(page, key=lambda row: order.get(str(row["id"]), 0))
 
         return pages()
-
-    def _leaf_text(self, row: dict[str, Any]) -> str:
-        """The text a stored text unit is a leaf of the tree with
-        (:func:`stored_leaf_text`)."""
-        return stored_leaf_text(row, self._translated_field)
 
     def _uncovered(
         self, indexer: VectorIndexer, suffix: str, rows: list[dict[str, Any]]

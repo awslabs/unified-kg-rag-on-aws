@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+import functools
 import json
 import time
 from collections import OrderedDict
@@ -59,6 +60,7 @@ from unified_kg_rag.domain.retrieval.filters import (
     kinds_rule,
     parse_any_of,
     parse_filters,
+    translated_text_field,
     union_filter_fields,
 )
 from unified_kg_rag.domain.retrieval.hybrid_normalization import combine_min_max
@@ -92,10 +94,10 @@ from unified_kg_rag.shared.utils import (
     text_digest,
 )
 from unified_kg_rag.shared.utils.concurrency import (
-    await_shared,
     discard,
     gather_bounded,
     gather_or_cancel,
+    single_flight,
 )
 from unified_kg_rag.shared.utils.scripts import (
     has_dense_script,
@@ -269,9 +271,9 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         self._max_size = self._opensearch_config.max_query_size
         # The configured limits; each index's own may be lower (_limits).
         self._configured_limits = IndexLimits.of(self._opensearch_config.index_settings)
-        # The limits in force on each alias read, or the read in flight
-        # (see _limits).
-        self._index_limits: dict[str, IndexLimits | asyncio.Future[Any]] = {}
+        # The read of the limits in force on each alias: in flight, or done
+        # and kept (see _limits).
+        self._index_limits: dict[str, asyncio.Future[Any]] = {}
         # Whether a denied settings read was logged.
         self._settings_denied_logged = False
         # The (query id, index, top_k, window) cuts warned of
@@ -300,7 +302,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         self._query_embedding_cache: OrderedDict[str, list[float]] = OrderedDict()
         # One embedding call per text in flight: concurrent sub-queries of one
         # search share it instead of each missing the cache.
-        self._pending_embeddings: dict[str, asyncio.Future[list[float]]] = {}
+        self._pending_embeddings: dict[str, asyncio.Future[Any]] = {}
         self._field_mappings = self._initialize_field_mappings()
         self._index_filter_fields = self._initialize_index_filter_fields()
 
@@ -316,7 +318,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         languages = self._config.processing.translation.translated_languages
         return {
             self._opensearch_config.text_units_index_prefix: {
-                "lexical": ["text", *(f"translated_text_{lang}" for lang in languages)],
+                "lexical": ["text", *map(translated_text_field, languages)],
                 "vector": ["text_embedding"],
             },
             self._opensearch_config.entities_index_prefix: {
@@ -491,7 +493,8 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                     # A read still in flight is left to finish: it is newer.
                     for prefix in limits:
                         name = self._get_name(prefix, query.suffix)
-                        if isinstance(self._index_limits.get(name), IndexLimits):
+                        read = self._index_limits.get(name)
+                        if read is not None and read.done():
                             del self._index_limits[name]
                     logger.info("Index limits changed; searching again: %s", e)
                     continue
@@ -894,24 +897,14 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         if cached is not None:
             cache.move_to_end(query_text)
             return cached
-        pending = self._pending_embeddings.get(query_text)
-        if pending is None:
-            pending = asyncio.ensure_future(self._store_embedding(query_text))
-            self._pending_embeddings[query_text] = pending
-            pending.add_done_callback(
-                lambda done: self._settle_embedding(query_text, done)
-            )
-        # Shielded (one waiter's cancellation must not cancel the others'
-        # call); a failure reaches each query as its own copy.
-        return await await_shared(pending)
-
-    def _settle_embedding(self, query_text: str, done: asyncio.Future[Any]) -> None:
-        self._pending_embeddings.pop(query_text, None)
-        # Mark a failure as retrieved: when every waiter was cancelled nobody
-        # awaits the shared call, and asyncio would log "Task exception was
-        # never retrieved". Waiters still awaiting it get the error as usual.
-        if not done.cancelled():
-            done.exception()
+        # Shared by concurrent queries (one waiter's cancellation must not
+        # cancel the others' call); a failure reaches each as its own copy.
+        return await single_flight(
+            self._pending_embeddings,
+            query_text,
+            functools.partial(self._store_embedding, query_text),
+            share_failure=True,
+        )
 
     async def _store_embedding(self, query_text: str) -> list[float]:
         try:
@@ -1010,27 +1003,15 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         the read in flight. Settings that cannot be read leave the
         configured limits: kept when the read was denied or found no index,
         read again next time on any other failure."""
-        cached = self._index_limits.get(alias)
-        if isinstance(cached, IndexLimits):
-            return cached
-        if cached is not None:
-            shared: IndexLimits | None = await asyncio.shield(cached)
-            return shared if shared is not None else (await self._read_limits(alias))[0]
-        pending: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
-        self._index_limits[alias] = pending
-        limits: IndexLimits | None = None
-        keep = False
-        try:
-            limits, keep = await self._read_limits(alias)
-        finally:
-            # Resolved whatever happens (None: the waiters read for
-            # themselves). The entry is still this read's: a rejected search
-            # drops only limits already read, never a read in flight.
-            if keep and limits is not None:
-                self._index_limits[alias] = limits
-            else:
-                self._index_limits.pop(alias, None)
-            pending.set_result(limits)
+        limits: IndexLimits = (
+            await single_flight(
+                self._index_limits,
+                alias,
+                functools.partial(self._read_limits, alias),
+                share_failure=False,
+                keep=lambda read: read[1],
+            )
+        )[0]
         return limits
 
     async def _read_limits(self, alias: str) -> tuple[IndexLimits, bool]:
@@ -1462,7 +1443,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
 
     async def _probe(
         self, alias: str, probe: dict[str, Any]
-    ) -> list[dict[str, Any]] | Exception | bool:
+    ) -> list[dict[str, Any]] | Exception:
         """``probe``'s hits on ``alias``, or its outcome earlier in this query.
 
         The sub-searches of one query (DRIFT's follow-ups above all) probe
@@ -1474,31 +1455,15 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         the owner is cancelled or raises, a waiter probes for itself.
         """
         memo = current_query_scope()
-        key = f"probe\n{alias}\n{json.dumps(probe, sort_keys=True, default=str)}"
         if memo is None:
             return await self._search(alias, probe)
-        pending = memo.get(key)
-        if pending is not None:
-            shared: list[dict[str, Any]] | Exception | bool | None = (
-                await asyncio.shield(pending)
-            )
-            if shared is not None:
-                return shared
-            return await self._search(alias, probe)
-        outcome: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
-        memo[key] = outcome
-        try:
-            found = await self._search(alias, probe)
-        except BaseException:
-            del memo[key]
-            outcome.set_result(None)  # the waiters probe for themselves
-            raise
-        if isinstance(found, Exception):
-            del memo[key]  # not kept: the next sub-search probes again
-            outcome.set_result(found)
-        else:
-            outcome.set_result(bool(found))
-        return found
+        return await single_flight(
+            memo,
+            f"probe\n{alias}\n{json.dumps(probe, sort_keys=True, default=str)}",
+            functools.partial(self._search, alias, probe),
+            share_failure=False,
+            keep=lambda found: not isinstance(found, Exception),
+        )
 
     def _fuse(
         self, sub_hits: list[list[dict[str, Any]]], size: int
@@ -1691,7 +1656,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
 
     def _extract_content(self, source: dict[str, Any]) -> str:
         content_parts = []
-        translated_key = f"translated_text_{index_language(self._config)}"
+        translated_key = translated_text_field(index_language(self._config))
 
         if translated_text := source.get(translated_key):
             content_parts.append(translated_text)

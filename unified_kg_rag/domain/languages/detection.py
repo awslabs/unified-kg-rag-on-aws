@@ -242,23 +242,18 @@ def _name_words(text: str, words: list[re.Match[str]]) -> set[int]:
     In a text written in these words (one stands outside the names), its
     capitalised first word directly before an article is the sentence's
     capital, not a name's ("List the Globex Sensors contracts signed in
-    東京"; "Alexander the Great 의 업적" stays a name), and a name's opening
-    article directly after a word outside the names is that phrase's word
-    ("Show the Acme Robotics orders for 서울": "the" is evidence; "공급사는
-    the Depot", "Lieferant 공급사 die Bahn" keep it in the name)."""
+    東京"; "Alexander the Great 의 업적" stays a name), and the article it
+    governs is the sentence's word, no name's ("Show the Acme Robotics
+    orders for 서울": "the" is evidence). Any other name keeps its opening
+    article: an English phrase in a question of another script ("Seller 의
+    liability under the Agreement 한도는?", "공급사는 the Depot") is no
+    sentence of its words, and a lowercase command ("find the Umbra Freight
+    orders for 서울") reads as one too."""
     names = _name_runs(text, words)
     if len(names) < len(words) and _sentence_capital(text, words):
         names = _name_runs(text, words, opens_none=0)
-    return {
-        i
-        for i in names
-        if not (
-            i > 0
-            and i - 1 not in names
-            and words[i].group().lower() in _ARTICLES
-            and _adjacent(text, words[i - 1], words[i])
-        )
-    }
+        names.discard(1)
+    return names
 
 
 def _sentence_capital(text: str, words: list[re.Match[str]]) -> bool:

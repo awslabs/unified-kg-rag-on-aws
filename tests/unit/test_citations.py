@@ -606,6 +606,50 @@ async def test_a_fully_known_lineage_needs_no_fetch() -> None:
     assert entity.document_id == "d"
 
 
+async def test_the_lineage_work_runs_off_the_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression (rv27 perf 1): the lineages and each page's plan scanned a
+    # hub entity's thousands of units on the event loop, 16-39 ms of every
+    # local and mix query on the 13-hub corpus.
+    loop_thread = threading.get_ident()
+    threads: list[int] = []
+    lineage, attach = citations._lineage, citations._attach
+
+    def recording_lineage(*args: Any) -> list[str]:
+        threads.append(threading.get_ident())
+        return lineage(*args)
+
+    def recording_attach(*args: Any) -> None:
+        threads.append(threading.get_ident())
+        attach(*args)
+
+    monkeypatch.setattr(citations, "_lineage", recording_lineage)
+    monkeypatch.setattr(citations, "_attach", recording_attach)
+    plan = citations._Pages.page
+
+    def recording_page(self: Any, scale: int) -> list[str]:
+        threads.append(threading.get_ident())
+        return plan(self, scale)
+
+    monkeypatch.setattr(citations._Pages, "page", recording_page)
+    entity = citations.citation_from_entry(
+        1,
+        _entry(
+            {"section_type": "entity", "text_unit_ids": [f"u{i}" for i in range(9)]},
+            "e",
+        ),
+    )
+
+    async def fetch(ids: list[str]) -> list[dict[str, Any]]:
+        return [{"id": "u5", "document_ids": ["d-5"]}] if "u5" in ids else []
+
+    await citations.aresolve_documents([entity], fetch, limit=2)
+    assert entity.document_id == "d-5"
+    # The lineages, four pages (the last one empty) and the attach.
+    assert len(threads) == 6 and loop_thread not in threads
+
+
 def test_unknown_markers_are_never_citations() -> None:
     cited = [
         citations.citation_from_entry(

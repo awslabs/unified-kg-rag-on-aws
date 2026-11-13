@@ -111,6 +111,12 @@ COMMAND_NAME = (
     'word ("Alexander the Great 의 업적은?"): no rule tells the verb from the '
     "name's first word without a word list of verbs (rv26 algo-ret 1)."
 )
+LOWERCASE_COMMAND = (
+    'A lowercase command ("find the Umbra Freight orders for 서울") opens on '
+    "no sentence capital, so its article opens the name as in an English "
+    'phrase quoted in a Korean question ("with the Globex Sensors 계약 조건은?"): '
+    "no rule tells the two apart without a word list of verbs (rv27 algo-ret 1)."
+)
 QUOTING = (
     "An English question quoting a name reads as English: the rv11 M5 "
     'matrix pins "Who is the CEO of {n}?" so for every script (the probe\'s '
@@ -1270,6 +1276,27 @@ DETECTION: tuple[Case, ...] = (
     Case("Alexander the Great 의 업적은?", "ko", "en", "rv26 algo-ret 1"),
     Case("Jack the Ripper は誰？", "ja", "en", "rv26 algo-ret 1"),
     Case("Alexander the Great conquered 페르시아", "en", "ko", "rv26 algo-ret 1"),
+    # Only a command's article is the sentence's word: an English phrase in
+    # a Korean or Japanese frame keeps its article in the name, so
+    # the frame's script decides on every index (rv27 algo-ret 1).
+    *(
+        Case(text, language, index, "rv27 algo-ret 1")
+        for text, language in (
+            ("Seller 의 liability under the Agreement 한도는?", "ko"),
+            ("契約書の terms of the Agreement 条項を要約して", "ja"),
+            ("with the Globex Sensors 계약 조건은?", "ko"),
+            ("of the United Nations 계약 조건은?", "ko"),
+            ("in the Asia Pacificの契約条件は？", "ja"),
+        )
+        for index in ("en", "ko", "ja", "zh")
+    ),
+    Case(
+        "find the Umbra Freight orders for 서울",
+        "en",
+        "en",
+        "rv27 algo-ret 1",
+        Tradeoff("ko", LOWERCASE_COMMAND),
+    ),
 )
 
 NUMBERS: tuple[Case, ...] = (

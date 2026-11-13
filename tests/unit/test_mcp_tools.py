@@ -1010,7 +1010,9 @@ async def test_one_deadline_covers_the_slot_wait_and_the_work() -> None:
     )
     assert not isinstance(first, BaseException)
     assert isinstance(second, QueryTimeoutError)
-    assert "The query did not finish within 0.5 s" in str(second)
+    # It states the time the query had after its wait, not the setting.
+    assert "(the caller's deadline)" in str(second)
+    assert second.timeout_seconds < 0.5
     assert asyncio.get_running_loop().time() - started < 0.5 + 0.25
 
 

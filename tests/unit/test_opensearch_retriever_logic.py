@@ -1149,7 +1149,7 @@ async def test_a_cancelled_probe_waiter_leaves_the_probe_in_flight(retriever) ->
         await asyncio.sleep(0)
         release.set()
         assert await owner == [{"_id": "cr1"}]
-        assert await other is True
+        assert await other == [{"_id": "cr1"}]  # the probe's one hit, shared
         with pytest.raises(asyncio.CancelledError):
             await waiter
     assert len(calls) == 1
@@ -1633,7 +1633,9 @@ async def test_concurrent_first_searches_read_the_settings_once(retriever) -> No
     found = await asyncio.gather(*(retriever._limits("alias") for _ in range(50)))
     assert client.reads == 1
     assert {limits.max_result_window for limits in found} == {500}
-    assert retriever._index_limits == {"alias": found[0]}
+    # The read is kept: the next search reads none.
+    assert list(retriever._index_limits) == ["alias"]
+    assert await retriever._limits("alias") == found[0] and client.reads == 1
 
 
 async def test_a_missing_index_is_read_once(retriever) -> None:

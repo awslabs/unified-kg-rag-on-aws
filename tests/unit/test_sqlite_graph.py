@@ -495,8 +495,18 @@ def test_edges_within_reads_a_hubs_edges_inside_the_set_only(
     expected = {(a, b) for a, b in edges if a in wanted and b in wanted}
     assert {(source, target) for _, source, target, _ in found} == expected
     assert len(found) == len(expected)
-    # The hub's 1,550 edges that leave the set are not read.
+    # The hub's 1,550 edges that leave the set are not read, in one
+    # statement (rv27: a batch pair each re-read the sources' index).
     assert sum(read) == len(expected)
+    assert len(read) == 1
+    read.clear()
+    small = members[:30]
+    found = _store(indexer).edges_within(LABEL, [*small, *small])
+    assert {(s, t) for _, s, t, _ in found} == {
+        (a, b) for a, b in edges if a in small and b in small
+    }
+    assert len(read) == 1
+    assert _store(indexer).edges_within(LABEL, []) == []
 
 
 # --- traversal ---------------------------------------------------------------

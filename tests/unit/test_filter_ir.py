@@ -38,6 +38,7 @@ from unified_kg_rag.domain.retrieval.filters import (
     own_attribute,
     parse_any_of,
     parse_filters,
+    translated_text_field,
 )
 from unified_kg_rag.shared import InvalidFilterError
 
@@ -243,3 +244,12 @@ def test_a_clause_holds_as_a_graph_store_compares() -> None:
     bounded = Range("rank", (("gte", 1), ("lt", 3)))
     assert bounded.holds([0, 2]) and not bounded.holds([3]) and not bounded.holds(["2"])
     assert Range("name", (("gte", "b"),)).holds(["c"])
+
+
+def test_the_translated_text_field_names_a_language_by_its_code() -> None:
+    # A LanguageCode is a str: formatted, it read "LanguageCode.KO".
+    from unified_kg_rag.domain.models import LanguageCode
+
+    assert translated_text_field(LanguageCode.KO) == "translated_text_ko"
+    assert translated_text_field("ja") == "translated_text_ja"
+    assert field_kind(translated_text_field("zh")) is FieldKind.TEXT

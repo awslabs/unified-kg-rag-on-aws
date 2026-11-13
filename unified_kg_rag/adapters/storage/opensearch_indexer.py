@@ -64,7 +64,10 @@ from unified_kg_rag.domain.models.config import (
     DEFAULT_LANGUAGE_ANALYZERS,
 )
 from unified_kg_rag.domain.models.provider_config import BEDROCK
-from unified_kg_rag.domain.retrieval.filters import ATTRIBUTE_KEY_PREFIX
+from unified_kg_rag.domain.retrieval.filters import (
+    ATTRIBUTE_KEY_PREFIX,
+    translated_text_field,
+)
 from unified_kg_rag.domain.retrieval.index_prefixes import index_artifacts
 from unified_kg_rag.domain.retrieval.store_names import (
     namespace_suffix,
@@ -752,7 +755,7 @@ class OpenSearchIndexer(VectorIndexer):
         return {
             "text": translation.source_language.value,
             **{
-                f"translated_text_{language}": language
+                translated_text_field(language): language
                 for language in translation.translated_languages
             },
         }
@@ -1307,7 +1310,7 @@ class OpenSearchIndexer(VectorIndexer):
         if hasattr(unit, "translated_texts") and unit.translated_texts:
             for language in self.config.processing.translation.translated_languages:
                 if translated := unit.translated_texts.get(language):
-                    doc[f"translated_text_{language}"] = translated
+                    doc[translated_text_field(language)] = translated
         return doc
 
     def _prepare_entity_doc(

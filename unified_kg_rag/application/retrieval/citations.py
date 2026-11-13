@@ -20,8 +20,10 @@ docs/design.md §7.1.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
+from itertools import islice
 from typing import Any
 
 from unified_kg_rag.adapters.retrieval.strategy_registry import citations_enabled
@@ -193,6 +195,58 @@ def _lineage(citation: Citation, known: dict[str, _Unit]) -> list[str]:
     return list(dict.fromkeys(held + rest))
 
 
+class _Pages:
+    """The page plan of :func:`aresolve_documents` over its graph citations:
+    pure work over their lineages (a hub entity's holds thousands of units),
+    run on a worker thread so it never holds the event loop; ``known`` and
+    ``absent`` change only between its calls."""
+
+    def __init__(self, graph: list[Citation], known: dict[str, _Unit], limit: int):
+        self.graph = graph
+        self.known = known
+        self.limit = limit
+        self.absent: set[str] = set()
+        self.lineages: dict[int, list[str]] | None = None
+
+    def _lineages(self) -> dict[int, list[str]]:
+        if self.lineages is None:
+            self.lineages = {c.marker: _lineage(c, self.known) for c in self.graph}
+        return self.lineages
+
+    def _chosen(self, marker: int) -> list[str]:
+        return [u for u in self._lineages()[marker] if u in self.known][: self.limit]
+
+    def page(self, scale: int) -> list[str]:
+        """The units the next read asks for: of each citation still short,
+        ``scale`` times the units it lacks, unread and not found absent."""
+        wanted: list[str] = []
+        for citation in self.graph:
+            short = self.limit - len(self._chosen(citation.marker))
+            if short <= 0:
+                continue
+            unread = (
+                u
+                for u in self._lineages()[citation.marker]
+                if u not in self.known and u not in self.absent
+            )
+            wanted.extend(islice(unread, short * scale))
+        return list(dict.fromkeys(wanted))
+
+    def read(self, missing: list[str], fetched: list[dict[str, Any]]) -> None:
+        """Record what a read of ``missing`` returned."""
+        asked = set(missing)
+        for metadata in fetched:
+            unit = unit_from_metadata(metadata, None)
+            if unit.unit_id in asked:
+                self.known[unit.unit_id] = unit
+        self.absent.update(u for u in missing if u not in self.known)
+
+    def attach(self) -> None:
+        """Set each graph citation's documents from its chosen units."""
+        for citation in self.graph:
+            _attach(citation, [self.known[u] for u in self._chosen(citation.marker)])
+
+
 async def aresolve_documents(
     citations: list[Citation],
     fetch: Callable[[list[str]], Awaitable[list[dict[str, Any]]]],
@@ -211,8 +265,9 @@ async def aresolve_documents(
     short the units it lacks, times two to the number of pages before, so
     a lineage of ``n`` units takes at most about ``log2(n)`` reads, and no
     more than :data:`MAX_LINEAGE_PAGES`: a citation whose units read by then
-    pass none names no document. Raises what ``fetch`` raises, leaving the
-    citations as they were."""
+    pass none names no document. The lineage work runs on a worker thread
+    (:class:`_Pages`). Raises what ``fetch`` raises, leaving the citations
+    as they were."""
     known: dict[str, _Unit] = {}
     for citation in citations:
         if citation.section_type == _TEXT and citation.chunk_id:
@@ -225,37 +280,17 @@ async def aresolve_documents(
                 page_end=citation.page_end,
             )
     graph = [c for c in citations if c.section_type != _TEXT and c.text_unit_ids]
-    lineages = {c.marker: _lineage(c, known) for c in graph}
-    absent: set[str] = set()
-
-    def chosen(marker: int) -> list[str]:
-        return [u for u in lineages[marker] if u in known][:limit]
-
+    if not graph:
+        return
+    pages = _Pages(graph, known, limit)
     scale = 1
     for _ in range(MAX_LINEAGE_PAGES):
-        wanted: list[str] = []
-        for citation in graph:
-            short = limit - len(chosen(citation.marker))
-            if short <= 0:
-                continue
-            unread = [
-                u
-                for u in lineages[citation.marker]
-                if u not in known and u not in absent
-            ]
-            wanted.extend(unread[: short * scale])
-        missing = list(dict.fromkeys(wanted))
+        missing = await asyncio.to_thread(pages.page, scale)
         if not missing:
             break
-        asked = set(missing)
-        for metadata in await fetch(missing):
-            unit = unit_from_metadata(metadata, None)
-            if unit.unit_id in asked:
-                known[unit.unit_id] = unit
-        absent.update(u for u in missing if u not in known)
+        pages.read(missing, await fetch(missing))
         scale *= 2
-    for citation in graph:
-        _attach(citation, [known[u] for u in chosen(citation.marker)])
+    await asyncio.to_thread(pages.attach)
 
 
 def mark_cited(

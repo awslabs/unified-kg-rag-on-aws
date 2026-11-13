@@ -30,7 +30,7 @@ import numpy as np
 
 from unified_kg_rag.domain.models import Constants, SummaryNode, TextUnit
 from unified_kg_rag.domain.models.config import SummaryTreeConfig
-from unified_kg_rag.domain.retrieval.filters import TRANSLATED_TEXT_PREFIX
+from unified_kg_rag.domain.retrieval.filters import translated_text_field
 from unified_kg_rag.shared.utils import compute_hash
 
 # Covariance regularization of the Gaussian mixtures (scikit-learn's
@@ -215,12 +215,6 @@ def stored_leaf_entry(
     )
 
 
-def translated_leaf_field(language: str) -> str:
-    """The stored text-unit field a leaf's translation into ``language``
-    (the index language) is read from."""
-    return f"{TRANSLATED_TEXT_PREFIX}{language}"
-
-
 def unit_leaf_entry(
     unit: TextUnit, language: str, translated_languages: Collection[str]
 ) -> tuple[str, str, str]:
@@ -232,7 +226,7 @@ def unit_leaf_entry(
         if language in translated_languages
         else None
     )
-    field = translated_leaf_field(language)
+    field = translated_text_field(language)
     return stored_leaf_entry(
         {
             "id": unit.id,

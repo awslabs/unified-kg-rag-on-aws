@@ -20,6 +20,7 @@ from collections.abc import (
     Collection,
     Iterator,
     Mapping,
+    MutableMapping,
 )
 from contextlib import AbstractContextManager, aclosing, nullcontext
 from dataclasses import dataclass, field
@@ -3660,52 +3661,54 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
 _SECTION_SOURCES = "_section_sources"
 
 
+class _InFlight(MutableMapping[tuple[str, ...], "asyncio.Future[Any]"]):
+    """The query extractions in flight (thread-safe), keyed within the
+    current ``extraction_cache_scope``: the ``memo`` of
+    :func:`~unified_kg_rag.shared.utils.concurrency.single_flight`. A call
+    in flight on another event loop is none of this loop's."""
+
+    def __init__(self, lock: threading.Lock) -> None:
+        self._futures: dict[tuple[str, ...], asyncio.Future[Any]] = {}
+        self._lock = lock
+
+    def __getitem__(self, key: tuple[str, ...]) -> asyncio.Future[Any]:
+        with self._lock:
+            found = self._futures[(_EXTRACTION_SCOPE.get(), *key)]
+        if found.get_loop() is not asyncio.get_running_loop():
+            raise KeyError(key)
+        return found
+
+    def __setitem__(self, key: tuple[str, ...], future: asyncio.Future[Any]) -> None:
+        with self._lock:
+            self._futures[(_EXTRACTION_SCOPE.get(), *key)] = future
+
+    def __delitem__(self, key: tuple[str, ...]) -> None:
+        with self._lock:
+            del self._futures[(_EXTRACTION_SCOPE.get(), *key)]
+
+    def __iter__(self) -> Iterator[tuple[str, ...]]:
+        with self._lock:
+            return iter(list(self._futures))
+
+    def __len__(self) -> int:
+        return len(self._futures)
+
+
 class _ExtractionCache:
     """A bounded, thread-safe LRU of query extractions (immutable values),
     keyed within the current ``extraction_cache_scope``; a size of 0 keeps
     nothing.
 
-    It also tracks the extractions in flight (``claim`` / ``release``), so
-    two queries of one scope that miss together, the interleaved arms of a
-    run-eval repeat, make one call: the first pays for it, the others wait
-    for its value and count a cache hit."""
+    It also tracks the extractions in flight (``inflight``; ``None`` with a
+    size of 0), so two queries of one scope that miss together, the
+    interleaved arms of a run-eval repeat, make one call: the first pays
+    for it, the others wait for its value and count a cache hit."""
 
     def __init__(self, size: int) -> None:
         self._size = size
         self._entries: OrderedDict[tuple[str, ...], Any] = OrderedDict()
-        self._inflight: dict[tuple[str, ...], asyncio.Future[Any]] = {}
         self._lock = threading.Lock()
-
-    def claim(self, key: tuple[str, ...]) -> tuple[asyncio.Future[Any] | None, bool]:
-        """``(future, owner)`` for an extraction of ``key`` about to run:
-        the one in flight on this loop and ``False`` (await it), else a new
-        one and ``True`` (extract, then ``release``). ``(None, True)`` with
-        a size of 0 (nothing is shared)."""
-        if self._size <= 0:
-            return None, True
-        key = (_EXTRACTION_SCOPE.get(), *key)
-        loop = asyncio.get_running_loop()
-        with self._lock:
-            found = self._inflight.get(key)
-            if found is not None and not found.done() and found.get_loop() is loop:
-                return found, False
-            future: asyncio.Future[Any] = loop.create_future()
-            self._inflight[key] = future
-            return future, True
-
-    def release(
-        self, key: tuple[str, ...], future: asyncio.Future[Any] | None, value: Any
-    ) -> None:
-        """End the owner's claim on ``key``: its waiters get ``value``
-        (``None``: it failed, so each extracts on its own)."""
-        if future is None:
-            return
-        key = (_EXTRACTION_SCOPE.get(), *key)
-        with self._lock:
-            if self._inflight.get(key) is future:
-                del self._inflight[key]
-        if not future.done():
-            future.set_result(value)
+        self.inflight = _InFlight(self._lock) if size > 0 else None
 
     def get(self, key: tuple[str, ...]) -> Any:
         key = (_EXTRACTION_SCOPE.get(), *key)
@@ -4125,13 +4128,17 @@ class _QueryDeadline:
         self, seconds: float | None, first_chunk_seconds: float | None = None
     ) -> None:
         self.seconds = seconds
+        self.setting = "search.query_timeout_seconds"
         self.first_chunk_seconds = first_chunk_seconds
-        self.at = None if seconds is None else time.monotonic() + seconds
+        now = time.monotonic()
+        self.at = None if seconds is None else now + seconds
         caller = _CALLER_DEADLINE.get()
         if caller is not None and (self.at is None or caller < self.at):
+            # The query's budget is the time its caller left it (after a
+            # wait for a call slot), not the setting.
             self.at = caller
-            if seconds is None:
-                self.seconds = max(0.0, caller - time.monotonic())
+            self.seconds = max(0.0, caller - now)
+            self.setting = "the caller's deadline"
         self._scope: _DeadlineScope | None = None
 
     def scope(self, first_chunk_from: float | None = None) -> "_DeadlineScope":
@@ -4210,10 +4217,10 @@ class _DeadlineScope:
             what = "The answer stream sent no first chunk"
         else:
             limit = self._deadline.seconds
-            setting = "search.query_timeout_seconds"
+            setting = self._deadline.setting
             what = "The query did not finish"
         assert limit is not None
-        message = f"{what} within {limit:g} s"
+        message = f"{what} within {round(limit, 2):g} s"
         logger.warning("%s (%s); cancelled its calls in flight", message, setting)
         return QueryTimeoutError(
             f"{message} ({setting}); its calls in flight were cancelled",

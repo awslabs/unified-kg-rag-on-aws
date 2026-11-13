@@ -62,10 +62,10 @@ from unified_kg_rag.domain.ingestion.names import compact_name_key
 from unified_kg_rag.domain.ingestion.relationship_weights import text_unit_weights
 from unified_kg_rag.domain.ingestion.summary_tree import (
     stored_leaf_entry,
-    translated_leaf_field,
     unit_leaf_entry,
 )
 from unified_kg_rag.domain.models import Entity, Relationship
+from unified_kg_rag.domain.retrieval.filters import translated_text_field
 from unified_kg_rag.ports.indexer import IndexingStats
 from unified_kg_rag.shared import NamespaceLeaseError, get_logger
 from unified_kg_rag.shared.write_fence import check_write_fence
@@ -191,7 +191,7 @@ class TextUnitRemoval:
         if not ids:
             return set()
         language = index_language(m.config)
-        field = translated_leaf_field(language)
+        field = translated_text_field(language)
         try:
             if m.vector_indexer.read_summary_tree_record(suffix) is None:
                 return set()

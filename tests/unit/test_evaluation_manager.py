@@ -40,6 +40,7 @@ from unified_kg_rag.domain.models import (
     EvaluationResult,
     EvaluationSummary,
     EvaluatorType,
+    LanguageCode,
     ModelRole,
     SearchQuery,
     SearchResult,
@@ -585,6 +586,21 @@ class TestLeanContextStrings:
         assert len(out) == 1
         assert "description" in out[0] and "name" in out[0]
         assert "irrelevant" not in out[0]
+
+    def test_a_units_translation_into_the_index_language_is_kept(
+        self, config: Config
+    ) -> None:
+        # Regression (rv27 architecture low): the key was built from the
+        # LanguageCode itself ("translated_text_LanguageCode.KO"), so no
+        # translated text was ever read.
+        translation = config.processing.translation
+        translation.enabled = True
+        translation.source_language = LanguageCode.EN
+        translation.target_language = LanguageCode.KO
+        out = _graph_aware_manager(config).create_lean_context_strings(
+            [{"metadata": {"translated_text_ko": "공급사는 부품을 납품한다"}}]
+        )
+        assert "공급사는 부품을 납품한다" in out[0]
 
     def test_minimal_info_fallback_when_no_desired_fields(self, config: Config) -> None:
         manager = _graph_aware_manager(config)

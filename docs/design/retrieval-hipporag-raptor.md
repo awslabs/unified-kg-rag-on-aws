@@ -184,9 +184,10 @@ cannot tell; the strategy then reads the relationships index.
   `scans_incident_edges` and, where the relationship vector index is
   built, the strategies read the edges from it as below (both endpoints in
   one terms query, no per-vertex scan); the graph serves them without it.
-- SQLite (`SQLiteGraphRetriever`): one read per pair of batches of 400
-  vertices, the edges leaving the source batch (an edge within the set
-  leaves one of them) read off the `(label, source_id, target_id)` index
+- SQLite (`SQLiteGraphRetriever`): one read of the set (bound as `?`
+  marks up to 400 vertices, as one JSON array through `json_each` above,
+  20-30% faster at 1,000-2,000 vertices than a read per pair of batches),
+  the edges leaving the set read off the `(label, source_id, target_id)` index
   with the target checked there, so only the edges within the set are read
   and decoded (13 hubs of 4,200 edges: 220-260 ms to 20-50 ms for 60-310
   vertices); the target is not a
