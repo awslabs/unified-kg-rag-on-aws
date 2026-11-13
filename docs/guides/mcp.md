@@ -123,8 +123,12 @@ read from its own server and namespace, with the store roles of the
 Every call runs under `search.query_timeout_seconds` (180 s by default) and
 fails with a timeout message past it; the wait for a call slot counts
 toward it. A `kg_search` or `kg_answer` past it ends in the chain's own
-timeout, so the query is counted in the query metrics and carries its
-`query_id`. A response's records are capped by `mcp.max_response_chars`,
+timeout. Every failed call's error ends with its `query_id` (and `trace_id`
+when traced), a call that timed out waiting for a slot included. A
+`kg_answer` that times out, in the chain or in the slot queue, is counted
+once in the query metrics; a `kg_search` is not (the query metrics count
+answers). The graph tools do not watch the deadline: a slow store call ends
+at a backstop one second past it. A response's records are capped by `mcp.max_response_chars`,
 and the MCP message carries them twice (structured content and its JSON
 text), so the message is up to about 2-4 times that. The tools keep no conversation
 memory: for a follow-up question, `kg_answer` takes the conversation so far

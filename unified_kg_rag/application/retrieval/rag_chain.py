@@ -2471,9 +2471,21 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
 
     @staticmethod
     def _query_id() -> str:
-        """A query's id: one bound by the caller (as the console's), else a
-        new one."""
-        return str(get_contextvars().get("query_id") or uuid.uuid4().hex[:12])
+        """A query's id: one bound by the caller (as the console's or an MCP
+        call's, :func:`new_query_id`), else a new one."""
+        return str(get_contextvars().get("query_id") or new_query_id())
+
+    def record_unrun_query(
+        self, query: Mapping[str, Any], error: BaseException, *, started: float
+    ) -> None:
+        """Publish the query metrics of an answer a host gave up on before
+        or while the chain ran it, so no query metric was recorded (an MCP
+        ``kg_answer`` that timed out waiting for a call slot, or at the
+        backstop past the chain's deadline): one failed query, as
+        :meth:`ainvoke` records its own. ``query``: the fields known
+        (``search_strategy``, ``suffix``); ``started``: the
+        ``time.monotonic()`` the call began."""
+        self._record_query_metrics(started, dict(query), error=error)
 
     @staticmethod
     def _log_context(rag_input: RAGInput, query_id: str) -> dict[str, Any]:
@@ -4054,6 +4066,13 @@ def _release_cached_resources(
 _CALLER_DEADLINE: contextvars.ContextVar[float | None] = contextvars.ContextVar(
     "kg_rag_caller_deadline", default=None
 )
+
+
+def new_query_id() -> str:
+    """A new query id (the ``query_id`` of a query's log lines, metrics and
+    errors); a host that binds one before calling the chain (as
+    ``query_id`` in the structlog context) has the chain use it."""
+    return uuid.uuid4().hex[:12]
 
 
 @contextlib.contextmanager

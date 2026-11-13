@@ -137,7 +137,12 @@ twice (structured content and its JSON text), so it is up to about 2-4
 times that on the wire. Each call runs under one deadline
 (`search.query_timeout_seconds`) that covers the wait for one of the
 `mcp.max_concurrent_calls` slots and the work, the chain's own deadline
-inside it included, so no call takes longer. The tools are stateless: no conversation memory (`use_memory` is
+inside it included. Work that does not watch the deadline (the graph tools'
+store calls) ends at a backstop `_BACKSTOP_GRACE_SECONDS` (1 s) past it. A
+`kg_answer` that times out in the slot queue or at the backstop has no
+query metric of the chain's own, so the tool records one
+(`GraphRAGChain.record_unrun_query`); the call's `query_id`, bound when it
+starts, is the one the chain's query uses and the one its error names. The tools are stateless: no conversation memory (`use_memory` is
 off), so no caller reaches another caller's history.
 
 **Usage, telemetry and redaction.** `kg_search` and `kg_answer` return the

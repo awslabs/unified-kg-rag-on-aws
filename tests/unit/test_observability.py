@@ -2141,3 +2141,59 @@ def test_a_sampled_span_gives_its_trace_ids(tracing: Tracing) -> None:
     with observability.span("kg_rag.query"):
         ids = observability.current_trace_ids()
     assert ids is not None and len(ids[0]) == 32
+
+
+async def test_an_mcp_call_past_its_deadline_in_the_slot_queue_is_a_counted_query(
+    tracing: Tracing, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Regression (rv27): a kg_answer that timed out waiting for a call slot
+    # recorded no query metric and carried no id, so the likeliest timeout of
+    # an overloaded server never reached QueryFailures or the latency.
+    import asyncio
+
+    from unified_kg_rag.application.cli.mcp_tools import KnowledgeGraphTools
+    from unified_kg_rag.domain.models.config import McpServerConfig
+    from unified_kg_rag.shared import metrics
+    from unified_kg_rag.shared.exceptions import QueryTimeoutError, query_failure_ids
+
+    tracing()
+    chain = _simple_chain()
+    chain.config.search.query_timeout_seconds = 0.3
+    sink = _RecordingSink()
+    chain.providers.metrics_sink = sink
+    real_screen = GraphRAGChain._screen_input
+
+    async def slow_screen(self: GraphRAGChain, *args: Any, **kwargs: Any) -> Any:
+        # The first call holds its slot past the others' deadline: it
+        # finishes a step that does not stop at the cancellation first.
+        until = asyncio.get_running_loop().time() + 0.6
+        try:
+            await asyncio.sleep(0.6)
+        except asyncio.CancelledError:
+            await asyncio.sleep(until - asyncio.get_running_loop().time())
+            raise
+        return await real_screen(self, *args, **kwargs)
+
+    monkeypatch.setattr(GraphRAGChain, "_screen_input", slow_screen)
+    tools = KnowledgeGraphTools(chain, settings=McpServerConfig(max_concurrent_calls=1))
+    try:
+        errors = await asyncio.gather(
+            *(
+                tools.answer("가젯을 보관하는 곳은?", strategy="simple")
+                for _ in range(3)
+            ),
+            return_exceptions=True,
+        )
+    finally:
+        await chain.aclose()
+    assert all(isinstance(e, QueryTimeoutError) for e in errors), errors
+    # One timed out in the chain, two waiting for the slot: three queries.
+    assert sum("slot" in str(e) for e in errors) == 2
+    assert len(sink.emitted) == 3
+    for _, values, properties in sink.emitted:
+        assert values[metrics.QUERY_FAILED_METRIC] == 1.0
+        assert properties["error_class"] == "timeout"
+        assert properties["Strategy"] == "simple"
+    ids = [query_failure_ids(e) for e in errors]
+    assert all(len(i.get("query_id", "")) == 12 and i.get("trace_id") for i in ids)
+    assert len({i["query_id"] for i in ids}) == 3
