@@ -86,8 +86,10 @@ class DocumentParsingConfig(ConfigSection):
             "detect it per file (charset-normalizer); a file whose encoding "
             "is not detected (a binary file with a text suffix) fails to "
             "parse and counts as failed. Set it when detection picks a "
-            "neighbouring encoding (cp1250 for a French cp1252 file). A UTF-8 "
-            "file is read as UTF-8 either way."
+            "neighbouring encoding (cp1250 for a French cp1252 file): setting "
+            "or changing it parses the files that are not UTF-8 again in the "
+            "next incremental run. A UTF-8 file is read as UTF-8 either way "
+            "and is not parsed again."
         ),
     )
 

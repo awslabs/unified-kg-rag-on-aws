@@ -193,6 +193,9 @@ class SummaryTreeStage(_RegistryStage):
             and stored.get("leaf_digest") == digest
             and stored.get("fingerprint") == fingerprint
             and not stored.get("partial")
+            # Nodes of it were deleted (a removal): over the same text units
+            # too, as a reprocessed document writes its units back.
+            and not stored.get("pruned")
             and self.reuse_stored
         )
         incremental = context.incremental_delta is not None and not (

@@ -204,6 +204,40 @@ def test_a_takeover_wait_ends_on_a_stop(monkeypatch: pytest.MonkeyPatch) -> None
     assert time.time() - started < 2
 
 
+@pytest.mark.parametrize("live", [True, False])
+@pytest.mark.parametrize("in_process_stores", [True, False])
+def test_a_gone_holder_with_embedded_stores_leaves_no_wait(
+    monkeypatch: pytest.MonkeyPatch, live: bool, in_process_stores: bool
+) -> None:
+    # rv25 quality 6: after kill -9 the local registry handed the lease on
+    # at once, but the first write still waited the late-write bound (35 s).
+    # A process that is gone has no write in flight, and an embedded
+    # store's writes commit under its database's lock: no wait. A store
+    # request (OpenSearch, Neptune) may still land, so the wait stays.
+    from tests.unit.test_processes import _exited_identity
+
+    _short_requests(monkeypatch, 30)
+    store = FakeDocStatusStore()
+    expiry = time.time() + (60 if live else -1)
+    store.leases["ns"] = (f"{_exited_identity()}:a1b2c3d4", expiry)
+    if live:
+        # Unexpired: the local registry hands a gone holder's lease on.
+        def hand_on(namespace: str, owner: str, seconds: float) -> bool:
+            store.leases[namespace] = (owner, time.time() + seconds)
+            return True
+
+        monkeypatch.setattr(store, "try_acquire_lease", hand_on)
+    lease = NamespaceLease(
+        store,
+        "ns",
+        60,
+        in_process_stores=in_process_stores,
+        in_process_write_seconds=30,
+    )
+    with lease:
+        assert (lease.writes_from > time.time()) is not in_process_stores
+
+
 def test_a_late_write_of_a_dead_holder_lands_before_the_new_holders_writes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

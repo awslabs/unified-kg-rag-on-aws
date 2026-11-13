@@ -73,6 +73,13 @@ class SummaryTreeRecord(BaseModel):
         description="Some summaries failed (their children were promoted): "
         "the next run rebuilds, reusing what it can",
     )
+    pruned: bool = Field(
+        default=False,
+        description="Summary nodes were deleted since it was built (a removal "
+        "of the text units they cite): with refresh every_run the next run "
+        "rebuilds it, even over the same text units (a reprocessed document "
+        "writes its units back unchanged)",
+    )
     failed_summaries: int = Field(default=0, ge=0)
     reused_summaries: int = Field(
         default=0, ge=0, description="Summaries taken from the previous tree"

@@ -137,8 +137,9 @@ class FileParser:
 # explicit ``encoding=``: the configured one, else the one charset-normalizer
 # detects (none detected: the file fails, it is not text).
 # Detection runs only after a decode error, so a file that decodes keeps the
-# text it always had (charset-normalizer is a declared dependency, reused in
-# ``Document._read_text_autodetect`` for one consistent detection path).
+# text it always had (charset-normalizer is a declared dependency, reused by
+# ``Document.from_json_file``, which also fails on bytes it detects no
+# encoding of: one rule for what is text).
 _ENCODING_AWARE_LOADERS = (
     CsvFileLoader,
     HtmlFileLoader,
@@ -320,6 +321,21 @@ class ParserFactory:
         return _fingerprint(
             loader_class, repr(sorted(loader_kwargs.items())), file_type_name
         )
+
+    @classmethod
+    def non_utf8_encoding(cls, extension: str, config: Config) -> str | None:
+        """The configured encoding a file of ``extension`` that does not
+        decode as UTF-8 is read in (``processing.document_parsing.encoding``),
+        for its source digest; ``None`` when none is configured (detected per
+        file) or its loader takes no encoding.
+
+        Raises:
+            DataProcessingError: No loader reads the extension.
+        """
+        loader_class, _, _ = cls.loader_spec(extension)
+        if not issubclass(loader_class, _ENCODING_AWARE_LOADERS):
+            return None
+        return config.processing.document_parsing.encoding
 
 
 # The libraries the built-in loaders read files with; their versions are

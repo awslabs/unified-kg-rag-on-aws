@@ -1270,6 +1270,7 @@ def test_ingestion_json_result_counts_failed_files_and_the_delta() -> None:
 
 def test_ingestion_max_failure_rate_fails_a_run_over_it() -> None:
     from unified_kg_rag.domain.ingestion.delta_detector import document_doc_id
+    from unified_kg_rag.domain.models import DocumentDelta
 
     # 1 file that failed to load, document a recorded FAILED and document
     # b with a failed text unit (a full build records none FAILED): 3 of 5.
@@ -1290,6 +1291,20 @@ def test_ingestion_max_failure_rate_fails_a_run_over_it() -> None:
         "failure",
         "PipelineExecutionError",
     )
+    # rv25 quality low: a breach exits 1, so its status is failed too,
+    # though every stage completed (the stage results say so).
+    assert result["status"] == "failed"
+    assert _ingestion_runner(0.6)._json_result(context)["status"] == "completed"
+    # rv25 algo-index 1: the unchanged documents the diff skipped are of the
+    # corpus too. Without them a file that keeps failing was the whole
+    # denominator of a rerun, which breached at any rate.
+    rerun = _ingested(failed_source_files=["src/broken.pdf"])
+    rerun.documents, rerun.text_units = [], []
+    rerun.incremental_delta = DocumentDelta(
+        unchanged=["k1", "k2", "k3", "broken"], failed=["broken"]
+    )
+    assert run_ingestion_pipeline._document_failures(rerun) == (1, 4)
+    assert _ingestion_runner(0.25)._failure_budget_breach(rerun) is None
     # Every document failed: a breach at any value; none failed: none.
     context.documents = context.documents[:2]
     context.text_units = context.text_units[:2]

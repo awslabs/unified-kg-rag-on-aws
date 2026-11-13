@@ -280,13 +280,16 @@ See [exit codes and JSON output](docs/reference/exit-codes-and-json.md) and the
   tokens from its compact key, cut where a word passes between a Han, Hangul or Kana letter and another character
   (a dotted "한·빛" has none, as "한빛"; "제3조" and "제 3 조" both 제, 3 and 조, so spacing variants with a number are
   one entity, where they were two), with a space where a letter meets a digit ("PO1002" is "PO 1002", "ISO9001"
-  "ISO 9001"), and a numeral is an identifier of its own ("東京第一工場" never links "東京第二工場", and "百度" or
-  "三菱商事" no longer hold one whole-word identifier that kept every variant apart). Of spellings with one key, the
+  "ISO 9001"; the decimal digits of every script read as ASCII digits, so "PO١٠٠٢" is too), and a numeral is an
+  identifier of its own ("東京第一工場" never links "東京第二工場", and "百度" or "三菱商事" no longer hold one
+  whole-word identifier that kept every variant apart), in the order the name writes them ("Version 1.2" never links
+  "Version 2.1", nor "2024-03-04" "2024-04-03"). Of spellings with one key, the
   one its key folds least names the entity on a tie ("토지", not "「토지」"). Entity and relationship `rank` come from
   node degree, and a relationship's weight sums its strengths per text unit (#189, #214, #574).
 - Entities have no `MemberOf` edges to communities; an entity lists its `community_ids` (#348).
 - Hidden files, files under a hidden or `__pycache__` directory of the corpus (#213) and files that resolve outside it
-  (a symlink to `/etc/hostname`; a WARNING names them) are not parsed.
+  (a symlink to `/etc/hostname`; a WARNING names them) are not parsed; a scan resolves only the paths with a symlink
+  below the corpus root.
 
 #### Deployment (CDK)
 See [`iac/README.md`](iac/README.md).
@@ -532,8 +535,8 @@ From a `main` checkout (formats and keys no release had):
   (#694) is ignored.
 - Re-keyed once before 0.3.0: entity ids and name keys fold quotes, apostrophes, invisible characters, dashes (not a
   leading minus), dense-script middle dots and Arabic and Hebrew marks and strip more legal forms, and dense-script
-  spacing variants with a number and a letter run into a digit ("PO1002", "PO 1002") are one entity (*Stored data and
-  reindexing*); the description summary and claim
+  spacing variants with a number and a letter run into a digit ("PO1002", "PO 1002") are one entity, as are the
+  digits of every script ("PO١٠٠٢") (*Stored data and reindexing*); the description summary and claim
   prompts changed, claims keep a `suspected` status and are keyed by their statement (*Fixed*); chunk sizes count
   tokens (*Defaults*), which re-chunks Korean, Japanese and Chinese text units and English ones of short or long words
   (most others are kept); stage-cache keys
@@ -980,7 +983,9 @@ From a `main` checkout (formats and keys no release had):
   Settings: `indexing.summary_tree`, `search.tree_search`, `search.token_manager.type_budgets.summary`; the
   `VectorIndexer` port gains the summary-tree methods (each with a "cannot" default). Differential tests against the
   original code ship with recorded fixtures. The build record keeps naming a live tree while a run rebuilds it (the
-  summaries citing removed text deleted first), so `tree` is served during and after a write run, and is refused
+  summaries citing removed text deleted first, which marks the tree record `pruned`: a FAILED document reprocessed
+  writes its text units back unchanged, and the tree is rebuilt all the same), so `tree` is served during and after
+  a write run, and is refused
   only once a tree build fails; a full build without `raptor` deletes the tree's indices; a partial tree is built
   again under `refresh: on_reset`; the leaves' vectors are read as float32 arrays (about 15 KiB per leaf read instead
   of 40-60 KiB, about 50 KiB at the build's peak) and `max_leaves_in_memory` is checked before they are read, at a
@@ -1079,7 +1084,8 @@ From a `main` checkout (formats and keys no release had):
   finance document whose extracted `category` was `hardware`) (#446, #661). See
   [filters](docs/reference/filters.md).
 - `processing.document_parsing.encoding`: the encoding the text formats that are not UTF-8 are read in instead of
-  the one detected (cp1252 for a French file detected as cp1250). See
+  the one detected (cp1252 for a French file detected as cp1250); setting it parses those files again in the next
+  incremental run, and no UTF-8 file. See
   [ingest](docs/guides/ingest.md#large-and-heterogeneous-corpora).
 - Documents from memory: `DataIngestionPipeline.insert_documents([InputDocument(id=..., text=..., filters=...)])`
   adds or updates documents, `delete_documents(ids)` deletes them, through the incremental path of `run` (one run
@@ -1122,7 +1128,8 @@ From a `main` checkout (formats and keys no release had):
 - Incremental indexing: the extraction-settings fingerprint (#224, #332); `indexing.max_document_failures` with
   own-error accounting and `documents_retrying` (#175, #431); source scopes and `--retire-source-scope` (#134,
   #192), a scope's first run into a namespace that holds other scopes' documents recorded as the incremental build it
-  is (#640); the namespace write lease (with the SQLite registry, a killed run's lease is taken at once on its host)
+  is (#640); the namespace write lease (with the SQLite registry, a killed run's lease is taken at once on its host,
+  and with every store embedded its first write does not wait for late writes)
   and quarantine (`indexing.max_document_attempts`) (#331, #346); the commit's
   note (`pending-commit`), which lists the old ids its derivation retires, so when a write fails, or the run dies,
   the next commit derives the items still stored under them again and deletes the old copies of those it re-keyed
@@ -1328,8 +1335,9 @@ From a `main` checkout (formats and keys no release had):
   `total_files_failed`, `total_files_skipped`,
   `total_documents_excluded` / `_deleted` / `_failed` / `_retrying` and `total_documents_without_claims`; a run with
   failed units ends with a WARNING naming them per stage (#518, #532). `run-ingestion --max-failure-rate` (off by
-  default) exits 1 when more of its documents failed (files that failed to load, documents recorded `FAILED` or
-  indexed without a failed stage's output).
+  default) exits 1, with status `failed`, when more of the corpus it covered failed (files that failed to load,
+  documents recorded `FAILED` or indexed without a failed stage's output, over those, the documents it processed
+  and the unchanged ones it skipped: a file that keeps failing does not breach every rerun).
 - Evaluation: `retrieval` (hit@k, recall@k, MRR; the passages' files ranked before the lineage files of summaries,
   reports, entities, relationships and claims, so one high-ranked summary or report cannot fill the top k) and
   `answer_match` (exact match, token F1) evaluators, grouped statistics, the run manifest and index build record,
@@ -1462,11 +1470,13 @@ From a `main` checkout (formats and keys no release had):
   English and analyzed as English without a word. Each sampled document votes for the script most of its letters are
   in, and for the language it reads as by the rule a query's is (a Latin-script one by its function words) only when
   that language is written in that script; the sample reads as the language of the script most documents are in (four
-  English documents and one Korean one, or English documents quoting Korean file names, read as English); a sample
-  that reads as the setting is not reported, however few of its letters are in its script. `run-prompt-tuning` writes
-  the `source_language` the sample reads as into its output (#629). Han, Hangul and Kana text reads by one rule
-  (`domain.languages.dense_language`): Korean when a tenth or more of those letters are Hangul (and no fewer than Kana),
-  so Korean written with Hanja reads as Korean, else Japanese when a tenth are Kana, else Chinese.
+  English documents and one Korean one, or English documents quoting Korean file names, read as English); a document
+  votes once its letters carry ten tokens by the token estimate's rates (forty Latin letters, ten Han characters); a
+  sample that reads as the setting is not reported, however few of its letters are in its script.
+  `run-prompt-tuning` writes the `source_language` the sample reads as into its output (#629). Han, Hangul and Kana
+  text reads by one rule (`domain.languages.dense_language`): Korean when a tenth or more of those letters are Hangul
+  (and no fewer than Kana), so Korean written with Hanja reads as Korean, else Japanese when a tenth are Kana, else
+  Chinese.
 - `backend: local`: the refusals and retrieval logs of the embedded vector store name it ("The embedded SQLite search
   engine index ...") instead of OpenSearch, and a query where nothing was ingested reads an empty store with a
   WARNING naming `providers.vector.sqlite_path` instead of creating an empty `vector.sqlite3` (in the working
@@ -1733,7 +1743,8 @@ From a `main` checkout (formats and keys no release had):
   findings cite (a parent's roll-up findings cited nothing, so `global` and `drift` attributed a parent report to the
   few members packed raw); a range `(1-4)` reads as 1 to 4 (never past the records the input numbered),
   `【Data: ...】` as `[Data: ...]`, `Entities [1, 2]` and `Report 1` as `Entities (1, 2)` and `Reports (1)`, and
-  `(2,000)` as one number, not 2 and 0. A report is titled by its name alone (an English "Report for Level 0
+  `(2,000)` as one number, not 2 and 0, unless past the input and each listed number is a record (`(12,345)` of 400
+  records cites 12 and 345). A report is titled by its name alone (an English "Report for Level 0
   Community ...:" was embedded with every report), and a rating written beside its scale reads as the rating ("10점
   만점에 7점" is 7, not 10; "10 (3 key risks)" is 10, not 3). The report stores the cited ids (an
   unindexed `findings` field): a retrieved report, and its source's metadata (each finding's ids, not its text),
@@ -1987,8 +1998,8 @@ Queries and retrieval.
 
 Ingestion and incremental indexing.
 - A `.txt`, `.md`, `.csv`, `.json` or `.html` file that is not UTF-8 and whose encoding is not detected (a binary file
-  with a text suffix) fails to parse and counts as failed: it was decoded as latin-1 and indexed as text units of
-  garbage.
+  with a text suffix) fails to parse and counts as failed, as a pre-parsed document JSON of such bytes fails to load:
+  it was decoded as latin-1 and indexed as text units of garbage.
 - A chunk of whitespace only makes no text unit: a chunk size of a few characters or tokens (`fallback_chunk_size:
   1`) cut the spaces between words into units of their own, and the run failed with `missing embeddings`.
 - A stage that failed because its model calls did keeps their dominant cause: a model server that was down fails

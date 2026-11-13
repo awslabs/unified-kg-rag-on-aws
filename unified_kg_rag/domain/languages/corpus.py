@@ -51,9 +51,11 @@ __all__ = [
 # What is read of a sample: the first characters of its first documents.
 SAMPLE_DOCUMENTS = 20
 SAMPLE_CHARS = 2000
-# Fewer letters than this decide nothing (a corpus of tables, numbers); a
-# two-sentence sample still decides.
-_MIN_LETTERS = 40
+# Letters carrying fewer tokens than this (``ScriptCounts.carried``: forty
+# Latin letters, ten Han characters or Hangul syllables) decide nothing (a
+# corpus of tables, numbers); a two-sentence sample still decides. Counted
+# in letters, one short Chinese document of 38 characters cast no vote.
+_MIN_TOKENS = 10
 # A corpus with fewer letters of the configured language's script than
 # this share disagrees with the setting, and a language is read only from
 # a script holding more than the majority of the letters. Wide margins:
@@ -115,7 +117,7 @@ def _evidence_vote(
     text); ``None`` when its letters are too few or no group holds the
     majority of them."""
     counts = evidence.counts
-    if counts.letters < _MIN_LETTERS:
+    if counts.carried < _MIN_TOKENS:
         return None
     dominant = counts.dominant()
     if dominant is None or _share(counts, dominant) <= _MAJORITY:
@@ -181,7 +183,7 @@ def source_language_mismatch(
     language; never when it reads as ``source_language`` (a Korean text
     that is mostly code)."""
     counts = sample.counts
-    if counts.letters < _MIN_LETTERS:
+    if counts.carried < _MIN_TOKENS:
         return None
     group = _group(profile(source_language).script)
     share = _share(counts, group)

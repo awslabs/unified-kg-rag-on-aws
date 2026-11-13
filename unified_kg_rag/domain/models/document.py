@@ -22,7 +22,12 @@ def _read_text_autodetect(path: Path) -> str:
     Heterogeneous corpora often contain non-UTF-8 files (e.g. cp949, latin-1).
     Attempt UTF-8 first (the common case), then fall back to charset-normalizer
     detection so such files are recovered rather than dropped. We do not silently
-    mojibake: the detected encoding is logged at debug level.
+    mojibake: the detected encoding is logged at debug level, and bytes in no
+    detected encoding are not text, as the source parser reads them
+    (``adapters.ingestion.parser``): reading them fails.
+
+    Raises:
+        UnicodeDecodeError: No encoding is detected (a binary file).
     """
     try:
         return path.read_text(encoding="utf-8")
@@ -32,12 +37,7 @@ def _read_text_autodetect(path: Path) -> str:
         raw = path.read_bytes()
         best = from_bytes(raw).best()
         if best is None:
-            # Last resort: decode as latin-1, which never raises, so a file is
-            # never lost outright (better degraded text than a dropped document).
-            logger.debug(
-                "Encoding detection failed for '%s'; falling back to latin-1", path
-            )
-            return raw.decode("latin-1")
+            raise
         logger.debug("Detected encoding '%s' for '%s'", best.encoding, path)
         return str(best)
 

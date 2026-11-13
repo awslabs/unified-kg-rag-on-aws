@@ -491,7 +491,9 @@ Unchanged clusters cost no call (`input_key` reuse) and no embedding
    deletion of step 1 succeeded, so `tree` queries meet the old tree
    without the deleted nodes while the stage runs, and after a crash
    before it finished; new documents are reachable as leaves. The tree
-   record still holds the old digest, so the next run rebuilds; an index
+   record still holds the old digest, and a deletion marks it `pruned`
+   first, so the next run rebuilds, also over the same leaves (a FAILED
+   document reprocessed writes its text units back unchanged); an index
    a killed build left unswapped is deleted by the next build's reaper. A
    build that fails (the stage raises) drops the tree from the build
    record: `tree` is refused until a run builds it.

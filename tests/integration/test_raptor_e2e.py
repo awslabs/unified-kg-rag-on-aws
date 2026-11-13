@@ -513,6 +513,48 @@ def test_a_removal_leaves_no_summary_of_removed_text(
     assert not any(set(n["text_unit_ids"]) & gone for n in tree_nodes(providers))
 
 
+@pytest.mark.parametrize("refresh", ["every_run", "on_reset"])
+def test_summaries_a_removal_deleted_are_built_again_over_the_same_text(
+    tmp_path: Path, no_aws, refresh: str  # noqa: F811 - the fixture
+) -> None:
+    # Regression (rv25 nightly faults): a FAILED document's retry removes
+    # its text units, which deletes the summaries citing them, and writes
+    # the same units again. The leaf digest was the stored tree's, so the
+    # tree read as current and the namespace lost those summaries for good.
+    config, providers, _, _ = setup(tmp_path)
+    config.indexing.summary_tree.refresh = refresh  # type: ignore[assignment]
+    source = corpus(tmp_path)
+    context = ingest(config, providers, source, tmp_path / "run-1")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    built = shape(tree_nodes(providers))
+    mill = sorted(
+        hit["_id"]
+        for hit in e2e._stored(
+            config, providers, config.indexing.opensearch.text_units_index_prefix
+        )
+        if "Mill" in hit["_source"]["text"]
+    )
+    indexer = providers.build_vector_indexer()
+    try:
+        # What the removal of a reprocessed document does
+        # (TextUnitRemoval), before its units are written back unchanged.
+        deleted = indexer.delete_summary_nodes_citing(mill, "")
+    finally:
+        indexer.close()
+    assert deleted.successful_items > 0 and len(tree_nodes(providers)) < len(built)
+    assert (tree_record(providers) or {}).get("pruned") is True
+
+    context = ingest(config, providers, source, tmp_path / "run-2")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    if refresh == "every_run":
+        assert shape(tree_nodes(providers)) == built
+        assert (tree_record(providers) or {}).get("pruned") is False
+    else:
+        # on_reset: a delta run only deletes the nodes of removed text and
+        # reports what no summary covers, until a reset.
+        assert len(tree_nodes(providers)) < len(built)
+
+
 def test_a_tree_over_the_limit_fails_before_its_vectors_are_read(
     tmp_path: Path, no_aws, monkeypatch: pytest.MonkeyPatch  # noqa: F811
 ) -> None:

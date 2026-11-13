@@ -71,6 +71,7 @@ from unified_kg_rag.domain.ingestion.cache_keys import (
     extraction_settings,
     is_excluded_source_path,
     leaves_source_root,
+    real_source_path,
     unit_record_fingerprint,
 )
 from unified_kg_rag.domain.ingestion.claim_resolver import ClaimResolver
@@ -1075,14 +1076,17 @@ class DocumentParsingStage(_RegistryStage):
         skipped_files: list[str] = []
         skipped: Counter[str] = Counter()
         outside: list[str] = []
-        for file_path in self.source_directory.rglob("*"):
+        root = self.source_directory
+        resolved_root = root.resolve()
+        for file_path in root.rglob("*"):
             if not file_path.is_file():
                 continue
-            if is_excluded_source_path(file_path, self.source_directory):
-                if leaves_source_root(file_path, self.source_directory):
+            if is_excluded_source_path(file_path, root, resolved_root):
+                if leaves_source_root(file_path, root, resolved_root):
                     outside.append(str(file_path))
                 continue
-            if any(file_path.resolve().is_relative_to(d) for d in owned_dirs):
+            real = real_source_path(file_path, root, resolved_root)
+            if any(real.is_relative_to(d) for d in owned_dirs):
                 continue
             suffix = file_path.suffix.lower()
             if suffix in self.supported_extensions:

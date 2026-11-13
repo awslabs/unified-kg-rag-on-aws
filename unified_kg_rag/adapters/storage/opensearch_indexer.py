@@ -3267,7 +3267,25 @@ class OpenSearchIndexer(VectorIndexer):
                 len(doomed),
                 suffix,
             )
+            # Before the delete: a run killed after it still rebuilds.
+            self._mark_summary_tree_pruned(suffix)
         return self.delete_by_id(doomed, prefix, suffix)
+
+    def _mark_summary_tree_pruned(self, suffix: str) -> None:
+        """Mark the record of ``suffix``'s live summary tree ``pruned``
+        (``SummaryTreeRecord.pruned``): nodes of it are deleted, so it is
+        not current even over the same text units."""
+        index_name = self._live_index(
+            self._get_name(self.opensearch_config.summary_nodes_index_prefix, suffix)
+        )
+        if not index_name:
+            return
+        meta = self._index_mappings(index_name).get("_meta") or {}
+        record = meta.get(SUMMARY_TREE_META)
+        if isinstance(record, dict) and not record.get("pruned"):
+            self._put_index_meta(
+                index_name, {**meta, SUMMARY_TREE_META: {**record, "pruned": True}}
+            )
 
     def delete_summary_nodes_citing(
         self, text_unit_ids: list[str], suffix: str

@@ -173,7 +173,9 @@ tokens, temperature and reasoning.
   as UTF-8, else in the encoding charset-normalizer detects; a file whose
   encoding is not detected (a binary file with a text suffix) fails to parse
   and counts as failed. If detection picks a neighbouring encoding (cp1250
-  for a French cp1252 file), set `processing.document_parsing.encoding`.
+  for a French cp1252 file), set `processing.document_parsing.encoding`: the
+  next run parses again the files that are not UTF-8 (a UTF-8 file keeps its
+  record).
 - **Multilingual:** see [Multilingual corpora](./multilingual.md).
 - **Heterogeneous domains:** tune `entity_types` to the union of the domains,
   or give each its own [index suffix](../concepts/scopes-and-namespaces.md#index-suffix).

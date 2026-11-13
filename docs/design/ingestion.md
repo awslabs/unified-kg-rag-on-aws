@@ -219,8 +219,9 @@ gets its models and stores from the run's `Providers` bundle.
   `有限公司`, a trailing `Inc` / `Ltd` / `LLC` / `Co` / `Corp` / `GmbH & Co.
   KG` / `S.A. de C.V.`, a leading `ООО` or `Công ty TNHH`, ...), without
   spaces next to Han, Hangul or Kana and with one where a letter meets a
-  digit, so "(주)가나다", "가나다 상사" / "가나다상사", "Acme Inc" / "Acme",
-  "PO1002" / "PO 1002" and "ООО «Ромашка»" / "Ромашка" merge. A
+  digit (the decimal digits of every script read as ASCII ones), so
+  "(주)가나다", "가나다 상사" / "가나다상사", "Acme Inc" / "Acme",
+  "PO1002" / "PO 1002" / "PO١٠٠٢" and "ООО «Ромашка»" / "Ромашка" merge. A
   form is read as written or without all its accents, never a word without
   its own ("Marcelo Sá" keeps "Sá"), and one that is also a unit symbol
   (`LanguageProfile.unit_like_legal_forms`: "kg") not after a number. A
@@ -236,7 +237,8 @@ gets its models and stores from the run's `Providers` bundle.
   name ("Northfield University" / "Northfield University Hospital"). When it is
   on, names link above `processing.similarity_threshold` only when their
   *discriminator tokens* (the numerals of any script, Han numerals
-  included, single letters, Roman numerals) are identical, their types are compatible, and, for names ending in Han,
+  included, single letters, Roman numerals) are identical in the order the
+  name writes them ("Version 1.2" and "Version 2.1" stay apart), their types are compatible, and, for names ending in Han,
   Hangul or Kana, their final (head) characters are equal ("가나다연구원" and
   "가나다연구소" stay apart). The tokens are the compact key's words, cut
   where they pass between a dense-script letter and another character

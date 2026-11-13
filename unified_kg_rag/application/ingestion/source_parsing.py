@@ -166,30 +166,39 @@ class SourceFileParser:
     def __init__(self, config: Config, source_directory: Path) -> None:
         self.config = config
         self.source_directory = Path(source_directory)
-        self._fingerprints: dict[str, str] = {}
+        self._fingerprints: dict[str, tuple[str, str | None]] = {}
 
     @property
     def index_value(self) -> str | None:
         return self.config.processing.document_parsing.index_value
 
     def source_digest(self, path: Path) -> str:
-        """``path``'s source digest (its bytes and its extension's parser).
+        """``path``'s source digest (its bytes and its extension's parser,
+        with the configured encoding it reads bytes in that are not UTF-8).
 
         Raises:
             OSError: The file cannot be read.
             DataProcessingError: No loader reads its extension.
         """
         extension = path.suffix.lower()
-        fingerprint = self._fingerprints.get(extension)
-        if fingerprint is None:
-            fingerprint = self._fingerprints[extension] = (
-                ParserFactory.parser_fingerprint(extension)
+        reading = self._fingerprints.get(extension)
+        if reading is None:
+            reading = self._fingerprints[extension] = (
+                ParserFactory.parser_fingerprint(extension),
+                ParserFactory.non_utf8_encoding(extension, self.config),
             )
-        if (held := _SOURCE_DIGESTS.get(_stat_key(path, fingerprint))) is not None:
+        fingerprint, encoding = reading
+        # The corpus fingerprint's read (fingerprint_digest) keys no
+        # encoding: with one configured its digest is not this one.
+        if encoding is None and (
+            held := _SOURCE_DIGESTS.get(_stat_key(path, fingerprint))
+        ):
             return held
         with path.open("rb") as file:
             return compute_source_digest(
-                iter(lambda: file.read(_READ_CHUNK_BYTES), b""), fingerprint
+                iter(lambda: file.read(_READ_CHUNK_BYTES), b""),
+                fingerprint,
+                encoding,
             )
 
     def _identify(self, document: Document, digest: str | None) -> Document:

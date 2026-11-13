@@ -17,7 +17,8 @@ lease from the registry before its first stage and holds it until it ends:
   the expired item, ``lease_expires_at`` being the table's TTL attribute);
   the local SQLite registry hands it on at once when its holder ran on this
   host and has exited (``shared.utils.processes``), which counts as an
-  expiry now;
+  expiry now, and with every store embedded as a release (a process that
+  is gone has no write in flight);
 - the lease is a write fence of the run (``shared.write_fence``): every
   registry write of the incremental path, every indexing phase and every
   store request that may write (a Neptune batch, edge write or drop, an
@@ -223,14 +224,18 @@ class NamespaceLease:
         # A lease still live when read was released before the acquire (its
         # run ended cleanly): no late writes to wait for, unless its holder
         # is gone (a local registry takes a killed run's lease at once): as
-        # if it expired now.
+        # if it expired now. With every store embedded a gone holder has no
+        # write in flight either (each committed, or never will, under the
+        # database's lock), so its lease reads as released.
         if (
             previous is not None
             and previous[0] != self.owner
-            and previous[1] > sent
             and process_gone(previous[0])
         ):
-            previous = (previous[0], sent)
+            if self.in_process_stores:
+                previous = None
+            elif previous[1] > sent:
+                previous = (previous[0], sent)
         if previous is not None and previous[0] != self.owner and previous[1] <= sent:
             self._previous_expiry = previous[1]
             self.writes_from = previous[1] + self._late_write_seconds()

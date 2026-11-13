@@ -1282,7 +1282,10 @@ Wait for that run and start again. A dead run's lease expires within
 SQLite registry also hands a lease on at once, as if it expired then, when its
 holder ran on the same host and pid namespace and its process has exited (its
 pid is free, or taken by a process started later): a run killed with `kill -9`
-does not lock the namespace for `lease_seconds`. DynamoDB waits for the expiry. A run whose
+does not lock the namespace for `lease_seconds`. With every store embedded
+(`backend: local` on the SQLite stores) it counts as released, so the next
+run's first write does not wait for late writes either: a process that is gone
+has none in flight. DynamoDB waits for the expiry. A run whose
 renewals keep failing, or whose lease was taken, stops before its next write
 with `NamespaceLeaseError: This run lost the write lease ...`: re-run once the
 other run ended.

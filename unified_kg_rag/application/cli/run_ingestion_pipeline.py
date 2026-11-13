@@ -335,11 +335,13 @@ class CommandLineInterface:
             type=failure_rate,
             default=None,
             metavar="RATE",
-            help="Exit 1 when more than this fraction (0.0-1.0) of the run's "
-            "documents failed: corpus files that failed to parse or load, "
-            "documents recorded FAILED, and documents indexed without the "
-            "output of a stage that failed one of their text units (a run "
-            "every document of which failed breaches it at any value). "
+            help="Exit 1 when more than this fraction (0.0-1.0) of the "
+            "corpus the run covered failed: corpus files that failed to parse "
+            "or load, documents recorded FAILED, and documents indexed without "
+            "the output of a stage that failed one of their text units, over "
+            "those, the documents processed and the unchanged ones an "
+            "incremental run skipped (a run every document of which failed "
+            "breaches it at any value). "
             "Default: off; a run whose stages finished exits 0 and counts its "
             "failures in its summary and JSON",
         )
@@ -937,18 +939,17 @@ class IngestionPipelineRunner:
         return {
             "pipeline_id": context.pipeline_id,
             "status": context.status.value,
-            # The keys of every failure document (status stays the run's).
+            # The keys of every failure document: status ``failed`` with
+            # exit code 1, a breached --max-failure-rate's too (its stages
+            # completed; the stage results say so).
             **(
-                {
-                    **failure_fields(
-                        EXIT_FAILURE,
-                        error,
-                        (stage.error_type if stage else None)
-                        or PipelineExecutionError.__name__,
-                        error_class=stage.error_class if stage else None,
-                    ),
-                    "status": context.status.value,
-                }
+                failure_fields(
+                    EXIT_FAILURE,
+                    error,
+                    (stage.error_type if stage else None)
+                    or PipelineExecutionError.__name__,
+                    error_class=stage.error_class if stage else None,
+                )
                 if error
                 else {}
             ),
@@ -1045,14 +1046,19 @@ def _document_failures(context: PipelineContext) -> tuple[int, int]:
     """How many of the run's documents failed, of how many: its corpus files
     that failed to parse or load, the documents it recorded FAILED, and the
     documents a stage failed a text unit of (a full build records none
-    FAILED), over those and the documents it processed."""
+    FAILED), over the corpus the run covered: those, the documents it
+    processed and the unchanged ones the registry diff skipped. Without the
+    unchanged ones a file that keeps failing was the whole denominator of
+    every later incremental run, which then breached at any rate."""
     processed = {document_doc_id(document) for document in context.documents}
     failed = set(context.recorded_failed_doc_ids) | {
         document_doc_id(document)
         for document in context.documents_of_units(context.failed_unit_ids())
     }
+    delta = context.incremental_delta
+    unchanged = set(delta.unchanged) - set(delta.failed) if delta is not None else set()
     files = len(context.failed_source_files)
-    return len(failed) + files, len(processed | failed) + files
+    return len(failed) + files, len(processed | failed | unchanged) + files
 
 
 def _next_run_writes_from(runner: IngestionPipelineRunner | None) -> str | None:

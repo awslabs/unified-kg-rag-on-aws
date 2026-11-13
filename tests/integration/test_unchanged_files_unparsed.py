@@ -129,6 +129,63 @@ def test_a_run_without_changes_parses_no_file(
     assert _stored_texts(config, providers) == set(texts.values())
 
 
+def test_a_file_that_keeps_failing_stays_within_the_failure_budget(
+    tmp_path: Path, no_aws
+) -> None:
+    # Regression (rv25 algo-index 1): --max-failure-rate counted only the
+    # run's delta, so on a rerun that changed nothing the one file that never
+    # parses was 1 of 1 documents and breached at any rate.
+    import argparse
+
+    from unified_kg_rag.application.cli.run_ingestion_pipeline import (
+        IngestionPipelineRunner,
+        _document_failures,
+    )
+
+    config, _, providers = _setup(tmp_path)
+    source = _corpus(tmp_path)
+    (source / "binary.txt").write_bytes(bytes(range(256)) * 20)
+    runner = IngestionPipelineRunner.__new__(IngestionPipelineRunner)
+    runner.args = argparse.Namespace(max_failure_rate=0.5)
+    for run in ("run-1", "run-2"):
+        context = _run(config, providers, source, tmp_path / run)
+        assert _document_failures(context) == (1, len(TEXTS) + 1)
+        assert runner._failure_budget_breach(context) is None
+    delta = context.incremental_delta
+    assert delta is not None and len(delta.unchanged) == len(TEXTS)
+
+
+def test_a_configured_encoding_parses_only_the_files_not_utf8_again(
+    tmp_path: Path, no_aws, parsed: list[str]
+) -> None:
+    # Regression (rv25 algo-index 2): setting
+    # processing.document_parsing.encoding for a file detection misread
+    # parsed nothing (its source digest was unchanged), so it kept its
+    # mojibake until a reset. A UTF-8 file is read the same either way and
+    # keeps its digest.
+    config, _, providers = _setup(tmp_path)
+    source = _corpus(tmp_path)
+    french = (
+        "Le fournisseur livre à Genève les marchandises à l'acheteur. "
+        "Señor Müller œuvre ž."
+    )
+    (source / "french.txt").write_bytes(french.encode("cp1252"))
+    _run(config, providers, source, tmp_path / "run-1")
+    # Detection reads it as a neighbouring encoding (cp1250).
+    assert "Genève" not in " ".join(_stored_texts(config, providers))
+    before = _records(config)
+    config.processing.document_parsing.encoding = "cp1252"
+    parsed.clear()
+    _run(config, providers, source, tmp_path / "run-2")
+    assert parsed == ["french.txt"]
+    assert "à Genève" in " ".join(_stored_texts(config, providers))
+    after = _records(config)
+    assert {name for name in TEXTS if after[name] == before[name]} == set(TEXTS)
+    parsed.clear()
+    _run(config, providers, source, tmp_path / "run-3")
+    assert parsed == []
+
+
 def test_a_corpus_read_through_a_symlink_is_not_parsed_again(
     tmp_path: Path, no_aws, parsed: list[str]
 ) -> None:

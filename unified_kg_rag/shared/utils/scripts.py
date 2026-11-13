@@ -303,14 +303,10 @@ class ScriptCounts:
             if name in _BY_NAME and _BY_NAME[name].spacing is Spacing.DENSE
         )
 
-    def dominant(self, without: Collection[str] = ()) -> str | None:
-        """The script most of the text is in, weighed by what its letters
-        carry (its letters over its ``chars_per_token``, so one Hangul
-        syllable outweighs one Latin letter), the dense scripts together
-        as ``"dense"``, leaving out the scripts (or ``"dense"``) named in
-        ``without``; ``None`` without letters. On a tie, a script other
-        than Latin wins: a name in Latin letters is what a question in
-        another script quotes."""
+    def _weights(self, without: Collection[str] = ()) -> dict[str, float]:
+        """What the letters of each group carry: its letters over its
+        script's ``chars_per_token`` (one Hangul syllable outweighs one
+        Latin letter), leaving out the groups named in ``without``."""
         weights: dict[str, float] = {}
         for name, count in self.by_script.items():
             group = _group(name)
@@ -320,6 +316,22 @@ class ScriptCounts:
             )
             if group not in without:
                 weights[group] = weights.get(group, 0.0) + count / rate
+        return weights
+
+    @property
+    def carried(self) -> float:
+        """What all the letters carry, in tokens (:meth:`_weights`): forty
+        Latin letters carry ten, as ten Han characters do."""
+        return sum(self._weights().values())
+
+    def dominant(self, without: Collection[str] = ()) -> str | None:
+        """The script most of the text is in, weighed by what its letters
+        carry (:attr:`carried`), the dense scripts together
+        as ``"dense"``, leaving out the scripts (or ``"dense"``) named in
+        ``without``; ``None`` without letters. On a tie, a script other
+        than Latin wins: a name in Latin letters is what a question in
+        another script quotes."""
+        weights = self._weights(without)
         if not weights:
             return None
         return max(weights, key=lambda group: (weights[group], group != "latin"))

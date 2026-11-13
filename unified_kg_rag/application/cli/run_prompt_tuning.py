@@ -92,12 +92,13 @@ def load_corpus_texts(
     _load_tuner()
     supported = _TEXT_SUFFIXES | set(ParserFactory.get_supported_extensions())
     texts: list[str] = []
+    resolved_dir = source_dir.resolve()
     for path in sorted(source_dir.rglob("*")):
         suffix = path.suffix.lower()
         if (
             not path.is_file()
             or suffix not in supported
-            or is_excluded_source_path(path, source_dir)
+            or is_excluded_source_path(path, source_dir, resolved_dir)
         ):
             continue
         try:

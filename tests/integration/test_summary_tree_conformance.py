@@ -324,15 +324,24 @@ def test_removed_text_takes_its_summaries_and_every_node_above(
     _tree(harness, nodes)
     _tree(harness, [_node("n1", 1, ["u000", "u001"], ["u000", "u001"])], tenant)
 
+    assert not (indexer.read_summary_tree_record(None) or {}).get("pruned")
+    # Nothing cites a unit no node holds: the tree is whole.
+    assert indexer.delete_summary_nodes_citing(["zzz"], "default").failed_items == 0
+    assert not (indexer.read_summary_tree_record(None) or {}).get("pruned")
+
     stats = indexer.delete_summary_nodes_citing(["u003"], "default")
 
     assert stats.failed_items == 0, stats.errors
     left = {n["id"] for n in indexer.read_summary_nodes(None, fields=[])}
     assert left == {"n1", "n3"}
+    # The record says so (rv25): the same text units written back do not
+    # make the tree current.
+    record = indexer.read_summary_tree_record(None)
+    assert record is not None and record["pruned"] is True
+    assert record["leaf_digest"] == "d"
     # Another suffix's tree is untouched.
     assert [n["id"] for n in indexer.read_summary_nodes(tenant, fields=[])] == ["n1"]
-    # Nothing cites a unit no node holds.
-    assert indexer.delete_summary_nodes_citing(["zzz"], "default").failed_items == 0
+    assert not (indexer.read_summary_tree_record(tenant) or {}).get("pruned")
 
 
 def test_a_full_build_drops_the_summaries_of_text_it_did_not_write(
@@ -352,6 +361,7 @@ def test_a_full_build_drops_the_summaries_of_text_it_did_not_write(
 
     assert stats.failed_items == 0, stats.errors
     assert [n["id"] for n in indexer.read_summary_nodes(None, fields=[])] == ["n1"]
+    assert (indexer.read_summary_tree_record(None) or {}).get("pruned") is True
 
 
 def test_stored_summary_vectors_are_reused(harness: StoreHarness) -> None:
