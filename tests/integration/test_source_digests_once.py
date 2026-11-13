@@ -78,3 +78,55 @@ def test_a_file_rewritten_at_the_same_size_and_time_is_read_again(
     assert path.stat().st_mtime_ns == stat.st_mtime_ns
 
     assert parser.source_digest(path) != before
+
+
+def test_a_run_with_an_encoding_reads_each_source_file_once(
+    tmp_path: Path, mocker
+) -> None:
+    # rv26 algo-index perf: with processing.document_parsing.encoding set,
+    # the digest the corpus fingerprint kept (keyed with no encoding) was
+    # skipped and every file read twice. The cache keys the encoding.
+    config = e2e._config(tmp_path / "stores", tmp_path / "viz")
+    config.processing.document_parsing.encoding = "cp1252"
+    providers = e2e._providers(
+        config, FakeOllama(e2e._respond, e2e.ANSWER, e2e.DIM), e2e.FakeCrossEncoder("r")
+    )
+    source = tmp_path / "corpus"
+    source.mkdir()
+    (source / "contract.txt").write_text("Vendor supplies widgets to Buyer.")
+    (source / "legacy.txt").write_bytes(
+        "Vendor’s café supplies Depot.".encode("cp1252")
+    )
+    source_parsing._SOURCE_DIGESTS.clear()
+    opened: Counter[str] = Counter()
+    open_ = pathlib.Path.open
+
+    def counted(
+        self, mode="r", *args, **kwargs
+    ):  # noqa: ANN001, ANN002, ANN003, ANN202
+        if mode == "rb" and self.parent == source:
+            opened[self.name] += 1
+        return open_(self, mode, *args, **kwargs)
+
+    mocker.patch.object(pathlib.Path, "open", counted)
+    context = e2e._ingest(config, providers, source, tmp_path / "run-1")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert opened == {"contract.txt": 1, "legacy.txt": 1}
+
+
+def test_the_kept_digest_is_the_one_its_encoding_gives(tmp_path: Path) -> None:
+    # A digest kept without the encoding is not served to a parser that
+    # configures one, nor the other way round.
+    path = tmp_path / "legacy.txt"
+    path.write_bytes("Vendor’s café".encode("cp1252"))
+    plain = SourceFileParser(Config(), tmp_path)
+    cp1252 = SourceFileParser(
+        Config(processing={"document_parsing": {"encoding": "cp1252"}}), tmp_path
+    )
+    source_parsing._SOURCE_DIGESTS.clear()
+    want = (plain.source_digest(path), cp1252.source_digest(path))
+    assert want[0] != want[1]
+    for config in (Config(), cp1252.config):
+        source_parsing._SOURCE_DIGESTS.clear()
+        fingerprint_digest(path, config)
+        assert (plain.source_digest(path), cp1252.source_digest(path)) == want

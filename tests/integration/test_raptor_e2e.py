@@ -517,10 +517,13 @@ def test_a_removal_leaves_no_summary_of_removed_text(
 def test_summaries_a_removal_deleted_are_built_again_over_the_same_text(
     tmp_path: Path, no_aws, refresh: str  # noqa: F811 - the fixture
 ) -> None:
-    # Regression (rv25 nightly faults): a FAILED document's retry removes
-    # its text units, which deletes the summaries citing them, and writes
-    # the same units again. The leaf digest was the stored tree's, so the
-    # tree read as current and the namespace lost those summaries for good.
+    # Regression (rv25 nightly faults): a removal deleted the summaries
+    # citing text units the stores then held again unchanged (a document
+    # removed and restored, a crash between the two). The leaf digest was
+    # the stored tree's, so the tree read as current and the namespace lost
+    # those summaries for good. A FAILED document's retry, which writes its
+    # units back as the same leaves, keeps them instead
+    # (test_raptor_failed_retry).
     config, providers, _, _ = setup(tmp_path)
     config.indexing.summary_tree.refresh = refresh  # type: ignore[assignment]
     source = corpus(tmp_path)
@@ -536,8 +539,8 @@ def test_summaries_a_removal_deleted_are_built_again_over_the_same_text(
     )
     indexer = providers.build_vector_indexer()
     try:
-        # What the removal of a reprocessed document does
-        # (TextUnitRemoval), before its units are written back unchanged.
+        # A removal's deletion of their summaries (TextUnitRemoval), the
+        # units then held again unchanged.
         deleted = indexer.delete_summary_nodes_citing(mill, "")
     finally:
         indexer.close()

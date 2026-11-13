@@ -329,6 +329,7 @@ def test_the_pipeline_folds_its_seeds_into_the_corpus_fingerprint(
         _config({"name": "procure", "kind": "jsonl", "path": str(procure_jsonl)})
     )
     pipeline: Any = SimpleNamespace(
+        config=Config(),
         pipeline_config=SimpleNamespace(local_directory=str(tmp_path / "cache")),
         target_directory=None,
         seed_conversions=(),

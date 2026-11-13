@@ -9,7 +9,9 @@ query's is (:func:`~unified_kg_rag.domain.languages.detection.script_language`):
 Han, Hangul and Kana by their shares (Korean written with Hanja is Korean),
 a script one language writes as that language (Cyrillic, Arabic, Thai, ...),
 and the languages of one script (Latin) by their function words. Each
-document votes first for the script group most of its letters are in, and
+document votes first for the script group most of its text is in (by what
+its letters carry in tokens, ``ScriptCounts.share``: one measure for the
+group and its majority), and
 for a language only when that language is written in the group; the corpus
 reads as the language of the group most documents are written in: pooled,
 one Korean document's Hangul runs outweighed the function words of several
@@ -45,6 +47,7 @@ __all__ = [
     "corpus_language",
     "corpus_sample",
     "corpus_source_language",
+    "sample_split",
     "source_language_mismatch",
 ]
 
@@ -56,9 +59,10 @@ SAMPLE_CHARS = 2000
 # corpus of tables, numbers); a two-sentence sample still decides. Counted
 # in letters, one short Chinese document of 38 characters cast no vote.
 _MIN_TOKENS = 10
-# A corpus with fewer letters of the configured language's script than
-# this share disagrees with the setting, and a language is read only from
-# a script holding more than the majority of the letters. Wide margins:
+# A corpus whose text (in tokens, ``ScriptCounts.share``) is less than
+# this share in the configured language's script disagrees with the
+# setting, and a language is read only from a script holding more than the
+# majority of it. Wide margins:
 # technical Korean or Japanese text carries Latin terms, and an English
 # corpus may quote names in Han or Hangul.
 _MINORITY = 0.2
@@ -90,16 +94,23 @@ def corpus_sample(texts: Iterable[str]) -> CorpusSample:
     )
 
 
+def sample_split(read: int, unread: int) -> tuple[int, int]:
+    """How many of a sample's :data:`SAMPLE_DOCUMENTS` texts are of the
+    ``read`` documents (an incremental run's delta) and how many of the
+    stored text of the ``unread`` ones (the unchanged): each part its share
+    of the corpus, one at least of a part that has any. One short delta
+    document is then not the sample of a corpus of thousands."""
+    total = read + unread
+    if not total:
+        return 0, 0
+    of_read = min(read, max(1 if read else 0, round(SAMPLE_DOCUMENTS * read / total)))
+    return of_read, min(unread, SAMPLE_DOCUMENTS - of_read)
+
+
 def _group(script: str) -> str:
     """``script`` as ``ScriptCounts.dominant`` groups it: the dense ones
     as ``"dense"``."""
     return "dense" if script_named(script).spacing is Spacing.DENSE else script
-
-
-def _share(counts: ScriptCounts, group: str) -> float:
-    """The share of the letters in ``group`` (a script name, or "dense")."""
-    held = counts.dense if group == "dense" else counts[group]
-    return held / counts.letters if counts.letters else 0.0
 
 
 def _script_label(group: str) -> str:
@@ -115,12 +126,12 @@ def _evidence_vote(
     ``None`` with the group (undecided: a terse English text of few
     function words, or one quoting a Korean file name, is still a Latin
     text); ``None`` when its letters are too few or no group holds the
-    majority of them."""
+    majority of what they carry."""
     counts = evidence.counts
     if counts.carried < _MIN_TOKENS:
         return None
     dominant = counts.dominant()
-    if dominant is None or _share(counts, dominant) <= _MAJORITY:
+    if dominant is None or counts.share(dominant) <= _MAJORITY:
         return None
     language = script_language(evidence, fallback)
     if language is not None and _group(profile(language).script) != dominant:
@@ -178,15 +189,15 @@ def corpus_language(
 def source_language_mismatch(
     sample: CorpusSample, source_language: LanguageCode
 ) -> str | None:
-    """Why ``sample`` disagrees with ``source_language``, or ``None``: few of
-    its letters are in that language's script, or it reads as another
+    """Why ``sample`` disagrees with ``source_language``, or ``None``: little
+    of its text is in that language's script, or it reads as another
     language; never when it reads as ``source_language`` (a Korean text
     that is mostly code)."""
     counts = sample.counts
     if counts.carried < _MIN_TOKENS:
         return None
     group = _group(profile(source_language).script)
-    share = _share(counts, group)
+    share = counts.share(group)
     detected = corpus_language(sample, source_language)
     if detected is source_language:
         return None
@@ -201,13 +212,13 @@ def source_language_mismatch(
             else "set it to the corpus language"
         )
         return (
-            f"only {share:.0%} of the sampled letters are {_script_label(group)}, "
+            f"only {share:.0%} of the sampled text is {_script_label(group)}, "
             f"but {setting}: {fix}"
         )
     if detected is not None:
         return (
             f"the sampled text reads as {language_name(detected.value)} "
-            f"({share:.0%} {_script_label(group)} letters), but {setting}: "
+            f"({share:.0%} of it {_script_label(group)}), but {setting}: "
             f"set it to '{detected.value}'"
         )
     return None

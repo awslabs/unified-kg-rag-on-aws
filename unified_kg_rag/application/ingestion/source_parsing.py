@@ -103,17 +103,17 @@ def _parse_in_worker(
 
 # Source digests computed while the corpus fingerprint read each file
 # (:func:`fingerprint_digest`), by path, inode, size, modification and
-# change times and parser fingerprint: the parsing stage reads each file
+# change times, parser fingerprint and the encoding the digest keys
+# (``ParserFactory.non_utf8_encoding``): the parsing stage reads each file
 # once per run, not twice. The change time is set by every write and cannot
 # be set back, so a file rewritten at the same size and modification time
 # (a sync that copies an object's second-precision time) is read again.
-_SOURCE_DIGESTS: dict[tuple[str, int, int, int, int, str], str] = {}
+_StatKey = tuple[str, int, int, int, int, str, str | None]
+_SOURCE_DIGESTS: dict[_StatKey, str] = {}
 _SOURCE_DIGESTS_HELD = 1 << 17
 
 
-def _stat_key(
-    path: Path, parser_fingerprint: str
-) -> tuple[str, int, int, int, int, str]:
+def _stat_key(path: Path, parser_fingerprint: str, encoding: str | None) -> _StatKey:
     stat = path.stat()
     return (
         str(path.resolve()),
@@ -122,20 +122,26 @@ def _stat_key(
         stat.st_mtime_ns,
         stat.st_ctime_ns,
         parser_fingerprint,
+        encoding,
     )
 
 
-def fingerprint_digest(path: Path) -> str:
+def fingerprint_digest(path: Path, config: Config | None = None) -> str:
     """``path``'s SHA-256 (hex) for the corpus fingerprint
     (``corpus_manifest_fingerprint``), with its source digest computed in
     the same read when a loader reads its extension (kept for
-    :meth:`SourceFileParser.source_digest`)."""
+    :meth:`SourceFileParser.source_digest`; with ``config``, keyed with the
+    encoding it configures for the extension, as that method keys it)."""
+    extension = path.suffix.lower()
     try:
-        parser_fingerprint: str | None = ParserFactory.parser_fingerprint(
-            path.suffix.lower()
+        parser_fingerprint: str | None = ParserFactory.parser_fingerprint(extension)
+        encoding = (
+            ParserFactory.non_utf8_encoding(extension, config)
+            if config is not None
+            else None
         )
     except Exception:  # noqa: BLE001 - no loader: no source digest to keep
-        parser_fingerprint = None
+        parser_fingerprint = encoding = None
     plain = hashlib.sha256()
 
     def read() -> Iterator[bytes]:
@@ -148,8 +154,8 @@ def fingerprint_digest(path: Path) -> str:
         for _ in read():
             pass
         return plain.hexdigest()
-    key = _stat_key(path, parser_fingerprint)
-    source = compute_source_digest(read(), parser_fingerprint)
+    key = _stat_key(path, parser_fingerprint, encoding)
+    source = compute_source_digest(read(), parser_fingerprint, encoding)
     if len(_SOURCE_DIGESTS) >= _SOURCE_DIGESTS_HELD:
         _SOURCE_DIGESTS.clear()
     _SOURCE_DIGESTS[key] = source
@@ -188,11 +194,7 @@ class SourceFileParser:
                 ParserFactory.non_utf8_encoding(extension, self.config),
             )
         fingerprint, encoding = reading
-        # The corpus fingerprint's read (fingerprint_digest) keys no
-        # encoding: with one configured its digest is not this one.
-        if encoding is None and (
-            held := _SOURCE_DIGESTS.get(_stat_key(path, fingerprint))
-        ):
+        if held := _SOURCE_DIGESTS.get(_stat_key(path, fingerprint, encoding)):
             return held
         with path.open("rb") as file:
             return compute_source_digest(

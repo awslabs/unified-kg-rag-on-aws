@@ -1006,9 +1006,9 @@ From a `main` checkout (formats and keys no release had):
   Settings: `indexing.summary_tree`, `search.tree_search`, `search.token_manager.type_budgets.summary`; the
   `VectorIndexer` port gains the summary-tree methods (each with a "cannot" default). Differential tests against the
   original code ship with recorded fixtures. The build record keeps naming a live tree while a run rebuilds it (the
-  summaries citing removed text deleted first, which marks the tree record `pruned`: a FAILED document reprocessed
-  writes its text units back unchanged, and the tree is rebuilt all the same), so `tree` is served during and after
-  a write run, and is refused
+  summaries citing removed text deleted first, which marks the tree record `pruned`, so the tree is rebuilt over the
+  same text units too; a FAILED document's retry that writes its text units back as the same leaves keeps their
+  summaries and asks for none), so `tree` is served during and after a write run, and is refused
   only once a tree build fails; a full build without `raptor` deletes the tree's indices; a partial tree is built
   again under `refresh: on_reset`; the leaves' vectors are read as float32 arrays (about 15 KiB per leaf read instead
   of 40-60 KiB, about 50 KiB at the build's peak) and `max_leaves_in_memory` is checked before they are read, at a
@@ -1108,7 +1108,8 @@ From a `main` checkout (formats and keys no release had):
   [filters](docs/reference/filters.md).
 - `processing.document_parsing.encoding`: the encoding the text formats that are not UTF-8 are read in instead of
   the one detected (cp1252 for a French file detected as cp1250); setting it parses those files again in the next
-  incremental run, and no UTF-8 file. See
+  incremental run, and no UTF-8 file. A text, CSV or HTML file is first read as UTF-8 under any locale (it was read
+  in the locale's encoding, so a UTF-8 file decoded as Latin-1 text under a Latin-1 locale). See
   [ingest](docs/guides/ingest.md#large-and-heterogeneous-corpora).
 - Documents from memory: `DataIngestionPipeline.insert_documents([InputDocument(id=..., text=..., filters=...)])`
   adds or updates documents, `delete_documents(ids)` deletes them, through the incremental path of `run` (one run
@@ -1364,12 +1365,14 @@ From a `main` checkout (formats and keys no release had):
   model>.per_thousand_rerank_search_units` (#607); the run manifest records the usage schema (`usage_schema: 3`), and
   a comparison gives no USD delta against a run saved with an earlier one (#613, #626).
 - Corpus coverage: `run-ingestion`'s JSON `units_failed`, `files_failed`, `documents_processed`,
-  `entities_extracted` and `delta` (`new`, `changed`, `unchanged`, `deleted`) and EMF metrics `total_units_failed`,
+  `entities_extracted`, `documents_quarantined`, `documents_deferred` and `delta` (`new`, `changed`, of them
+  `retried`, `unchanged`, `deleted`) and EMF metrics `total_units_failed`,
   `total_files_failed`, `total_files_skipped`,
   `total_documents_excluded` / `_deleted` / `_failed` / `_retrying` and `total_documents_without_claims`; a run with
   failed units ends with a WARNING naming them per stage (#518, #532). `run-ingestion --max-failure-rate` (off by
   default) exits 1, with status `failed`, when more of the corpus it covered failed (files that failed to load,
-  documents recorded `FAILED` or indexed without a failed stage's output, over those, the documents it processed
+  documents recorded `FAILED`, indexed without a failed stage's output or quarantined by the run, over those, the
+  documents it processed
   and the unchanged ones it skipped: a file that keeps failing does not breach every rerun).
 - Evaluation: `retrieval` (hit@k, recall@k, MRR; the passages' files ranked before the lineage files of summaries,
   reports, entities, relationships and claims, so one high-ranked summary or report cannot fill the top k) and
@@ -1498,13 +1501,15 @@ From a `main` checkout (formats and keys no release had):
   the raw question as its keyword when it is shorter than `raw_query_fallback_max_len` characters, as upstream
   LightRAG does (the entry's reason says whether it did), and a WARNING names the model role and model that
   answered. It failed the whole `mix`, `hybrid` or `iterative` query with the parser's `Expecting value` (#629).
-- The document loading stage samples the corpus (the first 2,000 characters of its first 20 documents) and WARNs,
-  naming `processing.translation.source_language`, when the sample disagrees with the setting: a Korean, Japanese,
-  Chinese, Russian, Thai, Arabic or German corpus under the default `en` was extracted with prompts asking for
-  English and analyzed as English without a word. Each sampled document votes for the script most of its letters are
-  in, and for the language it reads as by the rule a query's is (a Latin-script one by its function words) only when
-  that language is written in that script; the sample reads as the language of the script most documents are in (four
-  English documents and one Korean one, or English documents quoting Korean file names, read as English); a document
+- The document loading stage samples the corpus (the first 2,000 characters of 20 documents; an incremental run
+  takes the unchanged ones from their stored text, each part its share of the corpus) and WARNs, naming
+  `processing.translation.source_language`, when the sample disagrees with the setting: a Korean, Japanese, Chinese,
+  Russian, Thai, Arabic or German corpus under the default `en` was extracted with prompts asking for English and
+  analyzed as English without a word. Each sampled document votes for the script most of its text is in (by what its
+  letters carry in tokens), and for the language it reads as by the rule a query's is (a Latin-script one by its
+  function words) only when that language is written in that script; the sample reads as the language of the
+  script most documents are in (four English documents and one Korean one, or English documents quoting Korean file
+  names, read as English); a document
   votes once its letters carry ten tokens by the token estimate's rates (forty Latin letters, ten Han characters); a
   sample that reads as the setting is not reported, however few of its letters are in its script.
   `run-prompt-tuning` writes the `source_language` the sample reads as into its output (#629). Han, Hangul and Kana
@@ -1844,7 +1849,7 @@ From a `main` checkout (formats and keys no release had):
   parse in a process pool once the rest is expected to take longer than starting one. The first run after upgrading
   parses every file once and records their digests. The corpus fingerprint's read of each file computes its source
   digest too, so a run reads each file's bytes once for both (kept by inode, size, modification and change times: a
-  file rewritten at its size and modification time is read again).
+  file rewritten at its size and modification time is read again; keyed with `document_parsing.encoding` too).
 - Stage-cache files are compact UTF-8 JSON, 1.2 to 1.6 times fewer bytes to write and hash on English text (more on
   text the ASCII escapes multiplied); entries written indented still load.
 - Faster at query time and ingestion: the query path no longer imports datasketch and SciPy (about a second per

@@ -24,8 +24,10 @@ document. ``tests/unit/test_file_loaders_golden.py`` pins the parity.
   place of :class:`TextFileLoader` (Markdown as written) and
   :class:`HtmlFileLoader`.
 
-Encoding detection is not done here: ``FileParser`` retries a
-``UnicodeDecodeError`` with the encoding charset-normalizer detects.
+Encoding detection is not done here: a text loader without an ``encoding``
+reads UTF-8 (:data:`DEFAULT_ENCODING`, whatever the locale), and
+``FileParser`` retries a ``UnicodeDecodeError`` with the configured encoding
+or the one charset-normalizer detects.
 """
 
 from __future__ import annotations
@@ -47,12 +49,17 @@ from langchain_core.documents import Document as LangChainDocument
 from unified_kg_rag.shared.exceptions import DataProcessingError
 from unified_kg_rag.shared.extras import extra_hint
 
+# What a text loader reads without an ``encoding``: UTF-8, not the locale's
+# preferred encoding (``open()``'s default), so a UTF-8 file reads the same
+# text, and keeps its source digest, under any locale.
+DEFAULT_ENCODING = "utf-8"
+
 
 class TextFileLoader(BaseLoader):
     """Load a text file as one document.
 
-    ``encoding=None`` reads with the locale's preferred encoding, as
-    ``open()`` does (and ``TextLoader`` did).
+    ``encoding=None`` reads UTF-8 (:data:`DEFAULT_ENCODING`), under any
+    locale; the parser retries a decode error with the detected encoding.
     """
 
     def __init__(self, file_path: str | Path, encoding: str | None = None) -> None:
@@ -60,7 +67,7 @@ class TextFileLoader(BaseLoader):
         self.encoding = encoding
 
     def lazy_load(self) -> Iterator[LangChainDocument]:
-        with open(self.file_path, encoding=self.encoding) as file:
+        with open(self.file_path, encoding=self.encoding or DEFAULT_ENCODING) as file:
             text = file.read()
         yield LangChainDocument(
             page_content=text, metadata={"source": str(self.file_path)}
@@ -90,7 +97,9 @@ class CsvFileLoader(BaseLoader):
     def lazy_load(self) -> Iterator[LangChainDocument]:
         # newline="" lets the csv module see the quoted newlines inside a
         # field; it keeps them as written.
-        with open(self.file_path, newline="", encoding=self.encoding) as file:
+        with open(
+            self.file_path, newline="", encoding=self.encoding or DEFAULT_ENCODING
+        ) as file:
             for row_number, row in enumerate(csv.DictReader(file, **self.csv_args)):
                 content = "\n".join(
                     f"{_strip(key)}: {_cell(value)}" for key, value in row.items()
@@ -278,15 +287,16 @@ def html_to_text(html: str) -> str:
 
 class HtmlFileLoader(BaseLoader):
     """Load an HTML file as one document of its text (:func:`html_to_text`),
-    with the standard library alone. ``encoding=None`` reads as ``open()``
-    does; the parser retries a decode error with the detected encoding."""
+    with the standard library alone. ``encoding=None`` reads UTF-8
+    (:data:`DEFAULT_ENCODING`); the parser retries a decode error with the
+    detected encoding."""
 
     def __init__(self, file_path: str | Path, encoding: str | None = None) -> None:
         self.file_path = file_path
         self.encoding = encoding
 
     def lazy_load(self) -> Iterator[LangChainDocument]:
-        with open(self.file_path, encoding=self.encoding) as file:
+        with open(self.file_path, encoding=self.encoding or DEFAULT_ENCODING) as file:
             text = html_to_text(file.read())
         yield LangChainDocument(
             page_content=text, metadata={"source": str(self.file_path)}

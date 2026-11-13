@@ -179,13 +179,14 @@ exposes a best-effort `close()` / `aclose()` that never raises:
   that cannot give one answers a fixed ASCII sentinel (`[CANNOT_REWRITE]`,
   `[CANNOT_TRANSLATE]`), so no refusal phrase list (it knew four languages)
   is needed.
-- **Encoding.** A text, CSV or JSON file is first read with the locale's
-  preferred encoding, as `open()` reads (UTF-8 in the container image; it
-  can be another on a host whose locale is not UTF-8). Only when that read
-  fails with a decode error is the file read again with the encoding
-  `charset-normalizer` detects (latin-1 when it detects none). A file that
-  decodes under the locale's encoding is kept as read, even when it was
-  written in another encoding.
+- **Encoding.** A text, CSV, HTML or JSON file is first read as UTF-8,
+  under any locale (`file_loaders.DEFAULT_ENCODING`; `open()`'s default,
+  the locale's encoding, read a UTF-8 file as another text on a host whose
+  locale is not UTF-8). Only when that read fails with a decode error is the
+  file read again in `processing.document_parsing.encoding`, else the
+  encoding `charset-normalizer` detects (none detected: the file fails, it
+  is not text). A file that decodes as UTF-8 is kept as read, even when it
+  was written in another encoding.
 
 ### 8.5 OpenSearch engine version
 

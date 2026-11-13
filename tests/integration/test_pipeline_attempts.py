@@ -11,8 +11,10 @@ resumed with a delta the registry no longer matches computes it again.
 
 from __future__ import annotations
 
+import argparse
 import signal
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -25,6 +27,10 @@ from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
 from tests.integration.test_ingestion_stages import _config, _respond
 from unified_kg_rag.adapters.providers import Providers
+from unified_kg_rag.application.cli.run_ingestion_pipeline import (
+    IngestionPipelineRunner,
+    _document_failures,
+)
 from unified_kg_rag.application.ingestion import pipeline_stages as ps
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
 from unified_kg_rag.domain.models import (
@@ -147,12 +153,14 @@ def test_a_document_that_kills_chunking_is_isolated_across_resumed_runs(
     harness = _Harness(tmp_path)
     pipeline_id = "ingest-1"
     runs = 0
+    completed: list[PipelineContext] = []
     while runs < 12:
         runs += 1
         outcome = harness.run(pipeline_id, monkeypatch, chunking_fails_with=_Died)
         if isinstance(outcome, BaseException):
             continue  # the re-run resumes the same pipeline
         assert outcome.status is PipelineStageStatus.COMPLETED
+        completed.append(outcome)
         if all(
             status is not DocStatus.PENDING for status in harness.statuses().values()
         ):
@@ -165,6 +173,25 @@ def test_a_document_that_kills_chunking_is_isolated_across_resumed_runs(
         "poison.txt": DocStatus.QUARANTINED,
     }
     assert runs <= 7  # 3 deaths, then bisection of 3 suspects
+    # The run JSON counts the quarantined and deferred documents, and
+    # --max-failure-rate counts the quarantined one as failed.
+    runner = IngestionPipelineRunner.__new__(IngestionPipelineRunner)
+    runner.args = argparse.Namespace(max_failure_rate=0.5)
+    runner.pipeline = SimpleNamespace(executed_stages=frozenset())  # type: ignore[assignment]
+    results = [runner._json_result(context) for context in completed]
+    assert [r["documents_quarantined"] for r in results][-1] == 1, results
+    assert sum(r["documents_quarantined"] for r in results) == 1
+    assert all(
+        r["documents_deferred"] == len(c.incremental_delta.deferred)  # type: ignore[union-attr]
+        for r, c in zip(results, completed, strict=True)
+    )
+    quarantining = completed[-1]
+    assert _document_failures(quarantining) == (1, 3)
+    assert runner._failure_budget_breach(quarantining) is None
+    runner.args = argparse.Namespace(max_failure_rate=0.2)
+    assert "1 of 3 documents failed" in (
+        runner._failure_budget_breach(quarantining) or ""
+    )
     names = {
         entity.name
         for entity in harness.graph.read_entities(sorted(harness.graph.ids("entities")))

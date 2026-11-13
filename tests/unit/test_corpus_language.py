@@ -7,6 +7,8 @@ setting prompt tuning writes."""
 from __future__ import annotations
 
 import logging
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from langchain_core.documents import Document
@@ -16,9 +18,10 @@ from unified_kg_rag.domain.languages.corpus import (
     corpus_language,
     corpus_sample,
     corpus_source_language,
+    sample_split,
     source_language_mismatch,
 )
-from unified_kg_rag.domain.models import Config, LanguageCode
+from unified_kg_rag.domain.models import Config, DocumentDelta, LanguageCode
 
 pytestmark = pytest.mark.unit
 
@@ -61,10 +64,24 @@ KOREAN_HANJA = (
         (GERMAN, LanguageCode.DE),
         # Too few letters, or no script holding most of them.
         ("벤더 Vendor 123", None),
-        ("벤더는 공급한다 " * 3 + "The vendor supplies the buyer " * 3, None),
+        # Half of what the letters carry in each (20 Hangul syllables, 80
+        # Latin letters: 20 tokens each).
+        (
+            "벤더는 부품을 공급한다 " * 2
+            + "The vendors supply all the parts to their buyers " * 2,
+            None,
+        ),
+        # Most of it Hangul by what the letters carry, though most letters
+        # are Latin: the group and its majority are one measure (rv26; the
+        # group was weighed in tokens, its majority in letters, so no vote).
+        (
+            "벤더는 부품을 공급하고 납기를 정한다 " * 2
+            + "The vendor supplies parts " * 3,
+            LanguageCode.KO,
+        ),
     ],
     ids=["ko", "ko-technical", "ko-hanja", "ja", "zh", "en", "ru", "th", "ar", "de"]
-    + ["few", "mixed"],
+    + ["few", "mixed", "token-majority"],
 )
 def test_the_sample_reads_as_its_language(
     text: str, language: LanguageCode | None
@@ -78,7 +95,7 @@ def test_the_sample_reads_as_its_language(
         (KOREAN, LanguageCode.EN, "set it to 'ko'"),
         (JAPANESE, LanguageCode.EN, "set it to 'ja'"),
         (CHINESE, LanguageCode.DE, "set it to 'zh'"),
-        (ENGLISH, LanguageCode.KO, "only 0% of the sampled letters"),
+        (ENGLISH, LanguageCode.KO, "only 0% of the sampled text"),
         (KOREAN, LanguageCode.JA, "reads as Korean"),
         # Regression (rv8 design M3): only a dense-script corpus was judged.
         (RUSSIAN, LanguageCode.EN, "set it to 'ru'"),
@@ -86,8 +103,8 @@ def test_the_sample_reads_as_its_language(
         (ARABIC, LanguageCode.EN, "set it to 'ar'"),
         (GERMAN, LanguageCode.EN, "reads as German"),
         (ENGLISH, LanguageCode.DE, "set it to 'en'"),
-        (RUSSIAN, LanguageCode.KO, "only 0% of the sampled letters are Hangul"),
-        (KOREAN, LanguageCode.RU, "only 0% of the sampled letters are Cyrillic"),
+        (RUSSIAN, LanguageCode.KO, "only 0% of the sampled text is Hangul"),
+        (KOREAN, LanguageCode.RU, "only 0% of the sampled text is Cyrillic"),
     ],
     ids=["ko-as-en", "ja-as-en", "zh-as-de", "en-as-ko", "ko-as-ja"]
     + ["ru-as-en", "th-as-en", "ar-as-en", "de-as-en", "en-as-de"]
@@ -246,11 +263,66 @@ def test_the_loading_stage_warns_of_another_script(caplog) -> None:
     stage = object.__new__(DocumentLoadingStage)
     stage.config = Config()
     documents = [Document(page_content=KOREAN, metadata={})]
+    full_build = SimpleNamespace(incremental_delta=None)
     with caplog.at_level(logging.WARNING):
-        stage._warn_of_another_script(documents)
+        stage._warn_of_another_script(documents, full_build)  # type: ignore[arg-type]
     assert "Corpus language:" in caplog.text and "set it to 'ko'" in caplog.text
     caplog.clear()
     stage.config = Config(processing={"translation": {"source_language": "ko"}})
     with caplog.at_level(logging.WARNING):
-        stage._warn_of_another_script(documents)
+        stage._warn_of_another_script(documents, full_build)  # type: ignore[arg-type]
     assert "Corpus language" not in caplog.text
+
+
+class _StoredUnits:
+    """A vector store holding one page of English text units (two per
+    document), or failing to read them."""
+
+    def __init__(self, fails: bool = False) -> None:
+        self.fails = fails
+        self.page_sizes: list[int | None] = []
+
+    def scan_text_unit_pages(
+        self, suffix: str | None, *, fields: list[str], page_size: int | None = None
+    ) -> Any:
+        self.page_sizes.append(page_size)
+        if self.fails:
+            raise ConnectionError("store unavailable")
+        rows = [
+            {"id": f"u{i}", "text": ENGLISH, "document_ids": [f"d{i // 2}"]}
+            for i in range(200)
+        ]
+        return iter([rows[: page_size or len(rows)]])
+
+    def close(self) -> None:
+        return None
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_an_incremental_run_samples_the_stored_corpus_too(caplog, fails: bool) -> None:
+    # rv26 algo-index low: a delta of one short Korean document in an
+    # English corpus was the whole sample, and the run was told to set
+    # source_language to 'ko'. The unchanged documents are sampled from
+    # their stored text, each part its share of the corpus; a failed read
+    # falls back to the run's documents.
+    from unified_kg_rag.application.ingestion.pipeline_stages import (
+        DocumentLoadingStage,
+    )
+
+    stage = object.__new__(DocumentLoadingStage)
+    stage.config = Config()
+    store = _StoredUnits(fails)
+    stage.providers = SimpleNamespace(build_vector_indexer=lambda: store)  # type: ignore[assignment]
+    short = "벤더는 부품을 공급하고 납기와 가격을 계약서에 정한다."
+    delta = DocumentDelta(new=["n1"], unchanged=[f"d{i}" for i in range(500)])
+    context = SimpleNamespace(incremental_delta=delta)
+    with caplog.at_level(logging.WARNING):
+        stage._warn_of_another_script(
+            [Document(page_content=short, metadata={})], context  # type: ignore[arg-type]
+        )
+    assert ("set it to 'ko'" in caplog.text) is fails, caplog.text
+    assert store.page_sizes == [5 * 19]
+    assert sample_split(1, 500) == (1, 19)
+    assert sample_split(30, 0) == (20, 0)
+    assert sample_split(0, 3) == (0, 3)
+    assert sample_split(10, 10) == (10, 10)

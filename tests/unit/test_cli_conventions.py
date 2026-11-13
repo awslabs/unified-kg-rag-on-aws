@@ -1242,6 +1242,7 @@ async def test_ingestion_json_result_counts_the_failed_documents() -> None:
     assert runner._json_result(context)["delta"] == {
         "new": 1,
         "changed": 0,
+        "retried": 0,
         "unchanged": 0,
         "deleted": 2,
     }
@@ -1293,11 +1294,17 @@ def test_ingestion_json_result_counts_failed_files_and_the_delta() -> None:
     result = _ingestion_runner(None)._json_result(context)
     assert result["entities_extracted"] == 7
     context.incremental_delta = DocumentDelta(
-        new=["n1", "n2"], changed=["c1"], unchanged=["k1", "k2", "k3"], deleted=["x"]
+        new=["n1", "n2"],
+        changed=["c1", "c2"],
+        unchanged=["k1", "k2", "k3"],
+        deleted=["x"],
+        # A retried document a later rule took out of changed is not counted.
+        retried=["c2", "k3"],
     )
     assert _ingestion_runner(None)._json_result(context)["delta"] == {
         "new": 2,
-        "changed": 1,
+        "changed": 2,
+        "retried": 1,
         "unchanged": 3,
         "deleted": 1,
     }
@@ -2764,3 +2771,21 @@ def test_a_refused_config_names_its_error_type(capsys, monkeypatch) -> None:
         "error_class": "configuration",
         "error_type": "ConfigurationError",
     }
+
+
+def test_ingestion_json_result_counts_quarantined_and_deferred_documents() -> None:
+    # rv26: a poison document quarantined, and those a dying run deferred,
+    # were in no JSON count; the quarantined one fails --max-failure-rate.
+    from unified_kg_rag.application.cli.run_ingestion_pipeline import (
+        _document_failures,
+    )
+    from unified_kg_rag.domain.models import DocumentDelta
+
+    context = _ingested()
+    context.incremental_delta = DocumentDelta(
+        new=["n1"], quarantined=["q1"], deferred=["d1", "d2"]
+    )
+    result = _ingestion_runner(None)._json_result(context)
+    assert (result["documents_quarantined"], result["documents_deferred"]) == (1, 2)
+    failed, total = _document_failures(context)
+    assert (failed, total) == (1, len(context.documents) + 1)

@@ -374,6 +374,14 @@ class DocumentDelta(BaseModel):
         "from the run's, so they are re-extracted with the current settings",
     )
 
+    retried: list[str] = Field(
+        default_factory=list,
+        description="The ``changed`` doc ids whose content is unchanged and "
+        "whose record is FAILED: retried. A later rule that takes one out of "
+        "``changed`` (excluded, quarantined, deferred) leaves it here; the "
+        "run JSON counts those still changed",
+    )
+
     @classmethod
     def classify(
         cls,
@@ -387,7 +395,7 @@ class DocumentDelta(BaseModel):
         ``incoming`` is ``{doc_id: content_hash}``, ``stored`` the records the
         store read for the diff. A document is ``new`` without a record,
         ``changed`` when its hash differs or its record is FAILED (so it is
-        retried), and also when only its extraction settings changed
+        retried; ``retried`` too when only the status says so), and also when only its extraction settings changed
         (``settings_changed`` too); else ``unchanged`` (and also
         ``quarantined_unchanged`` when its record is QUARANTINED, so a raised
         attempt limit can retry it). With ``scope``, only stored records of
@@ -398,11 +406,11 @@ class DocumentDelta(BaseModel):
             record = stored.get(doc_id)
             if record is None:
                 delta.new.append(doc_id)
-            elif (
-                record.content_hash != content_hash
-                or record.status == DocStatus.FAILED.value
-            ):
+            elif record.content_hash != content_hash:
                 delta.changed.append(doc_id)
+            elif record.status == DocStatus.FAILED.value:
+                delta.changed.append(doc_id)
+                delta.retried.append(doc_id)
             elif settings_changed(
                 record.extraction_fingerprint, extraction_fingerprint
             ):
