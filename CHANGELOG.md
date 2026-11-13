@@ -1328,8 +1328,9 @@ From a `main` checkout (formats and keys no release had):
   `total_files_failed`, `total_files_skipped`,
   `total_documents_excluded` / `_deleted` / `_failed` / `_retrying` and `total_documents_without_claims`; a run with
   failed units ends with a WARNING naming them per stage (#518, #532). `run-ingestion --max-failure-rate` (off by
-  default) exits 1 when more of its documents failed (files that failed to load, documents recorded `FAILED` or
-  indexed without a failed stage's output).
+  default) exits 1, with status `failed`, when more of the corpus it covered failed (files that failed to load,
+  documents recorded `FAILED` or indexed without a failed stage's output, over those, the documents it processed
+  and the unchanged ones it skipped: a file that keeps failing does not breach every rerun).
 - Evaluation: `retrieval` (hit@k, recall@k, MRR; the passages' files ranked before the lineage files of summaries,
   reports, entities, relationships and claims, so one high-ranked summary or report cannot fill the top k) and
   `answer_match` (exact match, token F1) evaluators, grouped statistics, the run manifest and index build record,

@@ -129,6 +129,32 @@ def test_a_run_without_changes_parses_no_file(
     assert _stored_texts(config, providers) == set(texts.values())
 
 
+def test_a_file_that_keeps_failing_stays_within_the_failure_budget(
+    tmp_path: Path, no_aws
+) -> None:
+    # Regression (rv25 algo-index 1): --max-failure-rate counted only the
+    # run's delta, so on a rerun that changed nothing the one file that never
+    # parses was 1 of 1 documents and breached at any rate.
+    import argparse
+
+    from unified_kg_rag.application.cli.run_ingestion_pipeline import (
+        IngestionPipelineRunner,
+        _document_failures,
+    )
+
+    config, _, providers = _setup(tmp_path)
+    source = _corpus(tmp_path)
+    (source / "binary.txt").write_bytes(bytes(range(256)) * 20)
+    runner = IngestionPipelineRunner.__new__(IngestionPipelineRunner)
+    runner.args = argparse.Namespace(max_failure_rate=0.5)
+    for run in ("run-1", "run-2"):
+        context = _run(config, providers, source, tmp_path / run)
+        assert _document_failures(context) == (1, len(TEXTS) + 1)
+        assert runner._failure_budget_breach(context) is None
+    delta = context.incremental_delta
+    assert delta is not None and len(delta.unchanged) == len(TEXTS)
+
+
 def test_a_corpus_read_through_a_symlink_is_not_parsed_again(
     tmp_path: Path, no_aws, parsed: list[str]
 ) -> None:

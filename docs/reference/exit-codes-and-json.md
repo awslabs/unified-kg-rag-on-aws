@@ -167,12 +167,15 @@ holds:
     deletes are named in one INFO line (the first 20).
 
   `--max-failure-rate RATE` (off by default) exits `1` when more than `RATE`
-  of the run's documents failed: `files_failed`, the documents recorded
-  `FAILED` and the documents indexed without the output of a stage that
-  failed one of their text units, over those and the documents the run
-  processed (a run all of whose documents failed breaches it at any value).
-  The document then also has the `error` and `exit_code`, and the stage
-  results stand: rerun to retry the failed documents.
+  of the corpus the run covered failed: `files_failed`, the documents
+  recorded `FAILED` and the documents indexed without the output of a stage
+  that failed one of their text units, over those, the documents the run
+  processed and the `unchanged` documents of its `delta` (a run all of whose
+  documents failed breaches it at any value). So a file that keeps failing
+  counts as one of the corpus on every rerun, not as the whole of a rerun
+  that changed nothing. The document then also has the `error`, `exit_code`
+  and `status` `failed`, and the stage results stand: rerun to retry the
+  failed documents.
 
   And `build_record`, the suffix's build record after the run: `written`,
   `kept` (the run wrote nothing; the stored one stands), `failed` (no index
