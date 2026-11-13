@@ -598,6 +598,7 @@ class TestCorpusManifest:
     ) -> None:
         root = _write_corpus(tmp_path, {"a.txt": "Vendor pays Buyer."})
         pipeline = object.__new__(DataIngestionPipeline)
+        pipeline.config = Config()
         pipeline.pipeline_config = SimpleNamespace(local_directory=root / "cache")
         pipeline.target_directory = root / "parsed"
         baseline = pipeline._compute_corpus_fingerprint(root)

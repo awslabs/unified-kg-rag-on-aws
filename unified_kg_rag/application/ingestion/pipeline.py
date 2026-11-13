@@ -1759,7 +1759,10 @@ class DataIngestionPipeline:
             owned.append(self.target_directory)
         fingerprint = seed_corpus_fingerprint(
             corpus_manifest_fingerprint(
-                source_directory, extensions, owned, fingerprint_digest
+                source_directory,
+                extensions,
+                owned,
+                functools.partial(fingerprint_digest, config=self.config),
             ),
             [conversion.digest for conversion in self.seed_conversions],
         )

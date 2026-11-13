@@ -1849,7 +1849,7 @@ From a `main` checkout (formats and keys no release had):
   parse in a process pool once the rest is expected to take longer than starting one. The first run after upgrading
   parses every file once and records their digests. The corpus fingerprint's read of each file computes its source
   digest too, so a run reads each file's bytes once for both (kept by inode, size, modification and change times: a
-  file rewritten at its size and modification time is read again).
+  file rewritten at its size and modification time is read again; keyed with `document_parsing.encoding` too).
 - Stage-cache files are compact UTF-8 JSON, 1.2 to 1.6 times fewer bytes to write and hash on English text (more on
   text the ASCII escapes multiplied); entries written indented still load.
 - Faster at query time and ingestion: the query path no longer imports datasketch and SciPy (about a second per
