@@ -1021,7 +1021,8 @@ kbd {
 /* A row of figure cards: a small label over a large value. */
 .stat-row {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  /* The seven tiles share one row at 1280 px. */
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: var(--space-4);
 }
 .stat {
@@ -1029,7 +1030,7 @@ kbd {
   /* A label that wraps pushes no figure down: the figures share a line. */
   grid-template-rows: 1fr auto;
   gap: var(--space-1);
-  padding: var(--space-4) var(--space-5);
+  padding: var(--space-4);
   background: var(--sheet);
   border: 1px solid var(--rule);
   border-radius: var(--radius);

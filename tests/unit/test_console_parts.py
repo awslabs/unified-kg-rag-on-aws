@@ -370,6 +370,26 @@ def test_stage_progress_marks_running_restored_and_failed(tmp_path: Path) -> Non
         "pending",
         "pending",
     ]
+    # Regression (rv27): a run that stopped at its integrity question,
+    # before any stage, listed the earlier run's as "from the cache", all
+    # done. While it runs, they are what it restores.
+    earlier = {
+        "stage_results": [
+            {"stage_name": name, "status": "completed", "start_time": "2026-01-01"}
+            for name in plan
+        ]
+    }
+    later = "2026-01-02T00:00:00"
+    assert {
+        s["status"]
+        for s in stages.stage_progress(
+            plan, earlier, running=False, started_after=later
+        )
+    } == {"not_run"}
+    assert {
+        s["status"]
+        for s in stages.stage_progress(plan, earlier, running=True, started_after=later)
+    } == {"restored"}
     (tmp_path / "p").mkdir()
     (tmp_path / "p" / stages.METADATA_FILENAME).write_text("{half")
     assert stages.read_metadata(tmp_path, "p") is None
@@ -640,6 +660,43 @@ def test_questions_not_served_stay_out_of_every_latency_and_the_decline_rate() -
         ]
         is None
     )
+
+
+def test_a_failed_question_could_not_decline_and_a_refused_one_ran_no_strategy() -> (
+    None
+):
+    """rv27: a failed question counted in the decline rate's denominator (0%
+    with nothing answered), and a refused one as a strategy's question with
+    no tokens."""
+
+    def query(outcome: str, abstained: bool = False, tokens: int = 0) -> dict:
+        return {
+            "created": 1000.0,
+            "strategy": "local",
+            "outcome": outcome,
+            "abstained": abstained,
+            "latency_seconds": 1.0,
+            "usage": {"input_tokens": tokens},
+        }
+
+    summary = dashboard.summarize(
+        [
+            query("abstained", abstained=True, tokens=100),
+            query("answered", tokens=300),
+            query("failed"),
+            query("error"),
+            query("refused"),
+        ],
+        [],
+        Config(),
+    )
+    assert summary["totals"]["decline_rate"] == pytest.approx(0.5)
+    assert (summary["totals"]["queries"], summary["totals"]["refused"]) == (5, 1)
+    (strategy,) = summary["strategies"]
+    assert (strategy["queries"], strategy["errors"]) == (4, 2)
+    assert strategy["tokens_per_query"] == pytest.approx(100.0)
+    only_failed = dashboard.summarize([query("failed")], [], Config())
+    assert only_failed["totals"]["decline_rate"] is None
 
 
 def test_a_saved_run_is_traced_to_the_console_job_that_wrote_it(tmp_path: Path) -> None:

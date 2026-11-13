@@ -374,6 +374,23 @@ describe("upload batches", () => {
     // The picked folder's own name is the upload's, not a path segment.
     expect(readable(files, [".txt"]).map((f) => f.webkitRelativePath)).toEqual(["corpus/a.txt", ".corpus/e.txt"]);
   });
+
+  it("say how many picked files of another type the upload leaves out", async () => {
+    const { IngestPage } = await import("../pages/IngestPage");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => new Response(JSON.stringify(String(url).includes("corpora") ? { corpora: [], extensions: [".txt"] } : { jobs: [] }), { status: 200 })),
+    );
+    try {
+      const { container } = renderIn(<IngestPage status={null} onJobsChanged={() => undefined} />);
+      await screen.findByText(/Choose files/);
+      const input = container.querySelectorAll<HTMLInputElement>('input[type="file"]')[1]!;
+      fireEvent.change(input, { target: { files: [new File(["x"], "a.txt"), new File(["x"], "b.exe"), new File(["x"], ".DS_Store")] } });
+      expect(await screen.findByText("1 file picked · 1 file of another type is skipped")).toBeInTheDocument();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 function citation(marker: number, extra: Partial<Citation> = {}): Citation {

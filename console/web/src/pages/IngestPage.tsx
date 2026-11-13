@@ -34,6 +34,9 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
   // again once the corpora list (its extensions) has loaded.
   const [picked, setPicked] = useState<FileWithPath[]>([]);
   const files = useMemo(() => readable(picked, corpora.data?.extensions), [picked, corpora.data?.extensions]);
+  // The picked files left out for their type (hidden ones, which ingestion
+  // skips too, are not counted).
+  const skipped = useMemo(() => readable(picked, undefined).length - files.length, [picked, files]);
   const [uploading, setUploading] = useState(false);
   const [over, setOver] = useState(false);
 
@@ -189,7 +192,11 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
                   {t("ingest.chooseFiles")}
                   <input type="file" className="visually-hidden" multiple onChange={(e) => pickFiles(e.target.files)} />
                 </label>
-                {files.length ? <span className="muted">{t("ingest.picked", { count: files.length })}</span> : null}
+                {files.length || skipped ? (
+                  <span className="muted">
+                    {[...(files.length ? [t("ingest.picked", { count: files.length })] : []), ...(skipped ? [t("ingest.unsupported", { count: skipped })] : [])].join(" · ")}
+                  </span>
+                ) : null}
               </div>
               <div className="row" style={{ width: "100%" }}>
                 <label className="field" style={{ flex: "1 1 220px" }}>
