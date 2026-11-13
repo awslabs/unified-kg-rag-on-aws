@@ -113,8 +113,8 @@ are flushed first, and a process pool's workers are ended with it.
 ## JSON output
 
 `--output-format json` prints one JSON document to stdout and moves the
-banner, progress and logs to stderr, so the output pipes into `jq` (not with
-`--metrics-sink cloudwatch`, which also writes to stdout). Every document
+banner, progress and logs to stderr, so the output pipes into `jq`; the EMF
+records of `--metrics-sink cloudwatch` go to stderr too. Every document
 starts with `version`, the package version that wrote it. The document
 holds:
 
