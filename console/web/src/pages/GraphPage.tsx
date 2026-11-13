@@ -4,7 +4,7 @@ import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { Bars } from "../components/charts";
 import { colorSlot } from "../lib/graphColors";
 
-import { Empty, ErrorText, Loading, PageHead, Pager, Sheet } from "../components/ui";
+import { Empty, ErrorText, Loading, Notice, PageHead, Pager, Sheet } from "../components/ui";
 import { useI18n } from "../i18n/i18n";
 import { get } from "../lib/api";
 import { navigate } from "../lib/router";
@@ -56,10 +56,12 @@ export function GraphPage({ params }: { params: URLSearchParams }) {
   // records were written (the stores answer, yet no graph is current).
   const unrecorded = none && files.data?.current.state === "unrecorded";
   const held = useApi(() => (unrecorded ? get<NamespaceHeld>("namespace/methodologies").catch(() => null) : Promise.resolve(null)), [unrecorded]);
+  // The build time (and whether it is outdated) first: a narrow select
+  // cuts the end, and a console run's id is long.
   const fileLabel = (g: GraphFile) => {
     const built = g.built_at ? Date.parse(g.built_at) / 1000 : NaN;
-    const parts = [g.label, ...(g.run !== g.label ? [g.run] : []), date(Number.isNaN(built) ? g.modified : built)];
-    return `${parts.join(" · ")}${g.outdated ? ` (${t("graph.outdated")})` : ""}`;
+    const when = `${date(Number.isNaN(built) ? g.modified : built)}${g.outdated ? ` (${t("graph.outdated")})` : ""}`;
+    return [when, g.label, ...(g.run !== g.label ? [g.run] : [])].join(" · ");
   };
 
   return (
@@ -84,6 +86,9 @@ export function GraphPage({ params }: { params: URLSearchParams }) {
       />
       <ErrorText error={files.error ?? graph.error} />
       {none ? <NoGraph state={files.data!.current.state} indexed={held.data?.indexed ?? null} namespace={files.data!.current.namespace} /> : null}
+      {/* Building failed with exports to show: the newest is drawn, marked
+          outdated in the picker when the namespace was built since. */}
+      {!none && files.data?.current.state === "failed" ? <Notice tone="warn" title={t("graph.failedTitle")}>{t("graph.failed")}</Notice> : null}
       {files.loading || (unrecorded && held.loading) || (graph.loading && ref) ? <Loading /> : null}
       {graph.data && ref ? <GraphExplorer key={ref} graphRef={ref} data={graph.data} params={params} /> : null}
     </>

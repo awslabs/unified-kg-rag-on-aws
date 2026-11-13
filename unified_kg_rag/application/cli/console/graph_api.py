@@ -42,11 +42,8 @@ from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import DataProcessingError
 
 if TYPE_CHECKING:
+    from unified_kg_rag.application.bootstrap import Providers
     from unified_kg_rag.domain.models import Config
-
-# A provider bundle (``build_providers``'s): the console names no adapter
-# module, even for typing (tests/unit/test_run_console.py).
-Providers = Any
 
 logger = get_logger(__name__)
 
@@ -77,7 +74,9 @@ class CurrentGraph:
     ``export_off`` (``graph.visualization.export_data`` off: nothing is
     built) or ``unrecorded`` (no build record: nothing ingested, or indexed
     by a release before build records, whose graph cannot be told current);
-    ``failed`` when building it raised (:class:`GraphBuilder`)."""
+    ``failed`` when building it raised (:class:`GraphBuilder`), with the
+    build's ``built_at`` once the build record was read, so the exports
+    older than it are still marked outdated."""
 
     state: str
     namespace: str | None
@@ -106,7 +105,8 @@ def current_graph(
     ``<cache>/console-graphs/<namespace>/``. Nothing is built (nor a
     provider bundle) with ``graph.visualization.export_data`` off or no
     build recorded (an empty namespace). ``providers`` gives the bundle to
-    read the stores with (default: one built for ``config``).
+    read the stores with (default: one built for ``config``). A build that
+    raises is ``failed`` (logged), with the recorded ``built_at``.
 
     Raises:
         ConfigurationError: The vector store cannot page its items.
@@ -131,12 +131,16 @@ def current_graph(
         if configured
         else cache_directory / ON_DEMAND_DIRECTORY / suffix
     )
-    path, _ = current_visualization_data(
-        bundle,
-        suffix,
-        [cache_directory, *([Path(configured)] if configured else [])],
-        directory / VISUALIZATION_DATA_FILENAME,
-    )
+    try:
+        path, _ = current_visualization_data(
+            bundle,
+            suffix,
+            [cache_directory, *([Path(configured)] if configured else [])],
+            directory / VISUALIZATION_DATA_FILENAME,
+        )
+    except Exception as e:  # noqa: BLE001 - the page lists the exports there are
+        logger.warning("Building the graph of '%s' failed: %s", suffix, e)
+        return CurrentGraph("failed", suffix, built_at)
     return CurrentGraph("current", suffix, built_at, path)
 
 

@@ -149,6 +149,24 @@ describe("graph legibility", () => {
     expect(ids(placeLabels([{ ...cornered, strong: true }], { width: 10, height: 10 }))).toEqual(["cornered"]);
   });
 
+  it("names a hub over its leaves when no side is clear of nodes", () => {
+    // Leaves on all four sides of a hub (rv27: a dense centre's hubs got no
+    // label). Its label covers only less connected nodes.
+    const ring = [
+      [125, 50],
+      [75, 50],
+      [100, 30],
+      [100, 70],
+    ].map(([cx, cy], i) => ({ id: `leaf${i}`, cx: cx as number, cy: cy as number, r: 4, degree: 1 }));
+    const discs = [{ id: "hub", cx: 100, cy: 50, r: 4, degree: 9 }, ...ring];
+    const [hub] = placeLabels([{ ...label("hub", 100, 9), cy: 50 }], { width: 300, height: 100, discs });
+    expect(hub?.x).toBe(100 + 4 + 2);
+    // A leaf's label does not cover the hub, nor another leaf.
+    const leaf = { ...label("leaf1", 75, 1), cy: 50 };
+    const crowded = [...discs, { id: "rival", cx: 50, cy: 50, r: 4, degree: 1 }, { id: "up", cx: 75, cy: 30, r: 4, degree: 1 }, { id: "down", cx: 75, cy: 70, r: 4, degree: 1 }];
+    expect(placeLabels([leaf], { width: 300, height: 100, discs: crowded })).toEqual([]);
+  });
+
   it("always places the focused label", () => {
     expect(ids(placeLabels([label("hub", 0, 9), label("focus", 0, 1, true)]))).toContain("focus");
   });
@@ -202,5 +220,24 @@ describe("GraphPage without a graph", () => {
     renderIn(<GraphPage params={new URLSearchParams()} />);
     expect(await screen.findByText("“default” has no build record")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Go to Ingest" })).toBeInTheDocument();
+  });
+});
+
+describe("GraphPage when building the graph failed", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("says so over the older export it shows, marked outdated", async () => {
+    const older = { ref: "cache:a/visualization/visualization_data.json", label: "default", namespace: "default", run: "a", built_at: "2026-11-13T00:00:00Z", modified: 1, bytes: 10, outdated: true };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        const body = String(url).includes("graphs/data") ? graph(3, 3) : { graphs: [older], current: { state: "failed", namespace: "default", built_at: "2026-11-15T00:00:00Z" } };
+        return new Response(JSON.stringify(body), { status: 200 });
+      }),
+    );
+    renderIn(<GraphPage params={new URLSearchParams()} />);
+    expect(await screen.findByText("The graph could not be built")).toBeInTheDocument();
+    // The build time and the mark first: a narrow select cuts the end.
+    expect(screen.getByRole("option", { name: /^[^·]+ \(outdated\) · default · a$/ })).toBeInTheDocument();
   });
 });

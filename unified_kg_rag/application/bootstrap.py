@@ -43,7 +43,7 @@ from unified_kg_rag.adapters.provider_registry import (
     get_provider_builder,
     provider_kind,
 )
-from unified_kg_rag.adapters.providers import Providers
+from unified_kg_rag.adapters.providers import Providers as Providers
 from unified_kg_rag.adapters.schema_sources import (
     SchemaSourceContext,
     get_schema_source,
