@@ -66,6 +66,19 @@ describe("contentLang", () => {
     expect(contentLang("The supplier is Globex Sensors (グローベックス・センサーズ), which warrants each unit.", "en")).toBeUndefined();
     expect(contentLang("Umbra Freight가 라이다 장치를 케스트럴 창고까지 운송합니다.", "en")).toBe("ko");
   });
+
+  it("weighs words, not letters: a CJK sentence quoting English names is marked", () => {
+    // Counted letter for letter, the quoted names outnumber the sentence.
+    expect(contentLang("Umbra Freight는 10영업일 이내에 Kestrel Depot로 lidar unit을 배송합니다.", "en")).toBe("ko");
+    expect(contentLang("Globex SensorsはOrion Labsにlidar unitを供給します。", "en")).toBe("ja");
+    // A name the particle is written onto takes part in the CJK sentence.
+    expect(contentLang("Acme Robotics와 Orion Labs가 맺은 supply agreement의 penalty clause는 무엇인가요?", "ja")).toBe("ko");
+    expect(contentLang("Acme Robotics와 Orion Labs가 맺은 supply agreement의 penalty clause는 무엇인가요?", "ko")).toBeUndefined();
+    // A tie goes to the CJK script, as in the backend.
+    expect(contentLang("Kestrel 창고", "en")).toBe("ko");
+    // Spaced English quoting a CJK name stays the page's.
+    expect(contentLang("Ask Kestrel Depot (케스트럴 창고) about the 物流 schedule of Umbra Freight.", "en")).toBeUndefined();
+  });
 });
 
 describe("the top bar's steps", () => {
