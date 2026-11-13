@@ -145,7 +145,7 @@ stored is read again: follow *Upgrading* in order.
   local or uploaded by the S3 cache sync from the run the build record names (`visualization_export_run`), so a
   no-change run at 10k text units, a deployed task's on an empty disk too, no longer rewrites a 59 MB file;
   `run-visualization` renders it (without `--data-path` the namespace's newest export when it shows the build the
-  stores hold, else one it builds from the stores, as the console does after an ingestion that exported none; it
+  stores hold, else one it builds from the stores, as the console's Graph page does when opened; it
   takes the provider flags again) with a seeded spring layout, and the embedding layouts (UMAP, t-SNE, PCA) are
   gone.
   `graph.visualization.interactive` and `static` are typed sections: a misspelled setting is an unknown key (#344,
@@ -917,10 +917,11 @@ From a `main` checkout (formats and keys no release had):
   pipeline checkpoints; run and compare evaluations (progress per answer; paired deltas called by their
   Holm-adjusted p-value with the family's simultaneous interval and the primary metric marked, falling back to the
   interval for older comparisons; gates, cost, declines, win rates by answer length, each metric described on hover,
-  and per question every strategy's primary-metric score, its win, tie or loss and the answers side by side) and open
-  saved runs; explore the exported graph (search, neighbourhoods, communities, degree, schema conformance, seed
-  versus document evidence); a dashboard of the questions and jobs run through it (time, tokens, cost per strategy,
-  model and role); and edit the
+  and per question every strategy's primary-metric score, its win, tie or loss and the answers side by side, a
+  question marked unanswerable read by whether each answer declined) and open saved runs; explore the namespace's
+  graph, built from the stores when the Graph page opens and no export shows them, as no console job exports one
+  (search, neighbourhoods, communities, degree, schema conformance, seed versus document evidence); a dashboard of
+  the questions and jobs run through it (time, tokens, cost per strategy, model and role); and edit the
   config file with validation, a diff before saving, a confirmation before a provider endpoint or a file or directory
   path changes (every config key that names one), and secrets never shown or written. Jobs run the unchanged
   `run-ingestion` and `run-eval` in child processes. It binds `127.0.0.1` (another address needs `--allow-remote`),
@@ -933,8 +934,10 @@ From a `main` checkout (formats and keys no release had):
   nothing from another host. The web client
   (`console/web/`, Vite, React, TypeScript) is in English and nine more languages, in a light and a dark theme (the
   system's unless one is chosen in the top bar), set in Pretendard (Pretendard JP for Japanese, JetBrains Mono for
-  figures; self-hosted, SIL OFL), with a force-directed canvas graph (the focused node and its neighbours labelled
-  in screen pixels without overlaps, the rest dimmed, edges fading as they multiply; the 600 best-connected entities
+  figures; self-hosted, SIL OFL), with a force-directed canvas graph (laid out warm from the server's packed layout
+  with a weak pull to the centre; labels in screen pixels, the focused node's and its neighbours' first, at the first
+  clear side of each node, up to a share of the canvas; the rest dimmed, edges fading as they multiply, nodes edged
+  at 3:1 in the light theme; the 600 best-connected entities
   drawn and sent whole, the rest by name, found by search or in a paged table and read on demand; a file read once
   per version), to the brief in `console/web/DESIGN.md`; `console/demo/demo.py` prepares a synthetic corpus of
   the formats the core install parses (multi-page PDFs, whose citations name their page, Markdown, HTML, CSV, JSON

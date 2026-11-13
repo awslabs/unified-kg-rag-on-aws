@@ -8,7 +8,12 @@ communities, schema conformance, seed versus document evidence).
 A file is read once per version (path, modification time, size): the page
 gets the drawn entities and the edges between them in full and every other
 entity as ``{id, name, degree}`` (search and the table), and asks for one
-of those by id (:func:`entity`)."""
+of those by id (:func:`entity`).
+
+An ingestion job exports nothing of its own (an incremental run writes no
+graph): the page, once opened, gets the namespace's graph as
+``run-visualization`` does (:func:`current_graph`), rebuilt from the stores
+only when no export shows the build they hold."""
 
 from __future__ import annotations
 
@@ -17,7 +22,7 @@ import threading
 from collections import Counter, OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import networkx as nx
 
@@ -27,7 +32,11 @@ from unified_kg_rag.domain.ingestion.visualization_data import (
     displayed_graph,
 )
 from unified_kg_rag.domain.retrieval import source_fields
+from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.shared.exceptions import DataProcessingError
+
+if TYPE_CHECKING:
+    from unified_kg_rag.domain.models import Config
 
 # The node attributes the page reads; the rest stay on the server.
 MAX_DESCRIPTION = 1200
@@ -39,8 +48,56 @@ MAX_FILE_BYTES = 200 * 1024 * 1024
 CACHED_GRAPHS = 4
 
 
+# Where the page's on-demand graph of a namespace goes, under the cache
+# directory (one file per namespace, labelled with it).
+ON_DEMAND_DIRECTORY = "console-graphs"
+
+
 class GraphDataError(DataProcessingError):
     """The file is not exported visualization data."""
+
+
+def current_graph(config: Config, cache_directory: Path) -> Path | None:
+    """The visualization data of the config's index namespace that shows
+    what its stores hold (``current_visualization_data``, the builder
+    ``run-visualization`` uses): the newest export under the cache (and
+    ``graph.visualization.outputs_directory``) that names the build its
+    build record names, else one built from the stores into
+    ``graph.visualization.outputs_directory``, else
+    ``<cache>/console-graphs/<namespace>/``. ``None``, building nothing,
+    with ``graph.visualization.export_data`` off or no build recorded (an
+    empty namespace).
+
+    Raises:
+        ConfigurationError: The vector store cannot page its items.
+        StoreConnectionError: A store cannot be reached.
+    """
+    from unified_kg_rag.application.bootstrap import build_providers
+    from unified_kg_rag.application.storage.visualization_export import (
+        current_visualization_data,
+        stored_export,
+    )
+
+    if not config.graph.visualization.export_data:
+        return None
+    suffix = resolve_namespace(config, None)
+    providers = build_providers(config)
+    built_at, _ = stored_export(providers, suffix)
+    if built_at is None:
+        return None
+    configured = config.graph.visualization.outputs_directory
+    directory = (
+        Path(configured)
+        if configured
+        else cache_directory / ON_DEMAND_DIRECTORY / suffix
+    )
+    path, _ = current_visualization_data(
+        providers,
+        suffix,
+        [cache_directory, *([Path(configured)] if configured else [])],
+        directory / VISUALIZATION_DATA_FILENAME,
+    )
+    return path
 
 
 def find_graphs(roots: Roots, names: tuple[str, ...]) -> list[dict[str, Any]]:

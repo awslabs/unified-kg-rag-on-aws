@@ -11,6 +11,7 @@ import { navigate } from "../lib/router";
 import { useTrail } from "../lib/trail";
 import type { GraphData, GraphEntity, GraphEntityRef, GraphNode } from "../lib/types";
 import { useApi } from "../lib/useApi";
+import { contentLang } from "../lib/contentLang";
 
 // The canvas and its force engine load with the page that draws them.
 const GraphCanvas = lazy(() => import("../components/GraphCanvas").then((m) => ({ default: m.GraphCanvas })));
@@ -75,7 +76,7 @@ export function GraphPage({ params }: { params: URLSearchParams }) {
 }
 
 function GraphExplorer({ graphRef, data, params }: { graphRef: string; data: GraphData; params: URLSearchParams }) {
-  const { t, number, percent } = useI18n();
+  const { t, number, percent, locale } = useI18n();
   const { trail } = useTrail();
   const [selected, setSelected] = useState<string | null>(params.get("focus"));
   const [community, setCommunity] = useState<string | null>(params.get("community"));
@@ -108,13 +109,19 @@ function GraphExplorer({ graphRef, data, params }: { graphRef: string; data: Gra
   }, [data.edges]);
 
   // Colours follow the entity's group in a fixed order (largest first), so
-  // a selection never repaints the rest.
+  // a selection never repaints the rest. The entities with no community (or
+  // no type) are not a group: they take the neutral colour and come last,
+  // however many they are.
   const groups = useMemo(() => {
-    const key = (n: GraphNode) => (colorBy === "community" ? (n.community_id ?? "none") : (n.type ?? "unknown"));
+    const ungrouped = colorBy === "community" ? "none" : "unknown";
+    const key = (n: GraphNode) => (colorBy === "community" ? (n.community_id ?? ungrouped) : (n.type ?? ungrouped));
     const counts = new Map<string, number>();
     for (const n of data.nodes) counts.set(key(n), (counts.get(key(n)) ?? 0) + 1);
-    const order = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([k]) => k);
-    return { key, order, counts };
+    const order = [...counts.entries()]
+      .filter(([k]) => k !== ungrouped)
+      .sort((a, b) => b[1] - a[1])
+      .map(([k]) => k);
+    return { key, order, counts, ungrouped };
   }, [data.nodes, colorBy]);
   const communityById = useMemo(() => new Map(data.communities.map((c) => [c.id, c])), [data.communities]);
   const communityName = (id: string) => {
@@ -127,12 +134,10 @@ function GraphExplorer({ graphRef, data, params }: { graphRef: string; data: Gra
     const node = byId.get(id);
     return colorSlot(node ? (slotOf.get(groups.key(node)) ?? 99) : 99);
   };
-  const legend = groups.order.slice(0, LEGEND_SLOTS).map((k, i) => ({
-    key: k,
-    label: `${colorBy === "community" ? communityName(k) : k} (${number(groups.counts.get(k) ?? 0)})`,
-    color: colorSlot(i),
-  }));
+  const groupLabel = (k: string) => `${colorBy === "community" ? communityName(k) : k} (${number(groups.counts.get(k) ?? 0)})`;
+  const legend = groups.order.slice(0, LEGEND_SLOTS).map((k, i) => ({ key: k, label: groupLabel(k), color: colorSlot(i) }));
   if (groups.order.length > LEGEND_SLOTS) legend.push({ key: OTHER_GROUPS, label: t("graph.other", { count: groups.order.length - LEGEND_SLOTS }), color: colorSlot(99) });
+  if (groups.counts.has(groups.ungrouped)) legend.push({ key: groups.ungrouped, label: groupLabel(groups.ungrouped), color: colorSlot(99) });
   // A legend entry hovered or focused lights its members (a channel that
   // does not rely on colour).
   const [legendGroup, setLegendGroup] = useState<string | null>(null);
@@ -140,7 +145,7 @@ function GraphExplorer({ graphRef, data, params }: { graphRef: string; data: Gra
     if (!legendGroup) return null;
     const inGroup = (n: GraphNode) => {
       const slot = slotOf.get(groups.key(n)) ?? 99;
-      return legendGroup === OTHER_GROUPS ? slot >= LEGEND_SLOTS : groups.key(n) === legendGroup;
+      return legendGroup === OTHER_GROUPS ? slot >= LEGEND_SLOTS && groups.key(n) !== groups.ungrouped : groups.key(n) === legendGroup;
     };
     return new Set(data.nodes.filter(inGroup).map((n) => n.id));
   }, [legendGroup, data.nodes, groups, slotOf]);
@@ -203,7 +208,7 @@ function GraphExplorer({ graphRef, data, params }: { graphRef: string; data: Gra
       <div className="graph-layout">
         <div className="stack" style={{ gap: 10 }}>
           <div className="graph-scene">
-            <div className="graph-scene-bar">
+            <div className="graph-scene-bar" data-canvas-overlay="">
               <div style={{ position: "relative", flex: "1 1 240px", maxWidth: 420 }}>
                 <label className="visually-hidden" htmlFor="graph-search">
                   {t("graph.search")}
@@ -290,7 +295,7 @@ function GraphExplorer({ graphRef, data, params }: { graphRef: string; data: Gra
               ) : node ? (
                 <div className="stack" style={{ gap: 12 }}>
                   <div>
-                    <h2 className="sheet-title" style={{ fontSize: "var(--text-lg)" }}>
+                    <h2 className="sheet-title" style={{ fontSize: "var(--text-lg)" }} lang={contentLang(node.name, locale)}>
                       {node.name}
                     </h2>
                     <div className="row" style={{ marginTop: 4 }}>
@@ -301,7 +306,11 @@ function GraphExplorer({ graphRef, data, params }: { graphRef: string; data: Gra
                     </div>
                   </div>
                   {notDrawn ? <p className="field-help" style={{ margin: 0 }}>{t("graph.notDrawn")}</p> : null}
-                  {node.description ? <p style={{ margin: 0, whiteSpace: "pre-line", fontSize: "var(--text-sm)" }}>{node.description}</p> : null}
+                  {node.description ? (
+                    <p style={{ margin: 0, whiteSpace: "pre-line", fontSize: "var(--text-sm)" }} lang={contentLang(node.description, locale)}>
+                      {node.description}
+                    </p>
+                  ) : null}
                   <dl className="kv">
                     <dt>{t("graph.degree")}</dt>
                     <dd>{number(node.degree)}</dd>
@@ -338,11 +347,23 @@ function GraphExplorer({ graphRef, data, params }: { graphRef: string; data: Gra
                     </h3>
                     <ul className="list-plain">
                       {nodeEdges.slice(0, 40).map((edge) => {
-                        const other = edge.source === node.id ? edge.target : edge.source;
+                        // Told apart by direction and description: two
+                        // relationships may join the same pair.
+                        const out = edge.source === node.id;
+                        const other = out ? edge.target : edge.source;
                         return (
                           <li key={edge.id}>
                             <button onClick={() => pick(other)} title={edge.description ?? undefined}>
-                              <span>{neighbourName(other)}</span>
+                              <span className="neighbour" lang={contentLang(`${neighbourName(other)} ${edge.description ?? ""}`, locale)}>
+                                <span>
+                                  <span className="edge-dir" aria-hidden="true">
+                                    {out ? "→" : "←"}
+                                  </span>
+                                  <span className="visually-hidden">{t(out ? "graph.edgeOut" : "graph.edgeIn")} </span>
+                                  {neighbourName(other)}
+                                </span>
+                                {edge.description ? <span className="neighbour-desc">{edge.description}</span> : null}
+                              </span>
                               <span className="id">{edge.type}</span>
                             </button>
                           </li>
@@ -418,55 +439,59 @@ function GraphExplorer({ graphRef, data, params }: { graphRef: string; data: Gra
                   <h3 className="field-label" style={{ margin: "0 0 6px" }}>
                     {t("graph.stats.schema")}
                   </h3>
-                  <table className="table table-compact">
-                    <thead>
-                      <tr>
-                        <th>
-                          <span className="visually-hidden">{t("graph.stats.what")}</span>
-                        </th>
-                        <th className="num">{t("graph.inSchema")}</th>
-                        <th className="num">{t("graph.offSchema")}</th>
-                        <th className="num">{t("graph.unannotated")}</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(["entities", "relationships"] as const).map((k) => (
-                        <tr key={k}>
-                          <td>{t(`graph.stats.${k}`)}</td>
-                          <td className="num">{number(data.stats.schema[k].in_schema)}</td>
-                          <td className="num">{number(data.stats.schema[k].off_schema)}</td>
-                          <td className="num">{number(data.stats.schema[k].unannotated)}</td>
+                  <div className="table-wrap" tabIndex={0}>
+                    <table className="table table-compact">
+                      <thead>
+                        <tr>
+                          <th>
+                            <span className="visually-hidden">{t("graph.stats.what")}</span>
+                          </th>
+                          <th className="num">{t("graph.inSchema")}</th>
+                          <th className="num">{t("graph.offSchema")}</th>
+                          <th className="num">{t("graph.unannotated")}</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {(["entities", "relationships"] as const).map((k) => (
+                          <tr key={k}>
+                            <td>{t(`graph.stats.${k}`)}</td>
+                            <td className="num">{number(data.stats.schema[k].in_schema)}</td>
+                            <td className="num">{number(data.stats.schema[k].off_schema)}</td>
+                            <td className="num">{number(data.stats.schema[k].unannotated)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
                 <div>
                   <h3 className="field-label" style={{ margin: "0 0 6px" }}>
                     {t("graph.stats.evidence")}
                   </h3>
-                  <table className="table table-compact">
-                    <thead>
-                      <tr>
-                        <th>
-                          <span className="visually-hidden">{t("graph.stats.what")}</span>
-                        </th>
-                        <th className="num">{t("graph.evidence.document")}</th>
-                        <th className="num">{t("graph.evidence.seed_graph")}</th>
-                        <th className="num">{t("graph.evidence.both")}</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(["entities", "relationships"] as const).map((k) => (
-                        <tr key={k}>
-                          <td>{t(`graph.stats.${k}`)}</td>
-                          <td className="num">{number(data.stats.evidence[k].document ?? 0)}</td>
-                          <td className="num">{number(data.stats.evidence[k].seed_graph ?? 0)}</td>
-                          <td className="num">{number(data.stats.evidence[k].both ?? 0)}</td>
+                  <div className="table-wrap" tabIndex={0}>
+                    <table className="table table-compact">
+                      <thead>
+                        <tr>
+                          <th>
+                            <span className="visually-hidden">{t("graph.stats.what")}</span>
+                          </th>
+                          <th className="num">{t("graph.evidence.document")}</th>
+                          <th className="num">{t("graph.evidence.seed_graph")}</th>
+                          <th className="num">{t("graph.evidence.both")}</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {(["entities", "relationships"] as const).map((k) => (
+                          <tr key={k}>
+                            <td>{t(`graph.stats.${k}`)}</td>
+                            <td className="num">{number(data.stats.evidence[k].document ?? 0)}</td>
+                            <td className="num">{number(data.stats.evidence[k].seed_graph ?? 0)}</td>
+                            <td className="num">{number(data.stats.evidence[k].both ?? 0)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
             ) : null}

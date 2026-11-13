@@ -82,3 +82,18 @@ def test_a_run_without_per_question_results_has_no_questions(tmp_path: Path) -> 
         "strategies": [],
         "questions": [],
     }
+
+
+def test_a_question_marked_unanswerable_says_so(tmp_path: Path) -> None:
+    _save(tmp_path, "local", "20261101_100000", {"q1": 1.0, "q2": 0.0})
+    path = next(tmp_path.glob("evaluation_results_*.json"))
+    results = json.loads(path.read_text())
+    results[1]["metadata"] = {"answerable": False}
+    results[1]["abstained"] = True
+    path.write_text(json.dumps(results))
+    by_id = {
+        q["id"]: q for q in evaluations.question_scores(tmp_path, None)["questions"]
+    }
+    assert by_id["q1"]["unanswerable"] is False
+    assert by_id["q2"]["unanswerable"] is True
+    assert by_id["q2"]["answers"]["local"]["abstained"] is True

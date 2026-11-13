@@ -677,51 +677,30 @@ def _ingest_job(manager: JobManager, tmp_path: Path, document: str, code: int = 
     return job
 
 
-async def test_an_ingestion_that_exported_no_graph_gets_one_from_the_stores(
+async def test_an_ingestion_job_exports_no_graph_of_its_own(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # An incremental run exports no graph (rv24 perf 2): the Graph page
-    # would show the namespace as an earlier full build left it.
+    # rv25 perf 4: after every incremental job the console rebuilt the
+    # whole graph from the stores, before saving the job. The Graph page
+    # builds it when opened (graph_api.current_graph).
+    from unified_kg_rag.application import bootstrap
+    from unified_kg_rag.application.storage import visualization_export
+
     manager = _manager(tmp_path)
-    built: list[tuple[str, str]] = []
-
-    def current(config: Config, job: Any, cache: Path) -> Path:
-        built.append((job.namespace, str(cache)))
-        return cache / str(job.pipeline_id) / "visualization" / "v.json"
-
-    monkeypatch.setattr(jobs_module, "_current_graph", current)
+    built: list[Any] = []
+    monkeypatch.setattr(bootstrap, "build_providers", lambda *a: object())
+    monkeypatch.setattr(
+        visualization_export,
+        "current_visualization_data",
+        lambda *a: built.append(a) or (tmp_path / "v.json", {}),
+    )
     job = _ingest_job(
         manager, tmp_path, '{"status": "completed", "visualization_data": null}'
     )
     await manager._watch(job)
-    assert built == [("default", str(tmp_path / "cache"))]
-    assert job.result is not None and job.result["visualization_data"] == str(
-        tmp_path / "cache" / "console-p1" / "visualization" / "v.json"
-    )
-    # Exported by the run, failed, or export_data off: nothing built.
-    exported = '{"status": "completed", "visualization_data": "x.json"}'
-    await manager._watch(_ingest_job(manager, tmp_path, exported))
-    await manager._watch(_ingest_job(manager, tmp_path, '{"error": "boom"}', code=1))
-    manager.load_config = lambda: Config.model_validate(
-        {"graph": {"visualization": {"export_data": False}}}
-    )
-    await manager._watch(_ingest_job(manager, tmp_path, '{"visualization_data": null}'))
-    assert len(built) == 1
-
-
-async def test_a_failed_graph_build_leaves_the_job_succeeded(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    manager = _manager(tmp_path)
-
-    def unreachable(*_args: Any) -> Path:
-        raise StoreConnectionError("graph store down")
-
-    monkeypatch.setattr(jobs_module, "_current_graph", unreachable)
-    job = _ingest_job(manager, tmp_path, '{"visualization_data": null}')
-    await manager._watch(job)
     assert job.status is JobStatus.SUCCEEDED
-    assert job.result == {"visualization_data": None}
+    assert job.result == {"status": "completed", "visualization_data": None}
+    assert built == []
 
 
 def _event(level: str, text: str) -> str:

@@ -38,20 +38,25 @@ not assets:
   GitHub-style status colours with a label.
 - **A top-bar shell**: the brand at the left, the pages as icon-and-label
   links with the current one filled in the accent, the index and the
-  preferences at the right; on a narrow screen the pages fold under a menu
-  button.
+  preferences at the right; when the row does not fit (measured: the
+  labels' width follows the language), it drops the tagline, then the
+  pickers' field labels, and only then folds the pages under a menu button.
 - **A chat-style answer view**: the question as the asker's bubble at the
   right, the answer as a card at the left with its cited sources as chips,
   the composer docked at the foot of the conversation, a welcome with sample
   questions before the first one. The evidence trace stays beside it.
 - **A force-directed canvas graph in the style of react-force-graph**: nodes
-  sized by their connections (never under 2.5 px) and coloured by community
-  or type, labels for the focused node, its neighbours and the busiest nodes
-  (all labels once zoomed in) set at 12 px in screen space and placed most
-  connected first without overlapping, the rest dimmed, directed edges with
-  arrows that fade as they multiply, the edge's relationship shown on hover,
-  a click that centres and zooms, a legend whose hovered entry lights its
-  members and zoom tools over the canvas, and an inspector beside it.
+  sized by their connections (never under 2.5 px), coloured by community
+  or type and edged in `--node-edge`, laid out warm from the server's packed
+  layout with a weak pull toward the centre (so its islands stay beside the
+  main component), labels set at 12 px in screen space, the focused,
+  selected and traced nodes' always, the other lit nodes' most connected
+  first at the first clear side of the node (right, left, above, below) until
+  labels cover 10% of the canvas (so zooming in labels more), the rest
+  dimmed, directed edges with arrows that fade as they multiply, the edge's
+  relationship shown on hover, a click that centres and zooms, a legend whose
+  hovered entry lights its members and zoom tools over the canvas (the fit
+  keeps the graph clear of them and of the search bar), and an inspector beside it.
 
 ## Tokens
 
@@ -78,6 +83,7 @@ since the page's CSP allows no inline script).
 | `--highlighter` / `--mark-ink` | `#ffd33d` / `#1c2128` (11.3:1) | same | Matched evidence, cited markers |
 | `--good` / `--warn` / `--bad` | 4.6 / 4.5 / 4.7:1 on their washes | 6.3 / 6.2 / 4.9:1 | Status, with a label |
 | `--series-1..8` | dataviz reference, light steps | the same hues, dark steps (3:1 on sheet; 5 and 7 lighter, apart under colour-blindness) | Graph communities and types, charts |
+| `--node-edge` | `--control-edge` (3.3:1 on the canvas) | `--canvas-bg` | A graph node's edge: carries the light theme's 3:1, where series 3-5 and other fall under it |
 
 Type: Pretendard (SIL OFL 1.1), one design for Latin and Hangul, with
 Pretendard JP for a Japanese page and the system's faces after them (Chinese

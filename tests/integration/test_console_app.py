@@ -25,6 +25,7 @@ import yaml
 
 from tests.fixtures.console_demo import load, requires_console
 from tests.fixtures.graph_exports import write_export
+from unified_kg_rag.shared.exceptions import StoreConnectionError
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow, requires_console]
 
@@ -586,6 +587,26 @@ def test_the_graph_is_read_with_layout_communities_and_analysis(client: Any) -> 
     node_ids = {n["id"] for n in data["nodes"]}
     entity_ids = {s["id"] for s in result["sources"] if s["kind"] == "entity"}
     assert entity_ids and entity_ids <= node_ids
+
+
+def test_the_graph_page_brings_the_namespace_s_graph_up_to_date(
+    client: Any, workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # No job exports one (rv25 perf 4): listing the graphs builds the
+    # namespace's when the stores changed, and lists the exports when the
+    # stores cannot be read.
+    from unified_kg_rag.application.cli.console import graph_api
+
+    asked: list[Path] = []
+
+    def current(config: Any, cache: Path) -> None:
+        asked.append(cache)
+        raise StoreConnectionError("graph store down")
+
+    monkeypatch.setattr(graph_api, "current_graph", current)
+    response = client.get("/api/graphs")
+    assert response.status_code == 200 and response.json()["graphs"]
+    assert asked == [workspace / "cache"]
 
 
 def test_a_large_graph_draws_only_the_best_connected(

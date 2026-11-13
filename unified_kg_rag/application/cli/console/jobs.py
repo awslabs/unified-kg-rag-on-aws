@@ -656,8 +656,6 @@ class JobManager:
         if job.status is JobStatus.FAILED:
             job.error = (document or {}).get("error") or _last_error(self.log_tail(job))
             job.confirmation = confirmation_needed(job.error)
-        elif job.kind is JobKind.INGEST and document is not None:
-            await self._export_graph(job, document)
         self.store.save_job(job.record())
         logger.info(
             "%s job %s ended: %s (exit %s)",
@@ -671,30 +669,6 @@ class JobManager:
                 self.on_ingest_end()
             except Exception as e:  # noqa: BLE001 - a refresh must not fail the job
                 logger.warning("Refreshing after job %s failed: %s", job.id, e)
-
-    async def _export_graph(self, job: Job, document: dict[str, Any]) -> None:
-        """After an ingestion that exported no graph (an incremental run
-        writes none), the namespace's ``visualization_data.json`` for the
-        Graph page, as ``run-visualization`` builds it
-        (``current_visualization_data``: an export that shows the stores,
-        else one read from them), into ``document``'s ``visualization_data``.
-        Best effort: a failure is logged."""
-        if document.get("visualization_data") is not None:
-            return
-        try:
-            config = self.load_config()
-            if not config.graph.visualization.export_data:
-                return
-            path = await asyncio.to_thread(
-                _current_graph, config, job, self.cache_directory
-            )
-        except Exception as e:  # noqa: BLE001 - the Graph page is optional
-            logger.warning("Exporting the graph after job %s failed: %s", job.id, e)
-            return
-        document["visualization_data"] = str(path)
-        logger.info(
-            "Graph of namespace '%s' for the Graph page: %s", job.namespace, path
-        )
 
     # -- stopping ---------------------------------------------------------
 
@@ -904,33 +878,6 @@ def evaluation_progress(output: Path, total: int) -> dict[str, Any]:
         ]
     )
     return {"done": min(done, total) if total else done, "total": total}
-
-
-def _current_graph(config: Config, job: Job, cache_directory: Path) -> Path:
-    """The visualization data of ``job``'s namespace that shows its stores,
-    where ingestion writes it (``graph.visualization.outputs_directory``,
-    else the job's cache directory)."""
-    from unified_kg_rag.application.bootstrap import build_providers
-    from unified_kg_rag.application.storage.visualization_export import (
-        current_visualization_data,
-    )
-    from unified_kg_rag.domain.ingestion.visualization_data import (
-        VISUALIZATION_DATA_FILENAME,
-    )
-
-    configured = config.graph.visualization.outputs_directory
-    directory = (
-        Path(configured)
-        if configured
-        else cache_directory / str(job.pipeline_id) / "visualization"
-    )
-    path, _ = current_visualization_data(
-        build_providers(config),
-        job.namespace,
-        [cache_directory, *([Path(configured)] if configured else [])],
-        directory / VISUALIZATION_DATA_FILENAME,
-    )
-    return path
 
 
 def _last_json(text: str) -> dict[str, Any] | None:

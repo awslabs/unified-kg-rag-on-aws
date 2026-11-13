@@ -294,7 +294,8 @@ export interface GraphData {
 }
 
 /** `/api/evaluations/questions`: per question of a saved run, each
- * strategy's score on one metric (the primary) and its answer. */
+ * strategy's score on one metric (the primary) and its answer; a question
+ * marked unanswerable is read by whether each answer declined. */
 export interface QuestionScores {
   metric: string | null;
   strategies: string[];
@@ -302,6 +303,9 @@ export interface QuestionScores {
     id: string;
     question: string;
     ground_truth: string;
+    /** Marked unanswerable (``metadata.answerable: false``): a decline is
+     * the right answer. Absent from an older server. */
+    unanswerable?: boolean;
     scores: Record<string, number>;
     answers: Record<string, { text: string; error: string | null; abstained: boolean }>;
   }[];

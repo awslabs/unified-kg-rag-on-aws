@@ -332,7 +332,10 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
                         </td>
                         <td className="mono">{String(job.params.corpus ?? "")}</td>
                         <td>
-                          <JobStatusBadge status={job.status} />
+                          <span className="row" style={{ gap: 4 }}>
+                            <JobStatusBadge status={job.status} />
+                            <RunFlags job={job} />
+                          </span>
                         </td>
                       </tr>
                     ))}
@@ -349,14 +352,32 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
   );
 }
 
+/** Documents processed, no entity extracted: none of them is in a graph. */
+function extractedNothing(result: Record<string, unknown> | null): boolean {
+  return !!result && Number(result.documents_processed ?? 0) > 0 && result.entities_extracted === 0;
+}
+
+/** An ended run's warn badges in Earlier runs: its warnings and an empty
+ * extraction, so they show without opening the run. */
+export function RunFlags({ job }: { job: JobRecord }) {
+  const { t, number } = useI18n();
+  if (job.status === "running") return null;
+  const count = job.warnings?.count ?? 0;
+  return (
+    <>
+      {extractedNothing(job.result) ? <span className="badge badge-warn">{t("ingest.result.noEntitiesTitle")}</span> : null}
+      {count ? <span className="badge badge-warn">{`${t("ingest.result.warnings")} ${number(count)}`}</span> : null}
+    </>
+  );
+}
+
 export function IngestResult({ job }: { job: JobRecord }) {
   const { t } = useI18n();
   const result = job.result as Record<string, unknown> | null;
   if (!result || job.status === "running") return null;
   const usage = (result.token_usage ?? {}) as Record<string, number>;
   const warnings = job.warnings ?? { count: 0, lines: [] };
-  // Documents processed, no entity extracted: none of them is in a graph.
-  const noEntities = Number(result.documents_processed ?? 0) > 0 && result.entities_extracted === 0;
+  const noEntities = extractedNothing(result);
   return (
     <>
       {noEntities ? <Notice tone="warn" title={t("ingest.result.noEntitiesTitle")}>{t("ingest.result.noEntities")}</Notice> : null}

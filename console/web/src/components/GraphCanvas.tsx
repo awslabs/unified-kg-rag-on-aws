@@ -10,17 +10,31 @@
  * theme tokens, read again when the theme changes. Pan with a drag or the
  * arrow keys, zoom with the wheel, +/- or the buttons, 0 fits; Escape clears.
  */
-import { forceCenter, forceCollide, forceLink, forceManyBody, forceSimulation, type SimulationLinkDatum, type SimulationNodeDatum } from "d3-force";
+import { forceCenter, forceCollide, forceLink, forceManyBody, forceSimulation, forceX, forceY, type SimulationLinkDatum, type SimulationNodeDatum } from "d3-force";
 import ForceGraph2D, { type ForceGraphMethods, type LinkObject, type NodeObject } from "react-force-graph-2d";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "../i18n/i18n";
 import type { GraphData } from "../lib/types";
 
-// Past this many nodes, only the focused and the busiest carry labels and
-// the traced edge carries no particles.
-const LARGE = 1500;
-// The forces: room for labels between neighbours, more pull on a big graph.
-const forces = (large: boolean) => ({ charge: large ? -60 : -260, distance: large ? 30 : 78 });
+// The forces: room for labels between neighbours, and a weak pull toward
+// the centre (d3's remedy for a disconnected graph), so the islands the
+// server packs around the main component stay beside it rather than drift
+// to the corners.
+const CHARGE = -260;
+const DISTANCE = 78;
+const GRAVITY = 0.08;
+// The pre-layout warm-starts from the server's packed layout: a low alpha
+// and few ticks only clear overlaps and relax the edges, keeping its shape
+// (and the main thread free: a cold start of 300 ticks blocked 600 nodes for
+// about 2 s).
+const SETTLE_ALPHA = 0.3;
+const SETTLE_TICKS = 80;
+// Labels beyond the always-placed ones stop once they cover this share of
+// the canvas: a density bound, so a big canvas or a zoomed-in view carries
+// more of them and a small one fewer.
+const LABEL_COVER = 0.1;
+// The fit's margin around the graph, in pixels.
+const FIT_PAD = 40;
 
 export interface GraphCanvasProps {
   data: GraphData;
@@ -57,6 +71,7 @@ interface Palette {
   rule: string;
   ruleStrong: string;
   canvas: string;
+  nodeEdge: string;
   accent: string;
   font: string;
   resolve: (css: string) => string;
@@ -72,6 +87,7 @@ function readPalette(): Palette {
     rule: value("--rule", "#d9dde3"),
     ruleStrong: value("--rule-strong", "#b8bfc8"),
     canvas: value("--canvas-bg", "#ffffff"),
+    nodeEdge: value("--node-edge", "#848c96"),
     accent: value("--cobalt", "#4f46e5"),
     font: getComputedStyle(document.body).fontFamily || "sans-serif",
     resolve: (css) => {
@@ -117,10 +133,13 @@ export function linkAlpha(edges: number): number {
   return Math.min(0.85, Math.max(0.06, 0.85 * Math.sqrt(300 / Math.max(1, edges))));
 }
 
-export interface LabelBox {
+/** A node's label to place, in screen pixels: the node's centre and radius
+ * and the label's box size. */
+export interface LabelCandidate {
   id: string;
-  x: number;
-  y: number;
+  cx: number;
+  cy: number;
+  r: number;
   width: number;
   height: number;
   // Always placed (the focused, selected or traced node).
@@ -128,16 +147,49 @@ export interface LabelBox {
   degree: number;
 }
 
+/** A placed label's box (its text is centred in it). */
+export interface PlacedLabel {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+const GAP = 2;
+
+/** The four boxes a label may take around its node, in order of preference:
+ * right, left, above, below. */
+function sides(c: LabelCandidate): PlacedLabel[] {
+  const { id, cx, cy, r, width, height } = c;
+  return [
+    { id, x: cx + r + GAP, y: cy - height / 2, width, height },
+    { id, x: cx - r - GAP - width, y: cy - height / 2, width, height },
+    { id, x: cx - width / 2, y: cy - r - GAP - height, width, height },
+    { id, x: cx - width / 2, y: cy + r + GAP, width, height },
+  ];
+}
+
+const overlaps = (a: PlacedLabel, b: PlacedLabel) => !(a.x + a.width <= b.x || b.x + b.width <= a.x || a.y + a.height <= b.y || b.y + b.height <= a.y);
+
 /** The labels to draw, greedily: the strong ones, then the most connected
- * first, each skipped when its box overlaps one already placed. */
-export function placeLabels(boxes: LabelBox[]): Set<string> {
-  const order = [...boxes].sort((a, b) => Number(b.strong) - Number(a.strong) || b.degree - a.degree);
-  const placed: LabelBox[] = [];
-  for (const box of order) {
-    const clear = placed.every((o) => box.x + box.width <= o.x || o.x + o.width <= box.x || box.y + box.height <= o.y || o.y + o.height <= box.y);
-    if (box.strong || clear) placed.push(box);
+ * first, each at the first of its four sides clear of those already placed
+ * (skipped when none is), until the labels cover ``area`` square pixels (a
+ * density bound; the strong ones always count and are always placed). */
+export function placeLabels(candidates: LabelCandidate[], area = Infinity): PlacedLabel[] {
+  const order = [...candidates].sort((a, b) => Number(b.strong) - Number(a.strong) || b.degree - a.degree);
+  const placed: PlacedLabel[] = [];
+  let covered = 0;
+  for (const c of order) {
+    const size = c.width * c.height;
+    if (!c.strong && covered + size > area) continue;
+    const options = sides(c);
+    const clear = options.find((o) => placed.every((p) => !overlaps(o, p)));
+    if (!clear && !c.strong) continue;
+    placed.push(clear ?? (options[0] as PlacedLabel));
+    covered += size;
   }
-  return new Set(placed.map((b) => b.id));
+  return placed;
 }
 
 /** `(x, y)` of the graph in the canvas's CSS pixels, through the view's
@@ -180,25 +232,31 @@ export function drawnGraph(data: GraphData): { nodes: Node[]; links: Link[] } {
   return { nodes, links };
 }
 
-/** Room around each node: more for a busier one, and for labels on a small
- * graph. */
-function collide(nodes: Node[], large: boolean) {
+/** The forces besides the edges' (one set for the pre-layout and the live
+ * engine, so the picture does not drift as it starts): repulsion, room
+ * around each node (more for a busier one, and for its label), and the
+ * centring and the weak gravity. */
+function forces(nodes: Node[]) {
   const maxDeg = nodes.reduce((m, n) => Math.max(m, n.degree), 1);
-  return forceCollide<Node & SimulationNodeDatum>((n) => 6 + 5 * Math.sqrt(n.degree / maxDeg) + (large ? 0 : 10));
+  return {
+    charge: forceManyBody().strength(CHARGE).distanceMax(700),
+    collide: forceCollide<Node & SimulationNodeDatum>((n) => 16 + 5 * Math.sqrt(n.degree / maxDeg)),
+    center: forceCenter(0, 0),
+    x: forceX(0).strength(GRAVITY),
+    y: forceY(0).strength(GRAVITY),
+  };
 }
 
-/** Runs the pre-layout simulation on the drawn graph (in place). */
-function settle(graph: { nodes: Node[]; links: Link[] }): { nodes: Node[]; links: Link[] } {
+/** Runs the pre-layout simulation on the drawn graph (in place), warm from
+ * the server's layout. */
+export function settle(graph: { nodes: Node[]; links: Link[] }): { nodes: Node[]; links: Link[] } {
   const { nodes, links } = graph;
-  const large = nodes.length > LARGE;
-  const { charge, distance } = forces(large);
-  forceSimulation(nodes as (Node & SimulationNodeDatum)[])
-    .force("link", forceLink(links as unknown as SimulationLinkDatum<Node & SimulationNodeDatum>[]).id((n) => (n as Node).id).distance(distance))
-    .force("charge", forceManyBody().strength(charge).distanceMax(700))
-    .force("collide", collide(nodes, large))
-    .force("center", forceCenter(0, 0))
-    .stop()
-    .tick(large ? 120 : 300);
+  const simulation = forceSimulation(nodes as (Node & SimulationNodeDatum)[]).force(
+    "link",
+    forceLink(links as unknown as SimulationLinkDatum<Node & SimulationNodeDatum>[]).id((n) => (n as Node).id).distance(DISTANCE),
+  );
+  for (const [name, force] of Object.entries(forces(nodes))) simulation.force(name, force);
+  simulation.alpha(SETTLE_ALPHA).stop().tick(SETTLE_TICKS);
   return graph;
 }
 
@@ -211,6 +269,7 @@ export function GraphCanvas({ data, colorOf, selected, highlighted, traced, trac
   const [hoverNode, setHoverNode] = useState<string | null>(null);
   const [hoverLink, setHoverLink] = useState<Link | null>(null);
   const fitted = useRef(false);
+  const widths = useRef(new Map<string, number>());
   const reduced = useMemo(() => typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches, []);
 
   useEffect(() => {
@@ -228,19 +287,16 @@ export function GraphCanvas({ data, colorOf, selected, highlighted, traced, trac
   // a readable picture (and stays still under reduced motion); the live
   // engine then only eases what a drag disturbs.
   const graphData = useMemo(() => settle(drawnGraph(data)), [data]);
-  const large = graphData.nodes.length > LARGE;
 
-  // The live engine keeps the same forces as the settled layout (with its
-  // collision), so the picture does not drift as it starts, and a dragged
-  // node does not pull it back into a knot.
+  // The live engine keeps the same forces as the settled layout, so the
+  // picture does not drift as it starts, and a dragged node does not pull it
+  // back into a knot.
   useEffect(() => {
     const g = graph.current;
     if (!g) return;
-    const { charge, distance } = forces(large);
-    g.d3Force("charge")?.strength(charge).distanceMax(700);
-    g.d3Force("link")?.distance(distance);
-    g.d3Force("collide", collide(graphData.nodes, large));
-  }, [graphData, large]);
+    g.d3Force("link")?.distance(DISTANCE);
+    for (const [name, force] of Object.entries(forces(graphData.nodes))) g.d3Force(name, force);
+  }, [graphData]);
 
   const neighbours = useMemo(() => {
     const map = new Map<string, Set<string>>();
@@ -255,10 +311,6 @@ export function GraphCanvas({ data, colorOf, selected, highlighted, traced, trac
   }, [graphData.links]);
 
   const maxDegree = useMemo(() => graphData.nodes.reduce((m, n) => Math.max(m, n.degree), 1), [graphData.nodes]);
-  const busiest = useMemo(
-    () => new Set([...graphData.nodes].sort((a, b) => b.degree - a.degree).slice(0, large ? 20 : 10).map((n) => n.id)),
-    [graphData.nodes, large],
-  );
 
   const focus = hoverNode ?? selected;
   const focusSet = useMemo(() => (focus ? new Set([focus, ...(neighbours.get(focus) ?? [])]) : null), [focus, neighbours]);
@@ -291,6 +343,32 @@ export function GraphCanvas({ data, colorOf, selected, highlighted, traced, trac
     [graphData.nodes],
   );
 
+  // Fit the graph to the canvas between the overlays over it (the search
+  // bar at its head, the legend and the zoom tools at its foot: every
+  // element marked data-canvas-overlay beside or in it), so no node sits
+  // under them.
+  const fit = useCallback(
+    (ms: number) => {
+      const g = graph.current;
+      const bounds = g?.getGraphBbox();
+      const element = box.current;
+      if (!g || !bounds || !element) return;
+      const frame = element.getBoundingClientRect();
+      let [top, bottom] = [0, 0];
+      for (const overlay of (element.parentElement ?? element).querySelectorAll<HTMLElement>("[data-canvas-overlay]")) {
+        const r = overlay.getBoundingClientRect();
+        if (r.bottom <= frame.top || r.top >= frame.bottom || !r.height) continue;
+        if (r.top + r.height / 2 < frame.top + frame.height / 2) top = Math.max(top, r.bottom - frame.top);
+        else bottom = Math.max(bottom, frame.bottom - r.top);
+      }
+      const [bw, bh] = [Math.max(1, bounds.x[1] - bounds.x[0]), Math.max(1, bounds.y[1] - bounds.y[0])];
+      const k = Math.min(12, Math.max(0.2, Math.min((size.width - 2 * FIT_PAD) / bw, (size.height - top - bottom - 2 * FIT_PAD) / bh)));
+      g.zoom(k, ms);
+      g.centerAt((bounds.x[0] + bounds.x[1]) / 2, (bounds.y[0] + bounds.y[1]) / 2 - (top - bottom) / (2 * k), ms);
+    },
+    [size],
+  );
+
   // The layout is settled before the first paint: fit it (or centre the
   // selection) once, at once, when the canvas has its size. Only the Fit
   // button animates.
@@ -300,10 +378,10 @@ export function GraphCanvas({ data, colorOf, selected, highlighted, traced, trac
       if (fitted.current) return;
       fitted.current = true;
       if (selected) centre(selected, 0);
-      else graph.current?.zoomToFit(0, 48);
+      else fit(0);
     });
     return () => cancelAnimationFrame(frame);
-  }, [size, selected, centre]);
+  }, [size, selected, centre, fit]);
 
   // Bring a selection made elsewhere (search, a trail) into view.
   useEffect(() => {
@@ -328,8 +406,10 @@ export function GraphCanvas({ data, colorOf, selected, highlighted, traced, trac
     ctx.arc(n.x ?? 0, n.y ?? 0, r, 0, 2 * Math.PI);
     ctx.fillStyle = fill;
     ctx.fill();
+    // The edge keeps a light-theme node (some series are under 3:1 on the
+    // canvas) at 3:1, and separates overlapping ones in the dark.
     ctx.lineWidth = 1.5 / scale;
-    ctx.strokeStyle = palette.canvas;
+    ctx.strokeStyle = palette.nodeEdge;
     ctx.stroke();
     if (id === selected || id === focus) {
       ctx.lineWidth = 2.5 / scale;
@@ -348,13 +428,15 @@ export function GraphCanvas({ data, colorOf, selected, highlighted, traced, trac
     ctx.globalAlpha = 1;
   };
 
-  // The labels, after every node and edge: in screen pixels, placed most
-  // connected first without overlapping (the focused, selected and traced
-  // ones always).
+  // The labels, after every node and edge: in screen pixels, of the lit
+  // nodes on screen, placed most connected first beside, then above or below
+  // their node without overlapping, up to a share of the canvas (the
+  // focused, selected and traced ones always).
   const labels = (ctx: CanvasRenderingContext2D, scale: number) => {
     const dpr = window.devicePixelRatio || 1;
     const { width, height } = size;
-    const boxes: (LabelBox & { name: string; textX: number; textY: number })[] = [];
+    const candidates: LabelCandidate[] = [];
+    const names = new Map<string, { name: string; strong: boolean }>();
     const view = ctx.getTransform();
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -363,27 +445,31 @@ export function GraphCanvas({ data, colorOf, selected, highlighted, traced, trac
       const id = n.id;
       if (!isLit(id)) continue;
       const strong = id === focus || id === selected || traced.has(id);
-      const wanted = strong || (focusSet?.has(id) ?? false) || (highlighted?.has(id) ?? false) || scale >= 1.6 || (!focusSet && busiest.has(id));
-      if (!wanted) continue;
       const [cx, cy] = toScreen(view, n.x ?? 0, n.y ?? 0, dpr);
-      const textX = cx + radius(n, scale) * scale + 4;
-      const textWidth = ctx.measureText(n.name).width;
-      if (textX > width || textX + textWidth < 0 || cy < -LABEL_PX || cy > height + LABEL_PX) continue;
-      boxes.push({ id, x: textX - 2, y: cy - LABEL_PX / 2 - 2, width: textWidth + 4, height: LABEL_PX + 4, strong, degree: n.degree, name: n.name, textX, textY: cy });
+      if (cx < 0 || cx > width || cy < 0 || cy > height) continue;
+      const key = `${palette.font}\u0000${n.name}`;
+      let textWidth = widths.current.get(key);
+      if (textWidth === undefined) {
+        textWidth = ctx.measureText(n.name).width;
+        widths.current.set(key, textWidth);
+      }
+      candidates.push({ id, cx, cy, r: radius(n, scale) * scale, width: textWidth + 4, height: LABEL_PX + 4, strong, degree: n.degree });
+      names.set(id, { name: n.name, strong });
     }
-    const placed = placeLabels(boxes);
+    const placed = placeLabels(candidates, width * height * LABEL_COVER);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.textAlign = "left";
+    ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.lineJoin = "round";
     ctx.lineWidth = 3.5;
-    for (const box of boxes) {
-      if (!placed.has(box.id)) continue;
-      ctx.font = `${box.strong ? 600 : 500} ${LABEL_PX}px ${palette.font}`;
+    for (const box of placed) {
+      const { name, strong } = names.get(box.id) as { name: string; strong: boolean };
+      const [x, y] = [box.x + box.width / 2, box.y + box.height / 2];
+      ctx.font = `${strong ? 600 : 500} ${LABEL_PX}px ${palette.font}`;
       ctx.strokeStyle = palette.canvas;
-      ctx.strokeText(box.name, box.textX, box.textY);
+      ctx.strokeText(name, x, y);
       ctx.fillStyle = palette.ink;
-      ctx.fillText(box.name, box.textX, box.textY);
+      ctx.fillText(name, x, y);
     }
     ctx.restore();
   };
@@ -452,7 +538,7 @@ export function GraphCanvas({ data, colorOf, selected, highlighted, traced, trac
         const step = 60;
         if (event.key === "+" || event.key === "=") graph.current?.zoom((graph.current.zoom() || 1) * 1.25, 200);
         else if (event.key === "-") graph.current?.zoom((graph.current.zoom() || 1) * 0.8, 200);
-        else if (event.key === "0") graph.current?.zoomToFit(300, 40);
+        else if (event.key === "0") fit(300);
         else if (event.key === "ArrowLeft") pan(-step, 0);
         else if (event.key === "ArrowRight") pan(step, 0);
         else if (event.key === "ArrowUp") pan(0, -step);
@@ -483,7 +569,7 @@ export function GraphCanvas({ data, colorOf, selected, highlighted, traced, trac
         linkDirectionalArrowLength={4}
         linkDirectionalArrowRelPos={1}
         linkDirectionalArrowColor={linkColor}
-        linkDirectionalParticles={(l) => (!large && !reduced && isTraced(l as Link) ? 3 : 0)}
+        linkDirectionalParticles={(l) => (!reduced && isTraced(l as Link) ? 3 : 0)}
         linkDirectionalParticleWidth={3}
         linkDirectionalParticleColor={() => palette.accent}
         linkCanvasObjectMode={() => "after"}
@@ -497,26 +583,25 @@ export function GraphCanvas({ data, colorOf, selected, highlighted, traced, trac
           centre(String(n.id));
         }}
         onBackgroundClick={() => onSelect(null)}
-        enableNodeDrag={!large}
         minZoom={0.2}
         maxZoom={12}
         warmupTicks={0}
         cooldownTicks={reduced ? 0 : 40}
         d3VelocityDecay={0.35}
       />
-      <div className="graph-tools">
+      <div className="graph-tools" data-canvas-overlay="">
         <button className="button button-small" onClick={() => graph.current?.zoom((graph.current.zoom() || 1) * 1.25, 200)} aria-label={t("graph.zoomIn")}>
           +
         </button>
         <button className="button button-small" onClick={() => graph.current?.zoom((graph.current.zoom() || 1) * 0.8, 200)} aria-label={t("graph.zoomOut")}>
           −
         </button>
-        <button className="button button-small" onClick={() => graph.current?.zoomToFit(400, 48)}>
+        <button className="button button-small" onClick={() => fit(400)}>
           {t("graph.fit")}
         </button>
       </div>
       {legend.length ? (
-        <div className="graph-legend" aria-label={t("graph.legend")}>
+        <div className="graph-legend" aria-label={t("graph.legend")} data-canvas-overlay="">
           {legend.map((item) => (
             <span
               key={item.key}

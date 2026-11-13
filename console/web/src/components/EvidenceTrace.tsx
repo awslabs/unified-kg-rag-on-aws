@@ -11,6 +11,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperti
 import { useI18n } from "../i18n/i18n";
 import type { Source } from "../lib/types";
 import { Highlighted } from "./Highlighted";
+import { contentLang } from "../lib/contentLang";
 
 // The order of the kind chips; a kind the answer's sources hold that is not
 // listed (a summary node, a claim, a new section) follows them, so every
@@ -189,7 +190,7 @@ function SourceCard({
   onJump: (rank: number) => void;
   onOpenInGraph?: (source: Source) => void;
 }) {
-  const { t, number } = useI18n();
+  const { t, number, locale } = useI18n();
   const id = `source-${source.rank}`;
   const title = source.title ?? source.file_name ?? source.id ?? t("ask.trace.untitled");
   const seeded = source.provenance;
@@ -210,7 +211,9 @@ function SourceCard({
               [{source.marker}]
             </span>
           ) : null}
-          <span className="source-title">{title}</span>
+          <span className="source-title" lang={contentLang(title, locale)}>
+            {title}
+          </span>
           <span className="source-kind">{t(`ask.kind.${source.kind}`)}</span>
           {source.relation ? <span className="badge">{source.relation}</span> : null}
           {seeded ? <span className="badge badge-trace">{t("ask.trace.seed")}</span> : null}
@@ -219,7 +222,7 @@ function SourceCard({
         {source.kind === "query_result" ? (
           <pre className="query-table">{source.excerpt}</pre>
         ) : (
-          <p className="source-excerpt">
+          <p className="source-excerpt" lang={contentLang(source.excerpt, locale)}>
             <Highlighted text={excerptBody(source)} query={question} />
           </p>
         )}

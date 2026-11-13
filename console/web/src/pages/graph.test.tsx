@@ -3,7 +3,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { describe, expect, it } from "vitest";
-import { drawnGraph, linkAlpha, placeLabels, type LabelBox } from "../components/GraphCanvas";
+import { drawnGraph, linkAlpha, placeLabels, settle, type LabelCandidate } from "../components/GraphCanvas";
 import { I18nProvider } from "../i18n/i18n";
 import type { GraphData, GraphNode } from "../lib/types";
 import { EntityTable, rankMatches, TABLE_PAGE } from "./GraphPage";
@@ -37,6 +37,43 @@ describe("drawnGraph", () => {
   });
 });
 
+describe("settle", () => {
+  // A ring of 12 entities laid out in the middle and 4 islands the server
+  // packed around it, as the server's packed layout places them.
+  function islands(): GraphData {
+    const g = graph(16, 16);
+    g.edges = [...g.edges.slice(0, 11), { id: "loop", source: "n11", target: "n0", type: null, description: null, weight: null, in_schema: null, source_kinds: [] }];
+    const corners: [number, number][] = [[-300, -300], [300, -300], [-300, 300], [300, 300]];
+    g.nodes.forEach((n, i) => {
+      const angle = (i / 12) * 2 * Math.PI;
+      g.layout[n.id] = i < 12 ? [150 * Math.cos(angle), 150 * Math.sin(angle)] : (corners[i - 12] as [number, number]);
+    });
+    return g;
+  }
+  const span = (ns: { x?: number; y?: number }[]) => {
+    const xs = ns.map((n) => n.x ?? 0);
+    const ys = ns.map((n) => n.y ?? 0);
+    return Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
+  };
+
+  it("keeps the islands beside the main component", () => {
+    const { nodes } = settle(drawnGraph(islands()));
+    // The main component fills most of the frame instead of shrinking
+    // while the islands drift to its corners.
+    // (Without the gravity: 0.59.)
+    expect(span(nodes.slice(0, 12)) / span(nodes)).toBeGreaterThan(0.75);
+  });
+
+  it("starts warm from the server's layout", () => {
+    const start = drawnGraph(islands()).nodes;
+    const { nodes } = settle(drawnGraph(islands()));
+    const moved = nodes.map((n, i) => Math.hypot((n.x ?? 0) - (start[i]?.x ?? 0), (n.y ?? 0) - (start[i]?.y ?? 0)));
+    // Nodes only relax (a mean of about 60 px in the 600 px frame; a cold
+    // start moves them about 80).
+    expect(moved.reduce((sum, d) => sum + d, 0) / moved.length).toBeLessThan(70);
+  });
+});
+
 describe("EntityTable", () => {
   it("builds no rows until opened, then a page at a time", () => {
     const nodes = graph(250, 0).nodes;
@@ -66,15 +103,37 @@ describe("EntityTable", () => {
 });
 
 describe("graph legibility", () => {
-  const box = (id: string, x: number, degree: number, strong = false): LabelBox => ({ id, x, y: 0, width: 40, height: 16, strong, degree });
+  // A node at (cx, 0) of radius 4 with a 40×16 label.
+  const label = (id: string, cx: number, degree: number, strong = false): LabelCandidate => ({ id, cx, cy: 0, r: 4, width: 40, height: 16, strong, degree });
+  const ids = (placed: { id: string }[]) => placed.map((p) => p.id).sort();
 
-  it("places labels most connected first, skipping overlaps", () => {
-    const placed = placeLabels([box("low", 10, 1), box("high", 0, 9), box("apart", 100, 0)]);
-    expect([...placed].sort()).toEqual(["apart", "high"]);
+  it("places labels most connected first, on another side before skipping", () => {
+    // "low" sits 10 px right of "high": its right side overlaps nothing.
+    const placed = placeLabels([label("low", 10, 1), label("high", 0, 9), label("apart", 200, 0)]);
+    expect(ids(placed)).toEqual(["apart", "high", "low"]);
+    const high = placed.find((p) => p.id === "high");
+    const low = placed.find((p) => p.id === "low");
+    expect(high?.x).toBe(6);
+    // The right of "low" overlaps "high"'s label: it goes to the left
+    // (it used to be dropped).
+    expect(low?.x).toBe(10 - 4 - 2 - 40);
+  });
+
+  it("skips a label only when all four sides are taken", () => {
+    const wall: LabelCandidate = { ...label("wall", -100, 9), width: 400, height: 400 };
+    expect(ids(placeLabels([wall, label("hidden", 0, 1)]))).toEqual(["wall"]);
+  });
+
+  it("stops at the density bound, but always places the strong ones", () => {
+    const many = Array.from({ length: 10 }, (_, i) => label(`n${i}`, i * 100, 10 - i));
+    expect(placeLabels(many, 40 * 16 * 3)).toHaveLength(3);
+    const placed = placeLabels([...many, label("focus", 2000, 0, true)], 40 * 16 * 3);
+    expect(ids(placed)).toContain("focus");
+    expect(placed).toHaveLength(3);
   });
 
   it("always places the focused label", () => {
-    expect(placeLabels([box("hub", 0, 9), box("focus", 10, 1, true)]).has("focus")).toBe(true);
+    expect(ids(placeLabels([label("hub", 0, 9), label("focus", 0, 1, true)]))).toContain("focus");
   });
 
   it("fades edges as they multiply, within bounds", () => {
