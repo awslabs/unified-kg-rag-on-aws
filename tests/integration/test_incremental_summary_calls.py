@@ -184,6 +184,27 @@ def test_editing_several_documents_of_a_shared_entity_matches_a_full_build(
     assert incremental == full
 
 
+@pytest.mark.parametrize("adds", [1, 2, 3])
+def test_a_reset_after_extensions_matches_a_full_build(
+    tmp_path: Path, adds: int
+) -> None:
+    # rv25 algo-index 3: an extended description (a summary with lines
+    # appended) must drop the summarized_with mark. Kept, a reset full build
+    # of the same corpus took the extension for the summary of its lines and
+    # reused it: "Acme" kept the extension's text, not the lines' summary.
+    rounds = _additions()[: adds + 1]
+    reset = _state(
+        tmp_path / "inc",
+        [*rounds, rounds[-1]],
+        respond=_digesting,
+        summarize=True,
+        reset_last=True,
+    )
+    full = _state(tmp_path / "full", [rounds[-1]], respond=_digesting, summarize=True)
+
+    assert reset["entities"] == full["entities"]
+
+
 NOTE = "stripped-summaries"
 
 

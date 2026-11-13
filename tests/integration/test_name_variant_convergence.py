@@ -192,6 +192,7 @@ def _state(
     resume: bool = True,
     fail_resumed_at: tuple[Any, ...] | None = None,
     ranks: bool = False,
+    reset_last: bool = False,
 ) -> dict[str, list[tuple]]:
     """The stored entities, edges and claims after indexing ``corpora`` one
     after the other (run ``repeat`` twice under its pipeline id; run
@@ -203,7 +204,8 @@ def _state(
     (default the vector store's). ``fail_resumed_at`` (a method and its
     class) makes the resumed run's first call of it report every item
     failed; that run fails and is resumed once more. With ``ranks``, the
-    graph's entity ranks and edge ids and ranks too."""
+    graph's entity ranks and edge ids and ranks too. With ``reset_last``, the
+    last corpus is a reset full build (``indexing.reset``)."""
     config = _config(tmp / "stores", tmp / "viz")
     config.processing.claim_extraction.enabled = True
     config.processing.gleaning.enabled = gleaning
@@ -224,6 +226,7 @@ def _state(
         source.mkdir(parents=True)
         for name, text in corpus.items():
             (source / name).write_text(text)
+        config.indexing.reset = reset_last and run == len(corpora) - 1
         if run == die_in:
             owner = die_at[3] if len(die_at) > 3 else OpenSearchIndexer
             with (
