@@ -9,7 +9,6 @@ from typing import Annotated, Any, Literal, get_args
 
 from pydantic import (
     BeforeValidator,
-    ConfigDict,
     Field,
     model_validator,
 )
@@ -26,8 +25,6 @@ _logger = logging.getLogger("unified_kg_rag.domain.models.config")
 class ModelPrice(ConfigSection):
     """A model's on-demand price, for run-eval's USD cost estimate: a
     language model's token prices, or a rerank model's search-unit price."""
-
-    model_config = ConfigDict(extra="forbid")
 
     input_per_million_tokens: float | None = Field(
         default=None,

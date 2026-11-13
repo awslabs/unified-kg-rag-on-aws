@@ -10,7 +10,7 @@ from pydantic import BaseModel, ValidationError
 
 from unified_kg_rag.application.cli.console.jobs import ingest_config
 from unified_kg_rag.domain.models import Config, Methodology
-from unified_kg_rag.domain.models.config import ConfigSection
+from unified_kg_rag.domain.models.config import ConfigSection, SearchConfig
 from unified_kg_rag.shared import ConfigurationError
 
 pytestmark = pytest.mark.unit
@@ -50,9 +50,9 @@ def test_every_config_section_shares_the_base() -> None:
             assert issubclass(field.annotation, ConfigSection), name
 
 
-def test_the_hybrid_weights_normalize_as_a_pair() -> None:
-    # Validated on assignment, one weight renormalized both before the
-    # other was set, and the validator's own writes recursed (a hang).
+def test_the_hybrid_weights_validate_on_assignment() -> None:
+    # The weights are relative (every reader divides by their sum): checked
+    # on each assignment, never rewritten, so setting one at a time works.
     config = Config()
     config.search.hybrid.lexical_weight = 0.25
     config.search.hybrid.vector_weight = 0.75
@@ -60,7 +60,13 @@ def test_the_hybrid_weights_normalize_as_a_pair() -> None:
     changed = config.updated(
         {"search.hybrid.lexical_weight": 0.2, "search.hybrid.vector_weight": 0.6}
     )
-    assert changed.search.hybrid.lexical_weight == pytest.approx(0.25)
+    assert changed.search.hybrid.lexical_weight == pytest.approx(0.2)
+    with pytest.raises(ValidationError):
+        config.search.hybrid.lexical_weight = -1.0
+    config.search.hybrid.lexical_weight = 0.0
+    with pytest.raises(ValidationError, match="cannot be zero"):
+        config.search.hybrid.vector_weight = 0.0
+    assert config.search.hybrid.vector_weight == 0.75
 
 
 def test_updated_runs_the_checks_across_sections() -> None:
@@ -94,3 +100,27 @@ def test_the_console_refuses_a_methodology_the_config_cannot_build() -> None:
     config, chosen = ingest_config(Config(), ["lightrag"])
     assert chosen == ["lightrag"]
     assert config.indexing.methodologies == [Methodology.LIGHTRAG]
+
+
+def test_a_section_refuses_a_key_it_does_not_define() -> None:
+    # The backstop under Config's walk (which names moved keys): a section
+    # validated on its own refused no misspelled key.
+    with pytest.raises(ValidationError, match="entity_frequency_treshold"):
+        SearchConfig.model_validate({"local_search": {"entity_frequency_treshold": 5}})
+
+
+def test_a_removed_section_still_loads() -> None:
+    config = Config.model_validate(
+        {"graph": {"analysis": {"statistics": {"calculate_density": True}}}}
+    )
+    assert config.graph == Config().graph
+
+
+def test_the_library_log_levels_are_checked() -> None:
+    with pytest.raises(ValidationError, match="library_levels"):
+        Config.model_validate({"logging": {"library_levels": {"botocore": "LOUD"}}})
+    config = Config.model_validate(
+        {"logging": {"level": "debug", "library_levels": {"botocore": "error"}}}
+    )
+    assert config.logging.level == "DEBUG"
+    assert config.logging.library_levels == {"botocore": "ERROR"}

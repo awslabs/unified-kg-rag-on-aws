@@ -75,7 +75,8 @@ guard.
   ["lightrag"], "search.citations.enabled": False})`: it returns a new
   config validated whole, so the checks across sections run as they do at
   load. Assigning a setting (`config.search.top_k = 5`) validates that
-  field only.
+  field and its section's own checks, and an invalid value raises and
+  keeps the old one.
 
 ## Documents from memory
 

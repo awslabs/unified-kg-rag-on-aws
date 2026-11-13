@@ -3,17 +3,31 @@
 """Pipeline stages, constants and shared enums of the configuration tree."""
 
 from enum import Enum
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 
 class ConfigSection(BaseModel):
     """The base of every configuration section: an assignment is validated
-    against its field (``config.search.top_k = -1`` raises as loading it
-    would). The checks across sections (``Config``'s own validators) run on
-    a whole config: change one with :meth:`Config.updated`."""
+    against its field and the section's own checks
+    (``config.search.top_k = -1`` raises as loading it would, and leaves the
+    old value), and an unknown key is refused. The checks across sections
+    (``Config``'s own validators) run on a whole config: change one with
+    :meth:`Config.updated`."""
 
-    model_config = ConfigDict(validate_assignment=True)
+    model_config = ConfigDict(validate_assignment=True, extra="forbid")
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        before = self.__dict__.get(name)
+        try:
+            super().__setattr__(name, value)
+        except ValidationError:
+            # A section check (a model validator) that refuses the new value
+            # runs after pydantic has stored it: put the old one back.
+            if name in type(self).model_fields:
+                self.__dict__[name] = before
+            raise
 
 
 class PipelineStageType(Enum):

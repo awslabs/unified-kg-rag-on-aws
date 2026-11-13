@@ -46,7 +46,7 @@ from ._graph import GraphConfig
 from ._indexing import IndexingConfig
 from ._mcp import McpServerConfig
 from ._merge import _changes, _plain, merge_over
-from ._migration import moved_keys, unknown_keys
+from ._migration import _defined_keys_only, moved_keys, unknown_keys
 from ._models import (
     DEFAULT_MODEL_ID,
     FAST_MODEL_ID,
@@ -149,7 +149,10 @@ class Config(BaseModel):
             raise ValueError(
                 "unknown config keys: " + ", ".join(unknown) + " (fix or remove them)"
             )
-        config = handler(apply_backend_preset(data))
+        # What is left that no section defines is a removed setting, ignored
+        # (the loader warns of it): the sections refuse a key they do not
+        # define.
+        config = handler(apply_backend_preset(_defined_keys_only(data, cls)))
         config._input = _plain(data)
         return config
 

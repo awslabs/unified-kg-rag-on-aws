@@ -10,7 +10,6 @@ from typing import Annotated, Any, Literal
 from pydantic import (
     AfterValidator,
     BeforeValidator,
-    ConfigDict,
     Field,
     NonNegativeFloat,
     field_validator,
@@ -29,11 +28,9 @@ _logger = logging.getLogger("unified_kg_rag.domain.models.config")
 
 
 class HybridConfig(ConfigSection):
-    # The two weights are normalized as a pair (validate_weights_sum_to_one
-    # writes them): validated on each assignment, setting one renormalized
-    # both before the other was set, and the validator's own writes
-    # recursed. Set them together with Config.updated.
-    model_config = ConfigDict(validate_assignment=False)
+    # The weights are relative: every reader divides by their sum
+    # (combine_min_max, local search's seed floor), so they are checked,
+    # never rewritten, and an assignment of one is validated as any other.
 
     lexical_weight: float = Field(
         default=0.5,
@@ -54,7 +51,14 @@ class HybridConfig(ConfigSection):
         ),
     )
     vector_weight: float = Field(
-        default=0.5, ge=0.0, le=1.0, description="Weight for vector search results"
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Weight of the vector (kNN) side of a hybrid search. The two "
+            "weights are relative (each side counts its weight over their "
+            "sum), and their sum must be above 0."
+        ),
     )
     normalization_window: int = Field(
         default=50,
@@ -71,16 +75,11 @@ class HybridConfig(ConfigSection):
     )
 
     @model_validator(mode="after")
-    def validate_weights_sum_to_one(self) -> "HybridConfig":
-        total = self.lexical_weight + self.vector_weight
-        if math.isclose(total, 0.0):
+    def _check_weights(self) -> "HybridConfig":
+        if math.isclose(self.lexical_weight + self.vector_weight, 0.0):
             raise ValueError(
                 "The sum of vector_weight and lexical_weight cannot be zero."
             )
-
-        if not math.isclose(total, 1.0):
-            self.lexical_weight /= total
-            self.vector_weight /= total
         return self
 
 

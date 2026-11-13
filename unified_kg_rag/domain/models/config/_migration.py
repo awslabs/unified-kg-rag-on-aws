@@ -276,6 +276,23 @@ def unknown_keys(data: Any, model: type[BaseModel], prefix: str = "") -> list[st
     return found
 
 
+def _defined_keys_only(data: Any, model: type[BaseModel]) -> Any:
+    """``data`` without the keys the model does not define, copied where it
+    changes: once the unknown and moved keys are refused, what the removed
+    settings and the sections they emptied (``graph.analysis``) leave out
+    of validation."""
+    if not isinstance(data, dict):
+        return data
+    kept: dict[str, Any] = {}
+    for key, value in data.items():
+        field = model.model_fields.get(key)
+        if field is None:
+            continue
+        nested = nested_model(field.annotation)
+        kept[key] = value if nested is None else _defined_keys_only(value, nested)
+    return kept
+
+
 def _unknown_in_gone_section(path: str, value: Any) -> list[str]:
     """The unknown keys at ``path``, a key no model defines: none of a
     section that only holds moved or removed keys (``graph.analysis``,
