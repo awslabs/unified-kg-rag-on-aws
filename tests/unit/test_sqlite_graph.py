@@ -509,6 +509,45 @@ def test_edges_within_reads_a_hubs_edges_inside_the_set_only(
     assert _store(indexer).edges_within(LABEL, []) == []
 
 
+@pytest.mark.parametrize("members", [30, sqlite_graph.BATCH_SIZE + 50])
+def test_edges_within_seeks_the_source_target_index(
+    indexer: SQLiteGraphIndexer, monkeypatch: pytest.MonkeyPatch, members: int
+) -> None:
+    """The statement's plan seeks ``edges_source_target`` (a hub's other
+    edges stay index entries). The plan is the SQLite build's choice, read
+    on 3.50.4: an older build is skipped (the read-count test above pins the
+    behaviour there), a newer one that plans it differently fails."""
+    if sqlite3.sqlite_version_info < (3, 50, 4):
+        pytest.skip(f"the plan was read on SQLite 3.50.4, not {sqlite3.sqlite_version}")
+    ids = [f"n{i:04d}" for i in range(members)]
+    _graph(indexer, [(a, b) for a, b in zip(ids, ids[1:], strict=False)])
+    statements: list[tuple[str, Any]] = []
+    snapshot = sqlite_graph.read_snapshot
+
+    class _Recording:
+        def __init__(self, connection: sqlite3.Connection) -> None:
+            self.connection = connection
+
+        def execute(self, sql: str, params: Any = ()) -> Any:
+            statements.append((sql, params))
+            return self.connection.execute(sql, params)
+
+    @contextmanager
+    def recording(connection: sqlite3.Connection) -> Iterator[Any]:
+        with snapshot(connection) as inner:
+            yield _Recording(inner)
+
+    monkeypatch.setattr(sqlite_graph, "read_snapshot", recording)
+    _store(indexer).edges_within(LABEL, ids)
+    ((sql, params),) = statements
+    connection = _store(indexer).connection
+    plan = " | ".join(
+        str(row[-1])
+        for row in connection.execute(f"EXPLAIN QUERY PLAN {sql}", params).fetchall()
+    )
+    assert "USING INDEX edges_source_target" in plan, plan
+
+
 # --- traversal ---------------------------------------------------------------
 
 
