@@ -1088,7 +1088,8 @@ From a `main` checkout (formats and keys no release had):
   library](docs/guides/python-library.md#documents-from-memory).
 - `run-describe` (and `describe_namespace`, `export_graph`): what an index namespace holds (methodologies, the
   strategies it serves, each index's item count and embedding model, the build record, the registry's records), and
-  its graph streamed from the vector store as JSON Lines or GraphML with every item's text units and documents (a
+  its graph streamed from the vector store as JSON Lines (each record's `kind` the section type its sources name:
+  `text`, `entity`, `relationship`, `community`, `claim`) or GraphML with every item's text units and documents (a
   document by its path relative to the corpus root, else its file name, never the indexing host's path;
   `--output-path`, `--export-format`, `--max-items`; written atomically, so a failed export leaves the previous file
   and no partial one; an existing file is replaced only with `--force`, `export_graph(overwrite=True)`, and never the

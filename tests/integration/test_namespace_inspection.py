@@ -96,13 +96,13 @@ def test_jsonl_export_streams_every_kind_with_provenance(
     for record in records:
         by_type.setdefault(record["kind"], []).append(record)
     assert exported.counts["text_units"] == 3 and exported.counts["entities"] == 3
-    assert {r["documents"][0] for r in by_type["text_unit"]} == {
+    assert {r["documents"][0] for r in by_type["text"]} == {
         "contracts/supply.txt",
         "ko/공급.txt",
         "ticket-1",
     }
     # Text is left out unless asked for; no vector is written.
-    assert all("text" not in r for r in by_type["text_unit"])
+    assert all("text" not in r for r in by_type["text"])
     assert not [k for r in records for k in r if k.endswith("_embedding")]
     vendor = next(r for r in by_type["entity"] if r["name"] == "Vendor")
     assert vendor["type"] == "organization"
