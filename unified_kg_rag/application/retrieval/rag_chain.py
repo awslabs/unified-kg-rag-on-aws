@@ -4125,13 +4125,17 @@ class _QueryDeadline:
         self, seconds: float | None, first_chunk_seconds: float | None = None
     ) -> None:
         self.seconds = seconds
+        self.setting = "search.query_timeout_seconds"
         self.first_chunk_seconds = first_chunk_seconds
-        self.at = None if seconds is None else time.monotonic() + seconds
+        now = time.monotonic()
+        self.at = None if seconds is None else now + seconds
         caller = _CALLER_DEADLINE.get()
         if caller is not None and (self.at is None or caller < self.at):
+            # The query's budget is the time its caller left it (after a
+            # wait for a call slot), not the setting.
             self.at = caller
-            if seconds is None:
-                self.seconds = max(0.0, caller - time.monotonic())
+            self.seconds = max(0.0, caller - now)
+            self.setting = "the caller's deadline"
         self._scope: _DeadlineScope | None = None
 
     def scope(self, first_chunk_from: float | None = None) -> "_DeadlineScope":
@@ -4210,10 +4214,10 @@ class _DeadlineScope:
             what = "The answer stream sent no first chunk"
         else:
             limit = self._deadline.seconds
-            setting = "search.query_timeout_seconds"
+            setting = self._deadline.setting
             what = "The query did not finish"
         assert limit is not None
-        message = f"{what} within {limit:g} s"
+        message = f"{what} within {round(limit, 2):g} s"
         logger.warning("%s (%s); cancelled its calls in flight", message, setting)
         return QueryTimeoutError(
             f"{message} ({setting}); its calls in flight were cancelled",

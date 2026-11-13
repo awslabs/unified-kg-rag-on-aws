@@ -49,6 +49,7 @@ from unified_kg_rag.application.retrieval.rag_chain import (
     GraphRAGChain,
     RAGInput,
     RAGOutput,
+    caller_deadline,
 )
 from unified_kg_rag.domain.models import (
     Config,
@@ -225,6 +226,21 @@ async def test_ainvoke_past_the_deadline_raises_and_cancels_the_model_call(
     assert "search.query_timeout_seconds" in str(raised.value)
     await _until(model.cancelled)
     assert model.cancelled == [True]
+
+
+async def test_a_callers_earlier_deadline_states_the_budget_the_query_had() -> None:
+    # Regression (rv27 algo-ret low): under an MCP call's deadline the
+    # error said "within 300 s (search.query_timeout_seconds)" for a query
+    # that had well under a second after its wait for a call slot.
+    chain = _chain(
+        _config(query_timeout_seconds=300), _Factory(_SlowChatModel(first_delay=60))
+    )
+    with caller_deadline(time.monotonic() + 0.3):
+        with pytest.raises(QueryTimeoutError) as raised:
+            await asyncio.wait_for(chain.ainvoke(_query()), timeout=30)
+    assert raised.value.timeout_seconds <= 0.3
+    assert "the caller's deadline" in str(raised.value)
+    assert "300" not in str(raised.value)
 
 
 async def test_asearch_is_bounded_too() -> None:
