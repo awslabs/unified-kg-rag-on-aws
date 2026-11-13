@@ -89,6 +89,7 @@ from unified_kg_rag.shared.utils import (
     text_digest,
 )
 from unified_kg_rag.shared.utils.concurrency import (
+    await_shared,
     discard,
     gather_bounded,
     gather_or_cancel,
@@ -897,8 +898,9 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             pending.add_done_callback(
                 lambda done: self._settle_embedding(query_text, done)
             )
-        # Shielded: one waiter's cancellation must not cancel the others' call.
-        return await asyncio.shield(pending)
+        # Shielded (one waiter's cancellation must not cancel the others'
+        # call); a failure reaches each query as its own copy.
+        return await await_shared(pending)
 
     def _settle_embedding(self, query_text: str, done: asyncio.Future[Any]) -> None:
         self._pending_embeddings.pop(query_text, None)
@@ -1628,32 +1630,28 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 raise
             return  # Cannot tell: keep skipping just the missing index.
         shown = namespace_suffix(suffix)
-        ingested = await self._ingested_suffixes()
-        held = (
-            f" Suffixes ingested on this store: {', '.join(ingested)}."
-            if ingested
-            else " No suffix was ingested on this store."
-        )
         raise IndexNotFoundError(
             f"No indices found for suffix '{shown}' (the text units index "
             f"'{alias}' does not exist). Did you run ingestion with "
             f"processing.document_parsing.index_value '{shown}'? Query the "
-            f"namespace (suffix) the corpus was ingested under.{held}"
+            f"namespace (suffix) the corpus was ingested under.",
+            # Not in the message: a surface names those its caller may read.
+            ingested=await self._ingested_suffixes(),
         ) from cause
 
-    async def _ingested_suffixes(self) -> list[str]:
+    async def _ingested_suffixes(self) -> list[str] | None:
         """The suffixes a text units alias exists for (each ingested
-        namespace has one), for the message of a suffix none exists for;
-        empty when the store cannot tell."""
+        namespace has one), for the error of a suffix none exists for;
+        ``None`` when the store cannot tell."""
         prefix = f"{self._opensearch_config.text_units_index_prefix}-"
         additional = self._config.indexing.additional_suffix
         try:
             indices = await asyncio.to_thread(
                 self._opensearch_client.get_aliases_by_index, f"{prefix}*"
             )
-        except Exception as e:  # noqa: BLE001 - only the message's hint
+        except Exception as e:  # noqa: BLE001 - only the error's hint
             logger.debug("Listing the ingested suffixes failed: %s", e)
-            return []
+            return None
         suffixes: set[str] = set()
         for aliases in indices.values():
             for name in aliases:

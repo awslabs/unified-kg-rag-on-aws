@@ -759,7 +759,8 @@ From a `main` checkout (formats and keys no release had):
   minutes and ended with "produced 0 outputs"); a query raises it at once, without the transient retries' backoff
   (the error answer under `ignore_errors`, which no fallback absorbs), and `run-rag` exits 1 without a traceback.
   `ErrorClass` and `classify_error` name the class of a failure, which every surface maps: the CLIs' exit codes, the
-  MCP server's caller messages and the console's error kind, also of an error answer (`metadata.error_class`). A
+  MCP server's caller messages and the console's error kind, also of an error answer (`metadata.error_class`); a
+  `failure` reaches an MCP caller or the console with a generic message, its text only in the server log. A
   malformed filter value (a null, an empty or nested list) is `invalid_filter` with one message on every surface,
   `run-rag` naming the flag it came from.
 - `run-eval` comparisons adjust for the many deltas they read: every paired delta has a sign-flip randomization
@@ -845,10 +846,13 @@ From a `main` checkout (formats and keys no release had):
   else `index_value`) unless `mcp.allowed_namespaces` lists others; `mcp.tools`, `mcp.strategies` and the
   `mcp.max_*` bounds limit what a call may ask and costs (`mcp.strategies` binds the chain's new
   `allowed_strategies`: `auto` routes, and falls back, only within it, and is refused before any model call when the
-  namespace serves none of it); every call runs under `search.query_timeout_seconds` and returns its model `usage`.
+  namespace serves none of it); every call runs under `search.query_timeout_seconds` (a query past it times out in the
+  chain, so it is counted in the query metrics and names its ids) and returns its model `usage`.
   `kg_get_entity` matches a name folded as local search's seeds are.
   The graph tools read the stores through the chain's retrievers and make no model call, and check the namespace
-  first, as a query does (one nothing was ingested under logs no retrieval failure per call); they look names, IRIs and
+  first, as a query does (one nothing was ingested under logs no retrieval failure per call; its error names only the
+  served namespaces that hold an index: `IndexNotFoundError.ingested` holds the store's, out of the message, which
+  `run-rag` and the console add); they look names, IRIs and
   ids up in NFC (and a name again in NFKC), as search composes a query. Over HTTP only POST is served (405
   otherwise), and on any loopback address the `Host` and `Origin` headers must name it or a loopback name (421/403).
   `build_mcp_server` and `build_mcp_app` (package root; the latter the stateless ASGI application, its
@@ -1114,7 +1118,8 @@ From a `main` checkout (formats and keys no release had):
   strategies it serves, each index's item count and embedding model, the build record, the registry's records), and
   its graph (every kind the vector store keeps) streamed from the vector store as JSON Lines (each record's `kind`
   the section type its sources name: `text`, `entity`, `relationship`, `community`, `claim`, `summary`, a RAPTOR
-  summary node) or GraphML with every item's text units and documents (a
+  summary node, which also keys the export's `counts`, `truncated` and `missing`) or GraphML with every item's text
+  units and documents (a
   document by its path relative to the corpus root, else its file name, never the indexing host's path;
   `--output-path`, `--export-format`, `--max-items`; written atomically, so a failed export leaves the previous file
   and no partial one; an existing file is replaced only with `--force`, `export_graph(overwrite=True)`, and never the
@@ -1134,13 +1139,15 @@ From a `main` checkout (formats and keys no release had):
   [inspect and
   export](docs/guides/inspect.md).
 - Telemetry names the namespace (the tenant boundary) and ties a query to its logs: `kg_rag.namespace` on every span
-  of a query or ingestion run, `namespace` in their log context and an ingestion run's EMF properties; the
-  ingestion root span has `kg_rag.mode` and the delta counts, the query span `kg_rag.degraded` and
-  `kg_rag.error_class`; a result's `metadata.query_id` and `metadata.trace_id` (also MCP's `query_id` /
-  `trace_id`) are the ids of its log lines and trace (a trace id only when the trace was sampled, so exported), and a
-  console question's log lines carry its id. A query that raises carries them too (`exc.query_id`, `exc.trace_id`):
-  `run-rag`'s failure document, an MCP tool error and the console's error event name them. A streamed answer's spans,
-  its model call's included, name the namespace as `ainvoke`'s do, and admission log lines carry the query id.
+  of a query or ingestion run (an MCP tool call's and a console question's root span included), `namespace` in their
+  log context and an ingestion run's EMF properties; the ingestion root span has `kg_rag.mode` and the delta counts,
+  the query span `kg_rag.degraded` and `kg_rag.error_class`; a result's `metadata.query_id` and `metadata.trace_id`
+  (also MCP's `query_id` / `trace_id`) are the ids of its log lines and trace (a trace id only when the trace was
+  sampled, so exported), and a console question's log lines carry its id. A query that raises carries them too
+  (`exc.query_id`, `exc.trace_id`; its own error, also when concurrent queries share a query embedding in flight):
+  `run-rag`'s failure document, an MCP tool error (and the server's log line of it) and the console's error event and
+  history name them. A streamed answer's spans, its model call's included, name the namespace as `ainvoke`'s do, and
+  admission log lines carry the query id.
 - Observability: the `observability` section and `otel` extra, spans for runs, stages, batches and query steps,
   GenAI model-call spans, OTLP, Langfuse and Phoenix exporters with redacted content capture (an IPv6 endpoint keeps
   its brackets in the logged URL); CDK `enable_cloudwatch_tracing` with an ADOT sidecar (#207, #208, #211, #219,
@@ -2290,9 +2297,10 @@ Deployment (CDK).
   and `GetInferenceProfile` actions are dropped, and private-mode endpoint policies admit only the account (#204,
   #211, #319, #345).
 - Logs carry no query text, entity names or model output at INFO, no local variables in tracebacks, no ANSI codes
-  when piped, and no relationship endpoints or output previews from gleaning; an evaluator or judge error is logged
-  as its type and a digest, its text at DEBUG; a unit test fails on a new INFO+ log call that passes them (#156,
-  #173, #245, #255, #606).
+  when piped, and no relationship endpoints or output previews from gleaning; an evaluator or judge error, and a
+  model call's a query or an ingestion step absorbs (rerank, translation, planner, DRIFT step, extraction, reports,
+  batch embedding; `log_failure`), is logged as its type and a digest, its text at DEBUG; a unit test fails on a new
+  INFO+ log call that passes them (#156, #173, #245, #255, #606).
 - Spans carry an error's type and a digest of its message (`kg_rag.error_digest`), not its text or stack, unless
   `observability.capture_content` (then through `redact_patterns`): a judge's or parser's error quoting corpus text
   reached Langfuse or Phoenix with capture off. A model server that cannot be reached is named by its URL without

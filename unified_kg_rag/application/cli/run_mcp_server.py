@@ -72,6 +72,7 @@ from unified_kg_rag.shared import (
     get_logger,
     setup_logging,
 )
+from unified_kg_rag.shared.exceptions import error_text
 from unified_kg_rag.shared.utils import event_loop
 
 logger = get_logger(__name__)
@@ -212,7 +213,7 @@ async def warn_of_missing_namespaces(
                 "Namespace '%s' holds no index, so every tool call on it fails "
                 "until it is ingested: %s",
                 namespace,
-                e,
+                error_text(e),
             )
         except Exception as e:  # noqa: BLE001 - a call meets it again
             logger.warning("Could not check namespace '%s': %s", namespace, e)

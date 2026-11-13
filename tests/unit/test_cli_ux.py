@@ -559,7 +559,20 @@ async def test_a_typod_suffix_names_the_ingested_ones(
     object.__setattr__(retriever, "_opensearch_client", _Client())
     with pytest.raises(IndexNotFoundError) as refused:
         await retriever._require_ingested_suffix("tenant-b", RuntimeError("404"))
-    assert f"Suffixes ingested on this store: {expected}." in str(refused.value)
+    # Data, not message: the message reaches logs, error answers and callers
+    # that may not read the other namespaces.
+    assert refused.value.ingested == expected.split(", ")
+    assert "tenant-a" not in str(refused.value)
+    assert refused.value.described() == (
+        f"{refused.value} Suffixes ingested on this store: {expected}."
+    )
+    # A surface serving some namespaces names only those.
+    assert refused.value.described(["tenant-a", "other"]).endswith(
+        "Namespaces served here that hold an index: tenant-a."
+    )
+    assert refused.value.described(["other"]).endswith(
+        "No namespace served here holds an index."
+    )
 
 
 async def test_run_rag_exits_2_for_a_suffix_nothing_was_ingested_under(
@@ -581,6 +594,26 @@ async def test_run_rag_exits_2_for_a_suffix_nothing_was_ingested_under(
         await runner._run_query(RAGInput(query="hi"))
     assert exited.value.code == 2
     assert "No indices found for suffix 'tenant-b'" in capsys.readouterr().err
+
+
+async def test_run_rag_names_the_ingested_suffixes_of_a_typod_one(
+    mocker, capsys
+) -> None:
+    from unified_kg_rag.application.retrieval.rag_chain import RAGInput
+    from unified_kg_rag.shared import IndexNotFoundError
+
+    runner = object.__new__(run_rag_chain.RAGChainRunner)
+    runner.args = run_rag_chain.CommandLineInterface._setup_arguments().parse_args(
+        ["-q", "hi", "--suffix", "tenant-b"]
+    )
+    runner.metrics_sink = mocker.MagicMock()
+    runner.rag_chain = mocker.MagicMock()
+    runner.rag_chain.ainvoke = mocker.AsyncMock(
+        side_effect=IndexNotFoundError("No index.", ingested=["tenant-a"])
+    )
+    with pytest.raises(SystemExit):
+        await runner._run_query(RAGInput(query="hi"))
+    assert "Suffixes ingested on this store: tenant-a." in capsys.readouterr().err
 
 
 # --- run-eval: tables -----------------------------------------------------

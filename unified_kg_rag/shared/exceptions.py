@@ -1,6 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator
 from enum import StrEnum
 
 
@@ -15,7 +15,12 @@ def causes(exc: BaseException) -> Iterator[BaseException]:
 
 
 class GraphRAGException(Exception):
-    pass
+    def described(self, namespaces: Collection[str] | None = None) -> str:
+        """The message a surface shows (:func:`error_text`): the message and
+        what the error holds as data for its reader (the namespaces of
+        :class:`IndexNotFoundError`), naming only ``namespaces`` of them
+        when given."""
+        return str(self)
 
 
 class AWSServiceError(GraphRAGException):
@@ -139,7 +144,35 @@ class EmbeddingModelError(ModelError):
 
 
 class IndexNotFoundError(GraphRAGException):
-    """No store index exists for the queried suffix (not ingested, or a typo)."""
+    """No store index exists for the queried suffix (not ingested, or a typo).
+
+    ``ingested`` lists the suffixes the store holds an index for (``None``:
+    it could not tell). They are data, not part of the message, which
+    reaches logs, error answers and callers who may not read the other
+    namespaces: a surface adds them (:meth:`described`), the MCP server
+    only those it serves."""
+
+    def __init__(self, message: str, *, ingested: list[str] | None = None) -> None:
+        super().__init__(message)
+        self.ingested = ingested
+
+    def described(self, namespaces: Collection[str] | None = None) -> str:
+        if self.ingested is None:
+            return str(self)
+        if namespaces is None:
+            held = self.ingested
+            what = "Suffixes ingested on this store"
+        else:
+            held = [name for name in self.ingested if name in namespaces]
+            what = "Namespaces served here that hold an index"
+        if not held:
+            nothing = (
+                "No suffix was ingested on this store"
+                if namespaces is None
+                else "No namespace served here holds an index"
+            )
+            return f"{self} {nothing}."
+        return f"{self} {what}: {', '.join(held)}."
 
 
 class DocumentNotFoundError(GraphRAGException, LookupError):
@@ -375,6 +408,14 @@ def error_class_of(value: object) -> ErrorClass:
         return ErrorClass.FAILURE
 
 
+# What a surface (an MCP tool error, the console) says of a failure it does
+# not describe, so a store endpoint or a provider's text never reaches the
+# caller; the server logs the error under the ids the surface names.
+INTERNAL_ERROR_MESSAGE = (
+    "The call failed inside the server (a store or model error); the server "
+    "log has the details."
+)
+
 # The public name of :func:`classify` (``unified_kg_rag.classify_error``).
 classify_error = classify
 
@@ -397,6 +438,32 @@ def tag_query_failure(
                 setattr(exc, name, value)
             except (AttributeError, TypeError):
                 return
+
+
+def error_text(exc: BaseException, namespaces: Collection[str] | None = None) -> str:
+    """The message a surface shows for ``exc``: with what a package error
+    holds for its reader (:meth:`GraphRAGException.described`; only the
+    ``namespaces`` given of the ones it names)."""
+    if isinstance(exc, GraphRAGException):
+        return exc.described(namespaces)
+    return str(exc)
+
+
+def waiter_copy(exc: BaseException) -> BaseException:
+    """A copy of ``exc``, the failure of one call several waiters share,
+    for one of them: the same type, ``args`` and attributes (what
+    :func:`classify` and the surfaces read), without the ids another
+    waiter's query attached (:func:`tag_query_failure`), so each query names
+    its own. ``exc`` itself if it cannot be copied."""
+    try:
+        clone = type(exc).__new__(type(exc), *exc.args)
+        clone.args = exc.args
+        clone.__dict__.update(
+            (k, v) for k, v in exc.__dict__.items() if k not in QUERY_FAILURE_IDS
+        )
+    except Exception:  # noqa: BLE001 - a type that builds otherwise
+        return exc
+    return clone
 
 
 def query_failure_ids(exc: BaseException | str | None) -> dict[str, str]:

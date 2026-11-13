@@ -462,11 +462,13 @@ async def test_rag_runner_error_fallback_is_not_success(config, mocker) -> None:
         ),
         conversation_id=None,
         processed_query=ProcessedQuery(original_query="hi", final_query="hi"),
-        metadata={"error": True},
+        metadata={"error": True, "query_id": "q-7", "trace_id": "t-7"},
     )
     result = await runner._run_query(run_rag_chain.RAGInput(query="hi"))
     assert result["success"] is False
     assert result["error"] == "Neptune down"
+    # The failure document names the ids at its top, as a raised one does.
+    assert (result["query_id"], result["trace_id"]) == ("q-7", "t-7")
 
 
 class _RecordingSink:

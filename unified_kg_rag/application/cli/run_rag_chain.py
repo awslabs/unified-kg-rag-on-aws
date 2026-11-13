@@ -75,11 +75,13 @@ from unified_kg_rag.shared import (
     get_logger,
 )
 from unified_kg_rag.shared.exceptions import (
+    QUERY_FAILURE_IDS,
     ErrorClass,
     IndexNotFoundError,
     InvalidArgumentError,
     classify,
     error_class_of,
+    error_text,
 )
 from unified_kg_rag.shared.utils import event_loop
 
@@ -788,9 +790,17 @@ class RAGChainRunner:
                 error = outcome.error_message or "RAG chain returned an error"
                 error_type = outcome.error_type or RUN_FAILED
                 error_class = error_class_of(outcome.error_class)
+                # The ids of the query it absorbed, as a raised one names them.
+                ids = {
+                    name: value
+                    for name in QUERY_FAILURE_IDS
+                    if isinstance(value := result.metadata.get(name), str)
+                }
                 if EXIT_CODES[error_class] == EXIT_USAGE and not self.args.interactive:
                     # As raised without ignore_errors (below).
-                    usage_error(error, error_type=error_type, error_class=error_class)
+                    usage_error(
+                        error, error_type=error_type, error_class=error_class, **ids
+                    )
                 console.print(
                     f"\n[bold red]Error executing query: {markup_safe(error)}"
                     "[/bold red]"
@@ -801,6 +811,7 @@ class RAGChainRunner:
                     **failure_fields(
                         EXIT_FAILURE, error, error_type, error_class=error_class
                     ),
+                    **ids,
                 }
             console.print("\n[bold green]Query executed successfully![/bold green]")
             return {"success": True, **output}
@@ -821,7 +832,8 @@ class RAGChainRunner:
                 # store or model server down): no traceback.
                 logger.error("Query failed (%s): %s", error_class.value, e)
             console.print(
-                f"\n[bold red]Error executing query: {markup_safe(e)}[/bold red]"
+                "\n[bold red]Error executing query: "
+                f"{markup_safe(error_text(e))}[/bold red]"
             )
             return {
                 "success": False,

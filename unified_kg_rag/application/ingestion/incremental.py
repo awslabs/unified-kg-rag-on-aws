@@ -576,7 +576,9 @@ class IncrementalIndexer:
             # logged at WARNING elsewhere.
             names = sorted(names_by_suffix[suffix])
             logger.info(
-                "Removing the %d text units of %d obsolete documents from " "'%s': %s",
+                # A changed document's are those of its previous version.
+                "Removing the %d stored text units of %d deleted or changed "
+                "documents from '%s': %s",
                 len(unit_ids),
                 len(names),
                 suffix,

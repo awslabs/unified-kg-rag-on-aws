@@ -50,3 +50,27 @@ async def test_the_tool_span_captures_arguments_only_when_allowed() -> None:
         assert captured["query"] == "Where is account [REDACTED] stored?"
     finally:
         observability.uninstall()
+
+
+async def test_the_tool_span_names_the_namespace_it_reads() -> None:
+    from unified_kg_rag.shared.exceptions import InvalidArgumentError
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    configure_observability(ObservabilityConfig(enabled=True), tracer_provider=provider)
+    try:
+        tools = _tools(allowed_namespaces=["tenant-b"])
+        await tools.search("q")
+        await tools.search("q", namespace="tenant-b")
+        with pytest.raises(InvalidArgumentError):
+            await tools.search("q", namespace="unserved")
+        names = [
+            dict(s.attributes or {}).get("kg_rag.namespace")
+            for s in exporter.get_finished_spans()
+            if s.name == "kg_rag.mcp.tool"
+        ]
+        # A namespace the server does not serve is not recorded.
+        assert names == [tools.namespace, "tenant-b", None]
+    finally:
+        observability.uninstall()

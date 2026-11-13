@@ -1,5 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import logging
 import operator
 import re
 import threading
@@ -83,7 +84,7 @@ from unified_kg_rag.shared import (
     get_logger,
 )
 from unified_kg_rag.shared.exceptions import StoreRequestRejectedError
-from unified_kg_rag.shared.logging import warn_once
+from unified_kg_rag.shared.logging import log_failure, warn_once
 from unified_kg_rag.shared.store_lookups import StoreLookupCache, lookup_cache
 from unified_kg_rag.shared.utils.common import compute_hash
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
@@ -2778,10 +2779,12 @@ class OpenSearchIndexer(VectorIndexer):
                 # The embedding wrapper already retried transient Bedrock errors
                 # with backoff; re-embedding per item isolates the text(s) that
                 # still fail so the rest of the batch is not lost.
-                logger.warning(
+                log_failure(
+                    logger,
+                    logging.WARNING,
                     "Batch embedding failed (%s items), retrying individually: %s",
                     len(batch),
-                    e,
+                    error=e,
                 )
                 out: list[tuple[str, list[float] | None]] = []
                 for key, text in batch:

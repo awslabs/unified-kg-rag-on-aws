@@ -57,11 +57,13 @@ from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.evaluation.comparison import answer_cost_usd
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.exceptions import (
+    INTERNAL_ERROR_MESSAGE,
     ErrorClass,
     IndexNotFoundError,
     MethodologyNotIndexedError,
     classify,
     error_class_of,
+    error_text,
     query_failure_ids,
 )
 
@@ -316,7 +318,7 @@ class AskService:
             except MethodologyNotIndexedError as e:
                 available, reason = False, str(e)
             except Exception as e:  # noqa: BLE001 - shown, not fatal
-                available, reason = False, str(e)
+                available, reason = False, error_text(e)
             methodology = None
             if strategy is not SearchStrategy.AUTO:
                 with contextlib.suppress(Exception):
@@ -419,22 +421,27 @@ class AskService:
                 raise
             except Exception as e:  # noqa: BLE001 - reported to the page
                 kind = _error_kind(e)
+                # An unexpected error's text (a provider's, an endpoint) stays
+                # in the server log, under the ids the page shows.
+                message = error_text(e)
                 if kind == "failure":
                     logger.exception("Console question %s failed", query_id)
+                    message = INTERNAL_ERROR_MESSAGE
+                ids = {**query_failure_ids(e), "query_id": query_id}
                 record.update(
                     outcome=_failed_outcome(classify(e), "failed"),
-                    error=str(e),
+                    error=message,
                     latency_seconds=time.perf_counter() - started,
+                    trace_id=ids.get("trace_id") or record.get("trace_id"),
                 )
                 queue.put_nowait(
                     {
                         "kind": "error",
                         "error_kind": kind,
                         "error_class": kind,
-                        "message": str(e),
+                        "message": message,
                         # The ids of its log lines and trace.
-                        "query_id": query_id,
-                        **query_failure_ids(e),
+                        **ids,
                     }
                 )
             finally:
@@ -468,6 +475,7 @@ class AskService:
                 {
                     "kg_rag.search_strategy": request.search_strategy.value,
                     "kg_rag.query_id": query_id,
+                    "kg_rag.namespace": resolve_namespace(config, request.suffix),
                 },
             ),
             # The chain's log lines and its result's metadata carry the id

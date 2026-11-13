@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import threading
 import time
 from collections import OrderedDict
@@ -124,6 +125,7 @@ from unified_kg_rag.shared.exceptions import (
     InvalidGraphQueryError,
     ModelOutputError,
 )
+from unified_kg_rag.shared.logging import log_failure
 from unified_kg_rag.shared.usage import usage_scope
 from unified_kg_rag.shared.utils import parse_model_object, text_digest
 from unified_kg_rag.shared.utils.concurrency import gather_or_cancel
@@ -526,7 +528,12 @@ class StructuredSearchStrategy(BaseSearchStrategy):
             except Exception as e:
                 if is_fatal_retrieval_error(e):
                     raise
-                logger.warning("Structured search: the planner call failed: %s", e)
+                log_failure(
+                    logger,
+                    logging.WARNING,
+                    "Structured search: the planner call failed: %s",
+                    error=e,
+                )
                 run.fall_back("planner_error", e)
                 return None
             error = self._parsed(str(raw), profile, run)

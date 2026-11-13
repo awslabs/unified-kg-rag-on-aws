@@ -20,10 +20,11 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Collection
 from typing import Any, Literal, TypeVar
 
 from pydantic import BaseModel, Field
+from structlog.contextvars import bound_contextvars
 
 from unified_kg_rag.application.presentation.answer_view import (
     AnswerView,
@@ -37,6 +38,7 @@ from unified_kg_rag.application.retrieval.rag_chain import (
     RAGInput,
     RAGOutput,
     SearchOutput,
+    caller_deadline,
 )
 from unified_kg_rag.domain.models import (
     GraphEdge,
@@ -53,6 +55,7 @@ from unified_kg_rag.domain.retrieval.source_fields import EntityRef
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.exceptions import (
+    INTERNAL_ERROR_MESSAGE,
     ConfigurationError,
     ErrorClass,
     GraphRAGException,
@@ -60,6 +63,7 @@ from unified_kg_rag.shared.exceptions import (
     QueryTimeoutError,
     classify,
     error_class_of,
+    error_text,
     query_failure_ids,
     tag_query_failure,
 )
@@ -76,6 +80,10 @@ _T = TypeVar("_T")
 MAX_TEXT_UNIT_IDS = 20
 # Filter keys one call may give.
 MAX_FILTER_KEYS = 20
+# How long after the call's deadline its own timeout cancels it: the chain
+# times a query out at the deadline itself (and records it), so this only
+# ends work that does not watch the deadline.
+_BACKSTOP_GRACE_SECONDS = 1.0
 # A graph query result (``query_result``) is its table: a record keeps it
 # whole up to this many characters (or ``mcp.max_text_chars``, if more), as
 # the console shows it.
@@ -360,13 +368,11 @@ _CALLER_CLASSES = frozenset(
     {error_class for error_class in ErrorClass if error_class.is_caller_error}
     | {ErrorClass.TIMEOUT}
 )
-INTERNAL_ERROR_MESSAGE = (
-    "The call failed inside the server (a store or model error); the server "
-    "log has the details."
-)
 
 
-def describe_error(exc: BaseException) -> tuple[str, bool]:
+def describe_error(
+    exc: BaseException, namespaces: Collection[str] = ()
+) -> tuple[str, bool]:
     """The message a tool error carries for ``exc``, prefixed with its
     error class (``[store_unreachable] ...``, the :class:`ErrorClass` value
     a caller branches on: retry a ``timeout`` or an unreachable store, fix
@@ -375,7 +381,8 @@ def describe_error(exc: BaseException) -> tuple[str, bool]:
     stack frame never reaches the caller (the server logs it). The ids of
     the query it failed, when it carries them (``query_failure_ids``), end
     the message: ``(query_id: ..., trace_id: ...)``, which find its log
-    lines and trace."""
+    lines and trace. Of the namespaces an error names (the ingested ones of
+    ``IndexNotFoundError``), only ``namespaces``, the ones served."""
     error_class = (
         exc.error_class if isinstance(exc, _AbsorbedQueryError) else classify(exc)
     )
@@ -386,7 +393,7 @@ def describe_error(exc: BaseException) -> tuple[str, bool]:
         else ""
     )
     if error_class in _CALLER_CLASSES:
-        return f"[{error_class.value}] {exc}{suffix}", True
+        return f"[{error_class.value}] {error_text(exc, namespaces)}{suffix}", True
     return f"[{error_class.value}] {INTERNAL_ERROR_MESSAGE}{suffix}", False
 
 
@@ -618,12 +625,23 @@ class KnowledgeGraphTools:
         """``run`` in a call slot (``mcp.max_concurrent_calls``), the wait
         for the slot and the work under one deadline
         (``search.query_timeout_seconds``): a call never takes longer, the
-        chain's own deadline inside it included."""
+        chain's own deadline inside it included.
+
+        The chain gets the call's deadline (``caller_deadline``), so a query
+        past it ends in the chain's own timeout, recorded with its metrics
+        and ids; this timeout is a backstop ``_BACKSTOP_GRACE_SECONDS`` later
+        for work that does not watch the deadline."""
         seconds = self._deadline
+        at = None if seconds is None else time.monotonic() + seconds
         try:
             async with asyncio.timeout(seconds) as scope:
                 async with self._slots:
-                    return await run()
+                    if seconds is not None:
+                        when = scope.when()
+                        assert when is not None
+                        scope.reschedule(when + _BACKSTOP_GRACE_SECONDS)
+                    with caller_deadline(at):
+                        return await run()
         except QueryTimeoutError:
             raise
         except TimeoutError:
@@ -638,12 +656,17 @@ class KnowledgeGraphTools:
             ) from None
 
     async def _call(
-        self, tool: str, arguments: dict[str, Any], run: Callable[[], Awaitable[_R]]
+        self,
+        tool: str,
+        arguments: dict[str, Any],
+        run: Callable[[], Awaitable[_R]],
+        namespace: str | None = None,
     ) -> _R:
         """Run one tool call: a slot, a ``kg_rag.mcp.tool`` span (the
         arguments as ``input.value`` only under
-        ``observability.capture_content``, redacted) and a log line with a
-        digest of the query, never its text."""
+        ``observability.capture_content``, redacted; ``kg_rag.namespace``
+        when the call reads a served one, ``namespace`` or the server's) and
+        a log line with a digest of the query, never its text."""
         policy = observability.content_policy()
         attributes: dict[str, Any] = {"mcp.tool.name": tool}
         if policy.capture_content:
@@ -652,17 +675,21 @@ class KnowledgeGraphTools:
             )
         started = time.perf_counter()
         query = arguments.get("query") or arguments.get("name") or ""
+        served = self.namespace if namespace is None else namespace
+        if served in self.namespaces:
+            attributes["kg_rag.namespace"] = served
         with observability.span("kg_rag.mcp.tool", attributes) as span:
             try:
                 result = await self._within_deadline(run)
             except BaseException as e:
-                logger.info(
-                    "MCP tool %s failed after %.2fs (%s): %s",
-                    tool,
-                    time.perf_counter() - started,
-                    type(e).__name__,
-                    text_digest(str(query)),
-                )
+                with bound_contextvars(**query_failure_ids(e)):
+                    logger.info(
+                        "MCP tool %s failed after %.2fs (%s): %s",
+                        tool,
+                        time.perf_counter() - started,
+                        type(e).__name__,
+                        text_digest(str(query)),
+                    )
                 raise
             records = getattr(result, "records", None)
             span.set_attributes(
@@ -841,6 +868,7 @@ class KnowledgeGraphTools:
             "kg_search",
             {"query": query, "strategy": strategy, "filters": filters},
             run,
+            namespace,
         )
 
     async def answer(
@@ -937,6 +965,7 @@ class KnowledgeGraphTools:
                 "history_turns": len(history or []),
             },
             run,
+            namespace,
         )
 
     # -- the graph tools -------------------------------------------------
@@ -1004,7 +1033,10 @@ class KnowledgeGraphTools:
             )
 
         return await self._call(
-            "kg_get_entity", {"name": name, "iri": iri, "id": entity_id}, run
+            "kg_get_entity",
+            {"name": name, "iri": iri, "id": entity_id},
+            run,
+            namespace,
         )
 
     def _edge_record(
@@ -1099,7 +1131,10 @@ class KnowledgeGraphTools:
             return result
 
         return await self._call(
-            "kg_neighbors", {"name": name, "iri": iri, "id": entity_id}, run
+            "kg_neighbors",
+            {"name": name, "iri": iri, "id": entity_id},
+            run,
+            namespace,
         )
 
     async def describe_schema(
@@ -1143,7 +1178,9 @@ class KnowledgeGraphTools:
                 },
             )
 
-        return await self._call("kg_describe_schema", {"namespace": namespace}, run)
+        return await self._call(
+            "kg_describe_schema", {"namespace": namespace}, run, namespace
+        )
 
     async def aclose(self) -> None:
         """Close the chain (its store connections)."""

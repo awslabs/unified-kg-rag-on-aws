@@ -66,6 +66,10 @@ Describing creates no store file where nothing was ingested.
 
 The export streams the vector store's items a page at a time, so its
 memory does not grow with the namespace; `--max-items` caps each kind.
+The export's `counts`, `truncated` and `missing` (in `run-describe
+--output-format json`'s `export`) name the kinds as its records do (`text`,
+`entity`, ...); `indices[].kind` names an index (`text_units`, `entities`,
+`community_reports`, `summary_nodes`, ...).
 
 - **JSON Lines** (`jsonl`, the default): one object per line, `kind`
   `text` (a text unit), `entity`, `relationship`, `community` (its report:

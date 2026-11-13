@@ -497,3 +497,22 @@ def test_static_guard_flags_text_in_an_f_string_or_keyword(source: str) -> None:
     call = ast.parse(source).body[0]
     assert isinstance(call, ast.Expr) and isinstance(call.value, ast.Call)
     assert _leaky_args(call.value)
+
+
+def test_log_failure_logs_a_digest_at_its_level_and_the_text_at_debug(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from unified_kg_rag.shared import get_logger
+    from unified_kg_rag.shared.logging import log_failure
+    from unified_kg_rag.shared.utils import error_digest
+
+    error = RuntimeError("the model said: Quokkasecret")
+    with caplog.at_level("DEBUG"):
+        log_failure(
+            get_logger("probe"), logging.WARNING, "Step %s failed: %s", 3, error=error
+        )
+    (warned,) = [r for r in caplog.records if r.levelno == logging.WARNING]
+    (debug,) = [r for r in caplog.records if r.levelno == logging.DEBUG]
+    assert warned.getMessage() == f"Step 3 failed: {error_digest(error)}"
+    assert "Quokkasecret" not in warned.getMessage()
+    assert debug.getMessage() == "Step 3 failed: the model said: Quokkasecret"

@@ -636,6 +636,43 @@ async def test_the_result_names_the_namespace_the_question_searched(
     await service.close()
 
 
+async def test_the_question_s_span_names_the_namespace_it_searched(
+    tmp_path: Path,
+) -> None:
+    pytest.importorskip("opentelemetry.sdk")
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+        InMemorySpanExporter,
+    )
+
+    from unified_kg_rag.application.observability import configure_observability
+    from unified_kg_rag.domain.models import ObservabilityConfig
+    from unified_kg_rag.shared import observability
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    configure_observability(ObservabilityConfig(enabled=True), tracer_provider=provider)
+    service = AskService(
+        Config,
+        ConsoleStore(tmp_path / "s.sqlite3"),
+        chain_factory=lambda _c: _Chain(_output()),
+    )
+    try:
+        [e async for e in service.ask(AskRequest(query="q", suffix="tenant-a"))]
+        [e async for e in service.ask(AskRequest(query="q"))]
+    finally:
+        await service.close()
+        observability.uninstall()
+    names = [
+        dict(s.attributes or {}).get("kg_rag.namespace")
+        for s in exporter.get_finished_spans()
+        if s.name == "kg_rag.console.ask"
+    ]
+    assert names == ["tenant-a", "default"]
+
+
 class _FailingChain(_Chain):
     def __init__(self, error: Exception) -> None:
         super().__init__(_output())
@@ -650,17 +687,48 @@ async def test_a_missing_index_is_reported_as_such(tmp_path: Path) -> None:
     service = AskService(
         Config,
         ConsoleStore(tmp_path / "s.sqlite3"),
-        chain_factory=lambda _c: _FailingChain(IndexNotFoundError("no index 'x'")),
+        chain_factory=lambda _c: _FailingChain(
+            IndexNotFoundError("no index 'x'.", ingested=["tenant-a"])
+        ),
     )
     events = await _drain(service, "q")
     assert events[-1]["kind"] == "error"
     assert events[-1]["error_kind"] == "index_not_found"
+    # The console (one operator's) names the namespaces the store holds.
+    assert events[-1]["message"].endswith("Suffixes ingested on this store: tenant-a.")
     # Recorded as refused, which the dashboard does not count as an error
     # (rv25: an empty namespace's first question was one).
     (row,) = service.store.queries()
     assert row["outcome"] == "refused"
     totals = dashboard.summarize([row], [], Config())["totals"]
     assert (totals["errors"], totals["refused"]) == (0, 1)
+    await service.close()
+
+
+async def test_an_unexpected_failure_shows_no_text_and_keeps_its_ids(
+    tmp_path: Path,
+) -> None:
+    from unified_kg_rag.shared.exceptions import (
+        INTERNAL_ERROR_MESSAGE,
+        tag_query_failure,
+    )
+
+    error = RuntimeError("arn:aws:bedrock:region:000000000000:secret detail")
+    tag_query_failure(error, "q-chain", "trace-1")
+    service = AskService(
+        Config,
+        ConsoleStore(tmp_path / "s.sqlite3"),
+        chain_factory=lambda _c: _FailingChain(error),
+    )
+    events = await _drain(service, "q")
+    event = events[-1]
+    assert (event["kind"], event["error_kind"]) == ("error", "failure")
+    assert event["message"] == INTERNAL_ERROR_MESSAGE
+    # The console's own id (the chain reuses it), and the trace's.
+    assert event["query_id"] != "q-chain" and event["trace_id"] == "trace-1"
+    (row,) = service.store.queries()
+    assert row["trace_id"] == "trace-1"
+    assert "secret" not in str(row)
     await service.close()
 
 

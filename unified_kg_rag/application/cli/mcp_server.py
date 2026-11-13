@@ -28,6 +28,7 @@ from pydantic import (
     WithJsonSchema,
     create_model,
 )
+from structlog.contextvars import bound_contextvars
 
 from unified_kg_rag import __version__
 from unified_kg_rag.application.cli.mcp_tools import (
@@ -48,7 +49,11 @@ from unified_kg_rag.application.retrieval.rag_chain import (
 from unified_kg_rag.domain.models import SearchType
 from unified_kg_rag.domain.models.config import McpServerConfig
 from unified_kg_rag.shared import get_logger
-from unified_kg_rag.shared.exceptions import ConfigurationError, ErrorClass
+from unified_kg_rag.shared.exceptions import (
+    ConfigurationError,
+    ErrorClass,
+    query_failure_ids,
+)
 from unified_kg_rag.shared.extras import extra_hint
 
 if TYPE_CHECKING:
@@ -208,6 +213,7 @@ def _tool_function(
     returns: type[BaseModel],
     run: Callable[..., Awaitable[BaseModel]],
     tool_error: type[Exception],
+    namespaces: list[str],
 ) -> Callable[..., Awaitable[BaseModel]]:
     """An async function with the signature the SDK publishes as the
     tool's input schema, calling ``run``. A caller-correctable error keeps
@@ -231,9 +237,11 @@ def _tool_function(
         try:
             return await run(**checked)
         except Exception as e:
-            message, expected = describe_error(e)
+            message, expected = describe_error(e, namespaces)
             if not expected:
-                logger.error("MCP tool %s failed: %s", name, e, exc_info=True)
+                # Under the ids the caller's message names (query_id).
+                with bound_contextvars(**query_failure_ids(e)):
+                    logger.error("MCP tool %s failed: %s", name, e, exc_info=True)
             raise tool_error(message) from None
 
     tool.__name__ = name
@@ -573,7 +581,9 @@ def build_mcp_server(
     for name in limits.tools:
         parameters, returns, run = specs[name]
         server.add_tool(
-            _tool_function(name, parameters, returns, run, tool_error),
+            _tool_function(
+                name, parameters, returns, run, tool_error, tools.namespaces
+            ),
             name=name,
             description=f"{descriptions[name]} {UNTRUSTED_NOTE}",
             annotations=read_only,

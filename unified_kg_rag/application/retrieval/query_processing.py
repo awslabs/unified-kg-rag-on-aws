@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import hashlib
+import logging
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
@@ -57,6 +58,7 @@ from unified_kg_rag.domain.retrieval.degradation import DegradationStep
 from unified_kg_rag.domain.retrieval.keyword_fallback import fallback_outcome
 from unified_kg_rag.domain.retrieval.query_entities import split_entity_list
 from unified_kg_rag.shared import LanguageModelError, get_logger
+from unified_kg_rag.shared.logging import log_failure
 from unified_kg_rag.shared.usage import record_cache_hit
 from unified_kg_rag.shared.utils import text_digest
 
@@ -295,7 +297,12 @@ async def process_query(
     elif isinstance(translated_query, Exception):
         if not chain.ignore_errors or is_unreachable_error(translated_query):
             raise translated_query
-        logger.warning("Query translation failed: %s", translated_query)
+        log_failure(
+            logger,
+            logging.WARNING,
+            "Query translation failed: %s",
+            error=translated_query,
+        )
         record_degradation(
             DegradationStep.TRANSLATION, "searched untranslated", translated_query
         )

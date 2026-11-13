@@ -499,6 +499,119 @@ async def test_a_store_failure_reaches_the_caller_without_its_details(
 
 
 @requires_mcp
+async def test_an_unexpected_failure_is_logged_under_the_ids_the_caller_gets(
+    tools: KnowledgeGraphTools, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from mcp import Client
+    from structlog.contextvars import get_contextvars
+
+    from unified_kg_rag.application.cli import mcp_server
+    from unified_kg_rag.application.cli.mcp_server import build_mcp_server
+    from unified_kg_rag.shared.exceptions import tag_query_failure
+
+    async def broken(*_args: Any, **_kwargs: Any) -> Any:
+        error = RuntimeError("internal detail")
+        tag_query_failure(error, "q-traceback", "t-traceback")
+        raise error
+
+    logged: list[dict[str, Any]] = []
+    monkeypatch.setattr(mcp_tools.graph_lookup, "find_entities", broken)
+    monkeypatch.setattr(
+        mcp_server.logger,
+        "error",
+        lambda *_args, **_kwargs: logged.append(get_contextvars()),
+    )
+    async with Client(build_mcp_server(tools)) as client:
+        result = await client.call_tool("kg_get_entity", {"name": "Depot"})
+    assert result.is_error
+    text = " ".join(getattr(c, "text", "") for c in result.content)
+    assert "q-traceback" in text
+    # The traceback's line names the id the caller was told to look for.
+    assert logged == [{"query_id": "q-traceback", "trace_id": "t-traceback"}]
+
+
+@requires_mcp
+async def test_a_missing_namespace_names_only_the_namespaces_served(
+    index: Index, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from mcp import Client
+
+    from unified_kg_rag.application.cli.mcp_server import build_mcp_server
+    from unified_kg_rag.shared.exceptions import IndexNotFoundError
+
+    async def missing(*_args: Any, **_kwargs: Any) -> Any:
+        raise IndexNotFoundError(
+            "No indices found for suffix 'typo'.",
+            ingested=["default", "tenant-secret-co"],
+        )
+
+    monkeypatch.setattr(mcp_tools.graph_lookup, "find_entities", missing)
+    chain = index.chain()
+    try:
+        tools = KnowledgeGraphTools(
+            chain, settings=McpServerConfig(allowed_namespaces=["typo"])
+        )
+        async with Client(build_mcp_server(tools)) as client:
+            result = await client.call_tool(
+                "kg_get_entity", {"name": "Depot", "namespace": "typo"}
+            )
+    finally:
+        await chain.aclose()
+    assert result.is_error
+    text = " ".join(getattr(c, "text", "") for c in result.content)
+    assert "[index_not_found]" in text
+    assert "tenant-secret-co" not in text
+    assert "Namespaces served here that hold an index: default." in text
+
+
+class _Metrics:
+    def __init__(self) -> None:
+        self.rows: list[tuple[dict[str, float], dict[str, str]]] = []
+
+    def emit(
+        self,
+        namespace: str,
+        metrics: dict[str, float],
+        dimensions: dict[str, str] | None = None,
+    ) -> None:
+        self.rows.append((dict(metrics), dict(dimensions or {})))
+
+
+async def test_a_kg_answer_past_the_deadline_is_recorded_by_the_chain(
+    index: Index, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+
+    from unified_kg_rag.shared.exceptions import QueryTimeoutError, query_failure_ids
+
+    metrics = _Metrics()
+    monkeypatch.setattr(index.providers, "metrics_sink", metrics)
+    real_screen = GraphRAGChain._screen_input
+
+    async def slow_screen(self: GraphRAGChain, *args: Any, **kwargs: Any) -> Any:
+        await asyncio.sleep(3)
+        return await real_screen(self, *args, **kwargs)
+
+    monkeypatch.setattr(GraphRAGChain, "_screen_input", slow_screen)
+    config = index.config.updated({"search.query_timeout_seconds": 0.5})
+    chain = GraphRAGChain(config, providers=index.providers)
+    try:
+        with pytest.raises(QueryTimeoutError) as raised:
+            await KnowledgeGraphTools(chain).answer(
+                "가젯을 보관하는 곳은?", strategy="local"
+            )
+    finally:
+        await chain.aclose()
+    # The chain's own deadline fired (the call's, passed in), not the
+    # server's backstop: the query is counted, with its class and its ids.
+    assert "The query did not finish within 0.5 s" in str(raised.value)
+    assert query_failure_ids(raised.value).get("query_id")
+    ((values, dimensions),) = metrics.rows
+    assert values["query_failed"] == 1.0
+    assert dimensions["error_class"] == "timeout"
+
+
+@requires_mcp
 async def test_only_the_configured_tools_are_listed(index: Index) -> None:
     from mcp import Client
 

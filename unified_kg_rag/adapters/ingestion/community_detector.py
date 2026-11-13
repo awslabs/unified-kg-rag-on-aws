@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import json
+import logging
 import re
 import time
 from collections import defaultdict
@@ -65,6 +66,7 @@ from unified_kg_rag.domain.prompts import CommunityReportPrompt
 from unified_kg_rag.domain.prompts.delimiters import neutralise_delimiters
 from unified_kg_rag.ports.indexer import BaseIndexer
 from unified_kg_rag.shared import GraphError, get_logger
+from unified_kg_rag.shared.logging import log_failure
 from unified_kg_rag.shared.usage import record_cache_hit
 from unified_kg_rag.shared.utils import generate_stable_id
 
@@ -482,7 +484,12 @@ class CommunityDetector:
         except Exception as e:
             if not self.ignore_errors:
                 raise
-            logger.error("Error during community report generation: %s", e)
+            log_failure(
+                logger,
+                logging.ERROR,
+                "Error during community report generation: %s",
+                error=e,
+            )
             return [], [community.id for community in communities]
 
         return reports, failed

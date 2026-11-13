@@ -1,5 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import logging
 import time
 from collections import Counter
 from collections.abc import Callable
@@ -51,6 +52,7 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.domain.prompts import GraphExtractionPrompt
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
+from unified_kg_rag.shared.logging import log_failure
 from unified_kg_rag.shared.utils import clean_display_name, ensure_list, entity_key
 
 logger = get_logger(__name__)
@@ -256,7 +258,9 @@ class GraphExtractor(BaseProcessor):
         except Exception as e:
             if not self.ignore_errors:
                 raise
-            logger.error("Error during graph extraction: %s", e)
+            log_failure(
+                logger, logging.ERROR, "Error during graph extraction: %s", error=e
+            )
             self.stats.num_failed_extractions = len(text_units)
             self.stats.failed_text_unit_ids = [unit.id for unit in text_units]
             return [], self.stats

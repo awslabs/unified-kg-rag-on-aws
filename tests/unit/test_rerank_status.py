@@ -216,6 +216,20 @@ def test_runtime_failure_keeps_the_fused_order_and_reports_failed() -> None:
     assert rerank["reason"] == "rerank call failed: RuntimeError"
 
 
+def test_a_runtime_failure_logs_its_text_only_at_debug(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The provider's text can quote what it was sent (the query, passages).
+    scorer = _scorer(_FakeRerankFactory(_FakeReranker("boom")))
+    with caplog.at_level("DEBUG"):
+        _fuse(scorer, _results("text", "text"))
+    loud = [r.getMessage() for r in caplog.records if r.levelno >= logging.INFO]
+    quiet = [r.getMessage() for r in caplog.records if r.levelno < logging.INFO]
+    assert any("Reranking failed; keeping the fused order" in m for m in loud)
+    assert not any("rerank backend down" in m for m in loud)
+    assert any("rerank backend down" in m for m in quiet)
+
+
 def test_empty_rerank_output_is_failed() -> None:
     scorer = _scorer(_FakeRerankFactory(_FakeReranker("empty")))
     out, rerank = _fuse(scorer, _results("text", "text"))
