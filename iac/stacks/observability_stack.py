@@ -114,9 +114,20 @@ QUERY_OUTCOME_METRICS: tuple[str, ...] = (
     QUERY_DEGRADED_METRIC,
     QUERY_ABSTAINED_METRIC,
 )
+# The model requests Bedrock throttled for each query (read as Sum, on the
+# "Query outcomes" widget): this deployment's queries slowed or timed out by
+# the Bedrock quota, where the "Bedrock throttles (all models)" widget counts
+# every caller in the account and BedrockThrottling reads only the ingestion
+# stages.
+QUERY_THROTTLED_METRIC = "query_throttled_requests"
 # The failed share of queries (%) QueryFailures fires at, as AWS's
 # OpenSearch 5xx alarm fires at 10% of requests.
 QUERY_FAILED_SHARE = 10
+# The queries a 5-minute period needs before its failed share counts: on a
+# quiet host (an MCP server, the console) one failed query in each of two
+# periods must not page. Not measured (docs/operations.md, "Where each
+# threshold comes from").
+QUERY_FAILURES_MIN_QUERIES = 10
 
 # Document- and file-level outcomes of an ingestion run, as run-ingestion
 # emits them (one value per run, read as Sum; the file counts after
@@ -538,7 +549,8 @@ class ObservabilityStack(Stack):
                 title="Query outcomes",
                 left=[self._query_metric(QUERY_LATENCY_METRIC, "SampleCount")],
                 right=[
-                    self._query_metric(name, "Sum") for name in QUERY_OUTCOME_METRICS
+                    self._query_metric(name, "Sum")
+                    for name in (*QUERY_OUTCOME_METRICS, QUERY_THROTTLED_METRIC)
                 ],
             ),
         )
@@ -861,11 +873,15 @@ class ObservabilityStack(Stack):
         # Failed queries: a query that fails fast (store access denied, an
         # empty context) lowers the p90 instead of raising it, so the latency
         # alarm misses it. A missing failed count is no failure; a period
-        # without queries yields no value (not breaching).
+        # without queries yields no value (not breaching), one of fewer than
+        # QUERY_FAILURES_MIN_QUERIES reads 0.
         self._alarm(
             "QueryFailures",
             cw.MathExpression(
-                expression="100 * FILL(failed, 0) / queries",
+                expression=(
+                    f"IF(queries >= {QUERY_FAILURES_MIN_QUERIES}, "
+                    "100 * FILL(failed, 0) / queries, 0)"
+                ),
                 using_metrics={
                     "failed": self._query_metric(QUERY_FAILED_METRIC, "Sum"),
                     "queries": self._query_metric(QUERY_LATENCY_METRIC, "SampleCount"),
@@ -874,8 +890,9 @@ class ObservabilityStack(Stack):
                 period=Duration.minutes(5),
             ),
             QUERY_FAILED_SHARE,
-            f"At least {QUERY_FAILED_SHARE}% of queries failed in 2 of 3 "
-            "5-minute periods (all search strategies)",
+            f"At least {QUERY_FAILED_SHARE}% of queries (of "
+            f"{QUERY_FAILURES_MIN_QUERIES} or more in 5 minutes) failed in 2 of "
+            "3 5-minute periods (all search strategies)",
             evaluation_periods=3,
             datapoints_to_alarm=2,
         )
