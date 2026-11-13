@@ -14,6 +14,7 @@
   "nav.running_many": "{{count}} en cours",
   "nav.running_other": "{{count}} en cours",
   "shell.namespace": "Espace de noms",
+  "shell.namespaceEmpty": "Espace de noms, rien d’indexé pour l’instant",
   "shell.models": "Modèles",
   "shell.stores": "Stockages",
   "shell.language": "Langue",

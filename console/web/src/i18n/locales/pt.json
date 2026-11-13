@@ -14,6 +14,7 @@
   "nav.running_many": "{{count}} em execução",
   "nav.running_other": "{{count}} em execução",
   "shell.namespace": "Namespace",
+  "shell.namespaceEmpty": "Namespace, ainda sem nada indexado",
   "shell.models": "Modelos",
   "shell.stores": "Armazenamentos",
   "shell.language": "Idioma",

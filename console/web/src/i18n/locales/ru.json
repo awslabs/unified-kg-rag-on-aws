@@ -15,6 +15,7 @@
   "nav.running_many": "{{count}} выполняется",
   "nav.running_other": "{{count}} выполняется",
   "shell.namespace": "Пространство имён",
+  "shell.namespaceEmpty": "Пространство имён, пока ничего не проиндексировано",
   "shell.models": "Модели",
   "shell.stores": "Хранилища",
   "shell.language": "Язык",

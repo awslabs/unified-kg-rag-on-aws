@@ -12,6 +12,7 @@
   "nav.settings": "설정",
   "nav.running_other": "{{count}}개 실행 중",
   "shell.namespace": "네임스페이스",
+  "shell.namespaceEmpty": "네임스페이스(아직 수집된 내용 없음)",
   "shell.models": "모델",
   "shell.stores": "저장소",
   "shell.language": "언어",

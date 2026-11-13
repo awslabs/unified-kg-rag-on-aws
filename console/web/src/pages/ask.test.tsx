@@ -7,13 +7,13 @@ import { TrailProvider } from "../lib/trail";
 import type { Status } from "../lib/types";
 import { AskPage } from "./AskPage";
 
-const status = { config_path: "c.yaml", namespace: "default", jobs: [], sample_questions: ["Who ships parts?"] } as unknown as Status;
+const status = { config_path: "c.yaml", namespace: "default", jobs: [], sample_questions: ["Who ships parts?"], max_top_k: 40 } as unknown as Status;
 
-function serve(recorded: boolean) {
+function serve(recorded: boolean, indexed = recorded) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string) => {
-      const body = String(url).includes("namespace/methodologies") ? { namespace: "default", recorded, held: recorded ? ["graphrag"] : [], dropped: [] } : { strategies: [] };
+      const body = String(url).includes("namespace/methodologies") ? { namespace: "default", recorded, indexed, held: recorded ? ["graphrag"] : [], dropped: [] } : { strategies: [] };
       return new Response(JSON.stringify(body), { status: 200 });
     }),
   );
@@ -44,5 +44,20 @@ describe("AskPage welcome", () => {
     renderAsk();
     await waitFor(() => expect(screen.getByText("Who ships parts?")).toBeInTheDocument());
     expect(screen.queryByText(/Nothing is indexed/)).not.toBeInTheDocument();
+  });
+
+  it("reads an index without a build record as indexed: it answers", async () => {
+    serve(false, true);
+    renderAsk();
+    await waitFor(() => expect(screen.getByText("Who ships parts?")).toBeInTheDocument());
+    expect(screen.queryByText(/Nothing is indexed/)).not.toBeInTheDocument();
+  });
+
+  it("bounds top_k by the server's largest", async () => {
+    serve(true);
+    renderAsk();
+    await waitFor(() => expect(screen.getByText("Who ships parts?")).toBeInTheDocument());
+    const topK = document.querySelector<HTMLInputElement>('input[type="number"]');
+    expect(topK?.max).toBe("40");
   });
 });

@@ -13,6 +13,7 @@
   "nav.running_one": "{{count}} läuft",
   "nav.running_other": "{{count}} laufen",
   "shell.namespace": "Namespace",
+  "shell.namespaceEmpty": "Namespace, noch nichts indexiert",
   "shell.models": "Modelle",
   "shell.stores": "Speicher",
   "shell.language": "Sprache",

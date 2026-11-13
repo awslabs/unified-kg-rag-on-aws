@@ -6,7 +6,7 @@ import { ThemePicker } from "./components/ThemePicker";
 import { useI18n } from "./i18n/i18n";
 import { get } from "./lib/api";
 import { navigate, PAGES, useRoute, type Page } from "./lib/router";
-import type { Status } from "./lib/types";
+import type { NamespaceHeld, Status } from "./lib/types";
 import { useApi } from "./lib/useApi";
 import { useCompactNav } from "./lib/useCompactNav";
 import { AskPage } from "./pages/AskPage";
@@ -27,6 +27,12 @@ export function App() {
   // The row compacts in steps (tagline, field labels) and folds the links
   // into the menu only when it still does not fit, whatever the width.
   const fold = useCompactNav(navRow, [locale, running > 0, status.data?.namespace]);
+  // Whether the namespace holds an index (read again as jobs start and end).
+  const held = useApi(
+    () => (status.data?.namespace ? get<NamespaceHeld>("namespace/methodologies").catch(() => null) : Promise.resolve(null)),
+    [status.data?.namespace, status.data?.config_path, running],
+  );
+  const indexed = held.data ? held.data.indexed : null;
 
   useEffect(() => {
     document.title = `${t(`nav.${route.page}`)} · ${t("app.name")}`;
@@ -100,8 +106,8 @@ export function App() {
           </nav>
           <div className="nav-tools">
             {status.data?.namespace ? (
-              <span className="namespace-chip" title={t("shell.namespace")}>
-                <span className="visually-hidden">{t("shell.namespace")}</span>
+              <span className="namespace-chip" data-indexed={indexed === null ? undefined : String(indexed)} title={indexed === false ? t("shell.namespaceEmpty") : t("shell.namespace")}>
+                <span className="visually-hidden">{indexed === false ? t("shell.namespaceEmpty") : t("shell.namespace")}</span>
                 {status.data.namespace}
               </span>
             ) : null}

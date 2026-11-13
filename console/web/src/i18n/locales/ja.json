@@ -12,6 +12,7 @@
   "nav.settings": "設定",
   "nav.running_other": "{{count}} 件実行中",
   "shell.namespace": "名前空間",
+  "shell.namespaceEmpty": "名前空間（まだ何もインデックスされていません）",
   "shell.models": "モデル",
   "shell.stores": "ストア",
   "shell.language": "言語",

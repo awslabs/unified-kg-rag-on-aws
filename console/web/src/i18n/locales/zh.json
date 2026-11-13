@@ -12,6 +12,7 @@
   "nav.settings": "设置",
   "nav.running_other": "{{count}} 个运行中",
   "shell.namespace": "命名空间",
+  "shell.namespaceEmpty": "命名空间（尚无索引内容）",
   "shell.models": "模型",
   "shell.stores": "存储",
   "shell.language": "语言",
