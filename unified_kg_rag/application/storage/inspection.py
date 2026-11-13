@@ -5,9 +5,10 @@
 :func:`describe_namespace` reads the namespace's indices (live index, item
 counts, ``_meta``: the embedding model and dimension and the build record),
 the methodologies and strategies that build record serves, and the
-doc-status registry's records. :func:`export_graph` streams the namespace's
-entities, relationships, communities (their reports) and claims, with the
-text units they cite and each text unit's document, from the vector store
+doc-status registry's records. :func:`export_graph` streams every kind of
+item the namespace stores (text units, entities, relationships, communities'
+reports, claims, RAPTOR summary nodes), with the text units each cites and
+each text unit's document, from the vector store
 into JSON Lines or GraphML, a page at a time. ``run-describe`` drives both.
 """
 
@@ -42,7 +43,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
-from unified_kg_rag.ports.indexer import StoredItemKind
+from unified_kg_rag.ports.indexer import STORED_ITEM_KINDS, StoredItemKind
 from unified_kg_rag.shared import ConfigurationError, get_logger
 from unified_kg_rag.shared.exceptions import (
     DocStatusFormatError,
@@ -260,14 +261,12 @@ def _registry_records(
         return None, reason
 
 
-# Export: the kinds in the order they are written (text units first, so
-# every later item can name the documents of the text units it cites).
+# Export: every stored kind, text units first, so every later item can name
+# the documents of the text units it cites; a kind the port adds is
+# exported too (its record type must be named here).
 _EXPORT_KINDS: tuple[StoredItemKind, ...] = (
     "text_units",
-    "entities",
-    "relationships",
-    "community_reports",
-    "claims",
+    *(kind for kind in STORED_ITEM_KINDS if kind != "text_units"),
 )
 # Each record's ``kind``: the section type a source of it names
 # (``SectionType``), a text unit's ``text``.
@@ -277,6 +276,7 @@ _RECORD_TYPE: dict[StoredItemKind, SectionType] = {
     "relationships": SectionType.RELATIONSHIP,
     "community_reports": SectionType.COMMUNITY,
     "claims": SectionType.CLAIM,
+    "summary_nodes": SectionType.SUMMARY,
 }
 
 
@@ -308,8 +308,9 @@ def export_graph(
 
     ``jsonl``: one JSON object per line, ``kind`` ``text``, ``entity``,
     ``relationship``, ``community`` (a community report: level, parent and
-    child communities, summary) or ``claim``, with the stored fields (no
-    vector) and ``documents``, the files of the text units it cites.
+    child communities, summary), ``claim`` or ``summary`` (a RAPTOR
+    summary node), with the stored fields (no vector) and ``documents``, the
+    files of the text units it cites.
     ``graphml``: the entities as nodes and the relationships as edges, the
     communities as nodes of type ``community`` linked to their parent, each
     with its text unit ids and documents as attributes (lists as JSON).

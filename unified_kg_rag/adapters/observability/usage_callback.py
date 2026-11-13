@@ -131,8 +131,8 @@ class UsageCallbackHandler(BaseCallbackHandler):
             "Model '%s' reported %.2f times the input tokens the local token "
             "estimate counted for its prompts (%d calls). The budgets of a model "
             "without a token-count API (context packing, truncation) are taken "
-            "from that estimate and %s; the estimate's characters per token by "
-            "script are unified_kg_rag.shared.utils.scripts.SCRIPTS",
+            "from that estimate and %s. A model served outside Bedrock can count "
+            "with a tokenizer instead (providers.llm.tokenizer: tiktoken)",
             self.model_id,
             ratio,
             calls,

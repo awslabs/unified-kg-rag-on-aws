@@ -104,7 +104,6 @@ def write_workspace(
     seed: int = 1,
     stores: str = "sqlite",
     all_methodologies: bool = True,
-    lease_seconds: float | None = None,
 ) -> Path:
     """Write the workspace and return its config path."""
     corpus, demo = _demo_modules()
@@ -132,8 +131,6 @@ def write_workspace(
     }
     if all_methodologies:
         config.setdefault("indexing", {})["methodologies"] = ALL_METHODOLOGIES
-    if lease_seconds is not None:
-        config.setdefault("indexing", {})["lease_seconds"] = lease_seconds
     if stores == "containers":
         # docker/compose.local.yaml's OpenSearch and Gremlin Server.
         config["providers"]["graph"] = {"kind": "gremlin"}
@@ -161,7 +158,6 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="index the default methodologies only (no ppr, tree)",
     )
-    parser.add_argument("--lease-seconds", type=float)
     args = parser.parse_args(argv)
     print(
         write_workspace(
@@ -173,7 +169,6 @@ def main(argv: list[str] | None = None) -> int:
             seed=args.seed,
             stores=args.stores,
             all_methodologies=not args.lightrag_graphrag_only,
-            lease_seconds=args.lease_seconds,
         )
     )
     return 0

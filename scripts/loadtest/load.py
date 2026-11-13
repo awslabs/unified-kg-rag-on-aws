@@ -3,23 +3,27 @@
 """Drive queries at a ``GraphRAGChain`` or the console and report latency,
 throughput, errors and resources (docs/guides/load-testing.md).
 
-Local only: it unsets the AWS credential variables, turns the instance
-metadata lookup off and refuses a config whose models are not on a loopback
-address or that names an AWS store.
+Local only: it unsets every ``AWS_*`` variable, points the shared AWS config
+and credentials files at the null device, turns the instance metadata lookup
+off and refuses a config whose models or stores are not of a local kind on a
+loopback address, or that screens with the Bedrock guardrail.
 
 Modes:
 
 - ``sweep``: after one warm-up pass, ``--queries`` queries at each
   concurrency of ``--levels``, in process. Per level: p50/p95/p99,
-  throughput, errors by ``ErrorClass`` (and by strategy), degraded and
-  empty answers, and the event-loop lag (a 10 ms ticker's overshoot: the
+  throughput, errors by ``ErrorClass`` (and by strategy) with the latency
+  of the failed queries, the answers without evidence (no sources,
+  abstained, empty), degraded or with unresolved citations (``flags``), and
+  the event-loop lag (a 10 ms ticker's overshoot: the
   time the loop spent in code that does not yield).
 - ``soak``: ``--concurrency`` workers for ``--duration`` seconds, sampling
   RSS, file descriptors (SQLite files and sockets apart), threads, gc
   objects, asyncio tasks and conversations every ``--sample`` seconds
   (``--csv``), and the per-hour slope of each over the second half.
 - ``http``: ``sweep`` through a running console's ``/api/ask`` (server-sent
-  events), with the time to the first event.
+  events), with the time to the first event; its loop lag is this
+  client's (``client_loop_lag_*``), not the console's.
 - ``gate``: check a report against the nightly gates (harness.Gates); exit 1
   naming each failure.
 
@@ -47,7 +51,7 @@ import threading
 import time
 from array import array
 from collections import Counter
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -57,21 +61,25 @@ from harness import (
     Gates,
     Histogram,
     check_gates,
+    local_only_env,
     percentile,
+    second_half_rise,
     summarize,
     trends_per_hour,
 )
 
-for _name in (
-    "AWS_ACCESS_KEY_ID",
-    "AWS_SECRET_ACCESS_KEY",
-    "AWS_SESSION_TOKEN",
-    "AWS_PROFILE",
-):
-    os.environ.pop(_name, None)
-os.environ["AWS_EC2_METADATA_DISABLED"] = "true"
-
 LOOPBACK = frozenset({"127.0.0.1", "localhost", "::1"})
+# The provider kinds that run on this host (provider_config's built-in
+# kinds): a store or model kind not named here (dynamodb, neptune, bedrock,
+# a plugin's) is refused, whatever its endpoint.
+LOCAL_KINDS: dict[str, frozenset[str]] = {
+    "llm": frozenset({"ollama", "openai_compatible"}),
+    "embedding": frozenset({"ollama", "openai_compatible"}),
+    "rerank": frozenset({"cross_encoder", "none"}),
+    "graph": frozenset({"sqlite", "gremlin"}),
+    "vector": frozenset({"sqlite", "opensearch"}),
+    "doc_status": frozenset({"sqlite"}),
+}
 
 # A query per strategy, in English, Korean and Japanese, each answerable from
 # the demo corpus (console/demo/corpus.py).
@@ -110,20 +118,29 @@ def _host(endpoint: str) -> str | None:
 
 
 def refuse_remote(config: Any) -> None:
-    """Exit unless the config is ``backend: local`` and every model and
-    store endpoint it reaches is on a loopback address."""
+    """Exit unless the config is ``backend: local``, every model and store
+    is of a :data:`LOCAL_KINDS` kind (the registry only when it is on), no
+    Bedrock guardrail screens queries and every endpoint it reaches is on a
+    loopback address."""
     providers = config.providers
-    if config.backend != "local" or "bedrock" in (
-        providers.llm.kind,
-        providers.embedding.kind,
-        providers.rerank.kind,
-    ):
+    if config.backend != "local":
         raise SystemExit("refusing AWS models or stores: use backend: local")
+    for role, kinds in LOCAL_KINDS.items():
+        section = getattr(providers, role)
+        if role == "doc_status" and not section.enabled:
+            continue
+        if section.kind not in kinds:
+            raise SystemExit(
+                f"refusing providers.{role}.kind {section.kind!r}: not one of "
+                f"{', '.join(sorted(kinds))}"
+            )
+    if config.aws.bedrock.guardrail.enabled:
+        raise SystemExit("refusing the Bedrock guardrail: turn it off")
     endpoints = [
         getattr(section, "base_url", None)
         for section in (providers.llm, providers.embedding, providers.rerank)
     ]
-    if providers.graph.kind in ("gremlin", "neptune"):
+    if providers.graph.kind == "gremlin":
         endpoints.append(config.aws.neptune.endpoint or "")
     if providers.vector.kind == "opensearch":
         endpoints.append(config.aws.opensearch.endpoint or "")
@@ -138,12 +155,44 @@ class Tally:
 
     # 8 bytes a value (a list of floats takes 32): a soak keeps every one.
     latencies: array[float] = field(default_factory=lambda: array("d"))
+    # When each failed query ended (a deadline shows here).
+    error_latencies: array[float] = field(default_factory=lambda: array("d"))
     errors: Counter[str] = field(default_factory=Counter)
     flags: Counter[str] = field(default_factory=Counter)
     lags: Histogram = field(default_factory=Histogram)
 
     def report(self, wall: float) -> dict[str, Any]:
-        return summarize(self.latencies, self.errors, wall, self.flags, self.lags)
+        return summarize(
+            self.latencies,
+            self.errors,
+            wall,
+            self.flags,
+            self.lags,
+            self.error_latencies,
+        )
+
+    def failed(self, strategy: str, error_class: str, started: float) -> None:
+        self.errors[f"{strategy}:{error_class}"] += 1
+        self.error_latencies.append(time.perf_counter() - started)
+
+    def answered(
+        self, strategy: str, answer: Mapping[str, Any], started: float
+    ) -> None:
+        """An answer's latency and its flags, from its ``AnswerView`` fields
+        (the in-process view, or the console's result event): without
+        evidence (``no_sources``, ``abstained``, ``empty_answer``), degraded,
+        or with unresolved citations."""
+        self.latencies.append(time.perf_counter() - started)
+        flags = {
+            "no_sources": not answer.get("sources"),
+            "abstained": bool(answer.get("abstained")),
+            "empty_answer": not str(answer.get("answer") or "").strip(),
+            "degraded": bool(answer.get("degraded")),
+            "citations_unresolved": bool(answer.get("citations_unresolved")),
+        }
+        for kind, raised in flags.items():
+            if raised:
+                self.flags[f"{kind}:{strategy}"] += 1
 
 
 async def ask(
@@ -154,9 +203,9 @@ async def ask(
     query_seconds: float,
     conversation: str | None = None,
 ) -> None:
-    """One query: its latency on success, else its ``strategy:error_class``
-    (a raised error, or the error answer of ``processing.ignore_errors``);
-    a degraded, citation-unresolved or empty answer is flagged."""
+    """One query: its latency on success (and its flags, :meth:`Tally.answered`),
+    else its ``strategy:error_class`` and latency (a raised error, or the
+    error answer of ``processing.ignore_errors``)."""
     from unified_kg_rag import RAGInput, classify_error
     from unified_kg_rag.application.presentation.answer_view import AnswerView
 
@@ -174,19 +223,15 @@ async def ask(
             query_seconds,
         )
     except Exception as e:  # noqa: BLE001 - counted by class
-        tally.errors[f"{strategy}:{classify_error(e).value}"] += 1
+        tally.failed(strategy, classify_error(e).value, started)
         return
     view = AnswerView.from_output(output)
     if view.error:
-        tally.errors[f"{strategy}:{view.error_class or 'failure'}"] += 1
+        tally.failed(strategy, view.error_class or "failure", started)
         return
-    tally.latencies.append(time.perf_counter() - started)
-    if view.degraded:
-        tally.flags[f"degraded:{strategy}"] += 1
-    if view.citations_unresolved:
-        tally.flags[f"citations_unresolved:{strategy}"] += 1
-    if not view.answer.strip():
-        tally.flags[f"empty_answer:{strategy}"] += 1
+    # The fields the flags read, not a dump of every source's text.
+    fields = ("answer", "sources", "abstained", "degraded", "citations_unresolved")
+    tally.answered(strategy, {k: getattr(view, k) for k in fields}, started)
 
 
 async def with_loop_lag(
@@ -331,6 +376,7 @@ async def soak(
         "duration_seconds": duration,
         **tally.report(wall),
         "trends_per_hour": trends_per_hour(samples),
+        "second_half_rise": second_half_rise(samples),
         "first_sample": samples[0] if samples else None,
         "last_sample": samples[-1] if samples else None,
     }
@@ -368,7 +414,7 @@ async def http_level(
             body = {"query": query, "search_strategy": strategy}
             async with client.stream("POST", "/api/ask", json=body) as response:
                 if response.status_code != 200:
-                    tally.errors[f"{strategy}:http_{response.status_code}"] += 1
+                    tally.failed(strategy, f"http_{response.status_code}", started)
                     await response.aread()
                     return
                 async for line in response.aiter_lines():
@@ -381,30 +427,32 @@ async def http_level(
                     if event.get("kind") in ("result", "error"):
                         result = event
             if result is None:
-                tally.errors[f"{strategy}:no_result"] += 1
+                tally.failed(strategy, "no_result", started)
             elif result["kind"] == "error" or result.get("error"):
                 kind = (
                     result.get("error_kind") or result.get("error_class") or "failure"
                 )
-                tally.errors[f"{strategy}:{kind}"] += 1
+                tally.failed(strategy, kind, started)
             else:
-                tally.latencies.append(time.perf_counter() - started)
+                tally.answered(strategy, result, started)
                 first_events.append(first or 0.0)
-                if result.get("degraded"):
-                    tally.flags[f"degraded:{strategy}"] += 1
 
         async def worker() -> None:
             while not queue.empty():
                 query, strategy = queue.get_nowait()
+                started = time.perf_counter()
                 try:
                     await one(query, strategy)
                 except httpx.HTTPError as e:
-                    tally.errors[f"{strategy}:{type(e).__name__}"] += 1
+                    tally.failed(strategy, type(e).__name__, started)
 
         wall = await with_loop_lag(
             tally, asyncio.gather(*(worker() for _ in range(concurrency)))
         )
     report = {"concurrency": concurrency, **tally.report(wall)}
+    # The lag of this client's loop, not the console's: named apart.
+    for key in ("loop_lag_p99_ms", "loop_lag_max_ms"):
+        report[f"client_{key}"] = report.pop(key)
     report["first_event_p50"] = (
         round(percentile(first_events, 0.5), 3) if first_events else None
     )
@@ -460,6 +508,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--max-rss-mb-per-hour", type=float, default=Gates.rss_slope_mb_per_hour
     )
+    parser.add_argument(
+        "--rss-rise-floor-mb",
+        type=float,
+        default=Gates.rss_rise_floor_mb,
+        help="gate: RSS fails only past both the rate and this rise",
+    )
+    parser.add_argument(
+        "--max-flags",
+        type=int,
+        default=Gates.max_flags,
+        help="gate: flagged answers per level (no sources, abstained, ...)",
+    )
     args = parser.parse_args(argv)
     mix = query_mix(args.strategies)
     levels = [int(c) for c in args.levels.split(",") if c]
@@ -468,7 +528,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.mode == "gate":
         if args.report is None:
             parser.error("gate needs the report path")
-        gates = Gates(args.max_errors, args.max_loop_lag_ms, args.max_rss_mb_per_hour)
+        gates = Gates(
+            max_errors=args.max_errors,
+            loop_lag_p99_ms=args.max_loop_lag_ms,
+            rss_slope_mb_per_hour=args.max_rss_mb_per_hour,
+            rss_rise_floor_mb=args.rss_rise_floor_mb,
+            max_flags=args.max_flags,
+        )
         failures = check_gates(
             json.loads(args.report.read_text(encoding="utf-8")), gates
         )
@@ -476,6 +542,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"GATE FAILED: {failure}")
         print("gates passed" if not failures else f"{len(failures)} gate(s) failed")
         return 1 if failures else 0
+    # Before anything builds a model or store client (gate reads a file).
+    local = local_only_env(os.environ)
+    os.environ.clear()
+    os.environ.update(local)
     if args.mode == "http":
         token = os.environ.get("UKR_CONSOLE_TOKEN", "")
         if not args.console or not token:

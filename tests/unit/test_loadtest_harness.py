@@ -13,6 +13,7 @@ from __future__ import annotations
 import importlib
 import json
 import math
+import os
 import threading
 import time
 from collections.abc import Iterator
@@ -125,6 +126,9 @@ def test_trends_use_the_second_half_per_hour() -> None:
     # a key not in every sample of the second half is not reported
     assert "fds" not in trends
     assert harness.trends_per_hour([]) == {}
+    # the rise is the fit over the second half's span: 9 s at 1 KB a second
+    assert harness.second_half_rise(samples)["rss_kb"] == pytest.approx(9.0)
+    assert harness.second_half_rise([]) == {}
 
 
 # -- gates ------------------------------------------------------------------
@@ -136,7 +140,17 @@ def _level(**overrides: Any) -> dict[str, Any]:
         "requests": 100,
         "errors": 0,
         "errors_by_strategy": {},
+        "flags": {},
         "loop_lag_p99_ms": 12.0,
+        **overrides,
+    }
+
+
+def _soak(mb_per_hour: float, rise_mb: float, **overrides: Any) -> dict[str, Any]:
+    return {
+        **_level(concurrency=8),
+        "trends_per_hour": {"rss_kb": mb_per_hour * 1024},
+        "second_half_rise": {"rss_kb": rise_mb * 1024},
         **overrides,
     }
 
@@ -144,7 +158,7 @@ def _level(**overrides: Any) -> dict[str, Any]:
 def _report(**overrides: Any) -> dict[str, Any]:
     return {
         "sweep": [_level(concurrency=1), _level(concurrency=16)],
-        "soak": {**_level(concurrency=8), "trends_per_hour": {"rss_kb": 4.5 * 1024}},
+        "soak": _soak(4.5, 1.5),
         "chaos": [{"name": "kill", "converged": True, "detail": ""}],
         **overrides,
     }
@@ -164,11 +178,17 @@ def test_a_clean_report_passes_the_gates() -> None:
         (_report(sweep=[_level(loop_lag_p99_ms=100.0)]), "event-loop lag p99 100.0 ms"),
         (_report(sweep=[_level(loop_lag_p99_ms=None)]), "no event-loop lag"),
         (_report(sweep=[_level(requests=0)]), "no requests ran"),
-        (
-            _report(soak={**_level(), "trends_per_hour": {"rss_kb": 10 * 1024}}),
-            "RSS grows 10.0 MB/h",
-        ),
+        (_report(soak=_soak(10, 8)), "RSS grows 10.0 MB/h, 8.0 MB over"),
+        (_report(soak=_soak(96, 8)), "RSS grows 96.0 MB/h"),
         (_report(soak={**_level(), "trends_per_hour": {}}), "no RSS trend"),
+        (
+            _report(soak={**_level(), "trends_per_hour": {"rss_kb": 1.0}}),
+            "no RSS trend",
+        ),
+        (
+            _report(sweep=[_level(flags={"no_sources:mix": 2, "abstained:mix": 1})]),
+            "3 flagged answers (max 0)",
+        ),
         (
             _report(chaos=[{"name": "throttle", "converged": False, "detail": "x"}]),
             "chaos throttle: did not converge",
@@ -181,9 +201,38 @@ def test_each_gate_fails_its_report(report: dict[str, Any], expected: str) -> No
     assert expected in failures[0]
 
 
+def test_a_short_soak_fails_on_rss_only_past_the_floor() -> None:
+    # The clean 10-minute soak that failed the rate alone: about 1 MB over
+    # its 300-second second half is 12 MB/h, and allocator noise.
+    samples = [{"t": float(t), "rss_kb": 150_000.0} for t in range(0, 300, 10)]
+    samples += [
+        {"t": float(t), "rss_kb": 150_000 + (t - 300) * 1024 / 290}
+        for t in range(300, 600, 10)
+    ]
+    trend = harness.trends_per_hour(samples)["rss_kb"] / 1024
+    rise = harness.second_half_rise(samples)["rss_kb"] / 1024
+    assert trend > 10 and rise == pytest.approx(1.0, abs=0.05)
+    soak = _soak(trend, rise)
+    assert harness.check_gates(_report(soak=soak)) == []
+    # ... a real leak in the same run is past both
+    assert harness.check_gates(_report(soak=_soak(120, 10)))
+    # ... and a long soak growing slowly is past both too
+    assert harness.check_gates(
+        _report(soak=_soak(12, 9)), harness.Gates(rss_rise_floor_mb=8)
+    )
+
+
 def test_gate_thresholds_are_parameters() -> None:
     report = _report(sweep=[_level(errors=2)])
     assert harness.check_gates(report, harness.Gates(max_errors=2)) == []
+    flagged = _report(sweep=[_level(flags={"degraded:mix": 1})])
+    assert harness.check_gates(flagged, harness.Gates(max_flags=1)) == []
+    assert (
+        harness.check_gates(
+            _report(soak=_soak(12, 9)), harness.Gates(rss_rise_floor_mb=10)
+        )
+        == []
+    )
     no_convergence = harness.Gates(require_convergence=False)
     failing = _report(chaos=[{"name": "kill", "converged": False}])
     assert harness.check_gates(failing, no_convergence) == []
@@ -302,7 +351,9 @@ def load() -> ModuleType:
     return _import("load")
 
 
-def _config(backend: str = "local", **providers: Any) -> SimpleNamespace:
+def _config(
+    backend: str = "local", guardrail: bool = False, **providers: Any
+) -> SimpleNamespace:
     section = SimpleNamespace(kind="ollama", base_url="http://127.0.0.1:11500")
     defaults = {
         "llm": section,
@@ -310,12 +361,14 @@ def _config(backend: str = "local", **providers: Any) -> SimpleNamespace:
         "rerank": SimpleNamespace(kind="none"),
         "graph": SimpleNamespace(kind="sqlite"),
         "vector": SimpleNamespace(kind="sqlite"),
+        "doc_status": SimpleNamespace(kind="sqlite", enabled=True),
     }
     aws = SimpleNamespace(
         neptune=SimpleNamespace(endpoint="localhost"),
         opensearch=SimpleNamespace(
             endpoint="https://search-x.us-west-2.es.amazonaws.com"
         ),
+        bedrock=SimpleNamespace(guardrail=SimpleNamespace(enabled=guardrail)),
     )
     return SimpleNamespace(
         backend=backend, aws=aws, providers=SimpleNamespace(**{**defaults, **providers})
@@ -326,8 +379,16 @@ def test_the_driver_refuses_anything_not_local(load: ModuleType) -> None:
     load.refuse_remote(_config())
     # the compose stores are on localhost
     load.refuse_remote(_config(graph=SimpleNamespace(kind="gremlin")))
+    # a registry that is off is never reached, whatever its kind
+    load.refuse_remote(
+        _config(doc_status=SimpleNamespace(kind="dynamodb", enabled=False))
+    )
     remote = SimpleNamespace(kind="ollama", base_url="http://models.example.com:11434")
     for config in (
+        _config(doc_status=SimpleNamespace(kind="dynamodb", enabled=True)),
+        _config(graph=SimpleNamespace(kind="neptune")),  # under backend: local
+        _config(vector=SimpleNamespace(kind="my_plugin_store")),
+        _config(guardrail=True),
         _config(llm=remote),
         _config(embedding=SimpleNamespace(kind="bedrock")),
         _config(rerank=SimpleNamespace(kind="bedrock")),
@@ -337,6 +398,22 @@ def test_the_driver_refuses_anything_not_local(load: ModuleType) -> None:
     ):
         with pytest.raises(SystemExit):
             load.refuse_remote(config)
+
+
+def test_the_environment_reaches_no_aws_account() -> None:
+    env = harness.local_only_env(
+        {
+            "AWS_PROFILE": "prod",
+            "AWS_REGION": "us-east-1",
+            "AWS_SECRET_ACCESS_KEY": "x",
+            "HOME": "/home/u",
+        }
+    )
+    assert env["HOME"] == "/home/u" and "AWS_PROFILE" not in env
+    assert "AWS_REGION" not in env and "AWS_SECRET_ACCESS_KEY" not in env
+    # the profiles and SSO cache of ~/.aws are not read
+    assert env["AWS_CONFIG_FILE"] == env["AWS_SHARED_CREDENTIALS_FILE"] == os.devnull
+    assert env["AWS_EC2_METADATA_DISABLED"] == "true"
 
 
 def test_the_query_mix_covers_every_strategy_and_language(load: ModuleType) -> None:
@@ -352,6 +429,34 @@ def test_the_query_mix_covers_every_strategy_and_language(load: ModuleType) -> N
     assert len(load.query_mix("ppr")) == 1
 
 
+def test_an_answer_without_evidence_is_flagged(load: ModuleType) -> None:
+    tally = load.Tally()
+    started = time.perf_counter()
+    source = {"kind": "text", "text": "Umbra Freight delivers"}
+    tally.answered("mix", {"answer": "Umbra Freight.", "sources": [source]}, started)
+    assert not tally.flags
+    # the answer of an empty context: no error, no source, abstained
+    abstained = {"answer": "I could not find it.", "sources": [], "abstained": True}
+    tally.answered("local", abstained, started)
+    tally.answered(
+        "ppr", {"answer": " ", "sources": [source], "degraded": [{}]}, started
+    )
+    assert dict(tally.flags) == {
+        "no_sources:local": 1,
+        "abstained:local": 1,
+        "empty_answer:ppr": 1,
+        "degraded:ppr": 1,
+    }
+    tally.failed("tree", "timeout", started)
+    report = tally.report(1.0)
+    assert report["ok"] == 3 and report["errors_by_strategy"] == {"tree:timeout": 1}
+    assert report["error_max"] is not None and report["error_max"] >= 0
+    failures = harness.check_gates({"sweep": [{**report, "concurrency": 1}]})
+    assert any(
+        "4 flagged answers (max 0): abstained 1, degraded 1" in f for f in failures
+    )
+
+
 def test_the_gate_mode_exits_one_on_a_failed_gate(
     load: ModuleType, tmp_path: Path
 ) -> None:
@@ -361,6 +466,9 @@ def test_the_gate_mode_exits_one_on_a_failed_gate(
     path.write_text(json.dumps(_report(sweep=[_level(errors=3)])), encoding="utf-8")
     assert load.main(["gate", str(path)]) == 1
     assert load.main(["gate", str(path), "--max-errors", "3"]) == 0
+    path.write_text(json.dumps(_report(soak=_soak(30, 9))), encoding="utf-8")
+    assert load.main(["gate", str(path)]) == 1
+    assert load.main(["gate", str(path), "--rss-rise-floor-mb", "10"]) == 0
 
 
 # -- the chaos model server -------------------------------------------------
@@ -447,3 +555,50 @@ def test_the_fault_draws_follow_the_knobs(chaos_models: ModuleType) -> None:
     assert all(never.begin("chat")[1] is None for _ in range(50))
     with pytest.raises(ValueError):
         chaos_models.Chaos(typo=1.0)
+
+
+# -- the nightly run's pieces -----------------------------------------------
+
+
+@pytest.mark.timeout(240)
+def test_the_nightly_workspace_ingests_and_exports(tmp_path: Path) -> None:
+    """What the nightly composes, end to end on a small corpus: the model
+    server process, a workspace (every methodology), one ingestion run and
+    its export, which converges with itself and holds every methodology's
+    artifacts; a reset keeps the corpus and config only. A signature or
+    config change that breaks the nightly fails here, in the pull request."""
+    nightly = _import("nightly")
+    models = nightly.Models(tmp_path)
+    try:
+        ws = tmp_path / "ws"
+        config = nightly.write_workspace(ws, models.port, docs=3, lang="mixed")
+        from unified_kg_rag import get_config
+
+        assert get_config(str(config)).backend == "local"
+        build = nightly.ingest(ws, "full")
+        assert build["exit"] == 0 and build["status"] == "completed", build
+        assert models.chat_calls() > 0
+        a = nightly.export(ws, tmp_path / "a.jsonl")
+        b = nightly.export(ws, tmp_path / "b.jsonl")
+    finally:
+        models.close()
+    diffs = compare_exports.compare_files(a, b)
+    assert compare_exports.converged(diffs)
+    kinds = {d.kind for d in diffs}
+    assert {"text", "entity", "relationship", "community"} <= kinds
+    assert "summary" in kinds  # raptor's tree is compared too
+    nightly.reset(ws)
+    assert {p.name for p in ws.iterdir()} == set(nightly.KEEP)
+    report = {
+        "sweep": [{**_level(), "throughput_rps": 1.0, "p50": 0.1, "p99": 0.2}],
+        "soak": {
+            **_soak(1, 0.5),
+            "duration_seconds": 60,
+            "throughput_rps": 1.0,
+            "p50": 0.1,
+            "p99": 0.2,
+        },
+        "chaos": [{"name": "kill", "converged": True, "detail": ""}],
+        "gate_failures": [],
+    }
+    assert "Gates: passed" in nightly.markdown(report)

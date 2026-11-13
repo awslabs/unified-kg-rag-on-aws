@@ -11,9 +11,10 @@ or a network.
 from __future__ import annotations
 
 import math
+import os
 import statistics
 from collections import Counter
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -29,6 +30,20 @@ TREND_KEYS: tuple[str, ...] = (
     "asyncio_tasks",
     "window_p95",
 )
+
+
+def local_only_env(environ: Mapping[str, str]) -> dict[str, str]:
+    """``environ`` with nothing that reaches AWS: no ``AWS_*`` variable (keys,
+    profile, region), no shared config or credentials file (an SSO cache or a
+    profile in ``~/.aws`` would otherwise still sign requests) and no
+    instance metadata lookup."""
+    env = {k: v for k, v in environ.items() if not k.startswith("AWS_")}
+    env.update(
+        AWS_EC2_METADATA_DISABLED="true",
+        AWS_CONFIG_FILE=os.devnull,
+        AWS_SHARED_CREDENTIALS_FILE=os.devnull,
+    )
+    return env
 
 
 def percentile(values: Sequence[float], p: float) -> float:
@@ -85,10 +100,13 @@ def summarize(
     wall_seconds: float,
     flags: Mapping[str, int] | None = None,
     loop_lag: Histogram | None = None,
+    error_latencies: Sequence[float] = (),
 ) -> dict[str, Any]:
-    """One level's report: requests, throughput, latency quantiles, the
-    errors by ``strategy:error_class`` and by class alone, the flags
-    (degraded or empty answers) and the event-loop lag in milliseconds."""
+    """One level's report: requests, throughput, latency quantiles of the
+    answers and of the errors (when each failed: a deadline shows there),
+    the errors by ``strategy:error_class`` and by class alone, the flags
+    (answers without evidence or degraded, ``kind:strategy``) and the
+    event-loop lag in milliseconds."""
     failed = sum(errors.values())
     requests = len(latencies) + failed
     by_class: Counter[str] = Counter()
@@ -108,6 +126,8 @@ def summarize(
         "p95": _rounded(percentile(latencies, 0.95)),
         "p99": _rounded(percentile(latencies, 0.99)),
         "max": round(max(latencies), 3) if latencies else None,
+        "error_p99": _rounded(percentile(error_latencies, 0.99)),
+        "error_max": round(max(error_latencies), 3) if error_latencies else None,
         "loop_lag_p99_ms": _rounded(lag.percentile(0.99) * 1000, 1),
         "loop_lag_max_ms": round(lag.max * 1000, 1) if lag.count else None,
     }
@@ -129,15 +149,13 @@ def slope(xs: Sequence[float], ys: Sequence[float]) -> float:
     )
 
 
-def trends_per_hour(
-    samples: Sequence[Mapping[str, Any]], keys: Iterable[str] = TREND_KEYS
-) -> dict[str, float]:
-    """Per-hour slope of each numeric sample key over the second half of
-    ``samples`` (the first half is warm-up: caches and pools fill). Each
-    sample holds ``t``, its time in seconds; a key missing from a sample in
-    that half is not reported."""
+def _second_half(
+    samples: Sequence[Mapping[str, Any]], keys: Iterable[str]
+) -> Iterator[tuple[str, list[float], list[float]]]:
+    """Each key's ``(times, values)`` over the second half of ``samples``
+    (the first half is warm-up: caches and pools fill); a key missing from
+    a sample in that half is left out."""
     half = samples[len(samples) // 2 :]
-    trends: dict[str, float] = {}
     for key in keys:
         points = [
             (float(s["t"]), float(s[key]))
@@ -146,18 +164,59 @@ def trends_per_hour(
         ]
         if half and len(points) == len(half):
             xs, ys = zip(*points, strict=True)
-            trends[key] = round(slope(xs, ys) * 3600, 2)
-    return trends
+            yield key, list(xs), list(ys)
+
+
+def trends_per_hour(
+    samples: Sequence[Mapping[str, Any]], keys: Iterable[str] = TREND_KEYS
+) -> dict[str, float]:
+    """Per-hour slope of each numeric sample key over the second half of
+    ``samples``. Each sample holds ``t``, its time in seconds; a key missing
+    from a sample in that half is not reported."""
+    return {
+        key: round(slope(xs, ys) * 3600, 2)
+        for key, xs, ys in _second_half(samples, keys)
+    }
+
+
+def second_half_rise(
+    samples: Sequence[Mapping[str, Any]], keys: Iterable[str] = TREND_KEYS
+) -> dict[str, float]:
+    """How much each key rose over the second half of ``samples``: the
+    least-squares slope times the half's span (a fit, so one noisy sample
+    moves it little). With :func:`trends_per_hour` it tells a fast but small
+    rise in a short run (allocator noise) from growth."""
+    return {
+        key: round(slope(xs, ys) * (xs[-1] - xs[0]), 2)
+        for key, xs, ys in _second_half(samples, keys)
+    }
 
 
 @dataclass(frozen=True)
 class Gates:
     """The thresholds a nightly run passes. Each is for a fixed corpus and
-    the fake models: not a statement about real model latency."""
+    the fake models: not a statement about real model latency.
+
+    RSS fails only when it grows both faster than ``rss_slope_mb_per_hour``
+    and by at least ``rss_rise_floor_mb`` over the soak's second half: a
+    short soak's slope extrapolates a megabyte of allocator noise into tens
+    of MB/h (a clean 10-minute soak measured 8 to 13.5 MB/h from about 1 MB
+    over its second half), so the 10-minute nightly soak catches gross
+    leaks only; a slow one needs a soak of 30 minutes or more, where the
+    rate decides. The floor sits well above that noise, and a leak of
+    about 1.2 KB a query passes it over the nightly soak's second half
+    (about 6,900 queries at concurrency 8). Calibrating it on the runner
+    (the slope distribution of repeated clean soaks) is still to do."""
 
     max_errors: int = 0
     loop_lag_p99_ms: float = 100.0
     rss_slope_mb_per_hour: float = 10.0
+    rss_rise_floor_mb: float = 8.0
+    # Answers flagged as without evidence (no sources, abstained, empty),
+    # degraded or with unresolved citations: on the fixed corpus and the
+    # deterministic fake models every query is answerable, so any is a
+    # regression (an empty context answers "could not find" with no error).
+    max_flags: int = 0
     require_convergence: bool = True
 
 
@@ -182,6 +241,14 @@ def check_gates(report: Mapping[str, Any], gates: Gates = Gates()) -> list[str]:
                 f"{name}: {level['errors']} errors (max {gates.max_errors}): "
                 f"{level.get('errors_by_strategy')}"
             )
+        flags: Counter[str] = Counter()
+        for key, count in (level.get("flags") or {}).items():
+            flags[key.split(":", 1)[0]] += count
+        if flags.total() > gates.max_flags:
+            failures.append(
+                f"{name}: {flags.total()} flagged answers (max {gates.max_flags}): "
+                + ", ".join(f"{kind} {n}" for kind, n in sorted(flags.items()))
+            )
         lag = level.get("loop_lag_p99_ms")
         if lag is None:
             failures.append(f"{name}: no event-loop lag measured")
@@ -191,12 +258,17 @@ def check_gates(report: Mapping[str, Any], gates: Gates = Gates()) -> list[str]:
             )
     if soak is not None:
         rss = (soak.get("trends_per_hour") or {}).get("rss_kb")
-        if rss is None:
+        rise = (soak.get("second_half_rise") or {}).get("rss_kb")
+        if rss is None or rise is None:
             failures.append("soak: no RSS trend (too few samples)")
-        elif rss / 1024 >= gates.rss_slope_mb_per_hour:
+        elif (
+            rss / 1024 >= gates.rss_slope_mb_per_hour
+            and rise / 1024 >= gates.rss_rise_floor_mb
+        ):
             failures.append(
-                f"soak: RSS grows {rss / 1024:.1f} MB/h "
-                f"(limit {gates.rss_slope_mb_per_hour} MB/h)"
+                f"soak: RSS grows {rss / 1024:.1f} MB/h, {rise / 1024:.1f} MB over "
+                f"the second half (limits {gates.rss_slope_mb_per_hour} MB/h and "
+                f"{gates.rss_rise_floor_mb} MB)"
             )
     if gates.require_convergence:
         for scenario in report.get("chaos", []):

@@ -4,13 +4,15 @@ name: load-test
 # fake model server (scripts/loadtest/nightly.py, docs/guides/load-testing.md):
 # no AWS, no model, nothing leaves the runner. A concurrency sweep and a
 # 10-minute soak over the demo corpus, then a 429 throttle, 503s with dropped
-# connections and a SIGKILL mid-run, each checked to converge with a full
-# build. Gates: 0 errors on the fixed corpus, event-loop lag p99 under
-# 100 ms, RSS growing under 10 MB/h, every chaos scenario converging. The
-# report (report.md, report.json, the logs and exports) is uploaded as an
-# artifact. It reports only: no branch protection requires it, and pull
-# requests do not run it (tests/unit/test_loadtest_harness.py keeps the
-# harness's arithmetic and verdicts checked there).
+# connections and a SIGKILL mid-run resumed at once, each checked to
+# converge with a full build. Gates: 0 errors and 0 answers without evidence
+# on the fixed corpus, event-loop lag p99 under 100 ms, RSS not growing both
+# 10 MB/h or more and 8 MB or more over the soak's second half, every chaos
+# scenario converging. The report (report.md, report.json, the logs and
+# exports) is uploaded as an artifact. It reports only: no branch protection
+# requires it, and pull requests do not run it (tests/unit/test_loadtest_harness.py
+# keeps the harness's arithmetic and verdicts checked there, and runs one
+# small workspace, ingestion and export of the nightly's own code).
 
 on:
   schedule:

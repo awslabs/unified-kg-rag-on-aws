@@ -68,10 +68,12 @@ The export streams the vector store's items a page at a time, so its
 memory does not grow with the namespace; `--max-items` caps each kind.
 
 - **JSON Lines** (`jsonl`, the default): one object per line, `kind`
-  `text` (a text unit), `entity`, `relationship`, `community` (its report: level,
-  parent and child communities, title, summary) or `claim`, with every
-  stored field but the vectors, plus `documents`: the documents of the
-  text units the item cites. `--include-text` adds the text units' text.
+  `text` (a text unit), `entity`, `relationship`, `community` (its report:
+  level, parent and child communities, title, summary), `claim` or
+  `summary` (a RAPTOR summary node: level, children, the text units it
+  summarizes), with every stored field but the vectors, plus `documents`:
+  the documents of the text units the item cites. `--include-text` adds the
+  text units' text.
 - **GraphML** (`graphml`): the entities as nodes and the relationships as
   edges, the communities as nodes (`kind: community`) linked to their
   parent by `parent_of` edges; type, description, rank, weight, IRIs, text
