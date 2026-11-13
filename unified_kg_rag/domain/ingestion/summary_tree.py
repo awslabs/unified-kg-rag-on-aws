@@ -22,14 +22,15 @@ from __future__ import annotations
 
 import json
 import math
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, fields
 from typing import Any
 
 import numpy as np
 
-from unified_kg_rag.domain.models import Constants, SummaryNode
+from unified_kg_rag.domain.models import Constants, SummaryNode, TextUnit
 from unified_kg_rag.domain.models.config import SummaryTreeConfig
+from unified_kg_rag.domain.retrieval.filters import TRANSLATED_TEXT_PREFIX
 from unified_kg_rag.shared.utils import compute_hash
 
 # Covariance regularization of the Gaussian mixtures (scikit-learn's
@@ -186,6 +187,60 @@ def leaf_entry(
         leaf_id,
         compute_hash(text),
         json.dumps(filters, sort_keys=True, default=str),
+    )
+
+
+def stored_leaf_text(row: Mapping[str, Any], translated_field: str) -> str:
+    """The text a stored text unit (``row``: its stored fields) is a leaf of
+    the tree with: its translation into the index language
+    (``translated_field``), when it holds one, else its text."""
+    return str(row.get(translated_field) or row.get("text") or "")
+
+
+def stored_leaf_filters(row: Mapping[str, Any]) -> dict[str, Any]:
+    """A stored text unit's document filters."""
+    filters = (row.get("attributes") or {}).get(Constants.FILTERS.value) or {}
+    return filters if isinstance(filters, dict) else {}
+
+
+def stored_leaf_entry(
+    row: Mapping[str, Any], translated_field: str
+) -> tuple[str, str, str]:
+    """:func:`leaf_entry` of a stored text unit (``row``: its ``id`` and
+    stored fields)."""
+    return leaf_entry(
+        str(row["id"]),
+        stored_leaf_text(row, translated_field),
+        stored_leaf_filters(row),
+    )
+
+
+def translated_leaf_field(language: str) -> str:
+    """The stored text-unit field a leaf's translation into ``language``
+    (the index language) is read from."""
+    return f"{TRANSLATED_TEXT_PREFIX}{language}"
+
+
+def unit_leaf_entry(
+    unit: TextUnit, language: str, translated_languages: Collection[str]
+) -> tuple[str, str, str]:
+    """:func:`stored_leaf_entry` of ``unit`` once written: a vector store
+    keeps its translations into the ``translated_languages`` only, and the
+    tree reads the one into ``language`` (the index language)."""
+    translated = (
+        (unit.translated_texts or {}).get(language)
+        if language in translated_languages
+        else None
+    )
+    field = translated_leaf_field(language)
+    return stored_leaf_entry(
+        {
+            "id": unit.id,
+            "text": unit.text or "",
+            **({field: translated} if translated else {}),
+            "attributes": unit.attributes or {},
+        },
+        field,
     )
 
 

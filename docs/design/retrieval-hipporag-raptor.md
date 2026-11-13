@@ -480,7 +480,14 @@ Unchanged clusters cost no call (`input_key` reuse) and no embedding
    summary failed, can fall past that node's lineage cut), and every node
    above it (by `child_ids`, so a node whose lineage was cut is found
    too): a summary paraphrases its children, so it goes even where other
-   children remain. A full build (reset, or a run without the registry)
+   children remain. Not a removed text unit the run writes back under its
+   id as the same leaf (its stored text, translation into the index
+   language and document filters equal the delta's: a FAILED document's
+   retry): the tree over it is unchanged, so its summaries stay, none is
+   asked again and `refresh: on_reset` loses none. Ids hold the document
+   version, so a changed document's units are removed; a chunking or
+   translation change changes the leaf, so its summaries go; a failed read
+   of the stored leaves deletes them (fail-closed). A full build (reset, or a run without the registry)
    deletes the nodes citing, the same two ways, a text unit it did not
    write. Either deletion
    failing fails the indexing stage like any failed write.
@@ -492,8 +499,8 @@ Unchanged clusters cost no call (`input_key` reuse) and no embedding
    without the deleted nodes while the stage runs, and after a crash
    before it finished; new documents are reachable as leaves. The tree
    record still holds the old digest, and a deletion marks it `pruned`
-   first, so the next run rebuilds, also over the same leaves (a FAILED
-   document reprocessed writes its text units back unchanged); an index
+   first, so the next run rebuilds, also over the same leaves (a document
+   removed and restored unchanged under `refresh: on_reset`); an index
    a killed build left unswapped is deleted by the next build's reaper. A
    build that fails (the stage raises) drops the tree from the build
    record: `tree` is refused until a run builds it.

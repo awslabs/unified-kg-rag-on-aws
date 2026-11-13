@@ -37,8 +37,11 @@ from unified_kg_rag.domain.ingestion.summary_tree import (
     TreeSettings,
     build_tree,
     leaf_entries_digest,
-    leaf_entry,
     partition_key,
+    stored_leaf_entry,
+    stored_leaf_filters,
+    stored_leaf_text,
+    translated_leaf_field,
 )
 from unified_kg_rag.domain.models import (
     Config,
@@ -175,11 +178,7 @@ class SummaryTreeStage(_RegistryStage):
         entries: list[tuple[str, str, str]] = []
         for page in pages:
             for row in page:
-                entries.append(
-                    leaf_entry(
-                        str(row["id"]), self._leaf_text(row), self._leaf_filters(row)
-                    )
-                )
+                entries.append(stored_leaf_entry(row, self._translated_field))
                 rows.append({"id": row["id"], "attributes": row.get("attributes")})
         if not rows:
             logger.info("'%s' holds no text unit: no summary tree to build", suffix)
@@ -478,7 +477,7 @@ class SummaryTreeStage(_RegistryStage):
                     text=text,
                     vector=vector,
                     n_tokens=n_tokens or self.summarizer.count_tokens(text),
-                    filters=self._leaf_filters(row),
+                    filters=stored_leaf_filters(row),
                 )
             )
         if skipped:
@@ -494,7 +493,7 @@ class SummaryTreeStage(_RegistryStage):
     def _translated_field(self) -> str:
         """The text-unit field holding the translation into the index
         language."""
-        return f"translated_text_{index_language(self.config)}"
+        return translated_leaf_field(index_language(self.config))
 
     @staticmethod
     def _pages_by_id(
@@ -527,15 +526,9 @@ class SummaryTreeStage(_RegistryStage):
         return pages()
 
     def _leaf_text(self, row: dict[str, Any]) -> str:
-        """The text a stored text unit is a leaf of the tree with: its
-        translation, when it holds one, else its text."""
-        return str(row.get(self._translated_field) or row.get("text") or "")
-
-    @staticmethod
-    def _leaf_filters(row: dict[str, Any]) -> dict[str, Any]:
-        """A stored text unit's document filters."""
-        filters = (row.get("attributes") or {}).get(Constants.FILTERS.value) or {}
-        return filters if isinstance(filters, dict) else {}
+        """The text a stored text unit is a leaf of the tree with
+        (:func:`stored_leaf_text`)."""
+        return stored_leaf_text(row, self._translated_field)
 
     def _uncovered(
         self, indexer: VectorIndexer, suffix: str, rows: list[dict[str, Any]]

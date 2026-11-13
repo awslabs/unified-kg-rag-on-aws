@@ -42,7 +42,10 @@ from unified_kg_rag.application.storage.stored_items import (
     vector_stale,
     write_claims_new_ids_first,
 )
-from unified_kg_rag.domain.ingestion.cache_keys import unbuilt_record_prefixes
+from unified_kg_rag.domain.ingestion.cache_keys import (
+    index_language,
+    unbuilt_record_prefixes,
+)
 from unified_kg_rag.domain.ingestion.contributions import (
     RECORD_KEYS_ATTRIBUTE,
     RECORD_KINDS,
@@ -57,6 +60,11 @@ from unified_kg_rag.domain.ingestion.merge import (
 from unified_kg_rag.domain.ingestion.methodologies import artifacts_to_build
 from unified_kg_rag.domain.ingestion.names import compact_name_key
 from unified_kg_rag.domain.ingestion.relationship_weights import text_unit_weights
+from unified_kg_rag.domain.ingestion.summary_tree import (
+    stored_leaf_entry,
+    translated_leaf_field,
+    unit_leaf_entry,
+)
 from unified_kg_rag.domain.models import Entity, Relationship
 from unified_kg_rag.ports.indexer import IndexingStats
 from unified_kg_rag.shared import NamespaceLeaseError, get_logger
@@ -126,11 +134,16 @@ class TextUnitRemoval:
             if found is not None and reads_back(m.graph_indexer)
             else set()
         )
+        # Read before the delete below removes the stored leaves.
+        rewritten = self._rewritten_leaves(suffix, text_unit_ids)
         results = m.delete_documents({suffix: doomed}, {suffix: vector_only})
         # A summary of the tree paraphrases what it covers: one citing a
         # removed text unit goes, and every summary above it (fail-closed:
-        # the next summary_tree build writes the tree again).
-        summaries = m.vector_indexer.delete_summary_nodes_citing(text_unit_ids, suffix)
+        # the next summary_tree build writes the tree again). Not for a unit
+        # the commit writes back as the same leaf: its summaries still hold.
+        summaries = m.vector_indexer.delete_summary_nodes_citing(
+            [i for i in text_unit_ids if i not in rewritten], suffix
+        )
         if summaries.total_items or summaries.failed_items:
             results[f"vector_summary_nodes_{suffix}"] = summaries
         if _rejected(results):
@@ -163,6 +176,48 @@ class TextUnitRemoval:
             # The noted items are gone: the earlier strip is finished.
             self._clear_pending_strip(suffix)
         return results
+
+    def _rewritten_leaves(self, suffix: str, text_unit_ids: list[str]) -> set[str]:
+        """The removed text units the run's commit writes back under their
+        id as the summary tree's leaf they are stored as (same text, same
+        translation, same filters: a FAILED document's retry): the summary
+        tree over them is unchanged, so the summaries citing them are kept
+        and the tree's leaf digest says it is current. A changed document's
+        units have new ids (the version is in them); a chunking change
+        changes a leaf's text. A failed read keeps none (fail-closed)."""
+        m = self._m
+        delta = m._delta_units.get(suffix, {})
+        ids = [i for i in text_unit_ids if i in delta]
+        if not ids:
+            return set()
+        language = index_language(m.config)
+        field = translated_leaf_field(language)
+        try:
+            if m.vector_indexer.read_summary_tree_record(suffix) is None:
+                return set()
+            rows = m.vector_indexer.read_text_unit_fields(
+                ids, suffix, fields=["text", field, "attributes"]
+            )
+        except NamespaceLeaseError:
+            raise
+        except Exception as e:  # noqa: BLE001 - fail-closed: the summaries go
+            logger.warning(
+                "Reading the stored text of %d text units written back in '%s' "
+                "failed (%s): the summaries citing them are deleted and built "
+                "again",
+                len(ids),
+                suffix,
+                e,
+            )
+            return set()
+        translated = m.config.processing.translation.translated_languages
+        return {
+            str(row["id"])
+            for row in rows or []
+            if str(row["id"]) in delta
+            and stored_leaf_entry(row, field)
+            == unit_leaf_entry(delta[str(row["id"])], language, translated)
+        }
 
     def _find_citing(self, suffix: str, text_unit_ids: list[str]) -> "_Citing":
         """What cites the removed ``text_unit_ids`` in the stores (see

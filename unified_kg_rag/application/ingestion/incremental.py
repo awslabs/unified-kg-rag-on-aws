@@ -3158,7 +3158,7 @@ def index_delta(
     # does not write again stays wrong). Deleted docs keep their registry
     # rows, and the delta its PENDING records, for the next run's retry.
     # A shared item the delta derives again is summarized by the commit only.
-    indexing_manager.expect_delta(entities, relationships)
+    indexing_manager.expect_delta(entities, relationships, text_units)
     if not incremental.remove_changed_and_deleted(delta):
         doc_ids, _ = incremental.documents_to_remove(delta)
         removed = sorted(

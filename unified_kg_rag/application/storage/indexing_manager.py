@@ -259,6 +259,9 @@ class IndexingManager:
         # By suffix, the ids of the run's delta items (see expect_delta): a
         # removal that derives one again leaves its summary to the commit.
         self._delta_ids: dict[str, set[str]] = {}
+        # By suffix, the run's text units by id (see expect_delta): a removal
+        # keeps the summaries of one it writes back with the leaf unchanged.
+        self._delta_units: dict[str, dict[str, TextUnit]] = {}
         # The collaborators the public methods delegate to; they read and
         # write the stores and the run state above through this manager.
         self._merge = CrossRunMerge(self)
@@ -1200,19 +1203,27 @@ class IndexingManager:
         self._claim_endpoints.clear()
         self._noted_stripped_ids.clear()
         self._delta_ids.clear()
+        self._delta_units.clear()
         self._pending_writes.reset()
 
     def expect_delta(
-        self, entities: Sequence[Entity], relationships: Sequence[Relationship]
+        self,
+        entities: Sequence[Entity],
+        relationships: Sequence[Relationship],
+        text_units: Sequence[TextUnit] = (),
     ) -> None:
         """The items the run's commit derives (its delta), told before the
         removals: one a removal derives again under the same id is derived
         once more by the commit, with the delta's lines, so the removal
         writes its description unsummarized and the commit summarizes it
         (one call, from every line its text units state, as a full build).
-        Grouped by their index suffix."""
+        A text unit the commit writes back under its id (a FAILED
+        document's retry) as the summary tree's leaf it was keeps the
+        summaries citing it. Grouped by their index suffix."""
         for suffix, group in self._group_by_suffix([*entities, *relationships]).items():
             self._delta_ids.setdefault(suffix, set()).update(i.id for i in group)
+        for suffix, units in self._group_by_suffix(list(text_units)).items():
+            self._delta_units.setdefault(suffix, {}).update((u.id, u) for u in units)
 
     def offer_summaries(self, entities: Sequence[Entity]) -> None:
         """Summaries this run made before indexing (community detection's
