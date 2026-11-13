@@ -56,6 +56,7 @@ from unified_kg_rag.domain.retrieval.source_fields import EntityRef
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.exceptions import (
+    INTERNAL_ERROR_MESSAGE,
     ConfigurationError,
     ErrorClass,
     GraphRAGException,
@@ -818,7 +819,7 @@ class KnowledgeGraphTools:
             (
                 outcome.error_message or "The query was refused."
                 if shows_error_text(error_class, "caller")
-                else "The query failed (processing.ignore_errors)."
+                else INTERNAL_ERROR_MESSAGE
             ),
             error_class,
         )

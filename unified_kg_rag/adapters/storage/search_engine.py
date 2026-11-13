@@ -22,6 +22,30 @@ messages (:func:`engine_name`; ``OpenSearch`` without one).
 
 from typing import Any, Protocol
 
+from unified_kg_rag.domain.retrieval.store_names import suffixes_of_aliases
+from unified_kg_rag.shared import get_logger
+
+logger = get_logger(__name__)
+
+
+def ingested_suffixes(
+    client: Any, base: str, additional_suffix: str | None = None
+) -> list[str] | None:
+    """The suffixes ``client``'s engine holds an index of ``base`` for (each
+    ingested namespace has a text units alias), sorted; ``None`` when it
+    cannot be listed. Best-effort, for the error naming a suffix none exists
+    for: one copy for the indexer and the retriever."""
+    try:
+        indices = client.get_aliases_by_index(f"{base}-*")
+    except Exception as e:  # noqa: BLE001 - only the error's hint
+        logger.debug("Listing the ingested suffixes failed: %s", e)
+        return None
+    return suffixes_of_aliases(
+        (name for aliases in indices.values() for name in aliases),
+        base,
+        additional_suffix,
+    )
+
 
 def engine_name(client: object) -> str:
     """How messages name ``client``'s engine: its ``engine_name``, else

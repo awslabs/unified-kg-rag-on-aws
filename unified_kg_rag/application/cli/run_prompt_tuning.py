@@ -11,6 +11,7 @@ writes an extraction schema draft for ``schema_source: {kind: file}``.
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import sys
 from pathlib import Path
@@ -51,8 +52,9 @@ from unified_kg_rag.domain.ingestion.cache_keys import is_excluded_source_path
 from unified_kg_rag.domain.languages.corpus import corpus_source_language
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import ConfigurationError, get_logger
+from unified_kg_rag.shared.logging import log_error
 from unified_kg_rag.shared.utils import event_loop
-from unified_kg_rag.shared.utils.files import atomic_write_text
+from unified_kg_rag.shared.utils.files import atomic_write_text, read_user_text
 
 if TYPE_CHECKING:
     from unified_kg_rag.adapters.ingestion.parser import ParserFactory
@@ -103,12 +105,12 @@ def load_corpus_texts(
             continue
         try:
             if suffix in _TEXT_SUFFIXES:
-                text = path.read_text(encoding="utf-8")
+                text = read_user_text(path)
             else:
                 document = ParserFactory.create_parser(path, config).parse_file(path)
                 text = document.page_content
         except Exception as e:  # noqa: BLE001 - an unreadable file is skipped
-            logger.warning("Could not read %s: %s", path, e)
+            log_error(logger, logging.WARNING, "Could not read %s: %s", path, error=e)
             continue
         if text.strip():
             texts.append(text)
@@ -258,9 +260,9 @@ def main() -> int:
 
         texts = load_corpus_texts(args.source_directory, args.max_docs, config)
         if not texts:
-            error = f"No text documents found under '{args.source_directory}'"
-            logger.error("%s", error)
-            return failed(EXIT_FAILURE, error)
+            problem = f"No text documents found under '{args.source_directory}'"
+            logger.error("%s", problem)
+            return failed(EXIT_FAILURE, problem)
 
         result = event_loop.run(
             stoppable(tuner.tune(texts, schema_draft=args.schema_out is not None)),
@@ -298,12 +300,14 @@ def main() -> int:
         # Raised, not returned: exits_on_sigterm prints the JSON status.
         raise SystemExit(EXIT_INTERRUPTED) from None
     except ConfigurationError as e:
-        logger.error("Prompt tuning configuration error: %s", e)
+        log_error(
+            logger, logging.ERROR, "Prompt tuning configuration error: %s", error=e
+        )
         return failed(EXIT_USAGE, e)
     except Exception as e:
         # Surface a clean error line instead of a raw traceback (parity with the
         # other CLIs); details still go to the log at debug level.
-        logger.error("Prompt tuning failed: %s", e)
+        log_error(logger, logging.ERROR, "Prompt tuning failed: %s", error=e)
         logger.debug("Traceback:", exc_info=True)
         return failed(EXIT_FAILURE, e)
 

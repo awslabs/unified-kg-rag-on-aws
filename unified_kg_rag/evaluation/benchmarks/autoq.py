@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import math
 import random
 import re
@@ -61,7 +62,7 @@ import numpy as np
 from langchain_core.runnables import Runnable
 from pydantic import BaseModel, ConfigDict, Field
 
-from unified_kg_rag.adapters.evaluators.base import error_digest, judge_answers
+from unified_kg_rag.adapters.evaluators.base import judge_answers
 from unified_kg_rag.adapters.llm.chain_factory import setup_chain
 from unified_kg_rag.adapters.llm.reachability import (
     is_unreachable_error,
@@ -87,6 +88,7 @@ from unified_kg_rag.domain.prompts import (
 from unified_kg_rag.domain.retrieval.lineage import merge as merge_lineages
 from unified_kg_rag.evaluation.benchmarks import QUESTION_CLASSES
 from unified_kg_rag.shared import EvaluationException, get_logger
+from unified_kg_rag.shared.logging import log_failure
 from unified_kg_rag.shared.usage import merge_usage, usage_scope
 from unified_kg_rag.shared.utils.files import atomic_write_text
 
@@ -560,12 +562,13 @@ class AssertionBenchmarkGenerator:
                 # Every later call meets the same server: stop, naming it.
                 raise model_unreachable_error(e, self.config) from e
             # The error may quote the model's reply: a digest at WARNING.
-            logger.warning(
+            log_failure(
+                logger,
+                logging.WARNING,
                 "prepare-benchmark assertions: %s call failed: %s",
                 step,
-                error_digest(e),
+                error=e,
             )
-            logger.debug("prepare-benchmark assertions: %s call error: %s", step, e)
             self.dropped[f"{step}_call_failed"] += 1
             return None
         return output if isinstance(output, dict) else {}

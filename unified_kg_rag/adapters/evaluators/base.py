@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+import logging
 from collections.abc import Collection, Coroutine
 from datetime import datetime
 from typing import Any
@@ -24,9 +25,9 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.retrieval.citations import strip_markers
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.logging import log_failure
 
 # Also imported from here by the judges.
-from unified_kg_rag.shared.utils import error_digest as error_digest
 from unified_kg_rag.shared.utils.concurrency import cancel_on_exit
 
 logger = get_logger(__name__)
@@ -184,12 +185,14 @@ class BaseGraphRAGEvaluator:
                     # error here is recorded as failed metrics (and counted
                     # against --max-failure-rate) instead of discarding the
                     # run.
-                    logger.error(
+                    log_failure(
+                        logger,
+                        logging.ERROR,
                         "Failed to evaluate query '%s': %s",
                         query_id,
-                        error_digest(error),
+                        error=error,
+                        traceback=True,
                     )
-                    logger.debug("Evaluation error for '%s': %s", query_id, error)
                     final_reports[original_index] = self._create_empty_report(
                         query_id, reason=f"Evaluation failed: {error}"
                     )

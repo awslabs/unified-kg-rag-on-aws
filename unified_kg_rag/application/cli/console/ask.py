@@ -29,7 +29,6 @@ import contextlib
 import logging
 import os
 import time
-import uuid
 from collections.abc import AsyncIterator, Callable
 from typing import Any, Literal
 
@@ -45,6 +44,7 @@ from unified_kg_rag.application.retrieval.rag_chain import (
     GraphRAGChain,
     RAGInput,
     RAGOutput,
+    new_query_id,
 )
 from unified_kg_rag.domain.ingestion.methodologies import namespace_holdings
 from unified_kg_rag.domain.models import (
@@ -318,15 +318,26 @@ class AskService:
     ) -> list[dict[str, Any]]:
         routable = {s.value for s in config.search.auto_routable_strategies}
         views = []
+        logged = False
         for strategy in SearchStrategy:
             available, reason = True, None
             try:
                 await chain.acheck_methodology(strategy, suffix)
             except Exception as e:  # noqa: BLE001 - shown, not fatal
                 # A store error's text by the console's one rule, an
-                # unexpected one's never (it may quote a provider's).
+                # unexpected one's never (it may quote a provider's): it
+                # is logged, once per request, for the page's "see the log".
                 available = False
                 reason = shown_error_text(e, audience="operator")
+                if not logged and classify(e) is ErrorClass.FAILURE:
+                    logged = True
+                    log_failure(
+                        logger,
+                        logging.ERROR,
+                        "Console strategy check failed: %s",
+                        error=e,
+                        traceback=True,
+                    )
             methodology = None
             if strategy is not SearchStrategy.AUTO:
                 with contextlib.suppress(Exception):
@@ -375,7 +386,7 @@ class AskService:
     async def ask(self, request: AskRequest) -> AsyncIterator[dict[str, Any]]:
         """Answer ``request`` as events (see the module docstring); the
         question is recorded whatever the outcome."""
-        query_id = uuid.uuid4().hex[:12]
+        query_id = new_query_id()
         queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
         started = time.perf_counter()
         record: dict[str, Any] = {

@@ -3,6 +3,7 @@
 import asyncio
 import functools
 import json
+import logging
 import time
 from collections import OrderedDict
 from collections.abc import Collection, Coroutine, Iterable
@@ -30,6 +31,7 @@ from unified_kg_rag.adapters.storage.filter_schema import (
 from unified_kg_rag.adapters.storage.search_engine import (
     SearchEngineClient,
     engine_name,
+    ingested_suffixes,
 )
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
 from unified_kg_rag.domain.ingestion.cache_keys import index_language
@@ -71,7 +73,6 @@ from unified_kg_rag.domain.retrieval.index_prefixes import (
 from unified_kg_rag.domain.retrieval.source_fields import id_list
 from unified_kg_rag.domain.retrieval.store_names import (
     namespace_suffix,
-    suffixes_of_aliases,
 )
 from unified_kg_rag.ports.model_factory import EmbeddingFactoryPort
 from unified_kg_rag.shared import (
@@ -86,7 +87,7 @@ from unified_kg_rag.shared.exceptions import (
     StoreRequestRejectedError,
     StoreTimeoutError,
 )
-from unified_kg_rag.shared.logging import warn_once
+from unified_kg_rag.shared.logging import log_error, warn_once
 from unified_kg_rag.shared.utils import (
     EMBEDDING_FIELD_SUFFIX,
     interleave,
@@ -496,7 +497,12 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                         read = self._index_limits.get(name)
                         if read is not None and read.done():
                             del self._index_limits[name]
-                    logger.info("Index limits changed; searching again: %s", e)
+                    log_error(
+                        logger,
+                        logging.INFO,
+                        "Index limits changed; searching again: %s",
+                        error=e,
+                    )
                     continue
                 break
 
@@ -520,18 +526,20 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             # call that cannot succeed) so they surface instead of
             # masquerading as "0 results"; degrade only on transient ones.
             if is_fatal_retrieval_error(e):
-                logger.error(
+                log_error(
+                    logger,
+                    logging.ERROR,
                     "%s retrieval failed (fatal): %s",
                     self._engine,
-                    e,
-                    exc_info=True,
+                    error=e,
                 )
                 raise
-            logger.error(
+            log_error(
+                logger,
+                logging.ERROR,
                 "%s retrieval failed (transient, degrading to empty results): %s",
                 self._engine,
-                e,
-                exc_info=True,
+                error=e,
             )
             return []
 
@@ -1024,14 +1032,16 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             if isinstance(e, StoreAccessDeniedError):
                 if not self._settings_denied_logged:
                     self._settings_denied_logged = True
-                    logger.warning(
+                    log_error(
+                        logger,
+                        logging.WARNING,
                         "Not allowed to read the settings of %s (%s), so "
                         "searches are sized by the configured index_settings, "
                         "not the live index's max_result_window / "
                         "max_terms_count. Grant indices:monitor/settings/get "
                         "to size them by the live index.",
                         alias,
-                        e,
+                        error=e,
                     )
                 return self._configured_limits, True
             logger.debug("Could not read the settings of %s: %s", alias, e)
@@ -1053,13 +1063,15 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 self._embedding_checked_aliases.add(alias)
                 if not self._embedding_check_denied_logged:
                     self._embedding_check_denied_logged = True
-                    logger.warning(
+                    log_error(
+                        logger,
+                        logging.WARNING,
                         "Not allowed to read the mappings of %s (%s), so queries "
                         "are not checked against the embedding model the indices "
                         "were built with. Grant indices:admin/mappings/get to "
                         "enable the check.",
                         alias,
-                        e,
+                        error=e,
                     )
                 return None
             if isinstance(e, StoreTimeoutError):
@@ -1553,14 +1565,16 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             await self._require_ingested_suffix(suffix, error)
             # A missing alias is a config/index mismatch (the index was
             # never built), not a transient failure.
-            logger.warning(
+            log_error(
+                logger,
+                logging.WARNING,
                 "Index not found for %s; skipping it (was it built by the "
                 "ingestion config?): %s",
                 alias,
-                error,
+                error=error,
             )
             return []
-        logger.error("Search failed on %s: %s", alias, error)
+        log_error(logger, logging.ERROR, "Search failed on %s: %s", alias, error=error)
         return []
 
     async def ahas_index(self, prefix: str, suffix: str | None) -> bool | None:
@@ -1613,17 +1627,10 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         """The suffixes a text units alias exists for (each ingested
         namespace has one), for the error of a suffix none exists for;
         ``None`` when the store cannot tell."""
-        base = self._opensearch_config.text_units_index_prefix
-        try:
-            indices = await asyncio.to_thread(
-                self._opensearch_client.get_aliases_by_index, f"{base}-*"
-            )
-        except Exception as e:  # noqa: BLE001 - only the error's hint
-            logger.debug("Listing the ingested suffixes failed: %s", e)
-            return None
-        return suffixes_of_aliases(
-            (name for aliases in indices.values() for name in aliases),
-            base,
+        return await asyncio.to_thread(
+            ingested_suffixes,
+            self._opensearch_client,
+            self._opensearch_config.text_units_index_prefix,
             self._config.indexing.additional_suffix,
         )
 

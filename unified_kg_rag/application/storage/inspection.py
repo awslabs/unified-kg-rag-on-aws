@@ -452,14 +452,6 @@ class _Digest:
         return self._sha.hexdigest()
 
 
-def _digest(rows: Iterable[Iterable[Any]]) -> str:
-    """SHA-256 of ``rows``, one JSON array a line (:class:`_Digest`)."""
-    digest = _Digest()
-    for row in rows:
-        digest.add(row)
-    return digest.hexdigest()
-
-
 def export_graph(
     config: Config,
     path: str | Path,

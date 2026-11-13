@@ -323,7 +323,9 @@ def test_main_reports_an_invalid_dataset_and_exits_2(
     with pytest.raises(SystemExit) as exc:
         run_evaluation.main()
     assert exc.value.code == 2
-    out = capsys.readouterr().out
+    # The console line wraps at the terminal's width (a long path breaks it
+    # between words); the log line names the error by type and digest only.
+    out = " ".join(capsys.readouterr().out.split())
     assert "invalid evaluation dataset" in out
     assert message in out
     assert "unexpected error" not in out

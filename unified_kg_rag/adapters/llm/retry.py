@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import contextvars
+import logging
 import random
 import re
 import threading
@@ -27,7 +28,7 @@ from unified_kg_rag.domain.models.config import TransientRetryConfig
 from unified_kg_rag.domain.models.text_unit import TextUnit
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
-from unified_kg_rag.shared.utils.common import error_digest
+from unified_kg_rag.shared.logging import log_failure
 
 if TYPE_CHECKING:
     from unified_kg_rag.adapters.llm.langchain import BatchProcessor
@@ -336,14 +337,16 @@ def item_failed_indices(
     ):
         documents = {d for idx in own for d in units[idx].document_ids or []}
         if _cause(first)[0] == "output" and len(documents) > 1:
-            logger.warning(
-                "%s: the output of every item of %d documents failed alike "
-                "(%s), possibly under a model or server output cap: taken "
-                "for an error of each document's own, %s",
+            log_failure(
+                logger,
+                logging.WARNING,
+                "%s: the output of every item of %d documents failed alike, "
+                "possibly under a model or server output cap: taken for an "
+                "error of each document's own, %s (%s)",
                 task,
                 len(documents),
-                error_digest(first),
                 outcome,
+                error=first,
             )
             return list(own)
         # Imported here: the cache module imports the chain factory, which
@@ -359,22 +362,26 @@ def item_failed_indices(
                 parsed=_cause(first)[0] == "output",
             )
         if not passed:
-            logger.warning(
-                "%s: every item and a known-good request failed alike (%s): "
-                "taken for a model or configuration failure, counted against "
-                "no document",
+            log_failure(
+                logger,
+                logging.WARNING,
+                "%s: every item and a known-good request failed alike: taken "
+                "for a model or configuration failure, counted against no "
+                "document (%s)",
                 task,
-                error_digest(first),
+                error=first,
             )
             if (ledger := _LEDGER.get()) is not None:
                 ledger.model_failed = True
             return []
-        logger.warning(
-            "%s: every item failed alike (%s) but a known-good request was "
-            "answered: %s",
+        log_failure(
+            logger,
+            logging.WARNING,
+            "%s: every item failed alike but a known-good request was "
+            "answered: %s (%s)",
             task,
-            error_digest(first),
             outcome,
+            error=first,
         )
     return list(own)
 

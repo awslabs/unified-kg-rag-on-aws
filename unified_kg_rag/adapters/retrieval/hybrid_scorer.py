@@ -20,7 +20,7 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.domain.retrieval.hybrid_normalization import combine_min_max
 from unified_kg_rag.ports.model_factory import RerankFactoryPort
 from unified_kg_rag.shared import RerankModelError, get_logger
-from unified_kg_rag.shared.logging import log_failure
+from unified_kg_rag.shared.logging import log_error, log_failure
 from unified_kg_rag.shared.usage import record_rerank_call, rerank_search_units
 from unified_kg_rag.shared.utils import compute_hash
 from unified_kg_rag.shared.utils.scripts import word_terms
@@ -144,10 +144,12 @@ class HybridScorer:
                 raise RerankModelError(f"Rerank model could not be built: {e}") from e
             # Enabled but not built: every query runs on fusion alone, so say
             # so loudly once instead of degrading silently.
-            logger.error(
+            log_error(
+                logger,
+                logging.ERROR,
                 "Reranking initialization failed; queries keep the fused "
                 "order (set search.reranking.required to fail instead): %s",
-                e,
+                error=e,
             )
             self.rerank_factory = None
             self._inactive = (

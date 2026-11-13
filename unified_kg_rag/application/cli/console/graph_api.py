@@ -18,6 +18,7 @@ only when no export shows the build they hold (:class:`GraphBuilder`)."""
 from __future__ import annotations
 
 import json
+import logging
 import threading
 from collections import Counter, OrderedDict
 from collections.abc import Callable
@@ -40,6 +41,7 @@ from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import DataProcessingError
+from unified_kg_rag.shared.logging import log_error
 
 if TYPE_CHECKING:
     from unified_kg_rag.application.bootstrap import Providers
@@ -114,8 +116,10 @@ def current_graph(
     reason (``write`` for the export folder, else ``read``).
 
     Raises:
-        ConfigurationError: The vector store cannot page its items.
-        StoreConnectionError: A store cannot be reached.
+        ConfigurationError: The provider bundle cannot be built for ``config``.
+        StoreConnectionError: The build record cannot be read (a store cannot
+            be reached). An error of the build itself (a store that cannot
+            page its items, say) is not raised: the result is ``failed``.
     """
     from unified_kg_rag.application.bootstrap import build_providers
     from unified_kg_rag.application.storage.visualization_export import (
@@ -145,7 +149,13 @@ def current_graph(
             directory / VISUALIZATION_DATA_FILENAME,
         )
     except Exception as e:  # noqa: BLE001 - the page lists the exports there are
-        logger.warning("Building the graph of '%s' failed: %s", suffix, e)
+        log_error(
+            logger,
+            logging.WARNING,
+            "Building the graph of '%s' failed: %s",
+            suffix,
+            error=e,
+        )
         reason = "write" if isinstance(e, ExportWriteError) else "read"
         return CurrentGraph("failed", suffix, built_at, reason=reason)
     return CurrentGraph("current", suffix, built_at, path)
@@ -177,7 +187,12 @@ class GraphBuilder:
                     config, self.cache_directory, lambda: self._bundle(config)
                 )
             except Exception as e:  # noqa: BLE001 - the page still lists the exports
-                logger.warning("Building the graph for the Graph page failed: %s", e)
+                log_error(
+                    logger,
+                    logging.WARNING,
+                    "Building the graph for the Graph page failed: %s",
+                    error=e,
+                )
                 return CurrentGraph("failed", namespace, reason=reason)
 
     def _bundle(self, config: Config) -> Providers:

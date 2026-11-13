@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+import logging
 from datetime import datetime
 from typing import Any, ClassVar, cast
 
@@ -28,7 +29,6 @@ from unified_kg_rag.adapters.evaluators.base import (
     SKIP_REASON_NO_CONTEXTS,
     SKIPPED_METRICS_KEY,
     BaseGraphRAGEvaluator,
-    error_digest,
     judge_model_kwargs,
 )
 from unified_kg_rag.adapters.providers import Providers
@@ -45,6 +45,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.ports.model_factory import EmbeddingFactoryPort
 from unified_kg_rag.shared import EvaluationException, get_logger
+from unified_kg_rag.shared.logging import log_failure
 
 logger = get_logger(__name__)
 
@@ -416,7 +417,13 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
             except Exception as e:  # noqa: BLE001 - one batch fails only its metrics
                 # The error may quote judge replies: a digest at ERROR, the
                 # traceback at DEBUG.
-                logger.error("Ragas evaluation failed for batch: %s", error_digest(e))
+                log_failure(
+                    logger,
+                    logging.ERROR,
+                    "Ragas evaluation failed for batch: %s",
+                    error=e,
+                    traceback=True,
+                )
                 logger.debug("Ragas batch error", exc_info=True)
                 failed_runs.update(
                     dict.fromkeys(m_types, f"Ragas batch evaluation failed: {e}")

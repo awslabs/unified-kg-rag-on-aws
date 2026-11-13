@@ -84,7 +84,7 @@ from unified_kg_rag.shared.exceptions import (
     error_class_of,
     error_text,
 )
-from unified_kg_rag.shared.logging import log_failure
+from unified_kg_rag.shared.logging import log_error
 from unified_kg_rag.shared.utils import event_loop
 
 if TYPE_CHECKING:
@@ -646,18 +646,13 @@ class RAGChainRunner:
             exit_code = EXIT_CODES[error_class]
             if exit_code == EXIT_USAGE:
                 usage_error(e)
-            if error_class is ErrorClass.FAILURE:
-                log_failure(
-                    logger,
-                    logging.ERROR,
-                    "Failed to initialize RAG chain: %s",
-                    error=e,
-                    traceback=True,
-                )
-            else:
-                logger.error(
-                    "Failed to initialize RAG chain (%s): %s", error_class.value, e
-                )
+            # The one rule of every surface (log_error): an unexpected
+            # failure's type and where it happened (text at DEBUG), any
+            # other class with its text. The operator's stdout and the JSON
+            # document keep the text: this CLI is the operator's own.
+            log_error(
+                logger, logging.ERROR, "Failed to initialize RAG chain: %s", error=e
+            )
             console.print(f"[red]Error during initialization: {markup_safe(e)}[/red]")
             print_status(exit_code, e)
             sys.exit(exit_code)
@@ -745,10 +740,13 @@ class RAGChainRunner:
                 # console.input, spinning the generic handler below forever.
                 console.print("\n[yellow]Conversation interrupted.[/yellow]")
                 break
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - logged, the session goes on
                 console.print(f"[red]Unexpected error: {markup_safe(e)}[/red]")
-                logger.error(
-                    "Unexpected error in interactive mode: %s", e, exc_info=True
+                log_error(
+                    logger,
+                    logging.ERROR,
+                    "Unexpected error in interactive mode: %s",
+                    error=e,
                 )
 
     def _rag_input(
@@ -833,18 +831,13 @@ class RAGChainRunner:
                 # hold) or a --suffix nothing was ingested under: the command
                 # line or the configuration is wrong (exit 2).
                 usage_error(e)
-            if error_class is ErrorClass.FAILURE:
-                log_failure(
-                    logger,
-                    logging.ERROR,
-                    "Error during query execution: %s",
-                    error=e,
-                    traceback=True,
-                )
-            else:
-                # An expected outcome with its own message (the deadline, a
-                # store or model server down): no traceback.
-                logger.error("Query failed (%s): %s", error_class.value, e)
+            # The one rule of every surface (log_error): an unexpected
+            # failure's type and where it happened (text at DEBUG), any
+            # other class with its text. The operator's stdout and the JSON
+            # document keep the text: this CLI is the operator's own.
+            log_error(
+                logger, logging.ERROR, "Error during query execution: %s", error=e
+            )
             console.print(
                 "\n[bold red]Error executing query: "
                 f"{markup_safe(error_text(e))}[/bold red]"
@@ -1133,11 +1126,13 @@ async def async_main(args: argparse.Namespace) -> int:
         return EXIT_INTERRUPTED
     except ConfigurationError as e:
         console.print(f"\n[red]Error: {markup_safe(e)}[/red]")
-        logger.error("Configuration error: %s", e)
+        log_error(logger, logging.ERROR, "Configuration error: %s", error=e)
         return failed(EXIT_USAGE, e)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - logged, exit code
         console.print(f"\n[red]An unexpected error occurred: {markup_safe(e)}[/red]")
-        logger.exception("Unexpected error during execution")
+        log_error(
+            logger, logging.ERROR, "Unexpected error during execution: %s", error=e
+        )
         return failed(EXIT_FAILURE, e)
 
 

@@ -1282,6 +1282,10 @@ class _RecordingLogger:
     def error(self, *args, **_kwargs) -> None:
         self.errors.append(args)
 
+    def log(self, level, *args, **_kwargs) -> None:
+        # log_error / log_failure: the line at its level.
+        {logging.WARNING: self.warning, logging.ERROR: self.error}[level](*args)
+
     def __getattr__(self, _name):
         return lambda *a, **k: None
 

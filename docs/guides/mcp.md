@@ -68,7 +68,8 @@ after the SDK's `Error executing tool <name>: `, the stable key to branch on: `[
 `[not_indexed]`, `[index_not_found]` and `[timeout]` carry a message for the
 caller (an argument to change, or a call to retry later); `[store_unreachable]`,
 `[model_unreachable]`, `[configuration]` and `[failure]` a generic one (the
-server log has the details), so an agent can tell an outage to retry from an
+server log has the details: an outage's text, an unexpected failure's type and
+where it happened, its text at `DEBUG`), so an agent can tell an outage to retry from an
 error to report. An argument a tool does not take is refused
 (`[invalid_argument] depth: Extra inputs are not permitted`; every input
 schema says `additionalProperties: false`), not ignored.
@@ -207,7 +208,9 @@ app = build_mcp_app(chain, namespace="default", allowed_hosts=["mcp.example.com"
   a `kg_rag.mcp.tool` span; its arguments are recorded only with
   `observability.capture_content`, after `redact_patterns`. Logs carry a
   digest of the query, not its text. A store or model failure reaches the
-  caller as a generic message; the server log has the details.
+  caller as a generic message; the server log has the details (an outage's
+  text; for an unexpected failure its type and where it happened, its text
+  and traceback at `DEBUG`).
   `--metrics-sink cloudwatch` publishes each `kg_answer` call's query
   metrics (`query_latency_ms`, `query_failed`, ...) as CloudWatch EMF on
   stderr, with the logs (stdout is the protocol's), for the CDK stack's

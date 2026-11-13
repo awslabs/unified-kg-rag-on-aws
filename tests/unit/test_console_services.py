@@ -793,7 +793,7 @@ async def test_an_absorbed_failure_shows_text_by_the_raised_ones_rule(
 
 
 async def test_a_strategy_s_reason_shows_no_unexpected_failure_s_text(
-    tmp_path: Path,
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     from unified_kg_rag.shared.exceptions import INTERNAL_ERROR_MESSAGE
 
@@ -806,10 +806,16 @@ async def test_a_strategy_s_reason_shows_no_unexpected_failure_s_text(
         ConsoleStore(tmp_path / "s.sqlite3"),
         chain_factory=lambda _c: Checking(_output()),
     )
-    views = await service.strategies()
+    with caplog.at_level("INFO"):
+        views = await service.strategies()
     assert views and all(
         v["reason"] == INTERNAL_ERROR_MESSAGE and not v["available"] for v in views
     )
+    # "The server log has the details": once per request, not per strategy,
+    # without the text.
+    logged = [r.getMessage() for r in caplog.records if r.levelno >= 40]
+    assert len(logged) == 1 and "RuntimeError (len=" in logged[0], logged
+    assert "SECRET-MARKER" not in logged[0]
     await service.close()
 
 

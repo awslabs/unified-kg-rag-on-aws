@@ -411,8 +411,9 @@ def error_class_of(value: object) -> ErrorClass:
 
 # What a surface says of a failure whose text it does not show its audience
 # (shown_error_text): a provider's text (an unexpected failure's) reaches no
-# surface, a store or model endpoint no MCP caller; the server logs the error
-# under the ids the surface names.
+# surface, a store or model endpoint no MCP caller. The server logs the error
+# under the ids the surface names (``log_error``): an outage's text, an
+# unexpected failure's type and where it happened (its text at DEBUG).
 INTERNAL_ERROR_MESSAGE = (
     "The call failed inside the server (a store or model error); the server "
     "log has the details."

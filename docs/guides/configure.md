@@ -115,8 +115,10 @@ rewritten queries, entity names and raw model output are logged only at
 `DEBUG`, and exception messages never carry model output. An error whose
 text may come from a model provider or a library (a model call a step
 absorbs, a query's unexpected failure on any surface) is logged at `INFO`
-and above as its type and a digest, its text and traceback only at `DEBUG`.
-Treat `DEBUG` logs
+and above as its type, a digest and where it happened (the type chain and
+`file:line` frames, never the message), its text and traceback only at
+`DEBUG`; an unreachable store or model, the deadline or a refusal has its own
+message and is logged with its text. Treat `DEBUG` logs
 (`logging.level: DEBUG`, `UKR__LOGGING__LEVEL=DEBUG`, any CLI's `--log-level
 DEBUG`; `run-rag --verbose` prints more
 of each result but leaves the log level), and libraries set to `DEBUG` in

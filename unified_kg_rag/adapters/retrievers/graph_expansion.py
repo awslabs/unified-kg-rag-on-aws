@@ -26,6 +26,7 @@ The seeds themselves come back as rows with a path of length 1.
 """
 
 import asyncio
+import logging
 import time
 from abc import abstractmethod
 from collections.abc import Callable, Mapping
@@ -66,6 +67,7 @@ from unified_kg_rag.domain.retrieval.filters import (
 )
 from unified_kg_rag.domain.retrieval.ppr import cap_edges_per_vertex
 from unified_kg_rag.shared import InvalidFilterError, StoreConnectionError, get_logger
+from unified_kg_rag.shared.logging import log_error
 from unified_kg_rag.shared.utils import safe_float_parse, text_digest
 
 logger = get_logger(__name__)
@@ -218,24 +220,32 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
         except Exception as e:
             error = self._request_error(e)
             if not is_fatal_retrieval_error(error):
-                logger.error(
+                log_error(
+                    logger,
+                    logging.ERROR,
                     "%s retrieval failed (transient, degrading to empty "
                     "results): %s",
                     self._store_name,
-                    e,
-                    exc_info=True,
+                    error=e,
                 )
                 return []
             if isinstance(error, StoreConnectionError):
                 # The traversal has dropped the connection already.
-                logger.error("%s retrieval failed: %s", self._store_name, error)
+                log_error(
+                    logger,
+                    logging.ERROR,
+                    "%s retrieval failed: %s",
+                    self._store_name,
+                    error=error,
+                )
             else:
                 # A broken configuration is not "no results".
-                logger.error(
+                log_error(
+                    logger,
+                    logging.ERROR,
                     "%s retrieval failed (fatal): %s",
                     self._store_name,
-                    e,
-                    exc_info=True,
+                    error=e,
                 )
             if error is e:
                 raise
@@ -277,11 +287,13 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
         except Exception as e:
             error = self._request_error(e)
             if not is_fatal_retrieval_error(error):
-                logger.error(
+                log_error(
+                    logger,
+                    logging.ERROR,
                     "%s neighbourhood edges failed (transient, degrading to "
                     "none): %s",
                     self._store_name,
-                    e,
+                    error=e,
                 )
                 return []
             if error is e:

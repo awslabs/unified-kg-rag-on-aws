@@ -228,7 +228,6 @@ from unified_kg_rag.shared.metrics import (
 from unified_kg_rag.shared.usage import UsageMeter, metering, usage_scope
 from unified_kg_rag.shared.utils import (
     configure_event_loop,
-    error_digest,
     named_choice,
     strip_embedding_fields,
     strip_invisible,
@@ -2578,7 +2577,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 QUERY_METRICS_NAMESPACE, metrics, properties
             )
         except Exception as e:  # noqa: BLE001 - metrics never fail a query
-            logger.warning("Query metrics emission failed: %s", error_digest(e))
+            log_failure(
+                logger, logging.WARNING, "Query metrics emission failed: %s", error=e
+            )
 
     def _time_left(self, started: float) -> float | None:
         """Seconds left of the query deadline (``search.query_timeout_seconds``)
@@ -3620,10 +3621,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                     yield rest
         except Exception as e:
             if not self.ignore_errors:
-                logger.error(
+                log_failure(
+                    logger,
+                    logging.ERROR,
                     "RAG stream failed for query %s: %s",
                     text_digest(rag_input.query),
-                    error_digest(e),
+                    error=e,
+                    traceback=True,
                 )
                 if (named := named_model_error(e, self.config)) is not e:
                     raise named from e

@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import functools
+import logging
 import math
 import time
 import weakref
@@ -66,7 +67,7 @@ from unified_kg_rag.shared.exceptions import (
     GraphQueryError,
     GraphQueryExecutionError,
 )
-from unified_kg_rag.shared.logging import warn_once
+from unified_kg_rag.shared.logging import log_error, warn_once
 from unified_kg_rag.shared.utils import safe_float_parse
 from unified_kg_rag.shared.utils.concurrency import gather_or_cancel
 
@@ -751,5 +752,7 @@ class NeptuneRetriever(GraphExpansionRetriever):
                     + f": {(str(e).splitlines() or [type(e).__name__])[0][:200]}",
                     timed_out=timed_out,
                 ) from e
-            logger.error("Gremlin traversal execution failed: %s", e)
+            log_error(
+                logger, logging.ERROR, "Gremlin traversal execution failed: %s", error=e
+            )
             return []

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import inspect
 import json
+import logging
 import shutil
 import sys
 import tempfile
@@ -105,6 +106,7 @@ from unified_kg_rag.shared import (
     observability,
 )
 from unified_kg_rag.shared.exceptions import ErrorClass, classify
+from unified_kg_rag.shared.logging import log_error
 from unified_kg_rag.shared.usage import usage_scope
 from unified_kg_rag.shared.utils import event_loop
 from unified_kg_rag.shared.utils.files import atomic_write_text
@@ -1300,7 +1302,12 @@ class EvaluationRunner:
                 try:
                     await close()
                 except Exception as e:  # noqa: BLE001 - closing is best-effort
-                    logger.warning("Could not close an --arm chain: %s", e)
+                    log_error(
+                        logger,
+                        logging.WARNING,
+                        "Could not close an --arm chain: %s",
+                        error=e,
+                    )
 
     def _local_outputs(self, work_dir: Path) -> Path:
         """Where the result files are written (``work_dir`` for an S3 target)."""
@@ -1328,12 +1335,14 @@ class EvaluationRunner:
                 s3_client_for(self.config), outputs, target, self.config
             )
         except Exception as e:  # noqa: BLE001 - already failing; keep the files
-            logger.error(
+            log_error(
+                logger,
+                logging.ERROR,
                 "Evaluation stopped; could not upload the finished runs' "
-                "results to '%s' (%s). They are kept in '%s'.",
+                "results to '%s'. They are kept in '%s': %s",
                 target,
-                e,
                 outputs,
+                error=e,
             )
             return False
         logger.warning(
@@ -1469,8 +1478,8 @@ class EvaluationRunner:
         if not errors:
             return
         if getattr(self.args, "pool_runs", False):
-            for error in errors:
-                logger.warning("%s: pooled with --pool-runs: %s", flag, error)
+            for problem in errors:
+                logger.warning("%s: pooled with --pool-runs: %s", flag, problem)
             return
         raise InvalidDatasetError(
             f"{flag}: {'; '.join(errors)}. They are not one run's repeats: "
@@ -2665,27 +2674,31 @@ def main() -> None:
         console.print(
             f"\n[red]Error: invalid evaluation dataset: {markup_safe(e)}[/red]"
         )
-        logger.error("Invalid evaluation dataset: %s", e)
+        log_error(logger, logging.ERROR, "Invalid evaluation dataset: %s", error=e)
         sys.exit(EXIT_USAGE)
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - logged, exits
         error_class = classify(e)
         if EXIT_CODES[error_class] == EXIT_USAGE:
             # A setting, a filter or a namespace no query of the run can be
             # answered with (the warm-up raises it): a usage error, before
             # the dataset.
             console.print(f"\n[red]Error: {markup_safe(e)}[/red]")
-            logger.error("Evaluation configuration error: %s", e)
+            log_error(
+                logger, logging.ERROR, "Evaluation configuration error: %s", error=e
+            )
             sys.exit(EXIT_USAGE)
         if error_class is not ErrorClass.FAILURE or isinstance(e, AWSServiceError):
             # An expected outcome with its own message: a store or model
             # server down, the deadline, an s3:// dataset that cannot be
             # downloaded.
             console.print(f"\n[red]Error: {markup_safe(e)}[/red]")
-            logger.error("Evaluation failed: %s", e)
+            log_error(logger, logging.ERROR, "Evaluation failed: %s", error=e)
             sys.exit(EXIT_FAILURE)
         console.print(f"\n[red]An unexpected error occurred: {markup_safe(e)}[/red]")
-        logger.exception("Unexpected error during evaluation")
+        log_error(
+            logger, logging.ERROR, "Unexpected error during evaluation: %s", error=e
+        )
         sys.exit(EXIT_FAILURE)
 
 

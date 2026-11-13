@@ -983,8 +983,13 @@ class TestRunIndexCreationCheck:
     ) -> None:
         indexer = mocker.MagicMock()
         indexer.check_index_creation.side_effect = RuntimeError("connection reset")
-        with caplog.at_level("WARNING"):
+        with caplog.at_level("DEBUG"):
             _pipeline(Config(), indexer)._check_index_creation(_run_context())
+        # The warning names the error by type and digest (a store's error may
+        # quote what it was sent); its text is DEBUG's.
+        (warned,) = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert "RuntimeError (len=" in warned.getMessage()
+        assert "connection reset" not in warned.getMessage()
         assert "connection reset" in caplog.text
         indexer.close.assert_called_once_with()
 
