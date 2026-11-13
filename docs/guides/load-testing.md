@@ -183,11 +183,13 @@ writes `report.md` to the job summary. It fails when a gate fails:
 | Chaos scenarios | each converges (the kill exactly, the others `--incremental`), graph-store census included; the kill's resume, started at once, finds no lease held |
 
 A faulted run that failed no document and exited 0 (the injected faults all
-retried away, or none injected) left the recovery path untested: its
-scenario's `status` is `not_exercised`, which `report.md` lists under "Not
-tested this run" (a warning on the workflow run) without failing it. The
-nightly faults fail some documents on most nights; failing it would
-flake an estimated one night in twenty.
+retried away) left the recovery path untested: its scenario's `status` is
+`not_exercised`, which `report.md` lists under "Not tested this run" (a
+warning on the workflow run) without failing it. The nightly faults fail
+some documents on most nights; failing it would flake an estimated one
+night in twenty. A faulted run during which the model server injected no
+fault at all fails its scenario: at those rates that is a chaos server
+ignoring its knobs, not luck.
 
 The RSS floor (8 MB) sits well above the noise of a clean 10-minute soak
 (8 to 13.5 MB/h measured, from about 1 MB over its second half), so the
@@ -197,6 +199,19 @@ the floor over its second half); a slow leak is judged on a soak of
 on the runner: repeated clean soaks there would set it so that false
 failures stay rare.
 
+The nightly runs the soak's process with `MALLOC_ARENA_MAX=2`. Since the
+queries' CPU-bound steps (hit parsing, fusion, the PPR graph) run on worker
+threads, glibc's per-thread memory arenas grow RSS by tens of MB over the
+first ten minutes and then level off: measured on a development host, a
+300 s soak rose 22.5 MB (the Python heap 0.55 MB, by `tracemalloc`) and a
+1,500 s one levelled off near +32 MB after about 700 s, while with two
+arenas the 300 s soak rose 2.6 MB. The 10-minute soak's second half falls
+in that growth, which would read as a leak against the 8 MB floor. Two
+arenas leave the gate the memory the code holds; set the same when you run
+`load.py soak` yourself to compare with the nightly. Whether the deployed
+query task should set it is a separate measurement (its steady RSS under
+load).
+
 It only reports: no branch protection requires it, and pull requests do not
 run it. Run it locally with
 `uv run --extra local python scripts/loadtest/nightly.py out/` (about 20
@@ -205,7 +220,8 @@ report with `load.py gate report.json` (`--max-errors`, `--max-flags`,
 `--max-loop-lag-ms`, `--max-rss-mb-per-hour`, `--rss-rise-floor-mb`). The
 gate reads any mode's report: an `http` report's levels pass the same gates,
 its lag the client's (`client_loop_lag_p99_ms`); a report holding none of
-`sweep`, `soak`, `http` and `chaos` fails.
+`sweep`, `soak`, `http` and `chaos`, or only empty ones (`[]`, `null`),
+fails.
 
 ## Local baseline (fake models)
 

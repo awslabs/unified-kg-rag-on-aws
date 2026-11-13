@@ -1656,9 +1656,11 @@ From a `main` checkout (formats and keys no release had):
   census). A nightly `load-test` workflow runs it on the embedded stores; it gates on errors, answers without
   evidence (no sources, abstained, empty) or degraded, loop lag, RSS growth past both a rate and an 8 MB floor (a
   short soak's slope alone failed a clean run), and convergence, the kill's resume started at once (the dead run's
-  lease handed on), and only reports; a faulted run that failed nothing is reported `not_exercised`. `load.py gate`
-  checks any mode's report (an `http` one by the client's loop lag) and fails one that measured nothing. `load.py`
-  refuses a store or model kind that is not local, and reads no `~/.aws` profile.
+  lease handed on), and only reports; a faulted run that failed nothing is reported `not_exercised`, one during which
+  the model server injected no fault fails. The soak runs with `MALLOC_ARENA_MAX=2`: glibc's per-thread arenas grew
+  RSS 22.5 MB in a 300 s soak once queries used worker threads (2.6 MB with two arenas). `load.py gate` checks any
+  mode's report (an `http` one by the client's loop lag) and fails one that measured nothing (or holds only empty
+  sections). `load.py` refuses a store or model kind that is not local, and reads no `~/.aws` profile.
 
 ### Changed
 - `auto` falls back to the first routable of `local`, then `mix`, when the router's answer names no routable
