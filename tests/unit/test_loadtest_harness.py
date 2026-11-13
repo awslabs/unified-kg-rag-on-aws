@@ -585,8 +585,8 @@ def test_the_nightly_workspace_ingests_and_exports(tmp_path: Path) -> None:
     diffs = compare_exports.compare_files(a, b)
     assert compare_exports.converged(diffs)
     kinds = {d.kind for d in diffs}
-    assert {"text_unit", "entity", "relationship", "community"} <= kinds
-    assert "summary_node" in kinds  # raptor's tree is compared too
+    assert {"text", "entity", "relationship", "community"} <= kinds
+    assert "summary" in kinds  # raptor's tree is compared too
     nightly.reset(ws)
     assert {p.name for p in ws.iterdir()} == set(nightly.KEEP)
     report = {
