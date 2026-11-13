@@ -1129,6 +1129,43 @@ DETECTION: tuple[Case, ...] = (
     ),
     Case("Quanto custa?", "pt", "pt", "rv14 query", Tradeoff("it", SHARED_WORD)),
     Case("Quanto vale?", "pt", "pt", "rv14 query", Tradeoff("it", SHARED_WORD)),
+    # A name holds connectives, not a sentence's lowercase words: an English
+    # sentence naming two companies and quoting a short CJK term read as one
+    # name of eight words, its function words dropped, and so as the CJK
+    # term's language (rv25 quality 5). On a Korean or Chinese index too.
+    Case(
+        "Acme Robotics signed the supply agreement with Globex Sensors in 東京",
+        "en",
+        "en",
+        "rv25 quality 5",
+    ),
+    Case(
+        "Acme Robotics signed the supply agreement with Globex Sensors in 東京",
+        "en",
+        "zh",
+        "rv25 quality 5",
+    ),
+    Case(
+        "Alice Chen approved the specification that Ravi Patel wrote for 애크미",
+        "en",
+        "en",
+        "rv25 quality 5",
+    ),
+    Case(
+        "Alice Chen approved the specification that Ravi Patel wrote for 애크미",
+        "en",
+        "ko",
+        "rv25 quality 5",
+    ),
+    Case(
+        "Umbra Freight delivers the lidar units to Kestrel Depot in 東京",
+        "en",
+        "ja",
+        "rv25 quality 5",
+    ),
+    # A connective and an article still join a name.
+    Case("Bank of the West와 Universidad de la República 비교", "ko", "en", "rv25"),
+    Case("Museum of Modern Artの展示は？", "ja", "en", "rv25"),
 )
 
 NUMBERS: tuple[Case, ...] = (
