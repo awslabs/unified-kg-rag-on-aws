@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import { fireEvent, render, screen } from "@testing-library/react";
 import type { ReactElement } from "react";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { drawnGraph, linkAlpha, placeLabels, settle, type LabelCandidate } from "../components/GraphCanvas";
 import { I18nProvider } from "../i18n/i18n";
 import type { GraphData, GraphNode } from "../lib/types";
-import { EntityTable, rankMatches, TABLE_PAGE } from "./GraphPage";
+import { EntityTable, GraphPage, rankMatches, TABLE_PAGE } from "./GraphPage";
 
 const renderIn = (ui: ReactElement) => render(<I18nProvider initial="en">{ui}</I18nProvider>);
 
@@ -171,5 +171,36 @@ describe("rankMatches", () => {
     ];
     expect(rankMatches(entities, "Entity 77").map((e) => e.id)).toEqual(["b", "d", "a", "c"]);
     expect(rankMatches(entities, "  ")).toEqual([]);
+  });
+});
+
+describe("GraphPage without a graph", () => {
+  const serve = (current: { state: string; namespace: string; built_at: null }, indexed: boolean) =>
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        const body = String(url).includes("namespace/methodologies") ? { namespace: "default", recorded: false, indexed, held: [], dropped: [] } : { graphs: [], current };
+        return new Response(JSON.stringify(body), { status: 200 });
+      }),
+    );
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("sends an off export to Settings, not to Ingest", async () => {
+    serve({ state: "export_off", namespace: "default", built_at: null }, true);
+    renderIn(<GraphPage params={new URLSearchParams()} />);
+    expect(await screen.findByText("The graph is turned off")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open Settings" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Go to Ingest" })).not.toBeInTheDocument();
+  });
+
+  it("tells an empty namespace from one indexed before build records", async () => {
+    serve({ state: "unrecorded", namespace: "default", built_at: null }, false);
+    const { unmount } = renderIn(<GraphPage params={new URLSearchParams()} />);
+    expect(await screen.findByText("Nothing is indexed in “default” yet")).toBeInTheDocument();
+    unmount();
+    serve({ state: "unrecorded", namespace: "default", built_at: null }, true);
+    renderIn(<GraphPage params={new URLSearchParams()} />);
+    expect(await screen.findByText("“default” has no build record")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Go to Ingest" })).toBeInTheDocument();
   });
 });

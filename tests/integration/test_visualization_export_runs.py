@@ -294,21 +294,23 @@ def test_the_console_builds_the_graph_an_incremental_run_did_not_export(
     config.graph.visualization.outputs_directory = None
     cache = tmp_path / "cache"
     # An empty namespace (no build recorded): nothing to build.
-    assert graph_api.current_graph(config, cache) is None
+    assert graph_api.current_graph(config, cache).state == "unrecorded"
     exports = _exports(mocker)
     e2e._ingest(config, providers, source, tmp_path / "run-1")
     (source / "carrier.txt").write_text("Carrier ships widgets for Depot.")
     e2e._ingest(config, providers, source, tmp_path / "run-2")
 
-    path = graph_api.current_graph(config, cache)
+    current = graph_api.current_graph(config, cache)
+    path = current.path
 
+    assert current.state == "current" and current.built_at
     assert path == cache / "console-graphs" / "default" / VISUALIZATION_DATA_FILENAME
     names = {n["attributes"]["name"] for n in json.loads(path.read_text())["nodes"]}
     assert "Carrier" in names and "Vendor" in names
     # It shows the stores now: found again, not built.
     written = path.stat().st_mtime_ns
-    assert graph_api.current_graph(config, cache) == path
+    assert graph_api.current_graph(config, cache).path == path
     assert path.stat().st_mtime_ns == written
     assert len(exports) == 1  # the full build's
     config.graph.visualization.export_data = False
-    assert graph_api.current_graph(config, cache) is None
+    assert graph_api.current_graph(config, cache).state == "export_off"

@@ -16,7 +16,6 @@ import asyncio
 import contextlib
 import json
 import secrets
-import threading
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -298,7 +297,7 @@ class ConsoleState:
             on_ingest_end=self.ask.reset,
             read_held=self._held,
         )
-        self._graph_lock = threading.Lock()
+        self.graphs = graph_api.GraphBuilder(options.cache_directory)
         self._build_roots()
 
     async def _held(self, namespace: str) -> list[str] | None:
@@ -358,22 +357,6 @@ class ConsoleState:
             return None
         self.config_error = None
         return config
-
-    def current_graph(self) -> None:
-        """Bring the namespace's graph up to date for the Graph page
-        (:func:`graph_api.current_graph`: built from the stores only when
-        no export shows them), one build at a time. Best effort: a failure
-        is logged and the page lists the exports there are."""
-        with self._graph_lock:
-            try:
-                path = graph_api.current_graph(
-                    self.load_config(), self.options.cache_directory
-                )
-            except Exception as e:  # noqa: BLE001 - the page still lists the exports
-                logger.warning("Building the graph for the Graph page failed: %s", e)
-                return
-        if path is not None:
-            logger.debug("The Graph page's graph: %s", path)
 
     def reload(self) -> None:
         self._config = None
@@ -947,14 +930,15 @@ def create_app(
     @app.get("/api/graphs")
     async def graphs() -> dict[str, Any]:
         # The namespace's graph, built when the page opens and the stores
-        # changed since the newest export (no job exports one).
-        await asyncio.to_thread(state.current_graph)
+        # changed since the newest export (no job exports one); ``current``
+        # says why there is none (the page's empty state).
+        current = await asyncio.to_thread(state.graphs.current, state.load_config)
         names = tuple(
             n for n in ("cache", "visualization", "workspace") if n in state.roots.roots
         )
-        return {
-            "graphs": await asyncio.to_thread(graph_api.find_graphs, state.roots, names)
-        }
+        found = await asyncio.to_thread(graph_api.find_graphs, state.roots, names)
+        graph_api.mark_outdated(found, current)
+        return {"graphs": found, "current": current.view()}
 
     async def graph_file(ref: str) -> Path:
         path = state.roots.resolve(ref)
