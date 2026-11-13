@@ -1108,7 +1108,8 @@ From a `main` checkout (formats and keys no release had):
   [filters](docs/reference/filters.md).
 - `processing.document_parsing.encoding`: the encoding the text formats that are not UTF-8 are read in instead of
   the one detected (cp1252 for a French file detected as cp1250); setting it parses those files again in the next
-  incremental run, and no UTF-8 file. See
+  incremental run, and no UTF-8 file. A text, CSV or HTML file is first read as UTF-8 under any locale (it was read
+  in the locale's encoding, so a UTF-8 file decoded as Latin-1 text under a Latin-1 locale). See
   [ingest](docs/guides/ingest.md#large-and-heterogeneous-corpora).
 - Documents from memory: `DataIngestionPipeline.insert_documents([InputDocument(id=..., text=..., filters=...)])`
   adds or updates documents, `delete_documents(ids)` deletes them, through the incremental path of `run` (one run
