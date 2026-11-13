@@ -295,7 +295,8 @@ instead:
   `next_run_writes_from` (UTC, ISO 8601).
 
 One run prints no JSON: a `run-ingestion` resume whose cached stages fail
-the integrity check asks "Continue despite integrity issues?" on the
+the integrity check (a changed setting or an incomplete cache; not a
+corpus that changed under an incremental pipeline id) asks "Continue despite integrity issues?" on the
 terminal, and an answer of no exits `0` with nothing on stdout. Pass `--yes`
 (or `--confirm-integrity`) to continue; without a terminal the question stops
 the run with exit `1` and the status document. A `--force-rebuild` or

@@ -409,7 +409,10 @@ whose processing kills the task would stop every later run the same way.
   scope another pipeline id has since added, changed or deleted a document
   outside the delta, and one whose `document_loading` inputs changed since
   the delta was computed (a reset, retry or corpus setting; WARNING
-  `Rewinding resume point from ... to 'document_loading'`). A finished
+  `Rewinding resume point from ... to 'document_loading'`). A changed corpus
+  alone (a file added, edited or removed under the same settings, which the
+  context records as `incremental_loading_settings_key`) is the expected
+  case: the run asks no integrity question and logs the rewind at INFO. A finished
   pipeline id run again counts as resumed; a run resumed after its own kill
   or stop keeps its delta. A resume past
   a stage that recorded failed text units starts at that stage, so the units

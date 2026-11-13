@@ -319,7 +319,7 @@ time; a second is refused with the running job's id, also when both
 requests arrive at once (the namespace is claimed before the first await).
 A pipeline id is per corpus folder: a readable slug of its name and a hash
 of its resolved path and namespace. A question the run asks before it
-writes (the inputs of a resumed id changed, a reset, a mass deletion) is
+writes (a setting of a resumed id changed or its cache is incomplete, a reset, a mass deletion) is
 answered only by its own flag (`run-ingestion --confirm-integrity`,
 `--confirm-reset`, `--confirm-deletions`); unanswered, the job names it and
 the page offers to start again with that flag. A job a console process left

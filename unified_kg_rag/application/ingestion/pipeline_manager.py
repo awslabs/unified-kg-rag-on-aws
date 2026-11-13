@@ -396,6 +396,9 @@ class PipelineResumeManager:
         # The loading key the metadata's delta was computed with (see
         # determine_resume_strategy).
         self._loading_key: Any = _NO_DELTA
+        # Whether only the corpus differs from the one the saved delta was
+        # computed with (see _loading_inputs_change).
+        self._corpus_changed = False
 
     def determine_resume_strategy(
         self, pipeline_id: str, explicit_stage: str | None = None
@@ -417,6 +420,7 @@ class PipelineResumeManager:
                 if metadata.get("incremental_delta") is not None
                 else _NO_DELTA
             )
+            self._corpus_changed = self._loading_inputs_change(metadata) == "corpus"
 
             if explicit_stage:
                 start_stage, completed_stages = self._handle_explicit_stage_resume(
@@ -583,9 +587,11 @@ class PipelineResumeManager:
     def _rewind_level(self) -> int:
         """The level a rewind is logged at: a warning, except in a reset run
         (``indexing.reset``), which rebuilds the namespace from every
-        document, so recomputing the stages its cache no longer backs is
-        what it asked for."""
-        return logging.INFO if self.config.indexing.reset else logging.WARNING
+        document, and in a run over a changed corpus, whose cache keys
+        carry the corpus, so recomputing the stages its cache no longer
+        backs is what it asked for."""
+        reset = self.config.indexing.reset
+        return logging.INFO if reset or self._corpus_changed else logging.WARNING
 
     def _missing_cache_keys(
         self, pipeline_id: str, stage_name: str, *, load: bool = False
@@ -752,6 +758,27 @@ class PipelineResumeManager:
 
         return loaded_files_count > 0
 
+    def _loading_inputs_change(self, metadata: dict[str, Any]) -> str | None:
+        """How the document_loading inputs differ from those the saved delta
+        was computed with: ``None`` when they match (or no delta was saved),
+        ``"corpus"`` when only the documents differ, which an incremental
+        pipeline id run again expects, and ``"settings"`` when a setting
+        does too (a reset, retry or corpus setting), which needs an answer."""
+        recorded = metadata.get("incremental_loading_key")
+        if metadata.get("incremental_delta") is None or recorded is None:
+            return None
+        loading = PipelineStageType.DOCUMENT_LOADING
+        if recorded == stage_cache_key(
+            self.config, loading, "documents", self.corpus_fingerprint
+        ):
+            return None
+        settings = metadata.get("incremental_loading_settings_key")
+        if settings is not None and settings == stage_cache_key(
+            self.config, loading, "documents"
+        ):
+            return "corpus"
+        return "settings"
+
     def validate_pipeline_integrity(self, pipeline_id: str) -> tuple[bool, list[str]]:
         logger.info("Validating pipeline integrity for '%s'", pipeline_id)
         errors = []
@@ -763,15 +790,19 @@ class PipelineResumeManager:
             return False, [str(e)]
 
         loading = PipelineStageType.DOCUMENT_LOADING
-        recorded = metadata.get("incremental_loading_key")
-        reloaded = (
-            metadata.get("incremental_delta") is not None
-            and recorded is not None
-            and recorded
-            != stage_cache_key(
-                self.config, loading, "documents", self.corpus_fingerprint
+        change = self._loading_inputs_change(metadata)
+        if change == "corpus":
+            # Every stage's key carries the corpus fingerprint, so none of
+            # the cached outputs is the new corpus's: the run reads the
+            # corpus again, the delta (not a cache) says what is processed,
+            # and a cache check would only say so once per stage.
+            logger.info(
+                "The corpus of pipeline '%s' changed since its last run: its "
+                "stages run again and the delta decides what is processed",
+                pipeline_id,
             )
-        )
+            return True, []
+        reloaded = change == "settings"
         if reloaded:
             # The documents a reset, retry or corpus setting filtered: the
             # resume loads them again and recomputes every stage after it,

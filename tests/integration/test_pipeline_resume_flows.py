@@ -180,10 +180,81 @@ def test_a_rerun_stage_answers_from_the_response_cache(harness: _Harness) -> Non
 def test_a_failed_integrity_check_without_a_terminal_needs_yes(
     harness: _Harness,
 ) -> None:
+    # Without the doc-status registry there is no delta: an edited corpus
+    # changes every cache key, the completed stages are no longer backed by
+    # the cache, and the operator has to confirm.
+    harness.incremental = False
     assert harness.run("--pipeline-id", "p1") == 0
-    # Editing the corpus changes every cache key: the completed stages are no
-    # longer backed by the cache, and the operator has to confirm.
     (harness.source / "contract.txt").write_text("Vendor sells gadgets to Buyer.")
+    assert harness.run("--pipeline-id", "p1") == 1
+    assert harness.run("--pipeline-id", "p1", "--yes") == 0
+
+
+def test_adding_or_editing_a_document_reruns_incrementally_without_a_question(
+    harness: _Harness, caplog: pytest.LogCaptureFixture
+) -> None:
+    # An incremental pipeline id run again after its corpus changed loads the
+    # corpus anew by design (the delta decides what is processed): no
+    # question, no warning, and only the new or changed document is extracted.
+    harness.config.cache.llm_responses.enabled = False
+    assert harness.run("--pipeline-id", "p1") == 0
+    calls = harness.llm_calls
+
+    (harness.source / "audit.txt").write_text("Auditor reviews Depot records.")
+    with caplog.at_level(logging.INFO):
+        assert harness.run("--pipeline-id", "p1") == 0
+    assert 0 < harness.llm_calls - calls < calls
+    records = all_records(harness.registry)
+    assert len(records) == 3 and {r.status for r in records} == {DocStatus.PROCESSED}
+    assert harness.metadata("p1")["status"] == "completed"
+
+    calls = harness.llm_calls
+    (harness.source / "audit.txt").write_text("Auditor reviews Depot invoices.")
+    assert harness.run("--pipeline-id", "p1") == 0
+    assert harness.llm_calls > calls
+
+    noisy = [
+        r.getMessage()
+        for r in caplog.records
+        if r.levelno >= logging.WARNING
+        and any(
+            text in r.getMessage()
+            for text in ("Missing cache", "inputs changed", "cache holds no", "Rewind")
+        )
+    ]
+    assert not noisy
+    # The same ids again with nothing changed: still nothing to confirm.
+    assert harness.run("--pipeline-id", "p1") == 0
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        # Downstream of document_loading: its stage's output is not cached.
+        lambda config: setattr(config.processing.chunking, "max_chunk_size", 777),
+        # Upstream of every stage: the loading inputs themselves.
+        lambda config: setattr(config.indexing, "max_document_attempts", 7),
+    ],
+    ids=["downstream-setting", "loading-setting"],
+)
+def test_a_changed_setting_of_an_incremental_pipeline_still_asks(
+    harness: _Harness, change: Any
+) -> None:
+    assert harness.run("--pipeline-id", "p1") == 0
+    change(harness.config)
+    assert harness.run("--pipeline-id", "p1") == 1
+    assert harness.run("--pipeline-id", "p1", "--yes") == 0
+
+
+def test_a_missing_cache_of_an_incremental_pipeline_still_asks(
+    harness: _Harness,
+) -> None:
+    # The corpus is unchanged: a stage output that vanished (or was tampered
+    # with) from the cache is the integrity problem the question is for.
+    assert harness.run("--pipeline-id", "p1") == 0
+    outputs = harness.tmp_path / "cache" / "p1" / "text_chunking"
+    assert outputs.is_dir()
+    shutil.rmtree(outputs)
     assert harness.run("--pipeline-id", "p1") == 1
     assert harness.run("--pipeline-id", "p1", "--yes") == 0
 

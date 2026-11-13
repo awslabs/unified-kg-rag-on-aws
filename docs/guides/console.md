@@ -181,9 +181,11 @@ does not hold is dropped from the namespace), a forced recompute and the answers
 run can ask (a reset that drops another source's content, a mass
 deletion). Start runs `run-ingestion` with a pipeline id per corpus folder
 (its name and a hash of its path and namespace), so running the same corpus
-again resumes or runs incrementally. A run that stops at one of its
-questions (the corpus or the settings changed since this corpus's last run,
-a reset, a mass deletion) says which, and offers to start again answering
+again resumes or runs incrementally. Adding, editing or removing files
+and starting again is one run: with the doc-status registry on, the delta
+says what is processed, and no question is asked. A run that stops at one of
+its questions (a setting changed since this corpus's last run, an incomplete
+stage cache, a reset, a mass deletion) says which, and offers to start again answering
 that question alone (`--confirm-integrity`, `--confirm-reset`,
 `--confirm-deletions`); the same answers can be ticked under more options
 beforehand. The run's
