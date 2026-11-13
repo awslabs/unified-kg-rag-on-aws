@@ -25,6 +25,7 @@ from unified_kg_rag.domain.models import (
     SearchQuery,
     SearchType,
 )
+from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.lineage import merge as merge_lineages
 from unified_kg_rag.domain.retrieval.ppr import (
     PassageGraph,
@@ -39,11 +40,6 @@ logger = get_logger(__name__)
 PPR_SEED_TEXT_UNITS = "ppr_seed_text_units"
 
 
-def _cited_ids(node: RetrievalResult) -> list[Any]:
-    ids = (node.metadata or {}).get("text_unit_ids") or []
-    return ids if isinstance(ids, list) else []
-
-
 def document_unit_ids(node: RetrievalResult) -> list[str]:
     """The document text units an entity (or relationship) cites, each once,
     in id order: a seed graph's units are no passages."""
@@ -51,7 +47,11 @@ def document_unit_ids(node: RetrievalResult) -> list[str]:
 
 
 def _document_units(node: RetrievalResult) -> set[str]:
-    return {str(u) for u in _cited_ids(node) if u and not is_seed_unit(str(u))}
+    return {
+        str(u)
+        for u in source_fields.listed(node.metadata or {}, "text_unit_ids")
+        if u and not is_seed_unit(str(u))
+    }
 
 
 def document_unit_count(node: RetrievalResult) -> int:
@@ -65,7 +65,7 @@ def cites_more_than(node: RetrievalResult, limit: int) -> bool:
     (``document_unit_count(node) > limit``), read only until it is known: a
     hub cites thousands, the frequency threshold is tens."""
     seen: set[str] = set()
-    for unit in _cited_ids(node):
+    for unit in source_fields.listed(node.metadata or {}, "text_unit_ids"):
         if unit and not is_seed_unit(key := str(unit)):
             seen.add(key)
             if len(seen) > limit:
