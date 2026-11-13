@@ -846,3 +846,34 @@ def test_the_image_declares_the_task_volumes() -> None:
     ).read_text(encoding="utf-8")
     (line,) = [x for x in dockerfile.splitlines() if x.startswith("VOLUME ")]
     assert json.loads(line.removeprefix("VOLUME ")) == list(WRITABLE_VOLUMES.values())
+
+
+@pytest.mark.parametrize(
+    ("task", "options"),
+    [
+        ("IngestionTask", {"mode": "blocking"}),
+        # 25 MiB
+        ("QueryTask", {"mode": "non-blocking", "max-buffer-size": "26214400b"}),
+    ],
+)
+def test_the_app_ships_stdout_and_stderr_through_awslogs_in_an_explicit_mode(
+    task: str, options: dict[str, str]
+) -> None:
+    # The JSON-mode CLIs write their EMF records to stderr: awslogs ships
+    # both streams (a stdout-only router would drop them). Its mode is set:
+    # left out, ECS takes the account's default (non-blocking since 2025),
+    # which drops lines past a buffer. Ingestion blocks rather than drop
+    # the records its alarms read; queries do not wait on CloudWatch Logs.
+    template = _compute_template({"enable_cloudwatch_tracing": "true"})
+    task_defs = template.find_resources("AWS::ECS::TaskDefinition")
+    task_def = next(v for k, v in task_defs.items() if k.startswith(task))
+    containers = {c["Name"]: c for c in task_def["Properties"]["ContainerDefinitions"]}
+    app = containers["app"]["LogConfiguration"]
+    assert app["LogDriver"] == "awslogs"
+    assert {k: app["Options"].get(k) for k in options} == options
+    if options["mode"] == "blocking":
+        assert "max-buffer-size" not in app["Options"]
+    collector = containers["otel-collector"]["LogConfiguration"]
+    assert collector["LogDriver"] == "awslogs"
+    assert collector["Options"]["mode"] == "non-blocking"
+    assert collector["Options"]["max-buffer-size"] == "26214400b"  # 25 MiB

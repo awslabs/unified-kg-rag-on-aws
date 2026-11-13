@@ -1904,6 +1904,9 @@ From a `main` checkout (formats and keys no release had):
 - CDK: both task definitions drop every Linux capability (as `docker/compose.local.yaml`), and synth warns when an
   environment other than dev deploys the mutable `latest` image tag.
 - CDK: a plain `cdk deploy --all` attaches the guardrail it creates when `bedrock_region` is the deploy region (every
+- CDK: the `awslogs` delivery mode is set, not left to the account's ECS default (non-blocking, which drops lines
+  past its buffer): the ingestion task's app logs `blocking`, so the EMF records its alarms read are not dropped; the
+  query task's app and the trace collectors `non-blocking` with a 25 MiB buffer.
   private deploy): the tasks read its id and version from SSM parameters the guardrail stack writes, so queries and
   answers are screened without `-c guardrail_identifier`; across regions, and for a given identifier, the context
   path is unchanged. `-c create_guardrail=false` keeps a deployment without one.
