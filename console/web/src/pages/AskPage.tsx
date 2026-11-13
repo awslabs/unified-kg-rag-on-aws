@@ -11,6 +11,7 @@ import { navigate } from "../lib/router";
 import { useTrail } from "../lib/trail";
 import type { AskEvent, AskResult, Citation, Degradation, NamespaceHeld, Source, Status, StrategyInfo } from "../lib/types";
 import { useApi } from "../lib/useApi";
+import { contentLang } from "../lib/contentLang";
 
 interface Turn {
   id: number;
@@ -357,11 +358,13 @@ function TurnView({
   onSelect: () => void;
   onOpenCitation: (citation: Citation) => void;
 }) {
-  const { t, number, usd, seconds } = useI18n();
+  const { t, number, usd, seconds, locale } = useI18n();
   const result = turn.result;
   return (
     <article className="turn" aria-label={t("ask.turn", { question: truncate(turn.question, 60) })}>
-      <div className="question">{turn.question}</div>
+      <div className="question" lang={contentLang(turn.question, locale)}>
+        {turn.question}
+      </div>
       <section className="sheet answer" style={selected ? { borderColor: "var(--trace)" } : undefined}>
         {result?.routing && turn.requested === "auto" ? (
           <p className="route-note">
@@ -383,7 +386,7 @@ function TurnView({
             )}
           </Notice>
         ) : (
-          <p className={`answer-text${turn.status === "streaming" ? " streaming" : ""}`}>
+          <p className={`answer-text${turn.status === "streaming" ? " streaming" : ""}`} lang={contentLang(turn.text, locale)}>
             {turn.text ? (
               <AnswerText text={turn.text} citations={result?.citations} cites={result?.cites} onOpen={onOpenCitation} />
             ) : turn.status === "streaming" ? (

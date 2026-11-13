@@ -465,6 +465,8 @@
   "graph.id": "ID",
   "graph.neighbours_one": "{{count}} Beziehung",
   "graph.neighbours_other": "{{count}} Beziehungen",
+  "graph.edgeOut": "ausgehend",
+  "graph.edgeIn": "eingehend",
   "graph.pickHint": "Wählen Sie eine Entität im Graphen oder suchen Sie sie nach Name.",
   "graph.mostConnected": "Am stärksten vernetzt",
   "graph.noCommunities": "Dieser Export enthält keine Communitys (ein Lauf ohne GraphRAG).",

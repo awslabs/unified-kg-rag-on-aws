@@ -9,6 +9,7 @@ import { useI18n } from "../i18n/i18n";
 import { errorMessage, get, send } from "../lib/api";
 import type { Comparison, JobRecord, QuestionScores, SavedRun, Status, StrategyInfo } from "../lib/types";
 import { useApi } from "../lib/useApi";
+import { contentLang } from "../lib/contentLang";
 
 interface DatasetInfo {
   ref: string;
@@ -498,7 +499,7 @@ export const QUESTION_PAGE = 50;
  * shown candidate, its outcome against its baseline; a question opens the
  * answers side by side. Read only once opened. */
 export function QuestionTable({ refName, candidate, baseline }: { refName: string; candidate: string | null; baseline: string | null }) {
-  const { t, number } = useI18n();
+  const { t, number, locale } = useI18n();
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState<Outcome | "all">("all");
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -578,7 +579,7 @@ export function QuestionTable({ refName, candidate, baseline }: { refName: strin
                     const row = (
                       <tr key={q.id}>
                         <td>
-                          <button className="link-button question-toggle" aria-expanded={isOpen} onClick={() => setExpanded(isOpen ? null : q.id)}>
+                          <button className="link-button question-toggle" aria-expanded={isOpen} lang={contentLang(q.question, locale)} onClick={() => setExpanded(isOpen ? null : q.id)}>
                             {q.question}
                           </button>
                         </td>
@@ -598,7 +599,7 @@ export function QuestionTable({ refName, candidate, baseline }: { refName: strin
                           <div className="answers-side">
                             <div className="answer-card">
                               <div className="field-label">{t("evaluate.reference")}</div>
-                              {q.unanswerable ? <p>{t("evaluate.shouldDecline")}</p> : <p>{q.ground_truth}</p>}
+                              {q.unanswerable ? <p>{t("evaluate.shouldDecline")}</p> : <p lang={contentLang(q.ground_truth, locale)}>{q.ground_truth}</p>}
                             </div>
                             {strategies.map((s) => {
                               const a = q.answers[s];
@@ -614,7 +615,7 @@ export function QuestionTable({ refName, candidate, baseline }: { refName: strin
                                       </span>
                                     ) : null}
                                   </div>
-                                  {a?.error ? <p className="muted">{t("evaluate.answerFailed", { error: a.error })}</p> : <p>{a?.text ?? "—"}</p>}
+                                  {a?.error ? <p className="muted">{t("evaluate.answerFailed", { error: a.error })}</p> : <p lang={contentLang(a?.text, locale)}>{a?.text ?? "—"}</p>}
                                 </div>
                               );
                             })}

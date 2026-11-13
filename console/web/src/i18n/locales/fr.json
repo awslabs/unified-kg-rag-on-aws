@@ -484,6 +484,8 @@
   "graph.neighbours_one": "{{count}} relation",
   "graph.neighbours_many": "{{count}} de relations",
   "graph.neighbours_other": "{{count}} relations",
+  "graph.edgeOut": "sortante",
+  "graph.edgeIn": "entrante",
   "graph.pickHint": "Sélectionnez une entité dans le graphe ou recherchez-la par son nom.",
   "graph.mostConnected": "Les plus connectées",
   "graph.noCommunities": "Cet export ne contient aucune communauté (une exécution sans GraphRAG).",

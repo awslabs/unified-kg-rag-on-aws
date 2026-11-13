@@ -48,11 +48,14 @@ html {
   --leading-body: var(--leading-cjk);
   --tracking-display: 0;
 }
-:lang(ko) body {
+/* Per element, so user content marked with its own lang (contentLang)
+   breaks by its language inside a page in another. */
+:lang(ko) {
   word-break: keep-all;
 }
-:lang(ja) body,
-:lang(zh) body {
+:lang(ja),
+:lang(zh) {
+  word-break: normal;
   line-break: strict;
 }
 
@@ -967,12 +970,13 @@ kbd {
 
 /* ------------------------------------------------------------------ tabs */
 
+/* The tabs wrap rather than scroll, so a narrow screen hides none. */
 .tabs {
   display: flex;
-  gap: var(--space-1);
+  flex-wrap: wrap;
+  gap: 0 var(--space-1);
   padding: 0 var(--space-3);
   border-bottom: 1px solid var(--rule);
-  overflow-x: auto;
 }
 .tab {
   border: 0;
@@ -1777,6 +1781,23 @@ button.cite-link:hover {
   display: flex;
   justify-content: space-between;
   gap: var(--space-2);
+}
+.list-plain .neighbour {
+  display: grid;
+  min-width: 0;
+}
+.edge-dir {
+  margin-right: 6px;
+  color: var(--graphite);
+}
+.neighbour-desc {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  color: var(--graphite);
+  font-size: var(--text-xs);
 }
 .list-plain button:hover {
   background: var(--sheet-hover);

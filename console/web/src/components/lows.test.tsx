@@ -4,6 +4,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { modelIds } from "../App";
 import { I18nProvider, makeI18n, translate } from "../i18n/i18n";
+import { contentLang } from "../lib/contentLang";
 import type { Source } from "../lib/types";
 import { EvidenceTrace } from "./EvidenceTrace";
 import { stageName } from "./JobPanel";
@@ -45,6 +46,19 @@ describe("EvidenceTrace details", () => {
     expect(details.open).toBe(false);
     expect(details).toContainElement(screen.getByText("0d4c-uuid"));
     expect(details).toContainElement(screen.getByText("2 passages"));
+  });
+});
+
+describe("contentLang", () => {
+  it("marks content whose script is not the page's", () => {
+    expect(contentLang("케스트럴 창고까지 운송", "en")).toBe("ko");
+    expect(contentLang("ケストレル倉庫", "ko")).toBe("ja");
+    expect(contentLang("北京仓库", "ko")).toBe("zh");
+    // Han alone on a Japanese page may be a Japanese name.
+    expect(contentLang("東京倉庫", "ja")).toBeUndefined();
+    expect(contentLang("케스트럴 창고", "ko")).toBeUndefined();
+    expect(contentLang("Kestrel Depot", "ko")).toBeUndefined();
+    expect(contentLang(null, "en")).toBeUndefined();
   });
 });
 

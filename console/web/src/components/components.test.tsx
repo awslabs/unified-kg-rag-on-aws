@@ -331,6 +331,12 @@ describe("an ingestion's result", () => {
     expect(screen.queryByText("Show the warnings")).toBeNull();
   });
 
+  it("flags its warnings and an empty extraction in Earlier runs too", async () => {
+    const { RunFlags } = await import("../pages/IngestPage");
+    const { container } = renderIn(<RunFlags job={job({ documents_processed: 2, entities_extracted: 0 }, { count: 3, lines: [] })} />);
+    expect([...container.querySelectorAll(".badge-warn")].map((b) => b.textContent)).toEqual(["No entities extracted", "Warnings 3"]);
+  });
+
   it("does not flag a run that processed nothing", async () => {
     const { IngestResult } = await import("../pages/IngestPage");
     renderIn(<IngestResult job={job({ documents_processed: 0, entities_extracted: 0 })} />);

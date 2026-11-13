@@ -49,6 +49,15 @@ describe.each(Object.keys(LOCALES) as Locale[])("the %s catalog", (locale) => {
   });
 });
 
+describe("the Korean catalog", () => {
+  // A particle after a placeholder depends on the value's last syllable;
+  // "을(를)" style fallbacks read as machine output. Phrase around them.
+  it("has no particle fallbacks", () => {
+    const fallbacks = Object.entries(LOCALES.ko.catalog).filter(([, text]) => /[을를이가은는과와으]\([을를이가은는과와으로]+\)/.test(text));
+    expect(fallbacks).toEqual([]);
+  });
+});
+
 describe("translate", () => {
   it("picks the plural form of the count and formats it", () => {
     expect(translate("en", "ask.trace.read", { count: 1 })).toBe("The answer read 1 source");

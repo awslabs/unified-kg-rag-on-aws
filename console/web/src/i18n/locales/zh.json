@@ -446,6 +446,8 @@
   "graph.community": "社区",
   "graph.id": "ID",
   "graph.neighbours_other": "{{count}} 个关系",
+  "graph.edgeOut": "出边",
+  "graph.edgeIn": "入边",
   "graph.pickHint": "在图谱中选择一个实体，或按名称查找。",
   "graph.mostConnected": "连接最多",
   "graph.noCommunities": "此导出不包含社区（运行时未启用 GraphRAG）。",
