@@ -60,6 +60,7 @@ from unified_kg_rag.domain.retrieval.filters import (
     kinds_rule,
     parse_any_of,
     parse_filters,
+    translated_text_field,
     union_filter_fields,
 )
 from unified_kg_rag.domain.retrieval.hybrid_normalization import combine_min_max
@@ -317,7 +318,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         languages = self._config.processing.translation.translated_languages
         return {
             self._opensearch_config.text_units_index_prefix: {
-                "lexical": ["text", *(f"translated_text_{lang}" for lang in languages)],
+                "lexical": ["text", *map(translated_text_field, languages)],
                 "vector": ["text_embedding"],
             },
             self._opensearch_config.entities_index_prefix: {
@@ -1655,7 +1656,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
 
     def _extract_content(self, source: dict[str, Any]) -> str:
         content_parts = []
-        translated_key = f"translated_text_{index_language(self._config)}"
+        translated_key = translated_text_field(index_language(self._config))
 
         if translated_text := source.get(translated_key):
             content_parts.append(translated_text)

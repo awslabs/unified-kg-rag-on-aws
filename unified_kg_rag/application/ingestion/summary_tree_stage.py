@@ -41,7 +41,6 @@ from unified_kg_rag.domain.ingestion.summary_tree import (
     stored_leaf_entry,
     stored_leaf_filters,
     stored_leaf_text,
-    translated_leaf_field,
 )
 from unified_kg_rag.domain.models import (
     Config,
@@ -53,6 +52,7 @@ from unified_kg_rag.domain.models import (
     SummaryNode,
     SummaryTreeRecord,
 )
+from unified_kg_rag.domain.retrieval.filters import translated_text_field
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.ports.indexer import BaseIndexer, VectorIndexer
 from unified_kg_rag.shared import (
@@ -493,7 +493,7 @@ class SummaryTreeStage(_RegistryStage):
     def _translated_field(self) -> str:
         """The text-unit field holding the translation into the index
         language."""
-        return translated_leaf_field(index_language(self.config))
+        return translated_text_field(index_language(self.config))
 
     @staticmethod
     def _pages_by_id(

@@ -39,7 +39,7 @@ import json
 import math
 from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
-from enum import StrEnum
+from enum import Enum, StrEnum
 from typing import Any
 
 from unified_kg_rag.domain.ingestion.base_processor import SEED_PROPERTIES_ATTRIBUTE
@@ -59,6 +59,15 @@ SEED_PROPERTIES_PREFIX = f"{ATTRIBUTES_OBJECT_PREFIX}{SEED_PROPERTIES_ATTRIBUTE}
 # The exact copy of an analyzed name (the entities index's sub-field).
 EXACT_SUBFIELD = ".keyword"
 TRANSLATED_TEXT_PREFIX = "translated_text_"
+
+
+def translated_text_field(language: str) -> str:
+    """The text-unit field holding a unit's translation into ``language``
+    (a code, or its ``LanguageCode``): the one name the indexer writes and
+    the retriever, the summary tree, the removal and the evaluation read."""
+    code = language.value if isinstance(language, Enum) else language
+    return f"{TRANSLATED_TEXT_PREFIX}{code}"
+
 
 # The source kinds of an entity or relationship (``Entity.source_kinds``):
 # written only on items a seed graph states, so an item without the field

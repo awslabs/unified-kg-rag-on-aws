@@ -40,7 +40,6 @@ from unified_kg_rag.application.ingestion.summary_tree_stage import SummaryTreeS
 from unified_kg_rag.application.storage.removal import TextUnitRemoval
 from unified_kg_rag.domain.ingestion.summary_tree import (
     stored_leaf_entry,
-    translated_leaf_field,
     unit_leaf_entry,
 )
 from unified_kg_rag.domain.models import (
@@ -52,6 +51,7 @@ from unified_kg_rag.domain.models import (
     TextUnit,
 )
 from unified_kg_rag.domain.models.config import LanguageCode
+from unified_kg_rag.domain.retrieval.filters import translated_text_field
 
 pytestmark = pytest.mark.integration
 
@@ -321,7 +321,7 @@ def test_a_text_unit_reads_back_as_the_leaf_the_removal_predicts(
         indexer.initialize()
         stats = indexer.index_text_units(units)
         assert stats.failed_items == 0, stats.errors
-        field = translated_leaf_field(language)
+        field = translated_text_field(language)
         rows = indexer.read_text_unit_fields(
             [u.id for u in units], "", fields=["text", field, "attributes"]
         )
