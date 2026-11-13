@@ -170,6 +170,94 @@ def test_the_export_holds_every_stored_kind(ingested, tmp_path: Path) -> None:
     }
 
 
+def _compare_exports() -> Any:
+    import importlib
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.syspath_prepend(
+            str(Path(__file__).resolve().parents[2] / "scripts" / "loadtest")
+        )
+        return importlib.import_module("compare_exports")
+
+
+def test_the_export_takes_a_census_of_the_graph_store(ingested, tmp_path: Path) -> None:
+    """The graph store's vertices and edges are counted and digested
+    through the port and written as ``graph`` records, so a graph store
+    that lost writes no longer compares equal to a full build."""
+    compare = _compare_exports()
+    config, providers = ingested
+    before = tmp_path / "before.jsonl"
+
+    exported = export_graph(config, before, providers=providers, page_size=1)
+
+    census = exported.graph
+    assert census is not None
+    assert census.vertices.count == exported.counts["entity"] == 3
+    assert census.vertices.by_type == {"organization": 3}
+    assert census.edges.count == sum(census.edges.by_type.values()) > 0
+    records = {
+        r["id"]: r
+        for r in map(json.loads, before.read_text("utf-8").splitlines())
+        if r["kind"] == inspection.GRAPH_RECORD_KIND
+    }
+    assert records["vertices"] == {
+        "kind": "graph",
+        "id": "vertices",
+        **census.vertices.model_dump(),
+    }
+    assert set(records) == {"vertices", "edges"}
+    # A second export of the same stores converges with the first ...
+    again = export_graph(config, tmp_path / "again.jsonl", providers=providers)
+    assert again.graph == census
+    assert compare.converged(compare.compare_files(before, Path(again.path)))
+    # ... and one after half the edges were lost in the graph store alone
+    # (the vector store still holds them all) diverges, exactly or not.
+    graph = providers.build_graph_indexer()
+    try:
+        edges = sorted(graph.read_schema_annotations("relationships"))
+        lost = edges[: max(1, len(edges) // 2)]
+        assert graph.delete_by_id(lost).failed_items == 0
+    finally:
+        graph.close()
+    after = export_graph(config, tmp_path / "after.jsonl", providers=providers)
+    assert after.counts == exported.counts
+    assert after.graph is not None
+    assert after.graph.edges.count == census.edges.count - len(lost)
+    for tolerance in (compare.EXACT, compare.INCREMENTAL):
+        diffs = compare.compare_files(before, Path(after.path), tolerance)
+        assert not compare.converged(diffs)
+        assert [d.kind for d in diffs if not d.same] == ["graph"]
+
+
+def test_the_census_reads_ranks_and_types(ingested) -> None:
+    """A changed rank or a lost vertex changes the census; a store that
+    cannot list its items has none."""
+    from unified_kg_rag.adapters.storage.null_graph_indexer import NullGraphIndexer
+
+    config, providers = ingested
+    graph = providers.build_graph_indexer()
+    try:
+        census = inspection.census_graph(graph, "default")
+        assert census is not None
+        (first,) = graph.read_relationships(
+            [sorted(graph.read_schema_annotations("relationships"))[0]]
+        )
+        first.rank = (first.rank or 0) + 7
+        assert graph.update_relationship_ranks([first]).failed_items == 0
+        ranked = inspection.census_graph(graph, "default", page_size=1)
+        assert ranked is not None
+        assert ranked.edges.digest == census.edges.digest
+        assert ranked.edges.rank_digest != census.edges.rank_digest
+        vendor = next(i for i, n in graph.read_entity_names() if n == "Vendor")
+        graph.delete_by_id([vendor])
+        lost = inspection.census_graph(graph, "default")
+        assert lost is not None and lost.vertices.count == 2
+        assert lost.vertices.digest != census.vertices.digest
+    finally:
+        graph.close()
+    assert inspection.census_graph(NullGraphIndexer(config), "default") is None
+
+
 def test_graphml_export_reads_back_as_a_graph(ingested, tmp_path: Path) -> None:
     config, providers = ingested
     path = tmp_path / "graph.graphml"
@@ -220,7 +308,19 @@ def test_run_describe_prints_one_json_document(
     document = json.loads(capsys.readouterr().out)
     assert document["methodologies"] == ["graphrag", "lightrag", "hipporag"]
     assert document["export"]["counts"]["entity"] == 3
+    graph = document["export"]["graph"]
+    assert graph["vertices"]["count"] == 3
+    assert graph["vertices"]["by_type"] == {"organization": 3}
+    assert set(graph["edges"]) == {"count", "by_type", "digest", "rank_digest"}
     assert out.is_file()
+    # The text report names the graph store's census too.
+    monkeypatch.setattr(
+        sys, "argv", ["run-describe", "--output-path", str(out), "--force"]
+    )
+    assert run_describe.main() == 0
+    assert "Graph store: 3 vertices {'organization': 3}" in " ".join(
+        capsys.readouterr().out.split()
+    )
     # A namespace without an index is a usage error (exit 2), of the type
     # run-rag names it by (it said UsageError).
     monkeypatch.setattr(

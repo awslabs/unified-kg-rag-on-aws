@@ -127,8 +127,10 @@ directory (record ids name the source path, so build the reference in the
 same place, wiping `stores/` and `cache/` between builds). The export holds
 every kind of item the vector store keeps (text units, entities,
 relationships, community reports, claims, RAPTOR summary nodes), so every
-methodology's index is compared; the graph store's vertices and edges are
-not exported.
+methodology's index is compared, and ends with the graph store's census
+(the `graph` records: per-type counts and digests of the ids and ranks of
+its vertices and edges, see [Inspect](./inspect.md#exported-graph)), so a
+resume that lost graph writes the vector store kept does not converge.
 
 ```bash
 cd ws && uv run run-describe --config-path config.yaml --output-path ../reference.jsonl --include-text && cd ..
@@ -176,7 +178,14 @@ writes `report.md` to the job summary. It fails when a gate fails:
 | Flagged answers (every sweep level and the soak): no sources, abstained, empty, degraded, unresolved citations | 0 (every query of the mix is answerable from the demo corpus, and the fake models are deterministic) |
 | Event-loop lag p99 (every sweep level and the soak) | under 100 ms |
 | RSS over the soak's second half | fails only when it grows both at 10 MB/h or more and by 8 MB or more |
-| Chaos scenarios | each converges (the kill exactly, the others `--incremental`); the kill's resume, started at once, finds no lease held |
+| Chaos scenarios | each converges (the kill exactly, the others `--incremental`), graph-store census included; the kill's resume, started at once, finds no lease held |
+
+A faulted run that failed no document and exited 0 (the injected faults all
+retried away, or none injected) left the recovery path untested: its
+scenario's `status` is `not_exercised`, which `report.md` lists under "Not
+tested this run" (a warning on the workflow run) without failing it. The
+nightly faults fail some documents on most nights; failing it would
+flake an estimated one night in twenty.
 
 The RSS floor (8 MB) sits well above the noise of a clean 10-minute soak
 (8 to 13.5 MB/h measured, from about 1 MB over its second half), so the
@@ -191,7 +200,10 @@ run it. Run it locally with
 `uv run --extra local python scripts/loadtest/nightly.py out/` (about 20
 minutes; `--soak-seconds` and `--chaos-docs` scale it), and check another
 report with `load.py gate report.json` (`--max-errors`, `--max-flags`,
-`--max-loop-lag-ms`, `--max-rss-mb-per-hour`, `--rss-rise-floor-mb`).
+`--max-loop-lag-ms`, `--max-rss-mb-per-hour`, `--rss-rise-floor-mb`). The
+gate reads any mode's report: an `http` report's levels pass the same gates,
+its lag the client's (`client_loop_lag_p99_ms`); a report holding none of
+`sweep`, `soak`, `http` and `chaos` fails.
 
 ## Local baseline (fake models)
 

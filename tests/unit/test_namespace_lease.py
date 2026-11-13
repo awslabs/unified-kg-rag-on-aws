@@ -30,10 +30,18 @@ def test_a_held_lease_stops_the_second_run_and_names_the_holder() -> None:
     store = FakeDocStatusStore()
     with NamespaceLease(store, "ns", 60) as first:
         with (
-            pytest.raises(NamespaceLeaseError, match=first.owner),
+            pytest.raises(NamespaceLeaseError, match=first.owner) as held,
             NamespaceLease(store, "ns", 60),
         ):
             pass
+        # A dead run's lease expires, but the SQLite registry hands on a
+        # dead holder's of this host at once: one it names is alive.
+        message = " ".join(str(held.value).split())
+        assert "expires within indexing.lease_seconds (60s)" in message
+        assert (
+            "The local SQLite registry hands on at once the lease of a holder "
+            "of this host whose process exited" in message
+        )
         # Another namespace is leased apart.
         with NamespaceLease(store, "other", 60):
             pass

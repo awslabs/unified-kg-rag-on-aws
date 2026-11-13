@@ -6,7 +6,10 @@ convergence check after a chaos run (docs/guides/load-testing.md).
 Two namespaces converge when they hold the same records of every kind (by
 ``kind`` and ``id``) with the same content once the keys a rebuild may
 change without changing what the index says (:data:`VOLATILE`: build times,
-run ids) are removed. Lists keep their order.
+run ids) are removed. Lists keep their order. The export ends with the graph
+store's census (kind ``graph``: per-type counts and digests of its vertices
+and edges), compared like any record under either tolerance, so a graph
+store that lost writes the vector store kept does not converge.
 
 A run resumed after a crash must converge exactly. A clean incremental run
 after one that failed some documents re-indexes them as a delta, so it

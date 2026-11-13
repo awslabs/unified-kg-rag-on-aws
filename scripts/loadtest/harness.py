@@ -220,19 +220,48 @@ class Gates:
     require_convergence: bool = True
 
 
+# The sections of a report the gates read (load.py's modes, nightly.py's
+# chaos scenarios).
+REPORT_SECTIONS: tuple[str, ...] = ("sweep", "soak", "http", "chaos")
+
+
 def check_gates(report: Mapping[str, Any], gates: Gates = Gates()) -> list[str]:
-    """The gate failures of a run report (``nightly.py``'s ``report.json``:
-    ``sweep``, a list of level reports; ``soak``, a soak report; ``chaos``,
-    scenario results with ``converged``); an empty list passes. A section
-    the report does not hold is not checked; a section that holds no
-    requests fails, so a run that measured nothing does not pass."""
+    """The gate failures of a run report (``nightly.py``'s ``report.json``
+    or a ``load.py`` report: ``sweep`` and ``http``, lists of level reports;
+    ``soak``, a soak report; ``chaos``, scenario results with
+    ``converged``); an empty list passes. A section the report does not
+    hold is not checked, but a report holding none of
+    :data:`REPORT_SECTIONS` fails, and so does a level that holds no
+    requests: a run that measured nothing does not pass. An ``http`` level's
+    lag is the client's (``client_loop_lag_p99_ms``): a client loop that
+    lags inflates the latencies it measures."""
+    if not any(section in report for section in REPORT_SECTIONS):
+        return [
+            "the report holds none of "
+            + ", ".join(REPORT_SECTIONS)
+            + ": nothing was measured"
+        ]
     failures: list[str] = []
-    levels = [*report.get("sweep", [])]
+    # (name, level, its lag key, what the lag is of)
+    levels = [
+        (f"concurrency {level.get('concurrency')}", level, "loop_lag_p99_ms", "")
+        for level in report.get("sweep", [])
+    ]
     soak = report.get("soak")
     if soak is not None:
-        levels.append({"concurrency": f"soak {soak.get('concurrency')}", **soak})
-    for level in levels:
-        name = f"concurrency {level.get('concurrency')}"
+        levels.append(
+            (f"concurrency soak {soak.get('concurrency')}", soak, "loop_lag_p99_ms", "")
+        )
+    levels += [
+        (
+            f"http concurrency {level.get('concurrency')}",
+            level,
+            "client_loop_lag_p99_ms",
+            "client ",
+        )
+        for level in report.get("http", [])
+    ]
+    for name, level, lag_key, lag_of in levels:
         if not level.get("requests"):
             failures.append(f"{name}: no requests ran")
             continue
@@ -249,12 +278,13 @@ def check_gates(report: Mapping[str, Any], gates: Gates = Gates()) -> list[str]:
                 f"{name}: {flags.total()} flagged answers (max {gates.max_flags}): "
                 + ", ".join(f"{kind} {n}" for kind, n in sorted(flags.items()))
             )
-        lag = level.get("loop_lag_p99_ms")
+        lag = level.get(lag_key)
         if lag is None:
-            failures.append(f"{name}: no event-loop lag measured")
+            failures.append(f"{name}: no {lag_of}event-loop lag measured")
         elif lag >= gates.loop_lag_p99_ms:
             failures.append(
-                f"{name}: event-loop lag p99 {lag} ms (limit {gates.loop_lag_p99_ms} ms)"
+                f"{name}: {lag_of}event-loop lag p99 {lag} ms "
+                f"(limit {gates.loop_lag_p99_ms} ms)"
             )
     if soak is not None:
         rss = (soak.get("trends_per_hour") or {}).get("rss_kb")
@@ -278,3 +308,14 @@ def check_gates(report: Mapping[str, Any], gates: Gates = Gates()) -> list[str]:
                     f"build: {scenario.get('detail')}"
                 )
     return failures
+
+
+def gate_notes(report: Mapping[str, Any]) -> list[str]:
+    """What a run left untested without failing a gate: each chaos scenario
+    of status ``not_exercised`` (it converged, but its faults never reached
+    the recovery path, so the convergence proves nothing about it)."""
+    return [
+        f"chaos {scenario.get('name')}: not exercised: {scenario.get('detail')}"
+        for scenario in report.get("chaos", [])
+        if scenario.get("status") == "not_exercised"
+    ]

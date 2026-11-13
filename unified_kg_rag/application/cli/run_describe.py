@@ -7,8 +7,8 @@ search strategies they serve, each index with its item count and embedding
 model, the build record of the last ingestion run and the doc-status
 registry's records (``application.storage.inspection.describe_namespace``).
 With ``--output-path`` it also writes the namespace's graph, streamed from
-the vector store, as JSON Lines or GraphML (``export_graph``). It calls no
-model.
+the vector store, as JSON Lines or GraphML, with a census of the graph
+store's vertices and edges (``export_graph``). It calls no model.
 """
 
 from __future__ import annotations
@@ -274,6 +274,14 @@ def main() -> int:
                         else ""
                     )
                 )
+                if (census := exported.graph) is not None:
+                    console.print(
+                        markup_safe(
+                            f"Graph store: {census.vertices.count} vertices "
+                            f"{census.vertices.by_type}, {census.edges.count} "
+                            f"edges {census.edges.by_type}"
+                        )
+                    )
         return 0
     except KeyboardInterrupt:
         logger.warning("Describe interrupted by user.")
