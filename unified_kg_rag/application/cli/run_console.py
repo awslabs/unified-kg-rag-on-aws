@@ -42,6 +42,7 @@ from unified_kg_rag.application.cli.metrics_args import (
     build_metrics_sink,
 )
 from unified_kg_rag.application.config import get_config, load_cli_dotenv
+from unified_kg_rag.application.plugins import load_plugins
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import ConfigurationError, get_logger
 from unified_kg_rag.shared.extras import extra_hint
@@ -237,6 +238,7 @@ def main(argv: list[str] | None = None) -> int:
     cache.mkdir(parents=True, exist_ok=True)
     config_path = Path(args.config_path).resolve() if args.config_path else None
     try:
+        load_plugins()
         config = get_config(config_path, allow_unknown_keys=args.allow_unknown_keys)
         setup_cli_logging(config, args)
     except (ConfigurationError, FileNotFoundError) as e:

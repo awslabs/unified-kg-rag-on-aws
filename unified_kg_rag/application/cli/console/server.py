@@ -70,6 +70,7 @@ from unified_kg_rag.application.cli.console.settings_api import (
 from unified_kg_rag.application.cli.console.store import ConsoleStore
 from unified_kg_rag.application.cli.conventions import host_without_port, is_loopback
 from unified_kg_rag.application.config import get_config
+from unified_kg_rag.application.plugins import load_plugins
 from unified_kg_rag.domain.ingestion.cache_keys import is_excluded_source_path
 from unified_kg_rag.domain.ingestion.visualization_data import (
     VISUALIZATION_DATA_FILENAME,
@@ -335,6 +336,10 @@ class ConsoleState:
             ConfigurationError: It does not load.
         """
         if self._config is None:
+            # The plugins first, as every CLI loads them before its config:
+            # a file type or a kind one registers is known to every page
+            # (a plugin that cannot be loaded is the config error shown).
+            load_plugins()
             self._config = get_config(
                 self.options.config_path,
                 allow_unknown_keys=self.options.allow_unknown_keys,
