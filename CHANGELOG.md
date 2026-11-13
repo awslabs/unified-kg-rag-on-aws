@@ -1535,8 +1535,9 @@ From a `main` checkout (formats and keys no release had):
   per `Strategy` that ran (`auto` queries no longer land under `auto`), with `namespace` (the ingestion records'
   key) and a failure's `error_class` log properties, and `query_throttled_requests`. Streamed answers and failed
   admissions (a build-record read, the deadline) count; a caller's error (`ErrorClass.is_caller_error`: an invalid
-  argument or filter, a namespace without the index or methodology) is not a `query_failed`. `run-mcp-server` and `run-console` take `--metrics-sink cloudwatch` as `run-rag` does (the MCP server's EMF on
-  stderr, as stdout is the protocol's), one sink builder for every CLI.
+  argument or filter, a namespace without the index or methodology) is not a `query_failed`. `run-mcp-server` and
+  `run-console` take `--metrics-sink cloudwatch` as `run-rag` does (the MCP server's EMF on stderr, as stdout is
+  the protocol's), one sink builder for every CLI.
 - The package ships a `py.typed` marker (#568). `main` reports `0.3.0.dev0`, and a `v<version>` tag runs a release
   workflow that publishes a GitHub release: the tag must be on `main`, the notes are the section's introduction,
   *Highlights*, *Breaking changes*, *Upgrading* and *Security* with a link to the version's heading for the rest, and
@@ -2018,7 +2019,8 @@ Ingestion and incremental indexing.
   met too as the model's or a setting's, and throttling, a server error or a timeout that outlasted the retries as
   the model's, its quota's or the service's, with how many calls it ended (`error_type` the model error's, named by
   type, code and status, never its text); it said "produced 0 outputs. Check the stage configuration", class
-  `failure`. A failed batch item logs its error's digest, not its text, which may quote the item. The failed-units summary of a run that stopped before indexing no longer says they were indexed.
+  `failure`. A failed batch item logs its error's digest, not its text, which may quote the item. The failed-units
+  summary of a run that stopped before indexing no longer says they were indexed.
 - An extraction, claims, gleaning, report-findings or chunk-boundary section that lists elements reads as empty when
   it holds a short "nothing here" marker, in any language (one line of at most three estimated tokens:
   `<relationships>없음</relationships>`, `なし`, `None.`, `Keine`): only `None`, `N/A`, `null`, `nil` and `-` did,
