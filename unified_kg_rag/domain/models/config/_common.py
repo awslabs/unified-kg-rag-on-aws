@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 class ConfigSection(BaseModel):
     """The base of every configuration section: an assignment is validated
     against its field and the section's own checks
-    (``config.search.top_k = -1`` raises as loading it would, and leaves the
+    (``config.search.max_concurrency = 0`` raises as loading it would, and leaves the
     old value), and an unknown key is refused. The checks across sections
     (``Config``'s own validators) run on a whole config: change one with
     :meth:`Config.updated`."""

@@ -19,6 +19,7 @@ from pydantic import (
 from ..retrieval import (
     STRATEGY_TRAITS,
     SearchStrategy,
+    SectionType,
 )
 from ._common import ConfigSection
 
@@ -281,6 +282,11 @@ class ContextTypeBudgetConfig(ConfigSection):
         "strategy only): its table of counts, groups, rows or paths, at most "
         "search.structured.rows_in_context long",
     )
+
+    def share(self, kind: SectionType) -> float:
+        """The relative share of ``kind``: the field of its value (every
+        section type has one, a unit test checks)."""
+        return float(getattr(self, kind.value))
 
     @model_validator(mode="after")
     def validate_at_least_one_positive_share(self) -> "ContextTypeBudgetConfig":

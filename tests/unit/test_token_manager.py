@@ -818,11 +818,9 @@ class TestContextTypeBudgetConfig:
         # A new SectionType with no share field would silently fall back to 0.0 and
         # be dropped whenever it co-occurred with another type — the exact defect
         # GENERAL's hardcoded 0.0 caused.
+        budget = ContextTypeBudgetConfig()
         for section_type in SectionType:
-            assert section_type in TokenManager._BUDGET_FIELDS
-            assert hasattr(
-                ContextTypeBudgetConfig(), TokenManager._BUDGET_FIELDS[section_type]
-            )
+            assert budget.share(section_type) == getattr(budget, section_type.value)
 
 
 def test_default_config_budget_is_fixed_not_window_derived(mocker) -> None:

@@ -594,7 +594,8 @@ def test_the_dashboard_prices_usage_and_leaves_unpriced_models_out(
     models = {m["model"]: m for m in summary["models"]}
     assert models["m"]["cost_usd"] == pytest.approx((1000 * 3 + 100 * 15) / 1e6)
     assert models["other"]["cost_usd"] is None
-    assert summary["strategies"][0]["latency_p95"] == 3.0
+    # Interpolated between the two latencies (1 s and 3 s), as run-eval reads.
+    assert summary["strategies"][0]["latency_p95"] == pytest.approx(2.9)
     assert (
         summary["jobs"][0]["llm_calls"] == 4 and summary["jobs"][0]["cost_usd"] == 0.5
     )
