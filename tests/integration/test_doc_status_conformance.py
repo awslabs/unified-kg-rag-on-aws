@@ -181,10 +181,13 @@ def test_diff_partitions_like_the_reference(store: DocStatusPort) -> None:
         assert sorted(got.changed) == sorted(want.changed), scope
         assert sorted(got.unchanged) == sorted(want.unchanged), scope
         assert sorted(got.deleted) == sorted(want.deleted), scope
+        assert sorted(got.retried) == sorted(want.retried), scope
         assert got.stored_scopes == want.stored_scopes == ["s1", "s2"]
 
     scoped = store.diff(incoming, scope="s1")
     assert sorted(scoped.changed) == ["busy", "edited", "retry"]
+    # Of the changed, the FAILED record of unchanged content is a retry.
+    assert scoped.retried == ["retry"]
     # A record without a scope is never deleted by a scoped run.
     assert scoped.deleted == ["gone"]
     assert sorted(store.diff(incoming).deleted) == ["gone", "legacy", "other"]

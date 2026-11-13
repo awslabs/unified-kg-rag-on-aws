@@ -14,7 +14,9 @@ with a fresh build of the same corpus, in English, Korean and Japanese.
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
@@ -31,6 +33,9 @@ from tests.integration.test_name_variant_convergence import _Died, _dying
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 from unified_kg_rag.adapters.storage.sqlite_graph_indexer import SQLiteGraphIndexer
+from unified_kg_rag.application.cli.run_ingestion_pipeline import (
+    IngestionPipelineRunner,
+)
 from unified_kg_rag.application.ingestion.summary_tree_stage import SummaryTreeStage
 from unified_kg_rag.application.storage.removal import TextUnitRemoval
 from unified_kg_rag.domain.ingestion.summary_tree import (
@@ -152,6 +157,12 @@ def test_a_retry_keeps_the_summaries_of_text_it_writes_back_unchanged(
     context = rt.ingest(config, providers, source, tmp_path / "run-2")
     assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
     assert e2e._registry(providers)["zz.txt"] is DocStatus.PROCESSED
+    # The run JSON counts the retry among the changed documents.
+    runner = IngestionPipelineRunner.__new__(IngestionPipelineRunner)
+    runner.args = argparse.Namespace(max_failure_rate=None)
+    runner.pipeline = SimpleNamespace(executed_stages=frozenset())  # type: ignore[assignment]
+    delta = runner._json_result(context)["delta"]
+    assert (delta["changed"], delta["retried"]) == (1, 1), delta
     # Neither deleted nor asked again, whatever the refresh.
     assert rt.shape(rt.tree_nodes(providers)) == built
     assert calls.since(before)["summary"] == 0, calls.since(before)

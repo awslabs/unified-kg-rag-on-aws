@@ -156,6 +156,14 @@ holds:
     `indexing.max_document_failures` consecutive runs unchanged, at the same
     extraction settings (a settings change starts the count over); also in
     the summary.
+  - `documents_quarantined`: the documents this run quarantined, not
+    processed because processing their content killed
+    `indexing.max_document_attempts` consecutive runs (what those attempts
+    wrote is removed). Failures of the run: `--max-failure-rate` counts
+    them. Later runs count such a document as unchanged, as an excluded one.
+  - `documents_deferred`: the new or changed documents left for a later run
+    while runs keep dying (the run processes half of the suspects); not
+    failures, and not counted by `--max-failure-rate`.
   - `files_skipped`: the corpus files of a type no loader reads (a `.docx`
     without the `docx` extra, a suffix no loader registers), which one
     WARNING names with the remedy.
@@ -167,14 +175,17 @@ holds:
     processed some and extracted none indexed no graph of them).
   - `delta`: what the doc-status registry's diff found, `new`, `changed`,
     `unchanged` and `deleted` documents (an `indexing.reset` run counts every
-    document new), or `null` with the registry off. The documents a run
+    document new), or `null` with the registry off. `retried` counts the
+    `changed` documents whose content did not change: recorded `FAILED`,
+    they are processed again. The documents a run
     deletes are named in one INFO line (the first 20).
 
   `--max-failure-rate RATE` (off by default) exits `1` when more than `RATE`
   of the corpus the run covered failed: `files_failed`, the documents
-  recorded `FAILED` and the documents indexed without the output of a stage
-  that failed one of their text units, over those, the documents the run
-  processed and the `unchanged` documents of its `delta` (a run all of whose
+  recorded `FAILED`, the documents indexed without the output of a stage
+  that failed one of their text units and the documents it quarantined,
+  over those, the documents the run processed and the `unchanged` documents
+  of its `delta` (a run all of whose
   documents failed breaches it at any value). So a file that keeps failing
   counts as one of the corpus on every rerun, not as the whole of a rerun
   that changed nothing. The document then also has the `error`, `exit_code`

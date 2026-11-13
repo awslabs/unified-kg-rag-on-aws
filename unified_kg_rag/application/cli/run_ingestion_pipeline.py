@@ -339,8 +339,9 @@ class CommandLineInterface:
             metavar="RATE",
             help="Exit 1 when more than this fraction (0.0-1.0) of the "
             "corpus the run covered failed: corpus files that failed to parse "
-            "or load, documents recorded FAILED, and documents indexed without "
-            "the output of a stage that failed one of their text units, over "
+            "or load, documents recorded FAILED, documents indexed without "
+            "the output of a stage that failed one of their text units, and "
+            "documents the run quarantined, over "
             "those, the documents processed and the unchanged ones an "
             "incremental run skipped (a run every document of which failed "
             "breaches it at any value). "
@@ -956,11 +957,13 @@ class IngestionPipelineRunner:
             "units_failed": len(context.failed_unit_ids()),
             "documents_retrying": len(context.retrying_doc_ids),
             "documents_without_claims": len(context.claims_missing_doc_ids),
-            "documents_excluded": (
-                len(context.incremental_delta.excluded)
-                if context.incremental_delta is not None
-                else 0
+            "documents_excluded": len(delta.excluded) if delta is not None else 0,
+            # Quarantined by this run (a failure; --max-failure-rate counts
+            # it) and left for a later run while runs keep dying.
+            "documents_quarantined": (
+                len(delta.quarantined) if delta is not None else 0
             ),
+            "documents_deferred": len(delta.deferred) if delta is not None else 0,
             # Corpus files of a type no loader reads (the WARNING names them).
             "files_skipped": len(context.skipped_source_files),
             # Corpus files that failed to parse or load (not indexed).
@@ -980,6 +983,8 @@ class IngestionPipelineRunner:
                 else {
                     "new": len(delta.new),
                     "changed": len(delta.changed),
+                    # Of the changed: FAILED documents retried, unchanged.
+                    "retried": len(set(delta.retried) & set(delta.changed)),
                     "unchanged": len(delta.unchanged),
                     "deleted": len(delta.deleted),
                 }
@@ -1040,13 +1045,19 @@ def _document_failures(context: PipelineContext) -> tuple[int, int]:
     FAILED), over the corpus the run covered: those, the documents it
     processed and the unchanged ones the registry diff skipped. Without the
     unchanged ones a file that keeps failing was the whole denominator of
-    every later incremental run, which then breached at any rate."""
-    processed = {document_doc_id(document) for document in context.documents}
-    failed = set(context.recorded_failed_doc_ids) | {
-        document_doc_id(document)
-        for document in context.documents_of_units(context.failed_unit_ids())
-    }
+    every later incremental run, which then breached at any rate. A document
+    the run quarantined failed too; one quarantined earlier is unchanged, as
+    an excluded one is, and a deferred one is left to a later run."""
     delta = context.incremental_delta
+    processed = {document_doc_id(document) for document in context.documents}
+    failed = (
+        set(context.recorded_failed_doc_ids)
+        | {
+            document_doc_id(document)
+            for document in context.documents_of_units(context.failed_unit_ids())
+        }
+        | set(delta.quarantined if delta is not None else ())
+    )
     unchanged = set(delta.unchanged) - set(delta.failed) if delta is not None else set()
     files = len(context.failed_source_files)
     return len(failed) + files, len(processed | failed | unchanged) + files
