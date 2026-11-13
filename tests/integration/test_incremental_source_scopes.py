@@ -370,6 +370,8 @@ def test_a_moved_corpus_is_reported_after_a_refused_first_run(
     # advice to set a per-corpus source_scope could not be followed there.
     (warning,) = [m for m in warnings if "other local source directories" in m]
     assert "need nothing" in warning and "source_scope to a stable" not in warning
+    # And the remedy reads from the console too, which has no flags (rv25).
+    assert "indexing.retire_source_scopes (the console's Settings" in warning
 
 
 def test_an_edited_document_of_a_moved_corpus_does_not_warn_again(

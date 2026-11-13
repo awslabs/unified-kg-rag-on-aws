@@ -27,6 +27,10 @@ from typing import TYPE_CHECKING, Any
 import networkx as nx
 
 from unified_kg_rag.application.cli.console.paths import Roots, walk_files
+from unified_kg_rag.application.storage.visualization_export import (
+    export_build_time,
+    export_namespace,
+)
 from unified_kg_rag.domain.ingestion.visualization_data import (
     VISUALIZATION_DATA_FILENAME,
     displayed_graph,
@@ -115,9 +119,17 @@ def find_graphs(roots: Roots, names: tuple[str, ...]) -> list[dict[str, Any]]:
             if ref is None:
                 continue
             stat = path.stat()
+            # An export holds its namespace's whole graph: named by it, the
+            # run that wrote it beside (an export of an earlier release
+            # names no namespace).
+            namespace = export_namespace(path)
+            run = _label(path)
             found[path] = {
                 "ref": ref,
-                "label": _label(path),
+                "label": namespace or run,
+                "namespace": namespace,
+                "run": run,
+                "built_at": export_build_time(path),
                 "modified": stat.st_mtime,
                 "bytes": stat.st_size,
             }

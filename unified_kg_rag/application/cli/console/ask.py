@@ -57,8 +57,11 @@ from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.evaluation.comparison import answer_cost_usd
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.exceptions import (
+    ErrorClass,
+    IndexNotFoundError,
     MethodologyNotIndexedError,
     classify,
+    error_class_of,
     query_failure_ids,
 )
 
@@ -336,16 +339,27 @@ class AskService:
         record ingestion wrote on it (``GraphRAGChain.aread_build_record``):
         ``recorded`` false when it has none that names its artifacts (never
         built, or built before methodology profiles), and ``held`` then the
-        methodologies the config builds, which queries are served by. A store
+        methodologies the config builds, which queries are served by;
+        ``indexed`` whether anything was ingested under it at all (a
+        question on it fails with ``index_not_found`` otherwise). A store
         error raises."""
         async with self._using() as (chain, config):
             record = await chain.aread_build_record(suffix)
             namespace = resolve_namespace(config, suffix)
+            indexed = True
+            try:
+                # The check every question makes first.
+                await chain.acheck_methodology(SearchStrategy.AUTO, suffix)
+            except IndexNotFoundError:
+                indexed = False
+            except MethodologyNotIndexedError:
+                pass  # indexed, without what auto routes to
         holdings = namespace_holdings(record, config)
         return {
             "namespace": namespace,
             "recorded": holdings.source == "build_record",
             "held": [m.value for m in holdings.methodologies],
+            "indexed": indexed,
         }
 
     async def ask(self, request: AskRequest) -> AsyncIterator[dict[str, Any]]:
@@ -383,7 +397,7 @@ class AskService:
                     strategy=result["strategy"],
                     latency_seconds=result["latency_seconds"],
                     outcome=(
-                        "error"
+                        _failed_outcome(error_class_of(result["error_kind"]), "error")
                         if result["error"]
                         else (
                             "blocked"
@@ -408,7 +422,9 @@ class AskService:
                 if kind == "failure":
                     logger.exception("Console question %s failed", query_id)
                 record.update(
-                    error=str(e), latency_seconds=time.perf_counter() - started
+                    outcome=_failed_outcome(classify(e), "failed"),
+                    error=str(e),
+                    latency_seconds=time.perf_counter() - started,
                 )
                 queue.put_nowait(
                     {
@@ -575,6 +591,14 @@ class AskService:
             "sources": sources,
             "namespace": resolve_namespace(config, suffix),
         }
+
+
+def _failed_outcome(error_class: ErrorClass, failed: str) -> str:
+    """The recorded outcome of a question that failed with ``error_class``:
+    ``refused`` for a request to change (an empty namespace's question,
+    say), which the dashboard does not count as an error, else
+    ``failed``."""
+    return "refused" if error_class.is_caller_error else failed
 
 
 def _error_kind(error: Exception) -> str:

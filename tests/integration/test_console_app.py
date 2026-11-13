@@ -264,7 +264,8 @@ def test_a_refused_filter_is_reported_as_such(client: Any) -> None:
     assert events[-1]["kind"] == "error"
     assert events[-1]["error_kind"] == "invalid_filter"
     history = client.get("/api/history").json()["queries"]
-    assert history[0]["outcome"] == "failed"
+    # A filter to change: refused as asked, no error of the service.
+    assert history[0]["outcome"] == "refused"
 
 
 def test_strategies_mark_what_the_namespace_does_not_hold(client: Any) -> None:

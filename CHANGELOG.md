@@ -376,11 +376,6 @@ See [`iac/README.md`](iac/README.md).
 - `Config` reads models through `model_id(ModelRole.X)`, `tier_model_id`, `model_tier`, `embedding_model_id`,
   `embedding_dimension` and `rerank_model_id`; `ModelRole.GLOBAL_REDUCE` is gone (#334, #577).
 - `PipelineContext.unit_extractions` replaces `entities`, `relationships` and `rejected_entities` (#322).
-- `RAGInput` and `PipelineConfig` refuse an unknown key instead of ignoring it, as `Config` does: a dict query with
-  MCP's `strategy` for `search_strategy` ran `auto` at full model cost, and `PipelineConfig(force_rebuld=True)` left
-  `force_rebuild` off. A dict query raises `InvalidArgumentError` before any model call; the console's API refuses
-  an unknown body key or query parameter too (422, `invalid_argument`), the Ask, graph and evaluation reads
-  included.
 - An invalid assignment to a config setting (`config.search.max_concurrency = 0`) raises `ValidationError` and
   keeps the old value; a section validated on its own (`SearchConfig.model_validate`) refuses an unknown key. Change
   settings across sections with `Config.updated`. The `search.hybrid` weights keep the values set (relative weights).
@@ -931,7 +926,8 @@ From a `main` checkout (formats and keys no release had):
   question marked unanswerable read by whether each answer declined) and open saved runs; explore the namespace's
   graph, built from the stores when the Graph page opens and no export shows them, as no console job exports one
   (search, neighbourhoods, communities, degree, schema conformance, seed versus document evidence); a dashboard of
-  the questions and jobs run through it (time, tokens, cost per strategy, model and role); and edit the
+  the questions and jobs run through it (time, tokens, cost per strategy, model and role; a question refused as asked,
+  as on an empty namespace, counted apart from the errors); and edit the
   config file with validation, a diff before saving, a confirmation before a provider endpoint or a file or directory
   path changes (every config key that names one), and secrets never shown or written. Jobs run the unchanged
   `run-ingestion` and `run-eval` in child processes. It binds `127.0.0.1` (another address needs `--allow-remote`),

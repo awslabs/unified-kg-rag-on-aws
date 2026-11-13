@@ -167,6 +167,9 @@ def summarize(
             "answered": sum(q["outcome"] == "answered" for q in queries),
             "abstained": sum(bool(q.get("abstained")) for q in queries),
             "errors": sum(q["outcome"] in ("failed", "error") for q in queries),
+            # Questions refused as asked (a namespace without an index, a
+            # filter to change): the caller's to fix, not errors.
+            "refused": sum(q["outcome"] == "refused" for q in queries),
             "latency_p50": quantile(latencies, 0.5),
             "latency_p95": quantile(latencies, 0.95),
             "latency_mean": statistics.fmean(latencies) if latencies else None,

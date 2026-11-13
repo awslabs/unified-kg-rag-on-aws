@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 
+from unified_kg_rag.application.cli.console import dashboard
 from unified_kg_rag.application.cli.console import jobs as jobs_module
 from unified_kg_rag.application.cli.console.ask import AskRequest, AskService
 from unified_kg_rag.application.cli.console.jobs import (
@@ -36,7 +37,7 @@ from unified_kg_rag.domain.models import (
     SearchResult,
     SearchStrategy,
 )
-from unified_kg_rag.shared.exceptions import StoreConnectionError
+from unified_kg_rag.shared.exceptions import IndexNotFoundError, StoreConnectionError
 
 pytestmark = pytest.mark.unit
 
@@ -530,6 +531,11 @@ class _RecordChain(_Chain):
     async def aread_build_record(self, suffix: str | None) -> Any:
         return self.records.get(suffix)
 
+    async def acheck_methodology(self, strategy: Any, suffix: str | None) -> Any:
+        if suffix == "empty":
+            raise IndexNotFoundError(f"No indices found for suffix '{suffix}'")
+        return ()
+
 
 async def test_held_methodologies_come_from_the_namespace_s_build_record(
     tmp_path: Path,
@@ -554,6 +560,12 @@ async def test_held_methodologies_come_from_the_namespace_s_build_record(
         assert held["recorded"] is False
         assert held["held"] == ["graphrag", "lightrag", "hipporag"]
     assert (await service.held_methodologies(None))["namespace"] == "default"
+    # Whether anything was ingested at all (rv25: the page read an empty
+    # namespace from "recorded", which an index from before build records
+    # lacks too).
+    assert (await service.held_methodologies("old"))["indexed"] is True
+    empty = await service.held_methodologies("empty")
+    assert (empty["indexed"], empty["recorded"]) == (False, False)
     await service.close()
 
 
@@ -634,7 +646,6 @@ class _FailingChain(_Chain):
 
 
 async def test_a_missing_index_is_reported_as_such(tmp_path: Path) -> None:
-    from unified_kg_rag.shared.exceptions import IndexNotFoundError
 
     service = AskService(
         Config,
@@ -644,6 +655,12 @@ async def test_a_missing_index_is_reported_as_such(tmp_path: Path) -> None:
     events = await _drain(service, "q")
     assert events[-1]["kind"] == "error"
     assert events[-1]["error_kind"] == "index_not_found"
+    # Recorded as refused, which the dashboard does not count as an error
+    # (rv25: an empty namespace's first question was one).
+    (row,) = service.store.queries()
+    assert row["outcome"] == "refused"
+    totals = dashboard.summarize([row], [], Config())["totals"]
+    assert (totals["errors"], totals["refused"]) == (0, 1)
     await service.close()
 
 

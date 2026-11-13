@@ -352,9 +352,10 @@ class _AbsorbedQueryError(GraphRAGException):
         self.error_class = error_class
 
 
-# The error classes (ErrorClass) whose message is for the caller: an
-# argument, a filter or a strategy to change, a namespace without an index,
-# the deadline. The others' may name an endpoint (a store, a model server).
+# The error classes (ErrorClass) whose message is for the caller: a
+# refusal (an argument, a filter or a strategy to change, a namespace
+# without an index) and the deadline. The others' may name an endpoint (a
+# store, a model server).
 _CALLER_CLASSES = frozenset(
     {error_class for error_class in ErrorClass if error_class.is_caller_error}
     | {ErrorClass.TIMEOUT}

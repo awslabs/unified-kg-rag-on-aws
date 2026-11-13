@@ -90,3 +90,33 @@ def test_a_graph_is_read_again_only_when_its_file_changes(
     write_export(path, 21)
     assert graph_api.cached_graph(path).page["stats"]["nodes"] == 21
     assert len(reads) == 2
+
+
+def test_a_graph_file_is_named_by_its_namespace_not_the_last_run(
+    tmp_path: Path,
+) -> None:
+    # Regression (rv25): an export was labelled with the pipeline id of
+    # the run that wrote it ("console-extra-..."), though it holds the
+    # whole namespace's graph.
+    import json
+
+    from unified_kg_rag.application.cli.console.paths import Root, Roots
+
+    cache = tmp_path / "cache"
+    named = write_export(
+        cache / "console-extra-1a2b" / "visualization" / "visualization_data.json", 3
+    )
+    data = json.loads(named.read_text())
+    head = {"namespace": "tenant-a", "built_at": "2026-11-01T00:00:00Z"}
+    named.write_text(json.dumps({**head, **data}), encoding="utf-8")
+    write_export(cache / "older-run" / "visualization" / "visualization_data.json", 2)
+    found = {
+        g["run"]: g
+        for g in graph_api.find_graphs(Roots.build(Root("cache", cache)), ("cache",))
+    }
+    assert found["console-extra-1a2b"]["label"] == "tenant-a"
+    assert found["console-extra-1a2b"]["namespace"] == "tenant-a"
+    assert found["console-extra-1a2b"]["built_at"] == "2026-11-01T00:00:00Z"
+    # An export of an earlier release names no namespace: its run then.
+    assert found["older-run"]["label"] == "older-run"
+    assert found["older-run"]["namespace"] is None
