@@ -17,7 +17,6 @@ from hypothesis import strategies as st
 from unified_kg_rag.adapters.retrieval.base import graph_relevance
 from unified_kg_rag.application.cli import mcp_tools
 from unified_kg_rag.application.cli.mcp_tools import (
-    INTERNAL_ERROR_MESSAGE,
     KnowledgeGraphTools,
     describe_error,
 )
@@ -40,6 +39,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.models.config import McpServerConfig
 from unified_kg_rag.shared.exceptions import (
+    INTERNAL_ERROR_MESSAGE,
     ConfigurationError,
     ErrorClass,
     InvalidFilterError,

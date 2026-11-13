@@ -14,7 +14,9 @@ or directly via email to aws-security@amazon.com.
 Log records at `INFO` and above carry only lengths, counts, ids and a short
 stable hash for user queries, corpus text (including entity names) and model
 output; the text itself is logged only at `DEBUG`, and exception messages do
-not include model output. `DEBUG` logs therefore contain user and corpus data
+not include model output. An error whose text may come from a model provider
+or a library is logged at `INFO` and above as its type and a digest, its text
+and traceback only at `DEBUG`. `DEBUG` logs therefore contain user and corpus data
 and must be handled with the same controls as that data. See the logging
 section of the [user guide](docs/guides/configure.md#what-the-logs-contain).
 

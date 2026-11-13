@@ -30,11 +30,11 @@ from unified_kg_rag.application.cli import run_evaluation, run_rag_chain
 from unified_kg_rag.application.cli.console.ask import _error_kind
 from unified_kg_rag.application.cli.conventions import EXIT_CODES
 from unified_kg_rag.application.cli.mcp_tools import (
-    INTERNAL_ERROR_MESSAGE,
     describe_error,
 )
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import exceptions as x
+from unified_kg_rag.shared.exceptions import INTERNAL_ERROR_MESSAGE
 
 pytestmark = pytest.mark.unit
 
@@ -77,6 +77,17 @@ def test_every_surface_reads_one_classification(
     # The console's kind is the class (its page names each).
     assert _error_kind(error if isinstance(error, Exception) else Exception()) == (
         error_class.value
+    )
+    # One rule for the text each surface shows: an MCP caller sees what it
+    # can act on, the console's operator all but an unexpected failure's.
+    assert x.shows_error_text(error_class, "caller") is callers
+    assert x.shows_error_text(error_class, "operator") is (
+        error_class is not x.ErrorClass.FAILURE
+    )
+    assert x.shown_error_text(error, audience="operator") == (
+        INTERNAL_ERROR_MESSAGE
+        if error_class is x.ErrorClass.FAILURE
+        else x.error_text(error)
     )
 
 

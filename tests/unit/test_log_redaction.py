@@ -405,6 +405,10 @@ _JUDGE_MODULES = (
     "adapters/ingestion",
     "application/retrieval",
     "application/prompts",
+    # The surfaces' last-resort error lines: an unexpected failure's text.
+    "application/cli/mcp_server.py",
+    "application/cli/console/ask.py",
+    "application/cli/console/server.py",
 )
 _ERROR_NAMES = {"e", "err", "error", "errors", "exc", "outcome"}
 

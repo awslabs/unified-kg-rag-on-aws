@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 import sys
 import uuid
 from collections.abc import Callable
@@ -83,6 +84,7 @@ from unified_kg_rag.shared.exceptions import (
     error_class_of,
     error_text,
 )
+from unified_kg_rag.shared.logging import log_failure
 from unified_kg_rag.shared.utils import event_loop
 
 if TYPE_CHECKING:
@@ -636,7 +638,7 @@ class RAGChainRunner:
                 providers=build_providers(self.config, metrics_sink=self.metrics_sink),
             )
             console.print("[green]Query chain initialized.[/green]")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - logged and reported by class
             # Classified as a query's error is (_run_query): a setting the
             # chain refused (observability on without the otel extra, a bad
             # guardrail setting) is a usage error, exit 2.
@@ -645,7 +647,13 @@ class RAGChainRunner:
             if exit_code == EXIT_USAGE:
                 usage_error(e)
             if error_class is ErrorClass.FAILURE:
-                logger.exception("Failed to initialize RAG chain: %s", e)
+                log_failure(
+                    logger,
+                    logging.ERROR,
+                    "Failed to initialize RAG chain: %s",
+                    error=e,
+                    traceback=True,
+                )
             else:
                 logger.error(
                     "Failed to initialize RAG chain (%s): %s", error_class.value, e
@@ -816,7 +824,7 @@ class RAGChainRunner:
             console.print("\n[bold green]Query executed successfully![/bold green]")
             return {"success": True, **output}
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - logged and reported by class
             error_class = classify(e)
             if EXIT_CODES[error_class] == EXIT_USAGE and not self.args.interactive:
                 # A --filters key no index declares, a --search-strategy
@@ -826,7 +834,13 @@ class RAGChainRunner:
                 # line or the configuration is wrong (exit 2).
                 usage_error(e)
             if error_class is ErrorClass.FAILURE:
-                logger.exception("Error during query execution: %s", e)
+                log_failure(
+                    logger,
+                    logging.ERROR,
+                    "Error during query execution: %s",
+                    error=e,
+                    traceback=True,
+                )
             else:
                 # An expected outcome with its own message (the deadline, a
                 # store or model server down): no traceback.

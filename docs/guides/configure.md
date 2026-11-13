@@ -112,7 +112,11 @@ into a WARNING.
 At `INFO` and above, user and corpus text is logged only as lengths, counts,
 ids and a stable short hash (`query: len=42 sha=1a2b3c4d`). Query text,
 rewritten queries, entity names and raw model output are logged only at
-`DEBUG`, and exception messages never carry model output. Treat `DEBUG` logs
+`DEBUG`, and exception messages never carry model output. An error whose
+text may come from a model provider or a library (a model call a step
+absorbs, a query's unexpected failure on any surface) is logged at `INFO`
+and above as its type and a digest, its text and traceback only at `DEBUG`.
+Treat `DEBUG` logs
 (`logging.level: DEBUG`, `UKR__LOGGING__LEVEL=DEBUG`, any CLI's `--log-level
 DEBUG`; `run-rag --verbose` prints more
 of each result but leaves the log level), and libraries set to `DEBUG` in

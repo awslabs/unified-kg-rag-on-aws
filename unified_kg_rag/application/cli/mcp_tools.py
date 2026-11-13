@@ -56,7 +56,6 @@ from unified_kg_rag.domain.retrieval.source_fields import EntityRef
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.exceptions import (
-    INTERNAL_ERROR_MESSAGE,
     ConfigurationError,
     ErrorClass,
     GraphRAGException,
@@ -66,6 +65,8 @@ from unified_kg_rag.shared.exceptions import (
     error_class_of,
     error_text,
     query_failure_ids,
+    shown_error_text,
+    shows_error_text,
     tag_query_failure,
 )
 from unified_kg_rag.shared.usage import usage_scope
@@ -354,21 +355,11 @@ class SchemaToolResult(BaseModel):
 class _AbsorbedQueryError(GraphRAGException):
     """The chain's error answer (``processing.ignore_errors``), raised with
     the class of the failure it absorbed (``error_class``): the message of
-    a caller-correctable one (``_CALLER_CLASSES``) is the caller's."""
+    a caller-correctable one (``shows_error_text``) is the caller's."""
 
     def __init__(self, message: str, error_class: ErrorClass) -> None:
         super().__init__(message)
         self.error_class = error_class
-
-
-# The error classes (ErrorClass) whose message is for the caller: a
-# refusal (an argument, a filter or a strategy to change, a namespace
-# without an index) and the deadline. The others' may name an endpoint (a
-# store, a model server).
-_CALLER_CLASSES = frozenset(
-    {error_class for error_class in ErrorClass if error_class.is_caller_error}
-    | {ErrorClass.TIMEOUT}
-)
 
 
 def describe_error(
@@ -393,9 +384,11 @@ def describe_error(
         if ids
         else ""
     )
-    if error_class in _CALLER_CLASSES:
-        return f"[{error_class.value}] {error_text(exc, namespaces)}{suffix}", True
-    return f"[{error_class.value}] {INTERNAL_ERROR_MESSAGE}{suffix}", False
+    text = shown_error_text(error_class, error_text(exc, namespaces), audience="caller")
+    return (
+        f"[{error_class.value}] {text}{suffix}",
+        shows_error_text(error_class, "caller"),
+    )
 
 
 def _cut(text: str, limit: int) -> tuple[str, bool]:
@@ -824,7 +817,7 @@ class KnowledgeGraphTools:
         error = _AbsorbedQueryError(
             (
                 outcome.error_message or "The query was refused."
-                if error_class in _CALLER_CLASSES
+                if shows_error_text(error_class, "caller")
                 else "The query failed (processing.ignore_errors)."
             ),
             error_class,

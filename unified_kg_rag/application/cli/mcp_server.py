@@ -16,6 +16,7 @@ reads them as objects.
 
 import importlib.util
 import inspect
+import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Annotated, Any, Literal, cast
 
@@ -55,6 +56,7 @@ from unified_kg_rag.shared.exceptions import (
     query_failure_ids,
 )
 from unified_kg_rag.shared.extras import extra_hint
+from unified_kg_rag.shared.logging import log_failure
 
 if TYPE_CHECKING:
     from mcp.server.mcpserver import MCPServer
@@ -236,12 +238,19 @@ def _tool_function(
             ) from None
         try:
             return await run(**checked)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - raised on as a tool error
             message, expected = describe_error(e, namespaces)
             if not expected:
                 # Under the ids the caller's message names (query_id).
                 with bound_contextvars(**query_failure_ids(e)):
-                    logger.error("MCP tool %s failed: %s", name, e, exc_info=True)
+                    log_failure(
+                        logger,
+                        logging.ERROR,
+                        "MCP tool %s failed: %s",
+                        name,
+                        error=e,
+                        traceback=True,
+                    )
             raise tool_error(message) from None
 
     tool.__name__ = name

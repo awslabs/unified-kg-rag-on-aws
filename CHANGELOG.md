@@ -761,8 +761,10 @@ From a `main` checkout (formats and keys no release had):
   minutes and ended with "produced 0 outputs"); a query raises it at once, without the transient retries' backoff
   (the error answer under `ignore_errors`, which no fallback absorbs), and `run-rag` exits 1 without a traceback.
   `ErrorClass` and `classify_error` name the class of a failure, which every surface maps: the CLIs' exit codes, the
-  MCP server's caller messages and the console's error kind, also of an error answer (`metadata.error_class`); a
-  `failure` reaches an MCP caller or the console with a generic message, its text only in the server log. A
+  MCP server's caller messages and the console's error kind, also of an error answer (`metadata.error_class`). One
+  rule (`shown_error_text`) decides the text each surface shows: an MCP caller sees a refusal's and the deadline's,
+  the console all but a `failure`'s, also for an error answer, in the history and a strategy's reason; the hidden text
+  is logged as a digest, in full at DEBUG, under the `query_id` every Ask event carries. A
   malformed filter value (a null, an empty or nested list) is `invalid_filter` with one message on every surface,
   `run-rag` naming the flag it came from.
 - `run-eval` comparisons adjust for the many deltas they read: every paired delta has a sign-flip randomization

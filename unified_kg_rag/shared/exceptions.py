@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from collections.abc import Collection, Iterator
 from enum import StrEnum
+from typing import Literal
 
 
 def causes(exc: BaseException) -> Iterator[BaseException]:
@@ -408,13 +409,54 @@ def error_class_of(value: object) -> ErrorClass:
         return ErrorClass.FAILURE
 
 
-# What a surface (an MCP tool error, the console) says of a failure it does
-# not describe, so a store endpoint or a provider's text never reaches the
-# caller; the server logs the error under the ids the surface names.
+# What a surface says of a failure whose text it does not show its audience
+# (shown_error_text): a provider's text (an unexpected failure's) reaches no
+# surface, a store or model endpoint no MCP caller; the server logs the error
+# under the ids the surface names.
 INTERNAL_ERROR_MESSAGE = (
     "The call failed inside the server (a store or model error); the server "
     "log has the details."
 )
+
+# Who reads a surface's error text: ``caller``, a client the server does not
+# trust (an MCP agent), or ``operator``, the console's user, who configured
+# the stores and models and reads the server log.
+ErrorAudience = Literal["caller", "operator"]
+
+
+def shows_error_text(error_class: ErrorClass, audience: ErrorAudience) -> bool:
+    """Whether a surface shows ``audience`` the text of an error of
+    ``error_class``. A caller sees the text of what it can act on (a
+    refusal: ``ErrorClass.is_caller_error``) and of the deadline, never an
+    endpoint; an operator sees all but an unexpected failure's (``failure``),
+    whose text is a provider's or a library's (it may quote a prompt, an ARN
+    or corpus text)."""
+    if audience == "caller":
+        return error_class.is_caller_error or error_class is ErrorClass.TIMEOUT
+    return error_class is not ErrorClass.FAILURE
+
+
+def shown_error_text(
+    error: BaseException | ErrorClass,
+    text: str | None = None,
+    *,
+    audience: ErrorAudience,
+    namespaces: Collection[str] | None = None,
+) -> str:
+    """The text a surface shows ``audience`` for ``error`` (an exception, or
+    the class of one a result names, as the error answer of
+    ``processing.ignore_errors``): ``text`` (by default
+    :func:`error_text` of the exception) when :func:`shows_error_text`,
+    else :data:`INTERNAL_ERROR_MESSAGE`. The one rule every surface (the MCP
+    tools, the console's API, its Ask events and history) applies."""
+    error_class = error if isinstance(error, ErrorClass) else classify(error)
+    if not shows_error_text(error_class, audience):
+        return INTERNAL_ERROR_MESSAGE
+    if text is None:
+        assert isinstance(error, BaseException), "text is required with a class"
+        text = error_text(error, namespaces)
+    return text
+
 
 # The public name of :func:`classify` (``unified_kg_rag.classify_error``).
 classify_error = classify
