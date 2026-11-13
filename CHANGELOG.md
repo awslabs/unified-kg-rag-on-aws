@@ -1112,7 +1112,8 @@ From a `main` checkout (formats and keys no release had):
   warning, and the rest is still described (#636). A missing extra and a namespace that holds no index exit 2 with the
   error on stderr, and describing creates no store file where nothing was ingested (#641). `--documents
   failed,quarantined` (`describe_namespace(documents=...)`) lists the registry's documents of those statuses with their
-  `error_info`, counts, writer and time; a run names the documents it deletes in one INFO line. See
+  `error_info`, counts, writer and time (every run write stamps `updated_at`, and `created_at` once; a record
+  written before has none); a run names the documents it deletes in one INFO line. See
   [inspect and
   export](docs/guides/inspect.md).
 - Telemetry names the namespace (the tenant boundary) and ties a query to its logs: `kg_rag.namespace` on every span

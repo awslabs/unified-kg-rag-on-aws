@@ -104,7 +104,8 @@ def test_round_trip_keeps_every_field(store: DocStatusPort) -> None:
         extraction_fingerprint="x1",
         source_digest="s1",
         written_by="pipeline-a",
-        updated_at="2026-01-01T00:00:00",
+        created_at="2025-12-01T00:00:00+00:00",
+        updated_at="2026-01-01T00:00:00+00:00",
     )
     store.put(record)
     fetched = store.get("d1")
@@ -477,6 +478,53 @@ def test_interrupted_incremental_run_converges(
     assert harness.registry_problems(R1) == []
     harness.run(R1)
     assert harness.extracted == []
+
+
+def test_a_run_stamps_when_it_wrote_each_record(
+    store: DocStatusPort, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Regression (rv25): no writer set updated_at or created_at, so
+    # run-describe --documents always printed "at -" although its help and
+    # the runbook promise when.
+    from datetime import UTC, datetime
+
+    from unified_kg_rag.application.ingestion import incremental
+
+    class _Clock:
+        now = datetime(2026, 3, 1, 9, 0, tzinfo=UTC)
+
+        @classmethod
+        def now_(cls, tz: object = None) -> datetime:
+            return cls.now
+
+    monkeypatch.setattr(
+        incremental, "datetime", type("dt", (), {"now": staticmethod(_Clock.now_)})
+    )
+    harness = IncrementalRun(store)
+    harness.run(R0)
+    first = {r.doc_id: r for r in store.list_namespace("default")}
+    assert first
+    assert {(r.created_at, r.updated_at) for r in first.values()} == {
+        ("2026-03-01T09:00:00+00:00", "2026-03-01T09:00:00+00:00")
+    }
+    _Clock.now = datetime(2026, 3, 2, 9, 0, tzinfo=UTC)
+    harness.run(R1)
+    second = {r.doc_id: r for r in store.list_namespace("default")}
+    changed = [
+        doc_id
+        for doc_id, record in second.items()
+        if doc_id not in first or record.content_hash != first[doc_id].content_hash
+    ]
+    # b.txt changed, e.txt is new (a.txt is unchanged and not rewritten).
+    assert len(changed) == 2
+    for doc_id in changed:
+        assert second[doc_id].updated_at == "2026-03-02T09:00:00+00:00", doc_id
+    for doc_id, record in second.items():
+        # Kept from the first registration, a changed document's too; a new
+        # document's is now.
+        assert record.created_at == (
+            first[doc_id].created_at if doc_id in first else record.updated_at
+        ), doc_id
 
 
 # --- SQLite specifics --------------------------------------------------------
