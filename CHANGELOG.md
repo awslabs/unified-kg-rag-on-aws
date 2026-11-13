@@ -1902,7 +1902,9 @@ Queries and retrieval.
   (#176, #218).
 - Korean BM25 recall, CJK fuzziness and NFC normalization in retrieval (#175, #177); MMR diversity compares words
   as entity linking does (`word_terms`: punctuation ignored, and Han, Hangul, Kana, Thai, Lao, Myanmar, Khmer and Tai
-  runs by character bigrams), so a Thai or Khmer near-duplicate is no longer kept as distinct (#567).
+  runs by character bigrams), so a Thai or Khmer near-duplicate is no longer kept as distinct (#567); its words are
+  read by one compiled pattern, the characters of a non-ASCII gap alone checked for marks (a walk over every
+  character made the terms 5.6 times the cost of the old whitespace split).
 - A query is translated only when ingestion translates or the caller asks (`RAGInput.target_language`), and its
   entities and keywords are extracted in the index language even when the caller asks for another: only the text
   units carry the requested language, so they matched no entity, relationship or report (#567, #583, #619).

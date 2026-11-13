@@ -183,3 +183,36 @@ def test_without_latin_accents_folds_every_latin_mark(text: str, folded: str) ->
 def test_word_terms_split_unspaced_runs_into_bigrams(text: str, terms: set) -> None:
     # One owner of the rule MMR redundancy and name coverage compare by.
     assert scripts.word_terms(text) == frozenset(terms)
+
+
+def _letter_number_mark_runs(text: str) -> list[tuple[int, int]]:
+    """The definition ``word_spans`` keeps: runs of Unicode L, N and M."""
+    import unicodedata
+
+    spans: list[tuple[int, int]] = []
+    start: int | None = None
+    for i, ch in enumerate(text):
+        if unicodedata.category(ch)[0] in "LNM":
+            start = i if start is None else start
+        elif start is not None:
+            spans.append((start, i))
+            start = None
+    if start is not None:
+        spans.append((start, len(text)))
+    return spans
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["टाटा मोटर्स", "กรุงเทพ", "́abc", "á-b", "x_y", "ab́́cd e"],
+)
+def test_word_spans_are_runs_of_letters_numbers_and_marks(text: str) -> None:
+    # The compiled pattern (rv25: the per-character walk made MMR's terms
+    # 5.6x the old split) keeps the definition, marks included.
+    assert scripts.word_spans(text) == _letter_number_mark_runs(text)
+
+
+@given(st.text(alphabet=st.characters(codec="utf-8"), max_size=40))
+def test_word_spans_match_the_definition_on_any_text(text: str) -> None:
+    assert scripts.word_spans(text) == _letter_number_mark_runs(text)
+    assert scripts.words(text) == [text[a:b] for a, b in _letter_number_mark_runs(text)]
