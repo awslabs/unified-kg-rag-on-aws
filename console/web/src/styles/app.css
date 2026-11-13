@@ -432,8 +432,15 @@ kbd {
 .nav:not([data-fold="0"]) .brand-sub {
   display: none;
 }
+/* Hidden visually, not from the tree: the language picker's label is its
+   select's accessible name. */
 .nav:is([data-fold="2"], [data-fold="3"]) .nav-tools .field-label {
-  display: none;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 .nav[data-fold="3"] .nav-inner {
   flex-wrap: wrap;
