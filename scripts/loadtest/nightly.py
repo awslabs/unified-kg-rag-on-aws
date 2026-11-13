@@ -12,8 +12,9 @@ on the embedded SQLite stores and the fake models; nothing leaves the host.
    and dropped connections), each followed by a clean run that must
    converge with the reference within what incremental indexing documents
    (``compare_exports.INCREMENTAL``); ``kill`` (SIGKILL in the middle of a
-   run, then a resume under the same pipeline id once its lease expired),
-   which must converge exactly.
+   run, then at once a resume under the same pipeline id, which takes the
+   dead run's lease over: the SQLite registry hands on the lease of a holder
+   of this host whose process has exited), which must converge exactly.
 4. Check the gates (``harness.Gates``) and write ``report.json`` and
    ``report.md`` into the output directory; exit 1 when a gate fails.
 
@@ -39,21 +40,16 @@ from typing import Any
 
 from chaos_models import call
 from compare_exports import EXACT, INCREMENTAL, Tolerance, compare_files, converged
-from harness import Gates, check_gates
+from harness import Gates, check_gates, local_only_env
 from workspace import write_workspace
 
 HERE = Path(__file__).resolve().parent
-# The kill scenario's lease, the shortest the config accepts: a resume waits
-# it out (a SIGKILLed run cannot give its lease up).
-LEASE_SECONDS = 10.0
 # What a workspace reset keeps.
 KEEP = frozenset({"corpus", "config.yaml", "eval.json"})
 
 
 def _env() -> dict[str, str]:
-    env = {k: v for k, v in os.environ.items() if not k.startswith("AWS_")}
-    env.update(AWS_EC2_METADATA_DISABLED="true", UKR__LOGGING__LEVEL="WARNING")
-    return env
+    return {**local_only_env(os.environ), "UKR__LOGGING__LEVEL": "WARNING"}
 
 
 def _script(name: str) -> str:
@@ -248,7 +244,6 @@ def chaos_scenarios(models: Models, out: Path, docs: int) -> list[dict[str, Any]
         docs=docs,
         chars=2000,
         lang="mixed",
-        lease_seconds=LEASE_SECONDS,
     )
     models.chaos()
     before = models.chat_calls()
@@ -304,14 +299,17 @@ def chaos_scenarios(models: Models, out: Path, docs: int) -> list[dict[str, Any]
     models.chaos(delay=0.02)
     killed, calls = killed_run(models, ws, full_calls // 2)
     models.chaos()
-    time.sleep(LEASE_SECONDS + 1)  # a SIGKILLed run's lease runs out
+    # At once: the killed run's lease is handed on, not waited out.
     resume = ingest(ws, "kill-resume", "--pipeline-id", "kill")
     resume.update(chat_calls_before_kill=calls, chat_calls_full_build=full_calls)
-    problem = (
-        "the run ended before the kill: raise --chaos-docs"
-        if not killed
-        else f"the resume exited {resume['exit']}" if resume["exit"] else ""
-    )
+    if not killed:
+        problem = "the run ended before the kill: raise --chaos-docs"
+    elif resume["error_type"] == "NamespaceLeaseError":
+        problem = "the resume found the killed run's lease held (NamespaceLeaseError)"
+    elif resume["exit"]:
+        problem = f"the resume exited {resume['exit']}"
+    else:
+        problem = ""
     results.append(result("kill", [resume], EXACT, problem))
     return results
 
@@ -323,20 +321,25 @@ def markdown(report: dict[str, Any]) -> str:
         "Local numbers with fake models on one host: a regression signal, not "
         "product performance.",
         "",
-        "| Run | Requests | Errors | Throughput (rps) | p50 (s) | p99 (s) | Loop lag p99 (ms) |",
-        "|---|---|---|---|---|---|---|",
+        "| Run | Requests | Errors | Flagged | Throughput (rps) | p50 (s) | p99 (s) "
+        "| Loop lag p99 (ms) |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for level in [*report["sweep"], report["soak"]]:
         name = (
             "soak" if "duration_seconds" in level else "sweep"
         ) + f" c={level['concurrency']}"
         lines.append(
-            f"| {name} | {level['requests']} | {level['errors']} | {level['throughput_rps']} "
+            f"| {name} | {level['requests']} | {level['errors']} "
+            f"| {sum((level.get('flags') or {}).values())} | {level['throughput_rps']} "
             f"| {level['p50']} | {level['p99']} | {level['loop_lag_p99_ms']} |"
         )
     lines += [
         "",
         f"Soak trends per hour: `{json.dumps(report['soak']['trends_per_hour'])}`",
+        "",
+        "Soak rise over its second half: "
+        f"`{json.dumps(report['soak'].get('second_half_rise'))}`",
         "",
     ]
     lines += ["| Chaos scenario | Converged | Detail |", "|---|---|---|"]

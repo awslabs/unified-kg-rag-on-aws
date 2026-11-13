@@ -10,10 +10,14 @@ fake models answer in milliseconds, so its numbers are not product
 performance: with real models the model calls dominate latency, cost and
 throttling.
 
-Nothing leaves the host. Every script unsets the AWS credential variables and
-turns the instance metadata lookup off. The chaos model server binds
-127.0.0.1 only, and `load.py` refuses a config that is not `backend: local`
-or whose models or stores are not on a loopback address.
+Nothing leaves the host. Every script unsets every `AWS_*` variable, points
+the shared AWS config and credentials files at `/dev/null` (so no profile or
+SSO cache in `~/.aws` signs a request) and turns the instance metadata lookup
+off. The chaos model server binds 127.0.0.1 only, and `load.py` refuses a
+config that is not `backend: local`, whose models or stores are not of a
+local kind (Ollama or OpenAI-compatible models, a cross-encoder or no
+reranker, the SQLite stores and registry, a Gremlin Server or OpenSearch) on
+a loopback address, or that screens with the Bedrock guardrail.
 
 | Script | What it does |
 |---|---|
@@ -54,8 +58,12 @@ Japanese, each answerable from the demo corpus (`--strategies mix,local`
 narrows it). Each level reports p50, p95, p99 and max latency, throughput,
 errors by `ErrorClass` (`errors_by_class`, and `errors_by_strategy` as
 `strategy:class`: a raised error, or the error answer of
-`processing.ignore_errors`), the answers that were degraded, had unresolved
-citations or were empty (`flags`), and the event-loop lag. The lag is how
+`processing.ignore_errors`) with when the failed queries ended
+(`error_p99`, `error_max`), the flagged answers (`flags`, as
+`flag:strategy`), and the event-loop lag. An answer is flagged when it has
+no evidence (`no_sources`, `abstained`, `empty_answer`), was `degraded` or
+has `citations_unresolved`: a retrieval regression that empties the
+context answers "could not find" without an error, and shows here. The lag is how
 late a 10 ms ticker wakes up: the time the loop spent in code that does not
 yield, which delays every concurrent query. A rising p99 lag with
 concurrency points at CPU work on the loop that belongs in a thread.
@@ -73,11 +81,16 @@ it records RSS, file descriptors (SQLite files and sockets counted apart),
 threads, gc objects, asyncio tasks, the conversations held, and the window's
 p50 and p95 (`--csv`). The report adds the per-hour slope of each over the
 second half of the run (`trends_per_hour`; the first half is warm-up while
-caches and pools fill). A slope that stays positive over a longer run is a
-leak. The harness keeps its own memory flat (latencies in a compact array, the
-loop lag in a fixed histogram), so the slope is the chain's. The slope of a
-short run overstates growth that levels off later: judge a leak on a run of
-30 minutes or more.
+caches and pools fill) and how much each rose over that half
+(`second_half_rise`, the fitted slope times the half's span). A slope that
+stays positive over a longer run is a leak. The harness keeps its own memory
+flat (latencies in a compact array, the loop lag in a fixed histogram), so
+the slope is the chain's. The slope of a short run overstates growth that
+levels off later (about 1 MB of allocator noise over a 5-minute half reads as
+12 MB/h): judge a slow leak on a run of 30 minutes or more. The RSS gate
+therefore fails only when RSS grows both faster than its rate and by more
+than its floor over the second half, so a short soak catches a gross leak
+only and a long one is judged by the rate.
 
 ### Console over HTTP
 
@@ -89,7 +102,8 @@ UKR_CONSOLE_TOKEN=... uv run python scripts/loadtest/load.py http \
 
 The sweep through the console's `/api/ask` stream, with the time to the
 first event (`first_event_p50`, `first_event_p95`). An error event counts
-under its `error_kind`.
+under its `error_kind`, and a result is flagged as in the sweep. The loop lag
+it reports is this client's (`client_loop_lag_p99_ms`), not the console's.
 
 ### Bulk ingestion throughput
 
@@ -110,7 +124,11 @@ set by `processing` (see [Ingestion: Cost levers](./ingest.md#cost-levers)).
 Each scenario ends with a convergence check: export the namespace and
 compare it with a full build of the same corpus in the same workspace
 directory (record ids name the source path, so build the reference in the
-same place, wiping `stores/` and `cache/` between builds).
+same place, wiping `stores/` and `cache/` between builds). The export holds
+every kind of item the vector store keeps (text units, entities,
+relationships, community reports, claims, RAPTOR summary nodes), so every
+methodology's index is compared; the graph store's vertices and edges are
+not exported.
 
 ```bash
 cd ws && uv run run-describe --config-path config.yaml --output-path ../reference.jsonl --include-text && cd ..
@@ -122,9 +140,9 @@ uv run python scripts/loadtest/compare_exports.py reference.jsonl after.jsonl [-
 |---|---|---|
 | Model throttling and errors | `curl -X POST 127.0.0.1:11613/chaos -d '{"error_rate": 0.3, "error_status": 429}'` (or 500, 503) during a run, `{"error_rate": 0}` and run again | The faulted run records the documents it could not finish `FAILED` (or fails a stage over its failure budget, exit 1); the clean run after it exits 0 with none failed and converges with `--incremental` |
 | Dropped connections | `{"drop_rate": 0.05}` | As above |
-| Hung model | `{"hang_rate": 0.15, "hang_seconds": 60}` during a sweep with `search.query_timeout_seconds` set | Every query ends within the query deadline: as an answer, or as a `timeout` error |
+| Hung model | `{"hang_rate": 0.15, "hang_seconds": 60}` during a sweep with `search.query_timeout_seconds` set | Every query ends within the query deadline, as an answer or as a `timeout` error: `max` and `error_max` stay under it |
 | Store outage | With `--stores containers`: `docker compose -f docker/compose.local.yaml pause opensearch` (or `gremlin-server`) during a run or a sweep, then `unpause` | Queries fail as `store_unreachable` or `timeout` (a strategy that does not read the paused store still answers); the next ingestion run converges |
-| Killed run | `kill -9` the `run-ingestion` process mid-run, wait `indexing.lease_seconds` (the workspace's `--lease-seconds 10` shortens it), run again with the same `--pipeline-id` | The resume reuses the finished stages and converges exactly |
+| Killed run | `kill -9` the `run-ingestion` process mid-run, then at once run again with the same `--pipeline-id` | The resume takes the killed run's lease over (the SQLite registry hands on the lease of a holder of this host whose process has exited: no `NamespaceLeaseError`), reuses the finished stages and converges exactly |
 | Concurrent runs | Two `run-ingestion` runs on one namespace | The second stops with `NamespaceLeaseError` (the console: `409 job_conflict`) |
 
 Without `--incremental` the comparison is exact: same records, same content,
@@ -148,23 +166,32 @@ demand): ingest the demo corpus, a sweep at
 concurrency 1, 4 and 16, a 10-minute soak at 8 with 30% memory turns, and three
 chaos scenarios on a 60-document synthetic corpus (30% 429s, then 15% 503s
 with 5% dropped connections, each followed by a clean run; a SIGKILL halfway
-through a run, then its resume). It uploads `report.md`, `report.json`, the
+through a run, then its resume at once). It uploads `report.md`, `report.json`, the
 soak samples, the exports and the logs as the `load-test-report` artifact and
 writes `report.md` to the job summary. It fails when a gate fails:
 
 | Gate | Threshold |
 |---|---|
 | Errors on the fixed corpus (every sweep level and the soak) | 0 |
+| Flagged answers (every sweep level and the soak): no sources, abstained, empty, degraded, unresolved citations | 0 (every query of the mix is answerable from the demo corpus, and the fake models are deterministic) |
 | Event-loop lag p99 (every sweep level and the soak) | under 100 ms |
-| RSS slope over the soak's second half | under 10 MB/h |
-| Chaos scenarios | each converges (the kill exactly, the others `--incremental`) |
+| RSS over the soak's second half | fails only when it grows both at 10 MB/h or more and by 8 MB or more |
+| Chaos scenarios | each converges (the kill exactly, the others `--incremental`); the kill's resume, started at once, finds no lease held |
+
+The RSS floor (8 MB) sits well above the noise of a clean 10-minute soak
+(8 to 13.5 MB/h measured, from about 1 MB over its second half), so the
+nightly soak catches gross leaks only (a leak of about 1.2 KB a query passes
+the floor over its second half); a slow leak is judged on a soak of
+30 minutes or more, where the rate decides. The floor is not yet calibrated
+on the runner: repeated clean soaks there would set it so that false
+failures stay rare.
 
 It only reports: no branch protection requires it, and pull requests do not
 run it. Run it locally with
 `uv run --extra local python scripts/loadtest/nightly.py out/` (about 20
 minutes; `--soak-seconds` and `--chaos-docs` scale it), and check another
-report with `load.py gate report.json` (`--max-errors`, `--max-loop-lag-ms`,
-`--max-rss-mb-per-hour`).
+report with `load.py gate report.json` (`--max-errors`, `--max-flags`,
+`--max-loop-lag-ms`, `--max-rss-mb-per-hour`, `--rss-rise-floor-mb`).
 
 ## Local baseline (fake models)
 
