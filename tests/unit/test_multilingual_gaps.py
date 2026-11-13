@@ -120,6 +120,16 @@ class TestNonUtf8Recovery:
         loaded = Document.from_json_file(p)
         assert loaded.page_content == _KOREAN_TEXT
 
+    def test_document_from_json_file_fails_on_bytes_of_no_encoding(
+        self, tmp_path: Path
+    ) -> None:
+        # rv25 algo-index low: as the source parser does, bytes in no detected
+        # encoding are not text, where latin-1 decoded them into garbage.
+        p = tmp_path / "doc.json"
+        p.write_bytes(bytes(range(256)) * 20)
+        with pytest.raises(UnicodeDecodeError):
+            Document.from_json_file(p)
+
 
 # --- GAP 3: translation enable flag + same-language no-op --------------------
 

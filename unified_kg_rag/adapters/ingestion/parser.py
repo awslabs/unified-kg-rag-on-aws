@@ -137,8 +137,9 @@ class FileParser:
 # explicit ``encoding=``: the configured one, else the one charset-normalizer
 # detects (none detected: the file fails, it is not text).
 # Detection runs only after a decode error, so a file that decodes keeps the
-# text it always had (charset-normalizer is a declared dependency, reused in
-# ``Document._read_text_autodetect`` for one consistent detection path).
+# text it always had (charset-normalizer is a declared dependency, reused by
+# ``Document.from_json_file``, which also fails on bytes it detects no
+# encoding of: one rule for what is text).
 _ENCODING_AWARE_LOADERS = (
     CsvFileLoader,
     HtmlFileLoader,

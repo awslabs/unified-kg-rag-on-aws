@@ -1993,8 +1993,8 @@ Queries and retrieval.
 
 Ingestion and incremental indexing.
 - A `.txt`, `.md`, `.csv`, `.json` or `.html` file that is not UTF-8 and whose encoding is not detected (a binary file
-  with a text suffix) fails to parse and counts as failed: it was decoded as latin-1 and indexed as text units of
-  garbage.
+  with a text suffix) fails to parse and counts as failed, as a pre-parsed document JSON of such bytes fails to load:
+  it was decoded as latin-1 and indexed as text units of garbage.
 - A chunk of whitespace only makes no text unit: a chunk size of a few characters or tokens (`fallback_chunk_size:
   1`) cut the spaces between words into units of their own, and the run failed with `missing embeddings`.
 - A stage that failed because its model calls did keeps their dominant cause: a model server that was down fails
