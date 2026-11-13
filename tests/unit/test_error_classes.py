@@ -374,3 +374,45 @@ def test_the_console_names_the_class_of_an_absorbed_failure() -> None:
     result = AskService._result(failed, Config(), 0.1)
     assert result["error_kind"] == "model_unreachable"
     assert AskService._result(output({}), Config(), 0.1)["error_kind"] is None
+
+
+async def test_waiters_of_a_shared_call_each_get_their_own_failure() -> None:
+    import asyncio
+
+    from unified_kg_rag.shared.utils.concurrency import await_shared
+
+    shared: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+    original = x.QueryTimeoutError("late", timeout_seconds=2.0)
+    x.tag_query_failure(original, "q-first")
+    shared.set_exception(original)
+    raised = await asyncio.gather(
+        await_shared(shared), await_shared(shared), return_exceptions=True
+    )
+    first, second = raised
+    assert isinstance(first, x.QueryTimeoutError)
+    assert isinstance(second, x.QueryTimeoutError)
+    assert first is not second and original not in raised
+    # The type and attributes the surfaces read, the shared one as the
+    # cause, and no other query's ids.
+    assert first.timeout_seconds == 2.0 and str(first) == "late"
+    assert first.__cause__ is original
+    assert x.classify(first) is x.ErrorClass.TIMEOUT
+    assert x.query_failure_ids(first) == {}
+    x.tag_query_failure(first, "q-1")
+    x.tag_query_failure(second, "q-2")
+    assert {x.query_failure_ids(e)["query_id"] for e in raised} == {"q-1", "q-2"}
+
+
+async def test_a_waiters_own_cancellation_is_not_copied() -> None:
+    import asyncio
+
+    from unified_kg_rag.shared.utils.concurrency import await_shared
+
+    shared: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+    waiter = asyncio.ensure_future(await_shared(shared))
+    await asyncio.sleep(0)
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    assert not shared.cancelled()
+    shared.set_result(None)

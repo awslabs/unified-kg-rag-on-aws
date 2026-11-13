@@ -89,6 +89,7 @@ from unified_kg_rag.shared.utils import (
     text_digest,
 )
 from unified_kg_rag.shared.utils.concurrency import (
+    await_shared,
     discard,
     gather_bounded,
     gather_or_cancel,
@@ -897,8 +898,9 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             pending.add_done_callback(
                 lambda done: self._settle_embedding(query_text, done)
             )
-        # Shielded: one waiter's cancellation must not cancel the others' call.
-        return await asyncio.shield(pending)
+        # Shielded (one waiter's cancellation must not cancel the others'
+        # call); a failure reaches each query as its own copy.
+        return await await_shared(pending)
 
     def _settle_embedding(self, query_text: str, done: asyncio.Future[Any]) -> None:
         self._pending_embeddings.pop(query_text, None)

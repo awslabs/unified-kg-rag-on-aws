@@ -81,8 +81,10 @@ from unified_kg_rag.domain.models.config import (
 from unified_kg_rag.evaluation import EvaluationManager
 from unified_kg_rag.shared.exceptions import (
     ConfigurationError,
+    EmbeddingModelError,
     ModelUnreachableError,
     StoreRequestRejectedError,
+    query_failure_ids,
 )
 
 pytestmark = pytest.mark.integration
@@ -1076,3 +1078,48 @@ def test_an_unreachable_model_server_names_itself_at_query_time(
     assert out.metadata["error"] is True
     assert out.metadata["error_type"] == "ModelUnreachableError"
     assert out.metadata["error_class"] == "model_unreachable"
+
+
+def test_concurrent_same_text_queries_each_name_their_own_failure(
+    tmp_path: Path, no_aws
+) -> None:
+    # Two queries of one text share the query embedding in flight; with the
+    # embedder down each must raise its own error, tagged with its own ids,
+    # not the other query's.
+    config = _config(tmp_path / "stores", tmp_path / "viz-data")
+    server = FakeOllama(_respond, ANSWER, DIM)
+    providers = _providers(config, server, FakeCrossEncoder("synthetic-reranker"))
+    source = tmp_path / "corpus"
+    source.mkdir()
+    (source / "logistics.txt").write_text("Depot stores gadgets for Vendor.")
+    context = _ingest(config, providers, source, tmp_path / "run-1")
+    assert context.status is PipelineStageStatus.COMPLETED, _errors(context)
+
+    def down(_texts: list[str]) -> list[list[float]]:
+        raise RuntimeError("embedder down")
+
+    server.embedder.embed_documents = down  # type: ignore[method-assign]
+    chain = GraphRAGChain(config, providers=providers)
+
+    async def pairs() -> list[list[BaseException]]:
+        found = []
+        try:
+            for strategy in (SearchStrategy.SIMPLE, SearchStrategy.NAIVE):
+                query = RAGInput(
+                    query="가젯을 보관하는 곳은 어디?", search_strategy=strategy
+                )
+                outcomes = await asyncio.gather(
+                    chain.ainvoke(query), chain.ainvoke(query), return_exceptions=True
+                )
+                assert all(isinstance(o, BaseException) for o in outcomes), outcomes
+                found.append([o for o in outcomes if isinstance(o, BaseException)])
+        finally:
+            await chain.aclose()
+        return found
+
+    for first, second in asyncio.run(pairs()):
+        assert first is not second
+        assert isinstance(first, EmbeddingModelError)
+        assert isinstance(second, EmbeddingModelError)
+        ids = [query_failure_ids(e).get("query_id") for e in (first, second)]
+        assert all(ids) and ids[0] != ids[1]

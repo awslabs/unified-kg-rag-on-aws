@@ -1139,8 +1139,9 @@ From a `main` checkout (formats and keys no release had):
   ingestion root span has `kg_rag.mode` and the delta counts, the query span `kg_rag.degraded` and
   `kg_rag.error_class`; a result's `metadata.query_id` and `metadata.trace_id` (also MCP's `query_id` /
   `trace_id`) are the ids of its log lines and trace (a trace id only when the trace was sampled, so exported), and a
-  console question's log lines carry its id. A query that raises carries them too (`exc.query_id`, `exc.trace_id`):
-  `run-rag`'s failure document, an MCP tool error and the console's error event name them. A streamed answer's spans,
+  console question's log lines carry its id. A query that raises carries them too (`exc.query_id`, `exc.trace_id`;
+  its own error, also when concurrent queries share a query embedding in flight): `run-rag`'s failure document,
+  an MCP tool error and the console's error event name them. A streamed answer's spans,
   its model call's included, name the namespace as `ainvoke`'s do, and admission log lines carry the query id.
 - Observability: the `observability` section and `otel` extra, spans for runs, stages, batches and query steps,
   GenAI model-call spans, OTLP, Langfuse and Phoenix exporters with redacted content capture (an IPv6 endpoint keeps

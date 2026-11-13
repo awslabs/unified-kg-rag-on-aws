@@ -399,6 +399,23 @@ def tag_query_failure(
                 return
 
 
+def waiter_copy(exc: BaseException) -> BaseException:
+    """A copy of ``exc``, the failure of one call several waiters share,
+    for one of them: the same type, ``args`` and attributes (what
+    :func:`classify` and the surfaces read), without the ids another
+    waiter's query attached (:func:`tag_query_failure`), so each query names
+    its own. ``exc`` itself if it cannot be copied."""
+    try:
+        clone = type(exc).__new__(type(exc), *exc.args)
+        clone.args = exc.args
+        clone.__dict__.update(
+            (k, v) for k, v in exc.__dict__.items() if k not in QUERY_FAILURE_IDS
+        )
+    except Exception:  # noqa: BLE001 - a type that builds otherwise
+        return exc
+    return clone
+
+
 def query_failure_ids(exc: BaseException | str | None) -> dict[str, str]:
     """The ids :func:`tag_query_failure` attached to ``exc`` (none: ``{}``)."""
     if not isinstance(exc, BaseException):

@@ -29,6 +29,8 @@ from contextlib import asynccontextmanager, contextmanager
 from types import TracebackType
 from typing import Any, Literal, ParamSpec, TypeVar
 
+from unified_kg_rag.shared.exceptions import waiter_copy
+
 _P = ParamSpec("_P")
 _T = TypeVar("_T")
 _E = TypeVar("_E", bound=Executor)
@@ -102,6 +104,20 @@ async def gather_bounded(limit: int, aws: Iterable[Awaitable[_T]]) -> list[_T]:
                 inspect.getcoroutinestate(aw) == inspect.CORO_CREATED
             ):
                 aw.close()
+
+
+async def await_shared(future: asyncio.Future[_T]) -> _T:
+    """The result of ``future``, one call concurrent waiters share (an
+    in-flight cache), shielded so one waiter's cancellation cancels no
+    other's. Its failure reaches each waiter as a copy of its own
+    (``waiter_copy``, raised from the shared error): the waiters are
+    different queries, each tagging and reporting the error with its ids."""
+    try:
+        return await asyncio.shield(future)
+    except Exception as e:
+        if not future.done() or future.cancelled() or future.exception() is not e:
+            raise
+        raise waiter_copy(e) from e
 
 
 async def discard(tasks: Sequence[asyncio.Future[Any]]) -> None:
