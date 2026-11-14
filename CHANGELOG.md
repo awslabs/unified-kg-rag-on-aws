@@ -1678,9 +1678,9 @@ From a `main` checkout (formats and keys no release had):
 
 ### Changed
 - A query's compute-only steps (OpenSearch hit parsing and fusion, citation lineages, PPR, LightRAG's chunk pick, a
-  traversal's rows) run on a pool of their own (`to_cpu_thread`, one thread per available CPU, a container's quota
-  counted) instead of queueing in the `io_workers` pool behind blocking model calls; with all 64 threads busy and CPU
-  to spare the median query was 0.4-0.5 s faster.
+  traversal's rows) run on a pool of their own (`to_cpu_thread`, one thread per available CPU: the lower of a
+  container's CPU quota and cpuset) instead of queueing in the `io_workers` pool behind blocking model calls; with all
+  64 threads busy and CPU to spare the median query was 0.4-0.5 s faster.
 - `auto` falls back to the first routable of `local`, then `mix`, when the router's answer names no routable
   strategy, as it does when nothing configured is served and as `structured` falls back (one order,
   `GENERAL_FALLBACKS`, from the per-strategy `STRATEGY_TRAITS`); without `local` it took the first routable strategy.
@@ -1939,8 +1939,8 @@ From a `main` checkout (formats and keys no release had):
   `unified_kg_rag.domain.ingestion.community_clustering`), not the pipeline's, chain's or indexing manager's; filter
   on the subpackage prefix (`unified_kg_rag.application.ingestion`, ...) (#586, #587, #590).
 - Dependencies: pydantic 2.14, langchain-core 1.7.3, `langchain-aws>=1.8.1`, langchain-openai 1.7, langsmith 0.14,
-  datasets 5.1, tiktoken 0.14, tenacity 9.2, boto3 1.43.122, soupsieve 4.1 on every supported Python for
-  CVE-2026-126189 to CVE-2026-126193; aws-cdk-lib 2.275 in the CDK lock (#241, #251, #265, #438, #465, #489).
+  datasets 5.1, tiktoken 0.14, tenacity 9.2, boto3 1.43.122, soupsieve 4.1 (see Security); aws-cdk-lib 2.275 in the
+  CDK lock (#241, #251, #265, #438, #465, #489).
 - Documentation restructured around a hub ([docs/index.md](docs/index.md)) with tutorials, concepts, guides and
   references, Korean twins of the main pages and checked links; the 0.2.3 user guide is replaced by those pages
   (#337-#342, #351, #469, #542-#557, #582, #583).
@@ -2344,8 +2344,8 @@ Deployment (CDK).
   `unstructured`'s cap; locked at 4.2.5), Pillow 13.0.0 (GHSA-p4wg-p73j-c528 and others), `unstructured>=0.24.1`
   (GHSA-4mvj-m6j5-pmf7, GHSA-8mgp-746c-j5xp, the stored XSS GHSA-v5mq-3xhg-98m9), `langchain-openai>=1.1.14`
   (GHSA-r7w7-9xr2-qq2r), `langchain>=1.3.9` in `eval`, and pyarrow 26.0.1 in `eval` (CVE-2026-92287; no Parquet is
-  read, so it was not reachable); the lock, not a floor, takes certifi 2026.10.23 (GHSA-6q48-6c7w-9gw2) (#307, #426,
-  #430, #455, #520, #580).
+  read, so it was not reachable); the lock, not a floor, takes certifi 2026.10.23 (GHSA-6q48-6c7w-9gw2) and, on every
+  supported Python, soupsieve 4.1 (CVE-2026-126189 to CVE-2026-126193) (#307, #426, #430, #455, #520, #580, #723, #746).
 - Document attribute filters no longer leak excluded documents: they apply to relationships, claims, community
   reports (which carried the first entity's attributes) and graph expansion (which walked every edge), and a removed
   document's values stop matching what outlives it. The graph retrievers check filters as OpenSearch does (an
@@ -2376,15 +2376,16 @@ Deployment (CDK).
   and traceback replaced by digests. An unexpected failure's text is masked, as on the console's pages, in the CLIs'
   output and JSON `error` (it reached the Ingest and Evaluate pages), in a stage's recorded `error_message` (the
   run's metadata and S3 checkpoint) and in a failed answer's `run-eval` result, which names its class and type;
-  each answer's log lines carry its dataset `query_id`. SECURITY.md says what result output holds.
-  The text is closed where it enters: a store write records an error by its name and digest
-  (`IndexingStats.add_error` takes the exception), a store error the package wraps shows its operation or URI
-  and its cause's name (`caused_by`), and a saved evaluation result names a failure by class and type. The guard
-  also follows an alias, a gathered outcome, `traceback.format_exc()`, any logger, `bind` and an error's text kept
-  for later. A library's record is digested once for every handler, a non-string message and a Python warning
-  (by category and location) too, uvicorn's access path drops its query string and the console's uvicorn logs
-  through the same filter; an error is named by an OpenSearch or `openai` code, a Gremlin status and a package
-  error's cause. SECURITY.md says what stays outside the rule: file paths, a library's own stderr, result output.
+  each answer's log lines carry its dataset `query_id`.
+  The text is closed where it enters: a store write records an error by its name and digest (`IndexingStats.add_error`
+  takes the exception), a store error the package wraps shows its operation or URI and its cause's name (`caused_by`),
+  and an evaluator that fails to start or a result that cannot be processed is named in the saved results as an answer's
+  failure is. The guard also follows an alias, a gathered outcome, `traceback.format_exc()`, any logger, `bind` and an
+  error's text kept for later. A library's record is digested once for every handler, a non-string message and a Python
+  warning (by category and location) too, uvicorn's access path drops its query string and the console's uvicorn logs
+  through the same filter; an error is named by an OpenSearch or `openai` code, a Gremlin status and a package error's
+  cause. SECURITY.md says what stays outside the rule (file paths, a library's own stderr) and what result output
+  holds.
 - Spans carry an error's type and a digest of its message (`kg_rag.error_digest`), not its text or stack, unless
   `observability.capture_content` (then through `redact_patterns`): a judge's or parser's error quoting corpus text
   reached Langfuse or Phoenix with capture off. A model server that cannot be reached is named by its URL without

@@ -5,10 +5,12 @@ names the units its graph items rest on."""
 
 from __future__ import annotations
 
+import asyncio
 import threading
 
 import pytest
 
+from tests.fixtures.saturated_executor import saturated_default_executor
 from unified_kg_rag.adapters.retrieval import base
 from unified_kg_rag.adapters.retrieval.base import evidence_lineage, units_by_support
 from unified_kg_rag.adapters.search_strategies.local_search import (
@@ -97,5 +99,10 @@ async def test_the_support_merge_runs_off_the_event_loop(
         return merge_units(results)
 
     monkeypatch.setattr(base, "_units_by_support", recording)
-    assert await LocalSearchStrategy._rank_text_unit_ids(ENTITIES)
+    # On the CPU pool: with every default-executor thread in a blocking call,
+    # ``asyncio.to_thread`` would queue the merge behind them.
+    async with saturated_default_executor():
+        assert await asyncio.wait_for(
+            LocalSearchStrategy._rank_text_unit_ids(ENTITIES), 5
+        )
     assert threads and loop_thread not in threads

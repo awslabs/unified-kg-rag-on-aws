@@ -10,6 +10,7 @@ import pytest
 
 from unified_kg_rag.shared.utils import common as common_mod
 from unified_kg_rag.shared.utils.common import (
+    _available_cpu_count,
     _cgroup_cpu_quota,
     compute_hash,
     default_max_workers,
@@ -234,6 +235,53 @@ class TestCgroupCpuQuota:
         # 50000/100000 = 0.5 -> ceil -> 1 (never 0).
         self._patch_v2(monkeypatch, "50000 100000")
         assert _cgroup_cpu_quota() == 1
+
+
+class TestAvailableCpuCount:
+    """The CPUs a process may use: the lower of a container's CPU quota and
+    its cpuset (affinity mask), each counted when present."""
+
+    @staticmethod
+    def _limits(
+        monkeypatch, quota: int | None, affinity: int | None, host: int = 64
+    ) -> None:
+        import os
+
+        monkeypatch.setattr(common_mod, "_cgroup_cpu_quota", lambda: quota)
+        monkeypatch.setattr(common_mod, "cpu_count", lambda: host)
+        if affinity is None:
+            monkeypatch.delattr(os, "sched_getaffinity", raising=False)
+        else:
+            monkeypatch.setattr(
+                os, "sched_getaffinity", lambda pid: set(range(affinity)), raising=False
+            )
+
+    @pytest.mark.parametrize(
+        ("quota", "affinity", "expected"),
+        [
+            pytest.param(6, 2, 2, id="quota-over-cpuset"),
+            pytest.param(2, 8, 2, id="quota-under-cpuset"),
+            pytest.param(3, None, 3, id="quota-only"),
+            pytest.param(None, 5, 5, id="affinity-only"),
+            pytest.param(None, None, 64, id="neither"),
+        ],
+    )
+    def test_the_lower_limit_wins(
+        self, monkeypatch, quota: int | None, affinity: int | None, expected: int
+    ) -> None:
+        self._limits(monkeypatch, quota, affinity)
+        assert _available_cpu_count() == expected
+
+    def test_an_unreadable_affinity_mask_leaves_the_quota(self, monkeypatch) -> None:
+        import os
+
+        self._limits(monkeypatch, 3, None)
+
+        def refused(pid: int) -> set[int]:
+            raise OSError("no affinity")
+
+        monkeypatch.setattr(os, "sched_getaffinity", refused, raising=False)
+        assert _available_cpu_count() == 3
 
 
 class TestDefaultMaxWorkers:

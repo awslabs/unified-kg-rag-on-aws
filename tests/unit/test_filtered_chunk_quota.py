@@ -11,6 +11,7 @@ first chunks that pass, and only those are fetched with their content.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Collection
 from typing import Any
 
@@ -18,6 +19,7 @@ import pytest
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401
 from tests.fixtures.fakes.retrievers import opensearch_fields_for
+from tests.fixtures.saturated_executor import saturated_default_executor
 from unified_kg_rag.adapters.retrieval.strategy_registry import get_strategy_spec
 from unified_kg_rag.adapters.storage.filter_schema import (
     IndexLimits,
@@ -471,10 +473,18 @@ async def test_the_linked_chunk_pick_runs_off_the_event_loop(
         return lineages(results)
 
     monkeypatch.setattr(type(strategy), "_lineages", staticmethod(recording))
-    linked = await strategy._retrieve_linked_chunks(
-        SearchQuery(query="q", top_k=3, filters=_FILTERS[kind]),
-        [_entity("e0", _UNITS)],
-        [_entity("r0", _UNITS[6:])],
-    )
+    # On the CPU pool, not the default executor: with every default-executor
+    # thread in a blocking call, ``asyncio.to_thread`` would queue each step
+    # (the id filter, the selection, the vector pick's sides, the lineages)
+    # behind them and time out here.
+    async with saturated_default_executor():
+        linked = await asyncio.wait_for(
+            strategy._retrieve_linked_chunks(
+                SearchQuery(query="q", top_k=3, filters=_FILTERS[kind]),
+                [_entity("e0", _UNITS)],
+                [_entity("r0", _UNITS[6:])],
+            ),
+            5,
+        )
     assert linked
     assert threads and loop_thread not in threads

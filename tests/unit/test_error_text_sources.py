@@ -466,7 +466,19 @@ def test_a_library_record_is_digested_once_for_every_handler(tmp_path: Path) -> 
     assert console[-1].startswith("RuntimeError (len=")
 
 
-def test_an_access_line_drops_its_query_string(tmp_path: Path) -> None:
+def test_an_access_line_drops_its_query_string(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> None:
+    # The access logger as a process that serves with access lines on has it:
+    # a ``uvicorn.Config(access_log=False)`` another test built (the
+    # console's) leaves it without propagation and a level of its own.
+    access = logging.getLogger("uvicorn.access")
+    monkeypatch.setattr(access, "propagate", True)
+    monkeypatch.setattr(access, "handlers", [])
+    monkeypatch.setattr(access, "disabled", False)
+    level = access.level
+    access.setLevel(logging.NOTSET)  # setLevel: the loggers' level cache too
+    request.addfinalizer(lambda: access.setLevel(level))
     stream, _ = _setup(tmp_path)
     try:
         logging.getLogger("uvicorn.access").info(
