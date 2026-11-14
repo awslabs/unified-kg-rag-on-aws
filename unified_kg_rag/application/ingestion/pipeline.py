@@ -1636,7 +1636,6 @@ class DataIngestionPipeline:
             refuse=refuse,
             names={
                 "max_llm_calls": "processing.max_run_model_calls",
-                "max_input_tokens": "max_input_tokens",
                 "max_cost": "processing.max_run_usd",
             },
         )

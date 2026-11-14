@@ -2682,7 +2682,6 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             names={
                 "max_llm_calls": self._limit_setting(rag_input, "max_model_calls"),
                 "max_input_tokens": self._limit_setting(rag_input, "max_input_tokens"),
-                "max_cost": "max_cost",
             },
         )
 

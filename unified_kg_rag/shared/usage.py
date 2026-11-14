@@ -181,14 +181,9 @@ class UsageLimits:
     max_cost: float | None = None
     cost: Callable[[Mapping[str, Mapping[str, int]]], float] | None = None
     refuse: LimitRefusal = _refused
-    # The name each limit is reported by (the setting that sets it).
-    names: Mapping[str, str] = field(
-        default_factory=lambda: {
-            "max_llm_calls": "max_llm_calls",
-            "max_input_tokens": "max_input_tokens",
-            "max_cost": "max_cost",
-        }
-    )
+    # The name each limit is reported by (the setting that sets it); one
+    # not named here by its field's name.
+    names: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.max_cost is not None and self.cost is None:
