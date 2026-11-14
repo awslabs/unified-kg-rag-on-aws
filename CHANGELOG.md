@@ -58,9 +58,8 @@ stored is read again: follow *Upgrading* in order.
 ### Breaking changes
 
 #### Install and extras
-- Python 3.11 or 3.12 is required (`>=3.11.5, <3.13`); 3.10 is dropped (#430). Python 3.11.0–3.11.4 are no longer
-  supported; 3.11.5 or later is required: soupsieve 4, which fixes the soupsieve CVEs below, needs it, and the lock
-  kept the vulnerable soupsieve 2.10 for those patch releases.
+- Python 3.11.5 or later 3.11, or 3.12, is required (`>=3.11.5, <3.13`); 3.10 is dropped (#430), and 3.11.0–3.11.4
+  too: soupsieve 4, which fixes the soupsieve CVEs below, needs 3.11.5 (the lock kept the vulnerable 2.10 for them).
 - A core install (`uv sync`, `pip install -e .`) is ingestion and queries: 145 to 78 packages, 937 to 335 MB on Linux.
   Extras: `eval` (ragas, datasets, pandas, langchain, langchain-community, langchain-openai), `viz` (pyvis, for the
   `interactive` renderer, which a `run-visualization` without `--renderers` leaves out with a WARNING without it),
