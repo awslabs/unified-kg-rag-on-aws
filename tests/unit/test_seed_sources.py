@@ -631,8 +631,12 @@ def test_jsonl_refuses_a_missing_path_an_empty_directory_and_other_urls(
     _write(tmp_path / "empty" / "notes.txt", "x")
     with pytest.raises(SeedGraphError, match="holds no .jsonl file"):
         _load(tmp_path / "empty")
-    with pytest.raises(SeedGraphError, match="is a URL; kind 'jsonl' reads"):
-        _load("https://example.org/seed.jsonl")
+    # The refusal names the URL without its credentials.
+    url = "https://reader:secret@example.org/seed.jsonl"  # gitleaks:allow
+    with pytest.raises(SeedGraphError, match="is a URL; kind 'jsonl' reads") as refused:
+        _load(url)
+    assert "example.org/seed.jsonl" in str(refused.value)
+    assert "secret" not in str(refused.value) and "reader" not in str(refused.value)
     with pytest.raises(SeedGraphError, match="does not name an S3 bucket"):
         _load("s3://Not_A_Bucket/seed.jsonl")
 
