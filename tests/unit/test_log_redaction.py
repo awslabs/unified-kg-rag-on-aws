@@ -523,6 +523,22 @@ def _logs_raw_error(call: ast.Call, names: frozenset[str] = _ERROR_NAMES) -> lis
 # by its types, status and id) or a reply's field (``item["reason"]``) may
 # carry a store's reply, a model's output or a document's text.
 _STATS_TEXT_CALLS = frozenset({"len", "type", "_bulk_item_error"})
+# The attributes an f-string of a write's error may render: an id or a
+# count (``rel.source_id``, ``stats.failed_count``) or a type's name; any
+# other (``item.description``, ``entity.name``) may be a document's text.
+_STATS_TEXT_ATTRS = re.compile(r"(?:\w+_)?(?:ids?|count)|__name__")
+
+
+def _rendered_attributes(node: ast.AST) -> Iterator[ast.Attribute]:
+    """The attributes ``node`` (an f-string's value) renders: not the
+    receivers of one, nor what a call reads (the call rule judges it)."""
+    if isinstance(node, ast.Call):
+        return
+    if isinstance(node, ast.Attribute):
+        yield node
+        return
+    for child in ast.iter_child_nodes(node):
+        yield from _rendered_attributes(child)
 
 
 def _package_composed(node: ast.AST, names: frozenset[str]) -> bool:
@@ -543,6 +559,11 @@ def _package_composed(node: ast.AST, names: frozenset[str]) -> bool:
             return False
         if sub is not node and isinstance(sub, ast.FormattedValue):
             if _names_error(sub.value, names):
+                return False
+            if any(
+                not _STATS_TEXT_ATTRS.fullmatch(attribute.attr)
+                for attribute in _rendered_attributes(sub.value)
+            ):
                 return False
     return True
 
@@ -872,6 +893,15 @@ _CLAUSE = "try:\n    pass\nexcept Exception as e:\n"
         ("stats.add_error(reason, 1, ids=ids)\n", True),
         ("stats.add_error('; '.join(reasons), 1)\n", True),
         ("stats.add_error(f'first: {describe(item)}', 1)\n", True),
+        # An attribute other than an id or a count may be a document's text.
+        ("stats.add_error(f'first: {item.description}', 1)\n", True),
+        ("stats.add_error(f'first: {item.text[:40]}', 1)\n", True),
+        (
+            _CLAUSE + "    stats.add_error(e, 1, context=f'Write of {item.name}')\n",
+            True,
+        ),
+        ("stats.add_error(f'edge {rel.source_id} -> {rel.target_id} failed')\n", False),
+        ("stats.add_error(f'{len(self.items)} writes failed', 1)\n", False),
         (_CLAUSE + "    stats.add_error(e, 1, context=str(other))\n", True),
         (_CLAUSE + "    stats.add_error(e, 1, context=f'Write {e} failed')\n", True),
         (
@@ -1445,6 +1475,44 @@ def test_a_rejected_bulk_item_is_named_never_by_its_reason(
     assert any("Quokkasecret" in line for line in debug)
     assert "HTTP 400, item 'e-1'" in stats.errors[0]
     caplog.clear()
+    _assert_write_errors_log_safe(stats, caplog, mocker)
+
+
+def test_a_failed_embedding_is_named_in_the_write_s_error(
+    caplog: pytest.LogCaptureFixture, mocker: Any
+) -> None:
+    # rv32: the write recorded "Failed to prepare 2 documents" alone, so the
+    # stage's failure gave a count, and only a separate WARNING line said
+    # the embedding model failed. The model's error names the cause, log
+    # safely (its text may quote the corpus).
+    import threading
+
+    from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
+    from unified_kg_rag.domain.models import Entity
+
+    indexer = OpenSearchIndexer.__new__(OpenSearchIndexer)
+    indexer.config = Config()
+    indexer.opensearch_config = indexer.config.indexing.opensearch
+    indexer.analyzer = "standard"
+    indexer.language = "en"
+    indexer._embedding_dimension = 4
+    indexer._index_limits = {}
+    indexer._replaced, indexer._replaced_lock = {}, threading.Lock()
+    indexer.embedding_model = MagicMock()
+    indexer.embedding_model.embed_documents.side_effect = RuntimeError(
+        "model refused: Quokkasecret payroll"
+    )
+    mocker.patch.object(indexer, "_reusable_vectors", return_value={})
+    items = [
+        Entity(id=f"e-{i}", name=f"Vendor {i}", description="Acme") for i in (1, 2)
+    ]
+
+    stats = indexer._embed_and_write("idx", items, indexer._spec("entities"), "default")
+
+    assert stats.failed_ids == ["e-1", "e-2"]
+    (error,) = stats.errors
+    assert error.startswith("Failed to prepare 2 documents: ")
+    assert "RuntimeError" in error, error
     _assert_write_errors_log_safe(stats, caplog, mocker)
 
 

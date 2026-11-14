@@ -11,6 +11,7 @@ per-doc failures into `errors` and keep going.
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import MagicMock
 
 import pytest
@@ -218,9 +219,13 @@ def test_a_whole_bulk_request_rejected_under_load_is_resent_with_backoff(
 
 
 @pytest.mark.parametrize("method", ["bulk_index", "bulk_delete", "bulk_update"])
-def test_a_bulk_request_still_rejected_raises_a_typed_error(mocker, method) -> None:
+def test_a_bulk_request_still_rejected_raises_a_typed_error(
+    mocker, caplog, method
+) -> None:
     # Regression: the bulk methods raised a plain AWSServiceError("Streaming
-    # bulk ... failed.") that dropped the status and the server's reason.
+    # bulk ... failed.") that dropped the status. The error and its ERROR
+    # line name it by type and status, as each round's warning does: a bulk
+    # request's reason may quote a rejected item, so it is logged at DEBUG.
     retries = OpenSearchClient.BULK_ITEM_MAX_RETRIES
     calls: list[list[str]] = []
     mocker.patch.object(
@@ -235,9 +240,17 @@ def test_a_bulk_request_still_rejected_raises_a_typed_error(mocker, method) -> N
         else [{"id": doc_id, "x": 1} for doc_id in "abc"]
     )
 
-    with pytest.raises(StoreConnectionError, match="status=429.*injected 429"):
-        getattr(_client(), method)("idx", args)
+    with caplog.at_level(logging.DEBUG, logger=opensearch_mod.__name__):
+        with pytest.raises(
+            StoreConnectionError, match="TransportError rejected, HTTP 429"
+        ) as raised:
+            getattr(_client(), method)("idx", args)
     assert len(calls) == retries + 1
+    assert "injected" not in str(raised.value)
+    assert raised.value.__cause__ is not None
+    shown = [r for r in caplog.records if r.levelno >= logging.INFO]
+    assert shown and not [r for r in shown if "injected" in r.getMessage()]
+    assert "injected 429" in caplog.text  # at DEBUG
 
 
 def test_a_bulk_request_rejected_permanently_is_not_resent(mocker) -> None:
@@ -249,7 +262,10 @@ def test_a_bulk_request_rejected_permanently_is_not_resent(mocker) -> None:
     )
     sleep = mocker.patch.object(opensearch_mod, "_sleep")
 
-    with pytest.raises(StoreRequestRejectedError, match="injected 400"):
+    with pytest.raises(
+        StoreRequestRejectedError, match="TransportError rejected, HTTP 400"
+    ) as raised:
         _client().bulk_index("idx", [{"id": doc_id} for doc_id in "abc"])
+    assert "injected" not in str(raised.value)
     assert len(calls) == 1
     sleep.assert_not_called()

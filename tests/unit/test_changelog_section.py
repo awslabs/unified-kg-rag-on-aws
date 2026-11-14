@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 import tomllib
 from pathlib import Path
 from types import ModuleType
@@ -322,14 +323,22 @@ def test_the_real_release_body_is_condensed_not_cut() -> None:
     # Regression (rv23 docs 6): the 205 KB section was cut at 120,000
     # characters partway through Added, so the notes lost Changed, Fixed and
     # Security, and the link named no heading.
+    # Read for the subsections the section holds: a new cycle's
+    # [Unreleased] starts with some of them.
     module = _script()
     text, name = _released()
     url = f"https://x.invalid/CHANGELOG.md#{module.heading_fragment(text, name)}"
-    body = module.fit_release_body(
-        module.condense(module.extract_section(text, name), url), url
-    )
+    notes = module.extract_section(text, name)
+    held = re.findall(r"^### (.+?)\s*$", notes, re.MULTILINE)
+    body = module.fit_release_body(module.condense(notes, url), url)
     assert len(body) <= module.GITHUB_RELEASE_BODY_LIMIT
     assert "\n\n... The full notes" not in body  # nothing was cut
-    for name in module.RELEASE_SUBSECTIONS:
-        assert f"### {name}\n" in body, name
-    assert body.endswith(f"*Added*, *Changed* and *Fixed*: {url}\n")
+    kept = [t for t in held if t in module.RELEASE_SUBSECTIONS]
+    for title in held if not kept else kept:
+        assert f"### {title}\n" in body, title
+    left_out = [f"*{t}*" for t in held if t not in module.RELEASE_SUBSECTIONS]
+    if kept and left_out:
+        listed = left_out[-1]
+        if left_out[1:]:
+            listed = ", ".join(left_out[:-1]) + " and " + listed
+        assert body.endswith(f" with {listed}: {url}\n")
