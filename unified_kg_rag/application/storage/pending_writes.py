@@ -602,6 +602,7 @@ class PendingWrites:
         written: Iterable[Any],
         *,
         recorded: bool = True,
+        run_units: Collection[str],
     ) -> set[str]:
         """Note, per suffix, the ``written`` items whose write failed
         (:func:`failed_writes`), and delete the notes this run read with
@@ -613,20 +614,24 @@ class PendingWrites:
         failure rate), which the warning says; a commit that does not notes
         no failure naming no item (a raised write), which its documents'
         next indexing writes again, beyond the items of that kind the notes
-        it read hold (noted again as read)."""
+        it read hold (noted again as read) and the written ones citing none
+        of ``run_units`` (the text units of the run's documents): those the
+        next run does not derive again."""
         failed: dict[str, dict[str, dict[str, Any]]] = defaultdict(
             lambda: defaultdict(dict)
         )
         covered: set[str] = set()
         raised: set[str] = set()
+        written = list(written)
         if not recorded:
             # A failure naming no item (a raised write) stands for every
             # item of its kind the commit wrote. Its documents are not
             # recorded, so the next run indexes them again and writes what
             # they state; noted, the items as this run merged them would
-            # join that delta and could displace what it extracts. Left
-            # unnoted, the documents outside the run owning such an item
-            # are recorded FAILED (``IncrementalIndexer.record``).
+            # join that delta and could displace what it extracts (only
+            # those citing no unit of the run are noted, below). The
+            # documents outside the run owning such an item are recorded
+            # FAILED too (``IncrementalIndexer.record``).
             raised = {
                 RESULT_KINDS[key]
                 for key, stats in results.items()
@@ -643,14 +648,25 @@ class PendingWrites:
             covered.add(key)
         # The items of a raised kind in the notes this run read stay noted,
         # as read: a note is deleted only once its items are written or
-        # noted again. The run's own items are derived again by the next
-        # run; the noted ones may be stated by no document it indexes, and
-        # the fallback recording their documents FAILED comes after this
-        # note step (a run ending in between lost them).
+        # noted again. So do the written ones citing no text unit of the
+        # run (an endpoint of a noted edge, read from the graph with the
+        # rank the edge gives it): only an item citing one is derived again
+        # by the next run, which indexes the run's documents again. The
+        # others may be stated by no document it indexes, and the fallback
+        # recording their documents FAILED comes after this note step (a
+        # run ending in between lost them).
         for suffix, kinds in self._items.items():
             for kind in sorted(raised & kinds.keys()):
                 for item_id, item in kinds[kind].items():
                     failed[suffix][kind].setdefault(item_id, item)
+        if raised:
+            units = set(run_units)
+            for item in written:
+                of = _kind_of(item)
+                if of is None or of not in raised:
+                    continue
+                if units.isdisjoint(item.text_unit_ids or []):
+                    failed[BaseIndexer.get_suffix(item)][of].setdefault(item.id, item)
         try:
             for suffix in sorted(failed):
                 note = {

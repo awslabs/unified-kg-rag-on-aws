@@ -179,7 +179,10 @@ unless noted.
    extracted, for good. The items of that kind in the notes the commit read
    stay noted, as read: a note is deleted only once its items are written
    or noted again (deleted at the note step, the items were lost when the
-   run ended before the fallback recorded their documents `FAILED`).
+   run ended before the fallback recorded their documents `FAILED`). So do
+   the items of that kind it wrote citing no text unit of the run (an
+   endpoint of a noted edge, read from the graph with the rank the edge
+   gives it): only an item citing one is derived again by the next run.
 5. **Deletion propagation** (`IndexingManager.remove_text_units`). The stores
    are asked what cites the removed text units (`GraphIndexer.find_ids_citing`
    for entities, `VectorIndexer.find_documents`); edges are found among the

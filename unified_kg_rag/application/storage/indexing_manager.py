@@ -1110,12 +1110,16 @@ class IndexingManager:
         written: Iterable[Any],
         *,
         recorded: bool = True,
+        run_units: Collection[str],
     ) -> set[str]:
         """Note the ``written`` items whose write failed (``results``) for the
         next commit, and delete the read notes nothing is left in. Returns
         the result keys whose failures are noted (none when a note cannot
-        be written). ``recorded``: whether the commit records its documents."""
-        return self._pending_writes.note(results, written, recorded=recorded)
+        be written). ``recorded``: whether the commit records its documents;
+        ``run_units``: the text units of its documents."""
+        return self._pending_writes.note(
+            results, written, recorded=recorded, run_units=run_units
+        )
 
     def clear_pending_commit(self) -> None:
         """Delete the commit notes of the suffixes this run noted or read

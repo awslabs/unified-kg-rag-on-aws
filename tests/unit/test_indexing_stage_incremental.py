@@ -118,7 +118,7 @@ class _RecordingManager:
         return NotedWrites()
 
     def note_pending_writes(  # noqa: ANN001
-        self, results, written, *, recorded=True
+        self, results, written, *, recorded=True, run_units=()
     ) -> set[str]:
         return set()
 

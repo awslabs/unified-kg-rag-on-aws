@@ -220,8 +220,9 @@ def test_a_raised_write_over_the_rate_keeps_each_namespaces_read_note() -> None:
     # write raises in alpha while beta's names its own new edge: one merged
     # result, a failure naming no item, over the rate (nothing recorded).
     # Each note keeps the noted items of the raised kind as read; beta's
-    # noted entity, written, and the run's own edge (derived again by the
-    # next run) are not noted.
+    # noted entity, written, and the run's own edge (citing the run's unit
+    # ub2: derived again by the next run) are not noted; an edge the commit
+    # rewrote for a document outside the run (citing uo alone) is.
     config = Config()
     vector = FakeVectorStore(opensearch_config=config.indexing.opensearch)
     manager = IndexingManager(
@@ -259,12 +260,14 @@ def test_a_raised_write_over_the_rate_keeps_each_namespaces_read_note() -> None:
     edges = IndexingStats(total_items=3)
     edges.add_error("timed out", 1)
     edges.add_error("write rejected", 1, ids=[own.id])
-    written = [*read.relationships, *read.entities, own]
+    outside = _in("alpha", _edge("r-out", buyer, vendor, "uo"))
+    written = [*read.relationships, *read.entities, own, outside]
 
     manager.note_pending_writes(
         {"graph_relationships": edges, "vector_entities": IndexingStats()},
         written,
         recorded=False,
+        run_units=["ub2"],
     )
 
     def stored(suffix: str) -> dict[str, list[str]]:
@@ -275,5 +278,118 @@ def test_a_raised_write_over_the_rate_keeps_each_namespaces_read_note() -> None:
             if items
         }
 
-    assert stored("alpha") == {"relationships": ["r-a"]}
+    assert stored("alpha") == {"relationships": ["r-a", "r-out"]}
     assert stored("beta") == {"relationships": ["r-b"]}
+
+
+def _with_note(items: list[Any], units: list[str]) -> tuple[IndexingManager, Any]:
+    """A manager whose alpha note holds ``items``, the vector store holding
+    the text ``units``; and a reader of the stored note."""
+    config = Config()
+    vector = FakeVectorStore(opensearch_config=config.indexing.opensearch)
+    manager = IndexingManager(
+        config=config, vector_indexer=vector, graph_indexer=FakeGraphStore(config)
+    )
+    vector.upsert_text_units(
+        [
+            _in("alpha", TextUnit(id=unit, text="t", document_ids=["d"]))
+            for unit in units
+        ]
+    )
+    manager._write_note(
+        PENDING_WRITES,
+        "alpha",
+        {
+            kind: [_dump(i) for i in items if isinstance(i, model)]
+            for kind, model in (("relationships", Relationship), ("entities", Entity))
+        },
+    )
+
+    def stored() -> dict[str, list[dict[str, Any]]]:
+        note = vector.read_extraction_records([PENDING_WRITES], suffix="alpha")
+        return {k: v for k, v in note.get(PENDING_WRITES, {}).items() if v}
+
+    return manager, stored
+
+
+def _raised(total: int = 1) -> IndexingStats:
+    stats = IndexingStats(total_items=total)
+    stats.add_error("timed out", total)
+    return stats
+
+
+def test_a_note_step_forgets_the_note_it_read() -> None:
+    # The commit wrote the noted edge and deleted its note. A later note
+    # step with a raised edge write (no note read since) notes nothing: the
+    # edge as read is written, and noted again it would come back.
+    edge = _in("alpha", _edge("r-a", _VENDOR, _BUYER, "ua"))
+    manager, stored = _with_note([edge], ["ua"])
+    read = manager.read_pending_writes(["alpha"])
+    manager.note_pending_writes({}, read.relationships, run_units=[])
+    assert stored() == {}
+
+    manager.note_pending_writes(
+        {"graph_relationships": _raised()}, [], recorded=False, run_units=[]
+    )
+
+    assert stored() == {}
+
+
+def test_a_new_run_forgets_the_note_an_earlier_one_read() -> None:
+    # A run read the note (its edge cut to the unit the delta does not
+    # write again) and failed before its note step. The next run, reading
+    # no note, has an edge write raise: the stored note stays as it is,
+    # not replaced by the earlier run's cut copy.
+    edge = _in("alpha", _edge("r-a", _VENDOR, _BUYER, "ua"))
+    edge = edge.model_copy(update={"text_unit_ids": ["ua", "ux"]})
+    manager, stored = _with_note([edge], ["ua", "ux"])
+    read = manager.read_pending_writes(
+        ["alpha"], [_in("alpha", TextUnit(id="ux", text="t", document_ids=["d"]))]
+    )
+    assert [r.text_unit_ids for r in read.relationships] == [["ua"]]
+    manager.reset_run_state()
+
+    manager.note_pending_writes(
+        {"graph_relationships": _raised()}, [], recorded=False, run_units=[]
+    )
+
+    assert [r["text_unit_ids"] for r in stored()["relationships"]] == [["ua", "ux"]]
+
+
+def test_a_rejected_item_of_a_raised_kind_is_noted_as_written() -> None:
+    # Over the rate, the vector store rejects the noted entity by id and the
+    # graph's entity write raises. The note holds the entity as the commit
+    # wrote it (merged with the delta), as a rejection alone notes it, not
+    # as read.
+    entity = _in("alpha", Entity(id="e-a", name="Depot", text_unit_ids=["ua"]))
+    entity = entity.model_copy(update={"description": "as read"})
+    manager, stored = _with_note([entity], ["ua"])
+    read = manager.read_pending_writes(["alpha"])
+    written = [e.model_copy(update={"description": "as merged"}) for e in read.entities]
+
+    manager.note_pending_writes(
+        {"vector_entities": _rejected("e-a", total=1), "graph_entities": _raised()},
+        written,
+        recorded=False,
+        run_units=[],
+    )
+
+    assert [e["description"] for e in stored()["entities"]] == ["as merged"]
+
+
+def test_a_noted_item_of_a_raised_kind_stays_as_read() -> None:
+    # The commit wrote the noted edge (citing no unit of the run) merged
+    # with what it derived, and the edge write raised: the note keeps the
+    # edge as read, like every item of the notes it read.
+    edge = _in("alpha", _edge("r-a", _VENDOR, _BUYER, "ua"))
+    manager, stored = _with_note([edge], ["ua"])
+    read = manager.read_pending_writes(["alpha"])
+    written = [
+        r.model_copy(update={"description": "as merged"}) for r in read.relationships
+    ]
+
+    manager.note_pending_writes(
+        {"graph_relationships": _raised()}, written, recorded=False, run_units=["ub"]
+    )
+
+    assert [r["description"] for r in stored()["relationships"]] == [edge.description]
