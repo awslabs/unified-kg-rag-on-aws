@@ -60,7 +60,7 @@ from __future__ import annotations
 import importlib
 from typing import TYPE_CHECKING, Any
 
-__version__ = "0.3.0.dev0"
+__version__ = "0.3.0"
 
 # Public name -> the module that defines it.
 _EXPORTS: dict[str, str] = {

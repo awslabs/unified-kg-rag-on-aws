@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-14
+
 The first release after 0.2.3, the initial public snapshot (commit `81ea498`,
 never tagged), which ran GraphRAG and LightRAG retrieval on one Amazon Bedrock,
 Neptune, OpenSearch and DynamoDB stack. This release adds HippoRAG 2 and RAPTOR
@@ -1607,11 +1609,12 @@ From a `main` checkout (formats and keys no release had):
   sink builder for every CLI; its EMF goes to stderr where stdout carries the protocol or `--output-format json`,
   which `run-rag`, `run-ingestion` and `run-console` no longer refuse with it. An embedding-only stage emits no
   always-zero `llm_calls_<stage>` or token series.
-- The package ships a `py.typed` marker (#568). `main` reports `0.3.0.dev0`, and a `v<version>` tag runs a release
-  workflow that publishes a GitHub release: the tag must be on `main`, the notes are the section's introduction,
-  *Highlights*, *Breaking changes*, *Upgrading* and *Security* with a link to the version's heading for the rest, and
-  their repo-relative links point at the tagged tree (#572, #588). Its PyPI upload (trusted publishing, `pypi`
-  environment) stays off until the repository variable `PYPI_PUBLISH` is `true` (CONTRIBUTING.md, "Releasing").
+- The package ships a `py.typed` marker (#568). Between releases `main` reports the next version with a `.dev0`
+  suffix, and a `v<version>` tag runs a release workflow that publishes a GitHub release: the tag must be on `main`,
+  the notes are the section's introduction, *Highlights*, *Breaking changes*, *Upgrading* and *Security* with a link
+  to the version's heading for the rest, and their repo-relative links point at the tagged tree (#572, #588). Its PyPI
+  upload (trusted publishing, `pypi` environment) stays off until the repository variable `PYPI_PUBLISH` is `true`
+  (CONTRIBUTING.md, "Releasing").
 - HippoRAG 2's Personalized PageRank (docs/design.md §6.4): the opt-in `ppr` strategy and `local`'s default
   text-unit order. The `ppr` search strategy (`search.ppr_search`; `auto` never routes to it, and
   `search.auto_routable_strategies` refuses it until a measurement shows where it wins) seeds a Personalized
@@ -2433,4 +2436,5 @@ Deployment (CDK).
   stream, conversation memory) or claim extraction step logs its error as its type and a digest, its text at DEBUG,
   as the evaluators do (#617).
 
-[Unreleased]: https://github.com/awslabs/unified-kg-rag-on-aws/compare/81ea4987...HEAD
+[Unreleased]: https://github.com/awslabs/unified-kg-rag-on-aws/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/awslabs/unified-kg-rag-on-aws/releases/tag/v0.3.0
