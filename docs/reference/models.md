@@ -105,8 +105,10 @@ Four things differ for Claude 4.7-and-later models:
   4.6 or Sonnet 4.6) fails fast; a query's `effort` is refused before any
   model call when its answer model does not take it or does not reason.
   Older Claude models (4.5 and before) take a thinking budget instead: a
-  query's effort thinks on that level's (`EFFORT_THINKING_TOKENS`), its
-  max_tokens raised to stay above it.
+  query's effort thinks on that level's (`EFFORT_THINKING_TOKENS`). On every
+  family a query's effort raises the answer's max_tokens to that level's
+  reasoning plus the answer's floor (1,024 tokens), never past the model's
+  maximum; a tier's configured effort keeps `models.default_max_output_tokens`.
 - **Sampling parameters are dropped.** `temperature`/`top_k` are not accepted
   and are omitted from requests automatically; steer behaviour by prompting.
 - **Token estimates are scaled.** Their tokenizer counts roughly 1x-1.35x the

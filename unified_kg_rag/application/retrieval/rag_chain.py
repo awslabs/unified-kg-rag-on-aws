@@ -10,7 +10,6 @@ import threading
 import time
 import unicodedata
 import uuid
-import warnings
 import weakref
 from collections import OrderedDict
 from collections.abc import (
@@ -246,6 +245,7 @@ from unified_kg_rag.shared.utils.concurrency import (
     gather_bounded,
     settle,
 )
+from unified_kg_rag.shared.utils.deprecation import warn_deprecated
 
 logger = get_logger(__name__)
 
@@ -515,8 +515,8 @@ class RAGInput(BaseModel):
         "high, xhigh, max): the answer model reasons at this level "
         "(output_config.effort on Anthropic adaptive-thinking models, "
         "reasoning.effort on OpenAI GPT, that level's thinking budget on "
-        "older Claude models), with room for it left under its output "
-        "ceiling. Refused before any model call (InvalidArgumentError) when "
+        "older Claude models), its max_tokens raised to leave that level's "
+        "reasoning and the answer room. Refused before any model call (InvalidArgumentError) when "
         "the answer model does not take the level or does not reason (a "
         "local server's model, a Bedrock model without thinking). None: the "
         "configured effort of the answer model's tier "
@@ -622,12 +622,10 @@ class RAGInput(BaseModel):
     @classmethod
     def _deprecated_thinking(cls, enable: bool) -> bool:
         if enable:
-            warnings.warn(
+            warn_deprecated(
                 "RAGInput.enable_thinking is deprecated: set RAGInput.effort "
                 "(low, medium, high, xhigh, max), which turns reasoning on at "
-                "that level",
-                DeprecationWarning,
-                stacklevel=2,
+                "that level"
             )
         return enable
 
@@ -2625,12 +2623,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         """
         sink: _EventSink | None = None
         if on_answer_chunk is not None:
-            warnings.warn(
+            warn_deprecated(
                 "GraphRAGChain.ainvoke(on_answer_chunk=...) is deprecated: "
                 "iterate aquery_events() and read its AnswerChunk events "
-                "(its QueryResult carries the output)",
-                DeprecationWarning,
-                stacklevel=2,
+                "(its QueryResult carries the output)"
             )
             sink = _ChunkCallback(on_answer_chunk)
         token = _QUERY_EVENTS.set(sink)
@@ -2680,6 +2676,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         admission_tokens = bind_contextvars(query_id=query_id)
         try:
             rag_input, input_dict = await self._admit_query(input, deadline)
+            if not search:
+                # A search makes no answer: its effort is never spent.
+                self._check_effort(rag_input)
             self._apply_limits(deadline, rag_input)
         except Exception as e:
             tag_query_failure(e, query_id)
@@ -3660,7 +3659,6 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         query gives. A refused strategy or filter still raises: a usage
         error, not a failed query."""
         rag_input, input_dict = self._prepare_invoke(inputs)
-        self._check_effort(rag_input)
         rag_input.suffix = input_dict["suffix"] = resolve_namespace(
             self.config, rag_input.suffix
         )

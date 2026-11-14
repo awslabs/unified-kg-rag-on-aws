@@ -164,3 +164,35 @@ def test_an_incremental_record_keeps_its_full_build_s_answers() -> None:
     # A full build replaces them.
     rebuilt = IndexBuildRecord.model_validate(_record(changed)).over(full)
     assert rebuild_reasons(rebuilt.model_dump(mode="json"), changed) == []
+
+
+def test_reports_a_narrower_config_does_not_write_are_not_stale() -> None:
+    # Regression (W2 review E2): the reasons read what the namespace holds,
+    # not what the config builds of it, so a LightRAG-only config (whose run
+    # removes the reports) reported stale community reports.
+    config = Config()
+    record = _record(config)
+    lightrag = config.model_copy(deep=True)
+    lightrag.indexing.methodologies = [Methodology.LIGHTRAG]
+    lightrag.models.roles.community_report = lightrag.tier_model_id("fast")
+    reasons = rebuild_reasons(record, lightrag)
+    assert all(COMMUNITY_REPORT_ANSWERS not in r.settings for r in reasons), reasons
+    # The same change under a config that builds them is a reason.
+    graphrag = config.model_copy(deep=True)
+    graphrag.models.roles.community_report = graphrag.tier_model_id("fast")
+    assert [r.settings for r in rebuild_reasons(record, graphrag)] == [
+        [COMMUNITY_REPORT_ANSWERS]
+    ]
+
+
+def test_summaries_switched_on_since_the_build_say_so() -> None:
+    # W2 review E5: "were made under other settings" was wrong for answers
+    # the full build never wrote.
+    off = Config()
+    off.processing.graph_extraction.description_summarization.enabled = False
+    (reason,) = rebuild_reasons(_record(off), Config())
+    assert "wrote no description summaries" in reason.detail
+    changed = Config()
+    changed.models.roles.community_report = changed.tier_model_id("fast")
+    (reason,) = rebuild_reasons(_record(Config()), changed)
+    assert "under other settings (their model, prompt or language)" in reason.detail

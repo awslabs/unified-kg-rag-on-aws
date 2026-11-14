@@ -1029,7 +1029,8 @@ def create_app(
             state.load_config(),
             [m for m in (methodologies or "").split(",") if m] or None,
         )
-        held = await state.ask.held_methodologies(_suffix(suffix))
+        # Why it is due for a rebuild, under the methodologies picked.
+        held = await state.ask.held_methodologies(_suffix(suffix), building=config)
         # Without a build record nothing is dropped: the run writes the first.
         dropped = (
             dropped_methodologies(held["held"], config) if held["recorded"] else []

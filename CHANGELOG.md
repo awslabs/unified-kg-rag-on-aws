@@ -51,18 +51,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   screened: then its sources and the screened answer, one chunk, before the turn is written. The console's Ask page
   reads the events.
 - Rebuild due: `run-describe` (`rebuild`, `Rebuild due (...)` lines), the console's Ingest page
-  (`/api/namespace/methodologies`) and the MCP `kg_describe_schema` tool say why a namespace is due for a rebuild
-  under the config, from one owner (`rebuild_due`): community counters past `indexing.community_compaction`, reports
-  or description summaries its full build made under other settings (a run with `indexing.reset: true`), changed
-  extraction settings or a methodology it lacks (applied by the next run). The build record gains
+  (`/api/namespace/methodologies`, under the methodologies picked) and the MCP `kg_describe_schema` tool say why a
+  namespace is due for a rebuild under the config, from one owner (`rebuild_due`, its `RebuildReason` exported):
+  community counters past `indexing.community_compaction`, reports or description summaries its full build made under
+  other settings (a run with `indexing.reset: true`), changed extraction settings or a methodology it lacks (applied
+  by the next run). The build record gains
   `answer_fingerprints` (the full build's report and summary settings, kept by incremental records); a record
   written earlier names none. A run logs a WARNING per reason of the records it wrote and lists them by suffix in its
   JSON result (`rebuild_due`).
 - `RAGInput.effort` (`low` to `max`) sets one query's answer reasoning effort in place of its tier's
-  `aws.bedrock.default_effort` / `fast_effort`: it turns reasoning on for a model that opts in, leaves that level's
-  reasoning room under the answer's output ceiling and, on an older Claude model (4.5 and before), sizes its thinking
-  budget; unset, nothing changes. An effort the answer model cannot apply (a level it does not take, or a model that
-  does not reason, as a local server's) is refused before any model call (`InvalidArgumentError`).
+  `aws.bedrock.default_effort` / `fast_effort`: it turns reasoning on for a model that opts in, raises the answer's
+  max_tokens to leave that level's reasoning room on every model family and, on an older Claude model (4.5 and
+  before), sizes its thinking budget; unset, nothing changes. An effort the answer model cannot apply (a level it
+  does not take, or a model that does not reason, as a local server's) is refused before any answer's model call
+  (`InvalidArgumentError`); a search, which makes no answer, takes any.
 - An ingestion run's budget and cost estimate. `processing.max_run_model_calls` and `processing.max_run_usd` (off by
   default; USD priced by `models.prices`) refuse the model call that would pass them and stop the run once the calls
   already sent have answered (`RunBudgetExhausted`, exported, error class `limit_exceeded`, exit 1): its finished stages
@@ -78,9 +80,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The community-counter WARNING reads `Index namespace '<suffix>' is due for a rebuild: its communities are due for
   re-clustering: ...` (it began `Communities of '<suffix>' are due for re-clustering`), one rule with the other
   rebuild reasons. The console's job card offers "Rebuild the namespace" when the run's `rebuild_due` holds a reason
-  for it, not when a warning's text names `indexing.reset: true`: a warning hinting at the setting for another cause
-  no longer offers it, and the run's community drift offers it as it recommends it
-  (`indexing.community_compaction.on_drift_recommendation`).
+  for it, naming those reasons, not when a warning's text names `indexing.reset: true`: a warning hinting at the
+  setting for another cause no longer offers it, the run's community drift offers it as it recommends it
+  (`indexing.community_compaction.on_drift_recommendation`), and the job record's `warnings.reset_advised` is gone.
 - `search.auto_routable_strategies` accepts `ppr` and `tree`, loading with a WARNING that cites the measurement they
   were left out of the default on (`ppr`: within the noise of `local` at 2.4 times less cost, weaker on long chains;
   `tree`: +8 points of `answer_contains` over `naive`, below `mix` and `local`). It refused them, which made routing to

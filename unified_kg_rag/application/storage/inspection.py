@@ -40,7 +40,7 @@ from unified_kg_rag.domain.ingestion.methodologies import (
     namespace_holdings,
 )
 from unified_kg_rag.domain.ingestion.rebuild_due import (
-    RebuildReason,
+    RebuildReasons,
     rebuild_reasons,
 )
 from unified_kg_rag.domain.models import (
@@ -146,14 +146,7 @@ class NamespaceDescription(NamespaceSummary):
         description="The registry's documents of the statuses asked for "
         "(documents=), by file; None when none were asked for",
     )
-    rebuild: list[RebuildReason] = Field(
-        default_factory=list,
-        description="Why it is due for a rebuild under the configuration: "
-        "what the next incremental run cannot apply (stale communities, "
-        "reports or summaries: a run with indexing.reset: true) or applies "
-        "at a cost (changed extraction settings, a methodology it lacks); "
-        "empty when nothing is, or without a build record",
-    )
+    rebuild: RebuildReasons
 
 
 class GraphKindCensus(BaseModel):

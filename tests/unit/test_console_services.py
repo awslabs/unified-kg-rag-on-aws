@@ -1093,34 +1093,16 @@ async def test_a_job_records_its_warnings_and_a_stopped_one_no_error(
     assert job.record()["warnings"]["count"] == 25
     assert job.record()["warnings"]["lines"] == [f"warning {i}" for i in range(5, 25)]
 
-    assert job.record()["warnings"]["reset_advised"] is False
-
-    # The run's result, not a warning's text, says it is due for a rebuild
-    # only --reset applies: the page then offers "Rebuild the namespace". A
-    # warning naming the setting (a hint of another kind) does not.
-    hinted = _ingest_job(manager, tmp_path, '{"visualization_data": null}')
-    hinted.log_path.write_text(
-        _event("warning", "Re-run with indexing.reset: true to re-index.") + "\n",
-        encoding="utf-8",
+    # Why the run left its namespace due for a rebuild is its result's
+    # rebuild_due (the Ingest page reads it), never a warning's text.
+    assert "reset_advised" not in job.record()["warnings"]
+    due = {"default": [{"kind": "communities", "remedy": "reset"}]}
+    advised = _ingest_job(
+        manager, tmp_path, json.dumps({"visualization_data": None, "rebuild_due": due})
     )
-    await manager._watch(hinted)
-    assert hinted.record()["warnings"]["reset_advised"] is False
-    reason = {"kind": "communities", "remedy": "reset", "detail": "d", "settings": []}
-    later = {
-        "kind": "methodologies",
-        "remedy": "next_run",
-        "detail": "d",
-        "settings": [],
-    }
-    for due, advises in (({"default": [later]}, False), ({"default": [reason]}, True)):
-        advised = _ingest_job(
-            manager,
-            tmp_path,
-            json.dumps({"visualization_data": None, "rebuild_due": due}),
-        )
-        advised.log_path.write_text("\n".join(log) + "\n", encoding="utf-8")
-        await manager._watch(advised)
-        assert advised.record()["warnings"]["reset_advised"] is advises
+    advised.log_path.write_text("\n".join(log) + "\n", encoding="utf-8")
+    await manager._watch(advised)
+    assert advised.record()["result"]["rebuild_due"] == due
 
     stopped = _ingest_job(manager, tmp_path, '{"status": "interrupted"}', code=143)
     stopped.log_path.write_text("\n".join(log) + "\n", encoding="utf-8")
@@ -1140,3 +1122,53 @@ def test_a_failed_job_s_error_is_its_last_error_event_not_a_banner() -> None:
     trace = "ValueError: bad value"
     assert jobs_module._last_error([trace, banner, "╰────╯"]) == trace
     assert jobs_module._last_error([_event("info", "x")]) is None
+
+
+async def test_the_rebuild_reasons_are_those_of_the_methodologies_picked(
+    tmp_path: Path,
+) -> None:
+    # Regression (W2 review E2): the Ingest page's rebuild notice read the
+    # loaded config, whatever methodologies were picked, so picking LightRAG
+    # alone (a run that drops the reports) still said the reports were
+    # stale and a reset would write every one again.
+    from datetime import UTC, datetime
+
+    from unified_kg_rag.domain.ingestion.cache_keys import (
+        corpus_answer_fingerprints,
+        extraction_settings,
+    )
+    from unified_kg_rag.domain.ingestion.methodologies import artifacts_to_build
+    from unified_kg_rag.domain.models import IndexBuildRecord
+
+    built = Config()
+    settings = extraction_settings(built)
+    record = (
+        IndexBuildRecord(
+            pipeline_id="full",
+            mode="full",
+            built_at=datetime.now(UTC),
+            documents=1,
+            extraction_fingerprint=settings.fingerprint,
+            extraction_settings=settings,
+            answer_fingerprints=corpus_answer_fingerprints(
+                built, artifacts_to_build(built)
+            ),
+        )
+        .with_artifacts(artifacts_to_build(built))
+        .model_dump(mode="json")
+    )
+    loaded = Config()
+    loaded.models.roles.community_report = loaded.tier_model_id("fast")
+    chain = _RecordChain({"default": record})
+    service = AskService(
+        lambda: loaded,
+        ConsoleStore(tmp_path / "s.sqlite3"),
+        chain_factory=lambda _c: chain,
+    )
+    due = await service.held_methodologies("default")
+    assert [r["kind"] for r in due["rebuild"]] == ["answer_settings"]
+    lightrag = loaded.model_copy(deep=True)
+    lightrag.indexing.methodologies = [Methodology.LIGHTRAG]
+    picked = await service.held_methodologies("default", building=lightrag)
+    assert picked["rebuild"] == []
+    await service.close()

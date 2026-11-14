@@ -174,8 +174,8 @@ less (a held methodology whose artifacts the run would not build) is
 listed, and the run starts only once you confirm removing them: the
 namespace then stops serving their strategies for every corpus in it, not
 only this one (the API refuses it as `narrowing` without
-`confirm_narrowing`). A namespace due for a rebuild under the config says
-why above the start button
+`confirm_narrowing`). A namespace due for a rebuild under the methodologies
+picked says why above the start button, each reason with what applies it
 ([Incremental indexing: Rebuild due](./incremental.md#rebuild-due)). Under more options: another
 index namespace, a rebuild of the namespace from the whole corpus for this
 run only (`--reset`, so no setting has to be switched back; what the corpus
@@ -202,7 +202,8 @@ own metadata), with their time, outputs and model calls, each failed
 stage's error and failed files, and the log's tail. A finished run counts
 the WARNINGs it logged and lists the last 20 (a run that left the
 namespace due for a rebuild only a reset applies, its result's
-`rebuild_due`, offers to start it again with the rebuild), and flags a run that
+`rebuild_due`, names those reasons and offers to start it again with the
+rebuild), and flags a run that
 processed documents but extracted no entity from them. Stop sends the CLI
 the stop it is built for: the finished stages are kept and the next run of
 the corpus resumes. A job a console left running when it stopped is shown

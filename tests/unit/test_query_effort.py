@@ -206,3 +206,71 @@ def test_an_older_claude_thinks_on_the_effort_s_budget(
     assert kwargs["additional_model_request_fields"]["thinking"]["budget_tokens"] == (
         factory.DEFAULT_THINKING_BUDGET_TOKENS
     )
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        LanguageModelId.CLAUDE_V4_6_SONNET,  # adaptive thinking, opt-in
+        LanguageModelId.CLAUDE_V5_5_SONNET,  # adaptive, always on
+        LanguageModelId.GPT_V5_5,  # reasoning.effort, always on
+        LanguageModelId.CLAUDE_V4_5_SONNET,  # a manual budget
+    ],
+)
+def test_every_reasoning_family_leaves_room_for_the_query_s_effort(
+    monkeypatch, recorded_chat, model  # noqa: F811 - the fixture
+) -> None:
+    # Regression (W2 review E3): only older Claude raised max_tokens for a
+    # query's effort; at max (32,768 reasoning tokens) an adaptive Claude or
+    # GPT answer kept the 16,384 default and could be cut off after the
+    # retrieval ran. One rule: a request's reasoning plus the answer's
+    # floor, under the model's own maximum.
+    _resolve_to(monkeypatch, f"global.{model.value}")
+    config = Config.model_validate({"models": {"default": model.value}})
+    factory = _lang_factory(config)
+    model_id = config.model_id(ModelRole.ANSWER_GENERATION)
+    factory.get_model(model_id, enable_thinking=True, effort="max")
+    _, kwargs = recorded_chat[-1]
+    assert kwargs["max_tokens"] >= EFFORT_THINKING_TOKENS["max"] + CEILING_ANSWER_TOKENS
+    # At the tier's effort (high) the default cap stands, as before.
+    factory.get_model(model_id, enable_thinking=True)
+    _, kwargs = recorded_chat[-1]
+    assert kwargs["max_tokens"] == config.models.default_max_output_tokens
+
+
+def test_the_deprecation_is_shown_under_the_default_warning_filters() -> None:
+    # Regression (W2 review E4): stacklevel=2 inside the pydantic validator
+    # named a pydantic frame, which Python's default filters hide: a caller
+    # setting enable_thinking saw nothing. The warning names the caller's
+    # line, so the default filters show it (as from __main__).
+    import os
+    import subprocess
+    import sys
+
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONWARNINGS"}
+    code = (
+        "from unified_kg_rag import RAGInput\n"
+        "RAGInput(query='q', enable_thinking=True)\n"
+        "RAGInput.model_validate({'query': 'q', 'enable_thinking': True})\n"
+    )
+    done = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=120,
+    )
+    assert done.returncode == 0, done.stderr
+    shown = [line for line in done.stderr.splitlines() if "DeprecationWarning" in line]
+    assert len(shown) == 2 and all(
+        line.startswith("<string>:") for line in shown
+    ), done.stderr
+
+
+async def test_a_search_takes_an_effort_it_never_spends(config: Config) -> None:
+    # W2 review E6: a search makes no answer, so an effort the answer model
+    # cannot apply is no reason to refuse it.
+    factory = _ModelInfoFactory(provider="other", supports_thinking=False)
+    chain, _, _ = _make_chain(config, factory=factory)
+    found = await chain.asearch(_input(effort="low"))
+    assert found.search_results.results

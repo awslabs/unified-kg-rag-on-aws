@@ -34,7 +34,7 @@ card reads). Nothing here reads a store or calls a model.
 
 from collections.abc import Mapping
 from enum import Enum
-from typing import Any
+from typing import Annotated, Any
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -47,6 +47,7 @@ from unified_kg_rag.domain.ingestion.cache_keys import (
 )
 from unified_kg_rag.domain.ingestion.community_drift import reset_reasons
 from unified_kg_rag.domain.ingestion.methodologies import (
+    artifacts_to_build,
     held_artifacts,
     missing_artifacts,
 )
@@ -87,6 +88,23 @@ class RebuildReason(BaseModel):
         default_factory=list,
         description="The configuration paths or artifacts behind it",
     )
+
+
+# The ``rebuild`` field of every surface that describes a namespace
+# (run-describe, the MCP kg_describe_schema tool, the graph lookup), declared
+# once.
+RebuildReasons = Annotated[
+    list[RebuildReason],
+    Field(
+        default_factory=list,
+        description="Why the namespace is due for a rebuild under the "
+        "configuration (rebuild_due.rebuild_reasons): what the next "
+        "incremental run cannot apply (stale communities, reports or "
+        "summaries: remedy reset) or applies at a cost (changed extraction "
+        "settings, a methodology it lacks: remedy next_run); empty when "
+        "nothing is, or without a build record",
+    ),
+]
 
 
 _ANSWERS = {
@@ -149,9 +167,11 @@ def _answer_reasons(record: Mapping[str, Any], config: Config) -> list[RebuildRe
     recorded = record.get("answer_fingerprints")
     if not isinstance(recorded, Mapping):
         return []
-    # Of what the namespace holds: one the configuration would not write
-    # (reports it does not hold, summarization off) leaves nothing stale.
-    current = corpus_answer_fingerprints(config, held_artifacts(record, config))
+    # Of what the namespace holds and the configuration builds: one it
+    # would not write (reports of a methodology it does not build or the
+    # namespace lacks, summarization off) leaves nothing stale.
+    building = held_artifacts(record, config) & artifacts_to_build(config)
+    current = corpus_answer_fingerprints(config, building)
     reasons = []
     for name, fingerprint in current.items():
         if fingerprint is None or name not in recorded:
@@ -159,16 +179,20 @@ def _answer_reasons(record: Mapping[str, Any], config: Config) -> list[RebuildRe
         if recorded[name] == fingerprint:
             continue
         what = _ANSWERS[name]
+        made = (
+            f"the last full build wrote no {what}, which the configuration " "makes"
+            if recorded[name] is None
+            else f"the {what} the last full build wrote were made under other "
+            "settings (their model, prompt or language) than the "
+            "configuration's"
+        )
         reasons.append(
             RebuildReason(
                 kind=RebuildReasonKind.ANSWER_SETTINGS,
                 remedy=RebuildRemedy.RESET,
-                detail=f"the {what} the last full build wrote were made "
-                "under other settings (prompt, model, language or "
-                "switch) than the configuration's: incremental runs write "
-                f"the {what} of their delta alone; a run with "
-                f"indexing.reset: true writes every one again, a model "
-                "call each",
+                detail=f"{made}: incremental runs "
+                f"write the {what} of their delta alone; a run with "
+                "indexing.reset: true writes every one again, a model call each",
                 settings=[name],
             )
         )

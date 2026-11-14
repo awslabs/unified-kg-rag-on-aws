@@ -40,7 +40,6 @@ from unified_kg_rag.application.cli.console.paths import PathRefused, walk_files
 from unified_kg_rag.application.cli.console.store import ConsoleStore
 from unified_kg_rag.application.ingestion.pipeline_manager import INTEGRITY_QUESTIONS
 from unified_kg_rag.domain.ingestion.methodologies import artifacts_to_build
-from unified_kg_rag.domain.ingestion.rebuild_due import RebuildRemedy
 from unified_kg_rag.domain.models import (
     Config,
     Methodology,
@@ -149,11 +148,10 @@ class Job:
     confirmation: str | None = None
     confirmation_reason: str | None = None
     # The WARNING events of its log once it ended (_log_warnings): how many
-    # and the last ones; and whether the run left its namespace due for a
-    # rebuild only indexing.reset: true applies (_reset_advised).
+    # and the last ones. Why the run left its namespace due for a rebuild is
+    # its result's rebuild_due, which the Ingest page reads.
     warning_count: int = 0
     warnings: list[str] = field(default_factory=list)
-    reset_advised: bool = False
     process: asyncio.subprocess.Process | None = None
     identity: str | None = None
     watcher: asyncio.Task[None] | None = None
@@ -188,7 +186,6 @@ class Job:
             "warnings": {
                 "count": self.warning_count,
                 "lines": self.warnings,
-                "reset_advised": self.reset_advised,
             },
             "pid": self.process.pid if self.process is not None else None,
             # Its pid with its start time (process_identity): a later console
@@ -717,7 +714,6 @@ class JobManager:
         job.warning_count, job.warnings = await asyncio.to_thread(
             _log_warnings, job.log_path
         )
-        job.reset_advised = _reset_advised(document)
         if job.status is JobStatus.FAILED:
             job.error = (document or {}).get("error") or _last_error(self.log_tail(job))
             job.confirmation, job.confirmation_reason = confirmation_needed(job.error)
@@ -973,20 +969,6 @@ def _log_event(line: str) -> dict[str, Any] | None:
     if isinstance(event, dict) and isinstance(event.get("level"), str):
         return event
     return None
-
-
-def _reset_advised(document: dict[str, Any] | None) -> bool:
-    """Whether an ingestion's result says a record it wrote is due for a
-    rebuild only ``indexing.reset: true`` applies (its ``rebuild_due``,
-    ``rebuild_due.RebuildReason`` dumps by suffix): the run ``--reset``
-    makes, which the Ingest page offers as "Rebuild the namespace"."""
-    due = (document or {}).get("rebuild_due")
-    return isinstance(due, dict) and any(
-        isinstance(reason, dict) and reason.get("remedy") == RebuildRemedy.RESET.value
-        for reasons in due.values()
-        if isinstance(reasons, list)
-        for reason in reasons
-    )
 
 
 def _log_warnings(log_path: Path) -> tuple[int, list[str]]:

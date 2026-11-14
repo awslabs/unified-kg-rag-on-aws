@@ -23,8 +23,8 @@ export interface Status {
  * build record names it (`recorded` false: no build record, as before the
  * first ingestion or one of an earlier release), whether anything was
  * ingested into it at all (`indexed` false: a question on it is refused),
- * why it is due for a rebuild, and which of those an ingestion of the picked methodologies would no
- * longer serve. */
+ * why it is due for a rebuild under the picked methodologies, and which of
+ * those an ingestion of them would no longer serve. */
 export interface NamespaceHeld {
   namespace: string;
   recorded: boolean;
@@ -224,7 +224,7 @@ export interface JobRecord {
   // The WARNING events of its log once it ended: how many, and the last ones.
   /** Its WARNINGs once ended: how many, the last ones, and whether one
    * advises rebuilding the namespace (the run's ``--reset``). */
-  warnings?: { count: number; lines: string[]; reset_advised?: boolean };
+  warnings?: { count: number; lines: string[] };
   // An evaluation's answers so far (from its log) beside its saved runs.
   progress?: { stages?: StageProgress[]; done: number; total: number; answers?: { done: number; total: number } | null } | null;
   log?: string[];

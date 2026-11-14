@@ -26,7 +26,7 @@ from unified_kg_rag.adapters.retrieval.base import BaseGraphRAGRetriever
 from unified_kg_rag.application.bootstrap import resolve_extraction_schema
 from unified_kg_rag.application.retrieval import methodology_check
 from unified_kg_rag.application.retrieval.text_units import fetch_text_units
-from unified_kg_rag.domain.ingestion.rebuild_due import RebuildReason, rebuild_reasons
+from unified_kg_rag.domain.ingestion.rebuild_due import RebuildReasons, rebuild_reasons
 from unified_kg_rag.domain.models import (
     GraphEdge,
     IndexArtifact,
@@ -346,12 +346,7 @@ class NamespaceDescription(methodology_check.NamespaceSummary):
         default_factory=list,
         description="The filter keys some index of the document store declares",
     )
-    rebuild: list[RebuildReason] = Field(
-        default_factory=list,
-        description="Why it is due for a rebuild under the configuration "
-        "(rebuild_due.rebuild_reasons); empty when it is not, or without a "
-        "build record",
-    )
+    rebuild: RebuildReasons
 
 
 _BUILD_KEYS = ("pipeline_id", "mode", "built_at", "documents", "package_version")

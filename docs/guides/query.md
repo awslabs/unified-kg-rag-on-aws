@@ -233,8 +233,11 @@ The MCP tools `kg_search` and `kg_answer` take the same `limits` argument
 one query's answer model reasons, in place of its tier's configured
 `aws.bedrock.default_effort` / `fast_effort`
 ([Models](../reference/models.md)). It turns reasoning on for a model that
-opts in, and the answer's output ceiling (`search.output_ceilings`) leaves
-room for that level's reasoning. Only the answer call takes it; the router,
+opts in, and leaves room for that level's reasoning (its
+`EFFORT_THINKING_TOKENS`, `low` 2,048 up to `max` 32,768) on every model
+family: the answer's max_tokens is raised above it, past
+`models.default_max_output_tokens` and any output ceiling
+(`search.output_ceilings`) when needed, never past the model's maximum. Only the answer call takes it; the router,
 the query processing and the strategies' own calls keep their tier's. An
 older Claude model (4.5 and before), which takes a thinking budget, not a
 level, thinks on that level's budget (`low` 2,048 tokens up to `max` 32,768).

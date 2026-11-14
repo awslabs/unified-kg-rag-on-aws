@@ -811,15 +811,19 @@ class BedrockLanguageModelFactory(
             final_max_tokens = ceiled_output_tokens(
                 final_max_tokens, int(ceiling), thinking_tokens
             )
+        manual_budget = (
+            model_info.provider == "anthropic" and not model_info.uses_adaptive_thinking
+        )
         if (
             not kwargs.get("max_tokens")
             and thinking_tokens
-            and not model_info.uses_adaptive_thinking
-            and model_info.provider == "anthropic"
+            and (kwargs.get("effort") or manual_budget)
         ):
-            # A manual budget must be below max_tokens (Bedrock refuses it
-            # otherwise): an effort's budget raises the default cap to leave
-            # the answer its floor, never past the model's maximum.
+            # Reasoning counts toward max_tokens on every family: a query's
+            # effort (and an older Claude's manual budget, which Bedrock
+            # refuses unless it is below max_tokens) raises the default cap
+            # to leave the answer its floor above it, never past the
+            # model's maximum. A tier's effort keeps the configured cap.
             final_max_tokens = max(
                 final_max_tokens,
                 min(

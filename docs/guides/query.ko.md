@@ -202,8 +202,10 @@ MCP 도구 `kg_search`와 `kg_answer`도 같은 `limits` 인수를 받습니다(
 `RAGInput.effort`(`low`, `medium`, `high`, `xhigh`, `max`)는 질의 하나의 답변 모델이
 얼마나 깊이 추론할지를 정하며, 해당 계층에 설정한 `aws.bedrock.default_effort` /
 `fast_effort` 대신 쓰입니다([모델](../reference/models.md)(영문)). 추론을 선택 사항으로
-두는 모델이면 추론을 켜고, 답변의 출력 상한(`search.output_ceilings`)에 그 강도의 추론
-분량만큼 여유를 둡니다. 답변 호출만 이 값을 따르고, 라우터, 질의 처리, 전략 자체의 호출은
+두는 모델이면 추론을 켜고, 모든 모델 계열에서 그 강도의 추론 분량(`EFFORT_THINKING_TOKENS`,
+`low` 2,048토큰부터 `max` 32,768토큰까지)만큼 여유를 둡니다. 필요하면 답변의 max_tokens를
+`models.default_max_output_tokens`나 출력 상한(`search.output_ceilings`)보다 높이되, 모델의
+최댓값은 넘지 않습니다. 답변 호출만 이 값을 따르고, 라우터, 질의 처리, 전략 자체의 호출은
 계층 설정을 유지합니다. 강도 대신 추론 토큰 예산을 받는 이전 Claude 모델(4.5 이하)은 그
 강도의 예산(`low` 2,048토큰부터 `max` 32,768토큰까지)으로 추론합니다. 답변 모델이 적용할 수
 없는 강도는 모델을 호출하기 전에 거부합니다(`InvalidArgumentError`, 오류 클래스

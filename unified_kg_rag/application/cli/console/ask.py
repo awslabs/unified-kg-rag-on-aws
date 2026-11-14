@@ -358,7 +358,9 @@ class AskService:
             )
         return views
 
-    async def held_methodologies(self, suffix: str | None = None) -> dict[str, Any]:
+    async def held_methodologies(
+        self, suffix: str | None = None, *, building: Config | None = None
+    ) -> dict[str, Any]:
         """What the index namespace of ``suffix`` holds
         (``namespace_holdings``, the chain's rule), read fresh from the build
         record ingestion wrote on it (``GraphRAGChain.aread_build_record``):
@@ -367,8 +369,10 @@ class AskService:
         methodologies the config builds, which queries are served by;
         ``indexed`` whether anything was ingested under it at all (a
         question on it fails with ``index_not_found`` otherwise); and why it
-        is due for a rebuild under the config (``rebuild``:
-        ``rebuild_due.rebuild_reasons``). A store error raises."""
+        is due for a rebuild under ``building`` (``rebuild``:
+        ``rebuild_due.rebuild_reasons``; the config of the methodologies an
+        ingestion would build, default the loaded config). A store error
+        raises."""
         async with self._using() as (chain, config):
             record = await chain.aread_build_record(suffix)
             namespace = resolve_namespace(config, suffix)
@@ -388,7 +392,7 @@ class AskService:
             "indexed": indexed,
             "rebuild": [
                 reason.model_dump(mode="json")
-                for reason in rebuild_reasons(record, config)
+                for reason in rebuild_reasons(record, building or config)
             ],
         }
 
