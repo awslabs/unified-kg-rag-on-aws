@@ -16,6 +16,9 @@ Bugs present in 0.3.0.
 - A vector-store write whose embeddings failed records the embedding model's error after `Failed to prepare N
   documents`, by the same log-safe rule as every write error, so the indexing stage's "First error" names the cause,
   not only a count.
+- A saved result (an evaluation report, a failed metric's reason) names an error whose whole message is the package's
+  own by its type and the error it was raised from (`LanguageModelError from ConnectionRefusedError [Errno 111]
+  Connection refused`) when that message does not name it; it named the type alone.
 
 ## [0.3.0] - 2026-11-14
 

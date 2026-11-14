@@ -370,6 +370,35 @@ def test_a_saved_result_names_a_wrapped_failures_cause_once() -> None:
     )
 
 
+def test_a_saved_result_names_the_cause_an_own_message_leaves_out() -> None:
+    # rv32: an error whose whole message is the package's (own_text=True),
+    # raised from another, was named by its type alone, losing the "from"
+    # its error_name gives when the message does not name the cause.
+    cause = ConnectionRefusedError(111, MARKER)
+    try:
+        raise with_own_text(LanguageModelError("Model call failed")) from cause
+    except LanguageModelError as error:
+        shown = result_error_text(error)
+    _assert_no_marker(shown)
+    assert shown == (
+        "[failure] LanguageModelError from ConnectionRefusedError [Errno 111] "
+        "Connection refused: Model call failed"
+    )
+    # A message that names its cause names it once.
+    try:
+        raise with_own_text(
+            LanguageModelError(
+                "Model call failed: ConnectionRefusedError [Errno 111] "
+                "Connection refused"
+            )
+        ) from cause
+    except LanguageModelError as error:
+        assert result_error_text(error) == (
+            "[failure] LanguageModelError: Model call failed: "
+            "ConnectionRefusedError [Errno 111] Connection refused"
+        )
+
+
 def test_a_failed_export_names_its_folder_at_warning(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:

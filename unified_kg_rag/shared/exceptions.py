@@ -556,14 +556,19 @@ def named_failure_text(error_class: ErrorClass, name: str, shown: str) -> str:
 def result_error_text(error: BaseException) -> str:
     """:func:`named_failure_text` of ``error``, named by ``error_name`` (its
     type, code and HTTP status): what a saved result records of an error.
-    One holding the package's own message (:func:`own_text`, which names
-    the error it wraps: ``caused_by``) is named by its type alone."""
+    One holding the package's own message (:func:`own_text`) is named by its
+    type, and the error it was raised from unless that message names it
+    (``caused_by``'s does), so the cause is named once."""
     from .utils.common import error_name
 
-    name = type(error).__name__ if has_own_text(error) else error_name(error)
-    return named_failure_text(
-        classify(error), name, shown_error_text(error, audience="operator")
-    )
+    shown = shown_error_text(error, audience="operator")
+    name = error_name(error)
+    if has_own_text(error):
+        cause = name.partition(" from ")[2]
+        name = type(error).__name__
+        if cause and cause not in shown:
+            name = f"{name} from {cause}"
+    return named_failure_text(classify(error), name, shown)
 
 
 # The public name of :func:`classify` (``unified_kg_rag.classify_error``).
