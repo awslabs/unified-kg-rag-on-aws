@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+Bugs present in 0.3.0.
+
+- An OpenSearch bulk write whose last retry round fails whole names the error by its type and status
+  (`TransportError rejected, HTTP 429`), as each earlier round's warning does, in its ERROR line and the store error
+  the indexing stage shows: the server's reason, which may quote a rejected document, is logged at DEBUG.
+
 ## [0.3.0] - 2026-11-14
 
 The first release after 0.2.3, the initial public snapshot (commit `81ea498`,

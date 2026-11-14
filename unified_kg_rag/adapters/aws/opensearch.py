@@ -239,7 +239,11 @@ def _missing_analyzer_error(
 
 
 def _wrap_transport_error(
-    exc: TransportError, context: str, log_level: int = logging.ERROR
+    exc: TransportError,
+    context: str,
+    log_level: int = logging.ERROR,
+    *,
+    quotes_items: bool = False,
 ) -> AWSServiceError:
     """The typed error the client raises for ``exc`` (to be chained ``from exc``).
 
@@ -259,9 +263,18 @@ def _wrap_transport_error(
     only, as every error's (``log_failure``): of the client library's frames
     alone, it buried the message the caller adds (an index creation that
     OpenSearch 2.13 refuses for vector_mode, say).
+
+    ``quotes_items``: the request carried items (a bulk call), whose reason
+    may quote one, so the error is named by its type and status
+    (``error_name``) and the reason logged at DEBUG, as each bulk round's
+    warning does; the typed error still carries it as ``reason``.
     """
     reason = error_reason(exc)
-    msg = f"{context}: status={exc.status_code}, error={reason}"
+    if quotes_items:
+        msg = f"{context}: {error_name(exc)}"
+        logger.debug("%s: %s", context, reason)
+    else:
+        msg = f"{context}: status={exc.status_code}, error={reason}"
     error = _typed_transport_error(exc, msg, reason)
     logger.log(log_level, "%s", msg)
     logger.debug("Traceback of the failed request", exc_info=exc)
@@ -288,7 +301,9 @@ def _typed_transport_error(
     return AWSServiceError(msg)
 
 
-def _handle_opensearch_errors(func: Callable[..., Any]) -> Callable[..., Any]:
+def _handle_opensearch_errors(
+    func: Callable[..., Any], *, quotes_items: bool = False
+) -> Callable[..., Any]:
     @wraps(func)
     def wrapper(client_instance: "OpenSearchClient", *args: Any, **kwargs: Any) -> Any:
         try:
@@ -298,7 +313,7 @@ def _handle_opensearch_errors(func: Callable[..., Any]) -> Callable[..., Any]:
             raise
         except TransportError as e:
             raise _wrap_transport_error(
-                e, f"Transport error in '{func.__name__}'"
+                e, f"Transport error in '{func.__name__}'", quotes_items=quotes_items
             ) from e
         except GraphRAGException:
             raise
@@ -315,6 +330,12 @@ def _handle_opensearch_errors(func: Callable[..., Any]) -> Callable[..., Any]:
             ) from e
 
     return wrapper
+
+
+def _handle_bulk_errors(func: Callable[..., Any]) -> Callable[..., Any]:
+    """``_handle_opensearch_errors`` for a bulk call: its failed request is
+    named by type and status, never by a reason that may quote an item."""
+    return _handle_opensearch_errors(func, quotes_items=True)
 
 
 def _handle_async_opensearch_errors(func: Callable[..., Any]) -> Callable[..., Any]:
@@ -691,7 +712,7 @@ class OpenSearchClient:
             "No OpenSearch auth method configured (IAM, basic or allow_anonymous)."
         )
 
-    @_handle_opensearch_errors
+    @_handle_bulk_errors
     def bulk_index(
         self, index: str, documents: list[dict[str, Any]], refresh: bool = True
     ) -> dict[str, Any]:
@@ -725,7 +746,7 @@ class OpenSearchClient:
 
         return {"errors": bool(errors), "items": errors}
 
-    @_handle_opensearch_errors
+    @_handle_bulk_errors
     def bulk_delete(
         self, index: str, ids: list[str], refresh: bool = True
     ) -> dict[str, Any]:
@@ -753,7 +774,7 @@ class OpenSearchClient:
 
         return {"errors": bool(errors), "items": errors}
 
-    @_handle_opensearch_errors
+    @_handle_bulk_errors
     def bulk_update(
         self, index: str, documents: list[dict[str, Any]], refresh: bool = True
     ) -> dict[str, Any]:
