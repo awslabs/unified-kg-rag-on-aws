@@ -7,11 +7,12 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import functools
-import os
 import threading
 from collections.abc import Callable, Coroutine
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, ParamSpec, TypeVar
+
+from . import common
 
 _T = TypeVar("_T")
 _P = ParamSpec("_P")
@@ -44,8 +45,11 @@ def _cpu_pool() -> ThreadPoolExecutor:
     global _cpu_executor
     with _cpu_executor_lock:
         if _cpu_executor is None:
+            # The CPUs this process may run on (a container's quota), not
+            # the host's: more threads than that only take turns.
             _cpu_executor = ThreadPoolExecutor(
-                max_workers=os.cpu_count() or 1, thread_name_prefix="graphrag-cpu"
+                max_workers=common._available_cpu_count(),
+                thread_name_prefix="graphrag-cpu",
             )
         return _cpu_executor
 
@@ -55,7 +59,7 @@ async def to_cpu_thread(
 ) -> _T:
     """``asyncio.to_thread`` for a step that only computes (parsing hits,
     fusing, citation lineages, PPR): it runs on a pool of its own, one thread
-    per CPU, and with the caller's context.
+    per available CPU, and with the caller's context.
 
     The default executor (:func:`configure_event_loop`) holds the blocking
     model, store and rerank calls, seconds each: under load every one of its

@@ -1678,8 +1678,9 @@ From a `main` checkout (formats and keys no release had):
 
 ### Changed
 - A query's compute-only steps (OpenSearch hit parsing and fusion, citation lineages, PPR, LightRAG's chunk pick, a
-  traversal's rows) run on a pool of their own (`to_cpu_thread`, one thread per CPU) instead of queueing in the
-  `io_workers` pool behind blocking model calls; with all 64 threads busy the median query was 0.4-0.5 s faster.
+  traversal's rows) run on a pool of their own (`to_cpu_thread`, one thread per available CPU, a container's quota
+  counted) instead of queueing in the `io_workers` pool behind blocking model calls; with all 64 threads busy and CPU
+  to spare the median query was 0.4-0.5 s faster.
 - `auto` falls back to the first routable of `local`, then `mix`, when the router's answer names no routable
   strategy, as it does when nothing configured is served and as `structured` falls back (one order,
   `GENERAL_FALLBACKS`, from the per-strategy `STRATEGY_TRAITS`); without `local` it took the first routable strategy.

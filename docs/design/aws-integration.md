@@ -107,14 +107,20 @@ exposes a best-effort `close()` / `aclose()` that never raises:
   calls; `configure_event_loop` for async hosts). A step that only computes
   (parsing OpenSearch hits and fusing their lists, the citation lineages, PPR,
   LightRAG's chunk pick, a traversal's rows) runs through `to_cpu_thread`
-  instead, on a pool of `os.cpu_count()` threads of its own: in the default
-  executor it waits behind blocking calls of seconds each. Measured on the
-  embedded stores with fake models, holding all 64 default-executor threads
-  with staggered 2 s blocking calls (stand-ins for Bedrock under load), twice
-  per setting, five queries each: the median query fell from 2.3-2.6 s to
-  1.9 s (local), from 1.9-2.0 s to 1.3-1.5 s (mix) and from 0.6 s to 0.45 s
-  (ppr). With 16 blocked threads, or none, it did not change (the pool was not
-  saturated). A step that calls a service (token counts that may be a request,
+  instead, on a pool of its own with one thread per available CPU (the
+  container's CPU quota, else the affinity mask, else `os.cpu_count()`): in
+  the default executor it waits behind blocking calls of seconds each.
+  Measured on the embedded stores with fake models, holding all 64
+  default-executor threads with staggered 2 s blocking calls (stand-ins for
+  Bedrock under load), twice per setting, five queries each: the median query
+  fell from 2.3-2.6 s to 1.9 s (local), from 1.9-2.0 s to 1.3-1.5 s (mix) and
+  from 0.6 s to 0.45 s (ppr). With 16 blocked threads, or none, it did not
+  change (the pool was not saturated). The gain needs a saturated I/O pool
+  and spare CPU: with 16 concurrent queries on 2 CPUs the queries' Python
+  work, not the queue, set the latency, and old and new were within the
+  run-to-run noise (about 30 %) whether the I/O pool was saturated or not
+  (saturated, median: local 26.9 s against 26.5 s, hybrid 20.8 s against
+  18.9 s, mix 20.4 s against 19.6 s, ppr 2.75 s against 2.59 s). A step that calls a service (token counts that may be a request,
   the rerank) stays in the default executor: a slow call would hold a CPU
   thread. How often a deployed query task saturates `io_workers` is not
   measured (it needs real Bedrock traffic).
