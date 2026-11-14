@@ -211,9 +211,9 @@ def _build_record(context: PipelineContext) -> str | None:
 
 def _rebuild_due(context: PipelineContext) -> dict[str, list[dict[str, Any]]]:
     """Why the records the run wrote leave their suffixes due for a rebuild
-    only ``indexing.reset: true`` applies (the indexing stage's
-    ``rebuild_due``: ``RebuildReason`` dumps by suffix); empty when none
-    is, or when the stage wrote no record."""
+    (the indexing stage's ``rebuild_due``: ``RebuildReason`` dumps by
+    suffix, as ``run-describe``'s ``rebuild``); empty when none is, or when
+    the stage wrote no record."""
     due = _indexing_metric(context, "rebuild_due")
     return due if isinstance(due, dict) else {}
 
@@ -1085,9 +1085,9 @@ class IngestionPipelineRunner:
             # The suffix's build record after the run (written, kept, failed,
             # missing, unsupported; None: the indexing stage did not run).
             "build_record": _build_record(context),
-            # Why the records it wrote are due for a rebuild with
-            # indexing.reset: true, by suffix (rebuild_due); the console
-            # offers that run on it.
+            # Why the records it wrote are due for a rebuild, by suffix
+            # (rebuild_due); the console offers a reset on a reason it
+            # applies.
             "rebuild_due": _rebuild_due(context),
             "failed_documents": len(context.recorded_failed_doc_ids),
             # Text units a stage failed on: counted in a full build too,

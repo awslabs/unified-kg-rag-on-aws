@@ -118,10 +118,7 @@ from unified_kg_rag.domain.ingestion.names import (
     compact_name_key,
     normalize_entity_type,
 )
-from unified_kg_rag.domain.ingestion.rebuild_due import (
-    RebuildRemedy,
-    rebuild_reasons,
-)
+from unified_kg_rag.domain.ingestion.rebuild_due import rebuild_reasons
 from unified_kg_rag.domain.ingestion.seed_graph import (
     DOCUMENT_SOURCE_KIND,
     SEED_RECORD_FINGERPRINT,
@@ -3018,24 +3015,20 @@ class IndexingStage(_RegistryStage):
         self, records: dict[str, IndexBuildRecord], drift: CommunityDrift | None
     ) -> dict[str, Any]:
         """Warn where a written record leaves its suffix due for a rebuild
-        that only ``indexing.reset: true`` applies (``rebuild_due``: its
-        community counters past an ``indexing.community_compaction``
-        threshold, reports or summaries its full build made under other
-        settings), one WARNING per reason; the metrics: those reasons by
-        suffix (``rebuild_due``, the run result's, which the console's job
-        card reads) and the community counters' (the largest over the
-        suffixes)."""
+        (``rebuild_due``, the reasons ``run-describe`` reports, this run's
+        community drift among them: its community counters past an
+        ``indexing.community_compaction`` threshold, reports or summaries
+        its full build made under other settings), one WARNING per reason;
+        the metrics: those reasons by suffix (``rebuild_due``, the run
+        result's, which the console's job card reads) and the community
+        counters' (the largest over the suffixes)."""
         due: dict[str, list[dict[str, Any]]] = {}
         for suffix, written in sorted(records.items()):
-            reasons = [
-                reason
-                for reason in rebuild_reasons(
-                    written.model_dump(mode="json"),
-                    self.config,
-                    drift_recommended=drift is not None and drift.rebuild_recommended,
-                )
-                if reason.remedy is RebuildRemedy.RESET
-            ]
+            reasons = rebuild_reasons(
+                written.model_dump(mode="json"),
+                self.config,
+                drift_recommended=drift is not None and drift.rebuild_recommended,
+            )
             for reason in reasons:
                 logger.warning(
                     "Index namespace '%s' is due for a rebuild: %s.",

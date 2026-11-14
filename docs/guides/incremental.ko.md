@@ -180,7 +180,7 @@ re-clustering: 24 incremental runs since the last full clustering
 | `extraction_settings` | 마지막 실행 이후 추출 설정이 바뀜(바뀐 경로는 `settings`) | `next_run`: 모든 문서를 다시 추출 |
 | `methodologies` | 구성이 네임스페이스에 없는 코퍼스 전체 산출물을 빌드함 | `next_run`: 저장된 추출 결과로 네임스페이스를 다시 빌드 |
 
-실행은 자신이 쓴 빌드 레코드의 `reset` 이유마다 WARNING을 하나씩 남기고
+실행은 자신이 쓴 빌드 레코드의 이유마다 WARNING을 하나씩 남기고
 (`Index namespace 'default' is due for a rebuild: ...`, 위의 커뮤니티 카운터 경고도 그중
 하나), `--output-format json` 결과에 접미사별로 담습니다(`rebuild_due`). 콘솔의 작업
 카드는 경고 문구가 아니라 이 값을 보고 다시 빌드를 제안합니다. 이전 버전이 쓴 빌드 레코드에는

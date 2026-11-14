@@ -217,7 +217,7 @@ cost (`remedy: next_run`).
 | `extraction_settings` | The extraction settings changed since the last run (the changed paths in `settings`) | `next_run`: it extracts every document again |
 | `methodologies` | The config builds a corpus-wide artifact the namespace lacks | `next_run`: it rebuilds the namespace from the stored extractions |
 
-A run logs one WARNING per `reset` reason of the records it wrote
+A run logs one WARNING per reason of the records it wrote
 (`Index namespace 'default' is due for a rebuild: ...`), the community
 counters' above among them, and its `--output-format json` result lists them
 by suffix (`rebuild_due`): the console's job card offers the rebuild on

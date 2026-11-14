@@ -52,8 +52,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or description summaries its full build made under other settings (a run with `indexing.reset: true`), changed
   extraction settings or a methodology it lacks (applied by the next run). The build record gains
   `answer_fingerprints` (the full build's report and summary settings, kept by incremental records); a record
-  written earlier names none. A run logs a WARNING per reason only `indexing.reset: true` applies and lists them by
-  suffix in its JSON result (`rebuild_due`).
+  written earlier names none. A run logs a WARNING per reason of the records it wrote and lists them by suffix in its
+  JSON result (`rebuild_due`).
 - `RAGInput.effort` (`low` to `max`) sets one query's answer reasoning effort in place of its tier's
   `aws.bedrock.default_effort` / `fast_effort`: it turns reasoning on for a model that opts in, leaves that level's
   reasoning room under the answer's output ceiling and, on an older Claude model (4.5 and before), sizes its thinking

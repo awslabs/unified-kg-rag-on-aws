@@ -203,8 +203,9 @@ holds:
   queries take the namespace to hold what their config builds; a run that
   exits `0` with `failed` or `missing` also says so in its summary. And
   `rebuild_due`: by suffix, the reasons the records it wrote are due for a
-  rebuild only `indexing.reset: true` applies (each `kind`, `remedy`,
-  `detail` and `settings`, as `run-describe`'s `rebuild`), `{}` when none is
+  rebuild (each `kind`, `remedy`, `detail` and `settings`, as
+  `run-describe`'s `rebuild`; the run's community drift too), `{}` when none
+  is
   ([Incremental indexing: Rebuild due](../guides/incremental.md#rebuild-due)).
 - **`run-eval`**: the `output_directory`, `upload_error`, each run's summary
   (`runs`), the `comparison`, the failure-budget breaches
