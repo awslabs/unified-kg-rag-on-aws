@@ -2686,6 +2686,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         return UsageLimits(
             max_llm_calls=limits.max_model_calls,
             max_input_tokens=limits.max_input_tokens,
+            # The answer's call: no output repair takes it.
+            reserved_calls=1,
             names={
                 "max_llm_calls": self._limit_setting(rag_input, "max_model_calls"),
                 "max_input_tokens": self._limit_setting(rag_input, "max_input_tokens"),

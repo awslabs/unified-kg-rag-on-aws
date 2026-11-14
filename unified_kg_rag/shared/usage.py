@@ -78,6 +78,7 @@ __all__ = [
     "UsageMeter",
     "cache_probed",
     "calls_that_fit",
+    "optional_calls_left",
     "current_meter",
     "merge_usage",
     "metering",
@@ -180,6 +181,10 @@ class UsageLimits:
     max_llm_calls: int | None = None
     max_input_tokens: int | None = None
     max_cost: float | None = None
+    # Of max_llm_calls, those kept for the scope's last step (a query's
+    # answer): an optional call (an output repair) that would take one is
+    # not made (optional_calls_left).
+    reserved_calls: int = 0
     cost: Callable[[Mapping[str, Mapping[str, int]]], float] | None = None
     refuse: LimitRefusal = _refused
     # The name each limit is reported by (the setting that sets it); one
@@ -371,6 +376,26 @@ def remaining() -> Remaining:
         call_limit=call_limit[0] if call_limit else None,
         call_limit_value=call_limit[1] if call_limit else None,
     )
+
+
+def optional_calls_left() -> int | None:
+    """The calls an optional step (an output repair) may still make: what
+    the open scopes' call limits leave beside the calls they keep for their
+    last step (``UsageLimits.reserved_calls``); ``None`` without a call
+    limit."""
+    left: int | None = None
+    with _LOCK:
+        node = _CURRENT.get()
+        while node is not None:
+            limits = node.limits
+            if limits is not None and limits.max_llm_calls is not None:
+                room = max(
+                    0,
+                    limits.max_llm_calls - limits.reserved_calls - node.total.llm_calls,
+                )
+                left = room if left is None else min(left, room)
+            node = node.parent
+    return left
 
 
 def calls_that_fit(

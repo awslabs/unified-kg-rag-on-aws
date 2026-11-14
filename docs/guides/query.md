@@ -195,6 +195,9 @@ is refused before its request is sent:
   prompt's own templates and instructions and the question, less
   `search.token_manager.context_window_headroom_ratio` of them; the fan-out
   strategies keep that prompt's tokens for the answer too.
+- One call is kept for the answer: an output repair (`models.roles.fixing`)
+  that would take it is not asked, and the reply that did not parse counts
+  as a failed step, as an unrepaired one does.
 - A query whose answer call does not fit fails with
   `UsageLimitExceededError` (exported from `unified_kg_rag`; error class
   `limit_exceeded`, exit code `1`; a caller's error, not counted in the

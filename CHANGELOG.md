@@ -28,10 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its own. `global`, `drift` and `iterative` start only the calls that fit beside the answer and list the rest in
   `metadata.degraded` (reason `query_limit`), `auto` routes only to strategies whose fewest calls fit
   (`metadata.routing.over_limits`) and under either limit starts no speculative extraction, the answer's context is cut
-  to the tokens left after the answer prompt and the question (the fan-out keeps that prompt's tokens too), and a query
-  whose answer does not fit fails with `UsageLimitExceededError` (error class `limit_exceeded`, a caller's error: not
-  counted in `query_failed`, `refused` on the console's dashboard, its message shown to an MCP caller; exit code 1,
-  console HTTP 422).
+  to the tokens left after the answer prompt and the question (the fan-out keeps that prompt's tokens too), an output
+  repair never takes the call kept for the answer, and a query whose answer does not fit fails with
+  `UsageLimitExceededError` (error class `limit_exceeded`, a caller's error: not counted in `query_failed`, `refused` on
+  the console's dashboard, its message shown to an MCP caller; exit code 1, console HTTP 422).
 - An ingestion run's budget and cost estimate. `processing.max_run_model_calls` and `processing.max_run_usd` (off by
   default; USD priced by `models.prices`) refuse the model call that would pass them and stop the run once the calls
   already sent have answered (`RunBudgetExhausted`, error class `limit_exceeded`, exit 1): its finished stages are

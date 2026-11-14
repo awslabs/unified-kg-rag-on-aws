@@ -172,6 +172,8 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
 - 답변 컨텍스트는 남은 입력 토큰에서 답변 프롬프트 자체(템플릿과 지시문)와 질문을 빼고, 다시
   `search.token_manager.context_window_headroom_ratio`만큼 뺀 크기로 줄입니다. 호출을 펼치는
   전략도 답변 프롬프트 몫의 토큰을 답변용으로 남깁니다.
+- 호출 하나는 답변용으로 남깁니다. 그 호출을 쓰게 될 출력 보정(`models.roles.fixing`)은 하지 않고,
+  해석하지 못한 응답은 보정하지 못한 응답처럼 실패한 단계로 처리합니다.
 - 답변 호출이 들어가지 못하는 질의는 `UsageLimitExceededError`(`unified_kg_rag`에서 내보냄,
   오류 분류 `limit_exceeded`, 종료 코드 `1`. 호출하는 쪽의 오류로 보고 `query_failed` 지표에는
   세지 않음)로 실패하고, `processing.ignore_errors`를 켜면

@@ -57,6 +57,7 @@ from unified_kg_rag.shared import (
     LLMOutputTruncatedError,
     ModelOutputCutOffError,
     get_logger,
+    usage,
 )
 from unified_kg_rag.shared.logging import log_error
 from unified_kg_rag.shared.utils.model_output import (
@@ -770,12 +771,23 @@ class FixingJsonOutputParser(LLMJsonOutputParser):
 
     def _repairable(self, text: str, error: OutputParserException) -> bool:
         """Whether a fixer may repair ``text``: not blank, not cut off (a
-        fixer could only invent the rest), and a fixing model is set."""
-        return (
+        fixer could only invent the rest), a fixing model is set, and the
+        open usage limits leave a call beside the ones they keep for the
+        last step (``usage.optional_calls_left``: a query's answer)."""
+        if not (
             bool(text.strip())
             and not isinstance(error.__cause__, ModelOutputCutOffError)
             and self._fixing_model_id is not None
-        )
+        ):
+            return False
+        left = usage.optional_calls_left()
+        if left is not None and left <= 0:
+            logger.info(
+                "JSON answer did not parse; not repaired: the query's call "
+                "limit keeps its last calls for the answer"
+            )
+            return False
+        return True
 
     def parse(self, text: str) -> Any:
         try:

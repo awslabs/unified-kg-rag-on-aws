@@ -216,13 +216,14 @@ async def _calls_unlimited() -> int:
 
 async def test_a_query_past_its_call_limit_fails_naming_the_limit() -> None:
     calls = await _calls_unlimited()
+    assert calls == 3  # the rewrite, its output repair, the answer
     model = _metered(_SlowChatModel())
     chain = _chain(Config(), _Factory(model))
     with pytest.raises(UsageLimitExceededError) as refused:
-        await chain.ainvoke(_follow_up(QueryLimits(max_model_calls=calls - 1)))
+        await chain.ainvoke(_follow_up(QueryLimits(max_model_calls=1)))
     assert "limits.max_model_calls" in str(refused.value)
-    # Every call before the answer was sent; the answer was not.
-    assert len(model.started) == calls - 1
+    # The rewrite was sent; its repair and the answer were not.
+    assert len(model.started) == 1
     assert classify(refused.value) is ErrorClass.LIMIT_EXCEEDED
     # The MCP caller sees its own limit's message.
     message, callers = describe_error(refused.value)
@@ -231,7 +232,7 @@ async def test_a_query_past_its_call_limit_fails_naming_the_limit() -> None:
 
 async def test_the_configured_limit_is_named_and_streams_obey_it() -> None:
     calls = await _calls_unlimited()
-    config = Config(search={"query_max_model_calls": calls - 1})
+    config = Config(search={"query_max_model_calls": 1})
     model = _metered(_SlowChatModel())
     chain = _chain(config, _Factory(model))
     # A request above the configured limit does not raise it.
@@ -243,6 +244,12 @@ async def test_the_configured_limit_is_named_and_streams_obey_it() -> None:
     roomy = _chain(Config(search={"query_max_model_calls": calls}), _Factory(model))
     assert (await roomy.ainvoke(_follow_up())).answer == _ANSWER
     streamed = [chunk async for chunk in roomy.astream(_follow_up())]
+    assert "".join(streamed).strip() == _ANSWER
+    # One call short: the rewrite's repair is not asked (it would take the
+    # answer's call), and the query answers (W1 review L4).
+    tight = _chain(Config(search={"query_max_model_calls": calls - 1}), _Factory(model))
+    assert (await tight.ainvoke(_follow_up())).answer == _ANSWER
+    streamed = [chunk async for chunk in tight.astream(_follow_up())]
     assert "".join(streamed).strip() == _ANSWER
 
 
@@ -575,3 +582,37 @@ def test_auto_refuses_naming_the_limit_and_its_value() -> None:
             )
     assert "limits.max_model_calls 2" in str(refused.value)
     assert (refused.value.limit, refused.value.value) == ("limits.max_model_calls", 2)
+
+
+def test_an_output_repair_never_takes_the_call_kept_for_the_answer() -> None:
+    # Regression (W1 review L4): the fan-out reserved the answer's call, but
+    # a reply that did not parse asked the output fixer, which took that
+    # call, and the answer was refused. A query's limits keep one call for
+    # the answer (UsageLimits.reserved_calls): a repair that would take it
+    # is not asked, and the reply fails to parse as an unrepaired one does.
+    from langchain_core.exceptions import OutputParserException
+
+    from unified_kg_rag.adapters.llm.chain_factory import create_json_output_parser
+
+    built: list[str] = []
+
+    class _Factory:
+        def get_model(self, model_id: str, **_: Any) -> Any:
+            built.append(model_id)
+            raise RuntimeError("the fixer was asked")
+
+    parser = create_json_output_parser(_Factory(), "fixer")  # type: ignore[arg-type]
+    limits = usage.UsageLimits(max_llm_calls=3, reserved_calls=1)
+    with usage.usage_scope(limits):
+        usage.start_llm_call("query", "m", estimated_input_tokens=1)
+        usage.start_llm_call("query", "m", estimated_input_tokens=1)
+        # One call left: the answer's.
+        with pytest.raises(OutputParserException):
+            parser.parse("no json here")
+        assert built == []
+    with usage.usage_scope(limits):
+        usage.start_llm_call("query", "m", estimated_input_tokens=1)
+        # Two left: the repair may take one.
+        with pytest.raises(Exception, match="OutputFixingParser"):
+            parser.parse("no json here")
+        assert built == ["fixer"]
