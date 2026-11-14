@@ -60,7 +60,9 @@ Ctrl-C.
 `max_model_calls` and `max_input_tokens`, each lowering the server's own
 query limit for that call (`search.query_timeout_seconds`,
 `search.query_max_model_calls`, `search.query_max_input_tokens`), never
-raising it. A call past one fails with `limit_exceeded`, whose message names
+raising it; `kg_describe_schema` reports the server's own as
+`query_limits`. The call's `deadline_seconds` covers its wait for a call
+slot too. A call past one fails with `limit_exceeded`, whose message names
 the limit, or is answered without the steps that did not fit, listed in
 `degraded` ([Query limits](./query.md#model-call-and-input-token-limits)).
 

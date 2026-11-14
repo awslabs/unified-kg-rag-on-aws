@@ -55,7 +55,8 @@ extra가 없으면 `run-mcp-server`는 extra 이름을 알려 주고 종료 코�
 `kg_search`와 `kg_answer`는 `limits`도 받습니다. `deadline_seconds`, `max_model_calls`,
 `max_input_tokens`는 그 호출에 한해 서버의 질의 한도(`search.query_timeout_seconds`,
 `search.query_max_model_calls`, `search.query_max_input_tokens`)를 낮추기만 하고 올리지는
-않습니다. 한도를 넘는 호출은 한도 이름이 들어간 메시지와 함께 `limit_exceeded`로 실패하거나,
+않습니다. 서버 자체의 한도는 `kg_describe_schema`가 `query_limits`로 알려 줍니다. 호출의
+`deadline_seconds`에는 호출 슬롯을 기다리는 시간도 들어갑니다. 한도를 넘는 호출은 한도 이름이 들어간 메시지와 함께 `limit_exceeded`로 실패하거나,
 들어가지 못한 단계를 빼고 답하며 그 단계를 `degraded`에 남깁니다
 ([질의 한도](./query.ko.md#모델-호출-수와-입력-토큰-한도)).
 

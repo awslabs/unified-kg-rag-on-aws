@@ -23,7 +23,7 @@ import time
 from collections.abc import Awaitable, Callable, Collection
 from typing import Any, Literal, TypeVar
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from structlog.contextvars import bound_contextvars, get_contextvars
 
 from unified_kg_rag.application.presentation.answer_view import (
@@ -352,6 +352,11 @@ class SchemaToolResult(BaseModel):
         description="The namespaces a call may name (the first is the default)"
     )
     limits: dict[str, int] = Field(description="The server's bounds on arguments")
+    query_limits: QueryLimits = Field(
+        description="The server's query limits (search.query_timeout_seconds, "
+        "search.query_max_model_calls, search.query_max_input_tokens): the "
+        "ceiling the limits argument of kg_search and kg_answer lowers"
+    )
 
 
 class _AbsorbedQueryError(GraphRAGException):
@@ -458,6 +463,18 @@ def _cite_entities(records: list[SupportingContent]) -> None:
     for record in records:
         if record.kind == SectionType.TEXT and record.chunk_id in citing:
             record.entities = citing[record.chunk_id]
+
+
+def _own_deadline(limits: Any) -> float | None:
+    """The ``deadline_seconds`` a caller's ``limits`` (a ``QueryLimits`` or
+    its mapping) ask for, or ``None``; limits that do not validate are
+    refused with the query input (``_rag_input``), not here."""
+    if limits is None:
+        return None
+    try:
+        return QueryLimits.model_validate(limits).deadline_seconds
+    except ValidationError:
+        return None
 
 
 class KnowledgeGraphTools:
@@ -621,6 +638,7 @@ class KnowledgeGraphTools:
         self,
         run: Callable[[], Awaitable[_R]],
         on_timeout: Callable[[QueryTimeoutError], None] | None = None,
+        limits: Any = None,
     ) -> _R:
         """``run`` in a call slot (``mcp.max_concurrent_calls``), the wait
         for the slot and the work under one deadline
@@ -632,8 +650,13 @@ class KnowledgeGraphTools:
         ``_BACKSTOP_GRACE_SECONDS`` later for work that does not watch the
         deadline (the graph tools, a store call past it): such a call ends
         by the deadline plus that grace. ``on_timeout`` gets the error of
-        either before it is raised (``kg_answer`` records it as a query)."""
-        seconds = self._deadline
+        either before it is raised (``kg_answer`` records it as a query).
+        A caller's own ``limits.deadline_seconds`` (``limits``), when sooner,
+        is that deadline: the slot wait counts against it too."""
+        seconds, setting = self._deadline, "search.query_timeout_seconds"
+        own = _own_deadline(limits)
+        if own is not None and (seconds is None or own < seconds):
+            seconds, setting = own, "limits.deadline_seconds"
         at = None if seconds is None else time.monotonic() + seconds
         try:
             async with asyncio.timeout(seconds) as scope:
@@ -652,8 +675,7 @@ class KnowledgeGraphTools:
             assert seconds is not None
             error = QueryTimeoutError(
                 f"The call did not finish within {seconds:g} s "
-                "(search.query_timeout_seconds, the wait for a call slot "
-                "included).",
+                f"({setting}, the wait for a call slot included).",
                 timeout_seconds=seconds,
             )
             if on_timeout is not None:
@@ -667,8 +689,10 @@ class KnowledgeGraphTools:
         run: Callable[[], Awaitable[_R]],
         namespace: str | None = None,
         on_timeout: Callable[[QueryTimeoutError], None] | None = None,
+        limits: Any = None,
     ) -> _R:
-        """Run one tool call: a slot, a ``kg_rag.mcp.tool`` span (the
+        """Run one tool call (``limits``: the caller's ``QueryLimits``, whose
+        deadline bounds the call from its start, ``_within_deadline``): a slot, a ``kg_rag.mcp.tool`` span (the
         arguments as ``input.value`` only under
         ``observability.capture_content``, redacted; ``kg_rag.namespace``
         when the call reads a served one, ``namespace`` or the server's) and
@@ -692,7 +716,7 @@ class KnowledgeGraphTools:
             observability.span("kg_rag.mcp.tool", attributes) as span,
         ):
             try:
-                result = await self._within_deadline(run, on_timeout)
+                result = await self._within_deadline(run, on_timeout, limits)
             except BaseException as e:
                 ids = observability.current_trace_ids()
                 tag_query_failure(
@@ -889,6 +913,7 @@ class KnowledgeGraphTools:
             {"query": query, "strategy": strategy, "filters": filters},
             run,
             namespace,
+            limits=limits,
         )
 
     async def answer(
@@ -1006,6 +1031,7 @@ class KnowledgeGraphTools:
             run,
             namespace,
             on_timeout,
+            limits=limits,
         )
 
     # -- the graph tools -------------------------------------------------
@@ -1216,6 +1242,7 @@ class KnowledgeGraphTools:
                     "max_neighbors": self.settings.max_neighbors,
                     "max_query_chars": self.settings.max_query_chars,
                 },
+                query_limits=self.chain.config.search.query_limits(),
             )
 
         return await self._call(
