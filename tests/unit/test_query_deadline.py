@@ -17,6 +17,7 @@ accepts connections and never answers.
 from __future__ import annotations
 
 import asyncio
+import re
 import socket
 import threading
 import time
@@ -240,6 +241,8 @@ async def test_a_callers_earlier_deadline_states_the_budget_the_query_had() -> N
             await asyncio.wait_for(chain.ainvoke(_query()), timeout=30)
     assert raised.value.timeout_seconds <= 0.3
     assert "the caller's deadline" in str(raised.value)
+    # The budget left, rounded to hundredths.
+    assert re.search(r"within 0(\.\d{1,2})? s", str(raised.value))
     assert "300" not in str(raised.value)
 
 
