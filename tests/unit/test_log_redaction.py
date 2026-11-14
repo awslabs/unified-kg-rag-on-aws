@@ -1040,6 +1040,48 @@ def test_an_error_digest_names_its_code_status_and_data_free_facts() -> None:
         assert "Quokkasecret" not in error_digest(error)
 
 
+def test_a_two_path_os_error_names_both_paths() -> None:
+    # A rename's error names its source and its target (``filename2``; the
+    # fourth argument is Windows' ``winerror``).
+    import errno
+
+    from unified_kg_rag.shared.utils import error_name
+
+    moved = OSError(
+        errno.EXDEV, "custom text Quokkasecret", "/in/a.json", None, "/out/b"
+    )
+    shown = error_name(moved)
+    assert f"[Errno {errno.EXDEV}]" in shown
+    assert "'/in/a.json' -> '/out/b'" in shown
+    assert "Quokkasecret" not in shown
+
+
+def test_the_locator_names_each_chained_error_by_its_code_and_status() -> None:
+    # A wrapped service error is located by what error_name says of it (its
+    # code and HTTP status), not by its type alone.
+    from botocore.exceptions import ClientError
+
+    from unified_kg_rag.shared.utils import error_locator, error_name
+
+    throttled = ClientError(
+        {
+            "Error": {"Code": "ThrottlingException", "Message": "Quokkasecret"},
+            "ResponseMetadata": {"HTTPStatusCode": 429},
+        },
+        "Converse",
+    )
+    try:
+        try:
+            raise throttled
+        except ClientError as e:
+            raise RuntimeError("Zebrapassword") from e
+    except RuntimeError as e:
+        shown = error_locator(e)
+    assert " <- " + error_name(throttled) + " at " in shown
+    assert "ThrottlingException" in shown and "HTTP 429" in shown
+    assert "Quokkasecret" not in shown and "Zebrapassword" not in shown
+
+
 def test_the_locator_follows_the_context_unless_it_was_suppressed() -> None:
     from unified_kg_rag.shared.utils import error_locator
 
