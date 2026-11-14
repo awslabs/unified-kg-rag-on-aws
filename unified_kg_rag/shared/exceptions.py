@@ -555,11 +555,14 @@ def named_failure_text(error_class: ErrorClass, name: str, shown: str) -> str:
 
 def result_error_text(error: BaseException) -> str:
     """:func:`named_failure_text` of ``error``, named by ``error_name`` (its
-    type, code and HTTP status): what a saved result records of an error."""
+    type, code and HTTP status): what a saved result records of an error.
+    One holding the package's own message (:func:`own_text`, which names
+    the error it wraps: ``caused_by``) is named by its type alone."""
     from .utils.common import error_name
 
+    name = type(error).__name__ if has_own_text(error) else error_name(error)
     return named_failure_text(
-        classify(error), error_name(error), shown_error_text(error, audience="operator")
+        classify(error), name, shown_error_text(error, audience="operator")
     )
 
 

@@ -192,7 +192,8 @@ failure by `result_error_text` (class and type). A store error the package
 wraps is built by `GraphRAGException.caused_by(context, cause)`: its own
 text (`own_text`) is the package's context (the operation, the URI) and the
 cause's `error_name`, so every surface and record shows what failed without
-the store's reply. A static check (`tests/unit/test_log_redaction.py`)
+the store's reply; `log_error` adds where the cause happened
+(`error_locator`), and a saved result names it once. A static check (`tests/unit/test_log_redaction.py`)
 follows an error from its `except` clause (and an alias of it, an
 `isinstance`-checked gathered outcome, `traceback.format_exc()`) into any
 logger's INFO+ call or a value kept for later.

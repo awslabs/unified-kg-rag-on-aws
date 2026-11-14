@@ -176,6 +176,15 @@ def test_the_graph_page_builds_one_provider_bundle_per_config(
         "failed", None, reason="config"
     )
 
+    def refused() -> Config:
+        from unified_kg_rag.shared import ConfigurationError
+
+        raise ConfigurationError("a setting is refused")
+
+    # A config that cannot be read is ``config``, even when it raised a
+    # ConfigurationError (which a read config's store would make ``setting``).
+    assert builder.current(refused).reason == "config"
+
     def unreadable(config: object, cache: Path, providers: Any) -> object:
         raise StoreConnectionError("graph store down")
 

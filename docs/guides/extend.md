@@ -406,6 +406,18 @@ it. A plugin that cannot be imported fails the run before any work with a
 `unified_kg_rag` only, and register at import time; the entry point must
 not do work beyond registering.
 
+A plugin's own log records follow the logging policy
+([SECURITY.md](../../SECURITY.md)) on the CLIs' handlers: a record of a
+stdlib logger outside the package (`logging.getLogger(__name__)`) at INFO
+and above keeps its logger, level, message template and its numbers and
+booleans, but every other argument becomes a digest (`len=5 sha=...`) and
+its traceback the error's type, digest and `file:line` frames. To log a
+readable id or name at INFO, log through structlog
+(`structlog.get_logger(__name__)`, which these handlers render as they
+render the package's own records); the plugin then keeps corpus text, model
+output and a provider's error text out of those records itself (DEBUG
+records keep everything).
+
 ### Custom backends (run without AWS)
 
 Every cross-service dependency is behind a port. Each port is a role in the

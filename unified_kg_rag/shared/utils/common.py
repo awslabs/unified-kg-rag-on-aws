@@ -15,6 +15,7 @@ from itertools import zip_longest
 from multiprocessing import cpu_count
 from pathlib import Path
 from typing import Any, TypeVar
+from urllib.error import HTTPError
 from urllib.parse import urlsplit, urlunsplit
 
 from .scripts import (
@@ -175,7 +176,10 @@ def safe_url(url: str) -> str:
 
 def http_status(error: BaseException) -> int | None:
     """The HTTP status an error carries as ``status_code`` (``openai``'s,
-    ``ollama.ResponseError``) or ``response.status_code`` (``httpx``'s)."""
+    ``ollama.ResponseError``), ``response.status_code`` (``httpx``'s) or,
+    for ``urllib``'s ``HTTPError``, ``code``."""
+    if isinstance(error, HTTPError):
+        return error.code if isinstance(error.code, int) else None
     status = getattr(error, "status_code", None)
     if status is None:
         status = getattr(getattr(error, "response", None), "status_code", None)
@@ -197,23 +201,47 @@ def error_code(error: BaseException) -> str:
     """The service's error code an error carries: a botocore
     ``ClientError``'s (``ThrottlingException``), the error type an
     OpenSearch response names (``index_not_found_exception``, from its
-    ``info``; its ``error`` alone may be the raw response body), an
-    ``openai`` error's ``code`` (``rate_limit_exceeded``); else the error's
-    type name."""
+    ``info``; its ``error`` alone may be the raw response body), the engine
+    error a Gremlin server's JSON status message names (Neptune's
+    ``ConcurrentModificationException``; the rest of it may quote the
+    query), an ``openai`` error's ``code`` (``rate_limit_exceeded``); else
+    the error's type name. Each only when it is an identifier
+    (:data:`_CODE`): a ``code`` may be free text (``SystemExit``'s)."""
     response = getattr(error, "response", None)
-    if isinstance(response, dict):
-        code = (response.get("Error") or {}).get("Code")
-        if code:
-            return str(code)
+    if isinstance(response, dict) and (
+        code := _identifier((response.get("Error") or {}).get("Code"))
+    ):
+        return code
+    if code := _status_message_code(getattr(error, "status_message", None)):
+        return code
     info = getattr(error, "info", None)
     if isinstance(info, dict) and isinstance(info.get("error"), dict):
-        kind = info["error"].get("type")
-        if isinstance(kind, str) and kind:
+        if kind := _identifier(info["error"].get("type")):
             return kind
-    code = getattr(error, "code", None)
-    if isinstance(code, str) and code:
+    if code := _identifier(getattr(error, "code", None)):
         return code
     return type(error).__name__
+
+
+# An error code: an identifier, never text (a message, a query) an error
+# carries where a code usually is.
+_CODE = re.compile(r"[A-Za-z0-9_.-]{1,64}")
+
+
+def _identifier(value: object) -> str | None:
+    """``value`` when it is an error code (:data:`_CODE`), else ``None``."""
+    return value if isinstance(value, str) and _CODE.fullmatch(value) else None
+
+
+def _status_message_code(message: object) -> str | None:
+    """The ``code`` a JSON status message (a Gremlin server's) names."""
+    if not isinstance(message, str) or not message.lstrip().startswith("{"):
+        return None
+    try:
+        body = json.loads(message)
+    except ValueError:
+        return None
+    return _identifier(body.get("code")) if isinstance(body, dict) else None
 
 
 def _data_free_facts(error: BaseException) -> str:

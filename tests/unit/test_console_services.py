@@ -132,6 +132,8 @@ async def test_an_unexpected_failure_of_a_job_shows_no_text(
     assert shown["status"] == "failed"
     # Named by its type, its text masked (conventions.shown_text).
     assert shown["error"] == f"RuntimeError: {INTERNAL_ERROR_MESSAGE}"
+    # The page names the masked failure by its type, in its own language.
+    assert shown["masked_error"] == "RuntimeError"
     tail = "\n".join(manager.log_tail(job))
     assert "RuntimeError" in tail  # its type and where it happened
     for text in (shown["error"], tail, job.log_path.read_text()):
@@ -175,6 +177,7 @@ async def test_a_store_error_ending_an_evaluation_job_shows_no_store_text(
     shown = manager.get(job.id)
     assert shown["status"] == "failed"
     assert shown["error"] == f"AWSServiceError: {INTERNAL_ERROR_MESSAGE}"
+    assert shown["masked_error"] == "AWSServiceError"
     tail = "\n".join(manager.log_tail(job))
     assert "AWSServiceError" in tail
     for text in (shown["error"], tail, job.log_path.read_text()):

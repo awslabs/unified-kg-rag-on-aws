@@ -340,6 +340,36 @@ def test_a_saved_result_names_a_failure_by_class_and_type() -> None:
     assert result_error_text(own).endswith(": no label for assertion(s) [2]")
 
 
+def test_a_refused_data_file_names_the_key_it_missed() -> None:
+    from unified_kg_rag.shared.utils.validation import refused_data_reason
+
+    assert refused_data_reason(KeyError("question")) == "missing key 'question'"
+    assert refused_data_reason(KeyError()) == "KeyError"
+
+
+def test_a_saved_result_names_a_wrapped_failures_cause_once() -> None:
+    from botocore.exceptions import ClientError
+
+    cause = ClientError(
+        {
+            "Error": {"Code": "ThrottlingException", "Message": MARKER},
+            "ResponseMetadata": {"HTTPStatusCode": 429},
+        },
+        "Read",
+    )
+    try:
+        raise AWSServiceError.caused_by(
+            "Neptune read_entities failed", cause
+        ) from cause
+    except AWSServiceError as error:
+        shown = result_error_text(error)
+    _assert_no_marker(shown)
+    assert shown == (
+        "[failure] AWSServiceError: Neptune read_entities failed: "
+        "ClientError ThrottlingException, HTTP 429"
+    )
+
+
 def test_a_failed_export_names_its_folder_at_warning(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:

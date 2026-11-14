@@ -121,7 +121,9 @@ HTTP 429`), for an OS or decode error its errno and path or its position
 its message and where it happened (the type chain and `file:line` frames),
 never the message; its text and traceback only at `DEBUG`. An unreachable
 store or model, the deadline, a refusal and a message the package composes
-itself (a stage failure named by its cause) are logged with their text. A
+itself (a stage failure named by its cause) are logged with their text; one
+that wraps an unexpected error (the operation that failed, named with the
+error it caught) also says where that error happened. A
 library's own records at `INFO` and above (ragas's failed judge job,
 `langchain_aws`'s failed call) keep their logger, level and message
 template, their arguments and traceback replaced by digests (uvicorn's

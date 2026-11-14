@@ -21,7 +21,9 @@ path or a decode position; a digest of its message; and where it happened
 (the type chain and `file:line` frames). Its text and traceback are logged
 only at `DEBUG`. An expected outcome with its own message (an unreachable
 store or model, the deadline, a refusal) and a message the package composes
-itself (a stage failure named by its cause) are logged with their text. A
+itself (a stage failure named by its cause) are logged with their text; one
+that wraps an unexpected error (the operation that failed, named with the
+error it caught) also says where that error happened, as above. A
 library's own records at `INFO` and above (on the CLIs' handlers) keep their
 logger, level and message template; their arguments and traceback are
 replaced by digests, and a library's Python warning is logged by its

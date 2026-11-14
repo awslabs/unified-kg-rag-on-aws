@@ -2375,17 +2375,19 @@ Deployment (CDK).
   failed judge job, `langchain_aws`'s failed call) keep their logger, level and message template, their arguments
   and traceback replaced by digests. An unexpected failure's text is masked, as on the console's pages, in the CLIs'
   output and JSON `error` (it reached the Ingest and Evaluate pages), in a stage's recorded `error_message` (the
-  run's metadata and S3 checkpoint) and in a failed answer's `run-eval` result, which names its class and type;
-  each answer's log lines carry its dataset `query_id`.
+  run's metadata and S3 checkpoint), in a failed answer's `run-eval` result, which names its class and type, and in a
+  degraded answer's `RAGOutput.search_metadata["error"]` (`processing.ignore_errors`); each answer's log lines carry
+  its dataset `query_id`.
   The text is closed where it enters: a store write records an error by its name and digest (`IndexingStats.add_error`
-  takes the exception), a store error the package wraps shows its operation or URI and its cause's name (`caused_by`),
-  and an evaluator that fails to start or a result that cannot be processed is named in the saved results as an answer's
-  failure is. The guard also follows an alias, a gathered outcome, `traceback.format_exc()`, any logger, `bind` and an
-  error's text kept for later. A library's record is digested once for every handler, a non-string message and a Python
-  warning (by category and location) too, uvicorn's access path drops its query string and the console's uvicorn logs
-  through the same filter; an error is named by an OpenSearch or `openai` code, a Gremlin status and a package error's
-  cause. SECURITY.md says what stays outside the rule (file paths, a library's own stderr) and what result output
-  holds.
+  takes the exception), a store error the package wraps shows its operation or URI and its cause's name (`caused_by`;
+  its log line also says where the cause happened, a saved result names the cause once), and an evaluator that fails to
+  start or a result that cannot be processed is named in the saved results as an answer's failure is. The guard also
+  follows an alias, a gathered outcome, `traceback.format_exc()`, any logger, `bind` and an error's text kept for later.
+  A library's record is digested once for every handler, a non-string message and a Python warning (by category and
+  location) too, uvicorn's access path drops its query string and the console's uvicorn logs through the same filter; an
+  error is named by an OpenSearch, `openai` or Neptune engine code, an HTTP (urllib's too) or Gremlin status and a
+  package error's cause. SECURITY.md says what stays outside the rule (file paths, a library's own stderr) and what
+  result output holds.
 - Spans carry an error's type and a digest of its message (`kg_rag.error_digest`), not its text or stack, unless
   `observability.capture_content` (then through `redact_patterns`): a judge's or parser's error quoting corpus text
   reached Langfuse or Phoenix with capture off. A model server that cannot be reached is named by its URL without

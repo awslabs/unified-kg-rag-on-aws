@@ -1040,6 +1040,78 @@ def test_an_error_digest_names_its_code_status_and_data_free_facts() -> None:
         assert "Quokkasecret" not in error_digest(error)
 
 
+def test_an_error_name_reads_a_gremlin_engine_code_and_a_urllib_status() -> None:
+    """Neptune names its engine error (``ConcurrentModificationException``)
+    inside a JSON status message whose detail may quote the query; urllib's
+    ``HTTPError`` holds its status in ``code``."""
+    import io
+    import json as json_module
+    import urllib.error
+
+    from gremlin_python.driver.protocol import GremlinServerError
+
+    from unified_kg_rag.shared.utils import error_digest, error_name
+
+    def gremlin(message: str) -> GremlinServerError:
+        return GremlinServerError({"code": 500, "message": message, "attributes": {}})
+
+    conflict = gremlin(
+        json_module.dumps(
+            {
+                "code": "ConcurrentModificationException",
+                "detailedMessage": "Quokkasecret vertex",
+                "requestId": "r-1",
+            }
+        )
+    )
+    assert error_name(conflict) == (
+        "GremlinServerError ConcurrentModificationException, Gremlin status 500"
+    )
+    # Not an identifier, not JSON: the type and status alone.
+    for message in ('{"code": "Quokkasecret here"}', "Quokkasecret", "{broken"):
+        assert error_name(gremlin(message)) == "GremlinServerError, Gremlin status 500"
+    unavailable = urllib.error.HTTPError(
+        "http://model.local/api", 503, "Quokkasecret", {}, io.BytesIO(b"")  # type: ignore[arg-type]
+    )
+    assert error_name(unavailable) == "HTTPError, HTTP 503"
+    for error in (conflict, unavailable):
+        assert "Quokkasecret" not in error_digest(error)
+
+
+def test_an_error_name_takes_a_code_only_when_it_is_an_identifier() -> None:
+    """rv31 quality #4: a ``code`` attribute may be free text (``SystemExit``'s
+    is its argument), which reached ``error_name`` and INFO+ lines."""
+    from unified_kg_rag.shared.utils import error_name
+
+    assert error_name(SystemExit("Vendor ships 40 units to Buyer")) == "SystemExit"
+
+    class RateLimited(Exception):
+        code = "rate_limit_exceeded"
+
+    assert error_name(RateLimited("Quokkasecret")) == (
+        "RateLimited rate_limit_exceeded"
+    )
+
+
+def test_a_package_error_with_a_code_of_its_own_names_no_cause() -> None:
+    """``error_name`` names the cause of a package error that says nothing
+    of its own; one with its own code is named by it alone."""
+    from unified_kg_rag.shared import GraphRAGException
+    from unified_kg_rag.shared.utils import error_name
+
+    class Coded(GraphRAGException):
+        __module__ = "unified_kg_rag.shared.exceptions"
+        code = "Throttled"
+
+    try:
+        try:
+            raise KeyError("Quokkasecret")
+        except KeyError as cause:
+            raise Coded("wrapped") from cause
+    except Coded as e:
+        assert error_name(e) == "Coded Throttled"
+
+
 def test_a_two_path_os_error_names_both_paths() -> None:
     # A rename's error names its source and its target (``filename2``; the
     # fourth argument is Windows' ``winerror``).
@@ -1177,5 +1249,39 @@ def test_a_partly_own_message_shows_and_logs_its_own_part_only(
         log_error(get_logger("probe"), logging.ERROR, "Stage failed: %s", error=error)
     (shown,) = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
     assert shown == f"Stage failed: [failure] {own}"
+    debug = [r.getMessage() for r in caplog.records if r.levelno == logging.DEBUG]
+    assert any("Quokkasecret" in line for line in debug)
+
+
+def test_a_wrapped_failure_names_its_causes_frame_at_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Regression (rv31): a ``caused_by`` wrap logged only ``context:
+    CauseType`` at INFO and above, so a bug in a wrapped call (a ``KeyError``
+    in a chunker or a Neptune read) was locatable only by rerunning at DEBUG.
+    The line names the type chain and each one's frames, no message text."""
+    from unified_kg_rag.shared import DataProcessingError, get_logger
+    from unified_kg_rag.shared.logging import log_error
+
+    def lookup() -> None:
+        raise KeyError("Quokkasecret payroll")
+
+    def wrap() -> None:
+        try:
+            lookup()
+        except KeyError as cause:
+            raise DataProcessingError.caused_by("Failed to chunk", cause) from cause
+
+    try:
+        wrap()
+    except DataProcessingError as e:
+        error = e
+    with caplog.at_level("DEBUG"):
+        log_error(get_logger("probe"), logging.ERROR, "Stage failed: %s", error=error)
+    (shown,) = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
+    assert shown.startswith("Stage failed: [failure] Failed to chunk: KeyError; ")
+    assert " <- KeyError at " in shown
+    assert "test_log_redaction.py:" in shown and "lookup" in shown
+    assert "Quokkasecret" not in shown and "payroll" not in shown
     debug = [r.getMessage() for r in caplog.records if r.levelno == logging.DEBUG]
     assert any("Quokkasecret" in line for line in debug)
