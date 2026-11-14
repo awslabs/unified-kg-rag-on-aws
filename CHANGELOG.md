@@ -1939,8 +1939,8 @@ From a `main` checkout (formats and keys no release had):
   `unified_kg_rag.domain.ingestion.community_clustering`), not the pipeline's, chain's or indexing manager's; filter
   on the subpackage prefix (`unified_kg_rag.application.ingestion`, ...) (#586, #587, #590).
 - Dependencies: pydantic 2.14, langchain-core 1.7.3, `langchain-aws>=1.8.1`, langchain-openai 1.7, langsmith 0.14,
-  datasets 5.1, tiktoken 0.14, tenacity 9.2, boto3 1.43.122, soupsieve 4.1 on every supported Python for
-  CVE-2026-126189 to CVE-2026-126193; aws-cdk-lib 2.275 in the CDK lock (#241, #251, #265, #438, #465, #489).
+  datasets 5.1, tiktoken 0.14, tenacity 9.2, boto3 1.43.122, soupsieve 4.1 (see Security); aws-cdk-lib 2.275 in the
+  CDK lock (#241, #251, #265, #438, #465, #489).
 - Documentation restructured around a hub ([docs/index.md](docs/index.md)) with tutorials, concepts, guides and
   references, Korean twins of the main pages and checked links; the 0.2.3 user guide is replaced by those pages
   (#337-#342, #351, #469, #542-#557, #582, #583).
@@ -2344,8 +2344,8 @@ Deployment (CDK).
   `unstructured`'s cap; locked at 4.2.5), Pillow 13.0.0 (GHSA-p4wg-p73j-c528 and others), `unstructured>=0.24.1`
   (GHSA-4mvj-m6j5-pmf7, GHSA-8mgp-746c-j5xp, the stored XSS GHSA-v5mq-3xhg-98m9), `langchain-openai>=1.1.14`
   (GHSA-r7w7-9xr2-qq2r), `langchain>=1.3.9` in `eval`, and pyarrow 26.0.1 in `eval` (CVE-2026-92287; no Parquet is
-  read, so it was not reachable); the lock, not a floor, takes certifi 2026.10.23 (GHSA-6q48-6c7w-9gw2) (#307, #426,
-  #430, #455, #520, #580).
+  read, so it was not reachable); the lock, not a floor, takes certifi 2026.10.23 (GHSA-6q48-6c7w-9gw2) and, on every
+  supported Python, soupsieve 4.1 (CVE-2026-126189 to CVE-2026-126193) (#307, #426, #430, #455, #520, #580, #723, #746).
 - Document attribute filters no longer leak excluded documents: they apply to relationships, claims, community
   reports (which carried the first entity's attributes) and graph expansion (which walked every edge), and a removed
   document's values stop matching what outlives it. The graph retrievers check filters as OpenSearch does (an
