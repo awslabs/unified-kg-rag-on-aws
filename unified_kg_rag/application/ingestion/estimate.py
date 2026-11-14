@@ -20,6 +20,7 @@ meter counts a call's start at. No store or model is reached.
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from datetime import datetime
 from pathlib import Path
 
@@ -91,9 +92,16 @@ def _parse(config: Config, source: Path) -> list[Document]:
     return documents
 
 
-def estimate_ingestion(config: Config, source_directory: str | Path) -> RunEstimate:
+def estimate_ingestion(
+    config: Config,
+    source_directory: str | Path,
+    *,
+    stages: Collection[PipelineStageType] | None = None,
+) -> RunEstimate:
     """The estimate of a full build of ``source_directory`` under
-    ``config`` (see the module docstring)."""
+    ``config`` (see the module docstring), of ``stages`` only when given
+    (``run-ingestion --enabled-stages``): of them, those ``config``
+    selects."""
     source = Path(source_directory).resolve()
     documents = _parse(config, source)
     chunking = config.processing.chunking
@@ -105,7 +113,8 @@ def estimate_ingestion(config: Config, source_directory: str | Path) -> RunEstim
     )
     units = chunker.chunk_documents(documents)
     unit_tokens = [estimate_token_count(unit.text) for unit in units]
-    stages = selected_stages(config)
+    selected = selected_stages(config)
+    stages = [s for s in selected if s in stages] if stages is not None else selected
     processing = config.processing
     rows: list[StageCalls] = []
 

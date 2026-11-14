@@ -2921,3 +2921,73 @@ def test_run_ingestion_estimate_prints_the_estimate_and_runs_nothing(
     assert set(estimate["not_estimated"]) == {"graph_resolution", "community_detection"}
     # An estimate writes nothing.
     assert not cache.exists()
+
+
+def test_run_ingestion_estimate_reads_enabled_stages_and_notes_only_its_stages(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Regression (W1 review L12, D11): --estimate priced every configured
+    # stage whatever --enabled-stages ran, and its gleaning footnote showed
+    # with gleaning off.
+    monkeypatch.setattr(console, "stderr", console.stderr)
+    config = Config()
+    config.processing.chunking.chunker_type = "simple"  # type: ignore[assignment]
+    monkeypatch.setattr(run_ingestion_pipeline, "load_cli_config", lambda _args: config)
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "contract.txt").write_text("Vendor supplies widgets to Buyer. " * 20)
+    base = ["run-ingestion", "--source-directory", str(src), "--estimate"]
+    stages = "DOCUMENT_PARSING,DOCUMENT_LOADING,TEXT_CHUNKING,GRAPH_EXTRACTION"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [*base, "--enabled-stages", stages, "--output-format", "json"],
+    )
+    run_ingestion_pipeline.main()
+    estimate = json.loads(capsys.readouterr().out)
+    assert [s["stage"] for s in estimate["stages"]] == ["graph_extraction"]
+    monkeypatch.setattr(sys, "argv", [*base, "--enabled-stages", stages])
+    run_ingestion_pipeline.main()
+    printed = capsys.readouterr()
+    assert "gleaning" not in (printed.out + printed.err).lower()
+
+
+def test_a_budget_stop_prints_the_pipeline_id_to_resume_with(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Regression (W1 review L11): the text said "re-run with the same
+    # pipeline id" without naming it (a generated one, without
+    # --pipeline-id).
+    from types import SimpleNamespace
+
+    from unified_kg_rag.shared.exceptions import RunBudgetExhausted
+
+    monkeypatch.setattr(console, "stderr", console.stderr)
+    monkeypatch.setattr(
+        run_ingestion_pipeline, "load_cli_config", lambda _args: Config()
+    )
+
+    def _run(self: run_ingestion_pipeline.IngestionPipelineRunner) -> None:
+        self.pipeline = SimpleNamespace(  # type: ignore[assignment]
+            pipeline_id="run-generated-8", next_run_writes_from=0.0
+        )
+        raise RunBudgetExhausted(
+            "the run reached processing.max_run_model_calls 5",
+            limit="processing.max_run_model_calls",
+            value=5,
+        )
+
+    monkeypatch.setattr(run_ingestion_pipeline.IngestionPipelineRunner, "run", _run)
+    src = tmp_path / "src"
+    src.mkdir()
+    monkeypatch.setattr(sys, "argv", ["run-ingestion", "--source-directory", str(src)])
+    with pytest.raises(SystemExit):
+        run_ingestion_pipeline.main()
+    printed = capsys.readouterr()
+    assert "--pipeline-id run-generated-8" in " ".join(
+        (printed.out + printed.err).split()
+    )

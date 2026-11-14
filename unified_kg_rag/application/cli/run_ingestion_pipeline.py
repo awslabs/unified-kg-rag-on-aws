@@ -368,7 +368,8 @@ class CommandLineInterface:
             action="store_true",
             help="Parse and chunk the corpus (no model call, no store) and "
             "print the model calls, input and output tokens and USD a full "
-            "build of it would cost per stage, priced by models.prices; the "
+            "build of it would cost per stage (of --enabled-stages, when "
+            "given), priced by models.prices; the "
             "stages whose calls depend on the extracted graph (description "
             "summaries, community reports, the summary tree) are named, not "
             "estimated. Nothing is run",
@@ -956,7 +957,20 @@ class IngestionPipelineRunner:
         (``application.ingestion.estimate``); nothing is run."""
         from unified_kg_rag.application.ingestion.estimate import estimate_ingestion
 
-        estimate = estimate_ingestion(self.config, self.args.source_directory)
+        # The stages --enabled-stages runs (validated as a run's), else every
+        # stage the config selects.
+        enabled = (
+            [
+                stage
+                for stage, on in self._create_pipeline_config().stages_enabled.items()
+                if on
+            ]
+            if self.args.enabled_stages
+            else None
+        )
+        estimate = estimate_ingestion(
+            self.config, self.args.source_directory, stages=enabled
+        )
         self.reported = True
         if self.json_output:
             print_json(estimate.model_dump(mode="json"))
@@ -996,11 +1010,19 @@ class IngestionPipelineRunner:
             f"({estimate.text_unit_tokens:,} tokens)"
         )
         console.print(table)
+        gleaning = any(
+            stage.stage == PipelineStageType.GLEANING.value for stage in estimate.stages
+        )
         console.print(
             f"[dim]Output tokens at {estimate.output_tokens_per_input_token:.2f} x "
-            "input, the ratio of the measured benchmark build; gleaning counts "
-            "max_rounds (a round re-sends only the units the last one added "
-            "to).[/dim]"
+            "input, the ratio of the measured benchmark build"
+            + (
+                "; gleaning counts max_rounds (a round re-sends only the units "
+                "the last one added to)"
+                if gleaning
+                else ""
+            )
+            + ".[/dim]"
         )
         if estimate.unpriced_models:
             console.print(
@@ -1182,6 +1204,14 @@ def _next_run_wait(runner: IngestionPipelineRunner | None) -> str:
     )
 
 
+def _resume_hint(runner: IngestionPipelineRunner | None) -> str:
+    """`` Resume with --pipeline-id <id>.`` once the run's id is known."""
+    pipeline_id = runner.pipeline.pipeline_id if runner and runner.pipeline else None
+    return (
+        f" Resume with --pipeline-id {markup_safe(pipeline_id)}." if pipeline_id else ""
+    )
+
+
 def _print_interrupted(runner: IngestionPipelineRunner | None, exit_code: int) -> None:
     """The JSON status of a stopped run, with the pipeline id to resume with
     and, when the next run must wait, from when it may write."""
@@ -1220,7 +1250,7 @@ def main() -> None:
         # responses it got are kept, so a re-run resumes it.
         console.print(
             f"\n[yellow]Pipeline stopped at its budget: {markup_safe(e)}."
-            f"{_next_run_wait(runner)}[/yellow]"
+            f"{_resume_hint(runner)}{_next_run_wait(runner)}[/yellow]"
         )
         _print_failed(runner, EXIT_FAILURE, e)
         sys.exit(EXIT_FAILURE)
