@@ -5,6 +5,7 @@ neighbourhood-edge routing, over scripted stores (docs/design.md §6.4)."""
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import logging
 import threading
@@ -13,6 +14,11 @@ from typing import Any
 import pytest
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401
+from tests.fixtures.saturated_executor import (
+    CPU_THREAD_PREFIX,
+    ThreadSignal,
+    saturated_default_executor,
+)
 from unified_kg_rag.adapters.retrieval import ppr_ranking
 from unified_kg_rag.adapters.retrieval.ppr_ranking import (
     cites_more_than,
@@ -578,9 +584,28 @@ async def test_the_lineages_are_read_off_the_event_loop(
             return _read(node)
 
         monkeypatch.setattr(ppr_ranking, name, recording)
-    result = await strategy.asearch(SearchQuery(query="q", entity_focus=["Ann"]))
+    walks: list[str] = []
+    walked = ThreadSignal()
+    rank_passages = ppr_ranking.PassageGraph.rank_passages
+
+    def ranking(self: Any, *args: Any, **kwargs: Any) -> Any:
+        ranked = rank_passages(self, *args, **kwargs)
+        walks.append(threading.current_thread().name)
+        walked.set()
+        return ranked
+
+    monkeypatch.setattr(ppr_ranking.PassageGraph, "rank_passages", ranking)
+    # The walk runs on the CPU pool while every default-executor thread is
+    # in a blocking call (``asyncio.to_thread`` would queue it behind them).
+    async with saturated_default_executor():
+        search = asyncio.ensure_future(
+            strategy.asearch(SearchQuery(query="q", entity_focus=["Ann"]))
+        )
+        await walked.wait()
+    result = await asyncio.wait_for(search, 10)
     assert result.metadata["ppr"]["linked_entities"]
     assert threads and loop_thread not in threads
+    assert walks and all(name.startswith(CPU_THREAD_PREFIX) for name in walks)
 
 
 # --- neighbourhood edges ------------------------------------------------------

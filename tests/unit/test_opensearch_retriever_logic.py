@@ -18,6 +18,10 @@ from typing import Any
 
 import pytest
 
+from tests.fixtures.saturated_executor import (
+    CPU_THREAD_PREFIX,
+    saturated_default_executor,
+)
 from unified_kg_rag.adapters.retrieval.base import entity_content, query_scope
 from unified_kg_rag.adapters.retrievers.opensearch_retriever import OpenSearchRetriever
 from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
@@ -739,21 +743,28 @@ async def test_hits_are_parsed_off_the_event_loop(
     )
     mocker.patch.object(OpenSearchRetriever, "_check_embedding_settings")
     retriever._unit_kind_mapped.add(retriever._get_name(prefix, None))
-    loop_thread = threading.get_ident()
-    threads: list[int] = []
+    threads: list[str] = []
     parse = OpenSearchRetriever._parse_hit
 
     def recording(self: OpenSearchRetriever, hit: dict[str, Any]) -> Any:
-        threads.append(threading.get_ident())
+        threads.append(threading.current_thread().name)
         return parse(self, hit)
 
     mocker.patch.object(OpenSearchRetriever, "_parse_hit", recording)
-    results = await retriever.aretrieve(
-        SearchQuery(
-            query="x", top_k=2, index_prefixes=[prefix], search_type=search_type
+    # The parse (and the hybrid fusion) runs on the CPU pool while every
+    # default-executor thread is in a blocking call: ``asyncio.to_thread``
+    # would queue it behind them and time out here.
+    async with saturated_default_executor():
+        results = await asyncio.wait_for(
+            retriever.aretrieve(
+                SearchQuery(
+                    query="x", top_k=2, index_prefixes=[prefix], search_type=search_type
+                )
+            ),
+            5,
         )
-    )
-    assert results and threads and loop_thread not in threads
+    assert results and threads
+    assert all(name.startswith(CPU_THREAD_PREFIX) for name in threads)
 
 
 async def test_hybrid_ranking_does_not_depend_on_the_hits_asked_for(
