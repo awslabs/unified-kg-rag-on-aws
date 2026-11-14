@@ -148,14 +148,14 @@ run-ingestion --source-directory ./source --config-path config.yaml --estimate
   알리고 추정하지 않습니다. 벤치마크 빌드에서 커뮤니티 보고서는 모델 비용의 26%였습니다.
 
 `processing.max_run_model_calls`와 `processing.max_run_usd`(기본값 꺼짐)는 실행 하나가 쓸 수
-있는 양을 제한합니다. 한도를 넘게 될 모델 호출은 보내지 않고, 실행은 SIGTERM으로 중지할 때처럼
-멈춥니다(`RunBudgetExhausted`. `run-ingestion`은 JSON 상태에 pipeline id와 `error_class`
+있는 양을 제한합니다. 한도를 넘게 될 모델 호출은 보내지 않고, 실행은
+이미 보낸 호출의 응답을 받은 뒤 멈춥니다(`RunBudgetExhausted`. `run-ingestion`은 JSON 상태에 pipeline id와 `error_class`
 `limit_exceeded`를 담아 `1`로 종료하고, 콘솔의 수집 페이지는 이어서 실행하도록 제안합니다).
 끝난 단계는 체크포인트로 남고 받은 응답은 [LLM 응답 캐시](#llm-응답-캐시)에 남습니다. 같은
 pipeline id로 다시 실행하면 멈춘 단계부터 이어서 아직 답을 받지 못한 호출만 비용을 냅니다.
-예산은 실행마다 새로 적용되고, 캐시에서 받은 응답은 호출로 세지 않습니다. `max_run_usd`는
+예산은 실행마다 새로 적용되고, 캐시에서 받은 응답은 호출로 세지 않고, 조회하는 동안에도 예산을 차지하지 않습니다. `max_run_usd`는
 지금까지의 호출을 보고된 토큰으로, 진행 중인 호출을 추정 입력으로 계산하므로 진행 중인 호출의
-출력만큼 한도를 넘어 끝날 수 있습니다. 가격이 없는 모델은 첫 호출에서 그 모델 이름과 함께
+출력만큼 한도를 넘어 끝날 수 있습니다(멈출 때 진행 중인 호출을 기다립니다). 가격이 없는 모델은 첫 호출에서 그 모델 이름과 함께
 실행을 멈춥니다. 임베딩 요청은 어느 한도에도 들어가지 않습니다.
 
 ## 대규모, 이질적인 코퍼스

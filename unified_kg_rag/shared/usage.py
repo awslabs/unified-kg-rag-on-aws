@@ -76,6 +76,7 @@ __all__ = [
     "Remaining",
     "UsageLimits",
     "UsageMeter",
+    "cache_probed",
     "calls_that_fit",
     "current_meter",
     "merge_usage",
@@ -265,6 +266,13 @@ class UsageMeter:
 
 _CURRENT: ContextVar[UsageMeter | None] = ContextVar("llm_usage_meter", default=None)
 
+# The calls started here that a response cache is still to look up
+# (``start_llm_call(probes_cache=True)``), oldest first: a new list each time
+# one starts, so the threads and tasks that copied this context keep their own.
+_PROBING: ContextVar[list[LLMCall] | None] = ContextVar(
+    "llm_usage_probing", default=None
+)
+
 
 @contextmanager
 def usage_scope(limits: UsageLimits | None = None) -> Iterator[UsageMeter]:
@@ -378,14 +386,31 @@ class LLMCall:
     """
 
     def __init__(
-        self, meter: UsageMeter | None, role: str, model: str, estimate: int
+        self,
+        meter: UsageMeter | None,
+        role: str,
+        model: str,
+        estimate: int,
+        *,
+        probes_cache: bool = False,
     ) -> None:
         self._meter = meter
         self._role = role
         self._model = model
         self._estimate = estimate
         self._settled = False
-        _admit(meter, role, model, self._pending())
+        self._admitted = False
+        if probes_cache:
+            # Counted (and checked) once the cache missed (cache_probed): a
+            # hit is no call and must not hold a limit's room while in
+            # flight.
+            _PROBING.set([*(_PROBING.get() or ()), self])
+        else:
+            self._admit()
+
+    def _admit(self) -> None:
+        _admit(self._meter, self._role, self._model, self._pending())
+        self._admitted = True
 
     @property
     def estimated_input_tokens(self) -> int:
@@ -400,7 +425,12 @@ class LLMCall:
             if self._settled:
                 return
             self._settled = True
-        pending = self._pending()
+        probing = _PROBING.get()
+        if probing and self in probing:
+            probing.remove(self)
+        # A call the cache was still to look up was never counted: its
+        # settle adds what it is (a hit, or a call no lookup preceded).
+        pending = self._pending() if self._admitted else _Counts()
         delta = _Counts(
             **{
                 name: getattr(counts, name) - getattr(pending, name)
@@ -456,16 +486,50 @@ class LLMCall:
         self._settle(_Counts(failed_calls=1, request_retries=request_retries))
 
 
-def start_llm_call(role: str, model: str, *, estimated_input_tokens: int) -> LLMCall:
+def start_llm_call(
+    role: str, model: str, *, estimated_input_tokens: int, probes_cache: bool = False
+) -> LLMCall:
     """Count a model call that is starting, in the open scopes (see
-    :class:`LLMCall`).
+    :class:`LLMCall`). ``probes_cache``: a response cache looks the call up
+    before its request is sent (the ingestion response cache), so it is
+    counted and checked against the limits only once the cache missed
+    (:func:`cache_probed`); a hit is no call.
 
     Raises:
         BaseException: What a scope's :class:`UsageLimits` raise for a call
             past them (``UsageLimitExceededError`` by default); nothing is
             counted then.
     """
-    return LLMCall(_CURRENT.get(), role, model, estimated_input_tokens)
+    return LLMCall(
+        _CURRENT.get(),
+        role,
+        model,
+        estimated_input_tokens,
+        probes_cache=probes_cache,
+    )
+
+
+def cache_probed(*, hit: bool) -> None:
+    """A response cache looked up the oldest call started here with
+    ``probes_cache``: a miss counts it now, checked against the open
+    scopes' limits, before its request is sent; a hit leaves it to settle
+    as one (:meth:`LLMCall.served_from_cache`).
+
+    Raises:
+        BaseException: The limits' refusal of a missed call, which is then
+            counted nowhere.
+    """
+    probing = _PROBING.get()
+    if not probing:
+        return
+    call = probing.pop(0)
+    if hit:
+        return
+    try:
+        call._admit()
+    except BaseException:
+        call._settled = True
+        raise
 
 
 def record_llm_call(

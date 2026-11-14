@@ -171,17 +171,18 @@ run-ingestion --source-directory ./source --config-path config.yaml --estimate
 
 `processing.max_run_model_calls` and `processing.max_run_usd` (off by
 default) cap what one run may spend. The model call that would pass one is
-not sent: the run stops as a SIGTERM stops it (`RunBudgetExhausted`;
+not sent: the run stops, once the calls already sent have answered (`RunBudgetExhausted`;
 `run-ingestion` exits `1` with the pipeline id and `error_class`
 `limit_exceeded` in its JSON status, and the console's Ingest page offers to
 resume it), its
 finished stages checkpointed and its responses in the
 [LLM response cache](#llm-response-cache). A re-run with the same pipeline id
 resumes at the stage it stopped in and pays only for the calls not yet
-answered; each run gets the budget anew, and a cached response is no call.
+answered; each run gets the budget anew, and a cached response is no call
+(nor holds the budget while it is looked up).
 `max_run_usd` prices the calls so far at the tokens they reported and those
-in flight at their estimated input, so a run can end past it by the output
-of the calls in flight; a model without a price stops the run at its first
+in flight at their estimated input, and the stop waits for the calls in
+flight, so a run can end past it by their output; a model without a price stops the run at its first
 call, naming it. Embedding requests count in neither.
 
 ## Large and heterogeneous corpora

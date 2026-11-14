@@ -44,9 +44,14 @@ def is_stop(exc_type: type[BaseException] | None) -> bool:
     one ending that must not wait for work in flight. Any other
     ``BaseException`` (a closed generator, a test's simulated death) is
     treated as an error: in production a run dies by being killed, without
-    an exception."""
-    return exc_type is not None and issubclass(
-        exc_type, (KeyboardInterrupt, SystemExit)
+    an exception. A stop that lets the work it admitted finish
+    (``waits_for_work_in_flight``: an ingestion run stopped at its budget,
+    whose calls in flight are paid for) is not one: it waits as an error
+    does, so their answers are kept."""
+    return (
+        exc_type is not None
+        and issubclass(exc_type, (KeyboardInterrupt, SystemExit))
+        and not getattr(exc_type, "waits_for_work_in_flight", False)
     )
 
 

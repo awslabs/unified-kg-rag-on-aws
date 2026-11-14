@@ -416,3 +416,31 @@ async def test_iterative_stops_its_rounds_at_the_querys_limits() -> None:
         result = await strategy.asearch(_query())
     assert result.metadata["iterative"]["rounds"] == 1
     assert len(script.calls["controller"]) == 2
+
+
+def test_a_cache_probed_call_counts_only_once_the_cache_missed() -> None:
+    # A response cache looks a call up after it started: a hit is no call
+    # and holds no room while in flight; a miss is checked then.
+    limits = usage.UsageLimits(max_llm_calls=1)
+    with usage.usage_scope(limits) as meter:
+        hits = [
+            usage.start_llm_call(
+                "ingestion", "m", estimated_input_tokens=5, probes_cache=True
+            )
+            for _ in range(3)
+        ]
+        assert meter.total.llm_calls == 0
+        # A call that is no cache's takes the one call meanwhile.
+        sent = usage.start_llm_call("ingestion", "m", estimated_input_tokens=5)
+        for call in hits:
+            usage.cache_probed(hit=True)
+            call.served_from_cache()
+        missed = usage.start_llm_call(
+            "ingestion", "m", estimated_input_tokens=5, probes_cache=True
+        )
+        with pytest.raises(UsageLimitExceededError):
+            usage.cache_probed(hit=False)
+        missed.fail()
+        sent.finish(input_tokens=5, output_tokens=1)
+    assert (meter.total.llm_calls, meter.total.cache_hits) == (1, 3)
+    assert meter.total.failed_calls == 0

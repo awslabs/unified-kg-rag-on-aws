@@ -303,3 +303,66 @@ def test_a_usd_budget_ignores_the_embedding_and_rerank_requests(
         call.finish(input_tokens=100, output_tokens=10)
     assert meter.total.llm_calls == 1
     assert meter.total.sent_requests == 2
+
+
+class _Slow(_Counting):
+    """The counting responder, each call taking a while, so a budget stop
+    finds calls in flight."""
+
+    def __call__(self, system: str, human: str) -> str:
+        import time
+
+        time.sleep(0.05)
+        return super().__call__(system, human)
+
+
+@pytest.mark.parametrize(("budget", "slow_cache"), [(3, False), (4, False), (2, True)])
+def test_concurrent_budget_stops_resume_paying_each_call_once(
+    tmp_path: Path, budget: int, slow_cache: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Regression (W1 review L1, D1): a budget stop did not wait for the calls
+    # in flight (it is a KeyboardInterrupt), so their paid responses were
+    # never cached and a resume asked again, and a resume's cache hits held
+    # budget slots while in flight, so a resume could stop without progress.
+    import math
+
+    if slow_cache:
+        # A cache lookup that takes a while: hits in flight at once.
+        from unified_kg_rag.adapters.llm.response_cache import LLMResponseCache
+
+        lookup = LLMResponseCache.lookup
+
+        def slow(self: Any, prompt: str, llm_string: str) -> Any:
+            import time
+
+            time.sleep(0.05)
+            return lookup(self, prompt, llm_string)
+
+        monkeypatch.setattr(LLMResponseCache, "lookup", slow)
+    source = _corpus(tmp_path, documents=6)
+    full = _Counting()
+    _pipeline(_config(), source, tmp_path / "full", full).run(source, pipeline_id="f")
+    needed = sum(full.calls.values())
+
+    config = _config()
+    config.processing.max_concurrency = 4
+    config.processing.max_run_model_calls = budget
+    counted = _Slow()
+    cache = tmp_path / "cache"
+    stores = _Stores(config)
+    runs = 0
+    while True:
+        runs += 1
+        # A run pays `budget` new calls, and the last finishes the rest.
+        assert runs <= math.ceil(needed / budget) + 1, (runs, dict(counted.calls))
+        try:
+            context = _pipeline(config, source, cache, counted, stores).run(
+                source, pipeline_id="budget"
+            )
+        except RunBudgetExhausted:
+            continue
+        break
+    assert context.status is PipelineStageStatus.COMPLETED
+    # Every call paid once: the responses of the calls in flight at a stop
+    # were kept.
+    assert counted.calls == full.calls

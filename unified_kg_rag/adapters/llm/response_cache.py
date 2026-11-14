@@ -50,7 +50,7 @@ from unified_kg_rag.domain.models import ModelPurpose
 from unified_kg_rag.ports.model_factory import LLMFactoryPort
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.logging import log_error
-from unified_kg_rag.shared.usage import CACHED_RESPONSE_KEY
+from unified_kg_rag.shared.usage import CACHED_RESPONSE_KEY, cache_probed
 from unified_kg_rag.shared.utils.files import atomic_write_text
 
 logger = get_logger(__name__)
@@ -187,6 +187,13 @@ class LLMResponseCache(BaseCache):
             self._entries = {}
 
     def lookup(self, prompt: str, llm_string: str) -> RETURN_VAL_TYPE | None:
+        found = self._lookup(prompt, llm_string)
+        # Before the request: a miss is counted (and checked against the
+        # run's budget) now, a hit never (shared.usage.cache_probed).
+        cache_probed(hit=found is not None)
+        return found
+
+    def _lookup(self, prompt: str, llm_string: str) -> RETURN_VAL_TYPE | None:
         if _UNCACHED.get() or in_abandoned_attempt():
             return None
         key = _cache_key(prompt, llm_string)
@@ -287,6 +294,27 @@ class LLMResponseCache(BaseCache):
             self._pending = {}
 
 
+def _probing(callbacks: Any) -> Any:
+    """``callbacks`` (a handler list or a manager) with each handler that
+    counts usage replaced by its cache-probing copy
+    (``probing_response_cache``)."""
+
+    def probing(handlers: list[Any]) -> list[Any]:
+        return [
+            h.probing_response_cache() if hasattr(h, "probing_response_cache") else h
+            for h in handlers
+        ]
+
+    if callbacks is None:
+        return None
+    if isinstance(callbacks, list):
+        return probing(callbacks)
+    manager = callbacks.copy()
+    manager.handlers = probing(manager.handlers)
+    manager.inheritable_handlers = probing(manager.inheritable_handlers)
+    return manager
+
+
 class CachingLLMFactory:
     """An ``LLMFactoryPort`` whose ingestion models use ``cache``.
 
@@ -304,8 +332,12 @@ class CachingLLMFactory:
         purpose = ModelPurpose(kwargs.get("model_purpose", ModelPurpose.QUERY))
         if purpose is not ModelPurpose.INGESTION or not hasattr(model, "cache"):
             return model
-        # A copy: a factory may hand the same instance to other callers.
-        return model.model_copy(update={"cache": self.cache})
+        # A copy: a factory may hand the same instance to other callers. Its
+        # usage handler counts a call once the cache missed (a hit is no
+        # call: shared.usage.cache_probed).
+        return model.model_copy(
+            update={"cache": self.cache, "callbacks": _probing(model.callbacks)}
+        )
 
     def get_model_info(self, model_id: Any) -> Any:
         return self.factory.get_model_info(model_id)

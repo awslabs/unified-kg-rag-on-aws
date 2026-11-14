@@ -124,9 +124,12 @@ class UsageCallbackHandler(BaseCallbackHandler):
     # are let go (they stay counted as estimated).
     MAX_UNSETTLED: ClassVar[int] = 4096
 
-    def __init__(self, model_id: str, *, role: str) -> None:
+    def __init__(self, model_id: str, *, role: str, probes_cache: bool = False) -> None:
         self.model_id = model_id
         self.role = role
+        # A response cache looks this model's calls up before sending them
+        # (shared.usage.cache_probed): a hit takes no limit's room.
+        self.probes_cache = probes_cache
         # The calls started and not yet settled, by run id, oldest first.
         self._calls: OrderedDict[UUID, usage.LLMCall] = OrderedDict()
         # The task each call started in, and the callback that lets the call
@@ -175,6 +178,12 @@ class UsageCallbackHandler(BaseCallbackHandler):
             effect,
         )
 
+    def probing_response_cache(self) -> UsageCallbackHandler:
+        """This handler for a copy of its model that a response cache
+        serves (``CachingLLMFactory``): its calls are counted once the cache
+        missed."""
+        return UsageCallbackHandler(self.model_id, role=self.role, probes_cache=True)
+
     def _start(self, run_id: UUID, texts: list[str]) -> None:
         if usage.current_meter() is None:
             return
@@ -190,7 +199,10 @@ class UsageCallbackHandler(BaseCallbackHandler):
             estimate = 0
         # Raises a limit's refusal: the call is not sent.
         call = usage.start_llm_call(
-            self.role, self.model_id, estimated_input_tokens=estimate
+            self.role,
+            self.model_id,
+            estimated_input_tokens=estimate,
+            probes_cache=self.probes_cache,
         )
         self._track(run_id, call)
 

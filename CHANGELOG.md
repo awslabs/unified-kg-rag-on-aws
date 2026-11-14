@@ -7,18 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-Bugs present in 0.3.0.
-
-- An OpenSearch bulk write whose last retry round fails whole names the error by its type and status
-  (`TransportError rejected, HTTP 429`), as each earlier round's warning does, in its ERROR line and the store error
-  the indexing stage shows: the server's reason, which may quote a rejected document, is logged at DEBUG.
-- A vector-store write whose embeddings failed records the embedding model's error after `Failed to prepare N
-  documents`, by the same log-safe rule as every write error, so the indexing stage's "First error" names the cause,
-  not only a count.
-- A saved result (an evaluation report, a failed metric's reason) names an error whose whole message is the package's
-  own by its type and the error it was raised from (`LanguageModelError from ConnectionRefusedError [Errno 111]
-  Connection refused`) when that message does not name it; it named the type alone.
 ### Added
 
 - One owner of model prices: `models.prices` (`domain/pricing.py`) prices every USD figure, the `run-eval` comparison,
@@ -37,13 +25,13 @@ Bugs present in 0.3.0.
   `limit_exceeded`, a caller's error: not counted in `query_failed`, `refused` on the console's dashboard, its message
   shown to an MCP caller; exit code 1, console HTTP 422).
 - An ingestion run's budget and cost estimate. `processing.max_run_model_calls` and `processing.max_run_usd` (off by
-  default; USD priced by `models.prices`) stop a run at the model call that would pass them, as a signal stops it
-  (`RunBudgetExhausted`, error class `limit_exceeded`, exit 1): its finished stages are checkpointed and its responses
-  kept in the LLM response cache, so a re-run with the same pipeline id resumes and pays only for what was not answered.
-  `run-ingestion --estimate` parses and chunks the corpus without a model call and prints each stage's calls, tokens and
-  USD for the stages the text units decide (extraction, gleaning, claims, translation, intelligent chunking), naming the
-  graph-dependent ones it cannot count. The console's Ingest page offers to resume a run stopped at its budget (its
-  options without the forced recompute).
+  default; USD priced by `models.prices`) refuse the model call that would pass them and stop the run once the calls
+  already sent have answered (`RunBudgetExhausted`, error class `limit_exceeded`, exit 1): its finished stages are
+  checkpointed and those answers kept in the LLM response cache, whose hits take none of the budget, so a re-run with
+  the same pipeline id resumes and pays only for what was not answered. `run-ingestion --estimate` parses and chunks the
+  corpus without a model call and prints each stage's calls, tokens and USD for the stages the text units decide
+  (extraction, gleaning, claims, translation, intelligent chunking), naming the graph-dependent ones it cannot count.
+  The console's Ingest page offers to resume a run stopped at its budget (its options without the forced recompute).
 
 ### Changed
 
@@ -51,6 +39,19 @@ Bugs present in 0.3.0.
   were left out of the default on (`ppr`: within the noise of `local` at a third of its cost, weaker on long chains;
   `tree`: +8 points of `answer_contains` over `naive`, below `mix` and `local`). It refused them, which made routing
   to them a code change rather than the operator's call.
+
+### Fixed
+Bugs present in 0.3.0.
+
+- An OpenSearch bulk write whose last retry round fails whole names the error by its type and status
+  (`TransportError rejected, HTTP 429`), as each earlier round's warning does, in its ERROR line and the store error
+  the indexing stage shows: the server's reason, which may quote a rejected document, is logged at DEBUG.
+- A vector-store write whose embeddings failed records the embedding model's error after `Failed to prepare N
+  documents`, by the same log-safe rule as every write error, so the indexing stage's "First error" names the cause,
+  not only a count.
+- A saved result (an evaluation report, a failed metric's reason) names an error whose whole message is the package's
+  own by its type and the error it was raised from (`LanguageModelError from ConnectionRefusedError [Errno 111]
+  Connection refused`) when that message does not name it; it named the type alone.
 
 ## [0.3.0] - 2026-11-14
 

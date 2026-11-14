@@ -305,7 +305,15 @@ class RunBudgetExhausted(PipelineInterrupted):
     sent, the run unwound as a signal's stop does (its finished stages
     checkpointed, its responses in the LLM response cache), and a re-run with
     the same pipeline id resumes it. ``limit`` names the setting, ``value``
-    its value."""
+    its value.
+
+    Unlike a signal's stop it waits for the model calls already sent
+    (``shared.utils.concurrency.is_stop``): they are paid for, and their
+    answers go to the response cache a re-run is served from. No new call
+    starts, each being refused at the same budget."""
+
+    # The pools a stop unwinds wait for their running tasks (is_stop).
+    waits_for_work_in_flight = True
 
     def __init__(self, message: str, *, limit: str, value: float) -> None:
         super().__init__(signal.SIGINT)
