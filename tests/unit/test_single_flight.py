@@ -176,6 +176,33 @@ async def test_a_raising_keep_does_not_leave_a_shared_call_in_the_memo() -> None
     assert memo == {}
 
 
+async def test_a_failed_shared_call_is_settled_without_asking_keep() -> None:
+    """The settle callback reads a failed call's error, not its result: the
+    result would raise inside the callback (an unhandled error the loop
+    reports), and ``keep`` must not see a failed call."""
+    memo: dict[str, Any] = {}
+    call = _Call(error=RuntimeError("store down"))
+    call.release.set()
+    loop = asyncio.get_running_loop()
+    reported: list[dict[str, Any]] = []
+    previous = loop.get_exception_handler()
+    loop.set_exception_handler(lambda _loop, context: reported.append(context))
+    asked: list[Any] = []
+
+    def keep(result: Any) -> bool:
+        asked.append(result)
+        return True
+
+    try:
+        with pytest.raises(RuntimeError, match="store down"):
+            await single_flight(memo, "k", call, share_failure=True, keep=keep)
+        await asyncio.sleep(0)
+    finally:
+        loop.set_exception_handler(previous)
+    assert memo == {}
+    assert asked == [] and reported == []
+
+
 def test_an_extraction_in_flight_on_another_loop_is_none_of_this_loops() -> None:
     """The query extractions in flight are shared by thread; a future of
     another event loop cannot be awaited here, so it reads as absent."""
