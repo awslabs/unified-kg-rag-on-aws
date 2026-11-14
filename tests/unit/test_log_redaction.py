@@ -1448,6 +1448,44 @@ def test_a_rejected_bulk_item_is_named_never_by_its_reason(
     _assert_write_errors_log_safe(stats, caplog, mocker)
 
 
+def test_a_failed_embedding_is_named_in_the_write_s_error(
+    caplog: pytest.LogCaptureFixture, mocker: Any
+) -> None:
+    # rv32: the write recorded "Failed to prepare 2 documents" alone, so the
+    # stage's failure gave a count, and only a separate WARNING line said
+    # the embedding model failed. The model's error names the cause, log
+    # safely (its text may quote the corpus).
+    import threading
+
+    from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
+    from unified_kg_rag.domain.models import Entity
+
+    indexer = OpenSearchIndexer.__new__(OpenSearchIndexer)
+    indexer.config = Config()
+    indexer.opensearch_config = indexer.config.indexing.opensearch
+    indexer.analyzer = "standard"
+    indexer.language = "en"
+    indexer._embedding_dimension = 4
+    indexer._index_limits = {}
+    indexer._replaced, indexer._replaced_lock = {}, threading.Lock()
+    indexer.embedding_model = MagicMock()
+    indexer.embedding_model.embed_documents.side_effect = RuntimeError(
+        "model refused: Quokkasecret payroll"
+    )
+    mocker.patch.object(indexer, "_reusable_vectors", return_value={})
+    items = [
+        Entity(id=f"e-{i}", name=f"Vendor {i}", description="Acme") for i in (1, 2)
+    ]
+
+    stats = indexer._embed_and_write("idx", items, indexer._spec("entities"), "default")
+
+    assert stats.failed_ids == ["e-1", "e-2"]
+    (error,) = stats.errors
+    assert error.startswith("Failed to prepare 2 documents: ")
+    assert "RuntimeError" in error, error
+    _assert_write_errors_log_safe(stats, caplog, mocker)
+
+
 def test_a_failed_neptune_edge_write_is_recorded_log_safely(
     caplog: pytest.LogCaptureFixture, mocker: Any, skip_vertex_id_check: None
 ) -> None:

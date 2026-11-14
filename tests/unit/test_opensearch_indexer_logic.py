@@ -391,7 +391,7 @@ def test_a_document_that_fails_to_prepare_counts_in_the_write_s_total(
     monkeypatch.setattr(
         indexer,
         "_generate_embeddings",
-        lambda chunk, _spec, _stored: (
+        lambda chunk, _spec, _stored, **_: (
             [([0.1], None if item.id == "e3" else [0.2]) for item in chunk],
             [{} for _ in chunk],
         ),
@@ -722,7 +722,7 @@ def test_upsert_embeds_and_writes_one_slice_at_a_time(indexer, mocker) -> None:
     mocker.patch.object(
         indexer,
         "_generate_embeddings",
-        side_effect=lambda items, spec, stored=None: events.append(
+        side_effect=lambda items, spec, stored=None, **_: events.append(
             ("embed", len(items))
         )
         or ([([0.1],) for _ in items], [{} for _ in items]),

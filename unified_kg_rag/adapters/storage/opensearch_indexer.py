@@ -2589,7 +2589,10 @@ class OpenSearchIndexer(VectorIndexer):
             stored = self._reusable_vectors(
                 spec.alias_prefix, suffix, chunk, spec, keep_replaced
             )
-            embeddings, digests = self._generate_embeddings(chunk, spec, stored)
+            failures: list[BaseException] = []
+            embeddings, digests = self._generate_embeddings(
+                chunk, spec, stored, failures=failures
+            )
             docs, failed_ids = self._prepare_documents(
                 chunk,
                 embeddings,
@@ -2601,13 +2604,24 @@ class OpenSearchIndexer(VectorIndexer):
             if failed_ids:
                 # Items of the write that failed: counted in its total, as
                 # the written ones are (_perform_indexing), so its failure
-                # rate is of the items it was given.
+                # rate is of the items it was given. Named by the embedding
+                # model's error when one failed them (the indexing stage
+                # shows the first error), else by their count alone.
                 stats.total_items += len(failed_ids)
-                stats.add_error(
-                    f"Failed to prepare {len(failed_ids)} documents",
-                    len(failed_ids),
-                    ids=failed_ids,
-                )
+                embedding_error = failures[0] if failures else None
+                if isinstance(embedding_error, BaseException):
+                    stats.add_error(
+                        embedding_error,
+                        len(failed_ids),
+                        ids=failed_ids,
+                        context=f"Failed to prepare {len(failed_ids)} documents",
+                    )
+                else:
+                    stats.add_error(
+                        f"Failed to prepare {len(failed_ids)} documents",
+                        len(failed_ids),
+                        ids=failed_ids,
+                    )
             if docs:
                 last = start + size >= len(items)
                 stats.merge(self._perform_indexing(index_name, docs, refresh=last))
@@ -2721,9 +2735,13 @@ class OpenSearchIndexer(VectorIndexer):
         items: list[Any],
         spec: _ItemSpec,
         stored: Mapping[str, Mapping[str, Any]] | None = None,
+        *,
+        failures: list[BaseException] | None = None,
     ) -> tuple[list[tuple[Any, ...]], list[dict[str, str]]]:
         """Each item's vectors (in ``spec.vector_fields`` order; ``None``
-        where embedding failed or the text is empty) and digests by field.
+        where embedding failed or the text is empty) and digests by field;
+        the first embedding error is appended to ``failures``
+        (``_batch_embed``).
 
         A text whose digest is that of a ``stored`` vector of this run's
         dimension (``_reusable_vectors``, read for these items) or of one an
@@ -2763,7 +2781,9 @@ class OpenSearchIndexer(VectorIndexer):
                         pending.append((i, j))
                     found.append(vector)
                 vectors.append(found)
-        embedded = self._batch_embed([texts[i][j] for i, j in pending])
+        embedded = self._batch_embed(
+            [texts[i][j] for i, j in pending], failures=failures
+        )
         for (i, j), vector in zip(pending, embedded, strict=True):
             vectors[i][j] = vector
         total = len(items) * len(spec.vector_fields)
@@ -2801,7 +2821,12 @@ class OpenSearchIndexer(VectorIndexer):
             processing.embedding_batch_size * processing.embedding_concurrency,
         )
 
-    def _batch_embed(self, texts: list[str]) -> list[list[float] | None]:
+    def _batch_embed(
+        self, texts: list[str], *, failures: list[BaseException] | None = None
+    ) -> list[list[float] | None]:
+        """Each text's vector, ``None`` for an empty text or one whose
+        embedding failed; the first such failure is appended to
+        ``failures``, which a write names its failed items by."""
         result: list[list[float] | None] = [None] * len(texts)
 
         # Identical texts of one call are embedded once and fanned back out.
@@ -2849,6 +2874,8 @@ class OpenSearchIndexer(VectorIndexer):
                     except Exception as item_error:  # noqa: BLE001 - one text's failure
                         # Summarized once per call in _batch_embed (WARNING).
                         logger.debug("Failed to embed text '%s': %s", key, item_error)
+                        if failures is not None and not failures:
+                            failures.append(item_error)
                         out.append((key, None))
                 return out
 

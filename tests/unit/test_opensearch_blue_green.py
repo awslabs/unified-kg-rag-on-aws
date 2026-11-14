@@ -126,7 +126,7 @@ def _indexer(config: Config, client: _FakeCluster) -> OpenSearchIndexer:
     inst._embedding_dimension = 1024
     inst.opensearch_client = client
     # Avoid Bedrock: deterministic embeddings.
-    inst._batch_embed = lambda texts, batch_size=50: [[0.1] for _ in texts]
+    inst._batch_embed = lambda texts, **_: [[0.1] for _ in texts]
     return inst
 
 
