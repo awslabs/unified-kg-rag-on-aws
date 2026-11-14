@@ -159,7 +159,7 @@ def prepare_resume(
             pipeline_id,
             error=e,
         )
-        raise PipelineExecutionError(f"Pipeline resume failed: {e}") from e
+        raise PipelineExecutionError.caused_by("Pipeline resume failed", e) from e
 
 
 def _recorded_completed(

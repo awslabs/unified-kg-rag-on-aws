@@ -213,6 +213,7 @@ from unified_kg_rag.shared.exceptions import (
     MethodologyNotIndexedError,
     classify,
     error_class_of,
+    operator_error_text,
     tag_query_failure,
 )
 from unified_kg_rag.shared.genai import ERROR_TYPE, GEN_AI_CONVERSATION_ID
@@ -2746,7 +2747,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                     "error_type": type(e).__name__,
                     ERROR_CLASS_KEY: classify(e).value,
                 },
-                search_metadata={"error": str(e)},
+                # What the operator may read of it (an unexpected failure's
+                # text, a provider's, masked: run-rag prints this metadata).
+                search_metadata={"error": operator_error_text(e)},
             )
         finally:
             _GROUNDING_CAPTURE.reset(capture_token)

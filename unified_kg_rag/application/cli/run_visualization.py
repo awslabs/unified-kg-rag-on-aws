@@ -88,6 +88,7 @@ from unified_kg_rag.shared import (
 from unified_kg_rag.shared.exceptions import InvalidArgumentError
 from unified_kg_rag.shared.logging import log_error
 from unified_kg_rag.shared.registry import Registry
+from unified_kg_rag.shared.utils.validation import refused_data_reason
 
 logger = get_logger(__name__)
 
@@ -160,7 +161,8 @@ def load_render_context(data_path: Path) -> RenderContext:
     except (ValueError, KeyError, TypeError, AttributeError) as e:
         # ValueError covers invalid JSON and UTF-8 and a failed validation.
         raise InvalidVisualizationDataError(
-            f"'{data_path}' is not exported visualization data: {e!r}"
+            f"'{data_path}' is not exported visualization data: "
+            f"{refused_data_reason(e)}"
         ) from e
 
 

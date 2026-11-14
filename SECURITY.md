@@ -24,8 +24,25 @@ store or model, the deadline, a refusal) and a message the package composes
 itself (a stage failure named by its cause) are logged with their text. A
 library's own records at `INFO` and above (on the CLIs' handlers) keep their
 logger, level and message template; their arguments and traceback are
-replaced by digests. `DEBUG` logs therefore contain user and corpus data and
-must be handled with the same controls as that data.
+replaced by digests, and a library's Python warning is logged by its
+category and code location with its text digested. `DEBUG` logs therefore
+contain user and corpus data, and every error's full message, and must be
+handled with the same controls as that data.
+
+The rule is applied where an error's text enters: an error kept to be
+logged or shown later (a store write's recorded errors, a worker's outcome,
+a saved evaluation result) is recorded by its name and digest, a store
+error the package wraps shows the package's own context (the operation, the
+URI) and its cause's name, and a static check over the package fails the
+build on an error's text passed to an `INFO`+ record or kept for one. Some
+text remains outside it, by design or out of the package's reach:
+
+- File paths (corpus files, exports, caches, the config) appear at `INFO` and
+  above and in error messages. Name corpus files accordingly.
+- A third-party library that writes to stderr itself, formats text into its
+  message template, or logs through a handler of its own is not filtered.
+  Set its level in `logging.library_levels`.
+- Result output holds corpus and model text (below).
 
 Result output is not a log record and holds corpus and model text by design:
 `run-ingestion` prints entity names, community titles and summaries and

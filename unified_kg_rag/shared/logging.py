@@ -4,6 +4,7 @@ import logging
 import numbers
 import sys
 import threading
+import warnings
 from collections.abc import Hashable, Mapping
 from datetime import datetime
 from pathlib import Path
@@ -120,20 +121,32 @@ def _to_stdlib(logger: Any, method: str, event_dict: structlog.types.EventDict) 
 # The package's own loggers (``get_logger(__name__)``): their records keep to
 # the logging policy (``log_failure``); every other logger is a library's.
 _PACKAGE_LOGGER = __name__.partition(".")[0]
+# Where a library's warnings go under ``setup_logging`` (``_log_warning``).
+_warnings_logger = logging.getLogger(f"{_PACKAGE_LOGGER}.warnings")
 
 
 # Library loggers whose records are request metadata the package's own
-# servers log, not text: uvicorn's access line (client, method, path, status)
-# of the MCP server's HTTP transport.
+# servers log, not text: uvicorn's access line (client, method, path without
+# its query string, status) of the MCP server's HTTP transport.
 _METADATA_LOGGERS = frozenset({"uvicorn.access"})
 
 
 def _is_package_record(record: logging.LogRecord) -> bool:
-    return (
-        record.name == _PACKAGE_LOGGER
-        or record.name.startswith(f"{_PACKAGE_LOGGER}.")
-        or record.name in _METADATA_LOGGERS
+    return record.name == _PACKAGE_LOGGER or record.name.startswith(
+        f"{_PACKAGE_LOGGER}."
     )
+
+
+# The attribute that marks a record ``LibraryRecordFilter`` rewrote: the
+# record is shared by every handler, so the next one keeps it as it is (a
+# digest of the digest would make the console and the log file disagree).
+_FILTERED = "_kg_rag_filtered"
+
+
+def _without_query(path: object) -> object:
+    """An access line's path without its query string (it may hold a key:
+    ``/mcp?api_key=...``)."""
+    return path.partition("?")[0] if isinstance(path, str) else path
 
 
 def _safe_arg(value: object) -> object:
@@ -159,14 +172,40 @@ class LibraryRecordFilter(logging.Filter):
     its logger name, level and message template (the library's code, which
     says what happened) and loses what may hold that text: its arguments
     (:func:`_safe_arg`) and its traceback, of which the error's
-    :func:`error_digest` and :func:`error_locator` are appended. A library
-    that formats the text into the message itself (an f-string) is not
-    caught: set its level in ``logging.library_levels``. DEBUG records keep
-    everything, as the package's own do."""
+    :func:`error_digest` and :func:`error_locator` are appended; a message
+    that is no string (``logger.error(exc)``) is digested itself. A record
+    is rewritten once, whichever handler meets it first. A library that
+    formats the text into the message itself (an f-string) is not caught:
+    set its level in ``logging.library_levels``. DEBUG records keep
+    everything, as the package's own do. uvicorn's access line keeps its
+    arguments but the query string of its path."""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        if record.levelno < logging.INFO or _is_package_record(record):
+        if getattr(record, _FILTERED, False) or record.levelno < logging.INFO:
             return True
+        if record.name in _METADATA_LOGGERS:
+            # uvicorn's access line: client, method, path, version, status.
+            if isinstance(record.args, tuple) and len(record.args) == 5:
+                client, method, path, version, status = record.args
+                record.args = (client, method, _without_query(path), version, status)
+            setattr(record, _FILTERED, True)
+            return True
+        # A structlog event (``get_logger``: the package's own, also a
+        # module of it run as ``__main__``) is the package's record.
+        if _is_package_record(record) or isinstance(record.msg, _FormatterEvent):
+            return True
+        if not isinstance(record.msg, str):
+            # ``logger.error(exc)``: the message is the object itself.
+            record.msg = (
+                error_digest(record.msg)
+                if isinstance(record.msg, BaseException)
+                else text_digest(str(record.msg))
+            )
+        elif record.name == "py.warnings":
+            # ``logging.captureWarnings``: the warning's whole text is the
+            # message (``setup_logging``'s own hook names its category).
+            record.msg = f"Python warning ({text_digest(record.getMessage())})"
+            record.args = None
         if isinstance(record.args, Mapping):
             record.args = {key: _safe_arg(v) for key, v in record.args.items()}
         elif record.args:
@@ -180,7 +219,29 @@ class LibraryRecordFilter(logging.Filter):
         record.exc_info = None
         record.exc_text = None
         record.stack_info = None
+        setattr(record, _FILTERED, True)
         return True
+
+
+def _log_warning(
+    message: Warning | str,
+    category: type[Warning],
+    filename: str,
+    lineno: int,
+    file: TextIO | None = None,
+    line: str | None = None,
+) -> None:
+    """``warnings.showwarning`` under ``setup_logging``: a library's warning
+    (``warnings.warn``) as a WARNING record of the package's, named by its
+    category and the code location that raised it, its text, which may
+    quote a value, by ``text_digest`` (the text at DEBUG), as the logging
+    policy (SECURITY.md) has every library record."""
+    where = "/".join(Path(filename).parts[-2:])
+    text = str(message)
+    _warnings_logger.warning(
+        "%s at %s:%s (%s)", category.__name__, where, lineno, text_digest(text)
+    )
+    _warnings_logger.debug("%s at %s:%s: %s", category.__name__, where, lineno, text)
 
 
 def _configure_structlog() -> None:
@@ -263,6 +324,8 @@ class LoggingSetup:
         for handler in cls._handlers:
             handler.addFilter(library_filter)
             root_logger.addHandler(handler)
+        # A library's warnings.warn reaches these handlers, not bare stderr.
+        warnings.showwarning = _log_warning
 
         # Chatty dependencies (e.g. langchain_aws logs INFO per model call and a
         # full traceback per retried attempt) default to WARNING.
@@ -339,6 +402,25 @@ def log_failure(
     logger.debug(message, *args, error, exc_info=error if traceback else None)
 
 
+def error_log_text(error: BaseException) -> str:
+    """What a record at INFO and above says of ``error``, by its class (the
+    rule of :func:`log_error`): an unexpected ``failure`` by
+    :func:`error_digest` (its type, code, status and a hash of its text,
+    which may quote a model's reply, a query, corpus text or an ARN), a
+    failure whose message is the package's own (``own_text``) and any other
+    class (an unreachable store or model, the deadline, a refusal) by its
+    class and text. For an error kept to be logged later (a write's
+    ``IndexingStats.errors``, a worker's outcome): log the error itself at
+    DEBUG."""
+    error_class = classify(error)
+    if error_class is ErrorClass.FAILURE:
+        own = own_text(error)
+        if own is None:
+            return error_digest(error)
+        return f"[{error_class.value}] {own}"
+    return f"[{error_class.value}] {error_text(error)}"
+
+
 def log_error(
     logger: Any,
     level: int,
@@ -360,8 +442,7 @@ def log_error(
     if error_class is ErrorClass.FAILURE and own is None:
         log_failure(logger, level, message, *args, error=error, traceback=True)
         return
-    text = own if own is not None else error_text(error)
-    logger.log(level, message, *args, f"[{error_class.value}] {text}")
+    logger.log(level, message, *args, error_log_text(error))
     if own is not None and own != error_text(error):
         # The rest of a message only partly the package's own.
         logger.debug(message, *args, error, exc_info=error)

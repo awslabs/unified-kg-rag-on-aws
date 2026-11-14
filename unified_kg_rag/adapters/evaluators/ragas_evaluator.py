@@ -45,6 +45,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.ports.model_factory import EmbeddingFactoryPort
 from unified_kg_rag.shared import EvaluationException, get_logger
+from unified_kg_rag.shared.exceptions import result_error_text
 from unified_kg_rag.shared.logging import log_failure
 
 logger = get_logger(__name__)
@@ -131,8 +132,8 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
                 len(self.config.evaluation.ragas_metrics),
             )
         except Exception as e:
-            raise EvaluationException(
-                f"Failed to initialize Ragas evaluator: {e}"
+            raise EvaluationException.caused_by(
+                "Failed to initialize Ragas evaluator", e
             ) from e
 
     def _initialize_models(self) -> None:
@@ -426,7 +427,10 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
                 )
                 logger.debug("Ragas batch error", exc_info=True)
                 failed_runs.update(
-                    dict.fromkeys(m_types, f"Ragas batch evaluation failed: {e}")
+                    dict.fromkeys(
+                        m_types,
+                        f"Ragas batch evaluation failed: {result_error_text(e)}",
+                    )
                 )
         return self._parse_ragas_reports(
             (

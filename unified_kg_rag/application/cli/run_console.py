@@ -307,7 +307,10 @@ def main(argv: list[str] | None = None) -> int:
                 options,
                 chain_factory=_chain_factory(args.metrics_sink, stdout_taken=as_json),
             ),
-            # Uvicorn's own records: --log-level when given.
+            # Uvicorn's own records: --log-level when given, through the
+            # logging setup's handlers and their filter (no log config of
+            # its own, whose handlers would print a library's text as is).
+            log_config=None,
             log_level=(args.log_level or "WARNING").lower(),
             access_log=False,
             lifespan="on",

@@ -123,7 +123,7 @@ def _read(path: Path) -> Any:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
-        raise EvaluationException(f"cannot read '{path}': {e}") from e
+        raise EvaluationException.caused_by(f"cannot read '{path}'", e) from e
 
 
 def load_saved_run(path: Path) -> SavedRun:
@@ -151,7 +151,7 @@ def load_saved_run(path: Path) -> SavedRun:
             else None
         )
     except ValidationError as e:
-        raise EvaluationException(f"'{path}': {e}") from e
+        raise EvaluationException.caused_by(f"'{path}'", e) from e
     strategy = match.group("strategy") or _results_strategy(results)
     return SavedRun(
         path=path,

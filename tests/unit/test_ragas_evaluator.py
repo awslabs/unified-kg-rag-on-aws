@@ -562,7 +562,10 @@ class TestAevaluateBatch:
         reports = await ev.aevaluate_batch([_query()], [_result()], [""])
         assert len(reports) == 1
         assert reports[0].metrics == []
-        assert "ragas down" in reports[0].metadata["failed_metrics"]["faithfulness"]
+        reason = reports[0].metadata["failed_metrics"]["faithfulness"]
+        # Named by its class and type: a saved result is shown and uploaded.
+        assert "[failure] RuntimeError" in reason
+        assert "ragas down" not in reason
 
     async def test_reference_metrics_not_run_when_no_row_has_reference(
         self, mocker
@@ -785,7 +788,7 @@ class TestAevaluateBatch:
         )
         assert no_ref.metrics == []
         assert set(no_ref.metadata["failed_metrics"]) == {"faithfulness"}
-        assert "judge throttled" in no_ref.metadata["failed_metrics"]["faithfulness"]
+        assert "RuntimeError" in no_ref.metadata["failed_metrics"]["faithfulness"]
         assert no_ref.metadata["skipped_metrics"] == {
             "answer_correctness": "empty_reference"
         }
@@ -829,7 +832,7 @@ class TestAevaluateBatch:
         kept = ({"faithfulness", "context_precision"} - {failing}).pop()
         assert {m.metric_type.value: m.value for m in report.metrics} == {kept: 0.75}
         assert set(report.metadata["failed_metrics"]) == {failing}
-        assert "judge timed out" in report.metadata["failed_metrics"][failing]
+        assert "RuntimeError" in report.metadata["failed_metrics"][failing]
 
     async def test_only_reference_metrics_and_no_reference_skips_all(
         self, mocker

@@ -74,7 +74,10 @@ def test_a_failed_citing_read_reports_every_removed_unit_and_writes_nothing() ->
     assert set(results) == {f"find_removed_{DEFAULT}"}
     stats = results[f"find_removed_{DEFAULT}"]
     assert (stats.total_items, stats.failed_items) == (2, 2)
-    assert "graph read timed out" in " ".join(stats.errors)
+    # Named by its type, its text (a store's, which may quote a document)
+    # at DEBUG only.
+    assert "RuntimeError" in " ".join(stats.errors)
+    assert "graph read timed out" not in " ".join(stats.errors)
     assert _snapshot(graph, vectors) == before
 
 
@@ -110,7 +113,8 @@ def test_a_failed_incident_edge_read_fails_only_its_suffix() -> None:
 
     failed = results["graph_read_tenant-a"]
     assert (failed.total_items, failed.failed_items) == (2, 2)
-    assert "edge read timed out" in " ".join(failed.errors)
+    assert "RuntimeError" in " ".join(failed.errors)
+    assert "edge read timed out" not in " ".join(failed.errors)
     assert not any(
         key.endswith("tenant-a") for key in set(results) - {"graph_read_tenant-a"}
     )

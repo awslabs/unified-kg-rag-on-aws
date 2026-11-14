@@ -127,8 +127,8 @@ class FileParser:
 
             return document
         except Exception as e:
-            raise DataProcessingError(
-                f"Failed to parse '{self.file_type_name}' '{file_path}': {e}"
+            raise DataProcessingError.caused_by(
+                f"Failed to parse '{self.file_type_name}' '{file_path}'", e
             ) from e
 
 

@@ -636,7 +636,7 @@ class NeptuneClient:
                 raise error from e
             if isinstance(e, GraphRAGException):
                 raise
-            raise AWSServiceError(f"Neptune connection probe failed: {e!r}") from e
+            raise AWSServiceError.caused_by("Neptune connection probe failed", e) from e
 
     def _get_auth_headers(self, url: str) -> dict[str, str]:
         logger.debug("Using IAM authentication for Neptune connection")

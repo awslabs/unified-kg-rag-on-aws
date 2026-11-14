@@ -15,6 +15,7 @@ from unified_kg_rag.ports.indexer import (
     rewrites_schema_annotations,
 )
 from unified_kg_rag.shared import NamespaceLeaseError, get_logger
+from unified_kg_rag.shared.logging import error_log_text
 
 if TYPE_CHECKING:
     from unified_kg_rag.application.storage.indexing_manager import IndexingManager
@@ -88,7 +89,8 @@ class SchemaReannotator:
         except NamespaceLeaseError:
             raise
         except Exception as e:  # noqa: BLE001 - retried by the next run
-            result.error = f"{type(e).__name__}: {e}"
+            logger.debug("Schema re-annotation failed: %s", e)
+            result.error = error_log_text(e)
         if result.complete:
             logger.info(
                 "Schema annotations: checked %d stored entities and %d stored "

@@ -675,6 +675,6 @@ def get_language_model_info(
     try:
         return LanguageModelInfo.model_validate({**info.model_dump(), **override})
     except ValidationError as e:
-        raise LanguageModelError(
-            f"Invalid aws.bedrock.model_overrides entry for '{model_id}': {e}"
+        raise LanguageModelError.caused_by(
+            f"Invalid aws.bedrock.model_overrides entry for '{model_id}'", e
         ) from e

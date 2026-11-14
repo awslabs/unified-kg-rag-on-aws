@@ -1165,7 +1165,7 @@ class DataIngestionPipeline:
         except Exception as e:
             self._raise_if_stopped_by(e)
             log_error(logger, logging.ERROR, "Pipeline execution failed: %s", error=e)
-            raise PipelineExecutionError(f"Failed to run pipeline: {e}") from e
+            raise PipelineExecutionError.caused_by("Failed to run pipeline", e) from e
         finally:
             if self._reset_for_run:
                 # Set for the run that needed it, not for a later one.
@@ -2542,7 +2542,8 @@ class DataIngestionPipeline:
                 return
             counts = write_visualization_data(self.providers, suffix, path)
         except Exception as e:  # noqa: BLE001 - the export is optional
-            log_failure(
+            # By its class: a write failure names its folder (own_text).
+            log_error(
                 logger,
                 logging.WARNING,
                 "Visualization data export failed: %s",

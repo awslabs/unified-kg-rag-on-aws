@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from unified_kg_rag.shared import AWSServiceError, ConfigurationError, get_logger
+from unified_kg_rag.shared.exceptions import with_own_text
 from unified_kg_rag.shared.logging import log_error
 from unified_kg_rag.shared.utils.s3_uri import S3_SCHEME, is_s3_uri, split_s3_uri
 
@@ -74,7 +75,7 @@ def download_s3_object(s3_client: S3Client, uri: str, local_path: Path) -> Path:
     try:
         s3_client.download_file(bucket, key, str(local_path))
     except (ClientError, BotoCoreError) as e:
-        raise AWSServiceError(f"Failed to download '{uri}': {e}") from e
+        raise AWSServiceError.caused_by(f"Failed to download '{uri}'", e) from e
     logger.info("Downloaded '%s' to '%s'", uri, local_path)
     return local_path
 
@@ -118,9 +119,12 @@ def upload_directory_to_s3(
             continue
         uploaded.append(f"{S3_SCHEME}{bucket}/{key}")
     if failed:
-        raise AWSServiceError(
-            f"Failed to upload {len(failed)}/{len(failed) + len(uploaded)} file(s) "
-            f"to 's3://{bucket}/{prefix}': {', '.join(failed)}"
+        # Keys and counts only: the package's own message.
+        raise with_own_text(
+            AWSServiceError(
+                f"Failed to upload {len(failed)}/{len(failed) + len(uploaded)} "
+                f"file(s) to 's3://{bucket}/{prefix}': {', '.join(failed)}"
+            )
         )
     logger.info("Uploaded %s file(s) to '%s'", len(uploaded), uri)
     return uploaded

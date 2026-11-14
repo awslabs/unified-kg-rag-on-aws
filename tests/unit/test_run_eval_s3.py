@@ -293,6 +293,53 @@ def test_main_reports_s3_errors_and_exits_1(eval_config, mocker, monkeypatch) ->
     assert exc.value.code == 1
 
 
+@pytest.mark.parametrize(
+    ("error", "shown"),
+    [
+        # A store's reply (it may quote an ARN, a document): masked.
+        (
+            AWSServiceError("Neptune read_entities failed: Quokkasecret role/X"),
+            "AWSServiceError: The call failed with an unexpected error",
+        ),
+        # The package's context (the operation, the URI) is kept.
+        (
+            AWSServiceError.caused_by(
+                "Failed to download 's3://my-bucket/d.json'",
+                RuntimeError("Quokkasecret arn:aws:iam::000000000000:role/X"),
+            ),
+            "Failed to download 's3://my-bucket/d.json': RuntimeError",
+        ),
+    ],
+)
+def test_main_prints_a_store_error_without_the_store_s_reply(
+    eval_config, mocker, monkeypatch, capsys, error, shown
+) -> None:
+    # Regression (rv30 ux U1): the AWSServiceError branch printed the raw
+    # text, which the console keeps as the job's log tail.
+    import sys
+
+    monkeypatch.setattr(
+        sys, "argv", ["run-eval", "--data-path", "s3://my-bucket/d.json"]
+    )
+    mocker.patch.object(run_evaluation, "missing_endpoints_error", return_value=None)
+    mocker.patch.object(run_evaluation, "GraphRAGChain")
+
+    def _fail(coro, **_kwargs):
+        inner = coro.cr_frame.f_locals.get("main")
+        if inspect.iscoroutine(inner):
+            inner.close()
+        coro.close()
+        raise error
+
+    mocker.patch.object(run_evaluation.event_loop, "run", side_effect=_fail)
+    with pytest.raises(SystemExit) as exc:
+        run_evaluation.main()
+    assert exc.value.code == 1
+    out = " ".join(capsys.readouterr().out.split())
+    assert shown in out
+    assert "Quokkasecret" not in out and "000000000000" not in out
+
+
 def test_s3_client_uses_configured_region() -> None:
     config = Config()
     config.aws.region_name = "eu-west-1"
@@ -305,6 +352,8 @@ def test_s3_client_uses_configured_region() -> None:
         ("not json", "is not valid JSON"),
         ("[]", "contains no queries"),
         ('[{"id": "a", "question": "x", "answer_aliases": 5}]', "answer_aliases"),
+        # Not UTF-8: refused naming the file, not "a store or model error".
+        (b'[{"id": "a", "question": "\xff"}]', "is not UTF-8 text"),
     ],
 )
 def test_main_reports_an_invalid_dataset_and_exits_2(
@@ -314,7 +363,7 @@ def test_main_reports_an_invalid_dataset_and_exits_2(
     import sys
 
     dataset = tmp_path / "eval.json"
-    dataset.write_text(content, encoding="utf-8")
+    dataset.write_bytes(content if isinstance(content, bytes) else content.encode())
     monkeypatch.setattr(sys, "argv", ["run-eval", "--data-path", str(dataset)])
     mocker.patch.object(run_evaluation, "missing_endpoints_error", return_value=None)
     chain = mocker.MagicMock()

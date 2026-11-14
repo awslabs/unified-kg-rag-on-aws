@@ -190,12 +190,18 @@ async def serve_http(tools: KnowledgeGraphTools, host: str, port: int) -> None:
     rebinding: a web page cannot reach the server through a name it
     controls), whatever loopback address it is; on another address,
     reached through a proxy, they are not checked. uvicorn's logs,
-    access lines included, go to the logging setup (stderr).
+    access lines included, go to the logging setup (stderr), whose filter
+    digests the text of a library's line (uvicorn's own "running on"
+    line's address too): the address is logged here, readable.
     """
     import uvicorn
 
     app = build_mcp_app(
         tools, allowed_hosts=loopback_hosts(host) if is_loopback(host) else None
+    )
+    shown_host = f"[{host}]" if ":" in host else host
+    logger.info(
+        "Serving MCP over streamable HTTP on http://%s:%s/mcp", shown_host, port
     )
     config = uvicorn.Config(app, host=host, port=port, log_config=None)
     await uvicorn.Server(config).serve()

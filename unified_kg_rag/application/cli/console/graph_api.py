@@ -42,6 +42,7 @@ from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import DataProcessingError, ErrorClass, classify
 from unified_kg_rag.shared.logging import log_error
+from unified_kg_rag.shared.utils.validation import refused_data_reason
 
 if TYPE_CHECKING:
     from unified_kg_rag.application.bootstrap import Providers
@@ -343,10 +344,14 @@ def _read_graph(path: Path) -> LoadedGraph:
         raw_nodes = data["nodes"]
         raw_edges = data["edges"]
         if not isinstance(raw_nodes, list) or not isinstance(raw_edges, list):
-            raise TypeError("nodes and edges must be lists")
+            raise GraphDataError(
+                f"'{path.name}' is not exported visualization data: nodes and "
+                "edges must be lists"
+            )
     except (ValueError, KeyError, TypeError) as e:
         raise GraphDataError(
-            f"'{path.name}' is not exported visualization data: {e}"
+            f"'{path.name}' is not exported visualization data: "
+            f"{refused_data_reason(e)}"
         ) from e
 
     graph = nx.Graph()

@@ -297,7 +297,9 @@ class TestRunVisualization:
         assert cli_module.main() == 1
         out = json.loads(capsys.readouterr().out)
         assert out["files"] == [str(tmp_path / "out" / "ok.txt")]
-        assert out["failed_renderers"] == {"broken_for_main_test": "cannot draw"}
+        assert out["failed_renderers"] == {
+            "broken_for_main_test": "[failure] RuntimeError"
+        }
 
 
 class TestRendererRegistry:

@@ -175,9 +175,10 @@ class S3CacheManager:
                 pipeline_id,
                 error=e,
             )
-            raise CacheSyncError(
+            raise CacheSyncError.caused_by(
                 f"Failed to sync pipeline '{pipeline_id}' from "
-                f"'s3://{self.bucket_name}/{s3_prefix}': {e}"
+                f"'s3://{self.bucket_name}/{s3_prefix}'",
+                e,
             ) from e
 
         self._raise_on_failures("download", pipeline_id, failed_keys, total_files)
@@ -229,9 +230,10 @@ class S3CacheManager:
                 pipeline_id,
                 error=e,
             )
-            raise CacheSyncError(
+            raise CacheSyncError.caused_by(
                 f"Failed to sync pipeline '{pipeline_id}' to "
-                f"'s3://{self.bucket_name}/{base_prefix}': {e}"
+                f"'s3://{self.bucket_name}/{base_prefix}'",
+                e,
             ) from e
 
         self._raise_on_failures("upload", pipeline_id, failed_keys, total_files)

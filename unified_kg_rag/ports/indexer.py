@@ -27,6 +27,7 @@ from unified_kg_rag.domain.retrieval.store_names import (
     store_name,
 )
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.logging import error_log_text
 
 logger = get_logger(__name__)
 
@@ -78,9 +79,23 @@ class IndexingStats(BaseModel):
         self.successful_items += count
 
     def add_error(
-        self, error_message: str, count: int = 1, ids: list[str] | None = None
+        self,
+        error: BaseException | str,
+        count: int = 1,
+        ids: list[str] | None = None,
+        *,
+        context: str = "",
     ) -> None:
         """Record ``count`` failed items, ``ids`` naming the ones known.
+
+        ``error`` is what failed them: an exception (a store's, a library's),
+        recorded by what a log record at INFO and above may say of it
+        (``error_log_text``: its type, code, status and a digest of its text,
+        which may quote a document or a store's reply; the text itself is
+        logged here at DEBUG), or the package's own message (ids, counts,
+        settings: never a store's reply or corpus text). ``context`` (the
+        package's own words) prefixes it: ``"Bulk indexing failed: ..."``.
+        ``errors`` is logged as it is, so this is the one way into it.
 
         ``ids`` holds one entry per failed item (an id may repeat when the same
         artifact failed more than once) and must not outnumber ``count``.
@@ -93,6 +108,13 @@ class IndexingStats(BaseModel):
         self.failed_items += count
         if ids:
             self.failed_ids.extend(ids)
+        if isinstance(error, BaseException):
+            logger.debug("Indexing error (%s): %s", context or "write", error)
+            error_message = error_log_text(error)
+        else:
+            error_message = error
+        if context:
+            error_message = f"{context}: {error_message}"
         if error_message not in self.errors:
             self.errors.append(error_message)
 

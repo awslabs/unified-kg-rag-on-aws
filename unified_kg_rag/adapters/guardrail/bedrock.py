@@ -273,9 +273,10 @@ class BedrockGuardrail:
                     self._client.apply_guardrail, **request
                 )
             except (ClientError, BotoCoreError) as e:
-                raise GuardrailError(
+                raise GuardrailError.caused_by(
                     f"Bedrock guardrail '{self.identifier}' could not screen the "
-                    f"{source.value}: {e}"
+                    f"{source.value}",
+                    e,
                 ) from e
             verdict = verdict_from_response(
                 text, response, first_output_only=grounding is not None

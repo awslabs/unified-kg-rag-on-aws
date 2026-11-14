@@ -124,8 +124,16 @@ store or model, the deadline, a refusal and a message the package composes
 itself (a stage failure named by its cause) are logged with their text. A
 library's own records at `INFO` and above (ragas's failed judge job,
 `langchain_aws`'s failed call) keep their logger, level and message
-template, their arguments and traceback replaced by digests; a library at
-`DEBUG` in `logging.library_levels` logs everything. Treat `DEBUG` logs
+template, their arguments and traceback replaced by digests (uvicorn's
+access lines keep their path, without its query string); a library's Python
+warning is logged by its category and code location, its text digested; a
+library at `DEBUG` in `logging.library_levels` logs everything. A store
+error the package wraps is shown and logged with the package's own context
+(`Failed to download 's3://bucket/eval.json': ClientError AccessDenied, HTTP
+403`), never the store's reply. File paths (corpus files, exports, caches)
+appear at `INFO` and above; a library that writes to stderr itself or formats
+text into its message is not filtered (set its level in
+`logging.library_levels`). Treat `DEBUG` logs
 (`logging.level: DEBUG`, `UKR__LOGGING__LEVEL=DEBUG`, any CLI's `--log-level
 DEBUG`; `run-rag --verbose` prints more
 of each result but leaves the log level), and libraries set to `DEBUG` in

@@ -1698,8 +1698,9 @@ class OpenSearchIndexer(VectorIndexer):
             raise
         except Exception as e:  # noqa: BLE001 - reported as failed items
             stats.add_error(
-                f"Update of '{alias_name}' failed: {e}",
+                e,
                 len(ids) - stats.successful_items - stats.failed_items,
+                context=f"Update of '{alias_name}' failed",
             )
         return stats
 
@@ -1956,7 +1957,7 @@ class OpenSearchIndexer(VectorIndexer):
                 alias_name,
                 error=e,
             )
-            stats.add_error(str(e), len(records), ids=list(records))
+            stats.add_error(e, len(records), ids=list(records))
             return stats
         if failed:
             stats.add_error("bulk write rejected", len(failed), ids=failed)
@@ -2197,9 +2198,10 @@ class OpenSearchIndexer(VectorIndexer):
             raise
         except Exception as e:  # noqa: BLE001 - reported as failed items
             stats.add_error(
-                f"Update of '{alias_name}' failed: {e}",
+                e,
                 len(updates),
                 ids=[u["id"] for u in updates],
+                context=f"Update of '{alias_name}' failed",
             )
             return stats
         failed = [next(iter(r.values())) for r in response.get("items", [])]
@@ -2279,9 +2281,10 @@ class OpenSearchIndexer(VectorIndexer):
                 raise
             except Exception as e:  # noqa: BLE001 - reported as failed items
                 stats.add_error(
-                    f"Update of '{alias_name}' failed: {e}",
+                    e,
                     len(chunk),
                     ids=[item.id for item in chunk],
+                    context=f"Update of '{alias_name}' failed",
                 )
         return stats
 
@@ -2313,7 +2316,7 @@ class OpenSearchIndexer(VectorIndexer):
         except NamespaceLeaseError:
             raise
         except Exception as e:  # noqa: BLE001 - reported as failed items
-            stats.add_error(f"Delete-by-id failed: {e}", len(ids))
+            stats.add_error(e, len(ids), context="Delete-by-id failed")
         return stats
 
     def delete_document_artifacts(
@@ -2404,7 +2407,7 @@ class OpenSearchIndexer(VectorIndexer):
                     error=e,
                 )
                 total_stats.add_error(
-                    str(e), len(chunk_items), ids=[item.id for item in chunk_items]
+                    e, len(chunk_items), ids=[item.id for item in chunk_items]
                 )
 
         return total_stats
@@ -2531,7 +2534,7 @@ class OpenSearchIndexer(VectorIndexer):
                 )
                 # A failed empty replacement still fails the run.
                 total_stats.add_error(
-                    str(e),
+                    e,
                     max(1, len(chunk_items)),
                     ids=[item.id for item in chunk_items],
                 )
@@ -2944,9 +2947,10 @@ class OpenSearchIndexer(VectorIndexer):
             raise
         except Exception as e:  # noqa: BLE001 - reported as failed items
             stats.add_error(
-                f"Bulk indexing failed: {e}",
+                e,
                 len(documents),
                 ids=[str(doc["id"]) for doc in documents if "id" in doc],
+                context="Bulk indexing failed",
             )
 
         stats.processing_time = time.time() - start_time
@@ -3303,7 +3307,7 @@ class OpenSearchIndexer(VectorIndexer):
                 alias_name,
                 error=e,
             )
-            stats.add_error(str(e), max(1, len(nodes)), ids=[n.id for n in nodes])
+            stats.add_error(e, max(1, len(nodes)), ids=[n.id for n in nodes])
             if index_name:
                 self._drop_unswapped_index(alias_name, index_name)
         return stats
@@ -3378,7 +3382,7 @@ class OpenSearchIndexer(VectorIndexer):
             raise
         except Exception as e:  # noqa: BLE001 - reported as failed items
             stats = IndexingStats(total_items=1)
-            stats.add_error(f"Deleting stale summary nodes failed: {e}", 1)
+            stats.add_error(e, 1, context="Deleting stale summary nodes failed")
             return stats
 
     def delete_summary_nodes_outside(
@@ -3407,7 +3411,7 @@ class OpenSearchIndexer(VectorIndexer):
             raise
         except Exception as e:  # noqa: BLE001 - reported as failed items
             stats = IndexingStats(total_items=1)
-            stats.add_error(f"Deleting stale summary nodes failed: {e}", 1)
+            stats.add_error(e, 1, context="Deleting stale summary nodes failed")
             return stats
 
     def delete_summary_tree(self, suffix: str) -> IndexingStats:
@@ -3438,7 +3442,7 @@ class OpenSearchIndexer(VectorIndexer):
             raise
         except Exception as e:  # noqa: BLE001 - reported as failed items
             stats = IndexingStats(total_items=1)
-            stats.add_error(f"Deleting the summary tree failed: {e}", 1)
+            stats.add_error(e, 1, context="Deleting the summary tree failed")
             return stats
 
     def add_build_artifacts(

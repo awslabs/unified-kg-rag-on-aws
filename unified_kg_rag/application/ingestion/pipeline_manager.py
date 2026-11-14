@@ -158,8 +158,8 @@ class PipelineStateManager:
                 metadata_path,
                 error=e,
             )
-            raise PipelineStateError(
-                f"Failed to load pipeline metadata from '{metadata_path}': {e}"
+            raise PipelineStateError.caused_by(
+                f"Failed to load pipeline metadata from '{metadata_path}'", e
             ) from e
 
     def save_pipeline_metadata(self, context: PipelineContext) -> None:
@@ -208,8 +208,8 @@ class PipelineStateManager:
                 context.pipeline_id,
                 error=e,
             )
-            raise PipelineStateError(
-                f"Critical error saving pipeline metadata: {e}"
+            raise PipelineStateError.caused_by(
+                "Critical error saving pipeline metadata", e
             ) from e
 
     def _merge_persisted_stage_results(
@@ -503,8 +503,8 @@ class PipelineResumeManager:
                 pipeline_id,
                 error=e,
             )
-            raise PipelineResumeError(
-                f"Failed to determine resume strategy for pipeline '{pipeline_id}': {e}"
+            raise PipelineResumeError.caused_by(
+                f"Failed to determine resume strategy for pipeline '{pipeline_id}'", e
             ) from e
 
     @staticmethod
@@ -760,8 +760,8 @@ class PipelineResumeManager:
                 pipeline_id,
                 error=e,
             )
-            raise PipelineResumeError(
-                f"Failed to restore pipeline context for '{pipeline_id}': {e}"
+            raise PipelineResumeError.caused_by(
+                f"Failed to restore pipeline context for '{pipeline_id}'", e
             ) from e
         finally:
             self._verified_outputs.clear()

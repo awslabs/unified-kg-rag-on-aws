@@ -126,6 +126,7 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.domain.prompts import NO_ANSWER_SPAN, AnswerSpanExtractionPrompt
 from unified_kg_rag.domain.retrieval.no_context import answer_language
 from unified_kg_rag.shared import EvaluationException, get_logger
+from unified_kg_rag.shared.exceptions import result_error_text
 from unified_kg_rag.shared.logging import log_failure
 
 from .text_matching import (
@@ -537,7 +538,7 @@ class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
                 result,
                 ground_truth,
                 first_answer_line(answer),
-                {SPAN_FALLBACK_KEY: str(e) or type(e).__name__},
+                {SPAN_FALLBACK_KEY: result_error_text(e)},
             )
         return self._score(query, result, ground_truth, span, {})
 

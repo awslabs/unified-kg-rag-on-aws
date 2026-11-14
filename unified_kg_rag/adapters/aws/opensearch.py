@@ -309,7 +309,9 @@ def _handle_opensearch_errors(func: Callable[..., Any]) -> Callable[..., Any]:
                 func.__name__,
                 error=e,
             )
-            raise AWSServiceError(f"Unexpected error in '{func.__name__}': {e}") from e
+            raise AWSServiceError.caused_by(
+                f"Unexpected error in '{func.__name__}'", e
+            ) from e
 
     return wrapper
 
@@ -341,8 +343,8 @@ def _handle_async_opensearch_errors(func: Callable[..., Any]) -> Callable[..., A
                 func.__name__,
                 error=e,
             )
-            raise AWSServiceError(
-                f"Unexpected async error in '{func.__name__}': {e}"
+            raise AWSServiceError.caused_by(
+                f"Unexpected async error in '{func.__name__}'", e
             ) from e
 
     return async_wrapper
@@ -918,7 +920,7 @@ class OpenSearchClient:
         (``NamespaceLeaseError``) stops it at once.
         """
         not_deleted: list[str] = []
-        errors: list[str] = []
+        first_error: Exception | None = None
         for batch in _index_name_batches(index_names):
             try:
                 self._delete_index_batch(batch)
@@ -926,16 +928,17 @@ class OpenSearchClient:
                 raise
             except Exception as e:  # noqa: BLE001 - reported once for the whole delete
                 not_deleted.extend(batch)
-                errors.append(str(e))
-        if not_deleted:
+                first_error = first_error or e
+        if first_error is not None:
             shown = ", ".join(not_deleted[:_DELETE_REPORT_NAMES])
             more = len(not_deleted) - _DELETE_REPORT_NAMES
-            raise AWSServiceError(
+            raise AWSServiceError.caused_by(
                 f"Failed to delete {len(not_deleted)} of {len(index_names)} "
                 f"index name(s): {shown}"
                 + (f" (+{more} more)" if more > 0 else "")
-                + f"; first error: {errors[0]}"
-            )
+                + "; first error",
+                first_error,
+            ) from first_error
 
     @_handle_opensearch_errors
     def _delete_index_batch(self, index_names: list[str]) -> None:

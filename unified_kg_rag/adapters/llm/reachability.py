@@ -204,7 +204,10 @@ def named_model_error(exc: BaseException, config: Config) -> BaseException:
     if isinstance(exc, GraphRAGException):
         return exc
     if http_status(exc) is not None or looks_transient(exc):
-        return LanguageModelError(
+        named = LanguageModelError(
             f"A language model call failed ({type(exc).__name__}): {exc}"
         )
+        # Raised from the client's error: ``error_name`` names its status.
+        named.__cause__ = exc
+        return named
     return exc
