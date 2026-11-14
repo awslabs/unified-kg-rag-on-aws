@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking changes
+
+- `config.evaluation.prices` is gone from the Python surface: read and set `config.models.prices`
+  (`EvaluationConfig(prices=...)` is refused as an unknown field; a config file or `UKR__` variable that sets
+  `evaluation.prices` still loads, with a WARNING). `unified_kg_rag.evaluation.comparison.answer_cost_usd` is
+  `unified_kg_rag.domain.pricing.usage_cost_usd`.
+
 ### Added
 
 - One owner of model prices: `models.prices` (`domain/pricing.py`) prices every USD figure, the `run-eval` comparison,
