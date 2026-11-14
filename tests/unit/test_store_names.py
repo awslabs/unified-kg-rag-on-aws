@@ -105,3 +105,8 @@ def test_the_suffixes_of_aliases_read_store_name_back() -> None:
         "tenant-a",
     ]
     assert suffixes_of_aliases(names[2:], "graphrag-text-units") == ["other"]
+    # A name holding the base (and additional suffix) alone names no
+    # namespace: no "" suffix.
+    bare = ["graphrag-text-units-", "graphrag-text-units--v2"]
+    assert suffixes_of_aliases(bare, "graphrag-text-units") == ["-v2"]
+    assert suffixes_of_aliases(bare, "graphrag-text-units", "v2") == []

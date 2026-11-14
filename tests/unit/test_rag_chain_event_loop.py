@@ -665,7 +665,6 @@ async def test_a_cpu_step_runs_beside_a_saturated_default_executor() -> None:
     executor inside a blocking call does not delay it, and it runs with the
     caller's context."""
     import contextvars
-    import os
     import threading
 
     from unified_kg_rag.shared.utils import event_loop
@@ -693,8 +692,61 @@ async def test_a_cpu_step_runs_beside_a_saturated_default_executor() -> None:
         assert found[0] == "caller" and found[2] == 3
         assert found[1].startswith("graphrag-cpu")
         assert not queued.done()
-        assert event_loop._cpu_pool()._max_workers == (os.cpu_count() or 1)
     finally:
         release.set()
         await asyncio.gather(*held, queued)
         executor.shutdown(wait=False)
+
+
+def test_the_cpu_pool_has_one_thread_per_available_cpu(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The pool is sized by the CPUs the process may use (a container's
+    quota, its affinity mask), not by the host's ``os.cpu_count()``."""
+    import os
+
+    from unified_kg_rag.shared.utils import common, event_loop
+
+    monkeypatch.setattr(os, "cpu_count", lambda: 64)
+    monkeypatch.setattr(common, "_available_cpu_count", lambda: 3)
+    monkeypatch.setattr(event_loop, "_cpu_executor", None)
+    pool = event_loop._cpu_pool()
+    try:
+        assert pool._max_workers == 3
+        assert event_loop._cpu_pool() is pool
+    finally:
+        pool.shutdown(wait=False)
+
+
+async def test_the_default_executor_takes_calls_after_a_saturated_block() -> None:
+    """A query the block started goes on to its fusion (a default-executor
+    call) after the block: the executor the block held must not be the
+    loop's default by then, shut down."""
+    from tests.fixtures.saturated_executor import saturated_default_executor
+
+    async with saturated_default_executor():
+        pass
+    assert await asyncio.wait_for(asyncio.to_thread(lambda: "ran"), 5) == "ran"
+
+
+def test_a_shut_down_cpu_pool_is_replaced_on_the_next_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Nothing in the package shuts the CPU pool, but a host (or a test)
+    may; the next step must get a new pool, not "cannot schedule new
+    futures after shutdown", in any event loop of the process."""
+    from unified_kg_rag.shared.utils import event_loop
+
+    monkeypatch.setattr(event_loop, "_cpu_executor", None)
+    first = event_loop._cpu_pool()
+    first.shutdown(wait=True)
+    try:
+        # Two loops, one after the other, as two asyncio.run calls make.
+        for _ in range(2):
+            name = asyncio.run(
+                event_loop.to_cpu_thread(lambda: threading.current_thread().name)
+            )
+            assert name.startswith("graphrag-cpu")
+        assert event_loop._cpu_pool() is not first
+    finally:
+        event_loop._cpu_pool().shutdown(wait=False)

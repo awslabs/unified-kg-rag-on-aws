@@ -58,9 +58,8 @@ stored is read again: follow *Upgrading* in order.
 ### Breaking changes
 
 #### Install and extras
-- Python 3.11 or 3.12 is required (`>=3.11.5, <3.13`); 3.10 is dropped (#430). Python 3.11.0–3.11.4 are no longer
-  supported; 3.11.5 or later is required: soupsieve 4, which fixes the soupsieve CVEs below, needs it, and the lock
-  kept the vulnerable soupsieve 2.10 for those patch releases.
+- Python 3.11.5 or later 3.11, or 3.12, is required (`>=3.11.5, <3.13`); 3.10 is dropped (#430), and 3.11.0–3.11.4
+  too: soupsieve 4, which fixes the soupsieve CVEs below, needs 3.11.5 (the lock kept the vulnerable 2.10 for them).
 - A core install (`uv sync`, `pip install -e .`) is ingestion and queries: 145 to 78 packages, 937 to 335 MB on Linux.
   Extras: `eval` (ragas, datasets, pandas, langchain, langchain-community, langchain-openai), `viz` (pyvis, for the
   `interactive` renderer, which a `run-visualization` without `--renderers` leaves out with a WARNING without it),
@@ -1678,8 +1677,9 @@ From a `main` checkout (formats and keys no release had):
 
 ### Changed
 - A query's compute-only steps (OpenSearch hit parsing and fusion, citation lineages, PPR, LightRAG's chunk pick, a
-  traversal's rows) run on a pool of their own (`to_cpu_thread`, one thread per CPU) instead of queueing in the
-  `io_workers` pool behind blocking model calls; with all 64 threads busy the median query was 0.4-0.5 s faster.
+  traversal's rows) run on a pool of their own (`to_cpu_thread`, one thread per available CPU, a container's quota
+  counted) instead of queueing in the `io_workers` pool behind blocking model calls; with all 64 threads busy and CPU
+  to spare the median query was 0.4-0.5 s faster.
 - `auto` falls back to the first routable of `local`, then `mix`, when the router's answer names no routable
   strategy, as it does when nothing configured is served and as `structured` falls back (one order,
   `GENERAL_FALLBACKS`, from the per-strategy `STRATEGY_TRAITS`); without `local` it took the first routable strategy.
