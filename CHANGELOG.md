@@ -945,7 +945,8 @@ From a `main` checkout (formats and keys no release had):
   confirmed), with live stage progress, the run's WARNINGs (a run that extracted no entity flagged; one whose
   warnings advise a rebuild offers it), a rebuild of the namespace for one run (`--reset`, one job: it asks
   no integrity question, nor does the run after it; with the doc-status registry on, nor does a run after files
-  were added, edited or removed; a question names its cause in the page's language) and a stop the pipeline
+  were added, edited or removed; a question names its cause in the page's language; an unexpected failure is
+  named by its type in the page's language, as on Ask, on the Ingest and Evaluate pages) and a stop the pipeline
   checkpoints;
   run and compare evaluations (progress per answer;
   paired deltas called by their
@@ -957,7 +958,7 @@ From a `main` checkout (formats and keys no release had):
   shows them, as no console job exports one (each export named by build time, namespace and run, a replaced one
   marked outdated; without one, the page says why: nothing ingested, no build record, or the export off; a build
   that failed is said over the newest export, still marked against the build record, and names what failed: the
-  config, the stores or the export folder; search,
+  config read, a store setting refused, the stores or the export folder; search,
   neighbourhoods, communities, degree, schema conformance, seed versus document evidence); a dashboard of the
   questions and jobs run through it (time, tokens, cost per strategy, model and role; a question refused as asked,
   as on an empty namespace, counted apart from the errors and, like a cancelled one, left out of every time and of
@@ -2376,6 +2377,14 @@ Deployment (CDK).
   output and JSON `error` (it reached the Ingest and Evaluate pages), in a stage's recorded `error_message` (the
   run's metadata and S3 checkpoint) and in a failed answer's `run-eval` result, which names its class and type;
   each answer's log lines carry its dataset `query_id`. SECURITY.md says what result output holds.
+  The text is closed where it enters: a store write records an error by its name and digest
+  (`IndexingStats.add_error` takes the exception), a store error the package wraps shows its operation or URI
+  and its cause's name (`caused_by`), and a saved evaluation result names a failure by class and type. The guard
+  also follows an alias, a gathered outcome, `traceback.format_exc()`, any logger, `bind` and an error's text kept
+  for later. A library's record is digested once for every handler, a non-string message and a Python warning
+  (by category and location) too, uvicorn's access path drops its query string and the console's uvicorn logs
+  through the same filter; an error is named by an OpenSearch or `openai` code, a Gremlin status and a package
+  error's cause. SECURITY.md says what stays outside the rule: file paths, a library's own stderr, result output.
 - Spans carry an error's type and a digest of its message (`kg_rag.error_digest`), not its text or stack, unless
   `observability.capture_content` (then through `redact_patterns`): a judge's or parser's error quoting corpus text
   reached Langfuse or Phoenix with capture off. A model server that cannot be reached is named by its URL without

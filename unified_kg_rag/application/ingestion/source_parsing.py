@@ -53,7 +53,7 @@ from unified_kg_rag.domain.models import (
     Document,
 )
 from unified_kg_rag.shared import get_logger
-from unified_kg_rag.shared.logging import log_error
+from unified_kg_rag.shared.logging import error_log_text, log_error
 from unified_kg_rag.shared.utils import default_max_workers
 from unified_kg_rag.shared.utils.concurrency import process_pool, shut_down_after
 
@@ -95,12 +95,20 @@ def _parse_in_worker(
     spec: LoaderSpec, path: Path, index_value: str | None
 ) -> Document | str:
     """``path`` parsed in a pool worker, or why it failed (an exception of a
-    loader may not pickle back)."""
+    loader may not pickle back): :func:`_failure`."""
     assert _WORKER_CONFIG is not None
     try:
         return _parse(_WORKER_CONFIG, spec, path, index_value)
     except Exception as e:  # noqa: BLE001 - reported as a failed file
-        return str(e) or type(e).__name__
+        return _failure(e)
+
+
+def _failure(error: Exception) -> str:
+    """Why a file failed to parse, as the ERROR line reporting it may say it
+    (``error_log_text``: a loader's message may quote the file's content);
+    the message itself at DEBUG."""
+    logger.debug("Parse failure: %s", error)
+    return error_log_text(error)
 
 
 # Source digests computed while the corpus fingerprint read each file
@@ -296,7 +304,7 @@ class SourceFileParser:
             parser = ParserFactory.create_parser(path, self.config)
             return parser.parse_file(path, self.index_value)
         except Exception as e:  # noqa: BLE001 - reported as a failed file
-            return str(e) or type(e).__name__
+            return _failure(e)
 
     def _parse_in_pool(
         self,

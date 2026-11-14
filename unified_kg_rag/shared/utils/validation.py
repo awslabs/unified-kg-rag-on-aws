@@ -32,3 +32,21 @@ def format_validation_errors(
         else:
             parts.append(f"{key or root}: {detail['msg']}")
     return "; ".join(parts)
+
+
+def refused_data_reason(error: BaseException) -> str:
+    """Why a data file the user supplied (an export, a dataset) was refused,
+    without its values: a Pydantic error's keys and why
+    (:func:`format_validation_errors`), the key a lookup missed, else what
+    the error is (``error_name``: its type, a JSON or decode error's
+    position). Never ``repr``: a ``UnicodeDecodeError``'s holds the whole
+    file's bytes."""
+    from pydantic import ValidationError
+
+    from .common import error_name
+
+    if isinstance(error, ValidationError):
+        return format_validation_errors("", error)
+    if isinstance(error, KeyError) and error.args:
+        return f"missing key {error.args[0]!r}"
+    return error_name(error)

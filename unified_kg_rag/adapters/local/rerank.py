@@ -85,7 +85,7 @@ class CrossEncoderReranker(BaseDocumentCompressor):
                 )
             except Exception as e:
                 span.set_attribute("kg_rag.rerank.status", "error")
-                raise RerankModelError(f"Reranking failed: {e}") from e
+                raise RerankModelError.caused_by("Reranking failed", e) from e
             ranked = sorted(
                 zip(documents, (float(s) for s in scores), strict=True),
                 key=lambda pair: pair[1],

@@ -141,7 +141,9 @@ class HybridScorer:
             if rerank_config.required:
                 if isinstance(e, RerankModelError):
                     raise
-                raise RerankModelError(f"Rerank model could not be built: {e}") from e
+                raise RerankModelError.caused_by(
+                    "Rerank model could not be built", e
+                ) from e
             # Enabled but not built: every query runs on fusion alone, so say
             # so loudly once instead of degrading silently.
             log_error(
@@ -669,7 +671,7 @@ class HybridScorer:
             if required:
                 if isinstance(e, RerankModelError):
                     raise
-                raise RerankModelError(f"Reranking failed: {e}") from e
+                raise RerankModelError.caused_by("Reranking failed", e) from e
             log_failure(
                 logger,
                 logging.ERROR,

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from collections.abc import Collection, Iterator
 from enum import StrEnum
-from typing import Literal, TypeVar
+from typing import Any, Literal, Self, TypeVar
 
 _E = TypeVar("_E", bound=BaseException)
 
@@ -44,6 +44,26 @@ def with_own_text(exc: _E) -> _E:
 
 
 class GraphRAGException(Exception):
+    # The package's own message (:func:`own_text`): ``True``, all of it; a
+    # string, the part of it that is; ``False``, none.
+    own_text: bool | str = False
+
+    @classmethod
+    def caused_by(cls, context: str, cause: BaseException, **kwargs: Any) -> Self:
+        """``cls(f"{context}: {cause}")``, to raise ``from cause``, whose own
+        text (:func:`own_text`) is ``context`` and the cause's ``error_name``
+        (its type, code and HTTP status): ``context`` is the package's (an
+        operation, a URI, ids), the cause's message a store's, a provider's
+        or a library's, which may quote a document, a prompt or an ARN. A
+        surface and an INFO+ record show the own text, so an unexpected
+        failure still says what failed; ``log_error`` logs the rest at
+        DEBUG."""
+        from .utils.common import error_name
+
+        error = cls(f"{context}: {cause}", **kwargs)
+        error.own_text = f"{context}: {error_name(cause)}"
+        return error
+
     def described(self, namespaces: Collection[str] | None = None) -> str:
         """The message a surface shows (:func:`error_text`): the message and
         what the error holds as data for its reader (the namespaces of
@@ -519,6 +539,28 @@ def operator_error_text(error: BaseException) -> str:
 
     text = shown_error_text(error, audience="operator")
     return f"{error_name(error)}: {text}" if text == INTERNAL_ERROR_MESSAGE else text
+
+
+def named_failure_text(error_class: ErrorClass, name: str, shown: str) -> str:
+    """How a saved result (an evaluation report, a failed metric's reason)
+    names a failure: its class, its type (``name``) and the text a surface
+    shows the operator of it (``shown``), left out for an unexpected failure
+    (:data:`INTERNAL_ERROR_MESSAGE`): its text may quote the prompt, a
+    model's reply or a document, and results are shown and uploaded (the
+    log has it at DEBUG)."""
+    if shown == INTERNAL_ERROR_MESSAGE:
+        return f"[{error_class.value}] {name}"
+    return f"[{error_class.value}] {name}: {shown}"
+
+
+def result_error_text(error: BaseException) -> str:
+    """:func:`named_failure_text` of ``error``, named by ``error_name`` (its
+    type, code and HTTP status): what a saved result records of an error."""
+    from .utils.common import error_name
+
+    return named_failure_text(
+        classify(error), error_name(error), shown_error_text(error, audience="operator")
+    )
 
 
 # The public name of :func:`classify` (``unified_kg_rag.classify_error``).

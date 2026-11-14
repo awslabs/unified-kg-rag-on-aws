@@ -33,17 +33,18 @@ interface GraphFile {
 /** Why the config's namespace has a graph or not: ``current`` (shown),
  * ``export_off`` (graph.visualization.export_data off), ``unrecorded`` (no
  * build record) or ``failed`` (building it raised; the log says why, and
- * ``reason`` which part: the ``config``, the stores read or the export folder
- * written). */
+ * ``reason`` which part: the ``config`` read, a store ``setting`` refused,
+ * the stores read or the export folder written). */
 interface CurrentGraph {
   state: "current" | "export_off" | "unrecorded" | "failed";
   namespace: string | null;
   built_at: string | null;
-  reason?: "config" | "read" | "write" | null;
+  reason?: "config" | "setting" | "read" | "write" | null;
 }
 
 /** The catalog key of what a failed build says: the part that failed. */
-const failedKey = (reason: CurrentGraph["reason"]) => (reason === "write" ? "graph.failedWrite" : reason === "config" ? "graph.failedConfig" : "graph.failed");
+const FAILED_KEYS: Record<string, string> = { write: "graph.failedWrite", config: "graph.failedConfig", setting: "graph.failedSetting" };
+const failedKey = (reason: CurrentGraph["reason"]) => (reason && FAILED_KEYS[reason]) || "graph.failed";
 
 type Panel = "entity" | "communities" | "analysis";
 

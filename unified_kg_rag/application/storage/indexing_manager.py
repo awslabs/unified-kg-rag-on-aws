@@ -688,7 +688,7 @@ class IndexingManager:
                     error=e,
                 )
                 stats = IndexingStats(total_items=1)
-                stats.add_error(str(e))
+                stats.add_error(e)
                 results["graph_sweep"] = stats
 
         self._log_completion_summary(results, time.time() - start_time)
@@ -1007,7 +1007,7 @@ class IndexingManager:
                 raise
             except Exception as e:  # noqa: BLE001 - reported as a failed item
                 stats = IndexingStats(total_items=1)
-                stats.add_error(str(e))
+                stats.add_error(e)
             if stats.failed_items:
                 logger.warning(
                     "Pointing the stored community reports of '%s' at re-keyed "
@@ -1452,7 +1452,7 @@ class IndexingManager:
                         error=e,
                     )
                     stats = IndexingStats()
-                    stats.add_error(str(e))
+                    stats.add_error(e)
                     phase_results[task_name] = stats
 
         return phase_results

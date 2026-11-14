@@ -74,6 +74,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.prompts import ASSERTION_VERDICTS, AssertionJudgementPrompt
 from unified_kg_rag.shared import EvaluationException, get_logger
+from unified_kg_rag.shared.exceptions import result_error_text, with_own_text
 from unified_kg_rag.shared.logging import log_failure
 
 logger = get_logger(__name__)
@@ -113,7 +114,7 @@ def assertions_of(metadata: dict[str, Any]) -> list[EvaluationAssertion]:
                 else EvaluationAssertion.model_validate(entry)
             )
         except ValidationError as e:
-            raise EvaluationException(f"assertion {index}: {e}") from e
+            raise EvaluationException.caused_by(f"assertion {index}", e) from e
     return parsed
 
 
@@ -146,7 +147,9 @@ def parse_verdicts(output: Any, count: int) -> list[str]:
     Raises:
         EvaluationException: The reply has no ``verdicts`` list, an id is not
             one of ``1..count`` or repeats, an assertion has no label, or a
-            label is not one of ``ASSERTION_VERDICTS``.
+            label is not one of ``ASSERTION_VERDICTS``. A message quoting
+            no reply text is the package's own (``with_own_text``): a saved
+            result names it.
     """
     entries = output.get("verdicts") if isinstance(output, dict) else None
     if not isinstance(entries, list):
@@ -161,15 +164,19 @@ def parse_verdicts(output: Any, count: int) -> list[str]:
             raise EvaluationException(f"verdict id {entry.get('id')!r}") from e
         label = str(entry.get("verdict", "")).strip().strip('"').lower()
         if not 1 <= number <= count:
-            raise EvaluationException(f"verdict id {number} is not 1..{count}")
+            raise with_own_text(
+                EvaluationException(f"verdict id {number} is not 1..{count}")
+            )
         if label not in ASSERTION_VERDICTS:
             raise EvaluationException(f"assertion {number}: label {label!r}")
         if number in labels:
-            raise EvaluationException(f"assertion {number} is labelled twice")
+            raise with_own_text(
+                EvaluationException(f"assertion {number} is labelled twice")
+            )
         labels[number] = label
     missing = [n for n in range(1, count + 1) if n not in labels]
     if missing:
-        raise EvaluationException(f"no label for assertion(s) {missing}")
+        raise with_own_text(EvaluationException(f"no label for assertion(s) {missing}"))
     return [labels[n] for n in range(1, count + 1)]
 
 
@@ -342,7 +349,7 @@ class AssertionEvaluator(BaseGraphRAGEvaluator):
                     "Assertion judge failed every trial for '%s': no trial ran",
                     query.query_id,
                 )
-            last = (str(errors[-1]) or type(errors[-1]).__name__) if errors else ""
+            last = result_error_text(errors[-1]) if errors else ""
             reason = f"Assertion judge failed: {last or 'no trial'}"
             metadata[FAILED_METRICS_KEY] = {m.value: reason for m in attempted}
             return self._report(query, [], metadata)

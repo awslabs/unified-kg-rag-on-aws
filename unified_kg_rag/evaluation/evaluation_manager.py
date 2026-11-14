@@ -76,12 +76,11 @@ from unified_kg_rag.shared import (
 )
 from unified_kg_rag.shared.exceptions import (
     ERROR_CLASS_KEY,
-    INTERNAL_ERROR_MESSAGE,
-    ErrorClass,
     IndexNotFoundError,
     InvalidFilterError,
-    classify,
     error_class_of,
+    named_failure_text,
+    result_error_text,
     shown_error_text,
 )
 from unified_kg_rag.shared.extras import extra_hint
@@ -93,7 +92,7 @@ from unified_kg_rag.shared.usage import (
     metering,
     usage_scope,
 )
-from unified_kg_rag.shared.utils import error_name, safe_url
+from unified_kg_rag.shared.utils import safe_url
 from unified_kg_rag.shared.utils.files import USER_TEXT_ENCODING, atomic_write_text
 
 from .answer_match_evaluator import (
@@ -251,17 +250,6 @@ class AnswerArm(BaseModel):
     extraction_scope: str | None = None
 
 
-def _failure_text(error_class: ErrorClass, name: str, shown: str) -> str:
-    """How a saved result names the failure of its answer: its class, its
-    type (``name``) and the text a surface shows of it (``shown``), left
-    out for an unexpected failure (``INTERNAL_ERROR_MESSAGE``): its text
-    may quote the prompt, a model's reply or a document, and the results
-    are shown and uploaded (the log has it at DEBUG)."""
-    if shown == INTERNAL_ERROR_MESSAGE:
-        return f"[{error_class.value}] {name}"
-    return f"[{error_class.value}] {name}: {shown}"
-
-
 class EvaluationManager:
     """Answer an evaluation dataset with a RAG chain and score the answers.
 
@@ -393,7 +381,11 @@ class EvaluationManager:
                     None if evaluator.validate_config() else "invalid configuration"
                 )
             except Exception as e:  # noqa: BLE001 - raised below unless ignore_errors
-                evaluator, reason, cause = None, f"initialization failed: {e}", e
+                evaluator, reason, cause = (
+                    None,
+                    f"initialization failed: {result_error_text(e)}",
+                    e,
+                )
             if evaluator is not None and reason is None:
                 self.evaluators[evaluator_type] = evaluator
                 continue
@@ -567,7 +559,7 @@ class EvaluationManager:
         try:
             assertions = assertions_of({ASSERTIONS_KEY: item.get("assertions")})
         except EvaluationException as e:
-            raise EvaluationException(f"{where}: 'assertions': {e}") from e
+            raise EvaluationException.caused_by(f"{where}: 'assertions'", e) from e
         rag_fields = _rag_input_fields(final_metadata)
         try:
             # Validate what the RAG chain will receive now, not per query later.
@@ -609,7 +601,7 @@ class EvaluationManager:
                     assertions=assertions,
                 )
         except (ValidationError, InvalidFilterError) as e:
-            raise EvaluationException(f"{where}: {e}") from e
+            raise EvaluationException.caused_by(f"{where}", e) from e
         return query, gt
 
     async def evaluate_dataset(
@@ -644,7 +636,7 @@ class EvaluationManager:
             return results, reports, summary
         except Exception as e:
             log_error(logger, logging.ERROR, "Dataset evaluation failed: %s", error=e)
-            raise EvaluationException(f"Dataset evaluation failed: {e}") from e
+            raise EvaluationException.caused_by("Dataset evaluation failed", e) from e
 
     async def score_answers(
         self,
@@ -672,7 +664,7 @@ class EvaluationManager:
             )
         except Exception as e:
             log_error(logger, logging.ERROR, "Dataset evaluation failed: %s", error=e)
-            raise EvaluationException(f"Dataset evaluation failed: {e}") from e
+            raise EvaluationException.caused_by("Dataset evaluation failed", e) from e
 
     async def _score(
         self,
@@ -938,11 +930,7 @@ class EvaluationManager:
                     error=e,
                     traceback=True,
                 )
-                failure = _failure_text(
-                    classify(e),
-                    type(e).__name__,
-                    shown_error_text(e, audience="operator"),
-                )
+                failure = result_error_text(e)
                 results.append(
                     EvaluationResult(
                         query_id=query.query_id,
@@ -1082,16 +1070,12 @@ class EvaluationManager:
         item that failed every attempt (``error``, its last error). Neither
         is a real answer, so neither may be scored. Either is named by its
         class and type, and its text unless an unexpected failure's
-        (``_failure_text``).
+        (``named_failure_text``).
         """
         if raw_result is None or raw_result is BATCH_ITEM_FAILED:
             if error is None:
                 return "answer generation returned no result"
-            return _failure_text(
-                classify(error),
-                error_name(error),
-                shown_error_text(error, audience="operator"),
-            )
+            return result_error_text(error)
         if not (isinstance(rag_metadata, dict) and rag_metadata.get("error")):
             return None
         detail = None
@@ -1100,7 +1084,7 @@ class EvaluationManager:
         if not detail:
             return "RAG chain returned an error response"
         error_class = error_class_of(rag_metadata.get(ERROR_CLASS_KEY))
-        return _failure_text(
+        return named_failure_text(
             error_class,
             str(rag_metadata.get("error_type") or "error"),
             shown_error_text(error_class, str(detail), audience="operator"),
@@ -1387,7 +1371,8 @@ class EvaluationManager:
                 # --max-failure-rate then decides the exit code.
                 all_reports.extend(
                     evaluator._create_empty_report(
-                        query.query_id, reason=f"Evaluator crashed: {e}"
+                        query.query_id,
+                        reason=f"Evaluator crashed: {result_error_text(e)}",
                     )
                     for query in scorable_queries
                 )

@@ -137,7 +137,7 @@ def leiden(
         # the same way. KeyboardInterrupt and SystemExit pass through.
         if type(e).__module__ != "pyo3_runtime":
             raise
-        raise GraphError(f"graspologic_native panicked: {e}") from e
+        raise GraphError.caused_by("graspologic_native panicked", e) from e
     return {originals[key]: label for key, label in partition.items()}
 
 
@@ -389,10 +389,11 @@ def leiden_communities(
             extra_forced_iterations=config.extra_forced_iterations,
         )
     except Exception as e:
-        raise GraphError(
+        raise GraphError.caused_by(
             f"Leiden partitioning failed on a graph with "
             f"{graph.number_of_nodes()} nodes and "
-            f"{graph.number_of_edges()} edges: {e}"
+            f"{graph.number_of_edges()} edges",
+            e,
         ) from e
     return partition_dict_to_communities(partition_dict, graph)
 

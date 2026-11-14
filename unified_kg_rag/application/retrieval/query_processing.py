@@ -296,16 +296,12 @@ async def process_query(
         )
         translated_query = None
     elif isinstance(translated_query, Exception):
-        if not chain.ignore_errors or is_unreachable_error(translated_query):
-            raise translated_query
-        log_failure(
-            logger,
-            logging.WARNING,
+        _absorb_input_failure(
+            chain,
+            translated_query,
+            DegradationStep.TRANSLATION,
             "Query translation failed: %s",
-            error=translated_query,
-        )
-        record_degradation(
-            DegradationStep.TRANSLATION, "searched untranslated", translated_query
+            "searched untranslated",
         )
         translated_query = None
     elif "translation" in results_map and translated_query is None:
@@ -316,15 +312,13 @@ async def process_query(
     entity_data = results_map.get("entities", [])
     if not isinstance(entity_data, list):
         if isinstance(entity_data, Exception):
-            if chain.ignore_errors and not is_unreachable_error(entity_data):
-                logger.warning("Entity extraction failed: %s", entity_data)
-                record_degradation(
-                    DegradationStep.ENTITY_EXTRACTION,
-                    "searched without query entities",
-                    entity_data,
-                )
-            else:
-                raise entity_data
+            _absorb_input_failure(
+                chain,
+                entity_data,
+                DegradationStep.ENTITY_EXTRACTION,
+                "Entity extraction failed: %s",
+                "searched without query entities",
+            )
         entity_data = []
 
     hl_keywords: list[str] = []
@@ -356,6 +350,25 @@ async def process_query(
         "hl_keywords": hl_keywords,
         "ll_keywords": ll_keywords,
     }
+
+
+def _absorb_input_failure(
+    chain: GraphRAGChain,
+    error: Exception,
+    step: str,
+    message: str,
+    reason: str,
+) -> None:
+    """Answer without a query input whose task failed with ``error`` (an
+    outcome of the inputs' ``asyncio.gather``): under
+    ``processing.ignore_errors`` a failure but an unreachable model is
+    logged (``log_failure``: its type and digest at WARNING, its text, which
+    may quote the prompt or the provider's reply, at DEBUG) and recorded as
+    the ``step`` the answer is degraded by; else it is raised."""
+    if not chain.ignore_errors or is_unreachable_error(error):
+        raise error
+    log_failure(logger, logging.WARNING, message, error=error)
+    record_degradation(step, reason, error)
 
 
 def needs_query_entities(state: dict[str, Any], config: Config) -> bool:

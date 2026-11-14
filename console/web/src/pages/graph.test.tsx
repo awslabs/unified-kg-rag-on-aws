@@ -255,6 +255,8 @@ describe("GraphPage when building the graph failed", () => {
     ["read", /Reading the namespace's stores failed/],
     ["write", /Writing the graph's export folder failed/],
     ["config", /The config could not be read/],
+    // The config was read: a store refused one of its settings.
+    ["setting", /A store refused one of its settings/],
   ])("names what failed: %s", async (reason, text) => {
     const older = { ref: "cache:a/visualization/visualization_data.json", label: "default", namespace: "default", run: "a", built_at: "2026-11-13T00:00:00Z", modified: 1, bytes: 10, outdated: true };
     vi.stubGlobal(

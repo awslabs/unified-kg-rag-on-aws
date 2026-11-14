@@ -237,7 +237,9 @@ def test_a_failed_alias_swap_keeps_the_old_tree(
     monkeypatch.undo()
 
     assert (stats.failed_items, sorted(stats.failed_ids)) == (2, ["n8", "n9"])
-    assert "alias swap refused" in " ".join(stats.errors)
+    # Named by its type (the store's text is DEBUG's).
+    assert error.__name__ in " ".join(stats.errors)
+    assert "alias swap refused" not in " ".join(stats.errors)
     assert [n["id"] for n in indexer.read_summary_nodes(None, fields=[])] == ["n1"]
     assert _index_count(harness) == 1
 

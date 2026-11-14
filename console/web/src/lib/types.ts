@@ -197,6 +197,9 @@ export interface JobRecord {
   status: "running" | "succeeded" | "failed" | "stopping" | "stopped" | "lost";
   exit_code: number | null;
   error: string | null;
+  /** The type of an unexpected failure whose text the run masked (its
+   * ``error`` is then the CLIs' generic English message). */
+  masked_error?: string | null;
   result: Record<string, unknown> | null;
   pipeline_id: string | null;
   output_directory: string | null;

@@ -25,6 +25,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.retrieval.citations import strip_markers
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.exceptions import result_error_text
 from unified_kg_rag.shared.logging import log_failure
 
 # Also imported from here by the judges.
@@ -194,7 +195,8 @@ class BaseGraphRAGEvaluator:
                         traceback=True,
                     )
                     final_reports[original_index] = self._create_empty_report(
-                        query_id, reason=f"Evaluation failed: {error}"
+                        query_id,
+                        reason=f"Evaluation failed: {result_error_text(error)}",
                     )
                 else:
                     final_reports[original_index] = report

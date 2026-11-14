@@ -42,6 +42,7 @@ from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import DataProcessingError, ErrorClass, classify
 from unified_kg_rag.shared.logging import log_error
+from unified_kg_rag.shared.utils.validation import refused_data_reason
 
 if TYPE_CHECKING:
     from unified_kg_rag.application.bootstrap import Providers
@@ -79,8 +80,9 @@ class CurrentGraph:
     ``failed`` when building it raised (:class:`GraphBuilder`), with the
     build's ``built_at`` once the build record was read, so the exports
     older than it are still marked outdated, and its ``reason``: what failed
-    (``config`` the config could not be read, ``read`` the stores, ``write``
-    the export folder)."""
+    (``config`` the config could not be read, ``setting`` a store refused
+    one of its settings, ``read`` the stores, ``write`` the export
+    folder)."""
 
     state: str
     namespace: str | None
@@ -113,7 +115,8 @@ def current_graph(
     build recorded (an empty namespace). ``providers`` gives the bundle to
     read the stores with (default: one built for ``config``). A build that
     raises is ``failed`` (logged), with the recorded ``built_at`` and the
-    reason (``write`` for the export folder, else ``read``).
+    reason (``write`` for the export folder, ``setting`` for a store
+    setting refused, else ``read``).
 
     Raises:
         ConfigurationError: The provider bundle cannot be built for ``config``.
@@ -162,10 +165,10 @@ def current_graph(
 
 
 def _reason(error: BaseException, otherwise: str) -> str:
-    """Why building the graph failed, as the page names it: ``config`` for
+    """Why building the graph failed, as the page names it: ``setting`` for
     a setting the stores refuse (a graph-store path that cannot be opened,
     a ``ConfigurationError``: the fix is in Settings), else ``otherwise``."""
-    return "config" if classify(error) is ErrorClass.CONFIGURATION else otherwise
+    return "setting" if classify(error) is ErrorClass.CONFIGURATION else otherwise
 
 
 class GraphBuilder:
@@ -200,7 +203,10 @@ class GraphBuilder:
                     "Building the graph for the Graph page failed: %s",
                     error=e,
                 )
-                return CurrentGraph("failed", namespace, reason=_reason(e, reason))
+                # A config that cannot be read is ``config`` whatever it raised.
+                if reason != "config":
+                    reason = _reason(e, reason)
+                return CurrentGraph("failed", namespace, reason=reason)
 
     def _bundle(self, config: Config) -> Providers:
         from unified_kg_rag.application.bootstrap import build_providers
@@ -343,10 +349,14 @@ def _read_graph(path: Path) -> LoadedGraph:
         raw_nodes = data["nodes"]
         raw_edges = data["edges"]
         if not isinstance(raw_nodes, list) or not isinstance(raw_edges, list):
-            raise TypeError("nodes and edges must be lists")
+            raise GraphDataError(
+                f"'{path.name}' is not exported visualization data: nodes and "
+                "edges must be lists"
+            )
     except (ValueError, KeyError, TypeError) as e:
         raise GraphDataError(
-            f"'{path.name}' is not exported visualization data: {e}"
+            f"'{path.name}' is not exported visualization data: "
+            f"{refused_data_reason(e)}"
         ) from e
 
     graph = nx.Graph()

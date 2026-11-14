@@ -138,6 +138,50 @@ async def test_an_unexpected_failure_of_a_job_shows_no_text(
         assert "Quokkasecret" not in text and "Zebrapassword" not in text
 
 
+_FAILING_EVAL = (
+    "import sys\n"
+    "from unittest import mock\n"
+    "from unified_kg_rag.application.cli import run_evaluation as m\n"
+    "from unified_kg_rag.shared import AWSServiceError\n"
+    "async def run(self):\n"
+    "    raise AWSServiceError(\n"
+    "        'Neptune read_entities failed: Quokkasecret provider reply '\n"
+    "        'account 000000000000 role/Zebrapassword'\n"
+    "    )\n"
+    "m.EvaluationRunner.run = run\n"
+    "m.missing_endpoints_error = lambda *a, **k: None\n"
+    "m.missing_extras_error = lambda *a, **k: None\n"
+    "m.GraphRAGChain = mock.MagicMock(return_value=mock.MagicMock(aclose=mock.AsyncMock()))\n"
+    "m.main()\n"
+)
+
+
+async def test_a_store_error_ending_an_evaluation_job_shows_no_store_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Regression (rv30 ux U1): run-eval printed an AWSServiceError's text on
+    # its output, which the Evaluate page's Log shows (the job's log tail).
+    monkeypatch.setattr(
+        jobs_module, "_cli", lambda *_: [sys.executable, "-c", _FAILING_EVAL]
+    )
+    manager = _manager(tmp_path)
+    dataset = tmp_path / "d.json"
+    dataset.write_text('[{"question": "q"}]')
+    job = await manager.start_evaluate(
+        dataset=dataset, dataset_ref="workspace:d.json", strategies=["local"]
+    )
+    assert job.watcher is not None
+    await asyncio.wait_for(job.watcher, timeout=60)
+    shown = manager.get(job.id)
+    assert shown["status"] == "failed"
+    assert shown["error"] == f"AWSServiceError: {INTERNAL_ERROR_MESSAGE}"
+    tail = "\n".join(manager.log_tail(job))
+    assert "AWSServiceError" in tail
+    for text in (shown["error"], tail, job.log_path.read_text()):
+        for marker in ("Quokkasecret", "000000000000", "Zebrapassword"):
+            assert marker not in text, text
+
+
 def test_jobs_a_stopped_console_left_running_are_marked_lost(tmp_path: Path) -> None:
     store = ConsoleStore(tmp_path / "console.sqlite3")
     for job_id, status in (("a", "running"), ("b", "stopping"), ("c", "succeeded")):

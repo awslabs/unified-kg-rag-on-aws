@@ -51,6 +51,7 @@ from unified_kg_rag.domain.models.methodology import METHODOLOGY_PROFILES
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.evaluation.gates import parse_gate
 from unified_kg_rag.shared import InvalidArgumentError, get_logger
+from unified_kg_rag.shared.exceptions import INTERNAL_ERROR_MESSAGE
 from unified_kg_rag.shared.logging import log_error
 from unified_kg_rag.shared.utils.processes import process_gone, process_identity
 from unified_kg_rag.shared.utils.validation import format_validation_errors
@@ -107,6 +108,16 @@ class NarrowingNotConfirmed(InvalidArgumentError):
         self.dropped = dropped
 
 
+def masked_error_name(error: str | None) -> str | None:
+    """The error's name when ``error`` is the text a CLI shows of an
+    unexpected failure (``operator_error_text``: ``"<name>: "`` and
+    :data:`INTERNAL_ERROR_MESSAGE`), else ``None``."""
+    suffix = f": {INTERNAL_ERROR_MESSAGE}"
+    if error and error.endswith(suffix):
+        return error.removesuffix(suffix) or None
+    return None
+
+
 @dataclass
 class Job:
     """One job; ``record()`` is what the API and the store see."""
@@ -159,6 +170,10 @@ class Job:
             "status": self.status.value,
             "exit_code": self.exit_code,
             "error": self.error,
+            # The type of an unexpected failure the run masked (its ``error``
+            # the CLIs' generic message): the page says the rest in its
+            # language.
+            "masked_error": masked_error_name(self.error),
             "result": self.result,
             "pipeline_id": self.pipeline_id,
             "output_directory": (

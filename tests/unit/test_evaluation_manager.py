@@ -363,7 +363,7 @@ class TestInitialization:
             EvaluationManager, "_resolve_evaluator_class", return_value=_Boom
         )
         with pytest.raises(
-            EvaluationException, match="graph_aware.*init failed"
+            EvaluationException, match="graph_aware.*RuntimeError"
         ) as raised:
             EvaluationManager(config, rag_chain=object())
         # The evaluator's own error is the cause, with its traceback.
@@ -389,7 +389,7 @@ class TestInitialization:
         manager = EvaluationManager(config, rag_chain=object())
         assert set(manager.evaluators) == {EvaluatorType.ANSWER_MATCH}
         assert manager.dropped_evaluators == {
-            "graph_aware": "initialization failed: init failed"
+            "graph_aware": "initialization failed: [failure] RuntimeError"
         }
         manifest = manager.build_run_manifest()
         assert manifest["dropped_evaluators"] == manager.dropped_evaluators

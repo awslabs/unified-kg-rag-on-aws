@@ -601,7 +601,9 @@ class BaseChunker(ABC):
                 is_separator_regex=True,
             )
         except Exception as e:
-            raise DataProcessingError(f"Failed to create text splitter: {e}") from e
+            raise DataProcessingError.caused_by(
+                "Failed to create text splitter", e
+            ) from e
 
     def chunk_documents(self, documents: list[Document]) -> list[TextUnit]:
         try:
@@ -629,7 +631,7 @@ class BaseChunker(ABC):
                 "Failed to chunk documents: %s",
                 error=e,
             )
-            raise DataProcessingError(f"Failed to chunk documents: {e}") from e
+            raise DataProcessingError.caused_by("Failed to chunk documents", e) from e
 
     def _process_document_with_stats(
         self,
@@ -748,7 +750,7 @@ class BaseChunker(ABC):
                 updated_at=datetime.now(),
             )
         except Exception as e:
-            raise DataProcessingError(f"Failed to create text unit: {e}") from e
+            raise DataProcessingError.caused_by("Failed to create text unit", e) from e
 
     @staticmethod
     def _calculate_token_count(text: str) -> int:
@@ -793,8 +795,8 @@ class SimpleTextChunker(BaseChunker):
                 for i, chunk in enumerate(chunks)
             ]
         except Exception as e:
-            raise DataProcessingError(
-                f"Failed to chunk single document '{doc.file_name}': {e}"
+            raise DataProcessingError.caused_by(
+                f"Failed to chunk single document '{doc.file_name}'", e
             ) from e
 
 
@@ -949,8 +951,8 @@ class IntelligentTextChunker(BaseChunker):
                     }
             return units
         except Exception as e:
-            raise DataProcessingError(
-                f"Failed to chunk single document '{doc.file_name}': {e}"
+            raise DataProcessingError.caused_by(
+                f"Failed to chunk single document '{doc.file_name}'", e
             ) from e
 
     def _needs_llm(self, pre_chunk: str) -> bool:

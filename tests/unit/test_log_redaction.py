@@ -13,6 +13,8 @@ from __future__ import annotations
 import ast
 import json
 import logging
+import re
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -410,21 +412,56 @@ _SAFE_ERROR_CALLS = frozenset(
     }
 )
 _SAFE_ERROR_ATTRS = frozenset({"__name__", "__class__", "status_code", "errno"})
+# Calls that return the current exception or its text (``logger.error("%s",
+# traceback.format_exc())``) wherever they are logged.
+_CURRENT_ERROR_CALLS = frozenset(
+    {
+        "traceback.format_exc",
+        "traceback.format_exception",
+        "traceback.format_exception_only",
+        "traceback.format_tb",
+        "sys.exc_info",
+        "sys.exception",
+    }
+)
+# The names a logger goes by (``logger``, ``_logger``, ``self.logger``,
+# ``logging`` itself), and a ``logger.bind(...)``'s.
+_LOGGER_NAMES = frozenset({"logger", "_logger", "log", "logging", "LOGGER"})
+# The level of a ``logger.log(level, ...)`` call that is DEBUG; any other
+# (a variable, a level that may be raised) counts as INFO+.
+_DEBUG_LEVELS = frozenset({"logging.DEBUG", "DEBUG", "10"})
+
+
+def _names_error(node: ast.AST, names: frozenset[str]) -> bool:
+    """Whether ``node`` is one of the errors ``names`` (a name, or the
+    ``outcomes[0]`` an ``isinstance`` check named)."""
+    if isinstance(node, ast.Name):
+        return node.id in names
+    return (
+        isinstance(node, ast.Subscript | ast.Attribute) and ast.unparse(node) in names
+    )
 
 
 def _passes_raw_error(node: ast.AST, names: frozenset[str]) -> bool:
     """Whether ``node`` hands one of the errors ``names`` to the log record
     (an argument, an f-string's ``{e}``): names one outside
     ``error_digest(...)``/``len(...)``/``type(...)`` and the attributes that
-    name its type (the condition of ``x if errors else y`` is not logged)."""
-    if isinstance(node, ast.Name):
-        return node.id in names
-    if (
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id in _SAFE_ERROR_CALLS
-    ):
-        return False
+    name its type (the condition of ``x if errors else y`` is not logged),
+    or the current exception (``traceback.format_exc()``)."""
+    if _names_error(node, names):
+        return True
+    if isinstance(node, ast.Call):
+        if isinstance(node.func, ast.Name) and node.func.id in _SAFE_ERROR_CALLS:
+            return False
+        if ast.unparse(node.func) in _CURRENT_ERROR_CALLS:
+            return True
+        # ``future.exception()``: the error a future or task holds.
+        if (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == "exception"
+            and not node.args
+        ):
+            return True
     if isinstance(node, ast.Attribute) and node.attr in _SAFE_ERROR_ATTRS:
         return False
     if isinstance(node, ast.IfExp):
@@ -434,18 +471,29 @@ def _passes_raw_error(node: ast.AST, names: frozenset[str]) -> bool:
     return any(_passes_raw_error(child, names) for child in ast.iter_child_nodes(node))
 
 
+def _is_logger(node: ast.AST) -> bool:
+    """A logger: one of ``_LOGGER_NAMES``, as a name or an attribute
+    (``self.logger``), or what its ``bind(...)`` returns."""
+    if isinstance(node, ast.Name):
+        return node.id in _LOGGER_NAMES
+    if isinstance(node, ast.Attribute):
+        return node.attr in _LOGGER_NAMES
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "bind"
+        and _is_logger(node.func.value)
+    )
+
+
 def _is_info_plus_log(call: ast.Call) -> bool:
     """A ``logger.<info..critical>(...)`` call, or ``logger.log(level, ...)``
     at a level other than ``DEBUG``."""
     func = call.func
-    if not (
-        isinstance(func, ast.Attribute)
-        and isinstance(func.value, ast.Name)
-        and func.value.id == "logger"
-    ):
+    if not (isinstance(func, ast.Attribute) and _is_logger(func.value)):
         return False
     if func.attr == "log":
-        return bool(call.args) and "DEBUG" not in ast.unparse(call.args[0])
+        return bool(call.args) and ast.unparse(call.args[0]) not in _DEBUG_LEVELS
     return func.attr in _INFO_PLUS
 
 
@@ -461,32 +509,179 @@ def _logs_raw_error(call: ast.Call, names: frozenset[str] = _ERROR_NAMES) -> lis
     ):
         return ["exc_info"]
     first = 2 if isinstance(call.func, ast.Attribute) and call.func.attr == "log" else 1
+    candidates = [*call.args[first - 1 : first], *call.args[first:]]
+    candidates += [kw.value for kw in call.keywords]
+    # What ``logger.bind(err=...)`` binds is logged with the record.
+    receiver = call.func.value if isinstance(call.func, ast.Attribute) else None
+    while isinstance(receiver, ast.Call) and isinstance(receiver.func, ast.Attribute):
+        candidates += [*receiver.args, *(kw.value for kw in receiver.keywords)]
+        receiver = receiver.func.value
+    return [ast.unparse(arg) for arg in candidates if _passes_raw_error(arg, names)]
+
+
+# The ``except`` clauses whose error may be a store's, a provider's or a
+# library's (its text may quote a document, a prompt or an ARN): a broad one
+# and the store and model errors. A narrow one (``ValueError``,
+# ``ConfigurationError``) catches a refusal whose message is for its reader.
+_BROAD_CATCHES = frozenset(
+    {
+        "Exception",
+        "BaseException",
+        "AWSServiceError",
+        "ClientError",
+        "BotoCoreError",
+        "TransportError",
+        "OpenSearchException",
+        "GremlinServerError",
+        "ModelError",
+        "LanguageModelError",
+    }
+)
+
+
+def _catches_broadly(handler: ast.ExceptHandler) -> bool:
+    if handler.type is None:
+        return True
+    types = handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
+    return any(
+        (t.attr if isinstance(t, ast.Attribute) else getattr(t, "id", ""))
+        in _BROAD_CATCHES
+        for t in types
+    )
+
+
+def _error_text_of(node: ast.AST, names: frozenset[str]) -> bool:
+    """Whether ``node`` is the text of one of the errors ``names``:
+    ``str(e)``, ``repr(e)``, ``format(e)``, ``e.args``, an f-string's
+    ``{e}`` or ``"%s" % e``."""
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in {"str", "repr", "format"}
+        and node.args
+    ):
+        return _names_error(node.args[0], names)
+    if isinstance(node, ast.Attribute) and node.attr == "args":
+        return _names_error(node.value, names)
+    if isinstance(node, ast.JoinedStr):
+        return any(
+            isinstance(part, ast.FormattedValue) and _names_error(part.value, names)
+            for part in node.values
+        )
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod):
+        operands = (
+            node.right.elts if isinstance(node.right, ast.Tuple) else [node.right]
+        )
+        return any(_names_error(operand, names) for operand in operands)
+    return False
+
+
+def _kept_error_texts(node: ast.AST, names: frozenset[str]) -> list[ast.AST]:
+    """The texts of the errors ``names`` in ``node`` that it keeps (assigns,
+    returns, appends, records with ``add_error``) rather than raises in an
+    exception of its own, logs at DEBUG or names log-safely
+    (``error_digest(e)``): a kept text is logged or shown later, where no
+    guard reads it."""
+    if isinstance(node, ast.Raise):
+        return []
+    if isinstance(node, ast.Call):
+        func = ast.unparse(node.func)
+        if func.split(".")[-1] in _SAFE_ERROR_CALLS | {"debug", "isinstance"}:
+            return []
+    if _error_text_of(node, names):
+        return [node]
     return [
-        ast.unparse(arg)
-        for arg in [*call.args[first - 1 : first], *call.args[first:]]
-        + [kw.value for kw in call.keywords]
-        if _passes_raw_error(arg, names)
+        found
+        for child in ast.iter_child_nodes(node)
+        for found in _kept_error_texts(child, names)
     ]
 
 
+def _own_nodes(scope: ast.AST) -> Iterator[ast.AST]:
+    """The nodes of ``scope`` (a module or a function), not of the functions
+    it defines."""
+    for child in ast.iter_child_nodes(scope):
+        yield child
+        if not isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef):
+            yield from _own_nodes(child)
+
+
+def _isinstance_errors(scope: ast.AST) -> set[str]:
+    """What ``scope`` (a module or a function) checks with ``isinstance(x,
+    ...Exception/Error)``: an error outside an ``except`` clause (an
+    ``asyncio.gather(..., return_exceptions=True)`` outcome)."""
+    checked: set[str] = set()
+    for node in _own_nodes(scope):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "isinstance"
+            and len(node.args) == 2
+            and re.search(r"Exception|Error", ast.unparse(node.args[1]))
+            and isinstance(node.args[0], ast.Name | ast.Subscript | ast.Attribute)
+        ):
+            checked.add(ast.unparse(node.args[0]))
+    return checked
+
+
 class _RawErrorLogs(ast.NodeVisitor):
-    """The INFO+ log calls of a module that hand an error to the record:
-    the names an enclosing ``except ... as name`` binds, and
-    ``_ERROR_NAMES``."""
+    """What a module does with an error's text that the logging policy
+    forbids: the INFO+ log calls that hand an error to the record, and (in
+    a broad ``except`` clause) the error's text kept to be logged or shown
+    later (``found``). An error is a name an enclosing ``except ... as
+    name`` binds, a name assigned one there (``err = e``), a value its
+    function checks with ``isinstance(x, Exception)`` and ``_ERROR_NAMES``."""
 
     def __init__(self) -> None:
         self.bound: list[str] = []
+        self.broad: list[str] = []
+        self.scopes: list[set[str]] = [set()]
         self.found: list[tuple[int, str]] = []
+
+    def _names(self) -> frozenset[str]:
+        bound = {name for name in self.bound if name}
+        return _ERROR_NAMES | bound | self.scopes[-1]
+
+    def visit_Module(self, node: ast.Module) -> None:
+        self.scopes = [_isinstance_errors(node)]
+        self.generic_visit(node)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        self.scopes.append(_isinstance_errors(node))
+        self.generic_visit(node)
+        self.scopes.pop()
+
+    visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[assignment]
 
     def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
         self.bound.append(node.name or "")
+        broad = bool(node.name) and _catches_broadly(node)
+        if broad:
+            self.broad.append(node.name or "")
+            names = frozenset(self.broad) | self.scopes[-1]
+            for statement in node.body:
+                self.found += [
+                    (found.lineno, f"kept {ast.unparse(found)}")
+                    for found in _kept_error_texts(statement, names)
+                ]
         self.generic_visit(node)
+        if broad:
+            self.broad.pop()
         self.bound.pop()
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        # ``err = e``: the alias is the error for the rest of its function.
+        if _names_error(node.value, self._names()):
+            self.scopes[-1].update(
+                target.id for target in node.targets if isinstance(target, ast.Name)
+            )
+        self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> None:
         if _is_info_plus_log(node):
-            names = _ERROR_NAMES | {name for name in self.bound if name}
-            self.found += [(node.lineno, leak) for leak in _logs_raw_error(node, names)]
+            self.found += [
+                (node.lineno, leak) for leak in _logs_raw_error(node, self._names())
+            ]
         self.generic_visit(node)
 
 
@@ -547,6 +742,91 @@ def test_static_error_guard_flags_a_raw_exception(source: str, leaky: bool) -> N
         f"                {source}\n"
     )
     assert bool(_raw_error_logs(wrapped)) is leaky, source
+
+
+_CLAUSE = "try:\n    pass\nexcept Exception as e:\n"
+
+
+@pytest.mark.parametrize(
+    ("source", "leaky"),
+    [
+        # An alias of the error, in the clause and after it.
+        (_CLAUSE + "    err = e\n    logger.warning('x %s', err)\n", True),
+        (
+            "def f():\n"
+            + "".join(
+                f"    {line}\n"
+                for line in [
+                    "try:",
+                    "    pass",
+                    "except Exception as e:",
+                    "    err = e",
+                    "logger.warning('x %s', err)",
+                ]
+            ),
+            True,
+        ),
+        # The current exception, by the traceback and sys modules.
+        (_CLAUSE + "    logger.error('x %s', traceback.format_exc())\n", True),
+        (_CLAUSE + "    logger.error('x %s', sys.exc_info()[1])\n", True),
+        # Any logger's name, and what ``bind`` binds.
+        (_CLAUSE + "    _logger.warning('x %s', e)\n", True),
+        (_CLAUSE + "    self.logger.warning('x %s', e)\n", True),
+        (_CLAUSE + "    logger.bind(err=str(e)).warning('x')\n", True),
+        (_CLAUSE + "    logger.bind(err=error_digest(e)).warning('x')\n", False),
+        # A gathered outcome its function checks is an exception.
+        (
+            "async def f(t):\n"
+            "    r = await asyncio.gather(t, return_exceptions=True)\n"
+            "    if isinstance(r[0], Exception):\n"
+            "        logger.warning('x %s', r[0])\n",
+            True,
+        ),
+        (
+            "async def f(t):\n"
+            "    r = await asyncio.gather(t, return_exceptions=True)\n"
+            "    if isinstance(r[0], Exception):\n"
+            "        log_failure(logger, 30, 'x %s', error=r[0])\n",
+            False,
+        ),
+        # The same at module level, the error a future holds, and a level
+        # that may be raised.
+        (
+            "r = asyncio.run(f())\n"
+            "if isinstance(r[0], Exception):\n"
+            "    logger.warning('x %s', r[0])\n",
+            True,
+        ),
+        ("logger.warning('x %s', fut.exception())\n", True),
+        (_CLAUSE + "    logger.log(DEBUG_OR_ERROR, 'x %s', e)\n", True),
+        (_CLAUSE + "    logger.log(logging.DEBUG, 'x %s', e)\n", False),
+        # The error's text kept (returned, assigned, recorded) to be logged
+        # or shown later, in a broad clause.
+        (
+            "def f():\n    try:\n        pass\n"
+            "    except Exception as e:\n        return str(e)\n",
+            True,
+        ),
+        (_CLAUSE + "    stats.add_error(str(e), 1)\n", True),
+        (_CLAUSE + "    stats.add_error(f'Bulk write failed: {e}', 1)\n", True),
+        (_CLAUSE + "    errors.append(repr(e))\n", True),
+        (_CLAUSE + "    result.error = '%s' % e\n", True),
+        (_CLAUSE + "    failed[key] = e.args[0]\n", True),
+        # Not kept: the exception itself, a log-safe name, its own raise,
+        # a DEBUG line, and a narrow clause's refusal.
+        (_CLAUSE + "    stats.add_error(e, 1, context='Bulk write failed')\n", False),
+        (_CLAUSE + "    reason = error_name(e)\n", False),
+        (_CLAUSE + "    raise AWSServiceError(f'read failed: {e}') from e\n", False),
+        (_CLAUSE + "    logger.debug('x %s', str(e))\n", False),
+        ("try:\n    pass\nexcept ValueError as e:\n    usage_error(str(e))\n", False),
+    ],
+)
+def test_static_error_guard_follows_an_error_wherever_it_goes(
+    source: str, leaky: bool
+) -> None:
+    """Every rule the guard adds catches its planted example (the patterns
+    an adversarial review found passing it), and the safe forms pass."""
+    assert bool(_raw_error_logs(source)) is leaky, source
 
 
 def test_static_error_guard_reads_the_names_a_clause_binds_in_its_body() -> None:

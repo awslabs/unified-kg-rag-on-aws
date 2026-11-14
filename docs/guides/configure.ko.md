@@ -112,8 +112,14 @@ Bedrock 임베딩, 질의 시점 호출)에 적용되고, 기본값이 다른 �
 초과, 거부, 패키지가 직접 만든 메시지(원인으로 이름 붙인 단계 실패)는 텍스트와 함께
 기록합니다. 라이브러리 자체 레코드(ragas의 실패한 평가 작업, `langchain_aws`의 실패한
 호출)는 `INFO` 이상에서 로거, 수준, 메시지 템플릿을 유지하고 인자와 traceback은
-다이제스트로 바꿉니다. `logging.library_levels`에서 `DEBUG`로 둔 라이브러리는 모두
-기록합니다. `DEBUG` 로그(`logging.level: DEBUG`, `UKR__LOGGING__LEVEL=DEBUG`, 모든 CLI의
+다이제스트로 바꿉니다(uvicorn 접근 로그는 경로를 남기되 쿼리 문자열은 뺍니다). 라이브러리의
+Python 경고는 범주와 코드 위치로 기록하고 텍스트는 다이제스트로 바꿉니다.
+`logging.library_levels`에서 `DEBUG`로 둔 라이브러리는 모두 기록합니다. 패키지가 감싼
+저장소 오류는 저장소의 응답 대신 패키지가 붙인 맥락으로 보여 주고 기록합니다(`Failed to
+download 's3://bucket/eval.json': ClientError AccessDenied, HTTP 403`). 파일 경로(코퍼스
+파일, 내보낸 파일, 캐시)는 `INFO` 이상에도 남습니다. stderr에 직접 쓰거나 메시지 템플릿에
+텍스트를 넣는 라이브러리는 거르지 못하므로 `logging.library_levels`에서 수준을 정하세요.
+`DEBUG` 로그(`logging.level: DEBUG`, `UKR__LOGGING__LEVEL=DEBUG`, 모든 CLI의
 `--log-level DEBUG`. `run-rag --verbose`는 결과를 더
 자세히 출력할 뿐 로그 수준은 바꾸지 않음)와 `logging.library_levels`에서 `DEBUG`로 둔
 라이브러리(`botocore`는 요청 본문을 기록함)에는 사용자 데이터와 코퍼스 데이터가 들어 있다고

@@ -61,6 +61,7 @@ from unified_kg_rag.shared.exceptions import (
     DocStatusRegistryError,
     InvalidArgumentError,
 )
+from unified_kg_rag.shared.logging import error_log_text
 from unified_kg_rag.shared.utils.files import atomic_open
 
 logger = get_logger(__name__)
@@ -584,7 +585,8 @@ def _read_census(
         stores.callback(graph.close)
         return census_graph(graph, name, page_size=page_size), None
     except (AWSServiceError, ConfigurationError) as e:
-        reason = str(e)
+        logger.debug("Graph census read failed: %s", e)
+        reason = error_log_text(e)
         logger.warning(
             "The graph store is unavailable; exporting without its census: %s",
             reason,

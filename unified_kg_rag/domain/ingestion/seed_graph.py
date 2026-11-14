@@ -333,7 +333,7 @@ def parse_statement(line: str) -> SeedNodeStatement | SeedEdgeStatement:
     try:
         return _STATEMENT.validate_json(line)
     except ValueError as e:
-        raise DataProcessingError(f"not a seed graph statement: {e}") from e
+        raise DataProcessingError.caused_by("not a seed graph statement", e) from e
 
 
 def parse_unit_statements(text: str) -> list[SeedNodeStatement | SeedEdgeStatement]:

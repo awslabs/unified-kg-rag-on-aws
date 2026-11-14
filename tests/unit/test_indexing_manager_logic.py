@@ -176,7 +176,9 @@ def test_run_indexing_phase_captures_task_exception_as_failed_stats(manager) -> 
     assert "boom" in results
     stats = results["boom"]
     assert stats.failed_items == 1
-    assert any("backend down" in e for e in stats.errors)
+    # Named, never quoted: the errors are logged at WARNING.
+    assert any("RuntimeError" in e for e in stats.errors)
+    assert not any("backend down" in e for e in stats.errors)
 
 
 def test_run_indexing_phase_pool_size_capped_at_eight(manager, mocker) -> None:
@@ -458,7 +460,8 @@ def test_a_failed_sweep_is_reported_as_a_failed_write(mocker) -> None:
     )
 
     assert results["graph_sweep"].failed_items == 1
-    assert "timeout" in results["graph_sweep"].errors[0]
+    assert "RuntimeError" in results["graph_sweep"].errors[0]
+    assert "timeout" not in results["graph_sweep"].errors[0]
 
 
 def test_an_edge_rewritten_for_its_rank_only_is_not_embedded_again(

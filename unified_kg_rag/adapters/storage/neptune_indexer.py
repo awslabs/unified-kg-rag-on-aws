@@ -235,8 +235,8 @@ class NeptuneIndexer(GraphIndexer):
             except Exception as e:
                 if isinstance(e, GraphRAGException):
                     raise
-                raise AWSServiceError(
-                    f"Neptune vertex-id check of '{label}' failed: {e}"
+                raise AWSServiceError.caused_by(
+                    f"Neptune vertex-id check of '{label}' failed", e
                 ) from e
             if self._rebuild_tag is not None:
                 if switching or stored not in (None, mode):
@@ -340,7 +340,7 @@ class NeptuneIndexer(GraphIndexer):
             entities = [entity_from_vertex(row) for row in rows]
             return [entity for entity in entities if entity is not None]
         except Exception as e:
-            raise AWSServiceError(f"Neptune read_entities failed: {e}") from e
+            raise AWSServiceError.caused_by("Neptune read_entities failed", e) from e
 
     def read_relationships(
         self, ids: list[str], suffix: str | None = None
@@ -383,7 +383,9 @@ class NeptuneIndexer(GraphIndexer):
             ]
             return [rel for rel in rels if rel is not None]
         except Exception as e:
-            raise AWSServiceError(f"Neptune read_relationships failed: {e}") from e
+            raise AWSServiceError.caused_by(
+                "Neptune read_relationships failed", e
+            ) from e
 
     def find_ids_citing(
         self,
@@ -419,7 +421,7 @@ class NeptuneIndexer(GraphIndexer):
                 "find_ids_citing",
             )
         except Exception as e:
-            raise AWSServiceError(f"Neptune find_ids_citing failed: {e}") from e
+            raise AWSServiceError.caused_by("Neptune find_ids_citing failed", e) from e
         return {
             str(row["id"]): [str(u) for u in row.get("text_unit_ids") or []]
             for row in rows
@@ -459,8 +461,8 @@ class NeptuneIndexer(GraphIndexer):
                 "find_relationship_ids_citing",
             )
         except Exception as e:
-            raise AWSServiceError(
-                f"Neptune find_relationship_ids_citing failed: {e}"
+            raise AWSServiceError.caused_by(
+                "Neptune find_relationship_ids_citing failed", e
             ) from e
         return {
             str(row["id"]): edge_text_unit_ids(row.get("text_unit_ids"))
@@ -490,8 +492,8 @@ class NeptuneIndexer(GraphIndexer):
                 "find_entity_ids_by_name_key",
             )
         except Exception as e:
-            raise AWSServiceError(
-                f"Neptune find_entity_ids_by_name_key failed: {e}"
+            raise AWSServiceError.caused_by(
+                "Neptune find_entity_ids_by_name_key failed", e
             ) from e
         return sorted({str(row) for row in rows})
 
@@ -534,7 +536,9 @@ class NeptuneIndexer(GraphIndexer):
             )
             return {str(row["id"]): [str(n) for n in row["neighbors"]] for row in rows}
         except Exception as e:
-            raise AWSServiceError(f"Neptune read_neighbor_ids failed: {e}") from e
+            raise AWSServiceError.caused_by(
+                "Neptune read_neighbor_ids failed", e
+            ) from e
 
     def count_neighbors(
         self,
@@ -565,7 +569,7 @@ class NeptuneIndexer(GraphIndexer):
             )
             return {str(row["id"]): int(row["count"]) for row in rows}
         except Exception as e:
-            raise AWSServiceError(f"Neptune count_neighbors failed: {e}") from e
+            raise AWSServiceError.caused_by("Neptune count_neighbors failed", e) from e
 
     def read_entity_names(self, suffix: str | None = None) -> list[tuple[str, str]]:
         """Project ``(id, name)`` for all existing entities in the suffix's label.
@@ -595,7 +599,9 @@ class NeptuneIndexer(GraphIndexer):
                     pairs.append((str(row["id"]), str(row["name"])))
             return pairs
         except Exception as e:
-            raise AWSServiceError(f"Neptune read_entity_names failed: {e}") from e
+            raise AWSServiceError.caused_by(
+                "Neptune read_entity_names failed", e
+            ) from e
 
     def read_schema_annotations(
         self, kind: AnnotatedKind, suffix: str | None = None
@@ -641,7 +647,9 @@ class NeptuneIndexer(GraphIndexer):
         except NamespaceLeaseError:
             raise
         except Exception as e:
-            raise AWSServiceError(f"Neptune read_schema_annotations failed: {e}") from e
+            raise AWSServiceError.caused_by(
+                "Neptune read_schema_annotations failed", e
+            ) from e
         annotations: dict[str, StoredAnnotation] = {}
         for value_map, item_type in pairs:
             item_id = value_map.get("id")
@@ -701,7 +709,7 @@ class NeptuneIndexer(GraphIndexer):
         except NamespaceLeaseError:
             raise
         except Exception as e:
-            raise AWSServiceError(f"Neptune scan_census_rows failed: {e}") from e
+            raise AWSServiceError.caused_by("Neptune scan_census_rows failed", e) from e
         size = max(page_size or self.neptune_config.batch_size, 1)
         return self._census_pages(kind, label, ids, size)
 
@@ -739,7 +747,9 @@ class NeptuneIndexer(GraphIndexer):
             except NamespaceLeaseError:
                 raise
             except Exception as e:
-                raise AWSServiceError(f"Neptune scan_census_rows failed: {e}") from e
+                raise AWSServiceError.caused_by(
+                    "Neptune scan_census_rows failed", e
+                ) from e
             page = (
                 (
                     census_row_from_vertex(row)
@@ -774,7 +784,7 @@ class NeptuneIndexer(GraphIndexer):
         except NamespaceLeaseError:
             raise
         except Exception as e:
-            raise AWSServiceError(f"Neptune holds_any_item failed: {e}") from e
+            raise AWSServiceError.caused_by("Neptune holds_any_item failed", e) from e
         return bool(found)
 
     def holds_any_relationship(self, suffix: str | None = None) -> bool:
@@ -804,7 +814,9 @@ class NeptuneIndexer(GraphIndexer):
         except NamespaceLeaseError:
             raise
         except Exception as e:
-            raise AWSServiceError(f"Neptune holds_any_relationship failed: {e}") from e
+            raise AWSServiceError.caused_by(
+                "Neptune holds_any_relationship failed", e
+            ) from e
         return bool(found)
 
     def write_schema_annotations(
@@ -856,7 +868,7 @@ class NeptuneIndexer(GraphIndexer):
                 except NamespaceLeaseError:
                     raise
                 except Exception as e:  # noqa: BLE001 - reported as failed items
-                    stats.add_error(str(e), len(batch), ids=list(batch))
+                    stats.add_error(e, len(batch), ids=list(batch))
                     log_error(
                         logger,
                         logging.WARNING,
@@ -1104,7 +1116,7 @@ class NeptuneIndexer(GraphIndexer):
                     except NamespaceLeaseError:
                         raise
                     except Exception as e:  # noqa: BLE001 - reported as failed items
-                        stats.add_error(str(e), len(batch), ids=list(batch))
+                        stats.add_error(e, len(batch), ids=list(batch))
                         log_error(
                             logger,
                             logging.WARNING,
@@ -1225,8 +1237,8 @@ class NeptuneIndexer(GraphIndexer):
         except NamespaceLeaseError:
             raise
         except Exception as e:
-            raise AWSServiceError(
-                f"Neptune read of the relationship endpoints failed: {e}"
+            raise AWSServiceError.caused_by(
+                "Neptune read of the relationship endpoints failed", e
             ) from e
         found: dict[str, Any] = {}
         for row in sorted(rows, key=lambda r: str(r["vertex"])):
@@ -1276,7 +1288,7 @@ class NeptuneIndexer(GraphIndexer):
             except NamespaceLeaseError:
                 raise
             except AWSServiceError as e:
-                stats.add_error(str(e), len(rels), ids=[rel.id for rel in rels])
+                stats.add_error(e, len(rels), ids=[rel.id for rel in rels])
                 log_error(
                     logger,
                     logging.WARNING,
@@ -1297,8 +1309,9 @@ class NeptuneIndexer(GraphIndexer):
                 rel: Relationship,
                 entity_label: str = entity_label,
                 vertices: dict[str, Any] = vertices,
-            ) -> str | None:
-                """Write one edge; the error, or None once it is written."""
+            ) -> str | Exception | None:
+                """Write one edge; why it was not (the package's message or
+                the store's error), or None once it is written."""
                 missing = (
                     f"source entity '{rel.source_id}' or target entity "
                     f"'{rel.target_id}' not found"
@@ -1320,7 +1333,7 @@ class NeptuneIndexer(GraphIndexer):
                 except NamespaceLeaseError:
                     raise
                 except Exception as e:  # noqa: BLE001 - reported as a failed write
-                    return str(e)
+                    return e
 
             workers = max(1, min(self.neptune_config.index_concurrency, len(rels)))
             with ContextThreadPoolExecutor(max_workers=workers) as executor:
@@ -1330,10 +1343,19 @@ class NeptuneIndexer(GraphIndexer):
                 ):
                     if error is None:
                         stats.add_success(1)
-                    else:
+                    elif isinstance(error, str):
                         stats.add_error(error, ids=[rel.id])
                         logger.warning(
                             "Relationship '%s' not written: %s", rel.id, error
+                        )
+                    else:
+                        stats.add_error(error, ids=[rel.id])
+                        log_error(
+                            logger,
+                            logging.WARNING,
+                            "Relationship '%s' not written: %s",
+                            rel.id,
+                            error=error,
                         )
                     if index % self._PROGRESS_LOG_EVERY == 0:
                         logger.info(
@@ -1381,8 +1403,8 @@ class NeptuneIndexer(GraphIndexer):
             )
             return sorted({str(rid) for rid in rows if rid is not None})
         except Exception as e:
-            raise AWSServiceError(
-                f"Neptune find_incident_relationship_ids failed: {e}"
+            raise AWSServiceError.caused_by(
+                "Neptune find_incident_relationship_ids failed", e
             ) from e
 
     def delete_by_id(self, ids: list[str], suffix: str | None = None) -> IndexingStats:
@@ -1436,7 +1458,7 @@ class NeptuneIndexer(GraphIndexer):
             except NamespaceLeaseError:
                 raise
             except Exception as e:  # noqa: BLE001 - reported as failed items
-                stats.add_error(str(e), len(id_batch), ids=list(id_batch))
+                stats.add_error(e, len(id_batch), ids=list(id_batch))
                 log_error(
                     logger, logging.WARNING, "Failed to delete ids batch: %s", error=e
                 )
@@ -1544,7 +1566,7 @@ class NeptuneIndexer(GraphIndexer):
                 raise
             except Exception as e:  # noqa: BLE001 - a failed item
                 stats.successful_items -= 1
-                stats.add_error(str(e), ids=[str(item.id)])
+                stats.add_error(e, ids=[str(item.id)])
                 log_error(
                     logger,
                     logging.WARNING,
@@ -1686,7 +1708,7 @@ class NeptuneIndexer(GraphIndexer):
             log_error(logger, logging.ERROR, "Failed to drop %s: %s", what, error=e)
             if isinstance(e, GraphRAGException):
                 raise
-            raise AWSServiceError(f"Dropping Neptune {what} failed: {e}") from e
+            raise AWSServiceError.caused_by(f"Dropping Neptune {what} failed", e) from e
         if total:
             logger.info("Dropped %s %s", total, what)
         return total
@@ -1855,7 +1877,7 @@ class NeptuneIndexer(GraphIndexer):
                 except Exception as item_error:  # noqa: BLE001 - failed items
                     item_id = getattr(item, "id", None)
                     stats.add_error(
-                        str(item_error),
+                        item_error,
                         ids=[str(item_id)] if item_id is not None else None,
                     )
                     log_error(

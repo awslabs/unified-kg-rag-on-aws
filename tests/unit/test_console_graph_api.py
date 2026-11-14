@@ -225,7 +225,7 @@ def test_a_failed_build_keeps_the_recorded_build_time(
 
     monkeypatch.setattr(visualization_export, "current_visualization_data", refused)
     assert graph_api.current_graph(Config(), tmp_path, lambda: object()).reason == (
-        "config"
+        "setting"
     )
     builder = graph_api.GraphBuilder(tmp_path)
 
@@ -240,7 +240,8 @@ def test_a_failed_build_keeps_the_recorded_build_time(
         unreadable,
     )
     monkeypatch.setattr(builder, "_bundle", bad_bundle)
-    assert builder.current(Config).reason == "config"
+    # The config was read: the store refused one of its settings.
+    assert builder.current(Config).reason == "setting"
     graphs: list[dict[str, Any]] = [
         {"namespace": "default", "built_at": "2026-11-13T00:00:00Z"}
     ]

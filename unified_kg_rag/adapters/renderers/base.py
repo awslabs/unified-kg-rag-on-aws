@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
 from unified_kg_rag.shared import ConfigurationError, get_logger
+from unified_kg_rag.shared.exceptions import result_error_text
 from unified_kg_rag.shared.extras import extra_hint
 from unified_kg_rag.shared.logging import log_error
 from unified_kg_rag.shared.registry import Registry
@@ -145,7 +146,7 @@ def render_resolved(
         except Exception as e:  # noqa: BLE001 - one renderer must not sink the rest
             log_error(logger, logging.ERROR, "Renderer '%s' failed: %s", name, error=e)
             if failures is not None:
-                failures[name] = str(e) or type(e).__name__
+                failures[name] = result_error_text(e)
             continue
         if paths:
             logger.info("Renderer '%s' wrote %d file(s)", name, len(paths))

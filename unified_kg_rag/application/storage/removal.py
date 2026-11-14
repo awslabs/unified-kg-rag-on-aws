@@ -101,7 +101,7 @@ class TextUnitRemoval:
                 error=e,
             )
             stats = IndexingStats(total_items=len(text_unit_ids))
-            stats.add_error(str(e), count=stats.total_items)
+            stats.add_error(e, count=stats.total_items)
             return {f"find_removed_{suffix}": stats}
         exclusive, gone = citing.exclusive, citing.gone
 
@@ -547,7 +547,7 @@ class TextUnitRemoval:
                 logger, logging.ERROR, "%s in '%s' failed: %s", doing, suffix, error=e
             )
             stats = IndexingStats(total_items=len(entity_ids) + len(relationship_ids))
-            stats.add_error(str(e), count=stats.total_items)
+            stats.add_error(e, count=stats.total_items)
             return {**results, f"graph_read_{suffix}": stats}, note.noted
 
         if claim_ids:
@@ -569,7 +569,7 @@ class TextUnitRemoval:
                 error=e,
             )
             stats = IndexingStats(total_items=len(entity_ids) + len(relationship_ids))
-            stats.add_error(str(e), count=stats.total_items)
+            stats.add_error(e, count=stats.total_items)
             return {**results, f"graph_read_{suffix}": stats}, note.noted
         if not new_entities and not new_relationships:
             return results, note.noted
@@ -584,7 +584,7 @@ class TextUnitRemoval:
                 error=e,
             )
             stats = IndexingStats(total_items=len(entity_ids) + len(relationship_ids))
-            stats.add_error(str(e), count=stats.total_items)
+            stats.add_error(e, count=stats.total_items)
             return {**results, f"graph_read_{suffix}": stats}, note.noted
         logger.info(
             "Removing %d text units from %d shared entities and %d shared "
@@ -1058,7 +1058,7 @@ class TextUnitRemoval:
                 error=e,
             )
             stats = IndexingStats(total_items=len(claim_ids))
-            stats.add_error(str(e), count=len(claim_ids), ids=claim_ids)
+            stats.add_error(e, count=len(claim_ids), ids=claim_ids)
             return {f"vector_read_claims_{suffix}": stats}
         before = {c.id: c for c in claims}
         # The claims under new ids first: the stored claims they are derived
@@ -1176,7 +1176,7 @@ class TextUnitRemoval:
                     error=e,
                 )
                 stats = IndexingStats(total_items=len(ids))
-                stats.add_error(str(e), count=len(ids))
+                stats.add_error(e, count=len(ids))
                 results[f"graph_read_{suffix}"] = stats
                 continue
             # The vector copies first: a retry finds what to delete (and the

@@ -109,7 +109,7 @@ from unified_kg_rag.shared import (
 from unified_kg_rag.shared.exceptions import ErrorClass, InvalidArgumentError, classify
 from unified_kg_rag.shared.logging import log_error
 from unified_kg_rag.shared.usage import usage_scope
-from unified_kg_rag.shared.utils import event_loop
+from unified_kg_rag.shared.utils import error_name, event_loop
 from unified_kg_rag.shared.utils.files import atomic_write_text
 from unified_kg_rag.shared.utils.s3_uri import is_s3_uri
 from unified_kg_rag.shared.utils.validation import format_validation_errors
@@ -1399,7 +1399,7 @@ class EvaluationRunner:
         if upload_error:
             # Keep the local copy so a failed upload loses no results.
             console.print(
-                f"[red]Error: {markup_safe(upload_error)}. Local results kept in "
+                f"[red]Error: {markup_safe(shown_text(upload_error))}. Local results kept in "
                 f"'{markup_safe(local_outputs)}'.[/red]"
             )
             exit_code = EXIT_FAILURE
@@ -1425,7 +1425,7 @@ class EvaluationRunner:
                     "output_directory": str(
                         local_outputs if upload_error else outputs_target
                     ),
-                    "upload_error": str(upload_error) if upload_error else None,
+                    "upload_error": shown_text(upload_error) if upload_error else None,
                     "runs": measured.summaries,
                     "comparison": comparison,
                     "failure_budget_breaches": breaches,
@@ -1449,7 +1449,7 @@ class EvaluationRunner:
             return {}
         errors = [*breaches, *gate_failures]
         if upload_error is not None:
-            errors.append(str(upload_error))
+            errors.append(shown_text(upload_error))
         if breaches:
             kind = "FailureBudgetExceeded"
         elif gate_failures:
@@ -1880,6 +1880,11 @@ class EvaluationRunner:
         except json.JSONDecodeError as e:
             raise InvalidDatasetError(
                 f"evaluation dataset '{eval_data_uri}' is not valid JSON: {e}"
+            ) from e
+        except UnicodeDecodeError as e:
+            raise InvalidDatasetError(
+                f"evaluation dataset '{eval_data_uri}' is not UTF-8 text: "
+                f"{error_name(e)}"
             ) from e
         except EvaluationException as e:
             raise InvalidDatasetError(str(e)) from e
@@ -2693,8 +2698,10 @@ def main() -> None:
         if error_class is not ErrorClass.FAILURE or isinstance(e, AWSServiceError):
             # An expected outcome with its own message: a store or model
             # server down, the deadline, an s3:// dataset that cannot be
-            # downloaded.
-            console.print(f"\n[red]Error: {markup_safe(e)}[/red]")
+            # downloaded (shown_text: a store's own reply, which may quote
+            # an ARN or a document, is masked; the package's words, as the
+            # URI that failed, are kept).
+            console.print(f"\n[red]Error: {markup_safe(shown_text(e))}[/red]")
             log_error(logger, logging.ERROR, "Evaluation failed: %s", error=e)
             sys.exit(EXIT_FAILURE)
         # Masked (shown_text): the one rule of every surface.

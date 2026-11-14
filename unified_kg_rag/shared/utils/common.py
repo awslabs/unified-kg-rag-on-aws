@@ -5,6 +5,8 @@ import json
 import math
 import os
 import re
+import socket
+import ssl
 import traceback
 import unicodedata
 import uuid
@@ -188,13 +190,25 @@ def reported_status(error: BaseException) -> int | None:
 
 
 def error_code(error: BaseException) -> str:
-    """The service's error code a botocore ``ClientError`` carries
-    (``ThrottlingException``), else the error's type name."""
+    """The service's error code an error carries: a botocore
+    ``ClientError``'s (``ThrottlingException``), the error type an
+    OpenSearch response names (``index_not_found_exception``, from its
+    ``info``; its ``error`` alone may be the raw response body), an
+    ``openai`` error's ``code`` (``rate_limit_exceeded``); else the error's
+    type name."""
     response = getattr(error, "response", None)
     if isinstance(response, dict):
         code = (response.get("Error") or {}).get("Code")
         if code:
             return str(code)
+    info = getattr(error, "info", None)
+    if isinstance(info, dict) and isinstance(info.get("error"), dict):
+        kind = info["error"].get("type")
+        if isinstance(kind, str) and kind:
+            return kind
+    code = getattr(error, "code", None)
+    if isinstance(code, str) and code:
+        return code
     return type(error).__name__
 
 
@@ -204,6 +218,17 @@ def _data_free_facts(error: BaseException) -> str:
     names (a path is where the run reads and writes, not the content), a
     decode error's position and reason. Empty for any other error: its text
     may quote a model's reply, a query or corpus text."""
+    if isinstance(error, ssl.SSLError):
+        # Its errno is the SSL library's error number, not an OS one.
+        parts = (getattr(error, "library", None), getattr(error, "reason", None))
+        return " ".join(str(part) for part in parts if part)
+    if isinstance(error, socket.gaierror | socket.herror):
+        # Its errno is the resolver's (EAI_*), named by the resolver.
+        return (
+            f"[Errno {error.errno}] {error.strerror}"
+            if isinstance(error.strerror, str)
+            else ""
+        )
     if isinstance(error, OSError) and isinstance(error.errno, int):
         facts = f"[Errno {error.errno}] {os.strerror(error.errno)}"
         paths = [
@@ -220,20 +245,40 @@ def _data_free_facts(error: BaseException) -> str:
     return ""
 
 
-def error_name(error: BaseException) -> str:
+# What a status an error reports is, by the top-level package of its type:
+# a Gremlin server's response status (597, a script evaluation error) is
+# not an HTTP one.
+_STATUS_KINDS = {"gremlin_python": "Gremlin status"}
+
+
+def error_name(error: BaseException, *, _depth: int = 0) -> str:
     """Log-safe name of ``error``, never its message: its type, the
     service's error code and the HTTP status it reports
     (``ClientError ThrottlingException, HTTP 429``; ``ResponseError, HTTP
     400``) and what an error whose text holds no data says
     (``PermissionError [Errno 13] Permission denied: '/out'``,
-    ``JSONDecodeError Expecting value: line 1 column 1``)."""
+    ``JSONDecodeError Expecting value: line 1 column 1``). A package error
+    that reports none of its own and was raised from another (a
+    ``LanguageModelError`` wrapping a provider's) names that one too
+    (``LanguageModelError from ResponseError, HTTP 500``)."""
     name = type(error).__name__
     code = error_code(error)
     head = name if code == name else f"{name} {code}"
     if facts := _data_free_facts(error):
         head = f"{head} {facts}"
     status = reported_status(error)
-    return head if status is None else f"{head}, HTTP {status}"
+    if status is not None:
+        package = type(error).__module__.partition(".")[0]
+        return f"{head}, {_STATUS_KINDS.get(package, 'HTTP')} {status}"
+    cause = error.__cause__
+    if (
+        cause is not None
+        and head == name
+        and type(error).__module__.partition(".")[0] == __name__.partition(".")[0]
+        and _depth < 3
+    ):
+        return f"{head} from {error_name(cause, _depth=_depth + 1)}"
+    return head
 
 
 def error_digest(error: BaseException) -> str:

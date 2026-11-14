@@ -474,8 +474,8 @@ class BedrockCrossRegionModelHelper:
             }
             cls._unreachable_by_region.pop(region_name, None)
         except Exception as e:
-            raise AWSServiceError(
-                f"Failed to check cross-region model availability: {e}"
+            raise AWSServiceError.caused_by(
+                "Failed to check cross-region model availability", e
             ) from e
         cls._profiles_by_region[region_name] = profiles
         return profiles
@@ -1103,7 +1103,7 @@ class BedrockRerankWrapper(BaseBedrockWrapper, BedrockRerank):
                 )
             except Exception as e:
                 span.set_attribute("kg_rag.rerank.status", "error")
-                raise RerankModelError(f"Reranking failed: {e}") from e
+                raise RerankModelError.caused_by("Reranking failed", e) from e
             span.set_attributes(
                 {
                     "kg_rag.rerank.status": "ok" if result else "empty",

@@ -711,7 +711,9 @@ def create_robust_xml_output_parser(
             output_fixing_model_id,
             error=e,
         )
-        raise GraphRAGException(f"Failed to create OutputFixingParser: {e}") from e
+        raise GraphRAGException.caused_by(
+            "Failed to create OutputFixingParser", e
+        ) from e
 
 
 def _with_fixer(
@@ -761,8 +763,8 @@ class FixingJsonOutputParser(LLMJsonOutputParser):
                     )
                     self._fixer = _with_fixer(plain, llm)
                 except Exception as e:
-                    raise GraphRAGException(
-                        f"Failed to create OutputFixingParser: {e}"
+                    raise GraphRAGException.caused_by(
+                        "Failed to create OutputFixingParser", e
                     ) from e
             return self._fixer
 
@@ -900,6 +902,6 @@ def setup_chain(
             model_id,
             error=e,
         )
-        raise GraphRAGException(
-            f"Failed to setup LLM chain with model '{model_id}': {e}"
+        raise GraphRAGException.caused_by(
+            f"Failed to setup LLM chain with model '{model_id}'", e
         ) from e
