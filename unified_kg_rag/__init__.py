@@ -24,7 +24,9 @@ internal and may change in any release. Two groups:
 
 The errors these raise for a caller to tell apart are exported too. Each is
 a :class:`GraphRAGException` but :class:`PipelineInterrupted`, a
-``KeyboardInterrupt`` (a stop asked for by a signal). A
+``KeyboardInterrupt`` (a stop asked for by a signal, or, as
+:class:`RunBudgetExhausted`, an ingestion run stopped at its
+``processing.max_run_*`` budget, resumed by a re-run). A
 :class:`ConfigurationError` (among them a :class:`StoreRequestRejectedError`)
 is a setting to fix (a :class:`SchemaSourceError` a schema source that
 cannot be loaded, a :class:`SeedGraphError` a seed graph that cannot be
@@ -130,6 +132,7 @@ _EXPORTS: dict[str, str] = {
     "ErrorClass": "unified_kg_rag.shared.exceptions",
     "classify_error": "unified_kg_rag.shared.exceptions",
     "PipelineInterrupted": "unified_kg_rag.shared.exceptions",
+    "RunBudgetExhausted": "unified_kg_rag.shared.exceptions",
     # Extension: provider injection and the provider registry
     "Providers": "unified_kg_rag.adapters.providers",
     "build_providers": "unified_kg_rag.application.bootstrap",
@@ -349,6 +352,7 @@ if TYPE_CHECKING:
         PipelineInterrupted,
         QueryTimeoutError,
         RerankModelError,
+        RunBudgetExhausted,
         SchemaSourceError,
         SeedGraphError,
         StoreConnectionError,

@@ -304,8 +304,9 @@ one person on one host, not a multi-user service. Using it:
 with an empty allowlist), started by `run-console`
 (`application/cli/run_console.py`). It imports the application layer
 (`GraphRAGChain`, `get_config`, the ingestion pipeline's stage table),
-evaluation's comparison helpers (`answer_cost_usd`), domain models and
-the shared kernel, and of the adapters only the two public registries the
+evaluation's comparison and saved-result readers, domain models (the
+answer costs priced by `domain/pricing.py`, `usage_cost_usd`) and the
+shared kernel, and of the adapters only the two public registries the
 facade exports from (`strategy_registry`, `ParserFactory`; pinned by
 `test_run_console.py`). Its
 packages, FastAPI, Uvicorn and python-multipart, are the `console` extra;

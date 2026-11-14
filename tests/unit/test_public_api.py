@@ -85,6 +85,7 @@ PUBLIC_API = sorted(
         "PipelineInterrupted",
         "QueryTimeoutError",
         "RerankModelError",
+        "RunBudgetExhausted",
         "SchemaSourceError",
         "SeedGraphError",
         "StoreConnectionError",
