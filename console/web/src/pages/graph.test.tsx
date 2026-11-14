@@ -1,6 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { drawnGraph, linkAlpha, placeLabels, settle, type LabelCandidate } from "../components/GraphCanvas";
@@ -77,19 +77,21 @@ describe("settle", () => {
 
 describe("EntityTable", () => {
   it("builds no rows until opened, then a page at a time", () => {
-    const nodes = graph(250, 0).nodes;
+    // One full page and a short one: the paging, at the fewest rows (a
+    // query over every row's button outlasted the timeout on one core).
+    const nodes = graph(TABLE_PAGE + 5, 0).nodes;
     const { container } = renderIn(<EntityTable nodes={nodes} communityName={(id) => id} onPick={() => undefined} />);
     expect(container.querySelectorAll("tbody tr")).toHaveLength(0);
     const details = container.querySelector("details") as HTMLDetailsElement;
     details.open = true;
     fireEvent(details, new Event("toggle"));
     expect(container.querySelectorAll("tbody tr")).toHaveLength(TABLE_PAGE);
-    expect(screen.getByText("1–100 of 250")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    expect(container.querySelectorAll("tbody tr")).toHaveLength(50);
-    expect(screen.getByText("201–250 of 250")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+    const pager = within(container.querySelector(".pager") as HTMLElement);
+    expect(pager.getByRole("status")).toHaveTextContent("1–100 of 105");
+    fireEvent.click(pager.getByRole("button", { name: "Next" }));
+    expect(container.querySelectorAll("tbody tr")).toHaveLength(5);
+    expect(pager.getByRole("status")).toHaveTextContent("101–105 of 105");
+    expect(pager.getByRole("button", { name: "Next" })).toBeDisabled();
   });
 
   it("lists the undrawn entities by name and degree too", () => {

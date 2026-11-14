@@ -1168,8 +1168,13 @@ async def test_the_lineage_read_runs_alongside_the_answer(config: Config) -> Non
 
 async def test_a_failed_answer_cancels_the_lineage_read(config: Config) -> None:
     config.processing.ignore_errors = False
+    # The answer fails once the read is in flight: the read's first step
+    # runs on the CPU pool, so it may not have started when the answer
+    # (in a worker thread) fails at once.
+    started = threading.Event()
 
     def broken() -> None:
+        started.wait(timeout=5)
         raise RuntimeError("model down")
 
     chain, store, _ = _chain(config, on_answer=broken)
@@ -1179,6 +1184,7 @@ async def test_a_failed_answer_cancels_the_lineage_read(config: Config) -> None:
     async def hanging(query: SearchQuery) -> list[RetrievalResult]:
         if "id" not in (query.filters or {}):
             return await fetch(query)
+        started.set()
         try:
             await asyncio.sleep(60)
         except asyncio.CancelledError:
@@ -1189,7 +1195,7 @@ async def test_a_failed_answer_cancels_the_lineage_read(config: Config) -> None:
     store.aretrieve = hanging  # type: ignore[method-assign]
     with pytest.raises(Exception, match="model down"):
         await chain.ainvoke(_query())
-    assert cancelled.is_set()
+    assert started.is_set() and cancelled.is_set()
 
 
 async def test_citations_off_restores_the_earlier_context_and_prompt(
