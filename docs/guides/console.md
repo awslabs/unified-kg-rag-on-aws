@@ -183,9 +183,12 @@ deletion). Start runs `run-ingestion` with a pipeline id per corpus folder
 (its name and a hash of its path and namespace), so running the same corpus
 again resumes or runs incrementally. Adding, editing or removing files
 and starting again is one run: with the doc-status registry on, the delta
-says what is processed, and no question is asked. A run that stops at one of
-its questions (a setting changed since this corpus's last run, an incomplete
-stage cache, a reset, a mass deletion) says which, and offers to start again answering
+says what is processed, and no question is asked; nor after a rebuild (or
+the one an added methodology makes): the next Start is one run too. A run
+that stops at one of
+its questions (a loading setting changed since this corpus's last run, a
+stage's settings or its cache, the corpus with the registry off, a reset, a
+mass deletion) says which in its title, and offers to start again answering
 that question alone (`--confirm-integrity`, `--confirm-reset`,
 `--confirm-deletions`); the same answers can be ticked under more options
 beforehand. The run's

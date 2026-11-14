@@ -4,9 +4,13 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
-from unified_kg_rag.domain.ingestion.cache_keys import stage_cache_key
+from unified_kg_rag.domain.ingestion.cache_keys import (
+    loading_key,
+    loading_settings_key,
+    stage_cache_key,
+)
 from unified_kg_rag.domain.models import (
     Claim,
     Community,
@@ -362,6 +366,24 @@ STAGE_OUTPUTS: dict[PipelineStageType, dict[str, type[Any]]] = {
 
 _NO_DELTA = object()
 
+# Why a resumed pipeline id's integrity check failed, which the question a
+# run asks then names: a setting its documents were loaded with changed
+# ("settings"), its corpus changed without the doc-status registry
+# ("corpus"), or a completed stage's output is not cached under the current
+# inputs (a downstream setting changed, or the cache is incomplete).
+IntegrityReason = Literal["settings", "corpus", "cache"]
+
+# The question each reason asks (run-ingestion's, whose error names it: the
+# console tells the reason from it).
+INTEGRITY_QUESTIONS: dict[IntegrityReason, str] = {
+    "settings": "Loading settings changed since this pipeline's last run: "
+    "continue, recomputing its stages?",
+    "corpus": "The corpus changed since this pipeline's last run (the "
+    "doc-status registry is off): continue, recomputing its stages?",
+    "cache": "A stage's settings changed, or its cache is incomplete, since "
+    "this pipeline's last run: continue, recomputing those stages?",
+}
+
 
 class PipelineResumeManager:
     # Derived from STAGE_OUTPUTS (never edit separately).
@@ -396,9 +418,13 @@ class PipelineResumeManager:
         # The loading key the metadata's delta was computed with (see
         # determine_resume_strategy).
         self._loading_key: Any = _NO_DELTA
-        # Whether only the corpus differs from the one the saved delta was
-        # computed with (see _loading_inputs_change).
-        self._corpus_changed = False
+        # Whether the stages run again by design: the last run was a reset,
+        # or (under the registry) only the corpus differs from the one the
+        # saved delta was computed with (see _loading_inputs_change).
+        self._rewind_expected = False
+        # Why the last validate_pipeline_integrity failed (IntegrityReason),
+        # None when it passed.
+        self.integrity_reason: IntegrityReason | None = None
 
     def determine_resume_strategy(
         self, pipeline_id: str, explicit_stage: str | None = None
@@ -420,7 +446,7 @@ class PipelineResumeManager:
                 if metadata.get("incremental_delta") is not None
                 else _NO_DELTA
             )
-            self._corpus_changed = self._loading_inputs_change(metadata) == "corpus"
+            self._rewind_expected = self._expected_change(metadata) is not None
 
             if explicit_stage:
                 start_stage, completed_stages = self._handle_explicit_stage_resume(
@@ -587,11 +613,12 @@ class PipelineResumeManager:
     def _rewind_level(self) -> int:
         """The level a rewind is logged at: a warning, except in a reset run
         (``indexing.reset``), which rebuilds the namespace from every
-        document, and in a run over a changed corpus, whose cache keys
-        carry the corpus, so recomputing the stages its cache no longer
-        backs is what it asked for."""
+        document, in the run after one, and in a run over a changed corpus
+        under the registry, whose cache keys carry the corpus, so
+        recomputing the stages its cache no longer backs is what it asked
+        for (see ``_expected_change``)."""
         reset = self.config.indexing.reset
-        return logging.INFO if reset or self._corpus_changed else logging.WARNING
+        return logging.INFO if reset or self._rewind_expected else logging.WARNING
 
     def _missing_cache_keys(
         self, pipeline_id: str, stage_name: str, *, load: bool = False
@@ -759,58 +786,88 @@ class PipelineResumeManager:
         return loaded_files_count > 0
 
     def _loading_inputs_change(self, metadata: dict[str, Any]) -> str | None:
-        """How the document_loading inputs differ from those the saved delta
-        was computed with: ``None`` when they match (or no delta was saved),
-        ``"corpus"`` when only the documents differ, which an incremental
-        pipeline id run again expects, and ``"settings"`` when a setting
-        does too (a reset, retry or corpus setting), which needs an answer."""
+        """How the document_loading inputs differ from those the last run
+        loaded its documents with (``incremental_loading_key``): ``None``
+        when they match (or none is recorded), ``"reset"`` when only
+        ``indexing.reset`` does (the last run was a reset, this one is not,
+        or the reverse), ``"corpus"`` when only the documents do, and
+        ``"settings"`` when a loading setting does too (a retry or corpus
+        setting, the registry). Metadata saved before the settings key
+        reads as ``"settings"`` once its corpus changed."""
         recorded = metadata.get("incremental_loading_key")
-        if metadata.get("incremental_delta") is None or recorded is None:
+        if recorded is None:
             return None
-        loading = PipelineStageType.DOCUMENT_LOADING
-        if recorded == stage_cache_key(
-            self.config, loading, "documents", self.corpus_fingerprint
+        fingerprint = self.corpus_fingerprint
+        if recorded == loading_key(self.config, fingerprint):
+            return None
+        if recorded == loading_key(
+            self.config, fingerprint, reset=not self.config.indexing.reset
         ):
-            return None
+            return "reset"
         settings = metadata.get("incremental_loading_settings_key")
-        if settings is not None and settings == stage_cache_key(
-            self.config, loading, "documents"
-        ):
+        if settings is not None and settings == loading_settings_key(self.config):
             return "corpus"
         return "settings"
 
+    def _expected_change(self, metadata: dict[str, Any]) -> str | None:
+        """The loading change (``_loading_inputs_change``) whose recomputed
+        stages a run expects, so no question is asked: the last run was a
+        reset (its stages are keyed so, and a reset rebuilt the namespace
+        from every document), or, under the registry (a saved delta), the
+        corpus changed: the delta, not a cache, decides what is processed.
+        ``None`` for any other."""
+        change = self._loading_inputs_change(metadata)
+        if change == "reset" or (
+            change == "corpus" and metadata.get("incremental_delta") is not None
+        ):
+            return change
+        return None
+
     def validate_pipeline_integrity(self, pipeline_id: str) -> tuple[bool, list[str]]:
+        """Check that the run can resume ``pipeline_id`` without a question:
+        ``(valid, errors)``. When not valid, ``integrity_reason`` says why
+        (:data:`IntegrityReason`)."""
         logger.info("Validating pipeline integrity for '%s'", pipeline_id)
         errors = []
+        self.integrity_reason = None
 
         try:
             metadata = self.state_manager.load_pipeline_metadata(pipeline_id)
         except PipelineStateError as e:
             logger.error("Pipeline integrity validation failed: %s", e)
+            self.integrity_reason = "cache"
             return False, [str(e)]
 
         loading = PipelineStageType.DOCUMENT_LOADING
-        change = self._loading_inputs_change(metadata)
-        if change == "corpus":
-            # Every stage's key carries the corpus fingerprint, so none of
-            # the cached outputs is the new corpus's: the run reads the
-            # corpus again, the delta (not a cache) says what is processed,
-            # and a cache check would only say so once per stage.
+        expected = self._expected_change(metadata)
+        if expected is not None:
+            # Every stage's key carries the loading inputs, so none of the
+            # cached outputs is this run's: the run loads the documents
+            # again, the delta (not a cache) says what is processed, and a
+            # cache check would only say so once per stage.
             logger.info(
-                "The corpus of pipeline '%s' changed since its last run: its "
-                "stages run again and the delta decides what is processed",
+                "%s pipeline '%s': its stages run again and the delta "
+                "decides what is processed",
+                (
+                    "The last run was a reset of"
+                    if expected == "reset"
+                    else "The corpus changed since the last run of"
+                ),
                 pipeline_id,
             )
             return True, []
-        reloaded = change == "settings"
+        change = self._loading_inputs_change(metadata)
+        reloaded = (
+            change == "settings" and metadata.get("incremental_delta") is not None
+        )
         if reloaded:
-            # The documents a reset, retry or corpus setting filtered: the
-            # resume loads them again and recomputes every stage after it,
-            # whose outputs are cached under other keys too.
+            # The documents a retry or corpus setting filtered: the resume
+            # loads them again and recomputes every stage after it, whose
+            # outputs are cached under other keys too.
             error_msg = (
-                "The document_loading inputs changed since this pipeline "
-                "loaded its documents (a reset, retry or corpus setting, or "
-                "the corpus): document_loading and the stages after it run again"
+                "The document_loading settings changed since this pipeline "
+                "loaded its documents (a retry, corpus or registry setting): "
+                "document_loading and the stages after it run again"
             )
             errors.append(error_msg)
             logger.warning("%s", error_msg)
@@ -832,6 +889,14 @@ class PipelineResumeManager:
                 errors.append(error_msg)
                 logger.warning("%s", error_msg)
 
+        if errors:
+            # Without the registry a changed corpus misses every stage's
+            # cache; a downstream setting or a deleted cache misses some.
+            self.integrity_reason = (
+                "settings"
+                if change == "settings"
+                else "corpus" if change == "corpus" else "cache"
+            )
         is_valid = not errors
         logger.info(
             "Pipeline integrity validation %s for '%s'%s",

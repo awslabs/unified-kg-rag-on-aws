@@ -416,11 +416,14 @@ whose processing kills the task would stop every later run the same way.
   since, resumes from document_loading instead. So does one for whose
   scope another pipeline id has since added, changed or deleted a document
   outside the delta, and one whose `document_loading` inputs changed since
-  the delta was computed (a reset, retry or corpus setting; WARNING
+  the delta was computed (a retry or corpus setting; WARNING
   `Rewinding resume point from ... to 'document_loading'`). A changed corpus
   alone (a file added, edited or removed under the same settings, which the
-  context records as `incremental_loading_settings_key`) is the expected
-  case: the run asks no integrity question and logs the rewind at INFO. A finished
+  context records as `incremental_loading_settings_key`, without
+  `indexing.reset`: `cache_keys.loading_settings_key`) is the expected
+  case, and so is the run after a reset (or after the rebuild an added
+  methodology makes), whose loading key differs only by `indexing.reset`:
+  the run asks no integrity question and logs the rewind at INFO. A finished
   pipeline id run again counts as resumed; a run resumed after its own kill
   or stop keeps its delta. A resume past
   a stage that recorded failed text units starts at that stage, so the units

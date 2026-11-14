@@ -93,6 +93,7 @@ from unified_kg_rag.application.storage.visualization_export import (
 )
 from unified_kg_rag.domain.ingestion.cache_keys import (
     corpus_manifest_fingerprint,
+    loading_settings_key,
     seed_corpus_fingerprint,
     stage_cache_key,
 )
@@ -2334,8 +2335,8 @@ class DataIngestionPipeline:
                     "documents",
                     self.corpus_fingerprint,
                 )
-                context.incremental_loading_settings_key = stage_cache_key(
-                    self.config, PipelineStageType.DOCUMENT_LOADING, "documents"
+                context.incremental_loading_settings_key = loading_settings_key(
+                    self.config
                 )
             with self._checkpoint_write():
                 self.state_manager.update_stage_result(context, result)

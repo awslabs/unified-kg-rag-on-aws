@@ -62,6 +62,7 @@ from unified_kg_rag.application.cli.provider_args import (
 )
 from unified_kg_rag.application.cli.query_args import namespace_name, suffix_arg
 from unified_kg_rag.application.config import load_cli_dotenv, resolve_relative_paths
+from unified_kg_rag.application.ingestion.pipeline_manager import INTEGRITY_QUESTIONS
 from unified_kg_rag.domain.ingestion.delta_detector import document_doc_id
 from unified_kg_rag.domain.ingestion.methodologies import writes_graph_store
 from unified_kg_rag.domain.models import (
@@ -323,11 +324,14 @@ class CommandLineInterface:
             help="Answer yes to the question of a run that resumes a "
             "--pipeline-id whose settings changed since its stages ran (or "
             "whose cache is incomplete): continue, recomputing those stages; "
-            "nothing else. A changed corpus asks nothing when the doc-status "
-            "registry is on (the delta decides what is processed). Without it (or --yes), the question is asked on "
-            "the terminal, and the run stops (exit 1) when stdin is not one. "
-            "A --force-rebuild or --reset run asks no such question: it "
-            "recomputes what changed by design",
+            "nothing else. The question names which: a loading setting, a "
+            "stage's settings or cache, or a corpus that changed with the "
+            "doc-status registry off (with it on, a changed corpus asks "
+            "nothing: the delta decides what is processed). Without it (or "
+            "--yes), the question is asked on the terminal, and the run stops "
+            "(exit 1) when stdin is not one. A --force-rebuild or --reset run "
+            "asks no such question, nor does the run after a reset: they "
+            "recompute what changed by design",
         )
         parser.add_argument(
             "--continue-on-error",
@@ -411,7 +415,8 @@ class CommandLineInterface:
             "applying a delta (indexing.reset: true for this run only, so a "
             "config file need not be edited back). A resumed --pipeline-id "
             "continues past the integrity check (the reset recomputes every "
-            "stage its cache no longer backs)",
+            "stage its cache no longer backs), and so does its next run "
+            "without --reset",
         )
         add_config_arguments(parser)
         add_output_format_argument(parser)
@@ -752,16 +757,11 @@ class IngestionPipelineRunner:
                 )
                 for error in errors:
                     console.print(f"  • {markup_safe(error)}")
-                console.print(
-                    "[yellow]The inputs changed since these stages ran, or the "
-                    "cache is incomplete; a resume without --resume-from-stage recomputes them.[/yellow]"
-                )
+                reason = self.pipeline.resume_manager.integrity_reason or "cache"
+                question = INTEGRITY_QUESTIONS[reason]
                 if getattr(self.args, "confirm_integrity", False):
-                    console.print(
-                        "Continue despite integrity issues? "
-                        "[dim](--confirm-integrity)[/dim]"
-                    )
-                elif not self._confirm_integrity("Continue despite integrity issues?"):
+                    console.print(f"{question} [dim](--confirm-integrity)[/dim]")
+                elif not self._confirm_integrity(question):
                     console.print("[yellow]Pipeline execution cancelled.[/yellow]")
                     return False
         return True

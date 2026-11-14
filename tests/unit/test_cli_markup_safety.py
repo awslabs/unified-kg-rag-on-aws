@@ -227,6 +227,9 @@ def test_run_ingestion_prints_integrity_errors_literally(
             def pipeline_exists(pipeline_id: str) -> bool:
                 return True
 
+        class resume_manager:
+            integrity_reason = "cache"
+
         @staticmethod
         def validate_resume_integrity(*args: object) -> tuple[bool, list[str]]:
             return False, ["[/red] stage inputs changed"]

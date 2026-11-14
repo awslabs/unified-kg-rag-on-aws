@@ -30,6 +30,7 @@ from unified_kg_rag.application.cli.console.jobs import (
     confirmation_needed,
 )
 from unified_kg_rag.application.cli.console.store import ConsoleStore
+from unified_kg_rag.application.ingestion.pipeline_manager import INTEGRITY_QUESTIONS
 from unified_kg_rag.application.retrieval.rag_chain import ProcessedQuery, RAGOutput
 from unified_kg_rag.domain.models import (
     Config,
@@ -216,16 +217,19 @@ def test_pipeline_ids_differ_per_folder_and_name(tmp_path: Path) -> None:
 
 
 def test_the_question_a_run_stopped_at_is_named() -> None:
-    error = "Confirmation required (Continue despite integrity issues?); pass --confirm-integrity"
-    assert confirmation_needed(error) == "integrity"
-    assert (
-        confirmation_needed(
-            "Confirmation required (x); pass --confirm-deletions (or UKR_CONFIRM_DELETIONS=1)"
-        )
-        == "deletions"
-    )
-    assert confirmation_needed("Pipeline failed at stage(s): indexing") is None
-    assert confirmation_needed(None) is None
+    for reason, question in INTEGRITY_QUESTIONS.items():
+        error = f"Confirmation required ({question}); pass --confirm-integrity"
+        assert confirmation_needed(error) == ("integrity", reason)
+    # An error of a run before the reasons: the question, no reason.
+    assert confirmation_needed(
+        "Confirmation required (Continue despite integrity issues?); "
+        "pass --confirm-integrity"
+    ) == ("integrity", None)
+    assert confirmation_needed(
+        "Confirmation required (x); pass --confirm-deletions (or UKR_CONFIRM_DELETIONS=1)"
+    ) == ("deletions", None)
+    assert confirmation_needed("Pipeline failed at stage(s): indexing") == (None, None)
+    assert confirmation_needed(None) == (None, None)
 
 
 def test_shutdown_waits_the_documented_stop_grace() -> None:
