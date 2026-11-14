@@ -992,12 +992,12 @@ From a `main` checkout (formats and keys no release had):
   stops its console ([Console](docs/guides/console.md)).
 - `run-ingestion --confirm-integrity` answers only the question of a run that resumes a pipeline id whose settings
   changed or whose cache is incomplete (#631); the question names which: a loading setting, a stage's settings or
-  cache, or a corpus that changed with the doc-status registry off. A corpus that changed under an incremental
-  pipeline id asks none (the delta decides what is processed; with a downstream setting changed too, every document
-  is processed again without asking, while a changed loading setting still asks), nor does a `--reset`
-  (`indexing.reset`) run, which logs the stages it recomputes at INFO, or the run after one (or after the rebuild an
-  added methodology makes). Run metadata saved on a `main` checkout before the loading settings key asks once after
-  a corpus change.
+  cache, or a corpus that changed with the doc-status registry off. A `--reset` (`indexing.reset`) run asks none
+  and logs the stages it recomputes at INFO. Nor does a corpus that changed under an incremental pipeline id, or the
+  run after a reset (or after the rebuild an added methodology makes), which is treated as one: the delta decides
+  what is processed, so with a downstream setting changed too every document is processed again without asking,
+  while a changed loading setting still asks. Run metadata saved on a `main` checkout before the loading settings
+  key, or by a reset run while that key still held `indexing.reset`, asks once after a corpus change.
 - `GraphRAGChain.ainvoke(on_answer_chunk=...)` hands the answer's text chunks to a callback as the answer model
   streams them (the output, its citations included, is that of an unstreamed answer), and an `auto` query's output
   carries `metadata["routing"]` (how the strategy was chosen, among which candidates) (#631).

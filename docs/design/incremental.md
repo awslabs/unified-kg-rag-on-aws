@@ -426,7 +426,10 @@ whose processing kills the task would stop every later run the same way.
   `indexing.reset`: `cache_keys.loading_settings_key`) is the expected
   case, and so is the run after a reset (or after the rebuild an added
   methodology makes), whose loading key differs only by `indexing.reset`:
-  the run asks no integrity question and logs the rewind at INFO. A finished
+  the run asks no integrity question and logs the rewind at INFO. Either
+  way the run is one over a changed corpus: with a downstream setting
+  changed too (a chunk size), every document is processed again without
+  asking, while a changed loading setting still asks. A finished
   pipeline id run again counts as resumed; a run resumed after its own kill
   or stop keeps its delta. A resume past
   a stage that recorded failed text units starts at that stage, so the units
