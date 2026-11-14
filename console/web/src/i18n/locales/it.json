@@ -243,7 +243,7 @@
   "ingest.narrowingConfirm": "Rimuovi {{methodologies}} dal namespace",
   "ingest.rebuildTitle": "{{namespace}} va ricostruito",
   "ingest.rebuild.communities": "Le esecuzioni incrementali hanno allontanato molto le sue comunità dall'ultimo clustering completo.",
-  "ingest.rebuild.answer_settings": "I suoi report di comunità o riassunti delle descrizioni sono stati scritti con impostazioni diverse da quelle di questa configurazione.",
+  "ingest.rebuild.answer_settings": "I suoi report di comunità o riassunti delle descrizioni sono stati scritti con impostazioni diverse da quelle di questa configurazione, o non sono stati scritti.",
   "ingest.rebuild.extraction_settings": "Le impostazioni di estrazione sono cambiate dalla sua ultima esecuzione.",
   "ingest.rebuild.methodologies": "Questa configurazione costruisce ciò che il namespace non contiene.",
   "ingest.rebuildRemedy.reset": "Solo un’esecuzione con «{{option}}» ({{section}}) lo applica.",

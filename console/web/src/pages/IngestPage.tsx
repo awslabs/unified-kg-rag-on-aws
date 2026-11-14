@@ -383,10 +383,6 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
   );
 }
 
-/** A run stopped at its budget (processing.max_run_model_calls or
- * processing.max_run_usd: error class limit_exceeded) kept its finished
- * stages and answered calls: running it again (the same corpus and
- * namespace, so the same pipeline id) resumes it. */
 /** The reasons a reset applies that a finished ingestion reported for the
  * namespaces it wrote (its result's `rebuild_due`), one per kind. */
 export function resetReasons(job: Pick<JobRecord, "result">): RebuildReason[] {
@@ -426,6 +422,10 @@ export function ResetAdvice({ job, disabled, onReset }: { job: Pick<JobRecord, "
   );
 }
 
+/** A run stopped at its budget (processing.max_run_model_calls or
+ * processing.max_run_usd: error class limit_exceeded) kept its finished
+ * stages and answered calls: running it again (the same corpus and
+ * namespace, so the same pipeline id) resumes it. */
 export function BudgetNotice({ job, disabled, onResume }: { job: Pick<JobRecord, "kind" | "status" | "result">; disabled: boolean; onResume: () => void }) {
   const { t } = useI18n();
   if (!isBudgetStop(job)) return null;

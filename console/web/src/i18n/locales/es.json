@@ -243,7 +243,7 @@
   "ingest.narrowingConfirm": "Eliminar {{methodologies}} del espacio de nombres",
   "ingest.rebuildTitle": "{{namespace}} necesita una reconstrucción",
   "ingest.rebuild.communities": "Las ejecuciones incrementales han alejado mucho sus comunidades del último agrupamiento completo.",
-  "ingest.rebuild.answer_settings": "Sus informes de comunidad o resúmenes de descripciones se escribieron con una configuración distinta de esta.",
+  "ingest.rebuild.answer_settings": "Sus informes de comunidad o resúmenes de descripciones se escribieron con una configuración distinta de esta, o no se escribieron.",
   "ingest.rebuild.extraction_settings": "La configuración de extracción cambió desde su última ejecución.",
   "ingest.rebuild.methodologies": "Esta configuración construye lo que el espacio de nombres no contiene.",
   "ingest.rebuildRemedy.reset": "Solo una ejecución con «{{option}}» ({{section}}) lo aplica.",

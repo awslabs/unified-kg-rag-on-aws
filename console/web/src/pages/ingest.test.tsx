@@ -104,6 +104,8 @@ describe("a finished run that advises a rebuild", () => {
     expect(reset).toBe(2);
     // No locale's advice claims drifted communities any more.
     for (const locale of ["en", "ko", "ja", "zh", "de", "es", "fr", "it", "pt", "ru"] as const) {
+      // Nor that a warning says so: the run's result does (W2 re-check).
+      expect(translate(locale, "ingest.resetAdvisedTitle"), locale).not.toMatch(/warn|경고|警告|avertissement|advertencia|avvis|aviso|предупрежд/i);
       expect(translate(locale, "ingest.resetAdvised"), locale).not.toMatch(/communit|커뮤니티|コミュニティ|社区|Communit|comunidad|communaut|comunit|сообществ/i);
     }
   });

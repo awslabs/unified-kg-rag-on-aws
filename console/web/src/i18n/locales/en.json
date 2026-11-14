@@ -235,7 +235,7 @@
   "ingest.narrowingConfirm": "Remove {{methodologies}} from the namespace",
   "ingest.rebuildTitle": "{{namespace}} is due for a rebuild",
   "ingest.rebuild.communities": "Incremental runs have moved its communities far from the last full clustering.",
-  "ingest.rebuild.answer_settings": "Its community reports or description summaries were written under other settings than this configuration's.",
+  "ingest.rebuild.answer_settings": "Its community reports or description summaries were written under other settings than this configuration's, or not written at all.",
   "ingest.rebuild.extraction_settings": "The extraction settings changed since its last run.",
   "ingest.rebuild.methodologies": "This configuration builds what the namespace does not hold.",
   "ingest.rebuildRemedy.reset": "Only a run with “{{option}}” ({{section}}) applies it.",

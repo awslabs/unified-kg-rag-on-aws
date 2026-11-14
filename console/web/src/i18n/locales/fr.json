@@ -243,7 +243,7 @@
   "ingest.narrowingConfirm": "Retirer {{methodologies}} de l’espace de noms",
   "ingest.rebuildTitle": "{{namespace}} doit être reconstruit",
   "ingest.rebuild.communities": "Les exécutions incrémentales ont beaucoup éloigné ses communautés du dernier clustering complet.",
-  "ingest.rebuild.answer_settings": "Ses rapports de communauté ou résumés de descriptions ont été écrits avec d'autres paramètres que ceux de cette configuration.",
+  "ingest.rebuild.answer_settings": "Ses rapports de communauté ou résumés de descriptions ont été écrits avec d'autres paramètres que ceux de cette configuration, ou pas écrits du tout.",
   "ingest.rebuild.extraction_settings": "Les paramètres d'extraction ont changé depuis sa dernière exécution.",
   "ingest.rebuild.methodologies": "Cette configuration construit ce que l'espace de noms ne contient pas.",
   "ingest.rebuildRemedy.reset": "Seule une exécution avec « {{option}} » ({{section}}) l’applique.",

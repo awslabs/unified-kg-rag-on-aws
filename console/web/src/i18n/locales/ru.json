@@ -251,7 +251,7 @@
   "ingest.narrowingConfirm": "Удалить {{methodologies}} из пространства имён",
   "ingest.rebuildTitle": "{{namespace}} пора перестроить",
   "ingest.rebuild.communities": "Инкрементные запуски сильно отдалили его сообщества от последней полной кластеризации.",
-  "ingest.rebuild.answer_settings": "Его отчёты сообществ или сводки описаний написаны с другими настройками, чем в этой конфигурации.",
+  "ingest.rebuild.answer_settings": "Его отчёты сообществ или сводки описаний написаны с другими настройками, чем в этой конфигурации, или не написаны вовсе.",
   "ingest.rebuild.extraction_settings": "Настройки извлечения изменились после его последнего запуска.",
   "ingest.rebuild.methodologies": "Эта конфигурация строит то, чего нет в пространстве имён.",
   "ingest.rebuildRemedy.reset": "Применяет только запуск с «{{option}}» ({{section}}).",

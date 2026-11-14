@@ -192,6 +192,8 @@ def test_summaries_switched_on_since_the_build_say_so() -> None:
     off.processing.graph_extraction.description_summarization.enabled = False
     (reason,) = rebuild_reasons(_record(off), Config())
     assert "wrote no description summaries" in reason.detail
+    # None was written: a reset writes them, not "every one again".
+    assert "again" not in reason.detail and "writes them" in reason.detail
     changed = Config()
     changed.models.roles.community_report = changed.tier_model_id("fast")
     (reason,) = rebuild_reasons(_record(Config()), changed)

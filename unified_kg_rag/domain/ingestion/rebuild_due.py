@@ -179,20 +179,23 @@ def _answer_reasons(record: Mapping[str, Any], config: Config) -> list[RebuildRe
         if recorded[name] == fingerprint:
             continue
         what = _ANSWERS[name]
-        made = (
-            f"the last full build wrote no {what}, which the configuration " "makes"
-            if recorded[name] is None
-            else f"the {what} the last full build wrote were made under other "
-            "settings (their model, prompt or language) than the "
-            "configuration's"
-        )
+        if recorded[name] is None:
+            made = f"the last full build wrote no {what}, which the configuration makes"
+            written = "writes them"
+        else:
+            made = (
+                f"the {what} the last full build wrote were made under other "
+                "settings (their model, prompt or language) than the "
+                "configuration's"
+            )
+            written = "writes every one again"
         reasons.append(
             RebuildReason(
                 kind=RebuildReasonKind.ANSWER_SETTINGS,
                 remedy=RebuildRemedy.RESET,
-                detail=f"{made}: incremental runs "
-                f"write the {what} of their delta alone; a run with "
-                "indexing.reset: true writes every one again, a model call each",
+                detail=f"{made}: incremental runs write the {what} of their "
+                f"delta alone; a run with indexing.reset: true {written}, a "
+                "model call each",
                 settings=[name],
             )
         )

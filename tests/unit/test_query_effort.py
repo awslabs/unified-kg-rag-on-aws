@@ -274,3 +274,42 @@ async def test_a_search_takes_an_effort_it_never_spends(config: Config) -> None:
     chain, _, _ = _make_chain(config, factory=factory)
     found = await chain.asearch(_input(effort="low"))
     assert found.search_results.results
+
+
+def test_the_deprecation_is_shown_through_a_symlinked_install(tmp_path) -> None:
+    # W2 re-check low 1: the package and pydantic paths were compared
+    # resolved against the frames' unresolved file names, so through a
+    # symlinked venv or checkout no frame matched and the warning named
+    # a pydantic frame again, hidden by the default filters.
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    import pydantic
+
+    import unified_kg_rag
+
+    linked = tmp_path / "site"
+    linked.mkdir()
+    for module in (unified_kg_rag, pydantic):
+        package = Path(module.__file__).resolve().parent
+        (linked / package.name).symlink_to(package, target_is_directory=True)
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONWARNINGS"}
+    env["PYTHONPATH"] = str(linked)
+    code = (
+        "import pydantic, unified_kg_rag\n"
+        f"assert unified_kg_rag.__file__.startswith({str(linked)!r})\n"
+        "from unified_kg_rag import RAGInput\n"
+        "RAGInput(query='q', enable_thinking=True)\n"
+    )
+    done = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=120,
+    )
+    assert done.returncode == 0, done.stderr
+    shown = [line for line in done.stderr.splitlines() if "DeprecationWarning" in line]
+    assert len(shown) == 1 and shown[0].startswith("<string>:"), done.stderr
