@@ -10,6 +10,7 @@ import asyncio
 import contextlib
 import threading
 from collections.abc import AsyncIterator
+from concurrent.futures import ThreadPoolExecutor
 
 from unified_kg_rag.shared.utils.event_loop import configure_event_loop
 
@@ -58,4 +59,8 @@ async def saturated_default_executor(workers: int = 2) -> AsyncIterator[None]:
     finally:
         release.set()
         await asyncio.gather(*held)
+        # The query the body started goes on to its fusion (a default-executor
+        # call) after the block: the loop gets a new default executor, and
+        # the held one finishes what it was handed before it stops.
+        loop.set_default_executor(ThreadPoolExecutor(thread_name_prefix="test-io"))
         executor.shutdown(wait=False)

@@ -716,3 +716,14 @@ def test_the_cpu_pool_has_one_thread_per_available_cpu(
         assert event_loop._cpu_pool() is pool
     finally:
         pool.shutdown(wait=False)
+
+
+async def test_the_default_executor_takes_calls_after_a_saturated_block() -> None:
+    """A query the block started goes on to its fusion (a default-executor
+    call) after the block: the executor the block held must not be the
+    loop's default by then, shut down."""
+    from tests.fixtures.saturated_executor import saturated_default_executor
+
+    async with saturated_default_executor():
+        pass
+    assert await asyncio.wait_for(asyncio.to_thread(lambda: "ran"), 5) == "ran"
