@@ -420,3 +420,30 @@ async def test_an_input_token_limit_starts_no_speculative_extraction() -> None:
     out = await asyncio.wait_for(chain.ainvoke(query), 30)
     assert out.metadata["search_strategy"] == "simple"
     assert model.started == ["router", "answer"]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_unread_extractions_are_kept_only_until_the_lowered_deadline(
+    stream: bool,
+) -> None:
+    # Regression (W1 review L10): the speculative extractions the route did
+    # not read were kept until the config's deadline, not the query's own
+    # limits.deadline_seconds.
+    from unified_kg_rag import QueryLimits
+
+    model = _ThreadedChat()
+    chain = _chain(model, query_timeout_seconds=300)
+    kept: list[float | None] = []
+    keep = chain._background_extractions.keep
+
+    def record(leftovers: Any, timeout: float | None) -> None:
+        kept.append(timeout)
+        keep(leftovers, timeout)
+
+    chain._background_extractions.keep = record  # type: ignore[method-assign]
+    query = _auto().model_copy(update={"limits": QueryLimits(deadline_seconds=7)})
+    if stream:
+        _ = [c async for c in chain.astream(query)]
+    else:
+        await asyncio.wait_for(chain.ainvoke(query), 30)
+    assert kept and all(t is not None and t <= 7 for t in kept)

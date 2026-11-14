@@ -748,6 +748,8 @@ class _StreamOutcome:
     meter: UsageMeter | None = None
     # The streamed answer's metadata, once it was formatted.
     metadata: dict[str, Any] = field(default_factory=dict)
+    # The query's deadline, once it started (its own limits' included).
+    deadline: "_QueryDeadline | None" = None
 
 
 class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
@@ -2526,7 +2528,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                     _LEFTOVER_EXTRACTIONS.reset(token)
                 # Not waited for: counted from their start below, at an
                 # estimate until they answer.
-                self._background_extractions.keep(leftovers, self._time_left(started))
+                self._background_extractions.keep(leftovers, deadline.time_left())
                 # The query's model calls and tokens (shared.usage), and the
                 # ids that tie it to its log lines and trace.
                 result.metadata["usage"] = meter.snapshot()
@@ -3579,7 +3581,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                     ran=outcome.ran,
                     metadata=outcome.metadata,
                 )
-        self._background_extractions.keep(leftovers, self._time_left(started))
+        self._background_extractions.keep(
+            leftovers,
+            (
+                outcome.deadline.time_left()
+                if outcome.deadline is not None
+                else self._time_left(started)
+            ),
+        )
 
     async def _astream(
         self,
@@ -3597,6 +3606,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             search_config.query_timeout_seconds,
             first_chunk_seconds=search_config.model_timeout_seconds,
         )
+        outcome.deadline = deadline
         # Admitted within the deadline (_query), its log lines under the
         # query's id.
         admission_tokens = bind_contextvars(query_id=outcome.query_id)
@@ -4275,6 +4285,10 @@ class _QueryDeadline:
             self.seconds = max(0.0, caller - now)
             self.setting = "the caller's deadline"
         self._scope: _DeadlineScope | None = None
+
+    def time_left(self) -> float | None:
+        """Seconds left until the deadline (``None``: no deadline)."""
+        return None if self.at is None else max(0.0, self.at - time.monotonic())
 
     def lower_to(self, seconds: float | None, setting: str) -> None:
         """End the query ``seconds`` after it started, if that comes before
