@@ -335,7 +335,7 @@ class TestRendererRegistry:
         )
         assert written == [tmp_path / "ok.txt"]
         assert seen["config"] == {"size": 3}
-        assert "Renderer 'broken_for_test' failed: cannot draw" in caplog.text
+        assert "Renderer 'broken_for_test' failed: RuntimeError" in caplog.text
         with pytest.raises(ValueError, match="No renderer registered"):
             _render(RenderContext(graph=nx.Graph()), tmp_path, ["nope"], None)
 

@@ -389,100 +389,132 @@ def test_no_info_log_call_passes_corpus_or_model_text() -> None:
     assert not offenders, "\n".join(offenders)
 
 
-# Modules whose errors come from model replies or answers: the parsers quote
-# the reply in their error message, so an INFO+ log passes
-# ``error_digest(e)`` (``log_failure``), never the exception itself.
-_JUDGE_MODULES = (
-    "adapters/evaluators",
-    "evaluation/answer_match_evaluator.py",
-    "evaluation/assertion_evaluator.py",
-    "evaluation/benchmarks/autoq.py",
-    "evaluation/pairwise.py",
-    # A failed query, search strategy, ingestion or prompt-tuning step's
-    # error can quote the query, the model's reply or the text unit it was
-    # given (a provider's error quotes the prompt's tail).
-    "adapters/search_strategies",
-    "adapters/ingestion",
-    "application/retrieval",
-    "application/prompts",
-    # The surfaces' last-resort error lines: an unexpected failure's text.
-    "application/cli/mcp_server.py",
-    "application/cli/console",
-    "application/cli/run_rag_chain.py",
-    "application/cli/run_evaluation.py",
-    "application/cli/run_ingestion_pipeline.py",
-    "application/cli/run_prompt_tuning.py",
-    # The runs' own error lines, the stores' and the retrievers' (a store's
-    # or a provider's error may quote the query or a document).
-    "application/ingestion/pipeline.py",
-    "application/ingestion/pipeline_stages.py",
-    "adapters/retrieval",
-    "adapters/retrievers",
-    "evaluation",
+# Names that hold errors outside an ``except`` clause (a list of a batch's
+# errors, an outcome that may be one); inside one, the name it binds too.
+_ERROR_NAMES = frozenset({"errors", "outcome"})
+# Calls and attributes that log what an error is, not what it says
+# (``format_validation_errors``: the invalid keys and why, not the values).
+_SAFE_ERROR_CALLS = frozenset(
+    {
+        "error_digest",
+        "error_locator",
+        "error_name",
+        "text_digest",
+        "len",
+        "type",
+        "classify",
+        "format_validation_errors",
+        # OpenSearch's own reason for a request it refused (a bulk request's
+        # 429): what the store says, logged by design (adapters.aws.opensearch).
+        "error_reason",
+    }
 )
-_ERROR_NAMES = {"e", "err", "error", "errors", "exc", "outcome"}
+_SAFE_ERROR_ATTRS = frozenset({"__name__", "__class__", "status_code", "errno"})
 
 
-def _passes_raw_error(node: ast.AST) -> bool:
-    """Whether ``node`` hands an exception to the log record: names one
-    outside ``error_digest(...)``/``len(...)``/``type(...)`` (the condition of
-    ``x if errors else y`` is not logged)."""
+def _passes_raw_error(node: ast.AST, names: frozenset[str]) -> bool:
+    """Whether ``node`` hands one of the errors ``names`` to the log record
+    (an argument, an f-string's ``{e}``): names one outside
+    ``error_digest(...)``/``len(...)``/``type(...)`` and the attributes that
+    name its type (the condition of ``x if errors else y`` is not logged)."""
     if isinstance(node, ast.Name):
-        return node.id in _ERROR_NAMES
+        return node.id in names
     if (
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id in {"error_digest", "text_digest", "len", "type"}
+        and node.func.id in _SAFE_ERROR_CALLS
     ):
         return False
+    if isinstance(node, ast.Attribute) and node.attr in _SAFE_ERROR_ATTRS:
+        return False
     if isinstance(node, ast.IfExp):
-        return _passes_raw_error(node.body) or _passes_raw_error(node.orelse)
-    return any(_passes_raw_error(child) for child in ast.iter_child_nodes(node))
+        return _passes_raw_error(node.body, names) or _passes_raw_error(
+            node.orelse, names
+        )
+    return any(_passes_raw_error(child, names) for child in ast.iter_child_nodes(node))
 
 
-def _logs_raw_error(call: ast.Call) -> list[str]:
+def _is_info_plus_log(call: ast.Call) -> bool:
+    """A ``logger.<info..critical>(...)`` call, or ``logger.log(level, ...)``
+    at a level other than ``DEBUG``."""
+    func = call.func
+    if not (
+        isinstance(func, ast.Attribute)
+        and isinstance(func.value, ast.Name)
+        and func.value.id == "logger"
+    ):
+        return False
+    if func.attr == "log":
+        return bool(call.args) and "DEBUG" not in ast.unparse(call.args[0])
+    return func.attr in _INFO_PLUS
+
+
+def _logs_raw_error(call: ast.Call, names: frozenset[str] = _ERROR_NAMES) -> list[str]:
     # ``logger.exception`` logs the traceback, and so the message, as
     # ``exc_info`` does.
     if isinstance(call.func, ast.Attribute) and call.func.attr == "exception":
         return ["exception"]
-    if any(kw.arg == "exc_info" for kw in call.keywords):
+    if any(
+        kw.arg == "exc_info"
+        and not (isinstance(kw.value, ast.Constant) and not kw.value.value)
+        for kw in call.keywords
+    ):
         return ["exc_info"]
+    first = 2 if isinstance(call.func, ast.Attribute) and call.func.attr == "log" else 1
     return [
         ast.unparse(arg)
-        for arg in [*call.args[1:], *(kw.value for kw in call.keywords)]
-        if _passes_raw_error(arg)
+        for arg in [*call.args[first - 1 : first], *call.args[first:]]
+        + [kw.value for kw in call.keywords]
+        if _passes_raw_error(arg, names)
     ]
 
 
-def test_judge_modules_log_error_digests_not_errors() -> None:
+class _RawErrorLogs(ast.NodeVisitor):
+    """The INFO+ log calls of a module that hand an error to the record:
+    the names an enclosing ``except ... as name`` binds, and
+    ``_ERROR_NAMES``."""
+
+    def __init__(self) -> None:
+        self.bound: list[str] = []
+        self.found: list[tuple[int, str]] = []
+
+    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
+        self.bound.append(node.name or "")
+        self.generic_visit(node)
+        self.bound.pop()
+
+    def visit_Call(self, node: ast.Call) -> None:
+        if _is_info_plus_log(node):
+            names = _ERROR_NAMES | {name for name in self.bound if name}
+            self.found += [(node.lineno, leak) for leak in _logs_raw_error(node, names)]
+        self.generic_visit(node)
+
+
+def _raw_error_logs(source: str) -> list[tuple[int, str]]:
+    visitor = _RawErrorLogs()
+    visitor.visit(ast.parse(source))
+    return visitor.found
+
+
+def test_no_info_log_call_passes_a_raw_error() -> None:
+    """Static guard over the whole package: an INFO+ log call never hands
+    an error to the record (an argument, ``{e}`` in an f-string,
+    ``exc_info``, ``logger.exception``): its text may quote a model's
+    reply, a query, a document or an ARN. ``log_error``/``log_failure``
+    log it by its class (type, digest and where it happened; text at
+    DEBUG)."""
     offenders: list[str] = []
-    paths = sorted(
-        path
-        for target in _JUDGE_MODULES
-        for path in (
-            [_PACKAGE / target]
-            if target.endswith(".py")
-            else (_PACKAGE / target).rglob("*.py")
-        )
-    )
-    for path in paths:
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-            if (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-                and node.func.attr in _INFO_PLUS
-                and isinstance(node.func.value, ast.Name)
-                and node.func.value.id == "logger"
-            ):
-                offenders += [
-                    f"{path.relative_to(_PACKAGE.parent)}:{node.lineno}: {leak}"
-                    for leak in _logs_raw_error(node)
-                ]
+    for path in sorted(_PACKAGE.rglob("*.py")):
+        offenders += [
+            f"{path.relative_to(_PACKAGE.parent)}:{line}: {leak}"
+            for line, leak in _raw_error_logs(path.read_text(encoding="utf-8"))
+        ]
     assert not offenders, "\n".join(offenders)
 
 
-def test_static_error_guard_flags_a_raw_exception() -> None:
-    for source, leaky in [
+@pytest.mark.parametrize(
+    ("source", "leaky"),
+    [
         ("logger.warning('failed for %s: %s', qid, e)", True),
         ("logger.error('failed: %s', e, exc_info=True)", True),
         ("logger.exception('Question %s failed', qid)", True),
@@ -491,10 +523,41 @@ def test_static_error_guard_flags_a_raw_exception() -> None:
         ("logger.warning('failed: %s', error_digest(e))", False),
         ("logger.warning('failed %s', len(errors))", False),
         ("logger.warning('%s', error_digest(errors[-1]) if errors else 'x')", False),
-    ]:
-        call = ast.parse(source).body[0]
-        assert isinstance(call, ast.Expr) and isinstance(call.value, ast.Call)
-        assert bool(_logs_raw_error(call.value)) is leaky, source
+        ("logger.error('failed: %s', e, exc_info=False)", True),
+        ("logger.error('failed (%s)', type(e).__name__, exc_info=None)", False),
+        # Any name the clause binds, an f-string and ``logger.log``.
+        ("logger.warning('close failed: %s', close_error)", True),
+        ("logger.warning(f'failed: {raised}')", True),
+        ("logger.log(logging.ERROR, 'failed: %s', item_error)", True),
+        ("logger.log(logging.DEBUG, 'failed: %s', item_error)", False),
+        ("logger.log(level, f'failed {raised!r}')", True),
+        ("logger.warning('failed (%s)', raised.__class__.__name__)", False),
+    ],
+)
+def test_static_error_guard_flags_a_raw_exception(source: str, leaky: bool) -> None:
+    wrapped = (
+        "try:\n    pass\n"
+        "except (OSError, ValueError) as raised:\n"
+        "    try:\n        pass\n"
+        "    except Exception as item_error:\n"
+        "        try:\n            pass\n"
+        "        except Exception as close_error:\n"
+        "            try:\n                pass\n"
+        "            except Exception as e:\n"
+        f"                {source}\n"
+    )
+    assert bool(_raw_error_logs(wrapped)) is leaky, source
+
+
+def test_static_error_guard_reads_the_names_a_clause_binds_in_its_body() -> None:
+    # Outside the clause the bound name is an ordinary variable again.
+    source = (
+        "try:\n    pass\n"
+        "except Exception as raised:\n"
+        "    logger.warning('failed: %s', raised)\n"
+        "logger.warning('value: %s', raised)\n"
+    )
+    assert [line for line, _ in _raw_error_logs(source)] == [4]
 
 
 def test_static_guard_flags_a_name_in_an_info_log() -> None:
@@ -654,3 +717,143 @@ def test_log_error_logs_an_outage_with_its_text_and_a_failure_without(
     )
     assert failure.startswith("call failed: RuntimeError (len=")
     assert "Zebrapassword" not in failure
+
+
+def test_an_error_digest_names_its_code_status_and_data_free_facts() -> None:
+    """Regression (rv29 logging #3): at INFO a failure said only its type and
+    a hash, though its HTTP status, a service's error code, an OSError's
+    errno and path or a decode error's position hold no request text."""
+    import json as json_module
+
+    from botocore.exceptions import ClientError
+
+    from unified_kg_rag.shared.utils import error_digest, error_name
+
+    class ResponseError(Exception):
+        status_code = 400
+
+    reply = ResponseError("Quokkasecret: the prompt's tail")
+    assert error_digest(reply).startswith("ResponseError, HTTP 400 (len=")
+    throttled = ClientError(
+        {
+            "Error": {"Code": "ThrottlingException", "Message": "Quokkasecret"},
+            "ResponseMetadata": {"HTTPStatusCode": 429},
+        },
+        "Converse",
+    )
+    assert error_name(throttled) == "ClientError ThrottlingException, HTTP 429"
+    denied = PermissionError(13, "custom text Quokkasecret", "/exports/graph")
+    assert error_name(denied) == (
+        "PermissionError [Errno 13] Permission denied: '/exports/graph'"
+    )
+    try:
+        json_module.loads('{"q": Quokkasecret}')
+    except json_module.JSONDecodeError as e:
+        assert error_name(e) == "JSONDecodeError Expecting value: line 1 column 7"
+    try:
+        b"\xff Quokkasecret".decode("utf-8")
+    except UnicodeDecodeError as e:
+        assert error_name(e) == (
+            "UnicodeDecodeError 'utf-8' invalid start byte at position 0"
+        )
+    for error in (reply, throttled, denied):
+        assert "Quokkasecret" not in error_digest(error)
+
+
+def test_the_locator_follows_the_context_unless_it_was_suppressed() -> None:
+    from unified_kg_rag.shared.utils import error_locator
+
+    def handled(suppress: bool) -> BaseException:
+        try:
+            try:
+                raise KeyError("Quokkasecret")
+            except KeyError:
+                if suppress:
+                    raise RuntimeError("Zebrapassword") from None
+                raise RuntimeError("Zebrapassword")  # noqa: B904 - the context
+        except RuntimeError as e:
+            return e
+        raise AssertionError("unreachable")
+
+    shown = error_locator(handled(suppress=False))
+    assert shown.startswith("RuntimeError at ") and " <- KeyError at " in shown
+    assert "KeyError" not in error_locator(handled(suppress=True))
+    assert "Quokkasecret" not in shown and "Zebrapassword" not in shown
+
+
+def test_the_locator_names_no_absolute_path(tmp_path: Path) -> None:
+    import importlib.util
+
+    from unified_kg_rag.shared.utils import error_locator
+
+    # A frame of a file outside the package: its last two parts only.
+    outside = tmp_path / "probe" / "tool.py"
+    outside.parent.mkdir()
+    outside.write_text("def fail():\n    raise ValueError('x')\n", encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("probe_tool", outside)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    with pytest.raises(ValueError) as failed:
+        module.fail()
+    shown = error_locator(failed.value)
+    assert "probe/tool.py:2 fail" in shown
+    assert str(tmp_path) not in shown
+    # The package's files by their path from the package.
+    from unified_kg_rag.shared.utils import common
+
+    with pytest.raises(AttributeError) as raised:
+        common.compute_hash(None)  # type: ignore[arg-type]
+    shown = error_locator(raised.value)
+    assert "unified_kg_rag/shared/utils/common.py:" in shown
+    assert str(Path(common.__file__).parent) not in shown
+
+
+def test_an_export_write_failure_logs_its_folder(
+    caplog: pytest.LogCaptureFixture, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Regression (rv29): a graph write failure logged "ExportWriteError
+    # (len sha) <- PermissionError" without the folder the page said to fix.
+    from unified_kg_rag.application.storage import visualization_export
+    from unified_kg_rag.shared import get_logger
+    from unified_kg_rag.shared.logging import log_error
+
+    target = tmp_path / "exports" / "visualization_data.json"
+
+    def refuse(path: Path, _text: str, **_: Any) -> None:
+        raise PermissionError(13, "Permission denied", str(path))
+
+    monkeypatch.setattr(visualization_export, "atomic_write_text", refuse)
+    monkeypatch.setattr(
+        visualization_export, "stored_visualization_data", lambda *a, **k: {}
+    )
+    providers = MagicMock()
+    providers.build_vector_indexer.return_value.scan_items.return_value = []
+    with pytest.raises(visualization_export.ExportWriteError) as raised:
+        visualization_export.write_visualization_data(providers, "default", target)
+    with caplog.at_level("INFO"):
+        log_error(get_logger("probe"), logging.WARNING, "x: %s", error=raised.value)
+    (line,) = [r.getMessage() for r in caplog.records]
+    assert f"Cannot write '{target}'" in line
+    assert "PermissionError [Errno 13] Permission denied" in line
+
+
+def test_a_partly_own_message_shows_and_logs_its_own_part_only(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # A stage failure names its index types (the package's text) and its
+    # first error (a store's, which may quote a document): the first part
+    # is shown and logged at ERROR, the whole message only at DEBUG.
+    from unified_kg_rag.shared import PipelineStageError, get_logger
+    from unified_kg_rag.shared.exceptions import operator_error_text, own_text
+    from unified_kg_rag.shared.logging import log_error
+
+    own = "Indexing failed: vector_entities exceeded the tolerated failure rate."
+    error = PipelineStageError(f"{own} First error: Quokkasecret", own_text=own)
+    assert own_text(error) == own and operator_error_text(error) == own
+    with caplog.at_level("DEBUG"):
+        log_error(get_logger("probe"), logging.ERROR, "Stage failed: %s", error=error)
+    (shown,) = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
+    assert shown == f"Stage failed: [failure] {own}"
+    debug = [r.getMessage() for r in caplog.records if r.levelno == logging.DEBUG]
+    assert any("Quokkasecret" in line for line in debug)

@@ -306,7 +306,7 @@ class BedrockGuardrail:
         check = verdict.grounding
         assert check is not None
         if not check.checked:
-            outcome = (
+            result_text = (
                 f"skipped: {answer_chars} characters exceed the "
                 f"{GROUNDING_ANSWER_MAX_CHARS}-character limit"
                 if check.skipped_reason == "answer_too_long"
@@ -315,10 +315,10 @@ class BedrockGuardrail:
         elif not check.failed:
             return
         elif check.blocked:
-            outcome = "blocked"
+            result_text = "blocked"
         else:
-            outcome = "failed but not blocked (detect-only policy)"
-        key = outcome.split(":")[0].split(" ")[0]
+            result_text = "failed but not blocked (detect-only policy)"
+        key = result_text.split(":")[0].split(" ")[0]
         with self._lock:
             counts = type(self)._grounding_counts
             counts[key] = counts.get(key, 0) + 1
@@ -327,7 +327,7 @@ class BedrockGuardrail:
             "Contextual grounding check of guardrail '%s' on an answer %s "
             "(failed: %s; scores: %s; %s answers in this process: %d)",
             self.identifier,
-            outcome,
+            result_text,
             ", ".join(check.failed) or "none",
             ", ".join(f"{k} {v:.2f}" for k, v in sorted(check.scores.items()))
             or "none reported",

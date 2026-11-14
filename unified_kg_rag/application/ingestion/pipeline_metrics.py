@@ -11,6 +11,7 @@ delegating method for each of them.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 from unified_kg_rag.domain.models import (
@@ -20,6 +21,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.logging import log_error
 from unified_kg_rag.shared.usage import merge_usage
 
 if TYPE_CHECKING:
@@ -280,7 +282,7 @@ def emit_metrics(
             },
         )
     except Exception as e:  # noqa: BLE001 - metrics never break a run
-        logger.warning("Metrics emission failed: %s", e)
+        log_error(logger, logging.WARNING, "Metrics emission failed: %s", error=e)
 
 
 def emit_stage_metrics(
@@ -290,7 +292,7 @@ def emit_stage_metrics(
     try:
         metrics = pipeline._create_pipeline_metrics(context)
     except Exception as e:  # noqa: BLE001 - metrics never break a run
-        logger.warning("Metrics emission failed: %s", e)
+        log_error(logger, logging.WARNING, "Metrics emission failed: %s", error=e)
         return
     pipeline._emit_metrics(
         metrics,

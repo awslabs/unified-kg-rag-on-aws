@@ -31,6 +31,7 @@ from unified_kg_rag.domain.ingestion.visualization_data import (
 from unified_kg_rag.domain.models import Claim, Entity, Relationship
 from unified_kg_rag.ports.indexer import GraphIndexer, StoredItemKind, VectorIndexer
 from unified_kg_rag.shared import ConfigurationError, DataProcessingError, get_logger
+from unified_kg_rag.shared.utils import error_name
 from unified_kg_rag.shared.utils.files import atomic_write_text
 
 if TYPE_CHECKING:
@@ -41,7 +42,11 @@ logger = get_logger(__name__)
 
 class ExportWriteError(DataProcessingError, OSError):
     """The export file (or its folder) could not be written, as distinct from
-    the stores it was read from failing: a caller says which of the two."""
+    the stores it was read from failing: a caller says which of the two. Its
+    message names the path and the OS error (``error_name``: errno and path,
+    no data), so it is logged and shown in full (``has_own_text``)."""
+
+    own_text = True
 
 
 # Ids one graph-store read takes (as the incremental merge reads them).
@@ -141,7 +146,7 @@ def write_visualization_data(
         path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_text(path, json.dumps(data, default=str))
     except OSError as e:
-        raise ExportWriteError(f"Cannot write '{path}': {e}") from e
+        raise ExportWriteError(f"Cannot write '{path}': {error_name(e)}") from e
     return {
         "nodes": len(data["nodes"]),
         "edges": len(data["edges"]),

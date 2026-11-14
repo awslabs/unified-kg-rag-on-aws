@@ -88,7 +88,7 @@ from unified_kg_rag.shared import (
     get_logger,
 )
 from unified_kg_rag.shared.exceptions import StoreRequestRejectedError
-from unified_kg_rag.shared.logging import log_failure, warn_once
+from unified_kg_rag.shared.logging import log_error, log_failure, warn_once
 from unified_kg_rag.shared.store_lookups import StoreLookupCache, lookup_cache
 from unified_kg_rag.shared.utils.common import compute_hash
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
@@ -681,10 +681,12 @@ class OpenSearchIndexer(VectorIndexer):
         except NamespaceLeaseError:
             raise
         except Exception as e:  # noqa: BLE001 - every text is embedded instead
-            logger.warning(
+            log_error(
+                logger,
+                logging.WARNING,
                 "Reading the stored vectors of %s failed; embedding every text: %s",
                 spec.name,
-                e,
+                error=e,
             )
             return {}
 
@@ -1072,13 +1074,15 @@ class OpenSearchIndexer(VectorIndexer):
                 raise
             except Exception as e:  # noqa: BLE001 - the record is optional
                 failed = True
-                logger.warning(
+                log_error(
+                    logger,
+                    logging.WARNING,
                     "Could not record the build of pipeline '%s' in the _meta of "
                     "%s (%s): the run retries it once its documents are "
                     "recorded, and later runs while it is missing",
                     record.pipeline_id,
                     alias,
-                    e,
+                    error=e,
                 )
         return None if failed else written
 
@@ -1095,7 +1099,13 @@ class OpenSearchIndexer(VectorIndexer):
         except NamespaceLeaseError:
             raise
         except Exception as e:  # noqa: BLE001 - the record is optional
-            logger.warning("Could not read the build record of %s: %s", alias, e)
+            log_error(
+                logger,
+                logging.WARNING,
+                "Could not read the build record of %s: %s",
+                alias,
+                error=e,
+            )
             return None
 
     def clear(self, suffixes: list[str]) -> None:
@@ -1939,7 +1949,13 @@ class OpenSearchIndexer(VectorIndexer):
         except NamespaceLeaseError:
             raise
         except Exception as e:  # noqa: BLE001 - reported as failed items
-            logger.error("Writing extraction records to '%s' failed: %s", alias_name, e)
+            log_error(
+                logger,
+                logging.ERROR,
+                "Writing extraction records to '%s' failed: %s",
+                alias_name,
+                error=e,
+            )
             stats.add_error(str(e), len(records), ids=list(records))
             return stats
         if failed:
@@ -2001,8 +2017,12 @@ class OpenSearchIndexer(VectorIndexer):
         except NamespaceLeaseError:
             raise
         except Exception as e:  # noqa: BLE001 - the next run deletes them
-            logger.warning(
-                "Deleting the probe indices of '%s' failed: %s", alias_name, e
+            log_error(
+                logger,
+                logging.WARNING,
+                "Deleting the probe indices of '%s' failed: %s",
+                alias_name,
+                error=e,
             )
         probes: list[str] = []
         targets = self._mappings_to_create(suffix, rebuild)
@@ -2021,7 +2041,13 @@ class OpenSearchIndexer(VectorIndexer):
             except NamespaceLeaseError:
                 raise
             except Exception as e:  # noqa: BLE001 - the next run deletes it
-                logger.warning("Deleting the probe indices %s failed: %s", probes, e)
+                log_error(
+                    logger,
+                    logging.WARNING,
+                    "Deleting the probe indices %s failed: %s",
+                    probes,
+                    error=e,
+                )
 
     def _mappings_to_create(
         self, suffix: str | None, rebuild: bool
@@ -2369,12 +2395,13 @@ class OpenSearchIndexer(VectorIndexer):
             except NamespaceLeaseError:
                 raise
             except Exception as e:  # noqa: BLE001 - reported as failed items
-                logger.error(
+                log_error(
+                    logger,
+                    logging.ERROR,
                     "Failed to upsert %s (suffix=%s): %s",
                     spec.name,
                     suffix,
-                    e,
-                    exc_info=True,
+                    error=e,
                 )
                 total_stats.add_error(
                     str(e), len(chunk_items), ids=[item.id for item in chunk_items]
@@ -2494,12 +2521,13 @@ class OpenSearchIndexer(VectorIndexer):
             except NamespaceLeaseError:
                 raise
             except Exception as e:  # noqa: BLE001 - reported as failed items
-                logger.error(
+                log_error(
+                    logger,
+                    logging.ERROR,
                     "Failed to index %s (suffix=%s): %s",
                     spec.name,
                     suffix,
-                    e,
-                    exc_info=True,
+                    error=e,
                 )
                 # A failed empty replacement still fails the run.
                 total_stats.add_error(
@@ -2641,11 +2669,13 @@ class OpenSearchIndexer(VectorIndexer):
         except NamespaceLeaseError:
             raise
         except Exception as e:  # noqa: BLE001 - garbage only costs space
-            logger.warning(
+            log_error(
+                logger,
+                logging.WARNING,
                 "Failed to delete stale indices of '%s' (live index '%s' kept): %s",
                 alias_name,
                 live_index,
-                e,
+                error=e,
             )
 
     def _drop_unswapped_index(self, alias_name: str, index_name: str) -> None:
@@ -2663,7 +2693,13 @@ class OpenSearchIndexer(VectorIndexer):
         except NamespaceLeaseError:
             raise
         except Exception as e:  # noqa: BLE001 - the next run deletes it
-            logger.warning("Failed to delete unused index '%s': %s", index_name, e)
+            log_error(
+                logger,
+                logging.WARNING,
+                "Failed to delete unused index '%s': %s",
+                index_name,
+                error=e,
+            )
 
     def _generate_embeddings(
         self,
@@ -2854,11 +2890,12 @@ class OpenSearchIndexer(VectorIndexer):
             try:
                 docs.append(prepare_func(item, embedding_tuple))
             except Exception as e:  # noqa: BLE001 - isolate one item's failure
-                logger.error(
+                log_error(
+                    logger,
+                    logging.ERROR,
                     "Failed to prepare document for item ID: %s. Error: %s",
                     item.id,
-                    e,
-                    exc_info=True,
+                    error=e,
                 )
                 failed_ids.append(item.id)
 
@@ -3160,10 +3197,12 @@ class OpenSearchIndexer(VectorIndexer):
             except NamespaceLeaseError:
                 raise
             except Exception as e:  # noqa: BLE001 - every text is embedded instead
-                logger.warning(
+                log_error(
+                    logger,
+                    logging.WARNING,
                     "Reading the stored summary vectors failed; embedding every "
                     "summary: %s",
-                    e,
+                    error=e,
                 )
                 stored = {}
         vectors: list[list[float] | None] = [None] * len(texts)
@@ -3253,7 +3292,13 @@ class OpenSearchIndexer(VectorIndexer):
         except NamespaceLeaseError:
             raise
         except Exception as e:  # noqa: BLE001 - reported as failed items
-            logger.error("Failed to write the summary tree of '%s': %s", alias_name, e)
+            log_error(
+                logger,
+                logging.ERROR,
+                "Failed to write the summary tree of '%s': %s",
+                alias_name,
+                error=e,
+            )
             stats.add_error(str(e), max(1, len(nodes)), ids=[n.id for n in nodes])
             if index_name:
                 self._drop_unswapped_index(alias_name, index_name)

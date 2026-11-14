@@ -25,6 +25,7 @@ waits up to ``search.store_timeout_seconds`` for another writer's lock.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import threading
 import time
@@ -47,6 +48,7 @@ from unified_kg_rag.shared.exceptions import (
     StoreConfigurationError,
     StoreTimeoutError,
 )
+from unified_kg_rag.shared.logging import log_error
 from unified_kg_rag.shared.write_fence import check_fences_held, check_write_fence
 
 logger = get_logger(__name__)
@@ -319,10 +321,12 @@ class SQLiteGraphStore:
                     except sqlite3.DatabaseError as e:
                         message = str(e).lower()
                         if "not authorized" in message or "prohibited" in message:
-                            logger.error(
+                            log_error(
+                                logger,
+                                logging.ERROR,
                                 "The structured query's authorizer refused a "
                                 "statement the checker passed (a bug): %s",
-                                e,
+                                error=e,
                             )
                             raise GraphQueryCompileError(
                                 "the read-only authorizer refused the query"

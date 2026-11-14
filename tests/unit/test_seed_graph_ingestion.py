@@ -553,11 +553,13 @@ def test_an_unreadable_registry_fails_the_seed_guard() -> None:
         def list_namespace(self, namespace: str) -> list[DocStatusRecord]:
             raise RuntimeError("throttled")
 
-    with pytest.raises(DocStatusRegistryError, match="throttled") as error:
+    # Named by what it is (error_name); its text is the chained cause's.
+    with pytest.raises(DocStatusRegistryError, match="RuntimeError") as error:
         incremental._namespace_records(
             lambda: Unreadable(), "default", "the seed check"  # type: ignore[arg-type,return-value]
         )
     assert "could not read namespace 'default' for the seed check" in str(error.value)
+    assert str(error.value.__cause__) == "throttled"
 
 
 def test_a_seed_only_run_counts_a_file_that_failed_to_load() -> None:

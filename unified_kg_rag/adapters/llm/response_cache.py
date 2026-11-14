@@ -26,6 +26,7 @@ from __future__ import annotations
 import functools
 import hashlib
 import json
+import logging
 import re
 import secrets
 import threading
@@ -48,6 +49,7 @@ from unified_kg_rag.adapters.llm.langchain import (
 from unified_kg_rag.domain.models import ModelPurpose
 from unified_kg_rag.ports.model_factory import LLMFactoryPort
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.logging import log_error
 from unified_kg_rag.shared.usage import CACHED_RESPONSE_KEY
 from unified_kg_rag.shared.utils.files import atomic_write_text
 
@@ -149,8 +151,12 @@ class LLMResponseCache(BaseCache):
                     else:
                         entries[entry["key"]] = entry["generations"]
             except (OSError, ValueError, KeyError, TypeError) as e:
-                logger.warning(
-                    "Skipping unreadable LLM cache segment '%s': %s", path, e
+                log_error(
+                    logger,
+                    logging.WARNING,
+                    "Skipping unreadable LLM cache segment '%s': %s",
+                    path,
+                    error=e,
                 )
         with self._lock:
             self._directory = directory
@@ -262,11 +268,13 @@ class LLMResponseCache(BaseCache):
             except Exception as e:  # noqa: BLE001 - a model call must not fail on it
                 # The rest would likely fail alike: keep them all for the next
                 # write rather than wait on each inside this model call.
-                logger.warning(
+                log_error(
+                    logger,
+                    logging.WARNING,
                     "Handing off %d LLM cache segment(s) failed; retrying at the "
                     "next write: %s",
                     len(due) - done,
-                    e,
+                    error=e,
                 )
                 with self._lock:
                     self._unsynced = [*due[done:], *self._unsynced]

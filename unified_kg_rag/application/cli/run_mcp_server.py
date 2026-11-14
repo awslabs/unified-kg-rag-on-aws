@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 import sys
 from typing import Any
 
@@ -73,6 +74,7 @@ from unified_kg_rag.shared import (
     setup_logging,
 )
 from unified_kg_rag.shared.exceptions import error_text
+from unified_kg_rag.shared.logging import log_error
 from unified_kg_rag.shared.utils import event_loop
 
 logger = get_logger(__name__)
@@ -209,14 +211,24 @@ async def warn_of_missing_namespaces(
         try:
             await graph_lookup.require_namespace(chain, namespace)
         except IndexNotFoundError as e:
-            logger.warning(
+            log_error(
+                logger,
+                logging.WARNING,
                 "Namespace '%s' holds no index, so every tool call on it fails "
                 "until it is ingested: %s",
                 namespace,
-                error_text(e),
+                error=e,
             )
         except Exception as e:  # noqa: BLE001 - a call meets it again
-            logger.warning("Could not check namespace '%s': %s", namespace, e)
+            # A store down with its text, an unexpected failure by its type
+            # and where it happened (log_error).
+            log_error(
+                logger,
+                logging.WARNING,
+                "Could not check namespace '%s': %s",
+                namespace,
+                error=e,
+            )
 
 
 async def serve(args: argparse.Namespace, config: Config) -> int:
@@ -272,11 +284,13 @@ async def async_main(args: argparse.Namespace) -> int:
     except KeyboardInterrupt:
         return EXIT_INTERRUPTED
     except ConfigurationError as e:
-        logger.error("Configuration error: %s", e)
-        print(f"run-mcp-server: error: {e}", file=sys.stderr)
+        log_error(logger, logging.ERROR, "Configuration error: %s", error=e)
+        print(f"run-mcp-server: error: {error_text(e)}", file=sys.stderr)
         return failed(EXIT_USAGE, e)
-    except Exception as e:
-        logger.exception("The MCP server failed")
+    except Exception as e:  # noqa: BLE001 - logged, exit code
+        # The one rule of every surface (log_error): an unexpected failure's
+        # type and where it happened (text and traceback at DEBUG).
+        log_error(logger, logging.ERROR, "The MCP server failed: %s", error=e)
         return failed(EXIT_FAILURE, e)
 
 

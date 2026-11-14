@@ -211,4 +211,4 @@ app = build_mcp_app(chain, namespace="default", allowed_hosts=["mcp.example.com"
 | `is not a loopback address ... needs --allow-remote` | `127.0.0.1`에 바인딩하거나, 인증 프록시 뒤에서 `--allow-remote` 추가 |
 | `Strategy '...' is not offered` / `does not hold` | `kg_describe_schema`를 호출해 목록에 있는 전략 선택 |
 | `holds no knowledge graph` | 네임스페이스를 `raptor`만으로 빌드함. 그래프 도구에는 graphrag, lightrag, hipporag 중 하나가 필요 |
-| `The call failed inside the server` | 서버의 stderr 로그 확인 |
+| `The call failed with an unexpected error` | 서버의 stderr 로그 확인 |

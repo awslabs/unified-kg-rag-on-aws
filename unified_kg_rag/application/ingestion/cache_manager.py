@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import json
+import logging
 from collections.abc import Callable, Iterator
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -15,8 +16,8 @@ from unified_kg_rag.domain.models import (
     CacheStrategy,
     Config,
 )
-from unified_kg_rag.shared.logging import get_logger
-from unified_kg_rag.shared.utils import compute_hash
+from unified_kg_rag.shared.logging import get_logger, log_error
+from unified_kg_rag.shared.utils import compute_hash, error_name
 from unified_kg_rag.shared.utils.files import atomic_write_text
 
 logger = get_logger(__name__)
@@ -25,7 +26,10 @@ T = TypeVar("T", bound=BaseModel)
 
 class _CorruptCacheEntry(Exception):
     """A cached entry's files are missing, truncated, fail their hash or no
-    longer validate as the requested model."""
+    longer validate as the requested model. Its message names the files and
+    the cause by ``error_name``, never the cached text (``has_own_text``)."""
+
+    own_text = True
 
 
 class CacheManager:
@@ -77,10 +81,12 @@ class CacheManager:
             else:
                 self._read_single_file(entry, pipeline_id)
         except _CorruptCacheEntry as e:
-            logger.warning(
+            log_error(
+                logger,
+                logging.WARNING,
                 "Cache entry '%s' is incomplete, treating it as a miss: %s",
                 cache_key,
-                e,
+                error=e,
             )
             return False
         return True
@@ -161,10 +167,12 @@ class CacheManager:
                 data = json.load(f)
             return CacheIndex.model_validate(data)
         except (json.JSONDecodeError, OSError) as e:
-            logger.warning(
+            log_error(
+                logger,
+                logging.WARNING,
                 "Failed to load cache index '%s', creating a new one. Error: %s",
                 index_path,
-                e,
+                error=e,
             )
             return CacheIndex(
                 pipeline_id=pipeline_id,
@@ -229,10 +237,12 @@ class CacheManager:
                 else:
                     data = self._load_single_file_data(entry, pipeline_id, data_type)
             except _CorruptCacheEntry as e:
-                logger.warning(
+                log_error(
+                    logger,
+                    logging.WARNING,
                     "Cache entry '%s' is incomplete, treating it as a miss: %s",
                     cache_key,
-                    e,
+                    error=e,
                 )
                 self.stats.record_miss()
                 return None
@@ -241,7 +251,13 @@ class CacheManager:
             logger.debug("Cache hit for key '%s'", cache_key)
             return data
         except (OSError, json.JSONDecodeError) as e:
-            logger.error("Failed to load cache entry '%s': %s", cache_key, e)
+            log_error(
+                logger,
+                logging.ERROR,
+                "Failed to load cache entry '%s': %s",
+                cache_key,
+                error=e,
+            )
             self.stats.record_miss()
             return None
 
@@ -286,7 +302,9 @@ class CacheManager:
                 if data_type and chunk_data:
                     chunk_data = [data_type.model_validate(item) for item in chunk_data]
             except Exception as e:
-                raise _CorruptCacheEntry(f"chunk {i} could not be loaded: {e}") from e
+                raise _CorruptCacheEntry(
+                    f"chunk {i} could not be loaded: {error_name(e)}"
+                ) from e
             all_data.extend(chunk_data)
             items_loaded += len(chunk_data)
 
@@ -314,7 +332,7 @@ class CacheManager:
                 return data_type.model_validate(data)
         except Exception as e:
             raise _CorruptCacheEntry(
-                f"data does not validate as '{data_type.__name__}': {e}"
+                f"data does not validate as '{data_type.__name__}': " f"{error_name(e)}"
             ) from e
 
         return data
@@ -340,7 +358,13 @@ class CacheManager:
                     data, cache_key, stage_name, pipeline_id, metadata
                 )
         except (OSError, TypeError) as e:
-            logger.error("Failed to save cache entry '%s': %s", cache_key, e)
+            log_error(
+                logger,
+                logging.ERROR,
+                "Failed to save cache entry '%s': %s",
+                cache_key,
+                error=e,
+            )
             return None
 
     def _should_chunk_data(self, data: Any) -> bool:
@@ -378,7 +402,9 @@ class CacheManager:
                 )
                 return True
         except (TypeError, ValueError) as e:
-            logger.warning("Failed to estimate data size: %s", e)
+            log_error(
+                logger, logging.WARNING, "Failed to estimate data size: %s", error=e
+            )
 
         return False
 
@@ -548,4 +574,10 @@ class CacheManager:
         try:
             atomic_write_text(index_path, index.model_dump_json(indent=2))
         except OSError as e:
-            logger.error("Failed to save cache index to '%s': %s", index_path, e)
+            log_error(
+                logger,
+                logging.ERROR,
+                "Failed to save cache index to '%s': %s",
+                index_path,
+                error=e,
+            )

@@ -13,6 +13,7 @@ live tree's node with the same ``input_key``) and makes no model call.
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from collections.abc import Collection, Iterable, Iterator, Sequence
 from datetime import UTC, datetime
@@ -60,6 +61,8 @@ from unified_kg_rag.shared import (
     PipelineStageError,
     get_logger,
 )
+from unified_kg_rag.shared.exceptions import own_text
+from unified_kg_rag.shared.logging import log_error
 
 if TYPE_CHECKING:
     from unified_kg_rag.ports import DocStatusPort
@@ -234,7 +237,7 @@ class SummaryTreeStage(_RegistryStage):
                 "in the build record and serves the text units it covers",
                 suffix,
             )
-            raise _IntactTreeError(str(e)) from e
+            raise _IntactTreeError(str(e), own_text=own_text(e) or False) from e
         return self._rebuild(indexer, suffix, context, digest, fingerprint, rows)
 
     def _check_tree_size(self, suffix: str, rows: list[dict[str, Any]]) -> None:
@@ -253,7 +256,8 @@ class SummaryTreeStage(_RegistryStage):
                 "it with indexing.summary_tree.partition_by (document filter "
                 "keys), build one tree per document (scope: document), or raise "
                 "the limit with the task's memory (about 50 KiB per text unit "
-                "at 1,024 dimensions)."
+                "at 1,024 dimensions).",
+                own_text=True,
             )
 
     def _tree_of(self, attributes: dict[str, Any]) -> str | None:
@@ -332,11 +336,13 @@ class SummaryTreeStage(_RegistryStage):
             nodes, vectors, suffix, record.model_dump(mode="json")
         )
         if stats.failed_items:
+            # The write's errors are logged by the store (a store's error
+            # may quote a node's text): the message is the stage's own.
             raise PipelineStageError(
                 f"Writing the summary tree of '{suffix}' failed ({stats.failed_items} "
-                f"of {len(nodes)} nodes; first error: "
-                f"{stats.errors[0] if stats.errors else 'unknown'}): the previous "
-                "tree, without the summaries of removed text, is kept."
+                f"of {len(nodes)} nodes; the ERROR lines above name why): the "
+                "previous tree, without the summaries of removed text, is kept.",
+                own_text=True,
             )
         self._record_artifact(indexer, suffix)
         if record.partial:
@@ -565,10 +571,12 @@ class SummaryTreeStage(_RegistryStage):
         except NamespaceLeaseError:
             raise
         except Exception as e:  # noqa: BLE001 - the build's error is raised
-            logger.warning(
+            log_error(
+                logger,
+                logging.WARNING,
                 "Could not drop the summary tree from the build record of '%s': %s",
                 suffix,
-                e,
+                error=e,
             )
 
 

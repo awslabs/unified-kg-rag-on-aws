@@ -75,6 +75,7 @@ from unified_kg_rag.shared import (
     get_logger,
 )
 from unified_kg_rag.shared.exceptions import StoreConfigurationError
+from unified_kg_rag.shared.logging import log_error
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 from unified_kg_rag.shared.write_fence import (
     INGESTION_REQUEST_TIMEOUT_SECONDS,
@@ -856,7 +857,12 @@ class NeptuneIndexer(GraphIndexer):
                     raise
                 except Exception as e:  # noqa: BLE001 - reported as failed items
                     stats.add_error(str(e), len(batch), ids=list(batch))
-                    logger.warning("Failed to write schema annotations: %s", e)
+                    log_error(
+                        logger,
+                        logging.WARNING,
+                        "Failed to write schema annotations: %s",
+                        error=e,
+                    )
         return stats
 
     def index_entities(
@@ -1099,7 +1105,12 @@ class NeptuneIndexer(GraphIndexer):
                         raise
                     except Exception as e:  # noqa: BLE001 - reported as failed items
                         stats.add_error(str(e), len(batch), ids=list(batch))
-                        logger.warning("Failed to write relationship ranks: %s", e)
+                        log_error(
+                            logger,
+                            logging.WARNING,
+                            "Failed to write relationship ranks: %s",
+                            error=e,
+                        )
                         continue
                     stats.add_success(len(found & set(batch)))
                     missing = [i for i in batch if i not in found]
@@ -1266,11 +1277,13 @@ class NeptuneIndexer(GraphIndexer):
                 raise
             except AWSServiceError as e:
                 stats.add_error(str(e), len(rels), ids=[rel.id for rel in rels])
-                logger.warning(
+                log_error(
+                    logger,
+                    logging.WARNING,
                     "%s relationships of '%s' not written: %s",
                     len(rels),
                     entity_label,
-                    e,
+                    error=e,
                 )
                 stats.processing_time = time.time() - start_time
                 total_stats.merge(stats)
@@ -1424,7 +1437,9 @@ class NeptuneIndexer(GraphIndexer):
                 raise
             except Exception as e:  # noqa: BLE001 - reported as failed items
                 stats.add_error(str(e), len(id_batch), ids=list(id_batch))
-                logger.warning("Failed to delete ids batch: %s", e)
+                log_error(
+                    logger, logging.WARNING, "Failed to delete ids batch: %s", error=e
+                )
 
         return stats
 
@@ -1530,8 +1545,13 @@ class NeptuneIndexer(GraphIndexer):
             except Exception as e:  # noqa: BLE001 - a failed item
                 stats.successful_items -= 1
                 stats.add_error(str(e), ids=[str(item.id)])
-                logger.warning(
-                    "Writing the %s values of %s failed: %s", key, item.id, e
+                log_error(
+                    logger,
+                    logging.WARNING,
+                    "Writing the %s values of %s failed: %s",
+                    key,
+                    item.id,
+                    error=e,
                 )
 
     def _drop_stale_set_values(
@@ -1663,7 +1683,7 @@ class NeptuneIndexer(GraphIndexer):
                     f"dropped, {initial} counted before)"
                 )
         except Exception as e:
-            logger.error("Failed to drop %s: %s", what, e)
+            log_error(logger, logging.ERROR, "Failed to drop %s: %s", what, error=e)
             if isinstance(e, GraphRAGException):
                 raise
             raise AWSServiceError(f"Dropping Neptune {what} failed: {e}") from e
@@ -1812,11 +1832,13 @@ class NeptuneIndexer(GraphIndexer):
         except NamespaceLeaseError:
             raise
         except Exception as batch_error:  # noqa: BLE001 - retried per item below
-            logger.warning(
+            log_error(
+                logger,
+                logging.WARNING,
                 "Batch %s failed (%s items), falling back to individual indexing: %s",
                 operation_name,
                 len(batch),
-                batch_error,
+                error=batch_error,
             )
             for item in batch:
 
@@ -1836,8 +1858,12 @@ class NeptuneIndexer(GraphIndexer):
                         str(item_error),
                         ids=[str(item_id)] if item_id is not None else None,
                     )
-                    logger.warning(
-                        "Individual %s failed: %s", operation_name, item_error
+                    log_error(
+                        logger,
+                        logging.WARNING,
+                        "Individual %s failed: %s",
+                        operation_name,
+                        error=item_error,
                     )
         return stats
 
@@ -1871,24 +1897,27 @@ class NeptuneIndexer(GraphIndexer):
                 return run_traversal(self.neptune_client, build, results=results)
             except Exception as e:
                 if is_permanent_neptune_error(e) or attempt + 1 == max_attempts:
-                    logger.log(
+                    log_error(
+                        logger,
                         exhausted_level,
                         "Failed %s after %s attempt(s): %s",
                         operation_name,
                         attempt + 1,
-                        e,
+                        error=e,
                     )
                     raise
                 # Exponential backoff with full jitter so concurrent workers do
                 # not retry a throttled endpoint in lock-step.
                 backoff = delay * (2**attempt)
                 sleep_for = _jitter(0, backoff)
-                logger.warning(
+                log_error(
+                    logger,
+                    logging.WARNING,
                     "%s attempt %s failed, retrying in %.2fs: %s",
                     operation_name,
                     attempt + 1,
                     sleep_for,
-                    e,
+                    error=e,
                 )
                 _sleep(sleep_for)
                 attempt += 1

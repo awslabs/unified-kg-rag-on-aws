@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
+import logging
 from contextlib import closing
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
@@ -13,6 +14,7 @@ from botocore.exceptions import BotoCoreError, ClientError, NoCredentialsError
 from unified_kg_rag.domain.models import Config, S3EncryptionType
 from unified_kg_rag.domain.models.pipeline import PIPELINE_METADATA_FILE
 from unified_kg_rag.shared import CacheSyncError, ConfigurationError, get_logger
+from unified_kg_rag.shared.logging import log_error
 
 if TYPE_CHECKING:
     from types_boto3_s3 import S3Client
@@ -102,8 +104,12 @@ class S3CacheManager:
                 if error_code in ["404", "NoSuchBucket"]:
                     logger.error("S3 bucket not found: %s", self.bucket_name)
                 else:
-                    logger.error(
-                        "Failed to connect to S3 bucket '%s': %s", self.bucket_name, e
+                    log_error(
+                        logger,
+                        logging.ERROR,
+                        "Failed to connect to S3 bucket '%s': %s",
+                        self.bucket_name,
+                        error=e,
                     )
                 raise
         return self._s3_client
@@ -162,7 +168,13 @@ class S3CacheManager:
                     stages.add(self._stage_name(relative_path))
 
         except Exception as e:
-            logger.error("Failed to sync pipeline '%s' from S3: %s", pipeline_id, e)
+            log_error(
+                logger,
+                logging.ERROR,
+                "Failed to sync pipeline '%s' from S3: %s",
+                pipeline_id,
+                error=e,
+            )
             raise CacheSyncError(
                 f"Failed to sync pipeline '{pipeline_id}' from "
                 f"'s3://{self.bucket_name}/{s3_prefix}': {e}"
@@ -210,7 +222,13 @@ class S3CacheManager:
                 stages.add(self._stage_name(relative_path))
 
         except Exception as e:
-            logger.error("Failed to sync pipeline '%s' to S3: %s", pipeline_id, e)
+            log_error(
+                logger,
+                logging.ERROR,
+                "Failed to sync pipeline '%s' to S3: %s",
+                pipeline_id,
+                error=e,
+            )
             raise CacheSyncError(
                 f"Failed to sync pipeline '{pipeline_id}' to "
                 f"'s3://{self.bucket_name}/{base_prefix}': {e}"
@@ -324,8 +342,13 @@ class S3CacheManager:
             self.s3_client.download_file(str(self.bucket_name), s3_key, str(local_path))
             return True
         except (ClientError, BotoCoreError) as e:
-            logger.warning(
-                "Failed to download 's3://%s/%s': %s", self.bucket_name, s3_key, e
+            log_error(
+                logger,
+                logging.WARNING,
+                "Failed to download 's3://%s/%s': %s",
+                self.bucket_name,
+                s3_key,
+                error=e,
             )
             return False
 
@@ -346,11 +369,13 @@ class S3CacheManager:
             # S3UploadFailedError, so both must count as a per-file failure,
             # and so must a connection error (BotoCoreError, e.g.
             # EndpointConnectionError) that its retries did not overcome.
-            logger.warning(
+            log_error(
+                logger,
+                logging.WARNING,
                 "Failed to upload '%s' to 's3://%s/%s': %s",
                 local_path,
                 self.bucket_name,
                 s3_key,
-                e,
+                error=e,
             )
             return False

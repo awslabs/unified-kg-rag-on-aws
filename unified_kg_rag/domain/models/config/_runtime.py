@@ -141,11 +141,18 @@ class LoggingConfig(ConfigSection):
             "httpx": "WARNING",
             # The OTLP exporter warns on every retry to an unreachable collector.
             "opentelemetry": "ERROR",
+            # At INFO: ragas's backend discovery and analytics. A failed judge
+            # job (the evaluator sees only its NaN score) is logged at ERROR,
+            # its error digested like every library's (LibraryRecordFilter).
+            "ragas": "WARNING",
         },
         description=(
             "Per-logger levels for chatty third-party libraries (logger name "
             "-> level, one of the names level takes). In a config file the key replaces the whole map; an "
-            "environment variable sets one entry over the defaults."
+            "environment variable sets one entry over the defaults. A "
+            "library's records at INFO and above keep their logger, level "
+            "and message template; their arguments and traceback are replaced "
+            "by a digest (a library's DEBUG records keep them)."
         ),
     )
 

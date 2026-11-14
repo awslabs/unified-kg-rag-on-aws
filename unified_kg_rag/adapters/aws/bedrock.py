@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import contextlib
 import contextvars
+import logging
 import threading
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterator, Sequence
@@ -78,6 +79,7 @@ from unified_kg_rag.shared.genai import (
     PROVIDER_AWS_BEDROCK,
     embedding_span,
 )
+from unified_kg_rag.shared.logging import log_error
 
 logger = get_logger(__name__)
 
@@ -409,10 +411,12 @@ class BedrockCrossRegionModelHelper:
                     f"'{region_name}': {cause}. Configure credentials (for "
                     f"example AWS_PROFILE, `aws sso login`, or an instance role)."
                 ) from cause
-            logger.warning(
+            log_error(
+                logger,
+                logging.WARNING,
                 "Failed to resolve cross-region model for '%s': %s. Falling back to standard model.",
                 model_id,
-                e,
+                error=e,
             )
             return model_id
 

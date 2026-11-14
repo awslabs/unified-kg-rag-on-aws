@@ -167,18 +167,90 @@ def safe_url(url: str) -> str:
     return urlunsplit((parts.scheme, host, parts.path, "", ""))
 
 
+def http_status(error: BaseException) -> int | None:
+    """The HTTP status an error carries as ``status_code`` (``openai``'s,
+    ``ollama.ResponseError``) or ``response.status_code`` (``httpx``'s)."""
+    status = getattr(error, "status_code", None)
+    if status is None:
+        status = getattr(getattr(error, "response", None), "status_code", None)
+    return status if isinstance(status, int) else None
+
+
+def reported_status(error: BaseException) -> int | None:
+    """:func:`http_status`, or the one botocore's ``ClientError`` reports
+    in its response metadata."""
+    if (status := http_status(error)) is not None:
+        return status
+    response = getattr(error, "response", None)
+    metadata = response.get("ResponseMetadata") if isinstance(response, dict) else None
+    found = metadata.get("HTTPStatusCode") if isinstance(metadata, dict) else None
+    return found if isinstance(found, int) else None
+
+
+def error_code(error: BaseException) -> str:
+    """The service's error code a botocore ``ClientError`` carries
+    (``ThrottlingException``), else the error's type name."""
+    response = getattr(error, "response", None)
+    if isinstance(response, dict):
+        code = (response.get("Error") or {}).get("Code")
+        if code:
+            return str(code)
+    return type(error).__name__
+
+
+def _data_free_facts(error: BaseException) -> str:
+    """What an error whose text is the runtime's, not data, says: an
+    ``OSError``'s errno (named by the OS, ``os.strerror``) and the paths it
+    names (a path is where the run reads and writes, not the content), a
+    decode error's position and reason. Empty for any other error: its text
+    may quote a model's reply, a query or corpus text."""
+    if isinstance(error, OSError) and isinstance(error.errno, int):
+        facts = f"[Errno {error.errno}] {os.strerror(error.errno)}"
+        paths = [
+            repr(os.fsdecode(path))
+            for path in (error.filename, error.filename2)
+            if isinstance(path, str | bytes | os.PathLike)
+        ]
+        return f"{facts}: {' -> '.join(paths)}" if paths else facts
+    if isinstance(error, json.JSONDecodeError):
+        # ``msg`` is the decoder's own ("Expecting value"), never the document.
+        return f"{error.msg}: line {error.lineno} column {error.colno}"
+    if isinstance(error, UnicodeDecodeError | UnicodeEncodeError):
+        return f"{error.encoding!r} {error.reason} at position {error.start}"
+    return ""
+
+
+def error_name(error: BaseException) -> str:
+    """Log-safe name of ``error``, never its message: its type, the
+    service's error code and the HTTP status it reports
+    (``ClientError ThrottlingException, HTTP 429``; ``ResponseError, HTTP
+    400``) and what an error whose text holds no data says
+    (``PermissionError [Errno 13] Permission denied: '/out'``,
+    ``JSONDecodeError Expecting value: line 1 column 1``)."""
+    name = type(error).__name__
+    code = error_code(error)
+    head = name if code == name else f"{name} {code}"
+    if facts := _data_free_facts(error):
+        head = f"{head} {facts}"
+    status = reported_status(error)
+    return head if status is None else f"{head}, HTTP {status}"
+
+
 def error_digest(error: BaseException) -> str:
-    """Log-safe stand-in for an error at INFO and above: its type and
-    ``text_digest`` of its message, which may quote a model's reply, an
-    answer, a query or corpus text. Log the error itself at DEBUG."""
-    return f"{type(error).__name__} ({text_digest(str(error))})"
+    """Log-safe stand-in for an error at INFO and above: :func:`error_name`
+    (its type, code, HTTP status) and ``text_digest`` of its message, which
+    may quote a model's reply, an answer, a query or corpus text. Log the
+    error itself at DEBUG."""
+    return f"{error_name(error)} ({text_digest(str(error))})"
 
 
 def error_locator(error: BaseException, *, frames: int = 4, depth: int = 4) -> str:
     """Where an unexpected ``error`` came from, without its message: the type
-    chain along ``__cause__``/``__context__`` (outermost first) and, for each,
-    its last ``frames`` ``file:line function`` frames (the package's files by
-    path from the package, others by their last two parts). Frames are code
+    chain along ``__cause__``/``__context__`` (outermost first; not the
+    context a ``raise ... from None`` suppressed), each by :func:`error_name`
+    with its last ``frames`` ``file:line function`` frames (the package's
+    files by path from the package, others by their last two parts, never
+    an absolute path). Frames are code
     locations (``traceback.extract_tb``), never the exception text, so it is
     safe at INFO and above and locates a failure the surface only says
     "the server log has the details" of. Empty for an error never raised."""
@@ -196,7 +268,7 @@ def error_locator(error: BaseException, *, frames: int = 4, depth: int = 4) -> s
                 else path[-2:]
             )
             located.append(f"{'/'.join(keep)}:{frame.lineno} {frame.name}")
-        parts.append(f"{type(current).__name__} at {' > '.join(located) or '?'}")
+        parts.append(f"{error_name(current)} at {' > '.join(located) or '?'}")
         current = current.__cause__ or (
             None if current.__suppress_context__ else current.__context__
         )

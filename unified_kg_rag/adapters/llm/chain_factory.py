@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import dataclasses
+import logging
 import threading
 import time
 from collections.abc import AsyncIterator, Collection, Iterator
@@ -57,6 +58,7 @@ from unified_kg_rag.shared import (
     ModelOutputCutOffError,
     get_logger,
 )
+from unified_kg_rag.shared.logging import log_error
 from unified_kg_rag.shared.utils.model_output import (
     leading_reasoning_end,
     may_open_reasoning,
@@ -702,10 +704,12 @@ def create_robust_xml_output_parser(
         )
         return _with_fixer(base_parser, fixing_llm)
     except Exception as e:
-        logger.error(
+        log_error(
+            logger,
+            logging.ERROR,
             "Failed to create OutputFixingParser with model %s: %s",
             output_fixing_model_id,
-            e,
+            error=e,
         )
         raise GraphRAGException(f"Failed to create OutputFixingParser: {e}") from e
 
@@ -889,7 +893,13 @@ def setup_chain(
             is_transient=_reachable_and(is_transient),
         )
     except Exception as e:
-        logger.error("Failed to setup LLM chain with model '%s': %s", model_id, e)
+        log_error(
+            logger,
+            logging.ERROR,
+            "Failed to setup LLM chain with model '%s': %s",
+            model_id,
+            error=e,
+        )
         raise GraphRAGException(
             f"Failed to setup LLM chain with model '{model_id}': {e}"
         ) from e

@@ -10,6 +10,7 @@ to the CLI.
 
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -18,6 +19,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
 from unified_kg_rag.shared import ConfigurationError, get_logger
 from unified_kg_rag.shared.extras import extra_hint
+from unified_kg_rag.shared.logging import log_error
 from unified_kg_rag.shared.registry import Registry
 
 if TYPE_CHECKING:
@@ -141,7 +143,7 @@ def render_resolved(
         except ConfigurationError:
             raise
         except Exception as e:  # noqa: BLE001 - one renderer must not sink the rest
-            logger.error("Renderer '%s' failed: %s", name, e)
+            log_error(logger, logging.ERROR, "Renderer '%s' failed: %s", name, error=e)
             if failures is not None:
                 failures[name] = str(e) or type(e).__name__
             continue

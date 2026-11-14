@@ -346,7 +346,8 @@ class TestExtractionStore:
         store = ExtractionStore(Config(), _Broken)
         assert store.load([_unit("t1")], "fp", _raw) == {}
         assert store.save([(_unit("t1"), {"p": 1})], "fp") == {"t1"}
-        assert "store down" in caplog.text
+        # Logged by its type and where it happened (log_error).
+        assert "RuntimeError" in caplog.text and "store down" not in caplog.text
 
     @pytest.mark.parametrize("reuse", [True, False])
     def test_a_refused_store_fails_before_extraction(self, reuse: bool) -> None:

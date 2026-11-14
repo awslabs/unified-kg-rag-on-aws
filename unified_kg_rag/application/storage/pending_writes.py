@@ -23,6 +23,7 @@ so a reader never meets a half-written note.
 """
 
 import json
+import logging
 from collections import defaultdict
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -48,7 +49,9 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.ports.indexer import BaseIndexer, IndexingStats
 from unified_kg_rag.shared import NamespaceLeaseError, get_logger
+from unified_kg_rag.shared.logging import log_error
 from unified_kg_rag.shared.utils import compute_hash
+from unified_kg_rag.shared.utils.validation import format_validation_errors
 
 if TYPE_CHECKING:
     from unified_kg_rag.application.storage.indexing_manager import IndexingManager
@@ -392,8 +395,12 @@ class PendingWrites:
         except NamespaceLeaseError:
             raise
         except Exception as e:  # noqa: BLE001 - a leftover part is harmless
-            logger.warning(
-                "Deleting the parts of the write note of '%s' failed: %s", suffix, e
+            log_error(
+                logger,
+                logging.WARNING,
+                "Deleting the parts of the write note of '%s' failed: %s",
+                suffix,
+                error=e,
             )
 
     @staticmethod
@@ -407,11 +414,12 @@ class PendingWrites:
                 try:
                     parsed.append(model.model_validate(value))
                 except ValidationError as e:
+                    # The keys and why, not the values (a noted item's text).
                     logger.warning(
                         "Skipping a noted %s of '%s' that does not parse: %s",
                         kind,
                         suffix,
-                        e.errors()[:1],
+                        format_validation_errors("", e),
                     )
             items[kind] = parsed
         return items
@@ -642,7 +650,12 @@ class PendingWrites:
         except NamespaceLeaseError:
             raise
         except Exception as e:  # noqa: BLE001 - their documents are retried
-            logger.error("Noting the failed item writes failed: %s", e)
+            log_error(
+                logger,
+                logging.ERROR,
+                "Noting the failed item writes failed: %s",
+                error=e,
+            )
             return set()
         for suffix in sorted(self._read - set(failed)):
             self._m._delete_note(PENDING_WRITES, suffix)
