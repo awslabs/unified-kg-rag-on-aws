@@ -13,6 +13,7 @@ from pydantic import BaseModel, SecretStr, TypeAdapter, ValidationError
 
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.domain.models.config import (
+    DEPRECATED_KEYS,
     MOVED_KEYS,
     REMOVED_KEYS,
     merge_over,
@@ -183,6 +184,17 @@ def _unknown_variable(name: str) -> str:
             f"without the index segment: set {bare})"
         )
     return f"environment variable {name}"
+
+
+def _deprecated_variable(name: str) -> str | None:
+    """The variable that sets what the ``UKR__`` variable ``name`` sets
+    under a deprecated key (``DEPRECATED_KEYS``), or ``None``."""
+    upper = name.upper()
+    for old, new in DEPRECATED_KEYS.items():
+        variable = env_var(old)
+        if upper == variable or upper.startswith(f"{variable}__"):
+            return env_var(new) + upper[len(variable) :]
+    return None
 
 
 def _removed_path(name: str) -> str | None:
@@ -375,6 +387,14 @@ class ConfigLoader:
         for name in sorted(os.environ):
             if name.upper().startswith(ENV_PREFIX):
                 path = _env_path(name)
+                if path is None and (replacement := _deprecated_variable(name)):
+                    path = _env_path(replacement)
+                    if path is not None:
+                        _logger.warning(
+                            "Environment variable %s is deprecated: set %s",
+                            name,
+                            replacement,
+                        )
                 removed = _removed_path(name)
                 if removed is not None:
                     _warn_removed(f"environment variable {name}", removed)

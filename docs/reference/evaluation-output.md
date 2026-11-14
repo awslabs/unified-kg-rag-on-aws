@@ -34,7 +34,8 @@ sufficiency fields:
 - `abstained`: the chain declined (the fixed no-context reply, a
   `[NO_ANSWER]` decline or the insufficient-context policy).
 - `abstention_reason`: why: `no_context` (`no_reports` for `global` on a
-  namespace without community reports), `marker` or
+  namespace without community reports, `query_limit` when the query's
+  limits left out the steps that would have found a context), `marker` or
   `insufficient_context`; `null` for an answer.
 - `context_sufficient`: `false` when the strategy flagged its own context
   insufficient (`iterative` does), `null` when the strategy did not judge it.
@@ -380,7 +381,7 @@ strategies, or `--repeats`) saves every run's files and adds
   `p50` / `p95` over every answer of every repeat: `llm_calls_per_query`,
   `input_tokens_per_query`, `output_tokens_per_query`,
   `total_tokens_per_query`, `latency_seconds`, the `totals` and
-  `cache_hits`, and with `evaluation.prices` set `usd_per_query` and
+  `cache_hits`, and with `models.prices` set `usd_per_query` and
   `usd_total`. `cost.deltas_vs_baseline.<s>` pairs them against the
   baseline like the metrics (`usage/llm_calls`, `usage/input_tokens`,
   `usage/output_tokens`, `usage/total_tokens`, `usage/cost_usd`,

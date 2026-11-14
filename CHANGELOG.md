@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking changes
+
+- `config.evaluation.prices` is gone from the Python surface: read and set `config.models.prices`
+  (`EvaluationConfig(prices=...)` is refused as an unknown field; a config file or `UKR__` variable that sets
+  `evaluation.prices` still loads, with a WARNING). `unified_kg_rag.evaluation.comparison.answer_cost_usd` is
+  `unified_kg_rag.domain.pricing.usage_cost_usd`.
+
+### Added
+
+- One owner of model prices: `models.prices` (`domain/pricing.py`) prices every USD figure, the `run-eval` comparison,
+  the console's answers and dashboard alike. A price keyed by the bare model id, or by one inference profile's id,
+  prices the model under every profile when no other entry disagrees. `evaluation.prices` is deprecated: it loads
+  into `models.prices` with a WARNING (an entry both name keeps the `models.prices` price), through one rule for
+  deprecated keys (`DEPRECATED_KEYS`, file and `UKR__` variables alike, listed in the configuration reference).
+- Query limits beside the deadline: `search.query_max_model_calls` and `search.query_max_input_tokens` (off by default)
+  bound one query's model calls and their input tokens, and `RAGInput.limits` (`QueryLimits`, exported; the MCP tools'
+  `limits`, whose deadline covers the wait for a call slot, the server's own reported by `kg_describe_schema`) lowers
+  them and the deadline for one query, never raising them. A call past a limit is refused before it is sent: the usage
+  callback now raises its refusal (LangChain swallowed a handler's error) and logs any other error of its own. `global`,
+  `drift` and `iterative` start only the calls that fit beside what the answer will read (DRIFT's actions sharing what
+  is left) and list the rest in `metadata.degraded` (reason `query_limit`), `auto` routes only to strategies whose
+  fewest calls fit and makes no router call an input-token limit cannot take (`metadata.routing.over_limits`) and under
+  either limit starts no speculative extraction, the answer's context is cut to the tokens left after the answer prompt
+  and the question (the fan-out keeps that prompt's tokens too), an optional call (a query translation or extraction,
+  the structured planner, an output repair: `usage.optional_calls`) never takes the call kept for the answer, its step
+  degraded instead, an answer the limits left no context abstains with `abstention_reason: query_limit`, and a query
+  whose answer does not fit fails with `UsageLimitExceededError` (error class `limit_exceeded`, a caller's error: not
+  counted in `query_failed`, `refused` on the console's dashboard, its message shown to an MCP caller; exit code 1,
+  console HTTP 422).
+- An ingestion run's budget and cost estimate. `processing.max_run_model_calls` and `processing.max_run_usd` (off by
+  default; USD priced by `models.prices`) refuse the model call that would pass them and stop the run once the calls
+  already sent have answered (`RunBudgetExhausted`, exported, error class `limit_exceeded`, exit 1): its finished stages
+  are checkpointed and those answers kept in the LLM response cache, whose hits take none of the budget, so a re-run
+  with the same pipeline id resumes and pays only for what was not answered. `run-ingestion --estimate` parses and
+  chunks the corpus without a model call and prints each stage's calls, tokens and USD for the stages the text units
+  decide (extraction, gleaning, claims, translation, intelligent chunking), naming the graph-dependent ones it cannot
+  count. The console's Ingest page offers to resume a run stopped at its budget (its options without the forced
+  recompute).
+
+### Changed
+
+- `search.auto_routable_strategies` accepts `ppr` and `tree`, loading with a WARNING that cites the measurement they
+  were left out of the default on (`ppr`: within the noise of `local` at 2.4 times less cost, weaker on long chains;
+  `tree`: +8 points of `answer_contains` over `naive`, below `mix` and `local`). It refused them, which made routing to
+  them a code change rather than the operator's call.
+
 ### Fixed
 Bugs present in 0.3.0.
 

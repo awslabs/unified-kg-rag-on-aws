@@ -34,6 +34,7 @@ __all__ = [
     "REASON_MARKER",
     "REASON_NO_CONTEXT",
     "REASON_NO_REPORTS",
+    "REASON_QUERY_LIMIT",
     "MarkerStreamFilter",
     "split_marker",
 ]
@@ -51,6 +52,9 @@ REASON_NO_CONTEXT = "no_context"
 REASON_MARKER = "marker"
 REASON_INSUFFICIENT_CONTEXT = "insufficient_context"
 REASON_NO_REPORTS = "no_reports"
+# The query's limits (search.query_max_*, RAGInput.limits) left out every
+# step that would have found a context: no "no information" in its place.
+REASON_QUERY_LIMIT = "query_limit"
 
 # Characters a streamed answer holds back, at most, before the marker is
 # ruled in or out (leading decoration plus the token), and the characters

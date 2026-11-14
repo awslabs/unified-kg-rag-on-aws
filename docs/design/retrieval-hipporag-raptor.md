@@ -30,10 +30,11 @@ answer-level result (§9.1) showed it better than the earlier order.
   vectors, `[lightrag]`, `[hipporag]`), and one without it (`[graphrag]`
   with `build_relationship_vector_index: false`, `[raptor]`) refuses it
   before any model call (`MethodologyNotIndexedError`). The `local` ranking
-  below stays a `graphrag` strategy. `auto` never routes to `ppr`
-  (`search.auto_routable_strategies` refuses it until a measurement shows
-  where it wins): its answers were within the noise of `mix` and `local`
-  at a fraction of their cost, and weaker on the longest chains, so it is
+  below stays a `graphrag` strategy. `auto` does not route to `ppr` by
+  default (adding it to `search.auto_routable_strategies` loads with a
+  WARNING citing the evidence, as the router was not measured choosing
+  it): its answers were within the noise of `mix` and `local` at a
+  fraction of their cost, and weaker on the longest chains, so it is
   the cheap, fast option a caller selects
   ([evidence](../concepts/defaults-and-evidence.md#the-ppr-strategy)).
 - **`local` ranking** (`search.local_search.text_unit_ranking: ppr`, the
@@ -286,7 +287,8 @@ embedding space, each cluster is summarized by a model, the summaries are
 clustered and summarized again, and a query searches every level at once
 (RAPTOR's "collapsed tree"). It is opt-in: `raptor` is not in the default
 `indexing.methodologies`, so no default ingestion builds a tree, and
-`search.auto_routable_strategies` refuses `tree`: on MuSiQue's multi-hop
+`tree` is not in the default `search.auto_routable_strategies` (adding it
+loads with a WARNING citing the evidence): on MuSiQue's multi-hop
 questions it answered better than `naive` (+8 points of `answer_contains`,
 one repeat on one corpus) but well below `mix` and `local`, and slower than
 `naive`

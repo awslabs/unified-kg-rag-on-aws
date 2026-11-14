@@ -33,13 +33,13 @@ from unified_kg_rag.adapters.local.models import OllamaLanguageModelFactory
 from unified_kg_rag.application.bootstrap import build_providers
 from unified_kg_rag.application.retrieval.rag_chain import (
     _LEFTOVER_EXTRACTIONS,
-    AnswerGenerationPrompt,
-    ComprehensiveAnswerPrompt,
     GraphRAGChain,
     StrategySelectionPrompt,
 )
 from unified_kg_rag.domain.models import Config, LanguageModelId, SearchStrategy
 from unified_kg_rag.domain.prompts import (
+    AnswerGenerationPrompt,
+    ComprehensiveAnswerPrompt,
     EntityExtractionPrompt,
     KeywordsExtractionPrompt,
     TranslationPrompt,

@@ -134,7 +134,7 @@ final answer then replaces it (it is the one a decline or the output
 guardrail decided). Under it: for `auto`, the strategy it chose and how
 (the router named it, it was the only candidate under the filters, or the
 router failed and it fell back), and a line with the strategy, the time,
-the tokens in and out, the model calls, the cost (when `evaluation.prices`
+the tokens in and out, the model calls, the cost (when `models.prices`
 prices the models), the rerank status and the trace link. A declined
 answer says why (no context, the model's `[NO_ANSWER]`, an insufficient
 context under the decline policy); a blocked one says the guardrail
@@ -191,7 +191,10 @@ stage's settings or its cache, the corpus with the registry off, a reset, a
 mass deletion) says which in its title, and offers to start again answering
 that question alone (`--confirm-integrity`, `--confirm-reset`,
 `--confirm-deletions`); the same answers can be ticked under more options
-beforehand. The run's
+beforehand. A run stopped at its budget (`processing.max_run_model_calls`,
+`processing.max_run_usd`: error class `limit_exceeded`) keeps its finished
+stages and answered calls, and offers to resume it (the same options,
+without the forced recompute), with a new budget of the same size. The run's
 stages appear as a column of stations as they finish (from the pipeline's
 own metadata), with their time, outputs and model calls, each failed
 stage's error and failed files, and the log's tail. A finished run counts
@@ -276,7 +279,7 @@ strategy's) and the cost (a failed question is left out of the decline rate
 too: it could not decline);
 questions and median time per day; per
 strategy, model and role the calls, tokens and cost; and the jobs with
-their duration, calls, tokens and cost. Costs need `evaluation.prices`
+their duration, calls, tokens and cost. Costs need `models.prices`
 ([Cost and prices](./evaluate.md#comparing-strategies)); a model without a
 price is listed and left out instead of counted as free. Clear question
 history deletes the recorded questions.

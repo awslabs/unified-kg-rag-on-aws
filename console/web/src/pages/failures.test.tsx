@@ -98,3 +98,34 @@ describe("a failed request is said in the page's language", () => {
     await saysItAgainInKorean();
   });
 });
+
+describe("a run stopped at its budget", () => {
+  it("is said by the budget notice alone, not as a generic failure", async () => {
+    const { JobPanel } = await import("../components/JobPanel");
+    const job = {
+      id: "j1",
+      kind: "ingest",
+      namespace: "default",
+      params: {},
+      command: ["run-ingestion"],
+      created: 1,
+      started: 1,
+      ended: 2,
+      status: "failed",
+      exit_code: 1,
+      error: "the run reached processing.max_run_model_calls 4",
+      result: { status: "failed", error_class: "limit_exceeded" },
+      pipeline_id: "p",
+      output_directory: null,
+      plan: [],
+      total_runs: 0,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify(job), { status: 200 })),
+    );
+    renderPage(<JobPanel jobId="j1" />);
+    expect(await screen.findByText("j1")).toBeInTheDocument();
+    expect(screen.queryByText("The run failed")).not.toBeInTheDocument();
+  });
+});

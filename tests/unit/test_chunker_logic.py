@@ -725,7 +725,7 @@ class TestIntelligentChunkerHelpers:
         pre_chunk = "a" * (size // 2) + "\n" + "b" * (size - size // 2 - 1)
         assert len(pre_chunk) == size
 
-        assert intelligent_chunker._needs_llm(pre_chunk) is asked
+        assert intelligent_chunker.needs_boundary_call(pre_chunk) is asked
 
     def test_create_pre_chunks_plain_text(self, intelligent_chunker) -> None:
         out = intelligent_chunker._create_pre_chunks("a b c d e f")

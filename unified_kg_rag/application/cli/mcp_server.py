@@ -47,7 +47,7 @@ from unified_kg_rag.application.retrieval.rag_chain import (
     GraphRAGChain,
     validation_message,
 )
-from unified_kg_rag.domain.models import SearchType
+from unified_kg_rag.domain.models import QueryLimits, SearchType
 from unified_kg_rag.domain.models.config import McpServerConfig
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import (
@@ -461,6 +461,22 @@ def build_mcp_server(
                         "Attribute filters (key: value, a list of values, or a "
                         "range of gt/gte/lt/lte); kg_describe_schema lists the "
                         "keys. They narrow the search only"
+                    )
+                ),
+            ],
+            None,
+        ),
+        _parameter(
+            "limits",
+            Annotated[
+                QueryLimits | None,
+                Field(
+                    description=(
+                        "Lower this call's limits: deadline_seconds, "
+                        "max_model_calls, max_input_tokens (the server's own "
+                        "are the ceiling; a call past one fails with "
+                        "limit_exceeded, or the answer is given without the "
+                        "steps that did not fit, listed in degraded)"
                     )
                 ),
             ],

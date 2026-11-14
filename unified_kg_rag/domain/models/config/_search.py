@@ -15,6 +15,7 @@ from pydantic import (
 )
 
 from ..retrieval import (
+    QueryLimits,
     SearchStrategy,
 )
 from ._common import ConfigSection
@@ -77,13 +78,12 @@ class SearchConfig(ConfigSection):
             "when nothing is left local, else mix, else the first strategy "
             "of a held methodology is used (tree on a raptor-only "
             "namespace); with one strategy left no router call is "
-            "made. auto itself is rejected, and so are ppr until a "
-            "measurement shows where it wins and tree, which answered "
-            "better than naive but well below the graph strategies on one "
-            "corpus (docs/concepts/defaults-and-evidence.md"
-            "#raptor-summary-tree); "
-            "every strategy stays selectable explicitly, and one reading "
-            "what the namespace does not hold is refused."
+            "made. auto itself is rejected; ppr and tree load with a "
+            "WARNING citing the measurement they were left out of the "
+            "default on (docs/concepts/defaults-and-evidence.md), as the "
+            "router was not measured choosing them. Every strategy stays selectable "
+            "explicitly, and one reading what the namespace does not hold is "
+            "refused."
         ),
     )
     hybrid: HybridConfig = Field(
@@ -180,6 +180,39 @@ class SearchConfig(ConfigSection):
             "of its model call. Under processing.ignore_errors the query "
             "returns the error answer instead, a deadline that passes during "
             "its admission too. null disables both deadlines."
+        ),
+    )
+    query_max_model_calls: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Model calls one query may make in all: the router, the query "
+            "processing calls, the strategy's own and the answer. A call past "
+            "it is refused before it is sent. global's rating and map calls, "
+            "DRIFT's primer and follow-ups and iterative's rounds start only "
+            "the calls that fit beside the answer, the rest recorded in "
+            "metadata.degraded (reason query_limit); auto routes only to "
+            "the strategies whose fewest calls fit and starts no speculative "
+            "extraction; a query whose answer call does not fit fails with "
+            "UsageLimitExceededError (error class limit_exceeded). "
+            "RAGInput.limits.max_model_calls lowers it for one query. null "
+            "(default): no cap."
+        ),
+    )
+    query_max_input_tokens: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Input tokens one query's model calls may read in all, each "
+            "call counted at its start at the local estimate of its prompt "
+            "(then at what the model reports). Enforced as "
+            "query_max_model_calls (auto starts no speculative extraction "
+            "under it either); the fan-out keeps the answer prompt's own "
+            "tokens for the answer, and the answer's context is cut to what "
+            "is left after that prompt and the question, less "
+            "search.token_manager.context_window_headroom_ratio of it. "
+            "RAGInput.limits.max_input_tokens lowers it for one query. null "
+            "(default): no cap."
         ),
     )
     model_timeout_seconds: float = Field(
@@ -287,6 +320,15 @@ class SearchConfig(ConfigSection):
         """A query-time model-server request timeout: ``configured`` (the
         provider's own), capped at ``model_timeout_seconds``."""
         return min(configured, self.model_timeout_seconds)
+
+    def query_limits(self) -> QueryLimits:
+        """What every query may spend: ``query_timeout_seconds``,
+        ``query_max_model_calls`` and ``query_max_input_tokens``."""
+        return QueryLimits(
+            deadline_seconds=self.query_timeout_seconds,
+            max_model_calls=self.query_max_model_calls,
+            max_input_tokens=self.query_max_input_tokens,
+        )
 
     @model_validator(mode="after")
     def _check_seed_floor(self) -> "SearchConfig":

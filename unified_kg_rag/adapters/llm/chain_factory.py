@@ -57,8 +57,10 @@ from unified_kg_rag.shared import (
     LLMOutputTruncatedError,
     ModelOutputCutOffError,
     get_logger,
+    usage,
 )
-from unified_kg_rag.shared.logging import log_error
+from unified_kg_rag.shared.exceptions import OptionalCallSkipped
+from unified_kg_rag.shared.logging import log_error, warn_once
 from unified_kg_rag.shared.utils.model_output import (
     leading_reasoning_end,
     may_open_reasoning,
@@ -784,7 +786,13 @@ class FixingJsonOutputParser(LLMJsonOutputParser):
             if not self._repairable(text, e):
                 raise
             logger.info("JSON answer did not parse: asking the output fixer once")
-            return self._fixing_parser().parse(text)
+            # Optional: a repair never takes the call a query keeps for its
+            # answer; then the answer fails to parse as an unrepaired one.
+            try:
+                with usage.optional_calls():
+                    return self._fixing_parser().parse(text)
+            except OptionalCallSkipped:
+                raise e from None
 
     async def aparse(self, text: str) -> Any:
         try:
@@ -793,7 +801,11 @@ class FixingJsonOutputParser(LLMJsonOutputParser):
             if not self._repairable(text, e):
                 raise
             logger.info("JSON answer did not parse: asking the output fixer once")
-            return await self._fixing_parser().aparse(text)
+            try:
+                with usage.optional_calls():
+                    return await self._fixing_parser().aparse(text)
+            except OptionalCallSkipped:
+                raise e from None
 
 
 def create_json_output_parser(
@@ -822,6 +834,30 @@ def create_json_output_parser(
     parser._fixing_model_id = output_fixing_model_id
     parser._model_purpose = model_purpose
     return parser
+
+
+def _warn_if_unmetered(factory: Any, llm: Any) -> None:
+    """Warn once per factory class whose model carries no usage callback
+    (``UsageCallbackHandler``, which ``counts_usage``; the package's model
+    factories attach it): its calls count in no usage record, query limit
+    or run budget."""
+    callbacks = getattr(llm, "callbacks", None)
+    handlers = (
+        callbacks
+        if isinstance(callbacks, list)
+        else getattr(callbacks, "handlers", None) or []
+    )
+    if any(getattr(h, "counts_usage", False) for h in handlers):
+        return
+    name = type(getattr(factory, "factory", factory)).__name__
+    warn_once(
+        logger,
+        ("unmetered", name),
+        "Models built by %s carry no UsageCallbackHandler: their calls count "
+        "in no usage record, query limit (search.query_max_*) or run budget "
+        "(processing.max_run_*); attach one (with_callback) in get_model",
+        name,
+    )
 
 
 def setup_chain(
@@ -862,6 +898,7 @@ def setup_chain(
             ),
             **kwargs,
         )
+        _warn_if_unmetered(factory, llm)
         model_info = factory.get_model_info(model_id)
         resolved = prompt_class.resolve(custom_prompts=custom_prompts)
         if system_suffix:

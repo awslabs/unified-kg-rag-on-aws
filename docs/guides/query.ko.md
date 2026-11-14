@@ -152,6 +152,48 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
 정했습니다([근거](../concepts/defaults-and-evidence.md#query-deadlines-and-model-timeouts), 영문).
 조정 방법은 [운영 런북](../operations.md#query-deadlines-and-model-timeouts)(영문)에 있습니다.
 
+### 모델 호출 수와 입력 토큰 한도
+
+제한 시간은 질의 한도(`QueryLimits`) 가운데 하나입니다. 기본으로 꺼져 있는 한도가 둘 더
+있습니다. `search.query_max_model_calls`는 질의의 모든 모델 호출(라우터, 질의 처리, 전략
+자체의 호출, 답변) 수를, `search.query_max_input_tokens`는 그 호출들의 입력 토큰을
+제한합니다. 입력 토큰은 호출이 시작될 때 프롬프트의 로컬 추정치로 셉니다. 한도를 넘는
+호출은 요청을 보내기 전에 거부됩니다.
+
+- `global`의 평가·맵 호출, `drift`의 확장·초안·후속 호출, `iterative`의 판정 호출은 답변
+  호출을 남길 수 있는 만큼만 실행합니다. 들어가지 못한 호출은 빼고
+  `metadata.degraded`(사유 `query_limit`)에 기록합니다. global은 관련성이 높은 보고서 묶음부터,
+  DRIFT는 점수가 높은 후속 질의부터 실행하고, iterative는 라운드를 멈춥니다
+  (`stop_reason: query_limit`).
+- `auto`는 라우터 호출 뒤에 남은 호출 수 안에 최소 호출 수(`fewest_model_calls`, 그 전략이 읽는 질의
+  추출, 질문에 필요한 번역, 답변)가
+  들어가는 전략으로만 분기하고, 제외한 전략은 `metadata.routing.over_limits`에 남습니다.
+  두 한도 가운데 하나라도 있으면 미리 시작하는 추출은 하지 않습니다.
+- 답변 컨텍스트는 남은 입력 토큰에서 답변 프롬프트 자체(템플릿과 지시문)와 질문을 빼고, 다시
+  `search.token_manager.context_window_headroom_ratio`만큼 뺀 크기로 줄입니다. 호출을 펼치는
+  전략도 답변 프롬프트 몫의 토큰을 답변용으로 남깁니다.
+- 호출 하나는 답변용으로 남깁니다. 그 호출을 쓰게 될 선택적 호출은 보내지 않고, 그 단계는 빼고 답하며
+  `degraded`(사유 `query_limit`)에 남깁니다. 선택적 호출은 질의 번역과 추출, structured 전략의
+  계획 호출(대체 전략이 답함), 출력 보정(`models.roles.fixing`. 해석하지 못한 응답은 보정하지 못한
+  응답으로 처리)입니다.
+- 입력 토큰 한도에서는 호출을 펼치는 전략이 설정 상한이 아니라 답변이 실제로 읽을 만큼(답변 프롬프트,
+  DRIFT가 지금까지 받은 답변, 최소 컨텍스트)만 답변용으로 남기고, DRIFT의 후속 호출은 남은 토큰을
+  나눠 씁니다. `auto`는 한도가 감당하지 못하는 라우터 호출은 하지 않고 대체 전략으로 보냅니다.
+- 답변 호출이 들어가지 못하는 질의는 `UsageLimitExceededError`(`unified_kg_rag`에서 내보냄,
+  오류 분류 `limit_exceeded`, 종료 코드 `1`. 호출하는 쪽의 오류로 보고 `query_failed` 지표에는
+  세지 않음)로 실패하고, `processing.ignore_errors`를 켜면
+  오류 답변을 돌려줍니다.
+
+호출하는 쪽은 질의 하나에 대해 세 한도를 낮출 수만 있고 올릴 수는 없습니다.
+
+```python
+from unified_kg_rag import QueryLimits, RAGInput
+
+chain.invoke(RAGInput(query="...", limits=QueryLimits(max_model_calls=6, deadline_seconds=60)))
+```
+
+MCP 도구 `kg_search`와 `kg_answer`도 같은 `limits` 인수를 받습니다([MCP 서버](./mcp.ko.md)).
+
 ## 인용
 
 답변은 근거가 된 문서를 인용합니다(`search.citations`). 기본값으로는 `global`과 `drift`를 뺀
@@ -213,7 +255,7 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
 이 질문에 답할 관련 정보를 찾지 못했습니다." 등 지원 언어마다 하나)으로 답하며
 `metadata.abstained`와 `metadata.abstention_reason: no_context`를 남깁니다(커뮤니티 리포트가 없는
 네임스페이스에 대한 `global`은 `no_reports`. 커뮤니티가 생기기에는 너무 작은 코퍼스이거나 리포트 없이
-수집한 경우). 언어는 질문의 문자 체계와
+수집한 경우. 질의 한도 때문에 컨텍스트를 찾을 단계를 모두 빠뜨렸으면 `query_limit`). 언어는 질문의 문자 체계와
 기능어로 정하고, 이것으로 알 수 없으면 색인 언어(문자 체계가 맞지 않으면 영어)를 씁니다. 거절인지는
 문장이 아니라 `metadata.abstained`로 판단합니다. 그 밖에 모델이 자기 말로 답변을 거절하면 일반 답변과 구별되지 않습니다.
 `search.abstention`(선택 기능, 기본값은 꺼짐)을 켜면 거절을 명시적으로 표시합니다.

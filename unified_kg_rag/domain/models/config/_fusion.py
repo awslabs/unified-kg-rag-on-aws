@@ -354,14 +354,26 @@ class TokenManagerConfig(ConfigSection):
     )
 
 
+@functools.cache
+def _warn_unmeasured_route(strategy: SearchStrategy) -> None:
+    _logger.warning(
+        "search.auto_routable_strategies includes '%s', which auto does not "
+        "route to by default: %s",
+        strategy.value,
+        STRATEGY_TRAITS[strategy].route_warning,
+    )
+
+
 def _reject_auto_strategy(strategies: list[SearchStrategy]) -> list[SearchStrategy]:
     for strategy in strategies:
-        reason = STRATEGY_TRAITS[strategy].not_routable_reason
-        if reason is not None:
+        traits = STRATEGY_TRAITS[strategy]
+        if traits.not_routable_reason is not None:
             raise ValueError(
                 f"auto_routable_strategies cannot include '{strategy.value}': "
-                f"{reason}"
+                f"{traits.not_routable_reason}"
             )
+        if traits.route_warning is not None:
+            _warn_unmeasured_route(strategy)
     return strategies
 
 

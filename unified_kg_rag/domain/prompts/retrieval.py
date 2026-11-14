@@ -649,8 +649,9 @@ STRATEGY_ROUTING_GUIDE: dict[SearchStrategy, str] = {
      named entities; properties of curated (seed) entities. Not for explanations, opinions or text-only facts
    - Examples: "How many vendors supply buyers in Norland", "Which vendor supplies the most buyers", "How is
      Acme connected to Globex\"""",
-    # Not routable either (refused by search.auto_routable_strategies until
-    # measured); auto falls back to it on a raptor-only namespace.
+    # Not in the default search.auto_routable_strategies either (adding it
+    # warns with the evidence); auto falls back to it on a raptor-only
+    # namespace.
     SearchStrategy.TREE: """TREE SEARCH
    - Method: Passage search together with a search of summaries written over groups of related passages, at every
      level of a summary tree, each summary brought with its best passages (RAPTOR)

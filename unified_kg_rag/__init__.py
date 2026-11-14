@@ -24,7 +24,9 @@ internal and may change in any release. Two groups:
 
 The errors these raise for a caller to tell apart are exported too. Each is
 a :class:`GraphRAGException` but :class:`PipelineInterrupted`, a
-``KeyboardInterrupt`` (a stop asked for by a signal). A
+``KeyboardInterrupt`` (a stop asked for by a signal, or, as
+:class:`RunBudgetExhausted`, an ingestion run stopped at its
+``processing.max_run_*`` budget, resumed by a re-run). A
 :class:`ConfigurationError` (among them a :class:`StoreRequestRejectedError`)
 is a setting to fix (a :class:`SchemaSourceError` a schema source that
 cannot be loaded, a :class:`SeedGraphError` a seed graph that cannot be
@@ -37,6 +39,8 @@ output file that exists) to fix, not failures to retry; a
  store, a :class:`ModelUnreachableError` a model server that could not be
  reached (named with its provider kind and ``base_url``), a
  :class:`QueryTimeoutError` a query past its deadline, a
+ :class:`UsageLimitExceededError` one whose model call would pass its call
+ or input-token limit (``QueryLimits``), a
  :class:`ModelError` a model call that failed (a :class:`LanguageModelError`,
  an :class:`EmbeddingModelError` or a :class:`RerankModelError`), an
 :class:`IndexNotFoundError` a suffix with no index (not ingested,
@@ -89,6 +93,7 @@ _EXPORTS: dict[str, str] = {
     "SearchOutput": "unified_kg_rag.application.retrieval.rag_chain",
     "ProcessedQuery": "unified_kg_rag.application.retrieval.rag_chain",
     "ConversationTurn": "unified_kg_rag.application.retrieval.rag_chain",
+    "QueryLimits": "unified_kg_rag.domain.models",
     "Citation": "unified_kg_rag.domain.models",
     "CitedDocument": "unified_kg_rag.domain.models",
     "CitationMarkerScanner": "unified_kg_rag.domain.retrieval.citations",
@@ -119,6 +124,7 @@ _EXPORTS: dict[str, str] = {
     "StoreConnectionError": "unified_kg_rag.shared.exceptions",
     "ModelUnreachableError": "unified_kg_rag.shared.exceptions",
     "QueryTimeoutError": "unified_kg_rag.shared.exceptions",
+    "UsageLimitExceededError": "unified_kg_rag.shared.exceptions",
     "ModelError": "unified_kg_rag.shared.exceptions",
     "LanguageModelError": "unified_kg_rag.shared.exceptions",
     "EmbeddingModelError": "unified_kg_rag.shared.exceptions",
@@ -126,6 +132,7 @@ _EXPORTS: dict[str, str] = {
     "ErrorClass": "unified_kg_rag.shared.exceptions",
     "classify_error": "unified_kg_rag.shared.exceptions",
     "PipelineInterrupted": "unified_kg_rag.shared.exceptions",
+    "RunBudgetExhausted": "unified_kg_rag.shared.exceptions",
     # Extension: provider injection and the provider registry
     "Providers": "unified_kg_rag.adapters.providers",
     "build_providers": "unified_kg_rag.application.bootstrap",
@@ -284,6 +291,7 @@ if TYPE_CHECKING:
         PipelineContext,
         PipelineStageStatus,
         PipelineStageType,
+        QueryLimits,
         Relationship,
         RetrievalResult,
         RetrieverRole,
@@ -344,10 +352,12 @@ if TYPE_CHECKING:
         PipelineInterrupted,
         QueryTimeoutError,
         RerankModelError,
+        RunBudgetExhausted,
         SchemaSourceError,
         SeedGraphError,
         StoreConnectionError,
         StoreRequestRejectedError,
+        UsageLimitExceededError,
         classify_error,
     )
     from unified_kg_rag.shared.logging import setup_logging

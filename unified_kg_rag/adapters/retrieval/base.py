@@ -33,6 +33,7 @@ from unified_kg_rag.adapters.llm.chain_factory import (
     FixingJsonOutputParser,
     create_json_output_parser,
 )
+from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.hybrid_scorer import HybridScorer, RerankTrace
 from unified_kg_rag.adapters.retrieval.strategy_registry import citations_enabled
@@ -65,6 +66,18 @@ from unified_kg_rag.domain.models import (
     SectionType,
 )
 from unified_kg_rag.domain.models.config import language_name
+from unified_kg_rag.domain.prompts import (
+    AnswerGenerationPrompt,
+    BasePrompt,
+    ComprehensiveAnswerPrompt,
+)
+from unified_kg_rag.domain.prompts.retrieval import (
+    ABSTENTION_INSTRUCTIONS,
+    CITATION_INSTRUCTIONS,
+    DECLINE_INSTRUCTIONS,
+    HEDGE_INSTRUCTIONS,
+    QUERY_RESULT_INSTRUCTIONS,
+)
 from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.degradation import (
     DegradationLedger,
@@ -83,8 +96,8 @@ from unified_kg_rag.domain.retrieval.index_prefixes import (
 from unified_kg_rag.domain.retrieval.lineage import merge as merge_lineages
 from unified_kg_rag.domain.retrieval.ppr import cap_edges_per_vertex
 from unified_kg_rag.domain.retrieval.store_names import graph_label, store_name
-from unified_kg_rag.shared import get_logger, observability
-from unified_kg_rag.shared.exceptions import InvalidFilterError
+from unified_kg_rag.shared import get_logger, observability, usage
+from unified_kg_rag.shared.exceptions import InvalidFilterError, UsageLimitExceededError
 from unified_kg_rag.shared.logging import log_error, warn_once
 from unified_kg_rag.shared.utils.common import compute_hash, safe_float_parse
 from unified_kg_rag.shared.utils.concurrency import (
@@ -650,6 +663,60 @@ async def fetch_by_ids(
     return list(zip(batches, parts, strict=True))
 
 
+def answer_prompt_class(
+    config: Config, strategy: SearchStrategy | None
+) -> type[BasePrompt]:
+    """The answer prompt of ``strategy`` (``search.answer_prompt_style``):
+    the concise default, or the comprehensive one."""
+    style = (
+        config.search.answer_prompt_style.get(strategy)
+        if strategy is not None
+        else None
+    )
+    return (
+        ComprehensiveAnswerPrompt
+        if style == "comprehensive"
+        else AnswerGenerationPrompt
+    )
+
+
+def answer_prompt_tokens(config: Config, strategy: SearchStrategy | None = None) -> int:
+    """What the answer call reads besides its context and question, at the
+    local estimate the usage meter counts a call's start at: its prompt's
+    templates (``strategy``'s style; without one the larger of the two) and
+    the instructions the chain may append to it for ``strategy``
+    (``GraphRAGChain._answer_instructions``: the citations' when its
+    answers cite, the graph query result's for structured, the abstention
+    marker's under ``search.abstention.mode: mark``, and the longer of the
+    hedge and the decline, which a strategy that flags its context
+    insufficient gets); without a strategy all that any may get. What an
+    input-token limit keeps for the answer beside its context
+    (``search.query_max_input_tokens``)."""
+    classes = (
+        [answer_prompt_class(config, strategy)]
+        if strategy is not None
+        else [AnswerGenerationPrompt, ComprehensiveAnswerPrompt]
+    )
+    templates = 0
+    for prompt in classes:
+        resolved = prompt.resolve(custom_prompts=config.custom_prompts)
+        templates = max(
+            templates,
+            estimate_token_count(
+                resolved.system_prompt_template + resolved.human_prompt_template
+            ),
+        )
+    search = config.search
+    instructions = [max(HEDGE_INSTRUCTIONS, DECLINE_INSTRUCTIONS, key=len)]
+    if strategy is None or search.citations.enabled_for(strategy):
+        instructions.append(CITATION_INSTRUCTIONS)
+    if strategy in (None, SearchStrategy.STRUCTURED):
+        instructions.append(QUERY_RESULT_INSTRUCTIONS)
+    if search.abstention.mode == "mark":
+        instructions.append(ABSTENTION_INSTRUCTIONS)
+    return templates + estimate_token_count("".join(instructions))
+
+
 class BaseSearchStrategy(ABC):
     """A search algorithm over role-keyed retrievers.
 
@@ -669,6 +736,16 @@ class BaseSearchStrategy(ABC):
     # Section types that take the context budget other types leave unused
     # before the rest share it (``TokenManager.optimize_context``).
     spare_context_budget_first: ClassVar[tuple[SectionType, ...]] = ()
+
+    @classmethod
+    def fewest_model_calls(cls, config: Config) -> int:
+        """The model calls of its own one search makes at least when it does
+        its work (its query extractions and the answer apart): ``auto``
+        under a call limit (``search.query_max_model_calls``) routes only to
+        strategies whose fewest calls fit (the chain adds the query
+        extractions the strategy reads, ``query_inputs``, and the
+        translation). 0 for a search that retrieves only."""
+        return 0
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         # Every strategy's search reports what it answered without
@@ -703,6 +780,111 @@ class BaseSearchStrategy(ABC):
         self.providers = Providers.resolve(config, providers)
         self.hybrid_scorer = HybridScorer(self.config, providers=self.providers)
         self.token_manager = TokenManager(self.config, providers=self.providers)
+
+    def _calls_within_limits(
+        self,
+        prompt_class: type[BasePrompt],
+        inputs: Sequence[str | int | Callable[[], str]],
+        *,
+        reserve_calls: int = 1,
+        reserve_tokens: int = 0,
+    ) -> int:
+        """How many of the leading calls of ``prompt_class``, one per input
+        (the text it fills the prompt with, a callable returning it, read
+        only under a limit, or its estimated tokens), the
+        query's limits (``search.query_max_model_calls``,
+        ``search.query_max_input_tokens``) leave room for, after
+        ``reserve_calls`` and ``reserve_tokens`` kept for what must follow
+        (the answer's call by default; with it, the answer prompt's own
+        tokens too, ``answer_prompt_tokens``). Each call is estimated as the
+        usage meter counts it at its start: its prompt's templates and its
+        input by the local estimate. All of them without a limit."""
+        left = usage.remaining()
+        if left.unlimited:
+            return len(inputs)
+        overhead = self._prompt_tokens(prompt_class)
+        return usage.calls_that_fit(
+            [
+                overhead
+                + (
+                    item
+                    if isinstance(item, int)
+                    else estimate_token_count(item() if callable(item) else item)
+                )
+                for item in inputs
+            ],
+            reserve_calls=reserve_calls,
+            reserve_tokens=reserve_tokens
+            + (self._answer_prompt_tokens() if reserve_calls else 0),
+        )
+
+    def _answer_prompt_tokens(self) -> int:
+        """``answer_prompt_tokens`` of the answer to this strategy's search
+        (the strategy it is registered as; without one, the largest)."""
+        # Lazy: the registry imports this module.
+        from unified_kg_rag.adapters.retrieval.strategy_registry import (
+            registered_as,
+        )
+
+        return answer_prompt_tokens(self.config, registered_as(type(self)))
+
+    def _prompt_tokens(self, prompt_class: type[BasePrompt]) -> int:
+        """A call of ``prompt_class``'s own tokens (its templates) at the
+        local estimate the usage meter counts a call's start at."""
+        resolved = prompt_class.resolve(custom_prompts=self.config.custom_prompts)
+        return estimate_token_count(
+            resolved.system_prompt_template + resolved.human_prompt_template
+        )
+
+    @property
+    def _min_context_tokens(self) -> int:
+        """The least context a call is started for under an input-token
+        limit: a section cut below it is dropped anyway
+        (``search.token_manager.min_truncated_section_tokens``)."""
+        return self.config.search.token_manager.min_truncated_section_tokens
+
+    def _least_call_tokens(self, prompt_class: type[BasePrompt]) -> int:
+        """The input of the smallest useful call of ``prompt_class``: its
+        prompt and the least context (``_min_context_tokens``)."""
+        return self._prompt_tokens(prompt_class) + self._min_context_tokens
+
+    def _context_share(
+        self,
+        calls: int,
+        prompt_class: type[BasePrompt],
+        *,
+        ceiling: int,
+        reserve_tokens: int = 0,
+    ) -> int:
+        """The context each of ``calls`` calls of ``prompt_class`` may read:
+        ``ceiling``, or under the query's input-token limit
+        (``search.query_max_input_tokens``) an even share of what it leaves
+        after ``reserve_tokens``, the answer's prompt
+        (``answer_prompt_tokens``) and each call's own prompt, at least
+        ``_min_context_tokens``. The calls' contexts are cut to it, as the
+        answer's is to what is left."""
+        left = usage.remaining().input_tokens
+        if left is None or calls <= 0:
+            return ceiling
+        room = left - reserve_tokens - self._answer_prompt_tokens()
+        share = room // calls - self._prompt_tokens(prompt_class)
+        return max(self._min_context_tokens, min(ceiling, share))
+
+    @staticmethod
+    def _record_limit_stop(step: str, started: int, planned: int) -> None:
+        """Record that ``step`` started ``started`` of its ``planned`` calls,
+        the rest left out for the query's limits (reason ``query_limit``)."""
+        logger.warning(
+            "%s: the query's limits leave room for %s of %s model calls",
+            step,
+            started,
+            planned,
+        )
+        record_degradation(
+            step,
+            f"query_limit: {planned - started} of {planned} calls not started",
+            UsageLimitExceededError.__name__,
+        )
 
     @final
     def json_answers(

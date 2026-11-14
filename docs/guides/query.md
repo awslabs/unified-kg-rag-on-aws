@@ -172,6 +172,57 @@ measured query times on real AWS
 Tuning is in the
 [Operator Runbook](../operations.md#query-deadlines-and-model-timeouts).
 
+### Model-call and input-token limits
+
+The deadline is one of a query's limits (`QueryLimits`). Two more are off by
+default: `search.query_max_model_calls` (every model call of the query: the
+router, the query processing, the strategy's own calls and the answer) and
+`search.query_max_input_tokens` (the input tokens of those calls, each
+counted at its start at the local estimate of its prompt). A call past one
+is refused before its request is sent:
+
+- `global` rates and maps, `drift` expands, primes and follows up, and
+  `iterative` judges only what fits beside the answer's call. What did not
+  fit is left out and listed in `metadata.degraded` (reason `query_limit`):
+  global maps its most relevant report batches, DRIFT its best follow-ups,
+  iterative stops its rounds (`stop_reason: query_limit`).
+- `auto` routes only to strategies whose fewest calls (`fewest_model_calls`,
+  the query extractions they read, the translation the question needs, and
+  the answer) fit after its router call
+  (`metadata.routing.over_limits` names those it left out), and under
+  either limit starts no speculative extraction.
+- The answer's context is cut to the input tokens left after the answer
+  prompt's own templates and instructions and the question, less
+  `search.token_manager.context_window_headroom_ratio` of them; the fan-out
+  strategies keep that prompt's tokens for the answer too.
+- One call is kept for the answer: an optional call that would take it is
+  not sent, and its step is answered without (degraded, reason
+  `query_limit`). The optional calls are the query translation and
+  extractions, the structured strategy's planner (its fallback answers) and
+  an output repair (`models.roles.fixing`; the reply that did not parse
+  counts as unrepaired).
+- Under an input-token limit the fan-out keeps for the answer what it will
+  read (the answer prompt, DRIFT's answers so far, the least context),
+  not the configured ceilings, and DRIFT's actions share what is left;
+  `auto` makes no router call the limit cannot take, routing to its
+  fallback.
+- A query whose answer call does not fit fails with
+  `UsageLimitExceededError` (exported from `unified_kg_rag`; error class
+  `limit_exceeded`, exit code `1`; a caller's error, not counted in the
+  `query_failed` metric), or returns the error answer under
+  `processing.ignore_errors`.
+
+A caller lowers any of the three for one query, never raises them:
+
+```python
+from unified_kg_rag import QueryLimits, RAGInput
+
+chain.invoke(RAGInput(query="...", limits=QueryLimits(max_model_calls=6, deadline_seconds=60)))
+```
+
+The MCP tools `kg_search` and `kg_answer` take the same `limits` argument
+([MCP server](./mcp.md)).
+
 ## Citations
 
 Answers cite the documents they rest on (`search.citations`): those of every
@@ -248,7 +299,9 @@ fixed sentence per supported language, told by the question's script and
 function words; the index language's, or English, when they do not tell),
 and sets `metadata.abstained` and `metadata.abstention_reason: no_context`
 (`no_reports` for `global` on a namespace that holds no community report: a
-corpus too small for communities, or one ingested without them).
+corpus too small for communities, or one ingested without them;
+`query_limit` when the query's limits left out the steps that would have
+found a context).
 Tell a decline by `metadata.abstained`, not by the text. A model that declines in its own
 words is otherwise an ordinary answer. `search.abstention` (opt-in, off by
 default) makes declines explicit:

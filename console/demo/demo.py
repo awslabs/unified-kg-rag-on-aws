@@ -68,7 +68,7 @@ from unified_kg_rag.domain.models import Config  # noqa: E402
 
 # Illustrative prices of the fake models, so the dashboard and the
 # comparison show a cost column in the fake mode. Real runs take the current
-# Amazon Bedrock prices of their region (evaluation.prices).
+# Amazon Bedrock prices of their region (models.prices).
 FAKE_PRICES = {
     "demo-model": {"input_per_million_tokens": 3.0, "output_per_million_tokens": 15.0},
     "demo-model-fast": {
@@ -161,7 +161,7 @@ def demo_config(
             "fast": "demo-model-fast",
             "embedding": {"model_id": "demo-embed", "dimension": FAKE_DIMENSIONS},
         }
-        config["evaluation"]["prices"] = FAKE_PRICES
+        config["models"]["prices"] = FAKE_PRICES
         config["retry"] = {"max_attempts": 1}
     elif models == "ollama":
         config["backend"] = "local"

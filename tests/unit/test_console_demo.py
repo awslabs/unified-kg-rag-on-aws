@@ -33,7 +33,7 @@ def test_each_demo_config_loads_with_local_stores(models: str) -> None:
         assert config.aws.region_name == "eu-west-1"
         assert "anthropic" in config.model_id(ModelRole.ANSWER_GENERATION)
     if models == "fake":
-        assert set(config.evaluation.prices) == {"demo-model", "demo-model-fast"}
+        assert set(config.models.prices) == {"demo-model", "demo-model-fast"}
         assert config.providers.rerank.kind == "none"
 
 
@@ -180,18 +180,16 @@ def test_a_restart_keeps_the_config_settings_saved(
     port = demo.kept_model_port(path)
     assert port and written["providers"]["llm"]["base_url"].endswith(f":{port}")
     # What Settings saves (here: a price) survives the next start.
-    written["evaluation"]["prices"]["demo-model"]["input_per_million_tokens"] = 9.5
+    written["models"]["prices"]["demo-model"]["input_per_million_tokens"] = 9.5
     path.write_text(yaml.safe_dump(written))
     assert demo.main([*args, "--prepare-only"]) == 0
     kept = yaml.safe_load(path.read_text())
-    assert kept["evaluation"]["prices"]["demo-model"]["input_per_million_tokens"] == 9.5
+    assert kept["models"]["prices"]["demo-model"]["input_per_million_tokens"] == 9.5
     # The fake models answer where the kept config looks.
     assert f"Fake models on http://127.0.0.1:{port}" in capsys.readouterr().out
     assert demo.main([*args, "--prepare-only", "--reset-config"]) == 0
     reset = yaml.safe_load(path.read_text())
-    assert (
-        reset["evaluation"]["prices"]["demo-model"]["input_per_million_tokens"] == 3.0
-    )
+    assert reset["models"]["prices"]["demo-model"]["input_per_million_tokens"] == 3.0
     # A kept config that does not load stops the demo, naming the way out.
     path.write_text("search:\n  no_such_key: 1\n")
     with pytest.raises(SystemExit, match="--reset-config"):

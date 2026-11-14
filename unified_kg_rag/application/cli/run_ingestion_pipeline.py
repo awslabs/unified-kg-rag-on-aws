@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import ValidationError
 from rich.panel import Panel
 from rich.prompt import Confirm
+from rich.table import Table
 
 from unified_kg_rag import __version__
 from unified_kg_rag.application.cli.config_args import (
@@ -86,7 +87,11 @@ from unified_kg_rag.shared import (
     StoreConnectionError,
     get_logger,
 )
-from unified_kg_rag.shared.exceptions import ErrorClass, with_own_text
+from unified_kg_rag.shared.exceptions import (
+    ErrorClass,
+    RunBudgetExhausted,
+    with_own_text,
+)
 from unified_kg_rag.shared.logging import log_error
 from unified_kg_rag.shared.utils.validation import format_validation_errors
 
@@ -359,6 +364,17 @@ class CommandLineInterface:
             "failures in its summary and JSON",
         )
         parser.add_argument(
+            "--estimate",
+            action="store_true",
+            help="Parse and chunk the corpus (no model call, no store) and "
+            "print the model calls, input and output tokens and USD a full "
+            "build of it would cost per stage (of --enabled-stages, when "
+            "given), priced by models.prices; the "
+            "stages whose calls depend on the extracted graph (description "
+            "summaries, community reports, the summary tree) are named, not "
+            "estimated. Nothing is run",
+        )
+        parser.add_argument(
             "--enabled-stages",
             type=lambda s: [item.strip() for item in s.split(",")],
             help="Comma-separated list of pipeline stages to enable (e.g., 'DOCUMENT_PARSING,TEXT_CHUNKING'). If not specified, all stages are enabled.",
@@ -506,7 +522,9 @@ class IngestionPipelineRunner:
             if self.args.cache_directory
             else Path("cache")
         )
-        self.args.cache_directory.mkdir(parents=True, exist_ok=True)
+        if not getattr(self.args, "estimate", False):
+            # An estimate writes nothing.
+            self.args.cache_directory.mkdir(parents=True, exist_ok=True)
 
     def _s3_bucket_name(self) -> str | None:
         """The cache bucket: the flag, else the configured one (the CDK task
@@ -783,6 +801,9 @@ class IngestionPipelineRunner:
             usage_error(error)
 
     def run(self) -> None:
+        if getattr(self.args, "estimate", False):
+            self._estimate()
+            return
         _load_pipeline()
         display_ascii_art(__version__)
         self._display_run_info()
@@ -930,6 +951,90 @@ class IngestionPipelineRunner:
             f"than --max-failure-rate {budget} tolerates: rerun to retry them "
             "after fixing the cause the WARNINGs above name"
         )
+
+    def _estimate(self) -> None:
+        """``--estimate``: print what a full build of the corpus would cost
+        (``application.ingestion.estimate``); nothing is run."""
+        from unified_kg_rag.application.ingestion.estimate import estimate_ingestion
+
+        # The stages --enabled-stages runs (validated as a run's), else every
+        # stage the config selects.
+        enabled = (
+            [
+                stage
+                for stage, on in self._create_pipeline_config().stages_enabled.items()
+                if on
+            ]
+            if self.args.enabled_stages
+            else None
+        )
+        estimate = estimate_ingestion(
+            self.config, self.args.source_directory, stages=enabled
+        )
+        self.reported = True
+        if self.json_output:
+            print_json(estimate.model_dump(mode="json"))
+            return
+        table = Table(title="Estimated model calls of a full build")
+        for column in (
+            "Stage",
+            "Model",
+            "Calls",
+            "Input tokens",
+            "Output tokens",
+            "USD",
+        ):
+            table.add_column(
+                column, justify="left" if column in ("Stage", "Model") else "right"
+            )
+        for stage in estimate.stages:
+            bound = "" if stage.bound == "exact" else f" ({stage.bound})"
+            table.add_row(
+                f"{stage.stage}{bound}",
+                markup_safe(stage.model),
+                f"{stage.calls:,}",
+                f"{stage.input_tokens:,}",
+                f"{stage.output_tokens:,}",
+                "-" if stage.usd is None else f"${stage.usd:,.2f}",
+            )
+        table.add_row(
+            "[bold]total[/bold]",
+            "",
+            f"{estimate.calls:,}",
+            f"{estimate.input_tokens:,}",
+            f"{estimate.output_tokens:,}",
+            "-" if estimate.usd is None else f"${estimate.usd:,.2f}",
+        )
+        console.print(
+            f"{estimate.documents:,} documents, {estimate.text_units:,} text units "
+            f"({estimate.text_unit_tokens:,} tokens)"
+        )
+        console.print(table)
+        gleaning = any(
+            stage.stage == PipelineStageType.GLEANING.value for stage in estimate.stages
+        )
+        console.print(
+            f"[dim]Output tokens at {estimate.output_tokens_per_input_token:.2f} x "
+            "input, the ratio of the measured benchmark build"
+            + (
+                "; gleaning counts max_rounds (a round re-sends only the units "
+                "the last one added to)"
+                if gleaning
+                else ""
+            )
+            + ".[/dim]"
+        )
+        if estimate.unpriced_models:
+            console.print(
+                "[yellow]No USD for "
+                + markup_safe(", ".join(estimate.unpriced_models))
+                + ": add them to models.prices.[/yellow]"
+            )
+        for name, what in estimate.not_estimated.items():
+            console.print(
+                f"[yellow]Not estimated: {name} ({markup_safe(what)}), which "
+                "depends on the extracted graph.[/yellow]"
+            )
 
     def _json_result(self, context: PipelineContext) -> dict[str, Any]:
         """The run's ``--output-format json`` result; a run a stage failed,
@@ -1099,6 +1204,14 @@ def _next_run_wait(runner: IngestionPipelineRunner | None) -> str:
     )
 
 
+def _resume_hint(runner: IngestionPipelineRunner | None) -> str:
+    """`` Resume with --pipeline-id <id>.`` once the run's id is known."""
+    pipeline_id = runner.pipeline.pipeline_id if runner and runner.pipeline else None
+    return (
+        f" Resume with --pipeline-id {markup_safe(pipeline_id)}." if pipeline_id else ""
+    )
+
+
 def _print_interrupted(runner: IngestionPipelineRunner | None, exit_code: int) -> None:
     """The JSON status of a stopped run, with the pipeline id to resume with
     and, when the next run must wait, from when it may write."""
@@ -1114,7 +1227,7 @@ def _print_interrupted(runner: IngestionPipelineRunner | None, exit_code: int) -
 
 
 def _print_failed(
-    runner: IngestionPipelineRunner | None, exit_code: int, error: Exception
+    runner: IngestionPipelineRunner | None, exit_code: int, error: BaseException
 ) -> None:
     """The JSON status of a run that failed before it printed its result,
     with its error and, once resolved, its pipeline id."""
@@ -1132,6 +1245,15 @@ def main() -> None:
         args = cli.parse_args()
         runner = IngestionPipelineRunner(args)
         runner.run()
+    except RunBudgetExhausted as e:
+        # The run stopped at processing.max_run_*: its finished stages and the
+        # responses it got are kept, so a re-run resumes it.
+        console.print(
+            f"\n[yellow]Pipeline stopped at its budget: {markup_safe(e)}."
+            f"{_resume_hint(runner)}{_next_run_wait(runner)}[/yellow]"
+        )
+        _print_failed(runner, EXIT_FAILURE, e)
+        sys.exit(EXIT_FAILURE)
     except PipelineInterrupted as e:
         if runner and runner.reported:
             console.print(

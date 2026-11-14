@@ -2,11 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """The AUTO router prompt describes exactly the routable strategies."""
 
+import logging
+
 import pytest
 from pydantic import ValidationError
 
 from unified_kg_rag.domain.models import SearchStrategy
-from unified_kg_rag.domain.models.config import SearchConfig
+from unified_kg_rag.domain.models.config import SearchConfig, _fusion
 from unified_kg_rag.domain.prompts import StrategySelectionPrompt
 from unified_kg_rag.domain.prompts.retrieval import (
     STRATEGY_ROUTING_GUIDE,
@@ -14,6 +16,8 @@ from unified_kg_rag.domain.prompts.retrieval import (
 )
 
 pytestmark = pytest.mark.unit
+
+CONFIG_LOGGER = "unified_kg_rag.domain.models.config"
 
 
 def test_every_selectable_strategy_has_a_guide_entry() -> None:
@@ -43,9 +47,32 @@ def test_auto_is_not_routable() -> None:
         SearchConfig(auto_routable_strategies=[SearchStrategy.AUTO])
 
 
-def test_ppr_is_not_routable_until_measured() -> None:
-    # It stays selectable explicitly; auto may not pick it.
-    with pytest.raises(ValidationError, match="cannot include 'ppr'"):
-        SearchConfig(
-            auto_routable_strategies=[SearchStrategy.LOCAL, SearchStrategy.PPR]
-        )
+@pytest.mark.parametrize(
+    ("strategy", "evidence"),
+    [
+        (SearchStrategy.PPR, "#the-ppr-strategy"),
+        (SearchStrategy.TREE, "#raptor-summary-tree"),
+    ],
+)
+def test_unmeasured_routes_load_with_a_warning_citing_the_evidence(
+    strategy: SearchStrategy, evidence: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    # The operator's call: the config loads and auto may pick it, with a
+    # WARNING naming the measurement it was left out on.
+    _fusion._warn_unmeasured_route.cache_clear()
+    with caplog.at_level(logging.WARNING, logger=CONFIG_LOGGER):
+        config = SearchConfig(auto_routable_strategies=[SearchStrategy.LOCAL, strategy])
+    assert config.auto_routable_strategies == [SearchStrategy.LOCAL, strategy]
+    warned = [r.getMessage() for r in caplog.records]
+    assert len(warned) == 1
+    assert f"includes '{strategy.value}'" in warned[0]
+    assert evidence in warned[0]
+
+
+def test_default_routes_load_without_a_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _fusion._warn_unmeasured_route.cache_clear()
+    with caplog.at_level(logging.WARNING, logger=CONFIG_LOGGER):
+        SearchConfig()
+    assert not caplog.records

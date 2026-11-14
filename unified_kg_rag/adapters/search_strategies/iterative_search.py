@@ -26,7 +26,10 @@ wraps a base strategy (``search.iterative_search.base``: ``local`` or
 The answer model answers once, from the final candidates, which the chain packs
 into the usual token budget. A follow-up round starts only while the query
 deadline leaves ``search.model_timeout_seconds`` for the answer, and is
-cancelled when it would not.
+cancelled when it would not; and a controller call only while the query's
+limits (``search.query_max_*``) leave room for it and the answer, each
+reading about the packed candidates (stop reason ``query_limit``, recorded
+in ``metadata["degraded"]``).
 
 ``SearchResult.metadata["context_sufficient"]`` is ``False`` (with the
 stop reason under ``insufficiency_reason``) when the last
@@ -53,6 +56,7 @@ from langchain_core.runnables import Runnable, RunnableConfig
 
 from unified_kg_rag.adapters.llm.chain_factory import setup_chain
 from unified_kg_rag.adapters.llm.retry import current_deadline
+from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
@@ -86,7 +90,7 @@ from unified_kg_rag.domain.retrieval.abstention import (
 )
 from unified_kg_rag.domain.retrieval.degradation import DegradationStep
 from unified_kg_rag.domain.retrieval.linking import link_key
-from unified_kg_rag.shared import get_logger, observability
+from unified_kg_rag.shared import get_logger, observability, usage
 from unified_kg_rag.shared.logging import log_failure
 from unified_kg_rag.shared.usage import usage_scope
 from unified_kg_rag.shared.utils import interleave, text_digest
@@ -169,6 +173,12 @@ class IterativeSearchStrategy(BaseSearchStrategy):
     docstring). Reads what the base reads: its query extraction, its indexes
     and its context packing (``StrategySpec.wraps``), so it needs no
     artifact the base does not."""
+
+    @classmethod
+    def fewest_model_calls(cls, config: Config) -> int:
+        # Round 0 (the base search) and one controller verdict.
+        base = get_strategy_spec(_base_strategy(config)).strategy_class
+        return base.fewest_model_calls(config) + 1
 
     def __init__(
         self,
@@ -337,6 +347,9 @@ class IterativeSearchStrategy(BaseSearchStrategy):
                         run.stop_reason = "no_follow_up"
                         run.insufficient = True
                         return current
+                    if not await self._room_to_judge(run, current, query):
+                        run.insufficient = True
+                        return current
                     round_no = run.rounds + 1
                     # Without a new bridge a mix rerun would read the
                     # question's keywords again, which round 0 searched.
@@ -373,8 +386,11 @@ class IterativeSearchStrategy(BaseSearchStrategy):
         config: RunnableConfig | None,
     ) -> _Verdict | None:
         """The controller's verdict on ``results``; ``None`` when its call
-        failed or its answer could not be read (``run.degraded``)."""
+        failed or its answer could not be read (``run.degraded``), or the
+        query's limits leave no room for it (``query_limit``)."""
         context = await self._pack(results, query.query, query)
+        if not self._room_for(context, run):
+            return None
         run.llm_calls += 1
         try:
             raw = await self.controller.ainvoke(
@@ -605,6 +621,28 @@ class IterativeSearchStrategy(BaseSearchStrategy):
             type(self.base).spare_context_budget_first,
         )
         return self.token_manager.build_context_string(optimized)
+
+    def _room_for(self, context: str, run: _Run) -> bool:
+        """Whether the query's limits leave room for a controller call on
+        ``context`` and the answer, which reads about as much; when not, the
+        run stops (``query_limit``), recorded as degraded."""
+        tokens = estimate_token_count(context)
+        if self._calls_within_limits(
+            IterativeControllerPrompt, [tokens], reserve_tokens=tokens
+        ):
+            return True
+        run.stop_reason = "query_limit"
+        self._record_limit_stop(DegradationStep.ITERATIVE_CONTROLLER, 0, 1)
+        return False
+
+    async def _room_to_judge(
+        self, run: _Run, results: list[RetrievalResult], query: SearchQuery
+    ) -> bool:
+        """``_room_for`` the next round's verdict, before its search: the
+        round's candidates are packed into about the budget of these."""
+        if usage.remaining().unlimited:
+            return True
+        return self._room_for(await self._pack(results, query.query, query), run)
 
     def _time_budget(self) -> float | None:
         """Seconds the follow-up rounds may take: what the query deadline

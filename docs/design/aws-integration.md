@@ -39,6 +39,7 @@ fatal error.
 | A prompt longer than the model's context | `ContextOverflowError` (or a plain 400 from vLLM / llama.cpp) | not fatal: that global-search map batch is left unrated, unless every batch fails |
 | One failed request (an HTTP 500 for one search) | any other exception | degrades that section |
 | The whole query past `search.query_timeout_seconds`, or a stream's first chunk past `search.model_timeout_seconds` | `QueryTimeoutError`, raised by `GraphRAGChain` once its tasks (and, through `gather_or_cancel`, every section's) are cancelled | fatal (the error answer under `processing.ignore_errors`) |
+| A model call past the query's `search.query_max_model_calls` or `search.query_max_input_tokens` (lowered by `RAGInput.limits`) | `UsageLimitExceededError`, raised at the call's start by the usage callback (`raise_error`), so no request is sent; the limits live on the query's usage meter (`shared/usage.py`, `UsageLimits`) | the strategies' fan-out starts only what fits (`BaseSearchStrategy._calls_within_limits`, recorded as `query_limit`); a refused answer call is fatal (the error answer under `processing.ignore_errors`) |
 
 A failure that degrades a section is recorded in the query's
 `DegradationLedger` (`domain/retrieval/degradation.py`; the per-query scope,

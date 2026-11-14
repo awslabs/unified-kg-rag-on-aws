@@ -1,7 +1,9 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Moved and removed configuration keys, with the hints they raise."""
+"""Moved, deprecated and removed configuration keys, with the hints they
+raise."""
 
+import copy
 import types
 from typing import Any, Union, get_args, get_origin
 
@@ -96,6 +98,14 @@ MOVED_KEY_NOTES: dict[str, str] = {
         "it counted the items of one batch, not calls in flight; "
         "max_concurrency caps the calls"
     ),
+}
+
+
+# Deprecated settings -> the key that replaces each. A config that sets one
+# still loads: its value is moved into the replacement before validation
+# (:func:`migrate_deprecated_keys`), with a WARNING naming it.
+DEPRECATED_KEYS: dict[str, str] = {
+    "evaluation.prices": "models.prices",
 }
 
 
@@ -216,10 +226,69 @@ REMOVED_KEYS: dict[str, str] = {
 
 
 def _sets(data: Any, path: str) -> bool:
+    return _get(data, path) is not _ABSENT
+
+
+def migrate_deprecated_keys(data: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """``data`` with every deprecated key it sets moved into the key that
+    replaces it (copied where it changes), and those deprecated keys. A
+    replacement ``data`` sets too keeps its value: a mapping (``models.prices``)
+    keeps its own entries, whole, over the deprecated key's, any
+    other value set otherwise disagrees.
+
+    Raises:
+        ValueError: A deprecated key and its replacement are both set, to
+            different values (naming both).
+    """
+    migrated: list[str] = []
+    conflicts: list[str] = []
+    for old, new in DEPRECATED_KEYS.items():
+        if not _sets(data, old):
+            continue
+        if not migrated:
+            data = copy.deepcopy(data)
+        value = _pop(data, old)
+        migrated.append(old)
+        current = _get(data, new)
+        if current is _ABSENT:
+            _put(data, new, value)
+        elif isinstance(current, dict) and isinstance(value, dict):
+            _put(data, new, {**value, **current})
+        elif current != value:
+            conflicts.append(f"{old} and {new} are both set, to different values")
+    if conflicts:
+        raise ValueError(
+            "deprecated settings disagree with their replacements: "
+            + "; ".join(conflicts)
+            + " (set the replacement only)"
+        )
+    return data, migrated
+
+
+def _get(data: Any, path: str) -> Any:
     node = data
     for part in path.split("."):
         node = node.get(part, _ABSENT) if isinstance(node, dict) else _ABSENT
-    return node is not _ABSENT
+    return node
+
+
+def _pop(data: dict[str, Any], path: str) -> Any:
+    *parents, last = path.split(".")
+    node = data
+    for part in parents:
+        node = node[part]
+    return node.pop(last)
+
+
+def _put(data: dict[str, Any], path: str, value: Any) -> None:
+    *parents, last = path.split(".")
+    node = data
+    for part in parents:
+        child = node.get(part)
+        if not isinstance(child, dict):
+            child = node[part] = {}
+        node = child
+    node[last] = value
 
 
 def moved_key_hint(old: str, new: str) -> str:
@@ -244,6 +313,10 @@ def removed_keys(data: Any) -> list[str]:
 
 _ABSENT: Any = object()
 
+# The keys no section defines that are not unknown: moved (refused, naming
+# the replacement), deprecated (loaded into it) and removed (ignored).
+_GONE = frozenset({*MOVED_KEYS, *DEPRECATED_KEYS, *REMOVED_KEYS})
+
 
 def nested_model(annotation: Any) -> type[BaseModel] | None:
     """The BaseModel behind ``Model`` / ``Model | None`` (not dict/list values)."""
@@ -258,8 +331,8 @@ def nested_model(annotation: Any) -> type[BaseModel] | None:
 def unknown_keys(data: Any, model: type[BaseModel], prefix: str = "") -> list[str]:
     """The config keys in ``data`` the model does not define (pydantic would
     drop them), as dotted paths. Moved keys are left out (validation refuses
-    them, naming their replacement), and so are removed ones (ignored with a
-    warning)."""
+    them, naming their replacement), and so are deprecated ones (loaded into
+    their replacement) and removed ones (ignored with a warning)."""
     if not isinstance(data, dict):
         return []
     found: list[str] = []
@@ -267,7 +340,7 @@ def unknown_keys(data: Any, model: type[BaseModel], prefix: str = "") -> list[st
         path = f"{prefix}{key}"
         field = model.model_fields.get(key)
         if field is None:
-            if path not in MOVED_KEYS and path not in REMOVED_KEYS:
+            if path not in _GONE:
                 found.extend(_unknown_in_gone_section(path, value))
             continue
         nested = nested_model(field.annotation)
@@ -298,13 +371,12 @@ def _unknown_in_gone_section(path: str, value: Any) -> list[str]:
     section that only holds moved or removed keys (``graph.analysis``,
     whose last settings went) but the keys in it that are neither, else
     ``path`` itself."""
-    gone = [*MOVED_KEYS, *REMOVED_KEYS]
-    if not isinstance(value, dict) or not any(k.startswith(f"{path}.") for k in gone):
+    if not isinstance(value, dict) or not any(k.startswith(f"{path}.") for k in _GONE):
         return [path]
     found: list[str] = []
     for key, inner in value.items():
         inner_path = f"{path}.{key}"
-        if inner_path not in MOVED_KEYS and inner_path not in REMOVED_KEYS:
+        if inner_path not in _GONE:
             found.extend(_unknown_in_gone_section(inner_path, inner))
     return found
 

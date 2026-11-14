@@ -56,9 +56,9 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.models.retrieval import MAX_SERVED_TOP_K
 from unified_kg_rag.domain.models.usage import LLMUsage
+from unified_kg_rag.domain.pricing import usage_cost_usd
 from unified_kg_rag.domain.retrieval.citations import CitationMarkerScanner
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
-from unified_kg_rag.evaluation.comparison import answer_cost_usd
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.exceptions import (
     ErrorClass,
@@ -590,8 +590,8 @@ class AskService:
         unpriced: list[str] = []
         if isinstance(usage_data, dict):
             try:
-                usd, missing = answer_cost_usd(
-                    LLMUsage.model_validate(usage_data), config.evaluation.prices
+                usd, missing = usage_cost_usd(
+                    LLMUsage.model_validate(usage_data), config.models.prices
                 )
                 cost, unpriced = usd, sorted(missing)
             except ValidationError:
@@ -630,7 +630,7 @@ class AskService:
             "usage": usage_data,
             "cost_usd": cost,
             "unpriced_models": unpriced,
-            "prices_configured": bool(config.evaluation.prices),
+            "prices_configured": bool(config.models.prices),
             "latency_seconds": latency,
             "processing_seconds": view.processing_seconds,
             "total_results": view.total_results,

@@ -1,5 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import signal
 from collections.abc import Collection, Iterator
 from enum import StrEnum
 from typing import Any, Literal, Self, TypeVar
@@ -298,6 +299,29 @@ class PipelineInterrupted(KeyboardInterrupt):
         self.signum = signum
 
 
+class RunBudgetExhausted(PipelineInterrupted):
+    """An ingestion run stopped at its budget (``processing.max_run_model_calls``
+    or ``processing.max_run_usd``): the model call that would pass it was not
+    sent, the run unwound as a signal's stop does (its finished stages
+    checkpointed, its responses in the LLM response cache), and a re-run with
+    the same pipeline id resumes it. ``limit`` names the setting, ``value``
+    its value.
+
+    Unlike a signal's stop it waits for the model calls already sent
+    (``shared.utils.concurrency.is_stop``): they are paid for, and their
+    answers go to the response cache a re-run is served from. No new call
+    starts, each being refused at the same budget."""
+
+    # The pools a stop unwinds wait for their running tasks (is_stop).
+    waits_for_work_in_flight = True
+
+    def __init__(self, message: str, *, limit: str, value: float) -> None:
+        super().__init__(signal.SIGINT)
+        self.args = (message,)
+        self.limit = limit
+        self.value = value
+
+
 class NamespaceLeaseError(PipelineExecutionError):
     """Another run holds the index namespace's write lease, or this run lost
     it: two runs writing one namespace at once would corrupt the registry
@@ -347,6 +371,28 @@ class QueryTimeoutError(GraphRAGException, TimeoutError):
     def __init__(self, message: str, *, timeout_seconds: float) -> None:
         super().__init__(message)
         self.timeout_seconds = timeout_seconds
+
+
+class UsageLimitExceededError(GraphRAGException):
+    """A model call would take what its usage scope spent past a limit: a
+    query's model calls or input tokens (``search.query_max_model_calls``,
+    ``search.query_max_input_tokens``, lowered by ``RAGInput.limits``). The
+    call is refused before its request is sent. ``limit`` names the setting,
+    ``value`` its value."""
+
+    def __init__(self, message: str, *, limit: str, value: float) -> None:
+        super().__init__(message)
+        self.limit = limit
+        self.value = value
+
+
+class OptionalCallSkipped(UsageLimitExceededError):
+    """An optional model call (a query translation or extraction, the
+    structured planner, an output repair: ``shared.usage.optional_calls``)
+    was not sent: it would take a call the query's limits keep for its
+    answer (``UsageLimits.reserved_calls``). The step that made it is
+    answered without, recorded as degraded (``query_limit``); the query
+    goes on."""
 
 
 class RerankModelError(ModelError):
@@ -414,6 +460,7 @@ class ErrorClass(StrEnum):
     INDEX_NOT_FOUND = "index_not_found"
     CONFIGURATION = "configuration"
     TIMEOUT = "timeout"
+    LIMIT_EXCEEDED = "limit_exceeded"
     STORE_UNREACHABLE = "store_unreachable"
     MODEL_UNREACHABLE = "model_unreachable"
     FAILURE = "failure"
@@ -421,8 +468,10 @@ class ErrorClass(StrEnum):
     @property
     def is_caller_error(self) -> bool:
         """Whether the caller's request is at fault (an argument, a filter,
-        a namespace without an index, a strategy it does not hold), not the
-        service: the query metrics do not count it in ``query_failed``."""
+        a namespace without an index, a strategy it does not hold, a query
+        that needs more model calls or input tokens than its limits allow),
+        not the service: the query metrics do not count it in
+        ``query_failed``."""
         return self in _CALLER_ERRORS
 
 
@@ -432,6 +481,7 @@ _CALLER_ERRORS = frozenset(
         ErrorClass.INVALID_ARGUMENT,
         ErrorClass.NOT_INDEXED,
         ErrorClass.INDEX_NOT_FOUND,
+        ErrorClass.LIMIT_EXCEEDED,
     }
 )
 
@@ -445,6 +495,8 @@ _CLASSES: tuple[tuple[type[BaseException], ErrorClass], ...] = (
     (MethodologyNotIndexedError, ErrorClass.NOT_INDEXED),
     (IndexNotFoundError, ErrorClass.INDEX_NOT_FOUND),
     (QueryTimeoutError, ErrorClass.TIMEOUT),
+    (UsageLimitExceededError, ErrorClass.LIMIT_EXCEEDED),
+    (RunBudgetExhausted, ErrorClass.LIMIT_EXCEEDED),
     (ModelUnreachableError, ErrorClass.MODEL_UNREACHABLE),
     (StoreConnectionError, ErrorClass.STORE_UNREACHABLE),
     (ConfigurationError, ErrorClass.CONFIGURATION),

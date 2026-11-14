@@ -142,6 +142,49 @@ tokens, temperature and reasoning.
   responses, so a killed task loses at most one segment. A stop also ends
   the retries of the model calls still running.
 
+## Run budget and cost estimate
+
+`run-ingestion --estimate` prices a corpus before a run: it parses and
+chunks it (no model call, no store, nothing written) and prints, per stage,
+the model calls, input and output tokens and USD a full build would cost,
+priced by `models.prices` ([Evaluation: Comparing strategies](./evaluate.md#comparing-strategies)
+shows the price entries; `--output-format json` prints the estimate as JSON):
+
+```bash
+run-ingestion --source-directory ./source --config-path config.yaml --estimate
+```
+
+- Counted from the text units: the intelligent chunker's boundary calls,
+  the translation, the graph extraction, the gleaning rounds (all
+  `max_rounds`: an upper bound, since a round re-sends only the units the
+  last one added to) and the claims (at most one per unit). Each call is its
+  prompt's templates plus the text it reads, by the token estimate the usage
+  records count a call's start at; a fake-model run of a test corpus makes
+  the calls and reads the tokens the estimate gives within 15%.
+- Output tokens are estimated at 0.52 times the input, the ratio of the
+  measured benchmark build
+  ([evidence](../concepts/defaults-and-evidence.md#how-the-measurements-were-run)).
+- Named, not estimated: the stages whose calls depend on the extracted
+  graph (the description summaries, the community reports, the summary
+  tree). On the benchmark build the community reports were 26% of the model
+  cost.
+
+`processing.max_run_model_calls` and `processing.max_run_usd` (off by
+default) cap what one run may spend. The model call that would pass one is
+not sent: the run stops, once the calls already sent have answered (`RunBudgetExhausted`;
+`run-ingestion` exits `1` with the pipeline id and `error_class`
+`limit_exceeded` in its JSON status, and the console's Ingest page offers to
+resume it), its
+finished stages checkpointed and its responses in the
+[LLM response cache](#llm-response-cache). A re-run with the same pipeline id
+resumes at the stage it stopped in and pays only for the calls not yet
+answered; each run gets the budget anew, and a cached response is no call
+(nor holds the budget while it is looked up).
+`max_run_usd` prices the calls so far at the tokens they reported and those
+in flight at their estimated input, and the stop waits for the calls in
+flight, so a run can end past it by their output; a model without a price stops the run at its first
+call, naming it. Embedding requests count in neither.
+
 ## Large and heterogeneous corpora
 
 - **Large:** raise `processing.max_concurrency` as far as the Bedrock quota

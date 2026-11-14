@@ -128,6 +128,7 @@ from unified_kg_rag.domain.models import (
     Constants,
     Document,
     InputDocument,
+    LLMUsage,
     ModelPurpose,
     PipelineConfig,
     PipelineContext,
@@ -146,6 +147,7 @@ from unified_kg_rag.domain.models.methodology import (
     artifacts_of,
     methodologies_holding,
 )
+from unified_kg_rag.domain.pricing import usage_cost_usd
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.ports import DocStatusPort, GraphIndexer, VectorIndexer
 from unified_kg_rag.shared import (
@@ -159,9 +161,11 @@ from unified_kg_rag.shared import (
     PipelineStateError,
     get_logger,
     observability,
+    usage,
 )
 from unified_kg_rag.shared.exceptions import (
     ModelUnreachableError,
+    RunBudgetExhausted,
     StoreConnectionError,
     classify,
     operator_error_text,
@@ -201,9 +205,11 @@ class _StopFence:
         self._run_thread = threading.current_thread()
 
     def check(self) -> None:
-        signum = self._pipeline._stop_signal
-        if signum is not None and threading.current_thread() is not self._run_thread:
-            raise PipelineInterrupted(signum)
+        if (
+            self._pipeline._stop_signal is not None
+            and threading.current_thread() is not self._run_thread
+        ):
+            raise self._pipeline._stop_error()
 
     # Nothing to hold back: the same check where nothing is written.
     check_held = check
@@ -382,6 +388,8 @@ class DataIngestionPipeline:
     API_SOURCE_SCOPE = "api"
     _checkpointing: bool = False
     _stop_signal: int | None = None
+    # The budget a run stopped at (processing.max_run_*), if that stopped it.
+    _stopped_by: RunBudgetExhausted | None = None
 
     def __init__(
         self,
@@ -1064,6 +1072,7 @@ class DataIngestionPipeline:
     ) -> PipelineContext:
         log_context: Mapping[str, Any] = {}
         self._stop_signal = None
+        self._stopped_by = None
         stop_fence = install_write_fence(_StopFence(self))
         # The run's alias and mapping lookups, read once (only its own
         # writes change them while it holds the namespace's lease).
@@ -1100,7 +1109,12 @@ class DataIngestionPipeline:
             # no other run writes the namespace, and uploaded before the
             # lease is released.
             try:
-                with self._namespace_lease() as lease:
+                with (
+                    self._namespace_lease() as lease,
+                    # The run's model calls past its budget are refused, and
+                    # stop it (processing.max_run_*).
+                    usage_scope(limits=self._run_budget()),
+                ):
                     try:
                         context = self._run_leased(
                             source_path,
@@ -1263,7 +1277,7 @@ class DataIngestionPipeline:
             finally:
                 self._checkpointing = False
                 self._checkpoint_id = None
-            raise PipelineInterrupted(self._stop_signal) from e
+            raise self._stop_error() from e
         self._close_attempts(context, lease)
         return context
 
@@ -1560,7 +1574,7 @@ class DataIngestionPipeline:
         """Raise ``PipelineInterrupted`` once a stop was requested (a takeover
         wait of the lease calls it, in any thread)."""
         if self._stop_signal is not None:
-            raise PipelineInterrupted(self._stop_signal)
+            raise self._stop_error()
 
     def _raise_if_stopped_by(self, error: Exception) -> None:
         """End a run that failed with ``error`` once a stop was requested as
@@ -1568,7 +1582,77 @@ class DataIngestionPipeline:
         serialization pydantic wraps it in, say)."""
         if self._stop_signal is not None:
             self._checkpoint_on_stop()
-            raise PipelineInterrupted(self._stop_signal) from error
+            raise self._stop_error() from error
+
+    def _stop_error(self) -> PipelineInterrupted:
+        """The stop a requested stop raises: the budget the run stopped at
+        (``RunBudgetExhausted``), else the signal's ``PipelineInterrupted``;
+        a new one each time, as each thread raises its own."""
+        if (stopped := self._stopped_by) is not None:
+            return RunBudgetExhausted(
+                str(stopped), limit=stopped.limit, value=stopped.value
+            )
+        return PipelineInterrupted(self._stop_signal or signal.SIGINT)
+
+    def _run_budget(self) -> usage.UsageLimits | None:
+        """The run's budget (``processing.max_run_model_calls``,
+        ``processing.max_run_usd``) as its usage scope's limits: the call
+        that would pass one is refused with ``RunBudgetExhausted``, which
+        also stops the run's other threads (their write fences), as
+        ``request_stop`` does. ``None`` without either."""
+        processing = self.config.processing
+        calls, usd = processing.max_run_model_calls, processing.max_run_usd
+        if calls is None and usd is None:
+            return None
+        prices = self.config.models.prices
+
+        def refuse(limit: str, value: float, would: float) -> BaseException:
+            spent = f"${would:.2f}" if limit.endswith("usd") else f"{would:g} calls"
+            return self._stop_for_budget(
+                f"the run reached {limit} {value:g} (the next model call would "
+                f"take it to {spent}); its finished stages are checkpointed: "
+                "re-run with the same pipeline id to resume",
+                limit,
+                value,
+            )
+
+        def cost(by_model: Mapping[str, Mapping[str, int]]) -> float:
+            spent = LLMUsage.model_validate({"by_model": dict(by_model)})
+            total, unpriced = usage_cost_usd(spent, prices)
+            if total is None:
+                raise self._stop_for_budget(
+                    "processing.max_run_usd needs a models.prices entry for "
+                    f"{', '.join(sorted(unpriced))}; add one and re-run with the "
+                    "same pipeline id to resume",
+                    "processing.max_run_usd",
+                    usd or 0.0,
+                )
+            return total
+
+        return usage.UsageLimits(
+            max_llm_calls=calls,
+            max_cost=usd,
+            cost=cost if usd is not None else None,
+            refuse=refuse,
+            names={
+                "max_llm_calls": "processing.max_run_model_calls",
+                "max_cost": "processing.max_run_usd",
+            },
+        )
+
+    def _stop_for_budget(
+        self, message: str, limit: str, value: float
+    ) -> RunBudgetExhausted:
+        """Stop the run at its budget (from the thread whose call it
+        refused): every thread then raises the ``RunBudgetExhausted`` this
+        returns at its next write fence, the run's own included."""
+        error = RunBudgetExhausted(message, limit=limit, value=value)
+        if self._stopped_by is None:
+            logger.warning("Stopping the run: %s", message)
+            self._stopped_by = error
+        if self._stop_signal is None:
+            self._stop_signal = signal.SIGINT
+        return error
 
     def _open_llm_response_cache(self, pipeline_id: str) -> None:
         """Serve this run's ingestion model calls from the responses earlier
@@ -1630,7 +1714,7 @@ class DataIngestionPipeline:
         finally:
             self._checkpointing = outer
         if not outer and self._stop_signal is not None:
-            raise PipelineInterrupted(self._stop_signal)
+            raise self._stop_error()
 
     def _checkpoint_on_stop(self) -> None:
         """Upload the checkpoint of a run that is stopping (``request_stop``
@@ -1652,8 +1736,12 @@ class DataIngestionPipeline:
             )
             return
         logger.warning(
-            "Run stopped (signal %s): uploading the checkpoint of '%s'",
-            self._stop_signal or "SIGINT",
+            "Run stopped (%s): uploading the checkpoint of '%s'",
+            (
+                self._stopped_by.limit
+                if self._stopped_by is not None
+                else f"signal {self._stop_signal or 'SIGINT'}"
+            ),
             self._checkpoint_id,
         )
         # A second stop request during the upload waits for it.

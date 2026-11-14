@@ -69,6 +69,8 @@ from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
+    answer_prompt_class,
+    answer_prompt_tokens,
     current_ledger,
     degradation_scope,
     query_scope,
@@ -136,6 +138,7 @@ from unified_kg_rag.domain.models import (
     LanguageCode,
     Methodology,
     ModelRole,
+    QueryLimits,
     RetrievalResult,
     RetrieverRole,
     SearchQuery,
@@ -147,9 +150,7 @@ from unified_kg_rag.domain.models import (
     validate_safe_name,
 )
 from unified_kg_rag.domain.prompts import (
-    AnswerGenerationPrompt,
     BasePrompt,
-    ComprehensiveAnswerPrompt,
     QueryRewritePrompt,
     StrategySelectionPrompt,
 )
@@ -169,6 +170,7 @@ from unified_kg_rag.domain.retrieval.abstention import (
     REASON_INSUFFICIENT_CONTEXT,
     REASON_MARKER,
     REASON_NO_CONTEXT,
+    REASON_QUERY_LIMIT,
     MarkerStreamFilter,
     split_marker,
 )
@@ -205,12 +207,14 @@ from unified_kg_rag.shared import (
     StoreConnectionError,
     get_logger,
     observability,
+    usage,
 )
 from unified_kg_rag.shared.exceptions import (
     ERROR_CLASS_KEY,
     ErrorClass,
     InvalidArgumentError,
     MethodologyNotIndexedError,
+    UsageLimitExceededError,
     classify,
     error_class_of,
     operator_error_text,
@@ -226,7 +230,7 @@ from unified_kg_rag.shared.metrics import (
     QUERY_METRICS_NAMESPACE,
     QUERY_THROTTLED_METRIC,
 )
-from unified_kg_rag.shared.usage import UsageMeter, metering, usage_scope
+from unified_kg_rag.shared.usage import UsageLimits, UsageMeter, metering, usage_scope
 from unified_kg_rag.shared.utils import (
     configure_event_loop,
     named_choice,
@@ -569,6 +573,13 @@ class RAGInput(BaseModel):
     filters: dict[str, Any] | None = Field(
         default=None, description="Additional filters to apply to the search"
     )
+    limits: QueryLimits | None = Field(
+        default=None,
+        description="This query's deadline, model calls and input tokens, "
+        "each lowering the config's (search.query_timeout_seconds, "
+        "search.query_max_model_calls, search.query_max_input_tokens); a "
+        "value above the config's has no effect. None: the config's",
+    )
 
     @field_validator("suffix")
     @classmethod
@@ -738,6 +749,8 @@ class _StreamOutcome:
     meter: UsageMeter | None = None
     # The streamed answer's metadata, once it was formatted.
     metadata: dict[str, Any] = field(default_factory=dict)
+    # The query's deadline, once it started (its own limits' included).
+    deadline: "_QueryDeadline | None" = None
 
 
 class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
@@ -961,9 +974,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         closes.
         """
         processing = state.get("enable_query_processing", True)
+        # Not under a call or input-token limit: a speculative extraction
+        # the route does not read spends a call and tokens the query may
+        # need.
         prefetch: dict[str, asyncio.Future[Any]] | None = (
             {}
-            if processing and self.config.search.auto_speculative_extraction
+            if processing
+            and self.config.search.auto_speculative_extraction
+            and usage.remaining().unlimited
             else None
         )
         try:
@@ -1028,6 +1046,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             ),
             state.get("suffix"),
         )
+        routable, dropped = self._routes_within_limits(routable, state)
         candidates = [s.value for s in routable]
         if len(routable) == 1:
             # Nothing to choose between: no router call.
@@ -1035,6 +1054,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             state[ROUTING_KEY] = {
                 "decided_by": "only_candidate",
                 "candidates": candidates,
+                **({"over_limits": dropped} if dropped else {}),
             }
             return state
         if prefetch is not None:
@@ -1089,8 +1109,92 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             )
 
         state["resolved_strategy"] = strategy
-        state[ROUTING_KEY] = {"decided_by": decided_by, "candidates": candidates}
+        state[ROUTING_KEY] = {
+            "decided_by": decided_by,
+            "candidates": candidates,
+            **({"over_limits": dropped} if dropped else {}),
+        }
         return state
+
+    def _routes_within_limits(
+        self, routable: tuple[SearchStrategy, ...], state: dict[str, Any]
+    ) -> tuple[tuple[SearchStrategy, ...], list[str]]:
+        """Of ``routable``, those whose fewest model calls fit in what the
+        query's call limit leaves, after the router's call when more than
+        one is left; and the names of those dropped. A strategy's fewest
+        calls are its own (``fewest_model_calls``), the query processing
+        calls it reads for ``state``'s question (``query_processing_calls``:
+        its extractions and the translation) and the answer. All of them
+        without a call limit.
+
+        Raises:
+            UsageLimitExceededError: None fits, before any call of the
+                route, naming the limit and its value.
+        """
+        left = usage.remaining()
+        if left.input_tokens is not None and len(routable) > 1:
+            # The router call only beside the answer's prompt and the least
+            # context: else no router call, the fallback as one candidate.
+            router = self._router_tokens(routable, state)
+            answer = answer_prompt_tokens(self.config) + estimate_token_count(
+                self._question(state)
+            )
+            least = self.config.search.token_manager.min_truncated_section_tokens
+            if router + answer + least > left.input_tokens:
+                fallback = self._fallback_strategy(routable)
+                record_degradation(
+                    DegradationStep.ROUTING,
+                    f"query_limit: no router call, routed to '{fallback.value}'",
+                    UsageLimitExceededError.__name__,
+                )
+                return (fallback,), [s.value for s in routable if s is not fallback]
+        if left.llm_calls is None:
+            return routable, []
+        calls = left.llm_calls
+
+        def fewest(strategy: SearchStrategy) -> int:
+            spec = get_strategy_spec(strategy)
+            return (
+                spec.strategy_class.fewest_model_calls(self.config)
+                + query_processing.query_processing_calls(self, state, strategy)
+                + 1
+            )
+
+        routed = tuple(s for s in routable if fewest(s) <= calls - 1)
+        if len(routed) < 2:
+            # One (or none) beside the router's call: no router call is
+            # made, so a strategy may use that call too.
+            alone = tuple(s for s in routable if fewest(s) <= calls)
+            routed = (self._fallback_strategy(alone),) if alone else ()
+        if not routed:
+            needs = min(fewest(s) for s in routable)
+            limit = left.call_limit or "max_model_calls"
+            value = left.call_limit_value or calls
+            raise UsageLimitExceededError(
+                f"The query's model call limit {limit} {value} leaves {calls} "
+                f"calls, and every strategy auto may route to needs at least "
+                f"{needs} ({_names(routable)}); raise the limit or pick a "
+                "strategy",
+                limit=limit,
+                value=value,
+            )
+        return routed, [s.value for s in routable if s not in routed]
+
+    def _router_tokens(
+        self, routable: tuple[SearchStrategy, ...], state: dict[str, Any]
+    ) -> int:
+        """The router call's input among ``routable``, at the local estimate
+        the usage meter counts a call's start at."""
+        resolved = StrategySelectionPrompt.resolve(
+            custom_prompts=self.config.custom_prompts
+        )
+        return estimate_token_count(
+            resolved.system_prompt_template
+            + resolved.human_prompt_template
+            + self._question(state)
+            + ", ".join(s.value for s in routable)
+            + describe_routable_strategies(routable)
+        )
 
     def _check_allowed(self, strategy: SearchStrategy) -> None:
         """Refuse ``strategy`` outside ``allowed_strategies``, before any
@@ -1760,6 +1864,31 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             getattr(self, "_background_closes", None),
         )
 
+    def _context_budget(self, state: dict[str, Any]) -> int | None:
+        """The answer's context budget: the query's ``max_tokens``, cut to
+        what its input-token limit leaves after the answer call's own prompt
+        and question (``answer_prompt_tokens``), less the headroom the
+        context window keeps (``context_window_headroom_ratio``); ``None``
+        (the token manager's own) without either."""
+        budget: int | None = state.get("max_tokens")
+        left = usage.remaining().input_tokens
+        if left is None:
+            return budget
+        left -= answer_prompt_tokens(
+            self.config, state.get("resolved_strategy")
+        ) + estimate_token_count(self._question(state))
+        token_manager = self.config.search.token_manager
+        room = max(1, int(left * (1 - token_manager.context_window_headroom_ratio)))
+        if room < token_manager.min_truncated_section_tokens:
+            # No section would fit: an empty context the limit made, which
+            # the answer names (abstention reason query_limit).
+            record_degradation(
+                DegradationStep.CONTEXT_OPTIMIZATION,
+                "query_limit: the input-token limit leaves the answer no context",
+                UsageLimitExceededError.__name__,
+            )
+        return room if budget is None else min(budget, room)
+
     def _optimize_context(self, state: dict[str, Any]) -> OptimizedContext:
         query: ProcessedQuery = state["processed_query"]
         search_results: SearchResult = state["search_results"]
@@ -1767,7 +1896,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         return self.token_manager.optimize_context(
             retrieval_results=search_results.results,
             query=query.final_query,
-            max_tokens=state.get("max_tokens"),
+            max_tokens=self._context_budget(state),
             spare_budget_first=(
                 get_strategy_spec(
                     wrapped_strategy(strategy, self.config)
@@ -1917,11 +2046,20 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
     @staticmethod
     def _no_context_reason(state: dict[str, Any]) -> str:
         """Why the context is empty: the strategy's reason
-        (``NO_CONTEXT_REASON_KEY``, ``no_reports``), else ``no_context``."""
+        (``NO_CONTEXT_REASON_KEY``, ``no_reports``), else ``query_limit``
+        when the query's limits left out a step (degraded reason
+        ``query_limit``), else ``no_context``."""
         results = state.get("search_results")
         metadata = results.metadata if isinstance(results, SearchResult) else {}
         reason = metadata.get(NO_CONTEXT_REASON_KEY)
-        return reason if isinstance(reason, str) and reason else REASON_NO_CONTEXT
+        if isinstance(reason, str) and reason:
+            return reason
+        ledger = current_ledger()
+        if ledger is not None and any(
+            entry.reason.startswith(REASON_QUERY_LIMIT) for entry in ledger.entries
+        ):
+            return REASON_QUERY_LIMIT
+        return REASON_NO_CONTEXT
 
     def _no_context_answer(self, state: dict[str, Any]) -> str:
         """The fixed decline, in the language of the question (the index
@@ -1951,16 +2089,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         return state
 
     def _answer_prompt(self, strategy: SearchStrategy | None) -> type[BasePrompt]:
-        """The answer prompt of ``strategy`` (``search.answer_prompt_style``):
-        the concise default, or the comprehensive one."""
-        style = (
-            self.config.search.answer_prompt_style.get(strategy)
-            if strategy is not None
-            else None
-        )
-        if style == "comprehensive":
-            return ComprehensiveAnswerPrompt
-        return AnswerGenerationPrompt
+        """The answer prompt of ``strategy`` (``answer_prompt_class``)."""
+        return answer_prompt_class(self.config, strategy)
 
     def _grounding_context(self, state: dict[str, Any]) -> GroundingContext | None:
         """The question and context the answer model was given, or ``None``
@@ -2406,6 +2536,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         admission_tokens = bind_contextvars(query_id=query_id)
         try:
             rag_input, input_dict = await self._admit_query(input, deadline)
+            self._apply_limits(deadline, rag_input)
         except Exception as e:
             tag_query_failure(e, query_id)
             if not search:
@@ -2427,7 +2558,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 observability.span(
                     "kg_rag.query", self._query_span_attributes(rag_input, search)
                 ) as span,
-                usage_scope() as meter,
+                # Its calls past the query's limits are refused (shared.usage).
+                usage_scope(limits=self._usage_limits(rag_input)) as meter,
                 # The query's store-lookup memo and degradation ledger.
                 query_scope(),
             ):
@@ -2446,7 +2578,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                     _LEFTOVER_EXTRACTIONS.reset(token)
                 # Not waited for: counted from their start below, at an
                 # estimate until they answer.
-                self._background_extractions.keep(leftovers, self._time_left(started))
+                self._background_extractions.keep(leftovers, deadline.time_left())
                 # The query's model calls and tokens (shared.usage), and the
                 # ids that tie it to its log lines and trace.
                 result.metadata["usage"] = meter.snapshot()
@@ -2581,6 +2713,44 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             log_failure(
                 logger, logging.WARNING, "Query metrics emission failed: %s", error=e
             )
+
+    def _query_limits(self, rag_input: RAGInput) -> QueryLimits:
+        """What ``rag_input`` may spend: the config's limits
+        (``SearchConfig.query_limits``), lowered by its own."""
+        return self.config.search.query_limits().lowered_by(rag_input.limits)
+
+    def _limit_setting(self, rag_input: RAGInput, field: str) -> str:
+        """The setting ``rag_input``'s ``field`` limit (a ``QueryLimits``
+        field) comes from: its own (``limits.<field>``) when it is the lower,
+        else the config's (``SearchConfig.query_limits``)."""
+        own = getattr(rag_input.limits, field) if rag_input.limits else None
+        configured = getattr(self.config.search.query_limits(), field)
+        if own is not None and (configured is None or own < configured):
+            return f"limits.{field}"
+        return f"search.{_QUERY_LIMIT_SETTINGS[field]}"
+
+    def _usage_limits(self, rag_input: RAGInput) -> UsageLimits | None:
+        """The model-call and input-token limits of ``rag_input``'s usage
+        scope (``shared.usage``); ``None`` without either."""
+        limits = self._query_limits(rag_input)
+        if limits.max_model_calls is None and limits.max_input_tokens is None:
+            return None
+        return UsageLimits(
+            max_llm_calls=limits.max_model_calls,
+            max_input_tokens=limits.max_input_tokens,
+            # The answer's call: no output repair takes it.
+            reserved_calls=1,
+            names={
+                "max_llm_calls": self._limit_setting(rag_input, "max_model_calls"),
+                "max_input_tokens": self._limit_setting(rag_input, "max_input_tokens"),
+            },
+        )
+
+    def _apply_limits(self, deadline: "_QueryDeadline", rag_input: RAGInput) -> None:
+        """Lower ``deadline`` to ``rag_input``'s own deadline
+        (``limits.deadline_seconds``), once it is admitted."""
+        own = rag_input.limits.deadline_seconds if rag_input.limits else None
+        deadline.lower_to(own, "limits.deadline_seconds")
 
     def _time_left(self, started: float) -> float | None:
         """Seconds left of the query deadline (``search.query_timeout_seconds``)
@@ -3461,7 +3631,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                     ran=outcome.ran,
                     metadata=outcome.metadata,
                 )
-        self._background_extractions.keep(leftovers, self._time_left(started))
+        self._background_extractions.keep(
+            leftovers,
+            (
+                outcome.deadline.time_left()
+                if outcome.deadline is not None
+                else self._time_left(started)
+            ),
+        )
 
     async def _astream(
         self,
@@ -3479,11 +3656,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             search_config.query_timeout_seconds,
             first_chunk_seconds=search_config.model_timeout_seconds,
         )
+        outcome.deadline = deadline
         # Admitted within the deadline (_query), its log lines under the
         # query's id.
         admission_tokens = bind_contextvars(query_id=outcome.query_id)
         try:
             rag_input, input_dict = await self._admit_query(input, deadline)
+            self._apply_limits(deadline, rag_input)
         finally:
             reset_contextvars(**admission_tokens)
         outcome.rag_input = rag_input
@@ -3509,9 +3688,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                         "kg_rag.query",
                         self._query_span_attributes(rag_input, search=False),
                     ) as span,
-                    # Its usage and degradation ledger, as _query's; the
-                    # answer's later steps meter into it again (metering).
-                    usage_scope() as outcome.meter,
+                    # Its usage, limits and degradation ledger, as
+                    # _query's; the answer's later steps meter into it again
+                    # (metering), so its limits refuse their calls too.
+                    usage_scope(limits=self._usage_limits(rag_input)) as outcome.meter,
                     query_scope(),
                 ):
                     ledger = current_ledger()
@@ -4086,6 +4266,14 @@ def _release_cached_resources(
             runner.stop()
 
 
+# The search setting of each QueryLimits field (SearchConfig.query_limits).
+_QUERY_LIMIT_SETTINGS: dict[str, str] = {
+    "deadline_seconds": "query_timeout_seconds",
+    "max_model_calls": "query_max_model_calls",
+    "max_input_tokens": "query_max_input_tokens",
+}
+
+
 # An absolute deadline (``time.monotonic()``) a caller set for the queries it
 # runs (``caller_deadline``): a query's own deadline is never later.
 _CALLER_DEADLINE: contextvars.ContextVar[float | None] = contextvars.ContextVar(
@@ -4137,7 +4325,7 @@ class _QueryDeadline:
         self.seconds = seconds
         self.setting = "search.query_timeout_seconds"
         self.first_chunk_seconds = first_chunk_seconds
-        now = time.monotonic()
+        now = self.started = time.monotonic()
         self.at = None if seconds is None else now + seconds
         caller = _CALLER_DEADLINE.get()
         if caller is not None and (self.at is None or caller < self.at):
@@ -4147,6 +4335,20 @@ class _QueryDeadline:
             self.seconds = max(0.0, caller - now)
             self.setting = "the caller's deadline"
         self._scope: _DeadlineScope | None = None
+
+    def time_left(self) -> float | None:
+        """Seconds left until the deadline (``None``: no deadline)."""
+        return None if self.at is None else max(0.0, self.at - time.monotonic())
+
+    def lower_to(self, seconds: float | None, setting: str) -> None:
+        """End the query ``seconds`` after it started, if that comes before
+        its deadline (a query's own ``limits.deadline_seconds``, known once
+        it is admitted); ``setting`` then names the limit when it passes."""
+        if seconds is None:
+            return
+        at = self.started + seconds
+        if self.at is None or at < self.at:
+            self.at, self.seconds, self.setting = at, seconds, setting
 
     def scope(self, first_chunk_from: float | None = None) -> "_DeadlineScope":
         """A scope bounded by the deadline and, given ``first_chunk_from``

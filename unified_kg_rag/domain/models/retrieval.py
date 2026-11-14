@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Annotated, Any
 
-from pydantic import AfterValidator, BaseModel, Field, field_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator
 from typing_extensions import TypedDict
 
 from unified_kg_rag.domain.retrieval.section_types import SectionType as SectionType
@@ -108,6 +108,11 @@ class StrategyTraits:
     # Why ``search.auto_routable_strategies`` refuses it; None: it may list
     # it.
     not_routable_reason: str | None = None
+    # The evidence it was left out of the default routable strategies on:
+    # a config that lists it loads with a WARNING citing this
+    # (docs/concepts/defaults-and-evidence.md), since routing to it is the
+    # operator's call, not a setting that cannot work. None: no warning.
+    route_warning: str | None = None
     # Its place among the general-purpose strategies a query falls back to
     # (``GENERAL_FALLBACKS``: auto's when routing fails or nothing configured
     # is served, structured's when its fallback is not served); None: not
@@ -132,14 +137,17 @@ STRATEGY_TRAITS: dict[SearchStrategy, StrategyTraits] = {
     SearchStrategy.NAIVE: StrategyTraits(),
     SearchStrategy.ITERATIVE: StrategyTraits(),
     SearchStrategy.PPR: StrategyTraits(
-        not_routable_reason="it is opt-in until a measurement shows where it "
-        "wins (docs/design.md §6.4); select it explicitly"
+        route_warning="on 200 MuSiQue questions it answered within the noise "
+        "of local (answer_contains -2.0 [-7.5, +3.5]) at 2.4x lower cost, "
+        "weaker on 4-hop chains, and the router was not measured choosing it "
+        "(docs/concepts/defaults-and-evidence.md#the-ppr-strategy)"
     ),
     SearchStrategy.TREE: StrategyTraits(
-        not_routable_reason="it is opt-in (it answered better than naive but "
-        "well below the graph strategies, docs/concepts/"
-        "defaults-and-evidence.md#raptor-summary-tree), so the router does "
-        "not pick it; select it explicitly"
+        route_warning="on 100 MuSiQue questions it scored answer_contains "
+        "+8.0 [+3.0, +14.0] over naive where mix and local scored +19 and "
+        "+18, and on sensemaking questions it matched them against global; "
+        "the router was not measured choosing it "
+        "(docs/concepts/defaults-and-evidence.md#raptor-summary-tree)"
     ),
     # Routable once listed (not by default: docs/design.md §6.6).
     SearchStrategy.STRUCTURED: StrategyTraits(),
@@ -207,6 +215,54 @@ class Source(TypedDict, total=False):
 # Ask request, and the most mcp.max_top_k may allow (a library or CLI query
 # has no bound).
 MAX_SERVED_TOP_K = 100
+
+
+class QueryLimits(BaseModel):
+    """What one query may spend: its deadline, its model calls and their
+    input tokens; ``None`` caps nothing.
+
+    The config's (``search.query_timeout_seconds``,
+    ``search.query_max_model_calls``, ``search.query_max_input_tokens``:
+    ``SearchConfig.query_limits``) bound every query; a query's own
+    (``RAGInput.limits``, the MCP tools' ``limits``) can only lower them
+    (:meth:`lowered_by`).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    deadline_seconds: float | None = Field(
+        default=None,
+        gt=0,
+        description="Seconds the query may take in all (QueryTimeoutError past it)",
+    )
+    max_model_calls: int | None = Field(
+        default=None,
+        ge=1,
+        description="Model calls the query may make in all, the router's and "
+        "the answer's included (a call past it is not sent)",
+    )
+    max_input_tokens: int | None = Field(
+        default=None,
+        ge=1,
+        description="Input tokens its model calls may read in all, estimated "
+        "at each call's start (a call past it is not sent)",
+    )
+
+    def lowered_by(self, other: "QueryLimits | None") -> "QueryLimits":
+        """Each limit at the lower of this one's and ``other``'s: a query's
+        own limits never raise the config's."""
+        if other is None:
+            return self
+
+        def lower(a: Any, b: Any) -> Any:
+            return b if a is None else a if b is None else min(a, b)
+
+        return QueryLimits(
+            **{
+                name: lower(getattr(self, name), getattr(other, name))
+                for name in QueryLimits.model_fields
+            }
+        )
 
 
 class SearchQuery(BaseModel):

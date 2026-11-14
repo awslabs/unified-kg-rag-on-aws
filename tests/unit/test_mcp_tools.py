@@ -1016,6 +1016,8 @@ async def test_the_schema_is_resolved_once_and_its_error_returned(
     assert resolved == [1]
     assert (first.schema_error, second.schema_error) == ("SchemaSourceError",) * 2
     assert first.extraction_schema is None
+    # The ceiling a call's own limits lower (W1 review D8).
+    assert first.query_limits == tools.chain.config.search.query_limits()
 
 
 async def test_one_deadline_covers_the_slot_wait_and_the_work() -> None:
@@ -1074,6 +1076,31 @@ async def test_a_slot_wait_past_the_deadline_times_out_at_the_deadline() -> None
     # The first does not watch the deadline: only the backstop, a grace
     # later, would end it.
     assert not isinstance(first, BaseException)
+
+
+async def test_a_callers_own_deadline_covers_its_wait_for_a_slot() -> None:
+    # Regression (W1 review L5): limits.deadline_seconds was applied inside
+    # the chain only, so a call asking for 0.2 s could wait the server's
+    # whole deadline for a slot first.
+    import asyncio
+
+    class SlowChain(FakeChain):
+        async def asearch(self, rag_input: RAGInput) -> SearchOutput:
+            await asyncio.sleep(0.6)
+            return await super().asearch(rag_input)
+
+    tools = KnowledgeGraphTools(
+        SlowChain(Config()),  # type: ignore[arg-type]
+        settings=McpServerConfig(max_concurrent_calls=1),
+    )
+    first = asyncio.ensure_future(tools.search("q"))
+    await asyncio.sleep(0.05)
+    started = asyncio.get_running_loop().time()
+    with pytest.raises(QueryTimeoutError) as second:
+        await tools.search("q", limits={"deadline_seconds": 0.2})
+    assert asyncio.get_running_loop().time() - started < 0.45
+    assert "limits.deadline_seconds" in str(second.value)
+    await first
 
 
 async def test_fetched_items_report_no_relevance_score(

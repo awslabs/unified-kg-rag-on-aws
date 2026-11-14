@@ -81,6 +81,7 @@ EXIT_CODES: dict[ErrorClass, int] = {
     ErrorClass.INDEX_NOT_FOUND: EXIT_USAGE,
     ErrorClass.CONFIGURATION: EXIT_USAGE,
     ErrorClass.TIMEOUT: EXIT_FAILURE,
+    ErrorClass.LIMIT_EXCEEDED: EXIT_FAILURE,
     ErrorClass.STORE_UNREACHABLE: EXIT_FAILURE,
     ErrorClass.MODEL_UNREACHABLE: EXIT_FAILURE,
     ErrorClass.FAILURE: EXIT_FAILURE,
@@ -207,7 +208,13 @@ def failure_fields(
     the text the CLI shows of it (:func:`shown_text`); a string is the CLI's
     own message."""
     fields: dict[str, Any] = {"status": "failed", "exit_code": exit_code}
-    if isinstance(error, str | Exception) and str(error):
+    # A stop's BaseException too (an ingestion run stopped at its budget,
+    # RunBudgetExhausted), not the SystemExit a CLI exits with.
+    if (
+        isinstance(error, str | BaseException)
+        and not isinstance(error, SystemExit)
+        and str(error)
+    ):
         fields["error"] = (
             error if isinstance(error, str) else shown_text(error, exit_code)
         )

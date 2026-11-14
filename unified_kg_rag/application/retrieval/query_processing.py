@@ -41,6 +41,7 @@ from unified_kg_rag.domain.models import (
     Config,
     ModelPurpose,
     ModelRole,
+    SearchStrategy,
     language_name,
 )
 from unified_kg_rag.domain.prompts import (
@@ -57,7 +58,8 @@ from unified_kg_rag.domain.prompts.retrieval import (
 from unified_kg_rag.domain.retrieval.degradation import DegradationStep
 from unified_kg_rag.domain.retrieval.keyword_fallback import fallback_outcome
 from unified_kg_rag.domain.retrieval.query_entities import split_entity_list
-from unified_kg_rag.shared import LanguageModelError, get_logger
+from unified_kg_rag.shared import LanguageModelError, get_logger, usage
+from unified_kg_rag.shared.exceptions import OptionalCallSkipped
 from unified_kg_rag.shared.logging import log_failure
 from unified_kg_rag.shared.usage import record_cache_hit
 from unified_kg_rag.shared.utils import text_digest
@@ -209,8 +211,17 @@ def start_query_inputs(
             question, target_language, config
         )
     return {
-        name: asyncio.ensure_future(coroutine) for name, coroutine in coroutines.items()
+        name: asyncio.ensure_future(_optional(coroutine))
+        for name, coroutine in coroutines.items()
     }
+
+
+async def _optional(call: Awaitable[Any]) -> Any:
+    """``call``'s model calls as optional ones (``usage.optional_calls``):
+    the query answers without a translation or an extraction that would take
+    the call its limits keep for the answer."""
+    with usage.optional_calls():
+        return await call
 
 
 async def translate_query(
@@ -325,6 +336,13 @@ async def process_query(
     ll_keywords: list[str] = []
     if "keywords" in results_map:
         keyword_data = results_map["keywords"]
+        if isinstance(keyword_data, OptionalCallSkipped):
+            _record_limit_skip(
+                DegradationStep.KEYWORD_EXTRACTION,
+                "searched without keywords",
+                keyword_data,
+            )
+            keyword_data = ([], [])
         if isinstance(keyword_data, BaseException):
             # extract_dual_keywords already degrades to ([], []) what does
             # not fail the query, so an exception here must propagate.
@@ -365,10 +383,39 @@ def _absorb_input_failure(
     logged (``log_failure``: its type and digest at WARNING, its text, which
     may quote the prompt or the provider's reply, at DEBUG) and recorded as
     the ``step`` the answer is degraded by; else it is raised."""
+    if isinstance(error, OptionalCallSkipped):
+        _record_limit_skip(step, reason, error)
+        return
     if not chain.ignore_errors or is_unreachable_error(error):
         raise error
     log_failure(logger, logging.WARNING, message, error=error)
     record_degradation(step, reason, error)
+
+
+def _record_limit_skip(step: str, reason: str, error: OptionalCallSkipped) -> None:
+    """Record ``step`` left out to keep the answer's call (reason
+    ``query_limit``)."""
+    logger.info("%s skipped to keep the answer's call (%s)", step, error.limit)
+    record_degradation(step, f"query_limit: {reason}", error)
+
+
+def query_processing_calls(
+    chain: GraphRAGChain, state: dict[str, Any], strategy: SearchStrategy
+) -> int:
+    """The model calls query processing makes for ``state``'s question once
+    it is routed to ``strategy`` (``process_query``): the extractions the
+    strategy reads and the translation, unless the question needs none;
+    none with ``enable_query_processing`` off. A call the extraction cache
+    serves is counted too: an upper bound."""
+    if not state.get("enable_query_processing", True):
+        return 0
+    routed = {**state, "resolved_strategy": strategy}
+    _, skip_translation = _query_language(chain, state, chain._question(state))
+    return (
+        int(needs_query_entities(routed, chain.config))
+        + int(needs_dual_keywords(routed, chain.config))
+        + int(not skip_translation)
+    )
 
 
 def needs_query_entities(state: dict[str, Any], config: Config) -> bool:

@@ -768,9 +768,12 @@ class BedrockLanguageModelFactory(
         purpose = ModelPurpose(kwargs.get("model_purpose", ModelPurpose.QUERY))
         self._apply_tracing(model_config, resolved_model_id, purpose)
         # Always on: the usage accounting (shared.usage) needs no tracing.
+        # First: a call past a usage limit is refused before the tracing
+        # handler starts its span.
         model_config["callbacks"] = with_callback(
             model_config.get("callbacks"),
             UsageCallbackHandler(resolved_model_id, role=purpose.value),
+            first=True,
         )
         model_class = ChatBedrockConverse if use_converse else ChatBedrock
         model = model_class(**model_config)

@@ -377,6 +377,9 @@ HTTP_STATUS: dict[ErrorClass, int] = {
     ErrorClass.INDEX_NOT_FOUND: 404,
     ErrorClass.CONFIGURATION: 400,
     ErrorClass.TIMEOUT: 504,
+    # A query that needs more model calls or input tokens than its limits
+    # allow: the request (or the limit) to change.
+    ErrorClass.LIMIT_EXCEEDED: 422,
     ErrorClass.STORE_UNREACHABLE: 503,
     ErrorClass.MODEL_UNREACHABLE: 503,
     ErrorClass.FAILURE: 500,
@@ -666,7 +669,7 @@ def create_app(
                 if config
                 else None
             ),
-            "prices_configured": bool(config.evaluation.prices) if config else False,
+            "prices_configured": bool(config.models.prices) if config else False,
             # The largest top_k the Ask request takes.
             "max_top_k": MAX_SERVED_TOP_K,
             "jobs": state.jobs.active(),

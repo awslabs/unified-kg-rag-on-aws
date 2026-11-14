@@ -100,7 +100,7 @@ pricing before you reuse a dollar figure.
 | Cohere Rerank 3.5 | $2.00 per 1,000 search units | — | — | — |
 
 An in-Region inference profile lists Sonnet 5.5 about 10% higher. To price
-your own runs, give `run-eval` your prices (`evaluation.prices`,
+your own runs, give `run-eval` your prices (`models.prices`,
 [Evaluation: Comparing strategies](../guides/evaluate.md#comparing-strategies)): the package
 ships no price table, because one would go stale.
 
@@ -120,7 +120,7 @@ ships no price table, because one would go stale.
 | `search.local_search.text_unit_ranking` | `ppr` | Against `support` on 200 MuSiQue questions, two repeats: recall@5 +6.1 [+2.9, +9.4] and supporting paragraphs in the context +12 to +13 points; answers no worse (`answer_contains` +3.5 [+0.5, +6.75], borderline after a multiplicity correction; EM and token F1 n.s.); +0.10 s retrieval a query ([Local PPR ranking](#local-ppr-ranking)) |
 | `search.local_search.entity_frequency_threshold` | 20 | Without the cut, recall@5 -1.75 points [-3.12, -0.50] and supporting paragraphs in the context -2.42 [-3.96, -1.04], both significant; +3.08 s per answer, run separately (see *Latency* in [How the measurements were run](#how-the-measurements-were-run)) ([Retrieval switches](#retrieval-switches)) |
 | `search.auto_routable_strategies` | `local`, `mix`, `global`, `iterative` | `iterative` over `mix` against `mix` on multi-hop questions: `answer_contains` +12.5 points [+7.5, +18.0], token F1 +5.2 [+0.2, +10.1], last hop in the context +21.5; p95 11.1 s to 27.4 s. It cost +$0.0099 a query over `mix` (+18%) in the baselines of 2026-11-07, not the +$0.002 of that first run. `decompose` was no better than the loop, so it stays off ([Iterative follow-up rounds](#iterative-follow-up-rounds)) |
-| `indexing.methodologies` | `[graphrag, lightrag]` (no `raptor`); `search.auto_routable_strategies` refuses `tree` | `tree` against `naive` on 100 MuSiQue questions, one repeat, on a namespace that also held the graph (so `tree` fused its graph signal too): `answer_contains` +8.0 points [+3.0, +14.0], EM +9.0 [+2.0, +16.0], token F1 +7.5 [+1.1, +14.1], recall@5 -0.6 n.s., +1.2 s and +$0.0060 a query; `mix` and `local` scored +19 and +18 points of `answer_contains` over `naive` on the same questions. A `[raptor]`-only namespace was not measured. One repeat on one corpus, so opt-in. On sensemaking questions, with the comprehensive answer, `mix`, which needs no community reports (`[lightrag]`; regenerating that index's community reports alone cost about a quarter of its build), answered at least as well as `global` ([RAPTOR summary tree](#raptor-summary-tree), [Sensemaking strategies](#sensemaking-strategies)) |
+| `indexing.methodologies` | `[graphrag, lightrag]` (no `raptor`); `tree` is not in `search.auto_routable_strategies` (adding it loads with a WARNING citing this) | `tree` against `naive` on 100 MuSiQue questions, one repeat, on a namespace that also held the graph (so `tree` fused its graph signal too): `answer_contains` +8.0 points [+3.0, +14.0], EM +9.0 [+2.0, +16.0], token F1 +7.5 [+1.1, +14.1], recall@5 -0.6 n.s., +1.2 s and +$0.0060 a query; `mix` and `local` scored +19 and +18 points of `answer_contains` over `naive` on the same questions. A `[raptor]`-only namespace was not measured. One repeat on one corpus, so opt-in. On sensemaking questions, with the comprehensive answer, `mix`, which needs no community reports (`[lightrag]`; regenerating that index's community reports alone cost about a quarter of its build), answered at least as well as `global` ([RAPTOR summary tree](#raptor-summary-tree), [Sensemaking strategies](#sensemaking-strategies)) |
 | `aws.bedrock.ingestion_effort` | `null` (`default_effort`, `high`) | `low` on a 109-document slice: ingestion cost -19%, answers n.s. on 30 questions ([Ingestion effort](#ingestion-effort)) |
 | `search.model_timeout_seconds`, `search.query_timeout_seconds` | 90 s, 180 s | From the query times of the package's real-AWS evaluation runs ([Query deadlines and model timeouts](#query-deadlines-and-model-timeouts)) |
 | `search.citations.enabled`, `search.citations.strategies` | `true`; `{global: false, drift: false}` | Against off on 200 MuSiQue questions, two repeats, interleaved: `local` and `mix` answers n.s. (`answer_contains` -0.75 [-2.5, +0.75] adjusted, and 0.0), citation precision 0.75 and 0.82, recall 0.88 and 0.85. On 50 sensemaking questions the answers without citations won comprehensiveness 0.617 [0.540, 0.695] 95% (`global`, Holm p 0.037) and 0.642 [0.573, 0.708] 95% (`drift`, Holm p 0.002) with the differential judge, averaged over both answer orders, and `global` 0.742 (Holm p 0.002) with `run-eval`'s split on 2026-11-08; a "cite where possible" instruction for them won no comprehensiveness back and cost `global` directness ([Citations](#citations)) |
@@ -439,8 +439,9 @@ run on the same index:
 
 So `ppr` is the cheap, fast option: answers as good within the noise for
 a third to half of the cost and a lower median latency, weaker on the
-longest chains. `auto` does not route to it (`search.auto_routable_strategies`
-refuses it): select it explicitly. A variant closer to HippoRAG 2's
+longest chains. `auto` does not route to it by default: select it
+explicitly, or add it to `search.auto_routable_strategies`, which loads
+with a WARNING citing these numbers. A variant closer to HippoRAG 2's
 release (rerank off, passage-seed weight 0) scored EM +5.5 and token F1
 +5.9 against the default `ppr` with `answer_contains` and the supporting
 paragraphs unchanged and MRR -9.2, which reads as answer phrasing rather
@@ -571,8 +572,10 @@ significant and the retrieval loss is gone.
 So on multi-hop questions over short paragraphs the tree is cheap to build
 and adds about 8 points of `answer_contains` over `naive` for $0.006 and
 1.2 s a query, still well below the graph strategies. It stays opt-in and
-`auto` does not route to `tree`: this is one repeat on one corpus, and the
-graph strategies win there by more than twice as much. Not measured: a
+`auto` does not route to `tree` by default (adding it to
+`search.auto_routable_strategies` loads with a WARNING citing this): this
+is one repeat on one corpus, and the graph strategies win there by more
+than twice as much. Not measured: a
 `[raptor]`-only namespace (no graph signal), `graph_signal: off`, long
 documents, `scope: document` and `algorithm: gmm`; sensemaking questions
 are in [Sensemaking strategies](#sensemaking-strategies).

@@ -117,13 +117,14 @@ from unified_kg_rag.domain.retrieval.index_prefixes import held_artifacts_of
 from unified_kg_rag.domain.retrieval.linking import choose_links, hit_name
 from unified_kg_rag.domain.retrieval.source_fields import LIST_FIELDS, seed_provenance
 from unified_kg_rag.ports.graph_query import GraphQueryPort
-from unified_kg_rag.shared import get_logger, observability
+from unified_kg_rag.shared import get_logger, observability, usage
 from unified_kg_rag.shared.exceptions import (
     ConfigurationError,
     GraphQueryCompileError,
     GraphQueryExecutionError,
     InvalidGraphQueryError,
     ModelOutputError,
+    OptionalCallSkipped,
 )
 from unified_kg_rag.shared.logging import log_failure
 from unified_kg_rag.shared.usage import usage_scope
@@ -148,7 +149,15 @@ ANSWERED, FALLBACK, FAILED = "answered", "fallback", "failed"
 # after the repair, an absent name, an unknown value, an unanswerable
 # question) is no failure: metadata.structured.reason alone keeps it.
 _DEGRADING = frozenset(
-    {"planner_error", "unreadable_plan", "execution_error", "timeout", "compile_error"}
+    {
+        "planner_error",
+        "unreadable_plan",
+        "execution_error",
+        "timeout",
+        "compile_error",
+        # The planner call would have taken the answer's (query limits).
+        "query_limit",
+    }
 )
 # What _parsed says of an answer that holds no JSON object.
 _UNREADABLE = "plan: the answer is not one JSON object"
@@ -252,6 +261,11 @@ class StructuredSearchStrategy(BaseSearchStrategy):
     # The graph core every graph methodology builds (required_artifacts
     # decides what serves it: graphrag, lightrag and hipporag namespaces).
     methodology = Methodology.GRAPHRAG
+
+    @classmethod
+    def fewest_model_calls(cls, config: Config) -> int:
+        # The planner.
+        return 1
 
     def __init__(
         self,
@@ -518,16 +532,22 @@ class StructuredSearchStrategy(BaseSearchStrategy):
             if attempt:
                 run.repairs += 1
             try:
-                raw = await self.planner.ainvoke(
-                    {
-                        "query": query.query,
-                        "schema": schema,
-                        "data_language": language_name(index_language(self.config)),
-                        "max_hops": str(settings.max_hops),
-                        "feedback": feedback,
-                    },
-                    config,
-                )
+                # Optional: the planner never takes the call the query's
+                # limits keep for the answer (usage.optional_calls).
+                with usage.optional_calls():
+                    raw = await self.planner.ainvoke(
+                        {
+                            "query": query.query,
+                            "schema": schema,
+                            "data_language": language_name(index_language(self.config)),
+                            "max_hops": str(settings.max_hops),
+                            "feedback": feedback,
+                        },
+                        config,
+                    )
+            except OptionalCallSkipped as e:
+                run.fall_back("query_limit", e)
+                return None
             except Exception as e:
                 if is_fatal_retrieval_error(e):
                     raise
