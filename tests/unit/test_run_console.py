@@ -123,6 +123,7 @@ def test_it_binds_then_prints_where_it_serves(
     def run(self: Any, sockets: list[socket.socket]) -> None:
         served["address"] = sockets[0].getsockname()
         served["app"] = self.config.app
+        served["log_config"] = self.config.log_config
         sockets[0].close()
 
     monkeypatch.setattr(uvicorn.Server, "run", run)
@@ -150,6 +151,9 @@ def test_it_binds_then_prints_where_it_serves(
     options = served["app"].state.console.options
     assert options.loopback and options.sample_questions == ["Who ships?"]
     assert (tmp_path / "cache" / "console" / "console.sqlite3").exists()
+    # Uvicorn's records go through the logging setup's handlers and their
+    # filter, not a log config of its own that prints a library's text.
+    assert served["log_config"] is None
 
 
 @requires_console

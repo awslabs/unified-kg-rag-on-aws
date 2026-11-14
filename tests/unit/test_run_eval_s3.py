@@ -217,6 +217,36 @@ async def test_runner_upload_failure_exits_non_zero_and_keeps_results(
     assert list((work_dir / "outputs").rglob("evaluation_summary_*.json"))
 
 
+async def test_a_failed_upload_s_json_status_masks_the_store_s_reply(
+    s3, eval_config, mocker, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from unified_kg_rag.shared.exceptions import INTERNAL_ERROR_MESSAGE
+
+    data = tmp_path / "eval.json"
+    data.write_text(json.dumps(DATASET))
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    mocker.patch.object(run_evaluation.tempfile, "mkdtemp", return_value=str(work_dir))
+    mocker.patch.object(
+        run_evaluation,
+        "upload_directory_to_s3",
+        side_effect=AWSServiceError("upload refused: Quokkasecret role/Zebrapassword"),
+    )
+    args = _args(
+        "--data-path",
+        str(data),
+        "--output-directory",
+        f"s3://{BUCKET}/out",
+        "--output-format",
+        "json",
+    )
+    assert await run_evaluation.EvaluationRunner(args, _Chain(), eval_config).run() == 1
+    out = capsys.readouterr().out
+    status = json.loads(out)
+    assert status["upload_error"] == f"AWSServiceError: {INTERNAL_ERROR_MESSAGE}"
+    assert "Quokkasecret" not in out and "Zebrapassword" not in out
+
+
 async def test_runner_cleans_up_work_dir_on_success(
     s3, eval_config, mocker, tmp_path: Path
 ) -> None:
