@@ -151,24 +151,6 @@ async def test_an_answer_read_for_the_marker_streams_without_it(
     assert _output(events).metadata["abstention_reason"] == "marker"
 
 
-def test_a_screened_answer_is_not_streamed(config: Config) -> None:
-    from langchain_core.runnables import RunnableLambda
-
-    from unified_kg_rag.application.retrieval import rag_chain
-
-    chain, _, _ = _make_chain(config)
-    state = {"context": "Vendor and Buyer signed.", "query": "q"}
-    token = rag_chain._QUERY_EVENTS.set(rag_chain._ChunkCallback(lambda _t: None))
-    try:
-        streamed = chain._answer_generation_step(state)
-        chain._screen_outputs = True  # what a configured output guardrail sets
-        screened = chain._answer_generation_step(state)
-    finally:
-        rag_chain._QUERY_EVENTS.reset(token)
-    assert isinstance(streamed, RunnableLambda)
-    assert not isinstance(screened, RunnableLambda)
-
-
 async def test_an_empty_context_streams_nothing(config: Config) -> None:
     chain, factory, _ = _make_chain(config, empty=True)
     events = await _events(chain, _input())
@@ -444,3 +426,69 @@ def test_langchain_s_astream_events_is_left_as_it_is() -> None:
     # LangChain tooling (LangServe, LangGraph) reads its callback events.
     assert issubclass(GraphRAGChain, Runnable)
     assert GraphRAGChain.astream_events is Runnable.astream_events
+
+
+class _PassingGuard:
+    """An output guardrail that passes every text, recording the answers
+    it screened."""
+
+    def __init__(self) -> None:
+        self.screened: list[str] = []
+
+    async def acheck(self, text: str, source: Any, **kwargs: Any) -> Any:
+        from unified_kg_rag.ports.guardrail import (
+            GuardAction,
+            GuardSource,
+            GuardVerdict,
+        )
+
+        if source is GuardSource.OUTPUT:
+            self.screened.append(text)
+        return GuardVerdict(action=GuardAction.NONE, text=text)
+
+
+def _screened_chain(config: Config) -> tuple[GraphRAGChain, Any, _PassingGuard]:
+    chain, _, memory = _make_chain(config)
+    guard = _PassingGuard()
+    chain.guard = guard  # type: ignore[assignment]
+    chain._screen_outputs = True  # what a configured check_output sets
+    return chain, memory, guard
+
+
+async def test_a_screened_answer_streams_once_screened(config: Config) -> None:
+    # Regression (W2 review S1/S2): under check_output the answer model is
+    # still streamed (its first chunk bounded), nothing is shown before the
+    # guardrail screened the whole answer, then the screened answer is one
+    # chunk, its sources before it.
+    chain, _, guard = _screened_chain(config)
+    events = await _events(chain, _input())
+    kinds = [e.kind for e in events]
+    assert kinds == ["start", "routed", "sources", "chunk", "result"]
+    assert _chunks(events) == [_output(events).answer] == guard.screened
+    assert events[2].sources == _output(events).sources
+
+
+@pytest.mark.parametrize("stop_at", ["sources", "chunk"])
+async def test_a_screened_query_its_reader_stopped_saves_nothing(
+    config: Config, stop_at: str
+) -> None:
+    # Regression (W2 review S1): the screened sources were sent after the
+    # query had written its memory, so a reader that stopped there (never
+    # shown the answer) left the turn in memory.
+    chain, memory, _ = _screened_chain(config)
+    events = chain.aquery_events(_input(use_memory=True, conversation_id="c-9"))
+    async for event in events:
+        if event.kind == stop_at:
+            break
+    await events.aclose()
+    assert memory.messages == []
+
+
+async def test_a_screened_stream_broken_after_its_answer_saves_nothing(
+    config: Config,
+) -> None:
+    chain, memory, _ = _screened_chain(config)
+    stream = chain.astream(_input(use_memory=True, conversation_id="c-8"))
+    assert await anext(stream) == _ANSWER
+    await stream.aclose()
+    assert memory.messages == []

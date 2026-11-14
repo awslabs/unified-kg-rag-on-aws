@@ -797,9 +797,10 @@ class QueryRouted(BaseModel):
 
 class QuerySources(BaseModel):
     """The sources the answer model is given (``RAGOutput.sources``): sent
-    before the first answer chunk, or, when the output guardrail screens
-    the answer (which may withhold them) or the query ended without one,
-    from the final output just before :class:`QueryResult`."""
+    before the first answer chunk; when the output guardrail screens the
+    answer (which may withhold them), from the screened output before the
+    screened answer; when the query ended without one (blocked, an error
+    answer), just before :class:`QueryResult`."""
 
     kind: Literal["sources"] = "sources"
     sources: list[Source] = Field(description="The answer's sources")
@@ -807,9 +808,10 @@ class QuerySources(BaseModel):
 
 class AnswerChunk(BaseModel):
     """A piece of the answer as the answer model writes it: a preview, the
-    ``[NO_ANSWER]`` marker stripped (``search.abstention``). None is sent
-    when the output guardrail screens answers or for a fixed reply (an
-    empty context, a decline); :class:`QueryResult` carries the answer."""
+    ``[NO_ANSWER]`` marker stripped (``search.abstention``). Under the
+    output guardrail, one chunk: the whole answer once screened. None for
+    a fixed reply (an empty context, a decline); :class:`QueryResult`
+    carries the answer."""
 
     kind: Literal["chunk"] = "chunk"
     text: str = Field(description="The text written since the last chunk")
@@ -1206,8 +1208,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         one is left; and the names of those dropped. A strategy's fewest
         calls are its own (``fewest_model_calls``), the query processing
         calls it reads for ``state``'s question (``query_processing_calls``:
-        its extractions and the translation) and the answer. All of them
-        without a call limit.
+        its extractions and the translation) and the answer; when none
+        fits so, those that fit without their query processing calls,
+        which are optional (skipped under the limit). All of them without a
+        call limit.
 
         Raises:
             UsageLimitExceededError: None fits, before any call of the
@@ -1232,22 +1236,33 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             return routable, []
         calls = left.llm_calls
 
-        def fewest(strategy: SearchStrategy) -> int:
+        def fewest(strategy: SearchStrategy, optional: bool) -> int:
             spec = get_strategy_spec(strategy)
             return (
                 spec.strategy_class.fewest_model_calls(self.config)
-                + query_processing.query_processing_calls(self, state, strategy)
+                + (
+                    query_processing.query_processing_calls(self, state, strategy)
+                    if optional
+                    else 0
+                )
                 + 1
             )
 
-        routed = tuple(s for s in routable if fewest(s) <= calls - 1)
-        if len(routed) < 2:
-            # One (or none) beside the router's call: no router call is
-            # made, so a strategy may use that call too.
-            alone = tuple(s for s in routable if fewest(s) <= calls)
-            routed = (self._fallback_strategy(alone),) if alone else ()
+        def fitting(optional: bool) -> tuple[SearchStrategy, ...]:
+            routed = tuple(s for s in routable if fewest(s, optional) <= calls - 1)
+            if len(routed) < 2:
+                # One (or none) beside the router's call: no router call is
+                # made, so a strategy may use that call too.
+                alone = tuple(s for s in routable if fewest(s, optional) <= calls)
+                routed = (self._fallback_strategy(alone),) if alone else ()
+            return routed
+
+        # Those that fit whole first; else as if their optional calls (the
+        # query translation and extractions, skipped under the limit) were
+        # not made, as an explicit strategy answers.
+        routed = fitting(optional=True) or fitting(optional=False)
         if not routed:
-            needs = min(fewest(s) for s in routable)
+            needs = min(fewest(s, optional=False) for s in routable)
             limit = left.call_limit or "max_model_calls"
             value = left.call_limit_value or calls
             raise UsageLimitExceededError(
@@ -2063,10 +2078,19 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             | answer_chain
         )
         sink = _QUERY_EVENTS.get()
-        if sink is None or self._screen_outputs:
-            # Nothing is shown before the output guardrail screened the
-            # answer.
+        if sink is None:
             return answer
+        if self._screen_outputs:
+            # Streamed all the same (its first chunk bounded), but nothing
+            # is shown before the output guardrail screened the whole
+            # answer: _ainvoke sends it then.
+            return _streamed_to(
+                answer,
+                None,
+                marker=None,
+                declining=False,
+                first_chunk_seconds=self.config.search.model_timeout_seconds,
+            )
         # The start of the answer is held back until the [NO_ANSWER] token
         # is ruled in or out (search.abstention); under on_insufficient:
         # abstain only a decline is shown, an answer the model wrote
@@ -2806,7 +2830,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         names none (one series, not one per string)."""
         if result is not None:
             metadata = result.metadata
-            ran = result.search_results.search_strategy
+            # A blocked query ran no strategy (its output's is "blocked"):
+            # the requested one names it.
+            ran = (
+                None
+                if metadata.get("blocked")
+                else result.search_results.search_strategy
+            )
         metadata = metadata or {}
         if error is not None:
             error_class = classify(error)
@@ -3059,6 +3089,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                     guard_records.extend(evidence_records)
                 if isinstance(output, RAGOutput):
                     self._refresh_screened_copies(output, plan_texts)
+                    if self._screen_outputs:
+                        # The screened sources and answer, before the turn
+                        # is written: a reader that stops at either writes
+                        # none (aquery_events).
+                        await _emit(QuerySources(sources=output.sources))
+                        if output.answer:
+                            await _emit(AnswerChunk(text=output.answer))
                 if guard_records:
                     output.metadata["guardrail"] = guard_records
                 if isinstance(output, RAGOutput) and not answer_blocked:
@@ -3780,7 +3817,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         :class:`QueryStart` once the query is admitted, :class:`QueryRouted`
         once its strategy is resolved, :class:`QuerySources` (the sources the
         answer model is given), :class:`AnswerChunk` as the answer model
-        writes (none under the output guardrail, nor for a fixed reply), then
+        writes (under the output guardrail one, the screened answer; none
+        for a fixed reply), then
         :class:`QueryResult` with the :class:`RAGOutput` ``ainvoke``
         returns. A query blocked by the input guardrail, or failed under
         ``processing.ignore_errors``, yields its start (when admitted), its
@@ -3802,8 +3840,6 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             try:
                 output = await self._query(input, config, search=False)
                 assert isinstance(output, RAGOutput)
-                if not channel.sources_sent:
-                    await channel.send(QuerySources(sources=output.sources))
             except _ReaderStopped:
                 return
             except BaseException as e:
@@ -3813,7 +3849,18 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 return
             finally:
                 _QUERY_EVENTS.reset(token)
-            channel.finish(QueryResult(output=output))
+            # The query is done (its memory written): what is left is sent
+            # with no wait, so a reader has no stop point after it. A query
+            # that ended before its sources (blocked, an error answer) sends
+            # them here.
+            channel.finish(
+                *(
+                    []
+                    if channel.sources_sent
+                    else [QuerySources(sources=output.sources)]
+                ),
+                QueryResult(output=output),
+            )
 
         task = asyncio.create_task(produce(), name="kg-rag-query-events")
         try:
@@ -3876,8 +3923,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         :meth:`ainvoke`. Each :class:`AnswerChunk`'s text, then, when none
         was shown, the final answer as one chunk: the standard no-data
         answer of an empty context (no model call), a decline's fixed
-        reply, the blocked message, or the screened answer under the output
-        guardrail's ``check_output``. With ``processing.ignore_errors`` set,
+        reply or the blocked message. With ``processing.ignore_errors`` set,
         a failure yields the standard error message as a final chunk
         (after a blank line when part of the answer was shown) instead of
         raising. The query is ``ainvoke``'s: its metrics, ids, deadline,
@@ -4134,9 +4180,10 @@ class _EventChannel(_EventSink):
             if self._taken is taken:
                 self._taken = None
 
-    def finish(self, event: QueryEvent) -> None:
-        """Send the last event ``event``; nothing waits for it."""
-        self._queue.put_nowait((event, None))
+    def finish(self, *events: QueryEvent) -> None:
+        """Send the last ``events``; nothing waits for them."""
+        for event in events:
+            self._queue.put_nowait((event, None))
         self._queue.put_nowait((None, None))
 
     def fail(self, error: BaseException) -> None:
@@ -4219,14 +4266,15 @@ class _Ledgered(Runnable[Any, Any]):
 
 def _streamed_to(
     answer: Runnable[Any, Any],
-    sink: _EventSink,
+    sink: _EventSink | None,
     *,
     marker: MarkerStreamFilter | None,
     declining: bool,
     first_chunk_seconds: float | None,
 ) -> Runnable[Any, Any]:
     """``answer`` run as a stream whose text goes to ``sink`` as
-    :class:`AnswerChunk` events as it arrives; returns the whole text, as
+    :class:`AnswerChunk` events as it arrives (to none without one: an
+    answer the output guardrail screens first); returns the whole text, as
     the unstreamed chain would.
 
     ``marker`` holds back the start of the answer until the ``[NO_ANSWER]``
@@ -4263,9 +4311,9 @@ def _streamed_to(
                     shown = marker.feed(text) if marker is not None else text
                     if declining and marker is not None and not marker.marked:
                         shown = ""
-                    if shown:
+                    if shown and sink is not None:
                         await sink.send(AnswerChunk(text=shown))
-            if marker is not None:
+            if marker is not None and sink is not None:
                 rest = marker.finish()
                 if rest and not (declining and not marker.marked):
                     await sink.send(AnswerChunk(text=rest))

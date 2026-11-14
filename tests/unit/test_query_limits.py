@@ -612,11 +612,18 @@ def test_auto_counts_the_query_extractions_each_candidate_reads() -> None:
         assert chain._routes_within_limits(
             candidates, {**state, "enable_query_processing": False}
         ) == ((SearchStrategy.LOCAL,), ["mix", "naive"])
-    # A question to translate first costs one call more for every one.
+    # A question to translate first costs one call more for every one: none
+    # fits whole, so auto routes as if its optional calls (the translation
+    # and extractions, skipped under the limit) were not made (W2 review
+    # S5: it refused a query that local answered with one call).
     korean = {"query": "공급업체는 무엇을 공급합니까?"}
     with usage.usage_scope(usage.UsageLimits(max_llm_calls=1)):
-        with pytest.raises(UsageLimitExceededError):
-            chain._routes_within_limits(candidates, korean)
+        routed, dropped = chain._routes_within_limits(candidates, korean)
+    assert len(routed) == 1 and sorted([*dropped, routed[0].value]) == [
+        "local",
+        "mix",
+        "naive",
+    ]
 
 
 def test_auto_refuses_naming_the_limit_and_its_value() -> None:
@@ -630,7 +637,7 @@ def test_auto_refuses_naming_the_limit_and_its_value() -> None:
         usage.start_llm_call("query", "m", estimated_input_tokens=1)
         with pytest.raises(UsageLimitExceededError) as refused:
             chain._routes_within_limits(
-                (SearchStrategy.LOCAL,), {"query": "What does Vendor supply?"}
+                (SearchStrategy.DRIFT,), {"query": "What does Vendor supply?"}
             )
     assert "limits.max_model_calls 2" in str(refused.value)
     assert (refused.value.limit, refused.value.value) == ("limits.max_model_calls", 2)
@@ -832,3 +839,18 @@ def test_an_optional_call_past_a_limit_itself_is_skipped_not_refused() -> None:
     with usage.usage_scope(limits), usage.optional_calls():
         with pytest.raises(usage.OptionalCallSkipped):
             usage.start_llm_call("query", "m", estimated_input_tokens=500)
+
+
+async def test_a_streamed_answer_counts_one_call_as_an_unstreamed_one() -> None:
+    # Regression (W2 review S4): a streamed answer counted two calls (and an
+    # estimate), so its usage and cost read twice ainvoke's.
+    from unified_kg_rag import QueryResult
+
+    model = _metered(_SlowChatModel())
+    chain = _chain(Config(), _Factory(model))
+    unstreamed = (await chain.ainvoke(_question())).metadata["usage"]
+    events = [event async for event in chain.aquery_events(_question())]
+    assert isinstance(events[-1], QueryResult)
+    streamed = events[-1].output.metadata["usage"]
+    assert unstreamed["llm_calls"] == streamed["llm_calls"] == 1
+    assert streamed["estimated_calls"] == unstreamed["estimated_calls"]

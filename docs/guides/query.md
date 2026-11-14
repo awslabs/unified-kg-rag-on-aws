@@ -189,7 +189,9 @@ is refused before its request is sent:
 - `auto` routes only to strategies whose fewest calls (`fewest_model_calls`,
   the query extractions they read, the translation the question needs, and
   the answer) fit after its router call
-  (`metadata.routing.over_limits` names those it left out), and under
+  (`metadata.routing.over_limits` names those it left out); when none does,
+  to those whose calls fit without the translation and extractions, which
+  it then skips as optional calls; and under
   either limit starts no speculative extraction.
 - The answer's context is cut to the input tokens left after the answer
   prompt's own templates and instructions and the question, less
@@ -273,9 +275,10 @@ async for event in chain.aquery_events(RAGInput(query="...")):
 ```
 
 - The chunks are a preview; `QueryResult` is authoritative. Under the output
-  guardrail nothing is streamed (the answer is shown only once screened) and
-  the sources arrive just before the result, from the screened output; a
-  decline's or an empty context's fixed reply comes only in the result. The
+  guardrail the answer model still streams (its first chunk bounded), but
+  nothing is shown until the guardrail screened the whole answer: then its
+  sources and the screened answer as one chunk, before the turn is written
+  to memory; a decline's or an empty context's fixed reply comes only in the result. The
   `[NO_ANSWER]` token (`search.abstention`) is held back and stripped.
 - A failure raises after the events sent before it; with
   `processing.ignore_errors` the result carries the error answer.

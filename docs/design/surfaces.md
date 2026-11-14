@@ -369,9 +369,10 @@ the reader and waits until the reader asks for the next, so the query never
 runs ahead of it: a reader that closes the iterator cancels the query
 before it writes memory, and the query then ends as a closed stream
 (`_ReaderStopped`: its span without error, its metrics without a
-failure), not as a cancelled query. The answer step streams only with a sink and without the output
-guardrail (nothing may be shown before screening; the sources then come
-from the screened output, just before the result); a `[NO_ANSWER]` token
+failure), not as a cancelled query. The answer step streams whenever there is a sink; under the output
+guardrail it sends nothing (nothing may be shown before screening), and
+`_ainvoke` sends the screened sources and answer (one chunk) before it
+writes memory, so no reader stop falls after the turn is written; a `[NO_ANSWER]` token
 (`search.abstention`) is held back by `MarkerStreamFilter` and stripped, so
 a decline is never shown half-written. The first chunk must come within
 `search.model_timeout_seconds`: the query's deadline moves up for that wait

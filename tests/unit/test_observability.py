@@ -2238,3 +2238,40 @@ async def test_an_mcp_call_past_its_deadline_in_the_slot_queue_is_a_counted_quer
     ids = [query_failure_ids(e) for e in errors]
     assert all(len(i.get("query_id", "")) == 12 and i.get("trace_id") for i in ids)
     assert len({i["query_id"] for i in ids}) == 3
+
+
+class _BlockingInputGuard:
+    """An input guardrail that blocks every question."""
+
+    async def acheck(self, text: str, source: Any, **kwargs: Any) -> Any:
+        from unified_kg_rag.ports.guardrail import GuardAction, GuardVerdict
+
+        return GuardVerdict(action=GuardAction.BLOCKED, text="Blocked.")
+
+
+@pytest.mark.parametrize("streamed", [False, True], ids=["ainvoke", "astream"])
+async def test_a_blocked_query_is_counted_under_the_strategy_it_asked_for(
+    streamed: bool,
+) -> None:
+    # Regression (W2 review S3): a query the input guardrail blocked was
+    # published as Strategy=invalid: its output's strategy is "blocked",
+    # which no strategy is. It ran none: the requested one names it.
+    from unified_kg_rag.shared import metrics
+
+    chain = _simple_chain()
+    chain.guard = _BlockingInputGuard()  # type: ignore[assignment]
+    chain._screen_inputs = True
+    sink = _RecordingSink()
+    chain.providers.metrics_sink = sink
+    try:
+        if streamed:
+            assert (
+                "".join([c async for c in chain.astream(_SIMPLE_QUERY)]) == "Blocked."
+            )
+        else:
+            assert (await chain.ainvoke(_SIMPLE_QUERY)).answer == "Blocked."
+    finally:
+        await chain.aclose()
+    ((_, values, properties),) = sink.emitted
+    assert properties["Strategy"] == "simple"
+    assert values[metrics.QUERY_FAILED_METRIC] == 0.0

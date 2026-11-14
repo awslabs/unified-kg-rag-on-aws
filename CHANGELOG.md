@@ -30,11 +30,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   callback now raises its refusal (LangChain swallowed a handler's error) and logs any other error of its own. `global`,
   `drift` and `iterative` start only the calls that fit beside what the answer will read (DRIFT's actions sharing what
   is left) and list the rest in `metadata.degraded` (reason `query_limit`), `auto` routes only to strategies whose
-  fewest calls fit and makes no router call an input-token limit cannot take (`metadata.routing.over_limits`) and under
-  either limit starts no speculative extraction, the answer's context is cut to the tokens left after the answer prompt
-  and the question (the fan-out keeps that prompt's tokens too), an optional call (a query translation or extraction,
-  the follow-up rewrite, which then searches the follow-up as written, the structured planner, an output repair:
-  `usage.optional_calls`) never takes the call kept for the answer, nor under an input-token limit the answer's
+  fewest calls fit (when none fits with its query translation and extractions, to those that fit without them, which
+  it then skips) and makes no router call an input-token limit cannot take (`metadata.routing.over_limits`) and under
+  either limit starts no speculative extraction, the answer's context is cut to the tokens left after the answer
+  prompt and the question (the fan-out keeps that prompt's tokens too), an optional call (a query translation or
+  extraction, the follow-up rewrite, which then searches the follow-up as written, the structured planner, an output
+  repair: `usage.optional_calls`) never takes the call kept for the answer, nor under an input-token limit the answer's
   prompt, question and least context, its step degraded instead, an answer the limits left no context abstains with
   `abstention_reason: query_limit`, and a query whose answer does not fit fails with `UsageLimitExceededError` (error
   class `limit_exceeded`, a caller's error: not counted in `query_failed`, `refused` on the console's dashboard, its
@@ -45,7 +46,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `astream_events` is left as LangChain defines it. `astream` / `stream` yield the text of these events, so a
   streamed answer now reads its citations' lineage, records its answer on the query span and is traced in the query's
   trace, as an unstreamed one is. The query waits for its reader at each event: a reader that closes the iterator
-  ends it before it writes memory, counted as no failure. The console's Ask page reads the events.
+  ends it before it writes memory, counted as no failure. Under the output guardrail the answer model still streams
+  (its first chunk bounded by `search.model_timeout_seconds`) and nothing is shown until the whole answer is
+  screened: then its sources and the screened answer, one chunk, before the turn is written. The console's Ask page
+  reads the events.
 - Rebuild due: `run-describe` (`rebuild`, `Rebuild due (...)` lines), the console's Ingest page
   (`/api/namespace/methodologies`) and the MCP `kg_describe_schema` tool say why a namespace is due for a rebuild
   under the config, from one owner (`rebuild_due`): community counters past `indexing.community_compaction`, reports
@@ -93,6 +97,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 Bugs present in 0.3.0.
 
+- A query the input guardrail blocked was counted in the query metrics under `Strategy=invalid` (its output's
+  strategy is `blocked`): it is counted under the strategy it asked for.
+- A streamed answer (`astream`, `ainvoke(on_answer_chunk=...)`, the console) counted its model call twice in
+  `metadata["usage"]`, one of them an estimate: LangChain starts the call in a task that ends before the stream
+  does, and the usage callback let go of a call when its task ended. It lets go only of a cancelled task's call.
 - An OpenSearch bulk write whose last retry round fails whole names the error by its type and status
   (`TransportError rejected, HTTP 429`), as each earlier round's warning does, in its ERROR line and the store error
   the indexing stage shows: the server's reason, which may quote a rejected document, is logged at DEBUG.
