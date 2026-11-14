@@ -21,6 +21,11 @@ Bugs present in 0.3.0.
   Connection refused`) when that message does not name it; it named the type alone.
 ### Added
 
+- One owner of model prices: `models.prices` (`domain/pricing.py`) prices every USD figure, the `run-eval` comparison,
+  the console's answers and dashboard alike. A price keyed by the bare model id, or by one inference profile's id,
+  prices the model under every profile when no other entry disagrees. `evaluation.prices` is deprecated: it loads
+  into `models.prices` with a WARNING (an entry both name keeps the `models.prices` price), through one rule for
+  deprecated keys (`DEPRECATED_KEYS`, file and `UKR__` variables alike, listed in the configuration reference).
 - Query limits beside the deadline: `search.query_max_model_calls` and `search.query_max_input_tokens` (off by default)
   bound one query's model calls and their input tokens, and `RAGInput.limits` (`QueryLimits`, exported; the MCP tools'
   `limits`) lowers them and the deadline for one query, never raising them. A call past a limit is refused before it is
@@ -46,11 +51,6 @@ Bugs present in 0.3.0.
   were left out of the default on (`ppr`: within the noise of `local` at a third of its cost, weaker on long chains;
   `tree`: +8 points of `answer_contains` over `naive`, below `mix` and `local`). It refused them, which made routing
   to them a code change rather than the operator's call.
-- One owner of model prices: `models.prices` (`domain/pricing.py`) prices every USD figure, the `run-eval` comparison,
-  the console's answers and dashboard alike. A price keyed by the bare model id, or by one inference profile's id,
-  prices the model under every profile when no other entry disagrees. `evaluation.prices` is deprecated: it loads
-  into `models.prices` with a WARNING (an entry both name keeps the `models.prices` price), through one rule for
-  deprecated keys (`DEPRECATED_KEYS`, file and `UKR__` variables alike, listed in the configuration reference).
 
 ## [0.3.0] - 2026-11-14
 
