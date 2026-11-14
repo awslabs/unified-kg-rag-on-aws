@@ -274,11 +274,16 @@ def test_the_answer_context_is_cut_to_the_tokens_left() -> None:
     chain = GraphRAGChain.__new__(GraphRAGChain)
     chain.config = Config()
     assert chain._context_budget({"max_tokens": 500}) == 500
-    with usage.usage_scope(usage.UsageLimits(max_input_tokens=1000)):
+    from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
+    from unified_kg_rag.adapters.retrieval.base import answer_prompt_tokens
+
+    prompt = answer_prompt_tokens(chain.config) + estimate_token_count("q")
+    with usage.usage_scope(usage.UsageLimits(max_input_tokens=prompt + 1000)):
         usage.start_llm_call("query", "m", estimated_input_tokens=200)
-        # 800 left, less the 10% context-window headroom.
-        assert chain._context_budget({"max_tokens": None}) == 720
-        assert chain._context_budget({"max_tokens": 500}) == 500
+        # 800 left after the answer prompt, less the 10% context-window
+        # headroom.
+        assert chain._context_budget({"max_tokens": None, "query": "q"}) == 720
+        assert chain._context_budget({"max_tokens": 500, "query": "q"}) == 500
 
 
 # --- auto routes only to strategies that fit -----------------------------------
@@ -444,3 +449,83 @@ def test_a_cache_probed_call_counts_only_once_the_cache_missed() -> None:
         sent.finish(input_tokens=5, output_tokens=1)
     assert (meter.total.llm_calls, meter.total.cache_hits) == (1, 3)
     assert meter.total.failed_calls == 0
+
+
+class _ManyResults:
+    """A retriever of many long passages: an answer context far above a
+    small input-token limit."""
+
+    async def aindex_limits(self, prefix: str, suffix: str | None) -> Any:
+        from unified_kg_rag.domain.models import IndexLimits
+
+        return IndexLimits()
+
+    async def aretrieve(self, query: SearchQuery) -> list[Any]:
+        from unified_kg_rag.domain.models import RetrievalResult, SectionType
+
+        text = "Vendor supplies Buyer with parts under the agreement. " * 40
+        return [
+            RetrievalResult(
+                content=f"{i} {text}",
+                score=1 - i / 100,
+                source=f"doc{i}.txt",
+                retriever_type=SectionType.TEXT,
+                metadata={"id": f"doc-{i}", "text_unit_ids": []},
+            )
+            for i in range(40)
+        ]
+
+
+@pytest.mark.parametrize("limit", [1500, 3000, 6000])
+async def test_an_input_token_limit_cuts_the_context_so_the_answer_fits(
+    limit: int,
+) -> None:
+    # Regression (W1 review L2): the context was cut to the tokens left less
+    # the headroom, but the answer prompt's own templates and question were
+    # not subtracted, so under any limit below about 8k tokens the answer
+    # call was refused exactly where the cut should have made it fit.
+    from unified_kg_rag.adapters.local.token_counter import (
+        local_token_counter_factory,
+    )
+    from unified_kg_rag.adapters.providers import Providers
+    from unified_kg_rag.domain.models import RetrieverRole
+
+    config = Config()
+    model = _metered(_SlowChatModel())
+    retriever = _ManyResults()
+    providers = Providers(
+        config,
+        llm_factory=_Factory(model),
+        token_counter_factory=local_token_counter_factory(config),
+        retriever_builders={RetrieverRole.DOCUMENT: lambda: retriever},
+    )
+    chain = GraphRAGChain(config=config, providers=providers)
+    out = await chain.ainvoke(
+        RAGInput(
+            query="What does Vendor supply?",
+            search_strategy=SearchStrategy.SIMPLE,
+            enable_query_processing=False,
+            limits=QueryLimits(max_input_tokens=limit),
+        )
+    )
+    assert out.answer == _ANSWER, out.metadata.get("error")
+    assert out.metadata["usage"]["input_tokens"] <= limit
+
+
+def test_a_fan_out_keeps_the_answer_prompts_tokens_for_the_answer() -> None:
+    # Regression (W1 review L2): global's and DRIFT's token reserves counted
+    # the answer's context only, so a fan-out could leave the answer no room
+    # for its own prompt.
+    from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
+    from unified_kg_rag.adapters.retrieval.base import answer_prompt_tokens
+    from unified_kg_rag.domain.prompts import GlobalMapPrompt
+
+    strat = _global_strategy(map_batch_size=1, map_outputs=[])
+    resolved = GlobalMapPrompt.resolve(custom_prompts=strat.config.custom_prompts)
+    call = 100 + estimate_token_count(
+        resolved.system_prompt_template + resolved.human_prompt_template
+    )
+    answer = answer_prompt_tokens(strat.config)
+    for limit, fits in ((call + answer, 1), (call + answer - 1, 0)):
+        with usage.usage_scope(usage.UsageLimits(max_input_tokens=limit)):
+            assert strat._calls_within_limits(GlobalMapPrompt, [100]) == fits

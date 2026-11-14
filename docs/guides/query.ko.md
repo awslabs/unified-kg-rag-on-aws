@@ -168,8 +168,9 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
 - `auto`는 라우터 호출 뒤에 남은 호출 수 안에 최소 호출 수(`fewest_model_calls`와 답변)가
   들어가는 전략으로만 분기하고, 제외한 전략은 `metadata.routing.over_limits`에 남습니다.
   두 한도 가운데 하나라도 있으면 미리 시작하는 추출은 하지 않습니다.
-- 답변 컨텍스트는 남은 입력 토큰에서 프롬프트 몫인
-  `search.token_manager.context_window_headroom_ratio`를 뺀 만큼으로 줄입니다.
+- 답변 컨텍스트는 남은 입력 토큰에서 답변 프롬프트 자체(템플릿과 지시문)와 질문을 빼고, 다시
+  `search.token_manager.context_window_headroom_ratio`만큼 뺀 크기로 줄입니다. 호출을 펼치는
+  전략도 답변 프롬프트 몫의 토큰을 답변용으로 남깁니다.
 - 답변 호출이 들어가지 못하는 질의는 `UsageLimitExceededError`(`unified_kg_rag`에서 내보냄,
   오류 분류 `limit_exceeded`, 종료 코드 `1`. 호출하는 쪽의 오류로 보고 `query_failed` 지표에는
   세지 않음)로 실패하고, `processing.ignore_errors`를 켜면

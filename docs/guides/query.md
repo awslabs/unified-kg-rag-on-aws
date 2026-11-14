@@ -190,9 +190,10 @@ is refused before its request is sent:
   and the answer) fit after its router call
   (`metadata.routing.over_limits` names those it left out), and under
   either limit starts no speculative extraction.
-- The answer's context is cut to the input tokens left, less
-  `search.token_manager.context_window_headroom_ratio` of them for the
-  prompt.
+- The answer's context is cut to the input tokens left after the answer
+  prompt's own templates and instructions and the question, less
+  `search.token_manager.context_window_headroom_ratio` of them; the fan-out
+  strategies keep that prompt's tokens for the answer too.
 - A query whose answer call does not fit fails with
   `UsageLimitExceededError` (exported from `unified_kg_rag`; error class
   `limit_exceeded`, exit code `1`; a caller's error, not counted in the

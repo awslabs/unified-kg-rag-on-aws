@@ -66,7 +66,18 @@ from unified_kg_rag.domain.models import (
     SectionType,
 )
 from unified_kg_rag.domain.models.config import language_name
-from unified_kg_rag.domain.prompts import BasePrompt
+from unified_kg_rag.domain.prompts import (
+    AnswerGenerationPrompt,
+    BasePrompt,
+    ComprehensiveAnswerPrompt,
+)
+from unified_kg_rag.domain.prompts.retrieval import (
+    ABSTENTION_INSTRUCTIONS,
+    CITATION_INSTRUCTIONS,
+    DECLINE_INSTRUCTIONS,
+    HEDGE_INSTRUCTIONS,
+    QUERY_RESULT_INSTRUCTIONS,
+)
 from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.degradation import (
     DegradationLedger,
@@ -652,6 +663,59 @@ async def fetch_by_ids(
     return list(zip(batches, parts, strict=True))
 
 
+def answer_prompt_class(
+    config: Config, strategy: SearchStrategy | None
+) -> type[BasePrompt]:
+    """The answer prompt of ``strategy`` (``search.answer_prompt_style``):
+    the concise default, or the comprehensive one."""
+    style = (
+        config.search.answer_prompt_style.get(strategy)
+        if strategy is not None
+        else None
+    )
+    return (
+        ComprehensiveAnswerPrompt
+        if style == "comprehensive"
+        else AnswerGenerationPrompt
+    )
+
+
+# Every instruction the chain may append to the answer's system prompt
+# (GraphRAGChain._answer_instructions): at most these.
+_ANSWER_INSTRUCTIONS = "".join(
+    (
+        CITATION_INSTRUCTIONS,
+        QUERY_RESULT_INSTRUCTIONS,
+        ABSTENTION_INSTRUCTIONS,
+        HEDGE_INSTRUCTIONS,
+        DECLINE_INSTRUCTIONS,
+    )
+)
+
+
+def answer_prompt_tokens(config: Config, strategy: SearchStrategy | None = None) -> int:
+    """What the answer call reads besides its context and question, at the
+    local estimate the usage meter counts a call's start at: its prompt's
+    templates (``strategy``'s style; without one the larger of the two) and
+    every instruction the chain may append. What an input-token limit keeps
+    for the answer beside its context (``search.query_max_input_tokens``)."""
+    classes = (
+        [answer_prompt_class(config, strategy)]
+        if strategy is not None
+        else [AnswerGenerationPrompt, ComprehensiveAnswerPrompt]
+    )
+    templates = 0
+    for prompt in classes:
+        resolved = prompt.resolve(custom_prompts=config.custom_prompts)
+        templates = max(
+            templates,
+            estimate_token_count(
+                resolved.system_prompt_template + resolved.human_prompt_template
+            ),
+        )
+    return templates + estimate_token_count(_ANSWER_INSTRUCTIONS)
+
+
 class BaseSearchStrategy(ABC):
     """A search algorithm over role-keyed retrievers.
 
@@ -728,9 +792,10 @@ class BaseSearchStrategy(ABC):
         query's limits (``search.query_max_model_calls``,
         ``search.query_max_input_tokens``) leave room for, after
         ``reserve_calls`` and ``reserve_tokens`` kept for what must follow
-        (the answer's call by default). Each call is estimated as the usage
-        meter counts it at its start: its prompt's templates and its input
-        by the local estimate. All of them without a limit."""
+        (the answer's call by default; with it, the answer prompt's own
+        tokens too, ``answer_prompt_tokens``). Each call is estimated as the
+        usage meter counts it at its start: its prompt's templates and its
+        input by the local estimate. All of them without a limit."""
         left = usage.remaining()
         if left.llm_calls is None and left.input_tokens is None:
             return len(inputs)
@@ -745,7 +810,8 @@ class BaseSearchStrategy(ABC):
                 for item in inputs
             ],
             reserve_calls=reserve_calls,
-            reserve_tokens=reserve_tokens,
+            reserve_tokens=reserve_tokens
+            + (answer_prompt_tokens(self.config) if reserve_calls else 0),
         )
 
     @staticmethod

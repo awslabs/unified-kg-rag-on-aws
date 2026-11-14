@@ -69,6 +69,8 @@ from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
+    answer_prompt_class,
+    answer_prompt_tokens,
     current_ledger,
     degradation_scope,
     query_scope,
@@ -148,9 +150,7 @@ from unified_kg_rag.domain.models import (
     validate_safe_name,
 )
 from unified_kg_rag.domain.prompts import (
-    AnswerGenerationPrompt,
     BasePrompt,
-    ComprehensiveAnswerPrompt,
     QueryRewritePrompt,
     StrategySelectionPrompt,
 )
@@ -1820,13 +1820,17 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
 
     def _context_budget(self, state: dict[str, Any]) -> int | None:
         """The answer's context budget: the query's ``max_tokens``, cut to
-        what its input-token limit leaves less the headroom the context
-        window keeps for the prompt (``context_window_headroom_ratio``);
-        ``None`` (the token manager's own) without either."""
+        what its input-token limit leaves after the answer call's own prompt
+        and question (``answer_prompt_tokens``), less the headroom the
+        context window keeps (``context_window_headroom_ratio``); ``None``
+        (the token manager's own) without either."""
         budget: int | None = state.get("max_tokens")
         left = usage.remaining().input_tokens
         if left is None:
             return budget
+        left -= answer_prompt_tokens(
+            self.config, state.get("resolved_strategy")
+        ) + estimate_token_count(self._question(state))
         headroom = self.config.search.token_manager.context_window_headroom_ratio
         room = max(1, int(left * (1 - headroom)))
         return room if budget is None else min(budget, room)
@@ -2022,16 +2026,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         return state
 
     def _answer_prompt(self, strategy: SearchStrategy | None) -> type[BasePrompt]:
-        """The answer prompt of ``strategy`` (``search.answer_prompt_style``):
-        the concise default, or the comprehensive one."""
-        style = (
-            self.config.search.answer_prompt_style.get(strategy)
-            if strategy is not None
-            else None
-        )
-        if style == "comprehensive":
-            return ComprehensiveAnswerPrompt
-        return AnswerGenerationPrompt
+        """The answer prompt of ``strategy`` (``answer_prompt_class``)."""
+        return answer_prompt_class(self.config, strategy)
 
     def _grounding_context(self, state: dict[str, Any]) -> GroundingContext | None:
         """The question and context the answer model was given, or ``None``

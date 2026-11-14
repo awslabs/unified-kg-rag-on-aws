@@ -209,9 +209,10 @@ class SearchConfig(ConfigSection):
             "call counted at its start at the local estimate of its prompt "
             "(then at what the model reports). Enforced as "
             "query_max_model_calls (auto starts no speculative extraction "
-            "under it either); the answer's context is also cut to "
-            "what is left, less search.token_manager."
-            "context_window_headroom_ratio of it for the prompt. "
+            "under it either); the fan-out keeps the answer prompt's own "
+            "tokens for the answer, and the answer's context is cut to what "
+            "is left after that prompt and the question, less "
+            "search.token_manager.context_window_headroom_ratio of it. "
             "RAGInput.limits.max_input_tokens lowers it for one query. null "
             "(default): no cap."
         ),
