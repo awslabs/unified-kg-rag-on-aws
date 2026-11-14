@@ -217,7 +217,11 @@ handlers as record attributes, a trailing `_` added to one named like a
 package owns logging: it replaces the structlog configuration, sets the root
 logger's level to `logging.level` and the `logging.library_levels` loggers'
 levels, and adds a stdout handler (plus the dated file with
-`logging.log_to_file`) to the root logger. Handlers already on the root
+`logging.log_to_file`) to the root logger, and replaces
+`warnings.showwarning`, so a Python warning is logged as a WARNING record
+by its category and code location instead of printed (under pytest, a test
+that calls it logs its later warnings instead of listing them in the
+warnings summary). Handlers already on the root
 logger stay: they receive every record too, so the console shows each line
 twice when one of them writes there, and for the package's records they get
 the plain message and the exception, not the structured fields. A repeated

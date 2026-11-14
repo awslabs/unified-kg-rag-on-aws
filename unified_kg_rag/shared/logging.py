@@ -325,6 +325,10 @@ class LoggingSetup:
             handler.addFilter(library_filter)
             root_logger.addHandler(handler)
         # A library's warnings.warn reaches these handlers, not bare stderr.
+        # Process-wide, as the handlers are: under pytest, a test that calls
+        # a CLI's main() logs its later warnings instead of listing them in
+        # the warnings summary (``-W error`` and ``pytest.warns`` still see
+        # them; pytest restores the hook after the test).
         warnings.showwarning = _log_warning
 
         # Chatty dependencies (e.g. langchain_aws logs INFO per model call and a
