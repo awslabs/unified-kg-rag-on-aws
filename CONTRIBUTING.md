@@ -362,10 +362,14 @@ The version lives in one place, `__version__` in `unified_kg_rag/__init__.py`; `
    way).
 2. In `CHANGELOG.md`, rename `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`, add a new empty `## [Unreleased]` above
    it, and update the link references at the bottom: `[Unreleased]` compares `vX.Y.Z...HEAD`, and `[X.Y.Z]` compares
-   the previous tag with `vX.Y.Z` (the first tagged release links to `releases/tag/vX.Y.Z` instead).
+   the previous tag with `vX.Y.Z` (the first tagged release links to `releases/tag/vX.Y.Z` instead). No test needs
+   editing: the changelog tests (`tests/unit/test_changelog_lint.py`, `tests/unit/test_changelog_section.py`) read
+   `[Unreleased]` while it has entries and the newest version's section once it is empty, so they check the section
+   the tag publishes.
 3. Optionally, run the `release` workflow by hand (Actions, Run workflow) on the branch: it is a dry run that builds and
-   checks the artifacts and publishes nothing. Its notes fall back to `[Unreleased]`, a placeholder line when that
-   section is empty (right after a release).
+   checks the artifacts and publishes nothing. On the release branch its notes are the `[X.Y.Z]` section; on a
+   development version they fall back to `[Unreleased]`, a placeholder line when that section is empty (right after a
+   release).
 4. Land the pull request, then tag the merge commit on `main` and push the tag:
 
    ```bash
@@ -384,7 +388,10 @@ The version lives in one place, `__version__` in `unified_kg_rag/__init__.py`; `
    and *Fixed*. A release body resolves no relative link, so `--link-base` points the section's repo-relative links at
    the tagged tree. A version with an `a`, `b`, `rc` or `.dev` segment is marked as a pre-release.
 5. In a follow-up pull request, set `__version__` to the next development version (`X.Y.(Z+1).dev0` or
-   `X.(Y+1).0.dev0`).
+   `X.(Y+1).0.dev0`), and move the changelog lint's comparison base to the release: in
+   `tests/unit/test_changelog_lint.py` set `RELEASE` to `X.Y.Z` and `RELEASE_COMMIT` to the tagged commit, write that
+   commit's config keys (`config_keys_at`, one per line, sorted) to a new file in `tests/fixtures/` that
+   `RELEASE_KEYS` names, and empty `NEW_KEYS_IN_CHANGES`: the next *Changed* and *Fixed* entries compare with `X.Y.Z`.
 
 A failed release run creates no release; fix the cause on `main` and release a new version rather than moving a pushed
 tag.
