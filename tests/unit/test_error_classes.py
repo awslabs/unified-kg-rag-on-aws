@@ -218,10 +218,13 @@ def test_the_message_names_a_server_without_the_credentials_of_its_url() -> None
     # the base_url's userinfo and query.
     config = Config(backend="local", models={"default": "chat-m"})
     config.providers.llm.kind = "openai_compatible"
-    config.providers.llm.base_url = "http://alice:S3cretTok@127.0.0.1:9/v1?api-key=QQQ"
+    # A fake credential the test checks gets stripped.
+    url = "http://alice:secret@127.0.0.1:9/v1?api-key=QQQ"  # gitleaks:allow
+    config.providers.llm.base_url = url
     message = str(model_unreachable_error(httpx.ConnectError("refused"), config))
     assert "providers.llm (openai_compatible at http://127.0.0.1:9/v1)" in message
-    assert "S3cretTok" not in message and "QQQ" not in message
+    assert "alice" not in message and "secret" not in message
+    assert "QQQ" not in message
 
 
 def test_a_bedrock_server_is_named_by_its_endpoint_not_a_base_url() -> None:

@@ -632,7 +632,7 @@ def test_jsonl_refuses_a_missing_path_an_empty_directory_and_other_urls(
     with pytest.raises(SeedGraphError, match="holds no .jsonl file"):
         _load(tmp_path / "empty")
     with pytest.raises(SeedGraphError, match="is a URL; kind 'jsonl' reads"):
-        _load("https://user:pw@example.org/seed.jsonl")  # gitleaks:allow
+        _load("https://example.org/seed.jsonl")
     with pytest.raises(SeedGraphError, match="does not name an S3 bucket"):
         _load("s3://Not_A_Bucket/seed.jsonl")
 
