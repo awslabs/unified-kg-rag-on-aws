@@ -37,7 +37,8 @@ Bugs present in 0.3.0.
   kept in the LLM response cache, so a re-run with the same pipeline id resumes and pays only for what was not answered.
   `run-ingestion --estimate` parses and chunks the corpus without a model call and prints each stage's calls, tokens and
   USD for the stages the text units decide (extraction, gleaning, claims, translation, intelligent chunking), naming the
-  graph-dependent ones it cannot count.
+  graph-dependent ones it cannot count. The console's Ingest page offers to resume a run stopped at its budget (its
+  options without the forced recompute).
 
 ### Changed
 

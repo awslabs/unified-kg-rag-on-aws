@@ -181,7 +181,10 @@ uv run --no-dev --extra console --extra local python console/demo/demo.py --mode
 꺼진 상태에서 코퍼스가 바뀜, 재설정, 대량 삭제)에서 멈추면 제목에서 어떤 질문인지 알려 주고,
 그 질문에만 답해 다시 시작하도록 제안합니다(`--confirm-integrity`,
 `--confirm-reset`, `--confirm-deletions`). 추가 옵션에서 미리 체크해 둘 수도
-있습니다. 실행
+있습니다. 예산 한도(`processing.max_run_model_calls`, `processing.max_run_usd`.
+오류 분류 `limit_exceeded`)에서 멈춘 실행은 끝난 단계와 받은 응답을 보존하고,
+같은 크기의 새 예산으로 이어서 실행하도록 제안합니다(같은 옵션으로, 강제 재계산만
+뺍니다). 실행
 단계는 끝나는 대로(파이프라인 자체 메타데이터에서 읽어) 정류장 열로
 나타나며, 시간, 출력, 모델 호출, 실패한 단계의 오류와 실패한 파일, 로그의
 끝부분을 보여 줍니다. 끝난 실행은 남긴 WARNING 수와 마지막 20개를 보여 주고(커뮤니티 변화나

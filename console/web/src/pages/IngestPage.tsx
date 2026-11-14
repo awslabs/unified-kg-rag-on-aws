@@ -66,14 +66,16 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
   const active = ingestJobs.find((j) => j.status === "running" || j.status === "stopping");
   const shownJob = jobId ?? active?.id ?? null;
 
-  async function start(again?: { job: JobRecord; flag: string }) {
+  async function start(again?: { job: JobRecord; flag?: string }) {
     if (!corpus && !again) return;
     setError(null);
     // Answering a run's question (or its warnings' advice to rebuild)
-    // starts it again as it was, with that one flag added.
+    // starts it again as it was, with that one flag added. Resuming a run
+    // stopped at its budget (no flag) starts it as it was but without
+    // force_rebuild, which would recompute the stages it finished.
     const params = again?.job.params as Record<string, unknown> | undefined;
     const body = params
-      ? { ...params, [again?.flag as string]: true }
+      ? { ...params, ...(again?.flag ? { [again.flag]: true } : { force_rebuild: false }) }
       : {
           corpus,
           methodologies: chosen,
@@ -316,6 +318,7 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
                         </button>
                       </Notice>
                     ) : null}
+                    <BudgetNotice job={job} disabled={!!active} onResume={() => void start({ job })} />
                     {job.status === "succeeded" && job.warnings?.reset_advised && !job.params.reset ? (
                       <Notice tone="warn" title={t("ingest.resetAdvisedTitle")}>
                         <p style={{ margin: "0 0 8px" }}>{t("ingest.resetAdvised")}</p>
@@ -372,6 +375,23 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
         </div>
       </div>
     </>
+  );
+}
+
+/** A run stopped at its budget (processing.max_run_model_calls or
+ * processing.max_run_usd: error class limit_exceeded) kept its finished
+ * stages and answered calls: running it again (the same corpus and
+ * namespace, so the same pipeline id) resumes it. */
+export function BudgetNotice({ job, disabled, onResume }: { job: Pick<JobRecord, "status" | "result">; disabled: boolean; onResume: () => void }) {
+  const { t } = useI18n();
+  if (job.status !== "failed" || job.result?.error_class !== "limit_exceeded") return null;
+  return (
+    <Notice tone="warn" title={t("ingest.budget.title")}>
+      <p style={{ margin: "0 0 8px" }}>{t("ingest.budget.help")}</p>
+      <button className="button button-primary button-small" disabled={disabled} onClick={onResume}>
+        {t("ingest.budget.resume")}
+      </button>
+    </Notice>
   );
 }
 

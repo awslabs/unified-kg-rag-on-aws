@@ -10,7 +10,8 @@ import { EvidenceTrace } from "./EvidenceTrace";
 import { stageName } from "./JobPanel";
 import { formatBytes } from "./ui";
 import { fitting, NAV_FOLDED } from "../lib/useCompactNav";
-import { questionTitle } from "../pages/IngestPage";
+import { BudgetNotice, questionTitle } from "../pages/IngestPage";
+import type { JobRecord } from "../lib/types";
 
 describe("small copy", () => {
   it("names every stage in every locale, an unknown one by its id", () => {
@@ -34,6 +35,36 @@ describe("small copy", () => {
       for (const [i, text] of shown.entries()) expect(text, locale).not.toBe(titles[i]);
     }
     expect(translate("en", titles[0] ?? "")).toBe("Loading settings changed since its last run");
+  });
+
+  it("offers to resume a run stopped at its budget, in the page's language", () => {
+    // A run stopped at processing.max_run_* exits 1 (failed) with the
+    // limit_exceeded class: its finished stages are kept, so running it
+    // again resumes it.
+    const job = { status: "failed", result: { error_class: "limit_exceeded" } } as unknown as JobRecord;
+    let resumed = 0;
+    const { rerender } = render(
+      <I18nProvider initial="ko">
+        <BudgetNotice job={job} disabled={false} onResume={() => (resumed += 1)} />
+      </I18nProvider>,
+    );
+    expect(screen.getByText(translate("ko", "ingest.budget.title"))).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: translate("ko", "ingest.budget.resume") }));
+    expect(resumed).toBe(1);
+    for (const locale of ["en", "ko", "ja", "zh", "de", "es", "fr", "it", "pt", "ru"] as const) {
+      for (const key of ["ingest.budget.title", "ingest.budget.help", "ingest.budget.resume"]) {
+        expect(translate(locale, key), `${locale} ${key}`).not.toBe(locale === "en" ? key : translate("en", key));
+      }
+    }
+    // Another failure, or a run that ended otherwise, offers nothing.
+    for (const other of [{ status: "failed", result: { error_class: "failure" } }, { status: "succeeded", result: { error_class: "limit_exceeded" } }]) {
+      rerender(
+        <I18nProvider initial="ko">
+          <BudgetNotice job={other as unknown as JobRecord} disabled={false} onResume={() => undefined} />
+        </I18nProvider>,
+      );
+      expect(screen.queryByText(translate("ko", "ingest.budget.title"))).not.toBeInTheDocument();
+    }
   });
 
   it("puts a byte count in the plural", () => {
