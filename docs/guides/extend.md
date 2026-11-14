@@ -461,6 +461,12 @@ class MyLLMFactory:                       # structurally an LLMFactoryPort
 chain = GraphRAGChain(config=cfg, model_factory=MyLLMFactory())
 ```
 
+Attach `UsageCallbackHandler(model_id, role=...)`
+(`adapters/observability/usage_callback.py`) to the models it returns, first
+(`adapters.llm.langchain.with_callback(..., first=True)`), as the package's
+factories do: without it their calls count in no usage record, query limit
+or run budget, and the first chain built on one logs a WARNING saying so.
+
 A factory must keep the `**kwargs` catch-all and ignore keys it does not
 understand: callers pass framework arguments such as
 `model_purpose=ModelPurpose.INGESTION` (the per-path policy: response cache,

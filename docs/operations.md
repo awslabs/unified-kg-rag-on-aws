@@ -1470,9 +1470,12 @@ read, the deadline) too: a query that ran past
 `search.query_timeout_seconds` records about the deadline, so timeouts raise
 the p90 rather than vanishing from it. A caller's error (`invalid_argument`,
 `invalid_filter`, `index_not_found`, `not_indexed`: a typo'd namespace, an
-empty question) is not counted in `query_failed`, so a client's mistake
-does not page; every failure names its class in the record's `error_class`
-property. A cancelled query (an MCP client that disconnects, a task
+empty question; `limit_exceeded`: a query that needs more model calls or
+input tokens than its limits allow) is not counted in `query_failed`, so a
+client's mistake does not page; every failure names its class in the
+record's `error_class` property. A server limit set too low
+(`search.query_max_*`) therefore raises no alarm: watch the records whose
+`error_class` is `limit_exceeded`. A cancelled query (an MCP client that disconnects, a task
 cancelled by its host) records nothing. `query_throttled_requests` counts
 the requests Bedrock throttled for the query, which tells a query slowed by
 throttling apart. They go under `unified_kg_rag/query` with the task's

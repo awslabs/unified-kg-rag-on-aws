@@ -616,3 +616,43 @@ def test_an_output_repair_never_takes_the_call_kept_for_the_answer() -> None:
         with pytest.raises(Exception, match="OutputFixingParser"):
             parser.parse("no json here")
         assert built == ["fixer"]
+
+
+def test_a_model_without_the_usage_callback_is_warned_of_once(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Regression (W1 review L9): a custom LLMFactoryPort whose models carry
+    # no UsageCallbackHandler made every query limit and run budget count
+    # nothing, without a word.
+    from langchain_core.language_models.fake_chat_models import FakeListChatModel
+
+    from tests.fixtures.fakes.chat_models import fake_model_info
+    from unified_kg_rag.adapters.llm.chain_factory import setup_chain
+    from unified_kg_rag.domain.prompts import AnswerGenerationPrompt
+
+    class _Bare:
+        def get_model(self, model_id: str, **_: Any) -> Any:
+            return FakeListChatModel(responses=["a"])
+
+        def get_model_info(self, model_id: str) -> Any:
+            return fake_model_info(model_id)
+
+    class _Metered(_Bare):
+        def get_model(self, model_id: str, **_: Any) -> Any:
+            return FakeListChatModel(
+                responses=["a"],
+                callbacks=[UsageCallbackHandler(model_id, role="query")],
+            )
+
+    from langchain_core.output_parsers import StrOutputParser
+
+    with caplog.at_level(logging.WARNING):
+        for _ in range(2):
+            setup_chain(_Bare(), "m", AnswerGenerationPrompt, StrOutputParser())  # type: ignore[arg-type]
+        setup_chain(_Metered(), "m", AnswerGenerationPrompt, StrOutputParser())  # type: ignore[arg-type]
+    warned = [
+        r.getMessage()
+        for r in caplog.records
+        if "UsageCallbackHandler" in r.getMessage()
+    ]
+    assert len(warned) == 1 and "_Bare" in warned[0]

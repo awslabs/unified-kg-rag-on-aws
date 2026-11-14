@@ -114,6 +114,9 @@ class UsageCallbackHandler(BaseCallbackHandler):
 
     # In the caller's context, where its usage scope is open.
     run_inline = True
+    # What a model factory's caller checks for: the model's calls are
+    # counted (adapters.llm.chain_factory warns of a model without one).
+    counts_usage = True
     # A call past a scope's limits must not be sent: LangChain raises what a
     # handler raises only with this set. Every hook but the refusal logs its
     # own errors (_logged).
