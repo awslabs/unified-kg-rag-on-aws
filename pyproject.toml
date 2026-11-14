@@ -10,7 +10,7 @@ name = "unified-kg-rag-on-aws"
 dynamic = ["version"]
 description = "AWS-native Knowledge Graph RAG on Bedrock, Neptune & OpenSearch: GraphRAG, LightRAG, HippoRAG 2 and RAPTOR over one ingestion, indexing and hybrid-search stack, chosen per query."
 readme = "README.md"
-requires-python = ">=3.11, <3.13"
+requires-python = ">=3.11.5, <3.13"
 license = {text = "Apache-2.0"}
 authors = [
     {name = "Amazon.com, Inc. or its affiliates"},

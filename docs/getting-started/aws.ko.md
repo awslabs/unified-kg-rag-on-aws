@@ -17,7 +17,7 @@ Python, uv, Bedrock 액세스 권한이 있는 AWS 자격 증명, 그리고 아�
 
 ### 런타임
 
-- **Python 3.11 – 3.12**
+- **Python 3.11.5 – 3.12**
 - **[uv](https://docs.astral.sh/uv/)**(권장 패키지 관리자. `pip`도 사용 가능)
 
 ### AWS 서비스

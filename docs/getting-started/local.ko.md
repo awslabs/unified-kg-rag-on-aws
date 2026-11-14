@@ -16,7 +16,7 @@
 
 ## 설치
 
-Python 3.11–3.12, [uv](https://docs.astral.sh/uv/), Ollama가 필요합니다. `local` extra를
+Python 3.11.5–3.12, [uv](https://docs.astral.sh/uv/), Ollama가 필요합니다. `local` extra를
 설치하고 기본 모델 두 개를 내려받으세요.
 
 ```bash

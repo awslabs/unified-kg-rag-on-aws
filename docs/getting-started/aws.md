@@ -19,7 +19,7 @@ below.
 
 ### Runtime
 
-- **Python 3.11 – 3.12**
+- **Python 3.11.5 – 3.12**
 - **[uv](https://docs.astral.sh/uv/)** (recommended package manager; `pip` works too)
 
 ### AWS services

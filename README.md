@@ -1,7 +1,7 @@
 # Unified Knowledge Graph RAG on AWS
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
-[![Python](https://img.shields.io/badge/python-3.11--3.12-blue.svg)](https://www.python.org/downloads/)
+[![Python](https://img.shields.io/badge/python-3.11.5--3.12-blue.svg)](https://www.python.org/downloads/)
 [![CI](https://github.com/awslabs/unified-kg-rag-on-aws/actions/workflows/quality.yml/badge.svg?branch=main)](https://github.com/awslabs/unified-kg-rag-on-aws/actions/workflows/quality.yml)
 
 🇰🇷 **[한국어 README](./README.ko.md)** · 🤝 **[Contributing](./CONTRIBUTING.md)**
@@ -30,7 +30,7 @@ How this compares with the papers and with Amazon Bedrock Knowledge Bases GraphR
 
 ## Quickstart (no AWS)
 
-This runs everything on one machine: embedded SQLite stores and [Ollama](https://ollama.com) models. You need Python 3.11–3.12, [uv](https://docs.astral.sh/uv/) and Ollama.
+This runs everything on one machine: embedded SQLite stores and [Ollama](https://ollama.com) models. You need Python 3.11.5–3.12, [uv](https://docs.astral.sh/uv/) and Ollama.
 
 **1. Install** (the `local` extra adds the Ollama and OpenAI-compatible clients, no PyTorch; the cross-encoder reranker is the `cross-encoder` extra: [Getting started locally](./docs/getting-started/local.md#install); `--no-dev` leaves out the contributors' test and lint tools, which `uv run` without it would install):
 

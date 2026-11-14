@@ -58,7 +58,9 @@ stored is read again: follow *Upgrading* in order.
 ### Breaking changes
 
 #### Install and extras
-- Python 3.11 or 3.12 is required (`>=3.11, <3.13`); 3.10 is dropped (#430).
+- Python 3.11 or 3.12 is required (`>=3.11.5, <3.13`); 3.10 is dropped (#430). Python 3.11.0–3.11.4 are no longer
+  supported; 3.11.5 or later is required: soupsieve 4, which fixes the soupsieve CVEs below, needs it, and the lock
+  kept the vulnerable soupsieve 2.10 for those patch releases.
 - A core install (`uv sync`, `pip install -e .`) is ingestion and queries: 145 to 78 packages, 937 to 335 MB on Linux.
   Extras: `eval` (ragas, datasets, pandas, langchain, langchain-community, langchain-openai), `viz` (pyvis, for the
   `interactive` renderer, which a `run-visualization` without `--renderers` leaves out with a WARNING without it),
@@ -418,7 +420,7 @@ See [`iac/README.md`](iac/README.md).
 ### Upgrading
 From 0.2.3; the sub-list after it is for a `main` checkout since. The runbook's
 [Upgrading the library](docs/operations.md#upgrading-the-library) links here.
-1. Install on Python 3.11 or 3.12 with the extras you use (`eval`, `viz`, `local`, `cross-encoder`, `otel`,
+1. Install on Python 3.11.5–3.12 with the extras you use (`eval`, `viz`, `local`, `cross-encoder`, `otel`,
    `unstructured`, `docx`, `ontology`, `mcp`, `console`). A CLI whose configuration needs a missing extra exits 2 at
    start-up naming it (#472). Markdown and HTML files indexed with `unstructured` keep their text and ids only with
    that extra installed: without it the core readers write other text, so the next incremental run re-extracts
@@ -1936,8 +1938,8 @@ From a `main` checkout (formats and keys no release had):
   `unified_kg_rag.domain.ingestion.community_clustering`), not the pipeline's, chain's or indexing manager's; filter
   on the subpackage prefix (`unified_kg_rag.application.ingestion`, ...) (#586, #587, #590).
 - Dependencies: pydantic 2.14, langchain-core 1.7.3, `langchain-aws>=1.8.1`, langchain-openai 1.7, langsmith 0.14,
-  datasets 5.1, tiktoken 0.14, tenacity 9.2, boto3 1.43.122, soupsieve 4.1 (2.10 on Python before 3.11.5) for
-  CVE-2026-126190 and CVE-2026-126192; aws-cdk-lib 2.275 in the CDK lock (#241, #251, #265, #438, #465, #489).
+  datasets 5.1, tiktoken 0.14, tenacity 9.2, boto3 1.43.122, soupsieve 4.1 on every supported Python for
+  CVE-2026-126189 to CVE-2026-126193; aws-cdk-lib 2.275 in the CDK lock (#241, #251, #265, #438, #465, #489).
 - Documentation restructured around a hub ([docs/index.md](docs/index.md)) with tutorials, concepts, guides and
   references, Korean twins of the main pages and checked links; the 0.2.3 user guide is replaced by those pages
   (#337-#342, #351, #469, #542-#557, #582, #583).
