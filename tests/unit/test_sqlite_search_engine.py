@@ -1340,8 +1340,12 @@ def test_corrupt_database_raises_store_configuration_error(tmp_path: Path) -> No
     path = tmp_path / "corrupt.sqlite3"
     path.write_bytes(b"this is not a database" * 100)
     engine = SQLiteSearchEngine(path)
-    with pytest.raises(StoreConfigurationError):
+    # Named by SQLite's result code, never by its message.
+    with pytest.raises(
+        StoreConfigurationError, match=": DatabaseError SQLITE_NOTADB\\."
+    ) as raised:
         engine.get_indices_by_alias(ALIAS)
+    assert "not a database" not in str(raised.value)
 
 
 def test_unwritable_location_raises_store_configuration_error(tmp_path: Path) -> None:

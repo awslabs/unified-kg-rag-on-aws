@@ -856,7 +856,10 @@ async def test_locked_database_is_a_timeout(config: Config) -> None:
     holder = sqlite3.connect(config.providers.graph.sqlite_path, isolation_level=None)
     holder.execute("BEGIN EXCLUSIVE")
     try:
-        with pytest.raises(StoreTimeoutError):
+        # Named by SQLite's result code, never by its message.
+        with pytest.raises(
+            StoreTimeoutError, match=r"\(OperationalError SQLITE_BUSY\)"
+        ):
             indexer.upsert_entities([_entity("b")])
     finally:
         holder.execute("ROLLBACK")
