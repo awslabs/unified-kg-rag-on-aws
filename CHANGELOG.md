@@ -945,7 +945,8 @@ From a `main` checkout (formats and keys no release had):
   confirmed), with live stage progress, the run's WARNINGs (a run that extracted no entity flagged; one whose
   warnings advise a rebuild offers it), a rebuild of the namespace for one run (`--reset`, one job: it asks
   no integrity question, nor does the run after it; with the doc-status registry on, nor does a run after files
-  were added, edited or removed; a question names its cause in the page's language) and a stop the pipeline
+  were added, edited or removed; a question names its cause in the page's language; an unexpected failure is
+  named by its type in the page's language, as on Ask, on the Ingest and Evaluate pages) and a stop the pipeline
   checkpoints;
   run and compare evaluations (progress per answer;
   paired deltas called by their
@@ -957,7 +958,7 @@ From a `main` checkout (formats and keys no release had):
   shows them, as no console job exports one (each export named by build time, namespace and run, a replaced one
   marked outdated; without one, the page says why: nothing ingested, no build record, or the export off; a build
   that failed is said over the newest export, still marked against the build record, and names what failed: the
-  config, the stores or the export folder; search,
+  config read, a store setting refused, the stores or the export folder; search,
   neighbourhoods, communities, degree, schema conformance, seed versus document evidence); a dashboard of the
   questions and jobs run through it (time, tokens, cost per strategy, model and role; a question refused as asked,
   as on an empty namespace, counted apart from the errors and, like a cancelled one, left out of every time and of

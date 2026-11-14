@@ -87,7 +87,7 @@ export function JobPanel({ jobId, onEnded, children }: { jobId: string; onEnded?
       ) : null}
       {data.status === "failed" ? (
         <Notice tone="bad" title={t("job.failedTitle")}>
-          {data.error ?? t("job.failedNoMessage")}
+          {data.masked_error ? t("job.failedUnexpected", { name: data.masked_error }) : (data.error ?? t("job.failedNoMessage"))}
         </Notice>
       ) : null}
       {children ? children(data) : null}

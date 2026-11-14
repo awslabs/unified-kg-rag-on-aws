@@ -547,3 +547,49 @@ describe("stepNames", () => {
     expect(stepNames(steps, (key) => translate("en", key))).toBe("keyword extraction, my_plugin_step");
   });
 });
+
+describe("a failed job", () => {
+  const failed = (error: string, masked_error: string | null): JobRecord => ({
+    id: "j1",
+    kind: "evaluate",
+    namespace: "default",
+    params: {},
+    command: ["run-eval"],
+    created: 0,
+    started: 0,
+    ended: 1,
+    status: "failed",
+    exit_code: 1,
+    error,
+    masked_error,
+    result: null,
+    pipeline_id: null,
+    output_directory: null,
+    plan: [],
+    total_runs: 0,
+  });
+  const masked = "The call failed with an unexpected error (a store or model error); the log has the details.";
+
+  it.each(["en", "ko"])("says a masked failure in the page's language: %s", async (locale) => {
+    const { JobPanel } = await import("./JobPanel");
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify(failed(`AWSServiceError: ${masked}`, "AWSServiceError")), { status: 200 }))));
+    render(
+      <I18nProvider initial={locale as "en" | "ko"}>
+        <JobPanel jobId="j1" />
+      </I18nProvider>,
+    );
+    const expected = translate(locale as "en" | "ko", "job.failedUnexpected", { name: "AWSServiceError" });
+    expect(await screen.findByText(expected)).toBeInTheDocument();
+    expect(screen.queryByText(new RegExp(masked.slice(0, 20)))).toBeNull();
+    vi.unstubAllGlobals();
+  });
+
+  it("shows a failure's own message as it is", async () => {
+    const { JobPanel } = await import("./JobPanel");
+    const own = "Failed to download 's3://bucket/eval.json': ClientError AccessDenied, HTTP 403";
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify(failed(own, null)), { status: 200 }))));
+    renderIn(<JobPanel jobId="j1" />);
+    expect(await screen.findByText(own)).toBeInTheDocument();
+    vi.unstubAllGlobals();
+  });
+});
