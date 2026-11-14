@@ -571,7 +571,14 @@ def test_an_upload_of_an_unsupported_type_is_refused_by_name(
 
 
 def test_the_graph_is_read_with_layout_communities_and_analysis(client: Any) -> None:
-    graphs = client.get("/api/graphs").json()["graphs"]
+    listed = client.get("/api/graphs").json()
+    # The config namespace's current graph (other tests build their own
+    # namespaces, whose exports may be newer).
+    graphs = [
+        g
+        for g in listed["graphs"]
+        if g["namespace"] == listed["current"]["namespace"] and not g["outdated"]
+    ]
     assert graphs and graphs[0]["ref"].startswith("cache:")
     data = client.get("/api/graphs/data", params={"ref": graphs[0]["ref"]}).json()
     names = {n["name"] for n in data["nodes"]}
@@ -828,13 +835,14 @@ def test_an_incomplete_cache_ingests_again_once_its_question_is_confirmed(
 def test_a_rebuild_runs_in_one_job_without_the_integrity_question(
     client: Any,
 ) -> None:
+    # Its own namespace: a reset empties the one it runs in, and the
+    # module's other tests read the demo corpus from the default one.
+    corpus = {"corpus": "uploads:rebuilt", "index_value": "rebuilt"}
     files = {"a.txt": "Umbra Freight carries parts for Acme Robotics."}
     assert _upload(client, "rebuilt", files).status_code == 200
     first = _wait(
         client,
-        client.post(
-            "/api/jobs/ingest", json={"corpus": "uploads:rebuilt"}, headers=HEADERS
-        ).json()["id"],
+        client.post("/api/jobs/ingest", json=corpus, headers=HEADERS).json()["id"],
     )
     assert first["status"] == "succeeded", first["log"]
     # The same pipeline id with --reset: every stage is recomputed, so the
@@ -843,7 +851,7 @@ def test_a_rebuild_runs_in_one_job_without_the_integrity_question(
         client,
         client.post(
             "/api/jobs/ingest",
-            json={"corpus": "uploads:rebuilt", "reset": True},
+            json={**corpus, "reset": True},
             headers=HEADERS,
         ).json()["id"],
     )
@@ -861,17 +869,18 @@ def test_a_rebuild_then_an_added_file_ingests_in_one_run(
     client: Any, workspace: Path
 ) -> None:
     # Rebuild (--reset), then Start over a changed corpus: the run after a
-    # reset asks no integrity question.
+    # reset asks no integrity question. Its own namespace, as above.
+    own = {"index_value": "rebuilt-then"}
     files = {"a.txt": "Umbra Freight carries parts for Acme Robotics."}
     assert _upload(client, "rebuilt-then", files).status_code == 200
-    first = _ingest(client, "uploads:rebuilt-then")
+    first = _ingest(client, "uploads:rebuilt-then", **own)
     assert first["status"] == "succeeded", first["log"]
-    rebuilt = _ingest(client, "uploads:rebuilt-then", reset=True)
+    rebuilt = _ingest(client, "uploads:rebuilt-then", reset=True, **own)
     assert rebuilt["status"] == "succeeded", rebuilt["log"]
     (workspace / "uploads" / "rebuilt-then" / "b.txt").write_text(
         "Kestrel Depot stores parts for Globex Sensors.", encoding="utf-8"
     )
-    second = _ingest(client, "uploads:rebuilt-then")
+    second = _ingest(client, "uploads:rebuilt-then", **own)
     assert second["status"] == "succeeded", second.get("error")
     assert second.get("confirmation") is None
     assert second["pipeline_id"] == first["pipeline_id"]
