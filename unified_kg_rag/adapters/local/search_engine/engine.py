@@ -78,6 +78,7 @@ from unified_kg_rag.shared.exceptions import (
     StoreConfigurationError,
     StoreTimeoutError,
 )
+from unified_kg_rag.shared.utils.common import error_name
 from unified_kg_rag.shared.write_fence import check_fences_held, check_write_fence
 
 logger = get_logger(__name__)
@@ -367,7 +368,7 @@ class SQLiteSearchEngine:
             ),
             lambda e: StoreConfigurationError(
                 f"Embedded search engine: could not {operation} on the SQLite "
-                f"database '{self.path}': {type(e).__name__}: {e}. Check "
+                f"database '{self.path}': {error_name(e)}. Check "
                 "that the file (providers.vector.sqlite_path) is a database "
                 "this release wrote and that its directory is writable "
                 "(network filesystems are not supported)."

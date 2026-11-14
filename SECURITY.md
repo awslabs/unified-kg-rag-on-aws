@@ -33,7 +33,8 @@ handled with the same controls as that data.
 
 The rule is applied where an error's text enters: an error kept to be
 logged or shown later (a store write's recorded errors, a worker's outcome,
-a saved evaluation result) is recorded by its name and digest, a store
+a saved evaluation result) is recorded by its name and digest (a store's
+rejection of one item by its error types, status and the item's id), a store
 error the package wraps shows the package's own context (the operation, the
 URI) and its cause's name, and a static check over the package fails the
 build on an error's text passed to an `INFO`+ record or kept for one. Some

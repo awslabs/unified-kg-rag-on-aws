@@ -295,47 +295,46 @@ def test_opensearch_bulk_item_failures_carry_their_ids() -> None:
     assert stats.failed_ids == ["e-2"]
 
 
-def test_opensearch_bulk_item_failures_name_the_first_reason() -> None:
-    # Only the count was reported: the reason the store rejected the items
-    # (a mapping conflict, a vector of the wrong dimension) was dropped. It
-    # is named, without the rejected value the reason previews.
-    reason = (
-        "failed to parse field [embedding] of type [knn_vector] in document "
-        "with id 'e-2'. Preview of field's value: '[0.1, 0.2]'"
-    )
-    error = {"type": "mapper_parsing_exception", "reason": reason}
+def _first_bulk_error(error: object, status: int = 400) -> str:
     response = {
         "errors": True,
-        "items": [{"index": {"_id": "e-2", "status": 400, "error": error}}],
+        "items": [{"index": {"_id": "e-2", "status": status, "error": error}}],
     }
     indexer = _opensearch_indexer(_BulkClient(response))
-
     (message,) = indexer._perform_indexing("idx", [{"id": "e-2"}]).errors
+    return message
 
-    assert message == (
-        "Bulk API errors: 1 (first: mapper_parsing_exception: failed to parse "
-        "field [embedding] of type [knn_vector] in document with id 'e-2'.)"
+
+def test_opensearch_bulk_item_failures_name_the_first_by_its_types() -> None:
+    # Only the count was reported, then the store's reason, which quotes
+    # what it rejected (a field's value, an immense term's bytes, the input
+    # a number did not parse from). The first failed item is named by the
+    # error types along its caused_by chain, its status and its id.
+    error = {
+        "type": "mapper_parsing_exception",
+        "reason": "failed to parse field [rank] of type [long] in document "
+        "with id 'e-2'. Preview of field's value: 'Secret Corp'",
+        "caused_by": {
+            "type": "number_format_exception",
+            "reason": 'For input string: "Secret Corp"',
+        },
+    }
+    assert _first_bulk_error(error) == (
+        "Bulk API errors: 1 (first: mapper_parsing_exception caused by "
+        "number_format_exception, HTTP 400, item 'e-2')"
     )
-    error["reason"] = "x" * 1000
-    (message,) = indexer._perform_indexing("idx", [{"id": "e-2"}]).errors
-    assert len(message) < 350
+    # A reason that is no object (a rejected request's text) and a type
+    # that is no identifier name nothing of themselves.
+    assert _first_bulk_error("rejected: Secret Corp", 429) == (
+        "Bulk API errors: 1 (first: error, HTTP 429, item 'e-2')"
+    )
+    assert "Secret" not in _first_bulk_error({"type": "Secret Corp!", "reason": "x"})
 
 
-def test_opensearch_bulk_item_failures_name_the_cause_without_corpus_text() -> None:
-    # The cause was dropped: a vector of the wrong dimension read as a parse
-    # failure only, while its caused_by says "Vector dimension mismatch".
-    # An immense-term rejection quoted the term's bytes, and a cause the
-    # value it could not read: neither reaches the message.
-    def message(error: dict) -> str:
-        response = {
-            "errors": True,
-            "items": [{"index": {"_id": "e-2", "status": 400, "error": error}}],
-        }
-        indexer = _opensearch_indexer(_BulkClient(response))
-        (text,) = indexer._perform_indexing("idx", [{"id": "e-2"}]).errors
-        return text
-
-    dimension = message(
+def test_opensearch_bulk_item_failures_name_a_vector_dimension_mismatch() -> None:
+    # The one reason named (by its numbers): its fix is the configuration
+    # (models.embedding.dimension), which the CLI's next step says.
+    message = _first_bulk_error(
         {
             "type": "mapper_parsing_exception",
             "reason": "failed to parse field [embedding] of type [knn_vector]",
@@ -345,43 +344,11 @@ def test_opensearch_bulk_item_failures_name_the_cause_without_corpus_text() -> N
             },
         }
     )
-    assert dimension.endswith(
-        "(first: mapper_parsing_exception: failed to parse field [embedding] of "
-        "type [knn_vector] (caused by illegal_argument_exception: Vector "
-        "dimension mismatch. Expected: 1024, Given: 8))"
-    ), dimension
-    immense = message(
-        {
-            "type": "illegal_argument_exception",
-            "reason": 'Document contains at least one immense term in field="text" '
-            "(whose UTF8 encoding is longer than the max length 32766), all of "
-            "which were skipped.  Please correct the analyzer to not produce "
-            "such terms.  The prefix of the first immense term is: '[83, 101, "
-            "99, 114, 101, 116]...', original message: bytes can be at most "
-            "32766 in length; got 40000",
-            "caused_by": {
-                "type": "max_bytes_length_exceeded_exception",
-                "reason": "bytes can be at most 32766 in length; got 40000",
-            },
-        }
+    assert message == (
+        "Bulk API errors: 1 (first: mapper_parsing_exception caused by "
+        "illegal_argument_exception, vector dimension mismatch (expected 1024, "
+        "given 8), HTTP 400, item 'e-2')"
     )
-    assert "[83, 101" not in immense and "such terms." in immense
-    # Each part is cut, not the whole: the cause after a long reason stays.
-    assert immense.endswith(
-        "(caused by max_bytes_length_exceeded_exception: bytes can be at most "
-        "32766 in length; got 40000))"
-    ), immense
-    value = message(
-        {
-            "type": "mapper_parsing_exception",
-            "reason": "failed to parse field [rank] of type [long]",
-            "caused_by": {
-                "type": "number_format_exception",
-                "reason": 'For input string: "Secret Corp"',
-            },
-        }
-    )
-    assert "Secret" not in value and 'For input string: "..."' in value
 
 
 def test_opensearch_failed_bulk_request_fails_every_id() -> None:

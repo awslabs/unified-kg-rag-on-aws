@@ -320,8 +320,53 @@ def test_validate_backend_success_names_the_first_error(mocker) -> None:
     stage, _mgr = _indexing_stage(mocker, {})
     failed = IndexingStats(total_items=5)
     failed.add_error("unknown setting [index.refresh_intervl]", 5)
-    with pytest.raises(PipelineStageError, match=r"refresh_intervl"):
+    with pytest.raises(PipelineStageError, match=r"refresh_intervl") as raised:
         stage._validate_backend_success({"vector_entities": failed})
+    # What the operator is shown and the stage records: a write's errors are
+    # log-safe as recorded, so the first is the package's text too (rv31).
+    from unified_kg_rag.shared.exceptions import operator_error_text
+
+    assert operator_error_text(raised.value).endswith(
+        "First error: unknown setting [index.refresh_intervl]"
+    )
+
+
+def test_validate_backend_success_names_a_vector_dimension_mismatch(mocker) -> None:
+    # The stage's text is what the CLI's next step reads: a vector of the
+    # wrong dimension is named there (by its numbers), so the run says to
+    # set models.embedding.dimension (run_ingestion_pipeline._next_step).
+    from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
+    from unified_kg_rag.shared.exceptions import operator_error_text
+
+    client = mocker.MagicMock()
+    client.bulk_index.return_value = {
+        "errors": True,
+        "items": [
+            {
+                "index": {
+                    "_id": "e-1",
+                    "status": 400,
+                    "error": {
+                        "type": "mapper_parsing_exception",
+                        "reason": "failed to parse field [embedding] in document "
+                        "with id 'e-1'. Vector dimension mismatch. Expected: 1024, "
+                        "Given: 8",
+                    },
+                }
+            }
+        ],
+    }
+    indexer = OpenSearchIndexer.__new__(OpenSearchIndexer)
+    indexer.config = Config()
+    indexer.opensearch_config = indexer.config.indexing.opensearch
+    indexer.opensearch_client = client
+    failed = indexer._perform_indexing("idx", [{"id": "e-1"}])
+    stage, _mgr = _indexing_stage(mocker, {})
+    with pytest.raises(PipelineStageError) as raised:
+        stage._validate_backend_success({"vector_entities": failed})
+    assert "vector dimension mismatch (expected 1024, given 8)" in (
+        operator_error_text(raised.value)
+    )
 
 
 def test_validate_backend_success_passes_with_partial_success(mocker) -> None:

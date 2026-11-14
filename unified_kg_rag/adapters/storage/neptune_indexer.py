@@ -1309,27 +1309,23 @@ class NeptuneIndexer(GraphIndexer):
                 rel: Relationship,
                 entity_label: str = entity_label,
                 vertices: dict[str, Any] = vertices,
-            ) -> str | Exception | None:
-                """Write one edge; why it was not (the package's message or
-                the store's error), or None once it is written."""
-                missing = (
-                    f"source entity '{rel.source_id}' or target entity "
-                    f"'{rel.target_id}' not found"
-                )
+            ) -> bool | Exception:
+                """Write one edge: True once it is written, False when an
+                endpoint vertex is missing, else the store's error."""
                 source = vertices.get(rel.source_id)
                 target = vertices.get(rel.target_id)
                 if source is None or target is None:
-                    return missing
+                    return False
                 try:
-                    if self._execute_with_retries(
-                        lambda g: self._build_add_edge_traversal(
-                            g, rel, entity_label, source, target
-                        ),
-                        "Relationship indexing",
-                        results=True,
-                    ):
-                        return None
-                    return missing
+                    return bool(
+                        self._execute_with_retries(
+                            lambda g: self._build_add_edge_traversal(
+                                g, rel, entity_label, source, target
+                            ),
+                            "Relationship indexing",
+                            results=True,
+                        )
+                    )
                 except NamespaceLeaseError:
                     raise
                 except Exception as e:  # noqa: BLE001 - reported as a failed write
@@ -1337,25 +1333,33 @@ class NeptuneIndexer(GraphIndexer):
 
             workers = max(1, min(self.neptune_config.index_concurrency, len(rels)))
             with ContextThreadPoolExecutor(max_workers=workers) as executor:
-                for index, (rel, error) in enumerate(
+                for index, (rel, outcome) in enumerate(
                     zip(rels, executor.map(write, rels), strict=True),
                     start=1,
                 ):
-                    if error is None:
+                    if outcome is True:
                         stats.add_success(1)
-                    elif isinstance(error, str):
-                        stats.add_error(error, ids=[rel.id])
+                    elif outcome is False:
+                        stats.add_error(
+                            f"source entity '{rel.source_id}' or target entity "
+                            f"'{rel.target_id}' not found",
+                            ids=[rel.id],
+                        )
                         logger.warning(
-                            "Relationship '%s' not written: %s", rel.id, error
+                            "Relationship '%s' not written: source entity '%s' "
+                            "or target entity '%s' not found",
+                            rel.id,
+                            rel.source_id,
+                            rel.target_id,
                         )
                     else:
-                        stats.add_error(error, ids=[rel.id])
+                        stats.add_error(outcome, ids=[rel.id])
                         log_error(
                             logger,
                             logging.WARNING,
                             "Relationship '%s' not written: %s",
                             rel.id,
-                            error=error,
+                            error=outcome,
                         )
                     if index % self._PROGRESS_LOG_EVERY == 0:
                         logger.info(

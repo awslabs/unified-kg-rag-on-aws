@@ -204,21 +204,24 @@ def error_code(error: BaseException) -> str:
     ``info``; its ``error`` alone may be the raw response body), the engine
     error a Gremlin server's JSON status message names (Neptune's
     ``ConcurrentModificationException``; the rest of it may quote the
-    query), an ``openai`` error's ``code`` (``rate_limit_exceeded``); else
+    query), an ``openai`` error's ``code`` (``rate_limit_exceeded``), the
+    result code SQLite names (``SQLITE_READONLY``); else
     the error's type name. Each only when it is an identifier
     (:data:`_CODE`): a ``code`` may be free text (``SystemExit``'s)."""
     response = getattr(error, "response", None)
     if isinstance(response, dict) and (
-        code := _identifier((response.get("Error") or {}).get("Code"))
+        code := as_error_code((response.get("Error") or {}).get("Code"))
     ):
         return code
     if code := _status_message_code(getattr(error, "status_message", None)):
         return code
     info = getattr(error, "info", None)
     if isinstance(info, dict) and isinstance(info.get("error"), dict):
-        if kind := _identifier(info["error"].get("type")):
+        if kind := as_error_code(info["error"].get("type")):
             return kind
-    if code := _identifier(getattr(error, "code", None)):
+    if code := as_error_code(getattr(error, "code", None)):
+        return code
+    if code := as_error_code(getattr(error, "sqlite_errorname", None)):
         return code
     return type(error).__name__
 
@@ -228,7 +231,7 @@ def error_code(error: BaseException) -> str:
 _CODE = re.compile(r"[A-Za-z0-9_.-]{1,64}")
 
 
-def _identifier(value: object) -> str | None:
+def as_error_code(value: object) -> str | None:
     """``value`` when it is an error code (:data:`_CODE`), else ``None``."""
     return value if isinstance(value, str) and _CODE.fullmatch(value) else None
 
@@ -241,7 +244,7 @@ def _status_message_code(message: object) -> str | None:
         body = json.loads(message)
     except ValueError:
         return None
-    return _identifier(body.get("code")) if isinstance(body, dict) else None
+    return as_error_code(body.get("code")) if isinstance(body, dict) else None
 
 
 def _data_free_facts(error: BaseException) -> str:

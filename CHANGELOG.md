@@ -2381,10 +2381,14 @@ Deployment (CDK).
   degraded answer's `RAGOutput.search_metadata["error"]` (`processing.ignore_errors`); each answer's log lines carry
   its dataset `query_id`.
   The text is closed where it enters: a store write records an error by its name and digest (`IndexingStats.add_error`
-  takes the exception), a store error the package wraps shows its operation or URI and its cause's name (`caused_by`;
+  takes the exception or the package's own words) and a rejected bulk item by its error types, status and id (a vector
+  dimension mismatch by its numbers), never its reason, which quoted the rejected value; so the indexing stage's
+  failure names its first error again. A SQLite store's error names its cause by result code (`SQLITE_READONLY`), and
+  a store error the package wraps shows its operation or URI and its cause's name (`caused_by`;
   its log line also says where the cause happened, a saved result names the cause once), and an evaluator that fails to
   start or a result that cannot be processed is named in the saved results as an answer's failure is. The guard also
-  follows an alias, a gathered outcome, `traceback.format_exc()`, any logger, `bind` and an error's text kept for later.
+  follows an alias, a gathered outcome, `traceback.format_exc()`, any logger, `bind` and an error's text kept for later,
+  and fails on an `add_error` text the package did not compose (a call's result, a reply's field).
   A library's record is digested once for every handler, a non-string message and a Python warning (by category and
   location) too, uvicorn's access path drops its query string and the console's uvicorn logs through the same filter; an
   error is named by an OpenSearch, `openai` or Neptune engine code, an HTTP (urllib's too) or Gremlin status and a
