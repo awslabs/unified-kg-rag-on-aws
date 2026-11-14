@@ -436,16 +436,25 @@ def log_error(
     model, the deadline, a refusal: an expected outcome with its own
     message, whose endpoint is not user data), and a failure whose message
     is the package's own (``has_own_text``), with its text (``error_text``:
-    what a surface shows) and class."""
+    what a surface shows) and class; one only partly the package's own (a
+    ``caused_by`` wrap) also with where it came from (:func:`error_locator`:
+    the type chain and ``file:line`` frames, no message text)."""
     error_class = classify(error)
     own = own_text(error) if error_class is ErrorClass.FAILURE else None
     if error_class is ErrorClass.FAILURE and own is None:
         log_failure(logger, level, message, *args, error=error, traceback=True)
         return
-    logger.log(level, message, *args, error_log_text(error))
-    if own is not None and own != error_text(error):
-        # The rest of a message only partly the package's own.
-        logger.debug(message, *args, error, exc_info=error)
+    if own is None or own == error_text(error):
+        logger.log(level, message, *args, error_log_text(error))
+        return
+    # A message only partly the package's own (``caused_by``) wraps an
+    # unexpected error: say where it came from, as :func:`log_failure` does;
+    # the rest of its text and the traceback at DEBUG.
+    shown = error_log_text(error)
+    if where := error_locator(error):
+        shown = f"{shown}; {where}"
+    logger.log(level, message, *args, shown)
+    logger.debug(message, *args, error, exc_info=error)
 
 
 def warn_once(
