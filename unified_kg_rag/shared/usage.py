@@ -66,7 +66,10 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any
 
-from unified_kg_rag.shared.exceptions import UsageLimitExceededError
+from unified_kg_rag.shared.exceptions import (
+    OptionalCallSkipped,
+    UsageLimitExceededError,
+)
 
 __all__ = [
     "CACHED_RESPONSE_KEY",
@@ -78,7 +81,7 @@ __all__ = [
     "UsageMeter",
     "cache_probed",
     "calls_that_fit",
-    "optional_calls_left",
+    "optional_calls",
     "current_meter",
     "merge_usage",
     "metering",
@@ -182,8 +185,8 @@ class UsageLimits:
     max_input_tokens: int | None = None
     max_cost: float | None = None
     # Of max_llm_calls, those kept for the scope's last step (a query's
-    # answer): an optional call (an output repair) that would take one is
-    # not made (optional_calls_left).
+    # answer): an optional call (optional_calls) that would take one is
+    # refused with OptionalCallSkipped.
     reserved_calls: int = 0
     cost: Callable[[Mapping[str, Mapping[str, int]]], float] | None = None
     refuse: LimitRefusal = _refused
@@ -333,11 +336,14 @@ def _admit(meter: UsageMeter | None, role: str, model: str, counts: _Counts) -> 
     the limits of one of them refuse it: then raise the refusal and add
     nothing."""
     refusal: BaseException | None = None
+    optional = _OPTIONAL.get()
     with _LOCK:
         node = meter
         while node is not None and refusal is None:
             if node.limits is not None:
                 refusal = node.limits._check(node, model, counts)
+                if refusal is None and optional:
+                    refusal = _optional_refusal(node, counts)
             node = node.parent
         if refusal is None:
             node = meter
@@ -378,24 +384,42 @@ def remaining() -> Remaining:
     )
 
 
-def optional_calls_left() -> int | None:
-    """The calls an optional step (an output repair) may still make: what
-    the open scopes' call limits leave beside the calls they keep for their
-    last step (``UsageLimits.reserved_calls``); ``None`` without a call
-    limit."""
-    left: int | None = None
-    with _LOCK:
-        node = _CURRENT.get()
-        while node is not None:
-            limits = node.limits
-            if limits is not None and limits.max_llm_calls is not None:
-                room = max(
-                    0,
-                    limits.max_llm_calls - limits.reserved_calls - node.total.llm_calls,
-                )
-                left = room if left is None else min(left, room)
-            node = node.parent
-    return left
+# Whether the model calls made here are optional (optional_calls).
+_OPTIONAL: ContextVar[bool] = ContextVar("llm_usage_optional", default=False)
+
+
+@contextmanager
+def optional_calls() -> Iterator[None]:
+    """The model calls made in this context are optional: one that would
+    take a call the open scopes keep for their last step
+    (``UsageLimits.reserved_calls``: a query's answer) is refused with
+    :class:`OptionalCallSkipped`, which the step making it answers without
+    (a query translation or extraction, the structured planner, an output
+    repair). The one rule of every optional call."""
+    token = _OPTIONAL.set(True)
+    try:
+        yield
+    finally:
+        _OPTIONAL.reset(token)
+
+
+def _optional_refusal(meter: UsageMeter, call: _Counts) -> BaseException | None:
+    """The refusal of an optional ``call`` that would take a call ``meter``
+    keeps for its last step, if any."""
+    limits = meter.limits
+    if limits is None or limits.max_llm_calls is None or not limits.reserved_calls:
+        return None
+    room = limits.max_llm_calls - limits.reserved_calls
+    if meter.total.llm_calls + call.llm_calls <= room:
+        return None
+    name = limits.names.get("max_llm_calls", "max_llm_calls")
+    return OptionalCallSkipped(
+        f"An optional model call would take one of the {limits.reserved_calls} "
+        f"call(s) {name} {limits.max_llm_calls:g} keeps for the answer; it was "
+        "not sent",
+        limit=name,
+        value=limits.max_llm_calls,
+    )
 
 
 def calls_that_fit(

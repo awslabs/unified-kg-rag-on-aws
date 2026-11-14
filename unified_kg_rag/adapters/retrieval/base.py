@@ -680,25 +680,18 @@ def answer_prompt_class(
     )
 
 
-# Every instruction the chain may append to the answer's system prompt
-# (GraphRAGChain._answer_instructions): at most these.
-_ANSWER_INSTRUCTIONS = "".join(
-    (
-        CITATION_INSTRUCTIONS,
-        QUERY_RESULT_INSTRUCTIONS,
-        ABSTENTION_INSTRUCTIONS,
-        HEDGE_INSTRUCTIONS,
-        DECLINE_INSTRUCTIONS,
-    )
-)
-
-
 def answer_prompt_tokens(config: Config, strategy: SearchStrategy | None = None) -> int:
     """What the answer call reads besides its context and question, at the
     local estimate the usage meter counts a call's start at: its prompt's
     templates (``strategy``'s style; without one the larger of the two) and
-    every instruction the chain may append. What an input-token limit keeps
-    for the answer beside its context (``search.query_max_input_tokens``)."""
+    the instructions the chain may append to it for ``strategy``
+    (``GraphRAGChain._answer_instructions``: the citations' when its
+    answers cite, the graph query result's for structured, the abstention
+    marker's under ``search.abstention.mode: mark``, and the longer of the
+    hedge and the decline, which a strategy that flags its context
+    insufficient gets); without a strategy all that any may get. What an
+    input-token limit keeps for the answer beside its context
+    (``search.query_max_input_tokens``)."""
     classes = (
         [answer_prompt_class(config, strategy)]
         if strategy is not None
@@ -713,7 +706,15 @@ def answer_prompt_tokens(config: Config, strategy: SearchStrategy | None = None)
                 resolved.system_prompt_template + resolved.human_prompt_template
             ),
         )
-    return templates + estimate_token_count(_ANSWER_INSTRUCTIONS)
+    search = config.search
+    instructions = [max(HEDGE_INSTRUCTIONS, DECLINE_INSTRUCTIONS, key=len)]
+    if strategy is None or search.citations.enabled_for(strategy):
+        instructions.append(CITATION_INSTRUCTIONS)
+    if strategy in (None, SearchStrategy.STRUCTURED):
+        instructions.append(QUERY_RESULT_INSTRUCTIONS)
+    if search.abstention.mode == "mark":
+        instructions.append(ABSTENTION_INSTRUCTIONS)
+    return templates + estimate_token_count("".join(instructions))
 
 
 class BaseSearchStrategy(ABC):
@@ -783,13 +784,14 @@ class BaseSearchStrategy(ABC):
     def _calls_within_limits(
         self,
         prompt_class: type[BasePrompt],
-        inputs: Sequence[str | int],
+        inputs: Sequence[str | int | Callable[[], str]],
         *,
         reserve_calls: int = 1,
         reserve_tokens: int = 0,
     ) -> int:
         """How many of the leading calls of ``prompt_class``, one per input
-        (the text it fills the prompt with, or its estimated tokens), the
+        (the text it fills the prompt with, a callable returning it, read
+        only under a limit, or its estimated tokens), the
         query's limits (``search.query_max_model_calls``,
         ``search.query_max_input_tokens``) leave room for, after
         ``reserve_calls`` and ``reserve_tokens`` kept for what must follow
@@ -800,20 +802,73 @@ class BaseSearchStrategy(ABC):
         left = usage.remaining()
         if left.unlimited:
             return len(inputs)
-        resolved = prompt_class.resolve(custom_prompts=self.config.custom_prompts)
-        overhead = estimate_token_count(
-            resolved.system_prompt_template + resolved.human_prompt_template
-        )
+        overhead = self._prompt_tokens(prompt_class)
         return usage.calls_that_fit(
             [
                 overhead
-                + (item if isinstance(item, int) else estimate_token_count(item))
+                + (
+                    item
+                    if isinstance(item, int)
+                    else estimate_token_count(item() if callable(item) else item)
+                )
                 for item in inputs
             ],
             reserve_calls=reserve_calls,
             reserve_tokens=reserve_tokens
-            + (answer_prompt_tokens(self.config) if reserve_calls else 0),
+            + (self._answer_prompt_tokens() if reserve_calls else 0),
         )
+
+    def _answer_prompt_tokens(self) -> int:
+        """``answer_prompt_tokens`` of the answer to this strategy's search
+        (the strategy it is registered as; without one, the largest)."""
+        # Lazy: the registry imports this module.
+        from unified_kg_rag.adapters.retrieval.strategy_registry import (
+            registered_as,
+        )
+
+        return answer_prompt_tokens(self.config, registered_as(type(self)))
+
+    def _prompt_tokens(self, prompt_class: type[BasePrompt]) -> int:
+        """A call of ``prompt_class``'s own tokens (its templates) at the
+        local estimate the usage meter counts a call's start at."""
+        resolved = prompt_class.resolve(custom_prompts=self.config.custom_prompts)
+        return estimate_token_count(
+            resolved.system_prompt_template + resolved.human_prompt_template
+        )
+
+    @property
+    def _min_context_tokens(self) -> int:
+        """The least context a call is started for under an input-token
+        limit: a section cut below it is dropped anyway
+        (``search.token_manager.min_truncated_section_tokens``)."""
+        return self.config.search.token_manager.min_truncated_section_tokens
+
+    def _least_call_tokens(self, prompt_class: type[BasePrompt]) -> int:
+        """The input of the smallest useful call of ``prompt_class``: its
+        prompt and the least context (``_min_context_tokens``)."""
+        return self._prompt_tokens(prompt_class) + self._min_context_tokens
+
+    def _context_share(
+        self,
+        calls: int,
+        prompt_class: type[BasePrompt],
+        *,
+        ceiling: int,
+        reserve_tokens: int = 0,
+    ) -> int:
+        """The context each of ``calls`` calls of ``prompt_class`` may read:
+        ``ceiling``, or under the query's input-token limit
+        (``search.query_max_input_tokens``) an even share of what it leaves
+        after ``reserve_tokens``, the answer's prompt
+        (``answer_prompt_tokens``) and each call's own prompt, at least
+        ``_min_context_tokens``. The calls' contexts are cut to it, as the
+        answer's is to what is left."""
+        left = usage.remaining().input_tokens
+        if left is None or calls <= 0:
+            return ceiling
+        room = left - reserve_tokens - self._answer_prompt_tokens()
+        share = room // calls - self._prompt_tokens(prompt_class)
+        return max(self._min_context_tokens, min(ceiling, share))
 
     @staticmethod
     def _record_limit_stop(step: str, started: int, planned: int) -> None:

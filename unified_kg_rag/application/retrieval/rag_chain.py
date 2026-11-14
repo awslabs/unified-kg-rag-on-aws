@@ -170,6 +170,7 @@ from unified_kg_rag.domain.retrieval.abstention import (
     REASON_INSUFFICIENT_CONTEXT,
     REASON_MARKER,
     REASON_NO_CONTEXT,
+    REASON_QUERY_LIMIT,
     MarkerStreamFilter,
     split_marker,
 )
@@ -1131,6 +1132,22 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 route, naming the limit and its value.
         """
         left = usage.remaining()
+        if left.input_tokens is not None and len(routable) > 1:
+            # The router call only beside the answer's prompt and the least
+            # context: else no router call, the fallback as one candidate.
+            router = self._router_tokens(routable, state)
+            answer = answer_prompt_tokens(self.config) + estimate_token_count(
+                self._question(state)
+            )
+            least = self.config.search.token_manager.min_truncated_section_tokens
+            if router + answer + least > left.input_tokens:
+                fallback = self._fallback_strategy(routable)
+                record_degradation(
+                    DegradationStep.ROUTING,
+                    f"query_limit: no router call, routed to '{fallback.value}'",
+                    UsageLimitExceededError.__name__,
+                )
+                return (fallback,), [s.value for s in routable if s is not fallback]
         if left.llm_calls is None:
             return routable, []
         calls = left.llm_calls
@@ -1162,6 +1179,22 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 value=value,
             )
         return routed, [s.value for s in routable if s not in routed]
+
+    def _router_tokens(
+        self, routable: tuple[SearchStrategy, ...], state: dict[str, Any]
+    ) -> int:
+        """The router call's input among ``routable``, at the local estimate
+        the usage meter counts a call's start at."""
+        resolved = StrategySelectionPrompt.resolve(
+            custom_prompts=self.config.custom_prompts
+        )
+        return estimate_token_count(
+            resolved.system_prompt_template
+            + resolved.human_prompt_template
+            + self._question(state)
+            + ", ".join(s.value for s in routable)
+            + describe_routable_strategies(routable)
+        )
 
     def _check_allowed(self, strategy: SearchStrategy) -> None:
         """Refuse ``strategy`` outside ``allowed_strategies``, before any
@@ -1844,8 +1877,16 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         left -= answer_prompt_tokens(
             self.config, state.get("resolved_strategy")
         ) + estimate_token_count(self._question(state))
-        headroom = self.config.search.token_manager.context_window_headroom_ratio
-        room = max(1, int(left * (1 - headroom)))
+        token_manager = self.config.search.token_manager
+        room = max(1, int(left * (1 - token_manager.context_window_headroom_ratio)))
+        if room < token_manager.min_truncated_section_tokens:
+            # No section would fit: an empty context the limit made, which
+            # the answer names (abstention reason query_limit).
+            record_degradation(
+                DegradationStep.CONTEXT_OPTIMIZATION,
+                "query_limit: the input-token limit leaves the answer no context",
+                UsageLimitExceededError.__name__,
+            )
         return room if budget is None else min(budget, room)
 
     def _optimize_context(self, state: dict[str, Any]) -> OptimizedContext:
@@ -2005,11 +2046,20 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
     @staticmethod
     def _no_context_reason(state: dict[str, Any]) -> str:
         """Why the context is empty: the strategy's reason
-        (``NO_CONTEXT_REASON_KEY``, ``no_reports``), else ``no_context``."""
+        (``NO_CONTEXT_REASON_KEY``, ``no_reports``), else ``query_limit``
+        when the query's limits left out a step (degraded reason
+        ``query_limit``), else ``no_context``."""
         results = state.get("search_results")
         metadata = results.metadata if isinstance(results, SearchResult) else {}
         reason = metadata.get(NO_CONTEXT_REASON_KEY)
-        return reason if isinstance(reason, str) and reason else REASON_NO_CONTEXT
+        if isinstance(reason, str) and reason:
+            return reason
+        ledger = current_ledger()
+        if ledger is not None and any(
+            entry.reason.startswith(REASON_QUERY_LIMIT) for entry in ledger.entries
+        ):
+            return REASON_QUERY_LIMIT
+        return REASON_NO_CONTEXT
 
     def _no_context_answer(self, state: dict[str, Any]) -> str:
         """The fixed decline, in the language of the question (the index

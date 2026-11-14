@@ -28,6 +28,7 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import Runnable, RunnableConfig
 
 from unified_kg_rag.adapters.llm.chain_factory import setup_chain
+from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
@@ -217,12 +218,14 @@ class DriftSearchStrategy(BaseSearchStrategy):
             queue.sort(key=lambda item: (-item[0], item[1]))
             batch = [q for _, _, q in queue[: self.drift_config.k_followups]]
             # Under the query's limits: the best follow-ups whose actions
-            # (each reading up to local_context_tokens) fit beside the
-            # answer; the rounds end with them.
+            # (each with at least the least context) fit beside the answer,
+            # which reads the answers so far; the rounds end with them, and
+            # each reads an even share of what is left.
+            answer_tokens = self._answer_tokens(answers)
             fit = self._calls_within_limits(
                 DriftActionPrompt,
-                [self.drift_config.local_context_tokens] * len(batch),
-                reserve_tokens=self.drift_config.max_answer_tokens,
+                [self._min_context_tokens] * len(batch),
+                reserve_tokens=answer_tokens,
             )
             if fit < len(batch):
                 self._record_limit_stop(DegradationStep.DRIFT_ACTION, fit, len(batch))
@@ -234,8 +237,15 @@ class DriftSearchStrategy(BaseSearchStrategy):
             with observability.span(
                 "kg_rag.drift.actions", depth=depth, actions=len(batch)
             ):
+                context_tokens = self._context_share(
+                    len(batch),
+                    DriftActionPrompt,
+                    ceiling=self.drift_config.local_context_tokens,
+                    reserve_tokens=answer_tokens,
+                )
                 done = await gather_or_cancel(
-                    self._act(sub, query, semaphore, stats, config) for sub in batch
+                    self._act(sub, query, semaphore, stats, config, context_tokens)
+                    for sub in batch
                 )
             actions += len(batch)
             depth += 1
@@ -362,13 +372,15 @@ class DriftSearchStrategy(BaseSearchStrategy):
         if not template:
             return []
         expanded = query.query
-        # Under the query's limits: the expansion only beside a primer call,
-        # an action and the answer (else the question finds the reports).
+        # Under the query's limits: the expansion only beside the least
+        # primer call, action and answer (else the question finds the
+        # reports).
         if not self._calls_within_limits(
             DriftHydePrompt,
             [template[0].content],
             reserve_calls=3,
-            reserve_tokens=self._limit_reserve(),
+            reserve_tokens=self._least_call_tokens(DriftPrimerPrompt)
+            + self._least_call_tokens(DriftActionPrompt),
         ):
             self._record_limit_stop(DegradationStep.DRIFT_EXPANSION, 0, 1)
         else:
@@ -423,13 +435,13 @@ class DriftSearchStrategy(BaseSearchStrategy):
         ``search.max_concurrency`` folds at a time (as the actions), each
         citing its fold's reports."""
         folds = self._folds(reports, self.drift_config.primer_folds)
-        # Under the query's limits: the folds that fit beside an action and
-        # the answer.
+        # Under the query's limits: the folds that fit beside the least
+        # action and the answer.
         fit = self._calls_within_limits(
             DriftPrimerPrompt,
             ["\n\n".join(r.content for r in fold) for fold in folds],
             reserve_calls=2,
-            reserve_tokens=self._limit_reserve(),
+            reserve_tokens=self._least_call_tokens(DriftActionPrompt),
         )
         if fit < len(folds):
             self._record_limit_stop(DegradationStep.DRIFT_PRIMER, fit, len(folds))
@@ -504,8 +516,10 @@ class DriftSearchStrategy(BaseSearchStrategy):
         semaphore: asyncio.Semaphore,
         stats: dict[str, Any],
         config: RunnableConfig | None,
+        context_tokens: int | None = None,
     ) -> _Answer:
-        """A local search for ``follow_up`` and its answer from that context.
+        """A local search for ``follow_up`` and its answer from that context
+        (of ``context_tokens``, by default ``local_context_tokens``).
 
         A failure that is not fatal leaves the answer without text, keeps
         what the local search found, and records the error on the answer;
@@ -529,7 +543,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
                 self.token_manager.optimize_context,
                 local.results,
                 follow_up,
-                self.drift_config.local_context_tokens,
+                context_tokens or self.drift_config.local_context_tokens,
             )
             context = self.token_manager.build_context_string(optimized)
             answer = _Answer(
@@ -577,11 +591,15 @@ class DriftSearchStrategy(BaseSearchStrategy):
         answer.follow_ups = _follow_ups(payload)
         return answer
 
-    def _limit_reserve(self) -> int:
-        """The input tokens kept, under the query's limits, for one action
-        (``local_context_tokens``) and the answer (``max_answer_tokens``)."""
-        settings = self.drift_config
-        return settings.local_context_tokens + settings.max_answer_tokens
+    def _answer_tokens(self, answers: list[_Answer]) -> int:
+        """What the answer reads of DRIFT's work, kept for it under the
+        query's limits: the intermediate answers so far, at most
+        ``max_answer_tokens`` and at least the least context."""
+        written = sum(estimate_token_count(a.text) for a in answers if a.text)
+        return max(
+            self._min_context_tokens,
+            min(self.drift_config.max_answer_tokens, written),
+        )
 
     def _degrade(self, step: str, label: str, error: Exception) -> None:
         """Record ``step``'s failure (``label``) in the query's degradation

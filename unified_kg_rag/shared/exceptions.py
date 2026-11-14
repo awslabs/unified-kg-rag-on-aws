@@ -386,6 +386,15 @@ class UsageLimitExceededError(GraphRAGException):
         self.value = value
 
 
+class OptionalCallSkipped(UsageLimitExceededError):
+    """An optional model call (a query translation or extraction, the
+    structured planner, an output repair: ``shared.usage.optional_calls``)
+    was not sent: it would take a call the query's limits keep for its
+    answer (``UsageLimits.reserved_calls``). The step that made it is
+    answered without, recorded as degraded (``query_limit``); the query
+    goes on."""
+
+
 class RerankModelError(ModelError):
     """A rerank model that cannot be built or a rerank call that failed. A
     query raises it only with ``search.reranking.required``; otherwise it

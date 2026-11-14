@@ -59,6 +59,7 @@ from unified_kg_rag.shared import (
     get_logger,
     usage,
 )
+from unified_kg_rag.shared.exceptions import OptionalCallSkipped
 from unified_kg_rag.shared.logging import log_error, warn_once
 from unified_kg_rag.shared.utils.model_output import (
     leading_reasoning_end,
@@ -771,23 +772,12 @@ class FixingJsonOutputParser(LLMJsonOutputParser):
 
     def _repairable(self, text: str, error: OutputParserException) -> bool:
         """Whether a fixer may repair ``text``: not blank, not cut off (a
-        fixer could only invent the rest), a fixing model is set, and the
-        open usage limits leave a call beside the ones they keep for the
-        last step (``usage.optional_calls_left``: a query's answer)."""
-        if not (
+        fixer could only invent the rest), and a fixing model is set."""
+        return (
             bool(text.strip())
             and not isinstance(error.__cause__, ModelOutputCutOffError)
             and self._fixing_model_id is not None
-        ):
-            return False
-        left = usage.optional_calls_left()
-        if left is not None and left <= 0:
-            logger.info(
-                "JSON answer did not parse; not repaired: the query's call "
-                "limit keeps its last calls for the answer"
-            )
-            return False
-        return True
+        )
 
     def parse(self, text: str) -> Any:
         try:
@@ -796,7 +786,13 @@ class FixingJsonOutputParser(LLMJsonOutputParser):
             if not self._repairable(text, e):
                 raise
             logger.info("JSON answer did not parse: asking the output fixer once")
-            return self._fixing_parser().parse(text)
+            # Optional: a repair never takes the call a query keeps for its
+            # answer; then the answer fails to parse as an unrepaired one.
+            try:
+                with usage.optional_calls():
+                    return self._fixing_parser().parse(text)
+            except OptionalCallSkipped:
+                raise e from None
 
     async def aparse(self, text: str) -> Any:
         try:
@@ -805,7 +801,11 @@ class FixingJsonOutputParser(LLMJsonOutputParser):
             if not self._repairable(text, e):
                 raise
             logger.info("JSON answer did not parse: asking the output fixer once")
-            return await self._fixing_parser().aparse(text)
+            try:
+                with usage.optional_calls():
+                    return await self._fixing_parser().aparse(text)
+            except OptionalCallSkipped:
+                raise e from None
 
 
 def create_json_output_parser(

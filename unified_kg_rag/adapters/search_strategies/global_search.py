@@ -9,6 +9,7 @@ the ranked points, packed into a token budget, are the answer context.
 """
 
 import asyncio
+import functools
 import json
 import logging
 import math
@@ -566,14 +567,14 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                 query, {"depth": 0}, "Root community reports", stats
             )
             while queue:
-                # Under the query's limits: the ratings that fit beside one
-                # map call and the answer, the most relevant level last.
+                # Under the query's limits: the ratings that fit beside the
+                # least map call and the answer, the most relevant level last.
                 fit = self._calls_within_limits(
                     CommunityRelevancePrompt,
                     [r.content for r in queue],
                     reserve_calls=2,
-                    reserve_tokens=self._answer_reserve()
-                    + self.global_search_config.map_context_tokens,
+                    reserve_tokens=self._least_call_tokens(GlobalMapPrompt)
+                    + self._min_context_tokens,
                 )
                 limited = fit < len(queue)
                 if limited:
@@ -841,8 +842,9 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         # fit beside the answer; the others are not mapped.
         fit = self._calls_within_limits(
             GlobalMapPrompt,
-            [self._format_reports(batch) for batch in batches],
-            reserve_tokens=self._answer_reserve(),
+            # Formatted only under a limit.
+            [functools.partial(self._format_reports, batch) for batch in batches],
+            reserve_tokens=self._min_context_tokens,
         )
         if fit < len(batches):
             self._record_limit_stop(DegradationStep.GLOBAL_MAP, fit, len(batches))
@@ -910,13 +912,6 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             evidence = await asyncio.to_thread(self._cap_evidence, evidence)
             stats["global_evidence_reports"] = len(evidence)
         return self._reduce_from_points(packed_points, evidence, batches, lineages)
-
-    def _answer_reserve(self) -> int:
-        """The input tokens kept for the answer under the query's limits:
-        the key points it reads (``max_map_reduce_tokens``) and the cited
-        reports (``evidence_tokens``)."""
-        settings = self.global_search_config
-        return settings.max_map_reduce_tokens + (settings.evidence_tokens or 0)
 
     def _map_batches(
         self, reports: list[RetrievalResult]

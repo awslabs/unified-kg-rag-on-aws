@@ -536,7 +536,9 @@ def test_a_fan_out_keeps_the_answer_prompts_tokens_for_the_answer() -> None:
     call = 100 + estimate_token_count(
         resolved.system_prompt_template + resolved.human_prompt_template
     )
-    answer = answer_prompt_tokens(strat.config)
+    # The answer to a global search's prompt (its strategy's style).
+    answer = strat._answer_prompt_tokens()
+    assert answer == answer_prompt_tokens(strat.config, SearchStrategy.GLOBAL)
     for limit, fits in ((call + answer, 1), (call + answer - 1, 0)):
         with usage.usage_scope(usage.UsageLimits(max_input_tokens=limit)):
             assert strat._calls_within_limits(GlobalMapPrompt, [100]) == fits
@@ -588,34 +590,39 @@ def test_an_output_repair_never_takes_the_call_kept_for_the_answer() -> None:
     # Regression (W1 review L4): the fan-out reserved the answer's call, but
     # a reply that did not parse asked the output fixer, which took that
     # call, and the answer was refused. A query's limits keep one call for
-    # the answer (UsageLimits.reserved_calls): a repair that would take it
-    # is not asked, and the reply fails to parse as an unrepaired one does.
+    # the answer (UsageLimits.reserved_calls): a repair is an optional call
+    # (usage.optional_calls), refused when it would take it, and the reply
+    # fails to parse as an unrepaired one does.
     from langchain_core.exceptions import OutputParserException
+    from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
+    from tests.fixtures.fakes.chat_models import fake_model_info
     from unified_kg_rag.adapters.llm.chain_factory import create_json_output_parser
 
-    built: list[str] = []
-
-    class _Factory:
+    class _Fixer:
         def get_model(self, model_id: str, **_: Any) -> Any:
-            built.append(model_id)
-            raise RuntimeError("the fixer was asked")
+            return FakeListChatModel(
+                responses=['{"fixed": true}'],
+                callbacks=[UsageCallbackHandler(model_id, role="query")],
+            )
 
-    parser = create_json_output_parser(_Factory(), "fixer")  # type: ignore[arg-type]
+        def get_model_info(self, model_id: str) -> Any:
+            return fake_model_info(model_id)
+
+    parser = create_json_output_parser(_Fixer(), "fixer")  # type: ignore[arg-type]
     limits = usage.UsageLimits(max_llm_calls=3, reserved_calls=1)
-    with usage.usage_scope(limits):
+    with usage.usage_scope(limits) as meter:
         usage.start_llm_call("query", "m", estimated_input_tokens=1)
         usage.start_llm_call("query", "m", estimated_input_tokens=1)
         # One call left: the answer's.
         with pytest.raises(OutputParserException):
             parser.parse("no json here")
-        assert built == []
-    with usage.usage_scope(limits):
+        assert meter.total.llm_calls == 2
+    with usage.usage_scope(limits) as meter:
         usage.start_llm_call("query", "m", estimated_input_tokens=1)
         # Two left: the repair may take one.
-        with pytest.raises(Exception, match="OutputFixingParser"):
-            parser.parse("no json here")
-        assert built == ["fixer"]
+        assert parser.parse("no json here") == {"fixed": True}
+        assert meter.total.llm_calls == 2
 
 
 def test_a_model_without_the_usage_callback_is_warned_of_once(
@@ -656,3 +663,50 @@ def test_a_model_without_the_usage_callback_is_warned_of_once(
         if "UsageCallbackHandler" in r.getMessage()
     ]
     assert len(warned) == 1 and "_Bare" in warned[0]
+
+
+async def test_global_maps_what_an_input_token_limit_leaves_beside_the_answer() -> None:
+    # Regression (W1 verification 1): global reserved the config ceilings
+    # of what its answer may read (max_map_reduce_tokens, evidence_tokens:
+    # 12k) beside every map call, so under any smaller limit it mapped
+    # nothing; the answer's context is cut to what is left anyway, so a
+    # fan-out keeps only the answer prompt and the least context for it.
+    from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
+    from unified_kg_rag.domain.prompts import GlobalMapPrompt
+
+    strat = _global_strategy(
+        map_batch_size=1,
+        map_outputs=[_map_payload((f"point {i}", 90)) for i in range(4)],
+    )
+    reports = _communities(4)
+    batches, _ = strat._map_batches(reports)
+    call = strat._prompt_tokens(GlobalMapPrompt) + estimate_token_count(
+        strat._format_reports(batches[0])
+    )
+    limit = 2 * call + strat._answer_prompt_tokens() + strat._min_context_tokens
+    assert limit < strat.global_search_config.max_map_reduce_tokens
+    with usage.usage_scope(usage.UsageLimits(max_input_tokens=limit)):
+        await strat._apply_map_reduce(reports, SearchQuery(query="q"))
+    assert len(strat.map_rater.batch_inputs) == 2
+
+
+def test_auto_makes_no_router_call_an_input_token_limit_cannot_take() -> None:
+    # Regression (W1 verification 3): auto weighed a call limit but not an
+    # input-token one, so at a small token limit its router call was refused
+    # and the query failed where any explicit strategy degraded; the router
+    # call is optional too: without room for it beside the answer, auto
+    # takes its fallback as with one candidate.
+    from unified_kg_rag.adapters.retrieval.base import answer_prompt_tokens
+
+    chain = _router_chain()
+    candidates = (SearchStrategy.LOCAL, SearchStrategy.MIX, SearchStrategy.NAIVE)
+    state = {"query": "What does Vendor supply?", "enable_query_processing": False}
+    roomy = 50_000
+    with usage.usage_scope(usage.UsageLimits(max_input_tokens=roomy)):
+        assert chain._routes_within_limits(candidates, state) == (candidates, [])
+    small = answer_prompt_tokens(chain.config) + 200
+    with usage.usage_scope(usage.UsageLimits(max_input_tokens=small)):
+        assert chain._routes_within_limits(candidates, state) == (
+            (SearchStrategy.LOCAL,),
+            ["mix", "naive"],
+        )

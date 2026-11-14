@@ -34,7 +34,8 @@ sufficiency fields:
 - `abstained`: the chain declined (the fixed no-context reply, a
   `[NO_ANSWER]` decline or the insufficient-context policy).
 - `abstention_reason`: why: `no_context` (`no_reports` for `global` on a
-  namespace without community reports), `marker` or
+  namespace without community reports, `query_limit` when the query's
+  limits left out the steps that would have found a context), `marker` or
   `insufficient_context`; `null` for an answer.
 - `context_sufficient`: `false` when the strategy flagged its own context
   insufficient (`iterative` does), `null` when the strategy did not judge it.

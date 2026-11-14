@@ -18,7 +18,7 @@ from __future__ import annotations
 from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from unified_kg_rag.domain.ingestion.methodologies import artifacts_to_build
 from unified_kg_rag.domain.models import (
@@ -114,6 +114,12 @@ class StrategySpec:
 _REGISTRY: dict[SearchStrategy, StrategySpec] = {}
 
 StrategyT = TypeVar("StrategyT", bound="type[BaseSearchStrategy]")
+
+
+def registered_as(cls: type[Any]) -> SearchStrategy | None:
+    """The strategy ``cls`` is registered as, if exactly one."""
+    found = [s for s, spec in _REGISTRY.items() if spec.strategy_class is cls]
+    return found[0] if len(found) == 1 else None
 
 
 def register_strategy(
