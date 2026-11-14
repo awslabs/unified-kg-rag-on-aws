@@ -29,7 +29,7 @@ Usage:
     uv run python scripts/changelog_section.py --print-package-version
     uv run python scripts/changelog_section.py v0.3.0 --check-package \
         --link-base https://github.com/awslabs/unified-kg-rag-on-aws/blob/v0.3.0/
-    uv run python scripts/changelog_section.py 0.3.0.dev0 --fallback-unreleased
+    uv run python scripts/changelog_section.py 0.4.0.dev0 --fallback-unreleased
 """
 
 from __future__ import annotations

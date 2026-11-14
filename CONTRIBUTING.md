@@ -356,7 +356,7 @@ unit test fails when a page is stale):
 
 The version lives in one place, `__version__` in `unified_kg_rag/__init__.py`; `pyproject.toml` reads it from there
 (`[tool.hatch.version]`). Between releases `main` carries the next version with a `.devN` suffix (for example
-`0.3.0.dev0`), so a build from `main` is never mistaken for a release. Maintainers release as follows:
+`0.4.0.dev0`), so a build from `main` is never mistaken for a release. Maintainers release as follows:
 
 1. On a `chore/release-X.Y.Z` branch, set `__version__ = "X.Y.Z"` (a pre-release such as `X.Y.Zrc1` works the same
    way).
