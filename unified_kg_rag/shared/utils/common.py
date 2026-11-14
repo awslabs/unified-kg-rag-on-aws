@@ -38,23 +38,27 @@ def _available_cpu_count() -> int:
     ``multiprocessing.cpu_count()`` returns the host's physical core count and
     ignores cgroup CPU quotas, so inside a container with ``--cpus 2`` (e.g. a
     2-vCPU Fargate task) it can report the host's 7+ cores — over-sizing pools —
-    or, combined with the 0.8 fraction, mis-size them. We prefer, in order:
+    or, combined with the 0.8 fraction, mis-size them. Both container limits
+    count, each when present, and the lower wins (``docker run --cpus=6
+    --cpuset-cpus=0,1`` runs on two CPUs, ``--cpus=2`` on a 0-7 cpuset on two):
 
     1. the cgroup v2 / v1 CPU quota (the real CFS ceiling the task runs under),
-    2. the CPU affinity mask (``os.sched_getaffinity``, respects cpusets),
-    3. ``cpu_count()`` as a last resort.
+    2. the CPU affinity mask (``os.sched_getaffinity``, respects cpusets);
+
+    ``cpu_count()`` when neither is known.
     """
+    limits: list[int] = []
     quota = _cgroup_cpu_quota()
     if quota is not None and quota >= 1:
-        return quota
+        limits.append(quota)
     if hasattr(os, "sched_getaffinity"):
         try:
             affinity = len(os.sched_getaffinity(0))
             if affinity >= 1:
-                return affinity
+                limits.append(affinity)
         except OSError:
             pass
-    return cpu_count()
+    return min(limits) if limits else cpu_count()
 
 
 def _cgroup_cpu_quota() -> int | None:
