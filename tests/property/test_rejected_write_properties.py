@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager, suppress
+from contextlib import ExitStack, contextmanager, suppress
 
 import pytest
 from hypothesis import HealthCheck, example, given, settings
@@ -32,7 +32,7 @@ from tests.fixtures.incremental_runs import (
 )
 from unified_kg_rag.domain.ingestion.graph_resolver import entity_keys
 from unified_kg_rag.domain.ingestion.names import compact_name_key
-from unified_kg_rag.domain.models import Config, DocStatus
+from unified_kg_rag.domain.models import Config, DocStatus, DocStatusRecord
 from unified_kg_rag.shared.utils import entity_key
 
 pytestmark = pytest.mark.property
@@ -679,6 +679,30 @@ def _raising(
         delattr(store, method)
 
 
+@contextmanager
+def _registry_raising(harness: IncrementalRun) -> Iterator[None]:
+    """Make the commit's first registry record raise (an outage that hit the
+    registry too), after the note step."""
+    store = harness.store
+    original = store.put
+
+    def put(record: DocStatusRecord) -> None:
+        if record.status is not DocStatus.PENDING and record.attempt_batch is None:
+            raise _WriteRaised("registry write raised")
+        original(record)
+
+    setattr(store, "put", put)  # noqa: B010 - an instance attribute, undone below
+    try:
+        yield
+    finally:
+        delattr(store, "put")
+
+
+# How the run with the raised write ends: in the process, or killed after
+# its note step or at its first commit record, or with that record raising.
+_ENDS = [None, "after_write_note", "mid_commit", "registry"]
+
+
 _raised_corpora = st.sampled_from(sorted(_SPELLINGS)).flatmap(
     lambda lang: st.tuples(
         *(
@@ -723,6 +747,8 @@ def _named(prefix: str, documents: list[Content]) -> Corpus:
     k=st.integers(1, 3),
     cut=st.none() | st.tuples(st.integers(1, 3), st.integers(0, 1)),
     cap=st.booleans(),
+    noted=st.none() | st.tuples(st.sampled_from(_WRITES), st.integers(0, 1000)),
+    end=st.sampled_from(_ENDS),
 )
 # graph.upsert_entities raised at its second call: the note held every
 # entity of that call as the run had merged them, and joined to the next
@@ -760,6 +786,8 @@ def _named(prefix: str, documents: list[Content]) -> Corpus:
     k=2,
     cut=(2, 1),
     cap=True,
+    noted=None,
+    end=None,
 )
 def test_a_write_that_raises_in_the_commit_converges(
     corpora: tuple[list[Content], list[Content], list[Content]],
@@ -768,11 +796,15 @@ def test_a_write_that_raises_in_the_commit_converges(
     k: int,
     cut: tuple[int, int] | None,
     cap: bool,
+    noted: tuple[str, int] | None,
+    end: str | None,
 ) -> None:
-    # Indexed: kept, gone and later-gone documents; the next run removes
-    # the gone ones and adds new ones while the k-th call of one store write
-    # raises; then the later-gone ones are removed too, and clean runs
-    # leave what a fresh full build of the final corpus stores.
+    # Indexed: kept, gone and later-gone documents, maybe with some of the
+    # commit's item writes rejected (``noted``: recorded, the items noted);
+    # the next run removes the gone ones and adds new ones while the k-th
+    # call of one store write raises, and maybe ends before its documents
+    # are recorded (``end``); then the later-gone ones are removed too, and
+    # clean runs leave what a fresh full build of the final corpus stores.
     kept, gone, later = (_named(p, c) for p, c in zip("kgh", corpora, strict=True))
     new = _named("n", added)
     config = Config()
@@ -782,15 +814,69 @@ def test_a_write_that_raises_in_the_commit_converges(
         # Capped descriptions: a commit refills them from the vector copies.
         config.indexing.neptune.property_max_length = 40
     harness = IncrementalRun(FakeDocStatusStore(), config)
-    harness.run({**kept, **gone, **later})
-    with _raising(harness, where, k, cut), suppress(_WriteRaised):
+    harness.run(
+        {**kept, **gone, **later},
+        fail=_rejects(*noted) if noted else None,
+        fail_removal=False,
+    )
+    with ExitStack() as stack:
+        stack.enter_context(_raising(harness, where, k, cut))
+        stack.enter_context(suppress(_WriteRaised))
+        if end == "registry":
+            stack.enter_context(_registry_raising(harness))
         # A write the indexing phase runs fails its task (a failed removal
         # stops the run before the commit); one outside it fails the run,
         # as a crash would.
-        harness.run({**kept, **later, **new}, fail=lambda *_: False)
+        harness.run(
+            {**kept, **later, **new},
+            interrupt=None if end == "registry" else end,
+            fail=lambda *_: False,
+        )
     final = {**kept, **new}
     harness.run(final)
     harness.run(final)
 
     assert harness.state() == expected_state(final, config)
     assert harness.registry_problems(final) == []
+
+
+@pytest.mark.parametrize("end", _ENDS)
+@pytest.mark.parametrize(
+    ("depot", "spelling"), [("Depot", "Acme"), ("창고", "한빛"), ("倉庫", "ひかり")]
+)
+def test_a_raised_write_of_a_noted_item_keeps_its_note(
+    depot: str, spelling: str, end: str | None
+) -> None:
+    # m0.txt's edge write is rejected by id: the edge is noted and m0
+    # recorded. The next run (nothing changed) writes the noted edge, and
+    # that write raises (a timeout) over the failure rate: no document is
+    # recorded. Its note was deleted at the note step, before the fallback
+    # recorded m0 FAILED; a run ending in between (killed, or its registry
+    # write raising) left m0 indexed and the edge in no store for good.
+    config = Config()
+    config.indexing.max_failure_rate = 0.95
+    config.indexing.max_document_attempts = 50
+    harness = IncrementalRun(FakeDocStatusStore(), config)
+    kept: Corpus = {"/corpus/k0.txt": [[(depot, "Buyer", 3)]]}
+    corpus: Corpus = {**kept, "/corpus/m0.txt": [[(depot, spelling, 3)]]}
+    harness.run(kept)
+    harness.run(
+        corpus,
+        fail=lambda at, _i: at == "graph.upsert_relationships",
+        fail_removal=False,
+    )
+    with ExitStack() as stack:
+        stack.enter_context(_raising(harness, "graph.upsert_relationships", 1, None))
+        stack.enter_context(suppress(_WriteRaised))
+        if end == "registry":
+            stack.enter_context(_registry_raising(harness))
+        harness.run(
+            corpus,
+            interrupt=None if end == "registry" else end,
+            fail=lambda *_: False,
+        )
+    harness.run(corpus)
+    harness.run(corpus)
+
+    assert harness.state() == expected_state(corpus, config)
+    assert harness.registry_problems(corpus) == []

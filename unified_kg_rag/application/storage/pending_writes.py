@@ -238,9 +238,13 @@ class PendingWrites:
         self._parts: dict[str, list[str]] = {}
         # By suffix, the ids of the noted entities the commit's delta holds.
         self._entities: dict[str, set[str]] = defaultdict(set)
+        # By suffix, the items of the note this run read, by kind and id (as
+        # read: before the delta joined them).
+        self._items: dict[str, dict[str, dict[str, Any]]] = {}
 
     def reset(self) -> None:
         self._read.clear()
+        self._items.clear()
         self._joined.clear()
         self._parts.clear()
         self._entities.clear()
@@ -285,6 +289,9 @@ class PendingWrites:
             if items is None:
                 continue
             self._read.add(suffix)
+            self._items[suffix] = {
+                kind: {item.id: item for item in group} for kind, group in items.items()
+            }
             for kind, group in items.items():
                 getattr(noted, kind).extend(group)
             logger.info(
@@ -605,11 +612,13 @@ class PendingWrites:
         ``recorded``: whether the commit records its documents (under the
         failure rate), which the warning says; a commit that does not notes
         no failure naming no item (a raised write), which its documents'
-        next indexing writes again."""
+        next indexing writes again, beyond the items of that kind the notes
+        it read hold (noted again as read)."""
         failed: dict[str, dict[str, dict[str, Any]]] = defaultdict(
             lambda: defaultdict(dict)
         )
         covered: set[str] = set()
+        raised: set[str] = set()
         if not recorded:
             # A failure naming no item (a raised write) stands for every
             # item of its kind the commit wrote. Its documents are not
@@ -618,6 +627,11 @@ class PendingWrites:
             # join that delta and could displace what it extracts. Left
             # unnoted, the documents outside the run owning such an item
             # are recorded FAILED (``IncrementalIndexer.record``).
+            raised = {
+                RESULT_KINDS[key]
+                for key, stats in results.items()
+                if key in RESULT_KINDS and stats and stats.unattributed_failures
+            }
             results = {
                 key: stats
                 for key, stats in results.items()
@@ -627,6 +641,16 @@ class PendingWrites:
             for item in items:
                 failed[BaseIndexer.get_suffix(item)][RESULT_KINDS[key]][item.id] = item
             covered.add(key)
+        # The items of a raised kind in the notes this run read stay noted,
+        # as read: a note is deleted only once its items are written or
+        # noted again. The run's own items are derived again by the next
+        # run; the noted ones may be stated by no document it indexes, and
+        # the fallback recording their documents FAILED comes after this
+        # note step (a run ending in between lost them).
+        for suffix, kinds in self._items.items():
+            for kind in sorted(raised & kinds.keys()):
+                for item_id, item in kinds[kind].items():
+                    failed[suffix][kind].setdefault(item_id, item)
         try:
             for suffix in sorted(failed):
                 note = {
@@ -661,4 +685,5 @@ class PendingWrites:
             self._m._delete_note(PENDING_WRITES, suffix)
             self._delete_parts(suffix)
         self._read.clear()
+        self._items.clear()
         return covered

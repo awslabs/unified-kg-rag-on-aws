@@ -2187,6 +2187,8 @@ Ingestion and incremental indexing.
   `FAILED`, over the rate too, those outside the run included (only the run's were, so that kept edge was lost).
   So are, over the rate, those of a write that raised (a timeout) instead of naming its items: noted, the items as
   the commit merged them joined the next run's delta of the same documents and could drop one of its edges for good.
+  The items of that kind in the notes the commit read stay noted, as read: deleted with the note, they were lost when
+  the run ended (killed, or its registry write raising) before their documents were recorded `FAILED`.
   A noted item is cut to the units the next delta does not write again: a retried document's own units kept in it
   wrote it again as resolved when noted, beside the delta's item, at an entity a removal may have deleted since.
 - Deleting a document under a non-default suffix strips it from shared claims, a deletion-only run checks the

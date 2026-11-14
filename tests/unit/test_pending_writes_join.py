@@ -14,20 +14,28 @@ report the delta makes again replaces the noted one.
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
+from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
+from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 from unified_kg_rag.application.storage.pending_writes import (
     NotedWrites,
     PendingWrites,
+    _dump,
     failed_writes,
 )
+from unified_kg_rag.application.storage.stored_items import PENDING_WRITES
 from unified_kg_rag.domain.models import (
     Claim,
     Community,
     CommunityReport,
+    Config,
+    Constants,
     Entity,
     Relationship,
+    TextUnit,
 )
 from unified_kg_rag.ports.indexer import IndexingStats
 
@@ -201,3 +209,71 @@ def test_a_community_and_report_the_delta_makes_again_replace_the_noted_ones() -
         ("com-2", "kept", ["u9"]),
     ]
     assert [r.summary for r in reports] == ["remade"]
+
+
+def _in(suffix: str, item: Any) -> Any:
+    return item.model_copy(update={"attributes": {Constants.INDEX.value: suffix}})
+
+
+def test_a_raised_write_over_the_rate_keeps_each_namespaces_read_note() -> None:
+    # Two namespaces' notes are read and joined to one commit; its edge
+    # write raises in alpha while beta's names its own new edge: one merged
+    # result, a failure naming no item, over the rate (nothing recorded).
+    # Each note keeps the noted items of the raised kind as read; beta's
+    # noted entity, written, and the run's own edge (derived again by the
+    # next run) are not noted.
+    config = Config()
+    vector = FakeVectorStore(opensearch_config=config.indexing.opensearch)
+    manager = IndexingManager(
+        config=config, vector_indexer=vector, graph_indexer=FakeGraphStore(config)
+    )
+    vendor, buyer = _VENDOR, _BUYER
+    noted = {
+        "alpha": [_in("alpha", _edge("r-a", vendor, buyer, "ua"))],
+        "beta": [
+            _in("beta", _edge("r-b", buyer, vendor, "ub")),
+            _in("beta", Entity(id="e-b", name="Depot", text_unit_ids=["ub"])),
+        ],
+    }
+    vector.upsert_text_units(
+        [
+            _in(suffix, TextUnit(id=unit, text="t", document_ids=["d"]))
+            for suffix, unit in (("alpha", "ua"), ("beta", "ub"), ("beta", "ub2"))
+        ]
+    )
+    for suffix, items in noted.items():
+        manager._write_note(
+            PENDING_WRITES,
+            suffix,
+            {
+                kind: [_dump(i) for i in items if isinstance(i, model)]
+                for kind, model in (
+                    ("relationships", Relationship),
+                    ("entities", Entity),
+                )
+            },
+        )
+    read = manager.read_pending_writes(["alpha", "beta"])
+    assert {r.id for r in read.relationships} == {"r-a", "r-b"}
+    own = _in("beta", _edge("r-own", vendor, buyer, "ub2"))
+    edges = IndexingStats(total_items=3)
+    edges.add_error("timed out", 1)
+    edges.add_error("write rejected", 1, ids=[own.id])
+    written = [*read.relationships, *read.entities, own]
+
+    manager.note_pending_writes(
+        {"graph_relationships": edges, "vector_entities": IndexingStats()},
+        written,
+        recorded=False,
+    )
+
+    def stored(suffix: str) -> dict[str, list[str]]:
+        note = vector.read_extraction_records([PENDING_WRITES], suffix=suffix)
+        return {
+            kind: sorted(i["id"] for i in items)
+            for kind, items in note.get(PENDING_WRITES, {}).items()
+            if items
+        }
+
+    assert stored("alpha") == {"relationships": ["r-a"]}
+    assert stored("beta") == {"relationships": ["r-b"]}
