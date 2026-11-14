@@ -44,6 +44,7 @@ from unified_kg_rag.shared.exceptions import (
     StoreTimeoutError,
 )
 from unified_kg_rag.shared.logging import log_error
+from unified_kg_rag.shared.utils.common import error_name
 from unified_kg_rag.shared.write_fence import (
     INDEXING_REQUEST_TIMEOUT_SECONDS,
     check_write_fence,
@@ -852,7 +853,10 @@ class OpenSearchClient:
                     raise
                 # The failed request's items and the unsent ones after it.
                 # Resending an index, delete or partial update by id is safe.
-                logger.warning("Bulk request failed: %s", error_reason(e))
+                # Named by its type and status: a reason may quote a
+                # rejected item.
+                logger.warning("Bulk request failed: %s", error_name(e))
+                logger.debug("Bulk request failed: %s", error_reason(e))
                 retry_actions.extend(pending[answered:])
             if not retry_actions:
                 return success_count, failures

@@ -406,9 +406,6 @@ _SAFE_ERROR_CALLS = frozenset(
         "type",
         "classify",
         "format_validation_errors",
-        # OpenSearch's own reason for a request it refused (a bulk request's
-        # 429): what the store says, logged by design (adapters.aws.opensearch).
-        "error_reason",
     }
 )
 _SAFE_ERROR_ATTRS = frozenset({"__name__", "__class__", "status_code", "errno"})
@@ -517,6 +514,51 @@ def _logs_raw_error(call: ast.Call, names: frozenset[str] = _ERROR_NAMES) -> lis
         candidates += [*receiver.args, *(kw.value for kw in receiver.keywords)]
         receiver = receiver.func.value
     return [ast.unparse(arg) for arg in candidates if _passes_raw_error(arg, names)]
+
+
+# What a write's errors (``IndexingStats.add_error``, logged as recorded) may
+# be given: the error itself (recorded by ``error_log_text``) or the
+# package's own words, a literal or an f-string of counts, ids and names. A
+# call other than these namers (``_bulk_item_error``: a rejected bulk item
+# by its types, status and id) or a reply's field (``item["reason"]``) may
+# carry a store's reply, a model's output or a document's text.
+_STATS_TEXT_CALLS = frozenset({"len", "type", "_bulk_item_error"})
+
+
+def _package_composed(node: ast.AST, names: frozenset[str]) -> bool:
+    if isinstance(node, ast.Constant):
+        return isinstance(node.value, str)
+    if _names_error(node, names):
+        return True
+    if not isinstance(node, ast.JoinedStr):
+        return False
+    for sub in ast.walk(node):
+        if isinstance(sub, ast.Call) and (
+            ast.unparse(sub.func).split(".")[-1] not in _STATS_TEXT_CALLS
+        ):
+            return False
+        if isinstance(sub, ast.Subscript) and (
+            isinstance(sub.slice, ast.Constant) and isinstance(sub.slice.value, str)
+        ):
+            return False
+        if sub is not node and isinstance(sub, ast.FormattedValue):
+            if _names_error(sub.value, names):
+                return False
+    return True
+
+
+def _unsafe_stats_texts(call: ast.Call, names: frozenset[str]) -> list[str]:
+    """The arguments of an ``add_error`` call (its error and ``context``)
+    that are not package-composed (:func:`_package_composed`)."""
+    if not (isinstance(call.func, ast.Attribute) and call.func.attr == "add_error"):
+        return []
+    given = [*call.args[:1]]
+    given += [kw.value for kw in call.keywords if kw.arg in {"error", "context"}]
+    return [
+        f"add_error({ast.unparse(arg)})"
+        for arg in given
+        if not _package_composed(arg, names)
+    ]
 
 
 # The ``except`` clauses whose error may be a store's, a provider's or a
@@ -682,6 +724,9 @@ class _RawErrorLogs(ast.NodeVisitor):
             self.found += [
                 (node.lineno, leak) for leak in _logs_raw_error(node, self._names())
             ]
+        self.found += [
+            (node.lineno, leak) for leak in _unsafe_stats_texts(node, self._names())
+        ]
         self.generic_visit(node)
 
 
@@ -819,6 +864,27 @@ _CLAUSE = "try:\n    pass\nexcept Exception as e:\n"
         (_CLAUSE + "    raise AWSServiceError(f'read failed: {e}') from e\n", False),
         (_CLAUSE + "    logger.debug('x %s', str(e))\n", False),
         ("try:\n    pass\nexcept ValueError as e:\n    usage_error(str(e))\n", False),
+        # A write's errors take the error or the package's own words only:
+        # never a store's reply (a reason, a rejected item's error), a text
+        # composed elsewhere, or a call's result.
+        ("stats.add_error(item['error']['reason'], 1)\n", True),
+        ("stats.add_error(f'Bulk errors: {failed[0][\"error\"]}', 1)\n", True),
+        ("stats.add_error(reason, 1, ids=ids)\n", True),
+        ("stats.add_error('; '.join(reasons), 1)\n", True),
+        ("stats.add_error(f'first: {describe(item)}', 1)\n", True),
+        (_CLAUSE + "    stats.add_error(e, 1, context=str(other))\n", True),
+        (_CLAUSE + "    stats.add_error(e, 1, context=f'Write {e} failed')\n", True),
+        (
+            "stats.add_error(f'Bulk errors: {len(failed)}', len(failed), ids=ids)\n",
+            False,
+        ),
+        ("stats.add_error(f\"endpoint entity '{missing[0]}' not found\")\n", False),
+        ("stats.add_error(f'{type(self).__name__} keeps no tree', 1)\n", False),
+        ("stats.add_error(f'first: {_bulk_item_error(failed[0])}', 1)\n", False),
+        (
+            _CLAUSE + "    stats.add_error(e, 1, context=f'Update of {alias!r}')\n",
+            False,
+        ),
     ],
 )
 def test_static_error_guard_follows_an_error_wherever_it_goes(
@@ -1093,6 +1159,19 @@ def test_an_error_name_takes_a_code_only_when_it_is_an_identifier() -> None:
     )
 
 
+def test_an_error_name_reads_the_result_code_sqlite_names(tmp_path: Path) -> None:
+    """A SQLite store error names its cause by its result code
+    (``SQLITE_CANTOPEN``), what its text says without the text."""
+    import sqlite3
+
+    from unified_kg_rag.shared.utils import error_name
+
+    with pytest.raises(sqlite3.Error) as raised:
+        sqlite3.connect(f"file:{tmp_path}/missing/db?mode=ro", uri=True)
+    assert error_name(raised.value) == "OperationalError SQLITE_CANTOPEN"
+    assert error_name(sqlite3.OperationalError("Quokkasecret")) == "OperationalError"
+
+
 def test_a_package_error_with_a_code_of_its_own_names_no_cause() -> None:
     """``error_name`` names the cause of a package error that says nothing
     of its own; one with its own code is named by it alone."""
@@ -1285,3 +1364,148 @@ def test_a_wrapped_failure_names_its_causes_frame_at_error(
     assert "Quokkasecret" not in shown and "payroll" not in shown
     debug = [r.getMessage() for r in caplog.records if r.levelno == logging.DEBUG]
     assert any("Quokkasecret" in line for line in debug)
+
+
+# --- a write's recorded errors (IndexingStats.errors) ----------------------
+
+
+def _assert_write_errors_log_safe(
+    stats: Any, caplog: pytest.LogCaptureFixture, mocker: Any
+) -> None:
+    """``stats`` (a write that failed on a store's text holding the secret)
+    keeps the secret out of everything an operator reads: its errors, the
+    run's JSON (the stage's ``indexing_results``), the INFO+ lines that
+    name them and the stage's failure, which names the first (rv31: the
+    stage left it out, as a store's text, so its cause was at DEBUG only)."""
+    from unified_kg_rag.application.ingestion import pipeline_stages as ps
+    from unified_kg_rag.application.storage.indexing_manager import IndexingManager
+    from unified_kg_rag.shared import PipelineStageError, get_logger
+    from unified_kg_rag.shared.exceptions import operator_error_text
+    from unified_kg_rag.shared.logging import log_error
+
+    assert stats.errors and stats.failed_items
+    mocker.patch.object(ps, "IndexingManager", return_value=MagicMock())
+    stage = ps.IndexingStage(config=Config())
+    results = {"graph_entities": stats}
+    with caplog.at_level(logging.INFO):
+        IndexingManager._log_completion_summary(results, 1.0)
+        with pytest.raises(PipelineStageError) as raised:
+            stage._validate_backend_success(results)
+        log_error(
+            get_logger("probe"), logging.ERROR, "Stage failed: %s", error=raised.value
+        )
+    shown = operator_error_text(raised.value)
+    assert f"First error: {stats.errors[0]}" in shown
+    run_json = json.dumps({k: v.to_dict() for k, v in results.items()})
+    for text in (*stats.errors, run_json, shown, _info_text(caplog)):
+        for fragment in _SECRET_FRAGMENTS:
+            assert fragment not in text, text
+
+
+def _bulk_rejection(error: object) -> Any:
+    from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
+
+    client = MagicMock()
+    client.bulk_index.return_value = {
+        "errors": True,
+        "items": [{"index": {"_id": "e-1", "status": 400, "error": error}}],
+    }
+    indexer = OpenSearchIndexer.__new__(OpenSearchIndexer)
+    indexer.config = Config()
+    indexer.opensearch_config = indexer.config.indexing.opensearch
+    indexer.opensearch_client = client
+    return indexer._perform_indexing("idx", [{"id": "e-1"}])
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        # A rejected item whose error is no object (a request's text).
+        "rejected: Quokkasecret payroll",
+        # A reason quoting the document's value outside the patterns the
+        # writer used to cut (its own, not its cause's quotes were kept).
+        {
+            "type": "mapper_parsing_exception",
+            "reason": "failed to parse field [rank] of type [long] in document "
+            "with id 'e-1'. Value 'Quokkasecret payroll' is not a number",
+            "caused_by": {
+                "type": "illegal_argument_exception",
+                "reason": "Zebrapassword",
+            },
+        },
+    ],
+    ids=["plain-reason", "quoting-reason"],
+)
+def test_a_rejected_bulk_item_is_named_never_by_its_reason(
+    error: object, caplog: pytest.LogCaptureFixture, mocker: Any
+) -> None:
+    with caplog.at_level(logging.DEBUG):
+        stats = _bulk_rejection(error)
+    debug = [r.getMessage() for r in caplog.records if r.levelno == logging.DEBUG]
+    assert any("Quokkasecret" in line for line in debug)
+    assert "HTTP 400, item 'e-1'" in stats.errors[0]
+    caplog.clear()
+    _assert_write_errors_log_safe(stats, caplog, mocker)
+
+
+def test_a_failed_neptune_edge_write_is_recorded_log_safely(
+    caplog: pytest.LogCaptureFixture, mocker: Any, skip_vertex_id_check: None
+) -> None:
+    # Neptune's status message quotes the traversal, with the values it
+    # wrote.
+    from gremlin_python.driver.protocol import GremlinServerError
+
+    from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
+    from unified_kg_rag.domain.models import Relationship
+
+    mocker.patch("unified_kg_rag.adapters.storage.neptune_indexer.NeptuneClient")
+    mocker.patch("unified_kg_rag.adapters.storage.neptune_indexer._sleep")
+    indexer = NeptuneIndexer(config=Config())
+
+    def execute(build: Any, operation: str, **kwargs: Any) -> Any:  # noqa: ARG001
+        if operation == "Reading edge endpoints":
+            return [{"id": i, "vertex": f"v-{i}"} for i in ("a", "b")]
+        raise GremlinServerError(
+            {
+                "code": 500,
+                "message": "addE('RELATED').property('description', "
+                "'Quokkasecret payroll') failed",
+                "attributes": {},
+            }
+        )
+
+    mocker.patch.object(indexer, "_execute_with_retries", side_effect=execute)
+    stats = indexer.upsert_relationships(
+        [Relationship(id="r1", source_id="a", target_id="b")]
+    )
+    assert stats.failed_ids == ["r1"]
+    _assert_write_errors_log_safe(stats, caplog, mocker)
+
+
+def test_a_failed_sqlite_graph_write_is_recorded_log_safely(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, mocker: Any
+) -> None:
+    # The store's typed error named the SQLite error by its text.
+    import sqlite3
+
+    from unified_kg_rag.adapters.storage.sqlite_graph_indexer import (
+        SQLiteGraphIndexer,
+    )
+    from unified_kg_rag.domain.models import Entity
+    from unified_kg_rag.ports.indexer import IndexingStats
+
+    indexer = SQLiteGraphIndexer(Config(), tmp_path / "graph.db")
+    mocker.patch.object(
+        indexer,
+        "_upsert_vertices",
+        side_effect=sqlite3.OperationalError("Quokkasecret payroll"),
+    )
+    stats = IndexingStats()
+    try:
+        indexer.upsert_entities([Entity(id="e1", name="Vendor")])
+    except Exception as e:  # noqa: BLE001 - as IndexingManager records a task's
+        stats.add_error(e)
+    finally:
+        indexer.close()
+    assert "OperationalError" in stats.errors[0]
+    _assert_write_errors_log_safe(stats, caplog, mocker)

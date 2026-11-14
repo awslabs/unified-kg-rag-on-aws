@@ -90,7 +90,7 @@ from unified_kg_rag.shared import (
 from unified_kg_rag.shared.exceptions import StoreRequestRejectedError
 from unified_kg_rag.shared.logging import log_error, log_failure, warn_once
 from unified_kg_rag.shared.store_lookups import StoreLookupCache, lookup_cache
-from unified_kg_rag.shared.utils.common import compute_hash
+from unified_kg_rag.shared.utils.common import as_error_code, compute_hash
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 from unified_kg_rag.shared.write_fence import check_write_fence
 
@@ -352,35 +352,43 @@ def _creation_refused(
     )
 
 
-# The reason of a rejected bulk item and of each of its causes, each cut
-# short (cut as a whole, a long reason left no room for the cause), and
-# without the corpus text: a mapping error's reason quotes the rejected
-# field's value ("Preview of field's value: ..."), an immense-term rejection
-# the term's bytes ("The prefix of the first immense term is: ..."), and a
-# cause may quote the value it could not read ('For input string: "..."'),
-# none of which may reach the logs.
-_BULK_REASON_LIMIT = 300
-_BULK_REASON_QUOTES = re.compile(
-    r"\s*(Preview of field's value|The prefix of the first immense term)\b.*",
-    re.DOTALL,
+# A k-NN vector of the wrong dimension, as the engine words its rejection:
+# the one reason a rejected item is named by (its numbers only), since its
+# fix is the run's configuration (models.embedding.dimension).
+_DIMENSION_MISMATCH = re.compile(
+    r"dimension mismatch\b(?:\W+expected\W+(\d+)\W+given\W+(\d+))?", re.IGNORECASE
 )
-_QUOTED = re.compile(r"\"[^\"]*\"|'[^']*'")
 
 
-def _bulk_item_error(error: Any) -> str:
-    """``type: reason`` of a bulk item's ``error``, then of the errors it was
-    caused by (``caused_by``, which names the cause: "Vector dimension
-    mismatch"), without the corpus text a reason quotes."""
-    if not isinstance(error, dict):
-        return str(error)[:_BULK_REASON_LIMIT]
-    parts: list[str] = []
-    while isinstance(error, dict) and len(parts) < 5:
-        reason = _BULK_REASON_QUOTES.sub("", str(error.get("reason", "")))
-        if parts:
-            reason = _QUOTED.sub('"..."', reason)
-        parts.append(f"{error.get('type', 'error')}: {reason}"[:_BULK_REASON_LIMIT])
-        error = error.get("caused_by")
-    return " (caused by ".join(parts) + ")" * (len(parts) - 1)
+def _bulk_item_error(item: Mapping[str, Any]) -> str:
+    """How a write's errors name a rejected bulk ``item`` (``{"_id",
+    "status", "error"}``): the error types along its ``caused_by`` chain, a
+    vector dimension mismatch (the dimensions only), its status and its id,
+    never a reason: a reason quotes what it rejected (a field's value, an
+    immense term's bytes, the input a number did not parse from), so the
+    item's error is logged at DEBUG only."""
+    error = item.get("error")
+    logger.debug("Bulk item %s rejected: %s", item.get("_id"), error)
+    types: list[str] = []
+    mismatch: re.Match[str] | None = None
+    cause = error
+    while isinstance(cause, dict) and len(types) < 5:
+        types.append(as_error_code(cause.get("type")) or "error")
+        mismatch = mismatch or _DIMENSION_MISMATCH.search(str(cause.get("reason")))
+        cause = cause.get("caused_by")
+    parts = [" caused by ".join(types) or "error"]
+    if mismatch:
+        expected, given = mismatch.groups()
+        parts.append(
+            f"vector dimension mismatch (expected {expected}, given {given})"
+            if expected
+            else "vector dimension mismatch"
+        )
+    if isinstance(status := item.get("status"), int):
+        parts.append(f"HTTP {status}")
+    if (item_id := item.get("_id")) is not None:
+        parts.append(f"item '{item_id}'")
+    return ", ".join(parts)
 
 
 def _with_digests(
@@ -2938,7 +2946,7 @@ class OpenSearchIndexer(VectorIndexer):
                 ]
                 stats.add_error(
                     f"Bulk API errors: {len(failed)} "
-                    f"(first: {_bulk_item_error(failed[0]['error']) if failed else '?'})",
+                    f"(first: {_bulk_item_error(failed[0]) if failed else '?'})",
                     len(failed),
                     ids=[str(item["_id"]) for item in failed if "_id" in item],
                 )

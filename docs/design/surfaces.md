@@ -186,7 +186,10 @@ error but a refusal and the deadline, by `log_error`.
 The rule is applied where an error's text enters, not at each line that
 logs it. An error kept to be logged or shown later is kept by what
 `log_error` would say of it (`error_log_text`): a store write's
-`IndexingStats.add_error` takes the exception (its text at DEBUG), a pool
+`IndexingStats.add_error` takes the exception (its text at DEBUG) or the
+package's own words (a rejected bulk item by its error types, status and
+id, never the store's reason), so the indexing stage's failure names its
+first error, a pool
 worker returns the exception or that form, and a saved result names a
 failure by `result_error_text` (class and type). A store error the package
 wraps is built by `GraphRAGException.caused_by(context, cause)`: its own
@@ -196,7 +199,8 @@ the store's reply; `log_error` adds where the cause happened
 (`error_locator`), and a saved result names it once. A static check (`tests/unit/test_log_redaction.py`)
 follows an error from its `except` clause (and an alias of it, an
 `isinstance`-checked gathered outcome, `traceback.format_exc()`) into any
-logger's INFO+ call or a value kept for later.
+logger's INFO+ call or a value kept for later, and fails on an `add_error`
+text that is not a literal or an f-string of counts, ids and names.
 
 **Untrusted text.** Chunk text, descriptions and answers are corpus or model
 text, and the server instructions and every tool description say to treat

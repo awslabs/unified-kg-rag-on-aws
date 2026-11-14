@@ -49,6 +49,7 @@ from unified_kg_rag.shared.exceptions import (
     StoreTimeoutError,
 )
 from unified_kg_rag.shared.logging import log_error
+from unified_kg_rag.shared.utils.common import error_name
 from unified_kg_rag.shared.write_fence import check_fences_held, check_write_fence
 
 logger = get_logger(__name__)
@@ -186,12 +187,12 @@ class SQLiteGraphStore:
             lambda e: StoreTimeoutError(
                 f"Graph store: could not {operation}: SQLite database "
                 f"'{self.path}' stayed locked for {self.timeout_seconds}s "
-                f"({e}). Another process is writing to it; SQLite allows "
+                f"({error_name(e)}). Another process is writing to it; SQLite allows "
                 "one writer at a time."
             ),
             lambda e: StoreConfigurationError(
                 f"Graph store: could not {operation} on SQLite database "
-                f"'{self.path}': {type(e).__name__}: {e}. Check the path "
+                f"'{self.path}': {error_name(e)}. Check the path "
                 "(providers.graph.sqlite_path) is a writable SQLite file on a "
                 "local filesystem."
             ),

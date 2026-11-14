@@ -3380,16 +3380,13 @@ class IndexingStage(_RegistryStage):
                 ),
                 None,
             )
-            # The stage's own part is shown and logged; its first error, a
-            # store's (which may quote a document's text), only at DEBUG.
-            own = (
+            # Shown and logged whole: a write's errors are log-safe as
+            # recorded (IndexingStats.add_error), so the first names the cause.
+            message = (
                 f"Indexing failed: {', '.join(failed_index_types)} "
                 f"exceeded the tolerated failure rate ({max_failure_rate:.0%}) or "
                 f"failed to index any items. This indicates a configuration or "
                 f"connectivity issue; the WARNING and ERROR lines above name "
                 "each failed write."
-            )
-            raise PipelineStageError(
-                own + (f" First error: {first_error}" if first_error else ""),
-                own_text=own,
-            )
+            ) + (f" First error: {first_error}" if first_error else "")
+            raise PipelineStageError(message, own_text=True)
