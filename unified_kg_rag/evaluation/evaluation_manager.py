@@ -20,6 +20,7 @@ from typing import Any, Literal
 from langchain_core.runnables import Runnable
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from unified_kg_rag import __version__
 from unified_kg_rag.adapters.evaluators.base import (
     FAILED_METRICS_KEY,
     SKIPPED_METRICS_KEY,
@@ -1609,7 +1610,7 @@ class EvaluationManager:
         git_sha, git_dirty = self._git_state()
         return {
             "created_at": datetime.now(UTC).isoformat(),
-            "package_version": self._package_version("unified-kg-rag-on-aws"),
+            "package_version": __version__,
             "git_sha": git_sha,
             "git_dirty": git_dirty,
             # Every setting that can change an answer or a score, without

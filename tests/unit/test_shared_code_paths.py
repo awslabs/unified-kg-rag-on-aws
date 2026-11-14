@@ -192,6 +192,43 @@ def test_clis_show_the_package_version(module: str) -> None:
     assert cli.__version__ is unified_kg_rag.__version__
 
 
+def test_the_package_reads_its_own_version_from_one_source() -> None:
+    # A checkout's editable install keeps the metadata version it was built
+    # with (uv does not rebuild it when only __init__.py changes), so a
+    # build record, a tree record or an eval manifest that read
+    # importlib.metadata named an older version than `--version` and the
+    # cache keys: every one reads unified_kg_rag.__version__.
+    import ast
+    import tomllib
+    from pathlib import Path
+
+    import unified_kg_rag
+
+    package = Path(unified_kg_rag.__file__).parent
+    pyproject = tomllib.loads(
+        (package.parent / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    distribution = pyproject["project"]["name"]
+    reads = []
+    for path in sorted(package.rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if (
+                isinstance(node, ast.Call)
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and node.args[0].value == distribution
+            ):
+                func = node.func
+                name = (
+                    func.attr
+                    if isinstance(func, ast.Attribute)
+                    else getattr(func, "id", None)
+                )
+                if name in {"version", "_package_version"}:
+                    reads.append(f"{path.relative_to(package)}:{node.lineno}")
+    assert reads == []
+
+
 def test_registry_default_namespace_is_the_default_index_suffix() -> None:
     import inspect
 

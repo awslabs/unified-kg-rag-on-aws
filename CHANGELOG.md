@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-14
+
 The first release after 0.2.3, the initial public snapshot (commit `81ea498`,
 never tagged), which ran GraphRAG and LightRAG retrieval on one Amazon Bedrock,
 Neptune, OpenSearch and DynamoDB stack. This release adds HippoRAG 2 and RAPTOR
@@ -59,7 +61,8 @@ stored is read again: follow *Upgrading* in order.
 
 #### Install and extras
 - Python 3.11.5 or later 3.11, or 3.12, is required (`>=3.11.5, <3.13`); 3.10 is dropped (#430), and 3.11.0–3.11.4
-  too: soupsieve 4, which fixes the soupsieve CVEs below, needs 3.11.5 (the lock kept the vulnerable 2.10 for them).
+  too: soupsieve 4, which fixes the soupsieve CVEs below, needs 3.11.5 (the lock kept the vulnerable 2.10 for them)
+  (#746).
 - A core install (`uv sync`, `pip install -e .`) is ingestion and queries: 145 to 78 packages, 937 to 335 MB on Linux.
   Extras: `eval` (ragas, datasets, pandas, langchain, langchain-community, langchain-openai), `viz` (pyvis, for the
   `interactive` renderer, which a `run-visualization` without `--renderers` leaves out with a WARNING without it),
@@ -502,7 +505,6 @@ From 0.2.3; the sub-list after it is for a `main` checkout since. The runbook's
     matching worker processes now start from a forkserver, which imports the main module, instead of forking a
     process that runs threads (a lock another thread held could hang the worker). The console scripts and a
     notebook need nothing; what a custom pool task gets must pickle (#628).
-
 16. A `custom_prompts` override of `strategy_selection_*` should answer the strategy name alone, as the built-in
     prompt does, or `{"strategy": ...}` (*Changed*): another answer costs one output-fixer call per query. No stored
     data is re-keyed; the query-extraction cache keys on the prompts' text, so only its in-memory entries of changed
@@ -555,8 +557,8 @@ From a `main` checkout (formats and keys no release had):
   (#612, #624) are no longer looked up; a CSV or HTML file saved with a UTF-8 byte-order mark reads without it, so
   its text changes (an incremental run re-extracts it as a changed document; no other file changes). Run one reset
   (`indexing.reset: true`) with a new or no `--pipeline-id`: incremental runs keep stored entities under their
-  earlier ids beside the new ones. That one reset covers this item
-  and every item below, and its cost depends on the index's age. On an index built with #565 or later it reuses the
+  earlier ids beside the new ones. That one reset covers every item of this list, and its cost depends on the index's
+  age. On an index built with #565 or later it reuses the
   stored graph extraction and gleaning records and the vectors (entity and relationship ids are minted again from the
   names, as extraction mints them) and asks the model one summary, and one embedding, per entity or relationship over
   the summary threshold, every community's report (the report prompt cites sub-community reports now), with claim
@@ -1607,11 +1609,12 @@ From a `main` checkout (formats and keys no release had):
   sink builder for every CLI; its EMF goes to stderr where stdout carries the protocol or `--output-format json`,
   which `run-rag`, `run-ingestion` and `run-console` no longer refuse with it. An embedding-only stage emits no
   always-zero `llm_calls_<stage>` or token series.
-- The package ships a `py.typed` marker (#568). `main` reports `0.3.0.dev0`, and a `v<version>` tag runs a release
-  workflow that publishes a GitHub release: the tag must be on `main`, the notes are the section's introduction,
-  *Highlights*, *Breaking changes*, *Upgrading* and *Security* with a link to the version's heading for the rest, and
-  their repo-relative links point at the tagged tree (#572, #588). Its PyPI upload (trusted publishing, `pypi`
-  environment) stays off until the repository variable `PYPI_PUBLISH` is `true` (CONTRIBUTING.md, "Releasing").
+- The package ships a `py.typed` marker (#568). Between releases `main` reports the next version with a `.dev0`
+  suffix, and a `v<version>` tag runs a release workflow that publishes a GitHub release: the tag must be on `main`,
+  the notes are the section's introduction, *Highlights*, *Breaking changes*, *Upgrading* and *Security* with a link
+  to the version's heading for the rest, and their repo-relative links point at the tagged tree (#572, #588). Its PyPI
+  upload (trusted publishing, `pypi` environment) stays off until the repository variable `PYPI_PUBLISH` is `true`
+  (CONTRIBUTING.md, "Releasing").
 - HippoRAG 2's Personalized PageRank (docs/design.md §6.4): the opt-in `ppr` strategy and `local`'s default
   text-unit order. The `ppr` search strategy (`search.ppr_search`; `auto` never routes to it, and
   `search.auto_routable_strategies` refuses it until a measurement shows where it wins) seeds a Personalized
@@ -2433,4 +2436,5 @@ Deployment (CDK).
   stream, conversation memory) or claim extraction step logs its error as its type and a digest, its text at DEBUG,
   as the evaluators do (#617).
 
-[Unreleased]: https://github.com/awslabs/unified-kg-rag-on-aws/compare/81ea4987...HEAD
+[Unreleased]: https://github.com/awslabs/unified-kg-rag-on-aws/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/awslabs/unified-kg-rag-on-aws/releases/tag/v0.3.0

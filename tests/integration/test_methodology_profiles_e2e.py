@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+import unified_kg_rag
 from tests.fixtures.fakes.chat_models import CountingResponder
 from tests.fixtures.fakes.model_servers import FakeOllama
 from tests.integration import test_embedded_e2e as e2e
@@ -900,6 +901,16 @@ def test_leaving_out_raptor_beside_another_scope_is_refused_without_a_rebuild(
         assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
     record = _record(providers)
     assert "raptor" in record["methodologies"]
+    # Both records name the version the code reports (`--version`, cache
+    # keys), not the installed metadata a checkout's editable install keeps.
+    assert record["package_version"] == unified_kg_rag.__version__
+    indexer = providers.build_vector_indexer()
+    try:
+        tree = indexer.read_summary_tree_record(None)
+    finally:
+        indexer.close()
+    assert tree is not None
+    assert tree["package_version"] == unified_kg_rag.__version__
 
     config.indexing.methodologies = [Methodology.GRAPHRAG, Methodology.LIGHTRAG]
     (second / "more.txt").write_text("Carrier ships for Bank.")
