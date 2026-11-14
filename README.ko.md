@@ -1,7 +1,7 @@
 # Unified Knowledge Graph RAG on AWS
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
-[![Python](https://img.shields.io/badge/python-3.11--3.12-blue.svg)](https://www.python.org/downloads/)
+[![Python](https://img.shields.io/badge/python-3.11.5--3.12-blue.svg)](https://www.python.org/downloads/)
 [![CI](https://github.com/awslabs/unified-kg-rag-on-aws/actions/workflows/quality.yml/badge.svg?branch=main)](https://github.com/awslabs/unified-kg-rag-on-aws/actions/workflows/quality.yml)
 
 🇬🇧 **[English README](./README.md)** · 🤝 **[기여 가이드](./CONTRIBUTING.md)**(영문)
@@ -30,7 +30,7 @@ Unified Knowledge Graph RAG on AWS는 대규모 다국어 문서를 Amazon Neptu
 
 ## 빠른 시작(AWS 불필요)
 
-한 대의 컴퓨터에서 내장 SQLite 저장소와 [Ollama](https://ollama.com) 모델로 모든 과정을 실행합니다. Python 3.11–3.12, [uv](https://docs.astral.sh/uv/), Ollama가 필요합니다.
+한 대의 컴퓨터에서 내장 SQLite 저장소와 [Ollama](https://ollama.com) 모델로 모든 과정을 실행합니다. Python 3.11.5–3.12, [uv](https://docs.astral.sh/uv/), Ollama가 필요합니다.
 
 **1. 설치**(`local` extra는 Ollama와 OpenAI 호환 클라이언트를 더하며 PyTorch는 설치하지 않습니다. 크로스 인코더 재순위화 모델은 `cross-encoder` extra입니다. [로컬에서 시작하기](./docs/getting-started/local.ko.md#설치) 참고. `--no-dev`는 기여자용 테스트·린트 도구를 빼며, 이 옵션 없이 `uv run`을 실행하면 그 도구가 설치됩니다):
 

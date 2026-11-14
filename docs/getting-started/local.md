@@ -17,7 +17,7 @@ differences from AWS mode and the stores in containers.
 
 ## Install
 
-You need Python 3.11–3.12, [uv](https://docs.astral.sh/uv/) and Ollama.
+You need Python 3.11.5–3.12, [uv](https://docs.astral.sh/uv/) and Ollama.
 Install the `local` extra and pull the two default models:
 
 ```bash

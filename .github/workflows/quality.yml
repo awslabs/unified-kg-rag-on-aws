@@ -347,7 +347,8 @@ jobs:
 
   oldest-python:
     # The quality job runs one interpreter, so nothing else checks the LOWER
-    # bound of requires-python. Run the suite on the floor to keep it honest.
+    # bound of requires-python. Run the suite on the floor to keep it honest
+    # ("3.11" is the newest 3.11 patch release, inside the >=3.11.5 floor).
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -389,8 +390,8 @@ jobs:
 
       - name: Allow Python 3.13 in this checkout
         run: |
-          sed -i 's/^requires-python = ">=3.11, <3.13"$/requires-python = ">=3.11, <3.14"/' pyproject.toml
-          grep -q '^requires-python = ">=3.11, <3.14"$' pyproject.toml
+          sed -i 's/^requires-python = ">=3.11.5, <3.13"$/requires-python = ">=3.11.5, <3.14"/' pyproject.toml
+          grep -q '^requires-python = ">=3.11.5, <3.14"$' pyproject.toml
           uv lock
 
       - name: Sync dependencies

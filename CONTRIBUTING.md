@@ -50,7 +50,7 @@ GitHub provides additional document on [forking a repository](https://help.githu
 
 ### Set up
 
-You need Python 3.11–3.12 and [uv](https://docs.astral.sh/uv/). AWS credentials are needed only for real-AWS runs; the
+You need Python 3.11.5–3.12 and [uv](https://docs.astral.sh/uv/). AWS credentials are needed only for real-AWS runs; the
 test suite runs without AWS.
 
 ```bash

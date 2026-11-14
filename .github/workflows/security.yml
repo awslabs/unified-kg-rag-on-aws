@@ -82,7 +82,10 @@ jobs:
     # vulnerability fails the job unless .github/pip-audit-accepted.txt lists
     # its id, until a date, with the reason it does not apply; past the date
     # it gates again. Nothing is installed: the exported lock is hashed, so
-    # pip-audit resolves nothing itself.
+    # pip-audit resolves nothing itself. It skips an entry whose marker the
+    # runner's Python does not match, so a version the lock keeps only for an
+    # older interpreter goes unaudited: raise the requires-python floor rather
+    # than keep such a split (soupsieve 2.10 for 3.11.0-3.11.4 was one).
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
