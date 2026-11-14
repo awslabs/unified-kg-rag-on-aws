@@ -942,7 +942,9 @@ From a `main` checkout (formats and keys no release had):
   record holds; a run that would drop a held methodology for every corpus in the namespace starts only once
   confirmed), with live stage progress, the run's WARNINGs (a run that extracted no entity flagged; one whose
   warnings advise a rebuild offers it), a rebuild of the namespace for one run (`--reset`, one job: it asks
-  no integrity question; nor does a run after files were added or edited) and a stop the pipeline checkpoints;
+  no integrity question, nor does the run after it; with the doc-status registry on, nor does a run after files
+  were added, edited or removed; a question names its cause in the page's language) and a stop the pipeline
+  checkpoints;
   run and compare evaluations (progress per answer;
   paired deltas called by their
   Holm-adjusted p-value with the family's simultaneous interval and the primary metric marked, falling back to the
@@ -987,9 +989,13 @@ From a `main` checkout (formats and keys no release had):
   `local` extra the fake and Ollama models need, or with a `UKR_CONSOLE_TOKEN` under 16 characters; a SIGTERM to it
   stops its console ([Console](docs/guides/console.md)).
 - `run-ingestion --confirm-integrity` answers only the question of a run that resumes a pipeline id whose settings
-  changed or whose cache is incomplete (#631). A corpus that changed under an incremental pipeline id asks none (the
-  delta decides what is processed), nor does a `--reset` (`indexing.reset`) run, which logs the stages it recomputes
-  at INFO: it rebuilds by design.
+  changed or whose cache is incomplete (#631); the question names which: a loading setting, a stage's settings or
+  cache, or a corpus that changed with the doc-status registry off. A corpus that changed under an incremental
+  pipeline id asks none (the delta decides what is processed; with a downstream setting changed too, every document
+  is processed again without asking, while a changed loading setting still asks), nor does a `--reset`
+  (`indexing.reset`) run, which logs the stages it recomputes at INFO, or the run after one (or after the rebuild an
+  added methodology makes). Run metadata saved on a `main` checkout before the loading settings key asks once after
+  a corpus change.
 - `GraphRAGChain.ainvoke(on_answer_chunk=...)` hands the answer's text chunks to a callback as the answer model
   streams them (the output, its citations included, is that of an unstreamed answer), and an `auto` query's output
   carries `metadata["routing"]` (how the strategy was chosen, among which candidates) (#631).
@@ -2172,6 +2178,8 @@ Ingestion and incremental indexing.
   documents, and removing an unrecorded document then deleted a kept one's edge left at the removed one's entity.
   When the note itself cannot be written, the registry documents owning the failed items' text units are recorded
   `FAILED`, over the rate too, those outside the run included (only the run's were, so that kept edge was lost).
+  So are, over the rate, those of a write that raised (a timeout) instead of naming its items: noted, the items as
+  the commit merged them joined the next run's delta of the same documents and could drop one of its edges for good.
   A noted item is cut to the units the next delta does not write again: a retried document's own units kept in it
   wrote it again as resolved when noted, beside the delta's item, at an entity a removal may have deleted since.
 - Deleting a document under a non-default suffix strips it from shared claims, a deletion-only run checks the

@@ -818,6 +818,7 @@ def test_an_incomplete_cache_ingests_again_once_its_question_is_confirmed(
     second = _ingest(client, "uploads:damaged")
     assert second["status"] == "failed"
     assert second["confirmation"] == "integrity", second["error"]
+    assert second["confirmation_reason"] == "cache", second["error"]
     third = _ingest(client, "uploads:damaged", confirm_integrity=True)
     assert "--confirm-integrity" in third["command"]
     assert third["status"] == "succeeded", third["log"]
@@ -854,6 +855,31 @@ def test_a_rebuild_runs_in_one_job_without_the_integrity_question(
         "Rewinding" in w or "inputs changed" in w or "cache holds no" in w
         for w in rebuilt["warnings"]
     ), rebuilt["warnings"]
+
+
+def test_a_rebuild_then_an_added_file_ingests_in_one_run(
+    client: Any, workspace: Path
+) -> None:
+    # Rebuild (--reset), then Start over a changed corpus: the run after a
+    # reset asks no integrity question.
+    files = {"a.txt": "Umbra Freight carries parts for Acme Robotics."}
+    assert _upload(client, "rebuilt-then", files).status_code == 200
+    first = _ingest(client, "uploads:rebuilt-then")
+    assert first["status"] == "succeeded", first["log"]
+    rebuilt = _ingest(client, "uploads:rebuilt-then", reset=True)
+    assert rebuilt["status"] == "succeeded", rebuilt["log"]
+    (workspace / "uploads" / "rebuilt-then" / "b.txt").write_text(
+        "Kestrel Depot stores parts for Globex Sensors.", encoding="utf-8"
+    )
+    second = _ingest(client, "uploads:rebuilt-then")
+    assert second["status"] == "succeeded", second.get("error")
+    assert second.get("confirmation") is None
+    assert second["pipeline_id"] == first["pipeline_id"]
+    assert not any(
+        text in w
+        for w in second["warnings"]
+        for text in ("Missing cache", "settings changed", "Rewinding")
+    ), second["warnings"]
 
 
 def test_ingestion_refuses_the_workspace_itself_and_a_file(client: Any) -> None:

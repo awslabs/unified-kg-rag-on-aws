@@ -38,6 +38,7 @@ from pydantic import ValidationError
 from unified_kg_rag.application.cli.console import stages
 from unified_kg_rag.application.cli.console.paths import PathRefused, walk_files
 from unified_kg_rag.application.cli.console.store import ConsoleStore
+from unified_kg_rag.application.ingestion.pipeline_manager import INTEGRITY_QUESTIONS
 from unified_kg_rag.domain.ingestion.methodologies import artifacts_to_build
 from unified_kg_rag.domain.models import (
     Config,
@@ -131,8 +132,10 @@ class Job:
     total_runs: int = 0
     # An evaluation's answers so far, read from its log (AnswerProgress).
     answers: AnswerProgress | None = None
-    # The question a failed ingestion stopped at, unanswered (its flag).
+    # The question a failed ingestion stopped at, unanswered (its flag),
+    # and for the integrity question its reason (IntegrityReason).
     confirmation: str | None = None
+    confirmation_reason: str | None = None
     # The WARNING events of its log once it ended (_log_warnings): how many,
     # the last ones, and whether one advises rebuilding the namespace.
     warning_count: int = 0
@@ -164,6 +167,7 @@ class Job:
             "plan": self.plan,
             "total_runs": self.total_runs,
             "confirmation": self.confirmation,
+            "confirmation_reason": self.confirmation_reason,
             "warnings": {
                 "count": self.warning_count,
                 "lines": self.warnings,
@@ -698,7 +702,7 @@ class JobManager:
         )
         if job.status is JobStatus.FAILED:
             job.error = (document or {}).get("error") or _last_error(self.log_tail(job))
-            job.confirmation = confirmation_needed(job.error)
+            job.confirmation, job.confirmation_reason = confirmation_needed(job.error)
         self.store.save_job(job.record())
         logger.info(
             "%s job %s ended: %s (exit %s)",
@@ -831,14 +835,21 @@ _CONFIRMATIONS = {
 }
 
 
-def confirmation_needed(error: str | None) -> str | None:
-    """Which question a run stopped at unanswered, from its error."""
+def confirmation_needed(error: str | None) -> tuple[str | None, str | None]:
+    """Which question a run stopped at unanswered, from its error, and for
+    the integrity question its reason (``IntegrityReason``: the question
+    names it), else ``None``."""
     if not error or "onfirmation required" not in error:
-        return None
+        return None, None
     for flag, name in _CONFIRMATIONS.items():
         if flag in error:
-            return name
-    return None
+            reason = None
+            if name == "integrity":
+                reason = next(
+                    (r for r, q in INTEGRITY_QUESTIONS.items() if q in error), None
+                )
+            return name, reason
+    return None, None
 
 
 # The answer batch's lines run-eval logs (BatchProcessor, ProgressLogger),

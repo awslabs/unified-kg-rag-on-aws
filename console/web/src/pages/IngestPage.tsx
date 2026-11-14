@@ -309,7 +309,7 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
                 {(job) => (
                   <>
                     {job.confirmation && job.status === "failed" ? (
-                      <Notice tone="warn" title={t(`ingest.question.${job.confirmation}`)}>
+                      <Notice tone="warn" title={t(questionTitle(job))}>
                         <p style={{ margin: "0 0 8px" }}>{t(`ingest.question.${job.confirmation}Help`)}</p>
                         <button className="button button-primary button-small" disabled={!!active} onClick={() => void start({ job, flag: `confirm_${job.confirmation}` })}>
                           {t(`ingest.answer.${job.confirmation}`)}
@@ -376,6 +376,16 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
 }
 
 /** Documents processed, no entity extracted: none of them is in a graph. */
+const REASON_KEYS = { settings: "Settings", corpus: "Corpus", cache: "Cache" } as const;
+
+/** The title key of the question a failed ingestion stopped at: the
+ * integrity question's names its reason (a record saved without one, the
+ * generic title). */
+export function questionTitle(job: Pick<JobRecord, "confirmation" | "confirmation_reason">): string {
+  const reason = job.confirmation === "integrity" && job.confirmation_reason ? REASON_KEYS[job.confirmation_reason] : "";
+  return `ingest.question.${job.confirmation ?? ""}${reason}`;
+}
+
 function extractedNothing(result: Record<string, unknown> | null): boolean {
   return !!result && Number(result.documents_processed ?? 0) > 0 && result.entities_extracted === 0;
 }

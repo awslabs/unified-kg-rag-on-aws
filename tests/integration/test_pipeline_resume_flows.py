@@ -28,9 +28,12 @@ from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
 from tests.integration import test_ingestion_stages as stages_test
 from unified_kg_rag.application import bootstrap
 from unified_kg_rag.application.cli import run_ingestion_pipeline as cli
+from unified_kg_rag.application.cli.console.jobs import confirmation_needed
 from unified_kg_rag.application.ingestion import pipeline as pipeline_module
 from unified_kg_rag.application.ingestion import pipeline_stages as ps
+from unified_kg_rag.application.ingestion.pipeline_manager import INTEGRITY_QUESTIONS
 from unified_kg_rag.domain.models import Config, DocStatus
+from unified_kg_rag.domain.models.methodology import Methodology
 from unified_kg_rag.shared.metrics import MetricsSink
 
 pytestmark = pytest.mark.integration
@@ -277,6 +280,134 @@ def test_a_reset_rerun_needs_no_integrity_answer_and_warns_of_no_rewind(
         and ("cache holds no" in r.getMessage() or "inputs changed" in r.getMessage())
     ]
     assert harness.metadata("p1")["status"] == "completed"
+
+
+def _integrity_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if r.levelno >= logging.WARNING
+        and any(
+            text in r.getMessage()
+            for text in (
+                "Missing cache",
+                "settings changed",
+                "Rewind",
+                "cache holds no",
+            )
+        )
+    ]
+
+
+def _asked(harness: _Harness, capsys: pytest.CaptureFixture[str]) -> str | None:
+    """Run the pipeline id p1 again: the integrity question it stopped at
+    (its JSON status's error), or None when it succeeded."""
+    capsys.readouterr()
+    code = harness.run("--pipeline-id", "p1", "--output-format", "json")
+    if code == 0:
+        return None
+    status = json.loads(capsys.readouterr().out)
+    return str(status["error"])
+
+
+@pytest.mark.parametrize(
+    "follow_up",
+    [
+        lambda harness: None,
+        lambda harness: (harness.source / "audit.txt").write_text(
+            "Auditor reviews Depot records."
+        ),
+        lambda harness: (harness.source / "contract.txt").unlink(),
+    ],
+    ids=["unchanged", "file-added", "file-removed"],
+)
+def test_the_run_after_a_reset_asks_no_integrity_question(
+    harness: _Harness,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+    follow_up: Any,
+) -> None:
+    # The reset run's loading inputs carry indexing.reset; the next run's
+    # do not. That is a way of loading, not a changed setting: no
+    # question, no warning (the console's Rebuild, then Start).
+    assert harness.run("--pipeline-id", "p1") == 0
+    assert harness.run("--pipeline-id", "p1", "--reset") == 0
+    follow_up(harness)
+    caplog.clear()
+    with caplog.at_level(logging.INFO):
+        assert _asked(harness, capsys) is None
+    assert not _integrity_warnings(caplog)
+    records = all_records(harness.registry)
+    assert {r.status for r in records} == {DocStatus.PROCESSED}
+    assert len(records) == len(list(harness.source.iterdir()))
+
+
+def test_the_run_after_a_methodology_rebuild_asks_no_integrity_question(
+    harness: _Harness,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Adding a methodology rebuilds the namespace (indexing.reset for that
+    # run only): the plain run after it is no reset run's follow-up to ask.
+    harness.config.indexing.methodologies = [Methodology.LIGHTRAG]
+    assert harness.run("--pipeline-id", "p1") == 0
+    harness.config.indexing.methodologies = [Methodology.LIGHTRAG, Methodology.GRAPHRAG]
+    assert harness.run("--pipeline-id", "p1") == 0
+    assert harness.config.indexing.reset is False
+    caplog.clear()
+    with caplog.at_level(logging.INFO):
+        assert _asked(harness, capsys) is None
+    assert not _integrity_warnings(caplog)
+
+
+@pytest.mark.parametrize(
+    ("change", "reason"),
+    [
+        # A loading setting with an added file: the delta was computed
+        # under other settings.
+        (
+            lambda harness: (
+                setattr(harness.config.indexing, "max_document_attempts", 7),
+                (harness.source / "audit.txt").write_text("Auditor reviews Depot."),
+            ),
+            "settings",
+        ),
+        # A downstream setting: its stage's output is not cached.
+        (
+            lambda harness: setattr(
+                harness.config.processing.chunking, "max_chunk_size", 777
+            ),
+            "cache",
+        ),
+        # A cache that lost a stage's output.
+        (
+            lambda harness: shutil.rmtree(
+                harness.tmp_path / "cache" / "p1" / "text_chunking"
+            ),
+            "cache",
+        ),
+        # Without the registry, a changed corpus misses every stage's cache.
+        (
+            lambda harness: (harness.source / "audit.txt").write_text(
+                "Auditor reviews Depot."
+            ),
+            "corpus",
+        ),
+    ],
+    ids=["loading-setting", "downstream-setting", "lost-cache", "registry-off-corpus"],
+)
+def test_the_integrity_question_names_its_reason(
+    harness: _Harness, capsys: pytest.CaptureFixture[str], change: Any, reason: str
+) -> None:
+    if reason == "corpus":
+        harness.incremental = False
+    assert harness.run("--pipeline-id", "p1") == 0
+    change(harness)
+    error = _asked(harness, capsys)
+    assert error is not None and "--confirm-integrity" in error
+    assert INTEGRITY_QUESTIONS[reason] in error  # type: ignore[index]
+    assert confirmation_needed(error) == ("integrity", reason)
+    assert harness.run("--pipeline-id", "p1", "--confirm-integrity") == 0
 
 
 def test_force_rebuild_rewrites_the_stage_cache(harness: _Harness) -> None:

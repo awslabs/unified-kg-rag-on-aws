@@ -14,7 +14,8 @@ leaves exactly what a fresh full build stores.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, suppress
 
 import pytest
 from hypothesis import HealthCheck, example, given, settings
@@ -636,3 +637,160 @@ def test_a_removal_that_folds_a_rejected_spelling_converges(
         point,
         k,
     )
+
+
+# A store write that raises (a timeout, a dropped connection) rather than
+# reporting rejected items: the whole task fails, so its documents are not
+# recorded and the next run indexes them again.
+_RAISING = [*_WRITES, "vector.upsert_text_units"]
+
+
+class _WriteRaised(RuntimeError):
+    pass
+
+
+@contextmanager
+def _raising(
+    harness: IncrementalRun, where: str, k: int, cut: tuple[int, int] | None
+) -> Iterator[None]:
+    """Make the run's ``k``-th call of ``where`` raise; with ``cut``
+    ``(b, j)`` after writing all of its items but ``items[j*b:(j+1)*b]`` (a
+    write that dies mid-request)."""
+    store_name, method = where.split(".")
+    store = getattr(harness, store_name)
+    original = getattr(store, method)
+    calls = {"n": 0}
+
+    def write(items: list, *args: object, **kwargs: object) -> object:
+        calls["n"] += 1
+        items = list(items)
+        if calls["n"] != k:
+            return original(items, *args, **kwargs)
+        if cut is not None:
+            b, j = cut
+            lost = {i.id for i in items[j * b : (j + 1) * b]}
+            original([i for i in items if i.id not in lost], *args, **kwargs)
+        raise _WriteRaised(f"{where} call {k} raised")
+
+    setattr(store, method, write)
+    try:
+        yield
+    finally:
+        delattr(store, method)
+
+
+_raised_corpora = st.sampled_from(sorted(_SPELLINGS)).flatmap(
+    lambda lang: st.tuples(
+        *(
+            3
+            * [
+                st.lists(
+                    st.lists(
+                        _unit_of(["Depot", "Buyer", "Vendor", *_SPELLINGS[lang]]),
+                        min_size=1,
+                        max_size=2,
+                    ),
+                    min_size=1,
+                    max_size=2,
+                )
+            ]
+        )
+    )
+)
+
+
+def _named(prefix: str, documents: list[Content]) -> Corpus:
+    return {f"/corpus/{prefix}{i}.txt": c for i, c in enumerate(documents)}
+
+
+@pytest.mark.slow
+@pytest.mark.timeout(600)
+@settings(max_examples=60, deadline=None, suppress_health_check=[HealthCheck.too_slow])
+@given(
+    corpora=_raised_corpora,
+    added=st.sampled_from(sorted(_SPELLINGS)).flatmap(
+        lambda lang: st.lists(
+            st.lists(
+                _unit_of(["Depot", "Buyer", "Vendor", *_SPELLINGS[lang]]),
+                min_size=1,
+                max_size=2,
+            ),
+            min_size=1,
+            max_size=2,
+        )
+    ),
+    where=st.sampled_from(_RAISING),
+    k=st.integers(1, 3),
+    cut=st.none() | st.tuples(st.integers(1, 3), st.integers(0, 1)),
+    cap=st.booleans(),
+)
+# graph.upsert_entities raised at its second call: the note held every
+# entity of that call as the run had merged them, and joined to the next
+# run's delta (the same unrecorded documents, indexed again) it displaced
+# n0.txt's Depot -> Acme Corp from both stores for good.
+@example(
+    corpora=(
+        [
+            [[("Acme", "Buyer", 1), ("Vendor", "Buyer", 3)]],
+            [
+                [("Depot", "Acme", 1), ("Vendor", "ACME", 1), ("Buyer", "ACME", 1)],
+                [
+                    ("Acme Inc", "Vendor", 2),
+                    ("Depot", "Acme Inc", 3),
+                    ("Vendor", "Acme", 1),
+                ],
+            ],
+        ],
+        [
+            [[("Vendor", "Acme", 2)], [("Depot", "ACME", 2)]],
+            [[("Buyer", "Acme Inc", 3), ("Depot", "ACME", 3)], [("Buyer", "Acme", 3)]],
+        ],
+        [
+            [[("Acme", "Buyer", 1), ("Vendor", "Buyer", 3)]],
+            [[("Depot", "Acme Inc", 2)]],
+        ],
+    ),
+    added=[
+        [
+            [("Depot", "Acme", 2), ("Depot", "Acme Corp", 2), ("Buyer", "Acme Inc", 2)],
+            [("Buyer", "Acme Corp", 2), ("Acme", "Buyer", 2), ("Buyer", "Acme", 2)],
+        ]
+    ],
+    where="graph.upsert_entities",
+    k=2,
+    cut=(2, 1),
+    cap=True,
+)
+def test_a_write_that_raises_in_the_commit_converges(
+    corpora: tuple[list[Content], list[Content], list[Content]],
+    added: list[Content],
+    where: str,
+    k: int,
+    cut: tuple[int, int] | None,
+    cap: bool,
+) -> None:
+    # Indexed: kept, gone and later-gone documents; the next run removes
+    # the gone ones and adds new ones while the k-th call of one store write
+    # raises; then the later-gone ones are removed too, and clean runs
+    # leave what a fresh full build of the final corpus stores.
+    kept, gone, later = (_named(p, c) for p, c in zip("kgh", corpora, strict=True))
+    new = _named("n", added)
+    config = Config()
+    config.indexing.max_failure_rate = 0.95
+    config.indexing.max_document_attempts = 50
+    if cap:
+        # Capped descriptions: a commit refills them from the vector copies.
+        config.indexing.neptune.property_max_length = 40
+    harness = IncrementalRun(FakeDocStatusStore(), config)
+    harness.run({**kept, **gone, **later})
+    with _raising(harness, where, k, cut), suppress(_WriteRaised):
+        # A write the indexing phase runs fails its task (a failed removal
+        # stops the run before the commit); one outside it fails the run,
+        # as a crash would.
+        harness.run({**kept, **later, **new}, fail=lambda *_: False)
+    final = {**kept, **new}
+    harness.run(final)
+    harness.run(final)
+
+    assert harness.state() == expected_state(final, config)
+    assert harness.registry_problems(final) == []

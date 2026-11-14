@@ -10,6 +10,7 @@ import { EvidenceTrace } from "./EvidenceTrace";
 import { stageName } from "./JobPanel";
 import { formatBytes } from "./ui";
 import { fitting, NAV_FOLDED } from "../lib/useCompactNav";
+import { questionTitle } from "../pages/IngestPage";
 
 describe("small copy", () => {
   it("names every stage in every locale, an unknown one by its id", () => {
@@ -21,6 +22,18 @@ describe("small copy", () => {
   it("lists the distinct model ids, not the provider", () => {
     expect(modelIds({ answer_generation: "qwen2.5:7b", entity_extraction: "qwen2.5:7b", embedding: "bge-m3" })).toBe("qwen2.5:7b · bge-m3");
     expect(modelIds(null)).toBe("");
+  });
+
+  it("titles the integrity question by its reason, in every locale", () => {
+    const titles = (["settings", "corpus", "cache", null] as const).map((reason) => questionTitle({ confirmation: "integrity", confirmation_reason: reason }));
+    expect(titles).toEqual(["ingest.question.integritySettings", "ingest.question.integrityCorpus", "ingest.question.integrityCache", "ingest.question.integrity"]);
+    expect(questionTitle({ confirmation: "reset", confirmation_reason: null })).toBe("ingest.question.reset");
+    for (const locale of ["en", "ko", "ja", "zh", "de"] as const) {
+      const shown = titles.map((key) => translate(locale, key));
+      expect(new Set(shown).size, locale).toBe(titles.length);
+      for (const [i, text] of shown.entries()) expect(text, locale).not.toBe(titles[i]);
+    }
+    expect(translate("en", titles[0] ?? "")).toBe("Loading settings changed since its last run");
   });
 
   it("puts a byte count in the plural", () => {

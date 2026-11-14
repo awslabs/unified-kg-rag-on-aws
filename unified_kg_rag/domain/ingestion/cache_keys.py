@@ -1543,3 +1543,48 @@ def stage_cache_key(
     """
     fingerprint = stage_input_fingerprint(config, stage_type, corpus_fingerprint)
     return f"{context_attr}-{fingerprint}"
+
+
+def loading_key(
+    config: Config, corpus_fingerprint: str | None = None, *, reset: bool | None = None
+) -> str:
+    """The document_loading output's key (:func:`stage_cache_key`), with
+    ``indexing.reset`` taken as ``reset`` when given.
+
+    Example:
+        >>> config = Config()
+        >>> loading_key(config) == stage_cache_key(
+        ...     config, PipelineStageType.DOCUMENT_LOADING, "documents"
+        ... )
+        True
+        >>> loading_key(config, reset=True) == loading_key(config)
+        False
+    """
+    if reset is not None and reset != config.indexing.reset:
+        config = config.model_copy(
+            update={"indexing": config.indexing.model_copy(update={"reset": reset})}
+        )
+    return stage_cache_key(
+        config, PipelineStageType.DOCUMENT_LOADING, "documents", corpus_fingerprint
+    )
+
+
+def loading_settings_key(config: Config) -> str:
+    """The document_loading output's key without the corpus and without
+    ``indexing.reset``: what a run's loading settings are, for telling a
+    later run's changed documents from changed settings.
+
+    A reset is a run's way of loading (every document instead of the
+    delta), not a setting the documents loaded after it depend on: with it
+    in the key, the plain run after a ``--reset`` (or after the rebuild a
+    methodology added to ``indexing.methodologies`` makes) read as a
+    changed setting.
+
+    Example:
+        >>> config = Config()
+        >>> plain = loading_settings_key(config)
+        >>> config.indexing.reset = True
+        >>> loading_settings_key(config) == plain
+        True
+    """
+    return loading_key(config, reset=False)

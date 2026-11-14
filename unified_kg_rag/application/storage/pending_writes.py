@@ -595,11 +595,26 @@ class PendingWrites:
         note that cannot be written covers nothing (the caller then records
         the documents owning the items' text units FAILED, as before notes).
         ``recorded``: whether the commit records its documents (under the
-        failure rate), which the warning says."""
+        failure rate), which the warning says; a commit that does not notes
+        no failure naming no item (a raised write), which its documents'
+        next indexing writes again."""
         failed: dict[str, dict[str, dict[str, Any]]] = defaultdict(
             lambda: defaultdict(dict)
         )
         covered: set[str] = set()
+        if not recorded:
+            # A failure naming no item (a raised write) stands for every
+            # item of its kind the commit wrote. Its documents are not
+            # recorded, so the next run indexes them again and writes what
+            # they state; noted, the items as this run merged them would
+            # join that delta and could displace what it extracts. Left
+            # unnoted, the documents outside the run owning such an item
+            # are recorded FAILED (``IncrementalIndexer.record``).
+            results = {
+                key: stats
+                for key, stats in results.items()
+                if not stats or not stats.unattributed_failures
+            }
         for key, items in failed_writes(results, written).items():
             for item in items:
                 failed[BaseIndexer.get_suffix(item)][RESULT_KINDS[key]][item.id] = item

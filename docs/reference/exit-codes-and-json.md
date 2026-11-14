@@ -296,8 +296,12 @@ instead:
 
 One run prints no JSON: a `run-ingestion` resume whose cached stages fail
 the integrity check (a changed setting or an incomplete cache; not a
-corpus that changed under an incremental pipeline id) asks "Continue despite integrity issues?" on the
-terminal, and an answer of no exits `0` with nothing on stdout. Pass `--yes`
+corpus that changed under an incremental pipeline id) asks on the terminal
+whether to continue, naming the cause (a loading setting, a stage's settings
+or cache, or a corpus that changed with the doc-status registry off), and an
+answer of no exits `0` with nothing on stdout. Pass `--yes`
 (or `--confirm-integrity`) to continue; without a terminal the question stops
-the run with exit `1` and the status document. A `--force-rebuild` or
-`--reset` run (`indexing.reset`) asks no such question.
+the run with exit `1` and the status document, whose `error` holds the
+question. A `--force-rebuild` or
+`--reset` run (`indexing.reset`) asks no such question, nor does the run after
+a reset.

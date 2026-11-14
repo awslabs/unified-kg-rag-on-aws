@@ -1188,7 +1188,8 @@ classification and output parsing: [Design Doc §5.1](./design/incremental.md#51
   `PROCESSED` (a WARNING names how many were noted); a document whose own text units failed
   to write is `FAILED` (all of the run's when the backend names no item),
   retried by the next run without counting toward the retry limit. When the
-  note cannot be written, the documents owning the failed items' text units
+  note cannot be written (or, over the rate, a write raised without naming
+  its items), the documents owning the failed items' text units
   are `FAILED` instead, over the rate too, also those outside the run (a
   kept document whose edge the commit rewrote; found in one read of the
   namespace's registry records). The `IndexingFailures` and

@@ -17,6 +17,7 @@ import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from unittest.mock import ANY
 
 import pytest
 
@@ -24,7 +25,11 @@ from unified_kg_rag.application.ingestion.pipeline_manager import (
     PipelineResumeManager,
     PipelineStateManager,
 )
-from unified_kg_rag.domain.ingestion.cache_keys import stage_cache_key
+from unified_kg_rag.domain.ingestion.cache_keys import (
+    loading_key,
+    loading_settings_key,
+    stage_cache_key,
+)
 from unified_kg_rag.domain.models import (
     Config,
     DocumentDelta,
@@ -715,7 +720,7 @@ def test_validate_integrity_names_changed_loading_inputs(tmp_path) -> None:
 
     assert ok is False
     assert len(errors) == 1
-    assert "document_loading inputs changed" in errors[0]
+    assert "document_loading settings changed" in errors[0]
 
 
 def _saved_loading(tmp_path, corpus: str | None, settings_key: bool = True):
@@ -762,7 +767,7 @@ def test_validate_integrity_asks_when_a_setting_changed_with_the_corpus(
     resume = _saved_loading(tmp_path, "corpus-a")
     resume.config.indexing.max_document_attempts += 1
     ok, errors = resume.validate_pipeline_integrity("pid")
-    assert ok is False and "document_loading inputs changed" in errors[0]
+    assert ok is False and "document_loading settings changed" in errors[0]
     resume.determine_resume_strategy("pid")
     assert resume._rewind_level == logging.WARNING
 
@@ -773,7 +778,7 @@ def test_validate_integrity_asks_for_metadata_without_the_settings_key(
     # A run saved before the settings key existed cannot say what changed.
     resume = _saved_loading(tmp_path, "corpus-a", settings_key=False)
     ok, errors = resume.validate_pipeline_integrity("pid")
-    assert ok is False and "document_loading inputs changed" in errors[0]
+    assert ok is False and "document_loading settings changed" in errors[0]
 
 
 def test_validate_integrity_still_checks_the_cache_of_an_unchanged_corpus(
@@ -782,3 +787,63 @@ def test_validate_integrity_still_checks_the_cache_of_an_unchanged_corpus(
     resume = _saved_loading(tmp_path, "corpus-b")
     ok, errors = resume.validate_pipeline_integrity("pid")
     assert ok is False and all("Missing cache" in e for e in errors)
+
+
+def _saved_by(tmp_path, corpus: str, *, reset: bool, registry: bool = True):
+    """A pipeline whose last run loaded ``corpus`` (with ``indexing.reset``
+    as ``reset``), keyed as the pipeline records it, plus the manager of a
+    plain later run over corpus-b."""
+    state = PipelineStateManager(_StubCacheManager(tmp_path))
+    resume = PipelineResumeManager(state)
+    resume.corpus_fingerprint = "corpus-b"
+    context = _context(
+        "pid",
+        [
+            _stage_result("document_parsing", "completed"),
+            _stage_result("document_loading", "completed"),
+        ],
+    )
+    if registry:
+        context.incremental_delta = DocumentDelta(new=["d1"])
+    recorded = resume.config.model_copy(deep=True)
+    recorded.indexing.reset = reset
+    context.incremental_loading_key = loading_key(recorded, corpus)
+    context.incremental_loading_settings_key = loading_settings_key(recorded)
+    state.save_pipeline_metadata(context)
+    return resume
+
+
+@pytest.mark.parametrize("registry", [True, False])
+@pytest.mark.parametrize("corpus", ["corpus-a", "corpus-b"])
+def test_validate_integrity_expects_the_run_after_a_reset(
+    tmp_path, corpus: str, registry: bool
+) -> None:
+    # The reset run's keys carry indexing.reset, the plain run's do not:
+    # its stages run again by design, which is no question, except a
+    # changed corpus without the registry (no delta decides).
+    resume = _saved_by(tmp_path, corpus, reset=True, registry=registry)
+    asks = corpus == "corpus-a" and not registry
+    ok, errors = resume.validate_pipeline_integrity("pid")
+    assert ok is not asks
+    assert resume.integrity_reason == ("corpus" if asks else None)
+    if not asks:
+        assert errors == []
+        resume.determine_resume_strategy("pid")
+        assert resume._rewind_level == logging.INFO
+
+
+def test_validate_integrity_names_a_changed_setting_after_a_reset(tmp_path) -> None:
+    resume = _saved_by(tmp_path, "corpus-a", reset=True)
+    resume.config.indexing.max_document_attempts += 1
+    ok, errors = resume.validate_pipeline_integrity("pid")
+    assert ok is False and "document_loading settings changed" in errors[0]
+    assert resume.integrity_reason == "settings"
+
+
+def test_validate_integrity_names_a_missing_cache(tmp_path) -> None:
+    resume = _saved_by(tmp_path, "corpus-b", reset=False)
+    ok, errors = resume.validate_pipeline_integrity("pid")
+    assert ok is False and all("Missing cache" in e for e in errors)
+    assert resume.integrity_reason == "cache"
+    assert resume.validate_pipeline_integrity("missing") == (False, [ANY])
+    assert resume.integrity_reason == "cache"

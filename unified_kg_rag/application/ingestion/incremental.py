@@ -858,7 +858,11 @@ class IncrementalIndexer:
         failure rate too: the commit wrote what its merge derived again for
         documents outside the delta, which retrying the delta's documents
         does not write again (a removal of one may delete the stored copy).
-        Under the rate the docs are recorded, those owning a noted item
+        Over the rate, a failure naming no item (a raised write) is not
+        noted: the next run indexes the documents again, and the items as
+        this commit merged them could displace what it extracts; the
+        documents outside the run owning such an item are recorded FAILED
+        instead. Under the rate the docs are recorded, those owning a noted item
         PROCESSED. A doc owning an artifact whose failure is not
         noted (its own text unit, or any when the note cannot be written or
         ``written`` is not given) is recorded FAILED (see

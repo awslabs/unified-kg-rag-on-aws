@@ -203,6 +203,9 @@ export interface JobRecord {
   plan: string[];
   total_runs: number;
   confirmation?: "integrity" | "reset" | "deletions" | null;
+  /** Why the integrity question was asked: a loading setting, the corpus
+   * (without the doc-status registry), or a stage's settings or cache. */
+  confirmation_reason?: "settings" | "corpus" | "cache" | null;
   // The WARNING events of its log once it ended: how many, and the last ones.
   /** Its WARNINGs once ended: how many, the last ones, and whether one
    * advises rebuilding the namespace (the run's ``--reset``). */
