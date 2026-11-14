@@ -523,6 +523,22 @@ def _logs_raw_error(call: ast.Call, names: frozenset[str] = _ERROR_NAMES) -> lis
 # by its types, status and id) or a reply's field (``item["reason"]``) may
 # carry a store's reply, a model's output or a document's text.
 _STATS_TEXT_CALLS = frozenset({"len", "type", "_bulk_item_error"})
+# The attributes an f-string of a write's error may render: an id or a
+# count (``rel.source_id``, ``stats.failed_count``) or a type's name; any
+# other (``item.description``, ``entity.name``) may be a document's text.
+_STATS_TEXT_ATTRS = re.compile(r"(?:\w+_)?(?:ids?|count)|__name__")
+
+
+def _rendered_attributes(node: ast.AST) -> Iterator[ast.Attribute]:
+    """The attributes ``node`` (an f-string's value) renders: not the
+    receivers of one, nor what a call reads (the call rule judges it)."""
+    if isinstance(node, ast.Call):
+        return
+    if isinstance(node, ast.Attribute):
+        yield node
+        return
+    for child in ast.iter_child_nodes(node):
+        yield from _rendered_attributes(child)
 
 
 def _package_composed(node: ast.AST, names: frozenset[str]) -> bool:
@@ -543,6 +559,11 @@ def _package_composed(node: ast.AST, names: frozenset[str]) -> bool:
             return False
         if sub is not node and isinstance(sub, ast.FormattedValue):
             if _names_error(sub.value, names):
+                return False
+            if any(
+                not _STATS_TEXT_ATTRS.fullmatch(attribute.attr)
+                for attribute in _rendered_attributes(sub.value)
+            ):
                 return False
     return True
 
@@ -872,6 +893,15 @@ _CLAUSE = "try:\n    pass\nexcept Exception as e:\n"
         ("stats.add_error(reason, 1, ids=ids)\n", True),
         ("stats.add_error('; '.join(reasons), 1)\n", True),
         ("stats.add_error(f'first: {describe(item)}', 1)\n", True),
+        # An attribute other than an id or a count may be a document's text.
+        ("stats.add_error(f'first: {item.description}', 1)\n", True),
+        ("stats.add_error(f'first: {item.text[:40]}', 1)\n", True),
+        (
+            _CLAUSE + "    stats.add_error(e, 1, context=f'Write of {item.name}')\n",
+            True,
+        ),
+        ("stats.add_error(f'edge {rel.source_id} -> {rel.target_id} failed')\n", False),
+        ("stats.add_error(f'{len(self.items)} writes failed', 1)\n", False),
         (_CLAUSE + "    stats.add_error(e, 1, context=str(other))\n", True),
         (_CLAUSE + "    stats.add_error(e, 1, context=f'Write {e} failed')\n", True),
         (
