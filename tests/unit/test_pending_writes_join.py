@@ -18,7 +18,9 @@ from typing import Any
 
 import pytest
 
+from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
+from unified_kg_rag.application.ingestion.incremental import IncrementalIndexer
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 from unified_kg_rag.application.storage.pending_writes import (
     NotedWrites,
@@ -33,6 +35,7 @@ from unified_kg_rag.domain.models import (
     CommunityReport,
     Config,
     Constants,
+    DocumentLineage,
     Entity,
     Relationship,
     TextUnit,
@@ -280,6 +283,27 @@ def test_a_raised_write_over_the_rate_keeps_each_namespaces_read_note() -> None:
 
     assert stored("alpha") == {"relationships": ["r-a", "r-out"]}
     assert stored("beta") == {"relationships": ["r-b"]}
+
+
+def test_a_raised_commit_notes_no_item_citing_a_unit_of_its_documents() -> None:
+    # The commit's edge write raises over the rate (nothing recorded). Its
+    # documents' units come from the lineages it records: the edge citing
+    # one (derived again when the next run indexes the document) is not
+    # noted, the edge it rewrote for a document outside the run is.
+    manager, stored = _with_note([], [])
+    own = _in("alpha", _edge("r-own", _VENDOR, _BUYER, "ua"))
+    outside = _in("alpha", _edge("r-out", _BUYER, _VENDOR, "uo"))
+    indexer = IncrementalIndexer(FakeDocStatusStore(), manager)
+
+    recorded = indexer.record(
+        [DocumentLineage(doc_id="doc-a", text_unit_ids=["ua"])],
+        {"doc-a": "hash-a"},
+        {"graph_relationships": _raised(2)},
+        written=[own, outside],
+    )
+
+    assert recorded is False
+    assert [r["id"] for r in stored()["relationships"]] == ["r-out"]
 
 
 def _with_note(items: list[Any], units: list[str]) -> tuple[IndexingManager, Any]:
