@@ -172,7 +172,9 @@ run-ingestion --source-directory ./source --config-path config.yaml --estimate
 `processing.max_run_model_calls` and `processing.max_run_usd` (off by
 default) cap what one run may spend. The model call that would pass one is
 not sent: the run stops as a SIGTERM stops it (`RunBudgetExhausted`;
-`run-ingestion` exits `1` with the pipeline id in its JSON status), its
+`run-ingestion` exits `1` with the pipeline id and `error_class`
+`limit_exceeded` in its JSON status, and the console's Ingest page offers to
+resume it), its
 finished stages checkpointed and its responses in the
 [LLM response cache](#llm-response-cache). A re-run with the same pipeline id
 resumes at the stage it stopped in and pays only for the calls not yet
