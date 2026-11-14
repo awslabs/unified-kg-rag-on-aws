@@ -76,8 +76,13 @@ _WRITES = [
 ]
 
 
-def _rejects(where: str, salt: int):  # noqa: ANN202
+def _rejects(where: str, salt: int | None):  # noqa: ANN202
+    """Reject a hashed third of the items ``where`` writes (all of them
+    when ``salt`` is None)."""
+
     def fail(at: str, item_id: str) -> bool:
+        if salt is None:
+            return at == where
         digest = hashlib.sha256(f"{salt}:{item_id}".encode()).digest()
         return at == where and digest[0] % 3 == 0
 
@@ -700,6 +705,10 @@ def _registry_raising(harness: IncrementalRun) -> Iterator[None]:
 
 # How the run with the raised write ends: in the process, or killed after
 # its note step or at its first commit record, or with that record raising.
+# Over the failure rate the commit records a document only when an item it
+# leaves unnoted cites a document outside the run (recorded FAILED); with
+# none, "registry" raises nowhere and ends the run as None does, and only
+# the kills reach the window after the note step.
 _ENDS = [None, "after_write_note", "mid_commit", "registry"]
 
 
@@ -747,8 +756,10 @@ def _named(prefix: str, documents: list[Content]) -> Corpus:
     k=st.integers(1, 3),
     cut=st.none() | st.tuples(st.integers(1, 3), st.integers(0, 1)),
     cap=st.booleans(),
-    noted=st.none() | st.tuples(st.sampled_from(_WRITES), st.integers(0, 1000)),
+    noted=st.none()
+    | st.tuples(st.sampled_from(_WRITES), st.none() | st.integers(0, 1000)),
     end=st.sampled_from(_ENDS),
+    staged=st.booleans(),
 )
 # graph.upsert_entities raised at its second call: the note held every
 # entity of that call as the run had merged them, and joined to the next
@@ -788,6 +799,27 @@ def _named(prefix: str, documents: list[Content]) -> Corpus:
     cap=True,
     noted=None,
     end=None,
+    staged=False,
+)
+# The removal of g0 notes the rejected edge Depot - Buyer, and the removal
+# of h0 writes it with its endpoint Depot, owned by k0 alone; that run's
+# entity write raised, its note kept only the items of the note it read,
+# and a run ending after the note step left Depot's vector rank stale for
+# good (k0 was recorded PROCESSED and no later run derived it again).
+@example(
+    corpora=(
+        [[[("Depot", "Buyer", 3)]]],
+        [[[("Depot", "Buyer", 3)]]],
+        [[[("Depot", "Buyer", 1)]]],
+    ),
+    added=[[[("Depot", "Vendor", 3)]]],
+    where="vector.upsert_entities",
+    k=2,
+    cut=None,
+    cap=False,
+    noted=("graph.upsert_relationships", None),
+    end="after_write_note",
+    staged=True,
 )
 def test_a_write_that_raises_in_the_commit_converges(
     corpora: tuple[list[Content], list[Content], list[Content]],
@@ -796,8 +828,9 @@ def test_a_write_that_raises_in_the_commit_converges(
     k: int,
     cut: tuple[int, int] | None,
     cap: bool,
-    noted: tuple[str, int] | None,
+    noted: tuple[str, int | None] | None,
     end: str | None,
+    staged: bool,
 ) -> None:
     # Indexed: kept, gone and later-gone documents, maybe with some of the
     # commit's item writes rejected (``noted``: recorded, the items noted);
@@ -805,6 +838,10 @@ def test_a_write_that_raises_in_the_commit_converges(
     # call of one store write raises, and maybe ends before its documents
     # are recorded (``end``); then the later-gone ones are removed too, and
     # clean runs leave what a fresh full build of the final corpus stores.
+    # ``staged``: the writes are rejected in the removal of the gone ones
+    # instead, and the write raises in the removal of the later-gone ones
+    # (a run writing a noted item it did not derive, with what it reads
+    # from the graph for it).
     kept, gone, later = (_named(p, c) for p, c in zip("kgh", corpora, strict=True))
     new = _named("n", added)
     config = Config()
@@ -814,11 +851,16 @@ def test_a_write_that_raises_in_the_commit_converges(
         # Capped descriptions: a commit refills them from the vector copies.
         config.indexing.neptune.property_max_length = 40
     harness = IncrementalRun(FakeDocStatusStore(), config)
-    harness.run(
-        {**kept, **gone, **later},
-        fail=_rejects(*noted) if noted else None,
-        fail_removal=False,
-    )
+    final = {**kept, **new}
+    runs = [{**kept, **gone, **later}, {**kept, **later, **new}]
+    if staged:
+        runs = [runs[0], runs[1], final]
+    for i, corpus in enumerate(runs[:-1]):
+        harness.run(
+            corpus,
+            fail=_rejects(*noted) if noted and i == len(runs) - 2 else None,
+            fail_removal=False,
+        )
     with ExitStack() as stack:
         stack.enter_context(_raising(harness, where, k, cut))
         stack.enter_context(suppress(_WriteRaised))
@@ -828,11 +870,10 @@ def test_a_write_that_raises_in_the_commit_converges(
         # stops the run before the commit); one outside it fails the run,
         # as a crash would.
         harness.run(
-            {**kept, **later, **new},
+            runs[-1],
             interrupt=None if end == "registry" else end,
             fail=lambda *_: False,
         )
-    final = {**kept, **new}
     harness.run(final)
     harness.run(final)
 
@@ -880,3 +921,55 @@ def test_a_raised_write_of_a_noted_item_keeps_its_note(
 
     assert harness.state() == expected_state(corpus, config)
     assert harness.registry_problems(corpus) == []
+
+
+@pytest.mark.parametrize("end", _ENDS)
+@pytest.mark.parametrize(
+    ("depot", "buyer", "vendor"),
+    [
+        ("Depot", "Buyer", "Vendor"),
+        ("창고", "구매자", "한빛"),
+        ("倉庫", "買い手", "ひかり"),
+    ],
+)
+def test_a_raised_write_keeps_what_the_run_rewrote_for_other_documents(
+    depot: str, buyer: str, vendor: str, end: str | None
+) -> None:
+    # The removal of g0 notes the rejected edge depot - buyer (k0 and h0
+    # state it too). The removal of h0 writes it again with its endpoints,
+    # read from the graph with the rank the edge gives them, and its
+    # entity write raises over the failure rate: no document is recorded.
+    # The note kept only the noted items of the raised kind, so the
+    # endpoint depot, owned by k0 alone and derived by no later run, kept
+    # its old vector rank for good when the run ended after the note step.
+    config = Config()
+    config.indexing.max_failure_rate = 0.95
+    config.indexing.max_document_attempts = 50
+    harness = IncrementalRun(FakeDocStatusStore(), config)
+    kept: Corpus = {"/corpus/k0.txt": [[(depot, buyer, 3)]]}
+    added: Corpus = {"/corpus/m0.txt": [[(depot, vendor, 3)]]}
+    later: Corpus = {"/corpus/h0.txt": [[(depot, buyer, 1)]]}
+    harness.run({**kept, "/corpus/g0.txt": [[(depot, buyer, 3)]], **later})
+    harness.run(
+        {**kept, **later, **added},
+        fail=lambda at, _i: at == "graph.upsert_relationships",
+        fail_removal=False,
+    )
+    final = {**kept, **added}
+    with ExitStack() as stack:
+        # The run's first entity write is the removal's, the second the
+        # commit's.
+        stack.enter_context(_raising(harness, "vector.upsert_entities", 2, None))
+        stack.enter_context(suppress(_WriteRaised))
+        if end == "registry":
+            stack.enter_context(_registry_raising(harness))
+        harness.run(
+            final,
+            interrupt=None if end == "registry" else end,
+            fail=lambda *_: False,
+        )
+    harness.run(final)
+    harness.run(final)
+
+    assert harness.state() == expected_state(final, config)
+    assert harness.registry_problems(final) == []

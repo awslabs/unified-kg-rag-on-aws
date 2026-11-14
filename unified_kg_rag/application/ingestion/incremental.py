@@ -207,6 +207,11 @@ _WRITE_AHEAD_INFO = (
 )
 
 
+def _run_units(lineages: Iterable[DocumentLineage]) -> set[str]:
+    """The text units the ``lineages`` (the run's documents) list."""
+    return {unit for lineage in lineages for unit in lineage.text_unit_ids}
+
+
 def _remap_ids(ids: list[str] | None, id_remap: dict[str, str]) -> list[str]:
     return list(dict.fromkeys(id_remap.get(i, i) for i in ids or []))
 
@@ -867,11 +872,12 @@ class IncrementalIndexer:
         failure rate too: the commit wrote what its merge derived again for
         documents outside the delta, which retrying the delta's documents
         does not write again (a removal of one may delete the stored copy).
-        Over the rate, a failure naming no item (a raised write) is not
-        noted: the next run indexes the documents again, and the items as
-        this commit merged them could displace what it extracts; the
-        documents outside the run owning such an item are recorded FAILED
-        instead. Under the rate the docs are recorded, those owning a noted item
+        Over the rate, a failure naming no item (a raised write) notes only
+        its items citing no text unit of the run (and those of the notes the
+        commit read): the next run indexes the documents again, and the
+        items as this commit merged them could displace what it extracts;
+        the documents outside the run owning such an item are recorded
+        FAILED too. Under the rate the docs are recorded, those owning a noted item
         PROCESSED. A doc owning an artifact whose failure is not
         noted (its own text unit, or any when the note cannot be written or
         ``written`` is not given) is recorded FAILED (see
@@ -895,7 +901,10 @@ class IncrementalIndexer:
             before_registry(results)
         noted = (
             self.indexing_manager.note_pending_writes(
-                results, written, recorded=succeeded
+                results,
+                written,
+                recorded=succeeded,
+                run_units=_run_units(lineages),
             )
             if written is not None
             else set()
@@ -1003,7 +1012,7 @@ class IncrementalIndexer:
         such an item cites a unit no document of the run lists.
         """
         items = [i for group in failed_writes(results, written).values() for i in group]
-        run_units = {u for lineage in lineages for u in lineage.text_unit_ids}
+        run_units = _run_units(lineages)
         units = {
             u for i in items for u in getattr(i, "text_unit_ids", None) or []
         } - run_units

@@ -220,8 +220,9 @@ def test_a_raised_write_over_the_rate_keeps_each_namespaces_read_note() -> None:
     # write raises in alpha while beta's names its own new edge: one merged
     # result, a failure naming no item, over the rate (nothing recorded).
     # Each note keeps the noted items of the raised kind as read; beta's
-    # noted entity, written, and the run's own edge (derived again by the
-    # next run) are not noted.
+    # noted entity, written, and the run's own edge (citing the run's unit
+    # ub2: derived again by the next run) are not noted; an edge the commit
+    # rewrote for a document outside the run (citing uo alone) is.
     config = Config()
     vector = FakeVectorStore(opensearch_config=config.indexing.opensearch)
     manager = IndexingManager(
@@ -259,12 +260,14 @@ def test_a_raised_write_over_the_rate_keeps_each_namespaces_read_note() -> None:
     edges = IndexingStats(total_items=3)
     edges.add_error("timed out", 1)
     edges.add_error("write rejected", 1, ids=[own.id])
-    written = [*read.relationships, *read.entities, own]
+    outside = _in("alpha", _edge("r-out", buyer, vendor, "uo"))
+    written = [*read.relationships, *read.entities, own, outside]
 
     manager.note_pending_writes(
         {"graph_relationships": edges, "vector_entities": IndexingStats()},
         written,
         recorded=False,
+        run_units=["ub2"],
     )
 
     def stored(suffix: str) -> dict[str, list[str]]:
@@ -275,5 +278,5 @@ def test_a_raised_write_over_the_rate_keeps_each_namespaces_read_note() -> None:
             if items
         }
 
-    assert stored("alpha") == {"relationships": ["r-a"]}
+    assert stored("alpha") == {"relationships": ["r-a", "r-out"]}
     assert stored("beta") == {"relationships": ["r-b"]}
