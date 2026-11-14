@@ -1,6 +1,10 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""CHANGELOG.md's ``[Unreleased]`` section stays one coherent document.
+"""CHANGELOG.md's section being released stays one coherent document.
+
+That section is ``[Unreleased]``, or right after a release cut (an empty
+``[Unreleased]``) the newest version's, which the tag publishes
+(``tests/fixtures/changelog.py``).
 
 Branches that each add entries and then rebase leave the section damaged in
 ways a reader trusts and a reviewer misses: a ``(#PR)`` placeholder the
@@ -31,6 +35,7 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel
 
+from tests.fixtures import changelog
 from tests.fixtures.docs_check import REPO_ROOT
 
 pytestmark = pytest.mark.unit
@@ -56,12 +61,6 @@ SHARED_SPAN_WORDS = 3
 # Outside tables, no line is longer (the section wraps at 118).
 MAX_LINE = 120
 _PLACEHOLDER = re.compile(r"\(#\(?PR\)?\)|#\(PR\)|\(#PR\b", re.I)
-
-
-def _unreleased(text: str) -> str:
-    start = text.index("## [Unreleased]")
-    end = re.search(r"^(?:## \[|\[Unreleased\]:)", text[start + 1 :], re.M)
-    return text[start : start + 1 + end.start()] if end else text[start:]
 
 
 def _subsection(section: str, title: str) -> str:
@@ -336,7 +335,9 @@ def _extras() -> list[str]:
         return list(tomllib.load(file)["project"]["optional-dependencies"])
 
 
-SECTION = _unreleased(CHANGELOG.read_text(encoding="utf-8"))
+_TEXT = CHANGELOG.read_text(encoding="utf-8")
+# [Unreleased], or right after a release cut the version it publishes.
+SECTION = changelog.section(_TEXT, changelog.released_name(_TEXT))
 
 
 def test_the_unreleased_section_has_no_pr_placeholder() -> None:
@@ -565,3 +566,25 @@ def test_the_line_length_scan() -> None:
     long = "x" * (MAX_LINE + 1)
     text = f"- {'y' * (MAX_LINE - 2)}\n  {long}\n| {long} |\n"
     assert _long_lines(text) == [(2, MAX_LINE + 3)]
+
+
+_CUT = (
+    "# Changelog\n\n## [Unreleased]\n\n## [0.3.0] - 2026-11-14\n\n### Fixed\n"
+    "- A bug.\n\n## [0.2.3]\n\n- Old.\n\n"
+    "[Unreleased]: https://example.invalid/compare/v0.3.0...HEAD\n"
+)
+
+
+def test_the_section_being_released_is_unreleased_until_a_cut_empties_it() -> None:
+    # Right after a release cut the checks read the version just cut, which
+    # the tag publishes, not the empty [Unreleased] above it.
+    assert changelog.released_name(_CUT) == "0.3.0"
+    assert changelog.section(_CUT, "0.3.0") == (
+        "## [0.3.0] - 2026-11-14\n\n### Fixed\n- A bug.\n\n"
+    )
+    assert changelog.section(_CUT, "0.2.3") == "## [0.2.3]\n\n- Old.\n\n"
+    filled = _CUT.replace("## [Unreleased]\n", "## [Unreleased]\n\n- New.\n")
+    assert changelog.released_name(filled) == "Unreleased"
+    assert changelog.section(filled, "Unreleased") == "## [Unreleased]\n\n- New.\n\n"
+    with pytest.raises(ValueError, match="no release"):
+        changelog.released_name("## [Unreleased]\n\n[Unreleased]: x\n")

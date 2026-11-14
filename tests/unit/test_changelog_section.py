@@ -12,6 +12,7 @@ from types import ModuleType
 import pytest
 
 import unified_kg_rag
+from tests.fixtures import changelog
 
 pytestmark = pytest.mark.unit
 
@@ -208,11 +209,18 @@ def test_main_link_base(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> N
     )
 
 
-def test_real_unreleased_notes_have_no_repo_relative_links() -> None:
+def _released() -> tuple[str, str]:
+    """The real changelog and the name of its section being released:
+    ``Unreleased``, or right after a release cut the version just cut."""
+    text = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    return text, changelog.released_name(text)
+
+
+def test_real_released_notes_have_no_repo_relative_links() -> None:
     # Every repo-relative target in the real notes becomes an absolute URL.
     module = _script()
-    text = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-    notes = module.extract_section(text, "Unreleased", allow_empty=True)
+    text, name = _released()
+    notes = module.extract_section(text, name)
     targets = module._INLINE_TARGET.findall(module.absolutize_links(notes, BASE))
     relative = [t for _, _, t in targets if not module._NOT_REPO_RELATIVE.match(t)]
     assert relative == []
@@ -235,12 +243,12 @@ def test_long_notes_are_cut_at_a_line_break_with_a_link() -> None:
     assert notes.startswith("\n".join(kept) + "\n")
 
 
-def test_real_unreleased_notes_fit_a_release_body() -> None:
-    # Whatever the [Unreleased] section grows to, the published body fits.
+def test_real_released_notes_fit_a_release_body() -> None:
+    # Whatever the section being released grows to, the published body fits.
     module = _script()
-    text = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    text, name = _released()
     body = module.fit_release_body(
-        module.extract_section(text, "Unreleased"), "https://x.invalid"
+        module.extract_section(text, name), "https://x.invalid"
     )
     assert len(body) <= module.GITHUB_RELEASE_BODY_LIMIT
 
@@ -310,15 +318,15 @@ def test_main_links_the_version_heading(
     assert "- A feature." not in out
 
 
-def test_the_real_unreleased_release_body_is_condensed_not_cut() -> None:
+def test_the_real_release_body_is_condensed_not_cut() -> None:
     # Regression (rv23 docs 6): the 205 KB section was cut at 120,000
     # characters partway through Added, so the notes lost Changed, Fixed and
     # Security, and the link named no heading.
     module = _script()
-    text = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-    url = "https://x.invalid/CHANGELOG.md#unreleased"
+    text, name = _released()
+    url = f"https://x.invalid/CHANGELOG.md#{module.heading_fragment(text, name)}"
     body = module.fit_release_body(
-        module.condense(module.extract_section(text, "Unreleased"), url), url
+        module.condense(module.extract_section(text, name), url), url
     )
     assert len(body) <= module.GITHUB_RELEASE_BODY_LIMIT
     assert "\n\n... The full notes" not in body  # nothing was cut
