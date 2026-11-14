@@ -11,7 +11,7 @@ from typing import Any, NamedTuple
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from unified_kg_rag.shared.logging import get_logger
-from unified_kg_rag.shared.utils.files import atomic_write_text
+from unified_kg_rag.shared.utils.files import atomic_write_text, read_user_text
 
 logger = get_logger(__name__)
 
@@ -30,7 +30,8 @@ def _read_text_autodetect(path: Path) -> str:
         UnicodeDecodeError: No encoding is detected (a binary file).
     """
     try:
-        return path.read_text(encoding="utf-8")
+        # A leading byte-order mark is no text (read_user_text).
+        return read_user_text(path)
     except UnicodeDecodeError:
         from charset_normalizer import from_bytes
 

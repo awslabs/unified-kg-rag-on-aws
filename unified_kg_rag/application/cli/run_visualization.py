@@ -85,6 +85,7 @@ from unified_kg_rag.shared import (
     StoreConnectionError,
     get_logger,
 )
+from unified_kg_rag.shared.exceptions import InvalidArgumentError
 from unified_kg_rag.shared.logging import log_error
 from unified_kg_rag.shared.registry import Registry
 
@@ -141,9 +142,10 @@ def _to_communities(entries: list[dict[str, Any]]) -> list[Community]:
     return communities
 
 
-class InvalidVisualizationDataError(DataProcessingError):
-    """The visualization data file is not exported visualization JSON (exit 2,
-    as an invalid ``run-eval`` dataset)."""
+class InvalidVisualizationDataError(DataProcessingError, InvalidArgumentError):
+    """The visualization data file is not exported visualization JSON: an
+    input error (error class ``invalid_argument``, exit 2, as an invalid
+    ``run-eval`` dataset)."""
 
 
 def load_render_context(data_path: Path) -> RenderContext:

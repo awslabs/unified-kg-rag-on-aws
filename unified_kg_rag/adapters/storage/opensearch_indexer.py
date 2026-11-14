@@ -2588,6 +2588,10 @@ class OpenSearchIndexer(VectorIndexer):
                 ),
             )
             if failed_ids:
+                # Items of the write that failed: counted in its total, as
+                # the written ones are (_perform_indexing), so its failure
+                # rate is of the items it was given.
+                stats.total_items += len(failed_ids)
                 stats.add_error(
                     f"Failed to prepare {len(failed_ids)} documents",
                     len(failed_ids),

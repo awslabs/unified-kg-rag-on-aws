@@ -106,7 +106,7 @@ from unified_kg_rag.shared import (
     get_logger,
     observability,
 )
-from unified_kg_rag.shared.exceptions import ErrorClass, classify
+from unified_kg_rag.shared.exceptions import ErrorClass, InvalidArgumentError, classify
 from unified_kg_rag.shared.logging import log_error
 from unified_kg_rag.shared.usage import usage_scope
 from unified_kg_rag.shared.utils import event_loop
@@ -297,8 +297,9 @@ logger = get_logger(__name__)
 _STRATEGY_VALUES = frozenset(s.value for s in SearchStrategy)
 
 
-class InvalidDatasetError(DataProcessingError):
-    """The evaluation dataset cannot be read or fails validation (exit 2)."""
+class InvalidDatasetError(DataProcessingError, InvalidArgumentError):
+    """The evaluation dataset cannot be read or fails validation: an input
+    error (error class ``invalid_argument``, exit 2)."""
 
 
 def _data_path(value: str) -> str | Path:

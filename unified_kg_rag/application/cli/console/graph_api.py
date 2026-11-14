@@ -40,7 +40,7 @@ from unified_kg_rag.domain.ingestion.visualization_data import (
 from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.shared import get_logger
-from unified_kg_rag.shared.exceptions import DataProcessingError
+from unified_kg_rag.shared.exceptions import DataProcessingError, ErrorClass, classify
 from unified_kg_rag.shared.logging import log_error
 
 if TYPE_CHECKING:
@@ -156,9 +156,16 @@ def current_graph(
             suffix,
             error=e,
         )
-        reason = "write" if isinstance(e, ExportWriteError) else "read"
+        reason = "write" if isinstance(e, ExportWriteError) else _reason(e, "read")
         return CurrentGraph("failed", suffix, built_at, reason=reason)
     return CurrentGraph("current", suffix, built_at, path)
+
+
+def _reason(error: BaseException, otherwise: str) -> str:
+    """Why building the graph failed, as the page names it: ``config`` for
+    a setting the stores refuse (a graph-store path that cannot be opened,
+    a ``ConfigurationError``: the fix is in Settings), else ``otherwise``."""
+    return "config" if classify(error) is ErrorClass.CONFIGURATION else otherwise
 
 
 class GraphBuilder:
@@ -193,7 +200,7 @@ class GraphBuilder:
                     "Building the graph for the Graph page failed: %s",
                     error=e,
                 )
-                return CurrentGraph("failed", namespace, reason=reason)
+                return CurrentGraph("failed", namespace, reason=_reason(e, reason))
 
     def _bundle(self, config: Config) -> Providers:
         from unified_kg_rag.application.bootstrap import build_providers

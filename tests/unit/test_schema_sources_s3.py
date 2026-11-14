@@ -12,6 +12,7 @@ fix. The loaded content keys the caches, the location does not.
 from __future__ import annotations
 
 import io
+import json
 import logging
 import socket
 from collections.abc import Iterator
@@ -150,6 +151,15 @@ def _body(data: bytes) -> StreamingBody:
 
 
 # --- one object ---------------------------------------------------------------------
+
+
+def test_an_s3_json_schema_with_a_byte_order_mark_loads(s3: Any) -> None:
+    # Regression (rv29): the local file read past the mark (read_user_text),
+    # the S3 object (the deployed path) failed "Unexpected UTF-8 BOM".
+    schema = {"relationship_types": ["공급: 부품을 공급한다"]}
+    text = json.dumps(schema, ensure_ascii=False)
+    location = _put(s3, "schemas/schema.json", b"\xef\xbb\xbf" + text.encode())
+    assert _load("file", location).relationship_types == ["공급: 부품을 공급한다"]
 
 
 def test_file_reads_an_s3_object_as_a_local_file(s3: Any, tmp_path: Path) -> None:

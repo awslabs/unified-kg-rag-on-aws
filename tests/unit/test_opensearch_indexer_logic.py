@@ -378,6 +378,37 @@ def test_prepare_documents_all_ok(indexer) -> None:
     assert failed == []
 
 
+def test_a_document_that_fails_to_prepare_counts_in_the_write_s_total(
+    indexer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Regression (rv29): a document whose embedding failed counted as failed
+    # but not in total_items, so 8 failures of 7 written read 8/7 (114%)
+    # and the max_failure_rate gate was stricter than configured.
+    from unified_kg_rag.adapters.storage.opensearch_indexer import _ItemSpec
+
+    items = [Entity(id=f"e{i}", name=f"E{i}") for i in range(4)]
+    monkeypatch.setattr(indexer, "_reusable_vectors", lambda *_: {})
+    monkeypatch.setattr(
+        indexer,
+        "_generate_embeddings",
+        lambda chunk, _spec, _stored: (
+            [([0.1], None if item.id == "e3" else [0.2]) for item in chunk],
+            [{} for _ in chunk],
+        ),
+    )
+
+    def write(_index: str, docs: list, refresh: bool = True) -> IndexingStats:
+        stats = IndexingStats(total_items=len(docs))
+        stats.add_success(len(docs))
+        return stats
+
+    monkeypatch.setattr(indexer, "_perform_indexing", write)
+    spec = _ItemSpec("entities", "entities", dict, [], indexer._prepare_entity_doc, ())
+    stats = indexer._embed_and_write("idx", items, spec, "default")
+    assert (stats.total_items, stats.successful_items, stats.failed_items) == (4, 3, 1)
+    assert stats.error_rate == 0.25
+
+
 # --------------------------------------------------------------------------- #
 # mapping builders
 # --------------------------------------------------------------------------- #
