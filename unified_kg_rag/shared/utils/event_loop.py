@@ -41,10 +41,12 @@ def configure_event_loop(
     return executor
 
 
-def _cpu_pool() -> ThreadPoolExecutor:
+def _cpu_pool(stale: ThreadPoolExecutor | None = None) -> ThreadPoolExecutor:
+    """The CPU pool, created on first use; a new one in place of ``stale``
+    (a pool found shut down)."""
     global _cpu_executor
     with _cpu_executor_lock:
-        if _cpu_executor is None:
+        if _cpu_executor is None or _cpu_executor is stale:
             # The CPUs this process may run on (a container's quota), not
             # the host's: more threads than that only take turns.
             _cpu_executor = ThreadPoolExecutor(
@@ -71,7 +73,15 @@ async def to_cpu_thread(
     and did not change below saturation."""
     context = contextvars.copy_context()
     call = functools.partial(context.run, func, *args, **kwargs)
-    return await asyncio.get_running_loop().run_in_executor(_cpu_pool(), call)
+    loop = asyncio.get_running_loop()
+    pool = _cpu_pool()
+    try:
+        future = loop.run_in_executor(pool, call)
+    except RuntimeError:
+        # The pool was shut down (the package never does; a host may): the
+        # step runs on a new one. At interpreter exit that raises again.
+        future = loop.run_in_executor(_cpu_pool(stale=pool), call)
+    return await future
 
 
 def abandon_default_executor(

@@ -727,3 +727,26 @@ async def test_the_default_executor_takes_calls_after_a_saturated_block() -> Non
     async with saturated_default_executor():
         pass
     assert await asyncio.wait_for(asyncio.to_thread(lambda: "ran"), 5) == "ran"
+
+
+def test_a_shut_down_cpu_pool_is_replaced_on_the_next_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Nothing in the package shuts the CPU pool, but a host (or a test)
+    may; the next step must get a new pool, not "cannot schedule new
+    futures after shutdown", in any event loop of the process."""
+    from unified_kg_rag.shared.utils import event_loop
+
+    monkeypatch.setattr(event_loop, "_cpu_executor", None)
+    first = event_loop._cpu_pool()
+    first.shutdown(wait=True)
+    try:
+        # Two loops, one after the other, as two asyncio.run calls make.
+        for _ in range(2):
+            name = asyncio.run(
+                event_loop.to_cpu_thread(lambda: threading.current_thread().name)
+            )
+            assert name.startswith("graphrag-cpu")
+        assert event_loop._cpu_pool() is not first
+    finally:
+        event_loop._cpu_pool().shutdown(wait=False)
