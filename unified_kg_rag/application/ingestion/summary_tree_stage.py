@@ -17,11 +17,11 @@ import logging
 from collections import defaultdict
 from collections.abc import Collection, Iterable, Iterator, Sequence
 from datetime import UTC, datetime
-from importlib.metadata import PackageNotFoundError, version
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from unified_kg_rag import __version__
 from unified_kg_rag.adapters.ingestion.tree_summarizer import TreeSummarizer
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.ingestion.pipeline_stages import _RegistryStage
@@ -330,7 +330,7 @@ class SummaryTreeStage(_RegistryStage):
             partial=counts["summaries_failed"] > 0,
             failed_summaries=counts["summaries_failed"],
             reused_summaries=counts["reused"],
-            package_version=_package_version(),
+            package_version=__version__,
         )
         stats = indexer.write_summary_tree(
             nodes, vectors, suffix, record.model_dump(mode="json")
@@ -584,10 +584,3 @@ class _IntactTreeError(PipelineStageError):
     """A tree build that failed before writing anything (its size check),
     over a stored tree it leaves as it was: the build record keeps naming
     it."""
-
-
-def _package_version() -> str | None:
-    try:
-        return version("unified-kg-rag-on-aws")
-    except PackageNotFoundError:
-        return None

@@ -22,6 +22,7 @@ from typing import Any
 
 import pytest
 
+import unified_kg_rag
 from tests.fixtures.extras import requires_eval
 from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED
 from unified_kg_rag.application.retrieval.rag_chain import (
@@ -1352,9 +1353,21 @@ class TestComparability:
         assert manager._calculate_answer_span_statistics([report("a")]) == {}
 
     @requires_eval
-    def test_run_manifest(self, config: Config, tmp_path) -> None:
+    def test_run_manifest(self, config: Config, tmp_path, monkeypatch) -> None:
         import hashlib
 
+        from unified_kg_rag.evaluation import evaluation_manager
+
+        # A checkout's editable install keeps the metadata version it was
+        # built with: the manifest names the version the code reports.
+        installed = evaluation_manager.version
+        monkeypatch.setattr(
+            evaluation_manager,
+            "version",
+            lambda name: (
+                "0.0.0" if name == "unified-kg-rag-on-aws" else installed(name)
+            ),
+        )
         data = tmp_path / "eval.json"
         data.write_bytes(b'[{"question": "q"}]')
         config.evaluation.enabled_evaluators = [EvaluatorType.GRAPH_AWARE]
@@ -1380,7 +1393,8 @@ class TestComparability:
         assert manifest["models"]["evaluation_judge"] is None  # no LLM judge
         assert manifest["models"]["judge_is_answer_model"] is None
         assert manifest["enabled_evaluators"] == ["graph_aware"]
-        assert manifest["package_version"] and manifest["created_at"]
+        assert manifest["package_version"] == unified_kg_rag.__version__
+        assert manifest["created_at"]
         assert len(manifest["retrieval_config_sha256"]) == 64
         assert manifest["index"] == {}
         assert manifest["library_versions"]["ragas"]

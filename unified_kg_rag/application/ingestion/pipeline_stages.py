@@ -5,13 +5,13 @@ from abc import ABC, abstractmethod
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import UTC, datetime
-from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
 
 from pydantic import ValidationError
 from structlog.contextvars import bind_contextvars, reset_contextvars
 
+from unified_kg_rag import __version__
 from unified_kg_rag.adapters.ingestion.chunker import ChunkerFactory
 from unified_kg_rag.adapters.ingestion.claim_extractor import (
     ClaimExtractionStats,
@@ -3146,10 +3146,6 @@ class IndexingStage(_RegistryStage):
         suffixes = {BaseIndexer.get_suffix(unit) for unit in text_units} or {
             resolve_namespace(self.config, None)
         }
-        try:
-            package_version: str | None = version("unified-kg-rag-on-aws")
-        except PackageNotFoundError:
-            package_version = None
         documents = {
             doc_id for unit in text_units for doc_id in unit.document_ids or []
         }
@@ -3189,7 +3185,7 @@ class IndexingStage(_RegistryStage):
                 context.incremental_extraction_fingerprint or settings.fingerprint
             ),
             extraction_settings=settings,
-            package_version=package_version,
+            package_version=__version__,
             source_scopes=recorded_source_scopes(context, self.config.indexing.reset),
             # Only a full build exports (DataIngestionPipeline's export).
             visualization_export_run=(
