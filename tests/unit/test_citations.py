@@ -19,6 +19,7 @@ from hypothesis import strategies as st
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
 from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
+from tests.fixtures.saturated_executor import saturated_default_executor
 from unified_kg_rag.adapters.retrieval.token_manager import (
     EMPTY_CONTEXT_PLACEHOLDER,
     TokenManager,
@@ -644,7 +645,12 @@ async def test_the_lineage_work_runs_off_the_event_loop(
     async def fetch(ids: list[str]) -> list[dict[str, Any]]:
         return [{"id": "u5", "document_ids": ["d-5"]}] if "u5" in ids else []
 
-    await citations.aresolve_documents([entity], fetch, limit=2)
+    # On the CPU pool: with every default-executor thread in a blocking call,
+    # ``asyncio.to_thread`` would queue the pages and the attach behind them.
+    async with saturated_default_executor():
+        await asyncio.wait_for(
+            citations.aresolve_documents([entity], fetch, limit=2), 5
+        )
     assert entity.document_id == "d-5"
     # The lineages, four pages (the last one empty) and the attach.
     assert len(threads) == 6 and loop_thread not in threads
