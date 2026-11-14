@@ -171,7 +171,12 @@ unless noted.
    kept document's edge whose rejected write left it at an endpoint only the
    removed document states, and no run wrote it again. Recording the owners `FAILED` instead re-extracted every document
    a hub entity cites, on every run its write kept failing. A note that cannot
-   be written falls back to that.
+   be written falls back to that, and so does, over the rate, a write that
+   raised rather than naming its rejected items (a timeout, a dropped
+   connection), which stands for every item of its kind the commit wrote:
+   noted, those items as the commit merged them joined the next run's delta
+   of the same unrecorded documents and could displace an edge it
+   extracted, for good.
 5. **Deletion propagation** (`IndexingManager.remove_text_units`). The stores
    are asked what cites the removed text units (`GraphIndexer.find_ids_citing`
    for entities, `VectorIndexer.find_documents`); edges are found among the
