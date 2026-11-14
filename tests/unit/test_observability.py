@@ -1076,8 +1076,12 @@ async def test_a_streamed_query_names_its_namespace_and_publishes_its_metrics(
     assert properties["error_class"] == "failure"
     assert len(raised.value.query_id) == 12  # type: ignore[attr-defined]
 
-    # A stream the caller stops reading early is no failure.
-    chain = _simple_chain()
+    # A stream the caller stops reading early is no failure: its metrics
+    # count none, and its query span (the one streaming path ends the query
+    # where it waits for its reader) and its answer's model span end
+    # without an error, as a closed generator's.
+    exporter.clear()
+    chain = _simple_chain(_TracedModelFactory())
     sink = _RecordingSink()
     chain.providers.metrics_sink = sink
     try:
@@ -1086,8 +1090,13 @@ async def test_a_streamed_query_names_its_namespace_and_publishes_its_metrics(
         await stream.aclose()
     finally:
         await chain.aclose()
-    ((_, values, _),) = sink.emitted
+    ((_, values, properties),) = sink.emitted
     assert values[metrics.QUERY_FAILED_METRIC] == 0.0
+    assert properties["Strategy"] == "simple" and "error_class" not in properties
+    for name in ("kg_rag.query", "chat vendor.model-v1"):
+        span = _one(exporter, name)
+        assert span.status.status_code != StatusCode.ERROR, name
+        assert "error.type" not in _attrs(span), name
 
 
 class _DegradingRetriever(_FakeRetriever):

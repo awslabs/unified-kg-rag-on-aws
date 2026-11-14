@@ -72,7 +72,7 @@ async def test_the_events_stream_the_query_ainvoke_answers(config: Config) -> No
     assert kinds[-1] == "result"
     start, routed, sources = events[:3]
     assert isinstance(start, QueryStart) and len(start.query_id) == 12
-    assert start.conversation_id == "c-1"
+    assert start.conversation_id == "c-1" and start.namespace == "default"
     assert start.requested_strategy is SearchStrategy.SIMPLE
     assert isinstance(routed, QueryRouted)
     assert routed.strategy is SearchStrategy.SIMPLE and routed.routing is None
