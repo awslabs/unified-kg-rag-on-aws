@@ -32,6 +32,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.models.evaluation import EvaluationSummary
 from unified_kg_rag.evaluation.benchmarks import musique
+from unified_kg_rag.shared.exceptions import with_own_text
 from unified_kg_rag.shared.metrics import NullMetricsSink
 
 pytestmark = pytest.mark.unit
@@ -124,7 +125,8 @@ def test_run_ingestion_prints_an_unexpected_error_literally(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     def fail(*args: object, **kwargs: object) -> None:
-        raise RuntimeError(f"boom on {_NAME}")
+        # Its text shown (the package's own), so its markup is printed.
+        raise with_own_text(RuntimeError(f"boom on {_NAME}"))
 
     monkeypatch.setattr(run_ingestion_pipeline, "IngestionPipelineRunner", fail)
     monkeypatch.setattr("sys.argv", ["run-ingestion", "--source-directory", "."])
@@ -140,7 +142,8 @@ def test_run_eval_prints_an_unexpected_error_literally(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     def fail(*args: object, **kwargs: object) -> None:
-        raise RuntimeError(f"boom on {_QUERY}")
+        # Its text shown (the package's own), so its markup is printed.
+        raise with_own_text(RuntimeError(f"boom on {_QUERY}"))
 
     monkeypatch.setattr(run_evaluation, "load_cli_config", fail)
     monkeypatch.setattr("sys.argv", ["run-eval", "--data-path", "eval.json"])
@@ -168,7 +171,8 @@ def test_run_rag_prints_metrics_filters_and_init_errors_literally(
     assert state["filters"] == {"k": "[/red]v"}
 
     def fail(**kwargs: object) -> None:
-        raise RuntimeError(f"boom on {_NAME}")
+        # Its text shown (the package's own), so its markup is printed.
+        raise with_own_text(RuntimeError(f"boom on {_NAME}"))
 
     monkeypatch.setattr(run_rag_chain, "GraphRAGChain", fail)
     runner = object.__new__(run_rag_chain.RAGChainRunner)

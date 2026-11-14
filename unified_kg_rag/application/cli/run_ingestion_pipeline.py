@@ -38,6 +38,7 @@ from unified_kg_rag.application.cli.conventions import (
     print_json,
     print_status,
     setup_cli_logging,
+    shown_text,
     usage_error,
 )
 from unified_kg_rag.application.cli.display import (
@@ -85,7 +86,7 @@ from unified_kg_rag.shared import (
     StoreConnectionError,
     get_logger,
 )
-from unified_kg_rag.shared.exceptions import ErrorClass
+from unified_kg_rag.shared.exceptions import ErrorClass, with_own_text
 from unified_kg_rag.shared.logging import log_error
 from unified_kg_rag.shared.utils.validation import format_validation_errors
 
@@ -832,9 +833,10 @@ class IngestionPipelineRunner:
                         f"\n[yellow]Next step: {markup_safe(self._next_step(context))}"
                         "[/yellow]"
                     )
-                    raise PipelineExecutionError(error)
+                    # Of the stages' recorded errors (shown_error_text).
+                    raise with_own_text(PipelineExecutionError(error))
                 if (breach := self._failure_budget_breach(context)) is not None:
-                    raise PipelineExecutionError(breach)
+                    raise with_own_text(PipelineExecutionError(breach))
                 success_msg = "✓ Pipeline completed successfully!"
                 console.print(
                     Panel.fit(
@@ -1167,11 +1169,16 @@ def main() -> None:
     except (PipelineExecutionError, StoreConnectionError, ModelUnreachableError) as e:
         # A failed stage, a failed metadata check, a refused prompt or an
         # unreachable store or model server: say which before exiting non-zero.
-        console.print(f"\n[red]Error: {markup_safe(e)}[/red]")
+        console.print(f"\n[red]Error: {markup_safe(shown_text(e))}[/red]")
         _print_failed(runner, EXIT_FAILURE, e)
         sys.exit(EXIT_FAILURE)
     except Exception as e:  # noqa: BLE001 - logged, exits
-        console.print(f"\n[red]An unexpected error occurred: {markup_safe(e)}[/red]")
+        # The one rule of every surface: an unexpected failure's text is
+        # masked on the output and the JSON status (shown_text), its type and
+        # where it happened logged at ERROR (log_error), its text at DEBUG.
+        console.print(
+            f"\n[red]An unexpected error occurred: {markup_safe(shown_text(e))}[/red]"
+        )
         log_error(
             logger,
             logging.ERROR,

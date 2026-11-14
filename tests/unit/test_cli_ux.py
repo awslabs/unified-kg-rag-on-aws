@@ -15,6 +15,7 @@ from tests.fixtures.run_rag import answer_document, search_document
 from unified_kg_rag.application.cli import run_ingestion_pipeline, run_rag_chain
 from unified_kg_rag.application.presentation.answer_view import SourceView
 from unified_kg_rag.domain.models import Config, Methodology
+from unified_kg_rag.shared.exceptions import StoreConnectionError
 
 pytestmark = pytest.mark.unit
 
@@ -386,13 +387,15 @@ async def test_interactive_a_failing_question_does_not_end_the_session(
         nonlocal calls
         calls += 1
         if calls == 1:
-            raise RuntimeError("model down")
+            # Shown with its text (an outage; an unexpected failure's is
+            # masked: conventions.shown_text).
+            raise StoreConnectionError("store down")
         queries.append(rag_input)
         return {"success": True, "answer": "ok"}
 
     runner._run_query = run_query  # type: ignore[method-assign]
     await runner._interactive_mode()
-    assert "Unexpected error: model down" in printed.getvalue()
+    assert "Unexpected error: store down" in printed.getvalue()
     assert [q.query for q in queries] == ["after"]
 
 

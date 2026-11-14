@@ -53,7 +53,7 @@ from unified_kg_rag.domain.models import (
     PipelineStageStatus,
 )
 from unified_kg_rag.shared import ConfigurationError, StoreConnectionError
-from unified_kg_rag.shared.exceptions import classify
+from unified_kg_rag.shared.exceptions import INTERNAL_ERROR_MESSAGE, classify
 from unified_kg_rag.shared.metrics import NullMetricsSink
 
 pytestmark = pytest.mark.unit
@@ -1791,7 +1791,8 @@ def test_a_failed_json_run_prints_a_failed_status(
         (
             run_visualization.main,
             ["run-visualization", "--data-path", str(data), *json_flags],
-            "renderer crashed",
+            # An unexpected failure's text masked (conventions.shown_text).
+            INTERNAL_ERROR_MESSAGE,
             "RuntimeError",
         ),
         (
@@ -1872,7 +1873,8 @@ def test_a_json_run_failing_while_running_names_the_error(
         {
             "status": "failed",
             "exit_code": code,
-            "error": str(error),
+            # An unexpected failure's text masked (conventions.shown_text).
+            "error": conventions.shown_text(error, code),
             "error_class": classify(error).value,
             "error_type": type(error).__name__,
         },
@@ -1960,7 +1962,7 @@ def test_run_rag_classifies_an_error_building_its_chain(
     assert status == {
         "status": "failed",
         "exit_code": code,
-        "error": str(error),
+        "error": conventions.shown_text(error, code),
         "error_class": classify(error).value,
         "error_type": type(error).__name__,
     }
@@ -2193,11 +2195,13 @@ def test_a_failed_ingestion_status_names_the_error_and_pipeline_id(
     from unified_kg_rag.shared.exceptions import (
         PipelineExecutionError,
         StoreRequestRejectedError,
+        with_own_text,
     )
 
     raised = {
         "refused": StoreRequestRejectedError("unknown setting [index.refresh_intervl]"),
-        "stage": PipelineExecutionError("stage 'indexing' failed"),
+        # As the runner raises it: of the stages' recorded errors.
+        "stage": with_own_text(PipelineExecutionError("stage 'indexing' failed")),
         "unexpected": RuntimeError("boom"),
     }[error]
     monkeypatch.setattr(console, "stderr", console.stderr)
@@ -2220,7 +2224,7 @@ def test_a_failed_ingestion_status_names_the_error_and_pipeline_id(
     assert _document(capsys.readouterr().out) == {
         "status": "failed",
         "exit_code": code,
-        "error": str(raised),
+        "error": conventions.shown_text(raised, code),
         "error_class": classify(raised).value,
         "error_type": type(raised).__name__,
         "pipeline_id": "run-7",
@@ -2728,7 +2732,11 @@ async def test_a_failed_run_rag_query_has_the_failure_keys(mocker) -> None:
     degraded = MagicMock()
     degraded.model_dump.return_value = {
         "answer": "sorry",
-        "metadata": {"error": True, "error_type": "StoreConnectionError"},
+        "metadata": {
+            "error": True,
+            "error_type": "StoreConnectionError",
+            "error_class": "store_unreachable",
+        },
         "search_results": {"metadata": {"error": "Neptune down"}},
     }
     runner.rag_chain.ainvoke = mocker.AsyncMock(return_value=degraded)
@@ -2739,6 +2747,45 @@ async def test_a_failed_run_rag_query_has_the_failure_keys(mocker) -> None:
         "Neptune down",
         "StoreConnectionError",
     )
+
+
+async def test_a_failed_run_rag_query_shows_an_unexpected_failure_masked_once(
+    mocker, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Regression (rv29): the text of an unexpected failure (a provider's
+    # reply quoting the prompt) was printed and put in the JSON "error",
+    # and the text output printed it twice ("Error executing query:" and
+    # "Error:").
+    from unified_kg_rag.application.retrieval.rag_chain import RAGInput
+    from unified_kg_rag.shared.exceptions import INTERNAL_ERROR_MESSAGE
+
+    runner = object.__new__(run_rag_chain.RAGChainRunner)
+    runner.args = run_rag_chain.CommandLineInterface._setup_arguments().parse_args(
+        ["-q", "hi"]
+    )
+    runner.metrics_sink = MagicMock()
+    runner.rag_chain = MagicMock()
+    runner.rag_chain.ainvoke = mocker.AsyncMock(
+        side_effect=RuntimeError("Quokkasecret provider reply")
+    )
+    raised = await runner._run_query(RAGInput(query="hi"))
+    degraded = MagicMock()
+    degraded.model_dump.return_value = {
+        "answer": "sorry",
+        "metadata": {"error": True, "error_type": "RuntimeError"},
+        "search_results": {"metadata": {"error": "Quokkasecret provider reply"}},
+    }
+    runner.rag_chain.ainvoke = mocker.AsyncMock(return_value=degraded)
+    absorbed = await runner._run_query(RAGInput(query="hi"))
+    for result in (raised, absorbed):
+        # Named by its type before the generic message.
+        assert result["error"] == f"RuntimeError: {INTERNAL_ERROR_MESSAGE}"
+        assert result["error_class"] == "failure"
+        run_rag_chain.RAGChainRunner._print_result(result)
+    printed = capsys.readouterr()
+    assert "Quokkasecret" not in printed.out + printed.err
+    assert printed.out.count("\nError: ") == 2  # once per query
+    assert "Error executing query" not in printed.out
 
 
 def test_a_failing_run_eval_result_has_the_failure_keys() -> None:

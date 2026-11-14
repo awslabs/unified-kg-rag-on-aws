@@ -13,14 +13,33 @@ or directly via email to aws-security@amazon.com.
 
 Log records at `INFO` and above carry only lengths, counts, ids and a short
 stable hash for user queries, corpus text (including entity names) and model
-output; the text itself is logged only at `DEBUG`, and exception messages do
-not include model output. An error whose text may come from a model provider
-or a library is logged at `INFO` and above as its type, a digest and where it
-happened (the type chain and `file:line` frames, never the message); its text
-and traceback only at `DEBUG`. An expected outcome with its own message (an
-unreachable store or model, the deadline, a refusal) is logged with its text. `DEBUG` logs therefore contain user and corpus data
-and must be handled with the same controls as that data. See the logging
-section of the [user guide](docs/guides/configure.md#what-the-logs-contain).
+output; the text itself is logged only at `DEBUG`. An error whose text may
+come from a model provider or a library is logged at `INFO` and above by
+what it is, never by what it says: its type, a service error code and HTTP
+status, and for an error whose text holds no data the OS error number and
+path or a decode position; a digest of its message; and where it happened
+(the type chain and `file:line` frames). Its text and traceback are logged
+only at `DEBUG`. An expected outcome with its own message (an unreachable
+store or model, the deadline, a refusal) and a message the package composes
+itself (a stage failure named by its cause) are logged with their text. A
+library's own records at `INFO` and above (on the CLIs' handlers) keep their
+logger, level and message template; their arguments and traceback are
+replaced by digests. `DEBUG` logs therefore contain user and corpus data and
+must be handled with the same controls as that data.
+
+Result output is not a log record and holds corpus and model text by design:
+`run-ingestion` prints entity names, community titles and summaries and
+claim descriptions, `run-rag` the answer and its sources, and the saved
+evaluation results hold the questions and answers. An error's text in the
+output, in the JSON status' `error`, in a stage's recorded `error_message`
+(the run's `pipeline_metadata.json`, also its S3 checkpoint) and in a failed
+answer's result follows the rule above: an unexpected failure's text is
+replaced by its type and a generic message, an outage's (naming its
+endpoint) is kept.
+On AWS the CDK tasks send stdout and stderr to the same CloudWatch log group
+as the structured records, so that log group holds corpus and model text:
+control access to it as to the corpus. See the logging section of the
+[user guide](docs/guides/configure.md#what-the-logs-contain).
 
 ## Dependency advisories
 

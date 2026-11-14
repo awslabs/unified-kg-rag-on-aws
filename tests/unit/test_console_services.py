@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -39,7 +40,11 @@ from unified_kg_rag.domain.models import (
     SearchResult,
     SearchStrategy,
 )
-from unified_kg_rag.shared.exceptions import IndexNotFoundError, StoreConnectionError
+from unified_kg_rag.shared.exceptions import (
+    INTERNAL_ERROR_MESSAGE,
+    IndexNotFoundError,
+    StoreConnectionError,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -93,6 +98,44 @@ async def test_a_job_that_fails_to_start_frees_its_namespace(tmp_path: Path) -> 
     with pytest.raises(jobs_module.PathRefused):
         await manager.start_ingest(corpus=tmp_path / "missing", corpus_ref="w:missing")
     assert manager._claimed == {}
+
+
+# A run-ingestion whose runner fails with a provider's text (an unexpected
+# failure escaping the stages): the console's job reads its JSON status and
+# keeps its stdout and stderr as the job's log.
+_FAILING_INGEST = (
+    "import sys\n"
+    "from unified_kg_rag.application.cli import run_ingestion_pipeline as m\n"
+    "def run(self):\n"
+    "    raise RuntimeError('Quokkasecret provider reply: role/Zebrapassword')\n"
+    "m.IngestionPipelineRunner.run = run\n"
+    "m.main()\n"
+)
+
+
+async def test_an_unexpected_failure_of_a_job_shows_no_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Regression (rv29 U1): the run's last-resort handler masked the log
+    # line but printed the text on stdout ("An unexpected error occurred:")
+    # and in the JSON status' error, which the Ingest page showed.
+    monkeypatch.setattr(
+        jobs_module, "_cli", lambda *_: [sys.executable, "-c", _FAILING_INGEST]
+    )
+    manager = _manager(tmp_path)
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    job = await manager.start_ingest(corpus=corpus, corpus_ref="w:corpus")
+    assert job.watcher is not None
+    await asyncio.wait_for(job.watcher, timeout=60)
+    shown = manager.get(job.id)
+    assert shown["status"] == "failed"
+    # Named by its type, its text masked (conventions.shown_text).
+    assert shown["error"] == f"RuntimeError: {INTERNAL_ERROR_MESSAGE}"
+    tail = "\n".join(manager.log_tail(job))
+    assert "RuntimeError" in tail  # its type and where it happened
+    for text in (shown["error"], tail, job.log_path.read_text()):
+        assert "Quokkasecret" not in text and "Zebrapassword" not in text
 
 
 def test_jobs_a_stopped_console_left_running_are_marked_lost(tmp_path: Path) -> None:
@@ -788,6 +831,39 @@ async def test_a_hidden_failure_is_logged_under_the_id_the_page_shows(
     ]
     assert logged, [r.getMessage() for r in caplog.records]
     assert all("secret" not in r.getMessage() for r in caplog.records)
+    await service.close()
+
+
+@pytest.mark.parametrize(
+    ("error", "logged"),
+    [
+        (StoreConnectionError("OpenSearch at localhost:9200 is down"), True),
+        (IndexNotFoundError("No index found for suffix 'nosuch'"), False),
+    ],
+)
+async def test_a_question_s_error_is_logged_as_mcp_logs_a_tool_s(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    error: Exception,
+    logged: bool,
+) -> None:
+    # Regression (rv29): Ask logged only an unexpected failure, MCP every
+    # error but a refusal and the deadline: an outage left no server line.
+    service = AskService(
+        Config,
+        ConsoleStore(tmp_path / "s.sqlite3"),
+        chain_factory=lambda _c: _FailingChain(error),
+    )
+    with caplog.at_level(logging.INFO):
+        await _drain(service, "q")
+    lines = [
+        r.getMessage()
+        for r in caplog.records
+        if r.levelno >= logging.ERROR and "Console question" in r.getMessage()
+    ]
+    assert bool(lines) is logged, lines
+    if logged:
+        assert str(error) in lines[0] and "[store_unreachable]" in lines[0]
     await service.close()
 
 

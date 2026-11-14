@@ -10,7 +10,7 @@ import re
 import threading
 import time
 from collections import Counter, defaultdict
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, Final, NamedTuple
 
@@ -20,6 +20,7 @@ from langchain_core.exceptions import OutputParserException
 from langchain_core.output_parsers import BaseOutputParser, XMLOutputParser
 from lxml import etree
 from pydantic import BaseModel, ConfigDict, Field
+from structlog.contextvars import bound_contextvars
 from tenacity import RetryCallState
 from tqdm import tqdm
 from tqdm.asyncio import tqdm as async_tqdm
@@ -551,12 +552,18 @@ class BatchProcessor(BaseModel):
         sequential_func: Callable[..., Any],
         task_name: str,
         show_progress: bool = True,
+        errors: dict[int, BaseException] | None = None,
+        item_ids: Callable[[dict[str, Any]], Mapping[str, str]] | None = None,
     ) -> list[Any]:
         """The async :meth:`execute_with_fallback`, on the event loop.
 
         Each item is one awaited ``sequential_func`` call (``Runnable.ainvoke``),
         up to ``max_concurrency`` in flight; an item whose call fails with a
-        retryable error is retried alone (``max_attempts``).
+        retryable error is retried alone (``max_attempts``). An item that
+        failed every attempt is :data:`BATCH_ITEM_FAILED`, its last error in
+        ``errors`` (when given) under its index. ``item_ids`` names the ids
+        of an item's input (a dataset's ``query_id``) that its log lines,
+        its failure's included, carry.
         """
         with observability.span(
             "kg_rag.batch", task=task_name, items=len(items_to_process)
@@ -567,6 +574,8 @@ class BatchProcessor(BaseModel):
                 sequential_func,
                 task_name,
                 show_progress,
+                errors,
+                item_ids,
             )
             span.set_attributes(_batch_outcome(items_to_process, results))
             return results
@@ -578,6 +587,8 @@ class BatchProcessor(BaseModel):
         sequential_func: Callable[..., Any],
         task_name: str,
         show_progress: bool,
+        errors: dict[int, BaseException] | None = None,
+        item_ids: Callable[[dict[str, Any]], Mapping[str, str]] | None = None,
     ) -> list[Any]:
         inputs = self._prepare(items_to_process, prepare_inputs_func, task_name)
         if not inputs:
@@ -589,16 +600,23 @@ class BatchProcessor(BaseModel):
         semaphore = asyncio.Semaphore(self.max_concurrency)
         progress = ProgressLogger(task_name, len(inputs))
 
-        async def process_one(single_input: dict[str, Any]) -> Any:
+        async def process_one(idx: int, single_input: dict[str, Any]) -> Any:
+            ids = item_ids(single_input) if item_ids is not None else {}
             async with semaphore:
-                try:
-                    result = await retrying_sequential_func(single_input)
-                except Exception as error:  # noqa: BLE001 - isolate one item's failure
-                    result = self._failed(task_name, error)
+                with bound_contextvars(**ids):
+                    try:
+                        result = await retrying_sequential_func(single_input)
+                    except Exception as error:  # noqa: BLE001 - isolate one item
+                        if errors is not None:
+                            errors[idx] = error
+                        result = self._failed(task_name, error)
             progress.update()
             return result
 
-        tasks = [asyncio.ensure_future(process_one(i)) for i in inputs]
+        tasks = [
+            asyncio.ensure_future(process_one(idx, single_input))
+            for idx, single_input in enumerate(inputs)
+        ]
         async with cancel_on_exit(tasks):
             results: list[Any] = await async_tqdm.gather(
                 *tasks,

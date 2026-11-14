@@ -55,6 +55,7 @@ from unified_kg_rag.application.cli.conventions import (
     json_output,
     print_json,
     setup_cli_logging,
+    shown_text,
     stoppable,
     usage_error,
 )
@@ -2695,7 +2696,10 @@ def main() -> None:
             console.print(f"\n[red]Error: {markup_safe(e)}[/red]")
             log_error(logger, logging.ERROR, "Evaluation failed: %s", error=e)
             sys.exit(EXIT_FAILURE)
-        console.print(f"\n[red]An unexpected error occurred: {markup_safe(e)}[/red]")
+        # Masked (shown_text): the one rule of every surface.
+        console.print(
+            f"\n[red]An unexpected error occurred: {markup_safe(shown_text(e))}[/red]"
+        )
         log_error(
             logger, logging.ERROR, "Unexpected error during evaluation: %s", error=e
         )

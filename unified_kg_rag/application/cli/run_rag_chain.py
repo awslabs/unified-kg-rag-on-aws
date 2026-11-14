@@ -37,6 +37,7 @@ from unified_kg_rag.application.cli.conventions import (
     print_json,
     print_status,
     setup_cli_logging,
+    shown_text,
     stoppable,
     usage_error,
 )
@@ -76,13 +77,14 @@ from unified_kg_rag.shared import (
     get_logger,
 )
 from unified_kg_rag.shared.exceptions import (
+    INTERNAL_ERROR_MESSAGE,
     QUERY_FAILURE_IDS,
     ErrorClass,
     IndexNotFoundError,
     InvalidArgumentError,
     classify,
     error_class_of,
-    error_text,
+    shown_error_text,
 )
 from unified_kg_rag.shared.logging import log_error
 from unified_kg_rag.shared.utils import event_loop
@@ -646,14 +648,16 @@ class RAGChainRunner:
             exit_code = EXIT_CODES[error_class]
             if exit_code == EXIT_USAGE:
                 usage_error(e)
-            # The one rule of every surface (log_error): an unexpected
-            # failure's type and where it happened (text at DEBUG), any
-            # other class with its text. The operator's stdout and the JSON
-            # document keep the text: this CLI is the operator's own.
+            # The one rule of every surface: an unexpected failure's type and
+            # where it happened logged (log_error), its text at DEBUG only,
+            # masked on stdout and in the JSON document (shown_text); any
+            # other class with its text.
             log_error(
                 logger, logging.ERROR, "Failed to initialize RAG chain: %s", error=e
             )
-            console.print(f"[red]Error during initialization: {markup_safe(e)}[/red]")
+            console.print(
+                f"[red]Error during initialization: {markup_safe(shown_text(e))}[/red]"
+            )
             print_status(exit_code, e)
             sys.exit(exit_code)
 
@@ -741,7 +745,9 @@ class RAGChainRunner:
                 console.print("\n[yellow]Conversation interrupted.[/yellow]")
                 break
             except Exception as e:  # noqa: BLE001 - logged, the session goes on
-                console.print(f"[red]Unexpected error: {markup_safe(e)}[/red]")
+                console.print(
+                    f"[red]Unexpected error: {markup_safe(shown_text(e))}[/red]"
+                )
                 log_error(
                     logger,
                     logging.ERROR,
@@ -793,9 +799,17 @@ class RAGChainRunner:
             # With processing.ignore_errors the chain does not raise: it returns
             # its error fallback flagged by metadata.error. That is a failure.
             if outcome.error_class is not None:
-                error = outcome.error_message or "RAG chain returned an error"
                 error_type = outcome.error_type or RUN_FAILED
                 error_class = error_class_of(outcome.error_class)
+                # The absorbed error's text as a raised one's is shown
+                # (shown_text): an unexpected failure's masked.
+                error = shown_error_text(
+                    error_class,
+                    outcome.error_message or "RAG chain returned an error",
+                    audience="operator",
+                )
+                if error == INTERNAL_ERROR_MESSAGE:
+                    error = f"{error_type}: {error}"  # as operator_error_text
                 # The ids of the query it absorbed, as a raised one names them.
                 ids = {
                     name: value
@@ -807,10 +821,7 @@ class RAGChainRunner:
                     usage_error(
                         error, error_type=error_type, error_class=error_class, **ids
                     )
-                console.print(
-                    f"\n[bold red]Error executing query: {markup_safe(error)}"
-                    "[/bold red]"
-                )
+                # Printed by _print_result (text output) or in the document.
                 return {
                     "success": False,
                     **output,
@@ -831,16 +842,12 @@ class RAGChainRunner:
                 # hold) or a --suffix nothing was ingested under: the command
                 # line or the configuration is wrong (exit 2).
                 usage_error(e)
-            # The one rule of every surface (log_error): an unexpected
-            # failure's type and where it happened (text at DEBUG), any
-            # other class with its text. The operator's stdout and the JSON
-            # document keep the text: this CLI is the operator's own.
+            # The one rule of every surface: an unexpected failure's type and
+            # where it happened logged (log_error), its text at DEBUG only,
+            # masked in the document _print_result prints (shown_text); any
+            # other class with its text.
             log_error(
                 logger, logging.ERROR, "Error during query execution: %s", error=e
-            )
-            console.print(
-                "\n[bold red]Error executing query: "
-                f"{markup_safe(error_text(e))}[/bold red]"
             )
             return {
                 "success": False,
@@ -1129,7 +1136,9 @@ async def async_main(args: argparse.Namespace) -> int:
         log_error(logger, logging.ERROR, "Configuration error: %s", error=e)
         return failed(EXIT_USAGE, e)
     except Exception as e:  # noqa: BLE001 - logged, exit code
-        console.print(f"\n[red]An unexpected error occurred: {markup_safe(e)}[/red]")
+        console.print(
+            f"\n[red]An unexpected error occurred: {markup_safe(shown_text(e))}[/red]"
+        )
         log_error(
             logger, logging.ERROR, "Unexpected error during execution: %s", error=e
         )

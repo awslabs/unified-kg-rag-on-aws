@@ -163,6 +163,8 @@ from unified_kg_rag.shared import (
 from unified_kg_rag.shared.exceptions import (
     ModelUnreachableError,
     StoreConnectionError,
+    classify,
+    operator_error_text,
 )
 from unified_kg_rag.shared.logging import log_error, log_failure
 from unified_kg_rag.shared.metrics import MetricsSink, NullMetricsSink
@@ -2373,7 +2375,11 @@ class DataIngestionPipeline:
                 status=PipelineStageStatus.FAILED,
                 start_time=running_result.start_time,
                 end_time=datetime.now(),
-                error_message=f"Unexpected error: {str(e)}",
+                # As a stage's own failure is recorded (PipelineStage): what
+                # a surface shows, with the class and type.
+                error_message=(f"Unexpected error: {operator_error_text(e)}"),
+                error_class=classify(e),
+                error_type=type(e).__name__,
                 metrics=(
                     {LLM_USAGE_METRIC: stage_usage} if stage_usage is not None else {}
                 ),
