@@ -215,6 +215,7 @@ from unified_kg_rag.shared.exceptions import (
     ErrorClass,
     InvalidArgumentError,
     MethodologyNotIndexedError,
+    OptionalCallSkipped,
     UsageLimitExceededError,
     classify,
     error_class_of,
@@ -1217,11 +1218,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             # The router call only beside the answer's prompt and the least
             # context: else no router call, the fallback as one candidate.
             router = self._router_tokens(routable, state)
-            answer = answer_prompt_tokens(self.config) + estimate_token_count(
-                self._question(state)
-            )
-            least = self.config.search.token_manager.min_truncated_section_tokens
-            if router + answer + least > left.input_tokens:
+            if router + self._answer_reserve(self._question(state)) > (
+                left.input_tokens
+            ):
                 fallback = self._fallback_strategy(routable)
                 record_degradation(
                     DegradationStep.ROUTING,
@@ -1574,9 +1573,21 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             return None
         try:
             rewriter = self._get_chain_for_prompt(QueryRewritePrompt, StrOutputParser())
-            rewritten = await rewriter.ainvoke(
-                {"query": state["query"], "conversation_history": history}, config
+            # Optional under the query's limits: one that would take the
+            # answer's call or input searches the follow-up as written.
+            with usage.optional_calls():
+                rewritten = await rewriter.ainvoke(
+                    {"query": state["query"], "conversation_history": history},
+                    config,
+                )
+        except OptionalCallSkipped as e:
+            logger.info("Follow-up rewrite skipped to keep the answer's (%s)", e.limit)
+            record_degradation(
+                DegradationStep.FOLLOW_UP_REWRITE,
+                "query_limit: searched the follow-up as is",
+                e,
             )
+            return None
         except Exception as e:
             if not self.ignore_errors or is_unreachable_error(e):
                 raise
@@ -2862,15 +2873,40 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         limits = self._query_limits(rag_input)
         if limits.max_model_calls is None and limits.max_input_tokens is None:
             return None
+        strategy = rag_input.search_strategy
         return UsageLimits(
             max_llm_calls=limits.max_model_calls,
             max_input_tokens=limits.max_input_tokens,
-            # The answer's call: no output repair takes it.
+            # The answer's call and its input: no optional call (a query
+            # translation or extraction, the follow-up rewrite, an output
+            # repair) takes them; auto weighs its router call against the
+            # same reserve (_routes_within_limits).
             reserved_calls=1,
+            reserved_tokens=(
+                self._answer_reserve(
+                    rag_input.query,
+                    None if strategy is SearchStrategy.AUTO else strategy,
+                )
+                if limits.max_input_tokens is not None
+                else 0
+            ),
             names={
                 "max_llm_calls": self._limit_setting(rag_input, "max_model_calls"),
                 "max_input_tokens": self._limit_setting(rag_input, "max_input_tokens"),
             },
+        )
+
+    def _answer_reserve(
+        self, question: str, strategy: SearchStrategy | None = None
+    ) -> int:
+        """The input tokens an input-token limit keeps for the answer of
+        ``question``: its prompt (``answer_prompt_tokens`` of ``strategy``,
+        without one the largest), the question and the least context
+        (``search.token_manager.min_truncated_section_tokens``)."""
+        return (
+            answer_prompt_tokens(self.config, strategy)
+            + estimate_token_count(question)
+            + self.config.search.token_manager.min_truncated_section_tokens
         )
 
     def _apply_limits(self, deadline: "_QueryDeadline", rag_input: RAGInput) -> None:

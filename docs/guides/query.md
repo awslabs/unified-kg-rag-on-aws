@@ -195,12 +195,14 @@ is refused before its request is sent:
   prompt's own templates and instructions and the question, less
   `search.token_manager.context_window_headroom_ratio` of them; the fan-out
   strategies keep that prompt's tokens for the answer too.
-- One call is kept for the answer: an optional call that would take it is
-  not sent, and its step is answered without (degraded, reason
-  `query_limit`). The optional calls are the query translation and
-  extractions, the structured strategy's planner (its fallback answers) and
-  an output repair (`models.roles.fixing`; the reply that did not parse
-  counts as unrepaired).
+- One call is kept for the answer, and under an input-token limit its
+  input too (its prompt, the question and the least context): an optional
+  call that would take either is not sent, and its step is answered without
+  (degraded, reason `query_limit`). The optional calls are the query
+  translation and extractions, the follow-up rewrite (the
+  follow-up is then searched as written), the structured strategy's planner
+  (its fallback answers) and an output repair (`models.roles.fixing`; the
+  reply that did not parse counts as unrepaired).
 - Under an input-token limit the fan-out keeps for the answer what it will
   read (the answer prompt, DRIFT's answers so far, the least context),
   not the configured ceilings, and DRIFT's actions share what is left;

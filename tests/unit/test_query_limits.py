@@ -31,7 +31,13 @@ from tests.unit.test_global_search_map_reduce import (
     _map_payload,
 )
 from tests.unit.test_global_search_map_reduce import _strategy as _global_strategy
-from tests.unit.test_query_deadline import _ANSWER, _chain, _Factory, _SlowChatModel
+from tests.unit.test_query_deadline import (
+    _ANSWER,
+    _chain,
+    _Factory,
+    _Retriever,
+    _SlowChatModel,
+)
 from unified_kg_rag import QueryLimits, UsageLimitExceededError
 from unified_kg_rag.adapters.local.models import OllamaLanguageModelFactory
 from unified_kg_rag.adapters.observability import usage_callback
@@ -214,16 +220,51 @@ async def _calls_unlimited() -> int:
     return len(model.started)
 
 
+class _SpendingRetriever(_Retriever):
+    """A retrieval that spends one model call of the query's own (as a
+    third-party strategy's unguarded call): with ``max_model_calls=1`` the
+    answer's call is then past the limit."""
+
+    async def aretrieve(self, query: SearchQuery) -> list[Any]:
+        usage.start_llm_call("query", "m", estimated_input_tokens=1)
+        return await super().aretrieve(query)
+
+
+def _spending_chain(config: Config, model: _SlowChatModel) -> GraphRAGChain:
+    from unified_kg_rag.adapters.local.token_counter import (
+        local_token_counter_factory,
+    )
+    from unified_kg_rag.adapters.providers import Providers
+    from unified_kg_rag.domain.models import RetrieverRole
+
+    retriever = _SpendingRetriever()
+    providers = Providers(
+        config,
+        llm_factory=_Factory(model),
+        token_counter_factory=local_token_counter_factory(config),
+        retriever_builders={RetrieverRole.DOCUMENT: lambda: retriever},
+    )
+    return GraphRAGChain(config=config, providers=providers)
+
+
+def _question(limits: QueryLimits | None = None) -> RAGInput:
+    return RAGInput(
+        query="What does Vendor supply?",
+        search_strategy=SearchStrategy.SIMPLE,
+        enable_query_processing=False,
+        limits=limits,
+    )
+
+
 async def test_a_query_past_its_call_limit_fails_naming_the_limit() -> None:
     calls = await _calls_unlimited()
     assert calls == 3  # the rewrite, its output repair, the answer
     model = _metered(_SlowChatModel())
-    chain = _chain(Config(), _Factory(model))
+    chain = _spending_chain(Config(), model)
     with pytest.raises(UsageLimitExceededError) as refused:
-        await chain.ainvoke(_follow_up(QueryLimits(max_model_calls=1)))
+        await chain.ainvoke(_question(QueryLimits(max_model_calls=1)))
     assert "limits.max_model_calls" in str(refused.value)
-    # The rewrite was sent; its repair and the answer were not.
-    assert len(model.started) == 1
+    assert model.started == []  # the answer was not sent
     assert classify(refused.value) is ErrorClass.LIMIT_EXCEEDED
     # The MCP caller sees its own limit's message.
     message, callers = describe_error(refused.value)
@@ -232,14 +273,13 @@ async def test_a_query_past_its_call_limit_fails_naming_the_limit() -> None:
 
 async def test_the_configured_limit_is_named_and_streams_obey_it() -> None:
     calls = await _calls_unlimited()
-    config = Config(search={"query_max_model_calls": 1})
     model = _metered(_SlowChatModel())
-    chain = _chain(config, _Factory(model))
+    chain = _spending_chain(Config(search={"query_max_model_calls": 1}), model)
     # A request above the configured limit does not raise it.
     with pytest.raises(UsageLimitExceededError, match="search.query_max_model_calls"):
-        await chain.ainvoke(_follow_up(QueryLimits(max_model_calls=calls + 5)))
+        await chain.ainvoke(_question(QueryLimits(max_model_calls=calls + 5)))
     with pytest.raises(UsageLimitExceededError):
-        _ = [chunk async for chunk in chain.astream(_follow_up())]
+        _ = [chunk async for chunk in chain.astream(_question())]
     # The same limit on a call that fits answers in full, streamed too.
     roomy = _chain(Config(search={"query_max_model_calls": calls}), _Factory(model))
     assert (await roomy.ainvoke(_follow_up())).answer == _ANSWER
@@ -256,10 +296,20 @@ async def test_the_configured_limit_is_named_and_streams_obey_it() -> None:
 async def test_ignore_errors_answers_with_the_limit_error_class() -> None:
     config = Config(search={"query_max_model_calls": 1})
     config.processing.ignore_errors = True
-    chain = _chain(config, _Factory(_metered(_SlowChatModel())))
-    out = await chain.ainvoke(_follow_up())
+    chain = _spending_chain(config, _metered(_SlowChatModel()))
+    out = await chain.ainvoke(_question())
     assert out.answer == DEFAULT_ERROR_MESSAGE
     assert out.metadata["error_class"] == "limit_exceeded"
+
+
+async def test_an_input_token_limit_too_small_for_any_context_abstains() -> None:
+    # The rewrite skipped (optional), the answer left no context: it
+    # abstains naming the limit instead of failing, and sends nothing.
+    model = _metered(_SlowChatModel())
+    chain = _chain(Config(), _Factory(model))
+    out = await chain.ainvoke(_follow_up(QueryLimits(max_input_tokens=10)))
+    assert out.metadata["abstention_reason"] == "query_limit"
+    assert model.started == []
 
 
 async def test_a_lowered_deadline_is_the_querys_and_named() -> None:
@@ -710,3 +760,75 @@ def test_auto_makes_no_router_call_an_input_token_limit_cannot_take() -> None:
             (SearchStrategy.LOCAL,),
             ["mix", "naive"],
         )
+
+
+# --- what an optional call leaves the answer (W1 verification residuals) ----
+
+
+def test_an_optional_call_leaves_the_answer_its_input_tokens() -> None:
+    # Regression (W1 verification, low 1): an optional call kept the call
+    # for the answer but not its input tokens, so on a Korean question at a
+    # small max_input_tokens the translation and extraction took the tokens
+    # the answer's prompt needed and the query failed on the answer.
+    limits = usage.UsageLimits(
+        max_input_tokens=1_000, reserved_calls=1, reserved_tokens=600
+    )
+    with usage.usage_scope(limits) as meter:
+        with usage.optional_calls():
+            # 300 + 600 kept: fits.
+            usage.start_llm_call("query", "m", estimated_input_tokens=300)
+            with pytest.raises(usage.OptionalCallSkipped) as skipped:
+                usage.start_llm_call("query", "m", estimated_input_tokens=200)
+        assert skipped.value.limit == "max_input_tokens"
+        assert "keeps for the answer" in str(skipped.value)
+        # The answer itself may take them.
+        usage.start_llm_call("query", "m", estimated_input_tokens=600)
+        assert meter.total.input_tokens == 900
+
+
+def test_a_query_keeps_its_answer_s_prompt_and_question_tokens() -> None:
+    from unified_kg_rag.adapters.retrieval.base import answer_prompt_tokens
+
+    config = Config()
+    chain = _chain(config, _Factory(_SlowChatModel()))
+    rag_input = RAGInput(
+        query="What does Vendor supply?", limits=QueryLimits(max_input_tokens=5_000)
+    )
+    limits = chain._usage_limits(rag_input)
+    assert limits is not None
+    kept = limits.reserved_tokens
+    assert kept > answer_prompt_tokens(config)  # the prompt, question, context
+    # Without an input-token limit nothing is kept for it.
+    calls_only = chain._usage_limits(
+        RAGInput(query="q", limits=QueryLimits(max_model_calls=3))
+    )
+    assert calls_only is not None and calls_only.reserved_tokens == 0
+
+
+async def test_a_follow_up_at_one_call_searches_the_question_as_written() -> None:
+    # Regression (W1 verification, low 2): the history rewrite was no
+    # optional call, so a follow-up at max_model_calls=1 failed on its
+    # answer. It answers now, the follow-up searched as written and the
+    # rewrite recorded as degraded by the limit.
+    model = _metered(_SlowChatModel())
+    chain = _chain(Config(), _Factory(model))
+    out = await chain.ainvoke(_follow_up(QueryLimits(max_model_calls=1)))
+    assert out.answer == _ANSWER
+    assert len(model.started) == 1  # the answer alone
+    (entry,) = out.metadata["degraded"]
+    assert entry["step"] == "follow_up_rewrite"
+    assert entry["reason"].startswith("query_limit")
+    assert out.processed_query is not None
+    assert out.processed_query.final_query == "And its price?"
+
+
+def test_an_optional_call_past_a_limit_itself_is_skipped_not_refused() -> None:
+    # The meter checked the limit first: an optional call past it raised the
+    # limit's refusal, which the step making it does not absorb (the
+    # follow-up rewrite failed a query whose answer fitted).
+    limits = usage.UsageLimits(
+        max_input_tokens=100, reserved_calls=1, reserved_tokens=50
+    )
+    with usage.usage_scope(limits), usage.optional_calls():
+        with pytest.raises(usage.OptionalCallSkipped):
+            usage.start_llm_call("query", "m", estimated_input_tokens=500)

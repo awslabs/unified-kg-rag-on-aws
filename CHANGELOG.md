@@ -33,11 +33,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fewest calls fit and makes no router call an input-token limit cannot take (`metadata.routing.over_limits`) and under
   either limit starts no speculative extraction, the answer's context is cut to the tokens left after the answer prompt
   and the question (the fan-out keeps that prompt's tokens too), an optional call (a query translation or extraction,
-  the structured planner, an output repair: `usage.optional_calls`) never takes the call kept for the answer, its step
-  degraded instead, an answer the limits left no context abstains with `abstention_reason: query_limit`, and a query
-  whose answer does not fit fails with `UsageLimitExceededError` (error class `limit_exceeded`, a caller's error: not
-  counted in `query_failed`, `refused` on the console's dashboard, its message shown to an MCP caller; exit code 1,
-  console HTTP 422).
+  the follow-up rewrite, which then searches the follow-up as written, the structured planner, an output repair:
+  `usage.optional_calls`) never takes the call kept for the answer, nor under an input-token limit the answer's
+  prompt, question and least context, its step degraded instead, an answer the limits left no context abstains with
+  `abstention_reason: query_limit`, and a query whose answer does not fit fails with `UsageLimitExceededError` (error
+  class `limit_exceeded`, a caller's error: not counted in `query_failed`, `refused` on the console's dashboard, its
+  message shown to an MCP caller; exit code 1, console HTTP 422).
 - One streaming path: `GraphRAGChain.aquery_events()` (sync `query_events()`) yields typed events (`QueryEvent`,
   exported with `QueryStart`, `QueryRouted`, `QuerySources`, `AnswerChunk` and `QueryResult`): the query `ainvoke`
   runs, its deadline, query limits, guardrail, metrics and memory included, ending with its `RAGOutput`. LangChain's

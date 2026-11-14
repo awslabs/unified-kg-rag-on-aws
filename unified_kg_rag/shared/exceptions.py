@@ -389,8 +389,9 @@ class UsageLimitExceededError(GraphRAGException):
 class OptionalCallSkipped(UsageLimitExceededError):
     """An optional model call (a query translation or extraction, the
     structured planner, an output repair: ``shared.usage.optional_calls``)
-    was not sent: it would take a call the query's limits keep for its
-    answer (``UsageLimits.reserved_calls``). The step that made it is
+    was not sent: it would take a call or input tokens the query's limits
+    keep for its answer (``UsageLimits.reserved_calls`` /
+    ``reserved_tokens``). The step that made it is
     answered without, recorded as degraded (``query_limit``); the query
     goes on."""
 
