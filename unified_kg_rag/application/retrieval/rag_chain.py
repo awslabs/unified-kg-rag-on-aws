@@ -1581,11 +1581,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                     config,
                 )
         except OptionalCallSkipped as e:
-            logger.info("Follow-up rewrite skipped to keep the answer's (%s)", e.limit)
-            record_degradation(
-                DegradationStep.FOLLOW_UP_REWRITE,
-                "query_limit: searched the follow-up as is",
-                e,
+            query_processing.record_limit_skip(
+                DegradationStep.FOLLOW_UP_REWRITE, "searched the follow-up as is", e
             )
             return None
         except Exception as e:

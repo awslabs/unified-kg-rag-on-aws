@@ -337,7 +337,7 @@ async def process_query(
     if "keywords" in results_map:
         keyword_data = results_map["keywords"]
         if isinstance(keyword_data, OptionalCallSkipped):
-            _record_limit_skip(
+            record_limit_skip(
                 DegradationStep.KEYWORD_EXTRACTION,
                 "searched without keywords",
                 keyword_data,
@@ -384,7 +384,7 @@ def _absorb_input_failure(
     may quote the prompt or the provider's reply, at DEBUG) and recorded as
     the ``step`` the answer is degraded by; else it is raised."""
     if isinstance(error, OptionalCallSkipped):
-        _record_limit_skip(step, reason, error)
+        record_limit_skip(step, reason, error)
         return
     if not chain.ignore_errors or is_unreachable_error(error):
         raise error
@@ -392,10 +392,11 @@ def _absorb_input_failure(
     record_degradation(step, reason, error)
 
 
-def _record_limit_skip(step: str, reason: str, error: OptionalCallSkipped) -> None:
-    """Record ``step`` left out to keep the answer's call (reason
-    ``query_limit``)."""
-    logger.info("%s skipped to keep the answer's call (%s)", step, error.limit)
+def record_limit_skip(step: str, reason: str, error: OptionalCallSkipped) -> None:
+    """Record ``step`` left out to keep the answer's call or input (reason
+    ``query_limit``): the one record of a skipped optional call the chain
+    makes (a query input, the follow-up rewrite)."""
+    logger.info("%s skipped to keep the answer's call or input (%s)", step, error.limit)
     record_degradation(step, f"query_limit: {reason}", error)
 
 
