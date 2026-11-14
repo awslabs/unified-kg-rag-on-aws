@@ -640,7 +640,7 @@ class IterativeSearchStrategy(BaseSearchStrategy):
     ) -> bool:
         """``_room_for`` the next round's verdict, before its search: the
         round's candidates are packed into about the budget of these."""
-        if usage.remaining() == usage.Remaining():
+        if usage.remaining().unlimited:
             return True
         return self._room_for(await self._pack(results, query.query, query), run)
 

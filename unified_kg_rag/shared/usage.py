@@ -232,10 +232,18 @@ class UsageLimits:
 @dataclass(frozen=True)
 class Remaining:
     """What the limits of the open scopes leave (:func:`remaining`):
-    ``None`` where none caps it."""
+    ``None`` where none caps it; and the model-call limit that leaves the
+    fewest calls, by its name (the setting that sets it) and value."""
 
     llm_calls: int | None = None
     input_tokens: int | None = None
+    call_limit: str | None = None
+    call_limit_value: int | None = None
+
+    @property
+    def unlimited(self) -> bool:
+        """Whether no open scope caps model calls or input tokens."""
+        return self.llm_calls is None and self.input_tokens is None
 
 
 @dataclass
@@ -340,18 +348,29 @@ def remaining() -> Remaining:
     input tokens any of them still allows (``None`` where none caps it)."""
     calls: int | None = None
     tokens: int | None = None
+    call_limit: tuple[str, int] | None = None
     with _LOCK:
         node = _CURRENT.get()
         while node is not None:
             limits = node.limits
             if limits is not None and limits.max_llm_calls is not None:
                 left = max(0, limits.max_llm_calls - node.total.llm_calls)
-                calls = left if calls is None else min(calls, left)
+                if calls is None or left < calls:
+                    calls = left
+                    call_limit = (
+                        limits.names.get("max_llm_calls", "max_llm_calls"),
+                        limits.max_llm_calls,
+                    )
             if limits is not None and limits.max_input_tokens is not None:
                 left = max(0, limits.max_input_tokens - node.total.input_tokens)
                 tokens = left if tokens is None else min(tokens, left)
             node = node.parent
-    return Remaining(llm_calls=calls, input_tokens=tokens)
+    return Remaining(
+        llm_calls=calls,
+        input_tokens=tokens,
+        call_limit=call_limit[0] if call_limit else None,
+        call_limit_value=call_limit[1] if call_limit else None,
+    )
 
 
 def calls_that_fit(

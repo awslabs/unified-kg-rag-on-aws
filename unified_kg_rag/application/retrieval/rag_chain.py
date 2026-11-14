@@ -978,7 +978,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             {}
             if processing
             and self.config.search.auto_speculative_extraction
-            and usage.remaining() == usage.Remaining()
+            and usage.remaining().unlimited
             else None
         )
         try:
@@ -1043,7 +1043,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             ),
             state.get("suffix"),
         )
-        routable, dropped = self._routes_within_limits(routable)
+        routable, dropped = self._routes_within_limits(routable, state)
         candidates = [s.value for s in routable]
         if len(routable) == 1:
             # Nothing to choose between: no router call.
@@ -1114,39 +1114,50 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         return state
 
     def _routes_within_limits(
-        self, routable: tuple[SearchStrategy, ...]
+        self, routable: tuple[SearchStrategy, ...], state: dict[str, Any]
     ) -> tuple[tuple[SearchStrategy, ...], list[str]]:
-        """Of ``routable``, those whose fewest model calls (their own,
-        ``fewest_model_calls``, and the answer) fit in what the query's call
-        limit leaves, after the router's call when more than one is left;
-        and the names of those dropped. All of them without a call limit.
+        """Of ``routable``, those whose fewest model calls fit in what the
+        query's call limit leaves, after the router's call when more than
+        one is left; and the names of those dropped. A strategy's fewest
+        calls are its own (``fewest_model_calls``), the query processing
+        calls it reads for ``state``'s question (``query_processing_calls``:
+        its extractions and the translation) and the answer. All of them
+        without a call limit.
 
         Raises:
             UsageLimitExceededError: None fits, before any call of the
-                route.
+                route, naming the limit and its value.
         """
-        left = usage.remaining().llm_calls
-        if left is None:
+        left = usage.remaining()
+        if left.llm_calls is None:
             return routable, []
+        calls = left.llm_calls
 
         def fewest(strategy: SearchStrategy) -> int:
             spec = get_strategy_spec(strategy)
-            return spec.strategy_class.fewest_model_calls(self.config) + 1
+            return (
+                spec.strategy_class.fewest_model_calls(self.config)
+                + query_processing.query_processing_calls(self, state, strategy)
+                + 1
+            )
 
-        routed = tuple(s for s in routable if fewest(s) <= left - 1)
+        routed = tuple(s for s in routable if fewest(s) <= calls - 1)
         if len(routed) < 2:
             # One (or none) beside the router's call: no router call is
             # made, so a strategy may use that call too.
-            alone = tuple(s for s in routable if fewest(s) <= left)
+            alone = tuple(s for s in routable if fewest(s) <= calls)
             routed = (self._fallback_strategy(alone),) if alone else ()
         if not routed:
             needs = min(fewest(s) for s in routable)
+            limit = left.call_limit or "max_model_calls"
+            value = left.call_limit_value or calls
             raise UsageLimitExceededError(
-                f"The query's model call limit leaves {left} calls, and every "
-                f"strategy auto may route to needs at least {needs} "
-                f"({_names(routable)}); raise the limit or pick a strategy",
-                limit="max_model_calls",
-                value=left,
+                f"The query's model call limit {limit} {value} leaves {calls} "
+                f"calls, and every strategy auto may route to needs at least "
+                f"{needs} ({_names(routable)}); raise the limit or pick a "
+                "strategy",
+                limit=limit,
+                value=value,
             )
         return routed, [s.value for s in routable if s not in routed]
 

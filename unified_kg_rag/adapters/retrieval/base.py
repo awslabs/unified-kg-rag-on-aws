@@ -741,8 +741,9 @@ class BaseSearchStrategy(ABC):
         """The model calls of its own one search makes at least when it does
         its work (its query extractions and the answer apart): ``auto``
         under a call limit (``search.query_max_model_calls``) routes only to
-        strategies whose fewest calls fit. None for a search that retrieves
-        only."""
+        strategies whose fewest calls fit (the chain adds the query
+        extractions the strategy reads, ``query_inputs``, and the
+        translation). 0 for a search that retrieves only."""
         return 0
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
@@ -797,7 +798,7 @@ class BaseSearchStrategy(ABC):
         usage meter counts it at its start: its prompt's templates and its
         input by the local estimate. All of them without a limit."""
         left = usage.remaining()
-        if left.llm_calls is None and left.input_tokens is None:
+        if left.unlimited:
             return len(inputs)
         resolved = prompt_class.resolve(custom_prompts=self.config.custom_prompts)
         overhead = estimate_token_count(

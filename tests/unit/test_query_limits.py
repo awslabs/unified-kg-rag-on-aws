@@ -295,11 +295,15 @@ def _router_chain() -> GraphRAGChain:
     return chain
 
 
+# A query without query processing: the strategies' own calls alone.
+_UNPROCESSED = {"query": "q", "enable_query_processing": False}
+
+
 def test_auto_drops_the_candidates_whose_fewest_calls_do_not_fit() -> None:
     chain = _router_chain()
     config = chain.config
     candidates = (SearchStrategy.LOCAL, SearchStrategy.GLOBAL, SearchStrategy.DRIFT)
-    assert chain._routes_within_limits(candidates) == (candidates, [])
+    assert chain._routes_within_limits(candidates, _UNPROCESSED) == (candidates, [])
     # The fewest calls of each, past its query extraction and the answer.
     drift = DriftSearchStrategy.fewest_model_calls(config)
     assert drift == 2 + config.search.drift_search.primer_folds
@@ -309,20 +313,20 @@ def test_auto_drops_the_candidates_whose_fewest_calls_do_not_fit() -> None:
     with usage.usage_scope(usage.UsageLimits(max_llm_calls=1 + drift)):
         # The router's call, then global's rating and map call and the
         # answer fit; DRIFT's calls and the answer do not.
-        assert chain._routes_within_limits(candidates) == (
+        assert chain._routes_within_limits(candidates, _UNPROCESSED) == (
             (SearchStrategy.LOCAL, SearchStrategy.GLOBAL),
             ["drift"],
         )
     with usage.usage_scope(usage.UsageLimits(max_llm_calls=2)):
         # One left beside the router's: no router call, local alone.
-        assert chain._routes_within_limits(candidates) == (
+        assert chain._routes_within_limits(candidates, _UNPROCESSED) == (
             (SearchStrategy.LOCAL,),
             ["global", "drift"],
         )
     iterative = IterativeSearchStrategy.fewest_model_calls(config)
     with usage.usage_scope(usage.UsageLimits(max_llm_calls=iterative)):
         with pytest.raises(UsageLimitExceededError, match="needs at least"):
-            chain._routes_within_limits((SearchStrategy.ITERATIVE,))
+            chain._routes_within_limits((SearchStrategy.ITERATIVE,), _UNPROCESSED)
 
 
 # --- the fan-out strategies stop cleanly ----------------------------------------
@@ -529,3 +533,45 @@ def test_a_fan_out_keeps_the_answer_prompts_tokens_for_the_answer() -> None:
     for limit, fits in ((call + answer, 1), (call + answer - 1, 0)):
         with usage.usage_scope(usage.UsageLimits(max_input_tokens=limit)):
             assert strat._calls_within_limits(GlobalMapPrompt, [100]) == fits
+
+
+def test_auto_counts_the_query_extractions_each_candidate_reads() -> None:
+    # Regression (W1 review L3, D5): a candidate's fewest calls left out the
+    # query extraction it reads (local's entities, mix's keywords) and the
+    # translation, so under a call limit of 1 auto picked local (two calls)
+    # and failed where naive (the answer alone) fitted.
+    chain = _router_chain()
+    candidates = (SearchStrategy.LOCAL, SearchStrategy.MIX, SearchStrategy.NAIVE)
+    state = {"query": "What does Vendor supply?"}
+    with usage.usage_scope(usage.UsageLimits(max_llm_calls=1)):
+        assert chain._routes_within_limits(candidates, state) == (
+            (SearchStrategy.NAIVE,),
+            ["local", "mix"],
+        )
+    # Without query processing no extraction is made: local fits alone.
+    with usage.usage_scope(usage.UsageLimits(max_llm_calls=1)):
+        assert chain._routes_within_limits(
+            candidates, {**state, "enable_query_processing": False}
+        ) == ((SearchStrategy.LOCAL,), ["mix", "naive"])
+    # A question to translate first costs one call more for every one.
+    korean = {"query": "공급업체는 무엇을 공급합니까?"}
+    with usage.usage_scope(usage.UsageLimits(max_llm_calls=1)):
+        with pytest.raises(UsageLimitExceededError):
+            chain._routes_within_limits(candidates, korean)
+
+
+def test_auto_refuses_naming_the_limit_and_its_value() -> None:
+    # Regression (W1 review D3): the refusal named max_model_calls and the
+    # calls left, where every other refusal names the setting and its value.
+    chain = _router_chain()
+    limits = usage.UsageLimits(
+        max_llm_calls=2, names={"max_llm_calls": "limits.max_model_calls"}
+    )
+    with usage.usage_scope(limits):
+        usage.start_llm_call("query", "m", estimated_input_tokens=1)
+        with pytest.raises(UsageLimitExceededError) as refused:
+            chain._routes_within_limits(
+                (SearchStrategy.LOCAL,), {"query": "What does Vendor supply?"}
+            )
+    assert "limits.max_model_calls 2" in str(refused.value)
+    assert (refused.value.limit, refused.value.value) == ("limits.max_model_calls", 2)

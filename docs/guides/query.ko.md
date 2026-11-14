@@ -165,7 +165,8 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
   `metadata.degraded`(사유 `query_limit`)에 기록합니다. global은 관련성이 높은 보고서 묶음부터,
   DRIFT는 점수가 높은 후속 질의부터 실행하고, iterative는 라운드를 멈춥니다
   (`stop_reason: query_limit`).
-- `auto`는 라우터 호출 뒤에 남은 호출 수 안에 최소 호출 수(`fewest_model_calls`와 답변)가
+- `auto`는 라우터 호출 뒤에 남은 호출 수 안에 최소 호출 수(`fewest_model_calls`, 그 전략이 읽는 질의
+  추출, 질문에 필요한 번역, 답변)가
   들어가는 전략으로만 분기하고, 제외한 전략은 `metadata.routing.over_limits`에 남습니다.
   두 한도 가운데 하나라도 있으면 미리 시작하는 추출은 하지 않습니다.
 - 답변 컨텍스트는 남은 입력 토큰에서 답변 프롬프트 자체(템플릿과 지시문)와 질문을 빼고, 다시

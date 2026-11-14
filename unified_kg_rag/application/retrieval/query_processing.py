@@ -41,6 +41,7 @@ from unified_kg_rag.domain.models import (
     Config,
     ModelPurpose,
     ModelRole,
+    SearchStrategy,
     language_name,
 )
 from unified_kg_rag.domain.prompts import (
@@ -369,6 +370,25 @@ def _absorb_input_failure(
         raise error
     log_failure(logger, logging.WARNING, message, error=error)
     record_degradation(step, reason, error)
+
+
+def query_processing_calls(
+    chain: GraphRAGChain, state: dict[str, Any], strategy: SearchStrategy
+) -> int:
+    """The model calls query processing makes for ``state``'s question once
+    it is routed to ``strategy`` (``process_query``): the extractions the
+    strategy reads and the translation, unless the question needs none;
+    none with ``enable_query_processing`` off. A call the extraction cache
+    serves is counted too: an upper bound."""
+    if not state.get("enable_query_processing", True):
+        return 0
+    routed = {**state, "resolved_strategy": strategy}
+    _, skip_translation = _query_language(chain, state, chain._question(state))
+    return (
+        int(needs_query_entities(routed, chain.config))
+        + int(needs_dual_keywords(routed, chain.config))
+        + int(not skip_translation)
+    )
 
 
 def needs_query_entities(state: dict[str, Any], config: Config) -> bool:

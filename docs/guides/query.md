@@ -186,8 +186,9 @@ is refused before its request is sent:
   fit is left out and listed in `metadata.degraded` (reason `query_limit`):
   global maps its most relevant report batches, DRIFT its best follow-ups,
   iterative stops its rounds (`stop_reason: query_limit`).
-- `auto` routes only to strategies whose fewest calls (`fewest_model_calls`
-  and the answer) fit after its router call
+- `auto` routes only to strategies whose fewest calls (`fewest_model_calls`,
+  the query extractions they read, the translation the question needs, and
+  the answer) fit after its router call
   (`metadata.routing.over_limits` names those it left out), and under
   either limit starts no speculative extraction.
 - The answer's context is cut to the input tokens left after the answer
