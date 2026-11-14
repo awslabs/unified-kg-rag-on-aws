@@ -237,7 +237,8 @@ See [exit codes and JSON output](docs/reference/exit-codes-and-json.md) and the
   and everything else on stderr; `run-ingestion` rejects it with `--metrics-sink cloudwatch` (#333, #359, #366,
   #420).
 - JSON failures have one schema: `status` (`failed`, or `interrupted`), `exit_code`, `error`, a new `error_class`
-  (the `ErrorClass` value, the stable key; a refused command line is `invalid_argument`) and `error_type`
+  (the `ErrorClass` value, the stable key; a refused command line, `run-eval` dataset or `run-visualization` data
+  file is `invalid_argument`) and `error_type`
   (informational: the exception's class, `UsageError`, `FailureBudgetExceeded`, `RegressionGateFailed`, `RunFailed` or
   `Interrupted`), in a status document and in a result that shows a failure: a failed `run-rag` query adds them to
   `success: false` (it had only `error`), and a failing `run-eval`, `run-ingestion` or `run-visualization` result has
@@ -1137,8 +1138,9 @@ From a `main` checkout (formats and keys no release had):
   incremental run, and no UTF-8 file. A text, CSV or HTML file is first read as UTF-8 under any locale (it was read
   in the locale's encoding, so a UTF-8 file decoded as Latin-1 text under a Latin-1 locale), without a leading
   byte-order mark (a CSV saved as Excel's "CSV UTF-8" kept it in its first header on every row after the first); an
-  evaluation dataset, a JSON schema file, a dataset uploaded to the console and `run-prompt-tuning`'s corpus text
-  are read without one too. See [ingest](docs/guides/ingest.md#large-and-heterogeneous-corpora).
+  evaluation dataset, a JSON schema file (local or on S3), a pre-parsed Document JSON file, a dataset uploaded to
+  the console and `run-prompt-tuning`'s corpus text are read without one too. See
+  [ingest](docs/guides/ingest.md#large-and-heterogeneous-corpora).
 - Documents from memory: `DataIngestionPipeline.insert_documents([InputDocument(id=..., text=..., filters=...)])`
   adds or updates documents, `delete_documents(ids)` deletes them, through the incremental path of `run` (one run
   each, under the namespace lease); the source scope's other documents are kept (`DocumentDelta.kept`). Needs the
@@ -2170,6 +2172,9 @@ Ingestion and incremental indexing.
 - Two relationships whose endpoint names or type hold a `:` no longer share an id: `A:B -> C` and `A -> B:C` hashed
   one string and merged into one edge. Such ids are hashed from a JSON list (`shared.utils.id_content`); others keep
   theirs. An edge an extraction record already holds keeps its id until the unit is extracted again.
+- A vector write counts an item it could not prepare (its embedding failed) in its items: 8 such failures of 7
+  written read "8/7 (114.3%)", so `indexing.max_failure_rate` failed the stage below the configured rate.
+- `run-rag` text output prints a failed query's error once (it printed "Error executing query:" and "Error:").
 - A rejected entity, relationship, claim, community or report write (under `indexing.max_failure_rate`) no longer
   records the documents owning it `FAILED`: the item is noted in the extraction store (`pending-writes`) and the next
   run writes it again without extracting anything. Re-extracting the owners re-extracted every document a hub entity
@@ -2356,9 +2361,17 @@ Deployment (CDK).
   DRIFT, global and iterative steps, extraction, gleaning, chunking, reports, batch embedding), is logged as its type,
   a digest and where it happened (`log_failure`: the type chain and `file:line` frames, never the message), its text
   and traceback at DEBUG; an outage, the deadline or a refusal has its own message and is logged with it
-  (`log_error`, one rule for MCP, the console, `run-rag`, `run-eval`, ingestion and the stores' and retrievers'
-  error lines); the console answers an error no handler claimed itself, so the server logs no raw exception; a unit
-  test over those packages fails on a new INFO+ log call that passes them (#156, #173, #245, #255, #606).
+  (`log_error`, one rule for MCP, the console, every CLI, ingestion and the stores' and retrievers' error lines,
+  each logging all but a refusal and the deadline), as is a message the package composes itself (a stage failure
+  named by its cause); the console answers an error no handler claimed itself, so the server logs no raw exception;
+  a unit test over the whole package fails on a new INFO+ log call that passes an error (#156, #173, #245, #255,
+  #606). An error is named by its type, the service's error code and HTTP status and, for an OS or decode error,
+  its errno and path or its position (no data). A library's records at INFO and above on the CLIs' handlers (ragas's
+  failed judge job, `langchain_aws`'s failed call) keep their logger, level and message template, their arguments
+  and traceback replaced by digests. An unexpected failure's text is masked, as on the console's pages, in the CLIs'
+  output and JSON `error` (it reached the Ingest and Evaluate pages), in a stage's recorded `error_message` (the
+  run's metadata and S3 checkpoint) and in a failed answer's `run-eval` result, which names its class and type;
+  each answer's log lines carry its dataset `query_id`. SECURITY.md says what result output holds.
 - Spans carry an error's type and a digest of its message (`kg_rag.error_digest`), not its text or stack, unless
   `observability.capture_content` (then through `redact_patterns`): a judge's or parser's error quoting corpus text
   reached Langfuse or Phoenix with capture off. A model server that cannot be reached is named by its URL without
