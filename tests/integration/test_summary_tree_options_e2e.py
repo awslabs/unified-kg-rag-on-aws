@@ -269,7 +269,9 @@ def test_a_failed_tree_write_fails_the_stage_and_keeps_the_old_tree(
 
     (result,) = [r for r in context.stage_results if r.stage_name == "summary_tree"]
     assert result.status is PipelineStageStatus.FAILED
-    assert "node rejected" in (result.error_message or "")
+    # The store's error is logged where the write failed, not quoted.
+    assert "failed (1 of" in (result.error_message or "")
+    assert "node rejected" not in (result.error_message or "")
     assert "the previous tree" in (result.error_message or "")
     assert raptor.shape(raptor.tree_nodes(providers)) == built
     assert raptor.tree_record(providers) == record

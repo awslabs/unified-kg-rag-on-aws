@@ -33,6 +33,7 @@ from unified_kg_rag.application.cli.query_args import positive_int
 from unified_kg_rag.domain.models import LanguageCode, LLMUsage
 from unified_kg_rag.evaluation.benchmarks import QUESTION_CLASSES
 from unified_kg_rag.shared import EvaluationException
+from unified_kg_rag.shared.exceptions import with_own_text
 from unified_kg_rag.shared.usage import merge_usage
 from unified_kg_rag.shared.utils import event_loop
 
@@ -193,10 +194,12 @@ def run_assertion_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     if not generated["rows"]:
         # An empty dataset run-eval refuses: a failed run, nothing written.
         dropped = ", ".join(f"{k} {v}" for k, v in report["dropped"].items())
-        raise EvaluationException(
-            "prepare-benchmark assertions generated no question from "
-            f"{report['corpus']['sampled_units']} text units (dropped: "
-            f"{dropped or 'none'}); see the WARNINGs for the failed calls"
+        raise with_own_text(
+            EvaluationException(
+                "prepare-benchmark assertions generated no question from "
+                f"{report['corpus']['sampled_units']} text units (dropped: "
+                f"{dropped or 'none'}); see the WARNINGs for the failed calls"
+            )
         )
     autoq.write_outputs(args.output_directory, generated)
     counts = ", ".join(f"{k} {v}" for k, v in report["questions"].items()) or "none"

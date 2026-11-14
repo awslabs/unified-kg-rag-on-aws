@@ -158,8 +158,10 @@ namespace does not hold, the deadline) is returned as a tool error with its
 message, also under `processing.ignore_errors`, whose error answer names
 the error's type and class (`metadata.error_type`, `metadata.error_class`);
 any other failure returns a generic message and is logged on the server
-(its type and a digest at ERROR, its text and traceback at DEBUG), so a
-store or model endpoint or a stack trace never reaches the caller. Every
+(`log_error`: an outage with its text; an unexpected failure by its type,
+code and HTTP status, a digest and where it happened at ERROR, its text and
+traceback at DEBUG), so a store or model endpoint or a stack trace never
+reaches the caller. Every
 surface reads one classification of a failure (`shared/exceptions.py`
 `classify` → `ErrorClass`) and maps the class itself: the CLIs to an exit
 code (`cli/conventions.py` `EXIT_CODES`), the MCP server to the
@@ -169,10 +171,17 @@ page names. Which error text a surface shows is one rule,
 the caller-correctable classes and the deadline; the console's `operator`,
 who configured the stores and models, sees every class's text but an
 unexpected `failure`'s (a provider's or a library's, which may quote a
-prompt or an ARN). The console applies it to its API errors, the Ask
-error event, an absorbed error answer's `error_message` in the result
-event and the history, and a strategy's "not available" reason; each Ask
-event carries the `query_id` (and `trace_id`) that find its log lines.
+prompt or an ARN), unless the message is the package's own
+(`has_own_text`: a stage failure named by its dominant cause, a question
+the run asks). The console applies it to its API errors, the Ask error
+event, an absorbed error answer's `error_message` in the result event and
+the history, and a strategy's "not available" reason; the CLIs to their
+output and JSON status' `error` (`shown_text`, so the console's job pages
+show what the run printed), ingestion to each stage's recorded
+`error_message` (in the run's metadata and its S3 checkpoint) and
+`run-eval` to a failed answer's `error_message`. Each Ask event carries the
+`query_id` (and `trace_id`) that find its log lines; every surface logs an
+error but a refusal and the deadline, by `log_error`.
 
 **Untrusted text.** Chunk text, descriptions and answers are corpus or model
 text, and the server instructions and every tool description say to treat
@@ -217,7 +226,7 @@ error naming what it holds.
 | An argument out of bounds, an unknown namespace or strategy, a bad filter | tool error naming the argument |
 | A strategy the namespace does not hold | tool error with the chain's message (what it holds, how to add it) |
 | The deadline passes | tool error `QueryTimeoutError`; the chain cancels its calls |
-| A store or model failure | tool error with a generic message, logged as a digest (its traceback at DEBUG) |
+| A store or model failure | tool error with a generic message; logged by `log_error` (an outage with its text, an unexpected failure as its type, a digest and where it happened, its text and traceback at DEBUG) |
 | The client closes stdin (stdio) | the server exits 0; SIGTERM exits 143, Ctrl-C 130 |
 
 **Cost.** `kg_search` costs what `run-rag --mode search` costs for the same

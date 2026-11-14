@@ -1,5 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import logging
 import time
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from concurrent.futures import as_completed
@@ -65,6 +66,7 @@ from unified_kg_rag.ports.indexer import (
     VectorIndexer,
 )
 from unified_kg_rag.shared import DataProcessingError, NamespaceLeaseError, get_logger
+from unified_kg_rag.shared.logging import log_error
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 from unified_kg_rag.shared.write_fence import check_write_fence
 
@@ -397,11 +399,13 @@ class IndexingManager:
             except NamespaceLeaseError:
                 raise
             except Exception as e:  # noqa: BLE001 - garbage only costs space
-                logger.warning(
+                log_error(
+                    logger,
+                    logging.WARNING,
                     "Listing the extraction records of '%s' the rebuild does not "
                     "build from failed; every record stays: %s",
                     suffix,
-                    e,
+                    error=e,
                 )
                 keys = None
             if keys is None:
@@ -464,11 +468,13 @@ class IndexingManager:
             except NamespaceLeaseError:
                 raise
             except Exception as e:  # noqa: BLE001 - garbage only costs space
-                logger.warning(
+                log_error(
+                    logger,
+                    logging.WARNING,
                     "Dropping the extraction records of '%s' its text units no "
                     "longer name failed; they stay until the next full build: %s",
                     suffix,
-                    e,
+                    error=e,
                 )
                 continue
             logger.info(
@@ -675,7 +681,12 @@ class IndexingManager:
             try:
                 graph.end_rebuild(suffixes or [], sweep=not graph_failed)
             except Exception as e:  # noqa: BLE001 - reported as a failed write
-                logger.error("Dropping the previous graph failed: %s", e)
+                log_error(
+                    logger,
+                    logging.ERROR,
+                    "Dropping the previous graph failed: %s",
+                    error=e,
+                )
                 stats = IndexingStats(total_items=1)
                 stats.add_error(str(e))
                 results["graph_sweep"] = stats
@@ -1251,7 +1262,14 @@ class IndexingManager:
         except NamespaceLeaseError:
             raise
         except Exception as e:  # noqa: BLE001 - a leftover note is harmless
-            logger.warning("Deleting the note '%s' of '%s' failed: %s", key, suffix, e)
+            log_error(
+                logger,
+                logging.WARNING,
+                "Deleting the note '%s' of '%s' failed: %s",
+                key,
+                suffix,
+                error=e,
+            )
 
     def remove_text_units_from_shared(
         self,
@@ -1426,7 +1444,13 @@ class IndexingManager:
                 except NamespaceLeaseError:
                     raise
                 except Exception as e:  # noqa: BLE001 - reported as a failed task
-                    logger.error("Task '%s' failed: %s", task_name, e, exc_info=True)
+                    log_error(
+                        logger,
+                        logging.ERROR,
+                        "Task '%s' failed: %s",
+                        task_name,
+                        error=e,
+                    )
                     stats = IndexingStats()
                     stats.add_error(str(e))
                     phase_results[task_name] = stats

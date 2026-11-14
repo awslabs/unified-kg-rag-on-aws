@@ -75,8 +75,14 @@ from unified_kg_rag.shared import (
     observability,
 )
 from unified_kg_rag.shared.exceptions import (
+    ERROR_CLASS_KEY,
+    INTERNAL_ERROR_MESSAGE,
+    ErrorClass,
     IndexNotFoundError,
     InvalidFilterError,
+    classify,
+    error_class_of,
+    shown_error_text,
 )
 from unified_kg_rag.shared.extras import extra_hint
 from unified_kg_rag.shared.logging import log_error, log_failure
@@ -87,7 +93,7 @@ from unified_kg_rag.shared.usage import (
     metering,
     usage_scope,
 )
-from unified_kg_rag.shared.utils import safe_url
+from unified_kg_rag.shared.utils import error_name, safe_url
 from unified_kg_rag.shared.utils.files import USER_TEXT_ENCODING, atomic_write_text
 
 from .answer_match_evaluator import (
@@ -243,6 +249,17 @@ class AnswerArm(BaseModel):
     queries: list[EvaluationQuery]
     attributes: dict[str, Any] = Field(default_factory=dict)
     extraction_scope: str | None = None
+
+
+def _failure_text(error_class: ErrorClass, name: str, shown: str) -> str:
+    """How a saved result names the failure of its answer: its class, its
+    type (``name``) and the text a surface shows of it (``shown``), left
+    out for an unexpected failure (``INTERNAL_ERROR_MESSAGE``): its text
+    may quote the prompt, a model's reply or a document, and the results
+    are shown and uploaded (the log has it at DEBUG)."""
+    if shown == INTERNAL_ERROR_MESSAGE:
+        return f"[{error_class.value}] {name}"
+    return f"[{error_class.value}] {name}: {shown}"
 
 
 class EvaluationManager:
@@ -787,6 +804,7 @@ class EvaluationManager:
         spent: dict[int, _AnswerSpend] = {}
         inputs: list[dict[str, Any]] = []
         arm_of: dict[int, int] = {}
+        query_ids: dict[int, str] = {}
         parent = current_meter()
         meters = [UsageMeter(parent=parent) for _ in arms]
 
@@ -799,6 +817,7 @@ class EvaluationManager:
                     "query": query.question,
                 }
                 arm_of[id(single_input)] = a
+                query_ids[id(single_input)] = query.query_id
                 inputs.append(single_input)
             return inputs
 
@@ -823,23 +842,31 @@ class EvaluationManager:
                 finally:
                     record.end = time.monotonic()
 
+        # The error an answer failed every attempt with, by its input's
+        # index; each answer's log lines carry its dataset query_id.
+        errors: dict[int, BaseException] = {}
         raw_results = await self.batch_processor.aexecute_with_fallback(
             items_to_process=order,
             prepare_inputs_func=prepare_inputs,
             sequential_func=answer_one,
             task_name="Answer Generation",
             show_progress=show_progress,
+            errors=errors,
+            item_ids=lambda single_input: {"query_id": query_ids[id(single_input)]},
         )
         raw_by_arm: list[list[Any]] = [[None] * count for _ in arms]
         records_by_arm: list[list[_AnswerSpend | None]] = [[None] * count for _ in arms]
+        errors_by_arm: list[dict[int, BaseException]] = [{} for _ in arms]
         for index, ((a, j), raw) in enumerate(zip(order, raw_results, strict=True)):
             raw_by_arm[a][j] = raw
+            if index in errors:
+                errors_by_arm[a][j] = errors[index]
             if index < len(inputs):
                 records_by_arm[a][j] = spent.get(id(inputs[index]))
         answered = []
         for a, arm in enumerate(arms):
             results = await arm.manager._build_results(
-                arm.queries, raw_by_arm[a], records_by_arm[a]
+                arm.queries, raw_by_arm[a], records_by_arm[a], errors_by_arm[a]
             )
             answered.append((results, LLMUsage.model_validate(meters[a].snapshot())))
         return answered
@@ -849,18 +876,22 @@ class EvaluationManager:
         queries: list[EvaluationQuery],
         raw_results: list[Any],
         records: list[_AnswerSpend | None],
+        errors: dict[int, BaseException] | None = None,
     ) -> list[EvaluationResult]:
         """One ``EvaluationResult`` per query from the chain's raw results,
-        sources attributed to files."""
+        sources attributed to files; ``errors``: the error each answer that
+        failed every attempt failed with, by its query's index."""
         results = []
         provenance: list[SourceProvenance] = []
-        for query, raw_result, record in zip(
-            queries, raw_results, records, strict=True
+        for index, (query, raw_result, record) in enumerate(
+            zip(queries, raw_results, records, strict=True)
         ):
             provenance.append(self._extract_source_provenance(raw_result))
             try:
                 rag_metadata = self._extract_from_result(raw_result, "metadata", {})
-                error_message = self._detect_generation_error(raw_result, rag_metadata)
+                error_message = self._detect_generation_error(
+                    raw_result, rag_metadata, (errors or {}).get(index)
+                )
                 answer = self._extract_from_result(raw_result, "answer", "")
                 results.append(
                     EvaluationResult(
@@ -907,15 +938,20 @@ class EvaluationManager:
                     error=e,
                     traceback=True,
                 )
+                failure = _failure_text(
+                    classify(e),
+                    type(e).__name__,
+                    shown_error_text(e, audience="operator"),
+                )
                 results.append(
                     EvaluationResult(
                         query_id=query.query_id,
                         question=query.question,
                         generated_answer="",
                         ground_truth="",
-                        metadata={"error": str(e)},
+                        metadata={"error": failure},
                         error=True,
-                        error_message=str(e),
+                        error_message=failure,
                         response_time=_elapsed(record),
                         usage=_answer_usage(None, record),
                     )
@@ -1035,23 +1071,40 @@ class EvaluationManager:
         return query_or_result.metadata.get("answerable") is False
 
     @staticmethod
-    def _detect_generation_error(raw_result: Any, rag_metadata: Any) -> str | None:
+    def _detect_generation_error(
+        raw_result: Any, rag_metadata: Any, error: BaseException | None = None
+    ) -> str | None:
         """Return why answer generation failed, or None if it succeeded.
 
         Two failure shapes reach here without raising: the RAG chain's
         ignore_errors fallback (answer=DEFAULT_ERROR_MESSAGE, metadata
         ``{"error": True}``) and ``BATCH_ITEM_FAILED`` (or ``None``) for an
-        item that failed even sequentially. Neither is a real answer, so
-        neither may be scored.
+        item that failed every attempt (``error``, its last error). Neither
+        is a real answer, so neither may be scored. Either is named by its
+        class and type, and its text unless an unexpected failure's
+        (``_failure_text``).
         """
         if raw_result is None or raw_result is BATCH_ITEM_FAILED:
-            return "answer generation returned no result"
+            if error is None:
+                return "answer generation returned no result"
+            return _failure_text(
+                classify(error),
+                error_name(error),
+                shown_error_text(error, audience="operator"),
+            )
         if not (isinstance(rag_metadata, dict) and rag_metadata.get("error")):
             return None
         detail = None
         if isinstance(raw_result, RAGOutput) and raw_result.search_results:
             detail = raw_result.search_results.metadata.get("error")
-        return str(detail) if detail else "RAG chain returned an error response"
+        if not detail:
+            return "RAG chain returned an error response"
+        error_class = error_class_of(rag_metadata.get(ERROR_CLASS_KEY))
+        return _failure_text(
+            error_class,
+            str(rag_metadata.get("error_type") or "error"),
+            shown_error_text(error_class, str(detail), audience="operator"),
+        )
 
     @staticmethod
     def _raw_sources(raw_result: Any) -> list[Any]:

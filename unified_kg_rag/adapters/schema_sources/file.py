@@ -34,7 +34,7 @@ from unified_kg_rag.adapters.source_files.locations import (
 )
 from unified_kg_rag.domain.models.schema import SchemaDocument
 from unified_kg_rag.shared.exceptions import SchemaSourceError
-from unified_kg_rag.shared.utils.files import read_user_text
+from unified_kg_rag.shared.utils.files import decode_user_text, read_user_text
 from unified_kg_rag.shared.utils.validation import format_validation_errors
 
 from .registry import SchemaSourceContext, register_schema_source
@@ -110,7 +110,7 @@ def _load_s3(context: SchemaSourceContext, location: str) -> SchemaDocument:
         )
     data = read_source_bytes(context, location, max_bytes=MAX_S3_BYTES)
     try:
-        text = data.decode("utf-8")
+        text = decode_user_text(data)
     except UnicodeDecodeError as e:
         raise SchemaSourceError(
             f"Schema file '{name}' is not valid UTF-8 (byte offset {e.start})"

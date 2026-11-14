@@ -56,6 +56,7 @@ longest request.
 from __future__ import annotations
 
 import functools
+import logging
 import signal
 import threading
 import time
@@ -68,6 +69,7 @@ from types import TracebackType
 from typing import TYPE_CHECKING
 
 from unified_kg_rag.shared import NamespaceLeaseError, get_logger, write_fence
+from unified_kg_rag.shared.logging import log_error
 from unified_kg_rag.shared.utils.concurrency import is_stop
 from unified_kg_rag.shared.utils.processes import process_gone, process_identity
 from unified_kg_rag.shared.write_fence import (
@@ -344,24 +346,28 @@ class NamespaceLease:
         try:
             self.store.try_acquire_lease(self.namespace, self.owner, at - time.time())
         except Exception as e:  # noqa: BLE001 - it expires by itself
-            logger.warning(
-                "Expiring the lease of namespace '%s' failed (%s); it "
-                "expires within %gs",
+            log_error(
+                logger,
+                logging.WARNING,
+                "Expiring the lease of namespace '%s' failed; it expires within "
+                "%gs: %s",
                 self.namespace,
-                e,
                 self.seconds,
+                error=e,
             )
 
     def _release(self) -> None:
         try:
             self.store.release_lease(self.namespace, self.owner)
         except Exception as e:  # noqa: BLE001 - it expires by itself
-            logger.warning(
-                "Releasing the lease of namespace '%s' failed (%s); it "
-                "expires within %gs",
+            log_error(
+                logger,
+                logging.WARNING,
+                "Releasing the lease of namespace '%s' failed; it expires within "
+                "%gs: %s",
                 self.namespace,
-                e,
                 self.seconds,
+                error=e,
             )
 
     def _heartbeat(self) -> None:
@@ -374,10 +380,12 @@ class NamespaceLease:
                     self.namespace, self.owner, self.seconds
                 )
             except Exception as e:  # noqa: BLE001 - retried until it expires
-                logger.warning(
+                log_error(
+                    logger,
+                    logging.WARNING,
                     "Renewing the lease of namespace '%s' failed: %s",
                     self.namespace,
-                    e,
+                    error=e,
                 )
                 if self._expiring():
                     self._lose("its renewals failed until it nearly expired")
@@ -457,8 +465,12 @@ class NamespaceLease:
                 self.namespace, self.owner, self.seconds
             )
         except Exception as e:  # noqa: BLE001 - the lease stays lost
-            logger.warning(
-                "Retaking the lease of namespace '%s' failed: %s", self.namespace, e
+            log_error(
+                logger,
+                logging.WARNING,
+                "Retaking the lease of namespace '%s' failed: %s",
+                self.namespace,
+                error=e,
             )
             return False
         if held:

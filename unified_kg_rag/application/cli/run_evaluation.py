@@ -55,6 +55,7 @@ from unified_kg_rag.application.cli.conventions import (
     json_output,
     print_json,
     setup_cli_logging,
+    shown_text,
     stoppable,
     usage_error,
 )
@@ -105,7 +106,7 @@ from unified_kg_rag.shared import (
     get_logger,
     observability,
 )
-from unified_kg_rag.shared.exceptions import ErrorClass, classify
+from unified_kg_rag.shared.exceptions import ErrorClass, InvalidArgumentError, classify
 from unified_kg_rag.shared.logging import log_error
 from unified_kg_rag.shared.usage import usage_scope
 from unified_kg_rag.shared.utils import event_loop
@@ -296,8 +297,9 @@ logger = get_logger(__name__)
 _STRATEGY_VALUES = frozenset(s.value for s in SearchStrategy)
 
 
-class InvalidDatasetError(DataProcessingError):
-    """The evaluation dataset cannot be read or fails validation (exit 2)."""
+class InvalidDatasetError(DataProcessingError, InvalidArgumentError):
+    """The evaluation dataset cannot be read or fails validation: an input
+    error (error class ``invalid_argument``, exit 2)."""
 
 
 def _data_path(value: str) -> str | Path:
@@ -2695,7 +2697,10 @@ def main() -> None:
             console.print(f"\n[red]Error: {markup_safe(e)}[/red]")
             log_error(logger, logging.ERROR, "Evaluation failed: %s", error=e)
             sys.exit(EXIT_FAILURE)
-        console.print(f"\n[red]An unexpected error occurred: {markup_safe(e)}[/red]")
+        # Masked (shown_text): the one rule of every surface.
+        console.print(
+            f"\n[red]An unexpected error occurred: {markup_safe(shown_text(e))}[/red]"
+        )
         log_error(
             logger, logging.ERROR, "Unexpected error during evaluation: %s", error=e
         )

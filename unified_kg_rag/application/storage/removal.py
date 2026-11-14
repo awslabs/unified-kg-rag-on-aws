@@ -26,6 +26,7 @@ copy holding a rejected new item's lines (a split's origin, the claim a
 claim was split off) was overwritten without them.
 """
 
+import logging
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from functools import partial
 from typing import TYPE_CHECKING, Any, NamedTuple
@@ -68,6 +69,7 @@ from unified_kg_rag.domain.models import Entity, Relationship
 from unified_kg_rag.domain.retrieval.filters import translated_text_field
 from unified_kg_rag.ports.indexer import IndexingStats
 from unified_kg_rag.shared import NamespaceLeaseError, get_logger
+from unified_kg_rag.shared.logging import log_error
 from unified_kg_rag.shared.write_fence import check_write_fence
 
 if TYPE_CHECKING:
@@ -92,7 +94,12 @@ class TextUnitRemoval:
         try:
             citing = self._find_citing(suffix, text_unit_ids)
         except Exception as e:  # noqa: BLE001 - reported as failed items
-            logger.error("Finding the removed text units' items failed: %s", e)
+            log_error(
+                logger,
+                logging.ERROR,
+                "Finding the removed text units' items failed: %s",
+                error=e,
+            )
             stats = IndexingStats(total_items=len(text_unit_ids))
             stats.add_error(str(e), count=stats.total_items)
             return {f"find_removed_{suffix}": stats}
@@ -210,13 +217,15 @@ class TextUnitRemoval:
         except NamespaceLeaseError:
             raise
         except Exception as e:  # noqa: BLE001 - fail-closed: the summaries go
-            logger.warning(
+            log_error(
+                logger,
+                logging.WARNING,
                 "Reading the stored text of %d text units written back in '%s' "
                 "failed (%s): the summaries citing them are deleted and built "
                 "again",
                 len(ids),
                 suffix,
-                e,
+                error=e,
             )
             return set()
         translated = m.config.processing.translation.translated_languages
@@ -534,7 +543,9 @@ class TextUnitRemoval:
                 suffix, derived, entities, claim_ids, split_claims
             )
         except Exception as e:  # noqa: BLE001 - reported as failed items
-            logger.error("%s in '%s' failed: %s", doing, suffix, e)
+            log_error(
+                logger, logging.ERROR, "%s in '%s' failed: %s", doing, suffix, error=e
+            )
             stats = IndexingStats(total_items=len(entity_ids) + len(relationship_ids))
             stats.add_error(str(e), count=stats.total_items)
             return {**results, f"graph_read_{suffix}": stats}, note.noted
@@ -550,7 +561,13 @@ class TextUnitRemoval:
         try:
             note(set())
         except Exception as e:  # noqa: BLE001 - reported as failed items
-            logger.error("Noting the pending strip in '%s' failed: %s", suffix, e)
+            log_error(
+                logger,
+                logging.ERROR,
+                "Noting the pending strip in '%s' failed: %s",
+                suffix,
+                error=e,
+            )
             stats = IndexingStats(total_items=len(entity_ids) + len(relationship_ids))
             stats.add_error(str(e), count=stats.total_items)
             return {**results, f"graph_read_{suffix}": stats}, note.noted
@@ -559,7 +576,13 @@ class TextUnitRemoval:
         try:
             self._m.note_stripped_summaries(suffix)
         except Exception as e:  # noqa: BLE001 - reported as failed items
-            logger.error("Noting the stripped summaries in '%s' failed: %s", suffix, e)
+            log_error(
+                logger,
+                logging.ERROR,
+                "Noting the stripped summaries in '%s' failed: %s",
+                suffix,
+                error=e,
+            )
             stats = IndexingStats(total_items=len(entity_ids) + len(relationship_ids))
             stats.add_error(str(e), count=stats.total_items)
             return {**results, f"graph_read_{suffix}": stats}, note.noted
@@ -1027,7 +1050,13 @@ class TextUnitRemoval:
                 # Before the first claim write; raises when the note fails.
                 note({d.id for d in derived} - {c.id for c in claims})
         except Exception as e:  # noqa: BLE001 - reported as failed items
-            logger.error("Reading shared claims in '%s' failed: %s", suffix, e)
+            log_error(
+                logger,
+                logging.ERROR,
+                "Reading shared claims in '%s' failed: %s",
+                suffix,
+                error=e,
+            )
             stats = IndexingStats(total_items=len(claim_ids))
             stats.add_error(str(e), count=len(claim_ids), ids=claim_ids)
             return {f"vector_read_claims_{suffix}": stats}
@@ -1093,10 +1122,12 @@ class TextUnitRemoval:
             except NamespaceLeaseError:
                 raise
             except Exception as e:  # noqa: BLE001 - garbage only costs space
-                logger.warning(
+                log_error(
+                    logger,
+                    logging.WARNING,
                     "Collecting the unused extraction records of '%s' failed: %s",
                     suffix,
-                    e,
+                    error=e,
                 )
         m._removed_record_keys.clear()
         return results
@@ -1137,7 +1168,13 @@ class TextUnitRemoval:
             except Exception as e:  # noqa: BLE001 - reported as failed items
                 # Deleting without them would orphan their vector documents
                 # for good; fail the removal so the registry rows are kept.
-                logger.error("Reading incident edges in '%s' failed: %s", suffix, e)
+                log_error(
+                    logger,
+                    logging.ERROR,
+                    "Reading incident edges in '%s' failed: %s",
+                    suffix,
+                    error=e,
+                )
                 stats = IndexingStats(total_items=len(ids))
                 stats.add_error(str(e), count=len(ids))
                 results[f"graph_read_{suffix}"] = stats

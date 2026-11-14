@@ -34,13 +34,13 @@ from unified_kg_rag.domain.models.seed_graph import (
     SeedNode,
 )
 from unified_kg_rag.shared.exceptions import ConfigurationError
+from unified_kg_rag.shared.utils.files import decode_user_text
 from unified_kg_rag.shared.utils.s3_uri import is_s3_uri
 
 from .registry import SeedSourceContext, statement_problems
 
 # The most bytes one line (a JSONL record, a CSV row) may hold.
 MAX_LINE_BYTES = 1024 * 1024
-_BOM = b"\xef\xbb\xbf"
 
 
 def check_path(context: SeedSourceContext) -> str | Path:
@@ -153,10 +153,8 @@ class FileReader:
                     f"{MAX_LINE_BYTES} bytes"
                 )
             start, line = end + 1, line + 1
-        if data.startswith(_BOM):
-            data = data[len(_BOM) :]
         try:
-            return data.decode("utf-8")
+            return decode_user_text(data)
         except UnicodeDecodeError as e:
             raise self.context.terms(
                 f"'{file.name}' is not valid UTF-8 (byte offset {e.start})"

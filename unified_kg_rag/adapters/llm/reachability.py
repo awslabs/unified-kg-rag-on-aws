@@ -18,7 +18,7 @@ from __future__ import annotations
 import socket
 from urllib.parse import urlsplit
 
-from unified_kg_rag.adapters.llm.retry import _http_status, looks_transient
+from unified_kg_rag.adapters.llm.retry import looks_transient
 from unified_kg_rag.domain.models import Config, ModelRole
 from unified_kg_rag.domain.models.provider_config import BEDROCK, OLLAMA
 from unified_kg_rag.shared.exceptions import (
@@ -29,6 +29,7 @@ from unified_kg_rag.shared.exceptions import (
     causes,
 )
 from unified_kg_rag.shared.utils import safe_url
+from unified_kg_rag.shared.utils.common import http_status
 
 # Errors of a connection that was never made, by class name so this module
 # imports no client: httpx's ConnectError and ConnectTimeout, the OpenAI
@@ -202,7 +203,7 @@ def named_model_error(exc: BaseException, config: Config) -> BaseException:
         return model_unreachable_error(exc, config)
     if isinstance(exc, GraphRAGException):
         return exc
-    if _http_status(exc) is not None or looks_transient(exc):
+    if http_status(exc) is not None or looks_transient(exc):
         return LanguageModelError(
             f"A language model call failed ({type(exc).__name__}): {exc}"
         )

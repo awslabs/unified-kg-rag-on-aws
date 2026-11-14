@@ -45,6 +45,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.retrieval.store_names import namespace_suffix
 from unified_kg_rag.shared import DocStatusRegistryError, get_logger
+from unified_kg_rag.shared.utils import error_name
 from unified_kg_rag.shared.utils.processes import process_gone
 
 logger = get_logger(__name__)
@@ -158,13 +159,13 @@ class SQLiteDocStatusStore:
             lambda e: DocStatusRegistryError(
                 f"Doc-status registry: could not {operation}: SQLite database "
                 f"'{self.path}' stayed locked for {self.timeout_seconds}s "
-                f"(search.store_timeout_seconds; {e}). Another process is "
+                f"(search.store_timeout_seconds; {error_name(e)}). Another process is "
                 "writing to it; SQLite allows one writer at a time: wait for "
                 "the other run, or raise the timeout."
             ),
             lambda e: DocStatusRegistryError(
                 f"Doc-status registry: could not {operation} on SQLite database "
-                f"'{self.path}': {type(e).__name__}: {e}. Check the path "
+                f"'{self.path}': {error_name(e)}. Check the path "
                 "(providers.doc_status.sqlite_path) is writable, then re-run.",
                 indexing_hint="Incremental indexing needs the registry; set "
                 "providers.doc_status.enabled: false to run without it.",

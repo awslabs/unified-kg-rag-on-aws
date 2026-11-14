@@ -1,5 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import logging
 from collections.abc import Callable
 from typing import Any
 
@@ -8,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.logging import log_error
 
 logger = get_logger(__name__)
 
@@ -171,13 +173,20 @@ class GraphAnalyzer:
             result = computation_func(self._graph, **kwargs)
             self._update_centrality_results(centrality_data, metric_name, result)
         except (nx.PowerIterationFailedConvergence, nx.NetworkXError) as e:
-            logger.warning("Failed to calculate %s centrality: %s", metric_name, e)
-        except Exception as e:
-            logger.error(
+            log_error(
+                logger,
+                logging.WARNING,
+                "Failed to calculate %s centrality: %s",
+                metric_name,
+                error=e,
+            )
+        except Exception as e:  # noqa: BLE001 - a centrality is optional
+            log_error(
+                logger,
+                logging.ERROR,
                 "An unexpected error occurred during %s calculation: %s",
                 metric_name,
-                e,
-                exc_info=True,
+                error=e,
             )
 
     @staticmethod
@@ -245,7 +254,13 @@ class GraphAnalyzer:
             result = computation_func(self._graph)
             on_success(result)
         except Exception as e:  # noqa: BLE001 - a statistic is optional
-            logger.warning("Failed to calculate %s: %s", metric_name, e)
+            log_error(
+                logger,
+                logging.WARNING,
+                "Failed to calculate %s: %s",
+                metric_name,
+                error=e,
+            )
 
     @staticmethod
     def _update_component_stats(result: list[set[Any]], stats: GraphStatistics) -> None:

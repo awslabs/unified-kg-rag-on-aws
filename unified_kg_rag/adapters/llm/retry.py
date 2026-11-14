@@ -29,6 +29,12 @@ from unified_kg_rag.domain.models.text_unit import TextUnit
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
 from unified_kg_rag.shared.logging import log_failure
+from unified_kg_rag.shared.utils.common import (
+    error_code,
+    error_name,
+    http_status,
+    reported_status,
+)
 
 if TYPE_CHECKING:
     from unified_kg_rag.adapters.llm.langchain import BatchProcessor
@@ -86,26 +92,6 @@ _TRANSIENT_HTTP_STATUSES = frozenset({408, 429})
 _TRANSPORT_ERROR_NAMES = frozenset({"TransportError", "APIConnectionError"})
 
 
-def _http_status(exc: BaseException) -> int | None:
-    status = getattr(exc, "status_code", None)
-    if status is None:
-        status = getattr(getattr(exc, "response", None), "status_code", None)
-    return status if isinstance(status, int) else None
-
-
-def _reported_status(exc: BaseException) -> int | None:
-    """The HTTP status a failure reports, botocore's ``ClientError`` (its
-    response metadata) included: what names a cause (:func:`_cause`). The
-    retry and item classifiers read :func:`_http_status` only, as Bedrock's
-    factory classifies its own errors by code."""
-    if (status := _http_status(exc)) is not None:
-        return status
-    response = getattr(exc, "response", None)
-    metadata = response.get("ResponseMetadata") if isinstance(response, dict) else None
-    found = metadata.get("HTTPStatusCode") if isinstance(metadata, dict) else None
-    return found if isinstance(found, int) else None
-
-
 def looks_transient(exc: BaseException) -> bool:
     """Whether ``exc`` looks like a failure a new attempt can get past.
 
@@ -117,7 +103,7 @@ def looks_transient(exc: BaseException) -> bool:
     """
     if isinstance(exc, ConnectionError | TimeoutError):
         return True
-    status = _http_status(exc)
+    status = http_status(exc)
     if status is not None:
         return status in _TRANSIENT_HTTP_STATUSES or 500 <= status < 600
     return any(cls.__name__ in _TRANSPORT_ERROR_NAMES for cls in type(exc).__mro__)
@@ -145,7 +131,7 @@ def looks_like_item_error(exc: BaseException) -> bool:
     the model or its settings (an unknown model, an unsupported parameter),
     which fails every item alike. The local factories' ``is_item_error``, and
     the classifier of a factory without one."""
-    return _http_status(exc) in _ITEM_HTTP_STATUSES and not (
+    return http_status(exc) in _ITEM_HTTP_STATUSES and not (
         _CONFIGURATION_MESSAGE.search(str(exc))
     )
 
@@ -181,7 +167,7 @@ def _cause(exc: BaseException) -> tuple[str, str, int | None]:
     rejection names the request's token counts)."""
     if isinstance(exc, OutputParserException | LLMOutputTruncatedError):
         return "output", "", None
-    return type(exc).__name__, _error_code(exc), _reported_status(exc)
+    return type(exc).__name__, error_code(exc), reported_status(exc)
 
 
 class FailureLedger:
@@ -237,16 +223,13 @@ class FailureLedger:
 
 
 def describe_cause(error: BaseException) -> str:
-    """Log-safe name of an error's cause (:func:`_cause`): its type, error
-    code and HTTP status (``ClientError ThrottlingException, HTTP 429``),
-    never its message, which may quote the request's text."""
-    name, code, status = _cause(error)
-    if name == "output":
+    """Log-safe name of an error's cause (:func:`_cause`): output that does
+    not parse or was cut off, else :func:`error_name` (its type, error code
+    and HTTP status: ``ClientError ThrottlingException, HTTP 429``), never
+    its message, which may quote the request's text."""
+    if _cause(error)[0] == "output":
         return "output that does not parse or was cut off"
-    parts = [name if code in ("", name) else f"{name} {code}"]
-    if status is not None:
-        parts.append(f"HTTP {status}")
-    return ", ".join(parts)
+    return error_name(error)
 
 
 _LEDGER: contextvars.ContextVar[FailureLedger | None] = contextvars.ContextVar(
@@ -400,16 +383,6 @@ def transient_error_predicate(factory: object) -> TransientErrorPredicate:
     return predicate if predicate is not None else looks_transient
 
 
-def _error_code(exc: BaseException) -> str:
-    # botocore ClientErrors carry the service's error code; name it in the log.
-    response = getattr(exc, "response", None)
-    if isinstance(response, dict):
-        code = response.get("Error", {}).get("Code")
-        if code:
-            return str(code)
-    return type(exc).__name__
-
-
 def backoff_delay(attempt: int, base_delay: float, max_delay: float) -> float:
     """Exponential backoff with equal jitter for the given 1-based attempt.
 
@@ -441,7 +414,7 @@ def next_transient_retry_delay(
             "Giving up on '%s' after %s attempts (the query deadline is reached): %s",
             operation,
             attempt,
-            _error_code(exc),
+            error_name(exc),
         )
         return None
     if time.monotonic() - started_at + delay > policy.max_total_seconds:
@@ -450,7 +423,7 @@ def next_transient_retry_delay(
             operation,
             attempt,
             policy.max_total_seconds,
-            _error_code(exc),
+            error_name(exc),
         )
         return None
     logger.warning(
@@ -458,7 +431,7 @@ def next_transient_retry_delay(
         operation,
         attempt,
         policy.max_attempts,
-        _error_code(exc),
+        error_name(exc),
         delay,
     )
     return delay

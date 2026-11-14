@@ -423,6 +423,16 @@ def read_user_text(path: Path | str) -> str:
     return Path(path).read_text(encoding=USER_TEXT_ENCODING)
 
 
+def decode_user_text(data: bytes) -> str:
+    """The text of a file the user supplied read as bytes (from S3), as
+    :data:`USER_TEXT_ENCODING`, as :func:`read_user_text` reads a local one.
+
+    Raises:
+        UnicodeDecodeError: The bytes are not UTF-8.
+    """
+    return data.decode(USER_TEXT_ENCODING)
+
+
 def atomic_write_text(path: Path, text: str, *, fsync: bool = False) -> None:
     """Write ``text`` to ``path`` so a reader sees the old file or the new one.
 

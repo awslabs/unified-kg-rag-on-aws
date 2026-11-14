@@ -168,7 +168,8 @@ def test_a_failed_hand_off_never_fails_the_model_call(
     model = _model(cache, _Counter())
     assert _ask(model, "a") == "answer to a"
     assert _ask(model, "b") == "answer to b"
-    assert "s3 unreachable" in caplog.text and handed == []
+    # Logged by its type and where it happened (log_error), its text at DEBUG.
+    assert "ConnectionError" in caplog.text and handed == []
     # Back up: the next write hands off the earlier segments too, in order.
     down[0] = False
     _ask(model, "c")

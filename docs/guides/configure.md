@@ -112,18 +112,36 @@ into a WARNING.
 At `INFO` and above, user and corpus text is logged only as lengths, counts,
 ids and a stable short hash (`query: len=42 sha=1a2b3c4d`). Query text,
 rewritten queries, entity names and raw model output are logged only at
-`DEBUG`, and exception messages never carry model output. An error whose
-text may come from a model provider or a library (a model call a step
-absorbs, a query's unexpected failure on any surface) is logged at `INFO`
-and above as its type, a digest and where it happened (the type chain and
-`file:line` frames, never the message), its text and traceback only at
-`DEBUG`; an unreachable store or model, the deadline or a refusal has its own
-message and is logged with its text. Treat `DEBUG` logs
+`DEBUG`. An error whose text may come from a model provider or a library (a
+model call a step absorbs, a store write, a query's unexpected failure on
+any surface) is logged at `INFO` and above by what it is: its type, the
+service's error code and HTTP status (`ClientError ThrottlingException,
+HTTP 429`), for an OS or decode error its errno and path or its position
+(`PermissionError [Errno 13] Permission denied: '/exports'`), a digest of
+its message and where it happened (the type chain and `file:line` frames),
+never the message; its text and traceback only at `DEBUG`. An unreachable
+store or model, the deadline, a refusal and a message the package composes
+itself (a stage failure named by its cause) are logged with their text. A
+library's own records at `INFO` and above (ragas's failed judge job,
+`langchain_aws`'s failed call) keep their logger, level and message
+template, their arguments and traceback replaced by digests; a library at
+`DEBUG` in `logging.library_levels` logs everything. Treat `DEBUG` logs
 (`logging.level: DEBUG`, `UKR__LOGGING__LEVEL=DEBUG`, any CLI's `--log-level
 DEBUG`; `run-rag --verbose` prints more
 of each result but leaves the log level), and libraries set to `DEBUG` in
 `logging.library_levels` (`botocore` logs request bodies), as containing user
 and corpus data.
+
+The CLIs' result output is not a log record and holds corpus and model text:
+`run-ingestion`'s panels (entity names, community titles and summaries,
+claims), `run-rag`'s answer and sources, `run-eval`'s saved results. An
+error's text there, in the JSON status' `error`, in a stage's recorded
+`error_message` (the run's `pipeline_metadata.json` and its S3 checkpoint)
+and in a failed answer's result follows the rule above: an unexpected
+failure's text is replaced by its type and "The call failed with an
+unexpected error ...; the log has the details", an outage's is kept. On AWS the CDK tasks
+send stdout and stderr to the task's CloudWatch log group with the
+structured records: control access to it as to the corpus.
 
 Every CLI takes `--log-level` (over `logging.level`) and `--version`. With
 `--output-format text` the console logs are plain lines unless

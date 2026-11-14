@@ -15,6 +15,7 @@ the test process alive for the whole sleep after the suite finished.
 """
 
 import asyncio
+import logging
 import random
 import threading
 import time
@@ -329,3 +330,33 @@ def test_cancelling_an_async_batch_cancels_its_items() -> None:
 
     asyncio.run(main())
     assert calls == Counter(started=2)
+
+
+async def test_an_async_item_that_failed_names_its_ids_and_keeps_its_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Regression (rv29 logging #3): run-eval's "Item failed every attempt in
+    # 'Answer Generation'" line named no query, and its results only "no
+    # result": the error was dropped with the failed item.
+    async def call(item: dict[str, str]) -> str:
+        if item["id"] == "q2":
+            raise ValueError("Quokkasecret reply")
+        return item["id"]
+
+    errors: dict[int, BaseException] = {}
+    bp = BatchProcessor(max_concurrency=2, max_attempts=1)
+    with caplog.at_level("INFO"):
+        results = await bp.aexecute_with_fallback(
+            items_to_process=["q1", "q2"],
+            prepare_inputs_func=lambda ids: [{"id": i} for i in ids],
+            sequential_func=RunnableLambda(call).ainvoke,
+            task_name="Answer Generation",
+            show_progress=False,
+            errors=errors,
+            item_ids=lambda item: {"query_id": item["id"]},
+        )
+    assert results == ["q1", BATCH_ITEM_FAILED]
+    assert list(errors) == [1] and isinstance(errors[1], ValueError)
+    (failed,) = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert failed.query_id == "q2"  # type: ignore[attr-defined]
+    assert "Quokkasecret" not in failed.getMessage()

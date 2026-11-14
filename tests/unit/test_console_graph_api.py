@@ -215,6 +215,32 @@ def test_a_failed_build_keeps_the_recorded_build_time(
     monkeypatch.setattr(visualization_export, "current_visualization_data", unreadable)
     current = graph_api.current_graph(Config(), tmp_path, lambda: object())
     assert current.reason == "read" and current.view()["reason"] == "read"
+
+    # rv29: a graph-store path the stores refuse (a ConfigurationError) said
+    # "once they answer"; its fix is in Settings.
+    def refused(*args: Any) -> Any:
+        from unified_kg_rag.shared import ConfigurationError
+
+        raise ConfigurationError("graph store path cannot be opened")
+
+    monkeypatch.setattr(visualization_export, "current_visualization_data", refused)
+    assert graph_api.current_graph(Config(), tmp_path, lambda: object()).reason == (
+        "config"
+    )
+    builder = graph_api.GraphBuilder(tmp_path)
+
+    def bad_bundle(config: Any) -> Any:
+        from unified_kg_rag.shared import ConfigurationError
+
+        raise ConfigurationError("graph store path cannot be opened")
+
+    monkeypatch.setattr(
+        visualization_export,
+        "current_visualization_data",
+        unreadable,
+    )
+    monkeypatch.setattr(builder, "_bundle", bad_bundle)
+    assert builder.current(Config).reason == "config"
     graphs: list[dict[str, Any]] = [
         {"namespace": "default", "built_at": "2026-11-13T00:00:00Z"}
     ]

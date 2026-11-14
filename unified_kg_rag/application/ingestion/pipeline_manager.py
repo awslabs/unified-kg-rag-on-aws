@@ -28,7 +28,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.models.pipeline import PIPELINE_METADATA_FILE
 from unified_kg_rag.shared.exceptions import PipelineResumeError, PipelineStateError
-from unified_kg_rag.shared.logging import get_logger
+from unified_kg_rag.shared.logging import get_logger, log_error
 from unified_kg_rag.shared.utils.files import atomic_write_text
 
 if TYPE_CHECKING:
@@ -151,8 +151,12 @@ class PipelineStateManager:
                 f"Corrupted metadata file, invalid JSON: '{metadata_path}'"
             ) from e
         except Exception as e:
-            logger.error(
-                "Failed to load pipeline metadata from '%s': %s", metadata_path, e
+            log_error(
+                logger,
+                logging.ERROR,
+                "Failed to load pipeline metadata from '%s': %s",
+                metadata_path,
+                error=e,
             )
             raise PipelineStateError(
                 f"Failed to load pipeline metadata from '{metadata_path}': {e}"
@@ -197,8 +201,12 @@ class PipelineStateManager:
             )
 
         except Exception as e:
-            logger.error(
-                "Failed to save pipeline metadata for '%s': %s", context.pipeline_id, e
+            log_error(
+                logger,
+                logging.ERROR,
+                "Failed to save pipeline metadata for '%s': %s",
+                context.pipeline_id,
+                error=e,
             )
             raise PipelineStateError(
                 f"Critical error saving pipeline metadata: {e}"
@@ -223,10 +231,12 @@ class PipelineStateManager:
             with open(metadata_path, encoding="utf-8") as f:
                 persisted = json.load(f)
         except (json.JSONDecodeError, OSError) as e:
-            logger.warning(
+            log_error(
+                logger,
+                logging.WARNING,
                 "Could not read existing metadata to merge stage results "
                 "(treating as fresh): %s",
-                e,
+                error=e,
             )
             return
         if not isinstance(persisted, dict) or not isinstance(
@@ -246,7 +256,12 @@ class PipelineStateManager:
             try:
                 persisted_results.append(PipelineStageResult.model_validate(raw))
             except Exception as e:  # noqa: BLE001 - skip unparseable legacy entries
-                logger.warning("Skipping unparseable persisted stage result: %s", e)
+                log_error(
+                    logger,
+                    logging.WARNING,
+                    "Skipping unparseable persisted stage result: %s",
+                    error=e,
+                )
 
         # Only completed results are durable history. A failed or unfinished
         # result on disk comes from an earlier attempt: the stage is run again
@@ -310,7 +325,9 @@ class PipelineStateManager:
             return True
 
         except (OSError, ValueError) as e:
-            logger.error("Metadata verification failed: %s", e)
+            log_error(
+                logger, logging.ERROR, "Metadata verification failed: %s", error=e
+            )
             return False
 
     def verify_pipeline_metadata(self, pipeline_id: str) -> bool:
@@ -479,10 +496,12 @@ class PipelineResumeManager:
             raise
         except Exception as e:
             self._verified_outputs.clear()
-            logger.error(
+            log_error(
+                logger,
+                logging.ERROR,
                 "Failed to determine resume strategy for pipeline '%s': %s",
                 pipeline_id,
-                e,
+                error=e,
             )
             raise PipelineResumeError(
                 f"Failed to determine resume strategy for pipeline '{pipeline_id}': {e}"
@@ -717,11 +736,12 @@ class PipelineResumeManager:
                     if self._load_stage_cache_data(pipeline_id, stage_name, context):
                         loaded_count += 1
                 except Exception as e:  # noqa: BLE001 - isolate one stage's cache
-                    logger.error(
+                    log_error(
+                        logger,
+                        logging.ERROR,
                         "Error loading cache for stage '%s': %s",
                         stage_name,
-                        e,
-                        exc_info=True,
+                        error=e,
                     )
 
             logger.info(
@@ -733,8 +753,12 @@ class PipelineResumeManager:
             return context
 
         except Exception as e:
-            logger.error(
-                "Failed to restore pipeline context for '%s': %s", pipeline_id, e
+            log_error(
+                logger,
+                logging.ERROR,
+                "Failed to restore pipeline context for '%s': %s",
+                pipeline_id,
+                error=e,
             )
             raise PipelineResumeError(
                 f"Failed to restore pipeline context for '{pipeline_id}': {e}"
@@ -775,12 +799,13 @@ class PipelineResumeManager:
                         context_attr,
                     )
             except Exception as e:  # noqa: BLE001 - isolate one output's cache
-                logger.error(
+                log_error(
+                    logger,
+                    logging.ERROR,
                     "Failed to load cache data '%s' for stage '%s': %s",
                     context_attr,
                     stage_name,
-                    e,
-                    exc_info=True,
+                    error=e,
                 )
 
         return loaded_files_count > 0
@@ -834,7 +859,12 @@ class PipelineResumeManager:
         try:
             metadata = self.state_manager.load_pipeline_metadata(pipeline_id)
         except PipelineStateError as e:
-            logger.error("Pipeline integrity validation failed: %s", e)
+            log_error(
+                logger,
+                logging.ERROR,
+                "Pipeline integrity validation failed: %s",
+                error=e,
+            )
             self.integrity_reason = "cache"
             return False, [str(e)]
 

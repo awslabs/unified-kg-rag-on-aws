@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import logging
+import numbers
 import sys
 import threading
 from collections.abc import Hashable, Mapping
@@ -12,8 +13,8 @@ import structlog
 from structlog.stdlib import LoggerFactory, ProcessorFormatter
 
 from . import observability
-from .exceptions import ErrorClass, classify
-from .utils.common import error_digest, error_locator
+from .exceptions import ErrorClass, classify, error_text, own_text
+from .utils.common import error_digest, error_locator, text_digest
 
 
 class LoggingSettings(Protocol):
@@ -116,6 +117,72 @@ def _to_stdlib(logger: Any, method: str, event_dict: structlog.types.EventDict) 
     return structlog.stdlib.render_to_log_kwargs(logger, method, event_dict)
 
 
+# The package's own loggers (``get_logger(__name__)``): their records keep to
+# the logging policy (``log_failure``); every other logger is a library's.
+_PACKAGE_LOGGER = __name__.partition(".")[0]
+
+
+# Library loggers whose records are request metadata the package's own
+# servers log, not text: uvicorn's access line (client, method, path, status)
+# of the MCP server's HTTP transport.
+_METADATA_LOGGERS = frozenset({"uvicorn.access"})
+
+
+def _is_package_record(record: logging.LogRecord) -> bool:
+    return (
+        record.name == _PACKAGE_LOGGER
+        or record.name.startswith(f"{_PACKAGE_LOGGER}.")
+        or record.name in _METADATA_LOGGERS
+    )
+
+
+def _safe_arg(value: object) -> object:
+    """A library record's argument as the logging policy allows it at INFO
+    and above: a number or a boolean as it is, an error by
+    :func:`error_digest`, any other value by ``text_digest`` of its text
+    (it may be a prompt, a model's reply or an error's message)."""
+    if value is None or isinstance(value, numbers.Number):
+        return value
+    if isinstance(value, BaseException):
+        return error_digest(value)
+    return text_digest(str(value))
+
+
+class LibraryRecordFilter(logging.Filter):
+    """Keep a library's INFO+ records to the logging policy (SECURITY.md).
+
+    The package logs an error's text at DEBUG only (``log_failure``), but a
+    library logs its own: ragas a failed judge job's error at ERROR, the
+    ``ChatBedrock`` path a ``ClientError``'s traceback (``logger.exception``),
+    either quoting a prompt or an ARN. On the handlers ``setup_logging``
+    adds, a record of a logger outside the package at INFO or above keeps
+    its logger name, level and message template (the library's code, which
+    says what happened) and loses what may hold that text: its arguments
+    (:func:`_safe_arg`) and its traceback, of which the error's
+    :func:`error_digest` and :func:`error_locator` are appended. A library
+    that formats the text into the message itself (an f-string) is not
+    caught: set its level in ``logging.library_levels``. DEBUG records keep
+    everything, as the package's own do."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.levelno < logging.INFO or _is_package_record(record):
+            return True
+        if isinstance(record.args, Mapping):
+            record.args = {key: _safe_arg(v) for key, v in record.args.items()}
+        elif record.args:
+            record.args = tuple(_safe_arg(value) for value in record.args)
+        error = record.exc_info[1] if record.exc_info else None
+        if error is not None:
+            where = error_locator(error)
+            record.msg = (
+                f"{record.msg} [{error_digest(error)}{'; ' + where if where else ''}]"
+            )
+        record.exc_info = None
+        record.exc_text = None
+        record.stack_info = None
+        return True
+
+
 def _configure_structlog() -> None:
     """Route structlog through stdlib logging; installs no handler.
 
@@ -192,7 +259,9 @@ class LoggingSetup:
             file_handler.setFormatter(cls._formatter(json=structured, colors=False))
             cls._handlers.append(file_handler)
 
+        library_filter = LibraryRecordFilter()
         for handler in cls._handlers:
+            handler.addFilter(library_filter)
             root_logger.addHandler(handler)
 
         # Chatty dependencies (e.g. langchain_aws logs INFO per model call and a
@@ -283,12 +352,19 @@ def log_error(
     :func:`log_failure` (type, digest and where it came from at ``level``;
     text and traceback at DEBUG), any other class (an unreachable store or
     model, the deadline, a refusal: an expected outcome with its own
-    message, whose endpoint is not user data) with its text and class."""
+    message, whose endpoint is not user data), and a failure whose message
+    is the package's own (``has_own_text``), with its text (``error_text``:
+    what a surface shows) and class."""
     error_class = classify(error)
-    if error_class is ErrorClass.FAILURE:
+    own = own_text(error) if error_class is ErrorClass.FAILURE else None
+    if error_class is ErrorClass.FAILURE and own is None:
         log_failure(logger, level, message, *args, error=error, traceback=True)
-    else:
-        logger.log(level, message, *args, f"[{error_class.value}] {error}")
+        return
+    text = own if own is not None else error_text(error)
+    logger.log(level, message, *args, f"[{error_class.value}] {text}")
+    if own is not None and own != error_text(error):
+        # The rest of a message only partly the package's own.
+        logger.debug(message, *args, error, exc_info=error)
 
 
 def warn_once(

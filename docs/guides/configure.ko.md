@@ -102,16 +102,32 @@ Bedrock 임베딩, 질의 시점 호출)에 적용되고, 기본값이 다른 �
 
 `INFO` 이상에서 사용자 텍스트와 코퍼스 텍스트는 길이, 개수, ID, 항상 같은 짧은
 해시(`query: len=42 sha=1a2b3c4d`)로만 기록합니다. 질의 원문, 다시 쓴 질의, 엔티티
-이름, 모델 원본 출력은 `DEBUG`에서만 기록하며, 예외 메시지에는 모델 출력을 넣지
-않습니다. 모델 제공자나 라이브러리의 텍스트가 담길 수 있는 오류(단계가 흡수한 모델 호출
-오류, 어느 화면에서든 질의의 예기치 않은 실패)는 `INFO` 이상에서 유형, 다이제스트와 발생
-위치(유형 연쇄와 `file:line` 프레임, 메시지는 제외)로만 기록하고, 텍스트와 traceback은
-`DEBUG`에서만 기록합니다. 저장소나 모델에 닿지 않는 경우, 제한 시간 초과, 거부처럼 자체
-메시지가 있는 예상된 결과는 텍스트와 함께 기록합니다. `DEBUG` 로그(`logging.level: DEBUG`, `UKR__LOGGING__LEVEL=DEBUG`, 모든 CLI의
+이름, 모델 원본 출력은 `DEBUG`에서만 기록합니다. 모델 제공자나 라이브러리의 텍스트가 담길
+수 있는 오류(단계가 흡수한 모델 호출 오류, 저장소 쓰기 오류, 어느 화면에서든 질의의 예기치
+않은 실패)는 `INFO` 이상에서 무엇인지로만 기록합니다. 유형, 서비스 오류 코드와 HTTP
+상태(`ClientError ThrottlingException, HTTP 429`), OS 오류나 디코딩 오류면 errno와
+경로 또는 위치(`PermissionError [Errno 13] Permission denied: '/exports'`), 메시지의
+다이제스트, 발생 위치(유형 연쇄와 `file:line` 프레임)를 남기고 메시지는 남기지 않습니다.
+텍스트와 traceback은 `DEBUG`에서만 기록합니다. 저장소나 모델에 닿지 않는 경우, 제한 시간
+초과, 거부, 패키지가 직접 만든 메시지(원인으로 이름 붙인 단계 실패)는 텍스트와 함께
+기록합니다. 라이브러리 자체 레코드(ragas의 실패한 평가 작업, `langchain_aws`의 실패한
+호출)는 `INFO` 이상에서 로거, 수준, 메시지 템플릿을 유지하고 인자와 traceback은
+다이제스트로 바꿉니다. `logging.library_levels`에서 `DEBUG`로 둔 라이브러리는 모두
+기록합니다. `DEBUG` 로그(`logging.level: DEBUG`, `UKR__LOGGING__LEVEL=DEBUG`, 모든 CLI의
 `--log-level DEBUG`. `run-rag --verbose`는 결과를 더
 자세히 출력할 뿐 로그 수준은 바꾸지 않음)와 `logging.library_levels`에서 `DEBUG`로 둔
 라이브러리(`botocore`는 요청 본문을 기록함)에는 사용자 데이터와 코퍼스 데이터가 들어 있다고
 보세요.
+
+CLI의 결과 출력은 로그 레코드가 아니며 코퍼스와 모델 텍스트를 담습니다. `run-ingestion`의
+패널(엔티티 이름, 커뮤니티 제목과 요약, 클레임), `run-rag`의 답변과 출처, `run-eval`이
+저장한 결과가 그렇습니다. 출력, JSON 상태의 `error`, 단계가 기록한 `error_message`(실행의
+`pipeline_metadata.json`과 S3 체크포인트), 실패한 답변의 결과에 담기는 오류 텍스트는 위
+규칙을 따릅니다. 예기치 않은 실패의 텍스트는 오류 유형과 "The call failed with an
+unexpected error ...; the log has the details"로 바꾸고, 연결 장애의 텍스트는 그대로
+둡니다. AWS에서는
+CDK 작업이 stdout과 stderr를 구조화된 레코드와 같은 CloudWatch 로그 그룹으로 보내므로, 이
+로그 그룹의 접근은 코퍼스와 같은 수준으로 통제하세요.
 
 모든 CLI는 `--log-level`(`logging.level`보다 우선)과 `--version`을 받습니다.
 `--output-format text`에서는 `logging.log_format`을 지정하지 않으면 콘솔 로그가 일반 텍스트

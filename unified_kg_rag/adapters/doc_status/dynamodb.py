@@ -38,6 +38,7 @@ from unified_kg_rag.shared import (
     get_logger,
 )
 from unified_kg_rag.shared.exceptions import DocStatusFormatError
+from unified_kg_rag.shared.utils import error_name
 from unified_kg_rag.shared.write_fence import (
     REGISTRY_CONNECT_TIMEOUT_SECONDS,
     REGISTRY_READ_TIMEOUT_SECONDS,
@@ -230,7 +231,7 @@ class DynamoDBDocStatusStore:
         region = self.boto_session.region_name or "unset"
         return (
             f"Doc-status registry: could not {operation} on DynamoDB table "
-            f"'{self.table_name}' (region {region}): {code}: {error}. {hint}"
+            f"'{self.table_name}' (region {region}): {error_name(error)}. {hint}"
         )
 
     def _check_key_schema(self, client: DynamoDBClient) -> None:

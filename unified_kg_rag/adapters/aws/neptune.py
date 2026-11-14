@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import copy
+import logging
 import threading
 from collections.abc import Callable
 from concurrent.futures import Future
@@ -28,6 +29,7 @@ from unified_kg_rag.shared.exceptions import (
     StoreTimeoutError,
     causes,
 )
+from unified_kg_rag.shared.logging import log_error
 
 if TYPE_CHECKING:
     import boto3
@@ -624,7 +626,9 @@ class NeptuneClient:
                     remote_connection.close()
                 except Exception as close_error:  # noqa: BLE001 - keep the cause
                     logger.debug("Error closing failed connection: %s", close_error)
-            logger.error("Neptune connection probe failed: %s", e)
+            log_error(
+                logger, logging.ERROR, "Neptune connection probe failed: %s", error=e
+            )
             error = neptune_request_error(
                 e, timeout, connection_url, self.timeout_setting
             )
@@ -683,7 +687,12 @@ class NeptuneClient:
                     self._g = None
                     logger.info("Closed Neptune connection")
                 except Exception as e:  # noqa: BLE001 - teardown must never raise
-                    logger.error("Error closing Neptune connection: %s", e)
+                    log_error(
+                        logger,
+                        logging.ERROR,
+                        "Error closing Neptune connection: %s",
+                        error=e,
+                    )
 
     def __enter__(self) -> "NeptuneClient":
         return self

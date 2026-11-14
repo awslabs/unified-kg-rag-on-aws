@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 from collections.abc import Collection, Iterator
 from enum import StrEnum
-from typing import Literal
+from typing import Literal, TypeVar
+
+_E = TypeVar("_E", bound=BaseException)
 
 
 def causes(exc: BaseException) -> Iterator[BaseException]:
@@ -13,6 +15,32 @@ def causes(exc: BaseException) -> Iterator[BaseException]:
         seen.add(id(current))
         yield current
         current = current.__cause__ or current.__context__
+
+
+def own_text(exc: BaseException) -> str | None:
+    """The package's own message of ``exc`` (its ``own_text``), composed of
+    ids, counts, settings, paths and log-safe error names (``error_name``),
+    never a model's, a provider's or a document's text: ``True`` marks its
+    whole message (:func:`error_text`), a string the part of it that is
+    (the rest, a store's error it quotes, is DEBUG's); else ``None``. That
+    text is shown and logged whatever the error's class: an unexpected
+    failure's text otherwise is not (:func:`shows_error_text`)."""
+    own = getattr(exc, "own_text", False)
+    if own is True:
+        return error_text(exc)
+    return own if isinstance(own, str) and own else None
+
+
+def has_own_text(exc: BaseException) -> bool:
+    """Whether ``exc`` holds the package's own message (:func:`own_text`)."""
+    return own_text(exc) is not None
+
+
+def with_own_text(exc: _E) -> _E:
+    """``exc``, marked as holding the package's own message
+    (:func:`has_own_text`)."""
+    exc.own_text = True  # type: ignore[attr-defined]
+    return exc
 
 
 class GraphRAGException(Exception):
@@ -68,8 +96,12 @@ class DocStatusRegistryError(AWSServiceError):
     full rebuild of only this run's documents replaces the live index content.
 
     ``indexing_hint``, what an indexing run can do about it, ends the message;
-    :attr:`reason` is the message without it (what a reader reports).
+    :attr:`reason` is the message without it (what a reader reports). The
+    message names the error it wraps by ``error_name``, never its text
+    (:func:`has_own_text`).
     """
+
+    own_text = True
 
     def __init__(self, message: str = "", *, indexing_hint: str = "") -> None:
         super().__init__(f"{message} {indexing_hint}" if indexing_hint else message)
@@ -256,7 +288,9 @@ class ConfirmationDeclinedError(PipelineExecutionError):
     """A question the run asks before it writes (a reset that drops another
     source scope's content) was answered no, or no one could answer it: the
     run stops there, before any write, as a cancellation rather than a
-    failed stage."""
+    failed stage. Its message is the question (:func:`has_own_text`)."""
+
+    own_text = True
 
 
 class PipelineResumeError(GraphRAGException):
@@ -264,11 +298,20 @@ class PipelineResumeError(GraphRAGException):
 
 
 class PipelineStageError(PipelineExecutionError):
-    """A stage failed; ``failed_files``: the files its items failed on."""
+    """A stage failed; ``failed_files``: the files its items failed on;
+    ``own_text``: its message is the package's own (:func:`own_text`; a
+    string: the part of it that is), not one that quotes a store's or a
+    model's error."""
 
-    def __init__(self, *args: object, failed_files: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        *args: object,
+        failed_files: list[str] | None = None,
+        own_text: bool | str = False,
+    ) -> None:
         super().__init__(*args)
         self.failed_files = list(failed_files or ())
+        self.own_text = own_text
 
 
 class PipelineStateError(GraphRAGException):
@@ -415,7 +458,7 @@ def error_class_of(value: object) -> ErrorClass:
 # under the ids the surface names (``log_error``): an outage's text, an
 # unexpected failure's type and where it happened (its text at DEBUG).
 INTERNAL_ERROR_MESSAGE = (
-    "The call failed inside the server (a store or model error); the server "
+    "The call failed with an unexpected error (a store or model error); the "
     "log has the details."
 )
 
@@ -448,15 +491,34 @@ def shown_error_text(
     the class of one a result names, as the error answer of
     ``processing.ignore_errors``): ``text`` (by default
     :func:`error_text` of the exception) when :func:`shows_error_text`,
-    else :data:`INTERNAL_ERROR_MESSAGE`. The one rule every surface (the MCP
-    tools, the console's API, its Ask events and history) applies."""
+    else :data:`INTERNAL_ERROR_MESSAGE` (an operator also sees a failure
+    whose message is the package's own: :func:`has_own_text`). The one rule
+    every surface (the MCP tools, the console's API, its Ask events and
+    history, the CLIs' output and JSON status, a stage's recorded error)
+    applies."""
     error_class = error if isinstance(error, ErrorClass) else classify(error)
     if not shows_error_text(error_class, audience):
-        return INTERNAL_ERROR_MESSAGE
+        own = (
+            own_text(error)
+            if audience == "operator" and isinstance(error, BaseException)
+            else None
+        )
+        return INTERNAL_ERROR_MESSAGE if own is None else own
     if text is None:
         assert isinstance(error, BaseException), "text is required with a class"
         text = error_text(error, namespaces)
     return text
+
+
+def operator_error_text(error: BaseException) -> str:
+    """:func:`shown_error_text` for the operator, a masked failure named by
+    what it is (``error_name``: its type, code and HTTP status) before the
+    generic message: what the CLIs print and a stage records, whose reader
+    has no query id to look the log up by."""
+    from .utils.common import error_name
+
+    text = shown_error_text(error, audience="operator")
+    return f"{error_name(error)}: {text}" if text == INTERNAL_ERROR_MESSAGE else text
 
 
 # The public name of :func:`classify` (``unified_kg_rag.classify_error``).

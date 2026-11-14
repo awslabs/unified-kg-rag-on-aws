@@ -27,6 +27,7 @@ stays storage-focused and is exercised end-to-end with in-memory fakes.
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from datetime import UTC, datetime
@@ -114,6 +115,9 @@ from unified_kg_rag.shared import (
     PipelineStageError,
     get_logger,
 )
+from unified_kg_rag.shared.exceptions import with_own_text
+from unified_kg_rag.shared.logging import log_error
+from unified_kg_rag.shared.utils import error_name
 from unified_kg_rag.shared.write_fence import check_write_fence
 
 if TYPE_CHECKING:
@@ -392,10 +396,12 @@ class IncrementalIndexer:
             for suffix, ids in probes.items()
         ]
         if all(found is not None and not found for found in found_units):
-            raise DataProcessingError(
-                f"The {lost} text units the vector store does not hold (its "
-                "database file was deleted or moved, providers.vector."
-                f"sqlite_path changed, or its indices were deleted). {advice}"
+            raise with_own_text(
+                DataProcessingError(
+                    f"The {lost} text units the vector store does not hold (its "
+                    "database file was deleted or moved, providers.vector."
+                    f"sqlite_path changed, or its indices were deleted). {advice}"
+                )
             )
         # The documents probed may state no entity (cover pages): the graph
         # lost them only if the vector store holds entities citing them.
@@ -413,9 +419,12 @@ class IncrementalIndexer:
                 )
             )
         if all(lost_graph):
-            raise DataProcessingError(
-                f"The {lost} entities the graph store does not hold (an "
-                f"in-memory Gremlin Server loses its graph on restart). {advice}"
+            raise with_own_text(
+                DataProcessingError(
+                    f"The {lost} entities the graph store does not hold (an "
+                    "in-memory Gremlin Server loses its graph on restart). "
+                    f"{advice}"
+                )
             )
 
     def write_ahead(
@@ -1494,7 +1503,7 @@ def dedup_preferences(
     except Exception as e:
         raise DocStatusRegistryError(
             f"Doc-status registry: could not read it to deduplicate the "
-            f"corpus ({type(e).__name__}: {e})"
+            f"corpus ({error_name(e)})"
         ) from e
 
     def status(document: Document) -> DocStatus | None:
@@ -1593,7 +1602,7 @@ def _namespace_records(
     except Exception as e:
         raise DocStatusRegistryError(
             f"Doc-status registry: could not read namespace {namespace!r} for "
-            f"{purpose} ({type(e).__name__}: {e})"
+            f"{purpose} ({error_name(e)})"
         ) from e
 
 
@@ -1713,7 +1722,8 @@ def _refuse_seeds_over_documents(
         f"scope (--retire-source-scope {source_scope}); to keep seeds in a "
         "scope of their own, give their runs a "
         "processing.document_parsing.source_scope of their own (a seed-only "
-        "scope)."
+        "scope).",
+        own_text=True,
     )
 
 
@@ -1741,7 +1751,8 @@ def _refuse_seeds_over_other_scopes(
         "is spelled as its earlier runs spelled it (a volume not mounted, an "
         "S3 sync that copied nothing, a moved or mistyped prefix). To rebuild "
         "the namespace from seeds alone, run the seed-only scope without "
-        "indexing.reset first (it records its seeds), then reset it."
+        "indexing.reset first (it records its seeds), then reset it.",
+        own_text=True,
     )
 
 
@@ -1839,7 +1850,7 @@ def _seed_scope_records(
     except Exception as e:
         raise DocStatusRegistryError(
             f"Doc-status registry: could not read the records of scope "
-            f"{scope!r} for the seed-only run ({type(e).__name__}: {e})"
+            f"{scope!r} for the seed-only run ({error_name(e)})"
         ) from e
     return [record for record in stored.values() if record.scope == scope]
 
@@ -2035,7 +2046,7 @@ def filter_to_delta(
     except Exception as e:
         raise DocStatusRegistryError(
             f"Doc-status registry: could not diff the corpus against the "
-            f"registry ({type(e).__name__}: {e}). Incremental indexing needs "
+            f"registry ({error_name(e)}). Incremental indexing needs "
             "the registry; fix it and re-run, or turn incremental indexing off "
             "(providers.doc_status.enabled: false) to "
             "run without it."
@@ -3029,11 +3040,13 @@ def _namespace_was_empty(
     except NamespaceLeaseError:
         raise
     except Exception as e:  # noqa: BLE001 - the pass reads them again
-        logger.warning(
+        log_error(
+            logger,
+            logging.WARNING,
             "Could not tell whether the stores hold items of '%s' (%s); "
             "reading their schema annotations",
             incremental.suffix,
-            e,
+            error=e,
         )
         return False
 
@@ -3133,7 +3146,9 @@ def index_delta(
     delta = context.incremental_delta
     if delta is None:
         # A full replace here would wipe the documents the run did not load.
-        raise PipelineStageError("Incremental indexing needs the run's delta")
+        raise PipelineStageError(
+            "Incremental indexing needs the run's delta", own_text=True
+        )
     incremental = run_incremental_indexer(
         doc_status(), indexing_manager, context, text_units
     )
@@ -3174,7 +3189,8 @@ def index_delta(
             "Removing stale artifacts of changed, deleted or quarantined "
             "documents failed; not committing the delta so the registry keeps "
             "their PENDING records (old + planned lineage) and the next run "
-            "retries the removal" + (f": {named}" if named else "")
+            "retries the removal" + (f": {named}" if named else ""),
+            own_text=True,
         )
 
     if reannotate:

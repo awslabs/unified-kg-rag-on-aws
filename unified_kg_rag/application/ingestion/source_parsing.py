@@ -21,6 +21,7 @@ text files never starts one, one of PDFs parses in parallel.
 from __future__ import annotations
 
 import hashlib
+import logging
 import time
 from collections import Counter
 from collections.abc import Callable, Iterator, Sequence
@@ -52,6 +53,7 @@ from unified_kg_rag.domain.models import (
     Document,
 )
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.logging import log_error
 from unified_kg_rag.shared.utils import default_max_workers
 from unified_kg_rag.shared.utils.concurrency import process_pool, shut_down_after
 
@@ -341,9 +343,11 @@ class SourceFileParser:
                             e,
                         )
         except BrokenProcessPool as e:
-            logger.warning(
+            log_error(
+                logger,
+                logging.WARNING,
                 "The parsing processes stopped (%s): parsing the rest in-process",
-                e,
+                error=e,
             )
         for index in range(start, len(paths)):
             if results[index] is None:

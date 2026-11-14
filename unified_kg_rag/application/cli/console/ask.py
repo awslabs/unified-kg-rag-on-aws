@@ -70,7 +70,7 @@ from unified_kg_rag.shared.exceptions import (
     shown_error_text,
     shows_error_text,
 )
-from unified_kg_rag.shared.logging import log_failure
+from unified_kg_rag.shared.logging import log_error, log_failure
 
 logger = get_logger(__name__)
 
@@ -445,16 +445,18 @@ class AskService:
                 error_class = classify(e)
                 kind = _error_kind(e)
                 # An unexpected error's text (a provider's) stays in the
-                # server log, under the ids the page shows.
+                # server log, under the ids the page shows. Logged as MCP
+                # logs a tool's error: all but a refusal and the deadline,
+                # which the page says in full (log_error: an outage with
+                # its text, an unexpected failure by its type and place).
                 message = shown_error_text(e, audience="operator")
-                if not shows_error_text(error_class, "operator"):
-                    log_failure(
+                if not shows_error_text(error_class, "caller"):
+                    log_error(
                         logger,
                         logging.ERROR,
                         "Console question %s failed: %s",
                         query_id,
                         error=e,
-                        traceback=True,
                     )
                 ids = {**query_failure_ids(e), "query_id": query_id}
                 record.update(

@@ -14,6 +14,7 @@ store's vertices and edges (``export_graph``). It calls no model.
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 from pathlib import Path
 
@@ -53,10 +54,8 @@ from unified_kg_rag.application.storage.inspection import (
 )
 from unified_kg_rag.domain.models import DocStatus
 from unified_kg_rag.shared import ConfigurationError, get_logger
-from unified_kg_rag.shared.exceptions import (
-    IndexNotFoundError,
-    StoreConnectionError,
-)
+from unified_kg_rag.shared.exceptions import IndexNotFoundError
+from unified_kg_rag.shared.logging import log_error
 
 logger = get_logger(__name__)
 
@@ -294,14 +293,13 @@ def main() -> int:
         logger.warning("Describe interrupted by user.")
         raise SystemExit(EXIT_INTERRUPTED) from None
     except ConfigurationError as e:
-        logger.error("Describe input error: %s", e)
+        log_error(logger, logging.ERROR, "Describe input error: %s", error=e)
         return failed(EXIT_USAGE, e)
-    except StoreConnectionError as e:
-        logger.error("Describe failed: a store could not be reached: %s", e)
-        return failed(EXIT_FAILURE, e)
-    except Exception as e:
-        logger.error("Describe failed: %s", e)
-        logger.debug("Traceback:", exc_info=True)
+    except Exception as e:  # noqa: BLE001 - logged, exit code
+        # The one rule of every surface (log_error): a store that could not
+        # be reached with its text, an unexpected failure's type and where it
+        # happened (a store's error may quote a document; text at DEBUG).
+        log_error(logger, logging.ERROR, "Describe failed: %s", error=e)
         return failed(EXIT_FAILURE, e)
 
 

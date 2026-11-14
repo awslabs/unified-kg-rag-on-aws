@@ -14,14 +14,16 @@ import pytest
 from langsmith.utils import get_env_var
 from structlog.contextvars import bound_contextvars
 
+from tests.fixtures.extras import requires_eval
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import get_logger, setup_logging
 from unified_kg_rag.shared.logging import LoggingSetup
+from unified_kg_rag.shared.utils import text_digest
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 
 pytestmark = pytest.mark.unit
 
-_TOUCHED_LOGGERS = ("botocore", "langchain_aws", "urllib3", "unified_kg_rag")
+_TOUCHED_LOGGERS = ("botocore", "langchain_aws", "urllib3", "ragas", "unified_kg_rag")
 
 
 @pytest.fixture
@@ -64,17 +66,87 @@ def test_reinit_applies_config_level(stream: io.StringIO) -> None:
 def test_foreign_records_are_json_with_bound_context(stream: io.StringIO) -> None:
     setup_logging(_config(), stream=stream)
     with bound_contextvars(pipeline_id="p-1", stage="graph_extraction"):
-        try:
-            raise ValueError("boom")
-        except ValueError:
-            logging.getLogger("thirdparty.lib").exception("failed %s", "call")
+        logging.getLogger("thirdparty.lib").warning("failed after %s attempts", 3)
     (record,) = _records(stream)
-    assert record["event"] == "failed call"
+    assert record["event"] == "failed after 3 attempts"
     assert record["logger"] == "thirdparty.lib"
     assert record["pipeline_id"] == "p-1"
     assert record["stage"] == "graph_extraction"
-    # The traceback is a JSON field, not raw lines interleaved with the JSON.
-    assert "ValueError: boom" in record["exception"]
+
+
+def test_a_librarys_error_keeps_its_logger_and_level_not_its_text(
+    stream: io.StringIO,
+) -> None:
+    # A library logs an error's text and traceback (a provider's reply
+    # quoting the prompt): at INFO+ its arguments and traceback become
+    # digests, its logger, level and message template stay.
+    setup_logging(_config(level="DEBUG"), stream=stream)
+    try:
+        raise ValueError("Quokkasecret prompt tail")
+    except ValueError as e:
+        logging.getLogger("thirdparty.lib").exception("call %s failed: %s", "Zebra", e)
+        logging.getLogger("thirdparty.lib").debug("call failed: %s", e)
+    error, debug = _records(stream)
+    assert error["logger"] == "thirdparty.lib" and error["level"] == "error"
+    assert error["event"].startswith(f"call {text_digest('Zebra')} failed: ValueError")
+    assert "test_logging_setup.py" in error["event"]  # where it happened
+    assert "Quokkasecret" not in json.dumps(error) and "exception" not in error
+    # Below INFO a library's record is the package's DEBUG: all of it.
+    assert debug["event"] == "call failed: Quokkasecret prompt tail"
+
+
+@requires_eval
+def test_ragas_and_chat_bedrock_failures_log_no_provider_text(
+    stream: io.StringIO,
+) -> None:
+    # ragas logs a failed judge job's message at ERROR, langchain_aws's
+    # ChatBedrock a ClientError's traceback (logger.exception): both quote
+    # what the provider said, at the default INFO level.
+    import boto3
+    from botocore.stub import Stubber
+    from langchain_aws import ChatBedrock
+    from ragas.executor import Executor
+
+    marker = "Quokkasecret arn:aws:iam::000000000000:role/judge"
+    setup_logging(_config(level="INFO"), stream=stream)
+
+    async def judge() -> None:
+        raise RuntimeError(marker)
+
+    executor = Executor(desc="judge", show_progress=False, raise_exceptions=False)
+    executor.submit(judge)
+    executor.results()
+
+    client = boto3.client(
+        "bedrock-runtime",
+        region_name="us-east-1",
+        aws_access_key_id="testing",
+        aws_secret_access_key="testing",
+    )
+    stubber = Stubber(client)
+    stubber.add_client_error(
+        "invoke_model",
+        service_error_code="ValidationException",
+        service_message=marker,
+        http_status_code=400,
+    )
+    with stubber:
+        chat = ChatBedrock(
+            model_id="anthropic.claude-3-haiku-20240307-v1:0",
+            client=client,
+            region_name="us-east-1",
+        )
+        with pytest.raises(client.exceptions.ValidationException):
+            chat.invoke("Who supplies Vendor?")
+
+    records = _records(stream)
+    by_logger = {r["logger"]: r for r in records if r["level"] == "error"}
+    assert set(by_logger) == {"ragas.executor", "langchain_aws.llms.bedrock"}
+    assert "Quokkasecret" not in stream.getvalue(), stream.getvalue()
+    assert (
+        "ValidationException, HTTP 400"
+        in by_logger["langchain_aws.llms.bedrock"]["event"]
+    )
 
 
 def test_library_levels_quiet_chatty_dependencies(stream: io.StringIO) -> None:

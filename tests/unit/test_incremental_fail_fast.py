@@ -103,7 +103,9 @@ def test_registry_diff_error_fails_the_loading_stage(tmp_path) -> None:
     result = stage.execute(context)
 
     assert result.status is PipelineStageStatus.FAILED
-    assert "registry offline" in (result.error_message or "")
+    # The cause named by what it is (error_name), never its text.
+    assert "Doc-status registry" in (result.error_message or "")
+    assert "(RuntimeError)" in (result.error_message or "")
     assert "providers.doc_status.enabled" in (result.error_message or "")
     assert context.incremental_delta is None
 

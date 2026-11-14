@@ -43,6 +43,7 @@ from unified_kg_rag.domain.models import (
     SearchType,
 )
 from unified_kg_rag.evaluation.evaluation_manager import _WARM_UP_QUESTION
+from unified_kg_rag.shared.exceptions import INTERNAL_ERROR_MESSAGE
 
 pytestmark = pytest.mark.unit
 
@@ -462,7 +463,13 @@ async def test_rag_runner_error_fallback_is_not_success(config, mocker) -> None:
         ),
         conversation_id=None,
         processed_query=ProcessedQuery(original_query="hi", final_query="hi"),
-        metadata={"error": True, "query_id": "q-7", "trace_id": "t-7"},
+        metadata={
+            "error": True,
+            "query_id": "q-7",
+            "trace_id": "t-7",
+            "error_type": "StoreConnectionError",
+            "error_class": "store_unreachable",
+        },
     )
     result = await runner._run_query(run_rag_chain.RAGInput(query="hi"))
     assert result["success"] is False
@@ -2202,7 +2209,8 @@ async def test_rag_run_query_error_is_captured(config, mocker) -> None:
 
     out = await runner._run_query(RAGInput(query="hi", conversation_id="c1"))
     assert out["success"] is False
-    assert out["error"] == "boom"
+    # An unexpected failure's text masked (conventions.shown_text).
+    assert out["error"] == f"RuntimeError: {INTERNAL_ERROR_MESSAGE}"
     assert out["conversation_id"] == "c1"  # preserved for the caller
 
 

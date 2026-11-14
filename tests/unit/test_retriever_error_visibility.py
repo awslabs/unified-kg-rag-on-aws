@@ -1357,25 +1357,27 @@ _UNKNOWN_MODE_BODY = {
 
 
 @pytest.mark.parametrize(
-    ("status", "body", "traceback"),
+    ("status", "body"),
     [
-        (400, _UNKNOWN_MODE_BODY, False),
-        (500, {"error": {"type": "x", "reason": "node failed"}}, True),
+        (400, _UNKNOWN_MODE_BODY),
+        (500, {"error": {"type": "x", "reason": "node failed"}}),
     ],
     ids=["rejected", "server-error"],
 )
-def test_a_rejected_request_is_logged_without_its_traceback(
-    caplog: pytest.LogCaptureFixture, status: int, body: dict, traceback: bool
+def test_a_failed_request_is_logged_with_its_reason_and_no_traceback(
+    caplog: pytest.LogCaptureFixture, status: int, body: dict
 ) -> None:
     # The on_disk refusal of OpenSearch 2.13 logged an ERROR traceback of the
-    # client's frames before the message naming the fix.
+    # client's frames before the message naming the fix. The traceback is
+    # DEBUG's for every failed request (rv29: as every error's, log_failure).
     exc = _server_error(RequestsHttpConnection, status, body)
-    with caplog.at_level(logging.ERROR, logger="unified_kg_rag.adapters.aws"):
+    with caplog.at_level(logging.DEBUG, logger="unified_kg_rag.adapters.aws"):
         _through_handler(exc)
     (record,) = [r for r in caplog.records if r.levelno == logging.ERROR]
     assert "Transport error in 'search'" in record.getMessage()
     assert "unknown parameter [mode]" in record.getMessage() or status != 400
-    assert bool(record.exc_info) is traceback
+    assert not record.exc_info
+    assert any(r.exc_info for r in caplog.records if r.levelno == logging.DEBUG)
 
 
 _NO_SUCH_INDEX_BODY = {

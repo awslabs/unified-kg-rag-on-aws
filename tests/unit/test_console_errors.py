@@ -7,6 +7,7 @@ and an unreachable store a 503 ``store_unreachable``, not a bare 500."""
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -247,3 +248,40 @@ def test_an_unhandled_error_is_logged_once_without_its_text_under_uvicorn(
     assert "<string>:" in done.stderr
     assert done.stderr.count("Console request failed") == 1
     assert "Traceback" not in done.stderr
+
+
+async def test_an_error_after_the_response_started_is_logged_once_and_not_answered(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The catch-all's other branch: an error raised mid-stream (an SSE
+    # answer) cannot be answered with a 500, the response has started: it
+    # is logged once, masked, and the client gets the truncated response.
+    from unified_kg_rag.application.cli.console.server import _ContainUnexpected
+
+    sent: list[dict[str, Any]] = []
+
+    async def streaming(_scope: Any, _receive: Any, send: Any) -> None:
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send(
+            {"type": "http.response.body", "body": b"data: 1\n\n", "more_body": True}
+        )
+        raise RuntimeError("MARKER provider reply mid-stream")
+
+    async def send(message: dict[str, Any]) -> None:
+        sent.append(message)
+
+    async def receive() -> dict[str, Any]:
+        return {"type": "http.request"}
+
+    with caplog.at_level(logging.INFO):
+        await _ContainUnexpected(streaming)({"type": "http"}, receive, send)
+    assert [m["type"] for m in sent] == ["http.response.start", "http.response.body"]
+    failed = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
+    assert len(failed) == 1 and failed[0].startswith(
+        "Console request failed: RuntimeError"
+    )
+    assert all(
+        "MARKER" not in r.getMessage()
+        for r in caplog.records
+        if r.levelno >= logging.INFO
+    )

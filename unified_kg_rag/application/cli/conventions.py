@@ -58,6 +58,7 @@ from unified_kg_rag.shared.exceptions import (
     ErrorClass,
     classify,
     error_text,
+    operator_error_text,
     query_failure_ids,
 )
 
@@ -138,7 +139,11 @@ def usage_error(
     (:func:`error_class_for`) of the JSON status unless they are given; a
     text is a :data:`USAGE_ERROR` of class ``invalid_argument`` by
     default. ``fields`` (a query's ids) are added to the status."""
-    text = error_text(message) if isinstance(message, BaseException) else message
+    text = (
+        shown_text(message, EXIT_USAGE)
+        if isinstance(message, BaseException)
+        else message
+    )
     print(f"{Path(sys.argv[0]).name}: error: {text}", file=sys.stderr)
     print_status(
         EXIT_USAGE, message, error_type=error_type, error_class=error_class, **fields
@@ -168,6 +173,22 @@ def error_class_for(exit_code: int, error: BaseException | str | None) -> ErrorC
     return error_class
 
 
+def shown_text(error: BaseException, exit_code: int = EXIT_FAILURE) -> str:
+    """The text a CLI shows of ``error`` it exits ``exit_code`` with (its
+    output and its JSON status' ``error``), by the one rule of every surface
+    (``shown_error_text``, the operator's): an unexpected failure's text,
+    which may quote a prompt, a model's reply, a document or an ARN, is
+    masked (it is logged at DEBUG, its type and where it happened at ERROR);
+    any other class's (:func:`error_class_for`: an input file refused with
+    exit 2 is ``invalid_argument``), and a message that is the package's own
+    (``has_own_text``), is shown. The CLIs are the operator's own, but their
+    output is not private: on AWS it lands in the same log group as the
+    records, and the console shows it on its pages."""
+    if error_class_for(exit_code, error) is not ErrorClass.FAILURE:
+        return error_text(error)
+    return operator_error_text(error)
+
+
 def failure_fields(
     exit_code: int,
     error: BaseException | str | None,
@@ -182,10 +203,14 @@ def failure_fields(
     exception's class name, informational: :func:`error_type_of` unless
     given), and the ``query_id`` and ``trace_id`` of the query it failed,
     when it carries them (``query_failure_ids``). A CLI whose result
-    document shows a failure merges them into it."""
+    document shows a failure merges them into it. An exception's message is
+    the text the CLI shows of it (:func:`shown_text`); a string is the CLI's
+    own message."""
     fields: dict[str, Any] = {"status": "failed", "exit_code": exit_code}
     if isinstance(error, str | Exception) and str(error):
-        fields["error"] = error if isinstance(error, str) else error_text(error)
+        fields["error"] = (
+            error if isinstance(error, str) else shown_text(error, exit_code)
+        )
     fields["error_class"] = (error_class or error_class_for(exit_code, error)).value
     fields["error_type"] = error_type or error_type_of(exit_code, error)
     fields.update(query_failure_ids(error))

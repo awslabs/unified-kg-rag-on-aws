@@ -92,8 +92,9 @@ from unified_kg_rag.shared.exceptions import (
     InvalidArgumentError,
     classify,
     shown_error_text,
+    shows_error_text,
 )
-from unified_kg_rag.shared.logging import log_error, log_failure
+from unified_kg_rag.shared.logging import log_error
 from unified_kg_rag.shared.utils import event_loop
 from unified_kg_rag.shared.utils.files import open_temporary, replace_together
 
@@ -605,14 +606,11 @@ def create_app(
         # Any other error of the package, by its class (ErrorClass) as every
         # surface names it: an unreachable store is a 503 store_unreachable,
         # a namespace without an index a 404 index_not_found.
-        if classify(e) is ErrorClass.FAILURE:
-            log_failure(
-                logger,
-                logging.ERROR,
-                "Console request failed: %s",
-                error=e,
-                traceback=True,
-            )
+        # Logged as MCP logs a tool's error and Ask a question's: all but a
+        # refusal and the deadline (log_error: an outage with its text, an
+        # unexpected failure by its type and where it happened).
+        if not shows_error_text(classify(e), "caller"):
+            log_error(logger, logging.ERROR, "Console request failed: %s", error=e)
         return _classified_error(e)
 
     async def _unreadable(_: Request, e: Exception) -> JSONResponse:

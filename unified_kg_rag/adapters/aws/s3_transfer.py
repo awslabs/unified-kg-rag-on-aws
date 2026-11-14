@@ -12,10 +12,12 @@ call S3, so parsing a path (``is_s3_uri``, from
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from unified_kg_rag.shared import AWSServiceError, ConfigurationError, get_logger
+from unified_kg_rag.shared.logging import log_error
 from unified_kg_rag.shared.utils.s3_uri import S3_SCHEME, is_s3_uri, split_s3_uri
 
 if TYPE_CHECKING:
@@ -103,8 +105,14 @@ def upload_directory_to_s3(
         except (ClientError, S3UploadFailedError, BotoCoreError) as e:
             # boto3's managed upload_file wraps ClientError in
             # S3UploadFailedError, so both count as a per-file failure.
-            logger.warning(
-                "Failed to upload '%s' to 's3://%s/%s': %s", path, bucket, key, e
+            log_error(
+                logger,
+                logging.WARNING,
+                "Failed to upload '%s' to 's3://%s/%s': %s",
+                path,
+                bucket,
+                key,
+                error=e,
             )
             failed.append(key)
             continue

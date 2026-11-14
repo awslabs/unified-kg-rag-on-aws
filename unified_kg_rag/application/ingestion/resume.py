@@ -12,6 +12,7 @@ config they read, and it keeps a delegating method for each public one.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from unified_kg_rag.application.ingestion.incremental import delta_still_applies
@@ -35,6 +36,7 @@ from unified_kg_rag.shared import (
     PipelineStateError,
     get_logger,
 )
+from unified_kg_rag.shared.logging import log_error
 
 if TYPE_CHECKING:
     from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
@@ -150,7 +152,13 @@ def prepare_resume(
         )
         return context, start_stage_name
     except (PipelineResumeError, PipelineStateError) as e:
-        logger.error("Failed to prepare resume for pipeline '%s': %s", pipeline_id, e)
+        log_error(
+            logger,
+            logging.ERROR,
+            "Failed to prepare resume for pipeline '%s': %s",
+            pipeline_id,
+            error=e,
+        )
         raise PipelineExecutionError(f"Pipeline resume failed: {e}") from e
 
 
@@ -335,7 +343,12 @@ def rewind_on_missing_records(
     except NamespaceLeaseError:
         raise
     except Exception as e:  # noqa: BLE001 - the indexing stage meets the store
-        logger.warning("Checking the stored extraction records failed: %s", e)
+        log_error(
+            logger,
+            logging.WARNING,
+            "Checking the stored extraction records failed: %s",
+            error=e,
+        )
         return None
     if not missing:
         return None

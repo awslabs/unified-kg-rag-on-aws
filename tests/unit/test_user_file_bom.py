@@ -71,3 +71,25 @@ def test_prompt_tuning_corpus_text_keeps_no_mark(tmp_path: Path) -> None:
     (tmp_path / "b.md").write_text("plain", encoding="utf-8")
     texts = run_prompt_tuning.load_corpus_texts(tmp_path, max_docs=10)
     assert sorted(texts) == ["plain", "한빛상사는 부품을 공급한다."]
+
+
+def test_a_pre_parsed_document_with_a_mark_loads(tmp_path: Path) -> None:
+    # Regression (rv29): Document.from_json_file (the pre-parsed Document JSON
+    # input) read the mark as json.loads's "Unexpected UTF-8 BOM".
+    from unified_kg_rag.domain.models import Document
+
+    document = {
+        "document_id": "d1",
+        "file_name": "a.txt",
+        "file_path": "corpus/a.txt",
+        "page_content": "株式会社サンプル",
+    }
+    path = _with_bom(tmp_path / "doc.json", json.dumps(document, ensure_ascii=False))
+    assert Document.from_json_file(path).page_content == "株式会社サンプル"
+
+
+def test_decode_user_text_drops_a_leading_mark_as_read_user_text_does() -> None:
+    from unified_kg_rag.shared.utils.files import decode_user_text
+
+    assert decode_user_text(_BOM + "한빛상사".encode()) == "한빛상사"
+    assert decode_user_text("한빛상사".encode()) == "한빛상사"

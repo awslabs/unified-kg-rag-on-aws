@@ -12,6 +12,7 @@ warning, when tiktoken or its encoding file cannot be loaded.
 
 from __future__ import annotations
 
+import logging
 import threading
 from functools import lru_cache
 from typing import Any
@@ -22,6 +23,7 @@ from unified_kg_rag.adapters.llm.token_estimate import (
 )
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.logging import log_error
 
 logger = get_logger(__name__)
 
@@ -44,11 +46,13 @@ def load_encoding(name: str) -> Any | None:
         except Exception as e:  # noqa: BLE001 - any failure means "estimate"
             _failed.add(name)
             # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure - LLM token counts, not credentials
-            logger.warning(
+            log_error(
+                logger,
+                logging.WARNING,
                 "tiktoken encoding '%s' is unavailable (%s); counting tokens "
                 "with the script-aware estimate instead.",
                 name,
-                e,
+                error=e,
             )
             return None
         _encodings[name] = encoding

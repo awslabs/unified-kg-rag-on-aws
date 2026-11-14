@@ -174,7 +174,7 @@ from unified_kg_rag.shared import (
     get_logger,
     observability,
 )
-from unified_kg_rag.shared.exceptions import classify
+from unified_kg_rag.shared.exceptions import classify, operator_error_text
 from unified_kg_rag.shared.genai import ERROR_TYPE
 from unified_kg_rag.shared.logging import log_error
 from unified_kg_rag.shared.write_fence import check_write_fence
@@ -414,7 +414,10 @@ class PipelineStage(ABC):
                 end_time,
                 input_count,
                 output_count,
-                error_message=str(error),
+                # What a surface shows (an unexpected failure's text masked,
+                # at DEBUG in the log): the result is persisted (the run's
+                # metadata, its S3 checkpoint) and shown by every surface.
+                error_message=operator_error_text(error),
             )
             result.error_class = classify(error)
             # The model's error a stage failure was named after, else its own.
@@ -462,6 +465,7 @@ class PipelineStage(ABC):
                 "setting, not of the documents."
                 + _failed_files_note(error.failed_files),
                 failed_files=error.failed_files,
+                own_text=True,
             )
         elif not item_error_predicate(self.providers.llm_factory)(dominant):
             # Throttling, a 5xx or a timeout that outlasted the retries: the
@@ -473,6 +477,7 @@ class PipelineStage(ABC):
                 "service, not of the documents."
                 + _failed_files_note(error.failed_files),
                 failed_files=error.failed_files,
+                own_text=True,
             )
         else:
             return error, None
@@ -537,7 +542,7 @@ class PipelineStage(ABC):
                     f"Stage '{self.name}' received 0 inputs but requires input "
                     f"to function. {self._empty_input_hint()}"
                 )
-                raise PipelineStageError(error_msg)
+                raise PipelineStageError(error_msg, own_text=True)
             logger.info("Stage '%s' had no input to process", self.name)
             return
 
@@ -550,6 +555,7 @@ class PipelineStage(ABC):
             raise PipelineStageError(
                 error_msg + _failed_files_note(failed_files),
                 failed_files=list(failed_files),
+                own_text=True,
             )
 
         if output_count == 0:
@@ -2277,7 +2283,8 @@ class CommunityDetectionStage(_RegistryStage):
                 f"Community report generation failed for "
                 f"{len(failed_community_ids)} of {len(communities)} communities "
                 f"({failure_rate:.0%} > {max_failure_rate:.0%} tolerated by "
-                f"indexing.max_failure_rate). Check the report model errors above."
+                f"indexing.max_failure_rate). Check the report model errors above.",
+                own_text=True,
             )
         failed_ids = set(failed_community_ids)
         failed = [c for c in communities if c.id in failed_ids]
@@ -2767,7 +2774,8 @@ class IndexingStage(_RegistryStage):
                 "which stored documents to keep. Re-run from the "
                 "document_loading stage (--resume-from-stage document_loading) "
                 "once the doc-status registry is reachable, or set "
-                "indexing.reset: true to rebuild the stores."
+                "indexing.reset: true to rebuild the stores.",
+                own_text=True,
             )
 
         drift = None
@@ -3372,15 +3380,16 @@ class IndexingStage(_RegistryStage):
                 ),
                 None,
             )
-            error_msg = (
+            # The stage's own part is shown and logged; its first error, a
+            # store's (which may quote a document's text), only at DEBUG.
+            own = (
                 f"Indexing failed: {', '.join(failed_index_types)} "
                 f"exceeded the tolerated failure rate ({max_failure_rate:.0%}) or "
                 f"failed to index any items. This indicates a configuration or "
-                f"connectivity issue. "
-                + (
-                    f"First error: {first_error}"
-                    if first_error
-                    else "Check the logs above for specific errors."
-                )
+                f"connectivity issue; the WARNING and ERROR lines above name "
+                "each failed write."
             )
-            raise PipelineStageError(error_msg)
+            raise PipelineStageError(
+                own + (f" First error: {first_error}" if first_error else ""),
+                own_text=own,
+            )

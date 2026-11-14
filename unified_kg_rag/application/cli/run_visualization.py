@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
 from pathlib import Path
 from typing import Any
@@ -84,6 +85,8 @@ from unified_kg_rag.shared import (
     StoreConnectionError,
     get_logger,
 )
+from unified_kg_rag.shared.exceptions import InvalidArgumentError
+from unified_kg_rag.shared.logging import log_error
 from unified_kg_rag.shared.registry import Registry
 
 logger = get_logger(__name__)
@@ -139,9 +142,10 @@ def _to_communities(entries: list[dict[str, Any]]) -> list[Community]:
     return communities
 
 
-class InvalidVisualizationDataError(DataProcessingError):
-    """The visualization data file is not exported visualization JSON (exit 2,
-    as an invalid ``run-eval`` dataset)."""
+class InvalidVisualizationDataError(DataProcessingError, InvalidArgumentError):
+    """The visualization data file is not exported visualization JSON: an
+    input error (error class ``invalid_argument``, exit 2, as an invalid
+    ``run-eval`` dataset)."""
 
 
 def load_render_context(data_path: Path) -> RenderContext:
@@ -296,13 +300,15 @@ def _namespace_data(config: Any, args: argparse.Namespace) -> Path:
         found = newest_export([*directories, target.parent], suffix)
         if found is None:
             raise
-        logger.warning(
-            "The stores of namespace '%s' could not be read (%s): rendering its "
+        log_error(
+            logger,
+            logging.WARNING,
+            "The stores of namespace '%s' could not be read: rendering its "
             "newest export, '%s', which may be older than they are (pass "
-            "--config-path to read them)",
+            "--config-path to read them): %s",
             suffix,
-            e,
             found,
+            error=e,
         )
         return found
     if counts is None:
@@ -458,16 +464,14 @@ def main() -> int:
         # Raised, not returned: exits_on_sigterm prints the JSON status.
         raise SystemExit(EXIT_INTERRUPTED) from None
     except (ConfigurationError, InvalidVisualizationDataError) as e:
-        logger.error("Visualization input error: %s", e)
+        log_error(logger, logging.ERROR, "Visualization input error: %s", error=e)
         return failed(EXIT_USAGE, e)
-    except StoreConnectionError as e:
-        logger.error("Visualization failed: a store could not be reached: %s", e)
-        return failed(EXIT_FAILURE, e)
-    except Exception as e:
-        # Clean error line rather than a raw traceback (parity with the other
-        # CLIs); full detail goes to the log at debug level.
-        logger.error("Visualization failed: %s", e)
-        logger.debug("Traceback:", exc_info=True)
+    except Exception as e:  # noqa: BLE001 - logged, exit code
+        # A clean error line rather than a raw traceback, by the one rule of
+        # every surface (log_error): a store that could not be reached with
+        # its text, an unexpected failure's type and where it happened (text
+        # and traceback at DEBUG).
+        log_error(logger, logging.ERROR, "Visualization failed: %s", error=e)
         return failed(EXIT_FAILURE, e)
 
 

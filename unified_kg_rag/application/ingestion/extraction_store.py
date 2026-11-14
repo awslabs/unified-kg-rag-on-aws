@@ -20,6 +20,7 @@ after the extraction stages writes the same keys.
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from collections.abc import Callable, Collection, Iterable, Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -47,6 +48,7 @@ from unified_kg_rag.shared.exceptions import (
     StoreConnectionError,
     StoreRequestRejectedError,
 )
+from unified_kg_rag.shared.logging import log_error
 
 if TYPE_CHECKING:
     from unified_kg_rag.ports.indexer import VectorIndexer
@@ -145,8 +147,11 @@ class ExtractionStore:
             try:
                 self._indexer = self._build_indexer()
             except Exception as e:  # noqa: BLE001 - the store is a cache
-                logger.warning(
-                    "Extraction store unavailable, extracting every text unit: %s", e
+                log_error(
+                    logger,
+                    logging.WARNING,
+                    "Extraction store unavailable, extracting every text unit: %s",
+                    error=e,
                 )
                 self._unavailable = True
         return self._indexer
@@ -204,8 +209,12 @@ class ExtractionStore:
             ):
                 raise
             except Exception as e:  # noqa: BLE001 - the store is a cache
-                logger.warning(
-                    "Preparing the extraction store of '%s' failed: %s", suffix, e
+                log_error(
+                    logger,
+                    logging.WARNING,
+                    "Preparing the extraction store of '%s' failed: %s",
+                    suffix,
+                    error=e,
                 )
         if not self._reuse:
             return {}
@@ -214,11 +223,13 @@ class ExtractionStore:
             try:
                 payloads = store.read_extraction_records(sorted(by_key), suffix=suffix)
             except Exception as e:  # noqa: BLE001 - the store is a cache
-                logger.warning(
+                log_error(
+                    logger,
+                    logging.WARNING,
                     "Reading the extraction store of '%s' failed; extracting its "
                     "text units: %s",
                     suffix,
-                    e,
+                    error=e,
                 )
                 continue
             self._parse_into(found, payloads, by_key, parse)
@@ -262,8 +273,12 @@ class ExtractionStore:
             except NamespaceLeaseError:
                 raise
             except Exception as e:  # noqa: BLE001 - the store is a cache
-                logger.warning(
-                    "Reading the extraction store of '%s' failed: %s", suffix, e
+                log_error(
+                    logger,
+                    logging.WARNING,
+                    "Reading the extraction store of '%s' failed: %s",
+                    suffix,
+                    error=e,
                 )
         return found
 
@@ -281,8 +296,12 @@ class ExtractionStore:
             except NamespaceLeaseError:
                 raise
             except Exception as e:  # noqa: BLE001 - the store is a cache
-                logger.warning(
-                    "Writing the extraction records of '%s' failed: %s", suffix, e
+                log_error(
+                    logger,
+                    logging.WARNING,
+                    "Writing the extraction records of '%s' failed: %s",
+                    suffix,
+                    error=e,
                 )
                 continue
             if stats.failed_items:
@@ -316,8 +335,12 @@ class ExtractionStore:
             try:
                 stats = store.write_extraction_records(records, suffix=suffix)
             except Exception as e:  # noqa: BLE001 - the caller fails the units
-                logger.warning(
-                    "Writing the extraction records of '%s' failed: %s", suffix, e
+                log_error(
+                    logger,
+                    logging.WARNING,
+                    "Writing the extraction records of '%s' failed: %s",
+                    suffix,
+                    error=e,
                 )
                 unsaved.update(u.id for units in by_key.values() for u in units)
                 continue

@@ -52,7 +52,11 @@ from unified_kg_rag.evaluation.evaluation_manager import (
     _WARM_UP_QUESTION,
     GraphAwareEvaluator,
 )
-from unified_kg_rag.shared import ConfigurationError, EvaluationException
+from unified_kg_rag.shared import (
+    ConfigurationError,
+    EvaluationException,
+    StoreConnectionError,
+)
 from unified_kg_rag.shared.usage import record_llm_call
 
 pytestmark = pytest.mark.unit
@@ -970,7 +974,12 @@ class TestErroredQueries:
                 ),
                 "Who audits Acme?": _rag_output(
                     DEFAULT_ERROR_MESSAGE,
-                    {"error": True, "processing_time": 9.0},
+                    {
+                        "error": True,
+                        "processing_time": 9.0,
+                        "error_type": "QueryTimeoutError",
+                        "error_class": "timeout",
+                    },
                     error="upstream timeout",
                 ),
             }
@@ -992,7 +1001,7 @@ class TestErroredQueries:
 
         errored = {r.query_id: r for r in results}["q2"]
         assert errored.error is True
-        assert errored.error_message == "upstream timeout"
+        assert errored.error_message == "[timeout] QueryTimeoutError: upstream timeout"
         assert {r.query_id: r for r in results}["q1"].error is False
 
         # The apology text is not scored by any evaluator.
@@ -1015,6 +1024,29 @@ class TestErroredQueries:
         )
         assert EvaluationManager._detect_generation_error(None, {}) is not None
         assert EvaluationManager._detect_generation_error({"answer": "a"}, {}) is None
+
+    def test_an_unexpected_failure_s_text_is_not_saved(self) -> None:
+        # Regression (rv29 logging #3): the saved results held the text of
+        # an absorbed failure (a provider's reply quoting the prompt), and
+        # nothing of an answer that failed every attempt but "returned no
+        # result".
+        absorbed = EvaluationManager._detect_generation_error(
+            _rag_output(DEFAULT_ERROR_MESSAGE, {}, error="Quokkasecret said"),
+            {"error": True, "error_type": "ResponseError", "error_class": "failure"},
+        )
+        assert absorbed == "[failure] ResponseError"
+        error = RuntimeError("Quokkasecret said")
+        error.status_code = 400  # type: ignore[attr-defined]
+        failed = EvaluationManager._detect_generation_error(
+            BATCH_ITEM_FAILED, {}, error
+        )
+        assert failed == "[failure] RuntimeError, HTTP 400"
+        outage = EvaluationManager._detect_generation_error(
+            BATCH_ITEM_FAILED, {}, StoreConnectionError("OpenSearch is down")
+        )
+        assert outage == (
+            "[store_unreachable] StoreConnectionError: OpenSearch is down"
+        )
 
     def test_error_flag_without_detail_has_generic_message(self) -> None:
         msg = EvaluationManager._detect_generation_error(

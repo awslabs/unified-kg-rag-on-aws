@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import copy
+import logging
 import math
 from collections import defaultdict
 from collections.abc import Callable, Iterable
@@ -17,6 +18,7 @@ from unified_kg_rag.domain.models import (
     TextUnit,
 )
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.logging import log_error
 from unified_kg_rag.shared.utils import (
     clean_display_name,
     entity_key,
@@ -332,8 +334,12 @@ class BaseProcessor:
                 updated_at=datetime.now(),
             )
         except Exception as e:  # noqa: BLE001 - isolate one malformed entity
-            logger.warning(
-                "Failed to parse entity in text unit '%s': %s", text_unit.short_id, e
+            log_error(
+                logger,
+                logging.WARNING,
+                "Failed to parse entity in text unit '%s': %s",
+                text_unit.short_id,
+                error=e,
             )
             logger.debug("Unparsed entity name: '%s'", entity_data.get("name"))
             return None
@@ -446,10 +452,12 @@ class BaseProcessor:
                 updated_at=datetime.now(),
             )
         except Exception as e:  # noqa: BLE001 - isolate one malformed relationship
-            logger.warning(
+            log_error(
+                logger,
+                logging.WARNING,
                 "Failed to parse relationship in text unit '%s': %s",
                 text_unit.short_id,
-                e,
+                error=e,
             )
             logger.debug(
                 "Unparsed relationship: '%s' -> '%s'", raw_source_name, raw_target_name

@@ -234,4 +234,4 @@ app = build_mcp_app(chain, namespace="default", allowed_hosts=["mcp.example.com"
 | `is not a loopback address ... needs --allow-remote` | Bind `127.0.0.1`, or add `--allow-remote` behind an authenticating proxy |
 | `Strategy '...' is not offered` / `does not hold` | Call `kg_describe_schema` and pick a listed strategy |
 | `holds no knowledge graph` | The namespace was built with `raptor` only; the graph tools need graphrag, lightrag or hipporag |
-| `The call failed inside the server` | Read the server's stderr log |
+| `The call failed with an unexpected error` | Read the server's stderr log |
