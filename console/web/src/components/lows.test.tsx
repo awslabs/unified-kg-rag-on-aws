@@ -7,10 +7,10 @@ import { I18nProvider, makeI18n, translate } from "../i18n/i18n";
 import { contentLang } from "../lib/contentLang";
 import type { Source } from "../lib/types";
 import { EvidenceTrace } from "./EvidenceTrace";
-import { stageName } from "./JobPanel";
+import { isBudgetStop, stageName } from "./JobPanel";
 import { formatBytes } from "./ui";
 import { fitting, NAV_FOLDED } from "../lib/useCompactNav";
-import { BudgetNotice, questionTitle } from "../pages/IngestPage";
+import { BudgetNotice, questionTitle, runModelCalls } from "../pages/IngestPage";
 import type { JobRecord } from "../lib/types";
 
 describe("small copy", () => {
@@ -41,7 +41,7 @@ describe("small copy", () => {
     // A run stopped at processing.max_run_* exits 1 (failed) with the
     // limit_exceeded class: its finished stages are kept, so running it
     // again resumes it.
-    const job = { status: "failed", result: { error_class: "limit_exceeded" } } as unknown as JobRecord;
+    const job = { kind: "ingest", status: "failed", result: { error_class: "limit_exceeded" } } as unknown as JobRecord;
     let resumed = 0;
     const { rerender } = render(
       <I18nProvider initial="ko">
@@ -57,7 +57,7 @@ describe("small copy", () => {
       }
     }
     // Another failure, or a run that ended otherwise, offers nothing.
-    for (const other of [{ status: "failed", result: { error_class: "failure" } }, { status: "succeeded", result: { error_class: "limit_exceeded" } }]) {
+    for (const other of [{ kind: "ingest", status: "failed", result: { error_class: "failure" } }, { kind: "ingest", status: "succeeded", result: { error_class: "limit_exceeded" } }]) {
       rerender(
         <I18nProvider initial="ko">
           <BudgetNotice job={other as unknown as JobRecord} disabled={false} onResume={() => undefined} />
@@ -65,6 +65,33 @@ describe("small copy", () => {
       );
       expect(screen.queryByText(translate("ko", "ingest.budget.title"))).not.toBeInTheDocument();
     }
+  });
+
+  it("says a budget stop once and counts its model calls from its stages", () => {
+    // Regression (W1 review D10): the generic "The run failed" notice stood
+    // above the budget notice, and the calls read "-" (a stopped run's
+    // status has no token_usage).
+    const stopped = {
+      kind: "ingest",
+      status: "failed",
+      result: { error_class: "limit_exceeded", status: "failed" },
+      progress: {
+        done: 2,
+        total: 5,
+        stages: [
+          { name: "graph_extraction", status: "stopped", llm_calls: 4 },
+          { name: "text_chunking", status: "restored", llm_calls: 9 },
+          { name: "document_parsing", status: "completed", llm_calls: null },
+        ],
+      },
+    } as unknown as JobRecord;
+    expect(isBudgetStop(stopped)).toBe(true);
+    expect(isBudgetStop({ ...stopped, kind: "evaluate" } as JobRecord)).toBe(false);
+    expect(isBudgetStop({ ...stopped, result: { error_class: "failure" } } as JobRecord)).toBe(false);
+    // This run's calls: a restored stage's were an earlier run's.
+    expect(runModelCalls(stopped)).toBe(4);
+    const finished = { ...stopped, status: "succeeded", result: { token_usage: { llm_calls: 12 } } } as unknown as JobRecord;
+    expect(runModelCalls(finished)).toBe(12);
   });
 
   it("puts a byte count in the plural", () => {

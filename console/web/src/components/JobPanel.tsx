@@ -85,7 +85,7 @@ export function JobPanel({ jobId, onEnded, children }: { jobId: string; onEnded?
           {data.kind === "ingest" ? t("job.stoppedIngest") : interleaved ? t("job.stoppedInterleaved") : t("job.stoppedEvaluate")}
         </Notice>
       ) : null}
-      {data.status === "failed" ? (
+      {data.status === "failed" && !isBudgetStop(data) ? (
         <Notice tone="bad" title={t("job.failedTitle")}>
           {data.masked_error ? t("job.failedUnexpected", { name: data.masked_error }) : (data.error ?? t("job.failedNoMessage"))}
         </Notice>
@@ -105,6 +105,13 @@ export function JobPanel({ jobId, onEnded, children }: { jobId: string; onEnded?
       </details>
     </div>
   );
+}
+
+/** Whether an ingestion stopped at its budget (processing.max_run_*:
+ * error class limit_exceeded), which the Ingest page says with its own
+ * notice, offering to resume it, instead of the generic failure. */
+export function isBudgetStop(job: Pick<JobRecord, "kind" | "status" | "result">): boolean {
+  return job.kind === "ingest" && job.status === "failed" && job.result?.error_class === "limit_exceeded";
 }
 
 /** A pipeline stage's name in the page's language (its id when the

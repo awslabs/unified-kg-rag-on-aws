@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 import { useMemo, useState } from "react";
-import { JobPanel } from "../components/JobPanel";
+import { isBudgetStop, JobPanel } from "../components/JobPanel";
 import { Empty, ErrorText, formatBytes, JobStatusBadge, Loading, Notice, PageHead, Sheet } from "../components/ui";
 import { useI18n } from "../i18n/i18n";
 import { errorMessage, get, send, upload } from "../lib/api";
@@ -382,9 +382,9 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
  * processing.max_run_usd: error class limit_exceeded) kept its finished
  * stages and answered calls: running it again (the same corpus and
  * namespace, so the same pipeline id) resumes it. */
-export function BudgetNotice({ job, disabled, onResume }: { job: Pick<JobRecord, "status" | "result">; disabled: boolean; onResume: () => void }) {
+export function BudgetNotice({ job, disabled, onResume }: { job: Pick<JobRecord, "kind" | "status" | "result">; disabled: boolean; onResume: () => void }) {
   const { t } = useI18n();
-  if (job.status !== "failed" || job.result?.error_class !== "limit_exceeded") return null;
+  if (!isBudgetStop(job)) return null;
   return (
     <Notice tone="warn" title={t("ingest.budget.title")}>
       <p style={{ margin: "0 0 8px" }}>{t("ingest.budget.help")}</p>
@@ -424,6 +424,16 @@ export function RunFlags({ job }: { job: JobRecord }) {
   );
 }
 
+/** A run's model calls: its result's usage, else (a run that stopped
+ * before its result, as at its budget) the sum of its stages' calls, a
+ * restored stage's being an earlier run's; undefined when none says. */
+export function runModelCalls(job: Pick<JobRecord, "result" | "progress">): number | undefined {
+  const usage = job.result?.token_usage as Record<string, number> | undefined;
+  if (usage?.llm_calls != null) return usage.llm_calls;
+  const stages = (job.progress?.stages ?? []).filter((s) => s.status !== "restored" && s.llm_calls != null);
+  return stages.length ? stages.reduce((sum, s) => sum + (s.llm_calls ?? 0), 0) : undefined;
+}
+
 export function IngestResult({ job }: { job: JobRecord }) {
   const { t } = useI18n();
   const result = job.result as Record<string, unknown> | null;
@@ -434,7 +444,7 @@ export function IngestResult({ job }: { job: JobRecord }) {
   return (
     <>
       {noEntities ? <Notice tone="warn" title={t("ingest.result.noEntitiesTitle")}>{t("ingest.result.noEntities")}</Notice> : null}
-      <IngestCounts result={result} usage={usage} warnings={warnings.count} pipelineId={job.pipeline_id} />
+      <IngestCounts result={result} usage={{ ...usage, llm_calls: runModelCalls(job) as number }} warnings={warnings.count} pipelineId={job.pipeline_id} />
       {warnings.lines.length ? (
         <details>
           <summary>{t("ingest.result.showWarnings")}</summary>
