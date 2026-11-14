@@ -166,12 +166,13 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
   DRIFT는 점수가 높은 후속 질의부터 실행하고, iterative는 라운드를 멈춥니다
   (`stop_reason: query_limit`).
 - `auto`는 라우터 호출 뒤에 남은 호출 수 안에 최소 호출 수(`fewest_model_calls`와 답변)가
-  들어가는 전략으로만 분기하고, 미리 시작하는 추출은 하지 않습니다. 제외한 전략은
-  `metadata.routing.over_limits`에 남습니다.
+  들어가는 전략으로만 분기하고, 제외한 전략은 `metadata.routing.over_limits`에 남습니다.
+  두 한도 가운데 하나라도 있으면 미리 시작하는 추출은 하지 않습니다.
 - 답변 컨텍스트는 남은 입력 토큰에서 프롬프트 몫인
   `search.token_manager.context_window_headroom_ratio`를 뺀 만큼으로 줄입니다.
 - 답변 호출이 들어가지 못하는 질의는 `UsageLimitExceededError`(`unified_kg_rag`에서 내보냄,
-  오류 분류 `limit_exceeded`, 종료 코드 `1`)로 실패하고, `processing.ignore_errors`를 켜면
+  오류 분류 `limit_exceeded`, 종료 코드 `1`. 호출하는 쪽의 오류로 보고 `query_failed` 지표에는
+  세지 않음)로 실패하고, `processing.ignore_errors`를 켜면
   오류 답변을 돌려줍니다.
 
 호출하는 쪽은 질의 하나에 대해 세 한도를 낮출 수만 있고 올릴 수는 없습니다.

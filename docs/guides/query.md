@@ -187,14 +187,16 @@ is refused before its request is sent:
   global maps its most relevant report batches, DRIFT its best follow-ups,
   iterative stops its rounds (`stop_reason: query_limit`).
 - `auto` routes only to strategies whose fewest calls (`fewest_model_calls`
-  and the answer) fit after its router call, and starts no speculative
-  extraction; `metadata.routing.over_limits` names those it left out.
+  and the answer) fit after its router call
+  (`metadata.routing.over_limits` names those it left out), and under
+  either limit starts no speculative extraction.
 - The answer's context is cut to the input tokens left, less
   `search.token_manager.context_window_headroom_ratio` of them for the
   prompt.
 - A query whose answer call does not fit fails with
   `UsageLimitExceededError` (exported from `unified_kg_rag`; error class
-  `limit_exceeded`, exit code `1`), or returns the error answer under
+  `limit_exceeded`, exit code `1`; a caller's error, not counted in the
+  `query_failed` metric), or returns the error answer under
   `processing.ignore_errors`.
 
 A caller lowers any of the three for one query, never raises them:

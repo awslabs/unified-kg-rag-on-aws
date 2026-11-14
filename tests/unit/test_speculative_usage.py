@@ -404,3 +404,19 @@ async def test_a_call_limit_starts_no_speculative_extraction() -> None:
     assert out.metadata["search_strategy"] == "simple"
     assert model.started == ["router", "answer"]
     assert out.metadata["usage"]["llm_calls"] == 2
+
+
+async def test_an_input_token_limit_starts_no_speculative_extraction() -> None:
+    # Under search.query_max_input_tokens alone the extraction the route
+    # does not read would spend tokens the answer may need, as a call
+    # would under a call limit.
+    from unified_kg_rag import QueryLimits
+
+    model = _ThreadedChat()
+    chain = _chain(model)
+    query = _auto().model_copy(
+        update={"limits": QueryLimits(max_input_tokens=1_000_000)}
+    )
+    out = await asyncio.wait_for(chain.ainvoke(query), 30)
+    assert out.metadata["search_strategy"] == "simple"
+    assert model.started == ["router", "answer"]

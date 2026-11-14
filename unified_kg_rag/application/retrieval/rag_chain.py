@@ -971,13 +971,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         closes.
         """
         processing = state.get("enable_query_processing", True)
-        # Not under a call limit: a speculative extraction the route does not
-        # read spends a call the query may need.
+        # Not under a call or input-token limit: a speculative extraction
+        # the route does not read spends a call and tokens the query may
+        # need.
         prefetch: dict[str, asyncio.Future[Any]] | None = (
             {}
             if processing
             and self.config.search.auto_speculative_extraction
-            and usage.remaining().llm_calls is None
+            and usage.remaining() == usage.Remaining()
             else None
         )
         try:
