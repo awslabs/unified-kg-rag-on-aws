@@ -1868,6 +1868,9 @@ class EvaluationRunner:
                     "search_type": self.args.search_type,
                     "top_k": self.args.top_k,
                     "retrieval_multiplier": self.args.retrieval_multiplier,
+                    # A dataset item's own effort wins; unset (None, dropped):
+                    # the answer model tier's.
+                    "effort": self.args.effort,
                 },
                 # The keys the chain would refuse per query, refused now.
                 check_filter_keys=getattr(self.rag_chain, "check_filter_keys", None),
@@ -2510,7 +2513,14 @@ _SAVED_EXPECTATIONS = (
 # The query settings a run answered with (its strategy and query flags):
 # a --rescore dataset does not overwrite them.
 _RUN_METADATA = frozenset(
-    {"search_strategy", "suffix", "search_type", "top_k", "retrieval_multiplier"}
+    {
+        "search_strategy",
+        "suffix",
+        "search_type",
+        "top_k",
+        "retrieval_multiplier",
+        "effort",
+    }
 )
 # The manifest entries a re-score replaces: how the answers were scored.
 # What answered them (models, index, configuration, run order) stays.

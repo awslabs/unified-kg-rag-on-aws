@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+from typing import get_args
 
 from unified_kg_rag.application.cli.conventions import add_removed_flag
 from unified_kg_rag.domain.models import (
@@ -13,6 +14,7 @@ from unified_kg_rag.domain.models import (
     SearchType,
     validate_safe_name,
 )
+from unified_kg_rag.domain.models.config import EffortLevel
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.shared import get_logger
 
@@ -102,10 +104,24 @@ def add_query_arguments(
         "processing.document_parsing.index_value, as ingestion writes, else "
         "'default'); must match the index_value the corpus was ingested with",
     )
+    efforts = get_args(EffortLevel)
+    parser.add_argument(
+        "--effort",
+        choices=efforts,
+        default=None,
+        help="Reasoning effort of the answer (RAGInput.effort): the answer "
+        "model reasons at that level, a deeper one at more output tokens and "
+        "latency; only the answer call takes it (the query's other calls keep "
+        "their tier's). A model that does not reason, or does not take the "
+        "level, refuses it before any call (exit 2). Default: the answer "
+        "model's tier effort (aws.bedrock.default_effort). A search (run-rag "
+        "--mode search) makes no answer and ignores it",
+    )
     add_removed_flag(
         parser,
         "--enable-thinking",
-        "the default models (Claude 5.x) always reason; tune their depth with "
+        f"set the answer's reasoning effort with --effort {{{','.join(efforts)}}} "
+        "(RAGInput.effort); the default models (Claude 5.x) always reason, at "
         "aws.bedrock.default_effort / fast_effort in the config",
     )
     if multiple_strategies:

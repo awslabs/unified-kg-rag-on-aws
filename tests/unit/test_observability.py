@@ -957,6 +957,53 @@ async def test_a_query_is_tied_to_its_namespace_logs_trace_and_metrics(
     assert dimensions == {"Strategy": "simple", "namespace": "default"}
 
 
+async def test_a_query_s_effort_and_limits_tag_its_span_and_metrics(
+    tracing: Tracing,
+) -> None:
+    # rv33: cost could not be attributed by effort level, nor a limit hit by
+    # the limit in force.
+    from unified_kg_rag import QueryLimits
+
+    exporter = tracing()
+    chain = _simple_chain()
+    chain.config.search.query_max_model_calls = 5
+    sink = _RecordingSink()
+    chain.providers.metrics_sink = sink
+    query = _SIMPLE_QUERY.model_copy(
+        update={"limits": QueryLimits(max_model_calls=3, max_input_tokens=50_000)}
+    )
+    try:
+        await chain.ainvoke(query)
+        await chain.ainvoke(_SIMPLE_QUERY)
+    finally:
+        await chain.aclose()
+    limited, plain = (
+        s for s in exporter.get_finished_spans() if s.name == "kg_rag.query"
+    )
+    # The limits in force: the config's, lowered by the query's own.
+    assert _attrs(limited)["kg_rag.limits.max_model_calls"] == 3
+    assert _attrs(limited)["kg_rag.limits.max_input_tokens"] == 50_000
+    assert "kg_rag.effort" not in _attrs(limited)
+    assert _attrs(plain)["kg_rag.limits.max_model_calls"] == 5
+    assert "kg_rag.limits.max_input_tokens" not in _attrs(plain)
+    (_, _, first), (_, _, second) = sink.emitted
+    assert first["limits.max_model_calls"] == "3"
+    assert first["limits.max_input_tokens"] == "50000"
+    assert second["limits.max_model_calls"] == "5"
+    assert "effort" not in first
+
+
+def test_an_effort_tags_the_query_s_span_and_metrics() -> None:
+    chain = _simple_chain()
+    settings = chain._spend_settings(
+        _SIMPLE_QUERY.model_copy(update={"effort": "high"})
+    )
+    assert settings == {"effort": "high"}
+    # A refused input's, as it was given.
+    assert chain._spend_settings({"query": "q", "effort": "max"}) == {"effort": "max"}
+    assert chain._spend_settings({"query": "q"}) == {}
+
+
 async def test_a_failed_query_is_counted_and_a_search_is_not(
     tracing: Tracing,
 ) -> None:

@@ -103,6 +103,7 @@ def test_run_rag_banner_prints_the_query_literally(
         search_type="hybrid",
         top_k=5,
         retrieval_multiplier=2,
+        effort=None,
         use_memory=False,
         interactive=False,
         disable_query_processing=False,

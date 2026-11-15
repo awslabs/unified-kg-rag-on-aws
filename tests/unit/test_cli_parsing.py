@@ -246,6 +246,73 @@ async def test_rag_async_main_turns_system_exit_into_a_return_code(
     assert await run_rag_chain.async_main(args) == 1
 
 
+@pytest.mark.parametrize("cli", ["run-rag", "run-eval"])
+def test_effort_sets_the_answer_s_reasoning_effort(
+    cli: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    build, required = (
+        (_rag_parser, ["-q", "hi"])
+        if cli == "run-rag"
+        else (_eval_parser, ["--data-path", "e.json"])
+    )
+    assert build().parse_args(required).effort is None
+    assert build().parse_args([*required, "--effort", "high"]).effort == "high"
+    with pytest.raises(SystemExit) as stopped:
+        build().parse_args([*required, "--effort", "extreme"])
+    assert stopped.value.code == 2
+    assert "invalid choice: 'extreme'" in capsys.readouterr().err
+
+
+def test_run_rag_asks_with_the_effort_flag(config, mocker) -> None:
+    mocker.patch.object(run_rag_chain, "load_cli_config", return_value=config)
+    args = _rag_parser().parse_args(["-q", "hi", "--effort", "low"])
+    runner = run_rag_chain.RAGChainRunner(args)
+    rag_input = runner._rag_input(
+        "hi", conversation_id=None, use_memory=False, filters=None
+    )
+    assert rag_input.effort == "low"
+
+
+async def test_run_eval_answers_every_query_at_the_effort_flag(
+    config, mocker, tmp_path
+) -> None:
+    import json
+
+    config.evaluation.enabled_evaluators = [EvaluatorType.ANSWER_MATCH]
+    mocker.patch.object(run_evaluation, "display_ascii_art")
+    data = tmp_path / "eval.json"
+    data.write_text(
+        json.dumps(
+            [
+                {"question": "Who ships?", "answer": "Vendor"},
+                # An item's own effort wins.
+                {
+                    "question": "Who buys?",
+                    "answer": "Vendor",
+                    "metadata": {"effort": "max"},
+                },
+            ]
+        )
+    )
+    chain = _StrategyChain()
+    args = _eval_parser().parse_args(
+        [
+            "--data-path",
+            str(data),
+            "--output-directory",
+            str(tmp_path / "out"),
+            "--search-strategy",
+            "local",
+            "--effort",
+            "medium",
+        ]
+    )
+    assert await run_evaluation.EvaluationRunner(args, chain, config).run() == 0
+    answered = dict(zip(chain.questions, chain.efforts, strict=True))
+    assert answered["Who ships?"] == "medium"
+    assert answered["Who buys?"] == "max"
+
+
 def test_rag_runner_accepts_query(config, mocker) -> None:
     mocker.patch.object(run_rag_chain, "load_cli_config", return_value=config)
     args = _rag_parser().parse_args(["-q", "hi"])
@@ -256,8 +323,8 @@ def test_rag_runner_accepts_query(config, mocker) -> None:
 @pytest.mark.parametrize(
     ("cli", "flag", "says"),
     [
-        ("run-rag", "--enable-thinking", "default_effort"),
-        ("run-eval", "--enable-thinking", "default_effort"),
+        ("run-rag", "--enable-thinking", "--effort {low,medium,high,xhigh,max}"),
+        ("run-eval", "--enable-thinking", "--effort {low,medium,high,xhigh,max}"),
         ("run-rag", "--use-memory", "--interactive"),
         ("run-eval", "--verbose", "--log-level DEBUG"),
         ("run-eval", "-v", "--log-level DEBUG"),
@@ -1361,11 +1428,13 @@ class _StrategyChain:
     def __init__(self) -> None:
         self.strategies: list[str] = []
         self.questions: list[str] = []
+        self.efforts: list[str | None] = []
 
     async def ainvoke(self, inputs, config=None):
         requested = inputs.get("search_strategy", "auto")
         self.strategies.append(requested)
         self.questions.append(inputs["query"])
+        self.efforts.append(inputs.get("effort"))
         used = "local" if requested == "auto" else requested
         answer = "Vendor" if used == "local" else "Buyer"
         meta = {"search_strategy": used, "processing_time": 0.1}

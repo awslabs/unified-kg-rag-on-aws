@@ -180,6 +180,7 @@ _WARM_UP_KEYS = (
     "search_type",
     "top_k",
     "retrieval_multiplier",
+    "effort",
 )
 
 

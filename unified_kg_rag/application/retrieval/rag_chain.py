@@ -2907,6 +2907,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             properties["namespace"] = str(namespace)
         if error_class is not None:
             properties["error_class"] = error_class.value
+        # What it was let spend, to attribute cost and limit hits by.
+        properties.update(
+            {key: str(value) for key, value in self._spend_settings(query).items()}
+        )
         try:
             self.providers.metrics_sink.emit(
                 QUERY_METRICS_NAMESPACE, metrics, properties
@@ -3004,7 +3008,31 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             "kg_rag.requested_strategy": rag_input.search_strategy,
             "kg_rag.top_k": rag_input.top_k,
             "kg_rag.use_memory": rag_input.use_memory,
+            **{
+                f"kg_rag.{key}": value
+                for key, value in self._spend_settings(rag_input).items()
+            },
         }
+
+    def _spend_settings(self, query: RAGInput | dict[str, Any]) -> dict[str, Any]:
+        """What a query was let spend, as its span's attributes and its
+        metrics record's properties name it: its answer's ``effort`` and
+        its model-call and input-token limits in force (``_query_limits``:
+        the config's, lowered by its own), each when set (its deadline
+        names itself when it passes: ``error_class`` timeout); of an input
+        the admission refused, its ``effort`` alone."""
+        if not isinstance(query, RAGInput):
+            effort = query.get("effort") if isinstance(query, dict) else None
+            return {"effort": effort} if isinstance(effort, str) else {}
+        settings: dict[str, Any] = (
+            {} if query.effort is None else {"effort": query.effort}
+        )
+        limits = self._query_limits(query)
+        for field in ("max_model_calls", "max_input_tokens"):
+            value = getattr(limits, field)
+            if value is not None:
+                settings[f"limits.{field}"] = value
+        return settings
 
     @staticmethod
     def _query_outcome_attributes(

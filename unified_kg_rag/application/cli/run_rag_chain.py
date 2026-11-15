@@ -776,6 +776,7 @@ class RAGChainRunner:
             top_k=self.args.top_k,
             retrieval_multiplier=self.args.retrieval_multiplier,
             enable_query_processing=not self.args.disable_query_processing,
+            effort=self.args.effort,
         )
 
     async def _run_query(self, rag_input: RAGInput) -> dict[str, Any]:
@@ -900,6 +901,7 @@ class RAGChainRunner:
             f"[dim]Search Type:[/dim] {self.args.search_type}",
             f"[dim]Top K Results:[/dim] {self.args.top_k}",
             f"[dim]Retrieval Multiplier:[/dim] {self.args.retrieval_multiplier}",
+            f"[dim]Answer Effort:[/dim] {self.args.effort or 'the model tier default'}",
             f"[dim]Conversation Memory:[/dim] {self.args.interactive}",
             f"[dim]Query Processing:[/dim] {not self.args.disable_query_processing}",
             f"[dim]Verbose Output:[/dim] {self.args.verbose}",

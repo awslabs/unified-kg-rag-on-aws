@@ -536,6 +536,7 @@ _POOLED_CLI_ARGS = (
     "top_k",
     "search_type",
     "retrieval_multiplier",
+    "effort",
 )
 
 
