@@ -210,6 +210,16 @@ holds:
   `run-describe`'s `rebuild`; the run's community drift too), `{}` when none
   is
   ([Incremental indexing: Rebuild due](../guides/incremental.md#rebuild-due)).
+- **`run-ingestion --estimate`** (nothing is run): `documents` (those
+  left after `processing.deduplicate`), `text_units`, `text_unit_tokens`,
+  `stages` (each estimated stage's `stage`, `role`, `model`, `calls`,
+  `input_tokens`, `output_tokens`, `usd`, `null` without a price, and
+  `bound`: `exact`, `at most` or `about`, over the units of an intelligent
+  chunking), their totals `calls`, `input_tokens`, `output_tokens` and `usd`
+  (`null` when a model has no price), the `unpriced_models`, `not_estimated`
+  (the graph-dependent stages, each with what it calls the model for) and
+  `output_tokens_per_input_token`
+  ([Ingest: Run budget and cost estimate](../guides/ingest.md#run-budget-and-cost-estimate)).
 - **`run-eval`**: the `output_directory`, `upload_error`, each run's summary
   (`runs`), the `comparison`, the failure-budget breaches
   (`failure_budget_breaches`) and the failed gates (`gate_failures`); a

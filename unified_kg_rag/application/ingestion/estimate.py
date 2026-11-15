@@ -3,8 +3,9 @@
 """``run-ingestion --estimate``: a corpus's model calls, tokens and USD
 before a run (``domain.ingestion.estimate``).
 
-The corpus is parsed and chunked as a full build of it would (the stages'
-own parser and chunkers, no model call: an intelligent chunking is cut as
+The corpus is parsed, deduplicated and chunked as a full build of it would
+(the stages' own parser, deduplication and chunkers, no model call: an
+intelligent chunking is cut as
 its chunker cuts a pre-chunk no boundary answer came for, ``PreChunker``),
 and each stage whose calls the text units decide is counted: one call per
 unit for the extraction, the claims and each translation language, one per
@@ -25,6 +26,7 @@ from datetime import datetime
 from pathlib import Path
 
 from unified_kg_rag.adapters.ingestion.chunker import PreChunker, SimpleTextChunker
+from unified_kg_rag.adapters.ingestion.loader import DirectoryLoader
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.application.ingestion.pipeline_stages import DocumentParsingStage
 from unified_kg_rag.domain.ingestion.delta_detector import assign_document_identity
@@ -75,7 +77,9 @@ def _prompt_tokens(prompt: type[BasePrompt], config: Config) -> int:
 
 def _parse(config: Config, source: Path) -> list[Document]:
     """The corpus's documents, parsed by the parsing stage (no registry:
-    the estimate is a full build's) with their identity assigned."""
+    the estimate is a full build's) with their identity assigned, without
+    the near-duplicates ``processing.deduplicate`` drops (the loading
+    stage's deduplication)."""
     context = PipelineContext(
         pipeline_id="estimate",
         config=PipelineConfig(),
@@ -89,6 +93,10 @@ def _parse(config: Config, source: Path) -> list[Document]:
     documents = [d for d in context.documents if not is_seed_document(d)]
     for document in documents:
         assign_document_identity(document, source)
+    if config.processing.deduplicate:
+        documents = DirectoryLoader(source).deduplicate_documents(
+            documents, threshold=config.processing.deduplicate_similarity_threshold
+        )
     return documents
 
 
