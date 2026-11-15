@@ -358,6 +358,9 @@ class TestStatedNumbers:
             ("三千零五十家", {3050}),
             ("一億円", {100_000_000}),
             ("三千万元", {30_000_000}),
+            # Japanese 兆 (10^12) scales as 億 does.
+            ("一兆二千億円", {1_200_000_000_000}),
+            ("3兆円", {3_000_000_000_000}),
         ],
     )
     def test_cjk_counters_and_multipliers(self, text: str, numbers: set[float]) -> None:

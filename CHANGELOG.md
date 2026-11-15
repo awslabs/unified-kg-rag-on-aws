@@ -156,6 +156,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   path, is gone). A warning the package emits for a deprecated API now names the caller's
   line under `from unified_kg_rag import ...` too (it named a frame of the import machinery).
 
+### Upgrading
+From 0.3.0.
+1. With `processing.deduplicate` on, a run drops more near-duplicates than 0.3.0 did (see *Fixed*), and an incremental
+   run deletes the copies 0.3.0 indexed beside their originals (its WARNING names them; `indexing.max_deletion_share`
+   stops a run deleting past its share until confirmed). Raise `processing.deduplicate_similarity_threshold` (0.97 reads
+   about as 0.3.0's 0.9 did) to keep them.
+
 ### Fixed
 Bugs present in 0.3.0.
 
@@ -193,9 +200,15 @@ Bugs present in 0.3.0.
   datasketch's split proposed 40%), and never fewer than datasketch's split.
 - `processing.deduplicate` dropped template documents: two contracts of one form, with other amounts, dates and ids
   in a long shared text, read as copies at its fixed 0.9 3-gram similarity, and one went unindexed without a word.
-  A near-duplicate now also holds the same numbers in the same order (digits of any script, Han numerals), so any
+  A near-duplicate now also holds the same numbers in the same order (digits of any script; Han numerals in a run, an
+  ordinal or before a counter or unit, by the language profiles' numerals, counters and `numeral_units`), so any
   differing number keeps both; a document is dropped only as a copy of one that is kept (not of another dropped
-  copy), and a WARNING names the dropped documents (the first 20) and the ones they copy.
+  copy), and a WARNING names the dropped documents (the first 20) and the ones they copy. It also missed most copies
+  near its threshold: datasketch's LSH split (5 bands of 25 rows at 0.9) proposed a pair at 0.90-0.92 a third of the
+  time and the MinHash estimate decided, so 0.9 read as about 0.97. The index now takes name matching's layout (12
+  bands of 10 rows at 0.9: 99% of the pairs at the threshold) and the pair's exact 3-gram similarity decides.
+- `answer_match` read Japanese sums in 兆 (10^12) wrong: `一兆二千億円` as 200,000,000,000 and `3兆円` as 3. 兆 is a
+  multiplier of the Japanese profile, as 億 is.
 - An ingestion LLM item whose output did not parse waited the backoff of a throttled call (up to 30 s, then 60 s,
   then 120 s) before it was asked again; it is asked again at once. Throttling, timeouts and transient errors keep
   the backoff (`retry.ingestion_item`).

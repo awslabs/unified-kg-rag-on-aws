@@ -855,17 +855,19 @@ class ProcessingConfig(ConfigSection):
         description=(
             "Drop near-duplicate documents before extraction. Two documents "
             "are near-duplicates when the Jaccard similarity of their "
-            "character 3-gram sets, estimated with a 128-permutation MinHash, "
-            "is at least deduplicate_similarity_threshold and they hold the "
-            "same numbers in the same order (digits of any script and Han "
-            "numerals: amounts, dates, ids), so any differing number keeps "
+            "character 3-gram sets is at least "
+            "deduplicate_similarity_threshold and they hold the "
+            "same numbers in the same order (digits of any script, and Han "
+            "numerals in a run of two or more, as an ordinal or before a "
+            "counter or unit: amounts, dates, ids), so any differing number keeps "
             "both, two filled-in copies of one form as a page with another "
             "date in its footer. Of each pair the first is kept, and an "
             "incremental run keeps the already-indexed copy; a WARNING names "
             "the dropped documents and the ones they copy (the first 20, the "
-            "rest counted). The check is datasketch's LSH at its own layout "
-            "and the MinHash estimate (a document's exact shingle set is not "
-            "kept, unlike a name's: processing.minhash_similarity_threshold)."
+            "rest counted). An LSH index of 128-permutation MinHashes "
+            "proposes the pairs at the layout of name matching "
+            "(minhash_similarity_threshold: 99% of the pairs at a threshold of "
+            "0.85 or more) and their exact similarity decides."
         ),
     )
     deduplicate_similarity_threshold: float = Field(

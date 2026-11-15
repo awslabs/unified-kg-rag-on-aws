@@ -70,7 +70,7 @@ def _candidate_probability(similarity: float, bands: int, rows: int) -> float:
 
 
 @lru_cache(maxsize=8)
-def _lsh_params(threshold: float, num_perm: int) -> tuple[int, int]:
+def lsh_params(threshold: float, num_perm: int) -> tuple[int, int]:
     """The ``(bands, rows)`` of the LSH index for ``threshold`` and
     ``num_perm`` permutations.
 
@@ -150,7 +150,10 @@ def name_shingles(name: str) -> frozenset[str]:
     return frozenset(key[i : i + n] for i in range(len(key) - n + 1))
 
 
-def _jaccard(a: frozenset[str], b: frozenset[str]) -> float:
+def jaccard(a: frozenset[str], b: frozenset[str]) -> float:
+    """The Jaccard similarity of two shingle sets (1.0 of two empty ones):
+    what decides a pair the LSH index proposes, of names and of documents
+    (``processing.deduplicate``) alike."""
     union = len(a | b)
     return len(a & b) / union if union else 1.0
 
@@ -209,7 +212,7 @@ class FuzzyMatcher:
         self.lsh = MinHashLSH(
             threshold=self.similarity_threshold,
             num_perm=self.minhash_permutations,
-            params=_lsh_params(self.similarity_threshold, self.minhash_permutations),
+            params=lsh_params(self.similarity_threshold, self.minhash_permutations),
         )
         self.minhashes = {}
         # The candidates' shingle sets: the LSH proposes, their exact
@@ -317,7 +320,7 @@ class FuzzyMatcher:
             return []
         query_shingles = self.shingles.get(query) or name_shingles(query)
         matches = [
-            (str(candidate), _jaccard(query_shingles, self.shingles[str(candidate)]))
+            (str(candidate), jaccard(query_shingles, self.shingles[str(candidate)]))
             for candidate in similar_candidates
         ]
         return [match for match in matches if match[1] >= self.similarity_threshold]

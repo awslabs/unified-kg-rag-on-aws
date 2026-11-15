@@ -112,10 +112,10 @@ def test_the_lsh_layout_proposes_the_pairs_at_the_threshold_at_a_bounded_cost(
         LSH_MAX_PROPOSED_AT_HALF,
         LSH_RECALL_AT_THRESHOLD,
         _candidate_probability,
-        _lsh_params,
+        lsh_params,
     )
 
-    bands, rows = _lsh_params(threshold, num_perm)
+    bands, rows = lsh_params(threshold, num_perm)
     assert bands * rows <= num_perm
     own = MinHashLSH(threshold=threshold, num_perm=num_perm)
     at = _candidate_probability(threshold, bands, rows)
@@ -142,7 +142,7 @@ def test_matchers_derive_the_lsh_layout_once(monkeypatch: pytest.MonkeyPatch) ->
         return real(*args)
 
     monkeypatch.setattr(base_resolver, "_candidate_probability", counted)
-    base_resolver._lsh_params.cache_clear()
+    base_resolver.lsh_params.cache_clear()
     try:
         for _ in range(3):
             base_resolver.FuzzyMatcher(
@@ -158,7 +158,7 @@ def test_matchers_derive_the_lsh_layout_once(monkeypatch: pytest.MonkeyPatch) ->
                 similarity_threshold=0.42,
             )
     finally:
-        base_resolver._lsh_params.cache_clear()
+        base_resolver.lsh_params.cache_clear()
     assert searched > 0
     assert len(calls) == searched
 

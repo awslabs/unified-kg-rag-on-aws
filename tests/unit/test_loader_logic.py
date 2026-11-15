@@ -326,3 +326,109 @@ def test_the_dedup_threshold_is_the_configured_one() -> None:
     loader.max_workers = 1
     assert len(loader.deduplicate_documents(documents, threshold=0.85)) == 1
     assert len(loader.deduplicate_documents(documents, threshold=0.97)) == 2
+
+
+def _near_copies(similarity_range: tuple[float, float], count: int) -> list[Document]:
+    """``count`` documents and an edited copy of each, whose exact 3-gram
+    Jaccard similarity lies in ``similarity_range``: base, copy, base, ..."""
+    import random
+    import string
+
+    from unified_kg_rag.adapters.ingestion.loader import (
+        DEDUP_N_GRAMS,
+        document_shingles,
+    )
+    from unified_kg_rag.domain.ingestion.base_resolver import jaccard
+
+    rnd = random.Random(7)
+    low, high = similarity_range
+    documents: list[Document] = []
+    while len(documents) < 2 * count:
+        words = [
+            "".join(
+                rnd.choice(string.ascii_lowercase) for _ in range(rnd.randint(3, 8))
+            )
+            for _ in range(rnd.randint(60, 200))
+        ]
+        base = " ".join(words)
+        for _ in range(rnd.randint(1, 4)):
+            words[rnd.randrange(len(words))] = "".join(
+                rnd.choice(string.ascii_lowercase) for _ in range(5)
+            )
+        copy = " ".join(words)
+        if (
+            not low
+            <= jaccard(
+                document_shingles(base, DEDUP_N_GRAMS),
+                document_shingles(copy, DEDUP_N_GRAMS),
+            )
+            < high
+        ):
+            continue
+        for text in (base, copy):
+            name = f"d{len(documents)}"
+            documents.append(
+                Document(
+                    page_content=text,
+                    document_id=name,
+                    file_name=f"{name}.txt",
+                    file_path=f"{name}.txt",
+                )
+            )
+    return documents
+
+
+def test_dedup_drops_the_copies_at_its_threshold_by_their_exact_similarity() -> None:
+    # datasketch's own layout at 0.9 (5 bands of 25 rows) proposed a pair at
+    # 0.90-0.92 about one time in three and the MinHash estimate decided:
+    # 0.9 read as about 0.97. The resolver's layout proposes 99% of the pairs
+    # at the threshold and their exact 3-gram similarity decides.
+    loader = DirectoryLoader("/")
+    loader.max_workers = 1
+    at_threshold = _near_copies((0.90, 0.93), 40)
+    kept = loader.deduplicate_documents(at_threshold, threshold=0.9)
+    assert [d.document_id for d in kept] == [d.document_id for d in at_threshold[::2]]
+    # Below it, none is dropped (the estimate dropped some at 0.88-0.90).
+    below = _near_copies((0.86, 0.90), 40)
+    assert len(loader.deduplicate_documents(below, threshold=0.9)) == len(below)
+
+
+def test_a_dropped_copy_is_named_with_its_exact_similarity(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from unified_kg_rag.adapters.ingestion.loader import (
+        DEDUP_N_GRAMS,
+        document_shingles,
+    )
+    from unified_kg_rag.domain.ingestion.base_resolver import jaccard
+
+    base, copy = _near_copies((0.92, 0.95), 1)
+    exact = jaccard(
+        document_shingles(base.page_content, DEDUP_N_GRAMS),
+        document_shingles(copy.page_content, DEDUP_N_GRAMS),
+    )
+    loader = DirectoryLoader("/")
+    loader.max_workers = 1
+    with caplog.at_level("WARNING"):
+        loader.deduplicate_documents([base, copy], threshold=0.9)
+    assert f"(of '{base.file_name}', similarity {exact:.2f})" in caplog.text
+
+
+def test_han_numerals_read_as_numbers_only_in_numerals_runs() -> None:
+    from unified_kg_rag.adapters.ingestion.loader import numbers_digest
+
+    # A numeral inside an ordinary word is no number: an edit of such a
+    # word (一起 "together", 统一 "unify", 千葉 a place) leaves the digest.
+    assert numbers_digest("我们一起出发，统一安排。") == numbers_digest(
+        "我们出发，安排。"
+    )
+    assert numbers_digest("唯一的仓库，一律检查") == numbers_digest("仓库，检查")
+    assert numbers_digest("千葉の倉庫と一緒に") == numbers_digest("東京の倉庫と")
+    # Two numerals or more, a numeral before a counter or a unit, and an
+    # ordinal are numbers.
+    assert numbers_digest("合同金额三万元") != numbers_digest("合同金额四万元")
+    assert numbers_digest("三月五日交货") != numbers_digest("四月五日交货")
+    assert numbers_digest("三个集装箱") != numbers_digest("四个集装箱")
+    assert numbers_digest("会議は三回") != numbers_digest("会議は四回")
+    assert numbers_digest("第三期工程") != numbers_digest("第四期工程")
+    assert numbers_digest("二〇二六年") != numbers_digest("二〇二七年")
