@@ -363,7 +363,8 @@ def test_a_renamed_export_still_resolves_with_a_deprecation_warning() -> None:
         from unified_kg_rag import TransientRetryConfig  # noqa: F401
     assert TransientRetryConfig is unified_kg_rag.RetryPolicy
     messages = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-    assert messages and "RetryPolicy" in str(messages[0].message)
+    # One for the import (it read the name twice: importlib's check first).
+    assert len(messages) == 1 and "RetryPolicy" in str(messages[0].message)
     # Attributed to this line, not to the package or the import machinery.
     assert {w.filename for w in messages} == {__file__}
     assert "TransientRetryConfig" not in unified_kg_rag.__all__

@@ -64,6 +64,7 @@ pulls in no model, AWS or store SDK.
 from __future__ import annotations
 
 import importlib
+import sys
 from typing import TYPE_CHECKING, Any
 
 __version__ = "0.4.0.dev0"
@@ -403,11 +404,15 @@ if TYPE_CHECKING:
 
 def __getattr__(name: str) -> Any:
     if (renamed := _RENAMED.get(name)) is not None:
-        from unified_kg_rag.shared.utils.deprecation import warn_deprecated
+        # ``from unified_kg_rag import <name>`` reads the name twice: the
+        # import machinery's check first, then the import itself, which warns.
+        caller = sys._getframe(1).f_code.co_filename
+        if not ("importlib" in caller and "_bootstrap" in caller):
+            from unified_kg_rag.shared.utils.deprecation import warn_deprecated
 
-        warn_deprecated(
-            f"unified_kg_rag.{name} is deprecated: it is {renamed}; import that"
-        )
+            warn_deprecated(
+                f"unified_kg_rag.{name} is deprecated: it is {renamed}; import that"
+            )
         return __getattr__(renamed)
     module = _EXPORTS.get(name)
     if module is None:

@@ -132,7 +132,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   naming them; one set beside a profile key to another value fails the load, naming both. `DEPRECATED_KEYS` maps a
   key to one replacement or several.
 - `unified_kg_rag.TransientRetryConfig` warns (`DeprecationWarning`, at the importing line): it is `RetryPolicy`, its
-  new name, and is no longer in `__all__`. A warning the package emits for a deprecated API now names the caller's
+  new name, and is no longer in `__all__` (`unified_kg_rag.domain.models.config.TransientRetryConfig`, an internal
+  path, is gone). A warning the package emits for a deprecated API now names the caller's
   line under `from unified_kg_rag import ...` too (it named a frame of the import machinery).
 
 ### Fixed
