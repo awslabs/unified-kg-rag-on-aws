@@ -54,7 +54,6 @@ from unified_kg_rag.ports.model_factory import (
     LanguageModelInfo,
     LLMFactoryPort,
     RerankFactoryPort,
-    RerankModelInfo,
     TokenCounterPort,
 )
 from unified_kg_rag.shared.exceptions import ConfigurationError
@@ -240,20 +239,6 @@ class Providers:
 
             return get_embedding_model_info(model_id)
         return self.embedding_factory.get_model_info(model_id)
-
-    def rerank_model_info(self) -> RerankModelInfo | None:
-        """Capability record of the configured reranker (its document
-        limit), as :meth:`embedding_model_info`; None without a reranker."""
-        model_id = self.config.rerank_model_id
-        if model_id is None:
-            return None
-        if self._rerank_factory is None and self.kind(ProviderRole.RERANK) == BEDROCK:
-            from unified_kg_rag.adapters.aws.bedrock_models import (
-                get_rerank_model_info,
-            )
-
-            return get_rerank_model_info(model_id_value(model_id))
-        return self.rerank_factory.get_model_info(model_id)
 
     # --- stores --------------------------------------------------------------
 

@@ -158,7 +158,6 @@ PUBLIC_API = sorted(
         "IndexLimits",
         "IndexingStats",
         "LanguageModelInfo",
-        "RerankModelInfo",
         "Relationship",
         "RenderContext",
         "RetrievalResult",

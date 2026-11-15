@@ -239,6 +239,7 @@ ALLOWED: dict[str, str] = {
         "application/cli/mcp_tools.py:MAX_TEXT_UNIT_IDS",
         "application/cli/mcp_tools.py:MAX_TABLE_CHARS",
         "application/cli/console/evaluations.py:MAX_ANSWER_CHARS",
+        "application/ingestion/pipeline_stages.py:_DENSE_TOKEN_FACTOR",
         "application/cli/console/jobs.py:WARNING_LINES",
         "application/ingestion/incremental.py:_AUDIT_NAMES",
         "application/cli/run_evaluation.py:_METRIC_COLUMN_MAX",

@@ -217,7 +217,6 @@ _EXPORTS: dict[str, str] = {
     "GroundingContext": "unified_kg_rag.ports.guardrail",
     "EmbeddingModelInfo": "unified_kg_rag.ports.model_factory",
     "LanguageModelInfo": "unified_kg_rag.ports.model_factory",
-    "RerankModelInfo": "unified_kg_rag.ports.model_factory",
     "RetryPolicy": "unified_kg_rag.domain.models.config",
     "RenderContext": "unified_kg_rag.adapters.renderers.base",
 }
@@ -369,7 +368,6 @@ if TYPE_CHECKING:
     from unified_kg_rag.ports.model_factory import (
         EmbeddingModelInfo,
         LanguageModelInfo,
-        RerankModelInfo,
     )
     from unified_kg_rag.shared.exceptions import (
         ConfigurationError,

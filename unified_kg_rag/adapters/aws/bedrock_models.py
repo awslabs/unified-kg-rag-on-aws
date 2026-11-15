@@ -662,9 +662,9 @@ def get_embedding_model_info(model_id: str) -> EmbeddingModelInfo | None:
 
 
 def get_rerank_model_info(model_id: str) -> RerankModelInfo | None:
-    """Capability record of a Bedrock rerank model id; None for a model the
-    catalog does not hold."""
-    return _RERANK_MODEL_INFO.get(model_id)
+    """Capability record of a Bedrock rerank model id, profile id or
+    profile ARN; None for a model the catalog does not hold."""
+    return _RERANK_MODEL_INFO.get(profile_target_model_id(model_id))
 
 
 def get_language_model_info(

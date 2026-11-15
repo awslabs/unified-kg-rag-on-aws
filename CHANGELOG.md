@@ -87,11 +87,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `similarity_threshold`, as before (and keys no stage cache).
 - `processing.deduplicate_similarity_threshold` (default 0.9, the fixed value before): the 3-gram similarity at which
   `processing.deduplicate` reads two documents as copies.
-- The `text_chunking` stage warns when chunk sizes counted in characters (`length_unit: chars`) meet a corpus mostly
-  in a dense script (a chunk then holds about four times the tokens of a Latin one), and when text units are
-  estimated over the embedding model's input or the reranker's document limit, which read only their start; nothing
-  else changes. `Providers.embedding_model_info()` and `rerank_model_info()` (their `EmbeddingModelInfo` and
-  `RerankModelInfo` now exported) read those limits from the Bedrock catalog without building a client.
+- The `text_chunking` stage warns when chunk sizes counted in characters (`length_unit: chars`) meet a corpus whose
+  characters cost at least twice Latin text's estimated tokens (Han, Hangul, Kana, Thai, Greek, Hebrew, Devanagari,
+  Arabic: a chunk then holds that many times the tokens of an English one), and when text units are estimated over
+  the embedding model's input, which embeds only their start; each names the size that made the units
+  (`fallback_chunk_size` under the simple chunker). No backend's defaults warn; nothing else changes.
+  `Providers.embedding_model_info()` (its `EmbeddingModelInfo` now exported) reads the limit from the Bedrock
+  catalog without building a client, and a Bedrock rerank model given by profile id or ARN finds its record.
 - The `retry` section has one profile per caller, each a `RetryPolicy` (`max_attempts`, `base_delay_seconds`,
   `max_delay_seconds`, `max_total_seconds`, `jitter`; exported): `model`, `ingestion_item`, `model_server`,
   `graph_store`, `query_store` (OpenSearch and graph-store query reads), `bulk_item` and `registry_batch`, beside

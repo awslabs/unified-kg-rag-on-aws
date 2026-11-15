@@ -158,10 +158,11 @@ Switching the unit re-chunks the corpus and re-extracts its documents (an
 incremental run re-extracts every document of the scope).
 
 The `text_chunking` stage warns in two cases, and neither stops the run:
-when the sizes count characters and the corpus is mostly in a dense script,
-and when text units are estimated over the embedding model's input or the
-reranker's document limit (the count and the longest), which read only the
-start of a longer one.
+when the sizes count characters and the corpus's characters cost at least
+twice English text's estimated tokens (Han, Hangul, Kana, Thai, Greek,
+Hebrew, Devanagari, Arabic), and when text units are estimated over the
+embedding model's input (the count and the longest), which embeds only the
+start of a longer one. Each names the size setting that made the units.
 
 ## Evaluating Korean and CJK answers
 
