@@ -185,7 +185,9 @@ class SearchConfig(ConfigSection):
             "returns the error answer instead, a deadline that passes during "
             "its admission too. null disables both deadlines."
         ),
-        json_schema_extra=evidence("measured", "#query-deadlines-and-model-timeouts"),
+        json_schema_extra=evidence(
+            "operational", "#query-deadlines-and-model-timeouts"
+        ),
     )
     query_max_model_calls: int | None = Field(
         default=None,
@@ -233,7 +235,9 @@ class SearchConfig(ConfigSection):
             "providers.llm.timeout_seconds and providers.embedding."
             "timeout_seconds for query calls."
         ),
-        json_schema_extra=evidence("measured", "#query-deadlines-and-model-timeouts"),
+        json_schema_extra=evidence(
+            "operational", "#query-deadlines-and-model-timeouts"
+        ),
     )
     model_max_attempts: int = Field(
         default=2,

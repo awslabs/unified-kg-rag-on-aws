@@ -187,7 +187,9 @@ class ChunkingConfig(ConfigSection):
             "intelligent chunker's model-chosen boundaries cut between lines "
             "and share no text."
         ),
-        json_schema_extra=evidence("unmeasured"),
+        json_schema_extra=evidence(
+            "deviation", "MS GraphRAG's and LightRAG's chunk overlap, 100 tokens"
+        ),
     )
     pre_chunk_size: int = Field(
         default=12500,
@@ -219,7 +221,9 @@ class ChunkingConfig(ConfigSection):
             "characters) is the default chunk size of MS GraphRAG and "
             "LightRAG."
         ),
-        json_schema_extra=evidence("unmeasured"),
+        json_schema_extra=evidence(
+            "upstream", "MS GraphRAG's and LightRAG's chunk size, 1200 tokens"
+        ),
     )
     max_marker_miss_rate: float = Field(
         default=0.1,

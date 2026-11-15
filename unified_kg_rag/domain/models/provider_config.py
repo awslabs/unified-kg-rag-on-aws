@@ -108,7 +108,9 @@ class LLMProviderConfig(EndpointConfig):
         ge=0.0,
         le=2.0,
         description="Sampling temperature for the non-Bedrock models.",
-        json_schema_extra=evidence("upstream", "MS GraphRAG's model temperature, 0"),
+        json_schema_extra=evidence(
+            "upstream", "GraphRAG 2.x's language model temperature, 0"
+        ),
     )
     tokenizer: Literal["estimate", "tiktoken"] = Field(
         default="estimate",

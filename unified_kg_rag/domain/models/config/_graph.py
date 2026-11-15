@@ -85,7 +85,7 @@ class ReportGenerationConfig(ConfigSection):
         default=50,
         ge=1,
         description="Maximum entities per community report",
-        json_schema_extra=evidence("operational"),
+        json_schema_extra=evidence("unmeasured"),
     )
     max_report_context_tokens: int = Field(
         default=4000,
