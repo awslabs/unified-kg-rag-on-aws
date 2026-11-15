@@ -199,9 +199,10 @@ is refused before its request is sent:
   prompt's own templates and instructions and the question, less
   `search.token_manager.context_window_headroom_ratio` of them, and the
   context as built (its section headers and the blank lines between
-  sections included) never passes that room at the meter's estimate; the
-  fan-out strategies keep that prompt's tokens for the answer too. A context
-  cut this way, its sections left out or cut short, is listed in
+  sections included) is packed to that room at the meter's estimate, never
+  past it, whether the model's token counter counts more or less than that
+  estimate; the fan-out strategies keep that prompt's tokens for the answer
+  too. A context cut this way, its sections left out or cut short, is listed in
   `metadata.degraded` (step `context_optimization`, reason
   `query_limit: N of M sections cut`).
 - One call is kept for the answer, and under an input-token limit its

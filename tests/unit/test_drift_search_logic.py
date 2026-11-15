@@ -33,6 +33,7 @@ from unified_kg_rag.domain.models import (
     SearchQuery,
     SearchResult,
 )
+from unified_kg_rag.shared import usage
 from unified_kg_rag.shared.utils import parse_llm_score
 
 pytestmark = pytest.mark.unit
@@ -415,6 +416,28 @@ async def test_an_action_reads_its_local_context_within_the_budget() -> None:
     assert budgets and set(budgets) == {999}
     # What the budget kept is the context the action answers from.
     assert all(c["context"] == "" for c in strat.action.calls)
+
+
+async def test_an_action_under_an_input_limit_is_packed_down_to_its_share() -> None:
+    # Regression (rv35): the share, planned at the meter's estimate (its
+    # follow-up already left out), was also the counter's budget, which
+    # left the follow-up out again and, with a counter counting more than
+    # the estimate, filled the share in that ratio less.
+    budgets: list[tuple[int, int | None]] = []
+
+    class _Budget(_Tokens):
+        def optimize_context(self, results, query, max_tokens, estimated_within=None):
+            budgets.append((max_tokens, estimated_within))
+            return _Optimized(results)
+
+    strat = _strategy(n_depth=1, local_context_tokens=8000)
+    strat.token_manager = _Budget()  # type: ignore[assignment]
+    with usage.usage_scope(usage.UsageLimits(max_input_tokens=20_000)):
+        await strat.asearch(SearchQuery(query="question"))
+    assert budgets
+    for max_tokens, within in budgets:
+        assert max_tokens == 8000
+        assert within is not None and within < 8000
 
 
 async def test_a_follow_up_asked_twice_runs_once() -> None:

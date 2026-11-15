@@ -1213,6 +1213,57 @@ def test_many_short_sections_never_starve_the_answer_call(content: str) -> None:
         assert call <= limit, limit
 
 
+@pytest.mark.parametrize("ratio", [0.5, 1.0, 1.8])
+def test_the_answer_context_fills_the_room_at_any_counter_ratio(ratio: float) -> None:
+    # Regression (rv35): the room an input-token limit leaves is in the
+    # estimate's tokens (the meter's) but was packed as the counter's, so a
+    # counter counting 1.8 times the estimate left the answer about half
+    # the context it had room for.
+    from unittest import mock
+
+    from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
+    from unified_kg_rag.adapters.providers import Providers
+    from unified_kg_rag.domain.models import RetrievalResult, SectionType
+
+    counter = mock.Mock()
+    counter.count_tokens.side_effect = lambda text: max(
+        1, int(estimate_token_count(text) * ratio)
+    )
+    config = Config()
+    chain = GraphRAGChain(
+        config=config,
+        providers=Providers(
+            config,
+            llm_factory=_Factory(_SlowChatModel()),
+            token_counter_factory=lambda *_, **__: counter,
+        ),
+    )
+    results = [
+        RetrievalResult(
+            content="공급업체는 구매자에게 라이다 장치를 납품한다. " * (1 + i % 4),
+            score=1 - i / 100,
+            source=f"doc{i}.txt",
+            retriever_type=SectionType.TEXT,
+        )
+        for i in range(200)
+    ]
+    for limit in (3000, 6000):
+        with usage.usage_scope(usage.UsageLimits(max_input_tokens=limit)):
+            room, limited = chain._context_budget(
+                {
+                    "max_tokens": None,
+                    "resolved_strategy": SearchStrategy.SIMPLE,
+                    "query": "What does Vendor supply?",
+                }
+            )
+        assert limited
+        optimized, _ = _limited_context(chain, results, limit)
+        built = estimate_token_count(
+            chain.token_manager.build_context_string(optimized)
+        )
+        assert 0.9 * room <= built <= room, (limit, room, built)
+
+
 def test_a_section_the_limit_cuts_short_is_listed_as_cut() -> None:
     # Regression (rv34): a section the input-token limit truncated but kept
     # was not recorded, so the answer read less while query_limited said

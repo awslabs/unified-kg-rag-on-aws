@@ -2023,16 +2023,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 sections_excluded=len(search_results.results),
                 numbered=number,
             )
-        # The limit's room is the context's, at the estimate the meter counts
-        # the answer call at; the token manager's budget holds the question
-        # too.
-        room = budget if limited else None
-        if room is not None:
-            budget = room + self.token_manager.count_tokens(query.final_query)
+        # The limit's room is the context's at the estimate the meter counts
+        # the answer call at: the token manager packs the query's own budget
+        # (in its counter's tokens) down to it.
         optimized = self.token_manager.optimize_context(
             retrieval_results=search_results.results,
             query=query.final_query,
-            max_tokens=budget,
+            max_tokens=state.get("max_tokens"),
             spare_budget_first=(
                 get_strategy_spec(
                     wrapped_strategy(strategy, self.config)
@@ -2042,7 +2039,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             ),
             # search.citations, per strategy: auto's route, iterative's base.
             number_sections=number,
-            estimated_within=room,
+            estimated_within=budget if limited else None,
         )
         cut = optimized.sections_excluded + optimized.sections_truncated
         if limited and cut:

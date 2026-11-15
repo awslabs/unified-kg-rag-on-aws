@@ -252,9 +252,10 @@ class TokenManager:
         (``build_context_string``) at the local estimate
         (``estimate_token_count``) the usage meter counts a call's input at,
         which the budget's counter (a CountTokens API, each section counted
-        apart) can count lower: the room a query's input-token limit leaves
-        the context. A context past it is packed again into a budget smaller
-        by the excess, until it fits.
+        apart) can count lower or higher: the room a query's input-token
+        limit leaves the context. ``max_tokens`` stays the query's own
+        budget; a context past the bound is packed again into a budget cut
+        in the ratio the whole measured at, until it fits.
         """
         with observability.span(
             "kg_rag.context_build", results_in=len(retrieval_results)
@@ -335,19 +336,14 @@ class TokenManager:
                 return optimized, left
             if refit == _REFIT_ROUNDS:
                 break
-            # The pieces' counts (each rounded down, the separators between
-            # them uncounted, or a counter that counts lower) fall short of
-            # the whole's estimate: the excess comes off what they used, at
-            # least in proportion.
+            # The budget is in the counter's tokens, the bound in the
+            # estimate's: what the pieces used is cut in the ratio the whole
+            # measured at (the pieces each rounded down, the separators
+            # between them uncounted, a counter that counts otherwise).
             used = optimized.total_tokens + sum(
                 headers[t] for t in {s.section_type for s in optimized.sections}
             )
-            available_tokens = max(
-                0,
-                min(
-                    used - (built - estimated_within), used * estimated_within // built
-                ),
-            )
+            available_tokens = used * estimated_within // built
             optimized, left = self._packed(
                 all_sections,
                 headers,

@@ -1168,6 +1168,66 @@ def test_a_context_bounded_at_the_estimate_never_passes_it(
     assert any(overshot)
 
 
+def _ratio_manager(mocker, ratio: float) -> TokenManager:
+    """A manager whose counter counts ``ratio`` times the local estimate."""
+    from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
+
+    counter = mocker.Mock()
+    counter.count_tokens.side_effect = lambda text: max(
+        1, int(estimate_token_count(text) * ratio)
+    )
+    config = Config()
+    return TokenManager(
+        config,
+        providers=Providers(
+            config,
+            boto_session=mocker.Mock(),
+            token_counter_factory=lambda *_, **__: counter,
+        ),
+    )
+
+
+@pytest.mark.parametrize("ratio", [0.35, 0.5, 0.55, 0.7, 1.0, 1.37, 1.8])
+@pytest.mark.parametrize(
+    "line",
+    [
+        "공급업체는 공급 계약에 따라 구매자에게 라이다 장치를 납품한다. ",
+        "供給業者は供給契約に基づき購入者にライダー装置を納入する。",
+    ],
+    ids=["ko", "ja"],
+)
+def test_a_context_bounded_at_the_estimate_fills_it_at_any_counter_ratio(
+    mocker, ratio: float, line: str
+) -> None:
+    # Regression (rv35): the re-pack took the excess, in the estimate's
+    # tokens, off a budget in the counter's: with a counter counting half
+    # the estimate the budget went below zero and the context came back
+    # empty. Packed from the query's own budget, a counter counting more
+    # than the estimate fills the bound too.
+    from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
+
+    mgr = _ratio_manager(mocker, ratio)
+    results = [
+        _r(
+            line * (1 + i % 5),
+            1 - i / 100,
+            ("entity", "relationship", "text")[i % 3],
+            f"s{i}",
+        )
+        for i in range(60)
+    ]
+    for within in (1000, 4000):
+        out = mgr.optimize_context(
+            results,
+            "q",
+            max_tokens=30_000,
+            number_sections=True,
+            estimated_within=within,
+        )
+        built = estimate_token_count(mgr.build_context_string(out))
+        assert 0.85 * within <= built <= within, (within, built)
+
+
 def test_a_section_cut_to_fit_is_counted_truncated(mocker) -> None:
     mgr = _make_manager(mocker)
     results = [
