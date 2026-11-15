@@ -290,13 +290,19 @@ def test_a_template_filled_in_twice_keeps_both_documents(
     assert "'c.txt' (of 'a.txt', similarity 1.00)" in caplog.text
 
 
-def test_numbers_match_in_any_script_and_order() -> None:
+def test_numbers_match_in_any_digit_script_in_their_order() -> None:
     from unified_kg_rag.adapters.ingestion.loader import numbers_digest
 
+    # Full-width and Arabic-Indic digits read as the same numbers.
     assert numbers_digest("계약 금액 １２,５００원, 2020년") == numbers_digest(
-        "2020년 계약 금액 12,500원"
+        "계약 금액 12,500원, 2020년"
     )
+    assert numbers_digest("المبلغ ٢٥٠٠") == numbers_digest("المبلغ 2500")
     assert numbers_digest("금액 12,500원") != numbers_digest("금액 12,600원")
+    # Swapped dates or line amounts are another document.
+    assert numbers_digest("from 03/04/2026") != numbers_digest("from 04/03/2026")
+    # Han numerals count too.
+    assert numbers_digest("合同金额三万元") != numbers_digest("合同金额四万元")
 
 
 def test_the_dedup_threshold_is_the_configured_one() -> None:

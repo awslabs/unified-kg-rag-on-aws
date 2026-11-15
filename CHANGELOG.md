@@ -167,9 +167,9 @@ Bugs present in 0.3.0.
   datasketch's split proposed 40%), and never fewer than datasketch's split.
 - `processing.deduplicate` dropped template documents: two contracts of one form, with other amounts, dates and ids
   in a long shared text, read as copies at its fixed 0.9 3-gram similarity, and one went unindexed without a word.
-  A near-duplicate now also holds the same numbers (in any script and order), a document is dropped only as a copy
-  of one that is kept (not of another dropped copy), and a WARNING names each dropped document and the one it
-  copies.
+  A near-duplicate now also holds the same numbers in the same order (digits of any script, Han numerals), so any
+  differing number keeps both; a document is dropped only as a copy of one that is kept (not of another dropped
+  copy), and a WARNING names the dropped documents (the first 20) and the ones they copy.
 - An ingestion LLM item whose output did not parse waited the backoff of a throttled call (up to 30 s, then 60 s,
   then 120 s) before it was asked again; it is asked again at once. Throttling, timeouts and transient errors keep
   the backoff (`retry.ingestion_item`).

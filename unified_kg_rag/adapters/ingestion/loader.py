@@ -52,19 +52,29 @@ def compute_minhash(
     return doc_index, minhash, numbers_digest(content)
 
 
-# Digits of any script, after NFKC (full-width digits are ASCII then).
-_NUMBER = re.compile(r"\d+")
+# A run of digits of any script, or of Han numerals (三万, 二〇二六).
+# Hangul number words (삼백만) are ordinary syllables and are not read.
+_NUMBER = re.compile(r"\d+|[〇零一二三四五六七八九十百千万萬億亿兆]+")
+
+
+def _number(run: str) -> str:
+    """``run`` with every decimal digit as its ASCII digit (Arabic-Indic,
+    Devanagari, ... digits read as the same number; zeros kept)."""
+    return "".join(str(unicodedata.digit(ch)) if ch.isdecimal() else ch for ch in run)
 
 
 def numbers_digest(text: str) -> str:
-    """A digest of the numbers ``text`` holds, as a multiset: two documents
-    with the same numbers (amounts, dates, ids), in any order, share it.
+    """A digest of the numbers ``text`` holds, in their order: two documents
+    with the same numbers (amounts, dates, ids) in the same order share it.
 
     Template documents (two contracts of one form) differ in a few amounts
     and dates within a text of thousands of characters, so their shingle
-    similarity alone reads them as copies of each other.
+    similarity alone reads them as copies of each other; two dates or line
+    amounts swapped make another document too.
     """
-    numbers = sorted(_NUMBER.findall(unicodedata.normalize("NFKC", text)))
+    numbers = [
+        _number(run) for run in _NUMBER.findall(unicodedata.normalize("NFKC", text))
+    ]
     return hashlib.sha256("\x00".join(numbers).encode("utf-8")).hexdigest()
 
 

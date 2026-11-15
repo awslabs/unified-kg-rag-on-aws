@@ -857,10 +857,15 @@ class ProcessingConfig(ConfigSection):
             "are near-duplicates when the Jaccard similarity of their "
             "character 3-gram sets, estimated with a 128-permutation MinHash, "
             "is at least deduplicate_similarity_threshold and they hold the "
-            "same numbers (amounts, dates, ids, in any order), so two filled-in "
-            "copies of one form are both kept; of each pair the first is kept, "
-            "an incremental run keeps the already-indexed copy, and a WARNING "
-            "names every dropped document and the one it copies."
+            "same numbers in the same order (digits of any script and Han "
+            "numerals: amounts, dates, ids), so any differing number keeps "
+            "both, two filled-in copies of one form as a page with another "
+            "date in its footer. Of each pair the first is kept, and an "
+            "incremental run keeps the already-indexed copy; a WARNING names "
+            "the dropped documents and the ones they copy (the first 20, the "
+            "rest counted). The check is datasketch's LSH at its own layout "
+            "and the MinHash estimate (a document's exact shingle set is not "
+            "kept, unlike a name's: processing.minhash_similarity_threshold)."
         ),
     )
     deduplicate_similarity_threshold: float = Field(
