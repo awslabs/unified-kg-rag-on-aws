@@ -211,3 +211,30 @@ def test_the_minhash_threshold_is_its_own_once_set() -> None:
     assert processing.resolution_threshold == 0.7
     processing.resolution_method = ResolutionMethod.SEQUENCE_MATCHER
     assert processing.resolution_threshold == 0.85
+
+
+@pytest.mark.parametrize(
+    "processing",
+    [
+        # sequence_matcher does not read it.
+        {"resolution_method": "sequence_matcher", "minhash_similarity_threshold": 0.7},
+        # The same threshold as unset.
+        {"minhash_similarity_threshold": 0.85},
+    ],
+)
+def test_a_minhash_threshold_without_effect_keys_no_stage(
+    processing: dict[str, object],
+) -> None:
+    from unified_kg_rag.domain.ingestion.cache_keys import stage_input_fingerprint
+    from unified_kg_rag.domain.models import PipelineStageType
+
+    base = {k: v for k, v in processing.items() if k != "minhash_similarity_threshold"}
+    stage = PipelineStageType.GRAPH_RESOLUTION
+    assert stage_input_fingerprint(
+        Config(processing=processing), stage
+    ) == stage_input_fingerprint(Config(processing=base), stage)
+    assert stage_input_fingerprint(
+        Config(processing={**base, "minhash_similarity_threshold": 0.7}), stage
+    ) != stage_input_fingerprint(Config(processing=base), stage) or (
+        processing.get("resolution_method") == "sequence_matcher"
+    )

@@ -84,7 +84,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   numeric module constant not listed with its reason (`tests/fixtures/numeric_constants.py`).
 - `processing.minhash_similarity_threshold`: the threshold of `resolution_method: minhash`, a Jaccard similarity of
   character 3-grams that reads lower than the `sequence_matcher` ratio of the same pair; unset, it is
-  `similarity_threshold`, as before (and keys no stage cache).
+  `similarity_threshold`, as before. It keys the stage caches only where it changes a match: under `minhash`, set to
+  another value than `similarity_threshold`.
 - `processing.deduplicate_similarity_threshold` (default 0.9, the fixed value before): the 3-gram similarity at which
   `processing.deduplicate` reads two documents as copies.
 - The `text_chunking` stage warns when chunk sizes counted in characters (`length_unit: chars`) meet a corpus whose

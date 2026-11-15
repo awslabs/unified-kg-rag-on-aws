@@ -73,6 +73,7 @@ from unified_kg_rag.domain.models import (
     IndexArtifact,
     ModelRole,
     PipelineStageType,
+    ResolutionMethod,
 )
 from unified_kg_rag.domain.models.config import SummaryTreeConfig, TreeSearchConfig
 from unified_kg_rag.domain.models.provider_config import BEDROCK
@@ -583,6 +584,13 @@ def _block_on(config: Config, path: str) -> bool:
 # fields (``kind``, ``enabled``) count either way.
 _IN_EFFECT_WHEN: dict[str, Callable[[Config], bool]] = {
     "processing.deduplicate_similarity_threshold": lambda c: c.processing.deduplicate,
+    # Read by minhash resolution only, and the same as unset at
+    # similarity_threshold's value.
+    "processing.minhash_similarity_threshold": lambda c: (
+        c.processing.resolution_method is ResolutionMethod.MINHASH
+        and c.processing.minhash_similarity_threshold
+        != c.processing.similarity_threshold
+    ),
     # A role's model counts while the stage it serves runs.
     **{
         f"models.roles.{role}": functools.partial(_block_on, path=block)
