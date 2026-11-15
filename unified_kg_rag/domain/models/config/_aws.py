@@ -7,6 +7,7 @@ from typing import Any, Literal
 from pydantic import (
     Field,
     SecretStr,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -352,21 +353,18 @@ class RetryConfig(ConfigSection):
         json_schema_extra=evidence("operational"),
     )
 
-    @model_validator(mode="before")
+    @field_validator(*RETRY_PROFILES, mode="before")
     @classmethod
-    def _profile_defaults(cls, data: Any) -> Any:
-        """A profile given in part keeps its profile's defaults for the rest,
-        not :class:`RetryPolicy`'s."""
-        if not isinstance(data, dict):
-            return data
-        return {
-            key: (
-                {**RETRY_PROFILES[key], **value}
-                if key in RETRY_PROFILES and isinstance(value, dict)
-                else value
-            )
-            for key, value in data.items()
-        }
+    def _profile_defaults(cls, value: Any, info: ValidationInfo) -> Any:
+        """A profile given in part, as a mapping or a :class:`RetryPolicy`
+        (loaded or assigned), keeps its profile's defaults for the keys it
+        leaves out, not :class:`RetryPolicy`'s."""
+        assert info.field_name is not None
+        if isinstance(value, RetryPolicy):
+            value = value.model_dump(exclude_unset=True)
+        if isinstance(value, dict):
+            return {**RETRY_PROFILES[info.field_name], **value}
+        return value
 
     @model_validator(mode="after")
     def _client_attempts_where_a_client_retries(self) -> "RetryConfig":

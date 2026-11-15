@@ -295,9 +295,14 @@ def migrate_deprecated_keys(data: dict[str, Any]) -> tuple[dict[str, Any], list[
 
 
 def _get(data: Any, path: str) -> Any:
+    """The value ``data`` sets at ``path``: a section given as a model (a
+    ``RetryPolicy`` object) sets the fields it was given."""
     node = data
     for part in path.split("."):
-        node = node.get(part, _ABSENT) if isinstance(node, dict) else _ABSENT
+        if isinstance(node, BaseModel):
+            node = getattr(node, part) if part in node.model_fields_set else _ABSENT
+        else:
+            node = node.get(part, _ABSENT) if isinstance(node, dict) else _ABSENT
     return node
 
 
@@ -314,7 +319,10 @@ def _put(data: dict[str, Any], path: str, value: Any) -> None:
     node = data
     for part in parents:
         child = node.get(part)
-        if not isinstance(child, dict):
+        if isinstance(child, BaseModel):
+            # Its set fields, so the value joins them.
+            child = node[part] = child.model_dump(exclude_unset=True)
+        elif not isinstance(child, dict):
             child = node[part] = {}
         node = child
     node[last] = value

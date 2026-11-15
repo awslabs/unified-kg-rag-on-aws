@@ -402,3 +402,30 @@ def test_the_bulk_item_budget_stops_the_resends(mocker) -> None:
     client._bulk_with_item_retries([{"_id": "a"}], lambda ok, _: ok)
     assert sent == [1]  # the first wait, 1 s, would cross the 0.5 s budget
     assert sleep.call_count == 0
+
+
+# --- a profile given as a RetryPolicy keeps the profile's own defaults --------
+
+
+def test_a_policy_object_keeps_its_profiles_defaults() -> None:
+    # It replaced the ingestion item's 30-120 s full-jitter backoff with
+    # RetryPolicy's 2-16 s equal-jitter one and a 60 s budget.
+    retry = Config(retry={"ingestion_item": RetryPolicy(max_attempts=3)}).retry
+    assert _values(retry.ingestion_item) == (3, 30.0, 120.0, None, "full")
+
+
+def test_an_assigned_policy_object_keeps_its_profiles_defaults() -> None:
+    config = Config()
+    config.retry.ingestion_item = RetryPolicy(max_attempts=3)
+    assert _values(config.retry.ingestion_item) == (3, 30.0, 120.0, None, "full")
+    config.retry.graph_store = {"max_attempts": 6}  # type: ignore[assignment]
+    assert _values(config.retry.graph_store) == (6, 2.0, None, None, "full")
+
+
+def test_a_policy_object_beside_a_deprecated_key_is_its_replacement() -> None:
+    with pytest.raises(ValueError, match="retry.max_attempts and retry.model"):
+        Config(retry={"max_attempts": 7, "model": RetryPolicy(max_attempts=3)})
+    retry = Config(
+        retry={"max_attempts": 7, "model": RetryPolicy(base_delay_seconds=1.0)}
+    ).retry
+    assert (retry.model.max_attempts, retry.model.base_delay_seconds) == (7, 1.0)
