@@ -159,6 +159,9 @@ Bugs present in 0.3.0.
   A near-duplicate now also holds the same numbers (in any script and order), a document is dropped only as a copy
   of one that is kept (not of another dropped copy), and a WARNING names each dropped document and the one it
   copies.
+- An ingestion LLM item whose output did not parse waited the backoff of a throttled call (up to 30 s, then 60 s,
+  then 120 s) before it was asked again; it is asked again at once. Throttling, timeouts and transient errors keep
+  the backoff (`retry.ingestion_item`).
 
 ## [0.3.0] - 2026-11-14
 

@@ -271,8 +271,9 @@ class RetryConfig(ConfigSection):
         description=(
             "Each ingestion LLM item (extraction, gleaning, claims, summaries, "
             "reports, chunking, translation): transient errors, call timeouts "
-            "and output that does not parse. The long waits let a throttled "
-            "Bedrock quota recover under processing.max_concurrency items."
+            "and output that does not parse, which is asked again without a "
+            "wait. The long waits let a throttled Bedrock quota recover under "
+            "processing.max_concurrency items."
         ),
     )
     model_server: RetryPolicy = Field(

@@ -912,7 +912,7 @@ Bedrock embedding requests and query-time model calls: the transient errors boto
 
 ### `retry.ingestion_item`
 
-Each ingestion LLM item (extraction, gleaning, claims, summaries, reports, chunking, translation): transient errors, call timeouts and output that does not parse. The long waits let a throttled Bedrock quota recover under processing.max_concurrency items.
+Each ingestion LLM item (extraction, gleaning, claims, summaries, reports, chunking, translation): transient errors, call timeouts and output that does not parse, which is asked again without a wait. The long waits let a throttled Bedrock quota recover under processing.max_concurrency items.
 
 | Key | Type | Default | Evidence | Description |
 |---|---|---|---|---|

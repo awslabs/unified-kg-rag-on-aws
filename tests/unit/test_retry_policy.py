@@ -131,6 +131,57 @@ def test_the_ingestion_item_wait_is_drawn_under_its_profile(
     assert slept == [30.0, 60.0, 120.0, 120.0]
 
 
+def test_an_unparseable_answer_is_asked_again_without_the_backoff() -> None:
+    # The backoff waits out a throttled quota or a stalled model; an output
+    # that does not parse is the model's answer, which a new call may fix at
+    # once: it waited 30 to 120 s like a throttle.
+    from langchain_core.exceptions import OutputParserException
+
+    slept: list[float] = []
+    processor = BatchProcessor(retry=Config().retry.ingestion_item)
+    calls = {"n": 0}
+    never_abandoned = MagicMock(is_set=lambda: False, wait=slept.append)
+
+    @processor._create_retry_decorator("op", never_abandoned)
+    def unparseable_twice() -> str:
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise OutputParserException("no JSON object")
+        return "ok"
+
+    assert unparseable_twice() == "ok"
+    assert slept == [0.0, 0.0]
+
+
+async def test_an_async_unparseable_answer_is_asked_again_without_the_backoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    from langchain_core.exceptions import OutputParserException
+
+    slept: list[float] = []
+    real_sleep = asyncio.sleep
+
+    async def recorded(delay: float, *args: Any, **kwargs: Any) -> None:
+        slept.append(delay)
+        await real_sleep(0)
+
+    monkeypatch.setattr(asyncio, "sleep", recorded)
+    processor = BatchProcessor(retry=Config().retry.ingestion_item)
+    calls = {"n": 0}
+
+    @processor._create_retry_decorator("op")
+    async def unparseable_once() -> str:
+        calls["n"] += 1
+        if calls["n"] < 2:
+            raise OutputParserException("no JSON object")
+        return "ok"
+
+    assert await unparseable_once() == "ok"
+    assert slept == [0.0]
+
+
 def test_the_ingestion_item_budget_stops_the_retries() -> None:
     processor = BatchProcessor(
         retry=RetryPolicy(

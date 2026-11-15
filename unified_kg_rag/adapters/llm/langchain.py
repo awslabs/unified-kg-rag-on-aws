@@ -157,6 +157,18 @@ class ProgressLogger:
         )
 
 
+def _retry_wait(state: RetryCallState, policy: RetryPolicy) -> float:
+    """The wait before an item's next call: none after output that did not
+    parse (the model's answer, which a new call may fix at once), else
+    ``policy``'s backoff, which waits out a throttled quota or a stalled
+    model."""
+    outcome = state.outcome
+    error = outcome.exception() if outcome is not None and outcome.failed else None
+    if isinstance(error, OutputParserException):
+        return 0.0
+    return backoff_delay(state.attempt_number, policy)
+
+
 class BatchProcessor(BaseModel):
     # A removed setting (batch_size, chunk_concurrency, max_retries) raises
     # instead of being silently ignored.
@@ -496,7 +508,7 @@ class BatchProcessor(BaseModel):
             options["sleep"] = abandoned.wait
         policy: dict[str, Any] = {
             "retry": tenacity.retry_if_exception(self._is_retryable),
-            "wait": lambda state: backoff_delay(state.attempt_number, retry_policy),
+            "wait": lambda state: _retry_wait(state, retry_policy),
             "stop": stop,
             "before_sleep": self._create_retry_log_callback(operation_name),
             "reraise": True,
