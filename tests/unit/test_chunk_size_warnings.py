@@ -98,6 +98,22 @@ def test_no_character_warning_for_cheap_text_or_token_sizes(
     assert _warnings(caplog) == []
 
 
+def test_a_corpus_at_exactly_twice_latin_text_s_cost_is_warned_of(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Arabic letters, written here without spaces, cost exactly 2 characters
+    # a token: twice Latin text's, the warning's threshold, which it includes.
+    from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
+    from unified_kg_rag.shared.utils.scripts import LATIN_CHARS_PER_TOKEN
+
+    arabic = "يشحنالبائعالقطع" * 40
+    assert estimate_token_count(arabic) * LATIN_CHARS_PER_TOKEN == 2 * len(arabic)
+    with caplog.at_level(logging.WARNING):
+        _stage()._warn_of_chunk_sizes(_documents(arabic), [])
+    (warning,) = _warnings(caplog)
+    assert "2.0 times Latin text's" in warning
+
+
 def test_the_warning_names_the_size_that_made_the_units(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -138,6 +154,26 @@ def test_chunks_within_the_limit_are_not_warned_of(
             _documents(_ENGLISH), _units(_ENGLISH)
         )
     assert _warnings(caplog) == []
+
+
+def test_a_chunk_of_exactly_the_embedding_input_is_not_warned_of(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The model embeds a chunk of its whole input in full.
+    from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
+
+    limit = estimate_token_count(_ENGLISH)
+    with caplog.at_level(logging.WARNING):
+        _stage(embedding=limit, length_unit="tokens")._warn_of_chunk_sizes(
+            _documents(_ENGLISH), _units(_ENGLISH)
+        )
+    assert _warnings(caplog) == []
+    with caplog.at_level(logging.WARNING):
+        _stage(embedding=limit - 1, length_unit="tokens")._warn_of_chunk_sizes(
+            _documents(_ENGLISH), _units(_ENGLISH)
+        )
+    (warning,) = _warnings(caplog)
+    assert warning.startswith("Chunk size: 1 of 1 text units hold more")
 
 
 def test_an_unreadable_limit_skips_the_check(caplog: pytest.LogCaptureFixture) -> None:

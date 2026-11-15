@@ -119,6 +119,29 @@ def test_answers_the_config_would_not_write_are_not_stale() -> None:
     assert _kinds(built_off, config) == [RebuildReasonKind.ANSWER_SETTINGS]
 
 
+def test_a_record_that_fingerprinted_fewer_answers_tells_nothing_of_the_others() -> (
+    None
+):
+    # A record whose release fingerprinted only some answers says nothing of
+    # the rest, as a record from before the field says nothing of any.
+    config = Config()
+    record = _record(config)
+    record["answer_fingerprints"] = {
+        COMMUNITY_REPORT_ANSWERS: record["answer_fingerprints"][
+            COMMUNITY_REPORT_ANSWERS
+        ]
+    }
+    prompted = config.model_copy(deep=True)
+    prompted.custom_prompts.description_summarization_system = (
+        "Summarize the descriptions in {language}."
+    )
+    assert rebuild_reasons(record, prompted) == []
+    # The answers it did fingerprint are still compared.
+    prompted.models.roles.community_report = prompted.tier_model_id("fast")
+    (reason,) = rebuild_reasons(record, prompted)
+    assert reason.settings == [COMMUNITY_REPORT_ANSWERS]
+
+
 def test_changed_extraction_settings_are_applied_by_the_next_run() -> None:
     config = Config()
     changed = config.model_copy(deep=True)

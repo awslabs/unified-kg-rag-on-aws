@@ -129,6 +129,36 @@ def test_the_lsh_layout_proposes_the_pairs_at_the_threshold_at_a_bounded_cost(
         assert at >= LSH_RECALL_AT_THRESHOLD
 
 
+@pytest.mark.parametrize(
+    ("threshold", "ours", "datasketch"),
+    [
+        # The figures the CHANGELOG states: at the default 0.85, 99% of the
+        # pairs at the threshold (datasketch's 8 bands of 16 rows: 46%).
+        (0.85, 0.99, 0.46),
+        # Below about 0.8 no layout under the cost bound reaches 0.99: the
+        # one proposing the most at the threshold stands in (63% at 0.6,
+        # where datasketch's proposed 40%), not datasketch's.
+        (0.6, 0.63, 0.40),
+    ],
+)
+def test_the_lsh_layout_s_recall_is_the_one_the_changelog_states(
+    threshold: float, ours: float, datasketch: float
+) -> None:
+    from datasketch import MinHashLSH
+
+    from unified_kg_rag.domain.ingestion.base_resolver import (
+        _candidate_probability,
+        lsh_params,
+    )
+
+    own = MinHashLSH(threshold=threshold, num_perm=128)
+    at = _candidate_probability(threshold, *lsh_params(threshold, 128))
+    assert at == pytest.approx(ours, abs=0.005)
+    assert _candidate_probability(threshold, own.b, own.r) == pytest.approx(
+        datasketch, abs=0.005
+    )
+
+
 def test_matchers_derive_the_lsh_layout_once(monkeypatch: pytest.MonkeyPatch) -> None:
     # The layout search is cached per (threshold, permutations), not repeated
     # by every matcher.
