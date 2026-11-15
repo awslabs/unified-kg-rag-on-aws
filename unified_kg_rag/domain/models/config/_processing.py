@@ -878,7 +878,9 @@ class ProcessingConfig(ConfigSection):
             "The 3-gram similarity at which deduplicate reads two documents "
             "with the same numbers as copies. Documents that differ only in "
             "names (two parties of one template) still read as copies above "
-            "it: raise it, or leave deduplicate off, for such a corpus."
+            "it, as do distinct documents that share a boilerplate and hold "
+            "little text of their own (at 0.9, under about 3% of the "
+            "document): raise it, or leave deduplicate off, for such a corpus."
         ),
         json_schema_extra=evidence("unmeasured"),
     )
