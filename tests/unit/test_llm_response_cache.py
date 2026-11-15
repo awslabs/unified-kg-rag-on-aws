@@ -22,6 +22,7 @@ from unified_kg_rag.adapters.llm.response_cache import (
     LLMResponseCache,
 )
 from unified_kg_rag.domain.models import ModelPurpose
+from unified_kg_rag.domain.models.config import RetryPolicy
 
 pytestmark = pytest.mark.unit
 
@@ -48,12 +49,12 @@ def test_a_later_run_answers_from_the_responses_of_an_earlier_one(
     tmp_path: Path,
 ) -> None:
     respond = _Counter()
-    first = LLMResponseCache()
+    first = LLMResponseCache(flush_every=100)
     first.open(tmp_path)
     assert _ask(_model(first, respond)) == "answer to q"
     first.close()
 
-    second = LLMResponseCache()
+    second = LLMResponseCache(flush_every=100)
     second.open(tmp_path)
     assert _ask(_model(second, respond)) == "answer to q"
     assert respond.calls == 1
@@ -64,12 +65,12 @@ def test_an_entry_is_served_once_per_run(tmp_path: Path) -> None:
     # A retry within the run (after its response failed to parse, say) asks
     # the model again, and the new response replaces the old one.
     respond = _Counter()
-    first = LLMResponseCache()
+    first = LLMResponseCache(flush_every=100)
     first.open(tmp_path)
     _ask(_model(first, respond))
     first.close()
 
-    second = LLMResponseCache()
+    second = LLMResponseCache(flush_every=100)
     second.open(tmp_path)
     model = _model(second, respond)
     _ask(model)
@@ -79,7 +80,7 @@ def test_an_entry_is_served_once_per_run(tmp_path: Path) -> None:
 
 def test_responses_of_the_same_run_are_not_served(tmp_path: Path) -> None:
     respond = _Counter()
-    cache = LLMResponseCache()
+    cache = LLMResponseCache(flush_every=100)
     cache.open(tmp_path)
     model = _model(cache, respond)
     _ask(model)
@@ -88,7 +89,7 @@ def test_responses_of_the_same_run_are_not_served(tmp_path: Path) -> None:
 
 
 def test_the_key_covers_the_prompt_and_the_model(tmp_path: Path) -> None:
-    cache = LLMResponseCache()
+    cache = LLMResponseCache(flush_every=100)
     cache.open(tmp_path)
     cache.update("p", "model-a", [ChatGeneration(message=AIMessage(content="a"))])
     cache.close()
@@ -100,7 +101,7 @@ def test_the_key_covers_the_prompt_and_the_model(tmp_path: Path) -> None:
 def test_object_addresses_do_not_change_the_key(tmp_path: Path) -> None:
     # A model that is not LangChain-serializable lists its fields in the key,
     # an object's repr included, whose address differs per process.
-    cache = LLMResponseCache()
+    cache = LLMResponseCache(flush_every=100)
     cache.open(tmp_path)
     reply = [ChatGeneration(message=AIMessage(content="a"))]
     cache.update("p", "[('fn', <function f at 0x7f00aa>)]", reply)
@@ -112,7 +113,7 @@ def test_object_addresses_do_not_change_the_key(tmp_path: Path) -> None:
 
 def test_a_truncated_response_is_not_stored(tmp_path: Path) -> None:
     # Its failure is not retried, so replaying it would fail the item forever.
-    cache = LLMResponseCache()
+    cache = LLMResponseCache(flush_every=100)
     cache.open(tmp_path)
     cut = AIMessage(
         content="<entities>", response_metadata={"stopReason": "max_tokens"}
@@ -125,12 +126,12 @@ def test_a_truncated_response_is_not_stored(tmp_path: Path) -> None:
 
 def test_a_force_rebuild_stores_but_serves_nothing(tmp_path: Path) -> None:
     respond = _Counter()
-    first = LLMResponseCache()
+    first = LLMResponseCache(flush_every=100)
     first.open(tmp_path)
     _ask(_model(first, respond))
     first.close()
 
-    rebuild = LLMResponseCache()
+    rebuild = LLMResponseCache(flush_every=100)
     rebuild.open(tmp_path, lookups=False)
     _ask(_model(rebuild, respond))
     rebuild.close()
@@ -179,13 +180,13 @@ def test_a_failed_hand_off_never_fails_the_model_call(
 
 def test_an_unreadable_segment_is_skipped(tmp_path: Path) -> None:
     respond = _Counter()
-    first = LLMResponseCache()
+    first = LLMResponseCache(flush_every=100)
     first.open(tmp_path)
     _ask(_model(first, respond))
     first.close()
     (tmp_path / "00000000000000000000-bad.json").write_text("{not json")
 
-    second = LLMResponseCache()
+    second = LLMResponseCache(flush_every=100)
     second.open(tmp_path)
     _ask(_model(second, respond))
     assert respond.calls == 1
@@ -193,7 +194,7 @@ def test_an_unreadable_segment_is_skipped(tmp_path: Path) -> None:
 
 def test_an_unopened_cache_neither_serves_nor_stores(tmp_path: Path) -> None:
     respond = _Counter()
-    cache = LLMResponseCache()
+    cache = LLMResponseCache(flush_every=100)
     _ask(_model(cache, respond))
     _ask(_model(cache, respond))
     assert respond.calls == 2
@@ -201,7 +202,7 @@ def test_an_unopened_cache_neither_serves_nor_stores(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("purpose", [ModelPurpose.QUERY, ModelPurpose.EVALUATION])
 def test_only_ingestion_models_are_cached(tmp_path: Path, purpose) -> None:  # type: ignore[no-untyped-def]
-    cache = LLMResponseCache()
+    cache = LLMResponseCache(flush_every=100)
     model = _model(cache, _Counter(), purpose)
     assert model.cache is None
 
@@ -209,7 +210,7 @@ def test_only_ingestion_models_are_cached(tmp_path: Path, purpose) -> None:  # t
 def test_the_caching_factory_keeps_the_wrapped_factory_s_policies() -> None:
     inner = ScriptedLLMFactory(_Counter())
     inner.transient_retry = "policy"  # type: ignore[attr-defined]
-    factory = CachingLLMFactory(inner, LLMResponseCache())
+    factory = CachingLLMFactory(inner, LLMResponseCache(flush_every=100))
     assert factory.transient_retry == "policy"
     assert factory.get_model_info("model-a") == inner.get_model_info("model-a")
 
@@ -220,7 +221,9 @@ def _batch(
     """Ask ``model`` each of ``texts`` as one item of a batch, its answer
     checked by ``parse`` (raising fails the item)."""
     return BatchProcessor(
-        max_attempts=max_attempts, retry_multiplier=1.0, retry_max_wait=0
+        retry=RetryPolicy(
+            max_attempts=max_attempts, base_delay_seconds=1.0, max_delay_seconds=0
+        ),
     ).execute_with_fallback(
         texts,
         lambda items: [{"text": text} for text in items],
@@ -246,7 +249,7 @@ def test_the_responses_of_a_failed_item_are_not_served_again(
     # A re-run must ask the model again for the item a bad response failed
     # (not replay it and record the same failure), and only for that item.
     respond = _Counter()
-    first = LLMResponseCache()
+    first = LLMResponseCache(flush_every=100)
     first.open(tmp_path)
     results = _batch(
         _model(first, respond), ["good", "bad"], _rejecting("bad"), max_attempts
@@ -255,7 +258,7 @@ def test_the_responses_of_a_failed_item_are_not_served_again(
     assert respond.calls == 1 + max_attempts
     first.close()
 
-    second = LLMResponseCache()
+    second = LLMResponseCache(flush_every=100)
     second.open(tmp_path)
     asked = respond.calls
     results = _batch(_model(second, respond), ["good", "bad"], lambda answer: answer)
@@ -265,7 +268,7 @@ def test_the_responses_of_a_failed_item_are_not_served_again(
     second.close()
 
     # The answer that parsed is kept for the next run.
-    third = LLMResponseCache()
+    third = LLMResponseCache(flush_every=100)
     third.open(tmp_path)
     _batch(_model(third, respond), ["good", "bad"], lambda answer: answer)
     assert respond.calls == asked + 1
@@ -275,18 +278,18 @@ def test_a_served_response_its_item_rejects_is_dropped(tmp_path: Path) -> None:
     # Stored by an earlier run (a parser since tightened, a response from
     # before this rule): once its item fails on it, no later run gets it.
     respond = _Counter()
-    first = LLMResponseCache()
+    first = LLMResponseCache(flush_every=100)
     first.open(tmp_path)
     _ask(_model(first, respond), "bad")
     first.close()
 
-    second = LLMResponseCache()
+    second = LLMResponseCache(flush_every=100)
     second.open(tmp_path)
     results = _batch(_model(second, respond), ["bad"], _rejecting("bad"))
     assert results == [BATCH_ITEM_FAILED] and respond.calls == 1
     second.close()
 
-    third = LLMResponseCache()
+    third = LLMResponseCache(flush_every=100)
     third.open(tmp_path)
     _ask(_model(third, respond), "bad")
     assert respond.calls == 2
@@ -318,11 +321,12 @@ def test_a_timed_out_attempt_s_late_answer_is_not_stored(
     # re-run was served it (over the retry's good answer), or kept it after
     # the item's failure had already dropped its responses.
     respond, answered = _late_first_attempt(second)
-    cache = LLMResponseCache()
+    cache = LLMResponseCache(flush_every=100)
     cache.open(tmp_path)
     model = _model(cache, respond)
     results = BatchProcessor(
-        max_attempts=2, retry_multiplier=1.0, retry_max_wait=0, call_timeout_seconds=1
+        retry=RetryPolicy(max_attempts=2, base_delay_seconds=1.0, max_delay_seconds=0),
+        call_timeout_seconds=1,
     ).execute_with_fallback(
         ["q"],
         lambda items: [{"text": text} for text in items],
@@ -336,7 +340,7 @@ def test_a_timed_out_attempt_s_late_answer_is_not_stored(
     time.sleep(0.2)  # the abandoned call's cache update
     cache.close()
 
-    rerun = LLMResponseCache()
+    rerun = LLMResponseCache(flush_every=100)
     rerun.open(tmp_path)
     expected = "good" if second == "good" else "asked again"
     assert _ask(_model(rerun, lambda system, human: "asked again")) == expected
@@ -346,7 +350,7 @@ def test_a_dropped_response_still_pending_writes_nothing(tmp_path: Path) -> None
     # A response stored and dropped before any flush is never written: no
     # entry, no removal entry (nothing on disk to remove).
     respond = _Counter()
-    cache = LLMResponseCache()
+    cache = LLMResponseCache(flush_every=100)
     cache.open(tmp_path)
     _batch(_model(cache, respond), ["good", "bad"], _rejecting("bad"))
     cache.close()
@@ -366,12 +370,12 @@ def test_a_pending_segment_holds_one_entry_per_key(tmp_path: Path) -> None:
     def generation(text: str) -> list[ChatGeneration]:
         return [ChatGeneration(message=AIMessage(content=text))]
 
-    written = LLMResponseCache()
+    written = LLMResponseCache(flush_every=100)
     written.open(tmp_path)
     written.update("p-written", "llm", generation("old"))
     written.close()
 
-    cache = LLMResponseCache()
+    cache = LLMResponseCache(flush_every=100)
     cache.open(tmp_path)
     cache.update("p", "llm", generation("first"))
     cache.update("p", "llm", generation("second"))
@@ -390,7 +394,7 @@ def test_a_pending_segment_holds_one_entry_per_key(tmp_path: Path) -> None:
         for e in entries
     ] == [(_cache_key("p", "llm"), "second"), (_cache_key("p-written", "llm"), None)]
 
-    rerun = LLMResponseCache()
+    rerun = LLMResponseCache(flush_every=100)
     rerun.open(tmp_path)
     assert rerun.lookup("p", "llm")[0].text == "second"  # type: ignore[index]
     assert rerun.lookup("p-written", "llm") is None
@@ -404,7 +408,7 @@ def test_a_dropped_response_already_written_is_removed(tmp_path: Path) -> None:
     cache.open(tmp_path)
     _batch(_model(cache, respond), ["bad"], _rejecting("bad"))
     cache.close()
-    rerun = LLMResponseCache()
+    rerun = LLMResponseCache(flush_every=100)
     rerun.open(tmp_path)
     _ask(_model(rerun, respond), "bad")
     assert respond.calls == 2
@@ -423,7 +427,7 @@ def test_an_answered_item_s_responses_are_dropped_when_its_caller_rejects_it(
     first.open(tmp_path)
     model = _model(first, respond)
     discards: dict[int, Any] = {}
-    results = BatchProcessor(max_attempts=1).execute_with_fallback(
+    results = BatchProcessor(retry=RetryPolicy(max_attempts=1)).execute_with_fallback(
         ["good", "rejected"],
         lambda items: [{"text": text} for text in items],
         lambda request: _ask(model, request["text"]),
@@ -436,7 +440,7 @@ def test_an_answered_item_s_responses_are_dropped_when_its_caller_rejects_it(
     discards[1]()
     first.close()
 
-    second = LLMResponseCache()
+    second = LLMResponseCache(flush_every=100)
     second.open(tmp_path)
     asked = respond.calls
     _batch(_model(second, respond), ["good", "rejected"], lambda answer: answer)
@@ -450,7 +454,7 @@ def test_a_failed_item_gets_no_discard_to_call() -> None:
     def fail(request: dict[str, Any]) -> str:
         raise OutputParserException("cannot parse")
 
-    results = BatchProcessor(max_attempts=1).execute_with_fallback(
+    results = BatchProcessor(retry=RetryPolicy(max_attempts=1)).execute_with_fallback(
         ["bad"],
         lambda items: [{"text": text} for text in items],
         fail,
@@ -465,16 +469,16 @@ def test_a_served_response_its_caller_rejects_is_dropped(tmp_path: Path) -> None
     # Served from an earlier run's segment, then rejected after the batch:
     # removed for the next run, which asks the model again.
     respond = _Counter()
-    first = LLMResponseCache()
+    first = LLMResponseCache(flush_every=100)
     first.open(tmp_path)
     _ask(_model(first, respond), "rejected")
     first.close()
 
-    second = LLMResponseCache()
+    second = LLMResponseCache(flush_every=100)
     second.open(tmp_path)
     model = _model(second, respond)
     discards: dict[int, Any] = {}
-    BatchProcessor(max_attempts=1).execute_with_fallback(
+    BatchProcessor(retry=RetryPolicy(max_attempts=1)).execute_with_fallback(
         ["rejected"],
         lambda items: [{"text": text} for text in items],
         lambda request: _ask(model, request["text"]),
@@ -486,7 +490,7 @@ def test_a_served_response_its_caller_rejects_is_dropped(tmp_path: Path) -> None
     discards[0]()
     second.close()
 
-    third = LLMResponseCache()
+    third = LLMResponseCache(flush_every=100)
     third.open(tmp_path)
     _ask(_model(third, respond), "rejected")
     assert respond.calls == 2

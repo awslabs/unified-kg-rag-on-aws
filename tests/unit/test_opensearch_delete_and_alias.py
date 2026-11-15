@@ -19,6 +19,7 @@ from opensearchpy.exceptions import NotFoundError, TransportError
 
 import unified_kg_rag.adapters.aws.opensearch as opensearch_mod
 from unified_kg_rag.adapters.aws.opensearch import OpenSearchClient
+from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import AWSServiceError
 
 pytestmark = pytest.mark.unit
@@ -27,6 +28,7 @@ pytestmark = pytest.mark.unit
 def _client() -> OpenSearchClient:
     client = OpenSearchClient.__new__(OpenSearchClient)
     client._client = MagicMock()  # backing for the `client` property
+    client.config = Config()
     return client
 
 

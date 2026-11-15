@@ -86,12 +86,14 @@ def test_missing_config_file_is_a_usage_error(
 
 def test_validation_error_names_the_key_but_not_the_value(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
-    config_path.write_text("retry:\n  max_attempts: s3cr3t-value\n", encoding="utf-8")
+    config_path.write_text(
+        "retry:\n  model:\n    max_attempts: s3cr3t-value\n", encoding="utf-8"
+    )
     with pytest.raises(ConfigurationError) as exc:
         ConfigLoader(config_path).load_config()
     message = str(exc.value)
     assert message.startswith("Configuration validation error: ")
-    assert "retry.max_attempts" in message
+    assert "retry.model.max_attempts" in message
     assert "s3cr3t-value" not in message
     assert "\n" not in message
 

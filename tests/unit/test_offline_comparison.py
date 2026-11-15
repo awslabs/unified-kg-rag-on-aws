@@ -116,7 +116,8 @@ class TestCostBlock:
             {
                 "local": [_run(_BASE, "local", calls=2, tokens=100)],
                 "mix": [_run(_BASE, "mix", calls=3, tokens=150, latency=2.0)],
-            }
+            },
+            resamples=2000,
         )
         local = cost["strategies"]["local"]
         assert local["llm_calls_per_query"] == {"mean": 2.0, "p50": 2.0, "p95": 2.0}
@@ -145,6 +146,7 @@ class TestCostBlock:
                 "mix": [_run({"q1": 1.0}, "mix", tokens=1000, model="m-b")],
             },
             prices=prices,
+            resamples=2000,
         )
         usd = 1000 * 3.0 / 1e6 + 10 * 15.0 / 1e6
         assert cost["strategies"]["local"]["usd_per_query"]["mean"] == pytest.approx(
@@ -228,9 +230,11 @@ class TestCostBlock:
             by_model={"m-a": llm, "reranker": rerank},
         )
         runs = {"baseline:local": [old], "mix": [new]}
-        both = cost_comparison(runs, prices=prices)
+        both = cost_comparison(runs, prices=prices, resamples=2000)
         assert "usage/cost_usd" in both["deltas_vs_baseline"]["mix"]
-        cost = cost_comparison(runs, prices=prices, unmetered_rerank={"baseline:local"})
+        cost = cost_comparison(
+            runs, prices=prices, unmetered_rerank={"baseline:local"}, resamples=2000
+        )
         assert "usage/cost_usd" not in cost["deltas_vs_baseline"]["mix"]
         # The other measures still pair, and each side keeps its own USD.
         assert "usage/llm_calls" in cost["deltas_vs_baseline"]["mix"]
@@ -239,7 +243,10 @@ class TestCostBlock:
         assert "baseline:local" in warning and "usage_schema 3" in warning
         # Every side unmetered: like with like, no warning.
         same = cost_comparison(
-            runs, prices=prices, unmetered_rerank={"baseline:local", "mix"}
+            runs,
+            prices=prices,
+            unmetered_rerank={"baseline:local", "mix"},
+            resamples=2000,
         )
         assert "usage/cost_usd" in same["deltas_vs_baseline"]["mix"]
         assert same["warnings"] == []
@@ -283,7 +290,8 @@ class TestCostBlock:
             {
                 "local": [_run(_BASE, "local", usage=False)],
                 "mix": [_run(_BASE, "mix", usage=False)],
-            }
+            },
+            resamples=2000,
         )
         cost = comparison["cost"]
         assert cost["strategies"]["local"]["llm_calls_per_query"] is None
@@ -296,7 +304,8 @@ class TestCostBlock:
             {
                 "local": [_run(_BASE, "local", usage=False)],
                 "mix": [_run(_BASE, "mix")],
-            }
+            },
+            resamples=2000,
         )
         (warning,) = mixed["warnings"]
         assert warning.startswith("No usage records in the results of local ")
@@ -324,7 +333,8 @@ class TestGates:
             {
                 "local": [_run(_BASE, "local")],
                 "mix": [_run(_WORSE, "mix", tokens=400)],
-            }
+            },
+            resamples=2000,
         )
         f1 = parse_gate("answer_match/token_f1:ci_high<-0.02")
         tokens = parse_gate("usage/total_tokens:mean_delta>100")
@@ -346,7 +356,8 @@ class TestGates:
             {
                 "local": [_run({"q1": 0.5}, "local")],
                 "mix": [_run({"q1": 0.9}, "mix")],
-            }
+            },
+            resamples=2000,
         )
         delta = one["deltas_vs_baseline"]["mix"]["answer_match/token_f1"]
         assert delta["ci_low"] == delta["ci_high"]
@@ -360,7 +371,7 @@ class TestGates:
         assert "'usage/total_tokens' delta pairs 1 queries" in breaches[1]
         ten = {f"q{i}": 0.5 for i in range(10)}
         enough = paired_comparison(
-            {"local": [_run(ten, "local")], "mix": [_run(ten, "mix")]}
+            {"local": [_run(ten, "local")], "mix": [_run(ten, "mix")]}, resamples=2000
         )
         assert gate_breaches(enough, gates) == []
 
@@ -458,7 +469,8 @@ class TestFailedScores:
             {
                 "local": [_judged(dict.fromkeys(queries, 0.6))],
                 "mix": [_judged(candidate)],
-            }
+            },
+            resamples=2000,
         )
 
     def test_counted_warned_and_fail_the_metric_gates(self) -> None:
@@ -590,6 +602,7 @@ def test_from_results_rebuilds_the_comparison_without_a_chain(tmp_path: Path) ->
                 "mix": [_run(_WORSE, "mix", tokens=300)],
             },
             categories={"q1": "2hop", "q2": "1hop", "q3": "2hop", "q4": "1hop"},
+            resamples=2000,
         )
     )
     assert comparison["baseline"] == "local"
@@ -1057,7 +1070,9 @@ class TestFailedAnswersInCost:
         # Before, a timed-out answer (usage and time spent) was left out, so a
         # strategy that timed out looked faster.
         timed_out = _failing_run(_BASE, "mix", {"q1": (_usage(2, 100, 10), 30.0)})
-        cost = cost_comparison({"local": [_run(_BASE, "local")], "mix": [timed_out]})
+        cost = cost_comparison(
+            {"local": [_run(_BASE, "local")], "mix": [timed_out]}, resamples=2000
+        )
         mix = cost["strategies"]["mix"]
         assert (mix["failed_answers"], mix["answers_without_latency"]) == (1, 0)
         latency = cost["deltas_vs_baseline"]["mix"]["latency/response_time_seconds"]
@@ -1071,7 +1086,7 @@ class TestFailedAnswersInCost:
         # A failed answer saved before failed answers kept their measures.
         unmeasured = _failing_run(_BASE, "mix", {"q1": (None, None)})
         comparison = paired_comparison(
-            {"local": [_run(_BASE, "local")], "mix": [unmeasured]}
+            {"local": [_run(_BASE, "local")], "mix": [unmeasured]}, resamples=2000
         )
         (warning,) = [w for w in comparison["warnings"] if w.startswith("mix: ")]
         assert "1 without a usage record and 1 without a latency of 4" in warning
@@ -1095,7 +1110,7 @@ class TestFailedAnswersInCost:
         # compares the failures too (a fast failure looks cheap).
         failed = _failing_run(_BASE, "mix", {"q1": (_usage(1, 10, 0), 0.1)})
         comparison = paired_comparison(
-            {"local": [_run(_BASE, "local")], "mix": [failed]}
+            {"local": [_run(_BASE, "local")], "mix": [failed]}, resamples=2000
         )
         gates = [
             parse_gate("usage/total_tokens:mean_delta>1000"),
@@ -1118,7 +1133,8 @@ class TestFailedAnswersInCost:
                     _failing_run(_BASE, "local", {"q1": (_usage(1, 10, 0), 0.1)})
                 ],
                 "mix": [failed],
-            }
+            },
+            resamples=2000,
         )
         assert gate_breaches(both, gates) == []
 
@@ -1135,14 +1151,16 @@ class TestFailedAnswersInCost:
                     cached(_run(_BASE, "local", calls=1), 1),
                 ],
                 "local": [cached(_run(_BASE, "local", calls=2), 0)],
-            }
+            },
+            resamples=2000,
         )
         repeats, hits = cost["warnings"]
         assert "different numbers of repeats (baseline:local 2, local 1)" in repeats
         assert "same --repeats" in repeats
         assert "Cache hits per answer differ (baseline:local 0.50, local 0.00)" in hits
         same = cost_comparison(
-            {"local": [_run(_BASE, "local")], "mix": [_run(_BASE, "mix")]}
+            {"local": [_run(_BASE, "local")], "mix": [_run(_BASE, "mix")]},
+            resamples=2000,
         )
         assert same["warnings"] == []
 
@@ -1159,7 +1177,8 @@ def test_extracted_span_fallbacks_are_warned_per_strategy() -> None:
         {
             "local": [spans(_run(_BASE, "local"), 0)],
             "mix": [spans(_run(_BASE, "mix"), 4)],
-        }
+        },
+        resamples=2000,
     )
     assert comparison["strategies"]["mix"]["answer_span_fallbacks"] == {
         "scored": 4,
@@ -1171,7 +1190,8 @@ def test_extracted_span_fallbacks_are_warned_per_strategy() -> None:
     assert (
         "answer_span_fallbacks"
         not in paired_comparison(
-            {"local": [_run(_BASE, "local")], "mix": [_run(_BASE, "mix")]}
+            {"local": [_run(_BASE, "local")], "mix": [_run(_BASE, "mix")]},
+            resamples=2000,
         )["strategies"]["mix"]
     )
 
@@ -1204,7 +1224,8 @@ def test_a_failed_answer_is_not_filled_on_attributable_fraction() -> None:
                     _failing_run(_BASE, "mix", {"q1": (_usage(1, 1, 1), 1.0)})
                 )
             ],
-        }
+        },
+        resamples=2000,
     )
     # A share of attributable sources, not a score: no 0 for an answer that
     # reported no source.

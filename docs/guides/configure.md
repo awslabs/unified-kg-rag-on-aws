@@ -42,11 +42,31 @@ a WARNING per key and drops it instead.
 A moved key fails naming its replacement
 ([Moved keys](../reference/configuration.md#moved-keys)).
 
-Retries are configured in one section, `retry`: `max_attempts` for model
-calls (ingestion items, Bedrock embeddings and query-time calls) with its
-backoff, and an attempt count for the callers whose defaults differ (model
-servers, the graph-store indexer, OpenSearch queries, RAGAS judges). Every
-attempt count includes the first attempt; `1` disables the retry.
+Retries are configured in one section, `retry`, with one profile per
+caller: `model` (Bedrock embeddings and query-time calls), `ingestion_item`
+(each ingestion LLM item), `model_server` (an OpenAI-compatible or Ollama
+server), `graph_store` (Neptune and Gremlin indexer requests), `query_store`
+(OpenSearch, Neptune and Gremlin query reads), `bulk_item` (OpenSearch bulk items) and
+`registry_batch` (DynamoDB doc-status batches). Each profile sets
+`max_attempts`, the backoff (`base_delay_seconds`, `max_delay_seconds`,
+`jitter`) and a wall-clock budget (`max_total_seconds`), and keeps its own
+defaults for the keys it leaves out; `judge_max_attempts` counts the RAGAS
+judge's attempts. Every attempt count includes the first attempt; `1`
+disables the retry. Two callers' clients also retry on their own inside each
+attempt, and the counts stack: `retry.model.client_max_attempts` (6) is
+botocore's requests per Bedrock call of ingestion and evaluation (a query
+call's is `search.model_max_attempts`), `retry.bulk_item.client_max_attempts`
+(6) the OpenSearch indexing client's. The flat keys of earlier configs (`retry.max_attempts`,
+`retry.base_delay_seconds`, ...) still load, with a WARNING, into every
+profile each one governed
+([Deprecated keys](../reference/configuration.md#deprecated-keys)); set the
+profile keys instead.
+
+```yaml
+retry:
+  ingestion_item:
+    max_attempts: 8        # more patience with a throttled Bedrock quota
+```
 
 ## Settings most runs change
 

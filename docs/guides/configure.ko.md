@@ -37,10 +37,26 @@ cp config-template.yaml config.yaml
 남기고 그 키를 버립니다. 위치가 바뀐 키는 대신할 키를
 알려 주며 실패합니다([Moved keys](../reference/configuration.md#moved-keys), 영문).
 
-재시도는 `retry` 섹션 하나에서 설정합니다. `max_attempts`와 백오프는 모델 호출(수집 항목,
-Bedrock 임베딩, 질의 시점 호출)에 적용되고, 기본값이 다른 호출자(모델 서버, 그래프 저장소
-인덱서, OpenSearch 질의, RAGAS 평가 모델)는 시도 횟수를 따로 둡니다. 시도 횟수는 모두 첫
-시도를 포함하며, `1`이면 재시도하지 않습니다.
+재시도는 `retry` 섹션 하나에서 호출자별 프로필로 설정합니다. `model`(Bedrock 임베딩과
+질의 시점 호출), `ingestion_item`(수집 LLM 항목), `model_server`(OpenAI 호환 서버나
+Ollama), `graph_store`(Neptune·Gremlin 인덱서 요청), `query_store`(OpenSearch·Neptune·Gremlin 질의 읽기),
+`bulk_item`(OpenSearch 벌크 항목), `registry_batch`(DynamoDB 문서 상태 배치)가 있습니다.
+프로필마다 `max_attempts`, 백오프(`base_delay_seconds`, `max_delay_seconds`, `jitter`)와
+실행 시간 한도(`max_total_seconds`)를 정하고, 지정하지 않은 키는 그 프로필의 기본값을
+유지합니다. `judge_max_attempts`는 RAGAS 평가 모델의 시도 횟수입니다. 시도 횟수는 모두 첫
+시도를 포함하며, `1`이면 재시도하지 않습니다. 두 호출자는 클라이언트도 시도마다 자체 재시도를 하고, 그
+횟수는 곱해집니다. `retry.model.client_max_attempts`(6)는 수집·평가용 Bedrock 호출 하나에 botocore가
+보내는 요청 수이고(질의 호출은 `search.model_max_attempts`), `retry.bulk_item.client_max_attempts`(6)는
+OpenSearch 인덱싱 클라이언트의 요청 수입니다. 이전 설정의 평면 키(`retry.max_attempts`,
+`retry.base_delay_seconds`, ...)는 지원 중단(deprecation) WARNING과 함께 각 키가 맡던 모든 프로필에
+그대로 적용됩니다([Deprecated keys](../reference/configuration.md#deprecated-keys), 영문). 프로필 키로
+바꾸세요.
+
+```yaml
+retry:
+  ingestion_item:
+    max_attempts: 8        # 스로틀링된 Bedrock 할당량을 더 오래 기다림
+```
 
 ## 대부분의 실행에서 바꾸는 설정
 

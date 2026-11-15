@@ -179,10 +179,18 @@ class SourceFileParser:
     (``assign_document_identity``) and its source digest.
     """
 
-    def __init__(self, config: Config, source_directory: Path) -> None:
+    def __init__(
+        self,
+        config: Config,
+        source_directory: Path,
+        *,
+        clock: Callable[[], float] = time.perf_counter,
+    ) -> None:
         self.config = config
         self.source_directory = Path(source_directory)
         self._fingerprints: dict[str, tuple[str, str | None]] = {}
+        # Times the in-process parses that decide whether a pool pays off.
+        self._clock = clock
 
     @property
     def index_value(self) -> str | None:
@@ -290,11 +298,11 @@ class SourceFileParser:
                 self._parse_in_pool(paths, results, index, min(workers, remaining))
                 break
             extension = path.suffix.lower()
-            start = time.perf_counter()
+            start = self._clock()
             results[index] = self._parse_here(path)
             if extension in warmed:
                 seconds, count = spent.get(extension, (0.0, 0))
-                spent[extension] = (seconds + time.perf_counter() - start, count + 1)
+                spent[extension] = (seconds + self._clock() - start, count + 1)
             warmed.add(extension)
             left[extension] -= 1
         return [result if result is not None else "not parsed" for result in results]

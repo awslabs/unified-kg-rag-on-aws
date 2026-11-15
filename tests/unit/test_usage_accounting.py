@@ -117,12 +117,12 @@ def test_a_cached_response_is_a_cache_hit_not_a_call(tmp_path: Path) -> None:
             "chat-a", model_purpose=ModelPurpose.INGESTION
         )
 
-    first = LLMResponseCache()
+    first = LLMResponseCache(flush_every=100)
     first.open(tmp_path)
     with usage.usage_scope() as run_one:
         _model(first).invoke([HumanMessage(content="extract")])
     first.close()
-    second = LLMResponseCache()
+    second = LLMResponseCache(flush_every=100)
     second.open(tmp_path)
     with usage.usage_scope() as run_two:
         _model(second).invoke([HumanMessage(content="extract")])
@@ -652,8 +652,9 @@ def test_throttled_bedrock_requests_count_per_attempt_and_role(monkeypatch) -> N
     client.meta.events.register_first("before-send.bedrock-runtime", responder(99))
     with usage.usage_scope() as meter, pytest.raises(Exception, match="Throttling"):
         client.converse(modelId="vendor.model-a", messages=message)
-    assert meter.snapshot()["throttled_requests"] == factory.BOTO_MAX_ATTEMPTS + 1
-    assert meter.snapshot()["sent_requests"] == factory.BOTO_MAX_ATTEMPTS + 1
+    attempts = factory.config.retry.model.client_max_attempts
+    assert meter.snapshot()["throttled_requests"] == attempts
+    assert meter.snapshot()["sent_requests"] == attempts
     # Validated as part of the usage record.
     assert LLMUsage.model_validate(meter.snapshot()).throttled_requests == 6
 

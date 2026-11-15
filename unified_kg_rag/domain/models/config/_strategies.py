@@ -9,6 +9,8 @@ from pydantic import (
     Field,
 )
 
+from unified_kg_rag.domain.models.evidence import evidence
+
 from ..retrieval import (
     SearchStrategy,
     SearchType,
@@ -39,6 +41,7 @@ class GlobalSearchConfig(ConfigSection):
             "selection that found nothing relevant rates whole (MS GraphRAG's "
             "max_level); relevant reports are followed to the leaves."
         ),
+        json_schema_extra=evidence("upstream", "MS GraphRAG's community_level, 2"),
     )
     max_reports_per_level: int = Field(
         default=100,
@@ -57,6 +60,7 @@ class GlobalSearchConfig(ConfigSection):
             "(the default of 100 maps at most 99). MS GraphRAG has no cap: it "
             "maps the whole cut. Each report costs map-step input tokens."
         ),
+        json_schema_extra=evidence("unmeasured"),
     )
     use_dynamic_selection: bool = Field(
         default=False,
@@ -83,6 +87,9 @@ class GlobalSearchConfig(ConfigSection):
             "more, MS GraphRAG's threshold: a pruned report prunes its whole "
             "subtree."
         ),
+        json_schema_extra=evidence(
+            "upstream", "MS GraphRAG's dynamic selection threshold, a rating of 1"
+        ),
     )
     enable_map_reduce: bool = Field(
         default=True,
@@ -94,6 +101,7 @@ class GlobalSearchConfig(ConfigSection):
         ge=1,
         description="Minimum community results before map-reduce synthesis is "
         "applied; below this the results are returned directly.",
+        json_schema_extra=evidence("unmeasured"),
     )
     map_context_tokens: int = Field(
         default=12000,
@@ -107,6 +115,7 @@ class GlobalSearchConfig(ConfigSection):
             "a longer report gets a call of its own. "
             "Map calls run search.max_concurrency at a time."
         ),
+        json_schema_extra=evidence("upstream", "MS GraphRAG's data_max_tokens, 12000"),
     )
     map_relevance_threshold: int = Field(
         default=0,
@@ -114,6 +123,9 @@ class GlobalSearchConfig(ConfigSection):
         le=100,
         description="Drop map-step key points whose 0-100 relevance score is at "
         "or below this threshold before ranking (0 keeps any positive score).",
+        json_schema_extra=evidence(
+            "upstream", "MS GraphRAG's reduce keeps a key point scored above 0"
+        ),
     )
     max_map_reduce_tokens: int = Field(
         default=8000,
@@ -122,6 +134,7 @@ class GlobalSearchConfig(ConfigSection):
         "answer model; the highest-scored points are taken until this budget is "
         "reached, so the answer is written from focused, ranked evidence. "
         "The reports the points cite follow them in the context.",
+        json_schema_extra=evidence("unmeasured"),
     )
     text_unit_slots: int = Field(
         default=0,
@@ -132,6 +145,9 @@ class GlobalSearchConfig(ConfigSection):
             "none: MS GraphRAG's global context is community reports only, and "
             "chunks next to them took most of the answer budget the reports "
             "and key points need. Local and mix search cover chunk evidence."
+        ),
+        json_schema_extra=evidence(
+            "upstream", "MS GraphRAG's global context holds reports only (0)"
         ),
     )
     evidence_tokens: int | None = Field(
@@ -153,6 +169,7 @@ class GlobalSearchConfig(ConfigSection):
             "sources, since the key points are model output. Applies to the "
             "map-reduce path (enable_map_reduce)."
         ),
+        json_schema_extra=evidence("measured", "#global-evidence-cap"),
     )
 
 
@@ -176,54 +193,68 @@ class TypeQuotaConfig(ConfigSection):
         ge=0.0,
         description="Text-unit (chunk) slots as a multiple of top_k. "
         "Unmeasured choice.",
+        json_schema_extra=evidence("unmeasured"),
     )
     text_floor: int = Field(
         default=20,
         ge=1,
         description="Minimum text-unit slots whatever top_k. Unmeasured choice.",
+        json_schema_extra=evidence("unmeasured"),
     )
     entity_multiplier: float = Field(
         default=1.0,
         ge=0.0,
         description="Entity slots as a multiple of top_k. Unmeasured choice.",
+        json_schema_extra=evidence("unmeasured"),
     )
     entity_floor: int = Field(
         default=10,
         ge=1,
         description="Minimum entity slots (MS GraphRAG local's top_k_entities).",
+        json_schema_extra=evidence(
+            "upstream", "MS GraphRAG local's top_k_entities, 10"
+        ),
     )
     relationship_multiplier: float = Field(
         default=1.0,
         ge=0.0,
         description="Relationship slots as a multiple of top_k (also caps local "
         "search's bridge relationships). Unmeasured choice.",
+        json_schema_extra=evidence("unmeasured"),
     )
     relationship_floor: int = Field(
         default=10,
         ge=1,
         description="Minimum relationship slots (MS GraphRAG local's "
         "top_k_relationships).",
+        json_schema_extra=evidence(
+            "upstream", "MS GraphRAG local's top_k_relationships, 10"
+        ),
     )
     community_multiplier: float = Field(
         default=0.5,
         ge=0.0,
         description="Community report slots as a multiple of top_k. "
         "Unmeasured choice.",
+        json_schema_extra=evidence("unmeasured"),
     )
     community_floor: int = Field(
         default=2,
         ge=1,
         description="Minimum community report slots. Unmeasured choice.",
+        json_schema_extra=evidence("unmeasured"),
     )
     claim_multiplier: float = Field(
         default=0.5,
         ge=0.0,
         description="Claim slots as a multiple of top_k. Unmeasured choice.",
+        json_schema_extra=evidence("unmeasured"),
     )
     claim_floor: int = Field(
         default=2,
         ge=1,
         description="Minimum claim slots. Unmeasured choice.",
+        json_schema_extra=evidence("unmeasured"),
     )
 
     def slots(self, top_k: int) -> dict[str, int]:
@@ -247,6 +278,7 @@ class LocalSearchConfig(ConfigSection):
         "many text units (too generic to be discriminative for local search) "
         "from the context and the text-unit fan-out. The query's own matched "
         "(seed) entities are always kept.",
+        json_schema_extra=evidence("measured", "#retrieval-switches"),
     )
     include_bridge_relationships: bool = Field(
         default=True,
@@ -283,6 +315,7 @@ class LocalSearchConfig(ConfigSection):
             "hit. The seeds share the expansion budget in proportion to their "
             "scores."
         ),
+        json_schema_extra=evidence("unmeasured"),
     )
     report_selection: Literal["membership", "similarity"] = Field(
         default="similarity",
@@ -341,6 +374,7 @@ class LocalSearchConfig(ConfigSection):
             "is read from the entities index. 0 = off (the measured setting "
             "is 5). Needs indexing.opensearch.build_relationship_vector_index."
         ),
+        json_schema_extra=evidence("unmeasured"),
     )
     entity_candidates_per_focus: int = Field(
         default=2,
@@ -351,6 +385,7 @@ class LocalSearchConfig(ConfigSection):
             "seed_score_ratio). Unmeasured choice (no A/B in "
             "docs/concepts/defaults-and-evidence.md)."
         ),
+        json_schema_extra=evidence("unmeasured"),
     )
     type_quota: TypeQuotaConfig = Field(
         default_factory=TypeQuotaConfig,
@@ -390,6 +425,7 @@ class DriftSearchConfig(ConfigSection):
             " round (MS GraphRAG drift_k_followups: 20). Each follow-up query "
             "is one local search plus one models.roles.drift_action call."
         ),
+        json_schema_extra=evidence("deviation", "MS GraphRAG's drift_k_followups: 20"),
     )
     primer_folds: int = Field(
         default=5,
@@ -397,6 +433,7 @@ class DriftSearchConfig(ConfigSection):
         description="Primer calls the primer reports are split over (MS "
         "GraphRAG primer_folds, 5); each drafts its own intermediate answer and "
         "follow-up queries.",
+        json_schema_extra=evidence("upstream", "MS GraphRAG's primer_folds, 5"),
     )
     n_depth: int = Field(
         default=2,
@@ -405,18 +442,23 @@ class DriftSearchConfig(ConfigSection):
         "k_followups * n_depth local searches per query, so the defaults make "
         "at most 1 + primer_folds + 20 + 1 = 27 LLM calls (MS GraphRAG's "
         "defaults: 67).",
+        json_schema_extra=evidence("deviation", "MS GraphRAG's n_depth: 3"),
     )
     local_context_tokens: int = Field(
         default=12000,
         ge=128,
         description="Token budget of the local-search context one follow-up "
         "query is answered from (MS GraphRAG local_search_max_data_tokens).",
+        json_schema_extra=evidence(
+            "upstream", "MS GraphRAG's local_search_max_data_tokens, 12000"
+        ),
     )
     max_answer_tokens: int = Field(
         default=8000,
         ge=128,
         description="Token budget for the ranked intermediate answers handed to "
         "the answer model; the best-scored answers are taken first.",
+        json_schema_extra=evidence("unmeasured"),
     )
     text_unit_ranking: Literal["support", "ppr"] = Field(
         default="support",
@@ -445,6 +487,7 @@ class LightRAGSearchConfig(ConfigSection):
             "sentence, not a name: hybrid then retrieves nothing and mix only "
             "chunks. 0 turns the fallback off."
         ),
+        json_schema_extra=evidence("upstream", "LightRAG's len(query) < 50"),
     )
     kg_stream_top_k: int = Field(
         default=40,
@@ -455,6 +498,7 @@ class LightRAGSearchConfig(ConfigSection):
             "collapsing both onto the caller's single top_k starves the graph "
             "streams. Acts as a floor — a caller asking for a larger top_k gets it."
         ),
+        json_schema_extra=evidence("upstream", "LightRAG's QueryParam.top_k, 40"),
     )
     chunk_stream_top_k: int = Field(
         default=20,
@@ -464,6 +508,7 @@ class LightRAGSearchConfig(ConfigSection):
             "(LightRAG's `QueryParam.chunk_top_k`, default 20). Acts as a floor "
             "against the caller's top_k."
         ),
+        json_schema_extra=evidence("upstream", "LightRAG's QueryParam.chunk_top_k, 20"),
     )
     related_chunk_number: int = Field(
         default=5,
@@ -473,6 +518,7 @@ class LightRAGSearchConfig(ConfigSection):
             "`text_unit_ids` lineage (LightRAG's `related_chunk_number`). Slots are "
             "distributed on a decreasing gradient so the last match still gets one."
         ),
+        json_schema_extra=evidence("upstream", "LightRAG's related_chunk_number, 5"),
     )
     kg_chunk_pick_method: Literal["vector", "weight"] = Field(
         default="weight",
@@ -539,6 +585,7 @@ class IterativeSearchConfig(ConfigSection):
             "makes at most max_rounds + 1 controller calls and max_rounds + 1 "
             "base searches; the answer model is called once."
         ),
+        json_schema_extra=evidence("measured", "#iterative-settings"),
     )
     round_top_k: int = Field(
         default=5,
@@ -549,6 +596,7 @@ class IterativeSearchConfig(ConfigSection):
             "default). The base rerun of a follow-up round keeps the query's "
             "top_k."
         ),
+        json_schema_extra=evidence("unmeasured"),
     )
     max_next_queries: int = Field(
         default=2,
@@ -559,6 +607,7 @@ class IterativeSearchConfig(ConfigSection):
             "naming a bridge entity; a query already searched is not searched "
             "again. 0 follows the bridge entities alone."
         ),
+        json_schema_extra=evidence("unmeasured"),
     )
     max_bridge_entities: int = Field(
         default=5,
@@ -571,6 +620,7 @@ class IterativeSearchConfig(ConfigSection):
             "alone. Unmeasured choice (no A/B in "
             "docs/concepts/defaults-and-evidence.md)."
         ),
+        json_schema_extra=evidence("unmeasured"),
     )
     controller_context_tokens: int | None = Field(
         default=None,
@@ -614,6 +664,7 @@ class PPRSearchConfig(ConfigSection):
             "ppr_facts fusion bucket. Without the relationship vector index "
             "the entities-index hits of the question seed instead, this many."
         ),
+        json_schema_extra=evidence("upstream", "HippoRAG 2's linking_top_k, 5"),
     )
     fact_search_type: SearchType | None = Field(
         default=SearchType.VECTOR,
@@ -634,6 +685,7 @@ class PPRSearchConfig(ConfigSection):
             "Seed entities that keep their weight, best first (HippoRAG 2's "
             "link_top_k)."
         ),
+        json_schema_extra=evidence("upstream", "HippoRAG 2's link_top_k, 5"),
     )
     entity_seed_top_k: int = Field(
         default=0,
@@ -643,6 +695,7 @@ class PPRSearchConfig(ConfigSection):
             "(weighted by hit score over the text units they cite). 0 = off "
             "(HippoRAG 2 seeds from facts only)."
         ),
+        json_schema_extra=evidence("upstream", "HippoRAG 2 seeds from facts only (0)"),
     )
     passage_seed_top_k: int = Field(
         default=20,
@@ -654,6 +707,7 @@ class PPRSearchConfig(ConfigSection):
             "in the ppr strategy they also form the ppr_seed_text_units fusion "
             "bucket. 0 = no passage seeds."
         ),
+        json_schema_extra=evidence("unmeasured"),
     )
     passage_node_weight: float = Field(
         default=0.05,
@@ -662,6 +716,9 @@ class PPRSearchConfig(ConfigSection):
             "Reset weight of the best passage seed relative to a fact's score "
             "(HippoRAG 2's passage_node_weight, 0.05): small, so the facts' "
             "entities steer the walk and the passage search breaks ties."
+        ),
+        json_schema_extra=evidence(
+            "upstream", "HippoRAG 2's passage_node_weight, 0.05"
         ),
     )
     damping: float = Field(
@@ -675,16 +732,19 @@ class PPRSearchConfig(ConfigSection):
             "which is why a bounded neighbourhood stands in for the whole "
             "graph."
         ),
+        json_schema_extra=evidence("upstream", "HippoRAG 2's damping, 0.5"),
     )
     max_iterations: int = Field(
         default=30,
         ge=1,
         description="Power-iteration steps at most",
+        json_schema_extra=evidence("operational"),
     )
     tolerance: float = Field(
         default=1e-6,
         gt=0.0,
         description="The power iteration stops once the L1 change is below this",
+        json_schema_extra=evidence("operational"),
     )
     max_hops: int = Field(
         default=2,
@@ -693,6 +753,7 @@ class PPRSearchConfig(ConfigSection):
             "Depth of the ppr strategy's graph expansion around the seed "
             "entities (local's ranking uses local's own expansion)."
         ),
+        json_schema_extra=evidence("unmeasured"),
     )
     max_neighbourhood_entities: int = Field(
         default=100,
@@ -703,6 +764,7 @@ class PPRSearchConfig(ConfigSection):
             "search.graph_expansion.traversal_fetch_multiplier and splits the "
             "budget across the seeds by fact score)."
         ),
+        json_schema_extra=evidence("unmeasured"),
     )
     max_edges_per_vertex: int = Field(
         default=50,
@@ -711,6 +773,7 @@ class PPRSearchConfig(ConfigSection):
             "Relationships one entity contributes to the PageRank graph at "
             "most, the first by relationship id, so a hub cannot fill it."
         ),
+        json_schema_extra=evidence("unmeasured"),
     )
     entity_frequency_threshold: int = Field(
         default=20,
@@ -721,6 +784,7 @@ class PPRSearchConfig(ConfigSection):
             "passes its mass on through its relationships); local's ranking "
             "uses search.local_search.entity_frequency_threshold."
         ),
+        json_schema_extra=evidence("unmeasured"),
     )
     rerank: bool = Field(
         default=True,
@@ -758,6 +822,7 @@ class TreeSearchConfig(ConfigSection):
         ge=1,
         le=50,
         description="Entities the raw-query entity search takes as graph seeds.",
+        json_schema_extra=evidence("unmeasured"),
     )
     text_top_k: int = Field(
         default=20,
@@ -765,6 +830,7 @@ class TreeSearchConfig(ConfigSection):
         le=200,
         description="Text units each text bucket searches for, and the most "
         "the fused result keeps (expanded passages aside).",
+        json_schema_extra=evidence("unmeasured"),
     )
     summary_top_k: int = Field(
         default=10,
@@ -772,6 +838,7 @@ class TreeSearchConfig(ConfigSection):
         le=100,
         description="Summaries the summary buckets search for, and the most "
         "the fused result keeps (RAPTOR's collapsed tree takes top_k 10).",
+        json_schema_extra=evidence("upstream", "RAPTOR's collapsed tree top_k, 10"),
     )
     max_nodes_per_level: int = Field(
         default=3,
@@ -779,6 +846,7 @@ class TreeSearchConfig(ConfigSection):
         le=50,
         description="Summaries of one tree level the context keeps at most, so "
         "neither the roots nor the first level take every summary slot.",
+        json_schema_extra=evidence("unmeasured"),
     )
     expand_children: int = Field(
         default=2,
@@ -788,6 +856,7 @@ class TreeSearchConfig(ConfigSection):
         "(the best by the query, under the caller's filters), so the answer "
         "cites original text. 0 keeps the summaries alone (RAPTOR's "
         "collapsed tree).",
+        json_schema_extra=evidence("unmeasured"),
     )
 
 
@@ -843,6 +912,7 @@ class StructuredSearchConfig(ConfigSection):
         ge=1,
         le=4,
         description="The longest walk a plan may ask for, in hops over all its edges.",
+        json_schema_extra=evidence("unmeasured"),
     )
     rows_in_context: int = Field(
         default=50,
@@ -854,6 +924,7 @@ class StructuredSearchConfig(ConfigSection):
             "that names none (a count, an aggregate), the first matches by "
             "rank read as its evidence."
         ),
+        json_schema_extra=evidence("unmeasured"),
     )
     max_scan_rows: int = Field(
         default=5000,
@@ -867,6 +938,7 @@ class StructuredSearchConfig(ConfigSection):
             "truncated (a count reads 'at least N'). A count without either "
             "is computed by the store and exact."
         ),
+        json_schema_extra=evidence("operational"),
     )
     store_timeout_seconds: float = Field(
         default=10.0,
@@ -878,6 +950,7 @@ class StructuredSearchConfig(ConfigSection):
             "(reason timeout). Neptune's own neptune_query_timeout still "
             "applies (StrictTimeoutValidation refuses a longer one)."
         ),
+        json_schema_extra=evidence("operational"),
     )
     repair_attempts: int = Field(
         default=1,
@@ -887,6 +960,7 @@ class StructuredSearchConfig(ConfigSection):
             "Planner calls after one whose plan was refused, each shown the "
             "refusal (the plan field and why)."
         ),
+        json_schema_extra=evidence("unmeasured"),
     )
     schema_source: Literal["both", "declared", "observed"] = Field(
         default="both",
@@ -907,6 +981,7 @@ class StructuredSearchConfig(ConfigSection):
             "tokens; the least frequent patterns, properties and types are "
             "cut first."
         ),
+        json_schema_extra=evidence("operational"),
     )
     profile_sample_vertices: int = Field(
         default=2000,
@@ -917,17 +992,20 @@ class StructuredSearchConfig(ConfigSection):
             "per suffix and profile_ttl_seconds), so a large graph costs no "
             "scan."
         ),
+        json_schema_extra=evidence("operational"),
     )
     profile_edges_per_vertex: int = Field(
         default=20,
         ge=0,
         le=1000,
         description="Out-edges of each sampled entity the profile reads at most.",
+        json_schema_extra=evidence("operational"),
     )
     profile_ttl_seconds: float = Field(
         default=600.0,
         ge=0,
         description="Seconds a strategy reuses a suffix's profile (0: read it on every query).",
+        json_schema_extra=evidence("operational"),
     )
     max_example_values: int = Field(
         default=10,
@@ -939,6 +1017,7 @@ class StructuredSearchConfig(ConfigSection):
             "spelling (a country, a status); 0 shows none. Entity names are "
             "never listed: names in the question are linked by code."
         ),
+        json_schema_extra=evidence("operational"),
     )
     link_candidates: int = Field(
         default=3,
@@ -954,11 +1033,13 @@ class StructuredSearchConfig(ConfigSection):
             "vector search returns its nearest entities for any text, a "
             "lexical one every name sharing a word."
         ),
+        json_schema_extra=evidence("unmeasured"),
     )
     link_min_score: float = Field(
         default=0.0,
         ge=0.0,
         description="Lexical score a linked entity needs above 0 at least (0: any lexical hit).",
+        json_schema_extra=evidence("unmeasured"),
     )
     supporting_chunks: int = Field(
         default=5,
@@ -969,69 +1050,5 @@ class StructuredSearchConfig(ConfigSection):
             "cite, fused with a hybrid text search of the question among "
             "them and reranked, so the answer can cite text. 0 fetches none."
         ),
-    )
-
-
-class GraphExpansionConfig(ConfigSection):
-    """The walk around a query's seed entities, on every graph store
-    (Neptune, Gremlin Server, the embedded SQLite graph) and over the
-    relationships index under a document filter."""
-
-    max_hops: int = Field(
-        default=3,
-        ge=1,
-        description=(
-            "Depth of the graph expansion around the seed entities at query " "time."
-        ),
-    )
-    max_results_per_hop: int = Field(
-        default=50,
-        ge=1,
-        description="Maximum number of neighbours one node contributes per "
-        "traversal hop, so a hub entity cannot fan the expansion out unbounded",
-    )
-    entity_importance_source: Literal["rank", "degree", "none"] = Field(
-        default="rank",
-        description=(
-            "Graph-expansion relevance orders entities by distance from the "
-            "seeds (seeds first) and, at the same distance, by this "
-            "importance: 'rank' (the indexed entity rank, its degree), "
-            "'degree' (the entity's edges counted at query time, as MS "
-            "GraphRAG ranks entities; read as 'rank' under a document filter, "
-            "whose walk runs over the search store) or 'none' (a neutral 0.5 "
-            "for every entity, so expansion ranks by distance alone)."
-        ),
-    )
-    traversal_fetch_multiplier: int = Field(
-        default=3,
-        ge=1,
-        description=(
-            "Graph expansion (the graph walk, or under a document filter the "
-            "walk over the relationships index) reaches up to top_k * "
-            "retrieval_multiplier * this many entities besides the seeds, "
-            "split across the seeds (evenly; for local search's in proportion "
-            "to their scores: each seed reaches at most its share), ranks "
-            "them by relevance, then keeps every seed plus the "
-            "top top_k * retrieval_multiplier of the others. 1 = no "
-            "over-fetch: every reached entity is kept, with no cut after "
-            "ranking."
-        ),
-    )
-    deterministic_order: bool = Field(
-        default=True,
-        description=(
-            "Neptune graph expansion takes each vertex's max_results_per_hop "
-            "neighbours in id order, so two builds of one graph (edges "
-            "written in another order) expand to the same entities: "
-            "reproducible results across rebuilds. The cost: each expanded "
-            "vertex has all its neighbours read and sorted before the cut, "
-            "which grows with hub degree (Gremlin Server, 2,500-neighbour "
-            "hubs at the defaults: 6.8 to 23.2 ms per query; 60-neighbour "
-            "hubs: 4.5 to 4.8 ms; Neptune hub latency is unmeasured). false: "
-            "the first neighbours the store returns (an order Neptune does "
-            "not specify), so a rebuild can change the results. Of equally "
-            "short paths to an entity, the one from the better-ranked seed "
-            "is kept, then the first by content, either way. The embedded "
-            "SQLite graph store always takes neighbours by id and ignores it."
-        ),
+        json_schema_extra=evidence("unmeasured"),
     )

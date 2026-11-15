@@ -12,6 +12,8 @@ from pydantic import (
     Field,
 )
 
+from unified_kg_rag.domain.models.evidence import evidence
+
 from ..evaluation import EvaluationMetricType, EvaluatorType, RagasMetricType
 from ._common import ConfigSection
 from ._models import EffortLevel
@@ -154,6 +156,7 @@ class EvaluationConfig(ConfigSection):
             "A timed-out job yields NaN for that metric. RAGAS' own default "
             "(180s) is too tight for thinking judges."
         ),
+        json_schema_extra=evidence("operational"),
     )
     ragas_max_contexts: int | None = Field(
         default=20,
@@ -168,6 +171,7 @@ class EvaluationConfig(ConfigSection):
             "context within max_context_tokens, and the answer model's context "
             "is unaffected. null disables the cap."
         ),
+        json_schema_extra=evidence("operational"),
     )
     ragas_max_workers: int = Field(
         default=8,
@@ -177,6 +181,7 @@ class EvaluationConfig(ConfigSection):
             "Bedrock throttles the judge model (throttled calls burn the "
             "per-job timeout)."
         ),
+        json_schema_extra=evidence("operational"),
     )
     answer_span: Literal["full", "first_line", "extracted"] = Field(
         default="first_line",
@@ -209,6 +214,7 @@ class EvaluationConfig(ConfigSection):
             "budget (judge_effort's, see search.output_ceilings) plus 1,024 "
             "tokens. null = models.default_max_output_tokens."
         ),
+        json_schema_extra=evidence("operational"),
     )
     answer_normalization: Literal["default", "official_squad", "hotpotqa"] = Field(
         default="default",
@@ -282,6 +288,7 @@ class EvaluationConfig(ConfigSection):
             "trials). A query whose trials all failed records "
             "its metrics as failed, never as 0."
         ),
+        json_schema_extra=evidence("operational"),
     )
     retrieval_k: int = Field(
         default=5,
@@ -291,6 +298,7 @@ class EvaluationConfig(ConfigSection):
             "of top-ranked distinct files (of the reported sources, in rank "
             "order) compared with reference_sources."
         ),
+        json_schema_extra=evidence("operational"),
     )
     save_detailed_results: bool = Field(
         default=True,
@@ -356,4 +364,5 @@ class EvaluationConfig(ConfigSection):
             "the p-value's floor 1 / (1 + resamples); raise it for more "
             "stable unadjusted intervals, at a cost linear in it."
         ),
+        json_schema_extra=evidence("operational"),
     )

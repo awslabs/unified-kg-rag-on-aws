@@ -1610,7 +1610,7 @@ class CrossRunMerge:
         matcher = FuzzyMatcher(
             candidates=list(id_by_name.keys()),
             resolution_method=processing.resolution_method,
-            similarity_threshold=processing.similarity_threshold,
+            similarity_threshold=processing.resolution_threshold,
             fuzzy=processing.fuzzy_entity_resolution,
         )
         old_ids = {

@@ -224,18 +224,19 @@ _REMOVED_SETTINGS = [
 
 # The retry keys #468 folded into the retry section: each counts what its
 # replacement counts, so a tuned value fails the load naming the new key
-# rather than silently reverting to the default.
+# rather than silently reverting to the default. (The flat keys of the
+# section itself are deprecated aliases: test_retry_aliases.)
 _MOVED_RETRY_KEYS = {
-    "processing.max_attempts": "retry.max_attempts",
-    "aws.bedrock.transient_retry.max_attempts": "retry.max_attempts",
-    "aws.bedrock.transient_retry.base_delay_seconds": "retry.base_delay_seconds",
-    "aws.bedrock.transient_retry.max_delay_seconds": "retry.max_delay_seconds",
-    "aws.bedrock.transient_retry.max_total_seconds": "retry.max_total_seconds",
-    "providers.llm.max_attempts": "retry.model_server_max_attempts",
-    "providers.embedding.max_attempts": "retry.model_server_max_attempts",
-    "indexing.neptune.max_attempts": "retry.graph_store_max_attempts",
-    "indexing.neptune.retry_delay_seconds": "retry.base_delay_seconds",
-    "search.store_max_attempts": "retry.query_store_max_attempts",
+    "processing.max_attempts": "retry.ingestion_item.max_attempts",
+    "aws.bedrock.transient_retry.max_attempts": "retry.model.max_attempts",
+    "aws.bedrock.transient_retry.base_delay_seconds": "retry.model.base_delay_seconds",
+    "aws.bedrock.transient_retry.max_delay_seconds": "retry.model.max_delay_seconds",
+    "aws.bedrock.transient_retry.max_total_seconds": "retry.model.max_total_seconds",
+    "providers.llm.max_attempts": "retry.model_server.max_attempts",
+    "providers.embedding.max_attempts": "retry.model_server.max_attempts",
+    "indexing.neptune.max_attempts": "retry.graph_store.max_attempts",
+    "indexing.neptune.retry_delay_seconds": "retry.graph_store.base_delay_seconds",
+    "search.store_max_attempts": "retry.query_store.max_attempts",
     "evaluation.ragas_max_attempts": "retry.judge_max_attempts",
 }
 
@@ -260,9 +261,13 @@ def test_a_tuned_old_retry_key_fails_naming_its_replacement(
     [
         # 0.2.3 passed it to a pipeline setting nothing read: model calls
         # made BatchProcessor's 5 attempts whatever it said.
-        ("processing.max_retries", "retry.max_attempts", "had no effect"),
+        (
+            "processing.max_retries",
+            "retry.ingestion_item.max_attempts",
+            "had no effect",
+        ),
         # 0.2.3's Neptune indexer made max_retries + 1 attempts.
-        ("indexing.neptune.max_retries", "retry.graph_store_max_attempts", "N+1"),
+        ("indexing.neptune.max_retries", "retry.graph_store.max_attempts", "N+1"),
     ],
 )
 def test_a_0_2_3_retry_count_fails_saying_how_to_convert_it(

@@ -20,6 +20,14 @@ the keys most deployments set.
   upper case with `__` between the segments, for example
   `UKR__AWS__NEPTUNE__ENDPOINT` for `aws.neptune.endpoint`; a list or
   mapping value takes JSON. The standard AWS variables also apply when nothing else sets the key: `AWS_PROFILE` fills `aws.profile_name`, `AWS_REGION` fills `aws.region_name`.
+- **Evidence.** Every numeric default says what it rests on:
+  - *measured*: a real-model run compared it with other values; the ref is the section of Defaults and evidence that holds the numbers;
+  - *upstream*: the value of the original algorithm's reference implementation or of the service; the ref names it;
+  - *deviation*: a deliberate departure from the original's value that no run compared; the ref names the original's value;
+  - *operational*: bounds time, memory, request sizes or concurrency, not what is retrieved or answered;
+  - *unmeasured*: changes what is retrieved or answered, and no run compared it with another value.
+  The defaults a run never compared are listed in
+  [Defaults no run compared](#defaults-no-run-compared).
 - **Unknown keys** fail the load (`--allow-unknown-keys` turns that into a
   warning). Keys that moved are refused with their new place; see
   [Moved keys](#moved-keys). Removed keys load with a warning and are
@@ -44,14 +52,15 @@ the keys most deployments set.
 - [`custom_prompts`](#custom_prompts)
 - [`mcp`](#mcp)
 - [Long defaults](#long-defaults)
+- [Defaults no run compared](#defaults-no-run-compared)
 - [Moved keys](#moved-keys)
 - [Removed keys](#removed-keys)
 
 ## Top-level keys
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `backend` | `"aws"` \| `"local"` | `"aws"` | Provider preset. 'aws' (default): Bedrock, Neptune, OpenSearch and DynamoDB. 'local': fills in local providers (Ollama, a cross-encoder reranker, embedded SQLite graph/vector stores and registry) for every providers/aws.neptune/aws.opensearch key the config leaves unset. |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `backend` | `"aws"` \| `"local"` | `"aws"` |  | Provider preset. 'aws' (default): Bedrock, Neptune, OpenSearch and DynamoDB. 'local': fills in local providers (Ollama, a cross-encoder reranker, embedded SQLite graph/vector stores and registry) for every providers/aws.neptune/aws.opensearch key the config leaves unset. |
 
 ## `providers`
 
@@ -61,366 +70,368 @@ Per-role provider selection (models, stores, registry)
 
 Language-model provider
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `base_url` | string \| null (min length 1) | `null` | Endpoint of the model server, e.g. http://localhost:11434 for Ollama or http://localhost:8000/v1 for an OpenAI-compatible server (vLLM, llama.cpp, LM Studio). Ignored by bedrock. |
-| `api_key` | secret string \| null | `null` | API key for an OpenAI-compatible server (masked in logs). Most local servers ignore it; null sends a placeholder. Ignored by bedrock and ollama. |
-| `timeout_seconds` | number (> 0) | `300.0` | HTTP timeout per request to the model server, in seconds. |
-| `kind` | string (min length 1) | `"bedrock"` | Language-model provider: bedrock \| openai_compatible \| ollama. |
-| `context_window_size` | integer (≥ 1024) | `32768` | Context window of the non-Bedrock models, in tokens. Sizes the retrieval context budget and is sent to Ollama as num_ctx. Bedrock models take theirs from the capability catalog. |
-| `max_output_tokens` | integer (≥ 1) | `8192` | Output-token ceiling of the non-Bedrock models. A request asks for models.default_max_output_tokens (or a prompt's own floor), clamped to this. |
-| `temperature` | number (≥ 0.0, ≤ 2.0) | `0.0` | Sampling temperature for the non-Bedrock models. |
-| `tokenizer` | `"estimate"` \| `"tiktoken"` | `"estimate"` | Token counting for the non-Bedrock models: 'estimate' (the script-aware estimate Bedrock also falls back to) or 'tiktoken' (needs the [local] extra; tiktoken downloads its encoding file on first use). Falls back to the estimate when tiktoken is unavailable. |
-| `tiktoken_encoding` | string (min length 1) | `"cl100k_base"` | tiktoken encoding name used when tokenizer is 'tiktoken'. |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `base_url` | string \| null (min length 1) | `null` |  | Endpoint of the model server, e.g. http://localhost:11434 for Ollama or http://localhost:8000/v1 for an OpenAI-compatible server (vLLM, llama.cpp, LM Studio). Ignored by bedrock. |
+| `api_key` | secret string \| null | `null` |  | API key for an OpenAI-compatible server (masked in logs). Most local servers ignore it; null sends a placeholder. Ignored by bedrock and ollama. |
+| `timeout_seconds` | number (> 0) | `300.0` | operational | HTTP timeout per request to the model server, in seconds. |
+| `kind` | string (min length 1) | `"bedrock"` |  | Language-model provider: bedrock \| openai_compatible \| ollama. |
+| `context_window_size` | integer (≥ 1024) | `32768` | operational | Context window of the non-Bedrock models, in tokens. Sizes the retrieval context budget and is sent to Ollama as num_ctx. Bedrock models take theirs from the capability catalog. |
+| `max_output_tokens` | integer (≥ 1) | `8192` | operational | Output-token ceiling of the non-Bedrock models. A request asks for models.default_max_output_tokens (or a prompt's own floor), clamped to this. |
+| `temperature` | number (≥ 0.0, ≤ 2.0) | `0.0` | upstream: GraphRAG 2.x's language model temperature, 0 | Sampling temperature for the non-Bedrock models. |
+| `tokenizer` | `"estimate"` \| `"tiktoken"` | `"estimate"` |  | Token counting for the non-Bedrock models: 'estimate' (the script-aware estimate Bedrock also falls back to) or 'tiktoken' (needs the [local] extra; tiktoken downloads its encoding file on first use). Falls back to the estimate when tiktoken is unavailable. |
+| `tiktoken_encoding` | string (min length 1) | `"cl100k_base"` |  | tiktoken encoding name used when tokenizer is 'tiktoken'. |
 
 ### `providers.embedding`
 
 Embedding provider
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `base_url` | string \| null (min length 1) | `null` | Endpoint of the model server, e.g. http://localhost:11434 for Ollama or http://localhost:8000/v1 for an OpenAI-compatible server (vLLM, llama.cpp, LM Studio). Ignored by bedrock. |
-| `api_key` | secret string \| null | `null` | API key for an OpenAI-compatible server (masked in logs). Most local servers ignore it; null sends a placeholder. Ignored by bedrock and ollama. |
-| `timeout_seconds` | number (> 0) | `300.0` | HTTP timeout per request to the model server, in seconds. |
-| `kind` | string (min length 1) | `"bedrock"` | Embedding provider: bedrock \| openai_compatible \| ollama. |
-| `max_input_tokens` | integer (≥ 1) | `8192` | Longest input the non-Bedrock embedding model accepts, in tokens; longer texts are truncated (by the estimate) before embedding. |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `base_url` | string \| null (min length 1) | `null` |  | Endpoint of the model server, e.g. http://localhost:11434 for Ollama or http://localhost:8000/v1 for an OpenAI-compatible server (vLLM, llama.cpp, LM Studio). Ignored by bedrock. |
+| `api_key` | secret string \| null | `null` |  | API key for an OpenAI-compatible server (masked in logs). Most local servers ignore it; null sends a placeholder. Ignored by bedrock and ollama. |
+| `timeout_seconds` | number (> 0) | `300.0` | operational | HTTP timeout per request to the model server, in seconds. |
+| `kind` | string (min length 1) | `"bedrock"` |  | Embedding provider: bedrock \| openai_compatible \| ollama. |
+| `max_input_tokens` | integer (≥ 1) | `8192` | operational | Longest input the non-Bedrock embedding model accepts, in tokens; longer texts are truncated (by the estimate) before embedding. |
 
 ### `providers.rerank`
 
 Reranking provider
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `kind` | string (min length 1) | `"bedrock"` | Reranker: bedrock \| cross_encoder (sentence-transformers, [cross-encoder] extra) \| none (keep the fused order). With none, or a cross-encoder that cannot load, queries run unreranked, logged once and visible as kg_rag.rerank_enabled=false on the fusion span. |
-| `device` | string \| null | `null` | Torch device for the cross-encoder (null lets it choose). |
-| `max_length` | integer (≥ 16) | `512` | Longest query + passage pair the cross-encoder scores, in tokens. |
-| `batch_size` | integer (≥ 1) | `16` | Pairs scored per cross-encoder batch. |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `kind` | string (min length 1) | `"bedrock"` |  | Reranker: bedrock \| cross_encoder (sentence-transformers, [cross-encoder] extra) \| none (keep the fused order). With none, or a cross-encoder that cannot load, queries run unreranked, logged once and visible as kg_rag.rerank_enabled=false on the fusion span. |
+| `device` | string \| null | `null` |  | Torch device for the cross-encoder (null lets it choose). |
+| `max_length` | integer (≥ 16) | `512` | operational | Longest query + passage pair the cross-encoder scores, in tokens. |
+| `batch_size` | integer (≥ 1) | `16` | operational | Pairs scored per cross-encoder batch. |
 
 ### `providers.graph`
 
 Graph store
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `kind` | string (min length 1) | `"neptune"` | Graph store: neptune \| gremlin (a TinkerPop Gremlin Server through the same adapter, configured by aws.neptune with use_iam: false) \| sqlite (an embedded single-host graph in providers.graph.sqlite_path). |
-| `sqlite_path` | string (min length 1) | `".unified-kg-rag/graph.sqlite3"` | SQLite database file when kind is sqlite (created on first use). A relative path is resolved against the config file's directory (the working directory without a config file). |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `kind` | string (min length 1) | `"neptune"` |  | Graph store: neptune \| gremlin (a TinkerPop Gremlin Server through the same adapter, configured by aws.neptune with use_iam: false) \| sqlite (an embedded single-host graph in providers.graph.sqlite_path). |
+| `sqlite_path` | string (min length 1) | `".unified-kg-rag/graph.sqlite3"` |  | SQLite database file when kind is sqlite (created on first use). A relative path is resolved against the config file's directory (the working directory without a config file). |
 
 ### `providers.vector`
 
 Vector/lexical store
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `kind` | string (min length 1) | `"opensearch"` | Vector/lexical store: opensearch (Amazon OpenSearch Service or a local OpenSearch, configured by aws.opensearch) \| sqlite (an embedded store in sqlite_path that answers the same queries, for about 100k documents per index; no server). |
-| `sqlite_path` | string (min length 1) | `".unified-kg-rag/vector.sqlite3"` | SQLite database file when kind is sqlite (created on first use). A relative path is resolved against the config file's directory (the working directory without a config file). |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `kind` | string (min length 1) | `"opensearch"` |  | Vector/lexical store: opensearch (Amazon OpenSearch Service or a local OpenSearch, configured by aws.opensearch) \| sqlite (an embedded store in sqlite_path that answers the same queries, for about 100k documents per index; no server). |
+| `sqlite_path` | string (min length 1) | `".unified-kg-rag/vector.sqlite3"` |  | SQLite database file when kind is sqlite (created on first use). A relative path is resolved against the config file's directory (the working directory without a config file). |
 
 ### `providers.doc_status`
 
 Document-status registry
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `kind` | string (min length 1) | `"dynamodb"` | Document-status registry for incremental indexing: dynamodb \| sqlite. |
-| `enabled` | boolean | `false` | Turn on the doc-status registry, which makes ingestion incremental (only new, changed and failed documents are processed). |
-| `sqlite_path` | string (min length 1) | `".unified-kg-rag/doc-status.sqlite3"` | SQLite database file when kind is sqlite (created on first use). A relative path is resolved against the config file's directory (the working directory without a config file). |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `kind` | string (min length 1) | `"dynamodb"` |  | Document-status registry for incremental indexing: dynamodb \| sqlite. |
+| `enabled` | boolean | `false` |  | Turn on the doc-status registry, which makes ingestion incremental (only new, changed and failed documents are processed). |
+| `sqlite_path` | string (min length 1) | `".unified-kg-rag/doc-status.sqlite3"` |  | SQLite database file when kind is sqlite (created on first use). A relative path is resolved against the config file's directory (the working directory without a config file). |
 
 ## `models`
 
 Which model serves each role, on the providers above
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `default` | string \| null (min length 1) | `null` | Model of the 'default' tier (extraction, gleaning, claims, community reports, output fixing, query entity/keyword extraction, answer generation; evaluation with another provider than Bedrock, see roles.evaluation). null = anthropic.claude-sonnet-5-5 on Bedrock; required with another provider. |
-| `fast` | string \| null (min length 1) | `null` | Model of the 'fast' tier (chunking, translation, description summarization, global/DRIFT search steps, query translation, rewriting and routing). null = anthropic.claude-haiku-5-5 on Bedrock, the default tier's model with another provider. |
-| `rerank` | `"amazon.rerank-v1:0"` \| `"cohere.rerank-v3-5:0"` \| string \| null | `null` | Rerank model. Bedrock: one of the RerankModelId values, null = cohere.rerank-v3-5:0. cross_encoder: a sentence-transformers model name, required. Ignored with providers.rerank.kind none. |
-| `prices` | dict[string, ModelPrice] | `{}` | USD prices per model id, for every USD figure the package computes: the run-eval comparison's cost estimate (cost.strategies.<s>.usd_per_query), the console's per-answer cost and dashboard, processing.max_run_usd and run-ingestion --estimate. Keyed as the usage records name the model (usage.by_model: the id the model factory resolved, an inference profile id included); a model without its own entry takes the price its entries under other inference-profile prefixes (or none) agree on. Empty (default): no USD figure, token counts only. No prices ship with the package: fill in the current Amazon Bedrock on-demand prices of your region. input_tokens includes the cache reads and writes; each is priced at its own rate when the model's price sets one. The rerank model is priced too (per_thousand_rerank_search_units; a local cross-encoder at 0): an answer with an unpriced model that was called, reranker included, has no USD estimate. |
-| `default_max_output_tokens` | integer \| null (≥ 1) | `16384` | max_tokens sent with each LLM request, clamped to the model's maximum (providers.llm.max_output_tokens for a non-Bedrock model). Bedrock reserves input + max_tokens against the tokens-per-minute quota when a request starts, so sending the model maximum (128K on Claude 5.x) throttles concurrent calls long before real usage does. Thinking tokens count toward it. Prompts with long outputs (graph/claim extraction, gleaning, community reports, document translation) declare a higher floor that wins over this value. Raise it if answers are cut off (stopReason max_tokens); null sends the model maximum. |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `default` | string \| null (min length 1) | `null` |  | Model of the 'default' tier (extraction, gleaning, claims, community reports, output fixing, query entity/keyword extraction, answer generation; evaluation with another provider than Bedrock, see roles.evaluation). null = anthropic.claude-sonnet-5-5 on Bedrock; required with another provider. |
+| `fast` | string \| null (min length 1) | `null` |  | Model of the 'fast' tier (chunking, translation, description summarization, global/DRIFT search steps, query translation, rewriting and routing). null = anthropic.claude-haiku-5-5 on Bedrock, the default tier's model with another provider. |
+| `rerank` | `"amazon.rerank-v1:0"` \| `"cohere.rerank-v3-5:0"` \| string \| null | `null` |  | Rerank model. Bedrock: one of the RerankModelId values, null = cohere.rerank-v3-5:0. cross_encoder: a sentence-transformers model name, required. Ignored with providers.rerank.kind none. |
+| `prices` | dict[string, ModelPrice] | `{}` |  | USD prices per model id, for every USD figure the package computes: the run-eval comparison's cost estimate (cost.strategies.<s>.usd_per_query), the console's per-answer cost and dashboard, processing.max_run_usd and run-ingestion --estimate. Keyed as the usage records name the model (usage.by_model: the id the model factory resolved, an inference profile id included); a model without its own entry takes the price its entries under other inference-profile prefixes (or none) agree on. Empty (default): no USD figure, token counts only. No prices ship with the package: fill in the current Amazon Bedrock on-demand prices of your region. input_tokens includes the cache reads and writes; each is priced at its own rate when the model's price sets one. The rerank model is priced too (per_thousand_rerank_search_units; a local cross-encoder at 0): an answer with an unpriced model that was called, reranker included, has no USD estimate. |
+| `default_max_output_tokens` | integer \| null (≥ 1) | `16384` | operational | max_tokens sent with each LLM request, clamped to the model's maximum (providers.llm.max_output_tokens for a non-Bedrock model). Bedrock reserves input + max_tokens against the tokens-per-minute quota when a request starts, so sending the model maximum (128K on Claude 5.x) throttles concurrent calls long before real usage does. Thinking tokens count toward it. Prompts with long outputs (graph/claim extraction, gleaning, community reports, document translation) declare a higher floor that wins over this value. Raise it if answers are cut off (stopReason max_tokens); null sends the model maximum. |
 
 ### `models.roles`
 
 Per-role overrides: a model id or a tier name per role.
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `fixing` | string \| null (min length 1) | `null` | Model that repairs malformed structured model output: a model id, or a tier name ('default' / 'fast'). null runs it on the 'default' tier. |
-| `chunking` | string \| null (min length 1) | `null` | Model that places chunk boundaries (intelligent chunker): a model id, or a tier name ('default' / 'fast'). null runs it on the 'fast' tier. |
-| `translation` | string \| null (min length 1) | `null` | Model that translates the corpus at ingestion: a model id, or a tier name ('default' / 'fast'). null runs it on the 'fast' tier. |
-| `graph_extraction` | string \| null (min length 1) | `null` | Model that extracts entities and relationships: a model id, or a tier name ('default' / 'fast'). null runs it on the 'default' tier. |
-| `description_summary` | string \| null (min length 1) | `null` | Model that summarizes the merged descriptions of an entity or relationship: a model id, or a tier name ('default' / 'fast'). null runs it on the 'fast' tier. |
-| `gleaning` | string \| null (min length 1) | `null` | Model that refines each text unit's extraction: a model id, or a tier name ('default' / 'fast'). null runs it on the 'default' tier. |
-| `claim_extraction` | string \| null (min length 1) | `null` | Model that extracts claims: a model id, or a tier name ('default' / 'fast'). null runs it on the 'default' tier. |
-| `community_report` | string \| null (min length 1) | `null` | Model that writes community reports: a model id, or a tier name ('default' / 'fast'). null runs it on the 'default' tier. |
-| `summary_tree` | string \| null (min length 1) | `null` | Model that summarizes each cluster of the summary tree (raptor methodology): a model id, or a tier name ('default' / 'fast'). null runs it on the 'default' tier. |
-| `query_translation` | string \| null (min length 1) | `null` | Model that translates the query: a model id, or a tier name ('default' / 'fast'). null runs it on the 'fast' tier. |
-| `entity_extraction` | string \| null (min length 1) | `null` | Model that extracts the query's entities and keywords: a model id, or a tier name ('default' / 'fast'). null runs it on the 'default' tier. |
-| `strategy_selection` | string \| null (min length 1) | `null` | Model that routes an auto query to a strategy: a model id, or a tier name ('default' / 'fast'). null runs it on the 'fast' tier. |
-| `query_rewrite` | string \| null (min length 1) | `null` | Model that rewrites a follow-up into a standalone query: a model id, or a tier name ('default' / 'fast'). null runs it on the 'fast' tier. |
-| `answer_generation` | string \| null (min length 1) | `null` | Model that writes the answer: a model id, or a tier name ('default' / 'fast'). null runs it on the 'default' tier. |
-| `community_relevance` | string \| null (min length 1) | `null` | Model that rates community relevance for global search's dynamic selection: a model id, or a tier name ('default' / 'fast'). null runs it on the 'fast' tier. |
-| `global_map` | string \| null (min length 1) | `null` | Model that answers from each report batch (global map): a model id, or a tier name ('default' / 'fast'). null runs it on the 'fast' tier. |
-| `drift_primer` | string \| null (min length 1) | `null` | Model that writes DRIFT's primer and follow-ups: a model id, or a tier name ('default' / 'fast'). null runs it on the 'fast' tier. |
-| `drift_action` | string \| null (min length 1) | `null` | Model that answers each DRIFT follow-up: a model id, or a tier name ('default' / 'fast'). null runs it on the 'fast' tier. |
-| `query_controller` | string \| null (min length 1) | `null` | Model that judges whether iterative search's context answers the question and names the follow-up queries: a model id, or a tier name ('default' / 'fast'). null runs it on the 'fast' tier. |
-| `graph_query` | string \| null (min length 1) | `null` | Model that writes the structured strategy's graph query plan (search.structured): a model id, or a tier name ('default' / 'fast'). null runs it on the 'default' tier. |
-| `evaluation` | string \| null (min length 1) | `null` | Model of the run-eval LLM judges (the ragas and assertion evaluators and --pairwise-judge): a model id, or a tier name ('default' / 'fast'). null = anthropic.claude-opus-5-5 on Bedrock, a model other than the default answer model; when the answer model is that model, the default tier's model or else Claude Sonnet 5.5, whichever is not (run-eval logs the choice at INFO): a judge favours its own answers (measured on 50 global questions: Sonnet 5.5 judging its own answers against Opus 5.5's shifted the directness win rate by -0.27 [-0.38, -0.16] against a GPT-5.5 judge). It costs about twice the default tier per token (on-demand, us-west-2, 2026-11: $4 / $20 per million input / output tokens against $2 / $10). With another provider, null runs it on the 'default' tier. 'default' restores the judge of earlier versions, the answer model (run-eval warns when a configured judge is the answer model). |
-| `answer_span` | string \| null (min length 1) | `null` | Model that extracts the short answer span run-eval scores exact match and token F1 on (evaluation.answer_span: extracted): a model id, or a tier name ('default' / 'fast'). null runs it on the 'fast' tier. |
-| `pairwise_overlap` | string \| null (min length 1) | `null` | Model that splits two answers into shared and unique statements for run-eval --pairwise-mode differential: a model id, or a tier name ('default' / 'fast'). null runs it on the 'fast' tier. |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `fixing` | string \| null (min length 1) | `null` |  | Model that repairs malformed structured model output: a model id, or a tier name ('default' / 'fast'). null runs it on the 'default' tier. |
+| `chunking` | string \| null (min length 1) | `null` |  | Model that places chunk boundaries (intelligent chunker): a model id, or a tier name ('default' / 'fast'). null runs it on the 'fast' tier. |
+| `translation` | string \| null (min length 1) | `null` |  | Model that translates the corpus at ingestion: a model id, or a tier name ('default' / 'fast'). null runs it on the 'fast' tier. |
+| `graph_extraction` | string \| null (min length 1) | `null` |  | Model that extracts entities and relationships: a model id, or a tier name ('default' / 'fast'). null runs it on the 'default' tier. |
+| `description_summary` | string \| null (min length 1) | `null` |  | Model that summarizes the merged descriptions of an entity or relationship: a model id, or a tier name ('default' / 'fast'). null runs it on the 'fast' tier. |
+| `gleaning` | string \| null (min length 1) | `null` |  | Model that refines each text unit's extraction: a model id, or a tier name ('default' / 'fast'). null runs it on the 'default' tier. |
+| `claim_extraction` | string \| null (min length 1) | `null` |  | Model that extracts claims: a model id, or a tier name ('default' / 'fast'). null runs it on the 'default' tier. |
+| `community_report` | string \| null (min length 1) | `null` |  | Model that writes community reports: a model id, or a tier name ('default' / 'fast'). null runs it on the 'default' tier. |
+| `summary_tree` | string \| null (min length 1) | `null` |  | Model that summarizes each cluster of the summary tree (raptor methodology): a model id, or a tier name ('default' / 'fast'). null runs it on the 'default' tier. |
+| `query_translation` | string \| null (min length 1) | `null` |  | Model that translates the query: a model id, or a tier name ('default' / 'fast'). null runs it on the 'fast' tier. |
+| `entity_extraction` | string \| null (min length 1) | `null` |  | Model that extracts the query's entities and keywords: a model id, or a tier name ('default' / 'fast'). null runs it on the 'default' tier. |
+| `strategy_selection` | string \| null (min length 1) | `null` |  | Model that routes an auto query to a strategy: a model id, or a tier name ('default' / 'fast'). null runs it on the 'fast' tier. |
+| `query_rewrite` | string \| null (min length 1) | `null` |  | Model that rewrites a follow-up into a standalone query: a model id, or a tier name ('default' / 'fast'). null runs it on the 'fast' tier. |
+| `answer_generation` | string \| null (min length 1) | `null` |  | Model that writes the answer: a model id, or a tier name ('default' / 'fast'). null runs it on the 'default' tier. |
+| `community_relevance` | string \| null (min length 1) | `null` |  | Model that rates community relevance for global search's dynamic selection: a model id, or a tier name ('default' / 'fast'). null runs it on the 'fast' tier. |
+| `global_map` | string \| null (min length 1) | `null` |  | Model that answers from each report batch (global map): a model id, or a tier name ('default' / 'fast'). null runs it on the 'fast' tier. |
+| `drift_primer` | string \| null (min length 1) | `null` |  | Model that writes DRIFT's primer and follow-ups: a model id, or a tier name ('default' / 'fast'). null runs it on the 'fast' tier. |
+| `drift_action` | string \| null (min length 1) | `null` |  | Model that answers each DRIFT follow-up: a model id, or a tier name ('default' / 'fast'). null runs it on the 'fast' tier. |
+| `query_controller` | string \| null (min length 1) | `null` |  | Model that judges whether iterative search's context answers the question and names the follow-up queries: a model id, or a tier name ('default' / 'fast'). null runs it on the 'fast' tier. |
+| `graph_query` | string \| null (min length 1) | `null` |  | Model that writes the structured strategy's graph query plan (search.structured): a model id, or a tier name ('default' / 'fast'). null runs it on the 'default' tier. |
+| `evaluation` | string \| null (min length 1) | `null` |  | Model of the run-eval LLM judges (the ragas and assertion evaluators and --pairwise-judge): a model id, or a tier name ('default' / 'fast'). null = anthropic.claude-opus-5-5 on Bedrock, a model other than the default answer model; when the answer model is that model, the default tier's model or else Claude Sonnet 5.5, whichever is not (run-eval logs the choice at INFO): a judge favours its own answers (measured on 50 global questions: Sonnet 5.5 judging its own answers against Opus 5.5's shifted the directness win rate by -0.27 [-0.38, -0.16] against a GPT-5.5 judge). It costs about twice the default tier per token (on-demand, us-west-2, 2026-11: $4 / $20 per million input / output tokens against $2 / $10). With another provider, null runs it on the 'default' tier. 'default' restores the judge of earlier versions, the answer model (run-eval warns when a configured judge is the answer model). |
+| `answer_span` | string \| null (min length 1) | `null` |  | Model that extracts the short answer span run-eval scores exact match and token F1 on (evaluation.answer_span: extracted): a model id, or a tier name ('default' / 'fast'). null runs it on the 'fast' tier. |
+| `pairwise_overlap` | string \| null (min length 1) | `null` |  | Model that splits two answers into shared and unique statements for run-eval --pairwise-mode differential: a model id, or a tier name ('default' / 'fast'). null runs it on the 'fast' tier. |
 
 ### `models.embedding`
 
 The embedding model and its dimension.
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `model_id` | `"cohere.embed-multilingual-v3"` \| `"cohere.embed-v4:0"` \| `"cohere.embed-english-v3"` \| `"amazon.titan-embed-text-v1"` \| `"amazon.titan-embed-text-v2:0"` \| string \| null | `null` | Embedding model. With the bedrock embedding provider one of the EmbeddingModelId values (the vector dimension must be known for the index mapping), null = amazon.titan-embed-text-v2:0; with another provider any model name, required. |
-| `dimension` | integer \| null (≥ 1) | `null` | Vector dimension, fixed into the index mappings. Bedrock: one the model supports (Titan Embed V2: 256, 512 or 1024), null = its largest. Another provider: the model's dimension, required. |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `model_id` | `"cohere.embed-multilingual-v3"` \| `"cohere.embed-v4:0"` \| `"cohere.embed-english-v3"` \| `"amazon.titan-embed-text-v1"` \| `"amazon.titan-embed-text-v2:0"` \| string \| null | `null` |  | Embedding model. With the bedrock embedding provider one of the EmbeddingModelId values (the vector dimension must be known for the index mapping), null = amazon.titan-embed-text-v2:0; with another provider any model name, required. |
+| `dimension` | integer \| null (≥ 1) | `null` |  | Vector dimension, fixed into the index mappings. Bedrock: one the model supports (Titan Embed V2: 256, 512 or 1024), null = its largest. Another provider: the model's dimension, required. |
 
 ## `aws`
 
 AWS services configuration
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `region_name` | string (min length 1) | `"us-west-2"` | Region of Neptune, OpenSearch, S3 and DynamoDB, and of Bedrock unless aws.bedrock.region_name is set. AWS_REGION fills it only when the file leaves it unset. The default offers every default model, including both rerank models, which some regions (e.g. ap-northeast-2) do not. |
-| `profile_name` | string \| null | `null` | Named AWS profile. null uses the default credential chain (environment variables, instance or task role, ...); AWS_PROFILE fills it only when the file leaves it unset. |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `region_name` | string (min length 1) | `"us-west-2"` |  | Region of Neptune, OpenSearch, S3 and DynamoDB, and of Bedrock unless aws.bedrock.region_name is set. AWS_REGION fills it only when the file leaves it unset. The default offers every default model, including both rerank models, which some regions (e.g. ap-northeast-2) do not. |
+| `profile_name` | string \| null | `null` |  | Named AWS profile. null uses the default credential chain (environment variables, instance or task role, ...); AWS_PROFILE fills it only when the file leaves it unset. |
 
 ### `aws.bedrock`
 
 AWS Bedrock service configuration
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `region_name` | string \| null (min length 1) | `null` | Region for Bedrock model, embedding and rerank calls, and where the guardrail must exist. null = aws.region_name. Set it only when your models are enabled in another region; in a private VPC whose only Bedrock route is a VPC endpoint, leave it null or set the VPC's region. |
-| `assumed_role_arn` | string \| null | `null` | AWS assumed role ARN for Bedrock service |
-| `enable_global_profile` | boolean | `true` | Resolve cross-region (global) inference profiles. Keep it on: Claude 4.7+ and OpenAI GPT models are invocable only through a profile, which also needs bedrock:ListInferenceProfiles. |
-| `model_overrides` | dict[string, dict[string, Any]] | `{}` | Per-model capability overrides keyed by model id, e.g. {'amazon.nova-pro-v1:0': {'context_window_size': 300000}}. Keys are capability-record fields (context_window_size, max_output_tokens, supports_thinking, supports_sampling_params, supports_prompt_caching, ...). Use it for a model without a curated record, or to correct one, without a release. Language models only: embedding and rerank ids are a closed list (EmbeddingModelId, RerankModelId). |
-| `query_prompt_cache_ttl` | `"5m"` \| `"1h"` | `"5m"` | Lifetime of the system-prompt cache checkpoint on query-time chains. A chain gets a checkpoint only when its system prompt reaches the model's minimum cacheable size (512 tokens on Claude Sonnet/Opus/Haiku 5.5 and Opus 5, 1,024 or 4,096 on other Claude 4.5+ models): with the shipped prompts, answer generation, query entity extraction and the global-search reduce step on the 512-token models. Ingestion chains and evaluation judges keep 5m. '1h' keeps a query prompt cached across gaps of more than 5 minutes between queries, at a cost: a 1-hour cache write is billed at 2x the input-token price (5m: 1.25x), while a read costs the same. It pays off only at low query rates, when most queries would otherwise rewrite the cache. Applies to models whose capability record has supports_1h_cache_ttl (Claude 4.5+) on the Converse API (every inference profile); other models and InvokeModel requests keep the 5-minute checkpoint. |
-| `enable_1m_context` | boolean | `false` | Opt into the 1M-token context window on models that support it as a beta (Claude Sonnet 4 / 4.5, Opus 4 / 4.1 / 4.5). Off by default: long-context requests are billed at a premium on those models. Claude 5 has a native 1M window and ignores this flag. Enabling it also widens the derived retrieval context budget. |
-| `default_effort` | `"low"` \| `"medium"` \| `"high"` \| `"xhigh"` \| `"max"` | `"high"` | Reasoning effort for calls on the default tier's model (models.default). Sent as output_config.effort to Anthropic adaptive-thinking models (Claude 4.6+), where it replaces the fixed thinking token budget, and as reasoning.effort to OpenAI GPT models. 'xhigh'/'max' are only accepted by some models, and an unsupported level fails fast; lower it to cut cost and latency. |
-| `fast_effort` | `"low"` \| `"medium"` \| `"high"` \| `"xhigh"` \| `"max"` | `"low"` | Reasoning effort for calls on the fast tier's model (models.fast; when it differs from the default tier's). The shipped fast model, Claude Haiku 5.5, thinks adaptively, so this sets how much it reasons on fast-tier calls; it has no effect on a fast model that does not reason. |
-| `ingestion_effort` | `"low"` \| `"medium"` \| `"high"` \| `"xhigh"` \| `"max"` \| null | `null` | Reasoning effort for ingestion calls on the default tier (graph extraction, gleaning, claim extraction, description summaries, community reports, summary-tree summaries, chunk boundaries, translation, prompt tuning, and the output fixer when models.roles.fixing is a default-tier model). These make up most of an ingestion's default-tier tokens, so lowering this cuts ingestion cost without changing query-time effort. null inherits default_effort. Fast-tier ingestion calls keep fast_effort. |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `region_name` | string \| null (min length 1) | `null` |  | Region for Bedrock model, embedding and rerank calls, and where the guardrail must exist. null = aws.region_name. Set it only when your models are enabled in another region; in a private VPC whose only Bedrock route is a VPC endpoint, leave it null or set the VPC's region. |
+| `assumed_role_arn` | string \| null | `null` |  | AWS assumed role ARN for Bedrock service |
+| `enable_global_profile` | boolean | `true` |  | Resolve cross-region (global) inference profiles. Keep it on: Claude 4.7+ and OpenAI GPT models are invocable only through a profile, which also needs bedrock:ListInferenceProfiles. |
+| `model_overrides` | dict[string, dict[string, Any]] | `{}` |  | Per-model capability overrides keyed by model id, e.g. {'amazon.nova-pro-v1:0': {'context_window_size': 300000}}. Keys are capability-record fields (context_window_size, max_output_tokens, supports_thinking, supports_sampling_params, supports_prompt_caching, ...). Use it for a model without a curated record, or to correct one, without a release. Language models only: embedding and rerank ids are a closed list (EmbeddingModelId, RerankModelId). |
+| `query_prompt_cache_ttl` | `"5m"` \| `"1h"` | `"5m"` |  | Lifetime of the system-prompt cache checkpoint on query-time chains. A chain gets a checkpoint only when its system prompt reaches the model's minimum cacheable size (512 tokens on Claude Sonnet/Opus/Haiku 5.5 and Opus 5, 1,024 or 4,096 on other Claude 4.5+ models): with the shipped prompts, answer generation, query entity extraction and the global-search reduce step on the 512-token models. Ingestion chains and evaluation judges keep 5m. '1h' keeps a query prompt cached across gaps of more than 5 minutes between queries, at a cost: a 1-hour cache write is billed at 2x the input-token price (5m: 1.25x), while a read costs the same. It pays off only at low query rates, when most queries would otherwise rewrite the cache. Applies to models whose capability record has supports_1h_cache_ttl (Claude 4.5+) on the Converse API (every inference profile); other models and InvokeModel requests keep the 5-minute checkpoint. |
+| `enable_1m_context` | boolean | `false` |  | Opt into the 1M-token context window on models that support it as a beta (Claude Sonnet 4 / 4.5, Opus 4 / 4.1 / 4.5). Off by default: long-context requests are billed at a premium on those models. Claude 5 has a native 1M window and ignores this flag. Enabling it also widens the derived retrieval context budget. |
+| `default_effort` | `"low"` \| `"medium"` \| `"high"` \| `"xhigh"` \| `"max"` | `"high"` |  | Reasoning effort for calls on the default tier's model (models.default). Sent as output_config.effort to Anthropic adaptive-thinking models (Claude 4.6+), where it replaces the fixed thinking token budget, and as reasoning.effort to OpenAI GPT models. 'xhigh'/'max' are only accepted by some models, and an unsupported level fails fast; lower it to cut cost and latency. |
+| `fast_effort` | `"low"` \| `"medium"` \| `"high"` \| `"xhigh"` \| `"max"` | `"low"` |  | Reasoning effort for calls on the fast tier's model (models.fast; when it differs from the default tier's). The shipped fast model, Claude Haiku 5.5, thinks adaptively, so this sets how much it reasons on fast-tier calls; it has no effect on a fast model that does not reason. |
+| `ingestion_effort` | `"low"` \| `"medium"` \| `"high"` \| `"xhigh"` \| `"max"` \| null | `null` |  | Reasoning effort for ingestion calls on the default tier (graph extraction, gleaning, claim extraction, description summaries, community reports, summary-tree summaries, chunk boundaries, translation, prompt tuning, and the output fixer when models.roles.fixing is a default-tier model). These make up most of an ingestion's default-tier tokens, so lowering this cuts ingestion cost without changing query-time effort. null inherits default_effort. Fast-tier ingestion calls keep fast_effort. |
 
 #### `aws.bedrock.guardrail`
 
 Amazon Bedrock Guardrails configuration (disabled unless identifier set)
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `identifier` | string \| null | `null` | Bedrock guardrail ID or ARN; setting it enables the guardrail on the query path. The guardrail must exist in aws.bedrock.region_name. |
-| `version` | string (min length 1) | `"DRAFT"` | Guardrail version to apply (e.g. 'DRAFT' or a published version number) |
-| `trace` | boolean | `false` | Emit guardrail trace details for observability/auditing (full assessments, including non-detected entries) |
-| `check_input` | boolean | `true` | Screen each raw user query (ApplyGuardrail, source INPUT) before retrieval: prompt attacks, denied topics, PII |
-| `check_output` | boolean | `true` | Screen each final answer (ApplyGuardrail, source OUTPUT). A streamed answer is then delivered in one chunk, after the check |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `identifier` | string \| null | `null` |  | Bedrock guardrail ID or ARN; setting it enables the guardrail on the query path. The guardrail must exist in aws.bedrock.region_name. |
+| `version` | string (min length 1) | `"DRAFT"` |  | Guardrail version to apply (e.g. 'DRAFT' or a published version number) |
+| `trace` | boolean | `false` |  | Emit guardrail trace details for observability/auditing (full assessments, including non-detected entries) |
+| `check_input` | boolean | `true` |  | Screen each raw user query (ApplyGuardrail, source INPUT) before retrieval: prompt attacks, denied topics, PII |
+| `check_output` | boolean | `true` |  | Screen each final answer (ApplyGuardrail, source OUTPUT). A streamed answer is then delivered in one chunk, after the check |
 
 #### `aws.bedrock.guardrail.contextual_grounding`
 
 Contextual grounding and relevance check on each answer against the retrieved context (off by default)
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `enabled` | boolean | `false` | Send the retrieved context and the question with the answer's guardrail check, so the guardrail's contextual grounding policy scores and can block an ungrounded or irrelevant answer. The guardrail must have that policy; its Classic tier scores only English, French and Spanish. Needs check_output |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `enabled` | boolean | `false` |  | Send the retrieved context and the question with the answer's guardrail check, so the guardrail's contextual grounding policy scores and can block an ungrounded or irrelevant answer. The guardrail must have that policy; its Classic tier scores only English, French and Spanish. Needs check_output |
 
 ### `aws.neptune`
 
 AWS Neptune database configuration
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `endpoint` | string \| null | `null` | Neptune cluster endpoint. Required with the neptune graph store (the CDK stack injects it as UKR__AWS__NEPTUNE__ENDPOINT). |
-| `port` | integer (≥ 1, ≤ 65535) | `8182` | Neptune database connection port |
-| `use_iam` | boolean | `true` | SigV4-sign Neptune requests (IAM database authentication). |
-| `use_ssl` | boolean | `true` | Connect over TLS (wss://). Neptune requires it; set false only for a plain TinkerPop Gremlin Server (ws://), together with use_iam: false. |
-| `pool_size` | integer (≥ 1) | `4` | Gremlin DriverRemoteConnection pool size (max concurrent in-flight requests over the websocket). The client raises it to indexing.neptune.index_concurrency when that is larger, so concurrent write batches are not serialized on fewer connections. Query traversals beyond it wait on the event loop. The default matches the 4 query threads (2 x vCPUs) of the default db.r6g.large instance; more in-flight requests only queue on the server, so raise it with the instance size. |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `endpoint` | string \| null | `null` |  | Neptune cluster endpoint. Required with the neptune graph store (the CDK stack injects it as UKR__AWS__NEPTUNE__ENDPOINT). |
+| `port` | integer (≥ 1, ≤ 65535) | `8182` | upstream: Neptune's port | Neptune database connection port |
+| `use_iam` | boolean | `true` |  | SigV4-sign Neptune requests (IAM database authentication). |
+| `use_ssl` | boolean | `true` |  | Connect over TLS (wss://). Neptune requires it; set false only for a plain TinkerPop Gremlin Server (ws://), together with use_iam: false. |
+| `pool_size` | integer (≥ 1) | `4` | operational | Gremlin DriverRemoteConnection pool size (max concurrent in-flight requests over the websocket). The client raises it to indexing.neptune.index_concurrency when that is larger, so concurrent write batches are not serialized on fewer connections. Query traversals beyond it wait on the event loop. The default matches the 4 query threads (2 x vCPUs) of the default db.r6g.large instance; more in-flight requests only queue on the server, so raise it with the instance size. |
 
 ### `aws.opensearch`
 
 AWS OpenSearch service configuration
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `endpoint` | string \| null | `null` | OpenSearch domain endpoint. Required with the opensearch vector store (the CDK stack injects it as UKR__AWS__OPENSEARCH__ENDPOINT). |
-| `port` | integer (≥ 1, ≤ 65535) | `443` | OpenSearch cluster connection port |
-| `username` | string \| null | `null` | OpenSearch authentication username |
-| `password` | secret string \| null | `null` | OpenSearch authentication password (masked in logs/repr) |
-| `use_ssl` | boolean | `true` | Enable SSL/TLS connection |
-| `verify_certs` | boolean | `true` | Verify SSL/TLS certificates |
-| `use_iam` | boolean | `false` | SigV4-sign OpenSearch requests. false uses basic auth with username / password, usually from UKR__AWS__OPENSEARCH__USERNAME and UKR__AWS__OPENSEARCH__PASSWORD (for example in .env). |
-| `allow_anonymous` | boolean | `false` | Connect without authentication, for a local OpenSearch with the security plugin disabled. Mutually exclusive with use_iam and username/password. |
-| `sigv4_service_name` | string | `"es"` | SigV4 signing service for IAM auth. Only 'es' (a managed OpenSearch domain) is accepted: the setting exists so a config naming OpenSearch Serverless ('aoss') fails at load with the reason, as its vector collections assign their own document ids and have no refresh API, which the indexes need. |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `endpoint` | string \| null | `null` |  | OpenSearch domain endpoint. Required with the opensearch vector store (the CDK stack injects it as UKR__AWS__OPENSEARCH__ENDPOINT). |
+| `port` | integer (≥ 1, ≤ 65535) | `443` | upstream: the HTTPS port of an OpenSearch Service domain | OpenSearch cluster connection port |
+| `username` | string \| null | `null` |  | OpenSearch authentication username |
+| `password` | secret string \| null | `null` |  | OpenSearch authentication password (masked in logs/repr) |
+| `use_ssl` | boolean | `true` |  | Enable SSL/TLS connection |
+| `verify_certs` | boolean | `true` |  | Verify SSL/TLS certificates |
+| `use_iam` | boolean | `false` |  | SigV4-sign OpenSearch requests. false uses basic auth with username / password, usually from UKR__AWS__OPENSEARCH__USERNAME and UKR__AWS__OPENSEARCH__PASSWORD (for example in .env). |
+| `allow_anonymous` | boolean | `false` |  | Connect without authentication, for a local OpenSearch with the security plugin disabled. Mutually exclusive with use_iam and username/password. |
+| `sigv4_service_name` | string | `"es"` |  | SigV4 signing service for IAM auth. Only 'es' (a managed OpenSearch domain) is accepted: the setting exists so a config naming OpenSearch Serverless ('aoss') fails at load with the reason, as its vector collections assign their own document ids and have no refresh API, which the indexes need. |
 
 ### `aws.s3`
 
 AWS S3 storage configuration
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `bucket_name` | string \| null | `null` | Bucket for the stage-cache sync (run-ingestion --s3-sync). |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `bucket_name` | string \| null | `null` |  | Bucket for the stage-cache sync (run-ingestion --s3-sync). |
 
 #### `aws.s3.encryption`
 
 S3 server-side encryption configuration
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `encryption_type` | `"BUCKET_DEFAULT"` \| `"AES256"` \| `"aws:kms"` | `"BUCKET_DEFAULT"` | S3 server-side encryption for cache uploads: BUCKET_DEFAULT (send no header; the bucket's default encryption, e.g. its KMS CMK, applies), AES256 (force SSE-S3) or aws:kms (force SSE-KMS with kms_key_id). |
-| `kms_key_id` | string \| null | `null` | AWS KMS key ID for encryption (required when encryption type is KMS) |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `encryption_type` | `"BUCKET_DEFAULT"` \| `"AES256"` \| `"aws:kms"` | `"BUCKET_DEFAULT"` |  | S3 server-side encryption for cache uploads: BUCKET_DEFAULT (send no header; the bucket's default encryption, e.g. its KMS CMK, applies), AES256 (force SSE-S3) or aws:kms (force SSE-KMS with kms_key_id). |
+| `kms_key_id` | string \| null | `null` |  | AWS KMS key ID for encryption (required when encryption type is KMS) |
 
 ### `aws.dynamodb`
 
 AWS DynamoDB document-status registry configuration
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `table_name` | string (min length 1) | `"unified-kg-rag-on-aws-doc-status-v2"` | DynamoDB table holding each document's status and text units, partitioned by index namespace. |
-| `create_table_if_missing` | boolean | `true` | Create the doc-status table, with on-demand capacity, on first use. Set false when the table is managed by IaC (the CDK stack does). |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `table_name` | string (min length 1) | `"unified-kg-rag-on-aws-doc-status-v2"` |  | DynamoDB table holding each document's status and text units, partitioned by index namespace. |
+| `create_table_if_missing` | boolean | `true` |  | Create the doc-status table, with on-demand capacity, on first use. Set false when the table is managed by IaC (the CDK stack does). |
 
 ## `processing`
 
 Text processing configuration
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `max_concurrency` | integer (≥ 1) | `40` | LLM calls an ingestion stage keeps in flight: the next item starts as soon as one finishes, so this is both the peak and the steady concurrency (embedding requests: at most processing.embedding_concurrency of them). These stages are I/O-bound, so this can be well above the CPU count. Bedrock quotas differ per account, model and Region: lower it if the logs show ThrottlingException retries, raise it if quota allows. The backend: local preset sets 20, since a local model server queues the calls it cannot run at once. |
-| `embedding_concurrency` | integer (≥ 1) | `16` | Embedding requests the indexing stage keeps in flight at once (also capped by processing.max_concurrency). In a real-AWS run, 16 embedded 1,600 texts in half the time 8 took, without throttling; lower it if the logs show embedding ThrottlingException retries or a local embedding server queues. |
-| `embedding_batch_size` | integer (≥ 1) | `50` | Texts per embedding request. The indexing stage embeds and writes embedding_batch_size x embedding_concurrency items at a time (at most 1,000, one read of their stored digests). Keep it within what the embedding endpoint takes per request. |
-| `io_workers` | integer (≥ 1) | `64` | Threads for blocking I/O on the query path (the Bedrock calls LangChain runs in the event loop's default executor, Neptune traversals, reranking) in the CLIs and GraphRAGChain's sync methods. Python's default is min(32, CPUs + 4), six on a 2-vCPU task. An async host calls unified_kg_rag.configure_event_loop(asyncio.get_running_loop(), config.processing.io_workers) at startup. |
-| `max_run_model_calls` | integer \| null (≥ 1) | `null` | Model calls one ingestion run may make in all (every stage, the output fixer's too), counted from each call's start. The call that would pass it is not sent: the run stops (RunBudgetExhausted, error class limit_exceeded; run-ingestion exits 1) once the calls already sent have answered, its finished stages checkpointed and those answers kept in the LLM response cache, so a re-run with the same pipeline id resumes at the stage it stopped in and pays only for the calls not yet answered (each run gets the budget anew). A response the cache serves is no call, and takes none of the budget while it is looked up. null (default): no cap. run-ingestion --estimate prices a corpus before a run. |
-| `max_run_usd` | number \| null (> 0) | `null` | USD one ingestion run's model calls may cost, priced by models.prices (the calls so far at the tokens they reported, those in flight at their estimated input). Enforced as max_run_model_calls; a model without a price stops the run at its first call, naming it. A call is checked at its start, before its output is known, and the stop waits for the calls in flight, so a run can end above it by their output (at most processing.max_concurrency calls'). Embedding requests are not counted. null (default): no cap. |
-| `ignore_errors` | boolean | `false` | When a whole step fails (a batch call, a translation language, an evaluator, global map/reduce, the DRIFT primer, the auto router), log it and continue with an empty or degraded result instead of raising. Items whose own LLM call fails are always skipped and reported, whatever this says. |
-| `deduplicate` | boolean | `false` | Drop near-duplicate documents before extraction. Two documents are near-duplicates when the Jaccard similarity of their character 3-gram sets, estimated with a 128-permutation MinHash, is at least 0.9 (fixed parameters); of each pair the first is kept, and an incremental run keeps the already-indexed copy. |
-| `resolution_method` | `"minhash"` \| `"sequence_matcher"` | `"minhash"` | Name-similarity measure of fuzzy entity resolution (fuzzy_entity_resolution): minhash or sequence_matcher. |
-| `fuzzy_entity_resolution` | boolean | `false` | Also merge entities whose names are only similar (resolution_method at similarity_threshold). An incremental merge folds each new entity into its one best-matching stored entity and never joins stored entities with each other, so where a full build chains similar names into one group it can keep several, until indexing.reset regroups the corpus. Off by default: names are merged when they are equal after normalization, legal-form removal ('Acme Inc' / 'Acme') and dense-script spacing, because name similarity also joins different organizations that share most of their name ('... University' / '... University Hospital'). |
-| `similarity_threshold` | number (≥ 0.0, ≤ 1.0) | `0.85` | Similarity threshold for fuzzy entity resolution (fuzzy_entity_resolution), for matching claim subjects and objects to entity names, and for a word of a name a structured query gives to stand for a word of a stored entity's name. Raise it if distinct entities merge. |
-| `seed_graphs` | list[SeedGraphConfig] | `[]` | Knowledge graphs imported as virtual documents of this run's corpus and merged with the extracted graph (each item: processing.seed_graphs[] below). Documents are canonical: a seed fills types, names and confidence only where no document states them, and adds description lines, properties, IRIs and edges. Loaded once at start-up, after the extraction schema; what a seed converts to keys every stage, where it is read from does not. As an environment variable, a JSON list: UKR__PROCESSING__SEED_GRAPHS='[{"name": "procure", "kind": "jsonl", "path": "seed/procure.jsonl"}]'. |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `max_concurrency` | integer (≥ 1) | `40` | operational | LLM calls an ingestion stage keeps in flight: the next item starts as soon as one finishes, so this is both the peak and the steady concurrency (embedding requests: at most processing.embedding_concurrency of them). These stages are I/O-bound, so this can be well above the CPU count. Bedrock quotas differ per account, model and Region: lower it if the logs show ThrottlingException retries, raise it if quota allows. The backend: local preset sets 20, since a local model server queues the calls it cannot run at once. |
+| `embedding_concurrency` | integer (≥ 1) | `16` | operational | Embedding requests the indexing stage keeps in flight at once (also capped by processing.max_concurrency). In a real-AWS run, 16 embedded 1,600 texts in half the time 8 took, without throttling; lower it if the logs show embedding ThrottlingException retries or a local embedding server queues. |
+| `embedding_batch_size` | integer (≥ 1) | `50` | operational | Texts per embedding request. The indexing stage embeds and writes embedding_batch_size x embedding_concurrency items at a time (at most 1,000, one read of their stored digests). Keep it within what the embedding endpoint takes per request. |
+| `io_workers` | integer (≥ 1) | `64` | operational | Threads for blocking I/O on the query path (the Bedrock calls LangChain runs in the event loop's default executor, Neptune traversals, reranking) in the CLIs and GraphRAGChain's sync methods. Python's default is min(32, CPUs + 4), six on a 2-vCPU task. An async host calls unified_kg_rag.configure_event_loop(asyncio.get_running_loop(), config.processing.io_workers) at startup. |
+| `max_run_model_calls` | integer \| null (≥ 1) | `null` |  | Model calls one ingestion run may make in all (every stage, the output fixer's too), counted from each call's start. The call that would pass it is not sent: the run stops (RunBudgetExhausted, error class limit_exceeded; run-ingestion exits 1) once the calls already sent have answered, its finished stages checkpointed and those answers kept in the LLM response cache, so a re-run with the same pipeline id resumes at the stage it stopped in and pays only for the calls not yet answered (each run gets the budget anew). A response the cache serves is no call, and takes none of the budget while it is looked up. null (default): no cap. run-ingestion --estimate prices a corpus before a run. |
+| `max_run_usd` | number \| null (> 0) | `null` |  | USD one ingestion run's model calls may cost, priced by models.prices (the calls so far at the tokens they reported, those in flight at their estimated input). Enforced as max_run_model_calls; a model without a price stops the run at its first call, naming it. A call is checked at its start, before its output is known, and the stop waits for the calls in flight, so a run can end above it by their output (at most processing.max_concurrency calls'). Embedding requests are not counted. null (default): no cap. |
+| `ignore_errors` | boolean | `false` |  | When a whole step fails (a batch call, a translation language, an evaluator, global map/reduce, the DRIFT primer, the auto router), log it and continue with an empty or degraded result instead of raising. Items whose own LLM call fails are always skipped and reported, whatever this says. |
+| `deduplicate` | boolean | `false` |  | Drop near-duplicate documents before extraction. Two documents are near-duplicates when the Jaccard similarity of their character 3-gram sets, estimated with a 128-permutation MinHash, is at least deduplicate_similarity_threshold and they hold the same numbers in the same order (digits of any script and Han numerals: amounts, dates, ids), so any differing number keeps both, two filled-in copies of one form as a page with another date in its footer. Of each pair the first is kept, and an incremental run keeps the already-indexed copy; a WARNING names the dropped documents and the ones they copy (the first 20, the rest counted). The check is datasketch's LSH at its own layout and the MinHash estimate (a document's exact shingle set is not kept, unlike a name's: processing.minhash_similarity_threshold). |
+| `deduplicate_similarity_threshold` | number (> 0.0, ≤ 1.0) | `0.9` | unmeasured | The 3-gram similarity at which deduplicate reads two documents with the same numbers as copies. Documents that differ only in names (two parties of one template) still read as copies above it: raise it, or leave deduplicate off, for such a corpus. |
+| `resolution_method` | `"minhash"` \| `"sequence_matcher"` | `"minhash"` |  | Name-similarity measure of fuzzy entity resolution (fuzzy_entity_resolution): minhash or sequence_matcher. |
+| `fuzzy_entity_resolution` | boolean | `false` |  | Also merge entities whose names are only similar (resolution_method at similarity_threshold). An incremental merge folds each new entity into its one best-matching stored entity and never joins stored entities with each other, so where a full build chains similar names into one group it can keep several, until indexing.reset regroups the corpus. Off by default: names are merged when they are equal after normalization, legal-form removal ('Acme Inc' / 'Acme') and dense-script spacing, because name similarity also joins different organizations that share most of their name ('... University' / '... University Hospital'). |
+| `similarity_threshold` | number (≥ 0.0, ≤ 1.0) | `0.85` | unmeasured | Similarity two names need to match, as the sequence_matcher ratio (difflib) measures it: in fuzzy entity resolution (fuzzy_entity_resolution) and claim subject and object matching with resolution_method sequence_matcher, in both with minhash unless minhash_similarity_threshold is set, and for a word of a name a structured query gives to stand for a word of a stored entity's name. Raise it if distinct entities merge. |
+| `minhash_similarity_threshold` | number \| null (≥ 0.0, ≤ 1.0) | `null` |  | Similarity two names need to match with resolution_method minhash: the Jaccard similarity of their character 3-gram sets, which reads lower than the sequence_matcher ratio of the same pair. null: similarity_threshold. The MinHash index proposes the candidates and their exact Jaccard similarity decides. It proposes 99% of the pairs at a threshold of 0.85 or more; a lower one is cheaper to reach by fewer of them (at most 5% of the pairs at half the threshold are proposed, which bounds the comparisons): about 92% at 0.75 and 63% at 0.6, never fewer than datasketch's own layout. |
+| `seed_graphs` | list[SeedGraphConfig] | `[]` |  | Knowledge graphs imported as virtual documents of this run's corpus and merged with the extracted graph (each item: processing.seed_graphs[] below). Documents are canonical: a seed fills types, names and confidence only where no document states them, and adds description lines, properties, IRIs and edges. Loaded once at start-up, after the extraction schema; what a seed converts to keys every stage, where it is read from does not. As an environment variable, a JSON list: UKR__PROCESSING__SEED_GRAPHS='[{"name": "procure", "kind": "jsonl", "path": "seed/procure.jsonl"}]'. |
 
 ### `processing.document_parsing`
 
 Document parsing configuration
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `source_directory` | string \| path | `"source"` | Directory to load documents from, for library callers (null = the default). run-ingestion requires --source-directory (or UKR_SOURCE_DIRECTORY) instead. |
-| `target_directory` | string \| path \| null | `null` | Directory to export each parsed document to as <stem>.json for inspection (run-ingestion --output-directory). null = no export. Must not be the source directory. |
-| `index_value` | string \| null | `null` | Index suffix the run writes: every OpenSearch index and Neptune label is named <prefix>-<index_value>. null = 'default'. run-rag, run-eval and a RAGInput without a suffix query it too unless --suffix (RAGInput.suffix in Python) names another. run-ingestion --suffix sets it for one run. Lowercase letters, digits, '-' and '_'. |
-| `source_scope` | string \| null | `null` | Identity of the corpus source for incremental indexing: a run only treats registry documents of its own index suffix AND source scope as deleted. None = the resolved source directory. Set it when the local directory is a staging copy, e.g. the S3 URI a container syncs from (env UKR__PROCESSING__DOCUMENT_PARSING__SOURCE_SCOPE). Document and text-unit ids derive from it, so set it for ids that are reproducible across paths and machines. |
-| `encoding` | string \| null | `null` | Encoding of the text formats (.txt, .md, .csv, .json, .html) that do not decode as UTF-8, e.g. cp1252 or cp949. null = detect it per file (charset-normalizer); a file whose encoding is not detected (a binary file with a text suffix) fails to parse and counts as failed. Set it when detection picks a neighbouring encoding (cp1250 for a French cp1252 file): setting or changing it parses the files that are not UTF-8 again in the next incremental run. A UTF-8 file is read as UTF-8 either way and is not parsed again. |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `source_directory` | string \| path | `"source"` |  | Directory to load documents from, for library callers (null = the default). run-ingestion requires --source-directory (or UKR_SOURCE_DIRECTORY) instead. |
+| `target_directory` | string \| path \| null | `null` |  | Directory to export each parsed document to as <stem>.json for inspection (run-ingestion --output-directory). null = no export. Must not be the source directory. |
+| `index_value` | string \| null | `null` |  | Index suffix the run writes: every OpenSearch index and Neptune label is named <prefix>-<index_value>. null = 'default'. run-rag, run-eval and a RAGInput without a suffix query it too unless --suffix (RAGInput.suffix in Python) names another. run-ingestion --suffix sets it for one run. Lowercase letters, digits, '-' and '_'. |
+| `source_scope` | string \| null | `null` |  | Identity of the corpus source for incremental indexing: a run only treats registry documents of its own index suffix AND source scope as deleted. None = the resolved source directory. Set it when the local directory is a staging copy, e.g. the S3 URI a container syncs from (env UKR__PROCESSING__DOCUMENT_PARSING__SOURCE_SCOPE). Document and text-unit ids derive from it, so set it for ids that are reproducible across paths and machines. |
+| `encoding` | string \| null | `null` |  | Encoding of the text formats (.txt, .md, .csv, .json, .html) that do not decode as UTF-8, e.g. cp1252 or cp949. null = detect it per file (charset-normalizer); a file whose encoding is not detected (a binary file with a text suffix) fails to parse and counts as failed. Set it when detection picks a neighbouring encoding (cp1250 for a French cp1252 file): setting or changing it parses the files that are not UTF-8 again in the next incremental run. A UTF-8 file is read as UTF-8 either way and is not parsed again. |
 
 ### `processing.chunking`
 
 Text chunking configuration
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `chunker_type` | `"simple"` \| `"intelligent"` | `"intelligent"` | intelligent lets the chunking model pick semantic boundaries (one fast LLM call per pre-chunk); simple splits by size with no LLM call. |
-| `length_unit` | `"chars"` \| `"tokens"` | `"tokens"` | What the six chunk size settings below count. tokens (default) counts a local token estimate (a Han/Hangul/Kana character ~1 token, other text ~4 characters per token, at least one per word; no model call), so one setting keeps chunks inside the embedding and reranker token limits in any language: English chunks as with the character sizes four times as large, while Korean, Japanese and Chinese chunks hold about a third of the text they held at those. chars counts characters; set the sizes in characters with it (e.g. min 1000, max 8000, overlap 500, fallback 4800, pre-chunk 50000 and its overlap 500). Switching re-chunks and re-extracts the corpus. |
-| `min_chunk_size` | integer (≥ 1) | `250` | Minimum chunk size (length_unit, tokens by default); shorter pieces are merged into a neighbour. Default 250 (~1,000 English characters) keeps headings and short trailing paragraphs from becoming chunks of their own. |
-| `max_chunk_size` | integer (≥ 1) | `2000` | Maximum chunk size (length_unit, tokens by default). Every chunk is embedded whole and reranked as one document, so it must fit the embedding model's input (Titan Text Embeddings V2: 8,192 tokens) and the reranker's per-document limit (Cohere Rerank 3.5: 4,096 tokens), or its tail is never embedded or reranked. With length_unit: chars, English averages ~4 characters per token and a Han/Hangul/Kana character ~1, so size CJK corpora by their characters. |
-| `chunk_overlap` | integer (≥ 0) | `125` | Overlap between consecutive chunks the size-based splitter cuts (the simple chunker, and the intelligent chunker's size fallbacks), in length_unit (tokens by default). The intelligent chunker's model-chosen boundaries cut between lines and share no text. |
-| `pre_chunk_size` | integer (≥ 1) | `12500` | Pre-chunk size (length_unit, tokens by default): the window the intelligent chunker's LLM picks boundaries in. Not embedded itself (its chunks are capped by max_chunk_size), so it is sized for the chunking model's prompt. |
-| `pre_chunk_overlap` | integer (≥ 0) | `125` | Pre-chunk overlap (length_unit, tokens by default) |
-| `fallback_chunk_size` | integer (≥ 1) | `1200` | Target chunk size for the size-based splitter (the simple chunker, and intelligent chunking when the LLM fails or a chunk exceeds max_chunk_size). It splits at paragraphs, then lines, then after CJK sentence terminators, then after a sentence's '.', '!', '?' or '…' before a space, then spaces (length_unit, tokens by default). 1,200 tokens (~4,800 English characters) is the default chunk size of MS GraphRAG and LightRAG. |
-| `max_marker_miss_rate` | number (≥ 0.0, ≤ 1.0) | `0.1` | Maximum allowed boundary marker miss rate |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `chunker_type` | `"simple"` \| `"intelligent"` | `"intelligent"` |  | intelligent lets the chunking model pick semantic boundaries (one fast LLM call per pre-chunk); simple splits by size with no LLM call. |
+| `length_unit` | `"chars"` \| `"tokens"` | `"tokens"` |  | What the six chunk size settings below count. tokens (default) counts a local token estimate (a Han/Hangul/Kana character ~1 token, other text ~4 characters per token, at least one per word; no model call), so one setting keeps chunks inside the embedding and reranker token limits in any language: English chunks as with the character sizes four times as large, while Korean, Japanese and Chinese chunks hold about a third of the text they held at those. chars counts characters; set the sizes in characters with it (e.g. min 1000, max 8000, overlap 500, fallback 4800, pre-chunk 50000 and its overlap 500). Switching re-chunks and re-extracts the corpus. |
+| `min_chunk_size` | integer (≥ 1) | `250` | unmeasured | Minimum chunk size (length_unit, tokens by default); shorter pieces are merged into a neighbour. Default 250 (~1,000 English characters) keeps headings and short trailing paragraphs from becoming chunks of their own. |
+| `max_chunk_size` | integer (≥ 1) | `2000` | unmeasured | Maximum chunk size (length_unit, tokens by default). Every chunk is embedded whole and reranked as one document, so it must fit the embedding model's input (Titan Text Embeddings V2: 8,192 tokens) and the reranker's per-document limit (Cohere Rerank 3.5: 4,096 tokens), or its tail is never embedded or reranked. With length_unit: chars, English averages ~4 characters per token and a Han/Hangul/Kana character ~1, so size CJK corpora by their characters. |
+| `chunk_overlap` | integer (≥ 0) | `125` | deviation: MS GraphRAG's and LightRAG's chunk overlap, 100 tokens | Overlap between consecutive chunks the size-based splitter cuts (the simple chunker, and the intelligent chunker's size fallbacks), in length_unit (tokens by default). The intelligent chunker's model-chosen boundaries cut between lines and share no text. |
+| `pre_chunk_size` | integer (≥ 1) | `12500` | operational | Pre-chunk size (length_unit, tokens by default): the window the intelligent chunker's LLM picks boundaries in. Not embedded itself (its chunks are capped by max_chunk_size), so it is sized for the chunking model's prompt. |
+| `pre_chunk_overlap` | integer (≥ 0) | `125` | operational | Pre-chunk overlap (length_unit, tokens by default) |
+| `fallback_chunk_size` | integer (≥ 1) | `1200` | upstream: MS GraphRAG's and LightRAG's chunk size, 1200 tokens | Target chunk size for the size-based splitter (the simple chunker, and intelligent chunking when the LLM fails or a chunk exceeds max_chunk_size). It splits at paragraphs, then lines, then after CJK sentence terminators, then after a sentence's '.', '!', '?' or '…' before a space, then spaces (length_unit, tokens by default). 1,200 tokens (~4,800 English characters) is the default chunk size of MS GraphRAG and LightRAG. |
+| `max_marker_miss_rate` | number (≥ 0.0, ≤ 1.0) | `0.1` | operational | Maximum allowed boundary marker miss rate |
 
 ### `processing.translation`
 
 Text translation configuration
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `enabled` | boolean | `true` | Run the translation stage. It is skipped at no cost when source_language equals target_language and there are no additional_target_languages. |
-| `source_language` | `"ar"` \| `"de"` \| `"en"` \| `"es"` \| `"fr"` \| `"he"` \| `"hi"` \| `"it"` \| `"ja"` \| `"ko"` \| `"pt"` \| `"ru"` \| `"th"` \| `"vi"` \| `"zh"` | `"en"` | Predominant source language of the corpus: a code with a language profile (ar, de, en, es, fr, he, hi, it, ja, ko, pt, ru, th, vi, zh) or another BCP-47 language code, which gets the defaults of a language without one (OpenSearch's built-in analyzer of it, else the default_analyzer; English declines; one WARNING). Selects the OpenSearch analyzer of the original chunk text and drives the same-language no-op skip; translation itself is content-driven. With translation disabled the corpus is indexed in it: extraction, descriptions, claims, community reports and the summary tree are written in it, the graph indexes are analyzed for it, and a query without a requested language is processed into it. |
-| `target_language` | `"ar"` \| `"de"` \| `"en"` \| `"es"` \| `"fr"` \| `"he"` \| `"hi"` \| `"it"` \| `"ja"` \| `"ko"` \| `"pt"` \| `"ru"` \| `"th"` \| `"vi"` \| `"zh"` | `"en"` | Language the corpus is translated into. When translation runs, the corpus is indexed in it: extraction, embeddings and the answer context use it, and descriptions, claims, community reports and the summary tree are written in it (with translation disabled, source_language takes this role). |
-| `additional_target_languages` | list[`"ar"` \| `"de"` \| `"en"` \| `"es"` \| `"fr"` \| `"he"` \| `"hi"` \| `"it"` \| `"ja"` \| `"ko"` \| `"pt"` \| `"ru"` \| `"th"` \| `"vi"` \| `"zh"`] \| null | `null` | Extra languages to translate into. Each is indexed in its own translated_text_<language> field with that language's analyzer and searched lexically (useful with a per-query RAGInput.target_language); extraction, embeddings and the answer context use target_language only. Each language is one more LLM call per chunk. |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `enabled` | boolean | `true` |  | Run the translation stage. It is skipped at no cost when source_language equals target_language and there are no additional_target_languages. |
+| `source_language` | `"ar"` \| `"de"` \| `"en"` \| `"es"` \| `"fr"` \| `"he"` \| `"hi"` \| `"it"` \| `"ja"` \| `"ko"` \| `"pt"` \| `"ru"` \| `"th"` \| `"vi"` \| `"zh"` | `"en"` |  | Predominant source language of the corpus: a code with a language profile (ar, de, en, es, fr, he, hi, it, ja, ko, pt, ru, th, vi, zh) or another BCP-47 language code, which gets the defaults of a language without one (OpenSearch's built-in analyzer of it, else the default_analyzer; English declines; one WARNING). Selects the OpenSearch analyzer of the original chunk text and drives the same-language no-op skip; translation itself is content-driven. With translation disabled the corpus is indexed in it: extraction, descriptions, claims, community reports and the summary tree are written in it, the graph indexes are analyzed for it, and a query without a requested language is processed into it. |
+| `target_language` | `"ar"` \| `"de"` \| `"en"` \| `"es"` \| `"fr"` \| `"he"` \| `"hi"` \| `"it"` \| `"ja"` \| `"ko"` \| `"pt"` \| `"ru"` \| `"th"` \| `"vi"` \| `"zh"` | `"en"` |  | Language the corpus is translated into. When translation runs, the corpus is indexed in it: extraction, embeddings and the answer context use it, and descriptions, claims, community reports and the summary tree are written in it (with translation disabled, source_language takes this role). |
+| `additional_target_languages` | list[`"ar"` \| `"de"` \| `"en"` \| `"es"` \| `"fr"` \| `"he"` \| `"hi"` \| `"it"` \| `"ja"` \| `"ko"` \| `"pt"` \| `"ru"` \| `"th"` \| `"vi"` \| `"zh"`] \| null | `null` |  | Extra languages to translate into. Each is indexed in its own translated_text_<language> field with that language's analyzer and searched lexically (useful with a per-query RAGInput.target_language); extraction, embeddings and the answer context use target_language only. Each language is one more LLM call per chunk. |
 
 ### `processing.graph_extraction`
 
 Graph extraction configuration
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `max_entities_per_chunk` | integer (≥ 1) | `50` | Most entities the extraction prompt asks for per text chunk; it also sizes the extraction call's output-token floor. |
-| `max_relationships_per_chunk` | integer (≥ 1) | `50` | Maximum relationships per text chunk |
-| `entity_confidence_threshold` | number (≥ 0.0, ≤ 1.0) | `0.0` | Drop an entity from each chunk that scored it below this confidence, with that chunk's relationships naming it (per chunk, so the result does not depend on which documents are indexed together). Compared against the normalized confidence: the prompt's 1-10 score / 10. 0.0 keeps everything. |
-| `entity_types` | list[string \| EntityTypeSpec] | see [Long defaults](#long-defaults) | Entity categories injected into the extraction prompt, each 'LABEL: short description' (the description is optional), e.g. ['GENE: ...', 'DISEASE: ...'], or {label, description, iri} (iri: the ontology class the type maps to, stored as type_iri). The cheapest and most effective domain-adaptation knob; an empty list lets the model choose any relevant types. Labels must differ in more than case and word separators. |
-| `relationship_types` | list[string \| RelationshipTypeSpec] | `[]` | Relationship types of the extraction schema, each 'LABEL: short description' or {label, description, iri} (iri: the ontology property the type maps to, stored as predicate_iri). The extraction prompt lists them (and relationship_patterns) instead of its example types, and unless schema_mode is off a type naming one, or an entity type naming a declared one, is written as declared. Empty: none declared, the prompt shows its examples. |
-| `relationship_patterns` | list[string \| RelationshipPattern] | `[]` | Relationship types allowed between entity types, each 'SOURCE -RELATION-> TARGET' (e.g. 'PERSON -WORKS_FOR-> ORGANIZATION') or {source_type, relation, target_type}; every label must be a declared type. A relationship type with patterns is allowed only between the entity types they name, in their direction; one without is not restricted. Empty: no restriction. |
-| `schema_mode` | `"off"` \| `"align"` \| `"strict"` | `"align"` | How extraction applies the schema: 'off' (the prompt only), 'align' (keep every item, write in-schema labels as declared and count the rest; with entity types alone it changes nothing) or 'strict' (also drop, per text unit, entities of an undeclared or empty type with their relationships, relationships of an undeclared type, and relationships a pattern does not allow between two entities of declared types). Labels match by case and word separators only, never by similarity. Where the schema applies, indexing stores in_schema on entities and relationships, and unless the mode is off it stores a declared type's iri (type_iri, predicate_iri) on the items of that type, with entity types alone too; both are filter keys. |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `max_entities_per_chunk` | integer (≥ 1) | `50` | unmeasured | Most entities the extraction prompt asks for per text chunk; it also sizes the extraction call's output-token floor. |
+| `max_relationships_per_chunk` | integer (≥ 1) | `50` | unmeasured | Maximum relationships per text chunk |
+| `entity_confidence_threshold` | number (≥ 0.0, ≤ 1.0) | `0.0` | unmeasured | Drop an entity from each chunk that scored it below this confidence, with that chunk's relationships naming it (per chunk, so the result does not depend on which documents are indexed together). Compared against the normalized confidence: the prompt's 1-10 score / 10. 0.0 keeps everything. |
+| `entity_types` | list[string \| EntityTypeSpec] | see [Long defaults](#long-defaults) |  | Entity categories injected into the extraction prompt, each 'LABEL: short description' (the description is optional), e.g. ['GENE: ...', 'DISEASE: ...'], or {label, description, iri} (iri: the ontology class the type maps to, stored as type_iri). The cheapest and most effective domain-adaptation knob; an empty list lets the model choose any relevant types. Labels must differ in more than case and word separators. |
+| `relationship_types` | list[string \| RelationshipTypeSpec] | `[]` |  | Relationship types of the extraction schema, each 'LABEL: short description' or {label, description, iri} (iri: the ontology property the type maps to, stored as predicate_iri). The extraction prompt lists them (and relationship_patterns) instead of its example types, and unless schema_mode is off a type naming one, or an entity type naming a declared one, is written as declared. Empty: none declared, the prompt shows its examples. |
+| `relationship_patterns` | list[string \| RelationshipPattern] | `[]` |  | Relationship types allowed between entity types, each 'SOURCE -RELATION-> TARGET' (e.g. 'PERSON -WORKS_FOR-> ORGANIZATION') or {source_type, relation, target_type}; every label must be a declared type. A relationship type with patterns is allowed only between the entity types they name, in their direction; one without is not restricted. Empty: no restriction. |
+| `schema_mode` | `"off"` \| `"align"` \| `"strict"` | `"align"` |  | How extraction applies the schema: 'off' (the prompt only), 'align' (keep every item, write in-schema labels as declared and count the rest; with entity types alone it changes nothing) or 'strict' (also drop, per text unit, entities of an undeclared or empty type with their relationships, relationships of an undeclared type, and relationships a pattern does not allow between two entities of declared types). Labels match by case and word separators only, never by similarity. Where the schema applies, indexing stores in_schema on entities and relationships, and unless the mode is off it stores a declared type's iri (type_iri, predicate_iri) on the items of that type, with entity types alone too; both are filter keys. |
 
 #### `processing.graph_extraction.schema_source`
 
 Where the extraction schema comes from
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `kind` | string | `"inline"` | 'inline' (default): the schema is the entity_types, relationship_types and relationship_patterns keys. Another kind names a registered schema source ('file': a YAML or JSON file of those keys; 'owl': an OWL or RDFS ontology, with the ontology extra) loaded once at start-up into those keys; the loaded content, not its location, keys the extraction caches. A file that sets entity_types replaces the config's, which must then be left unset. |
-| `path` | string \| null | `null` | Location the schema source reads. For 'file', a local file path or an S3 object (s3://bucket/key.yaml); for 'owl', a local file or directory, an S3 object, or an S3 prefix read as a directory (s3://bucket/prefix/, the trailing '/' required). A local path may be written as a file:// URL. S3 is read with the run's AWS session (s3:GetObject, and s3:ListBucket for a prefix). A relative path is resolved against the config file's directory (the working directory without one); an HTTP location needs a source registered for it, which receives a URL as written. Logs and errors show it without userinfo, query or fragment. Must be unset for 'inline'. |
-| `options` | dict[string, Any] | `{}` | Settings of the registered source, read by its loader ('file' takes none; 'owl' takes what is selected, how it is labelled and the caps). Not keyed: the schema the source loads is. Must be empty for 'inline'. |
-| `secret_arn` | string \| null | `null` | ARN of a Secrets Manager secret holding the credentials a registered source reads at load time ('file' and 'owl' take none). Never logged. Must be unset for 'inline'. |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `kind` | string | `"inline"` |  | 'inline' (default): the schema is the entity_types, relationship_types and relationship_patterns keys. Another kind names a registered schema source ('file': a YAML or JSON file of those keys; 'owl': an OWL or RDFS ontology, with the ontology extra) loaded once at start-up into those keys; the loaded content, not its location, keys the extraction caches. A file that sets entity_types replaces the config's, which must then be left unset. |
+| `path` | string \| null | `null` |  | Location the schema source reads. For 'file', a local file path or an S3 object (s3://bucket/key.yaml); for 'owl', a local file or directory, an S3 object, or an S3 prefix read as a directory (s3://bucket/prefix/, the trailing '/' required). A local path may be written as a file:// URL. S3 is read with the run's AWS session (s3:GetObject, and s3:ListBucket for a prefix). A relative path is resolved against the config file's directory (the working directory without one); an HTTP location needs a source registered for it, which receives a URL as written. Logs and errors show it without userinfo, query or fragment. Must be unset for 'inline'. |
+| `options` | dict[string, Any] | `{}` |  | Settings of the registered source, read by its loader ('file' takes none; 'owl' takes what is selected, how it is labelled and the caps). Not keyed: the schema the source loads is. Must be empty for 'inline'. |
+| `secret_arn` | string \| null | `null` |  | ARN of a Secrets Manager secret holding the credentials a registered source reads at load time ('file' and 'owl' take none). Never logged. Must be unset for 'inline'. |
 
 #### `processing.graph_extraction.description_summarization`
 
 LLM re-summarization of over-long merged descriptions
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `enabled` | boolean | `true` | Re-summarize merged descriptions longer than force_summary_threshold_tokens with an LLM (a cost variant of MS GraphRAG and LightRAG, which also summarize short merges). Off, descriptions are only concatenated and grow without bound for frequently mentioned entities. |
-| `force_summary_threshold_tokens` | integer (≥ 1) | `600` | Re-summarize a merged description only when its estimated token count exceeds this threshold. Descriptions at or below it are left as-is, so cheap entities never incur an LLM call. |
-| `max_summary_tokens` | integer (≥ 1) | `256` | Target length (in tokens) of the produced summary; injected into the summarization prompt as the budget. |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `enabled` | boolean | `true` |  | Re-summarize merged descriptions longer than force_summary_threshold_tokens with an LLM (a cost variant of MS GraphRAG and LightRAG, which also summarize short merges). Off, descriptions are only concatenated and grow without bound for frequently mentioned entities. |
+| `force_summary_threshold_tokens` | integer (≥ 1) | `600` | unmeasured | Re-summarize a merged description only when its estimated token count exceeds this threshold. Descriptions at or below it are left as-is, so cheap entities never incur an LLM call. |
+| `max_summary_tokens` | integer (≥ 1) | `256` | deviation: MS GraphRAG's summarize_descriptions max_length: 500 | Target length (in tokens) of the produced summary; injected into the summarization prompt as the budget. |
 
 #### `processing.graph_extraction.entity_grounding`
 
 Provenance grounding guard against hallucinated entities
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `enabled` | boolean | `false` | Hallucination guard: drop (or, with action 'penalize', down-weight) entities and relationships whose verbatim source_text span is not found in their chunk. Punctuation is ignored and Han/Hangul/Kana spans are compared by character bigrams, so a changed Korean particle still counts as present. It applies to gleaning additions too. Requires an extraction model that emits a source_text span per item. |
-| `action` | string | `"drop"` | What to do with an ungrounded entity: 'drop' removes it; 'penalize' multiplies its confidence by penalty_factor so the confidence threshold can filter it without hard deletion. An ungrounded relationship is likewise dropped, or kept at its weight times penalty_factor; 'penalize' still drops one naming an entity its chunk did not extract, which it would otherwise make cite the chunk. Gleaning additions follow the same action. |
-| `penalty_factor` | number (≥ 0.0, ≤ 1.0) | `0.5` | Confidence multiplier applied to ungrounded entities when action='penalize'. |
-| `min_span_tokens` | integer (≥ 1) | `4` | Evidence spans shorter than this (after normalization) are treated as grounded — too short to judge, so the gate never deletes short legitimate names on weak signal. A Han/Hangul/Kana character counts as one token. |
-| `min_overlap_ratio` | number (≥ 0.0, ≤ 1.0) | `0.6` | When the span is not a verbatim substring, the fraction of its tokens that must appear in the chunk to still count as grounded (handles light paraphrase / whitespace edits). |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `enabled` | boolean | `false` |  | Hallucination guard: drop (or, with action 'penalize', down-weight) entities and relationships whose verbatim source_text span is not found in their chunk. Punctuation is ignored and Han/Hangul/Kana spans are compared by character bigrams, so a changed Korean particle still counts as present. It applies to gleaning additions too. Requires an extraction model that emits a source_text span per item. |
+| `action` | string | `"drop"` |  | What to do with an ungrounded entity: 'drop' removes it; 'penalize' multiplies its confidence by penalty_factor so the confidence threshold can filter it without hard deletion. An ungrounded relationship is likewise dropped, or kept at its weight times penalty_factor; 'penalize' still drops one naming an entity its chunk did not extract, which it would otherwise make cite the chunk. Gleaning additions follow the same action. |
+| `penalty_factor` | number (≥ 0.0, ≤ 1.0) | `0.5` | unmeasured | Confidence multiplier applied to ungrounded entities when action='penalize'. |
+| `min_span_tokens` | integer (≥ 1) | `4` | unmeasured | Evidence spans shorter than this (after normalization) are treated as grounded — too short to judge, so the gate never deletes short legitimate names on weak signal. A Han/Hangul/Kana character counts as one token. |
+| `min_overlap_ratio` | number (≥ 0.0, ≤ 1.0) | `0.6` | unmeasured | When the span is not a verbatim substring, the fraction of its tokens that must appear in the chunk to still count as grounded (handles light paraphrase / whitespace edits). |
 
 ### `processing.gleaning`
 
 Iterative extraction refinement configuration
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `enabled` | boolean | `true` | Extra extraction passes per text unit that ask the model for the entities and relationships it missed. |
-| `max_rounds` | integer (≥ 1) | `3` | Maximum gleaning rounds per text unit. Each round after the first re-sends only the text units whose previous answer added a new entity or relationship, so a unit stops once an answer adds nothing new. On MuSiQue, round 1 added most of gleaning's relationships to bridge entities and rounds 2-3 little more, gleaning was the largest share of the ingestion cost, and the answers favoured neither 1 nor 3 rounds (see docs/concepts/defaults-and-evidence.md#gleaning-rounds). 1 is MS GraphRAG's default and the cost lever. |
-| `max_entities_per_prompt` | integer (≥ 1) | `100` | Maximum entities per gleaning prompt |
-| `max_relationships_per_prompt` | integer (≥ 1) | `100` | Maximum relationships per gleaning prompt |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `enabled` | boolean | `true` |  | Extra extraction passes per text unit that ask the model for the entities and relationships it missed. |
+| `max_rounds` | integer (≥ 1) | `3` | [measured](../concepts/defaults-and-evidence.md#gleaning-rounds) | Maximum gleaning rounds per text unit. Each round after the first re-sends only the text units whose previous answer added a new entity or relationship, so a unit stops once an answer adds nothing new. On MuSiQue, round 1 added most of gleaning's relationships to bridge entities and rounds 2-3 little more, gleaning was the largest share of the ingestion cost, and the answers favoured neither 1 nor 3 rounds (see docs/concepts/defaults-and-evidence.md#gleaning-rounds). 1 is MS GraphRAG's default and the cost lever. |
+| `max_entities_per_prompt` | integer (≥ 1) | `100` | unmeasured | Maximum entities per gleaning prompt |
+| `max_relationships_per_prompt` | integer (≥ 1) | `100` | unmeasured | Maximum relationships per gleaning prompt |
 
 ### `processing.claim_extraction`
 
 Claim extraction configuration
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `enabled` | boolean | `false` | Extract claims (covariates): one more LLM call per text unit. When on, local search injects the matching claims into its context and simple search includes the claims index in its sweep. Claim subjects and objects are not linked into the entity graph. Turned on for an incremental namespace built without claims, the next run rebuilds it once from its stored extractions; that run, and one turning it off for a namespace that holds claims, is refused while the namespace holds other source scopes' documents. |
-| `max_entities_per_prompt` | integer (≥ 0) | `100` | Maximum entities per claim extraction prompt |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `enabled` | boolean | `false` |  | Extract claims (covariates): one more LLM call per text unit. When on, local search injects the matching claims into its context and simple search includes the claims index in its sweep. Claim subjects and objects are not linked into the entity graph. Turned on for an incremental namespace built without claims, the next run rebuilds it once from its stored extractions; that run, and one turning it off for a namespace that holds claims, is refused while the namespace holds other source scopes' documents. |
+| `max_entities_per_prompt` | integer (≥ 0) | `100` | unmeasured | Maximum entities per claim extraction prompt |
 
 ### `processing.seed_graphs[]`
 
 A knowledge graph imported as virtual documents of the corpus.
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `name` | string (min length 1) | required | Stable name of the seed graph: it names its virtual documents (seed_graphs/<name>/...) and the 'seed_graph' document filter of everything it states. Renaming it imports the seed again. Lowercase letters, digits, '-' and '_', starting with a letter or digit; unique among the seed graphs. |
-| `kind` | string | required | Registered seed source that reads the graph: 'jsonl' (nodes and edges, one JSON object per line), 'csv' (a nodes file and an edges file), 'rdf' (an RDF A-Box, with the ontology extra), or a kind a deployment registers (register_seed_source). The file formats: docs/reference/seed-graph-formats.md. |
-| `path` | string (min length 1) | required | Where the source reads: a local file or directory (or a file:// URL), an S3 object (s3://bucket/key) or an S3 prefix read as a directory (s3://bucket/prefix/, the trailing '/' required), read with the run's AWS session (s3:GetObject, and s3:ListBucket for a prefix). A relative path is resolved against the config file's directory. Logs and errors show it without userinfo, query or fragment. Not keyed: the converted content is, so moving the files re-indexes nothing. |
-| `options` | dict[string, Any] | `{}` | Settings of the source kind. Every kind takes 'dangling' (an edge naming an unknown node: 'error', the default, or 'skip') and 'qualifier_property' (the node property whose value on_name_collision: qualify appends). 'csv' also takes 'nodes' and 'edges' (the file names in the directory, default nodes.csv and edges.csv; edges: null reads no edges file) and 'property_columns' (the only extra columns kept as properties). 'rdf' takes 'prefixes', 'name_properties', 'description_properties', 'languages', 'labels', 'properties', 'exclude_properties' and 'format' (docs/reference/seed-graph-formats.md#rdf). An unknown option fails the import. Not keyed: the converted content is. |
-| `secret_arn` | string \| null | `null` | ARN of a Secrets Manager secret a registered service source reads at load time; 'jsonl' and 'csv' take none. Never logged. |
-| `filters` | dict[string, string \| integer \| number \| boolean] | `{}` | Document filters of the seed's virtual documents, as a document's metadata filters: what the seed states matches an attr_<key> filter as the documents carrying the same filters do. 'seed_graph': <name> is always added, so the key 'seed_graph' is reserved. |
-| `on_name_collision` | `"error"` \| `"merge"` \| `"qualify"` | `"error"` | Two seed nodes whose names are one entity (the same name after normalization) but that share neither an id nor an IRI: 'error' fails the import, listing them; 'merge' makes them one entity (the smallest IRI is kept); 'qualify' appends ' (<qualifier>)' to the later names so each is its own entity, which documents then do not link to by name. |
-| `description_properties` | list[string] | `[]` | Node and edge property keys written as 'key: value' lines after the description, so answers can use them. |
-| `confidence` | number (≥ 0.0, ≤ 1.0) | `1.0` | Confidence of the seed's statements (a node's own confidence wins). An item a document also states takes the document's confidence. |
-| `shards` | integer (≥ 1, ≤ 1024) | `16` | Number of virtual documents the seed is split into, by a stable hash of each node's id: an edit re-indexes only the shards it touches. Changing the value re-indexes the whole seed. |
-| `max_items_per_unit` | integer (≥ 1, ≤ 500) | `50` | Node and edge statements per text unit (the unit of lineage: what a removed statement re-derives). |
-| `max_nodes` | integer (≥ 1) | `100000` | Fail the import above this many nodes (never truncated). |
-| `max_edges` | integer (≥ 1) | `500000` | Fail the import above this many edges (never truncated). |
-| `max_bytes` | integer (≥ 1) | `268435456` | Fail the import when the source files hold more bytes together (checked before they are read, and while reading). Kind 'rdf' defaults to 32 MiB: its parser holds the whole graph, from about 25 (N-Triples) up to about 150 (dense Turtle) times the file size in memory (32 MiB: up to about 5 GB), before max_nodes and max_edges are checked, so size the task's memory before raising it ('jsonl' and 'csv' stop at those caps while reading). |
-| `max_property_keys` | integer (≥ 0, ≤ 512) | `64` | Fail the import when the seed uses more distinct property keys (the keys of attributes.seed_properties, stored but not indexed). |
-| `max_description_chars` | integer (≥ 50) | `1000` | Cut seed descriptions to this many characters, at a word boundary, so a seed-only item never needs the description summarizer. |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `name` | string (min length 1) | required |  | Stable name of the seed graph: it names its virtual documents (seed_graphs/<name>/...) and the 'seed_graph' document filter of everything it states. Renaming it imports the seed again. Lowercase letters, digits, '-' and '_', starting with a letter or digit; unique among the seed graphs. |
+| `kind` | string | required |  | Registered seed source that reads the graph: 'jsonl' (nodes and edges, one JSON object per line), 'csv' (a nodes file and an edges file), 'rdf' (an RDF A-Box, with the ontology extra), or a kind a deployment registers (register_seed_source). The file formats: docs/reference/seed-graph-formats.md. |
+| `path` | string (min length 1) | required |  | Where the source reads: a local file or directory (or a file:// URL), an S3 object (s3://bucket/key) or an S3 prefix read as a directory (s3://bucket/prefix/, the trailing '/' required), read with the run's AWS session (s3:GetObject, and s3:ListBucket for a prefix). A relative path is resolved against the config file's directory. Logs and errors show it without userinfo, query or fragment. Not keyed: the converted content is, so moving the files re-indexes nothing. |
+| `options` | dict[string, Any] | `{}` |  | Settings of the source kind. Every kind takes 'dangling' (an edge naming an unknown node: 'error', the default, or 'skip') and 'qualifier_property' (the node property whose value on_name_collision: qualify appends). 'csv' also takes 'nodes' and 'edges' (the file names in the directory, default nodes.csv and edges.csv; edges: null reads no edges file) and 'property_columns' (the only extra columns kept as properties). 'rdf' takes 'prefixes', 'name_properties', 'description_properties', 'languages', 'labels', 'properties', 'exclude_properties' and 'format' (docs/reference/seed-graph-formats.md#rdf). An unknown option fails the import. Not keyed: the converted content is. |
+| `secret_arn` | string \| null | `null` |  | ARN of a Secrets Manager secret a registered service source reads at load time; 'jsonl' and 'csv' take none. Never logged. |
+| `filters` | dict[string, string \| integer \| number \| boolean] | `{}` |  | Document filters of the seed's virtual documents, as a document's metadata filters: what the seed states matches an attr_<key> filter as the documents carrying the same filters do. 'seed_graph': <name> is always added, so the key 'seed_graph' is reserved. |
+| `on_name_collision` | `"error"` \| `"merge"` \| `"qualify"` | `"error"` |  | Two seed nodes whose names are one entity (the same name after normalization) but that share neither an id nor an IRI: 'error' fails the import, listing them; 'merge' makes them one entity (the smallest IRI is kept); 'qualify' appends ' (<qualifier>)' to the later names so each is its own entity, which documents then do not link to by name. |
+| `description_properties` | list[string] | `[]` |  | Node and edge property keys written as 'key: value' lines after the description, so answers can use them. |
+| `confidence` | number (≥ 0.0, ≤ 1.0) | `1.0` | operational | Confidence of the seed's statements (a node's own confidence wins). An item a document also states takes the document's confidence. |
+| `shards` | integer (≥ 1, ≤ 1024) | `16` | operational | Number of virtual documents the seed is split into, by a stable hash of each node's id: an edit re-indexes only the shards it touches. Changing the value re-indexes the whole seed. |
+| `max_items_per_unit` | integer (≥ 1, ≤ 500) | `50` | operational | Node and edge statements per text unit (the unit of lineage: what a removed statement re-derives). |
+| `max_nodes` | integer (≥ 1) | `100000` | operational | Fail the import above this many nodes (never truncated). |
+| `max_edges` | integer (≥ 1) | `500000` | operational | Fail the import above this many edges (never truncated). |
+| `max_bytes` | integer (≥ 1) | `268435456` | [operational](../concepts/defaults-and-evidence.md#ontology-and-rdf-parse-cost) | Fail the import when the source files hold more bytes together (checked before they are read, and while reading). Kind 'rdf' defaults to 32 MiB: its parser holds the whole graph, from about 25 (N-Triples) up to about 150 (dense Turtle) times the file size in memory (32 MiB: up to about 5 GB), before max_nodes and max_edges are checked, so size the task's memory before raising it ('jsonl' and 'csv' stop at those caps while reading). |
+| `max_property_keys` | integer (≥ 0, ≤ 512) | `64` | operational | Fail the import when the seed uses more distinct property keys (the keys of attributes.seed_properties, stored but not indexed). |
+| `max_description_chars` | integer (≥ 50) | `1000` | operational | Cut seed descriptions to this many characters, at a word boundary, so a seed-only item never needs the description summarizer. |
 
 ## `graph`
 
@@ -430,613 +441,697 @@ Graph analysis configuration
 
 Community detection configuration
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `enabled` | boolean | `true` | Run Leiden community detection + LLM community-report generation during indexing, when indexing.methodologies selects graphrag (its strategies need the reports). false leaves graphrag out of what ingestion builds, as indexing.methodologies: [lightrag] does: no Leiden pass and no report calls. |
-| `resolution` | number (> 0.0, ≤ 10.0) | `1.0` | Leiden modularity resolution: higher gives more, smaller communities (and more report calls); lower gives fewer, larger ones. |
-| `random_state` | integer (≥ 1) | `42` | Leiden random seed (a positive integer; the native Leiden rejects 0). The same graph and seed give the same communities. |
-| `max_levels` | integer (≥ 1) | `5` | Maximum depth of the community hierarchy. |
-| `trials` | integer (≥ 1) | `3` | Number of independent Leiden runs to find best partition (MS GraphRAG runs 1). |
-| `extra_forced_iterations` | integer (≥ 0) | `2` | Additional optimization iterations after convergence (MS GraphRAG runs 0). |
-| `max_cluster_size` | integer (≥ 2) | `20` | Maximum members per community before it is split: entities at level 0, child communities above. A larger Leiden community is re-partitioned on its own subgraph, recursively, until every piece fits or Leiden finds no finer split, and stays the parent of its pieces (as in MS GraphRAG's hierarchical Leiden). Without the bound, modularity's resolution limit grows communities with the corpus beyond what one report's max_report_context_tokens can describe (or a parent's roll-up can summarize). MS GraphRAG's default is 10 with a larger report budget; 20 typically keeps a leaf's entities and relationships, or a parent's child summaries, within the default 4000-token report context. |
-| `min_community_size` | integer (≥ 1) | `3` | Minimum entities per level-0 community: a smaller one merges into the neighbour it shares the most edge weight with, unless that would exceed max_cluster_size. A connected component of fewer entities (an isolated entity, a pair) has no neighbour and gets no community or report. 1 = cluster every component. |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `enabled` | boolean | `true` |  | Run Leiden community detection + LLM community-report generation during indexing, when indexing.methodologies selects graphrag (its strategies need the reports). false leaves graphrag out of what ingestion builds, as indexing.methodologies: [lightrag] does: no Leiden pass and no report calls. |
+| `resolution` | number (> 0.0, ≤ 10.0) | `1.0` | upstream: MS GraphRAG's Leiden resolution, 1.0 | Leiden modularity resolution: higher gives more, smaller communities (and more report calls); lower gives fewer, larger ones. |
+| `random_state` | integer (≥ 1) | `42` | operational | Leiden random seed (a positive integer; the native Leiden rejects 0). The same graph and seed give the same communities. |
+| `max_levels` | integer (≥ 1) | `5` | unmeasured | Maximum depth of the community hierarchy. |
+| `trials` | integer (≥ 1) | `3` | deviation: MS GraphRAG runs 1 | Number of independent Leiden runs to find best partition (MS GraphRAG runs 1). |
+| `extra_forced_iterations` | integer (≥ 0) | `2` | deviation: MS GraphRAG runs 0 | Additional optimization iterations after convergence (MS GraphRAG runs 0). |
+| `max_cluster_size` | integer (≥ 2) | `20` | deviation: MS GraphRAG's max_cluster_size: 10 | Maximum members per community before it is split: entities at level 0, child communities above. A larger Leiden community is re-partitioned on its own subgraph, recursively, until every piece fits or Leiden finds no finer split, and stays the parent of its pieces (as in MS GraphRAG's hierarchical Leiden). Without the bound, modularity's resolution limit grows communities with the corpus beyond what one report's max_report_context_tokens can describe (or a parent's roll-up can summarize). MS GraphRAG's default is 10 with a larger report budget; 20 typically keeps a leaf's entities and relationships, or a parent's child summaries, within the default 4000-token report context. |
+| `min_community_size` | integer (≥ 1) | `3` | unmeasured | Minimum entities per level-0 community: a smaller one merges into the neighbour it shares the most edge weight with, unless that would exceed max_cluster_size. A connected component of fewer entities (an isolated entity, a pair) has no neighbour and gets no community or report. 1 = cluster every component. |
 
 #### `graph.community_detection.report_generation`
 
 Community report generation configuration
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `enabled` | boolean | `true` | Enable automatic community report generation. Off: global and drift search, which answer from the reports, are refused (local reads graphrag without them; a WARNING at load says so). A run turning it off for a namespace that holds reports is refused while the namespace holds other source scopes' documents. |
-| `max_entities_per_report` | integer (≥ 1) | `50` | Maximum entities per community report |
-| `max_report_context_tokens` | integer (≥ 1) | `4000` | Token budget for the entity/relationship (and, with claim extraction on, claim) context packed into a community report prompt. As MS GraphRAG's sort_context, relationships are packed by combined endpoint degree (most connected first), each with its two entities and their claims, then the entities with no relationship in the community, up to this budget. max_entities_per_report remains an additional upper bound on entity count. MS GraphRAG's default is 8000 with max_cluster_size 10: raise this (more report input tokens per call) when reports of large communities keep few relationships. |
-| `content_length` | string | `"medium"` | Report length, as the number of findings the report asks for: short (5-7), medium (7-10), long (10-15) |
-| `enable_sub_community_rollup` | boolean | `true` | When a parent community's entity/relationship context is cut at max_report_context_tokens, add the summaries of its child communities' reports (largest first, within a budget of max_report_context_tokens of their own, so the prompt holds at most about twice it) after the context kept, so what was cut is still summarized. MS GraphRAG substitutes the child reports for raw context instead. Reports are then generated level by level, the finest first (a level waits for the one below); false generates every level at once and only cuts the context. |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `enabled` | boolean | `true` |  | Enable automatic community report generation. Off: global and drift search, which answer from the reports, are refused (local reads graphrag without them; a WARNING at load says so). A run turning it off for a namespace that holds reports is refused while the namespace holds other source scopes' documents. |
+| `max_entities_per_report` | integer (≥ 1) | `50` | unmeasured | Maximum entities per community report |
+| `max_report_context_tokens` | integer (≥ 1) | `4000` | deviation: MS GraphRAG's community report max_input_length: 8000 | Token budget for the entity/relationship (and, with claim extraction on, claim) context packed into a community report prompt. As MS GraphRAG's sort_context, relationships are packed by combined endpoint degree (most connected first), each with its two entities and their claims, then the entities with no relationship in the community, up to this budget. max_entities_per_report remains an additional upper bound on entity count. MS GraphRAG's default is 8000 with max_cluster_size 10: raise this (more report input tokens per call) when reports of large communities keep few relationships. |
+| `content_length` | string | `"medium"` |  | Report length, as the number of findings the report asks for: short (5-7), medium (7-10), long (10-15) |
+| `enable_sub_community_rollup` | boolean | `true` |  | When a parent community's entity/relationship context is cut at max_report_context_tokens, add the summaries of its child communities' reports (largest first, within a budget of max_report_context_tokens of their own, so the prompt holds at most about twice it) after the context kept, so what was cut is still summarized. MS GraphRAG substitutes the child reports for raw context instead. Reports are then generated level by level, the finest first (a level waits for the one below); false generates every level at once and only cuts the context. |
 
 ### `graph.visualization`
 
 Visualization configuration
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `export_data` | boolean | `true` | Write visualization_data.json (the index namespace's graph nodes, edges and community hierarchy, read from its stores) at the end of a full build, so run-visualization can render it, once the run gave up the namespace's lease. One pass over the stored items: no embedding or model call, no layout or centrality (run-visualization computes them). An incremental run writes none (run-visualization and the console build it from the stores); a run that wrote nothing keeps an export of the build the stores hold. |
-| `outputs_directory` | string \| path \| null | `null` | Directory ingestion writes visualization_data.json to. When unset, '<cache directory>/<pipeline_id>/visualization' (--cache-directory), so the file is synced to S3 with the cache, or 'outputs/visualization' without a cache directory. |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `export_data` | boolean | `true` |  | Write visualization_data.json (the index namespace's graph nodes, edges and community hierarchy, read from its stores) at the end of a full build, so run-visualization can render it, once the run gave up the namespace's lease. One pass over the stored items: no embedding or model call, no layout or centrality (run-visualization computes them). An incremental run writes none (run-visualization and the console build it from the stores); a run that wrote nothing keeps an export of the build the stores hold. |
+| `outputs_directory` | string \| path \| null | `null` |  | Directory ingestion writes visualization_data.json to. When unset, '<cache directory>/<pipeline_id>/visualization' (--cache-directory), so the file is synced to S3 with the cache, or 'outputs/visualization' without a cache directory. |
 
 #### `graph.visualization.centrality`
 
 Node centrality metrics the static renderer's centrality chart plots (computed at render time; no ingestion stage reads them). The interactive graph sizes nodes by degree, not by these.
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `calculate_degree` | boolean | `true` | Calculate degree centrality to measure node connectivity |
-| `calculate_betweenness` | boolean | `true` | Compute betweenness centrality (bridge nodes) for the visualization; ingestion itself computes no centrality. On graphs larger than betweenness_auto_sample_threshold nodes it is sampled instead of computed exactly. |
-| `calculate_pagerank` | boolean | `true` | Calculate PageRank centrality to rank node importance |
-| `pagerank_alpha` | number (≥ 0.0, ≤ 1.0) | `0.85` | PageRank damping factor |
-| `pagerank_max_iter` | integer (≥ 1) | `100` | Maximum iterations for PageRank convergence |
-| `betweenness_k` | integer \| null (≥ 1) | `null` | Sample size for betweenness calculation (None for all nodes) |
-| `betweenness_auto_sample_threshold` | integer (≥ 1) | `2000` | When betweenness_k is None (exact) AND the graph has more nodes than this, automatically switch to sampled betweenness (using this value as the pivot-sample size) instead of exact all-pairs shortest paths. Exact betweenness is O(V*E) and stalls on large real graphs; sampling keeps the analysis phase bounded. Raise this to force exact computation on larger graphs. |
-| `betweenness_seed` | integer | `42` | Random seed for sampled betweenness (only used when betweenness_k is set). Fixed for reproducibility — sampled betweenness picks random pivots, so without a seed centrality is non-deterministic. |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `calculate_degree` | boolean | `true` |  | Calculate degree centrality to measure node connectivity |
+| `calculate_betweenness` | boolean | `true` |  | Compute betweenness centrality (bridge nodes) for the visualization; ingestion itself computes no centrality. On graphs larger than betweenness_auto_sample_threshold nodes it is sampled instead of computed exactly. |
+| `calculate_pagerank` | boolean | `true` |  | Calculate PageRank centrality to rank node importance |
+| `pagerank_alpha` | number (≥ 0.0, ≤ 1.0) | `0.85` | upstream: NetworkX's PageRank alpha, 0.85 | PageRank damping factor |
+| `pagerank_max_iter` | integer (≥ 1) | `100` | operational | Maximum iterations for PageRank convergence |
+| `betweenness_k` | integer \| null (≥ 1) | `null` |  | Sample size for betweenness calculation (None for all nodes) |
+| `betweenness_auto_sample_threshold` | integer (≥ 1) | `2000` | operational | When betweenness_k is None (exact) AND the graph has more nodes than this, automatically switch to sampled betweenness (using this value as the pivot-sample size) instead of exact all-pairs shortest paths. Exact betweenness is O(V*E) and stalls on large real graphs; sampling keeps the analysis phase bounded. Raise this to force exact computation on larger graphs. |
+| `betweenness_seed` | integer | `42` | operational | Random seed for sampled betweenness (only used when betweenness_k is set). Fixed for reproducibility — sampled betweenness picks random pivots, so without a seed centrality is non-deterministic. |
 
 #### `graph.visualization.interactive`
 
 Settings of the interactive pyvis graph.
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `height` | string | `"900px"` | Canvas height (CSS). |
-| `width` | string | `"100%"` | Canvas width (CSS). |
-| `physics_enabled` | boolean | `false` | Run the pyvis physics simulation. |
-| `cdn_resources` | string | `"in_line"` | pyvis cdn_resources: in_line, local or remote. |
-| `background_color` | string | `"#f8fafc"` | Canvas colour. |
-| `font_family` | string | `"Arial"` | Label font. |
-| `tooltip_delay` | integer (≥ 0) | `200` | Tooltip delay (ms). |
-| `max_nodes` | integer \| null (≥ 0) | `2000` | Keep the top-N nodes by degree; 0 or null disables the cap (a browser cannot lay out tens of thousands of nodes). |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `height` | string | `"900px"` |  | Canvas height (CSS). |
+| `width` | string | `"100%"` |  | Canvas width (CSS). |
+| `physics_enabled` | boolean | `false` |  | Run the pyvis physics simulation. |
+| `cdn_resources` | string | `"in_line"` |  | pyvis cdn_resources: in_line, local or remote. |
+| `background_color` | string | `"#f8fafc"` |  | Canvas colour. |
+| `font_family` | string | `"Arial"` |  | Label font. |
+| `tooltip_delay` | integer (≥ 0) | `200` | operational | Tooltip delay (ms). |
+| `max_nodes` | integer \| null (≥ 0) | `2000` | operational | Keep the top-N nodes by degree; 0 or null disables the cap (a browser cannot lay out tens of thousands of nodes). |
 
 #### `graph.visualization.static`
 
 Settings of the static HTML/SVG charts.
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `figure_width` | integer (≥ 100) | `900` | Chart width (px). |
-| `figure_height` | integer (≥ 100) | `600` | Chart height (px). |
-| `font` | string | `"Arial, sans-serif"` | Chart font. |
-| `background_color` | string | `"#fdfdfd"` | Chart background. |
-| `log_scale_x` | boolean | `false` | Logarithmic x axis on distributions. |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `figure_width` | integer (≥ 100) | `900` | operational | Chart width (px). |
+| `figure_height` | integer (≥ 100) | `600` | operational | Chart height (px). |
+| `font` | string | `"Arial, sans-serif"` |  | Chart font. |
+| `background_color` | string | `"#fdfdfd"` |  | Chart background. |
+| `log_scale_x` | boolean | `false` |  | Logarithmic x axis on distributions. |
 
 ## `indexing`
 
 Data indexing configuration
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `methodologies` | list[`"graphrag"` \| `"lightrag"` \| `"hipporag"` \| `"raptor"`] (min length 1) | `["graphrag", "lightrag"]` | The retrieval methodologies ingestion builds: graphrag (local, global, drift, simple; communities and community reports), lightrag (mix, hybrid, naive; the relationship vector index), hipporag (ppr; what lightrag builds), raptor (tree; the text units and a summary tree over them, indexing.summary_tree, without graph extraction). naive and simple read what every methodology builds; iterative reads what its base reads. The default [graphrag, lightrag] also holds hipporag, and so does [graphrag] while its relationship vectors are built. A run builds only what the selected ones read: without graphrag no community detection and no report calls. A query whose strategy reads a methodology the index namespace does not hold fails before any model call. Adding a graph methodology to an incremental namespace rebuilds it once from its stored extractions (only the added methodology's model calls are new; a raptor-only namespace stores none, so every text unit is extracted); removing one stops maintaining its artifacts without deleting them. Adding a graph methodology and removing any are refused while the namespace holds other source scopes' documents. graph.community_detection.enabled: false leaves out graphrag and indexing.opensearch.build_relationship_vector_index: false lightrag and hipporag. Adding raptor builds only its tree, from the stored text units. |
-| `reset` | boolean | `false` | Rebuild the run's index namespace from the whole corpus instead of applying a delta, without taking it offline: the vector indices swap aliases, the graph is rewritten in place and what the rebuild did not write is dropped at the end; then the namespace's registry records are written again. Quarantined documents are skipped and keep their records. Set it for one run. |
-| `additional_suffix` | string \| null (min length 1) | `null` | Appended after the run's suffix in every OpenSearch index name and Neptune label (<prefix>-<suffix>-<additional_suffix>; the suffix is processing.document_parsing.index_value at ingestion and --suffix at query time, else index_value too, all 'default' when unset). Set it identically for ingestion and queries, for versioned or multi-tenant separation. Lowercase letters, digits, '-' and '_'. |
-| `community_drift_threshold` | number (> 0.0, ≤ 1.0) | `0.5` | On incremental runs with communities on, recommend a rebuild (WARNING and the community_rebuild_recommended metric) when at least this share of the entities the run clustered also belongs to an earlier level-0 community. A delta run clusters only its own documents, so such an entity sits in two communities and the earlier community's report misses what the run added; indexing.reset: true re-clusters the whole graph. |
-| `max_failure_rate` | number (≥ 0.0, ≤ 1.0) | `0.2` | Per-index-type write failure rate above which the indexing stage fails, and share of communities without a report above which community detection fails, recording no document; the failed items are noted and written again by the next run (below it, a document whose own text units failed is recorded FAILED and retried). A fully failed index type always fails the stage. 1.0 disables the partial-failure gate. |
-| `max_document_failures` | integer (≥ 1) | `3` | Incremental runs: a document recorded FAILED for an error of its own this many consecutive runs with unchanged content, under the same extraction settings, is no longer retried. It stays FAILED and is skipped as unchanged (with a WARNING) until its content changes or this value is raised. Output that fails alike on several documents (a server-side output cap) counts so too, once a run; changed extraction settings start the count over. A unit's own claim extraction error never counts: the document is indexed without those claims. A claim extraction outage fails the document uncounted, as any outage does. |
-| `max_document_attempts` | integer (≥ 1) | `3` | Incremental runs: once runs died this many consecutive times (the task was killed; a stopped or failed run does not count, nor one that lost its write lease unless another run held it when it ended) processing a document's unchanged content, the runs isolate it: a document that died processed alone is quarantined (the next run removes what the attempts wrote, records it QUARANTINED and skips it, a reset included, until its content changes or this value is raised); otherwise the next runs process half of the documents it died with and defer the other new and changed documents until the culprit is alone. |
-| `max_deletion_share` | number \| null (≥ 0.0, ≤ 1.0) | `0.5` | Incremental runs: when a run would delete more than this share of the documents the doc-status registry holds for its source scope (files gone from the corpus: a partial S3 sync, an expired prefix, a volume not mounted look the same), it stops at document_loading before any write unless the deletion is confirmed (run-ingestion asks on the terminal; --confirm-deletions, UKR_CONFIRM_DELETIONS=1 or --yes answers yes). Only scopes holding at least 10 documents are checked; retired scopes (retire_source_scopes) and seed graph shards (the configuration adds and removes them) do not count, and a reset or a run with the registry off is never checked. 1.0 or null disables the check. |
-| `lease_seconds` | number (≥ 10.0) | `600.0` | Incremental runs: the term of an index namespace's write lease, which a run holds from its first stage to its end so no other run writes the namespace meanwhile. The run renews it every sixth of the term and stops writing once less than a third is left since its last renewal, so keep it at least three times the longest store write request (180 s; a run under 540 s logs a WARNING); a run that dies stops renewing, so its lease expires (and another run can start) at most this long after; with the SQLite registry, a run of the same host whose process has exited (killed) hands it on at once. A stopped run (SIGTERM, Ctrl-C) gives it up expired, so the next run holds its first write about 185 s for the stopped run's requests in flight (with every store embedded it releases it instead). |
-| `retire_source_scopes` | list[string] | `[]` | Incremental runs only: source scopes (a former document_parsing.source_scope value, or the absolute source directory a corpus was indexed from before it moved) whose registry records in this run's index namespace are treated as deleted. The run removes their exclusive artifacts (shared ones are kept) and deletes their records once the removal succeeded. Never the run's own scope. run-ingestion --retire-source-scope adds to this list. |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `methodologies` | list[`"graphrag"` \| `"lightrag"` \| `"hipporag"` \| `"raptor"`] (min length 1) | `["graphrag", "lightrag"]` |  | The retrieval methodologies ingestion builds: graphrag (local, global, drift, simple; communities and community reports), lightrag (mix, hybrid, naive; the relationship vector index), hipporag (ppr; what lightrag builds), raptor (tree; the text units and a summary tree over them, indexing.summary_tree, without graph extraction). naive and simple read what every methodology builds; iterative reads what its base reads. The default [graphrag, lightrag] also holds hipporag, and so does [graphrag] while its relationship vectors are built. A run builds only what the selected ones read: without graphrag no community detection and no report calls. A query whose strategy reads a methodology the index namespace does not hold fails before any model call. Adding a graph methodology to an incremental namespace rebuilds it once from its stored extractions (only the added methodology's model calls are new; a raptor-only namespace stores none, so every text unit is extracted); removing one stops maintaining its artifacts without deleting them. Adding a graph methodology and removing any are refused while the namespace holds other source scopes' documents. graph.community_detection.enabled: false leaves out graphrag and indexing.opensearch.build_relationship_vector_index: false lightrag and hipporag. Adding raptor builds only its tree, from the stored text units. |
+| `reset` | boolean | `false` |  | Rebuild the run's index namespace from the whole corpus instead of applying a delta, without taking it offline: the vector indices swap aliases, the graph is rewritten in place and what the rebuild did not write is dropped at the end; then the namespace's registry records are written again. Quarantined documents are skipped and keep their records. Set it for one run. |
+| `additional_suffix` | string \| null (min length 1) | `null` |  | Appended after the run's suffix in every OpenSearch index name and Neptune label (<prefix>-<suffix>-<additional_suffix>; the suffix is processing.document_parsing.index_value at ingestion and --suffix at query time, else index_value too, all 'default' when unset). Set it identically for ingestion and queries, for versioned or multi-tenant separation. Lowercase letters, digits, '-' and '_'. |
+| `community_drift_threshold` | number (> 0.0, ≤ 1.0) | `0.5` | operational | On incremental runs with communities on, recommend a rebuild (WARNING and the community_rebuild_recommended metric) when at least this share of the entities the run clustered also belongs to an earlier level-0 community. A delta run clusters only its own documents, so such an entity sits in two communities and the earlier community's report misses what the run added; indexing.reset: true re-clusters the whole graph. |
+| `max_failure_rate` | number (≥ 0.0, ≤ 1.0) | `0.2` | operational | Per-index-type write failure rate above which the indexing stage fails, and share of communities without a report above which community detection fails, recording no document; the failed items are noted and written again by the next run (below it, a document whose own text units failed is recorded FAILED and retried). A fully failed index type always fails the stage. 1.0 disables the partial-failure gate. |
+| `max_document_failures` | integer (≥ 1) | `3` | operational | Incremental runs: a document recorded FAILED for an error of its own this many consecutive runs with unchanged content, under the same extraction settings, is no longer retried. It stays FAILED and is skipped as unchanged (with a WARNING) until its content changes or this value is raised. Output that fails alike on several documents (a server-side output cap) counts so too, once a run; changed extraction settings start the count over. A unit's own claim extraction error never counts: the document is indexed without those claims. A claim extraction outage fails the document uncounted, as any outage does. |
+| `max_document_attempts` | integer (≥ 1) | `3` | operational | Incremental runs: once runs died this many consecutive times (the task was killed; a stopped or failed run does not count, nor one that lost its write lease unless another run held it when it ended) processing a document's unchanged content, the runs isolate it: a document that died processed alone is quarantined (the next run removes what the attempts wrote, records it QUARANTINED and skips it, a reset included, until its content changes or this value is raised); otherwise the next runs process half of the documents it died with and defer the other new and changed documents until the culprit is alone. |
+| `max_deletion_share` | number \| null (≥ 0.0, ≤ 1.0) | `0.5` | operational | Incremental runs: when a run would delete more than this share of the documents the doc-status registry holds for its source scope (files gone from the corpus: a partial S3 sync, an expired prefix, a volume not mounted look the same), it stops at document_loading before any write unless the deletion is confirmed (run-ingestion asks on the terminal; --confirm-deletions, UKR_CONFIRM_DELETIONS=1 or --yes answers yes). Only scopes holding at least 10 documents are checked; retired scopes (retire_source_scopes) and seed graph shards (the configuration adds and removes them) do not count, and a reset or a run with the registry off is never checked. 1.0 or null disables the check. |
+| `lease_seconds` | number (≥ 10.0) | `600.0` | operational | Incremental runs: the term of an index namespace's write lease, which a run holds from its first stage to its end so no other run writes the namespace meanwhile. The run renews it every sixth of the term and stops writing once less than a third is left since its last renewal, so keep it at least three times the longest store write request (180 s; a run under 540 s logs a WARNING); a run that dies stops renewing, so its lease expires (and another run can start) at most this long after; with the SQLite registry, a run of the same host whose process has exited (killed) hands it on at once. A stopped run (SIGTERM, Ctrl-C) gives it up expired, so the next run holds its first write about 185 s for the stopped run's requests in flight (with every store embedded it releases it instead). |
+| `retire_source_scopes` | list[string] | `[]` |  | Incremental runs only: source scopes (a former document_parsing.source_scope value, or the absolute source directory a corpus was indexed from before it moved) whose registry records in this run's index namespace are treated as deleted. The run removes their exclusive artifacts (shared ones are kept) and deletes their records once the removal succeeded. Never the run's own scope. run-ingestion --retire-source-scope adds to this list. |
 
 ### `indexing.community_compaction`
 
 Incremental runs: when to recommend re-clustering the communities with indexing.reset: true (a WARNING and the community_growth_ratio and runs_since_clustering metrics).
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `max_runs_since_clustering` | integer \| null (≥ 1) | `20` | Recommend indexing.reset: true (a WARNING after the commit) once this many incremental commits ran since the last full build clustered the graph. A suffix whose full build predates the counters starts counting at its next full build. null turns this check off. |
-| `max_community_growth` | number \| null (> 1.0) | `1.5` | Recommend indexing.reset: true once the suffix holds this many times the communities its last full build clustered (each commit adds the communities it appended and subtracts those its removals deleted; the community_growth_ratio metric). null turns this check off. |
-| `on_drift_recommendation` | boolean | `false` | Also give this recommendation when the run's community drift recommends a rebuild (indexing.community_drift_threshold, or a kept report citing removed text), which logs its own WARNING either way. |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `max_runs_since_clustering` | integer \| null (≥ 1) | `20` | operational | Recommend indexing.reset: true (a WARNING after the commit) once this many incremental commits ran since the last full build clustered the graph. A suffix whose full build predates the counters starts counting at its next full build. null turns this check off. |
+| `max_community_growth` | number \| null (> 1.0) | `1.5` | operational | Recommend indexing.reset: true once the suffix holds this many times the communities its last full build clustered (each commit adds the communities it appended and subtracts those its removals deleted; the community_growth_ratio metric). null turns this check off. |
+| `on_drift_recommendation` | boolean | `false` |  | Also give this recommendation when the run's community drift recommends a rebuild (indexing.community_drift_threshold, or a kept report citing removed text), which logs its own WARNING either way. |
 
 ### `indexing.neptune`
 
 Configuration settings for Neptune graph database indexing
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `entity_label_prefix` | string (min length 1) | `"Entity"` | Prefix for entity node labels in Neptune (letters, digits, '-', '_') |
-| `community_label_prefix` | string (min length 1) | `"Community"` | Prefix for community node labels in Neptune (letters, digits, '-', '_') |
-| `batch_size` | integer (≥ 1) | `100` | Items per Neptune write batch. |
-| `index_concurrency` | integer (≥ 1) | `1` | Neptune write batches (and relationship edges, one per request) submitted concurrently; the Gremlin connection pool grows to at least this. Above 1, batches touching the same vertices can raise ConcurrentModificationException. On Neptune (one transaction per request) the retry recovers, but the conflicts can make a large run slower than sequential writes, so measure before raising it. A local Gremlin Server has no transactions: a retried edge rewrite can leave a duplicate edge (3,025 edges for 3,000 ids in one measurement), so keep it at 1 there. |
-| `property_max_length` | integer (≥ 1) | `4000` | Character cap per Neptune property value. Keep it above the longest description that is not re-summarized (summarization triggers above force_summary_threshold_tokens, 600 tokens or ~2,400 English characters). OpenSearch keeps descriptions in full. Takes effect on re-ingestion. |
-| `vertex_ids` | `"property"` \| `"custom"` | `"property"` | How Neptune vertices are identified. 'property': the vertex id Neptune assigns, and the item id in an 'id' property that every lookup filters on. 'custom': the vertex id is '<label>:<item id>' (e.g. 'Entity-default:<entity id>'), so lookups go by vertex id, which Neptune serves faster and with fewer ConcurrentModificationExceptions than a property lookup; the 'id' property is still written. Edges are unchanged. A graph is built in one mode: an ingestion run in the other mode is refused, and switching needs one full build (indexing.reset: true with incremental indexing on), which rewrites the graph. A query in the other mode, or during the switch, looks vertices up by the 'id' property instead (logged once). Neptune and Gremlin Server only: the embedded SQLite graph store ignores it. |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `entity_label_prefix` | string (min length 1) | `"Entity"` |  | Prefix for entity node labels in Neptune (letters, digits, '-', '_') |
+| `community_label_prefix` | string (min length 1) | `"Community"` |  | Prefix for community node labels in Neptune (letters, digits, '-', '_') |
+| `batch_size` | integer (≥ 1) | `100` | operational | Items per Neptune write batch. |
+| `index_concurrency` | integer (≥ 1) | `1` | operational | Neptune write batches (and relationship edges, one per request) submitted concurrently; the Gremlin connection pool grows to at least this. Above 1, batches touching the same vertices can raise ConcurrentModificationException. On Neptune (one transaction per request) the retry recovers, but the conflicts can make a large run slower than sequential writes, so measure before raising it. A local Gremlin Server has no transactions: a retried edge rewrite can leave a duplicate edge (3,025 edges for 3,000 ids in one measurement), so keep it at 1 there. |
+| `property_max_length` | integer (≥ 1) | `4000` | operational | Character cap per Neptune property value. Keep it above the longest description that is not re-summarized (summarization triggers above force_summary_threshold_tokens, 600 tokens or ~2,400 English characters). OpenSearch keeps descriptions in full. Takes effect on re-ingestion. |
+| `vertex_ids` | `"property"` \| `"custom"` | `"property"` |  | How Neptune vertices are identified. 'property': the vertex id Neptune assigns, and the item id in an 'id' property that every lookup filters on. 'custom': the vertex id is '<label>:<item id>' (e.g. 'Entity-default:<entity id>'), so lookups go by vertex id, which Neptune serves faster and with fewer ConcurrentModificationExceptions than a property lookup; the 'id' property is still written. Edges are unchanged. A graph is built in one mode: an ingestion run in the other mode is refused, and switching needs one full build (indexing.reset: true with incremental indexing on), which rewrites the graph. A query in the other mode, or during the switch, looks vertices up by the 'id' property instead (logged once). Neptune and Gremlin Server only: the embedded SQLite graph store ignores it. |
 
 ### `indexing.opensearch`
 
 Configuration settings for OpenSearch vector and text indexing
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `text_units_index_prefix` | string (min length 1) | `"graphrag-text-units"` | Index name prefix for text unit documents (lowercase letters, digits, '-' and '_', not starting with '-' or '_') |
-| `entities_index_prefix` | string (min length 1) | `"graphrag-entities"` | Index name prefix for entity documents (lowercase letters, digits, '-' and '_', not starting with '-' or '_') |
-| `community_reports_index_prefix` | string (min length 1) | `"graphrag-community-reports"` | Index name prefix for community report documents (lowercase letters, digits, '-' and '_', not starting with '-' or '_') |
-| `build_relationship_vector_index` | boolean | `true` | Build the relationship vector index (embeds Relationship.description). LightRAG mix/hybrid query it for high-level keywords and incident edges, GraphRAG local for its relationship section and bridge relationships, and simple and drift search it with the other indexes; only global does without it. false skips the relationship embeddings at the cost of those. The Neptune relationship edges are indexed either way. Without it, graph expansion under a document filter cannot check the edges it walks: an expanded entity is kept when its entity document passes the filter, also when only excluded documents connect it. |
-| `relationships_index_prefix` | string (min length 1) | `"graphrag-relationships"` | Index name prefix for relationship documents (LightRAG global retrieval) (lowercase letters, digits, '-' and '_', not starting with '-' or '_') |
-| `claims_index_prefix` | string (min length 1) | `"graphrag-claims"` | Index name prefix for claim (covariate) documents (lowercase letters, digits, '-' and '_', not starting with '-' or '_') |
-| `summary_nodes_index_prefix` | string (min length 1) | `"graphrag-summary-nodes"` | Index name prefix for the summary tree's nodes (built only for the raptor methodology, indexing.summary_tree) (lowercase letters, digits, '-' and '_', not starting with '-' or '_') |
-| `extraction_records_index_prefix` | string (min length 1) | `"graphrag-extraction-records"` | Index name prefix for the extraction store: each text unit's extracted entities, relationships and claims, keyed by its text and the extraction settings, so an unchanged chunk is not extracted again (no embeddings). A full build or reset keeps only the records its text units name. It also holds the notes a removal (pending-strip, stripped-summaries) or a commit (pending-commit) keeps until it finished, which a resumed run needs: delete the index only after a run that succeeded, or run indexing.reset next. Lowercase letters, digits, '-' and '_', not starting with '-' or '_' |
-| `default_analyzer` | string (min length 1) | `"standard"` | OpenSearch text analyzer used when the language has no specific mapping |
-| `language_analyzers` | dict[string, string] | see [Long defaults](#long-defaults) | Text analyzer per language code: by default every language with a profile has one (ar: arabic, de: german, en: english, es: spanish, fr: french, he: standard, hi: hindi, it: italian, ja: cjk, ko: nori, pt: portuguese, ru: russian, th: thai, vi: standard, zh: cjk), and so has every other BCP-47 code OpenSearch has a built-in language analyzer for (nl: dutch, sv: swedish, tr: turkish, ...: see Long defaults); a language without an entry uses default_analyzer. All are built into OpenSearch but nori, which needs the analysis-nori plugin: an Amazon OpenSearch Service domain has it only once its optional package is associated (the CDK stack maps ko to cjk). An index keeps the analyzers it was created with, so a change needs indexing.reset; a field built with default_analyzer before the default map named its language keeps it while the map gives that language the default's analyzer (one WARNING). In a config file the key replaces the whole map; an environment variable sets one entry over the defaults (UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO=cjk). |
-| `refresh_after_batch` | boolean | `true` | Whether to refresh OpenSearch indices after each batch operation for immediate visibility |
-| `max_query_size` | integer (≥ 1) | `100` | Maximum number of hits returned per OpenSearch query |
-| `index_settings` | dict[string, Any] | see [Long defaults](#long-defaults) | OpenSearch index settings of the indices this package creates (number_of_shards, number_of_replicas, refresh_interval, max_result_window, max_terms_count, ...; with or without the index. prefix or under an index: map, but not the knn keys, which follow vector_search; the two limits are whole numbers >= 1); every key is passed to index creation (OpenSearch rejects one it does not know: before its first model call, each run that extracts creates and deletes, together, a probe index per index it will create (all of them on a full build or reset, the missing ones on an incremental run) with them and that index's fields, so a refused key, vector_search method, analyzer or a shard limit fails it before any model call; the embedded engine applies only max_result_window) and applies to indices created afterwards, so reindex after changing it. Reads and searches are sized by the smaller of max_result_window / max_terms_count here and on the live index (read again when a search is refused for them): a fetch by id of more ids goes in batches that fit. Raise refresh_interval (or set "-1") for faster bulk loads, then reset it for live querying. In a config file the key replaces the whole map (a left-out shard, replica or refresh setting is 1, 0 or 1s); an environment variable sets one entry over the defaults. |
-| `vector_search` | dict[string, Any] | see [Long defaults](#long-defaults) | HNSW algorithm parameters for approximate nearest neighbor search. ef_search is the candidate list size of a query: on faiss and nmslib the index setting index.knn.algo_param.ef_search (fixed when the index is created), on lucene, which ignores that setting, the k of every kNN query (at least the hits requested), read at query time. |
-| `vector_mode` | `"in_memory"` \| `"on_disk"` | `"in_memory"` | Vector workload mode of the knn_vector fields (OpenSearch 2.17+). on_disk keeps quantized vectors in memory and the full-precision ones on disk, and rescores each kNN search's candidates with them: far less memory at slightly more latency and a little recall, which pays off only at millions of vectors. in_memory (the default) sends no mode key. A changed mode applies to indices created afterwards: an incremental run refuses a live index built otherwise, so run once with indexing.reset: true. With the lucene engine set compression_level (4x); the embedded engine of local mode ignores it (exact search). |
-| `compression_level` | `"1x"` \| `"2x"` \| `"4x"` \| `"8x"` \| `"16x"` \| `"32x"` \| null | `null` | Quantization of the knn_vector fields as a memory reduction factor (OpenSearch 2.17+). Unset: the mode's own (on_disk: 32x on faiss; in_memory: 1x, no key sent). faiss takes 1x, 2x, 8x, 16x and 32x, lucene 1x and 4x (lucene 8x-32x need a later OpenSearch); on_disk refuses 1x. faiss with cosinesimil needs OpenSearch 2.19. Needs the l2, innerproduct or cosinesimil space type and the hnsw method. on_disk rescores with OpenSearch's default oversampling; in_memory above 1x does not rescore. Applies to indices created afterwards (reset to change it on a live namespace). |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `text_units_index_prefix` | string (min length 1) | `"graphrag-text-units"` |  | Index name prefix for text unit documents (lowercase letters, digits, '-' and '_', not starting with '-' or '_') |
+| `entities_index_prefix` | string (min length 1) | `"graphrag-entities"` |  | Index name prefix for entity documents (lowercase letters, digits, '-' and '_', not starting with '-' or '_') |
+| `community_reports_index_prefix` | string (min length 1) | `"graphrag-community-reports"` |  | Index name prefix for community report documents (lowercase letters, digits, '-' and '_', not starting with '-' or '_') |
+| `build_relationship_vector_index` | boolean | `true` |  | Build the relationship vector index (embeds Relationship.description). LightRAG mix/hybrid query it for high-level keywords and incident edges, GraphRAG local for its relationship section and bridge relationships, and simple and drift search it with the other indexes; only global does without it. false skips the relationship embeddings at the cost of those. The Neptune relationship edges are indexed either way. Without it, graph expansion under a document filter cannot check the edges it walks: an expanded entity is kept when its entity document passes the filter, also when only excluded documents connect it. |
+| `relationships_index_prefix` | string (min length 1) | `"graphrag-relationships"` |  | Index name prefix for relationship documents (LightRAG global retrieval) (lowercase letters, digits, '-' and '_', not starting with '-' or '_') |
+| `claims_index_prefix` | string (min length 1) | `"graphrag-claims"` |  | Index name prefix for claim (covariate) documents (lowercase letters, digits, '-' and '_', not starting with '-' or '_') |
+| `summary_nodes_index_prefix` | string (min length 1) | `"graphrag-summary-nodes"` |  | Index name prefix for the summary tree's nodes (built only for the raptor methodology, indexing.summary_tree) (lowercase letters, digits, '-' and '_', not starting with '-' or '_') |
+| `extraction_records_index_prefix` | string (min length 1) | `"graphrag-extraction-records"` |  | Index name prefix for the extraction store: each text unit's extracted entities, relationships and claims, keyed by its text and the extraction settings, so an unchanged chunk is not extracted again (no embeddings). A full build or reset keeps only the records its text units name. It also holds the notes a removal (pending-strip, stripped-summaries) or a commit (pending-commit) keeps until it finished, which a resumed run needs: delete the index only after a run that succeeded, or run indexing.reset next. Lowercase letters, digits, '-' and '_', not starting with '-' or '_' |
+| `default_analyzer` | string (min length 1) | `"standard"` |  | OpenSearch text analyzer used when the language has no specific mapping |
+| `language_analyzers` | dict[string, string] | see [Long defaults](#long-defaults) |  | Text analyzer per language code: by default every language with a profile has one (ar: arabic, de: german, en: english, es: spanish, fr: french, he: standard, hi: hindi, it: italian, ja: cjk, ko: nori, pt: portuguese, ru: russian, th: thai, vi: standard, zh: cjk), and so has every other BCP-47 code OpenSearch has a built-in language analyzer for (nl: dutch, sv: swedish, tr: turkish, ...: see Long defaults); a language without an entry uses default_analyzer. All are built into OpenSearch but nori, which needs the analysis-nori plugin: an Amazon OpenSearch Service domain has it only once its optional package is associated (the CDK stack maps ko to cjk). An index keeps the analyzers it was created with, so a change needs indexing.reset; a field built with default_analyzer before the default map named its language keeps it while the map gives that language the default's analyzer (one WARNING). In a config file the key replaces the whole map; an environment variable sets one entry over the defaults (UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO=cjk). |
+| `refresh_after_batch` | boolean | `true` |  | Whether to refresh OpenSearch indices after each batch operation for immediate visibility |
+| `max_query_size` | integer (≥ 1) | `100` | operational | Maximum number of hits returned per OpenSearch query |
+| `index_settings` | dict[string, Any] | see [Long defaults](#long-defaults) |  | OpenSearch index settings of the indices this package creates (number_of_shards, number_of_replicas, refresh_interval, max_result_window, max_terms_count, ...; with or without the index. prefix or under an index: map, but not the knn keys, which follow vector_search; the two limits are whole numbers >= 1); every key is passed to index creation (OpenSearch rejects one it does not know: before its first model call, each run that extracts creates and deletes, together, a probe index per index it will create (all of them on a full build or reset, the missing ones on an incremental run) with them and that index's fields, so a refused key, vector_search method, analyzer or a shard limit fails it before any model call; the embedded engine applies only max_result_window) and applies to indices created afterwards, so reindex after changing it. Reads and searches are sized by the smaller of max_result_window / max_terms_count here and on the live index (read again when a search is refused for them): a fetch by id of more ids goes in batches that fit. Raise refresh_interval (or set "-1") for faster bulk loads, then reset it for live querying. In a config file the key replaces the whole map (a left-out shard, replica or refresh setting is 1, 0 or 1s); an environment variable sets one entry over the defaults. |
+| `vector_search` | dict[string, Any] | see [Long defaults](#long-defaults) |  | HNSW algorithm parameters for approximate nearest neighbor search. ef_search is the candidate list size of a query: on faiss and nmslib the index setting index.knn.algo_param.ef_search (fixed when the index is created), on lucene, which ignores that setting, the k of every kNN query (at least the hits requested), read at query time. |
+| `vector_mode` | `"in_memory"` \| `"on_disk"` | `"in_memory"` |  | Vector workload mode of the knn_vector fields (OpenSearch 2.17+). on_disk keeps quantized vectors in memory and the full-precision ones on disk, and rescores each kNN search's candidates with them: far less memory at slightly more latency and a little recall, which pays off only at millions of vectors. in_memory (the default) sends no mode key. A changed mode applies to indices created afterwards: an incremental run refuses a live index built otherwise, so run once with indexing.reset: true. With the lucene engine set compression_level (4x); the embedded engine of local mode ignores it (exact search). |
+| `compression_level` | `"1x"` \| `"2x"` \| `"4x"` \| `"8x"` \| `"16x"` \| `"32x"` \| null | `null` |  | Quantization of the knn_vector fields as a memory reduction factor (OpenSearch 2.17+). Unset: the mode's own (on_disk: 32x on faiss; in_memory: 1x, no key sent). faiss takes 1x, 2x, 8x, 16x and 32x, lucene 1x and 4x (lucene 8x-32x need a later OpenSearch); on_disk refuses 1x. faiss with cosinesimil needs OpenSearch 2.19. Needs the l2, innerproduct or cosinesimil space type and the hnsw method. on_disk rescores with OpenSearch's default oversampling; in_memory above 1x does not rescore. Applies to indices created afterwards (reset to change it on a live namespace). |
 
 ### `indexing.summary_tree`
 
 RAPTOR's summary tree over the stored text units, which the tree strategy searches (built for the raptor methodology).
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `scope` | `"corpus"` \| `"document"` | `"corpus"` | corpus: one tree over every text unit of the index namespace (one per partition_by value tuple); document: one tree per document (RAPTOR's own setting), none for a document of fewer than min_leaves_per_tree text units. |
-| `partition_by` | list[string] | `[]` | Document filter keys (a document's metadata filters) whose value tuple splits the corpus into separate trees, so every node is pure on them and survives a filter on them (a summary is kept under a filter only when all its documents pass it). |
-| `algorithm` | `"kmeans"` \| `"gmm"` | `"kmeans"` | kmeans: hard k-means over the PCA-reduced vectors, k = ceil(n / target_children) per level. gmm: RAPTOR's Gaussian mixture with BIC-chosen k, global then local, soft membership (soft_threshold). Both are numpy-only and seeded (random_state). |
-| `target_children` | integer (≥ 2, ≤ 50) | `6` | Children per summary node aimed at (kmeans' k, and the centre of gmm's bounded BIC grid). RAPTOR's trees average 6.7. |
-| `soft_threshold` | number (> 0.0, < 1.0) | `0.1` | gmm only: a node joins every cluster whose posterior exceeds this (RAPTOR's threshold), its likeliest one when none does. |
-| `reduction_dims` | integer (≥ 2, ≤ 100) | `10` | PCA dimensions the vectors are reduced to before clustering (RAPTOR's reduction_dimension; PCA replaces its UMAP). |
-| `max_levels` | integer (≥ 1, ≤ 10) | `5` | Summary levels above the text units at most (RAPTOR's num_layers). |
-| `min_nodes_to_cluster` | integer (≥ 2) | `11` | A level of at most this many nodes is not clustered again: its nodes are the roots (RAPTOR's reduction_dimension + 1). |
-| `min_level_shrink` | number (≥ 0.0, < 1.0) | `0.2` | Stop when the next level would hold more than (1 - this) of the current one's nodes: no structure is left to summarize. 0 never stops for it (RAPTOR's behaviour). |
-| `max_cluster_tokens` | integer (≥ 256) | `8000` | A cluster whose children hold more tokens than this (the summary prompt's input) is clustered again until it fits (RAPTOR's max_length_in_cluster, 3500 cl100k tokens). |
-| `max_summary_tokens` | integer (≥ 32, ≤ 4000) | `300` | Length a summary aims at; a longer answer is cut to it. |
-| `max_lineage_text_units` | integer (≥ 100) | `10000` | Text-unit ids a node stores at most (its provenance and removal key); above it the node keeps its child ids and the lineage is resolved through them at query time. |
-| `min_leaves_per_tree` | integer (≥ 2) | `3` | scope: document only: a document with fewer text units gets no tree. |
-| `refresh` | `"every_run"` \| `"on_reset"` | `"every_run"` | every_run: rebuild the tree on every run whose stored text units changed. on_reset: delta runs only delete the nodes of removed text (always done) and report the text units no summary covers (tree_uncovered_leaves); indexing.reset rebuilds. |
-| `random_state` | integer | `42` | Seed of the clustering's initializations. |
-| `max_leaves_in_memory` | integer (≥ 1) | `100000` | Text units one tree may hold, read into memory with their texts and vectors and clustered there, and the trees read at once hold (several trees are read and built a batch at a time): about 50 KiB of task memory per text unit at the peak (4,000-character units, 1,024 dimensions; read 15, build 35), so the default takes about 5 GiB. A larger tree fails the stage before its vectors are read, naming partition_by and scope: document; raise it with the task's memory. |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `scope` | `"corpus"` \| `"document"` | `"corpus"` |  | corpus: one tree over every text unit of the index namespace (one per partition_by value tuple); document: one tree per document (RAPTOR's own setting), none for a document of fewer than min_leaves_per_tree text units. |
+| `partition_by` | list[string] | `[]` |  | Document filter keys (a document's metadata filters) whose value tuple splits the corpus into separate trees, so every node is pure on them and survives a filter on them (a summary is kept under a filter only when all its documents pass it). |
+| `algorithm` | `"kmeans"` \| `"gmm"` | `"kmeans"` |  | kmeans: hard k-means over the PCA-reduced vectors, k = ceil(n / target_children) per level. gmm: RAPTOR's Gaussian mixture with BIC-chosen k, global then local, soft membership (soft_threshold). Both are numpy-only and seeded (random_state). |
+| `target_children` | integer (≥ 2, ≤ 50) | `6` | deviation: RAPTOR picks k by BIC (max_clusters 50); its trees average 6.7 children | Children per summary node aimed at (kmeans' k, and the centre of gmm's bounded BIC grid). RAPTOR's trees average 6.7. |
+| `soft_threshold` | number (> 0.0, < 1.0) | `0.1` | upstream: RAPTOR's GMM threshold, 0.1 | gmm only: a node joins every cluster whose posterior exceeds this (RAPTOR's threshold), its likeliest one when none does. |
+| `reduction_dims` | integer (≥ 2, ≤ 100) | `10` | upstream: RAPTOR's reduction_dimension, 10 | PCA dimensions the vectors are reduced to before clustering (RAPTOR's reduction_dimension; PCA replaces its UMAP). |
+| `max_levels` | integer (≥ 1, ≤ 10) | `5` | upstream: RAPTOR's num_layers, 5 | Summary levels above the text units at most (RAPTOR's num_layers). |
+| `min_nodes_to_cluster` | integer (≥ 2) | `11` | upstream: RAPTOR's reduction_dimension + 1 | A level of at most this many nodes is not clustered again: its nodes are the roots (RAPTOR's reduction_dimension + 1). |
+| `min_level_shrink` | number (≥ 0.0, < 1.0) | `0.2` | deviation: RAPTOR never stops for it (0) | Stop when the next level would hold more than (1 - this) of the current one's nodes: no structure is left to summarize. 0 never stops for it (RAPTOR's behaviour). |
+| `max_cluster_tokens` | integer (≥ 256) | `8000` | deviation: RAPTOR's max_length_in_cluster, 3500 cl100k tokens | A cluster whose children hold more tokens than this (the summary prompt's input) is clustered again until it fits (RAPTOR's max_length_in_cluster, 3500 cl100k tokens). |
+| `max_summary_tokens` | integer (≥ 32, ≤ 4000) | `300` | unmeasured | Length a summary aims at; a longer answer is cut to it. |
+| `max_lineage_text_units` | integer (≥ 100) | `10000` | operational | Text-unit ids a node stores at most (its provenance and removal key); above it the node keeps its child ids and the lineage is resolved through them at query time. |
+| `min_leaves_per_tree` | integer (≥ 2) | `3` | unmeasured | scope: document only: a document with fewer text units gets no tree. |
+| `refresh` | `"every_run"` \| `"on_reset"` | `"every_run"` |  | every_run: rebuild the tree on every run whose stored text units changed. on_reset: delta runs only delete the nodes of removed text (always done) and report the text units no summary covers (tree_uncovered_leaves); indexing.reset rebuilds. |
+| `random_state` | integer | `42` | operational | Seed of the clustering's initializations. |
+| `max_leaves_in_memory` | integer (≥ 1) | `100000` | operational | Text units one tree may hold, read into memory with their texts and vectors and clustered there, and the trees read at once hold (several trees are read and built a batch at a time): about 50 KiB of task memory per text unit at the peak (4,000-character units, 1,024 dimensions; read 15, build 35), so the default takes about 5 GiB. A larger tree fails the stage before its vectors are read, naming partition_by and scope: document; raise it with the task's memory. |
 
 ## `search`
 
 Search configuration
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `auto_routable_strategies` | list[`"auto"` \| `"drift"` \| `"global"` \| `"local"` \| `"simple"` \| `"mix"` \| `"hybrid"` \| `"naive"` \| `"iterative"` \| `"ppr"` \| `"tree"` \| `"structured"`] (min length 1) | `["local", "mix", "global", "iterative"]` | Strategies the auto router may pick; its prompt describes exactly these, in this order (under filters, only those applying every filter key; none applying them refuses the filters). simple is left out by default because the graph strategies cover its direct lookups with graph context, and drift because it costs up to 27 LLM calls a query (local: 2), a price one misrouted question should not pay; add it to route to it. iterative, for questions that chain facts through an entity they do not name, adds latency to the queries it is routed to (docs/concepts/defaults-and-evidence.md#iterative-follow-up-rounds); leave it out to keep auto off it. Only the strategies the queried index namespace serves are offered (on a LightRAG-only namespace none of local, global and drift), and when nothing is left local, else mix, else the first strategy of a held methodology is used (tree on a raptor-only namespace); with one strategy left no router call is made. auto itself is rejected; ppr and tree load with a WARNING citing the measurement they were left out of the default on (docs/concepts/defaults-and-evidence.md), as the router was not measured choosing them. Every strategy stays selectable explicitly, and one reading what the namespace does not hold is refused. |
-| `max_concurrency` | integer (≥ 1) | `10` | LLM calls and store requests one query keeps in flight at each level: the global map calls, the dynamic-selection ratings, the DRIFT primer calls and follow-up local searches; and within a search, its fetch-by-id batches (ids past the live index's id_batch_size), the global report browse's scope batches and a search's filter batches (lists past max_terms_count), and a filtered graph walk's per-vertex edge requests (each asks both endpoint sides, so up to twice that many); and the output guardrail's per-result checks of the model-written results, when the one check of them all intervenes. Each bound is its own and they nest: each DRIFT follow-up search, and each batch the retriever splits again, has one, so up to the square of this many requests. Per query, so concurrent queries (run-eval keeps processing.max_concurrency of them in flight) multiply it; lower it if a query's calls are throttled. |
-| `store_timeout_seconds` | number (> 0) | `30.0` | Seconds a query waits for one OpenSearch or Neptune request (and for opening a Neptune connection); a Neptune traversal, including its wait for a pooled connection, gets twice that. A store that does not answer fails the query instead of answering from no context. Ingestion keeps its own, longer limits. |
-| `query_timeout_seconds` | number \| null (> 0) | `180.0` | Seconds one query (invoke, search or a stream) may take in all, from its admission (the read of the namespace's build record) to the saved answer; past it the query fails with QueryTimeoutError and its model and store calls in flight are cancelled (a Bedrock call already sent from a worker thread runs on through its own attempts, model_max_attempts x model_timeout_seconds at most, but the framework's transient retries start no new call past the deadline). A streamed answer must also deliver its first chunk within model_timeout_seconds of its model call. Under processing.ignore_errors the query returns the error answer instead, a deadline that passes during its admission too. null disables both deadlines. |
-| `query_max_model_calls` | integer \| null (≥ 1) | `null` | Model calls one query may make in all: the router, the query processing calls, the strategy's own and the answer. A call past it is refused before it is sent. global's rating and map calls, DRIFT's primer and follow-ups and iterative's rounds start only the calls that fit beside the answer, the rest recorded in metadata.degraded (reason query_limit); auto routes only to the strategies whose fewest calls fit and starts no speculative extraction; a query whose answer call does not fit fails with UsageLimitExceededError (error class limit_exceeded). RAGInput.limits.max_model_calls lowers it for one query. null (default): no cap. |
-| `query_max_input_tokens` | integer \| null (≥ 1) | `null` | Input tokens one query's model calls may read in all, each call counted at its start at the local estimate of its prompt (then at what the model reports). Enforced as query_max_model_calls (auto starts no speculative extraction under it either); the fan-out keeps the answer prompt's own tokens for the answer, and the answer's context is cut to what is left after that prompt and the question, less search.token_manager.context_window_headroom_ratio of it. RAGInput.limits.max_input_tokens lowers it for one query. null (default): no cap. |
-| `model_timeout_seconds` | number (> 0) | `90.0` | Read timeout of the model clients a query calls (answer and query-time LLM calls, query embeddings, Bedrock rerank): how long one request may wait for the server's next bytes, which for a non-streamed call is its whole generation. Ingestion and evaluation-judge calls keep the 330 s Bedrock read timeout. On an OpenAI-compatible or Ollama server it caps providers.llm.timeout_seconds and providers.embedding.timeout_seconds for query calls. |
-| `model_max_attempts` | integer (≥ 1) | `2` | Attempts, including the first, that botocore makes for one query-time Bedrock request (read timeouts, throttling, 5xx); ingestion clients make 6. With model_timeout_seconds it bounds a stalled call to about model_max_attempts x model_timeout_seconds. Throttling and model errors past it are retried with backoff within the retry section's budget (retry.max_total_seconds). |
-| `auto_speculative_extraction` | boolean | `true` | For an auto query, start the query entity and keyword extractions that the routable strategies read, and the query translation, at the same time as the router call instead of after it: auto then costs the latency of the strategy it routes to plus nothing. The router prompt and its decision are unchanged. An extraction the chosen strategy does not read keeps running in the background: the query does not wait for it, its call is in the query's usage from its start (estimated_calls until it answers), its result fills the query_extraction_cache_size cache, and it is cancelled at query_timeout_seconds or when the chain closes. With the default routable strategies that is one fast-model extraction call per auto query (two when it routes to global), paid whatever the route. false runs them after the router, only for the strategy it picked. |
-| `query_extraction_cache_size` | integer (≥ 0) | `1024` | Query entity and keyword extractions a chain keeps in memory, keyed by the question, the target language, the model, the prompt text (a custom_prompts override is a new key) and the index namespace (no namespace reads by a cache hit what another was asked; a run-eval run's arms share across namespaces), least recently used dropped first. A repeated question (run-eval --repeats, the arms of a strategy comparison, a retry) reuses the extraction instead of calling the model again, so every arm searches with the same entities and keywords. A failed extraction is not kept. 0 disables it. |
-| `answer_prompt_style` | dict[`"auto"` \| `"drift"` \| `"global"` \| `"local"` \| `"simple"` \| `"mix"` \| `"hybrid"` \| `"naive"` \| `"iterative"` \| `"ppr"` \| `"tree"` \| `"structured"`, `"concise"` \| `"comprehensive"`] | `{"global": "comprehensive"}` | Answer prompt per strategy: concise (a one-sentence direct answer and brief support, custom_prompts.answer_generation_*) or comprehensive (a multi-paragraph markdown answer that explains every key point, modelled on MS GraphRAG's global reduce prompt, custom_prompts.comprehensive_answer_*). The map is merged over the default {global: comprehensive}; every other strategy is concise unless named. On sensemaking questions, comprehensive global answers won comprehensiveness, diversity and empowerment against concise ones, also with a judge that compares only what each answer adds, at a higher cost per query, and lost directness (docs/concepts/defaults-and-evidence.md#answer-style). drift stays concise: comprehensive drift won the same way, but its p95 latency came close to the 180 s query_timeout_seconds, so raise that with {drift: comprehensive}. {global: concise} restores the earlier default. An auto query uses the style of the strategy it routes to. |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `auto_routable_strategies` | list[`"auto"` \| `"drift"` \| `"global"` \| `"local"` \| `"simple"` \| `"mix"` \| `"hybrid"` \| `"naive"` \| `"iterative"` \| `"ppr"` \| `"tree"` \| `"structured"`] (min length 1) | `["local", "mix", "global", "iterative"]` |  | Strategies the auto router may pick; its prompt describes exactly these, in this order (under filters, only those applying every filter key; none applying them refuses the filters). simple is left out by default because the graph strategies cover its direct lookups with graph context, and drift because it costs up to 27 LLM calls a query (local: 2), a price one misrouted question should not pay; add it to route to it. iterative, for questions that chain facts through an entity they do not name, adds latency to the queries it is routed to (docs/concepts/defaults-and-evidence.md#iterative-follow-up-rounds); leave it out to keep auto off it. Only the strategies the queried index namespace serves are offered (on a LightRAG-only namespace none of local, global and drift), and when nothing is left local, else mix, else the first strategy of a held methodology is used (tree on a raptor-only namespace); with one strategy left no router call is made. auto itself is rejected; ppr and tree load with a WARNING citing the measurement they were left out of the default on (docs/concepts/defaults-and-evidence.md), as the router was not measured choosing them. Every strategy stays selectable explicitly, and one reading what the namespace does not hold is refused. |
+| `max_concurrency` | integer (≥ 1) | `10` | operational | LLM calls and store requests one query keeps in flight at each level: the global map calls, the dynamic-selection ratings, the DRIFT primer calls and follow-up local searches; and within a search, its fetch-by-id batches (ids past the live index's id_batch_size), the global report browse's scope batches and a search's filter batches (lists past max_terms_count), and a filtered graph walk's per-vertex edge requests (each asks both endpoint sides, so up to twice that many); and the output guardrail's per-result checks of the model-written results, when the one check of them all intervenes. Each bound is its own and they nest: each DRIFT follow-up search, and each batch the retriever splits again, has one, so up to the square of this many requests. Per query, so concurrent queries (run-eval keeps processing.max_concurrency of them in flight) multiply it; lower it if a query's calls are throttled. |
+| `store_timeout_seconds` | number (> 0) | `30.0` | operational | Seconds a query waits for one OpenSearch or Neptune request (and for opening a Neptune connection); a Neptune traversal, including its wait for a pooled connection, gets twice that. A store that does not answer fails the query instead of answering from no context. Ingestion keeps its own, longer limits. |
+| `query_timeout_seconds` | number \| null (> 0) | `180.0` | [operational](../concepts/defaults-and-evidence.md#query-deadlines-and-model-timeouts) | Seconds one query (invoke, search or a stream) may take in all, from its admission (the read of the namespace's build record) to the saved answer; past it the query fails with QueryTimeoutError and its model and store calls in flight are cancelled (a Bedrock call already sent from a worker thread runs on through its own attempts, model_max_attempts x model_timeout_seconds at most, but the framework's transient retries start no new call past the deadline). A streamed answer must also deliver its first chunk within model_timeout_seconds of its model call. Under processing.ignore_errors the query returns the error answer instead, a deadline that passes during its admission too. null disables both deadlines. |
+| `query_max_model_calls` | integer \| null (≥ 1) | `null` |  | Model calls one query may make in all: the router, the query processing calls, the strategy's own and the answer. A call past it is refused before it is sent. global's rating and map calls, DRIFT's primer and follow-ups and iterative's rounds start only the calls that fit beside the answer, the rest recorded in metadata.degraded (reason query_limit); auto routes only to the strategies whose fewest calls fit and starts no speculative extraction; a query whose answer call does not fit fails with UsageLimitExceededError (error class limit_exceeded). RAGInput.limits.max_model_calls lowers it for one query. null (default): no cap. |
+| `query_max_input_tokens` | integer \| null (≥ 1) | `null` |  | Input tokens one query's model calls may read in all, each call counted at its start at the local estimate of its prompt (then at what the model reports). Enforced as query_max_model_calls (auto starts no speculative extraction under it either); the fan-out keeps the answer prompt's own tokens for the answer, and the answer's context is cut to what is left after that prompt and the question, less search.token_manager.context_window_headroom_ratio of it. RAGInput.limits.max_input_tokens lowers it for one query. null (default): no cap. |
+| `model_timeout_seconds` | number (> 0) | `90.0` | [operational](../concepts/defaults-and-evidence.md#query-deadlines-and-model-timeouts) | Read timeout of the model clients a query calls (answer and query-time LLM calls, query embeddings, Bedrock rerank): how long one request may wait for the server's next bytes, which for a non-streamed call is its whole generation. Ingestion and evaluation-judge calls keep the 330 s Bedrock read timeout. On an OpenAI-compatible or Ollama server it caps providers.llm.timeout_seconds and providers.embedding.timeout_seconds for query calls. |
+| `model_max_attempts` | integer (≥ 1) | `2` | [operational](../concepts/defaults-and-evidence.md#query-deadlines-and-model-timeouts) | Attempts, including the first, that botocore makes for one query-time Bedrock request (read timeouts, throttling, 5xx); ingestion clients make retry.model.client_max_attempts. With model_timeout_seconds it bounds a stalled call to about model_max_attempts x model_timeout_seconds. Throttling and model errors past it are retried with backoff within the retry section's budget (retry.model.max_total_seconds). |
+| `auto_speculative_extraction` | boolean | `true` |  | For an auto query, start the query entity and keyword extractions that the routable strategies read, and the query translation, at the same time as the router call instead of after it: auto then costs the latency of the strategy it routes to plus nothing. The router prompt and its decision are unchanged. An extraction the chosen strategy does not read keeps running in the background: the query does not wait for it, its call is in the query's usage from its start (estimated_calls until it answers), its result fills the query_extraction_cache_size cache, and it is cancelled at query_timeout_seconds or when the chain closes. With the default routable strategies that is one fast-model extraction call per auto query (two when it routes to global), paid whatever the route. false runs them after the router, only for the strategy it picked. |
+| `query_extraction_cache_size` | integer (≥ 0) | `1024` | operational | Query entity and keyword extractions a chain keeps in memory, keyed by the question, the target language, the model, the prompt text (a custom_prompts override is a new key) and the index namespace (no namespace reads by a cache hit what another was asked; a run-eval run's arms share across namespaces), least recently used dropped first. A repeated question (run-eval --repeats, the arms of a strategy comparison, a retry) reuses the extraction instead of calling the model again, so every arm searches with the same entities and keywords. A failed extraction is not kept. 0 disables it. |
+| `answer_prompt_style` | dict[`"auto"` \| `"drift"` \| `"global"` \| `"local"` \| `"simple"` \| `"mix"` \| `"hybrid"` \| `"naive"` \| `"iterative"` \| `"ppr"` \| `"tree"` \| `"structured"`, `"concise"` \| `"comprehensive"`] | `{"global": "comprehensive"}` |  | Answer prompt per strategy: concise (a one-sentence direct answer and brief support, custom_prompts.answer_generation_*) or comprehensive (a multi-paragraph markdown answer that explains every key point, modelled on MS GraphRAG's global reduce prompt, custom_prompts.comprehensive_answer_*). The map is merged over the default {global: comprehensive}; every other strategy is concise unless named. On sensemaking questions, comprehensive global answers won comprehensiveness, diversity and empowerment against concise ones, also with a judge that compares only what each answer adds, at a higher cost per query, and lost directness (docs/concepts/defaults-and-evidence.md#answer-style). drift stays concise: comprehensive drift won the same way, but its p95 latency came close to the 180 s query_timeout_seconds, so raise that with {drift: comprehensive}. {global: concise} restores the earlier default. An auto query uses the style of the strategy it routes to. |
 
 ### `search.hybrid`
 
 Hybrid search configuration
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `lexical_weight` | number (≥ 0.0, ≤ 1.0) | `0.5` | Weight of the lexical side of a hybrid search. A hybrid search runs a lexical and a kNN search on each index, each fetching at least normalization_window hits, min-max normalizes each over its hits, takes their weighted mean (lexical_weight, vector_weight) and keeps the requested number, so the ranking does not depend on how many hits a query asks for. |
-| `vector_weight` | number (≥ 0.0, ≤ 1.0) | `0.5` | Weight of the vector (kNN) side of a hybrid search. The two weights are relative (each side counts its weight over their sum), and their sum must be above 0. |
-| `normalization_window` | integer (≥ 1) | `50` | Hits each side of a hybrid search fetches at least (capped by the index's max_result_window) for the min-max normalization before the cut to the requested number: normalized over only the hits returned, a hit's fused score, and so the ranking, depended on how many were asked for. A larger window costs store work per search. Unmeasured choice (no A/B in docs/concepts/defaults-and-evidence.md). |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `lexical_weight` | number (≥ 0.0, ≤ 1.0) | `0.5` | unmeasured: an equal split | Weight of the lexical side of a hybrid search. A hybrid search runs a lexical and a kNN search on each index, each fetching at least normalization_window hits, min-max normalizes each over its hits, takes their weighted mean (lexical_weight, vector_weight) and keeps the requested number, so the ranking does not depend on how many hits a query asks for. |
+| `vector_weight` | number (≥ 0.0, ≤ 1.0) | `0.5` | unmeasured: an equal split | Weight of the vector (kNN) side of a hybrid search. The two weights are relative (each side counts its weight over their sum), and their sum must be above 0. |
+| `normalization_window` | integer (≥ 1) | `50` | unmeasured | Hits each side of a hybrid search fetches at least (capped by the index's max_result_window) for the min-max normalization before the cut to the requested number: normalized over only the hits returned, a hit's fused score, and so the ranking, depended on how many were asked for. A larger window costs store work per search. Unmeasured choice (no A/B in docs/concepts/defaults-and-evidence.md). |
 
 ### `search.fusion`
 
 Search result fusion configuration
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `rrf_k` | integer (≥ 1) | `60` | The k constant of reciprocal rank fusion: each result adds 1 / (rrf_k + rank). |
-| `diversity_lambda` | number (≥ 0.0, ≤ 1.0) | `0.5` | MMR lambda for diversity filtering: score = lambda*relevance - (1-lambda)*max_similarity, with relevance min-max normalized to [0, 1] over the fused candidates. 1.0 = pure relevance (no diversity), 0.0 = maximum diversity. Lower values penalize redundant results more strongly. Filtering is skipped at 1.0 (no diversity benefit). On 200 MuSiQue mix questions 0.7 and 1.0 measured no significant answer difference against 0.5 (answer_contains -1.0 points [-3.75, +1.5] and -2.25 [-5.25, +0.5]). |
-| `fusion_weights` | dict[string, number] | `{}` | Per-source-bucket weights: reciprocal rank fusion scales each bucket's 1/(rrf_k + rank) term; simple's min-max fusion weighs each bucket's min-max normalized score in the weighted mean (divided by the weights' sum). Keys are the source buckets the search strategies emit: local (graph_entities, text_units, relationships, bridge_relationships, community_reports, claims), LightRAG (lightrag_entities, lightrag_relationships, lightrag_endpoint_entities, lightrag_incident_relationships, lightrag_chunks, lightrag_linked_chunks (the chunks the entities cite), lightrag_relation_chunks (those the relationships cite)), simple (simple_text_units, simple_entities, simple_relationships, simple_claims, simple_community_reports, simple_summary_nodes: one per index), global (text_units), drift (results), iterative (iterative_round_<n>, round n's base search, 0 the first; iterative_round_<n>_text, its follow-up queries' text units; fused once more over the rounds, the base's own buckets fused within each), ppr (ppr_passages, ppr_seed_text_units, ppr_facts), tree (tree_text_units, tree_summaries, tree_graph_summaries, tree_graph_text_units) and structured (structured_query_result, structured_entities, structured_relationships, structured_text_units, structured_text_hits, structured_fallback). A bucket without a key weighs 1.0 (the default: none); a weight is 0 or more (0 drops the bucket's contribution). A weight on a retired bucket (opensearch_all, vector_all, opensearch_community_reports, opensearch_candidate_community_reports, opensearch_expanded_community_reports) is dropped, with a warning. |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `rrf_k` | integer (≥ 1) | `60` | upstream: reciprocal rank fusion's k, 60 (Cormack et al., 2009) | The k constant of reciprocal rank fusion: each result adds 1 / (rrf_k + rank). |
+| `diversity_lambda` | number (≥ 0.0, ≤ 1.0) | `0.5` | [measured](../concepts/defaults-and-evidence.md#lightrag-chunk-picking-and-mmr-diversity) | MMR lambda for diversity filtering: score = lambda*relevance - (1-lambda)*max_similarity, with relevance min-max normalized to [0, 1] over the fused candidates. 1.0 = pure relevance (no diversity), 0.0 = maximum diversity. Lower values penalize redundant results more strongly. Filtering is skipped at 1.0 (no diversity benefit). On 200 MuSiQue mix questions 0.7 and 1.0 measured no significant answer difference against 0.5 (answer_contains -1.0 points [-3.75, +1.5] and -2.25 [-5.25, +0.5]). |
+| `fusion_weights` | dict[string, number] | `{}` |  | Per-source-bucket weights: reciprocal rank fusion scales each bucket's 1/(rrf_k + rank) term; simple's min-max fusion weighs each bucket's min-max normalized score in the weighted mean (divided by the weights' sum). Keys are the source buckets the search strategies emit: local (graph_entities, text_units, relationships, bridge_relationships, community_reports, claims), LightRAG (lightrag_entities, lightrag_relationships, lightrag_endpoint_entities, lightrag_incident_relationships, lightrag_chunks, lightrag_linked_chunks (the chunks the entities cite), lightrag_relation_chunks (those the relationships cite)), simple (simple_text_units, simple_entities, simple_relationships, simple_claims, simple_community_reports, simple_summary_nodes: one per index), global (text_units), drift (results), iterative (iterative_round_<n>, round n's base search, 0 the first; iterative_round_<n>_text, its follow-up queries' text units; fused once more over the rounds, the base's own buckets fused within each), ppr (ppr_passages, ppr_seed_text_units, ppr_facts), tree (tree_text_units, tree_summaries, tree_graph_summaries, tree_graph_text_units) and structured (structured_query_result, structured_entities, structured_relationships, structured_text_units, structured_text_hits, structured_fallback). A bucket without a key weighs 1.0 (the default: none); a weight is 0 or more (0 drops the bucket's contribution). A weight on a retired bucket (opensearch_all, vector_all, opensearch_community_reports, opensearch_candidate_community_reports, opensearch_expanded_community_reports) is dropped, with a warning. |
 
 ### `search.reranking`
 
 Reranking configuration
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `top_k` | integer (≥ 1) | `100` | Fused candidates sent to the reranker, the best fused first; the others are dropped from the result (their fused scores do not compare with the reranker's), so keep it at least the result width a strategy asks for (top_k x retrieval_multiplier, or the sum of its per-type quotas). |
-| `required` | boolean | `false` | Fail the query with RerankModelError when the rerank model cannot be built, the rerank call fails or it returns nothing usable. false keeps the fused order and reports the outcome in SearchResult.metadata['rerank']. No effect with providers.rerank.kind none. |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `top_k` | integer (≥ 1) | `100` | unmeasured | Fused candidates sent to the reranker, the best fused first; the others are dropped from the result (their fused scores do not compare with the reranker's), so keep it at least the result width a strategy asks for (top_k x retrieval_multiplier, or the sum of its per-type quotas). |
+| `required` | boolean | `false` |  | Fail the query with RerankModelError when the rerank model cannot be built, the rerank call fails or it returns nothing usable. false keeps the fused order and reports the outcome in SearchResult.metadata['rerank']. No effect with providers.rerank.kind none. |
 
 ### `search.global_search`
 
 Global search configuration
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `community_depth` | integer (≥ 0) | `2` | The cut of the community hierarchy whose reports global search maps over, counted from the root as MS GraphRAG's community_level (default 2 there too): the communities at this depth plus the leaves above it, so every entity is covered once. 0 = the root communities (fewest, broadest reports); a large value = the leaves. With use_dynamic_selection it bounds only the depths a selection that found nothing relevant rates whole (MS GraphRAG's max_level); relevant reports are followed to the leaves. |
-| `max_reports_per_level` | integer (≥ 1) | `100` | Upper bound on the reports one cut (or one step of the dynamic selection) contributes. A cut with more reports gives way to the deepest shallower cut that fits (global_cut_depth in the search metadata); when even the root cut does not fit, or under a filter on a report key (community_id, level, rating), to the reports of the cut most similar to the query (a hybrid search restricted to the cut, global_level_capped). At most indexing.opensearch.max_query_size - 1 (and the reports index's live max_result_window - 1): one store request returns at most that many hits and the cut asks for one more than the cap (the default of 100 maps at most 99). MS GraphRAG has no cap: it maps the whole cut. Each report costs map-step input tokens. |
-| `use_dynamic_selection` | boolean | `false` | MS GraphRAG dynamic community selection instead of a fixed cut: rate the root reports for the query with models.roles.community_relevance, descend into the children of the relevant ones down to the leaves (dropping a parent once a child is relevant), and rate the whole next depth when a depth yields none, down to community_depth (MS GraphRAG's selection stops at its community_level; this one follows relevant reports to the leaves). One fast-model call per rated report, search.max_concurrency at a time; the relevant reports are then mapped. Off by default, as in MS GraphRAG. |
-| `relevance_threshold` | number (≥ 0.0, ≤ 1.0) | `0.2` | Dynamic selection keeps a report whose relevance (MS GraphRAG's 0-5 rating divided by 5) is at least this. 0.2 = a rating of 1 or more, MS GraphRAG's threshold: a pruned report prunes its whole subtree. |
-| `enable_map_reduce` | boolean | `true` | Map the selected reports into scored key points. false = the reports go to the answer model as they are (budget-trimmed). |
-| `map_reduce_min_results` | integer (≥ 1) | `3` | Minimum community results before map-reduce synthesis is applied; below this the results are returned directly. |
-| `map_context_tokens` | integer (≥ 128) | `12000` | Report tokens packed into one map-step LLM call (MS GraphRAG's data_max_tokens, 12000). Reports are packed in the order the selection gives them (rank for the fixed cut, rating for dynamic selection, similarity for the similarity fallback; MS GraphRAG shuffles them first) until the next one would exceed it; a longer report gets a call of its own. Map calls run search.max_concurrency at a time. |
-| `map_relevance_threshold` | integer (≥ 0, ≤ 100) | `0` | Drop map-step key points whose 0-100 relevance score is at or below this threshold before ranking (0 keeps any positive score). |
-| `max_map_reduce_tokens` | integer (≥ 128) | `8000` | Token budget for the ranked key points handed to the answer model; the highest-scored points are taken until this budget is reached, so the answer is written from focused, ranked evidence. The reports the points cite follow them in the context. |
-| `text_unit_slots` | integer (≥ 0) | `0` | Text units of the communities behind the key points added to the context (retrieved for the query and reranked). 0 (default) = none: MS GraphRAG's global context is community reports only, and chunks next to them took most of the answer budget the reports and key points need. Local and mix search cover chunk evidence. |
-| `evidence_tokens` | integer \| null (≥ 0) | `4000` | Tokens of the cited reports' text that follow the key points in the answer context: whole reports, best-scored point first, until the next would exceed it. 4000 (default): measured on 50 global questions over a 3,318-document MuSiQue corpus, it cut the cost per global query by 41% ($0.1016 -> $0.0597) against no cap, with no consistent quality difference across three pairwise judges (position consistency 0.43-0.57), and the answer keeps its sources. null = no cap (the default before): as many as the answer's context budget holds, which on a large cut is most of a global query's input tokens. 0 = the key points only, as MS GraphRAG's reduce step reads them (-49% cost, also no measured quality difference); the answer then reports no sources, since the key points are model output. Applies to the map-reduce path (enable_map_reduce). |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `community_depth` | integer (≥ 0) | `2` | upstream: MS GraphRAG's community_level, 2 | The cut of the community hierarchy whose reports global search maps over, counted from the root as MS GraphRAG's community_level (default 2 there too): the communities at this depth plus the leaves above it, so every entity is covered once. 0 = the root communities (fewest, broadest reports); a large value = the leaves. With use_dynamic_selection it bounds only the depths a selection that found nothing relevant rates whole (MS GraphRAG's max_level); relevant reports are followed to the leaves. |
+| `max_reports_per_level` | integer (≥ 1) | `100` | unmeasured | Upper bound on the reports one cut (or one step of the dynamic selection) contributes. A cut with more reports gives way to the deepest shallower cut that fits (global_cut_depth in the search metadata); when even the root cut does not fit, or under a filter on a report key (community_id, level, rating), to the reports of the cut most similar to the query (a hybrid search restricted to the cut, global_level_capped). At most indexing.opensearch.max_query_size - 1 (and the reports index's live max_result_window - 1): one store request returns at most that many hits and the cut asks for one more than the cap (the default of 100 maps at most 99). MS GraphRAG has no cap: it maps the whole cut. Each report costs map-step input tokens. |
+| `use_dynamic_selection` | boolean | `false` |  | MS GraphRAG dynamic community selection instead of a fixed cut: rate the root reports for the query with models.roles.community_relevance, descend into the children of the relevant ones down to the leaves (dropping a parent once a child is relevant), and rate the whole next depth when a depth yields none, down to community_depth (MS GraphRAG's selection stops at its community_level; this one follows relevant reports to the leaves). One fast-model call per rated report, search.max_concurrency at a time; the relevant reports are then mapped. Off by default, as in MS GraphRAG. |
+| `relevance_threshold` | number (≥ 0.0, ≤ 1.0) | `0.2` | upstream: MS GraphRAG's dynamic selection threshold, a rating of 1 | Dynamic selection keeps a report whose relevance (MS GraphRAG's 0-5 rating divided by 5) is at least this. 0.2 = a rating of 1 or more, MS GraphRAG's threshold: a pruned report prunes its whole subtree. |
+| `enable_map_reduce` | boolean | `true` |  | Map the selected reports into scored key points. false = the reports go to the answer model as they are (budget-trimmed). |
+| `map_reduce_min_results` | integer (≥ 1) | `3` | unmeasured | Minimum community results before map-reduce synthesis is applied; below this the results are returned directly. |
+| `map_context_tokens` | integer (≥ 128) | `12000` | upstream: MS GraphRAG's data_max_tokens, 12000 | Report tokens packed into one map-step LLM call (MS GraphRAG's data_max_tokens, 12000). Reports are packed in the order the selection gives them (rank for the fixed cut, rating for dynamic selection, similarity for the similarity fallback; MS GraphRAG shuffles them first) until the next one would exceed it; a longer report gets a call of its own. Map calls run search.max_concurrency at a time. |
+| `map_relevance_threshold` | integer (≥ 0, ≤ 100) | `0` | upstream: MS GraphRAG's reduce keeps a key point scored above 0 | Drop map-step key points whose 0-100 relevance score is at or below this threshold before ranking (0 keeps any positive score). |
+| `max_map_reduce_tokens` | integer (≥ 128) | `8000` | unmeasured | Token budget for the ranked key points handed to the answer model; the highest-scored points are taken until this budget is reached, so the answer is written from focused, ranked evidence. The reports the points cite follow them in the context. |
+| `text_unit_slots` | integer (≥ 0) | `0` | upstream: MS GraphRAG's global context holds reports only (0) | Text units of the communities behind the key points added to the context (retrieved for the query and reranked). 0 (default) = none: MS GraphRAG's global context is community reports only, and chunks next to them took most of the answer budget the reports and key points need. Local and mix search cover chunk evidence. |
+| `evidence_tokens` | integer \| null (≥ 0) | `4000` | [measured](../concepts/defaults-and-evidence.md#global-evidence-cap) | Tokens of the cited reports' text that follow the key points in the answer context: whole reports, best-scored point first, until the next would exceed it. 4000 (default): measured on 50 global questions over a 3,318-document MuSiQue corpus, it cut the cost per global query by 41% ($0.1016 -> $0.0597) against no cap, with no consistent quality difference across three pairwise judges (position consistency 0.43-0.57), and the answer keeps its sources. null = no cap (the default before): as many as the answer's context budget holds, which on a large cut is most of a global query's input tokens. 0 = the key points only, as MS GraphRAG's reduce step reads them (-49% cost, also no measured quality difference); the answer then reports no sources, since the key points are model output. Applies to the map-reduce path (enable_map_reduce). |
 
 ### `search.local_search`
 
 Local search configuration
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `entity_frequency_threshold` | integer (≥ 1) | `20` | Drop graph-expanded entities appearing in more than this many text units (too generic to be discriminative for local search) from the context and the text-unit fan-out. The query's own matched (seed) entities are always kept. |
-| `include_bridge_relationships` | boolean | `true` | Also fetch the relationships incident to the graph-expanded entities, edges between two of those entities first (MS GraphRAG local's in-network relationships). These bridge edges carry the hops of a multi-hop chain, which the relationship vector query alone often misses. Needs indexing.opensearch.build_relationship_vector_index. false = only the vector query on the relationship index. |
-| `seed_score_ratio` | number (≥ 0.0, ≤ 1.0) | `0.6` | Each query entity is looked up in the entities index on its own and seeds graph expansion with the entities of its name; with none, with its top hit only when that scores at least this fraction of the best hit of any query entity (and is no one-word lookalike: a name sharing one word with it, neither holding the other), so a generic word the entity extraction returned seeds no unrelated entity. The fraction is read at equal hybrid weights, where a hit only the vector search found scores at most 0.5 of one both found, so above 0.5 it drops such a hit when another query entity matched by name; at other weights it is rescaled so that it still does (0.5 maps to search.hybrid.vector_weight: 0.6 is 0.84 at a 0.8 vector weight). A vector or lexical search compares raw scores, where the filter is weaker (similarities of related and unrelated entities are close). 0 keeps every query entity's top hit. The seeds share the expansion budget in proportion to their scores. |
-| `report_selection` | `"membership"` \| `"similarity"` | `"similarity"` | How local search (and each DRIFT follow-up) picks its community reports. 'membership' (MS GraphRAG local's, on leaf communities where upstream takes each entity's community at its community_level cut): the reports of the level-0 (leaf) communities the graph-expanded entities belong to, most matched entities first, then by report rank; when no expanded entity names a community (under a document filter, whose walk reads the entities index, or when graph expansion failed), or when a community_id or level filter admits none of those communities, the 'similarity' reports instead. Search metadata records which one ran (report_selection; DRIFT counts its follow-ups by each). 'similarity': the reports most similar to the joined query entities, which always fill the report slots. The default: on 200 MuSiQue questions (two repeats), membership scored exact match 4.0 points (95% CI -7.75 to -0.25) and token F1 4.1 points (-7.7 to -0.6) lower, for about 0.5% fewer tokens. |
-| `text_unit_ranking` | `"support"` \| `"ppr"` | `"ppr"` | How local search orders the text units of its expanded entities before the text quota cuts them (DRIFT's follow-up local searches: search.drift_search.text_unit_ranking). 'ppr' (the default): HippoRAG 2's Personalized PageRank over the expanded entities, their relationships and their text units, seeded by the seed entities (hit score over the text units cited), the endpoints of the question's ppr_seed_relationships relationship hits (kNN) and its search.ppr_search.passage_seed_top_k text-unit hits (BM25 + vector, weighted by passage_node_weight), which it ranks too; the PageRank settings are search.ppr_search's. 'support': by how many expanded entities cite a unit, then the best citing entity's score. ppr is the default because it answered multi-hop questions better than support (the measurement: docs/concepts/defaults-and-evidence.md#local-ppr-ranking). Costs a text-unit search, a relationship search, an edge read and a query embedding a query. See docs/design.md §6.4. |
-| `ppr_seed_relationships` | integer (≥ 0) | `5` | text_unit_ranking: ppr only: also seed the PageRank with the endpoints of the question's this many relationships-index hits (HippoRAG 2's query-to-fact seeding, under search.ppr_search.fact_search_type), each adding the mean score of its hits to the entity's own seed score before the division by the text units it cites; an endpoint the expansion did not reach is read from the entities index. 0 = off (the measured setting is 5). Needs indexing.opensearch.build_relationship_vector_index. |
-| `entity_candidates_per_focus` | integer (≥ 1) | `2` | Entities-index hits fetched per query entity, among which its exact name match is looked for (else its top hit seeds, under seed_score_ratio). Unmeasured choice (no A/B in docs/concepts/defaults-and-evidence.md). |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `entity_frequency_threshold` | integer (≥ 1) | `20` | [measured](../concepts/defaults-and-evidence.md#retrieval-switches) | Drop graph-expanded entities appearing in more than this many text units (too generic to be discriminative for local search) from the context and the text-unit fan-out. The query's own matched (seed) entities are always kept. |
+| `include_bridge_relationships` | boolean | `true` |  | Also fetch the relationships incident to the graph-expanded entities, edges between two of those entities first (MS GraphRAG local's in-network relationships). These bridge edges carry the hops of a multi-hop chain, which the relationship vector query alone often misses. Needs indexing.opensearch.build_relationship_vector_index. false = only the vector query on the relationship index. |
+| `seed_score_ratio` | number (≥ 0.0, ≤ 1.0) | `0.6` | unmeasured | Each query entity is looked up in the entities index on its own and seeds graph expansion with the entities of its name; with none, with its top hit only when that scores at least this fraction of the best hit of any query entity (and is no one-word lookalike: a name sharing one word with it, neither holding the other), so a generic word the entity extraction returned seeds no unrelated entity. The fraction is read at equal hybrid weights, where a hit only the vector search found scores at most 0.5 of one both found, so above 0.5 it drops such a hit when another query entity matched by name; at other weights it is rescaled so that it still does (0.5 maps to search.hybrid.vector_weight: 0.6 is 0.84 at a 0.8 vector weight). A vector or lexical search compares raw scores, where the filter is weaker (similarities of related and unrelated entities are close). 0 keeps every query entity's top hit. The seeds share the expansion budget in proportion to their scores. |
+| `report_selection` | `"membership"` \| `"similarity"` | `"similarity"` |  | How local search (and each DRIFT follow-up) picks its community reports. 'membership' (MS GraphRAG local's, on leaf communities where upstream takes each entity's community at its community_level cut): the reports of the level-0 (leaf) communities the graph-expanded entities belong to, most matched entities first, then by report rank; when no expanded entity names a community (under a document filter, whose walk reads the entities index, or when graph expansion failed), or when a community_id or level filter admits none of those communities, the 'similarity' reports instead. Search metadata records which one ran (report_selection; DRIFT counts its follow-ups by each). 'similarity': the reports most similar to the joined query entities, which always fill the report slots. The default: on 200 MuSiQue questions (two repeats), membership scored exact match 4.0 points (95% CI -7.75 to -0.25) and token F1 4.1 points (-7.7 to -0.6) lower, for about 0.5% fewer tokens. |
+| `text_unit_ranking` | `"support"` \| `"ppr"` | `"ppr"` |  | How local search orders the text units of its expanded entities before the text quota cuts them (DRIFT's follow-up local searches: search.drift_search.text_unit_ranking). 'ppr' (the default): HippoRAG 2's Personalized PageRank over the expanded entities, their relationships and their text units, seeded by the seed entities (hit score over the text units cited), the endpoints of the question's ppr_seed_relationships relationship hits (kNN) and its search.ppr_search.passage_seed_top_k text-unit hits (BM25 + vector, weighted by passage_node_weight), which it ranks too; the PageRank settings are search.ppr_search's. 'support': by how many expanded entities cite a unit, then the best citing entity's score. ppr is the default because it answered multi-hop questions better than support (the measurement: docs/concepts/defaults-and-evidence.md#local-ppr-ranking). Costs a text-unit search, a relationship search, an edge read and a query embedding a query. See docs/design.md §6.4. |
+| `ppr_seed_relationships` | integer (≥ 0) | `5` | unmeasured | text_unit_ranking: ppr only: also seed the PageRank with the endpoints of the question's this many relationships-index hits (HippoRAG 2's query-to-fact seeding, under search.ppr_search.fact_search_type), each adding the mean score of its hits to the entity's own seed score before the division by the text units it cites; an endpoint the expansion did not reach is read from the entities index. 0 = off (the measured setting is 5). Needs indexing.opensearch.build_relationship_vector_index. |
+| `entity_candidates_per_focus` | integer (≥ 1) | `2` | unmeasured | Entities-index hits fetched per query entity, among which its exact name match is looked for (else its top hit seeds, under seed_score_ratio). Unmeasured choice (no A/B in docs/concepts/defaults-and-evidence.md). |
 
 #### `search.local_search.type_quota`
 
 Fusion slots reserved per section type, max(multiplier * top_k, floor), in local search and the strategies built on it (DRIFT's follow-ups, ppr, iterative's rounds); search.token_manager.type_budgets sets what the context then holds of each. Only the entity and relationship floors follow MS GraphRAG; the rest are unmeasured choices.
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `text_multiplier` | number (≥ 0.0) | `2.0` | Text-unit (chunk) slots as a multiple of top_k. Unmeasured choice. |
-| `text_floor` | integer (≥ 1) | `20` | Minimum text-unit slots whatever top_k. Unmeasured choice. |
-| `entity_multiplier` | number (≥ 0.0) | `1.0` | Entity slots as a multiple of top_k. Unmeasured choice. |
-| `entity_floor` | integer (≥ 1) | `10` | Minimum entity slots (MS GraphRAG local's top_k_entities). |
-| `relationship_multiplier` | number (≥ 0.0) | `1.0` | Relationship slots as a multiple of top_k (also caps local search's bridge relationships). Unmeasured choice. |
-| `relationship_floor` | integer (≥ 1) | `10` | Minimum relationship slots (MS GraphRAG local's top_k_relationships). |
-| `community_multiplier` | number (≥ 0.0) | `0.5` | Community report slots as a multiple of top_k. Unmeasured choice. |
-| `community_floor` | integer (≥ 1) | `2` | Minimum community report slots. Unmeasured choice. |
-| `claim_multiplier` | number (≥ 0.0) | `0.5` | Claim slots as a multiple of top_k. Unmeasured choice. |
-| `claim_floor` | integer (≥ 1) | `2` | Minimum claim slots. Unmeasured choice. |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `text_multiplier` | number (≥ 0.0) | `2.0` | unmeasured | Text-unit (chunk) slots as a multiple of top_k. Unmeasured choice. |
+| `text_floor` | integer (≥ 1) | `20` | unmeasured | Minimum text-unit slots whatever top_k. Unmeasured choice. |
+| `entity_multiplier` | number (≥ 0.0) | `1.0` | unmeasured | Entity slots as a multiple of top_k. Unmeasured choice. |
+| `entity_floor` | integer (≥ 1) | `10` | upstream: MS GraphRAG local's top_k_entities, 10 | Minimum entity slots (MS GraphRAG local's top_k_entities). |
+| `relationship_multiplier` | number (≥ 0.0) | `1.0` | unmeasured | Relationship slots as a multiple of top_k (also caps local search's bridge relationships). Unmeasured choice. |
+| `relationship_floor` | integer (≥ 1) | `10` | upstream: MS GraphRAG local's top_k_relationships, 10 | Minimum relationship slots (MS GraphRAG local's top_k_relationships). |
+| `community_multiplier` | number (≥ 0.0) | `0.5` | unmeasured | Community report slots as a multiple of top_k. Unmeasured choice. |
+| `community_floor` | integer (≥ 1) | `2` | unmeasured | Minimum community report slots. Unmeasured choice. |
+| `claim_multiplier` | number (≥ 0.0) | `0.5` | unmeasured | Claim slots as a multiple of top_k. Unmeasured choice. |
+| `claim_floor` | integer (≥ 1) | `2` | unmeasured | Minimum claim slots. Unmeasured choice. |
 
 ### `search.drift_search`
 
 Drift search configuration
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `k_followups` | integer (≥ 1) | `10` | Community reports the primer reads, and follow-up queries run per round (MS GraphRAG drift_k_followups: 20). Each follow-up query is one local search plus one models.roles.drift_action call. |
-| `primer_folds` | integer (≥ 1) | `5` | Primer calls the primer reports are split over (MS GraphRAG primer_folds, 5); each drafts its own intermediate answer and follow-up queries. |
-| `n_depth` | integer (≥ 1) | `2` | Rounds of follow-up queries (MS GraphRAG n_depth: 3). Up to k_followups * n_depth local searches per query, so the defaults make at most 1 + primer_folds + 20 + 1 = 27 LLM calls (MS GraphRAG's defaults: 67). |
-| `local_context_tokens` | integer (≥ 128) | `12000` | Token budget of the local-search context one follow-up query is answered from (MS GraphRAG local_search_max_data_tokens). |
-| `max_answer_tokens` | integer (≥ 128) | `8000` | Token budget for the ranked intermediate answers handed to the answer model; the best-scored answers are taken first. |
-| `text_unit_ranking` | `"support"` \| `"ppr"` | `"support"` | How each follow-up local search orders its text units (search.local_search.text_unit_ranking's values). support (the default): what DRIFT was measured with. ppr was measured for local alone and costs each follow-up a text-unit search, a relationship search, an edge read and a query embedding (up to k_followups * n_depth = 20 of each a query, near the query deadline), so DRIFT keeps support until a run measures it. |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `k_followups` | integer (≥ 1) | `10` | deviation: MS GraphRAG's drift_k_followups: 20 | Community reports the primer reads, and follow-up queries run per round (MS GraphRAG drift_k_followups: 20). Each follow-up query is one local search plus one models.roles.drift_action call. |
+| `primer_folds` | integer (≥ 1) | `5` | upstream: MS GraphRAG's primer_folds, 5 | Primer calls the primer reports are split over (MS GraphRAG primer_folds, 5); each drafts its own intermediate answer and follow-up queries. |
+| `n_depth` | integer (≥ 1) | `2` | deviation: MS GraphRAG's n_depth: 3 | Rounds of follow-up queries (MS GraphRAG n_depth: 3). Up to k_followups * n_depth local searches per query, so the defaults make at most 1 + primer_folds + 20 + 1 = 27 LLM calls (MS GraphRAG's defaults: 67). |
+| `local_context_tokens` | integer (≥ 128) | `12000` | upstream: MS GraphRAG's local_search_max_data_tokens, 12000 | Token budget of the local-search context one follow-up query is answered from (MS GraphRAG local_search_max_data_tokens). |
+| `max_answer_tokens` | integer (≥ 128) | `8000` | unmeasured | Token budget for the ranked intermediate answers handed to the answer model; the best-scored answers are taken first. |
+| `text_unit_ranking` | `"support"` \| `"ppr"` | `"support"` |  | How each follow-up local search orders its text units (search.local_search.text_unit_ranking's values). support (the default): what DRIFT was measured with. ppr was measured for local alone and costs each follow-up a text-unit search, a relationship search, an edge read and a query embedding (up to k_followups * n_depth = 20 of each a query, near the query deadline), so DRIFT keeps support until a run measures it. |
 
 ### `search.lightrag_search`
 
 LightRAG dual-level keyword search configuration
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `raw_query_fallback_max_len` | integer (≥ 0) | `50` | When dual-level keyword extraction yields no keywords, a query shorter than this many characters (in every script, as upstream LightRAG's len(query) < 50) is searched as its own low-level keyword. A longer one skips the fallback, as upstream does, since a whole question as one keyword scans the entity index for a sentence, not a name: hybrid then retrieves nothing and mix only chunks. 0 turns the fallback off. |
-| `kg_stream_top_k` | integer (≥ 1) | `40` | Width of the entity and relationship vector queries (LightRAG's `QueryParam.top_k`, default 40). Separate from the chunk width: collapsing both onto the caller's single top_k starves the graph streams. Acts as a floor — a caller asking for a larger top_k gets it. |
-| `chunk_stream_top_k` | integer (≥ 1) | `20` | Width of the chunk stream, and the cap on the merged chunk pool (LightRAG's `QueryParam.chunk_top_k`, default 20). Acts as a floor against the caller's top_k. |
-| `related_chunk_number` | integer (≥ 1) | `5` | Chunks allocated per matched entity/relationship when following `text_unit_ids` lineage (LightRAG's `related_chunk_number`). Slots are distributed on a decreasing gradient so the last match still gets one. |
-| `kg_chunk_pick_method` | `"vector"` \| `"weight"` | `"weight"` | How hybrid/mix pick the chunks the matched entities and relationships cite (LightRAG's `kg_chunk_pick_method`). weight: related_chunk_number chunks per hit on a decreasing gradient, those more matched hits cite first, then by chunk id (upstream's order), fetched by id. vector: per side (entities, then relationships), the cited chunks the query matches best, by one search of the text units restricted to them (the request's search_type: BM25 + vector by default), related_chunk_number * hits / 2 of them up to chunk_stream_top_k. Upstream defaults to vector; weight stays the default here: on 200 MuSiQue questions vector measured no significant difference (answer_contains mix -1.5 points [-4.5, +1.25], hybrid -1.25 [-4.5, +2.0]) and about 1.5 s more latency per query. |
-| `enable_graph_expansion` | boolean | `false` | hybrid/mix: also expand the entity hits and relationship endpoints through the graph (search.graph_expansion.max_hops) and add the neighbourhood as entity candidates. Off by default: upstream LightRAG has no multi-hop traversal (its graph context is the matched items plus their one-hop incident edges and endpoint entities, which this strategy already retrieves), and the extra Neptune round trip adds latency and entities less related to the query. |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `raw_query_fallback_max_len` | integer (≥ 0) | `50` | upstream: LightRAG's len(query) < 50 | When dual-level keyword extraction yields no keywords, a query shorter than this many characters (in every script, as upstream LightRAG's len(query) < 50) is searched as its own low-level keyword. A longer one skips the fallback, as upstream does, since a whole question as one keyword scans the entity index for a sentence, not a name: hybrid then retrieves nothing and mix only chunks. 0 turns the fallback off. |
+| `kg_stream_top_k` | integer (≥ 1) | `40` | upstream: LightRAG's QueryParam.top_k, 40 | Width of the entity and relationship vector queries (LightRAG's `QueryParam.top_k`, default 40). Separate from the chunk width: collapsing both onto the caller's single top_k starves the graph streams. Acts as a floor — a caller asking for a larger top_k gets it. |
+| `chunk_stream_top_k` | integer (≥ 1) | `20` | upstream: LightRAG's QueryParam.chunk_top_k, 20 | Width of the chunk stream, and the cap on the merged chunk pool (LightRAG's `QueryParam.chunk_top_k`, default 20). Acts as a floor against the caller's top_k. |
+| `related_chunk_number` | integer (≥ 1) | `5` | upstream: LightRAG's related_chunk_number, 5 | Chunks allocated per matched entity/relationship when following `text_unit_ids` lineage (LightRAG's `related_chunk_number`). Slots are distributed on a decreasing gradient so the last match still gets one. |
+| `kg_chunk_pick_method` | `"vector"` \| `"weight"` | `"weight"` |  | How hybrid/mix pick the chunks the matched entities and relationships cite (LightRAG's `kg_chunk_pick_method`). weight: related_chunk_number chunks per hit on a decreasing gradient, those more matched hits cite first, then by chunk id (upstream's order), fetched by id. vector: per side (entities, then relationships), the cited chunks the query matches best, by one search of the text units restricted to them (the request's search_type: BM25 + vector by default), related_chunk_number * hits / 2 of them up to chunk_stream_top_k. Upstream defaults to vector; weight stays the default here: on 200 MuSiQue questions vector measured no significant difference (answer_contains mix -1.5 points [-4.5, +1.25], hybrid -1.25 [-4.5, +2.0]) and about 1.5 s more latency per query. |
+| `enable_graph_expansion` | boolean | `false` |  | hybrid/mix: also expand the entity hits and relationship endpoints through the graph (search.graph_expansion.max_hops) and add the neighbourhood as entity candidates. Off by default: upstream LightRAG has no multi-hop traversal (its graph context is the matched items plus their one-hop incident edges and endpoint entities, which this strategy already retrieves), and the extra Neptune round trip adds latency and entities less related to the query. |
 
 ### `search.iterative_search`
 
 Iterative bridge follow-up search configuration (opt-in)
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `base` | `"local"` \| `"mix"` | `"mix"` | The strategy round 0 runs and each follow-up round reruns, seeded with the bridge entities: local (its query entities) or mix (its low-level keywords). iterative reads the query extraction, the indexes and the context packing of this strategy. |
-| `max_rounds` | integer (≥ 1, ≤ 5) | `2` | Follow-up rounds after round 0 at most. The controller judges the context after every round, the last one included, so a query makes at most max_rounds + 1 controller calls and max_rounds + 1 base searches; the answer model is called once. |
-| `round_top_k` | integer (≥ 1, ≤ 50) | `5` | Text units each follow-up query retrieves by the request's search_type (BM25 + vector by default). The base rerun of a follow-up round keeps the query's top_k. |
-| `max_next_queries` | integer (≥ 0, ≤ 5) | `2` | Follow-up queries the controller may ask for in one round, each naming a bridge entity; a query already searched is not searched again. 0 follows the bridge entities alone. |
-| `max_bridge_entities` | integer (≥ 0) | `5` | Bridge entities one round follows at most (the controller's bridge_entities beyond them are dropped, so a controller that lists many does not multiply the round's lookups); one already followed is not followed again. 0 follows the follow-up queries alone. Unmeasured choice (no A/B in docs/concepts/defaults-and-evidence.md). |
-| `controller_context_tokens` | integer \| null (≥ 256) | `null` | Token budget of the context each controller call reads: the round's candidates packed as the answer's context is, cut to this. null (the default) packs them to the answer's budget (the request's max_tokens, else search.token_manager.max_context_tokens), so the controller judges the context the answer reads; a smaller value saves fast-model input tokens, but with large chunks the controller then reads only the first of the passages the answer gets. The answer itself always gets its full budget. |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `base` | `"local"` \| `"mix"` | `"mix"` |  | The strategy round 0 runs and each follow-up round reruns, seeded with the bridge entities: local (its query entities) or mix (its low-level keywords). iterative reads the query extraction, the indexes and the context packing of this strategy. |
+| `max_rounds` | integer (≥ 1, ≤ 5) | `2` | [measured](../concepts/defaults-and-evidence.md#iterative-settings) | Follow-up rounds after round 0 at most. The controller judges the context after every round, the last one included, so a query makes at most max_rounds + 1 controller calls and max_rounds + 1 base searches; the answer model is called once. |
+| `round_top_k` | integer (≥ 1, ≤ 50) | `5` | unmeasured | Text units each follow-up query retrieves by the request's search_type (BM25 + vector by default). The base rerun of a follow-up round keeps the query's top_k. |
+| `max_next_queries` | integer (≥ 0, ≤ 5) | `2` | unmeasured | Follow-up queries the controller may ask for in one round, each naming a bridge entity; a query already searched is not searched again. 0 follows the bridge entities alone. |
+| `max_bridge_entities` | integer (≥ 0) | `5` | unmeasured | Bridge entities one round follows at most (the controller's bridge_entities beyond them are dropped, so a controller that lists many does not multiply the round's lookups); one already followed is not followed again. 0 follows the follow-up queries alone. Unmeasured choice (no A/B in docs/concepts/defaults-and-evidence.md). |
+| `controller_context_tokens` | integer \| null (≥ 256) | `null` |  | Token budget of the context each controller call reads: the round's candidates packed as the answer's context is, cut to this. null (the default) packs them to the answer's budget (the request's max_tokens, else search.token_manager.max_context_tokens), so the controller judges the context the answer reads; a smaller value saves fast-model input tokens, but with large chunks the controller then reads only the first of the passages the answer gets. The answer itself always gets its full budget. |
 
 ### `search.ppr_search`
 
 HippoRAG 2 Personalized PageRank search configuration
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `fact_top_k` | integer (≥ 1) | `5` | Relationships-index hits of the question (the facts, searched by fact_search_type) that seed the ppr strategy's PageRank through their endpoint entities, each endpoint weighted by the mean score of its facts (relative to the best) over the text units it cites (HippoRAG 2's linking_top_k, 5); the facts also form the ppr_facts fusion bucket. Without the relationship vector index the entities-index hits of the question seed instead, this many. |
-| `fact_search_type` | `"hybrid"` \| `"lexical"` \| `"vector"` \| null | `"vector"` | How the facts (relationships-index hits) are searched, for the ppr strategy and local's ppr_seed_relationships: vector (the default: kNN of the question against the relationship descriptions, HippoRAG 2's query-to-fact similarity and the measured setting), lexical, hybrid, or null for the request's search_type. The passage seeds always use the request's (BM25 + vector by default). |
-| `link_top_k` | integer (≥ 1) | `5` | Seed entities that keep their weight, best first (HippoRAG 2's link_top_k). |
-| `entity_seed_top_k` | integer (≥ 0) | `0` | Also seed with this many entities-index hits of the question (weighted by hit score over the text units they cite). 0 = off (HippoRAG 2 seeds from facts only). |
-| `passage_seed_top_k` | integer (≥ 0) | `20` | Text-unit hits of the question (BM25 + vector under the default hybrid search) that seed the PageRank as passage nodes, weighted by passage_node_weight times their min-max normalized score; in the ppr strategy they also form the ppr_seed_text_units fusion bucket. 0 = no passage seeds. |
-| `passage_node_weight` | number (≥ 0.0) | `0.05` | Reset weight of the best passage seed relative to a fact's score (HippoRAG 2's passage_node_weight, 0.05): small, so the facts' entities steer the walk and the passage search breaks ties. |
-| `damping` | number (> 0.0, < 1.0) | `0.5` | Probability that the PageRank walk follows an edge rather than restarting at the seeds (HippoRAG 2: 0.5). At 0.5 at most 0.5^(h+1) of the mass lies more than h hops from the seeds, which is why a bounded neighbourhood stands in for the whole graph. |
-| `max_iterations` | integer (≥ 1) | `30` | Power-iteration steps at most |
-| `tolerance` | number (> 0.0) | `1e-06` | The power iteration stops once the L1 change is below this |
-| `max_hops` | integer (≥ 1) | `2` | Depth of the ppr strategy's graph expansion around the seed entities (local's ranking uses local's own expansion). |
-| `max_neighbourhood_entities` | integer (≥ 1) | `100` | Entities besides the seeds the ppr strategy's expansion keeps (its top_k; the expansion over-fetches by search.graph_expansion.traversal_fetch_multiplier and splits the budget across the seeds by fact score). |
-| `max_edges_per_vertex` | integer (≥ 1) | `50` | Relationships one entity contributes to the PageRank graph at most, the first by relationship id, so a hub cannot fill it. |
-| `entity_frequency_threshold` | integer (≥ 1) | `20` | An entity citing more document text units than this links to none of them in the ppr strategy's graph, a seed too (it still passes its mass on through its relationships); local's ranking uses search.local_search.entity_frequency_threshold. |
-| `rerank` | boolean | `true` | Rerank the ppr strategy's passages with the configured reranker, as local reranks its text units; false keeps the fused order (rerank status skipped), closer to HippoRAG 2, which does not rerank passages. |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `fact_top_k` | integer (≥ 1) | `5` | upstream: HippoRAG 2's linking_top_k, 5 | Relationships-index hits of the question (the facts, searched by fact_search_type) that seed the ppr strategy's PageRank through their endpoint entities, each endpoint weighted by the mean score of its facts (relative to the best) over the text units it cites (HippoRAG 2's linking_top_k, 5); the facts also form the ppr_facts fusion bucket. Without the relationship vector index the entities-index hits of the question seed instead, this many. |
+| `fact_search_type` | `"hybrid"` \| `"lexical"` \| `"vector"` \| null | `"vector"` |  | How the facts (relationships-index hits) are searched, for the ppr strategy and local's ppr_seed_relationships: vector (the default: kNN of the question against the relationship descriptions, HippoRAG 2's query-to-fact similarity and the measured setting), lexical, hybrid, or null for the request's search_type. The passage seeds always use the request's (BM25 + vector by default). |
+| `link_top_k` | integer (≥ 1) | `5` | upstream: HippoRAG 2's link_top_k, 5 | Seed entities that keep their weight, best first (HippoRAG 2's link_top_k). |
+| `entity_seed_top_k` | integer (≥ 0) | `0` | upstream: HippoRAG 2 seeds from facts only (0) | Also seed with this many entities-index hits of the question (weighted by hit score over the text units they cite). 0 = off (HippoRAG 2 seeds from facts only). |
+| `passage_seed_top_k` | integer (≥ 0) | `20` | unmeasured | Text-unit hits of the question (BM25 + vector under the default hybrid search) that seed the PageRank as passage nodes, weighted by passage_node_weight times their min-max normalized score; in the ppr strategy they also form the ppr_seed_text_units fusion bucket. 0 = no passage seeds. |
+| `passage_node_weight` | number (≥ 0.0) | `0.05` | upstream: HippoRAG 2's passage_node_weight, 0.05 | Reset weight of the best passage seed relative to a fact's score (HippoRAG 2's passage_node_weight, 0.05): small, so the facts' entities steer the walk and the passage search breaks ties. |
+| `damping` | number (> 0.0, < 1.0) | `0.5` | upstream: HippoRAG 2's damping, 0.5 | Probability that the PageRank walk follows an edge rather than restarting at the seeds (HippoRAG 2: 0.5). At 0.5 at most 0.5^(h+1) of the mass lies more than h hops from the seeds, which is why a bounded neighbourhood stands in for the whole graph. |
+| `max_iterations` | integer (≥ 1) | `30` | operational | Power-iteration steps at most |
+| `tolerance` | number (> 0.0) | `1e-06` | operational | The power iteration stops once the L1 change is below this |
+| `max_hops` | integer (≥ 1) | `2` | unmeasured | Depth of the ppr strategy's graph expansion around the seed entities (local's ranking uses local's own expansion). |
+| `max_neighbourhood_entities` | integer (≥ 1) | `100` | unmeasured | Entities besides the seeds the ppr strategy's expansion keeps (its top_k; the expansion over-fetches by search.graph_expansion.traversal_fetch_multiplier and splits the budget across the seeds by fact score). |
+| `max_edges_per_vertex` | integer (≥ 1) | `50` | unmeasured | Relationships one entity contributes to the PageRank graph at most, the first by relationship id, so a hub cannot fill it. |
+| `entity_frequency_threshold` | integer (≥ 1) | `20` | unmeasured | An entity citing more document text units than this links to none of them in the ppr strategy's graph, a seed too (it still passes its mass on through its relationships); local's ranking uses search.local_search.entity_frequency_threshold. |
+| `rerank` | boolean | `true` |  | Rerank the ppr strategy's passages with the configured reranker, as local reranks its text units; false keeps the fused order (rerank status skipped), closer to HippoRAG 2, which does not rerank passages. |
 
 ### `search.tree_search`
 
 RAPTOR summary-tree search configuration (opt-in)
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `graph_signal` | `"auto"` \| `"off"` | `"auto"` | auto: add the graph buckets (tree_graph_summaries, tree_graph_text_units) where the namespace's methodologies build the entities index (graphrag or lightrag besides raptor); off: never. No model call either way. |
-| `graph_seed_entities` | integer (≥ 1, ≤ 50) | `8` | Entities the raw-query entity search takes as graph seeds. |
-| `text_top_k` | integer (≥ 1, ≤ 200) | `20` | Text units each text bucket searches for, and the most the fused result keeps (expanded passages aside). |
-| `summary_top_k` | integer (≥ 1, ≤ 100) | `10` | Summaries the summary buckets search for, and the most the fused result keeps (RAPTOR's collapsed tree takes top_k 10). |
-| `max_nodes_per_level` | integer (≥ 1, ≤ 50) | `3` | Summaries of one tree level the context keeps at most, so neither the roots nor the first level take every summary slot. |
-| `expand_children` | integer (≥ 0, ≤ 10) | `2` | Passages of its own lineage each kept summary brings (the best by the query, under the caller's filters), so the answer cites original text. 0 keeps the summaries alone (RAPTOR's collapsed tree). |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `graph_signal` | `"auto"` \| `"off"` | `"auto"` |  | auto: add the graph buckets (tree_graph_summaries, tree_graph_text_units) where the namespace's methodologies build the entities index (graphrag or lightrag besides raptor); off: never. No model call either way. |
+| `graph_seed_entities` | integer (≥ 1, ≤ 50) | `8` | unmeasured | Entities the raw-query entity search takes as graph seeds. |
+| `text_top_k` | integer (≥ 1, ≤ 200) | `20` | unmeasured | Text units each text bucket searches for, and the most the fused result keeps (expanded passages aside). |
+| `summary_top_k` | integer (≥ 1, ≤ 100) | `10` | upstream: RAPTOR's collapsed tree top_k, 10 | Summaries the summary buckets search for, and the most the fused result keeps (RAPTOR's collapsed tree takes top_k 10). |
+| `max_nodes_per_level` | integer (≥ 1, ≤ 50) | `3` | unmeasured | Summaries of one tree level the context keeps at most, so neither the roots nor the first level take every summary slot. |
+| `expand_children` | integer (≥ 0, ≤ 10) | `2` | unmeasured | Passages of its own lineage each kept summary brings (the best by the query, under the caller's filters), so the answer cites original text. 0 keeps the summaries alone (RAPTOR's collapsed tree). |
 
 ### `search.structured`
 
 Structured graph query (structured strategy) configuration (opt-in)
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `mode` | `"fallback"` \| `"augment"` | `"fallback"` | fallback: answer from the graph query result, and run fallback_strategy only when no structured answer is produced (no valid plan, unanswerable, an unlinked name, an empty result, a store refusal or time limit; metadata.structured.reason says which). augment: run fallback_strategy on every query beside the graph query and fuse both contexts, the query result first: more recall on mixed questions at the fallback's cost on every query. |
-| `fallback_strategy` | `"auto"` \| `"drift"` \| `"global"` \| `"local"` \| `"simple"` \| `"mix"` \| `"hybrid"` \| `"naive"` \| `"iterative"` \| `"ppr"` \| `"tree"` \| `"structured"` \| null | `"local"` | The strategy a query without a structured answer runs (and the one augment runs beside it), reading the plan's entity names as its query entities or keywords, so no extraction call is added. One the namespace does not serve gives way to local, then mix. null answers such a query from no context. auto and structured are refused. |
-| `max_hops` | integer (≥ 1, ≤ 4) | `3` | The longest walk a plan may ask for, in hops over all its edges. |
-| `rows_in_context` | integer (≥ 1, ≤ 200) | `50` | Rows, groups or paths written into the query result's context section, and entities given their own section; for an answer that names none (a count, an aggregate), the first matches by rank read as its evidence. |
-| `max_scan_rows` | integer (≥ 1, ≤ 100000) | `5000` | Distinct matches a store returns to code at most: the rows that code orders by rank, and, under a document filter or a seed-property condition (which the graph cannot evaluate), every match it checks and aggregates. Past it the answer is marked truncated (a count reads 'at least N'). A count without either is computed by the store and exact. |
-| `store_timeout_seconds` | number (> 0) | `10.0` | Server-side time limit of one structured query (Gremlin evaluationTimeout, the SQLite progress handler), capped at search.store_timeout_seconds; past it the query falls back (reason timeout). Neptune's own neptune_query_timeout still applies (StrictTimeoutValidation refuses a longer one). |
-| `repair_attempts` | integer (≥ 0, ≤ 3) | `1` | Planner calls after one whose plan was refused, each shown the refusal (the plan field and why). |
-| `schema_source` | `"both"` \| `"declared"` \| `"observed"` | `"both"` | What the planner's schema lists: the extraction schema (processing.graph_extraction, inline) and what the graph holds (both), the declared schema alone, or the graph's observed profile alone. declared reads no profile from the store; a schema_source schema reaches the planner through the types it stored. |
-| `max_schema_tokens` | integer (≥ 200) | `3000` | Budget of the planner's schema text, in the answer model's tokens; the least frequent patterns, properties and types are cut first. |
-| `profile_sample_vertices` | integer (≥ 1, ≤ 100000) | `2000` | Entities read to build the observed profile (one bounded read per suffix and profile_ttl_seconds), so a large graph costs no scan. |
-| `profile_edges_per_vertex` | integer (≥ 0, ≤ 1000) | `20` | Out-edges of each sampled entity the profile reads at most. |
-| `profile_ttl_seconds` | number (≥ 0) | `600.0` | Seconds a strategy reuses a suffix's profile (0: read it on every query). |
-| `max_example_values` | integer (≥ 0, ≤ 50) | `10` | Sampled values shown for a string property with at most this many distinct short values, so a condition uses the stored spelling (a country, a status); 0 shows none. Entity names are never listed: names in the question are linked by code. |
-| `link_candidates` | integer (≥ 1, ≤ 20) | `3` | Entities a name in the question links to at most when no entity has its name (by compact_name_key) among a hybrid entity search's hits: the best hits of a lexical (BM25) search for it whose names hold every word of it (legal forms aside; Han, Hangul and Kana by character pairs), under the caller's filters and the node's types. Any other name links nothing (the query falls back): a vector search returns its nearest entities for any text, a lexical one every name sharing a word. |
-| `link_min_score` | number (≥ 0.0) | `0.0` | Lexical score a linked entity needs above 0 at least (0: any lexical hit). |
-| `supporting_chunks` | integer (≥ 0, ≤ 50) | `5` | Passages fetched for the returned entities: those the entities cite, fused with a hybrid text search of the question among them and reranked, so the answer can cite text. 0 fetches none. |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `mode` | `"fallback"` \| `"augment"` | `"fallback"` |  | fallback: answer from the graph query result, and run fallback_strategy only when no structured answer is produced (no valid plan, unanswerable, an unlinked name, an empty result, a store refusal or time limit; metadata.structured.reason says which). augment: run fallback_strategy on every query beside the graph query and fuse both contexts, the query result first: more recall on mixed questions at the fallback's cost on every query. |
+| `fallback_strategy` | `"auto"` \| `"drift"` \| `"global"` \| `"local"` \| `"simple"` \| `"mix"` \| `"hybrid"` \| `"naive"` \| `"iterative"` \| `"ppr"` \| `"tree"` \| `"structured"` \| null | `"local"` |  | The strategy a query without a structured answer runs (and the one augment runs beside it), reading the plan's entity names as its query entities or keywords, so no extraction call is added. One the namespace does not serve gives way to local, then mix. null answers such a query from no context. auto and structured are refused. |
+| `max_hops` | integer (≥ 1, ≤ 4) | `3` | unmeasured | The longest walk a plan may ask for, in hops over all its edges. |
+| `rows_in_context` | integer (≥ 1, ≤ 200) | `50` | unmeasured | Rows, groups or paths written into the query result's context section, and entities given their own section; for an answer that names none (a count, an aggregate), the first matches by rank read as its evidence. |
+| `max_scan_rows` | integer (≥ 1, ≤ 100000) | `5000` | operational | Distinct matches a store returns to code at most: the rows that code orders by rank, and, under a document filter or a seed-property condition (which the graph cannot evaluate), every match it checks and aggregates. Past it the answer is marked truncated (a count reads 'at least N'). A count without either is computed by the store and exact. |
+| `store_timeout_seconds` | number (> 0) | `10.0` | operational | Server-side time limit of one structured query (Gremlin evaluationTimeout, the SQLite progress handler), capped at search.store_timeout_seconds; past it the query falls back (reason timeout). Neptune's own neptune_query_timeout still applies (StrictTimeoutValidation refuses a longer one). |
+| `repair_attempts` | integer (≥ 0, ≤ 3) | `1` | unmeasured | Planner calls after one whose plan was refused, each shown the refusal (the plan field and why). |
+| `schema_source` | `"both"` \| `"declared"` \| `"observed"` | `"both"` |  | What the planner's schema lists: the extraction schema (processing.graph_extraction, inline) and what the graph holds (both), the declared schema alone, or the graph's observed profile alone. declared reads no profile from the store; a schema_source schema reaches the planner through the types it stored. |
+| `max_schema_tokens` | integer (≥ 200) | `3000` | operational | Budget of the planner's schema text, in the answer model's tokens; the least frequent patterns, properties and types are cut first. |
+| `profile_sample_vertices` | integer (≥ 1, ≤ 100000) | `2000` | operational | Entities read to build the observed profile (one bounded read per suffix and profile_ttl_seconds), so a large graph costs no scan. |
+| `profile_edges_per_vertex` | integer (≥ 0, ≤ 1000) | `20` | operational | Out-edges of each sampled entity the profile reads at most. |
+| `profile_ttl_seconds` | number (≥ 0) | `600.0` | operational | Seconds a strategy reuses a suffix's profile (0: read it on every query). |
+| `max_example_values` | integer (≥ 0, ≤ 50) | `10` | operational | Sampled values shown for a string property with at most this many distinct short values, so a condition uses the stored spelling (a country, a status); 0 shows none. Entity names are never listed: names in the question are linked by code. |
+| `link_candidates` | integer (≥ 1, ≤ 20) | `3` | unmeasured | Entities a name in the question links to at most when no entity has its name (by compact_name_key) among a hybrid entity search's hits: the best hits of a lexical (BM25) search for it whose names hold every word of it (legal forms aside; Han, Hangul and Kana by character pairs), under the caller's filters and the node's types. Any other name links nothing (the query falls back): a vector search returns its nearest entities for any text, a lexical one every name sharing a word. |
+| `link_min_score` | number (≥ 0.0) | `0.0` | unmeasured | Lexical score a linked entity needs above 0 at least (0: any lexical hit). |
+| `supporting_chunks` | integer (≥ 0, ≤ 50) | `5` | unmeasured | Passages fetched for the returned entities: those the entities cite, fused with a hybrid text search of the question among them and reranked, so the answer can cite text. 0 fetches none. |
 
 ### `search.graph_expansion`
 
 Graph expansion around the seed entities (every strategy that walks the graph, on every graph store)
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `max_hops` | integer (≥ 1) | `3` | Depth of the graph expansion around the seed entities at query time. |
-| `max_results_per_hop` | integer (≥ 1) | `50` | Maximum number of neighbours one node contributes per traversal hop, so a hub entity cannot fan the expansion out unbounded |
-| `entity_importance_source` | `"rank"` \| `"degree"` \| `"none"` | `"rank"` | Graph-expansion relevance orders entities by distance from the seeds (seeds first) and, at the same distance, by this importance: 'rank' (the indexed entity rank, its degree), 'degree' (the entity's edges counted at query time, as MS GraphRAG ranks entities; read as 'rank' under a document filter, whose walk runs over the search store) or 'none' (a neutral 0.5 for every entity, so expansion ranks by distance alone). |
-| `traversal_fetch_multiplier` | integer (≥ 1) | `3` | Graph expansion (the graph walk, or under a document filter the walk over the relationships index) reaches up to top_k * retrieval_multiplier * this many entities besides the seeds, split across the seeds (evenly; for local search's in proportion to their scores: each seed reaches at most its share), ranks them by relevance, then keeps every seed plus the top top_k * retrieval_multiplier of the others. 1 = no over-fetch: every reached entity is kept, with no cut after ranking. |
-| `deterministic_order` | boolean | `true` | Neptune graph expansion takes each vertex's max_results_per_hop neighbours in id order, so two builds of one graph (edges written in another order) expand to the same entities: reproducible results across rebuilds. The cost: each expanded vertex has all its neighbours read and sorted before the cut, which grows with hub degree (Gremlin Server, 2,500-neighbour hubs at the defaults: 6.8 to 23.2 ms per query; 60-neighbour hubs: 4.5 to 4.8 ms; Neptune hub latency is unmeasured). false: the first neighbours the store returns (an order Neptune does not specify), so a rebuild can change the results. Of equally short paths to an entity, the one from the better-ranked seed is kept, then the first by content, either way. The embedded SQLite graph store always takes neighbours by id and ignores it. |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `max_hops` | integer (≥ 1) | `3` | unmeasured | Depth of the graph expansion around the seed entities at query time. |
+| `max_results_per_hop` | integer (≥ 1) | `50` | unmeasured | Maximum number of neighbours one node contributes per traversal hop, so a hub entity cannot fan the expansion out unbounded |
+| `entity_importance_source` | `"rank"` \| `"degree"` \| `"none"` | `"rank"` |  | Graph-expansion relevance orders entities by distance from the seeds (seeds first) and, at the same distance, by this importance: 'rank' (the indexed entity rank, its degree), 'degree' (the entity's edges counted at query time, as MS GraphRAG ranks entities; read as 'rank' under a document filter, whose walk runs over the search store) or 'none' (a neutral 0.5 for every entity, so expansion ranks by distance alone). |
+| `traversal_fetch_multiplier` | integer (≥ 1) | `3` | unmeasured | Graph expansion (the graph walk, or under a document filter the walk over the relationships index) reaches up to top_k * retrieval_multiplier * this many entities besides the seeds, split across the seeds (evenly; for local search's in proportion to their scores: each seed reaches at most its share), ranks them by relevance, then keeps every seed plus the top top_k * retrieval_multiplier of the others. 1 = no over-fetch: every reached entity is kept, with no cut after ranking. |
+| `deterministic_order` | boolean | `true` |  | Neptune graph expansion takes each vertex's max_results_per_hop neighbours in id order, so two builds of one graph (edges written in another order) expand to the same entities: reproducible results across rebuilds. The cost: each expanded vertex has all its neighbours read and sorted before the cut, which grows with hub degree (Gremlin Server, 2,500-neighbour hubs at the defaults: 6.8 to 23.2 ms per query; 60-neighbour hubs: 4.5 to 4.8 ms; Neptune hub latency is unmeasured). false: the first neighbours the store returns (an order Neptune does not specify), so a rebuild can change the results. Of equally short paths to an entity, the one from the better-ranked seed is kept, then the first by content, either way. The embedded SQLite graph store always takes neighbours by id and ignores it. |
 
 ### `search.token_manager`
 
 Token management configuration
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `max_context_tokens` | integer \| null (≥ 1024) | `30000` | Retrieval context budget of the answer prompt, in tokens. 30,000 matches upstream LightRAG's total context budget (MS GraphRAG uses 12,000); a budget derived from a 1M-token window (~785K) would never bind, so the per-type budgets would never trim anything. Always clamped to what models.roles.answer_generation accepts beside its output reservation (models.default_max_output_tokens), with a warning. null derives it from that window minus the output reservation and context_window_headroom_ratio. |
-| `context_window_headroom_ratio` | number (> 0.0, < 1.0) | `0.1` | Fraction of the answer model's context window held back when deriving max_context_tokens, covering the system prompt, the question, conversation history, and tokenizer estimation error. |
-| `token_count_cache_size` | integer (≥ 1) | `1024` | Maximum number of entries in the LRU cache of the answer model's token counter (Bedrock CountTokens, or the local estimate) |
-| `min_truncated_section_tokens` | integer (≥ 1) | `64` | A section truncated below this many tokens is dropped rather than emitted as an unusable fragment of evidence. |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `max_context_tokens` | integer \| null (≥ 1024) | `30000` | [measured](../concepts/defaults-and-evidence.md#iterative-settings) | Retrieval context budget of the answer prompt, in tokens. 30,000 matches upstream LightRAG's total context budget (MS GraphRAG uses 12,000); a budget derived from a 1M-token window (~785K) would never bind, so the per-type budgets would never trim anything. Always clamped to what models.roles.answer_generation accepts beside its output reservation (models.default_max_output_tokens), with a warning. null derives it from that window minus the output reservation and context_window_headroom_ratio. |
+| `context_window_headroom_ratio` | number (> 0.0, < 1.0) | `0.1` | operational | Fraction of the answer model's context window held back when deriving max_context_tokens, covering the system prompt, the question, conversation history, and tokenizer estimation error. |
+| `token_count_cache_size` | integer (≥ 1) | `1024` | operational | Maximum number of entries in the LRU cache of the answer model's token counter (Bedrock CountTokens, or the local estimate) |
+| `min_truncated_section_tokens` | integer (≥ 1) | `64` | unmeasured | A section truncated below this many tokens is dropped rather than emitted as an unusable fragment of evidence. |
 
 #### `search.token_manager.type_budgets`
 
 Per-section-type shares of the context window
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `text` | number (≥ 0.0) | `0.5` | Relative share for document chunk sections |
-| `entity` | number (≥ 0.0) | `0.2` | Relative share for graph entity sections |
-| `relationship` | number (≥ 0.0) | `0.13` | Relative share for graph relationship sections |
-| `community` | number (≥ 0.0) | `0.1` | Relative share for community report sections |
-| `claim` | number (≥ 0.0) | `0.07` | Relative share for claim (covariate) sections |
-| `general` | number (≥ 0.0) | `0.1` | Relative share for untyped sections — global search's map-reduce synthesis lands here. |
-| `summary` | number (≥ 0.0) | `0.5` | Relative share for summary-tree sections (the tree strategy only, beside text's 0.50: at most half the context, and the text units take what the summaries leave) |
-| `query_result` | number (≥ 0.0) | `0.25` | Relative share for a graph query result (the structured strategy only): its table of counts, groups, rows or paths, at most search.structured.rows_in_context long |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `text` | number (≥ 0.0) | `0.5` | unmeasured | Relative share for document chunk sections |
+| `entity` | number (≥ 0.0) | `0.2` | unmeasured | Relative share for graph entity sections |
+| `relationship` | number (≥ 0.0) | `0.13` | unmeasured | Relative share for graph relationship sections |
+| `community` | number (≥ 0.0) | `0.1` | unmeasured | Relative share for community report sections |
+| `claim` | number (≥ 0.0) | `0.07` | unmeasured | Relative share for claim (covariate) sections |
+| `general` | number (≥ 0.0) | `0.1` | unmeasured | Relative share for untyped sections — global search's map-reduce synthesis lands here. |
+| `summary` | number (≥ 0.0) | `0.5` | unmeasured | Relative share for summary-tree sections (the tree strategy only, beside text's 0.50: at most half the context, and the text units take what the summaries leave) |
+| `query_result` | number (≥ 0.0) | `0.25` | unmeasured | Relative share for a graph query result (the structured strategy only): its table of counts, groups, rows or paths, at most search.structured.rows_in_context long |
 
 ### `search.output_ceilings`
 
 max_tokens of the short-answer query calls
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `strategy_selection` | integer \| null (≥ 1) | `1024` | max_tokens of the auto router call (models.roles.strategy_selection), which answers one strategy name (a few tokens; a reasoning model still gets its thinking budget plus 1,024) |
-| `query_extraction` | integer \| null (≥ 1) | `4096` | max_tokens of the query entity extraction (local, drift) and the dual-keyword extraction (mix, hybrid) |
-| `community_relevance` | integer \| null (≥ 1) | `4096` | max_tokens of each report rating of global search's dynamic selection (search.global_search.use_dynamic_selection), which answers one number |
-| `graph_query` | integer \| null (≥ 1) | `4096` | max_tokens of the structured strategy's plan call (models.roles.graph_query), which answers one JSON plan of a few hundred tokens |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `strategy_selection` | integer \| null (≥ 1) | `1024` | operational | max_tokens of the auto router call (models.roles.strategy_selection), which answers one strategy name (a few tokens; a reasoning model still gets its thinking budget plus 1,024) |
+| `query_extraction` | integer \| null (≥ 1) | `4096` | operational | max_tokens of the query entity extraction (local, drift) and the dual-keyword extraction (mix, hybrid) |
+| `community_relevance` | integer \| null (≥ 1) | `4096` | operational | max_tokens of each report rating of global search's dynamic selection (search.global_search.use_dynamic_selection), which answers one number |
+| `graph_query` | integer \| null (≥ 1) | `4096` | operational | max_tokens of the structured strategy's plan call (models.roles.graph_query), which answers one JSON plan of a few hundred tokens |
 
 ### `search.abstention`
 
 How an answer declines a question its context does not answer
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `mode` | `"off"` \| `"mark"` | `"off"` | off: the answer prompts are unchanged, and only an empty context is reported abstained (metadata.abstained, the fixed no-context reply). mark: the answer prompt (concise, comprehensive or a custom_prompts override) also asks the model to start a declined answer with the fixed token [NO_ANSWER] and say in the query's language what the context lacks; an answer starting with it is reported abstained (metadata.abstention_reason: marker) whatever its language. The instruction changes the answer prompt, so answers and EM/F1 differ from off: compare mark runs as their own arm. Opt-in: on multi-hop questions it cost exact-match points for machine-readable declines (docs/concepts/defaults-and-evidence.md#declines-and-abstention). |
-| `strip_marker` | boolean | `true` | Remove the [NO_ANSWER] token from a declined answer (invoke and stream), leaving the model's explanation; an answer that is only the token becomes the fixed no-context reply. false returns it as written. |
-| `on_insufficient` | `"hedge"` \| `"abstain"` | `"hedge"` | What the answer step does when the strategy flagged its context insufficient (SearchResult.metadata.context_sufficient false; iterative sets it when its controller still finds the context insufficient when it stops, other strategies never do). hedge: the model answers what the context supports and says, in the query's language, what it does not cover. abstain: the model is told not to answer and writes the decline in the query's language; the output is reported abstained (abstention_reason: insufficient_context). Neither adds a call. hedge is the default: with iterative, abstain declined many answerable questions (docs/concepts/defaults-and-evidence.md#declines-and-abstention). |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `mode` | `"off"` \| `"mark"` | `"off"` |  | off: the answer prompts are unchanged, and only an empty context is reported abstained (metadata.abstained, the fixed no-context reply). mark: the answer prompt (concise, comprehensive or a custom_prompts override) also asks the model to start a declined answer with the fixed token [NO_ANSWER] and say in the query's language what the context lacks; an answer starting with it is reported abstained (metadata.abstention_reason: marker) whatever its language. The instruction changes the answer prompt, so answers and EM/F1 differ from off: compare mark runs as their own arm. Opt-in: on multi-hop questions it cost exact-match points for machine-readable declines (docs/concepts/defaults-and-evidence.md#declines-and-abstention). |
+| `strip_marker` | boolean | `true` |  | Remove the [NO_ANSWER] token from a declined answer (invoke and stream), leaving the model's explanation; an answer that is only the token becomes the fixed no-context reply. false returns it as written. |
+| `on_insufficient` | `"hedge"` \| `"abstain"` | `"hedge"` |  | What the answer step does when the strategy flagged its context insufficient (SearchResult.metadata.context_sufficient false; iterative sets it when its controller still finds the context insufficient when it stops, other strategies never do). hedge: the model answers what the context supports and says, in the query's language, what it does not cover. abstain: the model is told not to answer and writes the decline in the query's language; the output is reported abstained (abstention_reason: insufficient_context). Neither adds a call. hedge is the default: with iterative, abstain declined many answerable questions (docs/concepts/defaults-and-evidence.md#declines-and-abstention). |
 
 ### `search.citations`
 
 Numbered answer contexts and the answer's citations
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `enabled` | boolean | `true` | Number the answer context's evidence sections [1], [2], ..., ask the answer model (concise, comprehensive or a custom_prompts override) to cite them with those markers in every language, and return RAGOutput.citations: per number its documents (file name, relative path, pages), text units and seed-graph provenance, and whether the answer cites it. The markers stay in the answer text. false: the context labels passages by id and the prompts are those of earlier releases; no citations. The setting of every strategy that strategies does not name. On local and mix, answers with and without citations scored alike (docs/concepts/defaults-and-evidence.md#citations). |
-| `strategies` | dict[`"auto"` \| `"drift"` \| `"global"` \| `"local"` \| `"simple"` \| `"mix"` \| `"hybrid"` \| `"naive"` \| `"iterative"` \| `"ppr"` \| `"tree"` \| `"structured"`, boolean] | `{"global": false, "drift": false}` | Per strategy, whether its answers cite, over enabled (an entry wins either way). The map is merged over the default {global: false, drift: false}: on 50 sensemaking questions their answers without citations won comprehensiveness (global 0.62, drift 0.64, a pairwise judge averaged over both answer orders) (docs/concepts/defaults-and-evidence.md#citations). {global: true, drift: true} turns them back on, with the plain citation instruction. An auto query follows the strategy it routes to, and iterative follows its base (iterative_search.base) unless it is named itself. |
-| `lineage_units` | integer (≥ 1) | `10` | Text units of a graph section's lineage (entity, relationship, claim, report, summary) that name its documents, those in the context first, counting only units the query's suffix and filters let through. The others are read in batched fetches by id, in pages that double what a section still lacks, at most 4 a query (a section reads at most 15 times this many of its units; one whose units read by then all fail the filters names no document). Unmeasured: bounds the reads for hub entities and reports with thousands of units. |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `enabled` | boolean | `true` |  | Number the answer context's evidence sections [1], [2], ..., ask the answer model (concise, comprehensive or a custom_prompts override) to cite them with those markers in every language, and return RAGOutput.citations: per number its documents (file name, relative path, pages), text units and seed-graph provenance, and whether the answer cites it. The markers stay in the answer text. false: the context labels passages by id and the prompts are those of earlier releases; no citations. The setting of every strategy that strategies does not name. On local and mix, answers with and without citations scored alike (docs/concepts/defaults-and-evidence.md#citations). |
+| `strategies` | dict[`"auto"` \| `"drift"` \| `"global"` \| `"local"` \| `"simple"` \| `"mix"` \| `"hybrid"` \| `"naive"` \| `"iterative"` \| `"ppr"` \| `"tree"` \| `"structured"`, boolean] | `{"global": false, "drift": false}` |  | Per strategy, whether its answers cite, over enabled (an entry wins either way). The map is merged over the default {global: false, drift: false}: on 50 sensemaking questions their answers without citations won comprehensiveness (global 0.62, drift 0.64, a pairwise judge averaged over both answer orders) (docs/concepts/defaults-and-evidence.md#citations). {global: true, drift: true} turns them back on, with the plain citation instruction. An auto query follows the strategy it routes to, and iterative follows its base (iterative_search.base) unless it is named itself. |
+| `lineage_units` | integer (≥ 1) | `10` | unmeasured | Text units of a graph section's lineage (entity, relationship, claim, report, summary) that name its documents, those in the context first, counting only units the query's suffix and filters let through. The others are read in batched fetches by id, in pages that double what a section still lacks, at most 4 a query (a section reads at most 15 times this many of its units; one whose units read by then all fail the filters names no document). Unmeasured: bounds the reads for hub entities and reports with thousands of units. |
 
 ## `memory`
 
 Memory system configuration
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `max_conversations` | integer (≥ 1) | `100` | Conversations held in conversation memory; a new one beyond it drops the one idle longest. |
-| `max_messages_per_conversation` | integer (≥ 1) | `20` | Messages kept per conversation; older ones are dropped. |
-| `max_conversation_age_hours` | integer (≥ 1) | `168` | Hours a conversation may stay idle (since its last message); an older one is dropped on the next memory lookup and starts over |
-| `max_history_tokens` | integer (≥ 1) | `4000` | Tokens (estimated) of a caller's RAGInput.history the follow-up rewrite reads: of its last max_messages_per_conversation turns, each answer cut to 1,000 characters, the oldest are dropped until the rest fit. Conversation memory is not bounded by it. Unmeasured. |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `max_conversations` | integer (≥ 1) | `100` | operational | Conversations held in conversation memory; a new one beyond it drops the one idle longest. |
+| `max_messages_per_conversation` | integer (≥ 1) | `20` | operational | Messages kept per conversation; older ones are dropped. |
+| `max_conversation_age_hours` | integer (≥ 1) | `168` | operational | Hours a conversation may stay idle (since its last message); an older one is dropped on the next memory lookup and starts over |
+| `max_history_tokens` | integer (≥ 1) | `4000` | unmeasured | Tokens (estimated) of a caller's RAGInput.history the follow-up rewrite reads: of its last max_messages_per_conversation turns, each answer cut to 1,000 characters, the oldest are dropped until the rest fit. Conversation memory is not bounded by it. Unmeasured. |
 
 ## `cache`
 
 Caching system configuration
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `ttl_seconds` | integer \| null (≥ 1) | `86400` | Time-to-live of the local stage-cache entries, in seconds; null = never expire. Not applied with --s3-sync, where the bucket lifecycle expires the checkpoints. |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `ttl_seconds` | integer \| null (≥ 1) | `86400` | operational | Time-to-live of the local stage-cache entries, in seconds; null = never expire. Not applied with --s3-sync, where the bucket lifecycle expires the checkpoints. |
 
 ### `cache.llm_responses`
 
 Ingestion LLM response cache
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `enabled` | boolean | `true` | Keep the responses of the ingestion model calls with the run's stage cache, so a re-run with the same pipeline id (after a crash, a stop or a timeout) does not call the model again for a prompt that already answered. Query and evaluation calls are never cached |
-| `flush_every` | integer (≥ 1) | `100` | Responses per cache segment file; a segment is written (and uploaded with --s3-sync) when it is full and before each stage checkpoint, so a killed task loses at most this many responses |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `enabled` | boolean | `true` |  | Keep the responses of the ingestion model calls with the run's stage cache, so a re-run with the same pipeline id (after a crash, a stop or a timeout) does not call the model again for a prompt that already answered. Query and evaluation calls are never cached |
+| `flush_every` | integer (≥ 1) | `100` | operational | Responses per cache segment file; a segment is written (and uploaded with --s3-sync) when it is full and before each stage checkpoint, so a killed task loses at most this many responses |
 
 ## `retry`
 
-Retries on transient errors, for every caller
+Retries on errors a new attempt can fix: one profile per caller
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `max_attempts` | integer (≥ 1) | `5` | Attempts per model call: each ingestion LLM item (transient errors, call timeouts and unparseable output), and each Bedrock embedding request and query-time call (transient errors botocore does not retry, such as HTTP 424). |
-| `base_delay_seconds` | number (≥ 0.0) | `2.0` | Backoff base in seconds. A Bedrock embedding or query-time call, and an Ollama call, waits up to this before its first retry, doubling per attempt (equal jitter); a graph-store indexer request waits a random 0 to base_delay_seconds * 2^(n-1) after attempt n (full jitter). 0 retries at once. |
-| `max_delay_seconds` | number (≥ 0.0) | `16.0` | Upper bound on one backoff delay of a Bedrock embedding or query-time call or an Ollama call, in seconds. |
-| `max_total_seconds` | number (≥ 0.0) | `60.0` | Wall-clock retry budget per Bedrock embedding or query-time call or Ollama call: no retry starts once the next backoff would cross it. |
-| `model_server_max_attempts` | integer (≥ 1) | `3` | Attempts per request to an OpenAI-compatible or Ollama model server (providers.llm, providers.embedding) on transient errors. The OpenAI client retries itself; on Ollama, whose client does not, query chains and embedding calls are retried by the framework (ingestion items keep max_attempts). |
-| `graph_store_max_attempts` | integer (≥ 1) | `4` | Attempts per Neptune or Gremlin indexer request (writes, read-backs, drops and label clears), with full-jitter backoff from base_delay_seconds. Errors a retry cannot fix (malformed query, access denied, bad parameter, read-only violation) fail on the first attempt. |
-| `query_store_max_attempts` | integer (≥ 1) | `3` | Attempts of one OpenSearch query request that timed out, could not connect or got a 429/502/503/504, with a jittered backoff between them (0.25-0.5 s, then 0.5-1 s, doubling up to 2-4 s), so a short throttling burst is waited out. A hung cluster fails a query after about query_store_max_attempts x search.store_timeout_seconds. A Neptune or Gremlin query read that failed leaving the store usable (throttling, a memory limit) is retried alike; one stopped at its time limit, a timeout and a lost connection are not. |
-| `judge_max_attempts` | integer (≥ 1) | `3` | Attempts per RAGAS judge call (passed as RAGAS RunConfig.max_retries, which RAGAS applies as stop_after_attempt, with exponential backoff). Attempts count against evaluation.ragas_timeout. |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `judge_max_attempts` | integer (≥ 1) | `3` | operational | Attempts per RAGAS judge call (passed as RAGAS RunConfig.max_retries, which RAGAS applies as stop_after_attempt, with its own exponential backoff). Attempts count against evaluation.ragas_timeout. |
+
+### `retry.model`
+
+Bedrock embedding requests and query-time model calls: the transient errors botocore does not retry (such as HTTP 424), after botocore's own attempts.
+
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `max_attempts` | integer (≥ 1) | `5` | operational | Attempts per call, including the first. 1 disables the retry. |
+| `base_delay_seconds` | number (≥ 0.0) | `2.0` | operational | Ceiling of the wait before the first retry, in seconds; it doubles per retry. 0 retries at once. |
+| `max_delay_seconds` | number \| null (≥ 0.0) | `16.0` | operational | Upper bound on one wait's ceiling, in seconds. null: none. |
+| `max_total_seconds` | number \| null (≥ 0.0) | `60.0` | operational | Wall-clock retry budget per call, in seconds: no retry starts once the next wait would cross it. null: none (the deadline of the query a call is made for still stops a model or query-store retry). |
+| `client_max_attempts` | integer \| null (≥ 1) | `6` | operational | Requests the service's own client makes for one attempt, the first included, retrying throttling, 5xx and timeouts itself before this profile's backoff: botocore's total_max_attempts on the Bedrock clients of ingestion and evaluation calls (retry.model; query-time calls take search.model_max_attempts), opensearch-py's max_retries + 1, back to back, on the OpenSearch indexing client (retry.bulk_item). The two stack: a call can make max_attempts x client_max_attempts requests. Set only on those two profiles; null leaves the client its library default. |
+| `jitter` | `"equal"` \| `"full"` \| `"none"` | `"equal"` |  | How a wait is drawn under its ceiling: 'equal' between half the ceiling and the ceiling, 'full' between 0 and the ceiling (spreads concurrent workers the most), 'none' the ceiling itself. |
+
+### `retry.ingestion_item`
+
+Each ingestion LLM item (extraction, gleaning, claims, summaries, reports, chunking, translation): transient errors, call timeouts and output that does not parse, which is asked again without a wait. The long waits let a throttled Bedrock quota recover under processing.max_concurrency items.
+
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `max_attempts` | integer (≥ 1) | `5` | operational | Attempts per call, including the first. 1 disables the retry. |
+| `base_delay_seconds` | number (≥ 0.0) | `30.0` | operational | Ceiling of the wait before the first retry, in seconds; it doubles per retry. 0 retries at once. |
+| `max_delay_seconds` | number \| null (≥ 0.0) | `120.0` | operational | Upper bound on one wait's ceiling, in seconds. null: none. |
+| `max_total_seconds` | number \| null (≥ 0.0) | `null` | operational | Wall-clock retry budget per call, in seconds: no retry starts once the next wait would cross it. null: none (the deadline of the query a call is made for still stops a model or query-store retry). |
+| `client_max_attempts` | integer \| null (≥ 1) | `null` | operational | Requests the service's own client makes for one attempt, the first included, retrying throttling, 5xx and timeouts itself before this profile's backoff: botocore's total_max_attempts on the Bedrock clients of ingestion and evaluation calls (retry.model; query-time calls take search.model_max_attempts), opensearch-py's max_retries + 1, back to back, on the OpenSearch indexing client (retry.bulk_item). The two stack: a call can make max_attempts x client_max_attempts requests. Set only on those two profiles; null leaves the client its library default. |
+| `jitter` | `"equal"` \| `"full"` \| `"none"` | `"full"` |  | How a wait is drawn under its ceiling: 'equal' between half the ceiling and the ceiling, 'full' between 0 and the ceiling (spreads concurrent workers the most), 'none' the ceiling itself. |
+
+### `retry.model_server`
+
+Requests to an OpenAI-compatible or Ollama model server (providers.llm, providers.embedding) on transient errors. The OpenAI client retries itself, max_attempts times; on Ollama, whose client does not, query chains and embedding calls are retried by the framework (ingestion items keep ingestion_item).
+
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `max_attempts` | integer (≥ 1) | `3` | operational | Attempts per call, including the first. 1 disables the retry. |
+| `base_delay_seconds` | number (≥ 0.0) | `2.0` | operational | Ceiling of the wait before the first retry, in seconds; it doubles per retry. 0 retries at once. |
+| `max_delay_seconds` | number \| null (≥ 0.0) | `16.0` | operational | Upper bound on one wait's ceiling, in seconds. null: none. |
+| `max_total_seconds` | number \| null (≥ 0.0) | `60.0` | operational | Wall-clock retry budget per call, in seconds: no retry starts once the next wait would cross it. null: none (the deadline of the query a call is made for still stops a model or query-store retry). |
+| `client_max_attempts` | integer \| null (≥ 1) | `null` | operational | Requests the service's own client makes for one attempt, the first included, retrying throttling, 5xx and timeouts itself before this profile's backoff: botocore's total_max_attempts on the Bedrock clients of ingestion and evaluation calls (retry.model; query-time calls take search.model_max_attempts), opensearch-py's max_retries + 1, back to back, on the OpenSearch indexing client (retry.bulk_item). The two stack: a call can make max_attempts x client_max_attempts requests. Set only on those two profiles; null leaves the client its library default. |
+| `jitter` | `"equal"` \| `"full"` \| `"none"` | `"equal"` |  | How a wait is drawn under its ceiling: 'equal' between half the ceiling and the ceiling, 'full' between 0 and the ceiling (spreads concurrent workers the most), 'none' the ceiling itself. |
+
+### `retry.graph_store`
+
+Each Neptune or Gremlin indexer request (writes, read-backs, drops and label clears), over a new connection after a lost one. Errors a retry cannot fix (malformed query, access denied, bad parameter, read-only violation) fail on the first attempt.
+
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `max_attempts` | integer (≥ 1) | `4` | operational | Attempts per call, including the first. 1 disables the retry. |
+| `base_delay_seconds` | number (≥ 0.0) | `2.0` | operational | Ceiling of the wait before the first retry, in seconds; it doubles per retry. 0 retries at once. |
+| `max_delay_seconds` | number \| null (≥ 0.0) | `null` | operational | Upper bound on one wait's ceiling, in seconds. null: none. |
+| `max_total_seconds` | number \| null (≥ 0.0) | `null` | operational | Wall-clock retry budget per call, in seconds: no retry starts once the next wait would cross it. null: none (the deadline of the query a call is made for still stops a model or query-store retry). |
+| `client_max_attempts` | integer \| null (≥ 1) | `null` | operational | Requests the service's own client makes for one attempt, the first included, retrying throttling, 5xx and timeouts itself before this profile's backoff: botocore's total_max_attempts on the Bedrock clients of ingestion and evaluation calls (retry.model; query-time calls take search.model_max_attempts), opensearch-py's max_retries + 1, back to back, on the OpenSearch indexing client (retry.bulk_item). The two stack: a call can make max_attempts x client_max_attempts requests. Set only on those two profiles; null leaves the client its library default. |
+| `jitter` | `"equal"` \| `"full"` \| `"none"` | `"full"` |  | How a wait is drawn under its ceiling: 'equal' between half the ceiling and the ceiling, 'full' between 0 and the ceiling (spreads concurrent workers the most), 'none' the ceiling itself. |
+
+### `retry.query_store`
+
+One OpenSearch, Neptune or Gremlin query request that failed leaving the store usable: an OpenSearch timeout, refused connection or 429/502/503/504, a graph-store read throttled or out of memory (one stopped at its time limit, a timeout and a lost connection are not retried), so a short throttling burst is waited out. A hung OpenSearch cluster fails a query after about max_attempts x search.store_timeout_seconds.
+
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `max_attempts` | integer (≥ 1) | `3` | operational | Attempts per call, including the first. 1 disables the retry. |
+| `base_delay_seconds` | number (≥ 0.0) | `0.5` | operational | Ceiling of the wait before the first retry, in seconds; it doubles per retry. 0 retries at once. |
+| `max_delay_seconds` | number \| null (≥ 0.0) | `4.0` | operational | Upper bound on one wait's ceiling, in seconds. null: none. |
+| `max_total_seconds` | number \| null (≥ 0.0) | `null` | operational | Wall-clock retry budget per call, in seconds: no retry starts once the next wait would cross it. null: none (the deadline of the query a call is made for still stops a model or query-store retry). |
+| `client_max_attempts` | integer \| null (≥ 1) | `null` | operational | Requests the service's own client makes for one attempt, the first included, retrying throttling, 5xx and timeouts itself before this profile's backoff: botocore's total_max_attempts on the Bedrock clients of ingestion and evaluation calls (retry.model; query-time calls take search.model_max_attempts), opensearch-py's max_retries + 1, back to back, on the OpenSearch indexing client (retry.bulk_item). The two stack: a call can make max_attempts x client_max_attempts requests. Set only on those two profiles; null leaves the client its library default. |
+| `jitter` | `"equal"` \| `"full"` \| `"none"` | `"equal"` |  | How a wait is drawn under its ceiling: 'equal' between half the ceiling and the ceiling, 'full' between 0 and the ceiling (spreads concurrent workers the most), 'none' the ceiling itself. |
+
+### `retry.bulk_item`
+
+OpenSearch bulk items the cluster rejected with 429/502/503/504, resent on their own (the bulk request itself answered 200).
+
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `max_attempts` | integer (≥ 1) | `5` | operational | Attempts per call, including the first. 1 disables the retry. |
+| `base_delay_seconds` | number (≥ 0.0) | `1.0` | operational | Ceiling of the wait before the first retry, in seconds; it doubles per retry. 0 retries at once. |
+| `max_delay_seconds` | number \| null (≥ 0.0) | `30.0` | operational | Upper bound on one wait's ceiling, in seconds. null: none. |
+| `max_total_seconds` | number \| null (≥ 0.0) | `null` | operational | Wall-clock retry budget per call, in seconds: no retry starts once the next wait would cross it. null: none (the deadline of the query a call is made for still stops a model or query-store retry). |
+| `client_max_attempts` | integer \| null (≥ 1) | `6` | operational | Requests the service's own client makes for one attempt, the first included, retrying throttling, 5xx and timeouts itself before this profile's backoff: botocore's total_max_attempts on the Bedrock clients of ingestion and evaluation calls (retry.model; query-time calls take search.model_max_attempts), opensearch-py's max_retries + 1, back to back, on the OpenSearch indexing client (retry.bulk_item). The two stack: a call can make max_attempts x client_max_attempts requests. Set only on those two profiles; null leaves the client its library default. |
+| `jitter` | `"equal"` \| `"full"` \| `"none"` | `"equal"` |  | How a wait is drawn under its ceiling: 'equal' between half the ceiling and the ceiling, 'full' between 0 and the ceiling (spreads concurrent workers the most), 'none' the ceiling itself. |
+
+### `retry.registry_batch`
+
+DynamoDB doc-status batch reads and writes: the keys or items DynamoDB returned unprocessed (throttling, the 16 MB response limit) are sent again, in max_attempts batch requests in all (each of up to 10 botocore attempts, the doc-status client's own); any left fail the run rather than read as absent.
+
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `max_attempts` | integer (≥ 1) | `8` | operational | Attempts per call, including the first. 1 disables the retry. |
+| `base_delay_seconds` | number (≥ 0.0) | `0.1` | operational | Ceiling of the wait before the first retry, in seconds; it doubles per retry. 0 retries at once. |
+| `max_delay_seconds` | number \| null (≥ 0.0) | `2.0` | operational | Upper bound on one wait's ceiling, in seconds. null: none. |
+| `max_total_seconds` | number \| null (≥ 0.0) | `null` | operational | Wall-clock retry budget per call, in seconds: no retry starts once the next wait would cross it. null: none (the deadline of the query a call is made for still stops a model or query-store retry). |
+| `client_max_attempts` | integer \| null (≥ 1) | `null` | operational | Requests the service's own client makes for one attempt, the first included, retrying throttling, 5xx and timeouts itself before this profile's backoff: botocore's total_max_attempts on the Bedrock clients of ingestion and evaluation calls (retry.model; query-time calls take search.model_max_attempts), opensearch-py's max_retries + 1, back to back, on the OpenSearch indexing client (retry.bulk_item). The two stack: a call can make max_attempts x client_max_attempts requests. Set only on those two profiles; null leaves the client its library default. |
+| `jitter` | `"equal"` \| `"full"` \| `"none"` | `"none"` |  | How a wait is drawn under its ceiling: 'equal' between half the ceiling and the ceiling, 'full' between 0 and the ceiling (spreads concurrent workers the most), 'none' the ceiling itself. |
 
 ## `logging`
 
 Logging system configuration
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `level` | string | `"INFO"` | Log level: DEBUG, INFO, WARNING, ERROR or CRITICAL (any case). DEBUG logs contain user and corpus text. |
-| `log_format` | string | `"structured"` | structured (JSON records, for CloudWatch and other log stores) or plain. |
-| `log_to_file` | boolean | `false` | Also write the CLIs' logs to log_file_path (dated per day; a relative path resolves against the working directory, which must then be writable). Off by default: the console (or the container's log driver) carries every record. The package configures no handler when imported as a library. |
-| `log_file_path` | string (min length 1) | `"logs/log.txt"` | Log file path (CLIs only); relative to the working directory |
-| `library_levels` | dict[string, string] | see [Long defaults](#long-defaults) | Per-logger levels for chatty third-party libraries (logger name -> level, one of the names level takes). In a config file the key replaces the whole map; an environment variable sets one entry over the defaults. A library's records at INFO and above keep their logger, level and message template; their arguments and traceback are replaced by a digest (a library's DEBUG records keep them). |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `level` | string | `"INFO"` |  | Log level: DEBUG, INFO, WARNING, ERROR or CRITICAL (any case). DEBUG logs contain user and corpus text. |
+| `log_format` | string | `"structured"` |  | structured (JSON records, for CloudWatch and other log stores) or plain. |
+| `log_to_file` | boolean | `false` |  | Also write the CLIs' logs to log_file_path (dated per day; a relative path resolves against the working directory, which must then be writable). Off by default: the console (or the container's log driver) carries every record. The package configures no handler when imported as a library. |
+| `log_file_path` | string (min length 1) | `"logs/log.txt"` |  | Log file path (CLIs only); relative to the working directory |
+| `library_levels` | dict[string, string] | see [Long defaults](#long-defaults) |  | Per-logger levels for chatty third-party libraries (logger name -> level, one of the names level takes). In a config file the key replaces the whole map; an environment variable sets one entry over the defaults. A library's records at INFO and above keep their logger, level and message template; their arguments and traceback are replaced by a digest (a library's DEBUG records keep them). |
 
 ## `observability`
 
 OpenTelemetry tracing configuration
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `enabled` | boolean | `false` | Emit OpenTelemetry spans for ingestion, queries and evaluation (needs the otel extra). OTEL_SDK_DISABLED=true turns it off regardless. |
-| `backend` | `"none"` \| `"otlp"` \| `"langfuse"` \| `"phoenix"` | `"none"` | none: spans go to the process's global tracer provider, which a host application or opentelemetry-instrument sets up. otlp: the package installs an OTLP exporter configured by the OTEL_EXPORTER_OTLP_* variables. langfuse / phoenix: the same exporter pointed at Langfuse or Arize Phoenix, with that vendor's attribute names added. |
-| `capture_content` | boolean | `false` | Also record prompt and completion text on model spans, and the query and answer on the kg_rag.query span (after redact_patterns). Off by default: spans carry counts, ids and token usage only. Leave it off for confidential corpora. |
-| `sample_rate` | number (≥ 0.0, ≤ 1.0) | `1.0` | Fraction of root traces sampled (backends otlp, langfuse, phoenix; with 'none' the host's provider samples); child spans follow their parent's decision |
-| `service_name` | string (min length 1) | `"unified-kg-rag"` | OpenTelemetry service.name, and the Phoenix project; OTEL_SERVICE_NAME (and PHOENIX_PROJECT_NAME) win when set. |
-| `redact_patterns` | list[string] | `[]` | Regular expressions replaced with '[REDACTED]' in captured content and, for the backends this package installs (otlp, langfuse, phoenix), in every exported string attribute, event attribute and status message |
-| `export_timeout_seconds` | number (> 0.0, ≤ 60.0) | `10.0` | Upper bound on one span-export request (backends otlp, langfuse, phoenix). OTEL_EXPORTER_OTLP_TRACES_TIMEOUT / OTEL_EXPORTER_OTLP_TIMEOUT win when set |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `enabled` | boolean | `false` |  | Emit OpenTelemetry spans for ingestion, queries and evaluation (needs the otel extra). OTEL_SDK_DISABLED=true turns it off regardless. |
+| `backend` | `"none"` \| `"otlp"` \| `"langfuse"` \| `"phoenix"` | `"none"` |  | none: spans go to the process's global tracer provider, which a host application or opentelemetry-instrument sets up. otlp: the package installs an OTLP exporter configured by the OTEL_EXPORTER_OTLP_* variables. langfuse / phoenix: the same exporter pointed at Langfuse or Arize Phoenix, with that vendor's attribute names added. |
+| `capture_content` | boolean | `false` |  | Also record prompt and completion text on model spans, and the query and answer on the kg_rag.query span (after redact_patterns). Off by default: spans carry counts, ids and token usage only. Leave it off for confidential corpora. |
+| `sample_rate` | number (≥ 0.0, ≤ 1.0) | `1.0` | operational | Fraction of root traces sampled (backends otlp, langfuse, phoenix; with 'none' the host's provider samples); child spans follow their parent's decision |
+| `service_name` | string (min length 1) | `"unified-kg-rag"` |  | OpenTelemetry service.name, and the Phoenix project; OTEL_SERVICE_NAME (and PHOENIX_PROJECT_NAME) win when set. |
+| `redact_patterns` | list[string] | `[]` |  | Regular expressions replaced with '[REDACTED]' in captured content and, for the backends this package installs (otlp, langfuse, phoenix), in every exported string attribute, event attribute and status message |
+| `export_timeout_seconds` | number (> 0.0, ≤ 60.0) | `10.0` | operational | Upper bound on one span-export request (backends otlp, langfuse, phoenix). OTEL_EXPORTER_OTLP_TRACES_TIMEOUT / OTEL_EXPORTER_OTLP_TIMEOUT win when set |
 
 ## `evaluation`
 
 Evaluation configuration
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `outputs_directory` | string \| path | `"outputs/evaluation"` | Directory the evaluation results are written to. |
-| `run_subdirectories` | boolean | `true` | Write each run-eval invocation's files into a subdirectory of outputs_directory (or --output-directory) of its own, named run_<timestamp>_<id> (the run manifest's run_id), so the runs of different invocations are never mixed in one directory. run-eval --from-results and --baseline-results read a directory and its run subdirectories. false writes into the directory itself (the behaviour before). |
-| `enabled_evaluators` | list[`"langchain"` \| `"ragas"` \| `"graph_aware"` \| `"retrieval"` \| `"answer_match"` \| `"assertion"`] | `["answer_match", "retrieval", "graph_aware"]` | List of evaluator types to enable for this evaluation run (run-eval --evaluators overrides it). The default is the deterministic ones (answer_match, retrieval, graph_aware): free, no extra, and each skips a query that lacks its dataset fields. The LLM judges are opt-in (add them to this list): ragas (the eval extra; answer_correctness and four more metrics, several judge calls per answer, context_precision one per context up to ragas_max_contexts) and assertion. 'langchain' was removed (ragas' answer_correctness measures its correctness): a list that names it loads with a warning and without it. |
-| `ragas_metrics` | list[`"answer_correctness"` \| `"answer_relevancy"` \| `"context_precision"` \| `"context_recall"` \| `"faithfulness"`] | see [Long defaults](#long-defaults) | The metrics the ragas evaluator scores: answer_correctness, answer_relevancy, context_precision, context_recall and faithfulness. Another metric fails the load. |
-| `max_context_tokens` | integer \| null (≥ 1) | `null` | Token cap on the retrieved context passed to the RAGAS judges. null (default) uses the answer model's budget (search.token_manager.max_context_tokens), so faithfulness and context_recall judge the answer against the context it was given; with that budget derived from the model window too, no extra cap applies (the contexts are already the answer model's selection). A value below the answer budget logs a warning: the judge then sees less context than the answer model did. |
-| `judge_effort` | `"low"` \| `"medium"` \| `"high"` \| `"xhigh"` \| `"max"` \| null | `"low"` | Reasoning effort for the LLM judges (ragas, assertion, --pairwise-judge and the answer_span 'extracted' calls) on adaptive-thinking models (Claude 4.7+). Judge prompts are short extraction/classification calls, so a low effort keeps each metric well inside the RAGAS timeout. null inherits the effort of the judge model's tier (aws.bedrock.default_effort by default). Ignored by models without adaptive thinking. |
-| `ragas_timeout` | integer (≥ 1) | `300` | RAGAS RunConfig.timeout in seconds: the budget for scoring ONE metric on ONE sample, covering all of its LLM calls and retries. A timed-out job yields NaN for that metric. RAGAS' own default (180s) is too tight for thinking judges. |
-| `ragas_max_contexts` | integer \| null (≥ 1) | `20` | Maximum number of top-ranked retrieved contexts per sample scored by RAGAS context_precision, applied before max_context_tokens. Context precision makes one judge call per context, so its cost scales with the context count; strategies that report 100+ sources time out otherwise. Only that metric is capped (it becomes context_precision@N); faithfulness and context_recall see every context within max_context_tokens, and the answer model's context is unaffected. null disables the cap. |
-| `ragas_max_workers` | integer (≥ 1) | `8` | RAGAS RunConfig.max_workers: concurrent metric jobs. Lower it if Bedrock throttles the judge model (throttled calls burn the per-job timeout). |
-| `answer_span` | `"full"` \| `"first_line"` \| `"extracted"` | `"first_line"` | The part of a generated answer the answer_match exact_match and token_f1 scores read. The benchmarks they come from (SQuAD, MuSiQue, HotpotQA) score a short predicted answer span, while the answer prompt writes a one-sentence answer and then its support. 'first_line' (default, free) scores the first line that is neither empty nor a Markdown heading: the one-sentence answer, still longer than a span, so EM under-counts. 'extracted' asks the models.roles.answer_span model (fast tier) for the short span, one call per distinct answer, cached for the run; a call that fails falls back to 'first_line' and is counted in the summary's answer_span_statistics. Use it, with answer_normalization official_squad, for numbers close to the papers'. 'full' scores the whole answer, so the score measures answer length as much as correctness. answer_contains always reads the whole answer. Recorded in the run manifest (answer_scoring) and each answer_match report. |
-| `answer_span_output_ceiling` | integer \| null (≥ 1) | `4096` | max_tokens of each answer_span 'extracted' call, which answers a short span; it never leaves less than the call's thinking budget (judge_effort's, see search.output_ceilings) plus 1,024 tokens. null = models.default_max_output_tokens. |
-| `answer_normalization` | `"default"` \| `"official_squad"` \| `"hotpotqa"` | `"default"` | Normalization of the answer_match exact_match and token_f1 scores. 'default' keeps meaning-bearing punctuation (minus signs, decimal points, 'C++') and folds Unicode; 'official_squad' is the official SQuAD v1.1 script (lowercase, ASCII punctuation and English articles removed), which MuSiQue's evaluation uses too; 'hotpotqa' adds the HotpotQA script's rule on top: a prediction or gold of 'yes', 'no' or 'noanswer' scores token F1 0 unless both are equal. The scores compare with published numbers only when the scored text is a short span (answer_span 'extracted'). answer_contains always uses 'default'. |
-| `pairwise_overall` | boolean | `false` | Ask the run-eval --pairwise-judge judge for an 'overall' winner too, as LightRAG's evaluation prompt does, reported as a fifth criterion. A custom_prompts.pairwise_comparison_* override must then return an 'overall' verdict as well. |
-| `pairwise_mode` | `"standard"` \| `"differential"` | `"standard"` | How the run-eval --pairwise-judge judge reads two answers (run-eval --pairwise-mode overrides it). 'standard' (default) judges the whole answers. 'differential' first asks the models.roles.pairwise_overlap model (fast tier) for the statements both answers make and those only one makes, then judges each criterion on the unique statements only, so content both share, and the length it adds, earns neither side credit; a split with no unique statement is a tie without a judge call. The split favours one slot, so each pair is split in both slot orders and each split judged in both answer orders: two fast calls and up to four judge calls per pair, against the standard mode's two judge calls. LLM judges prefer longer answers (Zeng et al. 2025); the comparisons in docs/concepts/defaults-and-evidence.md since 2026-11-08 use 'differential', and 'standard' stays the default, the cheaper judge. Both modes report win rates per answer-length bucket. |
-| `pairwise_repeats` | `"first"` \| `"all"` | `"first"` | Which repeats the run-eval --pairwise-judge judge reads (run-eval --pairwise-repeats overrides it). 'first' (default) judges the first repeat's answers: one judged pair per query and strategy (two judge calls, both orders; two fast calls and up to four judge calls in the differential mode). 'all' judges repeat r against repeat r for every repeat, so the win rate also averages the answers' run-to-run variance, at that cost times --repeats; each query's repeats are averaged before the queries, and its interval resamples queries. |
-| `assertion_trials` | integer (≥ 1) | `3` | Judge calls per answer of the assertion evaluator: each labels every assertion of the item supported, contradicted or absent (assertions shuffled per trial, in an order no earlier trial used while one is left), and an assertion takes the label a majority (more than half) of the trials that succeeded gave it. A deterministic judge (temperature 0) repeats itself on an item with fewer orders than trials (one assertion, or two with three trials). A query whose trials all failed records its metrics as failed, never as 0. |
-| `retrieval_k` | integer (≥ 1) | `5` | Cutoff k for the retrieval evaluator's hit@k / recall@k: the number of top-ranked distinct files (of the reported sources, in rank order) compared with reference_sources. |
-| `save_detailed_results` | boolean | `true` | Whether to save detailed evaluation results and reports (run-eval --from-results and --baseline-results read them). |
-| `run_order` | `"interleaved"` \| `"sequential"` | `"interleaved"` | How run-eval answers the runs of a comparison (several strategies, --repeats, --closed-book; run-eval --run-order overrides it). 'interleaved' (default) answers every query with every run before the next query, the runs' order alternating (ABBA), in one batch under processing.max_concurrency, so the latency and cost deltas do not measure what changed between runs answered one after another (service load, warm caches). 'sequential' answers each run's queries in turn, the order before; the comparison then warns that its latency deltas are confounded with time. Recorded in the run manifest (run_order). |
-| `repeat_extractions` | `"resample"` \| `"reuse"` | `"resample"` | Whether the run-eval --repeats of a strategy extract the query's entities and keywords again (run-eval --repeat-extractions overrides it). 'resample' (default) gives each repeat its own query extraction cache scope, so repeat_stdev includes the extraction's run-to-run variance; the arms of one repeat still share their extractions. It costs the fast-model extraction calls of a query once per repeat instead of once. 'reuse' shares them across repeats (the behaviour before), so the repeats only resample the answer. No effect with one repeat or search.query_extraction_cache_size 0. |
-| `primary_metric` | string \| null | `null` | The <evaluator>/<metric> a run-eval comparison declares in advance as its primary metric (run-eval --primary-metric overrides it): its paired delta is adjusted only over the compared strategies, every other metric is Holm-adjusted over all of them (deltas_vs_baseline.<s>.<metric>.adjusted_p_value, adjusted_ci_low/high), so reading many metrics does not multiply the chance of a difference on noise. null = answer_match/answer_contains when the comparison scored it, else no primary metric. |
-| `resamples` | integer (≥ 100) | `2000` | Resamples of a run-eval comparison's paired bootstrap intervals and Monte Carlo sign-flip p-values (comparison bootstrap.resamples). The Holm-adjusted families read at least 20 x tests / alpha of them (multiplicity.families.<f>.resamples: 42,000 for 105 tests at 0.05), so a large family is not held above alpha by the p-value's floor 1 / (1 + resamples); raise it for more stable unadjusted intervals, at a cost linear in it. |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `outputs_directory` | string \| path | `"outputs/evaluation"` |  | Directory the evaluation results are written to. |
+| `run_subdirectories` | boolean | `true` |  | Write each run-eval invocation's files into a subdirectory of outputs_directory (or --output-directory) of its own, named run_<timestamp>_<id> (the run manifest's run_id), so the runs of different invocations are never mixed in one directory. run-eval --from-results and --baseline-results read a directory and its run subdirectories. false writes into the directory itself (the behaviour before). |
+| `enabled_evaluators` | list[`"langchain"` \| `"ragas"` \| `"graph_aware"` \| `"retrieval"` \| `"answer_match"` \| `"assertion"`] | `["answer_match", "retrieval", "graph_aware"]` |  | List of evaluator types to enable for this evaluation run (run-eval --evaluators overrides it). The default is the deterministic ones (answer_match, retrieval, graph_aware): free, no extra, and each skips a query that lacks its dataset fields. The LLM judges are opt-in (add them to this list): ragas (the eval extra; answer_correctness and four more metrics, several judge calls per answer, context_precision one per context up to ragas_max_contexts) and assertion. 'langchain' was removed (ragas' answer_correctness measures its correctness): a list that names it loads with a warning and without it. |
+| `ragas_metrics` | list[`"answer_correctness"` \| `"answer_relevancy"` \| `"context_precision"` \| `"context_recall"` \| `"faithfulness"`] | see [Long defaults](#long-defaults) |  | The metrics the ragas evaluator scores: answer_correctness, answer_relevancy, context_precision, context_recall and faithfulness. Another metric fails the load. |
+| `max_context_tokens` | integer \| null (≥ 1) | `null` |  | Token cap on the retrieved context passed to the RAGAS judges. null (default) uses the answer model's budget (search.token_manager.max_context_tokens), so faithfulness and context_recall judge the answer against the context it was given; with that budget derived from the model window too, no extra cap applies (the contexts are already the answer model's selection). A value below the answer budget logs a warning: the judge then sees less context than the answer model did. |
+| `judge_effort` | `"low"` \| `"medium"` \| `"high"` \| `"xhigh"` \| `"max"` \| null | `"low"` |  | Reasoning effort for the LLM judges (ragas, assertion, --pairwise-judge and the answer_span 'extracted' calls) on adaptive-thinking models (Claude 4.7+). Judge prompts are short extraction/classification calls, so a low effort keeps each metric well inside the RAGAS timeout. null inherits the effort of the judge model's tier (aws.bedrock.default_effort by default). Ignored by models without adaptive thinking. |
+| `ragas_timeout` | integer (≥ 1) | `300` | operational | RAGAS RunConfig.timeout in seconds: the budget for scoring ONE metric on ONE sample, covering all of its LLM calls and retries. A timed-out job yields NaN for that metric. RAGAS' own default (180s) is too tight for thinking judges. |
+| `ragas_max_contexts` | integer \| null (≥ 1) | `20` | operational | Maximum number of top-ranked retrieved contexts per sample scored by RAGAS context_precision, applied before max_context_tokens. Context precision makes one judge call per context, so its cost scales with the context count; strategies that report 100+ sources time out otherwise. Only that metric is capped (it becomes context_precision@N); faithfulness and context_recall see every context within max_context_tokens, and the answer model's context is unaffected. null disables the cap. |
+| `ragas_max_workers` | integer (≥ 1) | `8` | operational | RAGAS RunConfig.max_workers: concurrent metric jobs. Lower it if Bedrock throttles the judge model (throttled calls burn the per-job timeout). |
+| `answer_span` | `"full"` \| `"first_line"` \| `"extracted"` | `"first_line"` |  | The part of a generated answer the answer_match exact_match and token_f1 scores read. The benchmarks they come from (SQuAD, MuSiQue, HotpotQA) score a short predicted answer span, while the answer prompt writes a one-sentence answer and then its support. 'first_line' (default, free) scores the first line that is neither empty nor a Markdown heading: the one-sentence answer, still longer than a span, so EM under-counts. 'extracted' asks the models.roles.answer_span model (fast tier) for the short span, one call per distinct answer, cached for the run; a call that fails falls back to 'first_line' and is counted in the summary's answer_span_statistics. Use it, with answer_normalization official_squad, for numbers close to the papers'. 'full' scores the whole answer, so the score measures answer length as much as correctness. answer_contains always reads the whole answer. Recorded in the run manifest (answer_scoring) and each answer_match report. |
+| `answer_span_output_ceiling` | integer \| null (≥ 1) | `4096` | operational | max_tokens of each answer_span 'extracted' call, which answers a short span; it never leaves less than the call's thinking budget (judge_effort's, see search.output_ceilings) plus 1,024 tokens. null = models.default_max_output_tokens. |
+| `answer_normalization` | `"default"` \| `"official_squad"` \| `"hotpotqa"` | `"default"` |  | Normalization of the answer_match exact_match and token_f1 scores. 'default' keeps meaning-bearing punctuation (minus signs, decimal points, 'C++') and folds Unicode; 'official_squad' is the official SQuAD v1.1 script (lowercase, ASCII punctuation and English articles removed), which MuSiQue's evaluation uses too; 'hotpotqa' adds the HotpotQA script's rule on top: a prediction or gold of 'yes', 'no' or 'noanswer' scores token F1 0 unless both are equal. The scores compare with published numbers only when the scored text is a short span (answer_span 'extracted'). answer_contains always uses 'default'. |
+| `pairwise_overall` | boolean | `false` |  | Ask the run-eval --pairwise-judge judge for an 'overall' winner too, as LightRAG's evaluation prompt does, reported as a fifth criterion. A custom_prompts.pairwise_comparison_* override must then return an 'overall' verdict as well. |
+| `pairwise_mode` | `"standard"` \| `"differential"` | `"standard"` |  | How the run-eval --pairwise-judge judge reads two answers (run-eval --pairwise-mode overrides it). 'standard' (default) judges the whole answers. 'differential' first asks the models.roles.pairwise_overlap model (fast tier) for the statements both answers make and those only one makes, then judges each criterion on the unique statements only, so content both share, and the length it adds, earns neither side credit; a split with no unique statement is a tie without a judge call. The split favours one slot, so each pair is split in both slot orders and each split judged in both answer orders: two fast calls and up to four judge calls per pair, against the standard mode's two judge calls. LLM judges prefer longer answers (Zeng et al. 2025); the comparisons in docs/concepts/defaults-and-evidence.md since 2026-11-08 use 'differential', and 'standard' stays the default, the cheaper judge. Both modes report win rates per answer-length bucket. |
+| `pairwise_repeats` | `"first"` \| `"all"` | `"first"` |  | Which repeats the run-eval --pairwise-judge judge reads (run-eval --pairwise-repeats overrides it). 'first' (default) judges the first repeat's answers: one judged pair per query and strategy (two judge calls, both orders; two fast calls and up to four judge calls in the differential mode). 'all' judges repeat r against repeat r for every repeat, so the win rate also averages the answers' run-to-run variance, at that cost times --repeats; each query's repeats are averaged before the queries, and its interval resamples queries. |
+| `assertion_trials` | integer (≥ 1) | `3` | operational | Judge calls per answer of the assertion evaluator: each labels every assertion of the item supported, contradicted or absent (assertions shuffled per trial, in an order no earlier trial used while one is left), and an assertion takes the label a majority (more than half) of the trials that succeeded gave it. A deterministic judge (temperature 0) repeats itself on an item with fewer orders than trials (one assertion, or two with three trials). A query whose trials all failed records its metrics as failed, never as 0. |
+| `retrieval_k` | integer (≥ 1) | `5` | operational | Cutoff k for the retrieval evaluator's hit@k / recall@k: the number of top-ranked distinct files (of the reported sources, in rank order) compared with reference_sources. |
+| `save_detailed_results` | boolean | `true` |  | Whether to save detailed evaluation results and reports (run-eval --from-results and --baseline-results read them). |
+| `run_order` | `"interleaved"` \| `"sequential"` | `"interleaved"` |  | How run-eval answers the runs of a comparison (several strategies, --repeats, --closed-book; run-eval --run-order overrides it). 'interleaved' (default) answers every query with every run before the next query, the runs' order alternating (ABBA), in one batch under processing.max_concurrency, so the latency and cost deltas do not measure what changed between runs answered one after another (service load, warm caches). 'sequential' answers each run's queries in turn, the order before; the comparison then warns that its latency deltas are confounded with time. Recorded in the run manifest (run_order). |
+| `repeat_extractions` | `"resample"` \| `"reuse"` | `"resample"` |  | Whether the run-eval --repeats of a strategy extract the query's entities and keywords again (run-eval --repeat-extractions overrides it). 'resample' (default) gives each repeat its own query extraction cache scope, so repeat_stdev includes the extraction's run-to-run variance; the arms of one repeat still share their extractions. It costs the fast-model extraction calls of a query once per repeat instead of once. 'reuse' shares them across repeats (the behaviour before), so the repeats only resample the answer. No effect with one repeat or search.query_extraction_cache_size 0. |
+| `primary_metric` | string \| null | `null` |  | The <evaluator>/<metric> a run-eval comparison declares in advance as its primary metric (run-eval --primary-metric overrides it): its paired delta is adjusted only over the compared strategies, every other metric is Holm-adjusted over all of them (deltas_vs_baseline.<s>.<metric>.adjusted_p_value, adjusted_ci_low/high), so reading many metrics does not multiply the chance of a difference on noise. null = answer_match/answer_contains when the comparison scored it, else no primary metric. |
+| `resamples` | integer (≥ 100) | `2000` | operational | Resamples of a run-eval comparison's paired bootstrap intervals and Monte Carlo sign-flip p-values (comparison bootstrap.resamples). The Holm-adjusted families read at least 20 x tests / alpha of them (multiplicity.families.<f>.resamples: 42,000 for 105 tests at 0.05), so a large family is not held above alpha by the p-value's floor 1 / (1 + resamples); raise it for more stable unadjusted intervals, at a cost linear in it. |
 
 ## `custom_prompts`
 
 Custom prompt configuration
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `graph_extraction_system` | string \| null | `null` | Custom system prompt for entity and relationship extraction from text |
-| `graph_extraction_human` | string \| null | `null` | Custom human prompt for entity and relationship extraction from text |
-| `claim_extraction_system` | string \| null | `null` | Custom system prompt for extracting claims and assertions from documents |
-| `claim_extraction_human` | string \| null | `null` | Custom human prompt for extracting claims and assertions from documents |
-| `description_summarization_system` | string \| null | `null` | Custom system prompt for re-summarizing over-long merged entity/relationship descriptions |
-| `description_summarization_human` | string \| null | `null` | Custom human prompt for re-summarizing over-long merged entity/relationship descriptions |
-| `text_chunking_system` | string \| null | `null` | Custom system prompt for the intelligent chunker's boundary call (processing.chunking.chunker_type: intelligent) |
-| `text_chunking_human` | string \| null | `null` | Custom human prompt for the intelligent chunker's boundary call; it must keep {numbered_text}, {min_chunk_size} and {max_chunk_size} |
-| `text_translation_system` | string \| null | `null` | Custom system prompt for translating text units (processing.translation) |
-| `text_translation_human` | string \| null | `null` | Custom human prompt for translating text units; it must keep {text} and {target_language} |
-| `tree_summary_system` | string \| null | `null` | Custom system prompt for summarizing one cluster of the summary tree (raptor methodology) |
-| `tree_summary_human` | string \| null | `null` | Custom human prompt for summarizing one cluster of the summary tree; it must keep {passages} |
-| `graph_refinement_system` | string \| null | `null` | Custom system prompt for improving and refining extracted graph entities and relationships |
-| `graph_refinement_human` | string \| null | `null` | Custom human prompt for improving and refining extracted graph entities and relationships |
-| `community_report_system` | string \| null | `null` | Custom system prompt for generating community analysis reports |
-| `community_report_human` | string \| null | `null` | Custom human prompt for generating community analysis reports |
-| `answer_generation_system` | string \| null | `null` | Custom system prompt for generating answers from knowledge graph |
-| `answer_generation_human` | string \| null | `null` | Custom human prompt for generating answers from knowledge graph |
-| `comprehensive_answer_system` | string \| null | `null` | Custom system prompt for the comprehensive answer of the strategies search.answer_prompt_style sets to comprehensive |
-| `comprehensive_answer_human` | string \| null | `null` | Custom human prompt for the comprehensive answer of the strategies search.answer_prompt_style sets to comprehensive |
-| `entity_extraction_system` | string \| null | `null` | Custom system prompt for extracting named entities from user queries |
-| `entity_extraction_human` | string \| null | `null` | Custom human prompt for extracting named entities from user queries |
-| `keywords_extraction_system` | string \| null | `null` | Custom system prompt for dual-level (high/low) keyword extraction (LightRAG) |
-| `keywords_extraction_human` | string \| null | `null` | Custom human prompt for dual-level (high/low) keyword extraction (LightRAG) |
-| `corpus_profile_system` | string \| null | `null` | Custom system prompt for corpus profiling during prompt tuning |
-| `corpus_profile_human` | string \| null | `null` | Custom human prompt for corpus profiling during prompt tuning |
-| `drift_primer_system` | string \| null | `null` | Custom system prompt for the DRIFT primer (intermediate answer + follow-up queries) |
-| `drift_primer_human` | string \| null | `null` | Custom human prompt for the DRIFT primer (intermediate answer + follow-up queries) |
-| `pairwise_comparison_system` | string \| null | `null` | Custom system prompt for the run-eval --pairwise-judge LLM judge |
-| `pairwise_comparison_human` | string \| null | `null` | Custom human prompt for the run-eval --pairwise-judge LLM judge |
-| `answer_span_extraction_system` | string \| null | `null` | Custom system prompt for the run-eval answer-span extractor (evaluation.answer_span: extracted) |
-| `answer_span_extraction_human` | string \| null | `null` | Custom human prompt for the run-eval answer-span extractor (evaluation.answer_span: extracted) |
-| `pairwise_overlap_system` | string \| null | `null` | Custom system prompt for the shared/unique statement split of run-eval --pairwise-mode differential |
-| `pairwise_overlap_human` | string \| null | `null` | Custom human prompt for the shared/unique statement split of run-eval --pairwise-mode differential |
-| `pairwise_differential_system` | string \| null | `null` | Custom system prompt for the run-eval --pairwise-mode differential judge (judges the unique statements) |
-| `pairwise_differential_human` | string \| null | `null` | Custom human prompt for the run-eval --pairwise-mode differential judge (judges the unique statements) |
-| `assertion_judgement_system` | string \| null | `null` | Custom system prompt for the assertion evaluator's judge |
-| `assertion_judgement_human` | string \| null | `null` | Custom human prompt for the assertion evaluator's judge |
-| `closed_book_answer_system` | string \| null | `null` | Custom system prompt for the run-eval --closed-book answers |
-| `closed_book_answer_human` | string \| null | `null` | Custom human prompt for the run-eval --closed-book answers |
-| `benchmark_activity_context_system` | string \| null | `null` | Custom system prompt for the personas and tasks of prepare-benchmark assertions |
-| `benchmark_activity_context_human` | string \| null | `null` | Custom human prompt for the personas and tasks of prepare-benchmark assertions |
-| `benchmark_questions_system` | string \| null | `null` | Custom system prompt for the question generation of prepare-benchmark assertions |
-| `benchmark_questions_human` | string \| null | `null` | Custom human prompt for the question generation of prepare-benchmark assertions |
-| `benchmark_claims_system` | string \| null | `null` | Custom system prompt for the claim extraction (map step) of prepare-benchmark assertions |
-| `benchmark_claims_human` | string \| null | `null` | Custom human prompt for the claim extraction (map step) of prepare-benchmark assertions |
-| `benchmark_assertions_system` | string \| null | `null` | Custom system prompt for the assertion synthesis (reduce step) of prepare-benchmark assertions |
-| `benchmark_assertions_human` | string \| null | `null` | Custom human prompt for the assertion synthesis (reduce step) of prepare-benchmark assertions |
-| `benchmark_validation_system` | string \| null | `null` | Custom system prompt for the assertion validation of prepare-benchmark assertions |
-| `benchmark_validation_human` | string \| null | `null` | Custom human prompt for the assertion validation of prepare-benchmark assertions |
-| `drift_hyde_system` | string \| null | `null` | Custom system prompt for the DRIFT query expansion (HyDE) |
-| `drift_hyde_human` | string \| null | `null` | Custom human prompt for the DRIFT query expansion (HyDE) |
-| `iterative_controller_system` | string \| null | `null` | Custom system prompt for iterative search's controller, which judges whether the context answers the question and names the bridge entities and follow-up queries |
-| `iterative_controller_human` | string \| null | `null` | Custom human prompt for iterative search's controller |
-| `graph_query_system` | string \| null | `null` | Custom system prompt for the structured strategy's planner, which writes the question as a graph query plan (JSON) |
-| `graph_query_human` | string \| null | `null` | Custom human prompt for the structured strategy's planner |
-| `drift_action_system` | string \| null | `null` | Custom system prompt for answering a DRIFT follow-up query from its local-search context |
-| `drift_action_human` | string \| null | `null` | Custom human prompt for answering a DRIFT follow-up query from its local-search context |
-| `query_rewrite_system` | string \| null | `null` | Custom system prompt for rewriting a follow-up message as a standalone question from the conversation history |
-| `query_rewrite_human` | string \| null | `null` | Custom human prompt for rewriting a follow-up message as a standalone question from the conversation history |
-| `strategy_selection_system` | string \| null | `null` | Custom system prompt for selecting search strategy based on user query |
-| `strategy_selection_human` | string \| null | `null` | Custom human prompt for selecting search strategy based on user query |
-| `global_map_system` | string \| null | `null` | Custom system prompt for the global-search map step (rate community-report key points 0-100 for relevance) |
-| `global_map_human` | string \| null | `null` | Custom human prompt for the global-search map step (rate community-report key points 0-100 for relevance) |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `graph_extraction_system` | string \| null | `null` |  | Custom system prompt for entity and relationship extraction from text |
+| `graph_extraction_human` | string \| null | `null` |  | Custom human prompt for entity and relationship extraction from text |
+| `claim_extraction_system` | string \| null | `null` |  | Custom system prompt for extracting claims and assertions from documents |
+| `claim_extraction_human` | string \| null | `null` |  | Custom human prompt for extracting claims and assertions from documents |
+| `description_summarization_system` | string \| null | `null` |  | Custom system prompt for re-summarizing over-long merged entity/relationship descriptions |
+| `description_summarization_human` | string \| null | `null` |  | Custom human prompt for re-summarizing over-long merged entity/relationship descriptions |
+| `text_chunking_system` | string \| null | `null` |  | Custom system prompt for the intelligent chunker's boundary call (processing.chunking.chunker_type: intelligent) |
+| `text_chunking_human` | string \| null | `null` |  | Custom human prompt for the intelligent chunker's boundary call; it must keep {numbered_text}, {min_chunk_size} and {max_chunk_size} |
+| `text_translation_system` | string \| null | `null` |  | Custom system prompt for translating text units (processing.translation) |
+| `text_translation_human` | string \| null | `null` |  | Custom human prompt for translating text units; it must keep {text} and {target_language} |
+| `tree_summary_system` | string \| null | `null` |  | Custom system prompt for summarizing one cluster of the summary tree (raptor methodology) |
+| `tree_summary_human` | string \| null | `null` |  | Custom human prompt for summarizing one cluster of the summary tree; it must keep {passages} |
+| `graph_refinement_system` | string \| null | `null` |  | Custom system prompt for improving and refining extracted graph entities and relationships |
+| `graph_refinement_human` | string \| null | `null` |  | Custom human prompt for improving and refining extracted graph entities and relationships |
+| `community_report_system` | string \| null | `null` |  | Custom system prompt for generating community analysis reports |
+| `community_report_human` | string \| null | `null` |  | Custom human prompt for generating community analysis reports |
+| `answer_generation_system` | string \| null | `null` |  | Custom system prompt for generating answers from knowledge graph |
+| `answer_generation_human` | string \| null | `null` |  | Custom human prompt for generating answers from knowledge graph |
+| `comprehensive_answer_system` | string \| null | `null` |  | Custom system prompt for the comprehensive answer of the strategies search.answer_prompt_style sets to comprehensive |
+| `comprehensive_answer_human` | string \| null | `null` |  | Custom human prompt for the comprehensive answer of the strategies search.answer_prompt_style sets to comprehensive |
+| `entity_extraction_system` | string \| null | `null` |  | Custom system prompt for extracting named entities from user queries |
+| `entity_extraction_human` | string \| null | `null` |  | Custom human prompt for extracting named entities from user queries |
+| `keywords_extraction_system` | string \| null | `null` |  | Custom system prompt for dual-level (high/low) keyword extraction (LightRAG) |
+| `keywords_extraction_human` | string \| null | `null` |  | Custom human prompt for dual-level (high/low) keyword extraction (LightRAG) |
+| `corpus_profile_system` | string \| null | `null` |  | Custom system prompt for corpus profiling during prompt tuning |
+| `corpus_profile_human` | string \| null | `null` |  | Custom human prompt for corpus profiling during prompt tuning |
+| `drift_primer_system` | string \| null | `null` |  | Custom system prompt for the DRIFT primer (intermediate answer + follow-up queries) |
+| `drift_primer_human` | string \| null | `null` |  | Custom human prompt for the DRIFT primer (intermediate answer + follow-up queries) |
+| `pairwise_comparison_system` | string \| null | `null` |  | Custom system prompt for the run-eval --pairwise-judge LLM judge |
+| `pairwise_comparison_human` | string \| null | `null` |  | Custom human prompt for the run-eval --pairwise-judge LLM judge |
+| `answer_span_extraction_system` | string \| null | `null` |  | Custom system prompt for the run-eval answer-span extractor (evaluation.answer_span: extracted) |
+| `answer_span_extraction_human` | string \| null | `null` |  | Custom human prompt for the run-eval answer-span extractor (evaluation.answer_span: extracted) |
+| `pairwise_overlap_system` | string \| null | `null` |  | Custom system prompt for the shared/unique statement split of run-eval --pairwise-mode differential |
+| `pairwise_overlap_human` | string \| null | `null` |  | Custom human prompt for the shared/unique statement split of run-eval --pairwise-mode differential |
+| `pairwise_differential_system` | string \| null | `null` |  | Custom system prompt for the run-eval --pairwise-mode differential judge (judges the unique statements) |
+| `pairwise_differential_human` | string \| null | `null` |  | Custom human prompt for the run-eval --pairwise-mode differential judge (judges the unique statements) |
+| `assertion_judgement_system` | string \| null | `null` |  | Custom system prompt for the assertion evaluator's judge |
+| `assertion_judgement_human` | string \| null | `null` |  | Custom human prompt for the assertion evaluator's judge |
+| `closed_book_answer_system` | string \| null | `null` |  | Custom system prompt for the run-eval --closed-book answers |
+| `closed_book_answer_human` | string \| null | `null` |  | Custom human prompt for the run-eval --closed-book answers |
+| `benchmark_activity_context_system` | string \| null | `null` |  | Custom system prompt for the personas and tasks of prepare-benchmark assertions |
+| `benchmark_activity_context_human` | string \| null | `null` |  | Custom human prompt for the personas and tasks of prepare-benchmark assertions |
+| `benchmark_questions_system` | string \| null | `null` |  | Custom system prompt for the question generation of prepare-benchmark assertions |
+| `benchmark_questions_human` | string \| null | `null` |  | Custom human prompt for the question generation of prepare-benchmark assertions |
+| `benchmark_claims_system` | string \| null | `null` |  | Custom system prompt for the claim extraction (map step) of prepare-benchmark assertions |
+| `benchmark_claims_human` | string \| null | `null` |  | Custom human prompt for the claim extraction (map step) of prepare-benchmark assertions |
+| `benchmark_assertions_system` | string \| null | `null` |  | Custom system prompt for the assertion synthesis (reduce step) of prepare-benchmark assertions |
+| `benchmark_assertions_human` | string \| null | `null` |  | Custom human prompt for the assertion synthesis (reduce step) of prepare-benchmark assertions |
+| `benchmark_validation_system` | string \| null | `null` |  | Custom system prompt for the assertion validation of prepare-benchmark assertions |
+| `benchmark_validation_human` | string \| null | `null` |  | Custom human prompt for the assertion validation of prepare-benchmark assertions |
+| `drift_hyde_system` | string \| null | `null` |  | Custom system prompt for the DRIFT query expansion (HyDE) |
+| `drift_hyde_human` | string \| null | `null` |  | Custom human prompt for the DRIFT query expansion (HyDE) |
+| `iterative_controller_system` | string \| null | `null` |  | Custom system prompt for iterative search's controller, which judges whether the context answers the question and names the bridge entities and follow-up queries |
+| `iterative_controller_human` | string \| null | `null` |  | Custom human prompt for iterative search's controller |
+| `graph_query_system` | string \| null | `null` |  | Custom system prompt for the structured strategy's planner, which writes the question as a graph query plan (JSON) |
+| `graph_query_human` | string \| null | `null` |  | Custom human prompt for the structured strategy's planner |
+| `drift_action_system` | string \| null | `null` |  | Custom system prompt for answering a DRIFT follow-up query from its local-search context |
+| `drift_action_human` | string \| null | `null` |  | Custom human prompt for answering a DRIFT follow-up query from its local-search context |
+| `query_rewrite_system` | string \| null | `null` |  | Custom system prompt for rewriting a follow-up message as a standalone question from the conversation history |
+| `query_rewrite_human` | string \| null | `null` |  | Custom human prompt for rewriting a follow-up message as a standalone question from the conversation history |
+| `strategy_selection_system` | string \| null | `null` |  | Custom system prompt for selecting search strategy based on user query |
+| `strategy_selection_human` | string \| null | `null` |  | Custom human prompt for selecting search strategy based on user query |
+| `global_map_system` | string \| null | `null` |  | Custom system prompt for the global-search map step (rate community-report key points 0-100 for relevance) |
+| `global_map_human` | string \| null | `null` |  | Custom human prompt for the global-search map step (rate community-report key points 0-100 for relevance) |
 
 ## `mcp`
 
 The read-only MCP server of run-mcp-server
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `tools` | list[`"kg_search"` \| `"kg_answer"` \| `"kg_get_entity"` \| `"kg_neighbors"` \| `"kg_describe_schema"`] (min length 1) | see [Long defaults](#long-defaults) | The tools the server lists, of kg_search, kg_answer, kg_get_entity, kg_neighbors and kg_describe_schema (all by default). Leave kg_answer out to make no answer-model call: the agent then answers from kg_search's records with its own model |
-| `allowed_namespaces` | list[string] | `[]` | Further index namespaces (suffixes) a tool call may name in its namespace argument. Empty (the default): the tools take no namespace argument and serve only the namespace the server started with |
-| `strategies` | list[`"auto"` \| `"drift"` \| `"global"` \| `"local"` \| `"simple"` \| `"mix"` \| `"hybrid"` \| `"naive"` \| `"iterative"` \| `"ppr"` \| `"tree"` \| `"structured"`] \| null (min length 1) | `null` | The search strategies kg_search and kg_answer may run (null: every strategy; one the namespace does not hold is refused either way). The default strategy is auto when listed, else the first one; auto then routes (and falls back) only among them, and is refused before any model call when the namespace serves none of them |
-| `max_top_k` | integer (≥ 1, ≤ 100) | `20` | Largest top_k (and kg_get_entity limit) a call may ask |
-| `max_hops` | integer (≥ 1, ≤ 3) | `2` | Largest max_hops of a kg_neighbors call |
-| `max_neighbors` | integer (≥ 1, ≤ 500) | `50` | Largest number of neighbours (and of relationships) one kg_neighbors call returns |
-| `max_query_chars` | integer (≥ 1) | `2000` | Longest query (and entity name) a call may give, in characters |
-| `max_text_chars` | integer (≥ 100) | `2000` | Characters of text each returned record keeps (chunk text, a description); a longer one is cut and marked text_truncated |
-| `max_response_chars` | integer (≥ 1000) | `60000` | Characters of serialized records one response holds; past it the lowest-ranked records are left out (truncated, omitted). The MCP message carries the result twice (structured content and its JSON text) and JSON escaping lengthens non-ASCII text, so the message on the wire is up to about 2-4 times this |
-| `uncited_records` | integer (≥ 1, ≤ 100) | `5` | Records a kg_answer with records=cited returns when its answer cites none (its strategy's citations are off, global and drift by default, or it wrote no [n] marker): the first ones, best first (records_kept: top); records=all returns every one |
-| `max_concurrent_calls` | integer (≥ 1) | `4` | Tool calls the server runs at once; further calls wait, and the wait counts toward the call's one deadline (search.query_timeout_seconds) |
+| Key | Type | Default | Evidence | Description |
+|---|---|---|---|---|
+| `tools` | list[`"kg_search"` \| `"kg_answer"` \| `"kg_get_entity"` \| `"kg_neighbors"` \| `"kg_describe_schema"`] (min length 1) | see [Long defaults](#long-defaults) |  | The tools the server lists, of kg_search, kg_answer, kg_get_entity, kg_neighbors and kg_describe_schema (all by default). Leave kg_answer out to make no answer-model call: the agent then answers from kg_search's records with its own model |
+| `allowed_namespaces` | list[string] | `[]` |  | Further index namespaces (suffixes) a tool call may name in its namespace argument. Empty (the default): the tools take no namespace argument and serve only the namespace the server started with |
+| `strategies` | list[`"auto"` \| `"drift"` \| `"global"` \| `"local"` \| `"simple"` \| `"mix"` \| `"hybrid"` \| `"naive"` \| `"iterative"` \| `"ppr"` \| `"tree"` \| `"structured"`] \| null (min length 1) | `null` |  | The search strategies kg_search and kg_answer may run (null: every strategy; one the namespace does not hold is refused either way). The default strategy is auto when listed, else the first one; auto then routes (and falls back) only among them, and is refused before any model call when the namespace serves none of them |
+| `max_top_k` | integer (≥ 1, ≤ 100) | `20` | operational | Largest top_k (and kg_get_entity limit) a call may ask |
+| `max_hops` | integer (≥ 1, ≤ 3) | `2` | operational | Largest max_hops of a kg_neighbors call |
+| `max_neighbors` | integer (≥ 1, ≤ 500) | `50` | operational | Largest number of neighbours (and of relationships) one kg_neighbors call returns |
+| `max_query_chars` | integer (≥ 1) | `2000` | operational | Longest query (and entity name) a call may give, in characters |
+| `max_text_chars` | integer (≥ 100) | `2000` | operational | Characters of text each returned record keeps (chunk text, a description); a longer one is cut and marked text_truncated |
+| `max_response_chars` | integer (≥ 1000) | `60000` | operational | Characters of serialized records one response holds; past it the lowest-ranked records are left out (truncated, omitted). The MCP message carries the result twice (structured content and its JSON text) and JSON escaping lengthens non-ASCII text, so the message on the wire is up to about 2-4 times this |
+| `uncited_records` | integer (≥ 1, ≤ 100) | `5` | operational | Records a kg_answer with records=cited returns when its answer cites none (its strategy's citations are off, global and drift by default, or it wrote no [n] marker): the first ones, best first (records_kept: top); records=all returns every one |
+| `max_concurrent_calls` | integer (≥ 1) | `4` | operational | Tool calls the server runs at once; further calls wait, and the wait counts toward the call's one deadline (search.query_timeout_seconds) |
 
 ## Long defaults
 
@@ -1158,6 +1253,94 @@ tools:
 - kg_describe_schema
 ```
 
+## Defaults no run compared
+
+The numeric defaults that change what is retrieved or answered and that no run compared with another value: the departures from the original algorithm first, then the rest. They keep the values they were written with. [Defaults and evidence](../concepts/defaults-and-evidence.md) holds the defaults a run measured and how to compare settings on your own corpus.
+
+| Key | Default | Evidence |
+|---|---|---|
+| `processing.chunking.chunk_overlap` | `125` | deviation: MS GraphRAG's and LightRAG's chunk overlap, 100 tokens |
+| `processing.graph_extraction.description_summarization.max_summary_tokens` | `256` | deviation: MS GraphRAG's summarize_descriptions max_length: 500 |
+| `graph.community_detection.trials` | `3` | deviation: MS GraphRAG runs 1 |
+| `graph.community_detection.extra_forced_iterations` | `2` | deviation: MS GraphRAG runs 0 |
+| `graph.community_detection.max_cluster_size` | `20` | deviation: MS GraphRAG's max_cluster_size: 10 |
+| `graph.community_detection.report_generation.max_report_context_tokens` | `4000` | deviation: MS GraphRAG's community report max_input_length: 8000 |
+| `indexing.summary_tree.target_children` | `6` | deviation: RAPTOR picks k by BIC (max_clusters 50); its trees average 6.7 children |
+| `indexing.summary_tree.min_level_shrink` | `0.2` | deviation: RAPTOR never stops for it (0) |
+| `indexing.summary_tree.max_cluster_tokens` | `8000` | deviation: RAPTOR's max_length_in_cluster, 3500 cl100k tokens |
+| `search.drift_search.k_followups` | `10` | deviation: MS GraphRAG's drift_k_followups: 20 |
+| `search.drift_search.n_depth` | `2` | deviation: MS GraphRAG's n_depth: 3 |
+| `processing.deduplicate_similarity_threshold` | `0.9` | unmeasured |
+| `processing.similarity_threshold` | `0.85` | unmeasured |
+| `processing.chunking.min_chunk_size` | `250` | unmeasured |
+| `processing.chunking.max_chunk_size` | `2000` | unmeasured |
+| `processing.graph_extraction.max_entities_per_chunk` | `50` | unmeasured |
+| `processing.graph_extraction.max_relationships_per_chunk` | `50` | unmeasured |
+| `processing.graph_extraction.entity_confidence_threshold` | `0.0` | unmeasured |
+| `processing.graph_extraction.description_summarization.force_summary_threshold_tokens` | `600` | unmeasured |
+| `processing.graph_extraction.entity_grounding.penalty_factor` | `0.5` | unmeasured |
+| `processing.graph_extraction.entity_grounding.min_span_tokens` | `4` | unmeasured |
+| `processing.graph_extraction.entity_grounding.min_overlap_ratio` | `0.6` | unmeasured |
+| `processing.gleaning.max_entities_per_prompt` | `100` | unmeasured |
+| `processing.gleaning.max_relationships_per_prompt` | `100` | unmeasured |
+| `processing.claim_extraction.max_entities_per_prompt` | `100` | unmeasured |
+| `graph.community_detection.max_levels` | `5` | unmeasured |
+| `graph.community_detection.min_community_size` | `3` | unmeasured |
+| `graph.community_detection.report_generation.max_entities_per_report` | `50` | unmeasured |
+| `indexing.summary_tree.max_summary_tokens` | `300` | unmeasured |
+| `indexing.summary_tree.min_leaves_per_tree` | `3` | unmeasured |
+| `search.hybrid.lexical_weight` | `0.5` | unmeasured: an equal split |
+| `search.hybrid.vector_weight` | `0.5` | unmeasured: an equal split |
+| `search.hybrid.normalization_window` | `50` | unmeasured |
+| `search.reranking.top_k` | `100` | unmeasured |
+| `search.global_search.max_reports_per_level` | `100` | unmeasured |
+| `search.global_search.map_reduce_min_results` | `3` | unmeasured |
+| `search.global_search.max_map_reduce_tokens` | `8000` | unmeasured |
+| `search.local_search.seed_score_ratio` | `0.6` | unmeasured |
+| `search.local_search.ppr_seed_relationships` | `5` | unmeasured |
+| `search.local_search.entity_candidates_per_focus` | `2` | unmeasured |
+| `search.local_search.type_quota.text_multiplier` | `2.0` | unmeasured |
+| `search.local_search.type_quota.text_floor` | `20` | unmeasured |
+| `search.local_search.type_quota.entity_multiplier` | `1.0` | unmeasured |
+| `search.local_search.type_quota.relationship_multiplier` | `1.0` | unmeasured |
+| `search.local_search.type_quota.community_multiplier` | `0.5` | unmeasured |
+| `search.local_search.type_quota.community_floor` | `2` | unmeasured |
+| `search.local_search.type_quota.claim_multiplier` | `0.5` | unmeasured |
+| `search.local_search.type_quota.claim_floor` | `2` | unmeasured |
+| `search.drift_search.max_answer_tokens` | `8000` | unmeasured |
+| `search.iterative_search.round_top_k` | `5` | unmeasured |
+| `search.iterative_search.max_next_queries` | `2` | unmeasured |
+| `search.iterative_search.max_bridge_entities` | `5` | unmeasured |
+| `search.ppr_search.passage_seed_top_k` | `20` | unmeasured |
+| `search.ppr_search.max_hops` | `2` | unmeasured |
+| `search.ppr_search.max_neighbourhood_entities` | `100` | unmeasured |
+| `search.ppr_search.max_edges_per_vertex` | `50` | unmeasured |
+| `search.ppr_search.entity_frequency_threshold` | `20` | unmeasured |
+| `search.tree_search.graph_seed_entities` | `8` | unmeasured |
+| `search.tree_search.text_top_k` | `20` | unmeasured |
+| `search.tree_search.max_nodes_per_level` | `3` | unmeasured |
+| `search.tree_search.expand_children` | `2` | unmeasured |
+| `search.structured.max_hops` | `3` | unmeasured |
+| `search.structured.rows_in_context` | `50` | unmeasured |
+| `search.structured.repair_attempts` | `1` | unmeasured |
+| `search.structured.link_candidates` | `3` | unmeasured |
+| `search.structured.link_min_score` | `0.0` | unmeasured |
+| `search.structured.supporting_chunks` | `5` | unmeasured |
+| `search.graph_expansion.max_hops` | `3` | unmeasured |
+| `search.graph_expansion.max_results_per_hop` | `50` | unmeasured |
+| `search.graph_expansion.traversal_fetch_multiplier` | `3` | unmeasured |
+| `search.token_manager.min_truncated_section_tokens` | `64` | unmeasured |
+| `search.token_manager.type_budgets.text` | `0.5` | unmeasured |
+| `search.token_manager.type_budgets.entity` | `0.2` | unmeasured |
+| `search.token_manager.type_budgets.relationship` | `0.13` | unmeasured |
+| `search.token_manager.type_budgets.community` | `0.1` | unmeasured |
+| `search.token_manager.type_budgets.claim` | `0.07` | unmeasured |
+| `search.token_manager.type_budgets.general` | `0.1` | unmeasured |
+| `search.token_manager.type_budgets.summary` | `0.5` | unmeasured |
+| `search.token_manager.type_budgets.query_result` | `0.25` | unmeasured |
+| `search.citations.lineage_units` | `10` | unmeasured |
+| `memory.max_history_tokens` | `4000` | unmeasured |
+
 ## Moved keys
 
 These keys are refused at load with the key that replaced them.
@@ -1196,19 +1379,19 @@ These keys are refused at load with the key that replaced them.
 | `aws.dynamodb.enabled` | `providers.doc_status.enabled` |
 | `search.reranking.rerank_model_id` | `models.rerank` |
 | `aws.bedrock.default_max_output_tokens` | `models.default_max_output_tokens` |
-| `processing.max_attempts` | `retry.max_attempts` |
-| `aws.bedrock.transient_retry.max_attempts` | `retry.max_attempts` |
-| `aws.bedrock.transient_retry.base_delay_seconds` | `retry.base_delay_seconds` |
-| `aws.bedrock.transient_retry.max_delay_seconds` | `retry.max_delay_seconds` |
-| `aws.bedrock.transient_retry.max_total_seconds` | `retry.max_total_seconds` |
-| `providers.llm.max_attempts` | `retry.model_server_max_attempts` |
-| `providers.embedding.max_attempts` | `retry.model_server_max_attempts` |
-| `indexing.neptune.max_attempts` | `retry.graph_store_max_attempts` |
-| `indexing.neptune.retry_delay_seconds` | `retry.base_delay_seconds` |
-| `search.store_max_attempts` | `retry.query_store_max_attempts` |
+| `processing.max_attempts` | `retry.ingestion_item.max_attempts` |
+| `aws.bedrock.transient_retry.max_attempts` | `retry.model.max_attempts` |
+| `aws.bedrock.transient_retry.base_delay_seconds` | `retry.model.base_delay_seconds` |
+| `aws.bedrock.transient_retry.max_delay_seconds` | `retry.model.max_delay_seconds` |
+| `aws.bedrock.transient_retry.max_total_seconds` | `retry.model.max_total_seconds` |
+| `providers.llm.max_attempts` | `retry.model_server.max_attempts` |
+| `providers.embedding.max_attempts` | `retry.model_server.max_attempts` |
+| `indexing.neptune.max_attempts` | `retry.graph_store.max_attempts` |
+| `indexing.neptune.retry_delay_seconds` | `retry.graph_store.base_delay_seconds` |
+| `search.store_max_attempts` | `retry.query_store.max_attempts` |
 | `evaluation.ragas_max_attempts` | `retry.judge_max_attempts` |
-| `processing.max_retries` | `retry.max_attempts` |
-| `indexing.neptune.max_retries` | `retry.graph_store_max_attempts` |
+| `processing.max_retries` | `retry.ingestion_item.max_attempts` |
+| `indexing.neptune.max_retries` | `retry.graph_store.max_attempts` |
 | `processing.chunk_concurrency` | `processing.max_concurrency` |
 | `processing.batch_size` | `processing.max_concurrency` |
 | `indexing.cross_run_fuzzy_merge` | `processing.fuzzy_entity_resolution` |
@@ -1220,17 +1403,24 @@ These keys are refused at load with the key that replaced them.
 
 Each takes the value of the key it replaces, except:
 
-- `processing.max_retries`: it had no effect; each model call made 5 attempts, the retry.max_attempts default.
-- `indexing.neptune.max_retries`: it counted retries, so max_retries N is graph_store_max_attempts N+1.
+- `processing.max_retries`: it had no effect; each model call made 5 attempts, the retry.ingestion_item.max_attempts default.
+- `indexing.neptune.max_retries`: it counted retries, so max_retries N is retry.graph_store.max_attempts N+1.
 - `processing.batch_size`: it counted the items of one batch, not calls in flight; max_concurrency caps the calls.
 
 ## Deprecated keys
 
-These keys still load, into the key that replaces them, with a WARNING.
+These keys still load, into the key or keys that replace them, with a WARNING. A key that governed several callers loads into each; one set beside a replacement to another value fails the load, naming both.
 
 | Deprecated key | Loads into |
 |---|---|
 | `evaluation.prices` | `models.prices` |
+| `retry.max_attempts` | `retry.model.max_attempts`, `retry.ingestion_item.max_attempts` |
+| `retry.base_delay_seconds` | `retry.model.base_delay_seconds`, `retry.model_server.base_delay_seconds`, `retry.graph_store.base_delay_seconds` |
+| `retry.max_delay_seconds` | `retry.model.max_delay_seconds`, `retry.model_server.max_delay_seconds` |
+| `retry.max_total_seconds` | `retry.model.max_total_seconds`, `retry.model_server.max_total_seconds` |
+| `retry.model_server_max_attempts` | `retry.model_server.max_attempts` |
+| `retry.graph_store_max_attempts` | `retry.graph_store.max_attempts` |
+| `retry.query_store_max_attempts` | `retry.query_store.max_attempts` |
 
 ## Removed keys
 

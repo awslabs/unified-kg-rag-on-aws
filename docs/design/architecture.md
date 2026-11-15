@@ -385,7 +385,12 @@ module per section, root `Config`) loaded by `application/config.py`
 (`get_config`).
 [docs/reference/configuration.md](../reference/configuration.md) is generated from it by
 `scripts/gen_config_reference.py`, and `tests/unit/test_config_reference.py`
-fails when it is stale; `config-template.yaml` is a short starting file with
+fails when it is stale. Every numeric default carries an evidence tag
+(`domain/models/evidence.py`: measured, upstream, deviation, operational or
+unmeasured), which the reference prints, listing the defaults no run
+compared; `tests/unit/test_config_evidence.py` fails an untagged one, and
+`tests/unit/test_numeric_constants.py` a numeric module constant not listed,
+with its reason, in `tests/fixtures/numeric_constants.py`; `config-template.yaml` is a short starting file with
 the keys most deployments set (`tests/unit/test_config_template_defaults.py`
 checks that its values are the defaults and each key is in the reference).
 [docs/reference/cli.md](../reference/cli.md) is generated the same way from the CLI parsers

@@ -1178,8 +1178,9 @@ classification and output parsing: [Design Doc §5.1](./design/incremental.md#51
   fails indexing before anything is written, with an error naming the file:
   split it.
 - **Write failures** are retried first: OpenSearch bulk items rejected with
-  429, 502, 503 or 504 up to four times with backoff, every Neptune request up
-  to `retry.graph_store_max_attempts` (default `4`) over a new connection. If
+  429, 502, 503 or 504 up to four times with backoff (`retry.bulk_item`), every
+  Neptune request up to `retry.graph_store.max_attempts` (default `4`) over a
+  new connection. If
   more than `indexing.max_failure_rate` (default `0.2`) of one artifact type's
   writes still fail, indexing fails and records no document. Either way the
   failed entities, relationships, claims, communities and reports are noted
@@ -1634,8 +1635,8 @@ strategy to its own.
 request against the model's tokens-per-minute (TPM) quota when the request
 starts, and throttles requests past it. A throttled query call is retried by
 botocore's adaptive mode within `search.model_max_attempts`, then with
-backoff by the query-chain retry (`retry.max_attempts`,
-`retry.max_total_seconds`), and every retry waits inside the query deadline.
+backoff by the query-chain retry (`retry.model.max_attempts`,
+`retry.model.max_total_seconds`), and every retry waits inside the query deadline.
 So a quota too small for the query load shows up as `QueryTimeoutError`
 rather than as slower answers: `run-eval` keeps `processing.max_concurrency`
 queries in flight, each with up to `search.max_concurrency` model calls (the

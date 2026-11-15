@@ -73,6 +73,7 @@ from unified_kg_rag.domain.models import (
     IndexArtifact,
     ModelRole,
     PipelineStageType,
+    ResolutionMethod,
 )
 from unified_kg_rag.domain.models.config import SummaryTreeConfig, TreeSearchConfig
 from unified_kg_rag.domain.models.provider_config import BEDROCK
@@ -255,6 +256,7 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
     **_keyed_at(
         _P.DOCUMENT_LOADING,
         "processing.deduplicate",
+        "processing.deduplicate_similarity_threshold",
         "indexing.reset",
         "indexing.retire_source_scopes",
         "indexing.max_document_failures",
@@ -323,6 +325,7 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
         _P.GRAPH_RESOLUTION,
         "processing.resolution_method",
         "processing.similarity_threshold",
+        "processing.minhash_similarity_threshold",
         "processing.fuzzy_entity_resolution",
     ),
     **_keyed_at(
@@ -509,6 +512,10 @@ _KEYED_ONCE_SET = frozenset(
         # as before (one detected as none now fails instead of being read
         # as latin-1).
         "processing.document_parsing.encoding",
+        # Unset, minhash resolution keeps similarity_threshold, as before
+        # the field; deduplication keeps its former fixed 0.9.
+        "processing.deduplicate_similarity_threshold",
+        "processing.minhash_similarity_threshold",
         # Overrides of the chunker's and the translator's prompts, added
         # after them: unset, the prompts are the ones keyed before.
         "custom_prompts.text_chunking_system",
@@ -576,6 +583,14 @@ def _block_on(config: Config, path: str) -> bool:
 # Path prefix -> whether the settings under it are in effect. Their switch
 # fields (``kind``, ``enabled``) count either way.
 _IN_EFFECT_WHEN: dict[str, Callable[[Config], bool]] = {
+    "processing.deduplicate_similarity_threshold": lambda c: c.processing.deduplicate,
+    # Read by minhash resolution only, and the same as unset at
+    # similarity_threshold's value.
+    "processing.minhash_similarity_threshold": lambda c: (
+        c.processing.resolution_method is ResolutionMethod.MINHASH
+        and c.processing.minhash_similarity_threshold
+        != c.processing.similarity_threshold
+    ),
     # A role's model counts while the stage it serves runs.
     **{
         f"models.roles.{role}": functools.partial(_block_on, path=block)

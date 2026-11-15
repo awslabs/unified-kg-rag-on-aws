@@ -50,23 +50,23 @@ MOVED_KEYS: dict[str, str] = {
     "aws.dynamodb.enabled": "providers.doc_status.enabled",
     "search.reranking.rerank_model_id": "models.rerank",
     "aws.bedrock.default_max_output_tokens": "models.default_max_output_tokens",
-    # Retries are configured in one section; each old key counts what its
-    # replacement counts, so a tuned value fails the load instead of
-    # silently reverting to the default.
-    "processing.max_attempts": "retry.max_attempts",
-    "aws.bedrock.transient_retry.max_attempts": "retry.max_attempts",
-    "aws.bedrock.transient_retry.base_delay_seconds": "retry.base_delay_seconds",
-    "aws.bedrock.transient_retry.max_delay_seconds": "retry.max_delay_seconds",
-    "aws.bedrock.transient_retry.max_total_seconds": "retry.max_total_seconds",
-    "providers.llm.max_attempts": "retry.model_server_max_attempts",
-    "providers.embedding.max_attempts": "retry.model_server_max_attempts",
-    "indexing.neptune.max_attempts": "retry.graph_store_max_attempts",
-    "indexing.neptune.retry_delay_seconds": "retry.base_delay_seconds",
-    "search.store_max_attempts": "retry.query_store_max_attempts",
+    # Retries are configured in one section, one profile per caller; each old
+    # key counts what its replacement counts, so a tuned value fails the load
+    # instead of silently reverting to the default.
+    "processing.max_attempts": "retry.ingestion_item.max_attempts",
+    "aws.bedrock.transient_retry.max_attempts": "retry.model.max_attempts",
+    "aws.bedrock.transient_retry.base_delay_seconds": "retry.model.base_delay_seconds",
+    "aws.bedrock.transient_retry.max_delay_seconds": "retry.model.max_delay_seconds",
+    "aws.bedrock.transient_retry.max_total_seconds": "retry.model.max_total_seconds",
+    "providers.llm.max_attempts": "retry.model_server.max_attempts",
+    "providers.embedding.max_attempts": "retry.model_server.max_attempts",
+    "indexing.neptune.max_attempts": "retry.graph_store.max_attempts",
+    "indexing.neptune.retry_delay_seconds": "retry.graph_store.base_delay_seconds",
+    "search.store_max_attempts": "retry.query_store.max_attempts",
     "evaluation.ragas_max_attempts": "retry.judge_max_attempts",
     # The 0.2.3 retry counts, which count otherwise (MOVED_KEY_NOTES).
-    "processing.max_retries": "retry.max_attempts",
-    "indexing.neptune.max_retries": "retry.graph_store_max_attempts",
+    "processing.max_retries": "retry.ingestion_item.max_attempts",
+    "indexing.neptune.max_retries": "retry.graph_store.max_attempts",
     # 0.2.3's call pools, one pool of in-flight calls now.
     "processing.chunk_concurrency": "processing.max_concurrency",
     "processing.batch_size": "processing.max_concurrency",
@@ -89,10 +89,10 @@ MOVED_KEYS: dict[str, str] = {
 MOVED_KEY_NOTES: dict[str, str] = {
     "processing.max_retries": (
         "it had no effect; each model call made 5 attempts, the "
-        "retry.max_attempts default"
+        "retry.ingestion_item.max_attempts default"
     ),
     "indexing.neptune.max_retries": (
-        "it counted retries, so max_retries N is graph_store_max_attempts N+1"
+        "it counted retries, so max_retries N is retry.graph_store.max_attempts N+1"
     ),
     "processing.batch_size": (
         "it counted the items of one batch, not calls in flight; "
@@ -101,12 +101,40 @@ MOVED_KEY_NOTES: dict[str, str] = {
 }
 
 
-# Deprecated settings -> the key that replaces each. A config that sets one
-# still loads: its value is moved into the replacement before validation
-# (:func:`migrate_deprecated_keys`), with a WARNING naming it.
-DEPRECATED_KEYS: dict[str, str] = {
+# Deprecated settings -> the key, or keys, that replace each. A config that
+# sets one still loads: its value is moved into every replacement before
+# validation (:func:`migrate_deprecated_keys`), with a WARNING naming it.
+DEPRECATED_KEYS: dict[str, str | tuple[str, ...]] = {
     "evaluation.prices": "models.prices",
+    # The flat retry keys of 0.3.0, before the per-caller profiles: each
+    # governed the callers whose profiles it maps to.
+    "retry.max_attempts": (
+        "retry.model.max_attempts",
+        "retry.ingestion_item.max_attempts",
+    ),
+    "retry.base_delay_seconds": (
+        "retry.model.base_delay_seconds",
+        "retry.model_server.base_delay_seconds",
+        "retry.graph_store.base_delay_seconds",
+    ),
+    "retry.max_delay_seconds": (
+        "retry.model.max_delay_seconds",
+        "retry.model_server.max_delay_seconds",
+    ),
+    "retry.max_total_seconds": (
+        "retry.model.max_total_seconds",
+        "retry.model_server.max_total_seconds",
+    ),
+    "retry.model_server_max_attempts": "retry.model_server.max_attempts",
+    "retry.graph_store_max_attempts": "retry.graph_store.max_attempts",
+    "retry.query_store_max_attempts": "retry.query_store.max_attempts",
 }
+
+
+def deprecated_targets(old: str) -> tuple[str, ...]:
+    """The keys the deprecated ``old`` loads into."""
+    new = DEPRECATED_KEYS[old]
+    return (new,) if isinstance(new, str) else new
 
 
 # Removed settings -> why they are gone. A config that sets one, or a key
@@ -230,32 +258,33 @@ def _sets(data: Any, path: str) -> bool:
 
 
 def migrate_deprecated_keys(data: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
-    """``data`` with every deprecated key it sets moved into the key that
-    replaces it (copied where it changes), and those deprecated keys. A
-    replacement ``data`` sets too keeps its value: a mapping (``models.prices``)
-    keeps its own entries, whole, over the deprecated key's, any
-    other value set otherwise disagrees.
+    """``data`` with every deprecated key it sets moved into each key that
+    replaces it (:func:`deprecated_targets`; copied where it changes), and
+    those deprecated keys. A replacement ``data`` sets too keeps its value: a
+    mapping (``models.prices``) keeps its own entries, whole, over the
+    deprecated key's, any other value set otherwise disagrees.
 
     Raises:
-        ValueError: A deprecated key and its replacement are both set, to
+        ValueError: A deprecated key and a replacement are both set, to
             different values (naming both).
     """
     migrated: list[str] = []
     conflicts: list[str] = []
-    for old, new in DEPRECATED_KEYS.items():
+    for old in DEPRECATED_KEYS:
         if not _sets(data, old):
             continue
         if not migrated:
             data = copy.deepcopy(data)
         value = _pop(data, old)
         migrated.append(old)
-        current = _get(data, new)
-        if current is _ABSENT:
-            _put(data, new, value)
-        elif isinstance(current, dict) and isinstance(value, dict):
-            _put(data, new, {**value, **current})
-        elif current != value:
-            conflicts.append(f"{old} and {new} are both set, to different values")
+        for new in deprecated_targets(old):
+            current = _get(data, new)
+            if current is _ABSENT:
+                _put(data, new, copy.deepcopy(value))
+            elif isinstance(current, dict) and isinstance(value, dict):
+                _put(data, new, {**value, **current})
+            elif current != value:
+                conflicts.append(f"{old} and {new} are both set, to different values")
     if conflicts:
         raise ValueError(
             "deprecated settings disagree with their replacements: "
@@ -266,9 +295,14 @@ def migrate_deprecated_keys(data: dict[str, Any]) -> tuple[dict[str, Any], list[
 
 
 def _get(data: Any, path: str) -> Any:
+    """The value ``data`` sets at ``path``: a section given as a model (a
+    ``RetryPolicy`` object) sets the fields it was given."""
     node = data
     for part in path.split("."):
-        node = node.get(part, _ABSENT) if isinstance(node, dict) else _ABSENT
+        if isinstance(node, BaseModel):
+            node = getattr(node, part) if part in node.model_fields_set else _ABSENT
+        else:
+            node = node.get(part, _ABSENT) if isinstance(node, dict) else _ABSENT
     return node
 
 
@@ -285,7 +319,10 @@ def _put(data: dict[str, Any], path: str, value: Any) -> None:
     node = data
     for part in parents:
         child = node.get(part)
-        if not isinstance(child, dict):
+        if isinstance(child, BaseModel):
+            # Its set fields, so the value joins them.
+            child = node[part] = child.model_dump(exclude_unset=True)
+        elif not isinstance(child, dict):
             child = node[part] = {}
         node = child
     node[last] = value

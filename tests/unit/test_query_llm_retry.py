@@ -41,15 +41,13 @@ from unified_kg_rag.domain.models import (
     RetrieverRole,
     SearchStrategy,
 )
-from unified_kg_rag.domain.models.config import RetryConfig, TransientRetryConfig
+from unified_kg_rag.domain.models.config import RetryConfig, RetryPolicy
 from unified_kg_rag.domain.prompts import StrategySelectionPrompt
 
 pytestmark = pytest.mark.unit
 
 _ANSWER = "Vendor ships parts to Buyer every quarter."
-_NO_WAIT = TransientRetryConfig(
-    max_attempts=3, base_delay_seconds=0.0, max_delay_seconds=0.0
-)
+_NO_WAIT = RetryPolicy(max_attempts=3, base_delay_seconds=0.0, max_delay_seconds=0.0)
 
 
 def _client_error(code: str, status: int) -> ClientError:
@@ -135,15 +133,15 @@ class _FakeBedrockFactory(BedrockLanguageModelFactory):
         return fake_model_info(model_id)
 
 
-def _config(retry: TransientRetryConfig = _NO_WAIT) -> Config:
+def _config(retry: RetryPolicy = _NO_WAIT) -> Config:
     config = Config()
-    config.retry = RetryConfig(**retry.model_dump())
+    config.retry = RetryConfig(model=retry)
     return config
 
 
 def _query_chain(
     model: _ScriptedModel,
-    retry: TransientRetryConfig = _NO_WAIT,
+    retry: RetryPolicy = _NO_WAIT,
     purpose: ModelPurpose = ModelPurpose.QUERY,
 ) -> Runnable:
     return setup_chain(
@@ -197,7 +195,7 @@ async def test_exhausted_retries_reraise_last_transient_error() -> None:
 
 async def test_retry_budget_bounds_attempts() -> None:
     # A backoff that would cross the wall-clock budget is not taken.
-    retry = TransientRetryConfig(
+    retry = RetryPolicy(
         max_attempts=5,
         base_delay_seconds=30.0,
         max_delay_seconds=30.0,
@@ -242,7 +240,7 @@ def test_sync_stream_does_not_retry_after_output_was_emitted() -> None:
 def test_retry_disabled_returns_plain_chain() -> None:
     chain = RunnableLambda(lambda x: x)
     assert with_transient_retry(chain, operation="op", retry=None) is chain
-    off = TransientRetryConfig(max_attempts=1)
+    off = RetryPolicy(max_attempts=1)
     assert with_transient_retry(chain, operation="op", retry=off) is chain
     assert not isinstance(_query_chain(_ScriptedModel(), off), TransientRetryRunnable)
 
@@ -328,7 +326,9 @@ def test_batch_processor_chain_is_not_double_retried() -> None:
     # 3 per attempt).
     model = _ScriptedModel([_model_error() for _ in range(10)])
     chain = _query_chain(model, purpose=ModelPurpose.INGESTION)
-    processor = BatchProcessor(max_attempts=2, retry_multiplier=1.0, retry_max_wait=0)
+    processor = BatchProcessor(
+        retry=RetryPolicy(max_attempts=2, base_delay_seconds=1.0, max_delay_seconds=0),
+    )
 
     results = processor.execute_with_fallback(
         items_to_process=["item"],

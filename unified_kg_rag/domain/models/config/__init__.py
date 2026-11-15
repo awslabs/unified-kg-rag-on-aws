@@ -9,6 +9,7 @@ Import configuration names from this package, not from its private
 from unified_kg_rag.domain.languages import LanguageCode, language_name
 
 from ._aws import (
+    RETRY_PROFILES,
     AWSConfig,
     BedrockConfig,
     ContextualGroundingConfig,
@@ -17,9 +18,10 @@ from ._aws import (
     NeptuneConfig,
     OpenSearchConfig,
     RetryConfig,
+    RetryJitter,
+    RetryPolicy,
     S3Config,
     S3EncryptionConfig,
-    TransientRetryConfig,
 )
 from ._common import (
     ChunkingStrategy,
@@ -58,6 +60,7 @@ from ._graph import (
     StaticChartSettings,
     VisualizationConfig,
 )
+from ._graph_expansion import GraphExpansionConfig
 from ._indexing import (
     DEFAULT_INDEX_SETTINGS,
     DEFAULT_LANGUAGE_ANALYZERS,
@@ -75,6 +78,7 @@ from ._migration import (
     MOVED_KEY_NOTES,
     MOVED_KEYS,
     REMOVED_KEYS,
+    deprecated_targets,
     migrate_deprecated_keys,
     moved_key_hint,
     moved_keys,
@@ -144,7 +148,6 @@ from ._seed import (
 from ._strategies import (
     DriftSearchConfig,
     GlobalSearchConfig,
-    GraphExpansionConfig,
     IterativeSearchConfig,
     LightRAGSearchConfig,
     LocalSearchConfig,
@@ -230,6 +233,7 @@ __all__ = [
     "ModelsConfig",
     "ModelTier",
     "bare_model_id",
+    "deprecated_targets",
     "migrate_deprecated_keys",
     "moved_key_hint",
     "MOVED_KEY_NOTES",
@@ -257,7 +261,10 @@ __all__ = [
     "RerankModelRef",
     "ResolutionMethod",
     "RETIRED_FUSION_BUCKETS",
+    "RETRY_PROFILES",
     "RetryConfig",
+    "RetryJitter",
+    "RetryPolicy",
     "ROLE_TIERS",
     "RoleModelsConfig",
     "S3Config",
@@ -273,7 +280,6 @@ __all__ = [
     "StructuredSearchConfig",
     "SummaryTreeConfig",
     "TokenManagerConfig",
-    "TransientRetryConfig",
     "TranslationConfig",
     "TreeSearchConfig",
     "TypeQuotaConfig",

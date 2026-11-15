@@ -162,7 +162,10 @@ def demo_config(
             "embedding": {"model_id": "demo-embed", "dimension": FAKE_DIMENSIONS},
         }
         config["models"]["prices"] = FAKE_PRICES
-        config["retry"] = {"max_attempts": 1}
+        config["retry"] = {
+            "model": {"max_attempts": 1},
+            "ingestion_item": {"max_attempts": 1},
+        }
     elif models == "ollama":
         config["backend"] = "local"
         if model_base_url:

@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 import logging
 import math
-import random
 import threading
 import time
 import uuid
@@ -34,6 +33,7 @@ from unified_kg_rag.adapters.aws.neptune import (
     vertex_id_switch_query,
     vertex_ids,
 )
+from unified_kg_rag.adapters.llm.retry import retry_wait
 from unified_kg_rag.adapters.storage.neptune_codec import (
     BUILD_TAG_PROPERTY,
     CENSUS_PROPERTIES,
@@ -87,12 +87,9 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-# Retry-backoff seams: tests patch these module attributes rather than the
-# process-global ``time.sleep``/``random.uniform``, which other threads share.
+# Retry-backoff seam: tests patch this module attribute rather than the
+# process-global ``time.sleep``, which other threads share.
 _sleep = time.sleep
-# Retry-backoff jitter only; drawn from the OS so CWE-338 scanners do not
-# flag the seedable module PRNG.
-_jitter = random.SystemRandom().uniform
 
 # Vertices one clear request drops, and the passes a clear allows beyond what
 # the label's count needs.
@@ -1913,8 +1910,8 @@ class NeptuneIndexer(GraphIndexer):
         error but a permanent one is retried, wider than a query read's
         approved list (``is_transient_neptune_error`` says why).
         """
-        max_attempts = self.config.retry.graph_store_max_attempts
-        delay = self.config.retry.base_delay_seconds
+        policy = self.config.retry.graph_store
+        started_at = time.monotonic()
         attempt = 0
         while True:
             if fenced:
@@ -1922,7 +1919,14 @@ class NeptuneIndexer(GraphIndexer):
             try:
                 return run_traversal(self.neptune_client, build, results=results)
             except Exception as e:
-                if is_permanent_neptune_error(e) or attempt + 1 == max_attempts:
+                # Full jitter by default (retry.graph_store), so concurrent
+                # workers do not retry a throttled endpoint in lock-step.
+                sleep_for = (
+                    None
+                    if is_permanent_neptune_error(e)
+                    else retry_wait(policy, attempt + 1, started_at)
+                )
+                if sleep_for is None:
                     log_error(
                         logger,
                         exhausted_level,
@@ -1932,10 +1936,6 @@ class NeptuneIndexer(GraphIndexer):
                         error=e,
                     )
                     raise
-                # Exponential backoff with full jitter so concurrent workers do
-                # not retry a throttled endpoint in lock-step.
-                backoff = delay * (2**attempt)
-                sleep_for = _jitter(0, backoff)
                 log_error(
                     logger,
                     logging.WARNING,

@@ -809,7 +809,7 @@ class TestAssertionComparison:
             [_report("a", assertion_recall=1.0, negative_assertion_violation_rate=1.0)],
             [_result("a", "x"), _result("b", "", error=True)],
         )
-        out = paired_comparison({"local": [base], "global": [other]})
+        out = paired_comparison({"local": [base], "global": [other]}, resamples=2000)
         deltas = out["deltas_vs_baseline"]["global"]
         recall = deltas["assertion/assertion_recall"]
         # The failed answer counts 0 on recall ...
@@ -828,7 +828,8 @@ class TestAssertionComparison:
                 "local": [(reports, results)],
                 "global": [(worse, results)],
                 CLOSED_BOOK_ARM: [(worse, results)],
-            }
+            },
+            resamples=2000,
         )
         out["arm_roles"] = {CLOSED_BOOK_ARM: "closed_book"}
         gate = parse_gate("assertion/assertion_recall:ci_high<-0.1")
@@ -1051,7 +1052,8 @@ def test_the_markdown_report_labels_an_aa_arm_as_the_noise_floor() -> None:
     reports = [_report(q, assertion_recall=1.0) for q in "ab"]
     results = [_result(q, "x") for q in "ab"]
     comparison = paired_comparison(
-        {"local": [(reports, results)], "local@aa": [(reports, results)]}
+        {"local": [(reports, results)], "local@aa": [(reports, results)]},
+        resamples=2000,
     )
     comparison["arm_roles"] = {"local@aa": "aa"}
     markdown = comparison_markdown(comparison)

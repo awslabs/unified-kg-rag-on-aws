@@ -230,7 +230,10 @@ RELEASE_KEYS = REPO_ROOT / "tests/fixtures/config_keys_0_3_0.txt"
 # Keys a Fixed or Changed entry may name although 0.3.0 had none: the knob
 # the change itself added to tune or undo it, or the new name of a 0.3.0 key
 # (*Breaking changes* lists the renames). Each must still be named.
-NEW_KEYS_IN_CHANGES: dict[str, str] = {}
+NEW_KEYS_IN_CHANGES: dict[str, str] = {
+    "retry.ingestion_item": "a profile a deprecated flat retry key loads into",
+    "retry.model": "a profile a deprecated flat retry key loads into",
+}
 # A backticked config key, bare, set (``search.top_k=20``, ``search.top_k:
 # 20``) or a family (``custom_prompts.text_chunking_*``); a call
 # (``export_data()``) or a file is none.
@@ -378,6 +381,23 @@ def test_no_fragment_is_repeated_within_an_entry() -> None:
 
 def test_no_two_entries_contradict() -> None:
     assert _contradictions(SECTION) == []
+
+
+def _glued_headings(section: str) -> list[tuple[int, str]]:
+    """Lines holding a Markdown heading anywhere but at their start (a
+    reflow that joined a ``### ...`` line to the bullet above it)."""
+    return [
+        (number, line)
+        for number, line in enumerate(section.splitlines(), 1)
+        if re.search(r"\S\s+#{2,6} [A-Z]", line)
+    ]
+
+
+def test_no_heading_is_glued_into_a_line() -> None:
+    assert _glued_headings(SECTION) == []
+    assert _glued_headings("- an entry.  ### Changed\n") == [
+        (1, "- an entry.  ### Changed")
+    ]
 
 
 def test_no_line_is_over_long() -> None:

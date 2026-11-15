@@ -71,7 +71,7 @@ from unified_kg_rag.shared.utils.model_output import (
 if TYPE_CHECKING:
     from unified_kg_rag.domain.models.config import (
         CustomPromptConfig,
-        TransientRetryConfig,
+        RetryPolicy,
     )
 
 logger = get_logger(__name__)
@@ -506,7 +506,7 @@ class TransientRetryRunnable(Runnable[Any, Any]):
         bound: Runnable[Any, Any],
         *,
         operation: str,
-        retry: TransientRetryConfig,
+        retry: RetryPolicy,
         is_transient: TransientErrorPredicate,
     ) -> None:
         self.bound = bound
@@ -607,7 +607,7 @@ def with_transient_retry(
     runnable: Runnable[Any, Any],
     *,
     operation: str,
-    retry: TransientRetryConfig | None,
+    retry: RetryPolicy | None,
     is_transient: TransientErrorPredicate | None = None,
 ) -> Runnable[Any, Any]:
     """Wrap ``runnable`` in :class:`TransientRetryRunnable` unless retry is off."""

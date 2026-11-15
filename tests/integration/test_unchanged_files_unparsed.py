@@ -11,7 +11,6 @@ again. Runs on the embedded stores with the fake model server
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -328,9 +327,6 @@ def test_a_slow_first_parse_of_a_file_type_starts_no_pool(
     # it is given here, whatever the host's load (a stall on a busy CI runner
     # must not read as a slow file type).
     now = [0.0]
-    monkeypatch.setattr(
-        source_parsing, "time", SimpleNamespace(perf_counter=lambda: now[0])
-    )
     calls: list[int] = []
 
     def slow_first(self, path):  # noqa: ANN001, ANN202
@@ -349,10 +345,59 @@ def test_a_slow_first_parse_of_a_file_type_starts_no_pool(
         "_parse_in_pool",
         lambda *args: pooled.append(1),
     )
-    documents, failed = source_parsing.SourceFileParser(Config(), source).parse(
+    documents, failed = source_parsing.SourceFileParser(
+        Config(), source, clock=lambda: now[0]
+    ).parse(sorted(source.iterdir()))
+    assert pooled == [] and failed == [] and len(documents) == 20
+
+
+def _timed_parses(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, costs: list[float]
+) -> list[int]:
+    """Parse ``len(costs)`` text files whose in-process parses take
+    ``costs`` seconds by the parser's clock (the first pays the loader's
+    warm-up); the files left when a pool starts, per pool."""
+    source = tmp_path / "corpus"
+    source.mkdir()
+    for i in range(len(costs)):
+        (source / f"doc_{i:02d}.txt").write_text(f"Vendor {i} ships.", encoding="utf-8")
+    parse_here = source_parsing.SourceFileParser._parse_here
+    now = [0.0]
+    parsed: list[int] = []
+
+    def timed(self, path):  # noqa: ANN001, ANN202
+        now[0] += costs[len(parsed)]
+        parsed.append(1)
+        return parse_here(self, path)
+
+    monkeypatch.setattr(source_parsing.SourceFileParser, "_parse_here", timed)
+    monkeypatch.setattr(source_parsing, "default_max_workers", lambda: 2)
+    pooled: list[int] = []
+    monkeypatch.setattr(
+        source_parsing.SourceFileParser,
+        "_parse_in_pool",
+        lambda self, paths, results, start, workers: pooled.append(len(paths) - start),
+    )
+    source_parsing.SourceFileParser(Config(), source, clock=lambda: now[0]).parse(
         sorted(source.iterdir())
     )
-    assert pooled == [] and failed == [] and len(documents) == 20
+    return pooled
+
+
+def test_steadily_slow_parses_start_a_pool_after_one_timed_parse(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A warm-up and one timed parse of 0.2 s: the 18 files left would take
+    # about 3.6 s in-process, past the pool's start, so they go to a pool.
+    pooled = _timed_parses(monkeypatch, tmp_path, [0.2] * 20)
+    assert pooled == [18]
+
+
+def test_fast_parses_start_no_pool(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pooled = _timed_parses(monkeypatch, tmp_path, [0.001] * 20)
+    assert pooled == []
 
 
 def test_a_loader_that_does_not_pickle_parses_in_process(

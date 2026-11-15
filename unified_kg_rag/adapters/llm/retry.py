@@ -5,7 +5,8 @@
 The caller says which errors are transient (``is_transient``): the language
 model factory's ``is_transient_error`` (``transient_error_predicate``), so
 validation, access-denied and other client errors fail fast. The bounds come
-from one policy, the ``retry`` section (``RetryConfig.transient_policy``).
+from the caller's profile of the ``retry`` section (a ``RetryPolicy``), and
+every caller draws its waits with :func:`backoff_delay`.
 """
 
 from __future__ import annotations
@@ -24,10 +25,13 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from langchain_core.exceptions import OutputParserException
 
-from unified_kg_rag.domain.models.config import TransientRetryConfig
+from unified_kg_rag.domain.models.config import RetryPolicy
 from unified_kg_rag.domain.models.text_unit import TextUnit
 from unified_kg_rag.shared import get_logger
-from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
+from unified_kg_rag.shared.exceptions import (
+    LLMOutputTruncatedError,
+    UsageLimitExceededError,
+)
 from unified_kg_rag.shared.logging import log_failure
 from unified_kg_rag.shared.utils.common import (
     error_code,
@@ -383,16 +387,47 @@ def transient_error_predicate(factory: object) -> TransientErrorPredicate:
     return predicate if predicate is not None else looks_transient
 
 
-def backoff_delay(attempt: int, base_delay: float, max_delay: float) -> float:
-    """Exponential backoff with equal jitter for the given 1-based attempt.
+def never_retried(exc: BaseException) -> bool:
+    """Whether ``exc`` is one no caller retries, whatever its predicate says:
+    a call the usage limits refused (``UsageLimitExceededError``, an
+    ``OptionalCallSkipped`` too), which a new attempt is refused again."""
+    return isinstance(exc, UsageLimitExceededError)
 
-    The ceiling doubles per attempt (``base * 2**(attempt-1)``, capped at
-    ``max_delay``); the delay is drawn from ``[ceiling/2, ceiling]`` so retries
-    from concurrent workers spread out while still backing off meaningfully.
+
+def backoff_delay(retry: int, policy: RetryPolicy) -> float:
+    """The wait before retry ``retry`` (1-based) under ``policy``: the one
+    backoff of every retrying caller.
+
+    The ceiling doubles per retry (:meth:`RetryPolicy.ceiling`); the wait is
+    drawn from ``[ceiling/2, ceiling]`` (``equal`` jitter), ``[0, ceiling]``
+    (``full``) or is the ceiling (``none``), so retries from concurrent
+    workers spread out while still backing off.
     """
-    ceiling: float = min(max_delay, base_delay * 2.0 ** (attempt - 1))
-    half = ceiling / 2
-    return half + _jitter_rng.uniform(0, half)
+    ceiling = policy.ceiling(retry)
+    if policy.jitter == "none":
+        return ceiling
+    floor = ceiling / 2 if policy.jitter == "equal" else 0.0
+    return floor + _jitter_rng.uniform(0, ceiling - floor)
+
+
+def past_budget(policy: RetryPolicy, started_at: float, delay: float) -> bool:
+    """Whether a wait of ``delay`` now would cross ``policy``'s wall-clock
+    budget (``max_total_seconds``) of a call started at ``started_at``
+    (``time.monotonic``)."""
+    budget = policy.max_total_seconds
+    return budget is not None and time.monotonic() - started_at + delay > budget
+
+
+def retry_wait(policy: RetryPolicy, retry: int, started_at: float) -> float | None:
+    """The wait before retry ``retry`` (1-based) of a call started at
+    ``started_at`` (``time.monotonic``) under ``policy``, or None when no
+    retry is left: its attempts are spent, or the wait would cross its
+    budget. The one schedule of every retry loop of its own (the indexers,
+    the bulk resends, the registry batches)."""
+    if retry >= policy.max_attempts:
+        return None
+    delay = backoff_delay(retry, policy)
+    return None if past_budget(policy, started_at, delay) else delay
 
 
 def next_transient_retry_delay(
@@ -402,12 +437,12 @@ def next_transient_retry_delay(
     operation: str,
     attempt: int,
     started_at: float,
-    policy: TransientRetryConfig,
+    policy: RetryPolicy,
 ) -> float | None:
     """Return the backoff before the next attempt, or None to give up on ``exc``."""
-    if not is_transient(exc) or attempt >= policy.max_attempts:
+    if never_retried(exc) or not is_transient(exc) or attempt >= policy.max_attempts:
         return None
-    delay = backoff_delay(attempt, policy.base_delay_seconds, policy.max_delay_seconds)
+    delay = backoff_delay(attempt, policy)
     deadline = _RETRY_DEADLINE.get()
     if deadline is not None and time.monotonic() + delay >= deadline:
         logger.warning(
@@ -417,7 +452,7 @@ def next_transient_retry_delay(
             error_name(exc),
         )
         return None
-    if time.monotonic() - started_at + delay > policy.max_total_seconds:
+    if past_budget(policy, started_at, delay):
         logger.warning(
             "Giving up on '%s' after %s attempts (%.1fs retry budget exhausted): %s",
             operation,
@@ -442,7 +477,7 @@ def call_with_transient_retry(
     *,
     is_transient: TransientErrorPredicate,
     operation: str,
-    policy: TransientRetryConfig,
+    policy: RetryPolicy,
 ) -> T:
     """Call ``func``, retrying transient errors with bounded backoff.
 
@@ -475,7 +510,7 @@ async def acall_with_transient_retry(
     *,
     is_transient: TransientErrorPredicate,
     operation: str,
-    policy: TransientRetryConfig,
+    policy: RetryPolicy,
 ) -> T:
     """Async twin of :func:`call_with_transient_retry` (backs off without blocking)."""
     started_at = time.monotonic()

@@ -76,7 +76,9 @@ def _dedup() -> list[str]:
     ]
     loader = DirectoryLoader("/")
     loader.max_workers = 2
-    return [d.document_id for d in loader.deduplicate_documents(documents)]
+    return [
+        d.document_id for d in loader.deduplicate_documents(documents, threshold=0.9)
+    ]
 
 
 def _fuzzy_resolve(*, use_process_pool: bool = True) -> list[str]:

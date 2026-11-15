@@ -64,6 +64,7 @@ pulls in no model, AWS or store SDK.
 from __future__ import annotations
 
 import importlib
+import sys
 from typing import TYPE_CHECKING, Any
 
 __version__ = "0.4.0.dev0"
@@ -215,9 +216,17 @@ _EXPORTS: dict[str, str] = {
     "GraphQueryRequest": "unified_kg_rag.domain.models.graph_query",
     "GraphQueryResult": "unified_kg_rag.domain.models.graph_query",
     "GroundingContext": "unified_kg_rag.ports.guardrail",
+    "EmbeddingModelInfo": "unified_kg_rag.ports.model_factory",
     "LanguageModelInfo": "unified_kg_rag.ports.model_factory",
-    "TransientRetryConfig": "unified_kg_rag.domain.models.config",
+    "RetryPolicy": "unified_kg_rag.domain.models.config",
     "RenderContext": "unified_kg_rag.adapters.renderers.base",
+}
+
+# Exports a release renamed -> the name each is now. One still resolves, to
+# that export, with a DeprecationWarning at the caller's line; ``__all__``
+# lists only the new name.
+_RENAMED: dict[str, str] = {
+    "TransientRetryConfig": "RetryPolicy",  # 0.3.0's name
 }
 
 __all__ = ["__version__", *_EXPORTS]
@@ -325,7 +334,10 @@ if TYPE_CHECKING:
         SummaryNode,
         TextUnit,
     )
-    from unified_kg_rag.domain.models.config import TransientRetryConfig
+    from unified_kg_rag.domain.models.config import RetryPolicy
+    from unified_kg_rag.domain.models.config import (
+        RetryPolicy as TransientRetryConfig,  # deprecated (_RENAMED)
+    )
     from unified_kg_rag.domain.models.graph_query import (
         GraphProfile,
         GraphQueryRequest,
@@ -354,7 +366,10 @@ if TYPE_CHECKING:
     )
     from unified_kg_rag.ports.guardrail import GroundingContext
     from unified_kg_rag.ports.indexer import GraphCensusRow, StoredAnnotation
-    from unified_kg_rag.ports.model_factory import LanguageModelInfo
+    from unified_kg_rag.ports.model_factory import (
+        EmbeddingModelInfo,
+        LanguageModelInfo,
+    )
     from unified_kg_rag.shared.exceptions import (
         ConfigurationError,
         ConfirmationDeclinedError,
@@ -388,6 +403,17 @@ if TYPE_CHECKING:
 
 
 def __getattr__(name: str) -> Any:
+    if (renamed := _RENAMED.get(name)) is not None:
+        # ``from unified_kg_rag import <name>`` reads the name twice: the
+        # import machinery's check first, then the import itself, which warns.
+        caller = sys._getframe(1).f_code.co_filename
+        if not ("importlib" in caller and "_bootstrap" in caller):
+            from unified_kg_rag.shared.utils.deprecation import warn_deprecated
+
+            warn_deprecated(
+                f"unified_kg_rag.{name} is deprecated: it is {renamed}; import that"
+            )
+        return __getattr__(renamed)
     module = _EXPORTS.get(name)
     if module is None:
         raise AttributeError(f"module 'unified_kg_rag' has no attribute '{name}'")

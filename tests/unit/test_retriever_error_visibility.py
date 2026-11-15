@@ -415,7 +415,7 @@ async def test_a_short_429_burst_is_waited_out(config: Config) -> None:
 async def test_a_persistent_429_fails_after_store_max_attempts(
     config: Config,
 ) -> None:
-    config.retry.query_store_max_attempts = 3
+    config.retry.query_store.max_attempts = 3
     server = _ThrottlingOpenSearch(burst=60)
     with pytest.raises(StoreConnectionError, match="status=429"):
         await _search_throttled(config, server)
@@ -607,7 +607,7 @@ async def test_a_silent_opensearch_fails_the_query_within_its_timeout(
 ) -> None:
     config = _local_opensearch_config(config, silent_port)
     config.search.store_timeout_seconds = 0.2
-    config.retry.query_store_max_attempts = 2
+    config.retry.query_store.max_attempts = 2
     retriever = _opensearch_retriever(config)
     client = OpenSearchClient(config)
     object.__setattr__(retriever, "_opensearch_client", client)
@@ -642,7 +642,7 @@ def test_a_silent_neptune_fails_an_ingestion_write_within_its_timeout(
     # answered blocked ingestion for good (hours in the real-AWS E2E).
     monkeypatch.setattr(neptune_indexer, "INGESTION_REQUEST_TIMEOUT_SECONDS", 0.3)
     config = _local_neptune_config(config, silent_port, timeout=30)
-    config.retry.graph_store_max_attempts = 1
+    config.retry.graph_store.max_attempts = 1
     indexer = NeptuneIndexer(config)
     try:
         # No setting named: search.store_timeout_seconds bounds queries only.
@@ -1071,7 +1071,7 @@ async def test_neptune_query_reads_retry_what_another_attempt_may_fix(
 ) -> None:
     # Regression (rv24): a Neptune read at query time was never retried, so
     # a throttled read degraded graph expansion to empty; OpenSearch reads
-    # get retry.query_store_max_attempts, and so do these now.
+    # get retry.query_store, and so do these now.
     monkeypatch.setattr("asyncio.sleep", _no_sleep)
     retriever = _neptune_retriever(config, _ClientWithLocalGraph())
     body = json.dumps({"code": code, "detailedMessage": "x"})
@@ -1122,7 +1122,7 @@ async def test_neptune_query_reads_stop_at_query_store_max_attempts(
     config: Config, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr("asyncio.sleep", _no_sleep)
-    config.retry.query_store_max_attempts = 2
+    config.retry.query_store.max_attempts = 2
     retriever = _neptune_retriever(config, _ClientWithLocalGraph())
     body = json.dumps({"code": "ThrottlingException", "detailedMessage": "x"})
     flaky = _FlakyTraversal(

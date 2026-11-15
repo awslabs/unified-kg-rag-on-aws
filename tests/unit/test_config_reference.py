@@ -62,6 +62,7 @@ def test_reference_lists_every_moved_and_removed_key() -> None:
         MOVED_KEY_NOTES,
         MOVED_KEYS,
         REMOVED_KEYS,
+        deprecated_targets,
     )
 
     text = _generator().render()
@@ -73,7 +74,8 @@ def test_reference_lists_every_moved_and_removed_key() -> None:
     for old, note in MOVED_KEY_NOTES.items():
         assert old in MOVED_KEYS
         assert f"- `{old}`: {note}." in moved, old
-    for old, new in DEPRECATED_KEYS.items():
-        assert f"| `{old}` | `{new}` |" in deprecated, old
+    for old in DEPRECATED_KEYS:
+        cell = ", ".join(f"`{key}`" for key in deprecated_targets(old))
+        assert f"| `{old}` | {cell} |" in deprecated, old
     for old in REMOVED_KEYS:
         assert f"| `{old}` |" in removed, old

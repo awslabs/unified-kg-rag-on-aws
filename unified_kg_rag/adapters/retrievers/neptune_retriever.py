@@ -3,7 +3,6 @@
 import asyncio
 import functools
 import logging
-import math
 import time
 import weakref
 from collections.abc import Callable
@@ -51,7 +50,6 @@ from unified_kg_rag.adapters.storage.neptune_codec import property_values
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
 from unified_kg_rag.domain.ingestion.seed_graph import SOURCE_KINDS_FIELD
 from unified_kg_rag.domain.models import Config, GraphEdge, SearchQuery
-from unified_kg_rag.domain.models.config import TransientRetryConfig
 from unified_kg_rag.domain.models.graph_query import (
     GraphProfile,
     GraphQueryRequest,
@@ -72,11 +70,6 @@ from unified_kg_rag.shared.utils import safe_float_parse
 from unified_kg_rag.shared.utils.concurrency import gather_or_cancel
 
 logger = get_logger(__name__)
-
-# The backoff between attempts of a query read (retry.query_store_max_attempts),
-# as an OpenSearch query request's: 0.25-0.5 s, then 0.5-1 s, up to 2-4 s.
-_QUERY_RETRY_BASE_DELAY_SECONDS = 0.5
-_QUERY_RETRY_MAX_DELAY_SECONDS = 4.0
 
 # The vertex properties a traversal row projects (the shape
 # ``GraphExpansionRetriever`` reads).
@@ -720,12 +713,7 @@ class NeptuneRetriever(GraphExpansionRetriever):
                 attempt,
                 is_transient=self._retryable_read,
                 operation="Neptune query",
-                policy=TransientRetryConfig(
-                    max_attempts=self._config.retry.query_store_max_attempts,
-                    base_delay_seconds=_QUERY_RETRY_BASE_DELAY_SECONDS,
-                    max_delay_seconds=_QUERY_RETRY_MAX_DELAY_SECONDS,
-                    max_total_seconds=math.inf,
-                ),
+                policy=self._config.retry.query_store,
             )
         except Exception as e:
             if isinstance(e, GraphQueryError):

@@ -27,10 +27,10 @@ from langchain_core.documents import Document
 from pydantic import Field, PrivateAttr
 
 from unified_kg_rag.adapters.aws.bedrock_models import (
-    _EMBEDDING_MODEL_INFO,
-    _RERANK_MODEL_INFO,
     base_model_id,
+    get_embedding_model_info,
     get_language_model_info,
+    get_rerank_model_info,
     profile_target_model_id,
     requires_embedding_profile,
 )
@@ -55,7 +55,7 @@ from unified_kg_rag.domain.models.config import (
     EFFORT_LEVELS,
     EFFORT_THINKING_TOKENS,
     ModelTier,
-    TransientRetryConfig,
+    RetryPolicy,
 )
 from unified_kg_rag.ports.model_factory import (
     CEILING_ANSWER_TOKENS,
@@ -177,7 +177,6 @@ class BaseBedrockModelFactory(Generic[ModelIdT, ModelInfoT, WrapperT], ABC):
     # prompt, retryable error — which callers that degrade gracefully (e.g. the
     # hybrid scorer's rerank fallback to RRF-only) can actually catch.
     BOTO_CONNECT_TIMEOUT: ClassVar[int] = 10
-    BOTO_MAX_ATTEMPTS: ClassVar[int] = 5
     # "adaptive" adds client-side rate limiting on top of retries, which is
     # materially better for throttling-heavy Bedrock workloads than "standard".
     BOTO_RETRY_MODE: ClassVar[Literal["legacy", "standard", "adaptive"]] = "adaptive"
@@ -205,14 +204,14 @@ class BaseBedrockModelFactory(Generic[ModelIdT, ModelInfoT, WrapperT], ABC):
     ) -> BotoConfig:
         # botocore accepts a plain retries dict at runtime; its stub uses a
         # private _RetryDict that a local dict does not nominally satisfy.
-        # max_attempts counts the retries after the first request (6 requests
-        # in all); total_max_attempts counts the first one too.
-        retries: dict[str, Any] = (
-            {"max_attempts": self.BOTO_MAX_ATTEMPTS}
-            if total_max_attempts is None
-            else {"total_max_attempts": total_max_attempts}
-        )
-        retries["mode"] = self.BOTO_RETRY_MODE
+        # total_max_attempts counts the first request too: a query client's
+        # search.model_max_attempts, else retry.model.client_max_attempts
+        # (unset: botocore's default).
+        if total_max_attempts is None:
+            total_max_attempts = self.config.retry.model.client_max_attempts
+        retries: dict[str, Any] = {"mode": self.BOTO_RETRY_MODE}
+        if total_max_attempts is not None:
+            retries["total_max_attempts"] = total_max_attempts
         if read_timeout is not None:
             return BotoConfig(
                 connect_timeout=self.BOTO_CONNECT_TIMEOUT,
@@ -498,8 +497,8 @@ class BedrockEmbeddingsWrapper(BaseBedrockWrapper, BedrockEmbeddings):
     # ModelErrorException) that botocore's retry modes do not cover. Applied
     # per InvokeModel call, so every sync/async embed path benefits and a
     # failure mid-batch does not restart the already-embedded texts. The
-    # factory sets it from the retry section (RetryConfig.transient_policy).
-    transient_retry: TransientRetryConfig = Field(default_factory=TransientRetryConfig)
+    # factory sets it from the retry section (retry.model).
+    transient_retry: RetryPolicy = Field(default_factory=RetryPolicy)
 
     def _invoke_model(self, input_body: dict[str, Any] | None = None) -> dict[str, Any]:
         # Single choke point for every embedding request in langchain-aws
@@ -599,8 +598,7 @@ class BedrockEmbeddingModelFactory(
     def get_model_info(
         self, model_id: EmbeddingModelId | str
     ) -> EmbeddingModelInfo | None:
-        catalog_id = self._catalog_id(model_id)
-        return None if catalog_id is None else _EMBEDDING_MODEL_INFO.get(catalog_id)
+        return get_embedding_model_info(model_id_value(model_id))
 
     def _resolve_invocation_id(self, catalog_id: EmbeddingModelId, given: str) -> str:
         """The id to invoke: ``given`` when it is already a profile id or ARN
@@ -678,7 +676,7 @@ class BedrockEmbeddingModelFactory(
             model_kwargs=model_kwargs,
             max_sequence_length=model_info.max_sequence_length,
             max_sequence_tokens=model_info.max_sequence_tokens,
-            transient_retry=self.config.retry.transient_policy(),
+            transient_retry=self.config.retry.model,
             # Accepted by BaseBedrockWrapper.__init__; pydantic's generated
             # __init__ signature hides it from mypy.
             token_counter=token_counter,  # type: ignore[call-arg]
@@ -705,9 +703,9 @@ class BedrockLanguageModelFactory(
     is_item_error = staticmethod(is_bedrock_item_error)
 
     @property
-    def transient_retry(self) -> TransientRetryConfig:
+    def transient_retry(self) -> RetryPolicy:
         """The retry policy ``setup_chain`` applies to query chains."""
-        return self.config.retry.transient_policy()
+        return self.config.retry.model
 
     @property
     def query_prompt_cache_ttl(self) -> str:
@@ -1155,7 +1153,7 @@ class BedrockRerankModelFactory(
         return "rerank"
 
     def get_model_info(self, model_id: str) -> RerankModelInfo | None:
-        return _RERANK_MODEL_INFO.get(model_id)
+        return get_rerank_model_info(model_id)
 
     def get_model(
         self, model_id: RerankModelId | str, **kwargs: Any

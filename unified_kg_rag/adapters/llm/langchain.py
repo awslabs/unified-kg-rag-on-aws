@@ -25,8 +25,13 @@ from tenacity import RetryCallState
 from tqdm import tqdm
 from tqdm.asyncio import tqdm as async_tqdm
 
-from unified_kg_rag.adapters.llm.retry import record_failure
+from unified_kg_rag.adapters.llm.retry import (
+    backoff_delay,
+    never_retried,
+    record_failure,
+)
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
+from unified_kg_rag.domain.models.config import RETRY_PROFILES, RetryPolicy
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
 from unified_kg_rag.shared.logging import log_failure
@@ -156,6 +161,18 @@ class ProgressLogger:
         )
 
 
+def _retry_wait(state: RetryCallState, policy: RetryPolicy) -> float:
+    """The wait before an item's next call: none after output that did not
+    parse (the model's answer, which a new call may fix at once), else
+    ``policy``'s backoff, which waits out a throttled quota or a stalled
+    model."""
+    outcome = state.outcome
+    error = outcome.exception() if outcome is not None and outcome.failed else None
+    if isinstance(error, OutputParserException):
+        return 0.0
+    return backoff_delay(state.attempt_number, policy)
+
+
 class BatchProcessor(BaseModel):
     # A removed setting (batch_size, chunk_concurrency, max_retries) raises
     # instead of being silently ignored.
@@ -167,22 +184,12 @@ class BatchProcessor(BaseModel):
         description="Items in flight at once: the next item starts as soon as "
         "one finishes, so this is both the peak and the steady concurrency",
     )
-    retry_multiplier: float = Field(
-        default=30.0,
-        ge=1.0,
-        description="Base multiplier for exponential backoff retry delays in seconds",
-    )
-    retry_max_wait: int = Field(
-        default=120,
-        ge=0,
-        description="Maximum allowed wait time between retry attempts in seconds",
-    )
-    max_attempts: int = Field(
-        default=5,
-        ge=1,
-        description="Total calls per item, including the first (1 disables "
-        "the retry). Only retryable errors are retried: an item whose error is "
-        "not retryable is not called again",
+    retry: RetryPolicy = Field(
+        default_factory=lambda: RetryPolicy(**RETRY_PROFILES["ingestion_item"]),
+        description="Calls per item, including the first, and the backoff "
+        "between them (the retry.ingestion_item profile by default). Only "
+        "retryable errors are retried: an item whose error is not retryable is "
+        "not called again",
     )
     call_timeout_seconds: int = Field(
         default=300,
@@ -205,11 +212,11 @@ class BatchProcessor(BaseModel):
 
     @classmethod
     def from_config(cls, config: "Config", **settings: Any) -> "BatchProcessor":
-        """A processor sized by ``processing.max_concurrency`` and
-        ``retry.max_attempts`` (the ingestion stages)."""
+        """A processor sized by ``processing.max_concurrency`` and retried
+        under ``retry.ingestion_item`` (the ingestion stages)."""
         return cls(
             max_concurrency=config.processing.max_concurrency,
-            max_attempts=config.retry.max_attempts,
+            retry=config.retry.ingestion_item,
             **settings,
         )
 
@@ -286,7 +293,7 @@ class BatchProcessor(BaseModel):
         next item as soon as a slot frees up, so a slow item holds only its
         own slot. Each item is its own call under its own
         ``call_timeout_seconds``; an item whose call fails with a retryable
-        error is retried alone, in its slot (``max_attempts``). Results are
+        error is retried alone, in its slot (``retry.max_attempts``). Results are
         1:1 with the prepared inputs; an item that failed every attempt is
         :data:`BATCH_ITEM_FAILED`, and its last error is put in ``errors``
         (when given) under its index (classified by
@@ -476,8 +483,9 @@ class BatchProcessor(BaseModel):
         # started the work again after the caller had given up.
         if not isinstance(exc, Exception) or isinstance(exc, _BatchAbandoned):
             return False
-        # The same input hits the same output-token limit again.
-        if isinstance(exc, LLMOutputTruncatedError):
+        # The same input hits the same output-token limit again, and a call
+        # the usage limits refused is refused again.
+        if isinstance(exc, LLMOutputTruncatedError) or never_retried(exc):
             return False
         # A malformed LLM response or a hung call can succeed on a new attempt.
         if isinstance(exc, OutputParserException | TimeoutError):
@@ -487,21 +495,25 @@ class BatchProcessor(BaseModel):
     def _create_retry_decorator(
         self, operation_name: str, abandoned: threading.Event | None = None
     ) -> Callable[..., Any]:
-        # Exponential backoff WITH jitter (wait_random_exponential) to spread
-        # concurrent retries and avoid hammering a throttled Bedrock endpoint in
-        # lock-step. Only retryable errors are retried, so a permanent failure
-        # (access denied, validation, missing model) fails fast. Once
-        # ``abandoned`` is set no retry is made and a backoff wait ends.
-        stop: tenacity.stop.stop_base = tenacity.stop_after_attempt(self.max_attempts)
+        # The one backoff of every retrying caller (backoff_delay; full jitter
+        # by default here) spreads concurrent retries, so a throttled Bedrock
+        # endpoint is not hammered in lock-step. Only retryable errors are
+        # retried, so a permanent failure (access denied, validation, missing
+        # model) fails fast. Once ``abandoned`` is set no retry is made and a
+        # backoff wait ends.
+        retry_policy = self.retry
+        stop: tenacity.stop.stop_base = tenacity.stop_after_attempt(
+            retry_policy.max_attempts
+        )
+        if retry_policy.max_total_seconds is not None:
+            stop = stop | tenacity.stop_before_delay(retry_policy.max_total_seconds)
         options: dict[str, Any] = {}
         if abandoned is not None:
             stop = stop | tenacity.stop_when_event_set(abandoned)
             options["sleep"] = abandoned.wait
         policy: dict[str, Any] = {
             "retry": tenacity.retry_if_exception(self._is_retryable),
-            "wait": tenacity.wait_random_exponential(
-                multiplier=self.retry_multiplier, max=self.retry_max_wait
-            ),
+            "wait": lambda state: _retry_wait(state, retry_policy),
             "stop": stop,
             "before_sleep": self._create_retry_log_callback(operation_name),
             "reraise": True,
@@ -559,11 +571,11 @@ class BatchProcessor(BaseModel):
 
         Each item is one awaited ``sequential_func`` call (``Runnable.ainvoke``),
         up to ``max_concurrency`` in flight; an item whose call fails with a
-        retryable error is retried alone (``max_attempts``). An item that
-        failed every attempt is :data:`BATCH_ITEM_FAILED`, its last error in
-        ``errors`` (when given) under its index. ``item_ids`` names the ids
-        of an item's input (a dataset's ``query_id``) that its log lines,
-        its failure's included, carry.
+        retryable error is retried alone (``retry.max_attempts``). An item
+        that failed every attempt is :data:`BATCH_ITEM_FAILED`, its last
+        error in ``errors`` (when given) under its index. ``item_ids`` names
+        the ids of an item's input (a dataset's ``query_id``) that its log
+        lines, its failure's included, carry.
         """
         with observability.span(
             "kg_rag.batch", task=task_name, items=len(items_to_process)

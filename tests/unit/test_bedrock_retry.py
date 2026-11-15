@@ -26,7 +26,7 @@ from unified_kg_rag.adapters.aws.bedrock_retry import is_transient_bedrock_error
 from unified_kg_rag.adapters.llm import retry as llm_retry
 from unified_kg_rag.adapters.llm.retry import backoff_delay, call_with_transient_retry
 from unified_kg_rag.domain.models import Config, EmbeddingModelId
-from unified_kg_rag.domain.models.config import TransientRetryConfig
+from unified_kg_rag.domain.models.config import RetryPolicy
 
 pytestmark = pytest.mark.unit
 
@@ -101,9 +101,10 @@ def test_connection_errors_are_retryable() -> None:
 
 
 def test_backoff_delay_is_bounded_and_grows() -> None:
+    policy = RetryPolicy(base_delay_seconds=2.0, max_delay_seconds=16.0)
     for attempt in range(1, 10):
         ceiling = min(16.0, 2.0 * 2 ** (attempt - 1))
-        d = backoff_delay(attempt, base_delay=2.0, max_delay=16.0)
+        d = backoff_delay(attempt, policy)
         assert ceiling / 2 <= d <= ceiling
 
 
@@ -137,9 +138,9 @@ def test_non_transient_error_not_retried(sleeps: list[float]) -> None:
 def test_exhausted_retries_reraise_original(sleeps: list[float]) -> None:
     client = _FakeRuntimeClient([_client_error("ModelErrorException", 424)] * 10)
     with pytest.raises(ClientError) as info:
-        _wrapper(
-            client, transient_retry=TransientRetryConfig(max_attempts=3)
-        ).embed_query("synthetic text")
+        _wrapper(client, transient_retry=RetryPolicy(max_attempts=3)).embed_query(
+            "synthetic text"
+        )
     assert info.value.response["Error"]["Code"] == "ModelErrorException"
     assert client.calls == 3
     assert len(sleeps) == 2
@@ -150,7 +151,7 @@ def test_retry_respects_wall_clock_budget(sleeps: list[float]) -> None:
     # Budget smaller than the first backoff: give up without sleeping.
     with pytest.raises(ClientError):
         _wrapper(
-            client, transient_retry=TransientRetryConfig(max_total_seconds=0.1)
+            client, transient_retry=RetryPolicy(max_total_seconds=0.1)
         ).embed_query("x")
     assert client.calls == 1
     assert sleeps == []
@@ -185,7 +186,7 @@ async def test_async_aembed_query_retries(sleeps: list[float]) -> None:
 
 
 def test_call_with_transient_retry_passthrough(sleeps: list[float]) -> None:
-    policy = TransientRetryConfig()
+    policy = RetryPolicy()
     assert (
         call_with_transient_retry(
             lambda: 42,
@@ -205,7 +206,7 @@ def test_embedding_factory_applies_configured_policy(mocker) -> None:
     from unified_kg_rag.adapters.aws.bedrock import BedrockEmbeddingModelFactory
 
     config = Config()
-    config.retry.max_attempts = 2
+    config.retry.model.max_attempts = 2
     factory = BedrockEmbeddingModelFactory(
         config=config, boto_session=mocker.MagicMock()
     )
@@ -213,17 +214,9 @@ def test_embedding_factory_applies_configured_policy(mocker) -> None:
     assert model.transient_retry.max_attempts == 2
 
 
-def test_the_retry_section_keeps_every_former_default() -> None:
-    # One section replaced eleven keys in seven sections; each caller's
-    # default attempts and backoff are what they were.
-    retry = Config().retry
-    assert retry.transient_policy() == TransientRetryConfig()
-    assert (retry.max_attempts, retry.base_delay_seconds) == (5, 2.0)
-    assert (retry.max_delay_seconds, retry.max_total_seconds) == (16.0, 60.0)
-    assert retry.model_server_max_attempts == 3
-    assert retry.graph_store_max_attempts == 4
-    assert retry.query_store_max_attempts == 3
-    assert retry.judge_max_attempts == 3
-    assert retry.transient_policy(max_attempts=3) == TransientRetryConfig(
-        max_attempts=3
-    )
+def test_the_model_profile_is_the_policy_default() -> None:
+    # The Bedrock embedding and query-time policy a custom factory gets from
+    # RetryPolicy() is the retry.model profile's (its client_max_attempts
+    # sizes the package's own Bedrock clients, which a custom factory has not).
+    model = Config().retry.model
+    assert model.model_copy(update={"client_max_attempts": None}) == RetryPolicy()

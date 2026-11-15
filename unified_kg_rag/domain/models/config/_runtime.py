@@ -13,6 +13,8 @@ from pydantic import (
     field_validator,
 )
 
+from unified_kg_rag.domain.models.evidence import evidence
+
 from ._common import ConfigSection
 
 # A logging level name, in any case (stored in upper case).
@@ -31,17 +33,20 @@ class MemoryConfig(ConfigSection):
             "Conversations held in conversation memory; a new one beyond it "
             "drops the one idle longest."
         ),
+        json_schema_extra=evidence("operational"),
     )
     max_messages_per_conversation: int = Field(
         default=20,
         ge=1,
         description=("Messages kept per conversation; older ones are dropped."),
+        json_schema_extra=evidence("operational"),
     )
     max_conversation_age_hours: int = Field(
         default=168,
         ge=1,
         description="Hours a conversation may stay idle (since its last message); "
         "an older one is dropped on the next memory lookup and starts over",
+        json_schema_extra=evidence("operational"),
     )
     max_history_tokens: int = Field(
         default=4000,
@@ -53,6 +58,7 @@ class MemoryConfig(ConfigSection):
             "the rest fit. Conversation memory is not bounded by it. "
             "Unmeasured."
         ),
+        json_schema_extra=evidence("unmeasured"),
     )
 
 
@@ -73,6 +79,7 @@ class LLMResponseCacheConfig(ConfigSection):
         description="Responses per cache segment file; a segment is written "
         "(and uploaded with --s3-sync) when it is full and before each stage "
         "checkpoint, so a killed task loses at most this many responses",
+        json_schema_extra=evidence("operational"),
     )
 
 
@@ -85,6 +92,7 @@ class CacheConfig(ConfigSection):
             " never expire. Not applied with --s3-sync, where the bucket "
             "lifecycle expires the checkpoints."
         ),
+        json_schema_extra=evidence("operational"),
     )
     llm_responses: LLMResponseCacheConfig = Field(
         default_factory=LLMResponseCacheConfig,
@@ -221,6 +229,7 @@ class ObservabilityConfig(ConfigSection):
         description="Fraction of root traces sampled (backends otlp, langfuse, "
         "phoenix; with 'none' the host's provider samples); child spans follow "
         "their parent's decision",
+        json_schema_extra=evidence("operational"),
     )
     service_name: str = Field(
         default="unified-kg-rag",
@@ -244,6 +253,7 @@ class ObservabilityConfig(ConfigSection):
         description="Upper bound on one span-export request (backends otlp, "
         "langfuse, phoenix). OTEL_EXPORTER_OTLP_TRACES_TIMEOUT / "
         "OTEL_EXPORTER_OTLP_TIMEOUT win when set",
+        json_schema_extra=evidence("operational"),
     )
 
     @field_validator("redact_patterns")

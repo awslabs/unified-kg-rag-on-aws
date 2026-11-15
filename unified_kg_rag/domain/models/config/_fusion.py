@@ -16,6 +16,8 @@ from pydantic import (
     model_validator,
 )
 
+from unified_kg_rag.domain.models.evidence import evidence
+
 from ..retrieval import (
     STRATEGY_TRAITS,
     SearchStrategy,
@@ -50,6 +52,7 @@ class HybridConfig(ConfigSection):
             "does not depend on how many hits a "
             "query asks for."
         ),
+        json_schema_extra=evidence("unmeasured", "an equal split"),
     )
     vector_weight: float = Field(
         default=0.5,
@@ -60,6 +63,7 @@ class HybridConfig(ConfigSection):
             "weights are relative (each side counts its weight over their "
             "sum), and their sum must be above 0."
         ),
+        json_schema_extra=evidence("unmeasured", "an equal split"),
     )
     normalization_window: int = Field(
         default=50,
@@ -73,6 +77,7 @@ class HybridConfig(ConfigSection):
             "store work per search. Unmeasured choice (no A/B in "
             "docs/concepts/defaults-and-evidence.md)."
         ),
+        json_schema_extra=evidence("unmeasured"),
     )
 
     @model_validator(mode="after")
@@ -117,6 +122,9 @@ class FusionConfig(ConfigSection):
             "The k constant of reciprocal rank fusion: each result adds 1 / "
             "(rrf_k + rank)."
         ),
+        json_schema_extra=evidence(
+            "upstream", "reciprocal rank fusion's k, 60 (Cormack et al., 2009)"
+        ),
     )
     diversity_lambda: float = Field(
         default=0.5,
@@ -131,6 +139,9 @@ class FusionConfig(ConfigSection):
             "On 200 MuSiQue mix questions 0.7 and 1.0 measured no significant "
             "answer difference against 0.5 (answer_contains -1.0 points "
             "[-3.75, +1.5] and -2.25 [-5.25, +0.5])."
+        ),
+        json_schema_extra=evidence(
+            "measured", "#lightrag-chunk-picking-and-mmr-diversity"
         ),
     )
     fusion_weights: dict[str, NonNegativeFloat] = Field(
@@ -201,6 +212,7 @@ class RerankingConfig(ConfigSection):
             "result width a strategy asks for (top_k x retrieval_multiplier, "
             "or the sum of its per-type quotas)."
         ),
+        json_schema_extra=evidence("unmeasured"),
     )
     required: bool = Field(
         default=False,
@@ -244,31 +256,41 @@ class ContextTypeBudgetConfig(ConfigSection):
     """
 
     text: float = Field(
-        default=0.50, ge=0.0, description="Relative share for document chunk sections"
+        default=0.50,
+        ge=0.0,
+        description="Relative share for document chunk sections",
+        json_schema_extra=evidence("unmeasured"),
     )
     entity: float = Field(
-        default=0.20, ge=0.0, description="Relative share for graph entity sections"
+        default=0.20,
+        ge=0.0,
+        description="Relative share for graph entity sections",
+        json_schema_extra=evidence("unmeasured"),
     )
     relationship: float = Field(
         default=0.13,
         ge=0.0,
         description="Relative share for graph relationship sections",
+        json_schema_extra=evidence("unmeasured"),
     )
     community: float = Field(
         default=0.10,
         ge=0.0,
         description="Relative share for community report sections",
+        json_schema_extra=evidence("unmeasured"),
     )
     claim: float = Field(
         default=0.07,
         ge=0.0,
         description="Relative share for claim (covariate) sections",
+        json_schema_extra=evidence("unmeasured"),
     )
     general: float = Field(
         default=0.10,
         ge=0.0,
         description="Relative share for untyped sections — global search's "
         "map-reduce synthesis lands here.",
+        json_schema_extra=evidence("unmeasured"),
     )
     summary: float = Field(
         default=0.50,
@@ -276,6 +298,7 @@ class ContextTypeBudgetConfig(ConfigSection):
         description="Relative share for summary-tree sections (the tree "
         "strategy only, beside text's 0.50: at most half the context, and "
         "the text units take what the summaries leave)",
+        json_schema_extra=evidence("unmeasured"),
     )
     query_result: float = Field(
         default=0.25,
@@ -283,6 +306,7 @@ class ContextTypeBudgetConfig(ConfigSection):
         description="Relative share for a graph query result (the structured "
         "strategy only): its table of counts, groups, rows or paths, at most "
         "search.structured.rows_in_context long",
+        json_schema_extra=evidence("unmeasured"),
     )
 
     def share(self, kind: SectionType) -> float:
@@ -325,6 +349,7 @@ class TokenManagerConfig(ConfigSection):
             "derives it from that window minus the output reservation and "
             "context_window_headroom_ratio."
         ),
+        json_schema_extra=evidence("measured", "#iterative-settings"),
     )
     context_window_headroom_ratio: float = Field(
         default=0.1,
@@ -335,12 +360,14 @@ class TokenManagerConfig(ConfigSection):
             "deriving max_context_tokens, covering the system prompt, the "
             "question, conversation history, and tokenizer estimation error."
         ),
+        json_schema_extra=evidence("operational"),
     )
     token_count_cache_size: int = Field(
         default=1024,
         ge=1,
         description="Maximum number of entries in the LRU cache of the answer "
         "model's token counter (Bedrock CountTokens, or the local estimate)",
+        json_schema_extra=evidence("operational"),
     )
     type_budgets: ContextTypeBudgetConfig = Field(
         default_factory=ContextTypeBudgetConfig,
@@ -351,6 +378,7 @@ class TokenManagerConfig(ConfigSection):
         ge=1,
         description="A section truncated below this many tokens is dropped rather "
         "than emitted as an unusable fragment of evidence.",
+        json_schema_extra=evidence("unmeasured"),
     )
 
 
@@ -429,6 +457,7 @@ class QueryOutputCeilingsConfig(ConfigSection):
             "tokens; a reasoning model still gets its thinking budget plus "
             "1,024)"
         ),
+        json_schema_extra=evidence("operational"),
     )
     query_extraction: int | None = Field(
         default=4096,
@@ -437,6 +466,7 @@ class QueryOutputCeilingsConfig(ConfigSection):
             "max_tokens of the query entity extraction (local, drift) and "
             "the dual-keyword extraction (mix, hybrid)"
         ),
+        json_schema_extra=evidence("operational"),
     )
     community_relevance: int | None = Field(
         default=4096,
@@ -446,6 +476,7 @@ class QueryOutputCeilingsConfig(ConfigSection):
             "selection (search.global_search.use_dynamic_selection), which "
             "answers one number"
         ),
+        json_schema_extra=evidence("operational"),
     )
     graph_query: int | None = Field(
         default=4096,
@@ -454,6 +485,7 @@ class QueryOutputCeilingsConfig(ConfigSection):
             "max_tokens of the structured strategy's plan call (models.roles."
             "graph_query), which answers one JSON plan of a few hundred tokens"
         ),
+        json_schema_extra=evidence("operational"),
     )
 
 
@@ -606,4 +638,5 @@ class CitationConfig(ConfigSection):
             "no document). Unmeasured: bounds the reads for hub entities and "
             "reports with thousands of units."
         ),
+        json_schema_extra=evidence("unmeasured"),
     )

@@ -130,12 +130,15 @@ from unified_kg_rag.domain.ingestion.seed_graph import (
     seed_text_units,
 )
 from unified_kg_rag.domain.languages.corpus import (
+    SAMPLE_CHARS,
+    SAMPLE_DOCUMENTS,
     corpus_sample,
     sample_split,
     source_language_mismatch,
 )
 from unified_kg_rag.domain.models import (
     ChunkingStrategy,
+    ChunkLengthUnit,
     Claim,
     Community,
     CommunityChange,
@@ -177,13 +180,20 @@ from unified_kg_rag.shared import (
 )
 from unified_kg_rag.shared.exceptions import classify, operator_error_text
 from unified_kg_rag.shared.genai import ERROR_TYPE
-from unified_kg_rag.shared.logging import log_error
+from unified_kg_rag.shared.logging import log_error, log_failure
+from unified_kg_rag.shared.utils.scripts import LATIN_CHARS_PER_TOKEN
 from unified_kg_rag.shared.write_fence import check_write_fence
 
 if TYPE_CHECKING:
     from unified_kg_rag.ports import DocStatusPort
 
 logger = get_logger(__name__)
+
+# How many times Latin text's estimated tokens a character a corpus must cost
+# for character chunk sizes to be warned of (by the estimate's rates in
+# shared.utils.scripts: Han, Hangul and Kana 4 times, Thai, Greek, Hebrew
+# and Devanagari about 2.7, Arabic 2; Cyrillic's 1.7 is not warned of).
+_DENSE_TOKEN_FACTOR = 2
 
 
 def _resolved_claims(context: PipelineContext) -> list[Claim]:
@@ -774,7 +784,10 @@ class DocumentLoadingStage(_RegistryStage):
                     self.loader.source_directory,
                 )
             documents = self.loader.deduplicate_documents(
-                documents, keep=keep, avoid=avoid
+                documents,
+                threshold=self.config.processing.deduplicate_similarity_threshold,
+                keep=keep,
+                avoid=avoid,
             )
         # After deduplication: a seed shard is no copy of a file.
         seeds = self._seed_documents()
@@ -1288,6 +1301,7 @@ class TextChunkingStage(PipelineStage):
             if is_seed_document(document)
             for unit in seed_text_units(document, count_tokens=estimate_token_count)
         ]
+        self._warn_of_chunk_sizes(documents, text_units)
         text_units.extend(seed_units)
         context.text_units = text_units
         total_chunks = len(text_units)
@@ -1302,6 +1316,72 @@ class TextChunkingStage(PipelineStage):
         }
 
         return doc_count, total_chunks, metrics
+
+    def _warn_of_chunk_sizes(
+        self, documents: list[Document], text_units: list[TextUnit]
+    ) -> None:
+        """WARN when chunk sizes counted in characters meet a corpus whose
+        characters cost at least :data:`_DENSE_TOKEN_FACTOR` times Latin
+        text's tokens (Han, Hangul, Kana, Thai, ...: a chunk then holds that
+        many times the tokens the setting gives English), and when chunks
+        outgrow the embedding model's input (it embeds only the start of a
+        longer one). The run goes on; no setting changes. The reranker is not
+        checked: a cross-encoder reads a passage's start by design (the local
+        one 512 tokens of query and passage)."""
+        chunking = self.config.processing.chunking
+        # The setting that sized the units: the size-based splitter's target
+        # under the simple chunker, the intelligent chunker's cap otherwise.
+        size_key, size = (
+            ("fallback_chunk_size", chunking.fallback_chunk_size)
+            if self.chunker_type is ChunkingStrategy.SIMPLE
+            else ("max_chunk_size", chunking.max_chunk_size)
+        )
+        if chunking.length_unit is ChunkLengthUnit.CHARS:
+            sample = "".join(
+                d.page_content[:SAMPLE_CHARS] for d in documents[:SAMPLE_DOCUMENTS]
+            )
+            per_char = estimate_token_count(sample) / len(sample) if sample else 0.0
+            if per_char >= _DENSE_TOKEN_FACTOR / LATIN_CHARS_PER_TOKEN:
+                logger.warning(
+                    "Chunk size: processing.chunking.length_unit is chars and the "
+                    "corpus costs about %.2f estimated tokens a character, %.1f "
+                    "times Latin text's: a chunk of %s %d holds up to about %d "
+                    "tokens. length_unit: tokens sizes chunks in tokens.",
+                    per_char,
+                    per_char * LATIN_CHARS_PER_TOKEN,
+                    size_key,
+                    size,
+                    round(size * per_char),
+                )
+        if not text_units:
+            return
+        try:
+            info = self.providers.embedding_model_info()
+        except Exception as e:  # noqa: BLE001 - a warning's input, not the run's
+            log_failure(logger, logging.DEBUG, "Chunk size check skipped: %s", error=e)
+            return
+        limit = getattr(info, "max_sequence_tokens", None)
+        if not isinstance(limit, int) or isinstance(limit, bool):
+            return
+        over = [
+            count
+            for count in (estimate_token_count(unit.text) for unit in text_units)
+            if count > limit
+        ]
+        if over:
+            logger.warning(
+                "Chunk size: %d of %d text units hold more than the embedding "
+                "model's %d-token input (up to about %d tokens, by the local "
+                "estimate): it embeds only the start of each. Lower "
+                "processing.chunking.%s (%d %s).",
+                len(over),
+                len(text_units),
+                limit,
+                max(over),
+                size_key,
+                size,
+                chunking.length_unit.value,
+            )
 
 
 class TranslationStage(PipelineStage):

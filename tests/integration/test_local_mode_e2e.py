@@ -138,7 +138,7 @@ def _config(tmp_path: Path) -> Config:
     config.processing.translation.enabled = False
     config.processing.gleaning.enabled = False
     config.processing.claim_extraction.enabled = False
-    config.retry.max_attempts = 1
+    config.retry.ingestion_item.max_attempts = 1
     return config
 
 

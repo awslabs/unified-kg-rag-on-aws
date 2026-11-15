@@ -139,11 +139,13 @@ def test_dynamodb_batch_backoff_waits_only_between_requests(mocker) -> None:
     # The module's own sleep: dynamodb.time is the time module, and stubbing
     # its sleep stubbed every thread's (the lease heartbeats of other tests).
     sleep = mocker.patch.object(dynamodb, "_sleep")
-    dynamodb._backoff_before(0)
-    sleep.assert_not_called()
-    dynamodb._backoff_before(3)
-    dynamodb._backoff_before(10)
-    assert [c.args[0] for c in sleep.call_args_list] == [pytest.approx(0.4), 2.0]
+    resends = dynamodb._Resends(Config().retry.registry_batch)
+    sleep.assert_not_called()  # none before the first request
+    while resends.wait():
+        pass
+    waits = [c.args[0] for c in sleep.call_args_list]
+    assert waits[2] == pytest.approx(0.4) and waits[-1] == 2.0
+    assert resends.requests == len(waits) + 1
 
 
 def test_full_and_delta_indexing_write_the_same_artifact_types(mocker) -> None:

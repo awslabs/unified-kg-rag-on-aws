@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`EvaluationConfig(prices=...)` is refused as an unknown field; a config file or `UKR__` variable that sets
   `evaluation.prices` still loads, with a WARNING). `unified_kg_rag.evaluation.comparison.answer_cost_usd` is
   `unified_kg_rag.domain.pricing.usage_cost_usd`.
+- `config.retry.max_attempts` and the other flat retry fields are gone from the Python surface, and
+  `RetryConfig.transient_policy()` with them: read and set the profiles (`config.retry.model.max_attempts`,
+  `config.retry.ingestion_item`, ...). Configs that set the flat keys still load (*Deprecated*).
 
 ### Added
 
@@ -74,6 +77,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   decide (extraction, gleaning, claims, translation, intelligent chunking), naming the graph-dependent ones it cannot
   count. The console's Ingest page offers to resume a run stopped at its budget (its options without the forced
   recompute).
+- Every numeric configuration default says what it rests on: an evidence tag (`json_schema_extra=evidence(...)`,
+  `domain/models/evidence.py`) of `measured` (linked to its run in Defaults and evidence), `upstream` or `deviation`
+  (naming the original's value), `operational` or `unmeasured`. The configuration reference prints it in an Evidence
+  column and lists the defaults no run compared; a unit test fails an untagged numeric default, and another a new
+  numeric module constant not listed with its reason (`tests/fixtures/numeric_constants.py`).
+- `processing.minhash_similarity_threshold`: the threshold of `resolution_method: minhash`, a Jaccard similarity of
+  character 3-grams that reads lower than the `sequence_matcher` ratio of the same pair; unset, it is
+  `similarity_threshold`, as before. It keys the stage caches only where it changes a match: under `minhash`, set to
+  another value than `similarity_threshold`.
+- `processing.deduplicate_similarity_threshold` (default 0.9, the fixed value before): the 3-gram similarity at which
+  `processing.deduplicate` reads two documents as copies.
+- The `text_chunking` stage warns when chunk sizes counted in characters (`length_unit: chars`) meet a corpus whose
+  characters cost at least twice Latin text's estimated tokens (Han, Hangul, Kana, Thai, Greek, Hebrew, Devanagari,
+  Arabic: a chunk then holds that many times the tokens of an English one), and when text units are estimated over
+  the embedding model's input, which embeds only their start; each names the size that made the units
+  (`fallback_chunk_size` under the simple chunker). No backend's defaults warn; nothing else changes.
+  `Providers.embedding_model_info()` (its `EmbeddingModelInfo` now exported) reads the limit from the Bedrock
+  catalog without building a client, and a Bedrock rerank model given by profile id or ARN finds its record.
+- The `retry` section has one profile per caller, each a `RetryPolicy` (`max_attempts`, `base_delay_seconds`,
+  `max_delay_seconds`, `max_total_seconds`, `jitter`; exported): `model`, `ingestion_item`, `model_server`,
+  `graph_store`, `query_store` (OpenSearch and graph-store query reads), `bulk_item` and `registry_batch`, beside
+  `judge_max_attempts` (the flat keys are deprecated, see *Deprecated*). Each profile defaults to its caller's 0.3.0
+  values, so nothing waits otherwise; the ingestion item backoff (30 s doubling to 120 s, which ignored the section),
+  the OpenSearch and Neptune query, bulk-item and DynamoDB batch backoffs, fixed in code before, are set there now, and
+  every caller draws its waits with one backoff function. A profile set in part keeps its own defaults. The clients' own
+  retries stacked under them are set there too: `client_max_attempts` of `retry.model` (botocore's requests per Bedrock
+  call of ingestion and evaluation) and of `retry.bulk_item` (the OpenSearch indexing client's), both 6, their 0.3.0
+  counts. No caller retries a call the usage limits refused.
 
 ### Changed
 
@@ -95,6 +126,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for `[NO_ANSWER]` (`search.abstention`), the token held back and stripped.
 - `RAGInput.enable_thinking` warns (`DeprecationWarning`): set `RAGInput.effort`. Until it is removed it turns the
   answer model's reasoning on at its tier's effort, as before.
+- The flat `retry` keys (`retry.max_attempts`, `base_delay_seconds`, `max_delay_seconds`, `max_total_seconds`,
+  `model_server_max_attempts`, `graph_store_max_attempts`, `query_store_max_attempts`) load, from a file or a `UKR__`
+  variable, into every profile each one governed in 0.3.0 (`max_attempts` into `retry.model` and
+  `retry.ingestion_item`, `base_delay_seconds` into `model`, `model_server` and `graph_store`, ...), with a WARNING
+  naming them; one set beside a profile key to another value fails the load, naming both. `DEPRECATED_KEYS` maps a
+  key to one replacement or several.
+- `unified_kg_rag.TransientRetryConfig` warns (`DeprecationWarning`, at the importing line): it is `RetryPolicy`, its
+  new name, and is no longer in `__all__` (`unified_kg_rag.domain.models.config.TransientRetryConfig`, an internal
+  path, is gone). A warning the package emits for a deprecated API now names the caller's
+  line under `from unified_kg_rag import ...` too (it named a frame of the import machinery).
 
 ### Fixed
 Bugs present in 0.3.0.
@@ -117,6 +158,21 @@ Bugs present in 0.3.0.
 - A saved result (an evaluation report, a failed metric's reason) names an error whose whole message is the package's
   own by its type and the error it was raised from (`LanguageModelError from ConnectionRefusedError [Errno 111]
   Connection refused`) when that message does not name it; it named the type alone.
+- Name matching with `processing.resolution_method: minhash` (the default; claim subjects and objects always, entities
+  with fuzzy resolution on) missed most pairs near `processing.similarity_threshold`: datasketch's LSH split (8 bands
+  of 16 rows at 0.85) proposed a pair at the threshold 46% of the time, so a typo of a name never matched, and the
+  MinHash estimate, off by a few hundredths, decided the rest. The index now proposes 99% of the pairs at the
+  threshold (16 bands of 8 rows) and their exact 3-gram Jaccard similarity decides. Below a threshold of about 0.8
+  it proposes fewer, at most 5% of the pairs at half the threshold, which bounds its comparisons (63% at 0.6, where
+  datasketch's split proposed 40%), and never fewer than datasketch's split.
+- `processing.deduplicate` dropped template documents: two contracts of one form, with other amounts, dates and ids
+  in a long shared text, read as copies at its fixed 0.9 3-gram similarity, and one went unindexed without a word.
+  A near-duplicate now also holds the same numbers in the same order (digits of any script, Han numerals), so any
+  differing number keeps both; a document is dropped only as a copy of one that is kept (not of another dropped
+  copy), and a WARNING names the dropped documents (the first 20) and the ones they copy.
+- An ingestion LLM item whose output did not parse waited the backoff of a throttled call (up to 30 s, then 60 s,
+  then 120 s) before it was asked again; it is asked again at once. Throttling, timeouts and transient errors keep
+  the backoff (`retry.ingestion_item`).
 
 ## [0.3.0] - 2026-11-14
 

@@ -1,7 +1,10 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import hashlib
 import logging
+import re
 import time
+import unicodedata
 from collections.abc import Callable
 from concurrent.futures import as_completed
 from functools import partial
@@ -31,7 +34,10 @@ preload_in_forkserver(__name__)
 
 def compute_minhash(
     doc_info: tuple[int, str], num_permutations: int, n_grams: int
-) -> tuple[int, MinHash] | None:
+) -> tuple[int, MinHash, str] | None:
+    """A document's MinHash of its character ``n_grams`` and the digest of
+    its numbers (:func:`numbers_digest`), or None for a text shorter than
+    one shingle."""
     doc_index, content = doc_info
     if not content or len(content) < n_grams:
         return None
@@ -43,15 +49,42 @@ def compute_minhash(
     minhash = MinHash(num_perm=num_permutations)
     minhash.update_batch([shingle.encode("utf8") for shingle in shingles])
 
-    return doc_index, minhash
+    return doc_index, minhash, numbers_digest(content)
 
 
-# Near-duplicate detection parameters of ``processing.deduplicate``: two
-# documents are duplicates when the Jaccard similarity of their character
-# 3-gram sets, estimated with a 128-permutation MinHash, is at least 0.9.
-DEDUP_SIMILARITY_THRESHOLD = 0.9
+# A run of digits of any script, or of Han numerals (三万, 二〇二六).
+# Hangul number words (삼백만) are ordinary syllables and are not read.
+_NUMBER = re.compile(r"\d+|[〇零一二三四五六七八九十百千万萬億亿兆]+")
+
+
+def _number(run: str) -> str:
+    """``run`` with every decimal digit as its ASCII digit (Arabic-Indic,
+    Devanagari, ... digits read as the same number; zeros kept)."""
+    return "".join(str(unicodedata.digit(ch)) if ch.isdecimal() else ch for ch in run)
+
+
+def numbers_digest(text: str) -> str:
+    """A digest of the numbers ``text`` holds, in their order: two documents
+    with the same numbers (amounts, dates, ids) in the same order share it.
+
+    Template documents (two contracts of one form) differ in a few amounts
+    and dates within a text of thousands of characters, so their shingle
+    similarity alone reads them as copies of each other; two dates or line
+    amounts swapped make another document too.
+    """
+    numbers = [
+        _number(run) for run in _NUMBER.findall(unicodedata.normalize("NFKC", text))
+    ]
+    return hashlib.sha256("\x00".join(numbers).encode("utf-8")).hexdigest()
+
+
+# Near-duplicate detection of ``processing.deduplicate``: the Jaccard
+# similarity of two documents' character 3-gram sets, estimated with a
+# 128-permutation MinHash.
 DEDUP_MINHASH_PERMUTATIONS = 128
 DEDUP_N_GRAMS = 3
+# The dropped documents a WARNING names at most (the rest are counted).
+_DROPPED_NAMED = 20
 
 
 class DirectoryLoader:
@@ -193,23 +226,29 @@ class DirectoryLoader:
     def deduplicate_documents(
         self,
         documents: list[Document],
+        *,
+        threshold: float,
         keep: Callable[[Document], bool] | None = None,
         avoid: Callable[[Document], bool] | None = None,
     ) -> list[Document]:
         """MinHash near-duplicate removal for documents loaded elsewhere.
 
+        Two documents are near-duplicates when their 3-gram similarity is
+        at least ``threshold`` and they hold the same numbers
+        (:func:`numbers_digest`): a form filled in twice is two documents.
         Of two near-duplicates the earlier one is kept, except that a document
         ``keep`` accepts wins over one it rejects (an incremental run keeps
         the already-indexed copy) and one ``avoid`` accepts loses to any other
-        (a copy whose indexing failed). The survivors keep their input order.
+        (a copy whose indexing failed). The survivors keep their input order;
+        a WARNING names each dropped document and the one it copies.
         """
         if len(documents) < 2:
             return documents
 
         logger.info("Starting deduplication for %s documents", len(documents))
 
-        minhashes = self._compute_minhashes(documents)
-        if not minhashes:
+        signatures = self._compute_minhashes(documents)
+        if not signatures:
             logger.warning("No MinHashes computed, skipping deduplication")
             return documents
 
@@ -223,10 +262,28 @@ class DirectoryLoader:
             ),
         )
         rank = {doc_index: position for position, doc_index in enumerate(order)}
-        duplicate_indices = self._find_duplicate_indices(minhashes, rank)
-        if not duplicate_indices:
+        duplicates = self._find_duplicates(signatures, rank, threshold)
+        if not duplicates:
             logger.info("No duplicates found")
             return documents
+        duplicate_indices = set(duplicates)
+        named = [
+            f"'{_label(documents[index])}' (of '{_label(documents[original])}', "
+            f"similarity {similarity:.2f})"
+            for index, (original, similarity) in sorted(duplicates.items())
+        ]
+        logger.warning(
+            "Deduplication dropped %d near-duplicate document(s) "
+            "(processing.deduplicate_similarity_threshold %.2f): %s%s",
+            len(named),
+            threshold,
+            ", ".join(named[:_DROPPED_NAMED]),
+            (
+                f" and {len(named) - _DROPPED_NAMED} more"
+                if len(named) > _DROPPED_NAMED
+                else ""
+            ),
+        )
 
         unique_docs = [
             doc for i, doc in enumerate(documents) if i not in duplicate_indices
@@ -240,8 +297,11 @@ class DirectoryLoader:
 
         return unique_docs
 
-    def _compute_minhashes(self, documents: list[Document]) -> dict[int, MinHash]:
-        minhashes = {}
+    def _compute_minhashes(
+        self, documents: list[Document]
+    ) -> dict[int, tuple[MinHash, str]]:
+        """Each document's MinHash and numbers digest, by its index."""
+        minhashes: dict[int, tuple[MinHash, str]] = {}
         compute_func = partial(
             compute_minhash,
             num_permutations=DEDUP_MINHASH_PERMUTATIONS,
@@ -260,7 +320,7 @@ class DirectoryLoader:
             for future in as_completed(tasks):
                 try:
                     if result := future.result():
-                        minhashes[result[0]] = result[1]
+                        minhashes[result[0]] = (result[1], result[2])
                 except Exception as e:  # noqa: BLE001 - isolate one document's failure
                     failures += 1
                     log_failure(
@@ -289,27 +349,41 @@ class DirectoryLoader:
         logger.debug("Computed MinHashes for %s documents", len(minhashes))
         return minhashes
 
-    def _find_duplicate_indices(
-        self, minhashes: dict[int, MinHash], rank: dict[int, int]
-    ) -> set[int]:
-        """Indices to drop: of each near-duplicate pair, the later-ranked one.
+    def _find_duplicates(
+        self,
+        signatures: dict[int, tuple[MinHash, str]],
+        rank: dict[int, int],
+        threshold: float,
+    ) -> dict[int, tuple[int, float]]:
+        """The indices to drop, each with the index it copies and their
+        similarity: of each near-duplicate pair, the later-ranked one.
 
         The Jaccard check runs here: it is a comparison of two short
         signatures, cheaper than handing them to a worker process.
         """
-        lsh = MinHashLSH(
-            threshold=DEDUP_SIMILARITY_THRESHOLD, num_perm=DEDUP_MINHASH_PERMUTATIONS
-        )
-        for doc_idx, minhash in minhashes.items():
+        lsh = MinHashLSH(threshold=threshold, num_perm=DEDUP_MINHASH_PERMUTATIONS)
+        for doc_idx, (minhash, _) in signatures.items():
             lsh.insert(doc_idx, minhash)
 
-        duplicate_indices = set()
-        for doc_idx, minhash in minhashes.items():
+        duplicates: dict[int, tuple[int, float]] = {}
+        for doc_idx in sorted(signatures, key=rank.__getitem__):
+            if doc_idx in duplicates:
+                continue
+            minhash, numbers = signatures[doc_idx]
             for other in lsh.query(minhash):
                 if (
-                    isinstance(other, int)
-                    and rank[doc_idx] < rank[other]
-                    and minhash.jaccard(minhashes[other]) >= DEDUP_SIMILARITY_THRESHOLD
+                    not isinstance(other, int)
+                    or other in duplicates
+                    or rank[doc_idx] >= rank[other]
+                    or signatures[other][1] != numbers
                 ):
-                    duplicate_indices.add(other)
-        return duplicate_indices
+                    continue
+                similarity = minhash.jaccard(signatures[other][0])
+                if similarity >= threshold:
+                    duplicates[other] = (doc_idx, similarity)
+        return duplicates
+
+
+def _label(document: Document) -> str:
+    """How a WARNING names ``document``: its file name, else its path."""
+    return document.file_name or document.file_path

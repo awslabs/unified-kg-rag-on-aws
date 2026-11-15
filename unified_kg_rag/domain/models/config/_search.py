@@ -14,6 +14,8 @@ from pydantic import (
     model_validator,
 )
 
+from unified_kg_rag.domain.models.evidence import evidence
+
 from ..retrieval import (
     QueryLimits,
     SearchStrategy,
@@ -33,10 +35,10 @@ from ._fusion import (
     _reject_auto_strategy,
     _reject_auto_style,
 )
+from ._graph_expansion import GraphExpansionConfig
 from ._strategies import (
     DriftSearchConfig,
     GlobalSearchConfig,
-    GraphExpansionConfig,
     IterativeSearchConfig,
     LightRAGSearchConfig,
     LocalSearchConfig,
@@ -152,6 +154,7 @@ class SearchConfig(ConfigSection):
             "keeps processing.max_concurrency of them in flight) multiply it; "
             "lower it if a query's calls are throttled."
         ),
+        json_schema_extra=evidence("operational"),
     )
     store_timeout_seconds: float = Field(
         default=30.0,
@@ -163,6 +166,7 @@ class SearchConfig(ConfigSection):
             "does not answer fails the query instead of answering from no "
             "context. Ingestion keeps its own, longer limits."
         ),
+        json_schema_extra=evidence("operational"),
     )
     query_timeout_seconds: float | None = Field(
         default=180.0,
@@ -180,6 +184,9 @@ class SearchConfig(ConfigSection):
             "of its model call. Under processing.ignore_errors the query "
             "returns the error answer instead, a deadline that passes during "
             "its admission too. null disables both deadlines."
+        ),
+        json_schema_extra=evidence(
+            "operational", "#query-deadlines-and-model-timeouts"
         ),
     )
     query_max_model_calls: int | None = Field(
@@ -228,6 +235,9 @@ class SearchConfig(ConfigSection):
             "providers.llm.timeout_seconds and providers.embedding."
             "timeout_seconds for query calls."
         ),
+        json_schema_extra=evidence(
+            "operational", "#query-deadlines-and-model-timeouts"
+        ),
     )
     model_max_attempts: int = Field(
         default=2,
@@ -235,11 +245,14 @@ class SearchConfig(ConfigSection):
         description=(
             "Attempts, including the first, that botocore makes for one "
             "query-time Bedrock request (read timeouts, throttling, 5xx); "
-            "ingestion clients make 6. With model_timeout_seconds it bounds a"
+            "ingestion clients make retry.model.client_max_attempts. With model_timeout_seconds it bounds a"
             " stalled call to about model_max_attempts x "
             "model_timeout_seconds. Throttling and model errors past it are "
             "retried with backoff within the retry section's budget "
-            "(retry.max_total_seconds)."
+            "(retry.model.max_total_seconds)."
+        ),
+        json_schema_extra=evidence(
+            "operational", "#query-deadlines-and-model-timeouts"
         ),
     )
     auto_speculative_extraction: bool = Field(
@@ -277,6 +290,7 @@ class SearchConfig(ConfigSection):
             "arm searches with the same entities and keywords. A failed "
             "extraction is not kept. 0 disables it."
         ),
+        json_schema_extra=evidence("operational"),
     )
     answer_prompt_style: Annotated[
         dict[SearchStrategy, AnswerPromptStyle],

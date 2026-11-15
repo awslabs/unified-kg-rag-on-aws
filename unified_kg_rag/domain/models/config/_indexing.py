@@ -12,6 +12,7 @@ from pydantic import (
 )
 
 from unified_kg_rag.domain.languages import BUILT_IN_ANALYZERS, PROFILES
+from unified_kg_rag.domain.models.evidence import evidence
 
 from ..methodology import (
     DEFAULT_METHODOLOGIES,
@@ -67,6 +68,7 @@ class NeptuneIndexingConfig(ConfigSection):
         default=100,
         ge=1,
         description=("Items per Neptune write batch."),
+        json_schema_extra=evidence("operational"),
     )
     index_concurrency: int = Field(
         default=1,
@@ -82,6 +84,7 @@ class NeptuneIndexingConfig(ConfigSection):
             "retried edge rewrite can leave a duplicate edge (3,025 edges "
             "for 3,000 ids in one measurement), so keep it at 1 there."
         ),
+        json_schema_extra=evidence("operational"),
     )
     property_max_length: int = Field(
         default=4000,
@@ -93,6 +96,7 @@ class NeptuneIndexingConfig(ConfigSection):
             "~2,400 English characters). OpenSearch keeps descriptions in "
             "full. Takes effect on re-ingestion."
         ),
+        json_schema_extra=evidence("operational"),
     )
     vertex_ids: Literal["property", "custom"] = Field(
         default="property",
@@ -301,6 +305,7 @@ class OpenSearchIndexingConfig(ConfigSection):
         default=100,
         ge=1,
         description="Maximum number of hits returned per OpenSearch query",
+        json_schema_extra=evidence("operational"),
     )
     index_settings: dict[str, Any] = Field(
         default_factory=lambda: dict(DEFAULT_INDEX_SETTINGS),
@@ -532,6 +537,7 @@ class CommunityCompactionConfig(ConfigSection):
         "build clustered the graph. A suffix whose full build predates the "
         "counters starts counting at its next full build. null turns this "
         "check off.",
+        json_schema_extra=evidence("operational"),
     )
     max_community_growth: float | None = Field(
         default=1.5,
@@ -541,6 +547,7 @@ class CommunityCompactionConfig(ConfigSection):
         "(each commit adds the communities it appended and subtracts those "
         "its removals deleted; the community_growth_ratio metric). null "
         "turns this check off.",
+        json_schema_extra=evidence("operational"),
     )
     on_drift_recommendation: bool = Field(
         default=False,
@@ -595,6 +602,10 @@ class SummaryTreeConfig(ConfigSection):
         le=50,
         description="Children per summary node aimed at (kmeans' k, and the "
         "centre of gmm's bounded BIC grid). RAPTOR's trees average 6.7.",
+        json_schema_extra=evidence(
+            "deviation",
+            "RAPTOR picks k by BIC (max_clusters 50); its trees average 6.7 children",
+        ),
     )
     soft_threshold: float = Field(
         default=0.1,
@@ -602,6 +613,7 @@ class SummaryTreeConfig(ConfigSection):
         lt=1.0,
         description="gmm only: a node joins every cluster whose posterior "
         "exceeds this (RAPTOR's threshold), its likeliest one when none does.",
+        json_schema_extra=evidence("upstream", "RAPTOR's GMM threshold, 0.1"),
     )
     reduction_dims: int = Field(
         default=10,
@@ -609,6 +621,7 @@ class SummaryTreeConfig(ConfigSection):
         le=100,
         description="PCA dimensions the vectors are reduced to before "
         "clustering (RAPTOR's reduction_dimension; PCA replaces its UMAP).",
+        json_schema_extra=evidence("upstream", "RAPTOR's reduction_dimension, 10"),
     )
     max_levels: int = Field(
         default=5,
@@ -616,12 +629,14 @@ class SummaryTreeConfig(ConfigSection):
         le=10,
         description="Summary levels above the text units at most (RAPTOR's "
         "num_layers).",
+        json_schema_extra=evidence("upstream", "RAPTOR's num_layers, 5"),
     )
     min_nodes_to_cluster: int = Field(
         default=11,
         ge=2,
         description="A level of at most this many nodes is not clustered "
         "again: its nodes are the roots (RAPTOR's reduction_dimension + 1).",
+        json_schema_extra=evidence("upstream", "RAPTOR's reduction_dimension + 1"),
     )
     min_level_shrink: float = Field(
         default=0.2,
@@ -630,6 +645,7 @@ class SummaryTreeConfig(ConfigSection):
         description="Stop when the next level would hold more than "
         "(1 - this) of the current one's nodes: no structure is left to "
         "summarize. 0 never stops for it (RAPTOR's behaviour).",
+        json_schema_extra=evidence("deviation", "RAPTOR never stops for it (0)"),
     )
     max_cluster_tokens: int = Field(
         default=8000,
@@ -637,12 +653,16 @@ class SummaryTreeConfig(ConfigSection):
         description="A cluster whose children hold more tokens than this "
         "(the summary prompt's input) is clustered again until it fits "
         "(RAPTOR's max_length_in_cluster, 3500 cl100k tokens).",
+        json_schema_extra=evidence(
+            "deviation", "RAPTOR's max_length_in_cluster, 3500 cl100k tokens"
+        ),
     )
     max_summary_tokens: int = Field(
         default=300,
         ge=32,
         le=4000,
         description="Length a summary aims at; a longer answer is cut to it.",
+        json_schema_extra=evidence("unmeasured"),
     )
     max_lineage_text_units: int = Field(
         default=10000,
@@ -650,12 +670,14 @@ class SummaryTreeConfig(ConfigSection):
         description="Text-unit ids a node stores at most (its provenance and "
         "removal key); above it the node keeps its child ids and the "
         "lineage is resolved through them at query time.",
+        json_schema_extra=evidence("operational"),
     )
     min_leaves_per_tree: int = Field(
         default=3,
         ge=2,
         description="scope: document only: a document with fewer text units "
         "gets no tree.",
+        json_schema_extra=evidence("unmeasured"),
     )
     refresh: Literal["every_run", "on_reset"] = Field(
         default="every_run",
@@ -665,7 +687,9 @@ class SummaryTreeConfig(ConfigSection):
         "covers (tree_uncovered_leaves); indexing.reset rebuilds.",
     )
     random_state: int = Field(
-        default=42, description="Seed of the clustering's initializations."
+        default=42,
+        description="Seed of the clustering's initializations.",
+        json_schema_extra=evidence("operational"),
     )
     max_leaves_in_memory: int = Field(
         default=100_000,
@@ -678,6 +702,7 @@ class SummaryTreeConfig(ConfigSection):
         "the default takes about 5 GiB. A larger tree fails the stage before "
         "its vectors are read, naming partition_by and scope: document; "
         "raise it with the task's memory.",
+        json_schema_extra=evidence("operational"),
     )
 
     @field_validator("partition_by")
@@ -759,6 +784,7 @@ class IndexingConfig(ConfigSection):
         "documents, so such an entity sits in two communities and the earlier "
         "community's report misses what the run added; indexing.reset: true "
         "re-clusters the whole graph.",
+        json_schema_extra=evidence("operational"),
     )
     community_compaction: CommunityCompactionConfig = Field(
         default_factory=CommunityCompactionConfig,
@@ -787,6 +813,7 @@ class IndexingConfig(ConfigSection):
             "retried). A fully failed index type always fails the stage. 1.0 "
             "disables the partial-failure gate."
         ),
+        json_schema_extra=evidence("operational"),
     )
     max_document_failures: int = Field(
         default=3,
@@ -801,6 +828,7 @@ class IndexingConfig(ConfigSection):
         "claim extraction error never counts: the document is indexed "
         "without those claims. A claim extraction outage fails the document "
         "uncounted, as any outage does.",
+        json_schema_extra=evidence("operational"),
     )
     max_document_attempts: int = Field(
         default=3,
@@ -816,6 +844,7 @@ class IndexingConfig(ConfigSection):
         "content changes or this value is raised); otherwise the "
         "next runs process half of the documents it died with and defer the "
         "other new and changed documents until the culprit is alone.",
+        json_schema_extra=evidence("operational"),
     )
     max_deletion_share: float | None = Field(
         default=0.5,
@@ -832,6 +861,7 @@ class IndexingConfig(ConfigSection):
         "(retire_source_scopes) and seed graph shards (the configuration "
         "adds and removes them) do not count, and a reset or a run with the "
         "registry off is never checked. 1.0 or null disables the check.",
+        json_schema_extra=evidence("operational"),
     )
     lease_seconds: float = Field(
         default=600.0,
@@ -849,6 +879,7 @@ class IndexingConfig(ConfigSection):
         "gives it up expired, so the next run holds its first write about "
         "185 s for the stopped run's requests in flight (with every store "
         "embedded it releases it instead).",
+        json_schema_extra=evidence("operational"),
     )
     retire_source_scopes: list[str] = Field(
         default_factory=list,

@@ -1150,7 +1150,10 @@ when an unadjusted 95% interval excludes zero.
   "significant" metric among many is weaker evidence than its interval
   alone suggests. Where a section says a Holm correction, it applied one
   by hand.
-- **Settings no run compared.** `search.local_search.type_quota` (only its
+- **Settings no run compared.** The configuration reference lists every
+  numeric default no run compared
+  ([Defaults no run compared](../reference/configuration.md#defaults-no-run-compared)),
+  from the evidence tag each one carries. Of them, `search.local_search.type_quota` (only its
   entity and relationship floors follow MS GraphRAG),
   `search.local_search.entity_candidates_per_focus`,
   `search.hybrid.normalization_window` and

@@ -38,9 +38,10 @@ cd ws && uv run run-ingestion --config-path config.yaml --source-directory corpu
 ```
 
 `--lightrag-graphrag-only` indexes the default methodologies only (no `ppr`
-or `tree`). The config keeps retries on (`retry.max_attempts: 3`) with a
-short `retry.base_delay_seconds` (0.2 s) for the model clients' own retries.
-Ingestion items back off on their own schedule (up to 120 s between
+or `tree`). The config keeps retries on (3 attempts) with a short backoff
+(`base_delay_seconds` 0.2 s) for the model clients' own retries
+(`retry.model`, `retry.model_server`) and the graph store's. Ingestion items
+back off on their own schedule (`retry.ingestion_item`, up to 120 s between
 attempts), so an ingestion run under injected faults takes minutes.
 
 ## Scenarios

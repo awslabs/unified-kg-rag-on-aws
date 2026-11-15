@@ -16,7 +16,9 @@ from unified_kg_rag.domain.models.config import (
     DEPRECATED_KEYS,
     MOVED_KEYS,
     REMOVED_KEYS,
+    deprecated_targets,
     merge_over,
+    migrate_deprecated_keys,
     moved_key_hint,
     nested_model,
     removed_keys,
@@ -186,15 +188,17 @@ def _unknown_variable(name: str) -> str:
     return f"environment variable {name}"
 
 
-def _deprecated_variable(name: str) -> str | None:
-    """The variable that sets what the ``UKR__`` variable ``name`` sets
-    under a deprecated key (``DEPRECATED_KEYS``), or ``None``."""
+def _deprecated_variables(name: str) -> tuple[str, ...]:
+    """The variables that set what the ``UKR__`` variable ``name`` sets
+    under a deprecated key (``DEPRECATED_KEYS``): one per key it loads into
+    (``deprecated_targets``), or none."""
     upper = name.upper()
-    for old, new in DEPRECATED_KEYS.items():
+    for old in DEPRECATED_KEYS:
         variable = env_var(old)
         if upper == variable or upper.startswith(f"{variable}__"):
-            return env_var(new) + upper[len(variable) :]
-    return None
+            suffix = upper[len(variable) :]
+            return tuple(env_var(new) + suffix for new in deprecated_targets(old))
+    return ()
 
 
 def _removed_path(name: str) -> str | None:
@@ -292,7 +296,13 @@ class ConfigLoader:
         )
         try:
             config = (
-                Config(**_merged(config_data, env_data, env_paths.values()))
+                Config(
+                    **_merged(
+                        _file_under_variables(config_data, env_paths),
+                        env_data,
+                        env_paths.values(),
+                    )
+                )
                 if env_data
                 else file_config
             )
@@ -372,7 +382,8 @@ class ConfigLoader:
     ) -> tuple[dict[str, Any], list[str], dict[str, tuple[str, ...]]]:
         """The set environment overrides as raw config data, the ``UKR__``
         variables that name no config key, and the config path each applied
-        variable sets.
+        variable sets (a deprecated key's variable is listed once per key it
+        loads into, as ``NAME -> REPLACEMENT``).
 
         Each value is converted and checked against its field in ``config``
         (the config without them), so an invalid one is reported by variable.
@@ -383,25 +394,50 @@ class ConfigLoader:
             ConfigurationError: An environment variable holds an invalid value.
         """
         overrides: dict[str, tuple[str, ...]] = {}
+        # The variable each override reads (a deprecated key's sets several).
+        variables: dict[str, str] = {}
         unknown: list[str] = []
         for name in sorted(os.environ):
             if name.upper().startswith(ENV_PREFIX):
                 path = _env_path(name)
-                if path is None and (replacement := _deprecated_variable(name)):
-                    path = _env_path(replacement)
-                    if path is not None:
+                replaced: list[tuple[str, tuple[str, ...]]] = []
+                if path is None:
+                    for replacement in _deprecated_variables(name):
+                        if (target := _env_path(replacement)) is not None:
+                            replaced.append((replacement, target))
+                    if replaced:
                         _logger.warning(
                             "Environment variable %s is deprecated: set %s",
                             name,
-                            replacement,
+                            ", ".join(replacement for replacement, _ in replaced),
                         )
                 removed = _removed_path(name)
                 if removed is not None:
                     _warn_removed(f"environment variable {name}", removed)
+                elif replaced:
+                    for replacement, target in replaced:
+                        key = name if len(replaced) == 1 else f"{name} -> {replacement}"
+                        overrides[key] = target
+                        variables[key] = name
                 elif path is None:
                     unknown.append(name)
                 else:
                     overrides[name] = path
+        # A deprecated variable and its replacement's both set: the
+        # replacement's wins, as it would over the deprecated key in a file.
+        direct = {
+            path: name for name, path in overrides.items() if name not in variables
+        }
+        for key in [key for key in overrides if key in variables]:
+            if (winner := direct.get(overrides[key])) is not None:
+                _logger.warning(
+                    "Environment variables %s and %s both set %s: %s wins",
+                    variables[key],
+                    winner,
+                    ".".join(overrides[key]),
+                    winner,
+                )
+                del overrides[key]
         for name, path in AWS_ENV_FALLBACKS.items():
             if (
                 name in os.environ
@@ -411,7 +447,7 @@ class ConfigLoader:
                 overrides[name] = path
         layer: dict[str, Any] = {}
         for name, path in overrides.items():
-            value = os.environ[name]
+            value = os.environ[variables.get(name, name)]
             if path == ("logging", "level"):
                 value = value.upper()  # logging accepts any case
             try:
@@ -435,6 +471,28 @@ class ConfigLoader:
     @property
     def config(self) -> Config:
         return self._config if self._config is not None else self.load_config()
+
+
+def _file_under_variables(
+    file_data: dict[str, Any], paths: dict[str, tuple[str, ...]]
+) -> dict[str, Any]:
+    """``file_data`` with its deprecated keys moved into the keys that
+    replace them (the file alone loaded, so they agree), so a variable that
+    sets one of those keys wins over the file's deprecated key as over any
+    file key, with a WARNING naming both."""
+    migrated, deprecated = migrate_deprecated_keys(file_data)
+    for old in deprecated:
+        for target in deprecated_targets(old):
+            for name, path in paths.items():
+                if ".".join(path) == target:
+                    _logger.warning(
+                        "Environment variable %s sets %s over the file's "
+                        "deprecated %s",
+                        name.split(" -> ")[0],
+                        target,
+                        old,
+                    )
+    return migrated
 
 
 def _merged(

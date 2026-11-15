@@ -569,7 +569,7 @@ def test_a_graph_store_without_string_ids_names_the_setting(
     make_indexer, mocker
 ) -> None:
     # TinkerGraph's default id manager takes Long ids only: every custom-id
-    # lookup failed with a raw 500, retried graph_store_max_attempts times.
+    # lookup failed with a raw 500, retried retry.graph_store.max_attempts times.
     from gremlin_python.driver.protocol import GremlinServerError
 
     from unified_kg_rag.adapters.aws.neptune import neptune_request_error
