@@ -16,13 +16,14 @@ that fit.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
 import httpx
 import pytest
 from langchain_core.messages import HumanMessage
-from pydantic import ValidationError
+from pydantic import Field, ValidationError
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
 from tests.fixtures.fakes.model_servers import FakeOllama
@@ -874,7 +875,10 @@ def test_an_optional_call_leaves_the_answer_its_input_tokens() -> None:
 
 
 def test_a_query_keeps_its_answer_s_prompt_and_question_tokens() -> None:
-    from unified_kg_rag.adapters.retrieval.base import answer_prompt_tokens
+    from unified_kg_rag.adapters.retrieval.base import (
+        answer_call_tokens,
+        answer_prompt_tokens,
+    )
 
     config = Config()
     chain = _chain(config, _Factory(_SlowChatModel()))
@@ -895,12 +899,20 @@ def test_a_query_keeps_its_answer_s_prompt_and_question_tokens() -> None:
     searched = chain._usage_limits(rag_input, search=True)
     assert searched is not None
     assert (searched.reserved_calls, searched.reserved_tokens) == (0, 0)
-    # DRIFT keeps the one action it cannot answer without beside the answer.
-    drift = chain._usage_limits(
-        rag_input.model_copy(update={"search_strategy": SearchStrategy.DRIFT}),
-        search=False,
-    )
+    # DRIFT keeps the one action it cannot answer without beside the
+    # answer, and under an input-token limit its least input too (rv34: an
+    # optional extraction spent the tokens the action needed, and the query
+    # abstained after paying for it); a search keeps the action alone.
+    drifting = rag_input.model_copy(update={"search_strategy": SearchStrategy.DRIFT})
+    (action,) = DriftSearchStrategy.answering_calls(config, rag_input.query)
+    assert action > config.search.token_manager.min_truncated_section_tokens
+    drift = chain._usage_limits(drifting, search=False)
     assert drift is not None and drift.reserved_calls == 2
+    answer = answer_call_tokens(config, SearchStrategy.DRIFT, rag_input.query)
+    assert drift.reserved_tokens == answer + action
+    drift_search = chain._usage_limits(drifting, search=True)
+    assert drift_search is not None
+    assert (drift_search.reserved_calls, drift_search.reserved_tokens) == (1, action)
 
 
 async def test_a_follow_up_at_one_call_searches_the_question_as_written() -> None:
@@ -966,3 +978,263 @@ async def test_a_streamed_answer_counts_one_call_as_an_unstreamed_one() -> None:
     streamed = events[-1].output.metadata["usage"]
     assert unstreamed["llm_calls"] == streamed["llm_calls"] == 1
     assert streamed["estimated_calls"] == unstreamed["estimated_calls"]
+
+
+# --- a DRIFT search under an input-token limit (rv34) ---------------------------
+
+
+class _DriftModel(_SlowChatModel):
+    """Answers each DRIFT prompt as the model would: a report for the
+    expansion, a primer answer with follow-ups, an action answer."""
+
+    actions: list[bool] = Field(default_factory=list)
+
+    async def _agenerate(self, messages: list[Any], *a: Any, **k: Any) -> Any:
+        from langchain_core.messages import AIMessage
+        from langchain_core.outputs import ChatGeneration, ChatResult
+
+        system = str(messages[0].content)
+        if "DRIFT action step" in system:
+            self.actions.append(True)
+            reply = json.dumps(
+                {
+                    "response": "Vendor ships parts.",
+                    "score": 60,
+                    "follow_up_queries": [],
+                }
+            )
+        elif "DRIFT search primer" in system:
+            reply = json.dumps(
+                {
+                    "intermediate_answer": "Vendor supplies Buyer.",
+                    "score": 50,
+                    "follow_up_queries": ["Which parts does Vendor ship to Buyer?"],
+                }
+            )
+        else:
+            reply = "Vendor supplies parts to Buyer under the agreement."
+        return ChatResult(
+            generations=[ChatGeneration(message=AIMessage(content=reply))]
+        )
+
+
+class _MixedLocal:
+    """A follow-up's local search: one section of each type, of the sizes
+    the demo corpus's are (a short relationship, a long entity, two
+    passages, a long report)."""
+
+    async def asearch(self, query: SearchQuery, config: Any = None) -> Any:
+        from unified_kg_rag.domain.models import RetrievalResult, SearchResult
+
+        def words(n: int) -> str:
+            return " ".join(f"part{i}" for i in range(n))
+
+        results = [
+            RetrievalResult(
+                content=words(size),
+                score=score,
+                source=f"{kind}-1",
+                retriever_type=kind,
+            )
+            for kind, size, score in (
+                ("relationship", 30, 0.9),
+                ("entity", 120, 0.8),
+                ("text", 150, 0.7),
+                ("text", 160, 0.6),
+                ("community", 200, 0.5),
+            )
+        ]
+        return SearchResult(
+            query=query,
+            results=results,
+            total_results=len(results),
+            search_strategy="local_search",
+            processing_time=0.0,
+        )
+
+
+def _drift(model: _DriftModel) -> DriftSearchStrategy:
+    from tests.unit.test_drift_search_logic import _Reports
+    from unified_kg_rag.adapters.local.token_counter import (
+        local_token_counter_factory,
+    )
+    from unified_kg_rag.adapters.providers import Providers
+
+    config = Config()
+    config.providers.rerank.kind = "none"
+    providers = Providers(
+        config,
+        llm_factory=_Factory(model),
+        token_counter_factory=local_token_counter_factory(config),
+    )
+    strategy = DriftSearchStrategy(
+        config, {"document": _Reports(count=4)}, providers=providers
+    )
+    strategy.local_search = _MixedLocal()  # type: ignore[assignment]
+    return strategy
+
+
+async def test_a_drift_search_under_any_input_token_limit_never_fails() -> None:
+    # Regression (rv34, from #759): a search keeps nothing for an answer, so
+    # an action's share had no slack, and the context built for it read past
+    # the share (the token manager lent a type's unused share twice; the
+    # pieces are counted apart from the whole the meter estimates). Every
+    # action was refused and the search failed with limit_exceeded at limits
+    # where lower ones succeeded. Now the built context keeps to its share,
+    # and an action the meter still refuses is a recorded limit stop.
+    from unified_kg_rag.adapters.retrieval.base import ANSWERED_KEY
+
+    sent: list[int] = []
+    for limit in range(400, 4000, 50):
+        model = _metered(_DriftModel())
+        strategy = _drift(model)
+        query = SearchQuery(
+            query="What does Vendor supply to Buyer?",
+            metadata={ANSWERED_KEY: False},
+        )
+        with (
+            degradation_scope(),
+            usage.usage_scope(usage.UsageLimits(max_input_tokens=limit)) as meter,
+        ):
+            result = await strategy.asearch(query)
+        assert meter.total.input_tokens <= limit
+        sent.append(len(model.actions))
+        # What the follow-ups' local searches found is kept.
+        assert result.results or not sent[-1], limit
+    # A higher limit never sends fewer actions.
+    assert sent == sorted(sent), sent
+    assert sent[0] < sent[-1]
+
+
+async def test_a_drift_action_the_limits_refuse_when_built_is_a_limit_stop() -> None:
+    # The plan counts an action's prompt in pieces, the meter the whole
+    # prompt: one the meter still refuses (not sent) is left out as an
+    # action that did not fit, its follow-up's evidence kept, not a failure
+    # of the search (rv34).
+    from tests.unit.test_drift_search_logic import _Local
+    from tests.unit.test_drift_search_logic import _strategy as _drift_strategy
+
+    refused = UsageLimitExceededError(
+        "A model call would take max_input_tokens to 1202, past its limit 1200",
+        limit="max_input_tokens",
+        value=1200,
+    )
+    strat = _drift_strategy(local=_Local(), action=lambda inputs: refused, n_depth=2)
+    with degradation_scope():
+        result = await strat.asearch(SearchQuery(query="question"))
+    assert result.metadata["drift_depth"] == 1  # no round after it
+    assert result.metadata["drift_llm_calls"] == 1 + 3  # the expansion, primers
+    assert any(r.source.startswith("t:") for r in result.results)
+    steps = {(e["step"], e["reason"]) for e in result.metadata["degraded"]}
+    assert ("drift_action", "query_limit: 1 of 1 calls not started") in steps
+    # Another error of an action still fails a search none of whose actions
+    # answered.
+    strat = _drift_strategy(
+        local=_Local(), action=lambda inputs: ValueError("boom"), n_depth=2
+    )
+    with degradation_scope(), pytest.raises(ValueError):
+        await strat.asearch(SearchQuery(query="question"))
+
+
+def _limited_context(chain: GraphRAGChain, results: list[Any], limit: int) -> Any:
+    """The answer context ``chain`` builds from ``results`` under an
+    input-token ``limit``, and what it recorded as degraded."""
+    from unified_kg_rag.application.retrieval.rag_chain import ProcessedQuery
+    from unified_kg_rag.domain.models import SearchResult
+
+    question = "What does Vendor supply?"
+    state = {
+        "query": question,
+        "max_tokens": None,
+        "resolved_strategy": SearchStrategy.SIMPLE,
+        "processed_query": ProcessedQuery(
+            original_query=question, final_query=question
+        ),
+        "search_results": SearchResult(
+            query=SearchQuery(query=question),
+            results=results,
+            total_results=len(results),
+            search_strategy="simple",
+            processing_time=0.0,
+        ),
+    }
+    with (
+        degradation_scope() as ledger,
+        usage.usage_scope(usage.UsageLimits(max_input_tokens=limit)),
+    ):
+        optimized = chain._optimize_context(state)
+    return optimized, ledger
+
+
+def _local_chain() -> GraphRAGChain:
+    from unified_kg_rag.adapters.local.token_counter import (
+        local_token_counter_factory,
+    )
+    from unified_kg_rag.adapters.providers import Providers
+
+    config = Config()
+    providers = Providers(
+        config,
+        llm_factory=_Factory(_SlowChatModel()),
+        token_counter_factory=local_token_counter_factory(config),
+    )
+    return GraphRAGChain(config=config, providers=providers)
+
+
+@pytest.mark.parametrize("content", ["Vendor {i}", "벤더 {i} 공급"])
+def test_many_short_sections_never_starve_the_answer_call(content: str) -> None:
+    # Regression (rv34): each section is counted apart and rounded down,
+    # the blank lines between them uncounted, so a context of 400 short
+    # passages estimated past its budget by more than the answer's 10%
+    # headroom (173 tokens on Korean ones): the meter refused the answer
+    # call though a smaller context fitted.
+    from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
+    from unified_kg_rag.adapters.retrieval.base import answer_call_tokens
+    from unified_kg_rag.domain.models import RetrievalResult, SectionType
+
+    chain = _local_chain()
+    results = [
+        RetrievalResult(
+            content=content.format(i=i),
+            score=1 - i / 1000,
+            source=f"doc{i}.txt",
+            retriever_type=SectionType.TEXT,
+        )
+        for i in range(400)
+    ]
+    question = "What does Vendor supply?"
+    for limit in range(1500, 8000, 37):
+        optimized, _ = _limited_context(chain, results, limit)
+        assert optimized.sections
+        built = chain.token_manager.build_context_string(optimized)
+        call = answer_call_tokens(
+            chain.config, SearchStrategy.SIMPLE, question, estimate_token_count(built)
+        )
+        assert call <= limit, limit
+
+
+def test_a_section_the_limit_cuts_short_is_listed_as_cut() -> None:
+    # Regression (rv34): a section the input-token limit truncated but kept
+    # was not recorded, so the answer read less while query_limited said
+    # the limit cut nothing.
+    from unified_kg_rag.adapters.retrieval.base import answer_call_tokens
+    from unified_kg_rag.domain.models import RetrievalResult, SectionType
+
+    chain = _local_chain()
+    text = "Vendor supplies Buyer with parts under the agreement. " * 30
+    results = [
+        RetrievalResult(
+            content=text, score=0.9, source="doc.txt", retriever_type=SectionType.TEXT
+        )
+    ]
+    prompt = answer_call_tokens(
+        chain.config, SearchStrategy.SIMPLE, "What does Vendor supply?", 0
+    )
+    optimized, ledger = _limited_context(chain, results, prompt + 300)
+    assert (optimized.sections_included, optimized.sections_excluded) == (1, 0)
+    assert optimized.sections_truncated == 1
+    (entry,) = ledger.entries
+    assert (entry.step, entry.reason) == (
+        "context_optimization",
+        "query_limit: 1 of 1 sections cut",
+    )

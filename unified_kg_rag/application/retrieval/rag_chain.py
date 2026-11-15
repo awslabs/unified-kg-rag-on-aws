@@ -2023,10 +2023,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 sections_excluded=len(search_results.results),
                 numbered=number,
             )
-        if limited and budget is not None:
-            # The limit's room is the context's; the token manager's budget
-            # holds the question too.
-            budget += self.token_manager.count_tokens(query.final_query)
+        # The limit's room is the context's, at the estimate the meter counts
+        # the answer call at; the token manager's budget holds the question
+        # too.
+        room = budget if limited else None
+        if room is not None:
+            budget = room + self.token_manager.count_tokens(query.final_query)
         optimized = self.token_manager.optimize_context(
             retrieval_results=search_results.results,
             query=query.final_query,
@@ -2040,13 +2042,16 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             ),
             # search.citations, per strategy: auto's route, iterative's base.
             number_sections=number,
+            estimated_within=room,
         )
-        if limited and optimized.sections_excluded:
-            # The answer reads less than it would without the limit.
+        cut = optimized.sections_excluded + optimized.sections_truncated
+        if limited and cut:
+            # The answer reads less than it would without the limit: the
+            # sections left out and those cut short.
             total = optimized.sections_included + optimized.sections_excluded
             record_degradation(
                 DegradationStep.CONTEXT_OPTIMIZATION,
-                f"query_limit: {optimized.sections_excluded} of {total} sections cut",
+                f"query_limit: {cut} of {total} sections cut",
                 UsageLimitExceededError.__name__,
             )
         elif not optimized.sections and any(r.content for r in search_results.results):
@@ -2949,25 +2954,32 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             if rag_input.search_strategy is SearchStrategy.AUTO
             else rag_input.search_strategy
         )
+        # The calls a named strategy cannot answer without, each by its
+        # least input (``answering_calls``).
+        answering = (
+            []
+            if strategy is None
+            else get_strategy_spec(strategy).strategy_class.answering_calls(
+                self.config, rag_input.query
+            )
+        )
         return UsageLimits(
             max_llm_calls=limits.max_model_calls,
             max_input_tokens=limits.max_input_tokens,
-            # The answer's call and its input, and the calls a named
-            # strategy cannot answer without (``answering_model_calls``):
-            # no optional call (a query translation or extraction, the
-            # follow-up rewrite, an output repair) takes them; auto weighs
-            # its router call against the answer's (_routes_within_limits).
-            reserved_calls=(0 if search else 1)
-            + (
-                0
-                if strategy is None
-                else get_strategy_spec(strategy).strategy_class.answering_model_calls(
-                    self.config
-                )
-            ),
+            # The answer's call and its input, and those answering calls
+            # and theirs: no optional call (a query translation or
+            # extraction, the follow-up rewrite, an output repair) takes
+            # them; auto weighs its router call against the answer's
+            # (_routes_within_limits).
+            reserved_calls=(0 if search else 1) + len(answering),
             reserved_tokens=(
-                answer_call_tokens(self.config, strategy, rag_input.query)
-                if limits.max_input_tokens is not None and not search
+                (
+                    0
+                    if search
+                    else answer_call_tokens(self.config, strategy, rag_input.query)
+                )
+                + sum(answering)
+                if limits.max_input_tokens is not None
                 else 0
             ),
             names={
@@ -3041,11 +3053,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         """Whether the query's limits (``_spend_settings``) cut it short, as
         its span's ``kg_rag.query_limited`` and its ``query_limited`` metric
         say: a call they refused (error class ``limit_exceeded``), an
-        abstention for them or a step they left out (abstention or degraded
-        reason ``query_limit``)."""
+        abstention for them, a step they left out or cut (abstention or
+        degraded reason ``query_limit``), or the strategies auto did not
+        route to for them (``routing.over_limits``)."""
+        routing = metadata.get(ROUTING_KEY)
         return (
             error_class == ErrorClass.LIMIT_EXCEEDED
             or metadata.get(ABSTENTION_REASON_KEY) == REASON_QUERY_LIMIT
+            or (isinstance(routing, Mapping) and bool(routing.get("over_limits")))
             or any(
                 entry.reason.startswith(REASON_QUERY_LIMIT)
                 for entry in DegradationReport.of(metadata).degraded
@@ -4823,7 +4838,11 @@ class _DeadlineScope:
         timeout.reschedule(loop.time() + seconds)
         self._first_chunk_seconds = seconds
         try:
-            with retry_deadline(now + seconds):
+            with retry_deadline(
+                now + seconds,
+                "the answer stream's first-chunk window "
+                "(search.model_timeout_seconds)",
+            ):
                 yield
         finally:
             if not timeout.expired():

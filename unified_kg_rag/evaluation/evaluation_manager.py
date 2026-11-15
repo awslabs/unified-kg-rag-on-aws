@@ -78,6 +78,7 @@ from unified_kg_rag.shared import (
 from unified_kg_rag.shared.exceptions import (
     ERROR_CLASS_KEY,
     IndexNotFoundError,
+    InvalidArgumentError,
     InvalidFilterError,
     error_class_of,
     named_failure_text,
@@ -738,8 +739,10 @@ class EvaluationManager:
         it uses no conversation memory. A failure is logged, not raised,
         but one every query would meet too: a ``ConfigurationError`` (a
         ``MethodologyNotIndexedError``, an embedding dimension the index
-        does not hold) or an ``IndexNotFoundError`` (nothing ingested under
-        the suffix), so the run stops before answering the dataset."""
+        does not hold), an ``IndexNotFoundError`` (nothing ingested under
+        the suffix) or an ``InvalidArgumentError`` of the run's settings
+        (an ``effort`` the answer model does not take), so the run stops
+        before answering the dataset."""
         inputs = {
             key: query.metadata[key] for key in _WARM_UP_KEYS if key in query.metadata
         }
@@ -747,7 +750,7 @@ class EvaluationManager:
             await self.rag_chain.ainvoke(
                 {**inputs, "query": _WARM_UP_QUESTION, "use_memory": False}
             )
-        except (ConfigurationError, IndexNotFoundError):
+        except (ConfigurationError, IndexNotFoundError, InvalidArgumentError):
             # The namespace or the settings serve no query of this run: fail
             # fast.
             raise

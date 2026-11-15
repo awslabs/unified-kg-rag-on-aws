@@ -255,6 +255,7 @@ ALLOWED: dict[str, str] = {
     ),
     **_reason(
         NUMERIC,
+        "adapters/retrieval/token_manager.py:_REFIT_ROUNDS",
         "adapters/search_strategies/tree_search.py:_EXPANSION_STEP",
         "domain/ingestion/base_processor.py:MIN_EDGE_WEIGHT",
         "domain/ingestion/base_processor.py:MAX_EDGE_WEIGHT",

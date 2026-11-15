@@ -379,7 +379,7 @@ async def _consume(chain: GraphRAGChain, surface: str) -> None:
 
 @pytest.mark.parametrize("surface", ["astream", "aquery_events"])
 async def test_a_retry_past_the_first_chunk_window_raises_the_model_error(
-    surface: str,
+    surface: str, caplog: pytest.LogCaptureFixture
 ) -> None:
     # Regression (rv33): the first-chunk window moved only the asyncio
     # timeout, so a backoff that crossed it was taken and the stream failed
@@ -390,9 +390,15 @@ async def test_a_retry_past_the_first_chunk_window_raises_the_model_error(
     config.search.model_timeout_seconds = 1.0
     model = _ScriptedModel([_model_error()])
     chain = _rag_chain(model, config)
-    with pytest.raises(ClientError):
+    with caplog.at_level("WARNING"), pytest.raises(ClientError):
         await asyncio.wait_for(_consume(chain, surface), timeout=30)
     assert model.calls == 1
+    # The give-up names the window's setting, not the query deadline (rv34).
+    (gave_up,) = [
+        r.getMessage() for r in caplog.records if "Giving up" in r.getMessage()
+    ]
+    assert "first-chunk window (search.model_timeout_seconds)" in gave_up
+    assert "query deadline" not in gave_up
 
 
 # --- an output repair's failure does not re-run the answered call -----------

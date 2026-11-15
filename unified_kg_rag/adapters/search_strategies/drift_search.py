@@ -33,6 +33,7 @@ from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
     evidence_lineage,
+    prompt_call_tokens,
     record_degradation,
 )
 from unified_kg_rag.adapters.retrieval.strategy_registry import register_strategy
@@ -60,7 +61,7 @@ from unified_kg_rag.domain.prompts import (
     DriftPrimerPrompt,
 )
 from unified_kg_rag.domain.retrieval.degradation import DegradationStep
-from unified_kg_rag.shared import get_logger, observability
+from unified_kg_rag.shared import get_logger, observability, usage
 from unified_kg_rag.shared.logging import log_failure
 from unified_kg_rag.shared.utils import (
     parse_llm_score,
@@ -89,6 +90,8 @@ class _Answer:
     read: list[RetrievalResult] = field(default_factory=list)
     # The non-fatal error that left the answer without text, if any.
     error: Exception | None = None
+    # Whether the query's limits refused the action's call (not sent).
+    limited: bool = False
 
 
 # The keys of the primer's and of an action's JSON answer.
@@ -113,10 +116,19 @@ class DriftSearchStrategy(BaseSearchStrategy):
         return 1 + config.search.drift_search.primer_folds + 1
 
     @classmethod
-    def answering_model_calls(cls, config: Config) -> int:
+    def answering_calls(cls, config: Config, question: str) -> list[int]:
         # One action: the expansion and the primer are optional, and the
-        # question itself is followed up without them.
-        return 1
+        # question itself is followed up without them, with the least
+        # context.
+        return [
+            prompt_call_tokens(
+                config,
+                DriftActionPrompt,
+                question,
+                estimate_token_count(question)
+                + config.search.token_manager.min_truncated_section_tokens,
+            )
+        ]
 
     def __init__(
         self,
@@ -262,6 +274,9 @@ class DriftSearchStrategy(BaseSearchStrategy):
             depth += 1
             failed = [a.error for a in done if a.error is not None]
             acted = acted or len(failed) < len(done)
+            # An action the limits refused when built ends the rounds as a
+            # planned one that did not fit.
+            limited = limited or any(a.limited for a in done)
             for answer in done:
                 answers.append(answer)
                 enqueue(answer)
@@ -557,6 +572,13 @@ class DriftSearchStrategy(BaseSearchStrategy):
                 local.results,
                 follow_up,
                 context_tokens or self.drift_config.local_context_tokens,
+                # Under an input-token limit the share is planned at the
+                # meter's estimate: the built context keeps to it.
+                estimated_within=(
+                    context_tokens
+                    if usage.remaining().input_tokens is not None
+                    else None
+                ),
             )
             context = self.token_manager.build_context_string(optimized)
             answer = _Answer(
@@ -573,7 +595,6 @@ class DriftSearchStrategy(BaseSearchStrategy):
             )
             if not local.results:
                 return answer
-            stats["drift_llm_calls"] += 1
             try:
                 raw = await self.action.ainvoke(
                     {
@@ -586,9 +607,15 @@ class DriftSearchStrategy(BaseSearchStrategy):
                     config,
                 )
             except Exception as e:  # noqa: BLE001 - classified by _degrade
+                if self._stopped_by_limits(DegradationStep.DRIFT_ACTION, e):
+                    # Its evidence stays: the follow-up's local search found it.
+                    answer.limited = True
+                    return answer
+                stats["drift_llm_calls"] += 1
                 self._degrade(DegradationStep.DRIFT_ACTION, "DRIFT action", e)
                 answer.error = e
                 return answer
+            stats["drift_llm_calls"] += 1
         try:
             payload = await self.json_answers(answer_keys=_ACTION_KEYS).aparse(str(raw))
         except OutputParserException as e:

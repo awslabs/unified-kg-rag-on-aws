@@ -173,21 +173,23 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
   호출로 건너뜁니다.
   두 한도 가운데 하나라도 있으면 미리 시작하는 추출은 하지 않습니다.
 - 답변 컨텍스트는 남은 입력 토큰에서 답변 프롬프트 자체(템플릿과 지시문)와 질문을 빼고, 다시
-  `search.token_manager.context_window_headroom_ratio`만큼 뺀 크기로 줄입니다. 호출을 펼치는
-  전략도 답변 프롬프트 몫의 토큰을 답변용으로 남깁니다. 이렇게 줄인 컨텍스트는
-  `metadata.degraded`(단계 `context_optimization`, 사유 `query_limit: N of M sections cut`)에
-  남습니다.
+  `search.token_manager.context_window_headroom_ratio`만큼 뺀 크기로 줄입니다. 실제로 만든
+  컨텍스트(구획 머리글과 구획 사이 빈 줄 포함)도 계측기 추정치로 이 크기를 넘지 않습니다. 호출을
+  펼치는 전략도 답변 프롬프트 몫의 토큰을 답변용으로 남깁니다. 이렇게 줄인 컨텍스트(빠진 구획과
+  잘린 구획)는 `metadata.degraded`(단계 `context_optimization`, 사유
+  `query_limit: N of M sections cut`)에 남습니다.
 - 호출 하나는 답변용으로 남기고, 입력 토큰 한도가 있으면 답변의 입력(프롬프트, 질문, 최소
   컨텍스트)도 남깁니다. 둘 중 하나라도 쓰게 될 선택적 호출은 보내지 않고, 그 단계는 빼고 답하며
   `degraded`(사유 `query_limit`)에 남깁니다. 선택적 호출은 질의 번역과 추출, 후속 질문
   재작성(이때 후속 질문을 쓰인 그대로 검색), structured 전략의 계획 호출(대체 전략이
   답함), 출력 보정(`models.roles.fixing`. 해석하지 못한 응답은 보정하지 못한 응답으로 처리)입니다.
-  `drift`를 지정한 질의는 후속 호출 하나의 몫도 남깁니다(그 호출이 없으면 DRIFT는 아무것도 찾지
-  못합니다). 검색(`asearch`, `kg_search`, `run-rag --mode search`)은 답변을 만들지 않으므로
+  `drift`를 지정한 질의는 후속 호출 하나의 몫도 남기고(그 호출이 없으면 DRIFT는 아무것도 찾지
+  못합니다), 입력 토큰 한도가 있으면 그 호출의 최소 입력도 남깁니다. 검색(`asearch`, `kg_search`, `run-rag --mode search`)은 답변을 만들지 않으므로
   답변 몫을 남기지 않으며, 이때도 한도를 넘는 선택적 호출은 같은 방식으로 건너뜁니다.
 - 입력 토큰 한도에서는 호출을 펼치는 전략이 설정 상한이 아니라 답변이 실제로 읽을 만큼(답변 프롬프트,
   DRIFT가 지금까지 받은 답변, 최소 컨텍스트)만 답변용으로 남기고, DRIFT의 후속 호출은 남은 토큰을
-  나눠 씁니다. `auto`는 한도가 감당하지 못하는 라우터 호출은 하지 않고 대체 전략으로 보냅니다.
+  나눠 씁니다. 후속 호출마다 만든 컨텍스트는 제 몫을 넘지 않으며, 그래도 계측기가 거부한 후속
+  호출은 들어가지 못한 호출로 빼고 그 후속 질의로 찾은 근거는 남깁니다. `auto`는 한도가 감당하지 못하는 라우터 호출은 하지 않고 대체 전략으로 보냅니다.
 - 답변 호출이 들어가지 못하는 질의는 `UsageLimitExceededError`(`unified_kg_rag`에서 내보냄,
   오류 분류 `limit_exceeded`, 종료 코드 `1`. 호출하는 쪽의 오류로 보고 `query_failed` 지표에는
   세지 않음)로 실패하고, `processing.ignore_errors`를 켜면
