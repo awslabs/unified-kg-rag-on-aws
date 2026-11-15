@@ -649,6 +649,15 @@ _SINO_KOREAN_DIGITS = dict(_KO.multiplier_numerals)
 _HAN_COUNTERS = tuple(
     dict.fromkeys(c for language in _HAN_LANGUAGES for c in language.counters)
 )
+# The forms that write a sum of money in words ("壹拾万元", "金壱萬円") and
+# the counters a sum takes (``sum_numerals``, ``currency_counters``): those
+# forms state a number only in a run before one ("大陆人", "古参社員" none).
+_SUM_NUMERALS = frozenset(
+    ch for language in _HAN_LANGUAGES for ch in language.sum_numerals
+)
+_CURRENCY_COUNTERS = tuple(
+    dict.fromkeys(c for language in _HAN_LANGUAGES for c in language.currency_counters)
+)
 
 
 def _magnitude(value: int) -> int:
@@ -841,15 +850,25 @@ _CJK_NONE = re.compile(
 )
 # Han, Sino-Korean and ASCII digits with the multipliers between them
 # ("十二", "一万二千", "1만 2천", "만 이천", "三", "1.5万", "3,000万");
-# ``_cjk_value`` reads them.
-_CJK_PART = (
-    f"(?:{_DIGIT_FORM}|["
-    + "".join([*_HAN_DIGITS, *_SINO_KOREAN_DIGITS, *_MULTIPLIERS])
-    + "])"
-)
+# ``_cjk_value`` reads them. A run holding a form of a sum in words is one
+# only before a currency counter ("叁仟伍佰元", "金参拾萬円", "伍元"); any
+# other run is of the remaining forms, so "人参三人" is 3, not 33.
+_CJK_CHARS = "".join([*_HAN_DIGITS, *_SINO_KOREAN_DIGITS, *_MULTIPLIERS])
+
+
+def _cjk_run(chars: str) -> str:
+    part = f"(?:{_DIGIT_FORM}|[{chars}])"
+    return rf"{part}(?:[^\S\n]?{part})*"
+
+
 _CJK_PART_TOKEN = re.compile(rf"{_DIGIT_FORM}|\S")
 _CJK_NUMBER = re.compile(
-    rf"(?<!{_HANGUL})(?<![\d.,]){_CJK_PART}(?:[^\S\n]?{_CJK_PART})*"
+    rf"(?<!{_HANGUL})(?<![\d.,])(?:{_cjk_run(_CJK_CHARS)}"
+    r"(?=[^\S\n]?(?:"
+    + "|".join(_CURRENCY_COUNTERS)
+    + "))|"
+    + _cjk_run("".join(ch for ch in _CJK_CHARS if ch not in _SUM_NUMERALS))
+    + ")"
 )
 _CJK_COUNTER_AFTER = re.compile(
     r"[^\S\n]?(?:"

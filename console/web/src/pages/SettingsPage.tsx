@@ -557,7 +557,11 @@ export function GoneKeys({ preview }: { preview: Pick<Preview, "deprecated_keys"
       <ul style={{ margin: 0, paddingLeft: 18 }}>
         {deprecated.map((d) => (
           <li key={d.key}>
-            {t("settings.deprecatedKey", { key: d.key, replacements: joinList(d.replacements, t) })}
+            {t("settings.deprecatedKey", {
+              key: d.key,
+              replacements: joinList(d.replacements, t),
+              count: d.replacements.length,
+            })}
           </li>
         ))}
         {removed.map((r) => (

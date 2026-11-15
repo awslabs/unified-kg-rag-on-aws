@@ -101,6 +101,10 @@ PROFILE = LanguageProfile(
     },
     # And a sum of money ("三千万元").
     counters=("家", "个", "個", "件", "人", "名", "台", "元"),
+    # 大写 is read in a sum only: "陆" is also land ("大陆人"), "伍" a
+    # file of soldiers ("队伍"), "拾" to tidy ("收拾").
+    sum_numerals=frozenset("壹贰貳叁參肆伍陆陸柒捌玖拾佰仟"),
+    currency_counters=("元",),
     polarity_words={
         "是": "yes",
         "是的": "yes",

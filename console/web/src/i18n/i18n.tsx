@@ -87,6 +87,13 @@ export function joinList(items: readonly string[], t: (key: string) => string): 
   return items.join(t("common.listSeparator"));
 }
 
+/** `sentences` as one text, joined by the locale's separator
+ * (`common.sentenceSeparator`: a space in English, none in Japanese and
+ * Chinese, whose full stop "。" sets a sentence off). */
+export function joinSentences(sentences: readonly string[], t: (key: string) => string): string {
+  return sentences.join(t("common.sentenceSeparator"));
+}
+
 export function formatNumber(locale: Locale, value: number, options?: Intl.NumberFormatOptions): string {
   return new Intl.NumberFormat(LOCALES[locale].tag, options).format(value);
 }

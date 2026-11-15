@@ -5,7 +5,7 @@ import { AnswerText, CitationList } from "../components/AnswerText";
 import { EvidenceTrace } from "../components/EvidenceTrace";
 import { StrategyPicker } from "../components/StrategyPicker";
 import { Notice, PageHead, Sheet } from "../components/ui";
-import { joinList, useI18n, type I18n } from "../i18n/i18n";
+import { joinList, joinSentences, useI18n, type I18n } from "../i18n/i18n";
 import { errorMessage, failureHelp, get, stream } from "../lib/api";
 import { navigate } from "../lib/router";
 import { useTrail } from "../lib/trail";
@@ -363,9 +363,6 @@ export function AskPage({ status }: { status: Status | null }) {
   );
 }
 
-/** The steps of `entries`, once each, by their names in the UI locale
- * (`ask.step.<step>`); a step the catalog does not know (a third-party
- * strategy's) as its id. */
 /** The degraded reasons (the reason itself, or its "<reason>: " head) of
  * a step left out on purpose, to keep within the query's limits
  * (search.query_max_*), rather than failed: the notice words them apart. */
@@ -385,7 +382,7 @@ export function partialHelp(entries: Degradation[], t: I18n["t"]): string {
     const skipped = entries.filter((e) => degradedKind(e) === reason);
     if (skipped.length) parts.push(t(`ask.partialSkipped.${reason}`, { steps: stepNames(skipped, t) }));
   }
-  return parts.join(" ");
+  return joinSentences(parts, t);
 }
 
 /** How auto routed, naming the strategies the query's limits left out
@@ -396,9 +393,12 @@ export function routingNote(routing: NonNullable<AskResult["routing"]>, strategy
   const values = { strategy, candidates: joinList(routing.candidates, t), over_limits: joinList(overLimits, t) };
   if (!overLimits.length) return t(`ask.routing.${routing.decided_by}`, values);
   if (routing.decided_by === "only_candidate") return t("ask.routing.over_limits", values);
-  return `${t(`ask.routing.${routing.decided_by}`, values)} ${t("ask.routing.limits_left_out", values)}`;
+  return joinSentences([t(`ask.routing.${routing.decided_by}`, values), t("ask.routing.limits_left_out", values)], t);
 }
 
+/** The steps of `entries`, once each, by their names in the UI locale
+ * (`ask.step.<step>`); a step the catalog does not know (a third-party
+ * strategy's) as its id. */
 export function stepNames(entries: Degradation[], t: (key: string) => string): string {
   const names = [...new Set(entries.map((entry) => entry.step))]
     .map((step) => {

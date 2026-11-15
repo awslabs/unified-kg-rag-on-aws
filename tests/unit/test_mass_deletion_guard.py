@@ -146,7 +146,8 @@ def test_the_question_counts_dropped_copies_apart_from_missing_files() -> None:
         "corpus (a partial sync or a missing volume looks the same) and 6 are "
         "near-copies processing.deduplicate dropped, whose files are in the "
         "corpus (a higher processing.deduplicate_similarity_threshold keeps "
-        "them); what only they stated is removed from the index; continue?"
+        "near-copies, not identical ones); what only they stated is removed "
+        "from the index; continue?"
     )
     confirm = _Asked(True)
     _confirm_mass_deletion(_delta(8, 4), 0.5, "s", confirm, [f"d{k}" for k in range(8)])

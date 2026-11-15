@@ -225,7 +225,7 @@ deletes N of the M documents ...; continue?`). 일부만 동기화된 S3, 만료
   동기화된 코퍼스를 가리지도 않습니다.
 - `processing.deduplicate`가 걸러 낸 사본도 삭제되므로 셉니다. 다만 파일은 코퍼스에 있으므로
   질문은 코퍼스에서 사라진 파일과 따로 셉니다(`processing.deduplicate_similarity_threshold`를
-  높이면 사본을 남깁니다).
+  높이면 거의 같은 사본은 남지만, 똑같은 사본은 어떤 임곗값에서도 걸러 냅니다).
 - 재구축과 레지스트리를 끈 실행은 검사하지 않습니다. 레지스트리가 없으면 모든 실행이 읽은
   것의 전체 빌드이므로, 일부만 도착할 수 있는 코퍼스는 레지스트리를 켜 두세요(시드가 있는
   빈 코퍼스는 [Seed graphs: Lifecycle](./seed-graphs.md#lifecycle)(영문)처럼

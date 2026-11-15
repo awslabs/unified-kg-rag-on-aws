@@ -272,7 +272,7 @@ terminal, stops the run (exit 1).
 - Copies `processing.deduplicate` drops are deleted too and count, but the
   question counts them apart from the files gone from the corpus: their files
   are present (a higher `processing.deduplicate_similarity_threshold` keeps
-  them).
+  near-copies; identical copies are dropped at any threshold).
 - A reset and a run with the registry off are not checked. Without the
   registry every run is a full build of what it reads, so keep the registry
   on for a corpus that may arrive partial (an empty corpus with seeds asks as

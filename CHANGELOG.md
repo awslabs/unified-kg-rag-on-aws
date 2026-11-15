@@ -246,7 +246,7 @@ Bugs present in 0.3.0.
   bands of 10 rows at 0.9: 99% of the pairs at the threshold) and the pair's exact 3-gram similarity decides.
 - `answer_match` read Japanese sums in 兆 (10^12) wrong: `一兆二千億円` as 200,000,000,000 and `3兆円` as 3. 兆 is a
   multiplier of the Japanese profile, as 億 is. It also reads sums in the financial numerals (`人民币壹拾万元`,
-  `金壱萬円`).
+  `金壱萬円`), only in a run before 元 or 円: outside a sum they are letters of other words (`大陆人`, `古参社員`).
 - A run stopped (a signal, Ctrl-C, its budget) after an ingestion item's answer failed to parse and before the item's
   next attempt kept that answer in the LLM response cache, so the resumed run replayed it and spent one of the item's
   attempts on it. A stop drops the answers of the item's failed attempts and keeps the one in flight.

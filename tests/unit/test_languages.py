@@ -205,6 +205,19 @@ def test_every_profile_covers_each_facet_or_lists_the_gap(facet: str) -> None:
     assert missing == _GAPS.get(facet, set())
 
 
+@pytest.mark.parametrize("code", list(PROFILES))
+def test_a_sum_in_words_is_of_the_profiles_numerals_and_counters(
+    code: LanguageCode,
+) -> None:
+    # The sum forms are numerals the profile reads (values and all), and a
+    # sum's counters are counters of it; one without the other reads none.
+    language = PROFILES[code]
+    numerals = {*language.counter_numerals, *language.numeral_multipliers}
+    assert language.sum_numerals <= numerals
+    assert set(language.currency_counters) <= set(language.counters)
+    assert bool(language.sum_numerals) == bool(language.currency_counters)
+
+
 def test_a_profile_is_frozen() -> None:
     with pytest.raises(AttributeError):
         PROFILES[KO].name = "x"  # type: ignore[misc]
