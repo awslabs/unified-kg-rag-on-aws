@@ -93,18 +93,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   else changes. `Providers.embedding_model_info()` and `rerank_model_info()` (their `EmbeddingModelInfo` and
   `RerankModelInfo` now exported) read those limits from the Bedrock catalog without building a client.
 - The `retry` section has one profile per caller, each a `RetryPolicy` (`max_attempts`, `base_delay_seconds`,
-  `max_delay_seconds`, `max_total_seconds`, `jitter`; exported, `TransientRetryConfig` its 0.3.0 name): `model`,
-  `ingestion_item`, `model_server`, `graph_store`, `query_store` (OpenSearch and graph-store query reads), `bulk_item`
-  and `registry_batch`, beside `judge_max_attempts` (the flat keys are deprecated, see *Deprecated*). Each profile
-  defaults to its caller's 0.3.0 values, so nothing waits otherwise; the ingestion item backoff (30 s doubling to 120 s,
-  which ignored the section), the OpenSearch and Neptune query, bulk-item and DynamoDB batch backoffs, fixed in code
-  before, are set there now, and every caller draws its waits with one backoff function. A profile set in part keeps its
-  own defaults. The clients' own retries stacked under them are set there too: `client_max_attempts` of `retry.model`
-  (botocore's requests per Bedrock call of ingestion and evaluation) and of `retry.bulk_item` (the OpenSearch indexing
-  client's), both 6, their 0.3.0 counts. No caller retries a call the usage limits refused.
-
-### Changed
-
+  `max_delay_seconds`, `max_total_seconds`, `jitter`; exported): `model`, `ingestion_item`, `model_server`,
+  `graph_store`, `query_store` (OpenSearch and graph-store query reads), `bulk_item` and `registry_batch`, beside
+  `judge_max_attempts` (the flat keys are deprecated, see *Deprecated*). Each profile defaults to its caller's 0.3.0
+  values, so nothing waits otherwise; the ingestion item backoff (30 s doubling to 120 s, which ignored the section),
+  the OpenSearch and Neptune query, bulk-item and DynamoDB batch backoffs, fixed in code before, are set there now, and
+  every caller draws its waits with one backoff function. A profile set in part keeps its own defaults. The clients' own
+  retries stacked under them are set there too: `client_max_attempts` of `retry.model` (botocore's requests per Bedrock
+  call of ingestion and evaluation) and of `retry.bulk_item` (the OpenSearch indexing client's), both 6, their 0.3.0
+  counts. No caller retries a call the usage limits refused.  ### Changed
 - The community-counter WARNING reads `Index namespace '<suffix>' is due for a rebuild: its communities are due for
   re-clustering: ...` (it began `Communities of '<suffix>' are due for re-clustering`), one rule with the other
   rebuild reasons. The console's job card offers "Rebuild the namespace" when the run's `rebuild_due` holds a reason
@@ -128,7 +125,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   variable, into every profile each one governed in 0.3.0 (`max_attempts` into `retry.model` and
   `retry.ingestion_item`, `base_delay_seconds` into `model`, `model_server` and `graph_store`, ...), with a WARNING
   naming them; one set beside a profile key to another value fails the load, naming both. `DEPRECATED_KEYS` maps a
-  key to one replacement or several. `TransientRetryConfig` is `RetryPolicy`'s 0.3.0 name, kept as an alias.
+  key to one replacement or several.
+- `unified_kg_rag.TransientRetryConfig` warns (`DeprecationWarning`, at the importing line): it is `RetryPolicy`, its
+  new name, and is no longer in `__all__`. A warning the package emits for a deprecated API now names the caller's
+  line under `from unified_kg_rag import ...` too (it named a frame of the import machinery).
 
 ### Fixed
 Bugs present in 0.3.0.

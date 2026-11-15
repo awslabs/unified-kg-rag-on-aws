@@ -218,10 +218,6 @@ class RetryPolicy(ConfigSection):
         return ceiling
 
 
-# 0.3.0's name of the policy (exported then): deprecated, the same class.
-TransientRetryConfig = RetryPolicy
-
-
 # The profiles of the ``retry`` section and their defaults: each caller's
 # values before the section had profiles. A profile a config sets in part
 # keeps its own defaults for the rest (RetryConfig._profile_defaults).

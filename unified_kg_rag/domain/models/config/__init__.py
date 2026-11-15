@@ -22,7 +22,6 @@ from ._aws import (
     RetryPolicy,
     S3Config,
     S3EncryptionConfig,
-    TransientRetryConfig,
 )
 from ._common import (
     ChunkingStrategy,
@@ -266,7 +265,6 @@ __all__ = [
     "RetryConfig",
     "RetryJitter",
     "RetryPolicy",
-    "TransientRetryConfig",
     "ROLE_TIERS",
     "RoleModelsConfig",
     "S3Config",

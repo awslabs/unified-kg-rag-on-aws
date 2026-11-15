@@ -167,7 +167,6 @@ PUBLIC_API = sorted(
         "StoredAnnotation",
         "SummaryNode",
         "TextUnit",
-        "TransientRetryConfig",
         "load_seed_graphs",
         "resolve_extraction_schema",
     ]
@@ -354,3 +353,18 @@ def test_the_extension_surface_names_only_exported_types() -> None:
         if name not in unified_kg_rag._EXPORTS
     }
     assert not missing, sorted(missing)
+
+
+def test_a_renamed_export_still_resolves_with_a_deprecation_warning() -> None:
+    # 0.3.0 exported the retry policy as TransientRetryConfig.
+    import warnings
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        from unified_kg_rag import TransientRetryConfig  # noqa: F401
+    assert TransientRetryConfig is unified_kg_rag.RetryPolicy
+    messages = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+    assert messages and "RetryPolicy" in str(messages[0].message)
+    # Attributed to this line, not to the package or the import machinery.
+    assert {w.filename for w in messages} == {__file__}
+    assert "TransientRetryConfig" not in unified_kg_rag.__all__

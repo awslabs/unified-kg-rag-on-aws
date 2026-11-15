@@ -219,8 +219,14 @@ _EXPORTS: dict[str, str] = {
     "LanguageModelInfo": "unified_kg_rag.ports.model_factory",
     "RerankModelInfo": "unified_kg_rag.ports.model_factory",
     "RetryPolicy": "unified_kg_rag.domain.models.config",
-    "TransientRetryConfig": "unified_kg_rag.domain.models.config",
     "RenderContext": "unified_kg_rag.adapters.renderers.base",
+}
+
+# Exports a release renamed -> the name each is now. One still resolves, to
+# that export, with a DeprecationWarning at the caller's line; ``__all__``
+# lists only the new name.
+_RENAMED: dict[str, str] = {
+    "TransientRetryConfig": "RetryPolicy",  # 0.3.0's name
 }
 
 __all__ = ["__version__", *_EXPORTS]
@@ -328,7 +334,10 @@ if TYPE_CHECKING:
         SummaryNode,
         TextUnit,
     )
-    from unified_kg_rag.domain.models.config import RetryPolicy, TransientRetryConfig
+    from unified_kg_rag.domain.models.config import RetryPolicy
+    from unified_kg_rag.domain.models.config import (
+        RetryPolicy as TransientRetryConfig,  # deprecated (_RENAMED)
+    )
     from unified_kg_rag.domain.models.graph_query import (
         GraphProfile,
         GraphQueryRequest,
@@ -395,6 +404,13 @@ if TYPE_CHECKING:
 
 
 def __getattr__(name: str) -> Any:
+    if (renamed := _RENAMED.get(name)) is not None:
+        from unified_kg_rag.shared.utils.deprecation import warn_deprecated
+
+        warn_deprecated(
+            f"unified_kg_rag.{name} is deprecated: it is {renamed}; import that"
+        )
+        return __getattr__(renamed)
     module = _EXPORTS.get(name)
     if module is None:
         raise AttributeError(f"module 'unified_kg_rag' has no attribute '{name}'")
