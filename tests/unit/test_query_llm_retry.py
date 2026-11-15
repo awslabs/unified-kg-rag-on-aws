@@ -393,3 +393,53 @@ async def test_a_retry_past_the_first_chunk_window_raises_the_model_error(
     with pytest.raises(ClientError):
         await asyncio.wait_for(_consume(chain, surface), timeout=30)
     assert model.calls == 1
+
+
+# --- an output repair's failure does not re-run the answered call -----------
+
+
+class _FailingFixerFactory:
+    """A factory whose fixing model fails with a transient error."""
+
+    is_transient_error = staticmethod(BedrockLanguageModelFactory.is_transient_error)
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def get_model(self, **kwargs: object) -> object:
+        def fail(_: object) -> object:
+            self.calls += 1
+            raise _model_error()
+
+        return RunnableLambda(fail)
+
+
+@pytest.mark.parametrize("asynchronous", [False, True], ids=["sync", "async"])
+async def test_a_failed_repair_leaves_the_answer_unrepaired(asynchronous: bool) -> None:
+    # rv33: the JSON parser runs inside the transient retry, so a transient
+    # error of the fixing model re-ran the whole chain, paying again for
+    # the model call that had answered (and, under a call limit, taking the
+    # answer's). A repair is optional: its failure leaves the answer as it
+    # is, unreadable.
+    from langchain_core.exceptions import OutputParserException
+
+    from unified_kg_rag.adapters.llm.chain_factory import create_json_output_parser
+
+    model = _ScriptedModel(answer="no JSON here")
+    fixer = _FailingFixerFactory()
+    chain = setup_chain(
+        factory=_FakeBedrockFactory(model, _config()),
+        model_id=LanguageModelId.CLAUDE_V4_5_HAIKU,
+        prompt_class=StrategySelectionPrompt,
+        parser=create_json_output_parser(
+            fixer, "fixer", answer_keys=("strategy",)  # type: ignore[arg-type]
+        ),
+    )
+    assert isinstance(chain, TransientRetryRunnable)
+    with pytest.raises(OutputParserException) as raised:
+        if asynchronous:
+            await chain.ainvoke(_QUERY)
+        else:
+            chain.invoke(_QUERY)
+    assert (model.calls, fixer.calls) == (1, 1)
+    assert isinstance(raised.value.__cause__, ClientError)

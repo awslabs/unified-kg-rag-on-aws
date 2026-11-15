@@ -43,6 +43,7 @@ from unified_kg_rag.adapters.llm.retry import (
     acall_with_transient_retry,
     call_with_transient_retry,
     next_transient_retry_delay,
+    transient_error_predicate,
 )
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.domain.models import ModelPurpose
@@ -60,7 +61,7 @@ from unified_kg_rag.shared import (
     usage,
 )
 from unified_kg_rag.shared.exceptions import OptionalCallSkipped
-from unified_kg_rag.shared.logging import log_error, warn_once
+from unified_kg_rag.shared.logging import log_error, log_failure, warn_once
 from unified_kg_rag.shared.utils.model_output import (
     leading_reasoning_end,
     may_open_reasoning,
@@ -791,8 +792,12 @@ class FixingJsonOutputParser(LLMJsonOutputParser):
             try:
                 with usage.optional_calls():
                     return self._fixing_parser().parse(text)
-            except OptionalCallSkipped:
-                raise e from None
+            except Exception as failure:
+                if not self._unrepaired(failure):
+                    raise
+                raise e from (
+                    None if isinstance(failure, OptionalCallSkipped) else failure
+                )
 
     async def aparse(self, text: str) -> Any:
         try:
@@ -804,8 +809,33 @@ class FixingJsonOutputParser(LLMJsonOutputParser):
             try:
                 with usage.optional_calls():
                     return await self._fixing_parser().aparse(text)
-            except OptionalCallSkipped:
-                raise e from None
+            except Exception as failure:
+                if not self._unrepaired(failure):
+                    raise
+                raise e from (
+                    None if isinstance(failure, OptionalCallSkipped) else failure
+                )
+
+    def _unrepaired(self, failure: Exception) -> bool:
+        """Whether the repair's ``failure`` leaves the answer unrepaired
+        rather than failing it: a repair the limits skipped
+        (``OptionalCallSkipped``), or one that failed as the chain's
+        transient retry would retry (``transient_error_predicate``, a
+        server that could be reached), which would re-run the model call
+        that answered, paid again. Any other failure (an unreachable
+        server, denied access) fails the answer, as the model's own would."""
+        if isinstance(failure, OptionalCallSkipped):
+            return True
+        is_transient = _reachable_and(transient_error_predicate(self._factory))
+        if not is_transient(failure):
+            return False
+        log_failure(
+            logger,
+            logging.WARNING,
+            "The output fixer failed; the answer stays unrepaired: %s",
+            error=failure,
+        )
+        return True
 
 
 def create_json_output_parser(
