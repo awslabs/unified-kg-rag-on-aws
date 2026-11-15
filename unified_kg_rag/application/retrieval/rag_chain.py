@@ -6,6 +6,7 @@ import contextlib
 import contextvars
 import functools
 import logging
+import queue
 import threading
 import time
 import unicodedata
@@ -66,10 +67,11 @@ from unified_kg_rag.adapters.llm.retry import retry_deadline
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.base import (
+    ANSWERED_KEY,
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
+    answer_call_tokens,
     answer_prompt_class,
-    answer_prompt_tokens,
     current_ledger,
     degradation_scope,
     query_scope,
@@ -807,9 +809,9 @@ class QuerySources(BaseModel):
 class AnswerChunk(BaseModel):
     """A piece of the answer as the answer model writes it: a preview, the
     ``[NO_ANSWER]`` marker stripped (``search.abstention``). Under the
-    output guardrail, one chunk: the whole answer once screened. None for
-    a fixed reply (an empty context, a decline); :class:`QueryResult`
-    carries the answer."""
+    output guardrail, one chunk: the whole answer once screened, a fixed
+    reply's too. Without it none for a fixed reply (an empty context, a
+    decline); :class:`QueryResult` carries the answer."""
 
     kind: Literal["chunk"] = "chunk"
     text: str = Field(description="The text written since the last chunk")
@@ -984,8 +986,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         # cached retrievers' sockets, then stop the loop. The finalizer holds
         # the caches and runner, never the chain itself, so it does not keep
         # the chain alive. Collection timing is up to the GC, so callers must
-        # still close the chain when done. It hands the release to a thread
-        # of its own: the collector may run it anywhere, under any lock.
+        # still close the chain when done. It hands the release to the
+        # release worker: the collector may run it anywhere, under any lock.
+        _COLLECTED_RELEASES.start()
         weakref.finalize(
             self,
             _release_collected,
@@ -1221,9 +1224,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             # The router call only beside the answer's prompt and the least
             # context: else no router call, the fallback as one candidate.
             router = self._router_tokens(routable, state)
-            if router + self._answer_reserve(self._question(state)) > (
-                left.input_tokens
-            ):
+            answer = (
+                answer_call_tokens(self.config, None, self._question(state))
+                if state.get(ANSWERED_KEY, True)
+                else 0
+            )
+            if router + answer > left.input_tokens:
                 fallback = self._fallback_strategy(routable)
                 record_degradation(
                     DegradationStep.ROUTING,
@@ -1673,6 +1679,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 "search_strategy": resolved_strategy.value,
                 "query_language": query_processing.query_language(self, state),
                 HELD_ARTIFACTS_KEY: sorted(a.value for a in held),
+                # Only a search's (answered by default).
+                **({} if state.get(ANSWERED_KEY, True) else {ANSWERED_KEY: False}),
             },
         )
         with observability.span(
@@ -1967,39 +1975,61 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             getattr(self, "_background_closes", None),
         )
 
-    def _context_budget(self, state: dict[str, Any]) -> int | None:
-        """The answer's context budget: the query's ``max_tokens``, cut to
-        what its input-token limit leaves after the answer call's own prompt
-        and question (``answer_prompt_tokens``), less the headroom the
-        context window keeps (``context_window_headroom_ratio``); ``None``
-        (the token manager's own) without either."""
+    def _context_budget(self, state: dict[str, Any]) -> tuple[int | None, bool]:
+        """The answer's context budget, and whether the query's input-token
+        limit set it: the query's ``max_tokens`` (``None``: the token
+        manager's own, both holding the question too), or, when that is
+        less, the context that limit leaves after the answer call's own
+        prompt and question (``answer_call_tokens``), less the headroom the
+        context window keeps (``context_window_headroom_ratio``)."""
         budget: int | None = state.get("max_tokens")
         left = usage.remaining().input_tokens
         if left is None:
-            return budget
-        left -= answer_prompt_tokens(
-            self.config, state.get("resolved_strategy")
-        ) + estimate_token_count(self._question(state))
-        token_manager = self.config.search.token_manager
-        room = max(1, int(left * (1 - token_manager.context_window_headroom_ratio)))
-        if room < token_manager.min_truncated_section_tokens:
-            # No section would fit: an empty context the limit made, which
-            # the answer names (abstention reason query_limit).
-            record_degradation(
-                DegradationStep.CONTEXT_OPTIMIZATION,
-                "query_limit: the input-token limit leaves the answer no context",
-                UsageLimitExceededError.__name__,
-            )
-        return room if budget is None else min(budget, room)
+            return budget, False
+        left -= answer_call_tokens(
+            self.config, state.get("resolved_strategy"), self._question(state), 0
+        )
+        ratio = self.config.search.token_manager.context_window_headroom_ratio
+        room = max(0, int(left * (1 - ratio)))
+        ceiling = self.token_manager.context_ceiling
+        if room >= (ceiling if budget is None else min(budget, ceiling)):
+            return budget, False
+        return room, True
 
     def _optimize_context(self, state: dict[str, Any]) -> OptimizedContext:
         query: ProcessedQuery = state["processed_query"]
         search_results: SearchResult = state["search_results"]
         strategy = state.get("resolved_strategy")
-        return self.token_manager.optimize_context(
+        number = citations.citations_enabled(self.config, strategy)
+        budget, limited = self._context_budget(state)
+        if (
+            limited
+            and budget is not None
+            and budget < (self.config.search.token_manager.min_truncated_section_tokens)
+        ):
+            # No section would fit: an empty context the limit made, which
+            # the answer names (abstention reason query_limit); a designed
+            # cut, so the token manager is not asked to fill it.
+            record_degradation(
+                DegradationStep.CONTEXT_OPTIMIZATION,
+                "query_limit: the input-token limit leaves the answer no context",
+                UsageLimitExceededError.__name__,
+            )
+            return OptimizedContext(
+                sections=[],
+                total_tokens=0,
+                sections_included=0,
+                sections_excluded=len(search_results.results),
+                numbered=number,
+            )
+        if limited and budget is not None:
+            # The limit's room is the context's; the token manager's budget
+            # holds the question too.
+            budget += self.token_manager.count_tokens(query.final_query)
+        optimized = self.token_manager.optimize_context(
             retrieval_results=search_results.results,
             query=query.final_query,
-            max_tokens=self._context_budget(state),
+            max_tokens=budget,
             spare_budget_first=(
                 get_strategy_spec(
                     wrapped_strategy(strategy, self.config)
@@ -2008,8 +2038,21 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 else ()
             ),
             # search.citations, per strategy: auto's route, iterative's base.
-            number_sections=citations.citations_enabled(self.config, strategy),
+            number_sections=number,
         )
+        if limited and optimized.sections_excluded:
+            # The answer reads less than it would without the limit.
+            total = optimized.sections_included + optimized.sections_excluded
+            record_degradation(
+                DegradationStep.CONTEXT_OPTIMIZATION,
+                f"query_limit: {optimized.sections_excluded} of {total} sections cut",
+                UsageLimitExceededError.__name__,
+            )
+        elif not optimized.sections and any(r.content for r in search_results.results):
+            # Retrieved evidence no section of which fits the budget: the
+            # decline that follows is the budget's, not "nothing found".
+            record_degradation(DegradationStep.CONTEXT_OPTIMIZATION, "context_budget")
+        return optimized
 
     def _context_optimization_step(self, state: dict[str, Any]) -> OptimizedContext:
         """Select the budgeted sections once and keep them in chain state.
@@ -2038,12 +2081,6 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 sections_included=0,
                 sections_excluded=len(state["search_results"].results),
             )
-        if not optimized.sections and any(
-            r.content for r in state["search_results"].results
-        ):
-            # Retrieved evidence no section of which fits the budget: the
-            # decline that follows is the budget's, not "nothing found".
-            record_degradation(DegradationStep.CONTEXT_OPTIMIZATION, "context_budget")
         return optimized
 
     def _context_building_step(self, state: dict[str, Any]) -> str:
@@ -2703,7 +2740,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                     "kg_rag.query", self._query_span_attributes(rag_input, search)
                 ) as span,
                 # Its calls past the query's limits are refused (shared.usage).
-                usage_scope(limits=self._usage_limits(rag_input)) as meter,
+                usage_scope(limits=self._usage_limits(rag_input, search)) as meter,
                 # The query's store-lookup memo and degradation ledger.
                 query_scope(),
             ):
@@ -2870,6 +2907,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             properties["namespace"] = str(namespace)
         if error_class is not None:
             properties["error_class"] = error_class.value
+        # What it was let spend, to attribute cost and limit hits by.
+        properties.update(
+            {key: str(value) for key, value in self._spend_settings(query).items()}
+        )
         try:
             self.providers.metrics_sink.emit(
                 QUERY_METRICS_NAMESPACE, metrics, properties
@@ -2894,27 +2935,37 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             return f"limits.{field}"
         return f"search.{_QUERY_LIMIT_SETTINGS[field]}"
 
-    def _usage_limits(self, rag_input: RAGInput) -> UsageLimits | None:
+    def _usage_limits(self, rag_input: RAGInput, search: bool) -> UsageLimits | None:
         """The model-call and input-token limits of ``rag_input``'s usage
-        scope (``shared.usage``); ``None`` without either."""
+        scope (``shared.usage``); ``None`` without either. A ``search``
+        makes no answer, so keeps nothing for it."""
         limits = self._query_limits(rag_input)
         if limits.max_model_calls is None and limits.max_input_tokens is None:
             return None
-        strategy = rag_input.search_strategy
+        strategy = (
+            None
+            if rag_input.search_strategy is SearchStrategy.AUTO
+            else rag_input.search_strategy
+        )
         return UsageLimits(
             max_llm_calls=limits.max_model_calls,
             max_input_tokens=limits.max_input_tokens,
-            # The answer's call and its input: no optional call (a query
-            # translation or extraction, the follow-up rewrite, an output
-            # repair) takes them; auto weighs its router call against the
-            # same reserve (_routes_within_limits).
-            reserved_calls=1,
-            reserved_tokens=(
-                self._answer_reserve(
-                    rag_input.query,
-                    None if strategy is SearchStrategy.AUTO else strategy,
+            # The answer's call and its input, and the calls a named
+            # strategy cannot answer without (``answering_model_calls``):
+            # no optional call (a query translation or extraction, the
+            # follow-up rewrite, an output repair) takes them; auto weighs
+            # its router call against the answer's (_routes_within_limits).
+            reserved_calls=(0 if search else 1)
+            + (
+                0
+                if strategy is None
+                else get_strategy_spec(strategy).strategy_class.answering_model_calls(
+                    self.config
                 )
-                if limits.max_input_tokens is not None
+            ),
+            reserved_tokens=(
+                answer_call_tokens(self.config, strategy, rag_input.query)
+                if limits.max_input_tokens is not None and not search
                 else 0
             ),
             names={
@@ -2923,32 +2974,11 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             },
         )
 
-    def _answer_reserve(
-        self, question: str, strategy: SearchStrategy | None = None
-    ) -> int:
-        """The input tokens an input-token limit keeps for the answer of
-        ``question``: its prompt (``answer_prompt_tokens`` of ``strategy``,
-        without one the largest), the question and the least context
-        (``search.token_manager.min_truncated_section_tokens``)."""
-        return (
-            answer_prompt_tokens(self.config, strategy)
-            + estimate_token_count(question)
-            + self.config.search.token_manager.min_truncated_section_tokens
-        )
-
     def _apply_limits(self, deadline: "_QueryDeadline", rag_input: RAGInput) -> None:
         """Lower ``deadline`` to ``rag_input``'s own deadline
         (``limits.deadline_seconds``), once it is admitted."""
         own = rag_input.limits.deadline_seconds if rag_input.limits else None
         deadline.lower_to(own, "limits.deadline_seconds")
-
-    def _time_left(self, started: float) -> float | None:
-        """Seconds left of the query deadline (``search.query_timeout_seconds``)
-        of a query that started at ``time.monotonic()`` ``started``."""
-        seconds = self.config.search.query_timeout_seconds
-        if seconds is None:
-            return None
-        return max(0.0, seconds - (time.monotonic() - started))
 
     @staticmethod
     def _identity(rag_input: RAGInput) -> AbstractContextManager[None]:
@@ -2978,7 +3008,31 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             "kg_rag.requested_strategy": rag_input.search_strategy,
             "kg_rag.top_k": rag_input.top_k,
             "kg_rag.use_memory": rag_input.use_memory,
+            **{
+                f"kg_rag.{key}": value
+                for key, value in self._spend_settings(rag_input).items()
+            },
         }
+
+    def _spend_settings(self, query: RAGInput | dict[str, Any]) -> dict[str, Any]:
+        """What a query was let spend, as its span's attributes and its
+        metrics record's properties name it: its answer's ``effort`` and
+        its model-call and input-token limits in force (``_query_limits``:
+        the config's, lowered by its own), each when set (its deadline
+        names itself when it passes: ``error_class`` timeout); of an input
+        the admission refused, its ``effort`` alone."""
+        if not isinstance(query, RAGInput):
+            effort = query.get("effort") if isinstance(query, dict) else None
+            return {"effort": effort} if isinstance(effort, str) else {}
+        settings: dict[str, Any] = (
+            {} if query.effort is None else {"effort": query.effort}
+        )
+        limits = self._query_limits(query)
+        for field in ("max_model_calls", "max_input_tokens"):
+            value = getattr(limits, field)
+            if value is not None:
+                settings[f"limits.{field}"] = value
+        return settings
 
     @staticmethod
     def _query_outcome_attributes(
@@ -3048,7 +3102,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 # The run metadata names the session, user and namespace for
                 # a tracing callback, as the query span does.
                 output: RAGOutput | SearchOutput = await runnable.ainvoke(
-                    input_dict,
+                    # Whether an answer follows the search: under the query's
+                    # limits only then is room kept for it.
+                    {**input_dict, ANSWERED_KEY: not search},
                     merge_configs(
                         config,
                         {
@@ -3816,8 +3872,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         :class:`QueryStart` once the query is admitted, :class:`QueryRouted`
         once its strategy is resolved, :class:`QuerySources` (the sources the
         answer model is given), :class:`AnswerChunk` as the answer model
-        writes (under the output guardrail one, the screened answer; none
-        for a fixed reply), then
+        writes (under the output guardrail one, the screened answer, a fixed
+        reply's too; without it none for a fixed reply), then
         :class:`QueryResult` with the :class:`RAGOutput` ``ainvoke``
         returns. A query blocked by the input guardrail, or failed under
         ``processing.ignore_errors``, yields its start (when admitted), its
@@ -4529,22 +4585,57 @@ def _release_cached_resources(
             runner.stop()
 
 
+class _CollectedReleases:
+    """The releases of dropped chains (:func:`_release_collected`), run one
+    after another by a daemon worker thread.
+
+    The collector runs a finalizer in whatever thread allocates when it
+    triggers, under whatever that thread holds: another chain's loop inside
+    ``ThreadPoolExecutor.submit`` (the executors' global lock), or, on
+    Python 3.11 and 3.12, threading's own lock of the threads to join at
+    shutdown, which every non-daemon thread's start and join takes. So the
+    finalizer neither waits for a release nor starts a thread (a thread's
+    start waits for it to run, which takes that lock): it puts the release
+    on a ``queue.SimpleQueue``, which a finalizer may call, and the worker,
+    started when a chain is built (never under the collector), takes it."""
+
+    def __init__(self) -> None:
+        self._queue: queue.SimpleQueue[tuple[Any, ...]] = queue.SimpleQueue()
+        self._lock = threading.Lock()
+        self._worker: threading.Thread | None = None
+
+    def start(self) -> None:
+        """Start the worker, unless it runs (once per process: a forked
+        child starts its own)."""
+        with self._lock:
+            if self._worker is None or not self._worker.is_alive():
+                self._worker = threading.Thread(
+                    target=self._run, name="kg-rag-chain-release", daemon=True
+                )
+                self._worker.start()
+
+    def put(self, resources: tuple[Any, ...]) -> None:
+        self._queue.put(resources)
+
+    def _run(self) -> None:
+        while True:
+            # Never raises.
+            _release_cached_resources(*self._queue.get())
+
+
+_COLLECTED_RELEASES = _CollectedReleases()
+
+
 def _release_collected(*resources: Any) -> None:
     """A dropped chain's GC finalizer: :func:`_release_cached_resources` of
-    ``resources`` on a thread of its own, never waited for here. The
-    collector runs a finalizer in whatever thread allocates when it
-    triggers, under whatever that thread holds (another chain's loop inside
-    ``ThreadPoolExecutor.submit``, under the executors' global lock), so a
-    release that waited there (for the dropped chain's loop, whose closes
-    may need that lock) deadlocked until its teardown timeouts."""
-    try:
-        threading.Thread(
-            target=_release_cached_resources,
-            args=resources,
-            name="kg-rag-chain-release",
-        ).start()
-    except RuntimeError:  # interpreter shutting down: no new thread
+    ``resources`` by the release worker (:class:`_CollectedReleases`),
+    never waited for here. At interpreter exit (the finalizer's ``atexit``
+    call, once the main thread has finished) the worker, a daemon, may not
+    run again: the release runs here, outside any collection."""
+    if not threading.main_thread().is_alive():
         _release_cached_resources(*resources)
+        return
+    _COLLECTED_RELEASES.put(resources)
 
 
 # The search setting of each QueryLimits field (SearchConfig.query_limits).
@@ -4698,16 +4789,20 @@ class _DeadlineScope:
     def first_chunk_within(self, seconds: float) -> Iterator[None]:
         """Bound the block (a stream's wait for its first chunk) to
         ``seconds`` too: the deadline moves up while it runs, when that is
-        earlier, and back after it."""
+        earlier, and back after it. No transient retry starts in it that
+        could not end by then either (``retry_deadline``): the model's error
+        is raised, not a first-chunk timeout after a backoff."""
         timeout, at = self._timeout, self._deadline.at
-        if timeout is None or at is None or time.monotonic() + seconds >= at:
+        now = time.monotonic()
+        if timeout is None or at is None or now + seconds >= at:
             yield
             return
         loop = asyncio.get_running_loop()
         timeout.reschedule(loop.time() + seconds)
         self._first_chunk_seconds = seconds
         try:
-            yield
+            with retry_deadline(now + seconds):
+                yield
         finally:
             if not timeout.expired():
                 self._first_chunk_seconds = None

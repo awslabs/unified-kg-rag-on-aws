@@ -571,10 +571,10 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                 # least map call and the answer, the most relevant level last.
                 fit = self._calls_within_limits(
                     CommunityRelevancePrompt,
+                    query,
                     [r.content for r in queue],
                     reserve_calls=2,
-                    reserve_tokens=self._least_call_tokens(GlobalMapPrompt)
-                    + self._min_context_tokens,
+                    reserve_tokens=self._least_call_tokens(GlobalMapPrompt, query),
                 )
                 limited = fit < len(queue)
                 if limited:
@@ -842,9 +842,9 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         # fit beside the answer; the others are not mapped.
         fit = self._calls_within_limits(
             GlobalMapPrompt,
+            query,
             # Formatted only under a limit.
             [functools.partial(self._format_reports, batch) for batch in batches],
-            reserve_tokens=self._min_context_tokens,
         )
         if fit < len(batches):
             self._record_limit_stop(DegradationStep.GLOBAL_MAP, fit, len(batches))

@@ -164,7 +164,8 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
   호출을 남길 수 있는 만큼만 실행합니다. 들어가지 못한 호출은 빼고
   `metadata.degraded`(사유 `query_limit`)에 기록합니다. global은 관련성이 높은 보고서 묶음부터,
   DRIFT는 점수가 높은 후속 질의부터 실행하고, iterative는 라운드를 멈춥니다
-  (`stop_reason: query_limit`).
+  (`stop_reason: query_limit`). 계획한 호출은 계측기가 세는 방식 그대로, 즉 프롬프트와 호출이
+  담는 질문, 읽을 내용을 더해 셉니다.
 - `auto`는 라우터 호출 뒤에 남은 호출 수 안에 최소 호출 수(`fewest_model_calls`, 그 전략이 읽는 질의
   추출, 질문에 필요한 번역, 답변)가
   들어가는 전략으로만 분기하고, 제외한 전략은 `metadata.routing.over_limits`에 남습니다.
@@ -173,12 +174,17 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
   두 한도 가운데 하나라도 있으면 미리 시작하는 추출은 하지 않습니다.
 - 답변 컨텍스트는 남은 입력 토큰에서 답변 프롬프트 자체(템플릿과 지시문)와 질문을 빼고, 다시
   `search.token_manager.context_window_headroom_ratio`만큼 뺀 크기로 줄입니다. 호출을 펼치는
-  전략도 답변 프롬프트 몫의 토큰을 답변용으로 남깁니다.
+  전략도 답변 프롬프트 몫의 토큰을 답변용으로 남깁니다. 이렇게 줄인 컨텍스트는
+  `metadata.degraded`(단계 `context_optimization`, 사유 `query_limit: N of M sections cut`)에
+  남습니다.
 - 호출 하나는 답변용으로 남기고, 입력 토큰 한도가 있으면 답변의 입력(프롬프트, 질문, 최소
   컨텍스트)도 남깁니다. 둘 중 하나라도 쓰게 될 선택적 호출은 보내지 않고, 그 단계는 빼고 답하며
   `degraded`(사유 `query_limit`)에 남깁니다. 선택적 호출은 질의 번역과 추출, 후속 질문
   재작성(이때 후속 질문을 쓰인 그대로 검색), structured 전략의 계획 호출(대체 전략이
   답함), 출력 보정(`models.roles.fixing`. 해석하지 못한 응답은 보정하지 못한 응답으로 처리)입니다.
+  `drift`를 지정한 질의는 후속 호출 하나의 몫도 남깁니다(그 호출이 없으면 DRIFT는 아무것도 찾지
+  못합니다). 검색(`asearch`, `kg_search`, `run-rag --mode search`)은 답변을 만들지 않으므로
+  답변 몫을 남기지 않으며, 이때도 한도를 넘는 선택적 호출은 같은 방식으로 건너뜁니다.
 - 입력 토큰 한도에서는 호출을 펼치는 전략이 설정 상한이 아니라 답변이 실제로 읽을 만큼(답변 프롬프트,
   DRIFT가 지금까지 받은 답변, 최소 컨텍스트)만 답변용으로 남기고, DRIFT의 후속 호출은 남은 토큰을
   나눠 씁니다. `auto`는 한도가 감당하지 못하는 라우터 호출은 하지 않고 대체 전략으로 보냅니다.
@@ -211,7 +217,11 @@ MCP 도구 `kg_search`와 `kg_answer`도 같은 `limits` 인수를 받습니다(
 없는 강도는 모델을 호출하기 전에 거부합니다(`InvalidArgumentError`, 오류 클래스
 `invalid_argument`). 모델이 받지 않는 강도이거나, 추론하지 않는 모델(로컬 서버의 모델,
 추론 기능이 없는 Bedrock 모델)이면 그렇습니다. 그대로 두면 강도가 조용히 무시되기
-때문입니다. 지정하지 않으면 바뀌는 것이 없습니다. `RAGInput.enable_thinking`은
+때문입니다. 지정하지 않으면 바뀌는 것이 없습니다. `run-rag --effort`와 `run-eval --effort`는
+실행의 모든 질의에 이 값을 지정합니다(`run-eval`에서는 데이터셋 항목의 `metadata.effort`가
+우선합니다). 질의 스팬(`kg_rag.effort`)과 질의 지표 기록(`effort`)에도 남습니다. MCP 도구와
+콘솔의 Ask 페이지는 이 값을 받지 않습니다. 한도와 달리 추론 강도는 질의의 비용과 지연을 늘릴 수
+있어, MCP 호출자에게 열려면 먼저 서버 쪽 상한이 필요합니다. `RAGInput.enable_thinking`은
 더 이상 권장하지 않으며(`DeprecationWarning`), 계층의 강도로 추론을 켭니다.
 
 ```python
@@ -244,7 +254,8 @@ async for event in chain.aquery_events(RAGInput(query="...")):
 - 청크는 미리 보기이고 기준은 `QueryResult`입니다. 출력 가드레일을 켜도 답변 모델은
   스트리밍으로 호출하지만(첫 청크 제한 시간 적용), 가드레일이 답변 전체를 검사할 때까지 아무것도
   보여 주지 않습니다. 검사가 끝나면 출처와 검사한 답변을 청크 하나로 보내고, 그다음에 대화를
-  메모리에 씁니다. 답변 거절이나 빈 컨텍스트의 고정 문구는 결과에만 들어 있습니다.
+  메모리에 씁니다. 답변 거절이나 빈 컨텍스트의 고정 문구도 마찬가지입니다(가드레일이 없으면
+  고정 문구는 결과에만 들어 있습니다).
   `[NO_ANSWER]` 표식(`search.abstention`)은 판단이 설 때까지 보류하고 지웁니다.
 - 실패하면 그 전에 보낸 이벤트 뒤에 예외가 납니다. `processing.ignore_errors`를 켜면
   결과에 오류 답변이 담깁니다.

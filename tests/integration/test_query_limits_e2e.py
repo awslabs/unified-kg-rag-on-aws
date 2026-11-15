@@ -14,6 +14,8 @@ failed where it could have answered (W1 verification 2).
 
 from __future__ import annotations
 
+import logging
+import re
 from pathlib import Path
 
 import pytest
@@ -35,6 +37,7 @@ from unified_kg_rag.application.retrieval.rag_chain import (
     GraphRAGChain,
     RAGInput,
     RAGOutput,
+    SearchOutput,
 )
 from unified_kg_rag.domain.models import PipelineStageStatus, SearchStrategy
 
@@ -130,7 +133,7 @@ def test_auto_under_a_small_token_limit_degrades_rather_than_fails(
 
 
 def test_an_answer_context_the_limit_emptied_names_the_limit(
-    chain: GraphRAGChain,
+    chain: GraphRAGChain, caplog: pytest.LogCaptureFixture
 ) -> None:
     # The limit leaves the answer's prompt but no context: the fixed reply
     # says the limit did it (abstention_reason query_limit), not "no
@@ -140,4 +143,87 @@ def test_an_answer_context_the_limit_emptied_names_the_limit(
         "degraded"
     )
     steps = [d["step"] for d in out.metadata["degraded"]]
-    assert "context_optimization" in steps
+    # One entry, the limit's (rv33: a second, context_budget, came with it),
+    # and no ERROR for a designed cut ("Token budget exceeded").
+    assert steps.count("context_optimization") == 1, out.metadata["degraded"]
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+
+
+def test_a_limit_that_cuts_the_answer_context_says_so(chain: GraphRAGChain) -> None:
+    # rv33: an input-token limit that cut some of the answer's sections
+    # recorded nothing, so a server limit set too low lowered answers with
+    # query_degraded at 0. The demo's local query reads 8 sections in about
+    # 940 tokens: at 1,100 the limit (less the context-window headroom)
+    # cuts some.
+    full = _ask(chain, SearchStrategy.LOCAL, QueryLimits(), ENGLISH)
+    assert "degraded" not in full.metadata or not full.metadata["degraded"]
+    out = _ask(
+        chain, SearchStrategy.LOCAL, QueryLimits(max_input_tokens=1_100), ENGLISH
+    )
+    assert out.answer == ANSWER
+    assert len(out.sources) < len(full.sources)
+    (entry,) = out.metadata["degraded"]
+    assert entry["step"] == "context_optimization"
+    assert re.fullmatch(r"query_limit: \d+ of \d+ sections cut", entry["reason"])
+
+
+# Long questions, the fan-out's planning miss (rv33): each planned map,
+# rating and action call carries the question, which the plans left out.
+LONG_ENGLISH = " ".join(
+    ["Who stores the gadgets for Vendor, and under which agreement and terms?"] * 25
+)
+LONG_KOREAN = " ".join(
+    ["누가 공급업체를 위해 물건을 보관하며 어떤 계약과 조건에 따릅니까?"] * 20
+)
+
+
+@pytest.mark.slow
+@pytest.mark.timeout(300)
+@pytest.mark.parametrize(
+    "strategy",
+    [SearchStrategy.DRIFT, SearchStrategy.GLOBAL, SearchStrategy.ITERATIVE],
+)
+def test_a_long_question_degrades_at_every_token_limit_instead_of_failing(
+    chain: GraphRAGChain, strategy: SearchStrategy
+) -> None:
+    for query in (LONG_ENGLISH, LONG_KOREAN):
+        # Past 4k tokens the demo's whole query fits.
+        for limit in range(1_000, 4_001, 100):
+            out = _ask(chain, strategy, QueryLimits(max_input_tokens=limit), query)
+            assert out.metadata["usage"]["input_tokens"] <= limit, (strategy, limit)
+            reasons = [d["reason"] for d in out.metadata.get("degraded", [])]
+            assert out.answer == ANSWER or (
+                out.metadata["abstention_reason"] == "query_limit"
+            ), (strategy, limit, reasons)
+
+
+def test_a_search_keeps_no_call_for_an_answer_it_does_not_make(
+    chain: GraphRAGChain,
+) -> None:
+    # rv33: a search (asearch, kg_search, run-rag --mode search) kept the
+    # answer's call, so at one call a Korean question searched untranslated.
+    out = chain.search(
+        RAGInput(
+            query=KOREAN,
+            search_strategy=SearchStrategy.NAIVE,
+            limits=QueryLimits(max_model_calls=1),
+        )
+    )
+    assert isinstance(out, SearchOutput)
+    # The translation was asked (the fake model's reply to it is not one),
+    # and its repair, optional, skipped at the limit instead of failing.
+    assert out.metadata["usage"]["llm_calls"] == 1
+    reasons = [d["reason"] for d in out.metadata.get("degraded", [])]
+    assert not any(r.startswith("query_limit") for r in reasons), reasons
+
+
+def test_drift_keeps_its_one_action_from_the_optional_calls(
+    chain: GraphRAGChain,
+) -> None:
+    # rv33: at two calls the translation of a Korean question took the call
+    # DRIFT's one action needs, so it abstained with one call spent where
+    # the English question answered with two.
+    for query in (ENGLISH, KOREAN):
+        out = _ask(chain, SearchStrategy.DRIFT, QueryLimits(max_model_calls=2), query)
+        assert out.answer == ANSWER, (query, out.metadata.get("degraded"))
+        assert out.metadata["usage"]["llm_calls"] == 2

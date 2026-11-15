@@ -185,7 +185,9 @@ is refused before its request is sent:
   `iterative` judges only what fits beside the answer's call. What did not
   fit is left out and listed in `metadata.degraded` (reason `query_limit`):
   global maps its most relevant report batches, DRIFT its best follow-ups,
-  iterative stops its rounds (`stop_reason: query_limit`).
+  iterative stops its rounds (`stop_reason: query_limit`). Each planned
+  call is counted as the meter will count it: its prompt, the question it
+  carries and what it reads.
 - `auto` routes only to strategies whose fewest calls (`fewest_model_calls`,
   the query extractions they read, the translation the question needs, and
   the answer) fit after its router call
@@ -196,7 +198,9 @@ is refused before its request is sent:
 - The answer's context is cut to the input tokens left after the answer
   prompt's own templates and instructions and the question, less
   `search.token_manager.context_window_headroom_ratio` of them; the fan-out
-  strategies keep that prompt's tokens for the answer too.
+  strategies keep that prompt's tokens for the answer too. A context cut
+  this way is listed in `metadata.degraded` (step `context_optimization`,
+  reason `query_limit: N of M sections cut`).
 - One call is kept for the answer, and under an input-token limit its
   input too (its prompt, the question and the least context): an optional
   call that would take either is not sent, and its step is answered without
@@ -204,7 +208,11 @@ is refused before its request is sent:
   translation and extractions, the follow-up rewrite (the
   follow-up is then searched as written), the structured strategy's planner
   (its fallback answers) and an output repair (`models.roles.fixing`; the
-  reply that did not parse counts as unrepaired).
+  reply that did not parse counts as unrepaired). A query that names `drift`
+  keeps the call of its one action too (without it DRIFT finds nothing). A
+  search (`asearch`, `kg_search`, `run-rag --mode search`) makes no answer,
+  so keeps nothing for one; an optional call past a limit is then skipped
+  the same way.
 - Under an input-token limit the fan-out keeps for the answer what it will
   read (the answer prompt, DRIFT's answers so far, the least context),
   not the configured ceilings, and DRIFT's actions share what is left;
@@ -245,7 +253,12 @@ An effort the answer model cannot apply is refused before any model call
 (`InvalidArgumentError`, error class `invalid_argument`): a level it does not
 take, or any level on a model that does not reason (a local server's, or a
 Bedrock model without thinking), which would otherwise drop it. Unset,
-nothing changes.
+nothing changes. `run-rag --effort` and `run-eval --effort` set it for every
+query of the run (in `run-eval` a dataset item's `metadata.effort` wins); the
+query span (`kg_rag.effort`) and the query metrics record (`effort`) name it.
+The MCP tools and the console's Ask page do not take it: unlike a limit, an
+effort can raise a query's cost and latency, so an MCP caller's would need a
+server ceiling first.
 `RAGInput.enable_thinking` is deprecated (a `DeprecationWarning`): it turns
 reasoning on at the tier's effort.
 
@@ -281,7 +294,8 @@ async for event in chain.aquery_events(RAGInput(query="...")):
   guardrail the answer model still streams (its first chunk bounded), but
   nothing is shown until the guardrail screened the whole answer: then its
   sources and the screened answer as one chunk, before the turn is written
-  to memory; a decline's or an empty context's fixed reply comes only in the result. The
+  to memory, a decline's or an empty context's fixed reply included (without
+  the guardrail a fixed reply comes only in the result). The
   `[NO_ANSWER]` token (`search.abstention`) is held back and stripped.
 - A failure raises after the events sent before it; with
   `processing.ignore_errors` the result carries the error answer.

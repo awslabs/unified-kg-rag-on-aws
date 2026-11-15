@@ -149,6 +149,43 @@ def test_ragas_and_chat_bedrock_failures_log_no_provider_text(
     )
 
 
+def test_a_call_the_usage_meter_refuses_logs_no_callback_error(
+    stream: io.StringIO,
+) -> None:
+    # rv33: LangChain logs "Error in UsageCallbackHandler.on_chat_model_start
+    # callback: OptionalCallSkipped(...)" before re-raising the refusal, a
+    # WARNING that read as a crash on every designed skip. Other callback
+    # errors are kept.
+    from langchain_core.callbacks import BaseCallbackHandler
+    from langchain_core.language_models.fake_chat_models import FakeListChatModel
+
+    from unified_kg_rag.adapters.observability.usage_callback import (
+        UsageCallbackHandler,
+    )
+    from unified_kg_rag.shared import usage
+
+    class _Broken(BaseCallbackHandler):
+        def on_chat_model_start(self, *args: object, **kwargs: object) -> None:
+            raise ValueError("a callback's own fault")
+
+    setup_logging(_config(log_format="structured"), stream=stream)
+    model = FakeListChatModel(
+        responses=["a"], callbacks=[UsageCallbackHandler("m", role="query")]
+    )
+    limits = usage.UsageLimits(max_llm_calls=1, reserved_calls=1)
+    with usage.usage_scope(limits), usage.optional_calls():
+        with pytest.raises(usage.OptionalCallSkipped):
+            model.invoke("hi")
+    with usage.usage_scope(usage.UsageLimits(max_llm_calls=0)):
+        with pytest.raises(usage.UsageLimitExceededError):
+            model.invoke("hi")
+    assert not [r for r in _records(stream) if "callback" in r["event"]]
+    FakeListChatModel(responses=["a"], callbacks=[_Broken()]).invoke("hi")
+    (kept,) = [r for r in _records(stream) if "callback" in r["event"]]
+    assert kept["logger"] == "langchain_core.callbacks.manager"
+    assert kept["level"] == "warning"
+
+
 def test_library_levels_quiet_chatty_dependencies(stream: io.StringIO) -> None:
     setup_logging(_config(), stream=stream)
     logging.getLogger("langchain_aws.llms").info("Successfully invoked model")

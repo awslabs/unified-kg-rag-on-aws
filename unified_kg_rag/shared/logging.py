@@ -14,7 +14,14 @@ import structlog
 from structlog.stdlib import LoggerFactory, ProcessorFormatter
 
 from . import observability
-from .exceptions import ErrorClass, classify, error_text, own_text
+from .exceptions import (
+    ErrorClass,
+    OptionalCallSkipped,
+    UsageLimitExceededError,
+    classify,
+    error_text,
+    own_text,
+)
 from .utils.common import error_digest, error_locator, text_digest
 
 
@@ -223,6 +230,38 @@ class LibraryRecordFilter(logging.Filter):
         return True
 
 
+# LangChain's callback manager: it logs a WARNING for every error a callback
+# raises, before re-raising one of a handler with ``raise_error``.
+_CALLBACK_MANAGER_LOGGER = "langchain_core.callbacks.manager"
+_CALLBACK_ERROR_TEMPLATE = "Error in %s.%s callback: %s"
+# The reprs of the usage meter's refusals: a call refused at its start by
+# the usage callback (a query limit, an optional call skipped), which the
+# package records itself (a degraded step, ``limit_exceeded``).
+_REFUSAL_REPRS = tuple(
+    f"{cls.__name__}(" for cls in (UsageLimitExceededError, OptionalCallSkipped)
+)
+
+
+class UsageRefusalRecordFilter(logging.Filter):
+    """Drop LangChain's "Error in <handler>.on_chat_model_start callback:
+    OptionalCallSkipped(...)" WARNING: a model call the usage meter refused
+    at its start is a designed stop the package records itself, not a
+    callback's fault (it read as a crash, digested to "Error in len=20
+    sha=... callback"). Only that record of that logger is dropped: any
+    other callback error is kept. Installed by ``setup_logging`` on the
+    callback manager's logger; importing the package installs nothing."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        return not (
+            record.msg == _CALLBACK_ERROR_TEMPLATE
+            and isinstance(args, tuple)
+            and len(args) == 3
+            and isinstance(args[2], str)
+            and args[2].startswith(_REFUSAL_REPRS)
+        )
+
+
 def _log_warning(
     message: Warning | str,
     category: type[Warning],
@@ -319,6 +358,10 @@ class LoggingSetup:
             file_handler = logging.FileHandler(log_file_path)
             file_handler.setFormatter(cls._formatter(json=structured, colors=False))
             cls._handlers.append(file_handler)
+
+        callbacks = logging.getLogger(_CALLBACK_MANAGER_LOGGER)
+        if not any(isinstance(f, UsageRefusalRecordFilter) for f in callbacks.filters):
+            callbacks.addFilter(UsageRefusalRecordFilter())
 
         library_filter = LibraryRecordFilter()
         for handler in cls._handlers:

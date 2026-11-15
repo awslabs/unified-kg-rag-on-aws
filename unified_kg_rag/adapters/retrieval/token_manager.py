@@ -180,6 +180,13 @@ class TokenManager:
             return budget_ceiling
         return configured
 
+    @property
+    def context_ceiling(self) -> int:
+        """The most context (and question) tokens a budget may take: what the
+        answer model accepts (``max_context_tokens``) less the prompt's
+        buffer."""
+        return self._max_context_tokens - self.CONTEXT_BUFFER_TOKENS
+
     def count_tokens(self, text: str) -> int:
         if not text:
             return 0
@@ -265,7 +272,7 @@ class TokenManager:
         # accept, so a large --top-k / RAGInput.max_tokens cannot overflow it.
         # The prompt buffer comes off that ceiling only: subtracting it from a
         # small explicit budget too (max_tokens <= 513) left nothing for context.
-        ceiling = self._max_context_tokens - self.CONTEXT_BUFFER_TOKENS
+        ceiling = self.context_ceiling
         target_tokens = min(max_tokens, ceiling) if max_tokens else ceiling
         query_tokens = self.count_tokens(query)
         available_tokens = target_tokens - query_tokens

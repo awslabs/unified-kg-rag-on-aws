@@ -137,6 +137,10 @@ class _Run:
     bridge_keys: set[str] = field(default_factory=set)
     verdicts: list[dict[str, Any]] = field(default_factory=list)
 
+    def searched_list(self) -> str:
+        """The queries searched so far, as the controller prompt lists them."""
+        return "\n".join(f"- {q}" for q in self.searched)
+
 
 def _strings(value: Any) -> list[str]:
     """A JSON list of strings, stripped, blank ones dropped."""
@@ -389,7 +393,7 @@ class IterativeSearchStrategy(BaseSearchStrategy):
         failed or its answer could not be read (``run.degraded``), or the
         query's limits leave no room for it (``query_limit``)."""
         context = await self._pack(results, query.query, query)
-        if not self._room_for(context, run):
+        if not self._room_for(context, query, run):
             return None
         run.llm_calls += 1
         try:
@@ -397,7 +401,7 @@ class IterativeSearchStrategy(BaseSearchStrategy):
                 {
                     "query": query.query,
                     "context": context,
-                    "searched": "\n".join(f"- {q}" for q in run.searched),
+                    "searched": run.searched_list(),
                     "max_next_queries": self.settings.max_next_queries,
                     "target_language": self.query_language(query),
                 },
@@ -622,13 +626,18 @@ class IterativeSearchStrategy(BaseSearchStrategy):
         )
         return self.token_manager.build_context_string(optimized)
 
-    def _room_for(self, context: str, run: _Run) -> bool:
+    def _room_for(self, context: str, query: SearchQuery, run: _Run) -> bool:
         """Whether the query's limits leave room for a controller call on
-        ``context`` and the answer, which reads about as much; when not, the
-        run stops (``query_limit``), recorded as degraded."""
+        ``context`` (and the searches so far) and the answer, which reads
+        about as much context; when not, the run stops (``query_limit``),
+        recorded as degraded."""
         tokens = estimate_token_count(context)
+        searched = estimate_token_count(run.searched_list())
         if self._calls_within_limits(
-            IterativeControllerPrompt, [tokens], reserve_tokens=tokens
+            IterativeControllerPrompt,
+            query,
+            [tokens + searched],
+            answer_context=tokens,
         ):
             return True
         run.stop_reason = "query_limit"
@@ -642,7 +651,7 @@ class IterativeSearchStrategy(BaseSearchStrategy):
         round's candidates are packed into about the budget of these."""
         if usage.remaining().unlimited:
             return True
-        return self._room_for(await self._pack(results, query.query, query), run)
+        return self._room_for(await self._pack(results, query.query, query), query, run)
 
     def _time_budget(self) -> float | None:
         """Seconds the follow-up rounds may take: what the query deadline

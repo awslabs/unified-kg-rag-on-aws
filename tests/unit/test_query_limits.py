@@ -370,19 +370,17 @@ async def test_a_lowered_deadline_is_the_querys_and_named() -> None:
 
 
 def test_the_answer_context_is_cut_to_the_tokens_left() -> None:
-    chain = GraphRAGChain.__new__(GraphRAGChain)
-    chain.config = Config()
-    assert chain._context_budget({"max_tokens": 500}) == 500
-    from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
-    from unified_kg_rag.adapters.retrieval.base import answer_prompt_tokens
+    chain = _chain(Config(), _Factory(_SlowChatModel()))
+    assert chain._context_budget({"max_tokens": 500}) == (500, False)
+    from unified_kg_rag.adapters.retrieval.base import answer_call_tokens
 
-    prompt = answer_prompt_tokens(chain.config) + estimate_token_count("q")
+    prompt = answer_call_tokens(chain.config, None, "q", 0)
     with usage.usage_scope(usage.UsageLimits(max_input_tokens=prompt + 1000)):
         usage.start_llm_call("query", "m", estimated_input_tokens=200)
         # 800 left after the answer prompt, less the 10% context-window
-        # headroom.
-        assert chain._context_budget({"max_tokens": None, "query": "q"}) == 720
-        assert chain._context_budget({"max_tokens": 500, "query": "q"}) == 500
+        # headroom: set by the limit.
+        assert chain._context_budget({"max_tokens": None, "query": "q"}) == (720, True)
+        assert chain._context_budget({"max_tokens": 500, "query": "q"}) == (500, False)
 
 
 # --- auto routes only to strategies that fit -----------------------------------
@@ -619,21 +617,36 @@ def test_a_fan_out_keeps_the_answer_prompts_tokens_for_the_answer() -> None:
     # Regression (W1 review L2): global's and DRIFT's token reserves counted
     # the answer's context only, so a fan-out could leave the answer no room
     # for its own prompt.
+    # rv33: and neither counted the question each call and the answer carry.
     from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
-    from unified_kg_rag.adapters.retrieval.base import answer_prompt_tokens
+    from unified_kg_rag.adapters.retrieval.base import answer_call_tokens
     from unified_kg_rag.domain.prompts import GlobalMapPrompt
 
     strat = _global_strategy(map_batch_size=1, map_outputs=[])
+    query = SearchQuery(query="공급업체는 어떤 부품을 언제 구매자에게 공급합니까?")
     resolved = GlobalMapPrompt.resolve(custom_prompts=strat.config.custom_prompts)
-    call = 100 + estimate_token_count(
-        resolved.system_prompt_template + resolved.human_prompt_template
+    question = estimate_token_count(query.query)
+    call = (
+        100
+        + question
+        + estimate_token_count(
+            resolved.system_prompt_template + resolved.human_prompt_template
+        )
     )
-    # The answer to a global search's prompt (its strategy's style).
-    answer = strat._answer_prompt_tokens()
-    assert answer == answer_prompt_tokens(strat.config, SearchStrategy.GLOBAL)
+    # The answer to a global search's prompt (its strategy's style), its
+    # question and the least context.
+    answer = strat._answer_reserve(query)
+    assert answer == answer_call_tokens(
+        strat.config, SearchStrategy.GLOBAL, query.query
+    )
+    assert answer > strat._min_context_tokens + question
     for limit, fits in ((call + answer, 1), (call + answer - 1, 0)):
         with usage.usage_scope(usage.UsageLimits(max_input_tokens=limit)):
-            assert strat._calls_within_limits(GlobalMapPrompt, [100]) == fits
+            assert strat._calls_within_limits(GlobalMapPrompt, query, [100]) == fits
+    # A search that is not answered keeps nothing for an answer.
+    unanswered = query.model_copy(update={"metadata": {"answered": False}})
+    with usage.usage_scope(usage.UsageLimits(max_input_tokens=call)):
+        assert strat._calls_within_limits(GlobalMapPrompt, unanswered, [100]) == 1
 
 
 def test_auto_counts_the_query_extractions_each_candidate_reads() -> None:
@@ -779,13 +792,14 @@ async def test_global_maps_what_an_input_token_limit_leaves_beside_the_answer() 
     )
     reports = _communities(4)
     batches, _ = strat._map_batches(reports)
-    call = strat._prompt_tokens(GlobalMapPrompt) + estimate_token_count(
-        strat._format_reports(batches[0])
+    query = SearchQuery(query="q")
+    call = strat._call_tokens(
+        GlobalMapPrompt, query, estimate_token_count(strat._format_reports(batches[0]))
     )
-    limit = 2 * call + strat._answer_prompt_tokens() + strat._min_context_tokens
+    limit = 2 * call + strat._answer_reserve(query)
     assert limit < strat.global_search_config.max_map_reduce_tokens
     with usage.usage_scope(usage.UsageLimits(max_input_tokens=limit)):
-        await strat._apply_map_reduce(reports, SearchQuery(query="q"))
+        await strat._apply_map_reduce(reports, query)
     assert len(strat.map_rater.batch_inputs) == 2
 
 
@@ -843,15 +857,26 @@ def test_a_query_keeps_its_answer_s_prompt_and_question_tokens() -> None:
     rag_input = RAGInput(
         query="What does Vendor supply?", limits=QueryLimits(max_input_tokens=5_000)
     )
-    limits = chain._usage_limits(rag_input)
+    limits = chain._usage_limits(rag_input, search=False)
     assert limits is not None
     kept = limits.reserved_tokens
     assert kept > answer_prompt_tokens(config)  # the prompt, question, context
+    assert limits.reserved_calls == 1
     # Without an input-token limit nothing is kept for it.
     calls_only = chain._usage_limits(
-        RAGInput(query="q", limits=QueryLimits(max_model_calls=3))
+        RAGInput(query="q", limits=QueryLimits(max_model_calls=3)), search=False
     )
     assert calls_only is not None and calls_only.reserved_tokens == 0
+    # A search makes no answer: nothing is kept for one (rv33).
+    searched = chain._usage_limits(rag_input, search=True)
+    assert searched is not None
+    assert (searched.reserved_calls, searched.reserved_tokens) == (0, 0)
+    # DRIFT keeps the one action it cannot answer without beside the answer.
+    drift = chain._usage_limits(
+        rag_input.model_copy(update={"search_strategy": SearchStrategy.DRIFT}),
+        search=False,
+    )
+    assert drift is not None and drift.reserved_calls == 2
 
 
 async def test_a_follow_up_at_one_call_searches_the_question_as_written() -> None:
@@ -881,6 +906,27 @@ def test_an_optional_call_past_a_limit_itself_is_skipped_not_refused() -> None:
     with usage.usage_scope(limits), usage.optional_calls():
         with pytest.raises(usage.OptionalCallSkipped):
             usage.start_llm_call("query", "m", estimated_input_tokens=500)
+
+
+@pytest.mark.parametrize(
+    ("limits", "call"),
+    [
+        (usage.UsageLimits(max_llm_calls=1), 1),
+        (usage.UsageLimits(max_input_tokens=100), 500),
+    ],
+    ids=["calls", "tokens"],
+)
+def test_an_optional_call_past_a_limit_keeping_nothing_is_skipped(
+    limits: usage.UsageLimits, call: int
+) -> None:
+    # rv33: a scope keeping nothing for an answer (a search's) refused an
+    # optional call past its limit with the limit's own error, which no
+    # optional step absorbs: a search's output repair failed the search.
+    with usage.usage_scope(limits), usage.optional_calls():
+        if limits.max_llm_calls is not None:
+            usage.start_llm_call("query", "m", estimated_input_tokens=1)
+        with pytest.raises(usage.OptionalCallSkipped, match="past"):
+            usage.start_llm_call("query", "m", estimated_input_tokens=call)
 
 
 async def test_a_streamed_answer_counts_one_call_as_an_unstreamed_one() -> None:
