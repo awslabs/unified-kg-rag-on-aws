@@ -290,6 +290,34 @@ def test_a_template_filled_in_twice_keeps_both_documents(
     assert "'c.txt' (of 'a.txt', similarity 1.00)" in caplog.text
 
 
+def test_the_warning_names_the_first_20_dropped_documents(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # A corpus of many copies keeps its WARNING one readable line.
+    text = "the quick brown fox jumps over the lazy dog repeatedly today"
+    documents = [
+        Document(
+            page_content=text,
+            document_id=f"d{i:02d}",
+            file_name=f"d{i:02d}.txt",
+            file_path=f"/corpus/d{i:02d}.txt",
+        )
+        for i in range(23)
+    ]
+    loader = DirectoryLoader("/")
+    loader.max_workers = 1
+    with caplog.at_level("WARNING"):
+        kept = loader.deduplicate_documents(documents, threshold=0.9)
+    assert [d.document_id for d in kept] == ["d00"]
+    (warning,) = [
+        r.getMessage() for r in caplog.records if "Deduplication" in r.getMessage()
+    ]
+    assert warning.startswith("Deduplication dropped 22 near-duplicate document(s)")
+    assert warning.count("(of 'd00.txt'") == 20
+    assert "'d20.txt'" in warning and "'d21.txt'" not in warning
+    assert warning.endswith(" and 2 more")
+
+
 def test_numbers_match_in_any_digit_script_in_their_order() -> None:
     from unified_kg_rag.adapters.ingestion.loader import numbers_digest
 

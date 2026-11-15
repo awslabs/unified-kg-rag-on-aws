@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Highlights
+- Query limits beside the deadline: a query's model calls and input tokens can be bounded, for every query or one
+  (`search.query_max_model_calls`, `search.query_max_input_tokens`, `RAGInput.limits`); a fan-out keeps to what fits
+  and `auto` routes only to strategies that fit (#756, #759).
+- An ingestion run's budget in model calls or USD, which stops a run that a re-run resumes, and
+  `run-ingestion --estimate`, each stage's calls, tokens and USD counted without a model call (#756, #761, #762).
+- One streaming path, `GraphRAGChain.aquery_events()`, which runs the whole query (limits, guardrail, metrics and
+  memory included), and one query's answer reasoning effort (`RAGInput.effort`, `run-rag` and `run-eval --effort`)
+  (#757, #759).
+- `run-describe`, the console and the MCP server say why a namespace is due for a rebuild (#757).
+- One `retry` profile per caller, an evidence tag on every numeric default, MinHash name matching and deduplication
+  that propose the pairs at their threshold (deduplication also compares the numbers: a form filled in twice stays two
+  documents) (#758, #762).
+
 ### Breaking changes
 
 - `EvaluationResult.enable_thinking` is gone: nothing recorded it (it was always false). A saved result that holds
@@ -18,6 +32,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `config.retry.max_attempts` and the other flat retry fields are gone from the Python surface, and
   `RetryConfig.transient_policy()` with them: read and set the profiles (`config.retry.model.max_attempts`,
   `config.retry.ingestion_item`, ...). Configs that set the flat keys still load (*Deprecated*).
+
+### Upgrading
+From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-the-library) links here.
+1. Move what the load's WARNINGs name: the flat `retry` keys to their profiles
+   ([Deprecated keys](docs/reference/configuration.md#deprecated-keys) lists where each one goes) and
+   `evaluation.prices` to `models.prices`. Python code that reads or sets them, or reads
+   `EvaluationResult.enable_thinking`, needs the change now (*Breaking changes*); replace the deprecated Python names
+   (`on_answer_chunk`, `RAGInput.enable_thinking`, `TransientRetryConfig`) before they are removed.
+2. A namespace indexed incrementally keeps the name matches 0.3.0's MinHash index made among the names it holds: a run
+   matches its delta's names with the new index. Run with `indexing.reset: true` to match the whole corpus again. With
+   `processing.deduplicate` on, deduplication decides otherwise both ways (*Fixed*): the numbers rule keeps template
+   documents 0.3.0 dropped as copies, which the next run indexes as new documents, and the exact index finds
+   near-copies 0.3.0 missed, so a run drops more of them and an incremental run deletes the copies 0.3.0 indexed
+   beside their originals (its WARNING names them; `indexing.max_deletion_share` stops a run deleting past its share
+   until confirmed). Raise `processing.deduplicate_similarity_threshold` to 0.97, which reads about as 0.3.0's 0.9
+   did, to keep them.
+3. A build record written by 0.3.0 has no `answer_fingerprints`: a report or description summary setting changed since
+   that build is named as a rebuild reason (`answer_settings`) only after the next full build records them.
 
 ### Added
 
@@ -47,13 +79,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   planner, an output repair: `usage.optional_calls`) never takes the call kept for the answer, nor under an
   input-token limit the answer's prompt, question and least context (nor, with nothing kept, a call past the limit),
   its step degraded instead, an answer the limits left no context abstains with `abstention_reason: query_limit`, and
-  a query whose answer does not fit fails with `UsageLimitExceededError` (error class `limit_exceeded`, a caller's
-  error: not counted in `query_failed`, `refused` on the console's dashboard, its message shown to an MCP caller; exit
-  code 1, console HTTP 422). The console's Ask page names that decline, the steps the limits skipped (apart from those
-  that failed) and the strategies they left `auto` without.
-  The `query_limited` metric (0 or 1, on the CDK dashboard's "Query outcomes" widget) and the query span's
-  `kg_rag.query_limited` count a query its limits cut short (a step left out, an abstention or a refusal), which
-  `query_degraded` could not tell from a failing step.
+  a query whose answer does not fit fails with `UsageLimitExceededError` (exported; error class `limit_exceeded`, a
+  caller's error: not counted in `query_failed`, `refused` on the console's dashboard, its message shown to an MCP
+  caller; exit code 1, console HTTP 422). The console's Ask page names that decline, the steps the limits skipped
+  (apart from those that failed) and the strategies they left `auto` without. The `query_limited` metric (0 or 1, on
+  the CDK dashboard's "Query outcomes" widget) and the query span's `kg_rag.query_limited` count a query its limits
+  cut short (a step left out, an abstention or a refusal), which `query_degraded` could not tell from a failing step.
 - One streaming path: `GraphRAGChain.aquery_events()` (sync `query_events()`) yields typed events (`QueryEvent`,
   exported with `QueryStart`, `QueryRouted`, `QuerySources`, `AnswerChunk` and `QueryResult`): the query `ainvoke`
   runs, its deadline, query limits, guardrail, metrics and memory included, ending with its `RAGOutput`. LangChain's
@@ -67,14 +98,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that window, as in 0.3.0: past it the model's error is raised, not a first-chunk timeout.
 - Rebuild due: `run-describe` (`rebuild`, `Rebuild due (...)` lines), the console's Ingest page
   (`/api/namespace/methodologies`, under the methodologies picked) and the MCP `kg_describe_schema` tool say why a
-  namespace is due for a rebuild under the config, from one owner (`rebuild_due`, its `RebuildReason` exported):
-  community counters past `indexing.community_compaction`, reports or description summaries its full build made under
-  other settings (a run with `indexing.reset: true`), changed extraction settings or a methodology it lacks (applied
-  by the next run). The build record gains
-  `answer_fingerprints` (the full build's report and summary settings, kept by incremental records); a record
-  written earlier names none. A run logs a WARNING per reason of the records it wrote and lists them by suffix in its
-  JSON result (`rebuild_due`), their count as the `rebuild_due_reasons` metric (the CDK dashboard's "Incremental run
-  health" widget).
+  namespace is due for a rebuild under the config, from one owner (`rebuild_due`; `RebuildReason`, `RebuildReasonKind`
+  and `RebuildRemedy` exported): community counters past `indexing.community_compaction`, reports or description
+  summaries its full build made under other settings (a run with `indexing.reset: true`), changed extraction settings
+  or a methodology it lacks (applied by the next run). The build record gains `answer_fingerprints` (the full build's
+  report and summary settings, kept by incremental records); a record written earlier names none. A run logs a WARNING
+  per reason of the records it wrote and lists them by suffix in its JSON result (`rebuild_due`), their count as the
+  `rebuild_due_reasons` metric (the CDK dashboard's "Incremental run health" widget).
 - `RAGInput.effort` (`low` to `max`) sets one query's answer reasoning effort in place of its tier's
   `aws.bedrock.default_effort` / `fast_effort`: it turns reasoning on for a model that opts in, raises the answer's
   max_tokens to leave that level's reasoning room on every model family and, on an older Claude model (4.5 and
@@ -86,16 +116,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   metrics record (`effort`, `limits.*` properties) name the effort and the limits in force.
 - An ingestion run's budget and cost estimate. `processing.max_run_model_calls` and `processing.max_run_usd` (off by
   default; USD priced by `models.prices`) refuse the model call that would pass them and stop the run once the calls
-  already sent have answered (`RunBudgetExhausted`, exported, error class `limit_exceeded`, exit 1): its finished stages
-  are checkpointed and those answers kept in the LLM response cache, whose hits take none of the budget, so a re-run
-  with the same pipeline id resumes and pays only for what was not answered. `run-ingestion --estimate` parses,
-  deduplicates (`processing.deduplicate`) and chunks the corpus without a model call and prints each stage's calls,
-  tokens and USD for the stages the text units decide (extraction, gleaning, claims, translation, intelligent chunking),
-  naming the graph-dependent ones it cannot count. The console's Ingest page offers to resume a run stopped at its
-  budget (its options without the forced recompute), and its run lists and the Dashboard mark such a run as stopped at
-  its budget, a warning, not failed. The stop's JSON status and message give the calls the run paid for (`token_usage`,
-  `cost_usd` when priced), and the stage it stopped in keeps its calls in its record and publishes them
-  (`llm_calls_<stage>`), so the stop and its resume count each paid call once.
+  already sent have answered (`RunBudgetExhausted`, exported, error class `limit_exceeded`, exit 1): its finished
+  stages are checkpointed and those answers kept in the LLM response cache, whose hits take none of the budget, so a
+  re-run with the same pipeline id resumes and pays only for what was not answered. The stop's JSON status and message
+  give the calls the run paid for (`token_usage`, `cost_usd` when priced), and the stage it stopped in keeps its calls
+  in its record and publishes them (`llm_calls_<stage>`), so the stop and its resume count each paid call once.
+  `run-ingestion --estimate` parses, deduplicates (`processing.deduplicate`) and chunks the corpus without a model
+  call and prints each stage's calls, tokens and USD for the stages the text units decide (extraction, gleaning,
+  claims, translation, intelligent chunking), naming the graph-dependent ones it cannot count. The console's Ingest
+  page offers to resume a run stopped at its budget (its options without the forced recompute), and its run lists and
+  the Dashboard mark such a run as stopped at its budget, a warning, not failed.
 - Every numeric configuration default says what it rests on: an evidence tag (`json_schema_extra=evidence(...)`,
   `domain/models/evidence.py`) of `measured` (linked to its run in Defaults and evidence), `upstream` or `deviation`
   (naming the original's value), `operational` or `unmeasured`. The configuration reference prints it in an Evidence
@@ -154,15 +184,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   key to one replacement or several.
 - `unified_kg_rag.TransientRetryConfig` warns (`DeprecationWarning`, at the importing line): it is `RetryPolicy`, its
   new name, and is no longer in `__all__` (`unified_kg_rag.domain.models.config.TransientRetryConfig`, an internal
-  path, is gone). A warning the package emits for a deprecated API now names the caller's
-  line under `from unified_kg_rag import ...` too (it named a frame of the import machinery).
-
-### Upgrading
-From 0.3.0.
-1. With `processing.deduplicate` on, a run drops more near-duplicates than 0.3.0 did (see *Fixed*), and an incremental
-   run deletes the copies 0.3.0 indexed beside their originals (its WARNING names them; `indexing.max_deletion_share`
-   stops a run deleting past its share until confirmed). Raise `processing.deduplicate_similarity_threshold` (0.97 reads
-   about as 0.3.0's 0.9 did) to keep them.
+  path, is gone). A warning the package emits for a deprecated API now names the caller's line under
+  `from unified_kg_rag import ...` too (it named a frame of the import machinery).
 
 ### Fixed
 Bugs present in 0.3.0.

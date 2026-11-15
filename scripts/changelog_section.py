@@ -16,7 +16,8 @@ when it renders CHANGELOG.md (a release body resolves none of them).
 
 The release body is the section condensed to what a reader of the release
 needs before upgrading: its introduction and its *Highlights*, *Breaking
-changes*, *Upgrading* and *Security* subsections, followed by a link to the
+changes*, *Upgrading*, *Deprecated* and *Security* subsections (what a user
+must change now or before a removal), followed by a link to the
 version's heading in the full changelog (``--full-notes-url`` and the
 heading's fragment) for the subsections left out (*Added*, *Changed*,
 *Fixed*). A section with none of the kept subsections is printed whole.
@@ -64,7 +65,13 @@ _REFERENCE_TARGET = re.compile(
 _NOT_REPO_RELATIVE = re.compile(r"^(?:[A-Za-z][A-Za-z0-9+.-]*:|//|#)")
 NO_UNRELEASED_CHANGES = "No unreleased changes.\n"
 # The subsections a release body keeps; the others are linked.
-RELEASE_SUBSECTIONS = ("Highlights", "Breaking changes", "Upgrading", "Security")
+RELEASE_SUBSECTIONS = (
+    "Highlights",
+    "Breaking changes",
+    "Upgrading",
+    "Deprecated",
+    "Security",
+)
 _SUBSECTION = re.compile(r"^### (?P<name>.+?)\s*$", re.MULTILINE)
 
 

@@ -97,6 +97,30 @@ def test_an_enclosing_scope_limits_the_calls_of_an_inner_one() -> None:
                 usage.start_llm_call("query", "m", estimated_input_tokens=60)
 
 
+@pytest.mark.parametrize(("outer", "inner"), [(5, 3), (3, 10)])
+def test_nested_scopes_leave_the_fewest_calls_any_of_them_allows(
+    outer: int, inner: int
+) -> None:
+    # Whichever scope is the tighter, inner or enclosing, decides.
+    with usage.usage_scope(usage.UsageLimits(max_llm_calls=outer)):
+        with usage.usage_scope(usage.UsageLimits(max_llm_calls=inner)):
+            usage.start_llm_call("query", "m", estimated_input_tokens=1)
+            left = usage.remaining()
+    assert left.llm_calls == min(outer, inner) - 1
+    assert left.call_limit_value == min(outer, inner)
+
+
+def test_a_call_that_reaches_the_input_token_limit_exactly_is_sent() -> None:
+    # The limit is the most a query may read: reaching it is within it.
+    with usage.usage_scope(usage.UsageLimits(max_input_tokens=100)) as meter:
+        usage.start_llm_call("query", "m", estimated_input_tokens=60)
+        usage.start_llm_call("query", "m", estimated_input_tokens=40)
+        assert usage.remaining().input_tokens == 0
+        with pytest.raises(UsageLimitExceededError, match="to 101, past its limit"):
+            usage.start_llm_call("query", "m", estimated_input_tokens=1)
+    assert meter.snapshot()["llm_calls"] == 2
+
+
 def test_a_cost_limit_prices_the_counts_with_the_refused_call() -> None:
     seen: list[dict[str, Any]] = []
 

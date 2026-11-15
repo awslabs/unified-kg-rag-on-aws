@@ -389,8 +389,8 @@ The version lives in one place, `__version__` in `unified_kg_rag/__init__.py`; `
    synced with every extra, `.github/scripts/sbom_licenses.py`), attests the build provenance of the distributions and
    the SBOM (Sigstore), and creates the GitHub release with both files, their checksums, the SBOM and the changelog
    section's notes (`scripts/changelog_section.py`): the section's introduction, *Highlights*, *Breaking changes*,
-   *Upgrading* and *Security*, then a link to the version's heading in the tagged `CHANGELOG.md` for *Added*, *Changed*
-   and *Fixed*. A release body resolves no relative link, so `--link-base` points the section's repo-relative links at
+   *Upgrading*, *Deprecated* and *Security*, then a link to the version's heading in the tagged `CHANGELOG.md` for
+   *Added*, *Changed* and *Fixed*. A release body resolves no relative link, so `--link-base` points the section's repo-relative links at
    the tagged tree. A version with an `a`, `b`, `rc` or `.dev` segment is marked as a pre-release.
 5. In a follow-up pull request, set `__version__` to the next development version (`X.Y.(Z+1).dev0` or
    `X.(Y+1).0.dev0`), and move the changelog lint's comparison base to the release: in

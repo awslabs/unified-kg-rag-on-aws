@@ -13,10 +13,11 @@ and a new version of the same instruction), a "step N" reference past the
 last step (left by a step removed or merged), the same passage kept twice by
 a conflict resolution (often on adjacent lines, both versions of one
 wrapped line), a shorter fragment of an entry kept twice in it (the old and
-the new tail of one sentence, the second starting a line), two entries of a
-subsection that contradict each other ("no longer exports X" beside
-"exports X", sharing a quoted message), a line a conflict resolution
-joined unwrapped, an extra the install instructions do not name, and a
+the new tail of one sentence, the second starting a line), one subsection
+heading twice (two branches that each added *Upgrading*: the step checks
+read only the first), two entries of a subsection that contradict each
+other ("no longer exports X" beside "exports X", sharing a quoted message),
+a line a conflict resolution joined unwrapped, an extra the install instructions do not name, and a
 *Fixed*, *Changed*, *Deprecated* or *Removed* entry (a change a 0.3.0 user
 compares with what they run) that names a config key 0.3.0 did not have: a
 feature no release had belongs in its *Added* entry.
@@ -398,6 +399,20 @@ def test_no_heading_is_glued_into_a_line() -> None:
     assert _glued_headings("- an entry.  ### Changed\n") == [
         (1, "- an entry.  ### Changed")
     ]
+
+
+def _repeated_headings(section: str) -> list[str]:
+    """The ``### `` subsection headings ``section`` holds more than once."""
+    titles = re.findall(r"^### (.+?)\s*$", section, re.MULTILINE)
+    return sorted({title for title in titles if titles.count(title) > 1})
+
+
+def test_no_subsection_heading_is_repeated() -> None:
+    assert _repeated_headings(SECTION) == []
+    two = "### Upgrading\n1. a\n\n### Fixed\n- b\n\n### Upgrading\n1. c\n"
+    assert _repeated_headings(two) == ["Upgrading"]
+    # A version's ``####`` groups repeat under different subsections.
+    assert _repeated_headings("### Added\n#### CLI\n### Changed\n#### CLI\n") == []
 
 
 def test_no_line_is_over_long() -> None:

@@ -294,7 +294,11 @@ def test_the_namespace_s_methodologies_come_from_its_build_record(
     assert fresh["dropped"] == []
     assert fresh["rebuild"] == []
     assert held["dropped"] == []  # the config builds what it holds
-    assert held["rebuild"] == []  # nor anything the next runs cannot apply
+    # Nor is it due for a rebuild under the config it was built with. Only
+    # the community counters may say otherwise: the module's other tests
+    # ingest into this namespace, and in some orders their runs cross
+    # indexing.community_compaction before this test reads it.
+    assert {r["kind"] for r in held["rebuild"]} <= {"communities"}
     narrowed = client.get(
         "/api/namespace/methodologies", params={"methodologies": "lightrag"}
     ).json()

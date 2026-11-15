@@ -259,6 +259,30 @@ def test_a_usd_budget_stops_the_run_at_its_price(tmp_path: Path) -> None:
     assert 0 < sent < 10
 
 
+def test_the_first_budget_a_run_stops_at_is_the_one_it_reports(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # The threads whose calls the budget refuses after the stop (their
+    # calls in flight, or the other budget) must not rename the stop: the
+    # run reports, and logs once, the budget that stopped it.
+    config = _config()
+    source = _corpus(tmp_path, documents=1)
+    pipeline = _pipeline(config, source, tmp_path / "cache", _Counting())
+    with caplog.at_level("WARNING"):
+        pipeline._stop_for_budget("calls spent", "processing.max_run_model_calls", 4)
+        later = pipeline._stop_for_budget("usd spent", "processing.max_run_usd", 1.0)
+    assert later.limit == "processing.max_run_usd"  # what that thread raises
+    stop = pipeline._stop_error()
+    assert isinstance(stop, RunBudgetExhausted)
+    assert (stop.limit, stop.value, str(stop)) == (
+        "processing.max_run_model_calls",
+        4,
+        "calls spent",
+    )
+    stopping = [r for r in caplog.records if "Stopping the run" in r.getMessage()]
+    assert [r.getMessage() for r in stopping] == ["Stopping the run: calls spent"]
+
+
 def test_gleaning_and_translation_count_as_upper_bounds(tmp_path: Path) -> None:
     from unified_kg_rag.domain.models.config import LanguageCode
 

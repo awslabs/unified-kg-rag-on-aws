@@ -238,6 +238,30 @@ def test_every_reasoning_family_leaves_room_for_the_query_s_effort(
     assert kwargs["max_tokens"] == config.models.default_max_output_tokens
 
 
+def test_an_effort_never_raises_max_tokens_past_the_model_s_maximum(
+    monkeypatch, recorded_chat  # noqa: F811 - the fixture
+) -> None:
+    # The room an effort leaves (its reasoning plus the answer's floor,
+    # 33,792 tokens at max) is capped by what the model can write: Bedrock
+    # refuses a max_tokens over it.
+    model = LanguageModelId.CLAUDE_V5_5_SONNET.value
+    _resolve_to(monkeypatch, f"global.{model}")
+    config = Config.model_validate(
+        {
+            "models": {"default": model},
+            "aws": {
+                "bedrock": {"model_overrides": {model: {"max_output_tokens": 20000}}}
+            },
+        }
+    )
+    assert EFFORT_THINKING_TOKENS["max"] + CEILING_ANSWER_TOKENS > 20000
+    factory = _lang_factory(config)
+    model_id = config.model_id(ModelRole.ANSWER_GENERATION)
+    factory.get_model(model_id, enable_thinking=True, effort="max")
+    _, kwargs = recorded_chat[-1]
+    assert kwargs["max_tokens"] == 20000
+
+
 def test_the_deprecation_is_shown_under_the_default_warning_filters() -> None:
     # Regression (W2 review E4): stacklevel=2 inside the pydantic validator
     # named a pydantic frame, which Python's default filters hide: a caller
