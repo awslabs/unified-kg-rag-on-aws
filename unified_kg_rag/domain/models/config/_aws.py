@@ -15,6 +15,7 @@ from pydantic import (
 from unified_kg_rag.domain.models.evidence import evidence
 
 from ._common import ConfigSection, S3EncryptionType
+from ._migration import unknown_key_note
 from ._models import EffortLevel, ModelPurpose, ModelTier
 
 
@@ -378,12 +379,12 @@ class RetryConfig(ConfigSection):
             value = value.model_dump(exclude_unset=True)
         if isinstance(value, dict):
             if name not in _CLIENT_PROFILES and "client_max_attempts" in value:
+                # The note every refusal of the key adds (unknown_key_note).
+                from ._root import Config
+
+                path = f"retry.{name}.client_max_attempts"
                 raise ValueError(
-                    f"retry.{name}.client_max_attempts: only "
-                    + " and ".join(f"retry.{p}" for p in sorted(_CLIENT_PROFILES))
-                    + " size their service clients' own attempts; that "
-                    "caller's client makes one request per attempt or keeps "
-                    "attempts the package sets"
+                    f"unknown config key {path}{unknown_key_note(path, Config)}"
                 )
             return {**RETRY_PROFILES[name], **value}
         return value

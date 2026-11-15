@@ -4,7 +4,9 @@
 raise."""
 
 import copy
+import functools
 import types
+from collections.abc import Iterator
 from typing import Any, Union, get_args, get_origin
 
 from pydantic import BaseModel
@@ -402,6 +404,72 @@ def unknown_keys(data: Any, model: type[BaseModel], prefix: str = "") -> list[st
         if nested is not None:
             found.extend(unknown_keys(value, nested, f"{path}."))
     return found
+
+
+def _sections(
+    model: type[BaseModel], prefix: str = ""
+) -> Iterator[tuple[str, type[BaseModel]]]:
+    """Each section of ``model``'s tree, as its dotted path and its type."""
+    for key, field in model.model_fields.items():
+        nested = nested_model(field.annotation)
+        if nested is not None:
+            yield f"{prefix}{key}", nested
+            yield from _sections(nested, f"{prefix}{key}.")
+
+
+@functools.cache
+def _section_tree(root: type[BaseModel]) -> tuple[tuple[str, type[BaseModel]], ...]:
+    return tuple(_sections(root))
+
+
+def _sections_taking(
+    model: type[BaseModel], key: str, root: type[BaseModel]
+) -> tuple[str, ...]:
+    """The sections of ``root`` that take ``key`` where a section of type
+    ``model`` does not: those of a subclass of it that defines the key
+    (``retry.bulk_item`` and ``retry.model``, of type ``ClientRetryPolicy``,
+    for a ``RetryPolicy``'s ``client_max_attempts``)."""
+    if key in model.model_fields:
+        return ()
+    return tuple(
+        sorted(
+            path
+            for path, section in _section_tree(root)
+            if section is not model
+            and issubclass(section, model)
+            and key in section.model_fields
+        )
+    )
+
+
+def _taken_by_note(sections: tuple[str, ...]) -> str:
+    """What a refusal of a key adds when other ``sections`` take it."""
+    if not sections:
+        return ""
+    names = ", ".join(sections[:-1]) + " and " if len(sections) > 1 else ""
+    return f" (only {names}{sections[-1]} take it)"
+
+
+@functools.cache
+def subclass_keys(root: type[BaseModel]) -> dict[str, tuple[str, ...]]:
+    """The keys a section of ``root`` refuses that a section of a subclass
+    of its type takes, as dotted paths, each with the sections that take it
+    (:func:`_sections_taking`): what an unknown-key refusal names, whether
+    the key comes from a file, a variable or a constructor."""
+    found: dict[str, tuple[str, ...]] = {}
+    for path, model in _section_tree(root):
+        for _, section in _section_tree(root):
+            if section is not model and issubclass(section, model):
+                for key in section.model_fields.keys() - model.model_fields.keys():
+                    found[f"{path}.{key}"] = _sections_taking(model, key, root)
+    return found
+
+
+def unknown_key_note(path: str, root: type[BaseModel]) -> str:
+    """What a refusal of the unknown key ``path`` adds: the sections that
+    take it, should a section of a subclass of its section's type
+    (:func:`subclass_keys`)."""
+    return _taken_by_note(subclass_keys(root).get(path, ()))
 
 
 def _defined_keys_only(data: Any, model: type[BaseModel]) -> Any:

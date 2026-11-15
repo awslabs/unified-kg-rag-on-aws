@@ -53,6 +53,7 @@ from ._migration import (
     deprecated_key_warning,
     migrate_deprecated_keys,
     moved_keys,
+    unknown_key_note,
     unknown_keys,
 )
 from ._models import (
@@ -175,7 +176,9 @@ class Config(_AssignmentChecked):
             # guardrail identifier under the wrong key leaves queries
             # unscreened). ConfigLoader(allow_unknown_keys=True) strips them.
             raise ValueError(
-                "unknown config keys: " + ", ".join(unknown) + " (fix or remove them)"
+                "unknown config keys: "
+                + ", ".join(path + unknown_key_note(path, cls) for path in unknown)
+                + " (fix or remove them)"
             )
         # What is left that no section defines is a removed setting, ignored
         # (the loader warns of it): the sections refuse a key they do not

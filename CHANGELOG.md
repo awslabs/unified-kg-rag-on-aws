@@ -159,7 +159,8 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   `max_total_seconds`). A profile set in part keeps its own defaults. The clients' own retries stacked under them are
   set there too: `client_max_attempts` of `retry.model` (botocore's requests per Bedrock call of ingestion and
   evaluation) and of `retry.bulk_item` (the OpenSearch indexing client's), both 6, their 0.3.0 counts; only those two
-  profiles (`ClientRetryPolicy`) have the key. No caller retries a call the usage limits refused.
+  profiles (`ClientRetryPolicy`) have the key, and setting it on another one is refused naming them, in a file, a
+  `UKR__` variable, `Config(...)` or an assignment alike. No caller retries a call the usage limits refused.
 
 ### Changed
 

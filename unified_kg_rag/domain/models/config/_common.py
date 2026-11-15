@@ -6,6 +6,7 @@ from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic_core import PydanticCustomError
 
 
 class _AssignmentChecked(BaseModel):
@@ -31,11 +32,38 @@ class ConfigSection(_AssignmentChecked):
     """The base of every configuration section: an assignment is validated
     against its field and the section's own checks
     (``config.search.max_concurrency = 0`` raises as loading it would, and leaves the
-    old value), and an unknown key is refused. The checks across sections
-    (``Config``'s own validators) run on a whole config: change one with
+    old value), and an unknown key is refused, naming the sections that take
+    it (``_sections_taking``). The checks across sections (``Config``'s own
+    validators) run on a whole config: change one with
     :meth:`Config.updated`."""
 
     model_config = ConfigDict(validate_assignment=True, extra="forbid")
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name in type(self).model_fields or name.startswith("_"):
+            super().__setattr__(name, value)
+            return
+        from ._migration import _sections_taking, _taken_by_note
+        from ._root import Config
+
+        takers = _sections_taking(type(self), name, Config)
+        if not takers:
+            super().__setattr__(name, value)
+            return
+        raise ValidationError.from_exception_data(
+            type(self).__name__,
+            [
+                {
+                    "type": PydanticCustomError(
+                        "no_such_attribute",
+                        "Object has no attribute '{name}'{note}",
+                        {"name": name, "note": _taken_by_note(takers)},
+                    ),
+                    "loc": (name,),
+                    "input": value,
+                }
+            ],
+        )
 
 
 class PipelineStageType(Enum):
