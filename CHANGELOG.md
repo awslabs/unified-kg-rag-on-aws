@@ -75,8 +75,9 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   input-token limit cannot take (`metadata.routing.over_limits`) and under either limit starts no speculative
   extraction, the answer's context is cut to the tokens left after the answer prompt and the question, the built
   context packed down to them at the meter's estimate whatever its counter counts (a pack a smaller budget no longer
-  shrinks, its cut sections ending at the same break, is cut down to the most of it that fits, empty only when no
-  section fits; the fan-out keeps that prompt's tokens too; a cut, its sections left out or cut short, listed as
+  shrinks, its cut sections ending at the same break, is cut down to the most of it that fits, its synthesized
+  sections kept first as packing seats them, empty only when no section fits whole or cut down; the fan-out keeps
+  that prompt's tokens too; a cut, its sections left out or cut short, listed as
   `query_limit: N of M sections cut`), a search (`asearch`, `kg_search`, `--mode search`) keeps nothing for an answer
   it does not make, a query naming `drift` keeps its one action's call too (and that call's least input under an
   input-token limit: `answering_calls`), an optional call (a query translation or extraction, the follow-up rewrite,

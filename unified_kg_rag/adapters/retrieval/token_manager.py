@@ -44,8 +44,8 @@ _TRUNCATION_BACKOFF_RATIO = 0.2
 # (domain/retrieval/citations.py).
 _MARKER_PLACEHOLDER = 999
 # The times a context past its estimate bound (optimize_context's
-# estimated_within) is packed again into a smaller budget; one still past it
-# then is left empty.
+# estimated_within) is packed again into a smaller budget; the smallest pack
+# still past it then is cut down to it (TokenManager._fitted).
 _REFIT_ROUNDS = 4
 
 
@@ -329,7 +329,7 @@ class TokenManager:
         if estimated_within is None:
             return optimized, left
         over: tuple[OptimizedContext, int, int] | None = None
-        for _ in range(_REFIT_ROUNDS + 1):
+        for refits in range(_REFIT_ROUNDS + 1):
             if not optimized.sections:
                 break
             built = estimate_token_count(self.build_context_string(optimized))
@@ -343,6 +343,8 @@ class TokenManager:
                 # would not shrink it either.
                 break
             over = optimized, left, built
+            if refits == _REFIT_ROUNDS:
+                break
             # The budget is in the counter's tokens, the bound in the
             # estimate's: what the pieces used is cut in the ratio the whole
             # measured at (the pieces each rounded down, the separators
@@ -373,11 +375,13 @@ class TokenManager:
         number_sections: bool,
     ) -> OptimizedContext:
         """The longest run of ``over``'s sections (a pack past
-        ``estimated_within``) that fits it, taken by their rank in their
-        type: the best of every type, then the second best, ... (scores rank
-        only within a type), so the sections each type seated last go
-        first. When not even the first fits, the first of ``all_sections``
-        in that order that fits alone: empty only when none does."""
+        ``estimated_within``) that fits it, taken in the order packing seats
+        them (``_by_rank``): the synthesized sections first, then the best
+        of every type, then the second best, ... (scores rank only within a
+        type), so the sections each type seated last go first. When not even
+        the first fits, the first of ``all_sections`` in that order that
+        fits alone whole, else the first that fits alone cut down: empty
+        only when none does."""
 
         def context(sections: list[ContextSection]) -> OptimizedContext:
             sections = self._numbered(sections) if number_sections else sections
@@ -396,40 +400,39 @@ class TokenManager:
             built = self.build_context_string(context(sections))
             return estimate_token_count(built) <= estimated_within
 
+        def cut_beside(
+            kept: list[ContextSection], section: ContextSection
+        ) -> ContextSection | None:
+            """``section`` cut to the room ``kept`` leaves it, if any."""
+            if section.result_index is not None:
+                section = all_sections[section.result_index]
+
+            def holds(room: int) -> bool:
+                # A room too small to cut the section to (below the
+                # truncation floor, or short of its prefix) is taken to
+                # hold, so the rooms that cut it form one run above them.
+                cut = self._truncate_to_tokens(section, room)
+                return cut is None or fits([*kept, cut])
+
+            cut = self._truncate_to_tokens(
+                section, self._most(section.token_count - 1, holds)
+            )
+            return cut if cut is not None and fits([*kept, cut]) else None
+
         ranked = self._by_rank(over.sections)
         # The estimate only grows with each section added, and with the
         # room a section is cut to: both are found by bisection.
         kept = ranked[: self._most(len(ranked) - 1, lambda n: fits(ranked[:n]))]
         if len(kept) < len(ranked):
             # The first section left out, cut to the room the others leave.
-            section = ranked[len(kept)]
-            if section.result_index is not None:
-                section = all_sections[section.result_index]
-
-            def head(room: int) -> ContextSection | None:
-                cut = self._truncate_to_tokens(section, room)
-                return cut if cut is not None and fits([*kept, cut]) else None
-
-            # Below the truncation floor no room cuts it: taken to hold
-            # there, so the rooms that do form one run from the bottom.
-            floor = self.config.min_truncated_section_tokens
-            room = self._most(
-                section.token_count - 1, lambda r: r < floor or head(r) is not None
-            )
-            last = head(room)
+            last = cut_beside(kept, ranked[len(kept)])
             if last is not None:
                 kept = [*kept, last]
         if not kept:
-            kept = next(
-                (
-                    [s]
-                    for s in self._by_rank(
-                        [s for s in all_sections if s.token_count > 0]
-                    )
-                    if fits([s])
-                ),
-                [],
-            )
+            alone = self._by_rank([s for s in all_sections if s.token_count > 0])
+            whole = next(([s] for s in alone if fits([s])), None)
+            cuts = ([c] for s in alone if (c := cut_beside([], s)) is not None)
+            kept = whole or next(cuts, [])
         return context(kept)
 
     @staticmethod
@@ -442,16 +445,31 @@ class TokenManager:
             lo, hi = (mid, hi) if holds(mid) else (lo, mid - 1)
         return lo
 
-    @staticmethod
-    def _by_rank(sections: list[ContextSection]) -> list[ContextSection]:
-        """``sections`` by their rank in their type (best first), each rank
-        in input order."""
+    @classmethod
+    def _by_rank(cls, sections: list[ContextSection]) -> list[ContextSection]:
+        """``sections`` in the order packing seats them: the synthesized ones
+        first (``_synthesized``), then the evidence by its rank in its type
+        (best first), each rank in input order."""
         rank: dict[SectionType, int] = {}
         keyed: list[tuple[int, ContextSection]] = []
-        for s in sorted(sections, key=lambda s: s.priority, reverse=True):
+        evidence = [s for s in sections if not s.metadata.get("synthesized")]
+        for s in sorted(evidence, key=lambda s: s.priority, reverse=True):
             keyed.append((rank.get(s.section_type, 0), s))
             rank[s.section_type] = rank.get(s.section_type, 0) + 1
-        return [s for _, s in sorted(keyed, key=lambda k: k[0])]
+        return cls._synthesized(sections) + [
+            s for _, s in sorted(keyed, key=lambda k: k[0])
+        ]
+
+    @staticmethod
+    def _synthesized(sections: list[ContextSection]) -> list[ContextSection]:
+        """The synthesized sections of ``sections`` (``metadata``'s
+        ``synthesized``), best first: the order they are seated in, ahead of
+        the evidence (``_select_optimal_sections``)."""
+        return sorted(
+            (s for s in sections if s.metadata.get("synthesized")),
+            key=lambda s: s.priority,
+            reverse=True,
+        )
 
     def _packed(
         self,
@@ -698,15 +716,7 @@ class TokenManager:
         # remaining budget.
         reserved: list[ContextSection] = []
         remaining = token_budget
-        for section in sorted(
-            (
-                s
-                for s in sections
-                if s.token_count > 0 and s.metadata.get("synthesized")
-            ),
-            key=lambda s: s.priority,
-            reverse=True,
-        ):
+        for section in self._synthesized([s for s in sections if s.token_count > 0]):
             if section.token_count <= remaining:
                 reserved.append(section)
                 remaining -= section.token_count
