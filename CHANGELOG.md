@@ -25,7 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the console's answers and dashboard alike. A price keyed by the bare model id, or by one inference profile's id,
   prices the model under every profile when no other entry disagrees. `evaluation.prices` is deprecated: it loads
   into `models.prices` with a WARNING (an entry both name keeps the `models.prices` price), through one rule for
-  deprecated keys (`DEPRECATED_KEYS`, file and `UKR__` variables alike, listed in the configuration reference).
+  deprecated keys (`DEPRECATED_KEYS`, file and `UKR__` variables alike, listed in the configuration reference). The
+  console's Settings review lists each deprecated key the file sets, and each removed one, with the loader's warning.
 - Query limits beside the deadline: `search.query_max_model_calls` and `search.query_max_input_tokens` (off by
   default) bound one query's model calls and their input tokens, and `RAGInput.limits` (`QueryLimits`, exported; the
   MCP tools' `limits`, whose deadline covers the wait for a call slot, the server's own reported by
@@ -47,7 +48,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its step degraded instead, an answer the limits left no context abstains with `abstention_reason: query_limit`, and
   a query whose answer does not fit fails with `UsageLimitExceededError` (error class `limit_exceeded`, a caller's
   error: not counted in `query_failed`, `refused` on the console's dashboard, its message shown to an MCP caller; exit
-  code 1, console HTTP 422).
+  code 1, console HTTP 422). The console's Ask page names that decline, the steps the limits skipped (apart from those
+  that failed) and the strategies they left `auto` without.
 - One streaming path: `GraphRAGChain.aquery_events()` (sync `query_events()`) yields typed events (`QueryEvent`,
   exported with `QueryStart`, `QueryRouted`, `QuerySources`, `AnswerChunk` and `QueryResult`): the query `ainvoke`
   runs, its deadline, query limits, guardrail, metrics and memory included, ending with its `RAGOutput`. LangChain's
@@ -85,7 +87,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   chunks the corpus without a model call and prints each stage's calls, tokens and USD for the stages the text units
   decide (extraction, gleaning, claims, translation, intelligent chunking), naming the graph-dependent ones it cannot
   count. The console's Ingest page offers to resume a run stopped at its budget (its options without the forced
-  recompute).
+  recompute), and its run lists and the Dashboard mark such a run as stopped at its budget, a warning, not failed.
 - Every numeric configuration default says what it rests on: an evidence tag (`json_schema_extra=evidence(...)`,
   `domain/models/evidence.py`) of `measured` (linked to its run in Defaults and evidence), `upstream` or `deviation`
   (naming the original's value), `operational` or `unmeasured`. The configuration reference prints it in an Evidence
@@ -149,6 +151,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 Bugs present in 0.3.0.
 
+- The console's Ask page showed the raw key `ask.abstention.no_reports` for a `global` question on a namespace without
+  community reports.
 - A `GraphRAGChain` dropped without `close()` could hang another chain's query for up to 90 s: the garbage collector
   ran the dropped chain's finalizer wherever it triggered (once inside another chain's executor submit, under the
   executors' global lock), and the finalizer waited there for its own loop, whose closes needed that lock. The

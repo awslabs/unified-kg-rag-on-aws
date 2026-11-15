@@ -137,6 +137,24 @@ def deprecated_targets(old: str) -> tuple[str, ...]:
     return (new,) if isinstance(new, str) else new
 
 
+def deprecated_key_warning(old: str) -> str:
+    """The warning a config that sets the deprecated ``old`` gets: the
+    loader's log line and the console's settings check say the same."""
+    targets = deprecated_targets(old)
+    if len(targets) == 1:
+        return f"Config key {old} is deprecated: it loads into {targets[0]}; set that key instead"
+    return (
+        f"Config key {old} is deprecated: it governed several callers and loads "
+        f"into each of {', '.join(targets)}; set those keys instead"
+    )
+
+
+def removed_key_warning(path: str, where: str | None = None) -> str:
+    """The warning a config that sets the removed ``path`` gets (``where``:
+    how the loader names it, a file key or an environment variable)."""
+    return f"Config key {where or path} is removed and ignored: {REMOVED_KEYS[path]}"
+
+
 # Removed settings -> why they are gone. A config that sets one, or a key
 # under a removed section, loads with a WARNING and the setting ignored.
 REMOVED_KEYS: dict[str, str] = {

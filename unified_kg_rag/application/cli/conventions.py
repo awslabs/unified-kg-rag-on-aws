@@ -224,6 +224,13 @@ def failure_fields(
     return fields
 
 
+def status_error_class(document: Any) -> str | None:
+    """The ``error_class`` a CLI's JSON status document names
+    (:func:`failure_fields`), if it is one that names one."""
+    value = document.get("error_class") if isinstance(document, dict) else None
+    return value if isinstance(value, str) else None
+
+
 def failed(exit_code: int, error: BaseException | str) -> int:
     """``exit_code``, for a ``main`` that returns it after logging ``error``:
     the JSON status names the error (:func:`print_status`)."""

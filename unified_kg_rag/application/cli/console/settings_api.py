@@ -24,7 +24,15 @@ import yaml
 
 from unified_kg_rag.application.config import ConfigLoader, env_var
 from unified_kg_rag.domain.models import Config, Methodology
-from unified_kg_rag.domain.models.config import unknown_keys
+from unified_kg_rag.domain.models.config import (
+    REMOVED_KEYS,
+    deprecated_key_warning,
+    deprecated_targets,
+    migrate_deprecated_keys,
+    removed_key_warning,
+    removed_keys,
+    unknown_keys,
+)
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import ConfigurationError, InvalidArgumentError
 from unified_kg_rag.shared.utils.files import atomic_write_text
@@ -320,7 +328,12 @@ def _load(data: dict[str, Any], config_path: Path | None) -> Config:
 
 def validate(data: dict[str, Any], config_path: Path | None) -> dict[str, Any]:
     """Whether ``data`` loads as a run would load it (unknown keys and the
-    ``UKR__`` environment included), with the errors and warnings."""
+    ``UKR__`` environment included), with the errors and warnings.
+
+    The deprecated keys it sets (loaded into their replacements) and the
+    removed ones (ignored) are listed apart, each with the warning the
+    loader logs (``message``), so the page words them in its language; a
+    moved key fails the load, an error naming its replacement."""
     errors: list[str] = []
     warnings: list[str] = []
     unknown = unknown_keys(data, Config)
@@ -339,7 +352,34 @@ def validate(data: dict[str, Any], config_path: Path | None) -> dict[str, Any]:
         "errors": errors,
         "warnings": warnings,
         "unknown_keys": unknown,
+        "deprecated_keys": _deprecated(data),
+        "removed_keys": [
+            {
+                "key": path,
+                "reason": REMOVED_KEYS[path],
+                "message": removed_key_warning(path),
+            }
+            for path in removed_keys(data)
+        ],
     }
+
+
+def _deprecated(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """The deprecated keys ``data`` sets, as the load moves them
+    (``migrate_deprecated_keys``; none when they disagree with their
+    replacements, an error of the load)."""
+    try:
+        _, deprecated = migrate_deprecated_keys(data)
+    except ValueError:
+        return []
+    return [
+        {
+            "key": old,
+            "replacements": list(deprecated_targets(old)),
+            "message": deprecated_key_warning(old),
+        }
+        for old in deprecated
+    ]
 
 
 def apply_changes(

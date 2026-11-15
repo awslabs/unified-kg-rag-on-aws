@@ -5,7 +5,7 @@ import { useI18n } from "../i18n/i18n";
 import { get, send } from "../lib/api";
 import type { JobRecord, StageProgress } from "../lib/types";
 import { useApi } from "../lib/useApi";
-import { ErrorText, JobStatusBadge, Notice } from "./ui";
+import { ErrorText, isBudgetStop, JobStatusBadge, Notice } from "./ui";
 
 const ACTIVE = new Set(["running", "stopping"]);
 
@@ -38,7 +38,7 @@ export function JobPanel({ jobId, onEnded, children }: { jobId: string; onEnded?
   return (
     <div className="stack">
       <div className="row">
-        <JobStatusBadge status={data.status} />
+        <JobStatusBadge job={data} />
         <span className="id">{data.id}</span>
         <span className="muted">{data.started ? date(data.started) : ""}</span>
         <span className="muted">{seconds(elapsed)}</span>
@@ -105,13 +105,6 @@ export function JobPanel({ jobId, onEnded, children }: { jobId: string; onEnded?
       </details>
     </div>
   );
-}
-
-/** Whether an ingestion stopped at its budget (processing.max_run_*:
- * error class limit_exceeded), which the Ingest page says with its own
- * notice, offering to resume it, instead of the generic failure. */
-export function isBudgetStop(job: Pick<JobRecord, "kind" | "status" | "result">): boolean {
-  return job.kind === "ingest" && job.status === "failed" && job.result?.error_class === "limit_exceeded";
 }
 
 /** A pipeline stage's name in the page's language (its id when the

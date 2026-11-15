@@ -17,6 +17,7 @@ from collections.abc import Iterable, Mapping
 from datetime import datetime
 from typing import Any
 
+from unified_kg_rag.application.cli.conventions import status_error_class
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.domain.models.usage import LLMUsage, LLMUsageCounts
 from unified_kg_rag.domain.pricing import price_of, usage_cost_usd
@@ -178,6 +179,9 @@ def summarize(
                 "id": job["id"],
                 "kind": job["kind"],
                 "status": job["status"],
+                # A failed run's error class (an ingestion's budget stop,
+                # limit_exceeded, is no failure the page marks red).
+                "error_class": status_error_class(job.get("result")),
                 "created": job["created"],
                 "duration_seconds": duration,
                 "llm_calls": usage.get("llm_calls"),

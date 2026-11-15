@@ -6,6 +6,7 @@ import { Empty, ErrorText, JobStatusBadge, Loading, Notice, PageHead, Sheet } fr
 import { useI18n } from "../i18n/i18n";
 import { get, send } from "../lib/api";
 import { navigate } from "../lib/router";
+import type { JobRecord } from "../lib/types";
 import { useApi } from "../lib/useApi";
 
 interface Counts {
@@ -44,7 +45,7 @@ interface Dashboard {
   models: ({ model: string; cost_usd: number | null } & Counts)[];
   roles: ({ role: string } & Counts)[];
   timeline: { day: string; queries: number; cost_usd: number; latency_p50: number | null }[];
-  jobs: { id: string; kind: string; status: string; created: number; duration_seconds: number | null; llm_calls: number | null; tokens: number | null; cost_usd: number | null }[];
+  jobs: { id: string; kind: JobRecord["kind"]; status: JobRecord["status"]; error_class?: string | null; created: number; duration_seconds: number | null; llm_calls: number | null; tokens: number | null; cost_usd: number | null }[];
   unpriced_models: string[];
   prices_configured: boolean;
 }
@@ -170,7 +171,7 @@ export function DashboardPage() {
                         <td>{date(j.created)}</td>
                         <td>{t(`dashboard.kind.${j.kind}`)}</td>
                         <td>
-                          <JobStatusBadge status={j.status} />
+                          <JobStatusBadge job={j} />
                         </td>
                         <td className="num">{seconds(j.duration_seconds)}</td>
                         <td className="num">{number(j.llm_calls)}</td>

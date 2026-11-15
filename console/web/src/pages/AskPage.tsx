@@ -5,7 +5,7 @@ import { AnswerText, CitationList } from "../components/AnswerText";
 import { EvidenceTrace } from "../components/EvidenceTrace";
 import { StrategyPicker } from "../components/StrategyPicker";
 import { Notice, PageHead, Sheet } from "../components/ui";
-import { useI18n } from "../i18n/i18n";
+import { useI18n, type I18n } from "../i18n/i18n";
 import { errorMessage, failureHelp, get, stream } from "../lib/api";
 import { navigate } from "../lib/router";
 import { useTrail } from "../lib/trail";
@@ -366,6 +366,36 @@ export function AskPage({ status }: { status: Status | null }) {
 /** The steps of `entries`, once each, by their names in the UI locale
  * (`ask.step.<step>`); a step the catalog does not know (a third-party
  * strategy's) as its id. */
+/** The degraded reasons (the reason itself, or its "<reason>: " head) of
+ * a step left out on purpose, to keep within the query's limits
+ * (search.query_max_*), rather than failed: the notice words them apart. */
+export const SKIPPED_REASONS = ["query_limit"] as const;
+
+/** Why `entry` is degraded: one of SKIPPED_REASONS, else "failed". */
+export function degradedKind(entry: Degradation): string {
+  return SKIPPED_REASONS.find((r) => entry.reason === r || entry.reason.startsWith(`${r}:`)) ?? "failed";
+}
+
+/** The partial-answer notice's text: the failed steps, then the skipped
+ * ones by their reason. */
+export function partialHelp(entries: Degradation[], t: I18n["t"]): string {
+  const failed = entries.filter((e) => degradedKind(e) === "failed");
+  const parts = failed.length ? [t("ask.partialHelp", { steps: stepNames(failed, t) })] : [];
+  for (const reason of SKIPPED_REASONS) {
+    const skipped = entries.filter((e) => degradedKind(e) === reason);
+    if (skipped.length) parts.push(t(`ask.partialSkipped.${reason}`, { steps: stepNames(skipped, t) }));
+  }
+  return parts.join(" ");
+}
+
+/** How auto routed: the limits' variant when they left the others out of
+ * a single candidate (routing.over_limits). */
+export function routingNote(routing: NonNullable<AskResult["routing"]>, strategy: string, t: I18n["t"]): string {
+  const overLimits = routing.over_limits ?? [];
+  const key = routing.decided_by === "only_candidate" && overLimits.length ? "ask.routing.over_limits" : `ask.routing.${routing.decided_by}`;
+  return t(key, { strategy, candidates: routing.candidates.join(", "), over_limits: overLimits.join(", ") });
+}
+
 export function stepNames(entries: Degradation[], t: (key: string) => string): string {
   return [...new Set(entries.map((entry) => entry.step))]
     .map((step) => {
@@ -401,10 +431,7 @@ function TurnView({
       <section className="sheet answer" style={selected ? { borderColor: "var(--trace)" } : undefined}>
         {result?.routing && turn.requested === "auto" ? (
           <p className="route-note">
-            {t(`ask.routing.${result.routing.decided_by}`, {
-              strategy: result.strategy ?? "",
-              candidates: result.routing.candidates.join(", "),
-            })}{" "}
+            {routingNote(result.routing, result.strategy ?? "", t)}{" "}
             <span className="field-help">{t(`strategy.help.${result.strategy}`)}</span>
           </p>
         ) : null}
@@ -453,7 +480,7 @@ function TurnView({
         {result && !result.error && result.degraded?.length ? (
           <div style={{ marginTop: 12 }}>
             <Notice tone="warn" title={t("ask.partial")}>
-              {t("ask.partialHelp", { steps: stepNames(result.degraded, t) })}
+              {partialHelp(result.degraded, t)}
             </Notice>
           </div>
         ) : null}
