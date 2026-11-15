@@ -410,6 +410,26 @@ def backoff_delay(retry: int, policy: RetryPolicy) -> float:
     return floor + _jitter_rng.uniform(0, ceiling - floor)
 
 
+def past_budget(policy: RetryPolicy, started_at: float, delay: float) -> bool:
+    """Whether a wait of ``delay`` now would cross ``policy``'s wall-clock
+    budget (``max_total_seconds``) of a call started at ``started_at``
+    (``time.monotonic``)."""
+    budget = policy.max_total_seconds
+    return budget is not None and time.monotonic() - started_at + delay > budget
+
+
+def retry_wait(policy: RetryPolicy, retry: int, started_at: float) -> float | None:
+    """The wait before retry ``retry`` (1-based) of a call started at
+    ``started_at`` (``time.monotonic``) under ``policy``, or None when no
+    retry is left: its attempts are spent, or the wait would cross its
+    budget. The one schedule of every retry loop of its own (the indexers,
+    the bulk resends, the registry batches)."""
+    if retry >= policy.max_attempts:
+        return None
+    delay = backoff_delay(retry, policy)
+    return None if past_budget(policy, started_at, delay) else delay
+
+
 def next_transient_retry_delay(
     exc: BaseException,
     *,
@@ -432,13 +452,12 @@ def next_transient_retry_delay(
             error_name(exc),
         )
         return None
-    budget = policy.max_total_seconds
-    if budget is not None and time.monotonic() - started_at + delay > budget:
+    if past_budget(policy, started_at, delay):
         logger.warning(
             "Giving up on '%s' after %s attempts (%.1fs retry budget exhausted): %s",
             operation,
             attempt,
-            budget,
+            policy.max_total_seconds,
             error_name(exc),
         )
         return None

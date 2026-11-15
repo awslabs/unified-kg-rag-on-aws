@@ -101,10 +101,11 @@ def test_the_registry_batch_waits_are_the_former_ones(
     # min(2.0, 0.05 * 2**attempt) for attempts 1..7, no jitter.
     slept: list[float] = []
     monkeypatch.setattr(dynamodb_mod, "_sleep", slept.append)
-    policy = Config().retry.registry_batch
-    for attempt in range(policy.max_attempts):
-        dynamodb_mod._backoff_before(attempt, policy)
+    resends = dynamodb_mod._Resends(Config().retry.registry_batch)
+    while resends.wait():
+        pass
     assert slept == [0.1, 0.2, 0.4, 0.8, 1.6, 2.0, 2.0]
+    assert resends.requests == 8
 
 
 def test_the_ingestion_item_wait_is_drawn_under_its_profile(
@@ -329,3 +330,75 @@ async def test_a_refused_call_takes_no_transient_retry(refusal: Exception) -> No
             policy=Config().retry.model,
         )
     assert calls["n"] == 1
+
+
+# --- every profile's wall-clock budget is honoured -----------------------------
+
+
+def test_the_graph_store_budget_stops_the_indexer_retries(mocker) -> None:
+    from unified_kg_rag.adapters.storage import neptune_indexer as indexer_mod
+
+    mocker.patch.object(indexer_mod, "NeptuneClient")
+    indexer = indexer_mod.NeptuneIndexer(
+        config=Config(
+            retry={
+                "graph_store": {
+                    "base_delay_seconds": 2.0,
+                    "jitter": "none",
+                    "max_total_seconds": 1.0,
+                }
+            }
+        )
+    )
+    sleep = mocker.patch.object(indexer_mod, "_sleep")
+    calls = {"n": 0}
+
+    def failing(*_args: Any, **_kwargs: Any) -> None:
+        calls["n"] += 1
+        raise ConnectionError("lost")
+
+    mocker.patch.object(indexer_mod, "run_traversal", side_effect=failing)
+    with pytest.raises(ConnectionError):
+        indexer._execute_with_retries(lambda _g: None, "upsert", fenced=False)
+    assert calls["n"] == 1  # the first wait, 2 s, would cross the 1 s budget
+    assert sleep.call_count == 0
+
+
+def test_the_registry_batch_budget_stops_the_resends(mocker) -> None:
+    from unified_kg_rag.shared.exceptions import DocStatusRegistryError
+
+    store = dynamodb_mod.DynamoDBDocStatusStore(
+        Config(retry={"registry_batch": {"max_total_seconds": 0.05}}),
+        boto_session=mocker.MagicMock(),
+    )
+    client = mocker.MagicMock()
+    store._client = client
+    client.batch_get_item.side_effect = lambda RequestItems: {
+        "Responses": {},
+        "UnprocessedKeys": RequestItems,
+    }
+    sleep = mocker.patch.object(dynamodb_mod, "_sleep")
+    with pytest.raises(DocStatusRegistryError, match="after 1 BatchGetItem"):
+        store._batch_get(["ns#a"])
+    assert client.batch_get_item.call_count == 1  # 0.1 s would cross 0.05 s
+    assert sleep.call_count == 0
+
+
+def test_the_bulk_item_budget_stops_the_resends(mocker) -> None:
+    config = Config(retry={"bulk_item": {"max_total_seconds": 0.5}})
+    client = opensearch_mod.OpenSearchClient.__new__(opensearch_mod.OpenSearchClient)
+    client._client = MagicMock()
+    client.config = config
+    sent: list[int] = []
+
+    def rejected(client: Any, actions: list[dict[str, Any]], **_: Any) -> Any:
+        sent.append(len(actions))
+        for action in actions:
+            yield False, {"index": {"_id": action["_id"], "status": 429}}
+
+    mocker.patch.object(opensearch_mod, "streaming_bulk", side_effect=rejected)
+    mocker.patch.object(llm_retry._jitter_rng, "uniform", lambda a, b: b)
+    sleep = mocker.patch.object(opensearch_mod, "_sleep")
+    client._bulk_with_item_retries([{"_id": "a"}], lambda ok, _: ok)
+    assert sent == [1]  # the first wait, 1 s, would cross the 0.5 s budget
+    assert sleep.call_count == 0

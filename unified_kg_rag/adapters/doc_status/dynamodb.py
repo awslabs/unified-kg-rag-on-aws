@@ -22,7 +22,7 @@ import boto3
 from botocore.config import Config as BotoConfig
 from botocore.exceptions import BotoCoreError, ClientError
 
-from unified_kg_rag.adapters.llm.retry import backoff_delay
+from unified_kg_rag.adapters.llm.retry import retry_wait
 from unified_kg_rag.domain.ingestion.delta_detector import scope_namespace
 from unified_kg_rag.domain.ingestion.document_identity import doc_id_namespace
 from unified_kg_rag.domain.models import (
@@ -314,20 +314,21 @@ class DynamoDBDocStatusStore:
     def _batch_get(self, keys: list[str]) -> list[dict[str, Any]]:
         request: dict[str, Any] = {self.table_name: {"Keys": [_key(k) for k in keys]}}
         items: list[dict[str, Any]] = []
-        policy = self.config.retry.registry_batch
-        for attempt in range(policy.max_attempts):
-            _backoff_before(attempt, policy)
+        resend = _Resends(self.config.retry.registry_batch)
+        while True:
             with self._registry_errors("read records"):
                 response = self.client.batch_get_item(RequestItems=request)
             items.extend(response.get("Responses", {}).get(self.table_name, []))
             request = dict(response.get("UnprocessedKeys") or {})
             if not request.get(self.table_name, {}).get("Keys"):
                 return items
+            if not resend.wait():
+                break
         remaining = len(request[self.table_name]["Keys"])
         raise DocStatusRegistryError(
             f"Doc-status registry: DynamoDB table '{self.table_name}' left "
             f"{remaining} of {len(keys)} keys unprocessed after "
-            f"{policy.max_attempts} BatchGetItem requests. Raise the table's "
+            f"{resend.requests} BatchGetItem requests. Raise the table's "
             "capacity or switch it to on-demand billing, then re-run."
         )
 
@@ -361,19 +362,20 @@ class DynamoDBDocStatusStore:
         request: dict[str, Any] = {
             self.table_name: [{"PutRequest": {"Item": item}} for item in items]
         }
-        policy = self.config.retry.registry_batch
-        for attempt in range(policy.max_attempts):
-            _backoff_before(attempt, policy)
+        resend = _Resends(self.config.retry.registry_batch)
+        while True:
             with self._registry_errors("write records"):
                 response = self.client.batch_write_item(RequestItems=request)
             request = dict(response.get("UnprocessedItems") or {})
             if not request.get(self.table_name):
                 return
+            if not resend.wait():
+                break
         remaining = len(request[self.table_name])
         raise DocStatusRegistryError(
             f"Doc-status registry: DynamoDB table '{self.table_name}' left "
             f"{remaining} of {len(items)} items unprocessed after "
-            f"{policy.max_attempts} BatchWriteItem requests. Raise the "
+            f"{resend.requests} BatchWriteItem requests. Raise the "
             "table's capacity or switch it to on-demand billing, then re-run."
         )
 
@@ -702,11 +704,23 @@ class DynamoDBDocStatusStore:
         )
 
 
-def _backoff_before(attempt: int, policy: RetryPolicy) -> None:
-    """Wait before re-sending a batch's unprocessed items (none before the
-    first request, ``attempt`` 0)."""
-    if attempt:
-        _sleep(backoff_delay(attempt, policy))
+class _Resends:
+    """The resends of one batch's unprocessed keys or items under
+    ``policy`` (``retry.registry_batch``): its attempts and budget."""
+
+    def __init__(self, policy: RetryPolicy) -> None:
+        self.policy = policy
+        self.requests = 1
+        self._started_at = time.monotonic()
+
+    def wait(self) -> bool:
+        """Wait before the next request; False when none is left."""
+        delay = retry_wait(self.policy, self.requests, self._started_at)
+        if delay is None:
+            return False
+        _sleep(delay)
+        self.requests += 1
+        return True
 
 
 def _key(doc_id: str) -> dict[str, Any]:

@@ -26,7 +26,7 @@ from opensearchpy.exceptions import (
 )
 from opensearchpy.helpers import streaming_bulk
 
-from unified_kg_rag.adapters.llm.retry import acall_with_transient_retry, backoff_delay
+from unified_kg_rag.adapters.llm.retry import acall_with_transient_retry, retry_wait
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import (
     AWSServiceError,
@@ -828,18 +828,9 @@ class OpenSearchClient:
         retry_results: list[dict[str, Any]] = []
         pending = actions
         policy = self.config.retry.bulk_item
-        for attempt in range(policy.max_attempts):
-            if attempt:
-                delay = backoff_delay(attempt, policy)
-                logger.warning(
-                    "Resending %s bulk item(s) rejected with a retryable status "
-                    "(retry %s/%s) in %.1fs",
-                    len(pending),
-                    attempt,
-                    policy.max_attempts - 1,
-                    delay,
-                )
-                _sleep(delay)
+        started_at = time.monotonic()
+        retries = 0
+        while True:
             retry_actions: list[dict[str, Any]] = []
             retry_results = []
             results = streaming_bulk(
@@ -860,10 +851,8 @@ class OpenSearchClient:
                     else:
                         failures.append(result)
             except TransportError as e:
-                if (
-                    e.status_code not in RETRYABLE_STATUSES
-                    or attempt == policy.max_attempts - 1
-                ):
+                delay = retry_wait(policy, retries + 1, started_at)
+                if e.status_code not in RETRYABLE_STATUSES or delay is None:
                     raise
                 # The failed request's items and the unsent ones after it.
                 # Resending an index, delete or partial update by id is safe.
@@ -872,13 +861,27 @@ class OpenSearchClient:
                 logger.warning("Bulk request failed: %s", error_name(e))
                 logger.debug("Bulk request failed: %s", error_reason(e))
                 retry_actions.extend(pending[answered:])
-            if not retry_actions:
-                return success_count, failures
+            else:
+                if not retry_actions:
+                    return success_count, failures
+                delay = retry_wait(policy, retries + 1, started_at)
+                if delay is None:
+                    break
+            retries += 1
+            logger.warning(
+                "Resending %s bulk item(s) rejected with a retryable status "
+                "(retry %s/%s) in %.1fs",
+                len(retry_actions),
+                retries,
+                policy.max_attempts - 1,
+                delay,
+            )
+            _sleep(delay)
             pending = retry_actions
         logger.warning(
             "%s bulk item(s) still rejected after %s retries",
             len(retry_results),
-            policy.max_attempts - 1,
+            retries,
         )
         return success_count, failures + retry_results
 

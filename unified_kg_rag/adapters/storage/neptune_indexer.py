@@ -33,7 +33,7 @@ from unified_kg_rag.adapters.aws.neptune import (
     vertex_id_switch_query,
     vertex_ids,
 )
-from unified_kg_rag.adapters.llm.retry import backoff_delay
+from unified_kg_rag.adapters.llm.retry import retry_wait
 from unified_kg_rag.adapters.storage.neptune_codec import (
     BUILD_TAG_PROPERTY,
     CENSUS_PROPERTIES,
@@ -1911,6 +1911,7 @@ class NeptuneIndexer(GraphIndexer):
         approved list (``is_transient_neptune_error`` says why).
         """
         policy = self.config.retry.graph_store
+        started_at = time.monotonic()
         attempt = 0
         while True:
             if fenced:
@@ -1918,7 +1919,14 @@ class NeptuneIndexer(GraphIndexer):
             try:
                 return run_traversal(self.neptune_client, build, results=results)
             except Exception as e:
-                if is_permanent_neptune_error(e) or attempt + 1 >= policy.max_attempts:
+                # Full jitter by default (retry.graph_store), so concurrent
+                # workers do not retry a throttled endpoint in lock-step.
+                sleep_for = (
+                    None
+                    if is_permanent_neptune_error(e)
+                    else retry_wait(policy, attempt + 1, started_at)
+                )
+                if sleep_for is None:
                     log_error(
                         logger,
                         exhausted_level,
@@ -1928,9 +1936,6 @@ class NeptuneIndexer(GraphIndexer):
                         error=e,
                     )
                     raise
-                # Full jitter by default (retry.graph_store), so concurrent
-                # workers do not retry a throttled endpoint in lock-step.
-                sleep_for = backoff_delay(attempt + 1, policy)
                 log_error(
                     logger,
                     logging.WARNING,
