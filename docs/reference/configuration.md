@@ -587,7 +587,7 @@ RAPTOR's summary tree over the stored text units, which the tree strategy search
 | `scope` | `"corpus"` \| `"document"` | `"corpus"` |  | corpus: one tree over every text unit of the index namespace (one per partition_by value tuple); document: one tree per document (RAPTOR's own setting), none for a document of fewer than min_leaves_per_tree text units. |
 | `partition_by` | list[string] | `[]` |  | Document filter keys (a document's metadata filters) whose value tuple splits the corpus into separate trees, so every node is pure on them and survives a filter on them (a summary is kept under a filter only when all its documents pass it). |
 | `algorithm` | `"kmeans"` \| `"gmm"` | `"kmeans"` |  | kmeans: hard k-means over the PCA-reduced vectors, k = ceil(n / target_children) per level. gmm: RAPTOR's Gaussian mixture with BIC-chosen k, global then local, soft membership (soft_threshold). Both are numpy-only and seeded (random_state). |
-| `target_children` | integer (≥ 2, ≤ 50) | `6` | upstream: RAPTOR's trees average 6.7 children | Children per summary node aimed at (kmeans' k, and the centre of gmm's bounded BIC grid). RAPTOR's trees average 6.7. |
+| `target_children` | integer (≥ 2, ≤ 50) | `6` | deviation: RAPTOR picks k by BIC (max_clusters 50); its trees average 6.7 children | Children per summary node aimed at (kmeans' k, and the centre of gmm's bounded BIC grid). RAPTOR's trees average 6.7. |
 | `soft_threshold` | number (> 0.0, < 1.0) | `0.1` | upstream: RAPTOR's GMM threshold, 0.1 | gmm only: a node joins every cluster whose posterior exceeds this (RAPTOR's threshold), its likeliest one when none does. |
 | `reduction_dims` | integer (≥ 2, ≤ 100) | `10` | upstream: RAPTOR's reduction_dimension, 10 | PCA dimensions the vectors are reduced to before clustering (RAPTOR's reduction_dimension; PCA replaces its UMAP). |
 | `max_levels` | integer (≥ 1, ≤ 10) | `5` | upstream: RAPTOR's num_layers, 5 | Summary levels above the text units at most (RAPTOR's num_layers). |
@@ -1265,6 +1265,7 @@ The numeric defaults that change what is retrieved or answered and that no run c
 | `graph.community_detection.extra_forced_iterations` | `2` | deviation: MS GraphRAG runs 0 |
 | `graph.community_detection.max_cluster_size` | `20` | deviation: MS GraphRAG's max_cluster_size: 10 |
 | `graph.community_detection.report_generation.max_report_context_tokens` | `4000` | deviation: MS GraphRAG's community report max_input_length: 8000 |
+| `indexing.summary_tree.target_children` | `6` | deviation: RAPTOR picks k by BIC (max_clusters 50); its trees average 6.7 children |
 | `indexing.summary_tree.min_level_shrink` | `0.2` | deviation: RAPTOR never stops for it (0) |
 | `indexing.summary_tree.max_cluster_tokens` | `8000` | deviation: RAPTOR's max_length_in_cluster, 3500 cl100k tokens |
 | `search.drift_search.k_followups` | `10` | deviation: MS GraphRAG's drift_k_followups: 20 |

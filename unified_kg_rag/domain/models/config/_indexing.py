@@ -602,7 +602,10 @@ class SummaryTreeConfig(ConfigSection):
         le=50,
         description="Children per summary node aimed at (kmeans' k, and the "
         "centre of gmm's bounded BIC grid). RAPTOR's trees average 6.7.",
-        json_schema_extra=evidence("upstream", "RAPTOR's trees average 6.7 children"),
+        json_schema_extra=evidence(
+            "deviation",
+            "RAPTOR picks k by BIC (max_clusters 50); its trees average 6.7 children",
+        ),
     )
     soft_threshold: float = Field(
         default=0.1,
