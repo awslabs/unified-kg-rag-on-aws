@@ -27,7 +27,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   into `models.prices` with a WARNING (an entry both name keeps the `models.prices` price), through one rule for
   deprecated keys (`DEPRECATED_KEYS`, file and `UKR__` variables alike, listed in the configuration reference). The
   console's Settings review lists each deprecated key the file sets, and each removed one, with the loader's warning.
-  deprecated keys (`DEPRECATED_KEYS`, file and `UKR__` variables alike, listed in the configuration reference).
   An ingestion run it prices publishes its USD as the `llm_cost_usd` metric (the CDK dashboard's "LLM cost" widget).
 - Query limits beside the deadline: `search.query_max_model_calls` and `search.query_max_input_tokens` (off by
   default) bound one query's model calls and their input tokens, and `RAGInput.limits` (`QueryLimits`, exported; the
@@ -52,7 +51,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   error: not counted in `query_failed`, `refused` on the console's dashboard, its message shown to an MCP caller; exit
   code 1, console HTTP 422). The console's Ask page names that decline, the steps the limits skipped (apart from those
   that failed) and the strategies they left `auto` without.
-  code 1, console HTTP 422).
   The `query_limited` metric (0 or 1, on the CDK dashboard's "Query outcomes" widget) and the query span's
   `kg_rag.query_limited` count a query its limits cut short (a step left out, an abstention or a refusal), which
   `query_degraded` could not tell from a failing step.
@@ -95,7 +93,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   decide (extraction, gleaning, claims, translation, intelligent chunking), naming the graph-dependent ones it cannot
   count. The console's Ingest page offers to resume a run stopped at its budget (its options without the forced
   recompute), and its run lists and the Dashboard mark such a run as stopped at its budget, a warning, not failed.
-  recompute). The stop's JSON status and message give the calls the run paid for (`token_usage`, `cost_usd` when
+  The stop's JSON status and message give the calls the run paid for (`token_usage`, `cost_usd` when
   priced), and the stage it stopped in keeps its calls in its record and publishes them (`llm_calls_<stage>`), so the
   stop and its resume count each paid call once.
 - Every numeric configuration default says what it rests on: an evidence tag (`json_schema_extra=evidence(...)`,
