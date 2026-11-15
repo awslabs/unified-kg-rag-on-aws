@@ -186,22 +186,6 @@ class RetryPolicy(ConfigSection):
         ),
         json_schema_extra=evidence("operational"),
     )
-    client_max_attempts: int | None = Field(
-        default=None,
-        ge=1,
-        description=(
-            "Requests the service's own client makes for one attempt, the "
-            "first included, retrying throttling, 5xx and timeouts itself "
-            "before this profile's backoff: botocore's total_max_attempts on "
-            "the Bedrock clients of ingestion and evaluation calls "
-            "(retry.model; query-time calls take search.model_max_attempts), "
-            "opensearch-py's max_retries + 1, back to back, on the OpenSearch "
-            "indexing client (retry.bulk_item). The two stack: a call can make "
-            "max_attempts x client_max_attempts requests. Set only on those "
-            "two profiles; null leaves the client its library default."
-        ),
-        json_schema_extra=evidence("operational"),
-    )
     jitter: RetryJitter = Field(
         default="equal",
         description=(
@@ -217,6 +201,31 @@ class RetryPolicy(ConfigSection):
         if self.max_delay_seconds is not None:
             ceiling = min(ceiling, self.max_delay_seconds)
         return ceiling
+
+
+class ClientRetryPolicy(RetryPolicy):
+    """The policy of a profile whose caller's service client retries on its
+    own (``retry.model``, ``retry.bulk_item``): also the requests that client
+    makes for one attempt."""
+
+    client_max_attempts: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Requests the service's own client makes for one attempt, the "
+            "first included, retrying throttling, 5xx and timeouts itself "
+            "before this profile's backoff: botocore's total_max_attempts on "
+            "the Bedrock clients of ingestion and evaluation calls "
+            "(retry.model; query-time calls take search.model_max_attempts), "
+            "opensearch-py's max_retries + 1, back to back, on the OpenSearch "
+            "indexing client (retry.bulk_item). The two stack: a call can make "
+            "max_attempts x client_max_attempts requests. null leaves the "
+            "client its library default. The other profiles have no such key: "
+            "their callers' clients make one request per attempt or keep "
+            "attempts the package sets."
+        ),
+        json_schema_extra=evidence("operational"),
+    )
 
 
 # The profiles of the ``retry`` section and their defaults: each caller's
@@ -264,7 +273,8 @@ _CLIENT_PROFILES = frozenset({"model", "bulk_item"})
 
 
 def _profile(name: str) -> Any:
-    return lambda: RetryPolicy(**RETRY_PROFILES[name])
+    policy = ClientRetryPolicy if name in _CLIENT_PROFILES else RetryPolicy
+    return lambda: policy(**RETRY_PROFILES[name])
 
 
 class RetryConfig(ConfigSection):
@@ -276,7 +286,7 @@ class RetryConfig(ConfigSection):
     A profile set in part keeps its own defaults for the keys it leaves out.
     """
 
-    model: RetryPolicy = Field(
+    model: ClientRetryPolicy = Field(
         default_factory=_profile("model"),
         description=(
             "Bedrock embedding requests and query-time model calls: the "
@@ -308,7 +318,9 @@ class RetryConfig(ConfigSection):
         default_factory=_profile("graph_store"),
         description=(
             "Each Neptune or Gremlin indexer request (writes, read-backs, drops "
-            "and label clears), over a new connection after a lost one. "
+            "and label clears), over a new connection after a lost one; a "
+            "failed batch and its per-item fallback share one "
+            "max_total_seconds. "
             "Errors a retry cannot fix (malformed query, access denied, bad "
             "parameter, read-only violation) fail on the first attempt."
         ),
@@ -325,7 +337,7 @@ class RetryConfig(ConfigSection):
             "max_attempts x search.store_timeout_seconds."
         ),
     )
-    bulk_item: RetryPolicy = Field(
+    bulk_item: ClientRetryPolicy = Field(
         default_factory=_profile("bulk_item"),
         description=(
             "OpenSearch bulk items the cluster rejected with 429/502/503/504, "
@@ -360,17 +372,12 @@ class RetryConfig(ConfigSection):
         """A profile given in part, as a mapping or a :class:`RetryPolicy`
         (loaded or assigned), keeps its profile's defaults for the keys it
         leaves out, not :class:`RetryPolicy`'s."""
-        assert info.field_name is not None
+        name = info.field_name
+        assert name is not None
         if isinstance(value, RetryPolicy):
             value = value.model_dump(exclude_unset=True)
         if isinstance(value, dict):
-            return {**RETRY_PROFILES[info.field_name], **value}
-        return value
-
-    @model_validator(mode="after")
-    def _client_attempts_where_a_client_retries(self) -> "RetryConfig":
-        for name in RETRY_PROFILES.keys() - _CLIENT_PROFILES:
-            if getattr(self, name).client_max_attempts is not None:
+            if name not in _CLIENT_PROFILES and "client_max_attempts" in value:
                 raise ValueError(
                     f"retry.{name}.client_max_attempts: only "
                     + " and ".join(f"retry.{p}" for p in sorted(_CLIENT_PROFILES))
@@ -378,7 +385,8 @@ class RetryConfig(ConfigSection):
                     "caller's client makes one request per attempt or keeps "
                     "attempts the package sets"
                 )
-        return self
+            return {**RETRY_PROFILES[name], **value}
+        return value
 
 
 class BedrockConfig(ConfigSection):

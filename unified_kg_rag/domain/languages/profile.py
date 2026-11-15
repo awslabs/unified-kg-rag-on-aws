@@ -124,6 +124,10 @@ class LanguageProfile:
     # they are other words ("이" is "this").
     multiplier_numerals: Mapping[str, int] = field(default_factory=dict)
     counters: tuple[str, ...] = ()
+    # The units of a date, a time or a measure a numeral states a number
+    # before, beside its ``counters`` ("三月", "五日", "十時"): no count, but
+    # a number two documents differ by (``processing.deduplicate``).
+    numeral_units: tuple[str, ...] = ()
     # Numerals that state a count standing alone, with at most a particle
     # or the copula after them ("하나입니다", "셋이에요"), by value; the forms
     # before a counter that are other words alone ("한", "세", "네") are

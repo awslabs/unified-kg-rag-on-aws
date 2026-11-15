@@ -88,14 +88,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   default; USD priced by `models.prices`) refuse the model call that would pass them and stop the run once the calls
   already sent have answered (`RunBudgetExhausted`, exported, error class `limit_exceeded`, exit 1): its finished stages
   are checkpointed and those answers kept in the LLM response cache, whose hits take none of the budget, so a re-run
-  with the same pipeline id resumes and pays only for what was not answered. `run-ingestion --estimate` parses and
-  chunks the corpus without a model call and prints each stage's calls, tokens and USD for the stages the text units
-  decide (extraction, gleaning, claims, translation, intelligent chunking), naming the graph-dependent ones it cannot
-  count. The console's Ingest page offers to resume a run stopped at its budget (its options without the forced
-  recompute), and its run lists and the Dashboard mark such a run as stopped at its budget, a warning, not failed.
-  The stop's JSON status and message give the calls the run paid for (`token_usage`, `cost_usd` when
-  priced), and the stage it stopped in keeps its calls in its record and publishes them (`llm_calls_<stage>`), so the
-  stop and its resume count each paid call once.
+  with the same pipeline id resumes and pays only for what was not answered. `run-ingestion --estimate` parses,
+  deduplicates (`processing.deduplicate`) and chunks the corpus without a model call and prints each stage's calls,
+  tokens and USD for the stages the text units decide (extraction, gleaning, claims, translation, intelligent chunking),
+  naming the graph-dependent ones it cannot count. The console's Ingest page offers to resume a run stopped at its
+  budget (its options without the forced recompute), and its run lists and the Dashboard mark such a run as stopped at
+  its budget, a warning, not failed. The stop's JSON status and message give the calls the run paid for (`token_usage`,
+  `cost_usd` when priced), and the stage it stopped in keeps its calls in its record and publishes them
+  (`llm_calls_<stage>`), so the stop and its resume count each paid call once.
 - Every numeric configuration default says what it rests on: an evidence tag (`json_schema_extra=evidence(...)`,
   `domain/models/evidence.py`) of `measured` (linked to its run in Defaults and evidence), `upstream` or `deviation`
   (naming the original's value), `operational` or `unmeasured`. The configuration reference prints it in an Evidence
@@ -120,10 +120,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `judge_max_attempts` (the flat keys are deprecated, see *Deprecated*). Each profile defaults to its caller's 0.3.0
   values, so nothing waits otherwise; the ingestion item backoff (30 s doubling to 120 s, which ignored the section),
   the OpenSearch and Neptune query, bulk-item and DynamoDB batch backoffs, fixed in code before, are set there now, and
-  every caller draws its waits with one backoff function. A profile set in part keeps its own defaults. The clients' own
-  retries stacked under them are set there too: `client_max_attempts` of `retry.model` (botocore's requests per Bedrock
-  call of ingestion and evaluation) and of `retry.bulk_item` (the OpenSearch indexing client's), both 6, their 0.3.0
-  counts. No caller retries a call the usage limits refused.
+  every caller draws its waits with one backoff function (a Neptune batch and its per-item fallback under one
+  `max_total_seconds`). A profile set in part keeps its own defaults. The clients' own retries stacked under them are
+  set there too: `client_max_attempts` of `retry.model` (botocore's requests per Bedrock call of ingestion and
+  evaluation) and of `retry.bulk_item` (the OpenSearch indexing client's), both 6, their 0.3.0 counts; only those two
+  profiles (`ClientRetryPolicy`) have the key. No caller retries a call the usage limits refused.
 
 ### Changed
 
@@ -155,6 +156,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   new name, and is no longer in `__all__` (`unified_kg_rag.domain.models.config.TransientRetryConfig`, an internal
   path, is gone). A warning the package emits for a deprecated API now names the caller's
   line under `from unified_kg_rag import ...` too (it named a frame of the import machinery).
+
+### Upgrading
+From 0.3.0.
+1. With `processing.deduplicate` on, a run drops more near-duplicates than 0.3.0 did (see *Fixed*), and an incremental
+   run deletes the copies 0.3.0 indexed beside their originals (its WARNING names them; `indexing.max_deletion_share`
+   stops a run deleting past its share until confirmed). Raise `processing.deduplicate_similarity_threshold` (0.97 reads
+   about as 0.3.0's 0.9 did) to keep them.
 
 ### Fixed
 Bugs present in 0.3.0.
@@ -193,9 +201,18 @@ Bugs present in 0.3.0.
   datasketch's split proposed 40%), and never fewer than datasketch's split.
 - `processing.deduplicate` dropped template documents: two contracts of one form, with other amounts, dates and ids
   in a long shared text, read as copies at its fixed 0.9 3-gram similarity, and one went unindexed without a word.
-  A near-duplicate now also holds the same numbers in the same order (digits of any script, Han numerals), so any
+  A near-duplicate now also holds the same numbers in the same order (digits of any script; Han numerals in a run, an
+  ordinal or before a counter or unit, by the language profiles' numerals, counters and `numeral_units`), so any
   differing number keeps both; a document is dropped only as a copy of one that is kept (not of another dropped
-  copy), and a WARNING names the dropped documents (the first 20) and the ones they copy.
+  copy), and a WARNING names the dropped documents (the first 20) and the ones they copy. It also missed most copies
+  near its threshold: datasketch's LSH split (5 bands of 25 rows at 0.9) proposed a pair at 0.90-0.92 a third of the
+  time and the MinHash estimate decided, so 0.9 read as about 0.97. The index now takes name matching's layout (12
+  bands of 10 rows at 0.9: 99% of the pairs at the threshold) and the pair's exact 3-gram similarity decides.
+- `answer_match` read Japanese sums in 兆 (10^12) wrong: `一兆二千億円` as 200,000,000,000 and `3兆円` as 3. 兆 is a
+  multiplier of the Japanese profile, as 億 is.
+- A run stopped (a signal, Ctrl-C, its budget) after an ingestion item's answer failed to parse and before the item's
+  next attempt kept that answer in the LLM response cache, so the resumed run replayed it and spent one of the item's
+  attempts on it. A stop drops the answers of the item's failed attempts and keeps the one in flight.
 - An ingestion LLM item whose output did not parse waited the backoff of a throttled call (up to 30 s, then 60 s,
   then 120 s) before it was asked again; it is asked again at once. Throttling, timeouts and transient errors keep
   the backoff (`retry.ingestion_item`).

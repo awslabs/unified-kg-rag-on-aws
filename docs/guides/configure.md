@@ -56,7 +56,8 @@ disables the retry. Two callers' clients also retry on their own inside each
 attempt, and the counts stack: `retry.model.client_max_attempts` (6) is
 botocore's requests per Bedrock call of ingestion and evaluation (a query
 call's is `search.model_max_attempts`), `retry.bulk_item.client_max_attempts`
-(6) the OpenSearch indexing client's. The flat keys of earlier configs (`retry.max_attempts`,
+(6) the OpenSearch indexing client's; the other profiles have no such key.
+The flat keys of earlier configs (`retry.max_attempts`,
 `retry.base_delay_seconds`, ...) still load, with a WARNING, into every
 profile each one governed
 ([Deprecated keys](../reference/configuration.md#deprecated-keys)); set the

@@ -54,7 +54,7 @@ def test_write_relationships_isolates_a_failing_edge(indexer, mocker) -> None:
         Relationship(id="r3", source_id="e3", target_id="e4"),
     ]
 
-    def flaky_execute(traversal, op, *, results=False, fenced=True):
+    def flaky_execute(traversal, op, *, results=False, fenced=True, **_):
         if op != "Relationship indexing":  # the reads and drops before
             return _stored_ends(op, rels) or []
         calls["n"] += 1
@@ -90,7 +90,7 @@ def test_write_relationships_counts_an_edge_without_source_as_failed(
     mocker.patch.object(
         indexer,
         "_execute_with_retries",
-        side_effect=lambda traversal, op, *, results=False, fenced=True: (
+        side_effect=lambda traversal, op, *, results=False, fenced=True, **_: (
             written[next(order)]
             if op == "Relationship indexing"
             else _stored_ends(op, rels) or []
@@ -118,7 +118,7 @@ def test_edges_are_written_index_concurrency_at_a_time(indexer, mocker) -> None:
         Relationship(id=f"r{i}", source_id=f"e{i}", target_id="e9") for i in range(8)
     ]
 
-    def execute(traversal, op, *, results=False, fenced=True):
+    def execute(traversal, op, *, results=False, fenced=True, **_):
         if op != "Relationship indexing":  # the reads and drops before
             return _stored_ends(op, rels) or []
         threads.add(threading.get_ident())
@@ -326,7 +326,7 @@ def _set_value_requests(indexer, mocker, fail_op: str | None = None) -> list[lis
     requests: list[list] = []
 
     def execute(
-        build, op, *, results=False, fenced=True, exhausted_level=None
+        build, op, *, results=False, fenced=True, exhausted_level=None, **_
     ):  # noqa: ANN001, ANN202
         steps: list = []
         build(RecordingTraversal(steps, with_args=True))
@@ -443,7 +443,7 @@ def test_an_interrupted_hub_write_never_stores_part_of_a_set(
     sent = {"n": 0}
 
     def execute(
-        build, op, *, results=False, fenced=True, exhausted_level=None
+        build, op, *, results=False, fenced=True, exhausted_level=None, **_
     ):  # noqa: ANN001, ANN202
         sent["n"] += 1
         if sent["n"] == kill_at:

@@ -12,7 +12,9 @@ from pathlib import Path
 
 from datasketch import MinHash, MinHashLSH
 
+from unified_kg_rag.domain.ingestion.base_resolver import jaccard, lsh_params
 from unified_kg_rag.domain.ingestion.cache_keys import is_excluded_source_path
+from unified_kg_rag.domain.languages import profiles
 from unified_kg_rag.domain.models import Document
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import ConfigurationError
@@ -24,12 +26,21 @@ from unified_kg_rag.shared.utils.concurrency import (
     process_pool,
     shut_down_after,
 )
+from unified_kg_rag.shared.utils.scripts import script_named, script_of
 
 logger = get_logger(__name__)
 
 # Its pool's tasks live here: imported by the forkserver whichever pool of
 # the run (document loading, graph resolution) starts it.
 preload_in_forkserver(__name__)
+
+
+def document_shingles(content: str, n_grams: int) -> frozenset[str]:
+    """The character ``n_grams`` of ``content`` (empty for a text shorter
+    than one): what deduplication compares."""
+    return frozenset(
+        content[j : j + n_grams] for j in range(len(content) - n_grams + 1)
+    )
 
 
 def compute_minhash(
@@ -39,10 +50,7 @@ def compute_minhash(
     its numbers (:func:`numbers_digest`), or None for a text shorter than
     one shingle."""
     doc_index, content = doc_info
-    if not content or len(content) < n_grams:
-        return None
-
-    shingles = {content[j : j + n_grams] for j in range(len(content) - n_grams + 1)}
+    shingles = document_shingles(content or "", n_grams)
     if not shingles:
         return None
 
@@ -52,9 +60,46 @@ def compute_minhash(
     return doc_index, minhash, numbers_digest(content)
 
 
-# A run of digits of any script, or of Han numerals (三万, 二〇二六).
-# Hangul number words (삼백만) are ordinary syllables and are not read.
-_NUMBER = re.compile(r"\d+|[〇零一二三四五六七八九十百千万萬億亿兆]+")
+_HAN = script_named("han")
+
+
+def _ideographic(numeral: str) -> bool:
+    """Whether ``numeral`` is one Han character (〇, a numeral of no
+    script's letters, included): a word of its own, where a numeral of
+    syllables is part of other words too."""
+    return len(numeral) == 1 and script_of(numeral) in (_HAN, None)
+
+
+def _han_number_forms() -> tuple[str, str]:
+    """The Han numerals of the language profiles (``counter_numerals``,
+    ``numeral_multipliers``), and the counters and units after which one
+    numeral states a number (``counters``, ``numeral_units``) of the
+    profiles that write them, longest first, as regex alternatives."""
+    numerals: dict[str, None] = {}
+    after: dict[str, None] = {}
+    for language in profiles():
+        own = [
+            ch
+            for ch in (*language.counter_numerals, *language.numeral_multipliers)
+            if _ideographic(ch)
+        ]
+        if own:
+            numerals.update(dict.fromkeys(own))
+            after.update(dict.fromkeys((*language.counters, *language.numeral_units)))
+    words = sorted(after, key=len, reverse=True)
+    return "".join(numerals), "|".join(map(re.escape, words))
+
+
+_HAN_NUMERALS, _HAN_COUNTERS = _han_number_forms()
+# A run of digits of any script; of Han numerals, a run of two or more
+# (三万, 二〇二六), an ordinal (第三) or one before a counter or unit (三月,
+# 五人): one numeral alone is also part of ordinary words (一起 "together",
+# 统一 "unify", 千葉 a place name). Hangul number words (삼백만) are
+# ordinary syllables and are not read.
+_NUMBER = re.compile(
+    rf"\d+|[{_HAN_NUMERALS}]{{2,}}|第[{_HAN_NUMERALS}]"
+    rf"|[{_HAN_NUMERALS}](?=(?:{_HAN_COUNTERS}))"
+)
 
 
 def _number(run: str) -> str:
@@ -78,9 +123,10 @@ def numbers_digest(text: str) -> str:
     return hashlib.sha256("\x00".join(numbers).encode("utf-8")).hexdigest()
 
 
-# Near-duplicate detection of ``processing.deduplicate``: the Jaccard
-# similarity of two documents' character 3-gram sets, estimated with a
-# 128-permutation MinHash.
+# Near-duplicate detection of ``processing.deduplicate``: an LSH index of
+# 128-permutation MinHashes of the documents' character 3-gram sets proposes
+# pairs (the resolver's layout, ``lsh_params``), their exact Jaccard
+# similarity decides.
 DEDUP_MINHASH_PERMUTATIONS = 128
 DEDUP_N_GRAMS = 3
 # The dropped documents a WARNING names at most (the rest are counted).
@@ -262,7 +308,9 @@ class DirectoryLoader:
             ),
         )
         rank = {doc_index: position for position, doc_index in enumerate(order)}
-        duplicates = self._find_duplicates(signatures, rank, threshold)
+        duplicates = self._find_duplicates(
+            signatures, [d.page_content for d in documents], rank, threshold
+        )
         if not duplicates:
             logger.info("No duplicates found")
             return documents
@@ -352,18 +400,32 @@ class DirectoryLoader:
     def _find_duplicates(
         self,
         signatures: dict[int, tuple[MinHash, str]],
+        texts: list[str],
         rank: dict[int, int],
         threshold: float,
     ) -> dict[int, tuple[int, float]]:
         """The indices to drop, each with the index it copies and their
         similarity: of each near-duplicate pair, the later-ranked one.
 
-        The Jaccard check runs here: it is a comparison of two short
-        signatures, cheaper than handing them to a worker process.
+        The LSH index proposes pairs, at the threshold 99% of them; the
+        exact Jaccard similarity of their ``texts``' shingle sets decides
+        (the MinHash estimate is off by a few hundredths either way). Only
+        proposed documents' shingle sets are built.
         """
-        lsh = MinHashLSH(threshold=threshold, num_perm=DEDUP_MINHASH_PERMUTATIONS)
+        lsh = MinHashLSH(
+            threshold=threshold,
+            num_perm=DEDUP_MINHASH_PERMUTATIONS,
+            params=lsh_params(threshold, DEDUP_MINHASH_PERMUTATIONS),
+        )
         for doc_idx, (minhash, _) in signatures.items():
             lsh.insert(doc_idx, minhash)
+
+        shingles: dict[int, frozenset[str]] = {}
+
+        def shingles_of(index: int) -> frozenset[str]:
+            if index not in shingles:
+                shingles[index] = document_shingles(texts[index], DEDUP_N_GRAMS)
+            return shingles[index]
 
         duplicates: dict[int, tuple[int, float]] = {}
         for doc_idx in sorted(signatures, key=rank.__getitem__):
@@ -378,7 +440,7 @@ class DirectoryLoader:
                     or signatures[other][1] != numbers
                 ):
                     continue
-                similarity = minhash.jaccard(signatures[other][0])
+                similarity = jaccard(shingles_of(doc_idx), shingles_of(other))
                 if similarity >= threshold:
                     duplicates[other] = (doc_idx, similarity)
         return duplicates

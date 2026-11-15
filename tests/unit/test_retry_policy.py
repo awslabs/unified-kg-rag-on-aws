@@ -21,7 +21,11 @@ from unified_kg_rag.adapters.llm import retry as llm_retry
 from unified_kg_rag.adapters.llm.langchain import BatchProcessor
 from unified_kg_rag.adapters.llm.retry import backoff_delay
 from unified_kg_rag.domain.models import Config
-from unified_kg_rag.domain.models.config import RETRY_PROFILES, RetryPolicy
+from unified_kg_rag.domain.models.config import (
+    RETRY_PROFILES,
+    ClientRetryPolicy,
+    RetryPolicy,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -59,7 +63,7 @@ def test_every_profile_is_pinned() -> None:
 def test_a_profile_set_in_part_keeps_its_own_defaults() -> None:
     retry = Config(retry={"graph_store": {"max_attempts": 6}}).retry
     assert _values(retry.graph_store) == (6, 2.0, None, None, "full")
-    assert retry.model == RetryPolicy(**RETRY_PROFILES["model"])
+    assert retry.model == ClientRetryPolicy(**RETRY_PROFILES["model"])
 
 
 def test_a_profile_rejects_an_unknown_key() -> None:
@@ -229,8 +233,10 @@ def test_the_client_attempts_default_to_the_clients_former_counts() -> None:
     retry = Config().retry
     assert retry.model.client_max_attempts == 6
     assert retry.bulk_item.client_max_attempts == 6
+    # The other profiles have no such key: their callers' clients make one
+    # request per attempt (the configuration reference lists none).
     for name in RETRY_PROFILES.keys() - {"model", "bulk_item"}:
-        assert getattr(retry, name).client_max_attempts is None, name
+        assert "client_max_attempts" not in type(getattr(retry, name)).model_fields
 
 
 @pytest.mark.parametrize(
@@ -274,6 +280,10 @@ def test_a_profile_whose_client_retries_nothing_refuses_client_attempts(
 ) -> None:
     with pytest.raises(ValueError, match=f"retry.{profile}.client_max_attempts"):
         Config(retry={profile: {"client_max_attempts": 3}})
+    # Assigned too, and from a policy that has the key.
+    config = Config()
+    with pytest.raises(ValueError, match=f"retry.{profile}.client_max_attempts"):
+        setattr(config.retry, profile, config.retry.model)
 
 
 # --- a refused call is never retried -------------------------------------------

@@ -219,4 +219,6 @@ def test_the_model_profile_is_the_policy_default() -> None:
     # RetryPolicy() is the retry.model profile's (its client_max_attempts
     # sizes the package's own Bedrock clients, which a custom factory has not).
     model = Config().retry.model
-    assert model.model_copy(update={"client_max_attempts": None}) == RetryPolicy()
+    assert model.model_dump(exclude={"client_max_attempts"}) == (
+        RetryPolicy().model_dump()
+    )

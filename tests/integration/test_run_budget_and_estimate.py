@@ -429,3 +429,101 @@ def test_a_budget_stop_publishes_and_reports_the_calls_it_paid_for(
     context = resumed.run(source, pipeline_id="budget")
     assert context.status is PipelineStageStatus.COMPLETED
     assert sink.calls() == counted.calls
+
+
+_CHUNKING_MARKER = "intelligent semantic chunking"
+
+
+class _Chunking(_Counting):
+    """The counting responder, also answering the intelligent chunker's
+    boundary calls (no cut)."""
+
+    def __call__(self, system: str, human: str) -> str:
+        if _CHUNKING_MARKER not in system:
+            return super().__call__(system, human)
+        with self._lock:
+            self.calls["text_chunking"] += 1
+            self.tokens["text_chunking"] += estimate_token_count(
+                system
+            ) + estimate_token_count(human)
+        return '<?xml version="1.0" encoding="UTF-8"?>\n<chunk_boundaries>\n</chunk_boundaries>'
+
+
+def _lined_corpus(root: Path, documents: int = 6) -> Path:
+    """Documents of many short lines, en, ko and ja: a boundary call
+    numbers every line of its pre-chunk."""
+    lines = ("Vendor ships.", "벤더가 보낸다.", "ベンダーが送る。", "Buyer pays.")
+    source = root / "corpus"
+    source.mkdir()
+    for i in range(documents):
+        text = "\n".join(f"{lines[(i + j) % 4]} {i}-{j}" for j in range(120 + i))
+        (source / f"doc{i}.txt").write_text(text, encoding="utf-8")
+    return source
+
+
+def test_the_estimate_counts_the_intelligent_chunkers_boundary_calls(
+    tmp_path: Path,
+) -> None:
+    # The default chunker: a boundary call per pre-chunk worth one, its
+    # input the pre-chunk with a number on each line; the units are those of
+    # a chunking no boundary answer cut, so the per-unit stages are "about".
+    from unified_kg_rag.domain.models.config import ChunkingStrategy
+
+    config = _config()
+    chunking = config.processing.chunking
+    chunking.chunker_type = ChunkingStrategy.INTELLIGENT
+    chunking.min_chunk_size = 40
+    chunking.max_chunk_size = 2000
+    # Pre-chunks of many lines: their numbers are a share of a call's input.
+    chunking.pre_chunk_size = 1500
+    chunking.pre_chunk_overlap = 0
+    source = _lined_corpus(tmp_path)
+    estimate = estimate_ingestion(config, source)
+    counted = _Chunking()
+    context = _pipeline(config, source, tmp_path / "cache", counted).run(
+        source, pipeline_id="intelligent"
+    )
+    assert context.status is PipelineStageStatus.COMPLETED
+    rows = {row.stage: row for row in estimate.stages}
+    chunked = rows["text_chunking"]
+    assert counted.calls["text_chunking"] > 1
+    assert (chunked.calls, chunked.bound) == (counted.calls["text_chunking"], "exact")
+    # Within 2%: the line numbers are about 5% of these calls' input.
+    assert chunked.input_tokens == pytest.approx(
+        counted.tokens["text_chunking"], rel=0.02
+    )
+    assert rows["graph_extraction"].bound == "about"
+    assert rows["gleaning"].bound == "at most"
+
+
+def test_the_estimate_translates_into_no_source_language(tmp_path: Path) -> None:
+    from unified_kg_rag.domain.models.config import LanguageCode
+
+    config = _config()
+    translation = config.processing.translation
+    translation.enabled = True
+    translation.source_language = LanguageCode.EN
+    translation.target_language = LanguageCode.KO
+    # The source language among the targets: its text is the unit's own.
+    translation.additional_target_languages = [LanguageCode.EN, LanguageCode.JA]
+    estimate = estimate_ingestion(config, _corpus(tmp_path))
+    rows = {row.stage: row for row in estimate.stages}
+    assert rows["translation"].calls == 2 * estimate.text_units
+
+
+def test_the_estimate_drops_the_copies_deduplication_drops(tmp_path: Path) -> None:
+    config = _config()
+    source = _corpus(tmp_path, documents=4)
+    for i in range(4):
+        text = (source / f"doc{i}.txt").read_text(encoding="utf-8")
+        (source / f"copy{i}.txt").write_text(text + " Note.", encoding="utf-8")
+    config.processing.deduplicate = True
+    estimate = estimate_ingestion(config, source)
+    counted = _Counting()
+    context = _pipeline(config, source, tmp_path / "cache", counted).run(
+        source, pipeline_id="deduplicated"
+    )
+    assert context.status is PipelineStageStatus.COMPLETED
+    assert estimate.documents == len(context.documents) == 4
+    assert estimate.text_units == len(context.text_units)
+    assert estimate.calls == pytest.approx(sum(counted.calls.values()), rel=0.15)

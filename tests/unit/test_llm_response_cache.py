@@ -274,6 +274,73 @@ def test_the_responses_of_a_failed_item_are_not_served_again(
     assert respond.calls == asked + 1
 
 
+@pytest.mark.parametrize("stop_in", ["call", "wait"])
+def test_a_stop_after_an_unparseable_attempt_drops_its_response(
+    tmp_path: Path, stop_in: str
+) -> None:
+    # A budget stop (a KeyboardInterrupt) after an attempt whose answer did
+    # not parse: the resumed run must not replay that answer (free, but one
+    # of its attempts spent on it). The stop refuses the retry's call, or
+    # comes from another item while this one waits to retry (a throttled
+    # second attempt), so it makes no third. Ordered by events: the other
+    # item stops the batch only once this one's second attempt started, and
+    # the retry's wait (a minute) ends only by the stop: its next attempt is
+    # then the abandoned batch's, never made.
+    from unified_kg_rag.shared.exceptions import RunBudgetExhausted
+
+    def stop() -> RunBudgetExhausted:
+        return RunBudgetExhausted("stopped", limit="max_run_model_calls", value=1)
+
+    first = LLMResponseCache(flush_every=100)
+    first.open(tmp_path)
+    model = _model(first, lambda system, human: f"unparseable {human}")
+    attempts: list[str] = []
+    second_attempt = threading.Event()
+
+    def attempt(request: dict[str, Any]) -> str:
+        text = request["text"]
+        attempts.append(text)
+        if text == "stop":
+            assert second_attempt.wait(10), "q's second attempt never started"
+            raise stop()
+        if attempts.count(text) == 2:
+            if stop_in == "call":
+                raise stop()
+            second_attempt.set()
+            raise TimeoutError("throttled")
+        return _rejecting("unparseable")(_ask(model, text))
+
+    texts = ["q"] if stop_in == "call" else ["q", "stop"]
+    processor = BatchProcessor(
+        max_concurrency=2,
+        retry=RetryPolicy(
+            max_attempts=3,
+            base_delay_seconds=30.0,
+            max_delay_seconds=None,
+            max_total_seconds=None,
+            jitter="none",
+        ),
+    )
+    with pytest.raises(RunBudgetExhausted):
+        processor.execute_with_fallback(
+            texts,
+            lambda items: [{"text": text} for text in items],
+            attempt,
+            "test",
+            show_progress=False,
+        )
+    assert attempts.count("q") == 2
+    first.close()
+
+    second = LLMResponseCache(flush_every=100)
+    second.open(tmp_path)
+    results = _batch(
+        _model(second, lambda system, human: f"parsed {human}"), ["q"], lambda a: a
+    )
+    assert results == ["parsed q"]
+    assert (second.hits, second.misses) == (0, 1)
+
+
 def test_a_served_response_its_item_rejects_is_dropped(tmp_path: Path) -> None:
     # Stored by an earlier run (a parser since tightened, a response from
     # before this rule): once its item fails on it, no later run gets it.

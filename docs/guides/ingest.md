@@ -144,8 +144,9 @@ tokens, temperature and reasoning.
 
 ## Run budget and cost estimate
 
-`run-ingestion --estimate` prices a corpus before a run: it parses and
-chunks it (no model call, no store, nothing written) and prints, per stage,
+`run-ingestion --estimate` prices a corpus before a run: it parses it,
+drops the near-duplicates `processing.deduplicate` would, and chunks it (no
+model call, no store, nothing written) and prints, per stage,
 the model calls, input and output tokens and USD a full build would cost,
 priced by `models.prices` ([Evaluation: Comparing strategies](./evaluate.md#comparing-strategies)
 shows the price entries; `--output-format json` prints the estimate as JSON):
