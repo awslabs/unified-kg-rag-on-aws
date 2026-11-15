@@ -1166,6 +1166,46 @@ async def test_a_drift_action_whose_context_fits_nothing_is_a_limit_stop() -> No
     assert strat.action.calls and all(c["context"] == "" for c in strat.action.calls)
 
 
+async def test_a_drift_action_left_out_for_its_share_ends_the_rounds() -> None:
+    # Of a round's two actions, the one no section of whose evidence fits
+    # its share is left out as a limit stop, the other answers: the rounds
+    # end with it, as they do when the plan leaves an action out, though
+    # the answer asked for a follow-up.
+    from tests.unit import test_drift_search_logic as drift
+
+    class _NothingFor(drift._Tokens):
+        def optimize_context(self, results, query, max_tokens, estimated_within=None):
+            return drift._Optimized(results[:0] if query == "second?" else results)
+
+    def primer(inputs: dict) -> str:
+        return json.dumps(
+            {
+                "intermediate_answer": "draft",
+                "score": 40,
+                "follow_up_queries": ["first?", "second?"],
+            }
+        )
+
+    strat = drift._strategy(
+        local=drift._Local(),
+        primer=primer,
+        action=drift._action({"first?": (60, ["deeper?"])}),
+        n_depth=2,
+    )
+    strat.token_manager = _NothingFor()  # type: ignore[assignment]
+    with (
+        degradation_scope(),
+        usage.usage_scope(usage.UsageLimits(max_input_tokens=100_000)),
+    ):
+        result = await strat.asearch(SearchQuery(query="question"))
+    assert [c["query"] for c in strat.action.calls] == ["first?"]
+    assert result.metadata["drift_depth"] == 1  # no round after it
+    sources = {r.source for r in result.results}
+    assert {"t:first?", "t:second?"} <= sources  # both follow-ups' evidence
+    steps = [(e["step"], e["reason"]) for e in result.metadata["degraded"]]
+    assert steps.count(("drift_action", "query_limit: 1 of 1 calls not started")) == 1
+
+
 def _limited_context(chain: GraphRAGChain, results: list[Any], limit: int) -> Any:
     """The answer context ``chain`` builds from ``results`` under an
     input-token ``limit``, and what it recorded as degraded."""
