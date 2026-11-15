@@ -26,23 +26,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prices the model under every profile when no other entry disagrees. `evaluation.prices` is deprecated: it loads
   into `models.prices` with a WARNING (an entry both name keeps the `models.prices` price), through one rule for
   deprecated keys (`DEPRECATED_KEYS`, file and `UKR__` variables alike, listed in the configuration reference).
-- Query limits beside the deadline: `search.query_max_model_calls` and `search.query_max_input_tokens` (off by default)
-  bound one query's model calls and their input tokens, and `RAGInput.limits` (`QueryLimits`, exported; the MCP tools'
-  `limits`, whose deadline covers the wait for a call slot, the server's own reported by `kg_describe_schema`) lowers
-  them and the deadline for one query, never raising them. A call past a limit is refused before it is sent: the usage
-  callback now raises its refusal (LangChain swallowed a handler's error) and logs any other error of its own. `global`,
-  `drift` and `iterative` start only the calls that fit beside what the answer will read (DRIFT's actions sharing what
-  is left) and list the rest in `metadata.degraded` (reason `query_limit`), `auto` routes only to strategies whose
-  fewest calls fit (when none fits with its query translation and extractions, to those that fit without them, which
-  it then skips) and makes no router call an input-token limit cannot take (`metadata.routing.over_limits`) and under
-  either limit starts no speculative extraction, the answer's context is cut to the tokens left after the answer
-  prompt and the question (the fan-out keeps that prompt's tokens too), an optional call (a query translation or
-  extraction, the follow-up rewrite, which then searches the follow-up as written, the structured planner, an output
-  repair: `usage.optional_calls`) never takes the call kept for the answer, nor under an input-token limit the answer's
-  prompt, question and least context, its step degraded instead, an answer the limits left no context abstains with
-  `abstention_reason: query_limit`, and a query whose answer does not fit fails with `UsageLimitExceededError` (error
-  class `limit_exceeded`, a caller's error: not counted in `query_failed`, `refused` on the console's dashboard, its
-  message shown to an MCP caller; exit code 1, console HTTP 422).
+- Query limits beside the deadline: `search.query_max_model_calls` and `search.query_max_input_tokens` (off by
+  default) bound one query's model calls and their input tokens, and `RAGInput.limits` (`QueryLimits`, exported; the
+  MCP tools' `limits`, whose deadline covers the wait for a call slot, the server's own reported by
+  `kg_describe_schema`) lowers them and the deadline for one query, never raising them. A call past a limit is refused
+  before it is sent: the usage callback now raises its refusal (LangChain swallowed a handler's error) and logs any
+  other error of its own (`setup_logging` drops LangChain's own "Error in UsageCallbackHandler... callback" WARNING of
+  a refusal). `global`, `drift` and `iterative` start only the calls that fit beside what the answer will read
+  (DRIFT's actions sharing what is left; each planned call counted with the question it carries, by the one estimate
+  of the answer's call, `answer_call_tokens`) and list the rest in `metadata.degraded` (reason `query_limit`), `auto`
+  routes only to strategies whose fewest calls fit (when none fits with its query translation and extractions, to
+  those that fit without them, which it then skips) and makes no router call an input-token limit cannot take
+  (`metadata.routing.over_limits`) and under either limit starts no speculative extraction, the answer's context is
+  cut to the tokens left after the answer prompt and the question (the fan-out keeps that prompt's tokens too; a cut
+  listed as `query_limit: N of M sections cut`), a search (`asearch`, `kg_search`, `--mode search`) keeps nothing for
+  an answer it does not make, a query naming `drift` keeps its one action's call too, an optional call (a query
+  translation or extraction, the follow-up rewrite, which then searches the follow-up as written, the structured
+  planner, an output repair: `usage.optional_calls`) never takes the call kept for the answer, nor under an
+  input-token limit the answer's prompt, question and least context (nor, with nothing kept, a call past the limit),
+  its step degraded instead, an answer the limits left no context abstains with `abstention_reason: query_limit`, and
+  a query whose answer does not fit fails with `UsageLimitExceededError` (error class `limit_exceeded`, a caller's
+  error: not counted in `query_failed`, `refused` on the console's dashboard, its message shown to an MCP caller; exit
+  code 1, console HTTP 422).
 - One streaming path: `GraphRAGChain.aquery_events()` (sync `query_events()`) yields typed events (`QueryEvent`,
   exported with `QueryStart`, `QueryRouted`, `QuerySources`, `AnswerChunk` and `QueryResult`): the query `ainvoke`
   runs, its deadline, query limits, guardrail, metrics and memory included, ending with its `RAGOutput`. LangChain's
@@ -52,7 +57,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ends it before it writes memory, counted as no failure. Under the output guardrail the answer model still streams
   (its first chunk bounded by `search.model_timeout_seconds`) and nothing is shown until the whole answer is
   screened: then its sources and the screened answer, one chunk, before the turn is written. The console's Ask page
-  reads the events.
+  reads the events. A transient retry while the stream waits for its first chunk starts only if it can end within
+  that window, as in 0.3.0: past it the model's error is raised, not a first-chunk timeout.
 - Rebuild due: `run-describe` (`rebuild`, `Rebuild due (...)` lines), the console's Ingest page
   (`/api/namespace/methodologies`, under the methodologies picked) and the MCP `kg_describe_schema` tool say why a
   namespace is due for a rebuild under the config, from one owner (`rebuild_due`, its `RebuildReason` exported):
@@ -67,7 +73,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   max_tokens to leave that level's reasoning room on every model family and, on an older Claude model (4.5 and
   before), sizes its thinking budget; unset, nothing changes. An effort the answer model cannot apply (a level it
   does not take, or a model that does not reason, as a local server's) is refused before any answer's model call
-  (`InvalidArgumentError`); a search, which makes no answer, takes any.
+  (`InvalidArgumentError`); a search, which makes no answer, takes any. `run-rag --effort` and `run-eval --effort` set
+  it (a dataset item's `metadata.effort` wins in `run-eval`); the MCP tools and the console's Ask page do not take it.
+  The query span (`kg_rag.effort`, `kg_rag.limits.max_model_calls`, `kg_rag.limits.max_input_tokens`) and the query
+  metrics record (`effort`, `limits.*` properties) name the effort and the limits in force.
 - An ingestion run's budget and cost estimate. `processing.max_run_model_calls` and `processing.max_run_usd` (off by
   default; USD priced by `models.prices`) refuse the model call that would pass them and stop the run once the calls
   already sent have answered (`RunBudgetExhausted`, exported, error class `limit_exceeded`, exit 1): its finished stages
@@ -143,7 +152,11 @@ Bugs present in 0.3.0.
 - A `GraphRAGChain` dropped without `close()` could hang another chain's query for up to 90 s: the garbage collector
   ran the dropped chain's finalizer wherever it triggered (once inside another chain's executor submit, under the
   executors' global lock), and the finalizer waited there for its own loop, whose closes needed that lock. The
-  finalizer hands the release to a thread of its own and returns at once.
+  finalizer puts the release on a queue a daemon worker, started with the first chain, drains, and returns at once:
+  it starts no thread either, whose start could hang on Python 3.11 and 3.12 under threading's shutdown lock.
+- A JSON answer whose repair (`models.roles.fixing`) failed with a transient error re-ran the query's model call that
+  had answered (the transient retry wraps the parser too), paying for it again: a repair that fails leaves the
+  answer unrepaired, logged with the fixer's error by type.
 - A query the input guardrail blocked was counted in the query metrics under `Strategy=invalid` (its output's
   strategy is `blocked`): it is counted under the strategy it asked for.
 - A streamed answer (`astream`, `ainvoke(on_answer_chunk=...)`, the console) counted its model call twice in

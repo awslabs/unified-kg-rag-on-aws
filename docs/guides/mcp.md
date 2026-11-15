@@ -65,6 +65,10 @@ raising it; `kg_describe_schema` reports the server's own as
 slot too. A call past one fails with `limit_exceeded`, whose message names
 the limit, or is answered without the steps that did not fit, listed in
 `degraded` ([Query limits](./query.md#model-call-and-input-token-limits)).
+They take no answer `effort` (`RAGInput.effort`): unlike a limit, an effort
+can raise a call's cost and latency, so a caller's would need a server
+ceiling first; the answers use the answer model's configured effort
+([Reasoning effort](./query.md#reasoning-effort)).
 
 Every tool is annotated read-only and idempotent. Call
 `kg_describe_schema` first: it says which strategies the namespace can

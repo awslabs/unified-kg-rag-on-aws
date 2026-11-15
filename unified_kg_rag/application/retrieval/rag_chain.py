@@ -809,9 +809,9 @@ class QuerySources(BaseModel):
 class AnswerChunk(BaseModel):
     """A piece of the answer as the answer model writes it: a preview, the
     ``[NO_ANSWER]`` marker stripped (``search.abstention``). Under the
-    output guardrail, one chunk: the whole answer once screened. None for
-    a fixed reply (an empty context, a decline); :class:`QueryResult`
-    carries the answer."""
+    output guardrail, one chunk: the whole answer once screened, a fixed
+    reply's too. Without it none for a fixed reply (an empty context, a
+    decline); :class:`QueryResult` carries the answer."""
 
     kind: Literal["chunk"] = "chunk"
     text: str = Field(description="The text written since the last chunk")
@@ -3872,8 +3872,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         :class:`QueryStart` once the query is admitted, :class:`QueryRouted`
         once its strategy is resolved, :class:`QuerySources` (the sources the
         answer model is given), :class:`AnswerChunk` as the answer model
-        writes (under the output guardrail one, the screened answer; none
-        for a fixed reply), then
+        writes (under the output guardrail one, the screened answer, a fixed
+        reply's too; without it none for a fixed reply), then
         :class:`QueryResult` with the :class:`RAGOutput` ``ainvoke``
         returns. A query blocked by the input guardrail, or failed under
         ``processing.ignore_errors``, yields its start (when admitted), its
