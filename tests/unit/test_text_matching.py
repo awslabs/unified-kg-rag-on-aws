@@ -407,6 +407,25 @@ class TestStatedNumbers:
     @pytest.mark.parametrize(
         ("text", "numbers"),
         [
+            # A Han decimal point before 万 or 億 (zh numeral_decimal_points).
+            ("一点五万元", {15_000}),
+            ("十二点五万元", {125_000}),
+            ("投资额为一点二亿元", {120_000_000}),
+            ("一點五萬元", {15_000}),
+            # Before a smaller multiplier it is another word: a time, a
+            # little.
+            ("三点五十分", set()),
+            ("便宜一点五千元", {5000}),
+        ],
+    )
+    def test_a_han_decimal_point_before_a_section_multiplier(
+        self, text: str, numbers: set[float]
+    ) -> None:
+        assert stated_numbers(text) == numbers
+
+    @pytest.mark.parametrize(
+        ("text", "numbers"),
+        [
             # Regression (rv35 index M1): a form of a sum in words is a
             # letter of another word outside a sum, even before a counter.
             ("大陆人", set()),

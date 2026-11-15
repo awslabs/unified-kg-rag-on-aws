@@ -659,6 +659,12 @@ _SUM_NUMERALS = frozenset(
 _CURRENCY_COUNTERS = tuple(
     dict.fromkeys(c for language in _HAN_LANGUAGES for c in language.currency_counters)
 )
+# The decimal points of Han digits ("一点五万"; ``numeral_decimal_points``),
+# read before a multiplier that closes a section (万, 億) only.
+_DECIMAL_POINTS = "".join(
+    sorted({p for language in _HAN_LANGUAGES for p in language.numeral_decimal_points})
+)
+_SECTION_MULTIPLIERS = "".join(ch for ch, v in _MULTIPLIERS.items() if v >= 10**4)
 
 
 def _magnitude(value: int) -> int:
@@ -850,7 +856,8 @@ _CJK_NONE = re.compile(
     re.MULTILINE,
 )
 # Han, Sino-Korean and ASCII digits with the multipliers between them
-# ("十二", "一万二千", "1만 2천", "만 이천", "三", "1.5万", "3,000万");
+# ("十二", "一万二千", "1만 2천", "만 이천", "三", "1.5万", "3,000万", and
+# a Han decimal before 万 or 億: "一点五万");
 # ``_cjk_value`` reads them. A run of the ordinary forms is ``_CJK_NUMBER``,
 # so "人参三人" is 3, not 33; a run of any form before a currency counter
 # is a candidate sum (``_CJK_SUM``, read by ``_sum_value``: "叁仟伍佰元",
@@ -858,8 +865,20 @@ _CJK_NONE = re.compile(
 _CJK_CHARS = "".join([*_HAN_DIGITS, *_SINO_KOREAN_DIGITS, *_MULTIPLIERS])
 
 
+def _han_decimal(digits: str) -> str:
+    """Han ``digits`` with a decimal point between them ("一点五"), before
+    a multiplier that closes a section ("一点五万")."""
+    if not _DECIMAL_POINTS:
+        return "(?!)"
+    return (
+        rf"[{digits}]+[{_DECIMAL_POINTS}][{digits}]+"
+        rf"(?=[^\S\n]?[{_SECTION_MULTIPLIERS}])"
+    )
+
+
 def _cjk_run(chars: str) -> str:
-    part = f"(?:{_DIGIT_FORM}|[{chars}])"
+    decimal = _han_decimal("".join(ch for ch in chars if ch in _HAN_DIGITS))
+    part = f"(?:{_DIGIT_FORM}|{decimal}|[{chars}])"
     return rf"{part}(?:[^\S\n]?{part})*"
 
 
@@ -868,7 +887,7 @@ def _cjk_run(chars: str) -> str:
 # that only sets a clause off starts one: "据报道，三千元" (NFKC folds
 # "，" to ",") is 3000, "是的，五家" 5.
 _NO_NUMBER_BEFORE = r"(?<!\d)(?<!\d[.,])"
-_CJK_PART_TOKEN = re.compile(rf"{_DIGIT_FORM}|\S")
+_CJK_PART_TOKEN = re.compile(rf"{_DIGIT_FORM}|{_han_decimal(''.join(_HAN_DIGITS))}|\S")
 _CJK_NUMBER = re.compile(
     rf"(?<!{_HANGUL}){_NO_NUMBER_BEFORE}"
     + _cjk_run("".join(ch for ch in _CJK_CHARS if ch not in _SUM_NUMERALS))
@@ -930,9 +949,17 @@ def _cjk_value(match: re.Match[str], counted: bool | None = None) -> float | Non
 
 
 def _digit_value(part: str) -> float:
-    """The value of a digit part of a ``_CJK_PART_TOKEN`` run."""
+    """The value of a digit part of a ``_CJK_PART_TOKEN`` run: digits
+    ("1,500", "1.5"), a Han or Sino-Korean digit, or Han digits with a
+    decimal point ("一点五" is 1.5)."""
     if part[0].isdigit():
         return float(part.replace(",", ""))
+    if len(part) > 1:
+        return float(
+            "".join(
+                "." if ch in _DECIMAL_POINTS else str(_HAN_DIGITS[ch]) for ch in part
+            )
+        )
     return _HAN_DIGITS.get(part, _SINO_KOREAN_DIGITS.get(part, 0))
 
 

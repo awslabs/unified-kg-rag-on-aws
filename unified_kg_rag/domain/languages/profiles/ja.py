@@ -94,6 +94,8 @@ PROFILE = LanguageProfile(
     # "持参人"), "拾" to pick up ("拾う"). 萬 is the older form of 万.
     sum_numerals=frozenset("壱弐参拾"),
     currency_counters=("円",),
+    # No numeral_decimal_points: "一・五万円" may be 15,000, but "・" also
+    # joins a range ("二・三日", two or three days; "三・四万円").
     polarity_words={"はい": "yes", "いいえ": "no"},
     quote_pairs=(("「", "」"), ("『", "』")),
     chars_per_token={CLAUDE_TOKENIZER: 1.03},

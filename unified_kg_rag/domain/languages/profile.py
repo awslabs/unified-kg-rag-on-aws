@@ -134,6 +134,11 @@ class LanguageProfile:
     # deduplication digest) read them everywhere.
     sum_numerals: frozenset[str] = frozenset()
     currency_counters: tuple[str, ...] = ()
+    # The decimal points of ``counter_numerals`` ("点" in "一点五万", 15,000),
+    # read between digits before a multiplier of ten thousand or more only:
+    # below it a number writes its places in full ("一千五百"), and the
+    # mark is also another word ("三点五十分" is a time, "一点" a little).
+    numeral_decimal_points: frozenset[str] = frozenset()
     # Numerals that state a count standing alone, with at most a particle
     # or the copula after them ("하나입니다", "셋이에요"), by value; the forms
     # before a counter that are other words alone ("한", "세", "네") are
