@@ -566,19 +566,18 @@ class DriftSearchStrategy(BaseSearchStrategy):
             if isinstance(selection, str):
                 counts = stats["report_selection"]
                 counts[selection] = counts.get(selection, 0) + 1
+            # Under an input-token limit the share is planned at the meter's
+            # estimate: the built context is packed down to it.
+            within = (
+                context_tokens if usage.remaining().input_tokens is not None else None
+            )
             # Counting can be one CountTokens request per section: off the loop.
             optimized = await asyncio.to_thread(
                 self.token_manager.optimize_context,
                 local.results,
                 follow_up,
                 self.drift_config.local_context_tokens,
-                # Under an input-token limit the share is planned at the
-                # meter's estimate: the built context is packed down to it.
-                estimated_within=(
-                    context_tokens
-                    if usage.remaining().input_tokens is not None
-                    else None
-                ),
+                estimated_within=within,
             )
             context = self.token_manager.build_context_string(optimized)
             answer = _Answer(
@@ -594,6 +593,13 @@ class DriftSearchStrategy(BaseSearchStrategy):
                 ],
             )
             if not local.results:
+                return answer
+            if within is not None and not optimized.sections:
+                # No section of its evidence fits the share the limits leave
+                # it: an action that did not fit, not one asked to answer
+                # from nothing.
+                self._record_limit_stop(DegradationStep.DRIFT_ACTION, 0, 1)
+                answer.limited = True
                 return answer
             try:
                 raw = await self.action.ainvoke(
