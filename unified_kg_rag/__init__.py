@@ -215,7 +215,9 @@ _EXPORTS: dict[str, str] = {
     "GraphQueryRequest": "unified_kg_rag.domain.models.graph_query",
     "GraphQueryResult": "unified_kg_rag.domain.models.graph_query",
     "GroundingContext": "unified_kg_rag.ports.guardrail",
+    "EmbeddingModelInfo": "unified_kg_rag.ports.model_factory",
     "LanguageModelInfo": "unified_kg_rag.ports.model_factory",
+    "RerankModelInfo": "unified_kg_rag.ports.model_factory",
     "RetryPolicy": "unified_kg_rag.domain.models.config",
     "TransientRetryConfig": "unified_kg_rag.domain.models.config",
     "RenderContext": "unified_kg_rag.adapters.renderers.base",
@@ -355,7 +357,11 @@ if TYPE_CHECKING:
     )
     from unified_kg_rag.ports.guardrail import GroundingContext
     from unified_kg_rag.ports.indexer import GraphCensusRow, StoredAnnotation
-    from unified_kg_rag.ports.model_factory import LanguageModelInfo
+    from unified_kg_rag.ports.model_factory import (
+        EmbeddingModelInfo,
+        LanguageModelInfo,
+        RerankModelInfo,
+    )
     from unified_kg_rag.shared.exceptions import (
         ConfigurationError,
         ConfirmationDeclinedError,

@@ -84,6 +84,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `similarity_threshold`, as before (and keys no stage cache).
 - `processing.deduplicate_similarity_threshold` (default 0.9, the fixed value before): the 3-gram similarity at which
   `processing.deduplicate` reads two documents as copies.
+- The `text_chunking` stage warns when chunk sizes counted in characters (`length_unit: chars`) meet a corpus mostly
+  in a dense script (a chunk then holds about four times the tokens of a Latin one), and when text units are
+  estimated over the embedding model's input or the reranker's document limit, which read only their start; nothing
+  else changes. `Providers.embedding_model_info()` and `rerank_model_info()` (their `EmbeddingModelInfo` and
+  `RerankModelInfo` now exported) read those limits from the Bedrock catalog without building a client.
 
 ### Changed
 

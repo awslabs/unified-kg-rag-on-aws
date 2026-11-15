@@ -27,10 +27,10 @@ from langchain_core.documents import Document
 from pydantic import Field, PrivateAttr
 
 from unified_kg_rag.adapters.aws.bedrock_models import (
-    _EMBEDDING_MODEL_INFO,
-    _RERANK_MODEL_INFO,
     base_model_id,
+    get_embedding_model_info,
     get_language_model_info,
+    get_rerank_model_info,
     profile_target_model_id,
     requires_embedding_profile,
 )
@@ -599,8 +599,7 @@ class BedrockEmbeddingModelFactory(
     def get_model_info(
         self, model_id: EmbeddingModelId | str
     ) -> EmbeddingModelInfo | None:
-        catalog_id = self._catalog_id(model_id)
-        return None if catalog_id is None else _EMBEDDING_MODEL_INFO.get(catalog_id)
+        return get_embedding_model_info(model_id_value(model_id))
 
     def _resolve_invocation_id(self, catalog_id: EmbeddingModelId, given: str) -> str:
         """The id to invoke: ``given`` when it is already a profile id or ARN
@@ -1155,7 +1154,7 @@ class BedrockRerankModelFactory(
         return "rerank"
 
     def get_model_info(self, model_id: str) -> RerankModelInfo | None:
-        return _RERANK_MODEL_INFO.get(model_id)
+        return get_rerank_model_info(model_id)
 
     def get_model(
         self, model_id: RerankModelId | str, **kwargs: Any

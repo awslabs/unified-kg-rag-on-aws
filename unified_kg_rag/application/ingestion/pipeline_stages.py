@@ -136,6 +136,7 @@ from unified_kg_rag.domain.languages.corpus import (
 )
 from unified_kg_rag.domain.models import (
     ChunkingStrategy,
+    ChunkLengthUnit,
     Claim,
     Community,
     CommunityChange,
@@ -1291,6 +1292,7 @@ class TextChunkingStage(PipelineStage):
             if is_seed_document(document)
             for unit in seed_text_units(document, count_tokens=estimate_token_count)
         ]
+        self._warn_of_chunk_sizes(documents, text_units)
         text_units.extend(seed_units)
         context.text_units = text_units
         total_chunks = len(text_units)
@@ -1305,6 +1307,63 @@ class TextChunkingStage(PipelineStage):
         }
 
         return doc_count, total_chunks, metrics
+
+    def _warn_of_chunk_sizes(
+        self, documents: list[Document], text_units: list[TextUnit]
+    ) -> None:
+        """WARN when chunk sizes counted in characters meet a dense-script
+        corpus (a chunk then holds about four times the tokens the same
+        setting gives Latin text), and when chunks outgrow the input the
+        embedding model or the reranker reads (each reads only the start of
+        a longer one). The run goes on; no setting changes."""
+        chunking = self.config.processing.chunking
+        if (
+            chunking.length_unit is ChunkLengthUnit.CHARS
+            and corpus_sample(d.page_content for d in documents).counts.dominant()
+            == "dense"
+        ):
+            logger.warning(
+                "Chunk size: processing.chunking.length_unit is chars and the "
+                "corpus is mostly in a dense script (Han, Hangul, Kana), about "
+                "one token a character: a chunk of max_chunk_size %d holds up to "
+                "about %d tokens, some four times what the setting gives Latin "
+                "text. length_unit: tokens sizes chunks in tokens.",
+                chunking.max_chunk_size,
+                chunking.max_chunk_size,
+            )
+        if not text_units:
+            return
+        tokens = [estimate_token_count(unit.text) for unit in text_units]
+        try:
+            limits = {
+                "embedding model": getattr(
+                    self.providers.embedding_model_info(), "max_sequence_tokens", None
+                ),
+                "reranker": getattr(
+                    self.providers.rerank_model_info(), "max_document_tokens", None
+                ),
+            }
+        except Exception as e:  # noqa: BLE001 - a warning's input, not the run's
+            logger.debug("Chunk size check skipped: no model limits (%s)", e)
+            return
+        for reader, limit in limits.items():
+            if not isinstance(limit, int) or isinstance(limit, bool):
+                continue
+            over = [count for count in tokens if count > limit]
+            if over:
+                logger.warning(
+                    "Chunk size: %d of %d text units hold more than the %s's "
+                    "%d-token input (up to about %d tokens, by the local "
+                    "estimate): it reads only the start of each. Lower "
+                    "processing.chunking.max_chunk_size (%d %s).",
+                    len(over),
+                    len(tokens),
+                    reader,
+                    limit,
+                    max(over),
+                    chunking.max_chunk_size,
+                    chunking.length_unit.value,
+                )
 
 
 class TranslationStage(PipelineStage):

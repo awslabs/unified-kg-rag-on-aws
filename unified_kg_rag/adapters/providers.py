@@ -35,7 +35,7 @@ from unified_kg_rag.adapters.provider_registry import (
     register_provider,
 )
 from unified_kg_rag.domain.ingestion.methodologies import writes_graph_store
-from unified_kg_rag.domain.models import Config, RetrieverRole
+from unified_kg_rag.domain.models import Config, RetrieverRole, model_id_value
 from unified_kg_rag.domain.models.provider_config import (
     BEDROCK,
     CROSS_ENCODER,
@@ -50,9 +50,11 @@ from unified_kg_rag.domain.models.provider_config import (
 )
 from unified_kg_rag.ports.model_factory import (
     EmbeddingFactoryPort,
+    EmbeddingModelInfo,
     LanguageModelInfo,
     LLMFactoryPort,
     RerankFactoryPort,
+    RerankModelInfo,
     TokenCounterPort,
 )
 from unified_kg_rag.shared.exceptions import ConfigurationError
@@ -222,6 +224,36 @@ class Providers:
                 model_id, self.config.aws.bedrock.model_overrides
             )
         return self.llm_factory.get_model_info(model_id)
+
+    def embedding_model_info(self) -> EmbeddingModelInfo | None:
+        """Capability record of the configured embedding model (its input
+        limits), as :meth:`llm_model_info`: from the catalog on Bedrock
+        without an injected factory, else the embedding factory's."""
+        model_id = model_id_value(self.config.embedding_model_id)
+        if (
+            self._embedding_factory is None
+            and self.kind(ProviderRole.EMBEDDING) == BEDROCK
+        ):
+            from unified_kg_rag.adapters.aws.bedrock_models import (
+                get_embedding_model_info,
+            )
+
+            return get_embedding_model_info(model_id)
+        return self.embedding_factory.get_model_info(model_id)
+
+    def rerank_model_info(self) -> RerankModelInfo | None:
+        """Capability record of the configured reranker (its document
+        limit), as :meth:`embedding_model_info`; None without a reranker."""
+        model_id = self.config.rerank_model_id
+        if model_id is None:
+            return None
+        if self._rerank_factory is None and self.kind(ProviderRole.RERANK) == BEDROCK:
+            from unified_kg_rag.adapters.aws.bedrock_models import (
+                get_rerank_model_info,
+            )
+
+            return get_rerank_model_info(model_id_value(model_id))
+        return self.rerank_factory.get_model_info(model_id)
 
     # --- stores --------------------------------------------------------------
 
