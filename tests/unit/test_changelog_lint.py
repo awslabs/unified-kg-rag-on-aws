@@ -383,6 +383,23 @@ def test_no_two_entries_contradict() -> None:
     assert _contradictions(SECTION) == []
 
 
+def _glued_headings(section: str) -> list[tuple[int, str]]:
+    """Lines holding a Markdown heading anywhere but at their start (a
+    reflow that joined a ``### ...`` line to the bullet above it)."""
+    return [
+        (number, line)
+        for number, line in enumerate(section.splitlines(), 1)
+        if re.search(r"\S\s+#{2,6} [A-Z]", line)
+    ]
+
+
+def test_no_heading_is_glued_into_a_line() -> None:
+    assert _glued_headings(SECTION) == []
+    assert _glued_headings("- an entry.  ### Changed\n") == [
+        (1, "- an entry.  ### Changed")
+    ]
+
+
 def test_no_line_is_over_long() -> None:
     assert _long_lines(SECTION) == []
 
