@@ -275,6 +275,9 @@ The release in one line.
 ### Added
 - A feature.
 
+### Deprecated
+- An old flag warns.
+
 ### Fixed
 - A bug.
 
@@ -298,6 +301,9 @@ def test_the_release_body_keeps_what_an_upgrade_needs_and_links_the_rest() -> No
         "The release in one line.\n\n"
         "### Highlights\n- Faster.\n\n"
         "### Breaking changes\n- A flag renamed.\n\n"
+        # What a user must replace before its removal, which a warning names
+        # but no other kept subsection lists.
+        "### Deprecated\n- An old flag warns.\n\n"
         "### Security\n- A floor.\n\n"
         "The full notes, with *Added* and *Fixed*: https://x.invalid/CHANGELOG.md#030\n"
     )
