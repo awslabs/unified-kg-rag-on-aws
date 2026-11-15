@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar
 
 from pydantic import BaseModel, Field
@@ -372,6 +372,7 @@ class TokenManager:
             all_sections,
             max(available_tokens - sum(headers.values()), 0),
             spare_budget_first,
+            headers,
         )
         if not selected_sections and all_sections:
             # No type fits beside every header: the best section's type is
@@ -581,7 +582,11 @@ class TokenManager:
         sections: list[ContextSection],
         token_budget: int,
         spare_budget_first: Sequence[SectionType] = (),
+        headers: Mapping[SectionType, int] | None = None,
     ) -> list[ContextSection]:
+        """``sections`` selected for ``token_budget``, beside which the
+        ``headers`` of their types are reserved (a type left unseated frees
+        its header's)."""
         # Synthesized sections (global search's ranked map key points or reduce
         # summary) are not one retrieved item of their type: they condense every
         # selected community report, and their producer already sized them
@@ -610,10 +615,17 @@ class TokenManager:
                 remaining -= head.token_count
             break
         evidence = [s for s in sections if not s.metadata.get("synthesized")]
+        unseated = {
+            t: tokens
+            for t, tokens in (headers or {}).items()
+            if t not in {s.section_type for s in reserved}
+        }
         if not reserved:
-            return self._select_per_type(evidence, token_budget, spare_budget_first)
+            return self._select_per_type(
+                evidence, token_budget, spare_budget_first, headers=unseated
+            )
         return reserved + self._select_per_type(
-            evidence, remaining, spare_budget_first, fallback=False
+            evidence, remaining, spare_budget_first, fallback=False, headers=unseated
         )
 
     def _select_per_type(
@@ -622,6 +634,7 @@ class TokenManager:
         token_budget: int,
         spare_budget_first: Sequence[SectionType] = (),
         fallback: bool = True,
+        headers: Mapping[SectionType, int] | None = None,
     ) -> list[ContextSection]:
         # Each type is packed in score order against its own share first, so
         # no type can cross into another's share by out-scoring it: scores are
@@ -652,28 +665,43 @@ class TokenManager:
         shares = self._type_budget_shares(list(by_type))
         caps = self._type_budgets(list(by_type), token_budget)
         min_spare = self.config.min_truncated_section_tokens
+        packed = {t: self._pack_type(lst, caps[t]) for t, lst in by_type.items()}
         # A round normally spends the spare or seats a receiver completely, so
-        # one round per type (after the first) bounds the loop.
-        for _ in range(len(by_type) + 1):
-            packed = {t: self._pack_type(lst, caps[t]) for t, lst in by_type.items()}
+        # one round per type bounds the loop.
+        for _ in range(len(by_type)):
             receivers = [t for t, (_, done) in packed.items() if not done]
-            # What the seated types leave and the receivers do not hold: a
-            # receiver keeps its whole cap (what it could not seat of it
-            # too), so its unused room is not lent to another type as well.
-            spare = token_budget - sum(
-                caps[t] if t in receivers else sum(s.token_count for s in seated)
+            used = {
+                t: sum(s.token_count for s in seated)
                 for t, (seated, _) in packed.items()
-            )
+            }
+            spare = token_budget - sum(used.values())
             if spare < min_spare or not receivers:
                 break
-            first = [t for t in spare_budget_first if t in receivers]
-            if first:
-                caps[first[0]] += spare
-                continue
-            total = sum(shares[t] for t in receivers)
-            for t in receivers:
-                weight = shares[t] / total if total > 0 else 1.0 / len(receivers)
-                caps[t] += int(spare * weight)
+            # The spare is lent on top of each receiver's cap: the room a
+            # receiver holds but could not seat is in the spare too, for any
+            # of them to use. When the receivers then seat past the budget
+            # (with the headers of the types they leave unseated, which it
+            # reserved), it is lent on top of what each seated instead, the
+            # room they held pooled in it (each token lent once).
+            lent = self._lent(caps, spare, receivers, shares, spare_budget_first)
+            trial = {t: self._pack_type(lst, lent[t]) for t, lst in by_type.items()}
+            if sum(
+                s.token_count for seated, _ in trial.values() for s in seated
+            ) > token_budget + sum(
+                tokens
+                for t, tokens in (headers or {}).items()
+                if not (t in trial and trial[t][0])
+            ):
+                lent = self._lent(
+                    {**caps, **{t: used[t] for t in receivers}},
+                    spare,
+                    receivers,
+                    shares,
+                    spare_budget_first,
+                    floor=min_spare,
+                )
+                trial = {t: self._pack_type(lst, lent[t]) for t, lst in by_type.items()}
+            caps, packed = lent, trial
         selected = [s for seated, _ in packed.values() for s in seated]
 
         if selected or not fallback:
@@ -700,6 +728,36 @@ class TokenManager:
                 return [section]
         head = self._truncate_to_tokens(ranked[0], token_budget)
         return [head] if head is not None else []
+
+    @staticmethod
+    def _lent(
+        caps: dict[SectionType, int],
+        spare: int,
+        receivers: list[SectionType],
+        shares: dict[SectionType, float],
+        spare_budget_first: Sequence[SectionType],
+        floor: int = 0,
+    ) -> dict[SectionType, int]:
+        """``caps`` with ``spare`` added to the receivers': all of it to the
+        first ``spare_budget_first`` type among them, else in proportion to
+        their ``shares`` (equally when they are all 0). When every part
+        falls below ``floor`` (the truncation floor: it could cut no section
+        to fit), the receiver with the largest share takes it all."""
+        lent = dict(caps)
+        first = [t for t in spare_budget_first if t in receivers]
+        if first:
+            lent[first[0]] += spare
+            return lent
+        total = sum(shares[t] for t in receivers)
+        parts = {
+            t: int(spare * (shares[t] / total if total > 0 else 1 / len(receivers)))
+            for t in receivers
+        }
+        if max(parts.values()) < floor:
+            parts = {max(receivers, key=lambda t: shares[t]): spare}
+        for t, part in parts.items():
+            lent[t] += part
+        return lent
 
     def _truncate_to_tokens(
         self, section: ContextSection, max_tokens: int

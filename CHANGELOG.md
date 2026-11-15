@@ -197,8 +197,9 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
 Bugs present in 0.3.0.
 
 - A context could read past its token budget: a section type whose next section fell below the truncation floor
-  kept its unused share while that share was also handed to the other types (a 244-token budget built 262). The
-  token manager hands each share out once.
+  kept its unused share while that share was also handed to the other types (a 244-token budget built 262). A round
+  that seats past the budget so now lends its spare once, the room the types held unseated pooled in it; any other
+  context is the one 0.3.0 built.
 - The console's Ask page showed the raw key `ask.abstention.no_reports` for a `global` question on a namespace without
   community reports.
 - The console's hovered primary button in the dark theme fell to 4.3:1 contrast; it keeps 4.7:1.
