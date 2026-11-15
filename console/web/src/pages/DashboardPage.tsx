@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Bars } from "../components/charts";
 import { Empty, ErrorText, JobStatusBadge, Loading, Notice, PageHead, Sheet } from "../components/ui";
-import { useI18n } from "../i18n/i18n";
+import { joinList, useI18n } from "../i18n/i18n";
 import { get, send } from "../lib/api";
 import { navigate } from "../lib/router";
 import type { JobRecord } from "../lib/types";
@@ -103,7 +103,7 @@ export function DashboardPage() {
             <Notice title={t("dashboard.noPricesTitle")}>{t("dashboard.noPrices")}</Notice>
           ) : d.unpriced_models.length ? (
             <Notice tone="warn" title={t("dashboard.unpricedTitle")}>
-              {t("dashboard.unpriced", { models: d.unpriced_models.join(", ") })}
+              {t("dashboard.unpriced", { models: joinList(d.unpriced_models, t) })}
             </Notice>
           ) : null}
           <div className="grid-cols">

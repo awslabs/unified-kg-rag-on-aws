@@ -28,6 +28,7 @@
   "common.previous": "上一页",
   "common.next": "下一页",
   "common.range": "共 {{total}} 个，第 {{from}}–{{to}} 个",
+  "common.listSeparator": "、",
   "common.goIngest": "前往摄取",
   "ask.title": "提问",
   "ask.lede": "向知识图谱提问。每个回答都会列出它读取的来源，每个来源都可追溯到对应段落及其在图谱中的位置。",

@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { JobPanel } from "../components/JobPanel";
 import { Empty, ErrorText, formatBytes, isBudgetStop, JobStatusBadge, Loading, Notice, PageHead, Sheet } from "../components/ui";
-import { useI18n } from "../i18n/i18n";
+import { joinList, useI18n } from "../i18n/i18n";
 import { errorMessage, get, send, upload } from "../lib/api";
 import type { Corpus, JobRecord, NamespaceHeld, RebuildReason, Status } from "../lib/types";
 import { useApi } from "../lib/useApi";
@@ -216,7 +216,7 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
               <span className="field-help">{t("ingest.methodologiesHelp")}</span>
               {holds && held.data ? (
                 <span className="field-help">
-                  {t("ingest.namespaceHolds", { namespace: held.data.namespace, methodologies: holds.map((m) => t(`methodology.${m}`)).join(", ") })}
+                  {t("ingest.namespaceHolds", { namespace: held.data.namespace, methodologies: joinList(holds.map((m) => t(`methodology.${m}`)), t) })}
                 </span>
               ) : null}
               <div className="stack" role="group" aria-label={t("ingest.methodologies")} style={{ gap: 6 }}>
@@ -277,11 +277,11 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
               {dropped.length && chosen.length && held.data ? (
                 <Notice tone="warn" title={t("ingest.narrowingTitle", { namespace: held.data.namespace })}>
                   <p style={{ margin: "0 0 8px" }}>
-                    {t("ingest.narrowingHelp", { namespace: held.data.namespace, methodologies: dropped.map((m) => t(`methodology.${m}`)).join(", ") })}
+                    {t("ingest.narrowingHelp", { namespace: held.data.namespace, methodologies: joinList(dropped.map((m) => t(`methodology.${m}`)), t) })}
                   </p>
                   <label className="check">
                     <input type="checkbox" checked={confirmNarrowing} onChange={(e) => setConfirmNarrowing(e.target.checked)} />
-                    <span>{t("ingest.narrowingConfirm", { methodologies: dropped.map((m) => t(`methodology.${m}`)).join(", ") })}</span>
+                    <span>{t("ingest.narrowingConfirm", { methodologies: joinList(dropped.map((m) => t(`methodology.${m}`)), t) })}</span>
                   </label>
                 </Notice>
               ) : null}

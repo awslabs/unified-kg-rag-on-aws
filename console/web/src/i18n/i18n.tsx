@@ -81,6 +81,12 @@ export function translate(locale: Locale, key: string, vars?: Vars): string {
   return key;
 }
 
+/** `items` as a list inside a sentence, joined by the locale's separator
+ * (`common.listSeparator`: ", " in English, "、" in Japanese and Chinese). */
+export function joinList(items: readonly string[], t: (key: string) => string): string {
+  return items.join(t("common.listSeparator"));
+}
+
 export function formatNumber(locale: Locale, value: number, options?: Intl.NumberFormatOptions): string {
   return new Intl.NumberFormat(LOCALES[locale].tag, options).format(value);
 }

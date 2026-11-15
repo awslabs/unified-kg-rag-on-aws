@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { useMemo, useState } from "react";
 import { ErrorText, Loading, Notice, PageHead, Sheet } from "../components/ui";
-import { useI18n } from "../i18n/i18n";
+import { joinList, useI18n } from "../i18n/i18n";
 import { errorMessage, get, send } from "../lib/api";
 import { fieldsOf, flatten, parseValue, valueAt, type JsonSchema, type SchemaField } from "../lib/schema";
 import { useApi } from "../lib/useApi";
@@ -132,7 +132,7 @@ export function SettingsPage({ onSaved }: { onSaved: () => void }) {
       ) : null}
       {data.secrets_in_file.length ? (
         <Notice tone="warn" title={t("settings.credentialsTitle")}>
-          {t("settings.credentials", { keys: data.secrets_in_file.join(", ") })}
+          {t("settings.credentials", { keys: joinList(data.secrets_in_file, t) })}
         </Notice>
       ) : null}
       {saved ? <Notice tone="good" title={t("settings.saved")}>{t("settings.savedHelp")}</Notice> : null}
@@ -557,7 +557,7 @@ export function GoneKeys({ preview }: { preview: Pick<Preview, "deprecated_keys"
       <ul style={{ margin: 0, paddingLeft: 18 }}>
         {deprecated.map((d) => (
           <li key={d.key}>
-            {t("settings.deprecatedKey", { key: d.key, replacements: d.replacements.join(", ") })}
+            {t("settings.deprecatedKey", { key: d.key, replacements: joinList(d.replacements, t) })}
           </li>
         ))}
         {removed.map((r) => (

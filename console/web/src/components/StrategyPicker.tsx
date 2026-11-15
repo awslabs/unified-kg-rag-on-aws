@@ -1,6 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-import { useI18n } from "../i18n/i18n";
+import { joinList, useI18n } from "../i18n/i18n";
 import type { StrategyInfo } from "../lib/types";
 
 const GROUPS = ["graphrag", "lightrag", "hipporag", "raptor"] as const;
@@ -34,7 +34,7 @@ export function StrategyPicker({
           <div className="chips">
             <Chip info={auto} selected={value.includes("auto")} multiple={multiple} onClick={() => toggle("auto")} />
             <span className="field-help" style={{ alignSelf: "center" }}>
-              {t("strategy.autoHelp", { list: strategies.filter((s) => s.routable).map((s) => s.name).join(", ") })}
+              {t("strategy.autoHelp", { list: joinList(strategies.filter((s) => s.routable).map((s) => s.name), t) })}
             </span>
           </div>
         ) : null}

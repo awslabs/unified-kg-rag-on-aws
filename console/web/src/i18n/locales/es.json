@@ -30,6 +30,7 @@
   "common.previous": "Anterior",
   "common.next": "Siguiente",
   "common.range": "{{from}}–{{to}} de {{total}}",
+  "common.listSeparator": ", ",
   "common.goIngest": "Ir a Ingesta",
   "ask.title": "Preguntar",
   "ask.lede": "Haz una pregunta al grafo de conocimiento. Cada respuesta enumera las fuentes que leyó, y cada fuente lleva de vuelta a su pasaje y a su lugar en el grafo.",
