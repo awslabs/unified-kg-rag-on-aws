@@ -771,6 +771,7 @@ class DocumentLoadingStage(_RegistryStage):
             context.skipped_source_files = []
 
         incremental = self._registry_on
+        deduplicated: list[Document] = []
         if self.config.processing.deduplicate:
             # Deduplication compares the texts.
             documents = self._read_unparsed(documents)
@@ -783,12 +784,15 @@ class DocumentLoadingStage(_RegistryStage):
                     self._build_doc_status_store,
                     self.loader.source_directory,
                 )
-            documents = self.loader.deduplicate_documents(
+            kept = self.loader.deduplicate_documents(
                 documents,
                 threshold=self.config.processing.deduplicate_similarity_threshold,
                 keep=keep,
                 avoid=avoid,
             )
+            survivors = {id(document) for document in kept}
+            deduplicated = [d for d in documents if id(d) not in survivors]
+            documents = kept
         # After deduplication: a seed shard is no copy of a file.
         seeds = self._seed_documents()
         documents.extend(seeds)
@@ -799,7 +803,7 @@ class DocumentLoadingStage(_RegistryStage):
         delta_skipped = 0
         if incremental:
             documents, delta_skipped = self._apply_incremental_filter(
-                documents, context
+                documents, context, deduplicated
             )
         elif corpus_is_seeds_only(documents):
             self._confirm_seeds_alone()
@@ -944,9 +948,13 @@ class DocumentLoadingStage(_RegistryStage):
         return None if None in answers else False
 
     def _apply_incremental_filter(
-        self, documents: list[Document], context: PipelineContext
+        self,
+        documents: list[Document],
+        context: PipelineContext,
+        deduplicated: Sequence[Document] = (),
     ) -> tuple[list[Document], int]:
-        """Keep the new and changed documents (see ``incremental.filter_to_delta``)."""
+        """Keep the new and changed documents (see ``incremental.filter_to_delta``;
+        ``deduplicated``: the copies deduplication dropped)."""
         return filter_to_delta(
             documents,
             context,
@@ -960,6 +968,7 @@ class DocumentLoadingStage(_RegistryStage):
             ),
             deletions=self.deletions() if self.deletions is not None else None,
             read_unparsed=self._source_parser().read_unparsed,
+            deduplicated=deduplicated,
         )
 
     def _source_parser(self) -> SourceFileParser:

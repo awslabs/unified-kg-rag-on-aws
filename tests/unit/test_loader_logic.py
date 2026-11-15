@@ -442,21 +442,42 @@ def test_a_dropped_copy_is_named_with_its_exact_similarity(
     assert f"(of '{base.file_name}', similarity {exact:.2f})" in caplog.text
 
 
-def test_han_numerals_read_as_numbers_only_in_numerals_runs() -> None:
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        # Runs, ordinals, counters, dates and units of every kind: the list
+        # of units a numeral stands before is open, so none is consulted.
+        ("合同金额三万元", "合同金额四万元"),
+        ("第三期工程", "第四期工程"),
+        ("二〇二六年", "二〇二七年"),
+        ("三月五日交货", "四月五日交货"),
+        ("契約期間は三ヶ月とする", "契約期間は六ヶ月とする"),
+        ("手数料は売上の三割", "手数料は売上の二割"),
+        ("距離は五キロ", "距離は八キロ"),
+        ("总额为一兆円", "总额为二兆円"),
+        ("合同期限为两年", "合同期限为三年"),
+        ("面积为五平方米", "面积为六平方米"),
+        ("货物存放在三层", "货物存放在五层"),
+        ("价格打八折", "价格打九折"),
+        ("每三季度结算", "每四季度结算"),
+        ("由三方签署", "由四方签署"),
+        # The financial forms of a sum in words (大写).
+        ("人民币壹拾万元整", "人民币贰拾万元整"),
+        ("金額は金壱萬円", "金額は金弐萬円"),
+    ],
+)
+def test_every_han_numeral_reads_as_a_number(first: str, second: str) -> None:
     from unified_kg_rag.adapters.ingestion.loader import numbers_digest
 
-    # A numeral inside an ordinary word is no number: an edit of such a
-    # word (一起 "together", 统一 "unify", 千葉 a place) leaves the digest.
-    assert numbers_digest("我们一起出发，统一安排。") == numbers_digest(
-        "我们出发，安排。"
-    )
-    assert numbers_digest("唯一的仓库，一律检查") == numbers_digest("仓库，检查")
-    assert numbers_digest("千葉の倉庫と一緒に") == numbers_digest("東京の倉庫と")
-    # Two numerals or more, a numeral before a counter or a unit, and an
-    # ordinal are numbers.
-    assert numbers_digest("合同金额三万元") != numbers_digest("合同金额四万元")
-    assert numbers_digest("三月五日交货") != numbers_digest("四月五日交货")
-    assert numbers_digest("三个集装箱") != numbers_digest("四个集装箱")
-    assert numbers_digest("会議は三回") != numbers_digest("会議は四回")
-    assert numbers_digest("第三期工程") != numbers_digest("第四期工程")
-    assert numbers_digest("二〇二六年") != numbers_digest("二〇二七年")
+    assert numbers_digest(first) != numbers_digest(second)
+
+
+def test_a_numeral_inside_a_word_keeps_a_copy_on_the_safe_side() -> None:
+    from unified_kg_rag.adapters.ingestion.loader import numbers_digest
+
+    # A numeral inside an ordinary word (一起 "together", 统一 "unify") is
+    # read too: an edit of such a word keeps both documents, an extra copy
+    # indexed rather than a document lost.
+    assert numbers_digest("我们一起出发") != numbers_digest("我们出发")
+    # Words of no numeral leave the digest.
+    assert numbers_digest("仓库，检查") == numbers_digest("仓库，检查。")

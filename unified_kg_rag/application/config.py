@@ -23,6 +23,8 @@ from unified_kg_rag.domain.models.config import (
     nested_model,
     removed_key_warning,
     removed_keys,
+    subclass_keys,
+    unknown_key_note,
     unknown_keys,
     without_keys,
 )
@@ -173,11 +175,15 @@ def _env_path(name: str) -> tuple[str, ...] | None:
 def _unknown_variable(name: str) -> str:
     """How an unknown variable ``name`` is reported: one naming a moved key
     (``MOVED_KEYS``) or a nested ``index`` segment of an index setting names
-    the variable to set instead."""
+    the variable to set instead, one naming a key other sections take
+    (``subclass_keys``) names them."""
     for old, new in MOVED_KEYS.items():
         if name.upper() == env_var(old):
             hint = moved_key_hint(old, env_var(new))
             return f"environment variable {name} (moved: set {hint})"
+    for path in subclass_keys(Config):
+        if name.upper() == env_var(path):
+            return f"environment variable {name}{unknown_key_note(path, Config)}"
     settings = env_var("indexing.opensearch.index_settings")
     nested = f"{settings}__INDEX__"
     if name.upper().startswith(nested):
@@ -312,7 +318,7 @@ class ConfigLoader:
                 f"(set by environment variable {_variables_at(e, env_paths)})"
             ) from e
         self._check_unknown(
-            [f"'{path}'{where}" for path in unknown]
+            [f"'{path}'{where}{unknown_key_note(path, Config)}" for path in unknown]
             + [_unknown_variable(name) for name in unknown_env]
         )
         if self.warn_ineffective:

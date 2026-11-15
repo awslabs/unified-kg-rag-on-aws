@@ -5,7 +5,7 @@ import { AnswerText, CitationList } from "../components/AnswerText";
 import { EvidenceTrace } from "../components/EvidenceTrace";
 import { StrategyPicker } from "../components/StrategyPicker";
 import { Notice, PageHead, Sheet } from "../components/ui";
-import { useI18n, type I18n } from "../i18n/i18n";
+import { joinList, useI18n, type I18n } from "../i18n/i18n";
 import { errorMessage, failureHelp, get, stream } from "../lib/api";
 import { navigate } from "../lib/router";
 import { useTrail } from "../lib/trail";
@@ -393,17 +393,17 @@ export function partialHelp(entries: Degradation[], t: I18n["t"]): string {
 export function routingNote(routing: NonNullable<AskResult["routing"]>, strategy: string, t: I18n["t"]): string {
   const overLimits = routing.over_limits ?? [];
   const key = routing.decided_by === "only_candidate" && overLimits.length ? "ask.routing.over_limits" : `ask.routing.${routing.decided_by}`;
-  return t(key, { strategy, candidates: routing.candidates.join(", "), over_limits: overLimits.join(", ") });
+  return t(key, { strategy, candidates: joinList(routing.candidates, t), over_limits: joinList(overLimits, t) });
 }
 
 export function stepNames(entries: Degradation[], t: (key: string) => string): string {
-  return [...new Set(entries.map((entry) => entry.step))]
+  const names = [...new Set(entries.map((entry) => entry.step))]
     .map((step) => {
       const key = `ask.step.${step}`;
       const name = t(key);
       return name === key ? step : name;
-    })
-    .join(", ");
+    });
+  return joinList(names, t);
 }
 
 function truncate(text: string, length: number): string {

@@ -63,43 +63,26 @@ def compute_minhash(
 _HAN = script_named("han")
 
 
-def _ideographic(numeral: str) -> bool:
-    """Whether ``numeral`` is one Han character (〇, a numeral of no
-    script's letters, included): a word of its own, where a numeral of
-    syllables is part of other words too."""
-    return len(numeral) == 1 and script_of(numeral) in (_HAN, None)
-
-
-def _han_number_forms() -> tuple[str, str]:
+def _han_numerals() -> str:
     """The Han numerals of the language profiles (``counter_numerals``,
-    ``numeral_multipliers``), and the counters and units after which one
-    numeral states a number (``counters``, ``numeral_units``) of the
-    profiles that write them, longest first, as regex alternatives."""
-    numerals: dict[str, None] = {}
-    after: dict[str, None] = {}
-    for language in profiles():
-        own = [
+    ``numeral_multipliers``; 〇, a numeral of no script's letters, too)."""
+    return "".join(
+        dict.fromkeys(
             ch
+            for language in profiles()
             for ch in (*language.counter_numerals, *language.numeral_multipliers)
-            if _ideographic(ch)
-        ]
-        if own:
-            numerals.update(dict.fromkeys(own))
-            after.update(dict.fromkeys((*language.counters, *language.numeral_units)))
-    words = sorted(after, key=len, reverse=True)
-    return "".join(numerals), "|".join(map(re.escape, words))
+            if len(ch) == 1 and script_of(ch) in (_HAN, None)
+        )
+    )
 
 
-_HAN_NUMERALS, _HAN_COUNTERS = _han_number_forms()
-# A run of digits of any script; of Han numerals, a run of two or more
-# (三万, 二〇二六), an ordinal (第三) or one before a counter or unit (三月,
-# 五人): one numeral alone is also part of ordinary words (一起 "together",
-# 统一 "unify", 千葉 a place name). Hangul number words (삼백만) are
-# ordinary syllables and are not read.
-_NUMBER = re.compile(
-    rf"\d+|[{_HAN_NUMERALS}]{{2,}}|第[{_HAN_NUMERALS}]"
-    rf"|[{_HAN_NUMERALS}](?=(?:{_HAN_COUNTERS}))"
-)
+# A run of digits of any script, or of Han numerals (三万, 二〇二六, 三ヶ月,
+# 壹拾万). One numeral alone is read too, whatever follows it: the units a
+# number stands before are an open list (月, ヶ月, 平方米, 折, ...). It is
+# also part of ordinary words (一起 "together", 统一 "unify"), so an edit of
+# such a word keeps a copy: an extra document indexed, not one lost.
+# Hangul number words (삼백만) are ordinary syllables and are not read.
+_NUMBER = re.compile(rf"\d+|[{_han_numerals()}]+")
 
 
 def _number(run: str) -> str:

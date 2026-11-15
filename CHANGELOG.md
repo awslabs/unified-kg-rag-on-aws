@@ -46,8 +46,8 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
    documents 0.3.0 dropped as copies, which the next run indexes as new documents, and the exact index finds
    near-copies 0.3.0 missed, so a run drops more of them and an incremental run deletes the copies 0.3.0 indexed
    beside their originals (its WARNING names them; `indexing.max_deletion_share` stops a run deleting past its share
-   until confirmed). Raise `processing.deduplicate_similarity_threshold` to 0.97, which reads about as 0.3.0's 0.9
-   did, to keep them.
+   until confirmed, and its question counts these copies apart from files gone from the corpus). Raise
+   `processing.deduplicate_similarity_threshold` to 0.97, which reads about as 0.3.0's 0.9 did, to keep them.
 3. A build record written by 0.3.0 has no `answer_fingerprints`: a report or description summary setting changed since
    that build is named as a rebuild reason (`answer_settings`) only after the next full build records them.
 
@@ -141,7 +141,7 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   `similarity_threshold`, as before. It keys the stage caches only where it changes a match: under `minhash`, set to
   another value than `similarity_threshold`.
 - `processing.deduplicate_similarity_threshold` (default 0.9, the fixed value before): the 3-gram similarity at which
-  `processing.deduplicate` reads two documents as copies.
+  `processing.deduplicate` reads two documents as copies, up to 1.0 (its index takes name matching's layout).
 - The `text_chunking` stage warns when chunk sizes counted in characters (`length_unit: chars`) meet a corpus whose
   characters cost at least twice Latin text's estimated tokens (Han, Hangul, Kana, Thai, Greek, Hebrew, Devanagari,
   Arabic: a chunk then holds that many times the tokens of an English one), and when text units are estimated over
@@ -159,7 +159,8 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   `max_total_seconds`). A profile set in part keeps its own defaults. The clients' own retries stacked under them are
   set there too: `client_max_attempts` of `retry.model` (botocore's requests per Bedrock call of ingestion and
   evaluation) and of `retry.bulk_item` (the OpenSearch indexing client's), both 6, their 0.3.0 counts; only those two
-  profiles (`ClientRetryPolicy`) have the key. No caller retries a call the usage limits refused.
+  profiles (`ClientRetryPolicy`) have the key, and setting it on another one is refused naming them, in a file, a
+  `UKR__` variable, `Config(...)` or an assignment alike. No caller retries a call the usage limits refused.
 
 ### Changed
 
@@ -229,18 +230,22 @@ Bugs present in 0.3.0.
   MinHash estimate, off by a few hundredths, decided the rest. The index now proposes 99% of the pairs at the
   threshold (16 bands of 8 rows) and their exact 3-gram Jaccard similarity decides. Below a threshold of about 0.8
   it proposes fewer, at most 5% of the pairs at half the threshold, which bounds its comparisons (63% at 0.6, where
-  datasketch's split proposed 40%), and never fewer than datasketch's split.
+  datasketch's split proposed 40%), and never fewer than datasketch's split. A threshold of about 0.985 or more, which
+  the keys accept, raised `ValueError` (datasketch's split had fewer than the two bands its index takes); the
+  search's split stands there.
 - `processing.deduplicate` dropped template documents: two contracts of one form, with other amounts, dates and ids
   in a long shared text, read as copies at its fixed 0.9 3-gram similarity, and one went unindexed without a word.
-  A near-duplicate now also holds the same numbers in the same order (digits of any script; Han numerals in a run, an
-  ordinal or before a counter or unit, by the language profiles' numerals, counters and `numeral_units`), so any
-  differing number keeps both; a document is dropped only as a copy of one that is kept (not of another dropped
-  copy), and a WARNING names the dropped documents (the first 20) and the ones they copy. It also missed most copies
+  A near-duplicate now also holds the same numbers in the same order (digits of any script and the language
+  profiles' Han numerals, the financial forms `壹拾万` and `金壱萬` included), so a number written so that differs keeps
+  both (an edit of a word holding a numeral, `一起`, keeps both too); a document is dropped only as a copy of one that
+  is kept (not of another dropped copy), and a WARNING names the dropped documents (the first 20) and the ones they
+  copy. It also missed most copies
   near its threshold: datasketch's LSH split (5 bands of 25 rows at 0.9) proposed a pair at 0.90-0.92 a third of the
   time and the MinHash estimate decided, so 0.9 read as about 0.97. The index now takes name matching's layout (12
   bands of 10 rows at 0.9: 99% of the pairs at the threshold) and the pair's exact 3-gram similarity decides.
 - `answer_match` read Japanese sums in 兆 (10^12) wrong: `一兆二千億円` as 200,000,000,000 and `3兆円` as 3. 兆 is a
-  multiplier of the Japanese profile, as 億 is.
+  multiplier of the Japanese profile, as 億 is. It also reads sums in the financial numerals (`人民币壹拾万元`,
+  `金壱萬円`).
 - A run stopped (a signal, Ctrl-C, its budget) after an ingestion item's answer failed to parse and before the item's
   next attempt kept that answer in the LLM response cache, so the resumed run replayed it and spent one of the item's
   attempts on it. A stop drops the answers of the item's failed attempts and keeps the one in flight.

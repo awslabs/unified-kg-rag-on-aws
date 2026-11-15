@@ -29,6 +29,7 @@
   "common.previous": "Previous",
   "common.next": "Next",
   "common.range": "{{from}}–{{to}} of {{total}}",
+  "common.listSeparator": ", ",
   "common.goIngest": "Go to Ingest",
   "ask.title": "Ask",
   "ask.lede": "Ask the knowledge graph a question. Every answer lists the sources it read, and each source leads back to its passage and its place in the graph.",

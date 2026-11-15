@@ -159,6 +159,48 @@ def test_the_lsh_layout_s_recall_is_the_one_the_changelog_states(
     )
 
 
+@pytest.mark.parametrize("threshold", [0.985, 0.99, 1.0])
+def test_a_threshold_near_one_builds_an_index(threshold: float) -> None:
+    # The keys accept a threshold up to 1.0, where datasketch's own layout
+    # has fewer than the two bands its index takes ("bands are too small"):
+    # the layout search stands in, and the copies at the threshold still
+    # match (name matching and processing.deduplicate alike).
+    from unified_kg_rag.adapters.ingestion.loader import DirectoryLoader
+    from unified_kg_rag.domain.ingestion import base_resolver
+    from unified_kg_rag.domain.ingestion.base_resolver import (
+        LSH_RECALL_AT_THRESHOLD,
+        _candidate_probability,
+        lsh_params,
+    )
+    from unified_kg_rag.domain.models import Document
+
+    bands, rows = lsh_params(threshold, 128)
+    assert bands >= 2 and bands * rows <= 128
+    assert _candidate_probability(threshold, bands, rows) >= LSH_RECALL_AT_THRESHOLD
+    matcher = base_resolver.FuzzyMatcher(
+        ["Kestrel Depot", "Umbra Freight"],
+        resolution_method=base_resolver.ResolutionMethod.MINHASH,
+        similarity_threshold=threshold,
+    )
+    assert [name for name, _ in matcher.find_all_matches("Kestrel Depot")] == [
+        "Kestrel Depot"
+    ]
+    text = "The vendor ships the goods to the buyer's depot. " * 20
+    documents = [
+        Document(
+            page_content=text,
+            document_id=name,
+            file_name=f"{name}.txt",
+            file_path=f"{name}.txt",
+        )
+        for name in ("a", "b")
+    ]
+    loader = DirectoryLoader("/")
+    loader.max_workers = 1
+    kept = loader.deduplicate_documents(documents, threshold=threshold)
+    assert [d.document_id for d in kept] == ["a"]
+
+
 def test_matchers_derive_the_lsh_layout_once(monkeypatch: pytest.MonkeyPatch) -> None:
     # The layout search is cached per (threshold, permutations), not repeated
     # by every matcher.

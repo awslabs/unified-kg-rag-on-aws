@@ -27,6 +27,7 @@ from pydantic import ValidationError
 from unified_kg_rag.application.config import ConfigLoader, resolve_relative_paths
 from unified_kg_rag.domain.models import Config, ModelRole
 from unified_kg_rag.domain.models.config import (
+    unknown_key_note,
     unknown_keys,
     without_keys,
 )
@@ -137,7 +138,8 @@ def arm_config(
     if unknown and not allow_unknown_keys:
         raise ConfigurationError(
             f"--arm {spec['name']}: unknown config keys "
-            f"{', '.join(repr(k) for k in unknown)} in '{path}' (fix or remove "
+            f"{', '.join(repr(k) + unknown_key_note(k, Config) for k in unknown)} "
+            f"in '{path}' (fix or remove "
             "them, or pass --allow-unknown-keys)"
         )
     data = without_keys(data, unknown)

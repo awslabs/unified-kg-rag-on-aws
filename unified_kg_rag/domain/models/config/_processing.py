@@ -857,11 +857,11 @@ class ProcessingConfig(ConfigSection):
             "are near-duplicates when the Jaccard similarity of their "
             "character 3-gram sets is at least "
             "deduplicate_similarity_threshold and they hold the "
-            "same numbers in the same order (digits of any script, and Han "
-            "numerals in a run of two or more, as an ordinal or before a "
-            "counter or unit: amounts, dates, ids), so any differing number keeps "
-            "both, two filled-in copies of one form as a page with another "
-            "date in its footer. Of each pair the first is kept, and an "
+            "same numbers in the same order (amounts, dates, ids in digits "
+            "of any script or in Han numerals), so a number written so that "
+            "differs keeps both, two filled-in copies of one form as a page "
+            "with another date in its footer (numbers spelled in words, "
+            "'thirty' or '삼십', are not compared). Of each pair the first is kept, and an "
             "incremental run keeps the already-indexed copy; a WARNING names "
             "the dropped documents and the ones they copy (the first 20, the "
             "rest counted). An LSH index of 128-permutation MinHashes "
@@ -878,7 +878,9 @@ class ProcessingConfig(ConfigSection):
             "The 3-gram similarity at which deduplicate reads two documents "
             "with the same numbers as copies. Documents that differ only in "
             "names (two parties of one template) still read as copies above "
-            "it: raise it, or leave deduplicate off, for such a corpus."
+            "it, as do distinct documents that share a boilerplate and hold "
+            "little text of their own (at 0.9, under about 3% of the "
+            "document): raise it, or leave deduplicate off, for such a corpus."
         ),
         json_schema_extra=evidence("unmeasured"),
     )

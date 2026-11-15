@@ -274,15 +274,37 @@ def test_the_opensearch_indexing_client_makes_the_bulk_item_profiles_requests() 
     assert client._get_base_connection_params(async_mode=True)["max_retries"] == 0
 
 
+# What every refusal of client_max_attempts names: the profiles that take it.
+_TAKERS = r"only retry\.bulk_item and retry\.model take it"
+
+
 @pytest.mark.parametrize("profile", ["ingestion_item", "query_store", "graph_store"])
 def test_a_profile_whose_client_retries_nothing_refuses_client_attempts(
-    profile: str,
+    profile: str, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    with pytest.raises(ValueError, match=f"retry.{profile}.client_max_attempts"):
+    from unified_kg_rag.application.config import ConfigLoader
+    from unified_kg_rag.shared.exceptions import ConfigurationError
+
+    key = rf"retry\.{profile}\.client_max_attempts"
+    with pytest.raises(ValueError, match=rf"{key} \({_TAKERS}\)"):
         Config(retry={profile: {"client_max_attempts": 3}})
-    # Assigned too, and from a policy that has the key.
+    # In a file and in a UKR__ variable.
+    path = tmp_path / "config.yaml"
+    path.write_text(f"retry:\n  {profile}:\n    client_max_attempts: 3\n")
+    with pytest.raises(ConfigurationError, match=rf"{key}'.* \({_TAKERS}\)"):
+        ConfigLoader(path).load_config()
+    variable = f"UKR__RETRY__{profile.upper()}__CLIENT_MAX_ATTEMPTS"
+    monkeypatch.setenv(variable, "3")
+    with pytest.raises(ConfigurationError, match=rf"{variable} \({_TAKERS}\)"):
+        ConfigLoader(None).load_config()
+    monkeypatch.delenv(variable)
+    # Assigned, the key itself or a policy that has it.
     config = Config()
-    with pytest.raises(ValueError, match=f"retry.{profile}.client_max_attempts"):
+    with pytest.raises(
+        ValueError, match=rf"attribute 'client_max_attempts' \({_TAKERS}\)"
+    ):
+        getattr(config.retry, profile).client_max_attempts = 3
+    with pytest.raises(ValueError, match=rf"{key} \({_TAKERS}\)"):
         setattr(config.retry, profile, config.retry.model)
 
 

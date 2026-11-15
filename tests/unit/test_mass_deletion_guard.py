@@ -50,7 +50,9 @@ from unified_kg_rag.domain.models import (
     Document,
     DocumentDelta,
     PipelineContext,
+    PipelineStageResult,
     PipelineStageStatus,
+    PipelineStageType,
 )
 from unified_kg_rag.shared.exceptions import ConfirmationDeclinedError
 
@@ -131,6 +133,25 @@ def test_no_confirmation_or_a_no_stops_the_run() -> None:
         "and what only they stated is removed from the index. A partial sync "
         "or a missing volume looks the same; continue?"
     ]
+
+
+def test_the_question_counts_dropped_copies_apart_from_missing_files() -> None:
+    # Of 8 deleted, 6 are copies deduplication dropped: their files are in
+    # the corpus, so they are not what a partial sync looks like.
+    confirm = _Asked(True)
+    copies = [f"d{k}" for k in range(6)]
+    _confirm_mass_deletion(_delta(8, 4), 0.5, "s", confirm, copies)
+    assert confirm.questions[0].endswith(
+        "(67%, over indexing.max_deletion_share 0.5): 2 have no file in the "
+        "corpus (a partial sync or a missing volume looks the same) and 6 are "
+        "near-copies processing.deduplicate dropped, whose files are in the "
+        "corpus (a higher processing.deduplicate_similarity_threshold keeps "
+        "them); what only they stated is removed from the index; continue?"
+    )
+    confirm = _Asked(True)
+    _confirm_mass_deletion(_delta(8, 4), 0.5, "s", confirm, [f"d{k}" for k in range(8)])
+    assert "0.5): 8 are near-copies" in confirm.questions[0]
+    assert "partial sync" not in confirm.questions[0]
 
 
 def _document(relative: str) -> Document:
@@ -283,6 +304,54 @@ def test_the_loading_stage_asks_before_its_first_write(
     context = _run(root, store, mocker, confirm=lambda question: True)
     assert context.incremental_delta is not None
     assert len(context.incremental_delta.deleted) == 6
+
+
+def test_the_loading_stage_names_the_copies_deduplication_drops(
+    tmp_path: Path, mocker: Any
+) -> None:
+    # An index built without deduplication holds 13 documents, 8 of them
+    # copies of one text; a run with it on drops 7 (54% of the scope).
+    root = tmp_path / "corpus"
+    root.mkdir()
+    template = " ".join(
+        f"Clause {word}: the vendor delivers the goods to the depot."
+        for word in ("alpha", "beta", "gamma", "delta", "epsilon", "zeta")
+    )
+    for k in range(5):
+        (root / f"d{k}.txt").write_text(f"Kestrel Depot {k}. {template * k}")
+    for k in range(8):
+        (root / f"copy{k}.txt").write_text(f"Umbra Freight. {template}")
+    store = FakeDocStatusStore()
+    _run(root, store, mocker)
+    assert len(all_records(store)) == 13
+
+    config = _config()
+    config.processing.deduplicate = True
+    context = PipelineContext(
+        pipeline_id="pid",
+        config={},
+        status=PipelineStageStatus.RUNNING,
+        start_time=datetime(2026, 1, 1),
+        source_directory=root,
+    )
+    DocumentParsingStage(config, source_directory=root)._execute_core(context)
+    context.stage_results.append(
+        PipelineStageResult(
+            stage_name=PipelineStageType.DOCUMENT_PARSING.value,
+            status=PipelineStageStatus.COMPLETED,
+            start_time=datetime(2026, 1, 1),
+        )
+    )
+    confirm = _Asked(False)
+    loading = DocumentLoadingStage(
+        config, source_directory=root, doc_status=store, confirm_deletions=confirm
+    )
+    loading.loader.max_workers = 1
+    with pytest.raises(ConfirmationDeclinedError):
+        loading._execute_core(context)
+    assert "0.5): 7 are near-copies processing.deduplicate dropped" in (
+        confirm.questions[0]
+    )
 
 
 # --- run-ingestion ----------------------------------------------------------------

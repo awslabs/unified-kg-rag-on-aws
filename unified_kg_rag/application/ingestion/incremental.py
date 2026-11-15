@@ -1918,6 +1918,7 @@ def filter_to_delta(
     guard_reset_deletions: bool = False,
     deletions: Sequence[str] | None = None,
     read_unparsed: ReadUnparsed | None = None,
+    deduplicated: Sequence[Document] = (),
 ) -> tuple[list[Document], int]:
     """Keep only new/changed documents per the DynamoDB doc-status registry.
 
@@ -1937,7 +1938,9 @@ def filter_to_delta(
     documents are added or updated, the documents of the scope with these
     relative paths (ids) are deleted, and the scope's other documents are
     kept (``DocumentChanges``); no mass deletion is asked, the caller named
-    them. Such a run cannot reset.
+    them. Such a run cannot reset. ``deduplicated`` are the documents
+    ``processing.deduplicate`` dropped as copies: the deletion question
+    counts them apart from the files gone from the corpus.
 
     An unparsed document (its file's source digest is its record's, see
     ``source_parsing``) the run processes after all is read by
@@ -1982,8 +1985,9 @@ def filter_to_delta(
         namespace,
         retired_scope_readings,
     )
-    for document in documents:
+    for document in [*documents, *deduplicated]:
         assign_registry_source(document, source_scope)
+    copies = {document_doc_id(document) for document in deduplicated}
     settings = extraction_settings(config)
     context.incremental_extraction_settings = settings
     context.incremental_extraction_fingerprint = settings.fingerprint
@@ -2001,6 +2005,7 @@ def filter_to_delta(
                 config.indexing.max_deletion_share,
                 source_scope,
                 confirm_deletions,
+                copies,
             )
         # A reset rebuilds the namespace from the whole corpus and then
         # replaces the registry's records, so every document is new: diffing
@@ -2086,6 +2091,7 @@ def filter_to_delta(
             confirm_deletions,
             deletions=deletions,
             read_unparsed=read_unparsed,
+            deduplicated=deduplicated,
         )
     # Before any write, under the stored spelling of the scope.
     if seeds_only:
@@ -2094,7 +2100,11 @@ def filter_to_delta(
         )
     if changes is None:
         _confirm_mass_deletion(
-            delta, config.indexing.max_deletion_share, source_scope, confirm_deletions
+            delta,
+            config.indexing.max_deletion_share,
+            source_scope,
+            confirm_deletions,
+            copies,
         )
     _warn_about_a_shared_seed(doc_status, documents, delta, namespace, scope)
     to_read = set(delta.to_process)
@@ -2245,6 +2255,7 @@ def _confirm_mass_deletion(
     max_share: float | None,
     source_scope: str,
     confirm: Callable[[str], bool] | None,
+    copies: Collection[str] = (),
 ) -> None:
     """Ask before a run deletes more than ``max_share`` of its scope's
     documents.
@@ -2259,7 +2270,9 @@ def _confirm_mass_deletion(
     (``DocumentDelta.retired``) were asked for, and files the run could not
     read are kept, not deleted. A scope of fewer than
     ``MASS_DELETION_MIN_DOCUMENTS`` documents, or ``max_share`` ``None`` or
-    1.0, is not checked. ``confirm`` answers (``--confirm-deletions``,
+    1.0, is not checked. The question tells the documents whose files are
+    gone from the ``copies`` (doc ids) ``processing.deduplicate`` dropped,
+    whose files are in the corpus. ``confirm`` answers (``--confirm-deletions``,
     ``UKR_CONFIRM_DELETIONS=1`` or ``--yes``); ``None`` cannot, and the run
     stops before it writes.
 
@@ -2274,13 +2287,34 @@ def _confirm_mass_deletion(
     total = delta.scope_documents
     if total < MASS_DELETION_MIN_DOCUMENTS or deleted / total <= max_share:
         return
+    dropped = sum(
+        1 for doc_id in delta.deleted if doc_id not in uncounted and doc_id in copies
+    )
+    if dropped:
+        gone = deleted - dropped
+        why = (
+            (
+                f"{gone} have no file in the corpus (a partial sync or a "
+                "missing volume looks the same) and "
+                if gone
+                else ""
+            )
+            + f"{dropped} are near-copies processing.deduplicate dropped, "
+            "whose files are in the corpus (a higher "
+            "processing.deduplicate_similarity_threshold keeps them); what "
+            "only they stated is removed from the index; continue?"
+        )
+    else:
+        why = (
+            "their files are not in the corpus, and what only they stated is "
+            "removed from the index. A partial sync or a missing volume looks "
+            "the same; continue?"
+        )
     question = (
         f"This run deletes {deleted} of the {total} documents the doc-status "
         f"registry holds for source scope {source_scope!r} "
         f"({deleted / total:.0%}, over indexing.max_deletion_share "
-        f"{max_share:g}): their files are not in the corpus, and what only "
-        "they stated is removed from the index. A partial sync or a missing "
-        "volume looks the same; continue?"
+        f"{max_share:g}): {why}"
     )
     if confirm is None:
         raise ConfirmationDeclinedError(

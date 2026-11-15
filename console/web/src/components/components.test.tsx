@@ -546,6 +546,12 @@ describe("stepNames", () => {
     expect(stepNames(steps, (key) => translate("ko", key))).toBe("키워드 추출, my_plugin_step");
     expect(stepNames(steps, (key) => translate("en", key))).toBe("keyword extraction, my_plugin_step");
   });
+  it("joins them with the locale's list separator", () => {
+    for (const locale of ["ja", "zh"] as const) {
+      const name = translate(locale, "ask.step.keyword_extraction");
+      expect(stepNames(steps, (key) => translate(locale, key))).toBe(`${name}、my_plugin_step`);
+    }
+  });
 });
 
 describe("a failed job", () => {
