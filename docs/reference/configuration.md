@@ -908,8 +908,8 @@ Bedrock embedding requests and query-time model calls: the transient errors boto
 | `base_delay_seconds` | number (≥ 0.0) | `2.0` | operational | Ceiling of the wait before the first retry, in seconds; it doubles per retry. 0 retries at once. |
 | `max_delay_seconds` | number \| null (≥ 0.0) | `16.0` | operational | Upper bound on one wait's ceiling, in seconds. null: none. |
 | `max_total_seconds` | number \| null (≥ 0.0) | `60.0` | operational | Wall-clock retry budget per call, in seconds: no retry starts once the next wait would cross it. null: none (the deadline of the query a call is made for still stops a model or query-store retry). |
-| `client_max_attempts` | integer \| null (≥ 1) | `6` | operational | Requests the service's own client makes for one attempt, the first included, retrying throttling, 5xx and timeouts itself before this profile's backoff: botocore's total_max_attempts on the Bedrock clients of ingestion and evaluation calls (retry.model; query-time calls take search.model_max_attempts), opensearch-py's max_retries + 1, back to back, on the OpenSearch indexing client (retry.bulk_item). The two stack: a call can make max_attempts x client_max_attempts requests. Set only on those two profiles; null leaves the client its library default. |
 | `jitter` | `"equal"` \| `"full"` \| `"none"` | `"equal"` |  | How a wait is drawn under its ceiling: 'equal' between half the ceiling and the ceiling, 'full' between 0 and the ceiling (spreads concurrent workers the most), 'none' the ceiling itself. |
+| `client_max_attempts` | integer \| null (≥ 1) | `6` | operational | Requests the service's own client makes for one attempt, the first included, retrying throttling, 5xx and timeouts itself before this profile's backoff: botocore's total_max_attempts on the Bedrock clients of ingestion and evaluation calls (retry.model; query-time calls take search.model_max_attempts), opensearch-py's max_retries + 1, back to back, on the OpenSearch indexing client (retry.bulk_item). The two stack: a call can make max_attempts x client_max_attempts requests. null leaves the client its library default. The other profiles have no such key: their callers' clients make one request per attempt or keep attempts the package sets. |
 
 ### `retry.ingestion_item`
 
@@ -921,7 +921,6 @@ Each ingestion LLM item (extraction, gleaning, claims, summaries, reports, chunk
 | `base_delay_seconds` | number (≥ 0.0) | `30.0` | operational | Ceiling of the wait before the first retry, in seconds; it doubles per retry. 0 retries at once. |
 | `max_delay_seconds` | number \| null (≥ 0.0) | `120.0` | operational | Upper bound on one wait's ceiling, in seconds. null: none. |
 | `max_total_seconds` | number \| null (≥ 0.0) | `null` | operational | Wall-clock retry budget per call, in seconds: no retry starts once the next wait would cross it. null: none (the deadline of the query a call is made for still stops a model or query-store retry). |
-| `client_max_attempts` | integer \| null (≥ 1) | `null` | operational | Requests the service's own client makes for one attempt, the first included, retrying throttling, 5xx and timeouts itself before this profile's backoff: botocore's total_max_attempts on the Bedrock clients of ingestion and evaluation calls (retry.model; query-time calls take search.model_max_attempts), opensearch-py's max_retries + 1, back to back, on the OpenSearch indexing client (retry.bulk_item). The two stack: a call can make max_attempts x client_max_attempts requests. Set only on those two profiles; null leaves the client its library default. |
 | `jitter` | `"equal"` \| `"full"` \| `"none"` | `"full"` |  | How a wait is drawn under its ceiling: 'equal' between half the ceiling and the ceiling, 'full' between 0 and the ceiling (spreads concurrent workers the most), 'none' the ceiling itself. |
 
 ### `retry.model_server`
@@ -934,12 +933,11 @@ Requests to an OpenAI-compatible or Ollama model server (providers.llm, provider
 | `base_delay_seconds` | number (≥ 0.0) | `2.0` | operational | Ceiling of the wait before the first retry, in seconds; it doubles per retry. 0 retries at once. |
 | `max_delay_seconds` | number \| null (≥ 0.0) | `16.0` | operational | Upper bound on one wait's ceiling, in seconds. null: none. |
 | `max_total_seconds` | number \| null (≥ 0.0) | `60.0` | operational | Wall-clock retry budget per call, in seconds: no retry starts once the next wait would cross it. null: none (the deadline of the query a call is made for still stops a model or query-store retry). |
-| `client_max_attempts` | integer \| null (≥ 1) | `null` | operational | Requests the service's own client makes for one attempt, the first included, retrying throttling, 5xx and timeouts itself before this profile's backoff: botocore's total_max_attempts on the Bedrock clients of ingestion and evaluation calls (retry.model; query-time calls take search.model_max_attempts), opensearch-py's max_retries + 1, back to back, on the OpenSearch indexing client (retry.bulk_item). The two stack: a call can make max_attempts x client_max_attempts requests. Set only on those two profiles; null leaves the client its library default. |
 | `jitter` | `"equal"` \| `"full"` \| `"none"` | `"equal"` |  | How a wait is drawn under its ceiling: 'equal' between half the ceiling and the ceiling, 'full' between 0 and the ceiling (spreads concurrent workers the most), 'none' the ceiling itself. |
 
 ### `retry.graph_store`
 
-Each Neptune or Gremlin indexer request (writes, read-backs, drops and label clears), over a new connection after a lost one. Errors a retry cannot fix (malformed query, access denied, bad parameter, read-only violation) fail on the first attempt.
+Each Neptune or Gremlin indexer request (writes, read-backs, drops and label clears), over a new connection after a lost one; a failed batch and its per-item fallback share one max_total_seconds. Errors a retry cannot fix (malformed query, access denied, bad parameter, read-only violation) fail on the first attempt.
 
 | Key | Type | Default | Evidence | Description |
 |---|---|---|---|---|
@@ -947,7 +945,6 @@ Each Neptune or Gremlin indexer request (writes, read-backs, drops and label cle
 | `base_delay_seconds` | number (≥ 0.0) | `2.0` | operational | Ceiling of the wait before the first retry, in seconds; it doubles per retry. 0 retries at once. |
 | `max_delay_seconds` | number \| null (≥ 0.0) | `null` | operational | Upper bound on one wait's ceiling, in seconds. null: none. |
 | `max_total_seconds` | number \| null (≥ 0.0) | `null` | operational | Wall-clock retry budget per call, in seconds: no retry starts once the next wait would cross it. null: none (the deadline of the query a call is made for still stops a model or query-store retry). |
-| `client_max_attempts` | integer \| null (≥ 1) | `null` | operational | Requests the service's own client makes for one attempt, the first included, retrying throttling, 5xx and timeouts itself before this profile's backoff: botocore's total_max_attempts on the Bedrock clients of ingestion and evaluation calls (retry.model; query-time calls take search.model_max_attempts), opensearch-py's max_retries + 1, back to back, on the OpenSearch indexing client (retry.bulk_item). The two stack: a call can make max_attempts x client_max_attempts requests. Set only on those two profiles; null leaves the client its library default. |
 | `jitter` | `"equal"` \| `"full"` \| `"none"` | `"full"` |  | How a wait is drawn under its ceiling: 'equal' between half the ceiling and the ceiling, 'full' between 0 and the ceiling (spreads concurrent workers the most), 'none' the ceiling itself. |
 
 ### `retry.query_store`
@@ -960,7 +957,6 @@ One OpenSearch, Neptune or Gremlin query request that failed leaving the store u
 | `base_delay_seconds` | number (≥ 0.0) | `0.5` | operational | Ceiling of the wait before the first retry, in seconds; it doubles per retry. 0 retries at once. |
 | `max_delay_seconds` | number \| null (≥ 0.0) | `4.0` | operational | Upper bound on one wait's ceiling, in seconds. null: none. |
 | `max_total_seconds` | number \| null (≥ 0.0) | `null` | operational | Wall-clock retry budget per call, in seconds: no retry starts once the next wait would cross it. null: none (the deadline of the query a call is made for still stops a model or query-store retry). |
-| `client_max_attempts` | integer \| null (≥ 1) | `null` | operational | Requests the service's own client makes for one attempt, the first included, retrying throttling, 5xx and timeouts itself before this profile's backoff: botocore's total_max_attempts on the Bedrock clients of ingestion and evaluation calls (retry.model; query-time calls take search.model_max_attempts), opensearch-py's max_retries + 1, back to back, on the OpenSearch indexing client (retry.bulk_item). The two stack: a call can make max_attempts x client_max_attempts requests. Set only on those two profiles; null leaves the client its library default. |
 | `jitter` | `"equal"` \| `"full"` \| `"none"` | `"equal"` |  | How a wait is drawn under its ceiling: 'equal' between half the ceiling and the ceiling, 'full' between 0 and the ceiling (spreads concurrent workers the most), 'none' the ceiling itself. |
 
 ### `retry.bulk_item`
@@ -973,8 +969,8 @@ OpenSearch bulk items the cluster rejected with 429/502/503/504, resent on their
 | `base_delay_seconds` | number (≥ 0.0) | `1.0` | operational | Ceiling of the wait before the first retry, in seconds; it doubles per retry. 0 retries at once. |
 | `max_delay_seconds` | number \| null (≥ 0.0) | `30.0` | operational | Upper bound on one wait's ceiling, in seconds. null: none. |
 | `max_total_seconds` | number \| null (≥ 0.0) | `null` | operational | Wall-clock retry budget per call, in seconds: no retry starts once the next wait would cross it. null: none (the deadline of the query a call is made for still stops a model or query-store retry). |
-| `client_max_attempts` | integer \| null (≥ 1) | `6` | operational | Requests the service's own client makes for one attempt, the first included, retrying throttling, 5xx and timeouts itself before this profile's backoff: botocore's total_max_attempts on the Bedrock clients of ingestion and evaluation calls (retry.model; query-time calls take search.model_max_attempts), opensearch-py's max_retries + 1, back to back, on the OpenSearch indexing client (retry.bulk_item). The two stack: a call can make max_attempts x client_max_attempts requests. Set only on those two profiles; null leaves the client its library default. |
 | `jitter` | `"equal"` \| `"full"` \| `"none"` | `"equal"` |  | How a wait is drawn under its ceiling: 'equal' between half the ceiling and the ceiling, 'full' between 0 and the ceiling (spreads concurrent workers the most), 'none' the ceiling itself. |
+| `client_max_attempts` | integer \| null (≥ 1) | `6` | operational | Requests the service's own client makes for one attempt, the first included, retrying throttling, 5xx and timeouts itself before this profile's backoff: botocore's total_max_attempts on the Bedrock clients of ingestion and evaluation calls (retry.model; query-time calls take search.model_max_attempts), opensearch-py's max_retries + 1, back to back, on the OpenSearch indexing client (retry.bulk_item). The two stack: a call can make max_attempts x client_max_attempts requests. null leaves the client its library default. The other profiles have no such key: their callers' clients make one request per attempt or keep attempts the package sets. |
 
 ### `retry.registry_batch`
 
@@ -986,7 +982,6 @@ DynamoDB doc-status batch reads and writes: the keys or items DynamoDB returned 
 | `base_delay_seconds` | number (≥ 0.0) | `0.1` | operational | Ceiling of the wait before the first retry, in seconds; it doubles per retry. 0 retries at once. |
 | `max_delay_seconds` | number \| null (≥ 0.0) | `2.0` | operational | Upper bound on one wait's ceiling, in seconds. null: none. |
 | `max_total_seconds` | number \| null (≥ 0.0) | `null` | operational | Wall-clock retry budget per call, in seconds: no retry starts once the next wait would cross it. null: none (the deadline of the query a call is made for still stops a model or query-store retry). |
-| `client_max_attempts` | integer \| null (≥ 1) | `null` | operational | Requests the service's own client makes for one attempt, the first included, retrying throttling, 5xx and timeouts itself before this profile's backoff: botocore's total_max_attempts on the Bedrock clients of ingestion and evaluation calls (retry.model; query-time calls take search.model_max_attempts), opensearch-py's max_retries + 1, back to back, on the OpenSearch indexing client (retry.bulk_item). The two stack: a call can make max_attempts x client_max_attempts requests. Set only on those two profiles; null leaves the client its library default. |
 | `jitter` | `"equal"` \| `"full"` \| `"none"` | `"none"` |  | How a wait is drawn under its ceiling: 'equal' between half the ceiling and the ceiling, 'full' between 0 and the ceiling (spreads concurrent workers the most), 'none' the ceiling itself. |
 
 ## `logging`

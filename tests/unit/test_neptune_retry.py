@@ -309,6 +309,46 @@ def test_an_item_the_fallback_cannot_index_logs_an_error(
     assert levels == [logging.WARNING, logging.ERROR, logging.ERROR]
 
 
+def test_the_fallback_s_items_share_one_retry_budget(indexer, mocker) -> None:
+    # A failed batch's per-item fallback is bounded as a whole by
+    # retry.graph_store.max_total_seconds: once it is spent, each item left
+    # gets its one attempt and no retry (each item had the whole budget, so
+    # a batch of n items could retry for n times it).
+    from types import SimpleNamespace
+
+    now = [0.0]
+    clock = SimpleNamespace(monotonic=lambda: now[0])
+    mocker.patch(_MOD + ".time", clock)
+    mocker.patch.object(llm_retry, "time", clock)
+
+    def sleep(seconds: float) -> None:
+        now[0] += seconds
+
+    mocker.patch(_MOD + "._sleep", side_effect=sleep)
+    attempts: list[str] = []
+
+    def fake_run(client, build, *, results=False):
+        items = build(None)
+        if len(items) == 1:
+            attempts.append(items[0])
+        raise _CME
+
+    mocker.patch(_MOD + ".run_traversal", side_effect=fake_run)
+    policy = indexer.config.retry.graph_store
+    policy.max_attempts = 4
+    policy.base_delay_seconds = 1.0
+    policy.jitter = "none"
+    policy.max_total_seconds = 4.0
+    stats = IndexingStats(total_items=3)
+    indexer._execute_single_batch(
+        ["a", "b", "c"], lambda _g, items: items, "upsert entities", stats
+    )
+    assert stats.failed_items == 3
+    # The batch's own attempts take 1 + 2 s of the budget; "a" retries once
+    # more (a wait of 1 s ends at 4 s), then no item waits again.
+    assert attempts == ["a", "a", "b", "c"]
+
+
 def test_the_graph_store_default_is_full_jitter_without_a_cap() -> None:
     # The backoff the loop had before retry profiles: a draw from [0, 2 s x
     # 2^(n-1)], no upper bound, no time budget.

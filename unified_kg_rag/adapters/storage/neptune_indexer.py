@@ -1841,8 +1841,11 @@ class NeptuneIndexer(GraphIndexer):
         Accumulates into the supplied ``stats`` and returns it, so the caller can
         either share one stats object (sequential) or merge per-batch objects
         (concurrent) without any locking. A run that lost its write lease
-        raises before the request (``check_write_fence``).
+        raises before the request (``check_write_fence``). The batch and its
+        fallback share one retry budget (``retry.graph_store.max_total_seconds``):
+        once it is spent, each item left gets one attempt.
         """
+        started_at = time.monotonic()
         try:
             # Not an error yet: the per-item fallback below may still index
             # every item; one that fails there logs it.
@@ -1850,6 +1853,7 @@ class NeptuneIndexer(GraphIndexer):
                 lambda g: traversal_builder(g, batch),
                 operation_name,
                 exhausted_level=logging.WARNING,
+                started_at=started_at,
             )
             stats.add_success(len(batch))
         except NamespaceLeaseError:
@@ -1871,7 +1875,9 @@ class NeptuneIndexer(GraphIndexer):
                     return traversal_builder(g, [item])
 
                 try:
-                    self._execute_with_retries(build_one, operation_name)
+                    self._execute_with_retries(
+                        build_one, operation_name, started_at=started_at
+                    )
                     stats.add_success(1)
                 except NamespaceLeaseError:
                     raise
@@ -1898,6 +1904,7 @@ class NeptuneIndexer(GraphIndexer):
         results: bool = False,
         exhausted_level: int = logging.ERROR,
         fenced: bool = True,
+        started_at: float | None = None,
     ) -> list[Any]:
         """Run the traversal ``build`` makes, with retries (``run_traversal``).
 
@@ -1908,10 +1915,12 @@ class NeptuneIndexer(GraphIndexer):
         reads (``fenced=False``), each attempt checks the run's write fence
         first, so a run that lost its lease stops between attempts. Every
         error but a permanent one is retried, wider than a query read's
-        approved list (``is_transient_neptune_error`` says why).
+        approved list (``is_transient_neptune_error`` says why). The retry
+        budget counts from ``started_at`` (``time.monotonic``), by default now.
         """
         policy = self.config.retry.graph_store
-        started_at = time.monotonic()
+        if started_at is None:
+            started_at = time.monotonic()
         attempt = 0
         while True:
             if fenced:
