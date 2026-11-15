@@ -6,6 +6,7 @@ from typing import Any, ClassVar
 
 from pydantic import BaseModel, Field
 
+from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import (
     Config,
@@ -42,6 +43,10 @@ _TRUNCATION_BACKOFF_RATIO = 0.2
 # was packed in, and the widest an answer's marker is read at
 # (domain/retrieval/citations.py).
 _MARKER_PLACEHOLDER = 999
+# The times a context past its estimate bound (optimize_context's
+# estimated_within) is packed again into a smaller budget; one still past it
+# then is left empty.
+_REFIT_ROUNDS = 4
 
 
 class ContextSection(BaseModel):
@@ -83,6 +88,10 @@ class OptimizedContext(BaseModel):
     )
     sections_excluded: int = Field(
         description="Number of sections excluded from the optimization"
+    )
+    sections_truncated: int = Field(
+        default=0,
+        description="Number of the included sections cut to fit the budget",
     )
     numbered: bool = Field(
         default=False,
@@ -229,6 +238,7 @@ class TokenManager:
         max_tokens: int | None = None,
         spare_budget_first: Sequence[SectionType] = (),
         number_sections: bool = False,
+        estimated_within: int | None = None,
     ) -> OptimizedContext:
         """The sections of ``retrieval_results`` that fit the context budget.
 
@@ -238,6 +248,13 @@ class TokenManager:
         one that names no evidence (``is_citable``) a citation marker ``[1]``, ``[2]``, ... in the order
         ``build_context_string`` renders them, in place of its id prefix
         (docs/design.md §7.1).
+        ``estimated_within`` bounds the built context
+        (``build_context_string``) at the local estimate
+        (``estimate_token_count``) the usage meter counts a call's input at,
+        which the budget's counter (a CountTokens API, each section counted
+        apart) can count lower: the room a query's input-token limit leaves
+        the context. A context past it is packed again into a budget smaller
+        by the excess, until it fits.
         """
         with observability.span(
             "kg_rag.context_build", results_in=len(retrieval_results)
@@ -248,6 +265,7 @@ class TokenManager:
                 max_tokens,
                 spare_budget_first,
                 number_sections,
+                estimated_within,
             )
             # Tokens used vs the budget the sections had to fit in.
             span.set_attributes(
@@ -267,6 +285,7 @@ class TokenManager:
         max_tokens: int | None,
         spare_budget_first: Sequence[SectionType] = (),
         number_sections: bool = False,
+        estimated_within: int | None = None,
     ) -> tuple[OptimizedContext, int]:
         # A caller-supplied budget is still capped by what the answer model can
         # accept, so a large --top-k / RAGInput.max_tokens cannot overflow it.
@@ -303,6 +322,52 @@ class TokenManager:
             section_type: self.count_tokens(self._section_header(section_type))
             for section_type in dict.fromkeys(s.section_type for s in all_sections)
         }
+        optimized, left = self._packed(
+            all_sections, headers, available_tokens, spare_budget_first, number_sections
+        )
+        if estimated_within is None:
+            return optimized, left
+        for refit in range(_REFIT_ROUNDS + 1):
+            if not optimized.sections:
+                return optimized, left
+            built = estimate_token_count(self.build_context_string(optimized))
+            if built <= estimated_within:
+                return optimized, left
+            if refit == _REFIT_ROUNDS:
+                break
+            # The pieces' counts (each rounded down, the separators between
+            # them uncounted, or a counter that counts lower) fall short of
+            # the whole's estimate: the excess comes off what they used, at
+            # least in proportion.
+            used = optimized.total_tokens + sum(
+                headers[t] for t in {s.section_type for s in optimized.sections}
+            )
+            available_tokens = max(
+                0,
+                min(
+                    used - (built - estimated_within), used * estimated_within // built
+                ),
+            )
+            optimized, left = self._packed(
+                all_sections,
+                headers,
+                available_tokens,
+                spare_budget_first,
+                number_sections,
+            )
+        return self._packed(all_sections, headers, 0, (), number_sections)
+
+    def _packed(
+        self,
+        all_sections: list[ContextSection],
+        headers: dict[SectionType, int],
+        available_tokens: int,
+        spare_budget_first: Sequence[SectionType],
+        number_sections: bool,
+    ) -> tuple[OptimizedContext, int]:
+        """``all_sections`` packed into ``available_tokens`` with the headers
+        of the types seated (``headers``), and the budget the sections had
+        to fit in."""
         selected_sections = self._select_optimal_sections(
             all_sections,
             max(available_tokens - sum(headers.values()), 0),
@@ -334,6 +399,14 @@ class TokenManager:
                 total_tokens=total_tokens,
                 sections_included=sections_included,
                 sections_excluded=sections_excluded,
+                # Cut to fit (_truncate_to_tokens): its content is not the
+                # whole result's.
+                sections_truncated=sum(
+                    1
+                    for section in selected_sections
+                    if section.result_index is not None
+                    and section.content != all_sections[section.result_index].content
+                ),
                 numbered=number_sections,
             ),
             available_tokens,
@@ -583,10 +656,14 @@ class TokenManager:
         # one round per type (after the first) bounds the loop.
         for _ in range(len(by_type) + 1):
             packed = {t: self._pack_type(lst, caps[t]) for t, lst in by_type.items()}
-            spare = token_budget - sum(
-                s.token_count for seated, _ in packed.values() for s in seated
-            )
             receivers = [t for t, (_, done) in packed.items() if not done]
+            # What the seated types leave and the receivers do not hold: a
+            # receiver keeps its whole cap (what it could not seat of it
+            # too), so its unused room is not lent to another type as well.
+            spare = token_budget - sum(
+                caps[t] if t in receivers else sum(s.token_count for s in seated)
+                for t, (seated, _) in packed.items()
+            )
             if spare < min_spare or not receivers:
                 break
             first = [t for t in spare_budget_first if t in receivers]

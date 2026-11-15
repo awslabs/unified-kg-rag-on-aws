@@ -2346,3 +2346,8 @@ def test_a_refused_call_or_a_limit_abstention_reads_as_limited() -> None:
     assert not _query_limited(
         {"degraded": [{"step": "rerank", "reason": "error"}]}, "failure"
     )
+    # Auto routed past the strategies the limits leave no room for (rv34).
+    assert _query_limited(
+        {"routing": {"decided_by": "only_candidate", "over_limits": ["mix"]}}, None
+    )
+    assert not _query_limited({"routing": {"decided_by": "router"}}, None)

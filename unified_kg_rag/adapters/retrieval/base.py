@@ -741,6 +741,23 @@ def answer_call_tokens(
     )
 
 
+def prompt_call_tokens(
+    config: Config, prompt_class: type[BasePrompt], question: str, item: int = 0
+) -> int:
+    """A planned call of ``prompt_class`` on ``question`` at the local
+    estimate the usage meter counts a call's start at: its prompt's
+    templates, the question (every strategy prompt carries it) and ``item``
+    tokens of the rest it is filled with."""
+    resolved = prompt_class.resolve(custom_prompts=config.custom_prompts)
+    return (
+        estimate_token_count(
+            resolved.system_prompt_template + resolved.human_prompt_template
+        )
+        + estimate_token_count(question)
+        + item
+    )
+
+
 # SearchQuery.metadata: whether an answer is generated from the search
 # (False for GraphRAGChain.asearch); under the query's limits a strategy
 # keeps room for the answer only then (``answered``).
@@ -784,14 +801,17 @@ class BaseSearchStrategy(ABC):
         return 0
 
     @classmethod
-    def answering_model_calls(cls, config: Config) -> int:
-        """The model calls of its own a search cannot answer without (DRIFT's
-        one action: without it nothing is found); a query that names the
-        strategy keeps them, beside the answer's, from its optional calls (a
-        translation, the follow-up rewrite) under a call limit
-        (``search.query_max_model_calls``). 0 for a search that answers from
-        what it retrieves when its model calls are cut."""
-        return 0
+    def answering_calls(cls, config: Config, question: str) -> list[int]:
+        """The model calls of its own a search of ``question`` cannot answer
+        without (DRIFT's one action: without it nothing is found), each by
+        its least input (``prompt_call_tokens``, with the least context): a
+        query that names the strategy keeps them, beside the answer's, from
+        its optional calls (a translation or extraction, the follow-up
+        rewrite) under a call limit (``search.query_max_model_calls``) and
+        their input under an input-token limit
+        (``search.query_max_input_tokens``). None (``[]``) for a search that
+        answers from what it retrieves when its model calls are cut."""
+        return []
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         # Every strategy's search reports what it answered without
@@ -888,18 +908,9 @@ class BaseSearchStrategy(ABC):
     def _call_tokens(
         self, prompt_class: type[BasePrompt], query: SearchQuery, item: int = 0
     ) -> int:
-        """A planned call of ``prompt_class`` on ``query`` at the local
-        estimate the usage meter counts a call's start at: its prompt's
-        templates, the question (every strategy prompt carries it) and
-        ``item`` tokens of the rest it is filled with."""
-        resolved = prompt_class.resolve(custom_prompts=self.config.custom_prompts)
-        return (
-            estimate_token_count(
-                resolved.system_prompt_template + resolved.human_prompt_template
-            )
-            + estimate_token_count(query.query)
-            + item
-        )
+        """A planned call of ``prompt_class`` on ``query``
+        (``prompt_call_tokens``)."""
+        return prompt_call_tokens(self.config, prompt_class, query.query, item)
 
     @property
     def _min_context_tokens(self) -> int:
@@ -957,6 +968,19 @@ class BaseSearchStrategy(ABC):
             f"query_limit: {planned - started} of {planned} calls not started",
             UsageLimitExceededError.__name__,
         )
+
+    @classmethod
+    def _stopped_by_limits(cls, step: str, error: BaseException) -> bool:
+        """Whether ``error`` is the query's limits refusing a call of
+        ``step`` (``UsageLimitExceededError``: it was not sent), then
+        recorded as the step's limit stop (``_record_limit_stop``): a call
+        planned to fit whose built prompt does not (the meter estimates the
+        whole prompt, a plan its pieces) is left out as one that did not
+        fit, not failed."""
+        if not isinstance(error, UsageLimitExceededError):
+            return False
+        cls._record_limit_stop(step, 0, 1)
+        return True
 
     @final
     def json_answers(

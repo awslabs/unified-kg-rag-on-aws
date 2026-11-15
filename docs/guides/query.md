@@ -197,10 +197,13 @@ is refused before its request is sent:
   either limit starts no speculative extraction.
 - The answer's context is cut to the input tokens left after the answer
   prompt's own templates and instructions and the question, less
-  `search.token_manager.context_window_headroom_ratio` of them; the fan-out
-  strategies keep that prompt's tokens for the answer too. A context cut
-  this way is listed in `metadata.degraded` (step `context_optimization`,
-  reason `query_limit: N of M sections cut`).
+  `search.token_manager.context_window_headroom_ratio` of them, and the
+  context as built (its section headers and the blank lines between
+  sections included) never passes that room at the meter's estimate; the
+  fan-out strategies keep that prompt's tokens for the answer too. A context
+  cut this way, its sections left out or cut short, is listed in
+  `metadata.degraded` (step `context_optimization`, reason
+  `query_limit: N of M sections cut`).
 - One call is kept for the answer, and under an input-token limit its
   input too (its prompt, the question and the least context): an optional
   call that would take either is not sent, and its step is answered without
@@ -209,14 +212,17 @@ is refused before its request is sent:
   follow-up is then searched as written), the structured strategy's planner
   (its fallback answers) and an output repair (`models.roles.fixing`; the
   reply that did not parse counts as unrepaired). A query that names `drift`
-  keeps the call of its one action too (without it DRIFT finds nothing). A
+  keeps the call of its one action too (without it DRIFT finds nothing),
+  and under an input-token limit that action's least input. A
   search (`asearch`, `kg_search`, `run-rag --mode search`) makes no answer,
   so keeps nothing for one; an optional call past a limit is then skipped
   the same way.
 - Under an input-token limit the fan-out keeps for the answer what it will
   read (the answer prompt, DRIFT's answers so far, the least context),
-  not the configured ceilings, and DRIFT's actions share what is left;
-  `auto` makes no router call the limit cannot take, routing to its
+  not the configured ceilings, and DRIFT's actions share what is left,
+  each action's built context kept to its share (an action the meter still
+  refuses is left out as one that did not fit, its follow-up's evidence
+  kept); `auto` makes no router call the limit cannot take, routing to its
   fallback.
 - A query whose answer call does not fit fails with
   `UsageLimitExceededError` (exported from `unified_kg_rag`; error class

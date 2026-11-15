@@ -1480,8 +1480,10 @@ record's `error_class` property. A server limit set too low
 error at all: a query its limits cut short answers without the steps that did
 not fit (a degraded reason that starts with `query_limit`) or declines
 (`abstention_reason` `query_limit`), counted in `query_degraded` with steps
-that failed. `query_limited` is 1 for each of those and for a call the limits
-refused (`limit_exceeded`), and the query span carries it as
+that failed. `query_limited` is 1 for each of those (an answer context the
+limit cut short included), for an `auto` query routed past the strategies
+that did not fit (`routing.over_limits`) and for a call the limits refused
+(`limit_exceeded`), and the query span carries it as
 `kg_rag.query_limited`: watch it on the "Query outcomes" widget, and raise
 the limit when it grows. A cancelled query (an MCP client that disconnects, a task
 cancelled by its host) records nothing. `query_throttled_requests` counts

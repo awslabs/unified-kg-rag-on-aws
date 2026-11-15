@@ -806,20 +806,25 @@ class TestWarmUp:
         with pytest.raises(MethodologyNotIndexedError, match="raptor"):
             await manager.warm_up(query)
 
-    @pytest.mark.parametrize("kind", ["index", "config"])
+    @pytest.mark.parametrize("kind", ["index", "config", "effort"])
     async def test_a_missing_index_or_a_bad_setting_fails_fast(
         self, config: Config, kind: str
     ) -> None:
-        # Nothing ingested under the suffix, or an embedding dimension the
-        # index does not hold: the run used to answer the whole dataset,
+        # Nothing ingested under the suffix, an embedding dimension the
+        # index does not hold, or an effort the answer model does not take
+        # (rv34: run-eval --effort answered every query, each refused, and
+        # exited 1 instead of 2): the run used to answer the whole dataset,
         # every query failing the same way.
         from unified_kg_rag.shared import ConfigurationError, IndexNotFoundError
+        from unified_kg_rag.shared.exceptions import InvalidArgumentError
 
-        error = (
-            IndexNotFoundError("no index for suffix 'typo'")
-            if kind == "index"
-            else ConfigurationError("embedding dimension 64, index holds 32")
-        )
+        error = {
+            "index": IndexNotFoundError("no index for suffix 'typo'"),
+            "config": ConfigurationError("embedding dimension 64, index holds 32"),
+            "effort": InvalidArgumentError(
+                "effort 'high' cannot apply: the answer model does not reason"
+            ),
+        }[kind]
 
         class _Chain:
             async def ainvoke(self, inputs, config=None):

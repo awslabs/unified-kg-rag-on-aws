@@ -62,17 +62,26 @@ T = TypeVar("T")
 _RETRY_DEADLINE: contextvars.ContextVar[float | None] = contextvars.ContextVar(
     "kg_rag_retry_deadline", default=None
 )
+# What sets that deadline, as the give-up warning names it.
+_RETRY_DEADLINE_NAME: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "kg_rag_retry_deadline_name", default="the query deadline"
+)
 
 
 @contextlib.contextmanager
-def retry_deadline(deadline: float | None) -> Iterator[None]:
+def retry_deadline(
+    deadline: float | None, name: str = "the query deadline"
+) -> Iterator[None]:
     """No transient retry starts past ``deadline`` (``time.monotonic()``)
     in this context: a call abandoned by a timed-out query does not keep
-    re-sending its request from a worker thread."""
+    re-sending its request from a worker thread. ``name`` says what set it
+    (a retry given up for it names it)."""
     token = _RETRY_DEADLINE.set(deadline)
+    name_token = _RETRY_DEADLINE_NAME.set(name)
     try:
         yield
     finally:
+        _RETRY_DEADLINE_NAME.reset(name_token)
         _RETRY_DEADLINE.reset(token)
 
 
@@ -446,9 +455,10 @@ def next_transient_retry_delay(
     deadline = _RETRY_DEADLINE.get()
     if deadline is not None and time.monotonic() + delay >= deadline:
         logger.warning(
-            "Giving up on '%s' after %s attempts (the query deadline is reached): %s",
+            "Giving up on '%s' after %s attempts (%s is reached): %s",
             operation,
             attempt,
+            _RETRY_DEADLINE_NAME.get(),
             error_name(exc),
         )
         return None

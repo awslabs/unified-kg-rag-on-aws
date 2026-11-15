@@ -134,7 +134,7 @@ class _Optimized(list):
 
 
 class _Tokens:
-    def optimize_context(self, results, query, max_tokens):
+    def optimize_context(self, results, query, max_tokens, estimated_within=None):
         return _Optimized(results)
 
     def build_context_string(self, optimized) -> str:
@@ -405,7 +405,7 @@ async def test_an_action_reads_its_local_context_within_the_budget() -> None:
     budgets: list[int] = []
 
     class _Budget(_Tokens):
-        def optimize_context(self, results, query, max_tokens):
+        def optimize_context(self, results, query, max_tokens, estimated_within=None):
             budgets.append(max_tokens)
             return _Optimized(results[:0] if max_tokens < 1000 else results)
 
@@ -639,7 +639,7 @@ async def test_each_intermediate_answer_cites_what_it_was_written_from(
             return found
 
     class _Budget(_Tokens):
-        def optimize_context(self, results, query, max_tokens):
+        def optimize_context(self, results, query, max_tokens, estimated_within=None):
             return _Optimized(r for r in results if r.source != "t:cut")
 
     strat = _strategy(reports=reports, local=_CitingLocal(), n_depth=1, primer_folds=2)

@@ -67,14 +67,17 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   before it is sent: the usage callback now raises its refusal (LangChain swallowed a handler's error) and logs any
   other error of its own (`setup_logging` drops LangChain's own "Error in UsageCallbackHandler... callback" WARNING of
   a refusal). `global`, `drift` and `iterative` start only the calls that fit beside what the answer will read
-  (DRIFT's actions sharing what is left; each planned call counted with the question it carries, by the one estimate
-  of the answer's call, `answer_call_tokens`) and list the rest in `metadata.degraded` (reason `query_limit`), `auto`
+  (DRIFT's actions sharing what is left, each built context kept to its share and an action the meter still refuses
+  left out as one that did not fit; each planned call counted with the question it carries, by the one estimate of
+  the answer's call, `answer_call_tokens`) and list the rest in `metadata.degraded` (reason `query_limit`), `auto`
   routes only to strategies whose fewest calls fit (when none fits with its query translation and extractions, to
   those that fit without them, which it then skips) and makes no router call an input-token limit cannot take
   (`metadata.routing.over_limits`) and under either limit starts no speculative extraction, the answer's context is
-  cut to the tokens left after the answer prompt and the question (the fan-out keeps that prompt's tokens too; a cut
-  listed as `query_limit: N of M sections cut`), a search (`asearch`, `kg_search`, `--mode search`) keeps nothing for
-  an answer it does not make, a query naming `drift` keeps its one action's call too, an optional call (a query
+  cut to the tokens left after the answer prompt and the question, the built context never past them at the meter's
+  estimate (the fan-out keeps that prompt's tokens too; a cut, its sections left out or cut short, listed as
+  `query_limit: N of M sections cut`), a search (`asearch`, `kg_search`, `--mode search`) keeps nothing for an answer
+  it does not make, a query naming `drift` keeps its one action's call too (and that call's least input under an
+  input-token limit: `answering_calls`), an optional call (a query
   translation or extraction, the follow-up rewrite, which then searches the follow-up as written, the structured
   planner, an output repair: `usage.optional_calls`) never takes the call kept for the answer, nor under an
   input-token limit the answer's prompt, question and least context (nor, with nothing kept, a call past the limit),
@@ -84,7 +87,8 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   caller; exit code 1, console HTTP 422). The console's Ask page names that decline, the steps the limits skipped
   (apart from those that failed) and the strategies they left `auto` without. The `query_limited` metric (0 or 1, on
   the CDK dashboard's "Query outcomes" widget) and the query span's `kg_rag.query_limited` count a query its limits
-  cut short (a step left out, an abstention or a refusal), which `query_degraded` could not tell from a failing step.
+  cut short (a step left out or cut, an abstention, a refusal, or the strategies `auto` was routed past), which
+  `query_degraded` could not tell from a failing step.
 - One streaming path: `GraphRAGChain.aquery_events()` (sync `query_events()`) yields typed events (`QueryEvent`,
   exported with `QueryStart`, `QueryRouted`, `QuerySources`, `AnswerChunk` and `QueryResult`): the query `ainvoke`
   runs, its deadline, query limits, guardrail, metrics and memory included, ending with its `RAGOutput`. LangChain's
@@ -111,7 +115,8 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   before), sizes its thinking budget; unset, nothing changes. An effort the answer model cannot apply (a level it
   does not take, or a model that does not reason, as a local server's) is refused before any answer's model call
   (`InvalidArgumentError`); a search, which makes no answer, takes any. `run-rag --effort` and `run-eval --effort` set
-  it (a dataset item's `metadata.effort` wins in `run-eval`); the MCP tools and the console's Ask page do not take it.
+  it (a dataset item's `metadata.effort` wins in `run-eval`, whose warm-up fails such an effort before the dataset,
+  exit 2); the MCP tools and the console's Ask page do not take it.
   The query span (`kg_rag.effort`, `kg_rag.limits.max_model_calls`, `kg_rag.limits.max_input_tokens`) and the query
   metrics record (`effort`, `limits.*` properties) name the effort and the limits in force.
 - An ingestion run's budget and cost estimate. `processing.max_run_model_calls` and `processing.max_run_usd` (off by
@@ -190,6 +195,9 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
 ### Fixed
 Bugs present in 0.3.0.
 
+- A context could read past its token budget: a section type whose next section fell below the truncation floor
+  kept its unused share while that share was also handed to the other types (a 244-token budget built 262). The
+  token manager hands each share out once.
 - The console's Ask page showed the raw key `ask.abstention.no_reports` for a `global` question on a namespace without
   community reports.
 - The console's hovered primary button in the dark theme fell to 4.3:1 contrast; it keeps 4.7:1.

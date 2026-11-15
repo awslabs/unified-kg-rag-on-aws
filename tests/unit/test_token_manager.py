@@ -992,3 +992,83 @@ def test_headers_are_paid_for_the_types_seated_only(mocker) -> None:
     assert [s.source_id for s in optimized.sections] == ["tu-1"]
     context = manager.build_context_string(optimized)
     assert len(context.split()) <= 9 - 1
+
+
+@pytest.mark.parametrize("max_tokens", range(20, 1200, 7))
+def test_a_type_that_seats_nothing_never_lends_its_share_twice(
+    mocker, max_tokens: int
+) -> None:
+    # Regression (rv34): a type whose share was below the truncation floor
+    # seated nothing yet kept its share when the spare was handed out, so
+    # its share was counted twice: a 244-token budget rendered 262 tokens,
+    # and a DRIFT action read past the input tokens planned for it.
+    mgr = _make_manager(mocker)
+    results = [
+        _r(" ".join(["w"] * 30), 0.9, "relationship", "r-1"),
+        _r(" ".join(["w"] * 120), 0.8, "entity", "e-1"),
+        _r(" ".join(["w"] * 150), 0.7, "text", "t-1"),
+        _r(" ".join(["w"] * 160), 0.6, "text", "t-2"),
+        _r(" ".join(["w"] * 200), 0.5, "community", "c-1"),
+    ]
+    out = mgr.optimize_context(results, query="the query", max_tokens=max_tokens)
+    rendered = mgr.build_context_string(out)
+    assert mgr.count_tokens(rendered) + mgr.count_tokens("the query") <= max_tokens
+
+
+def _local_manager() -> TokenManager:
+    from unified_kg_rag.adapters.local.token_counter import (
+        local_token_counter_factory,
+    )
+
+    config = Config()
+    return TokenManager(
+        config,
+        providers=Providers(
+            config, token_counter_factory=local_token_counter_factory(config)
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "content", ["Vendor {i} sells to Buyer {i}x.", "벤더 {i} 공급"]
+)
+@pytest.mark.parametrize("kind", ["text", "entity"])
+def test_a_context_bounded_at_the_estimate_never_passes_it(
+    content: str, kind: str
+) -> None:
+    # Regression (rv34): each section is counted apart, rounded down, and
+    # the blank lines between them are not counted, so a context of many
+    # short sections estimated up to 16% past its budget: past the room an
+    # input-token limit left a call (the usage meter estimates the whole
+    # prompt) and past the answer's headroom.
+    from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
+
+    mgr = _local_manager()
+    results = [_r(content.format(i=i), 1 - i / 1000, kind, f"d{i}") for i in range(400)]
+    overshot = []
+    for budget in range(300, 6000, 211):
+        out = mgr.optimize_context(
+            results, "q", max_tokens=budget, estimated_within=budget - 1
+        )
+        built = estimate_token_count(mgr.build_context_string(out))
+        assert out.sections_included > 0
+        assert built <= budget - 1
+        unbounded = mgr.optimize_context(results, "q", max_tokens=budget)
+        overshot.append(
+            estimate_token_count(mgr.build_context_string(unbounded)) > budget - 1
+        )
+    # The bound is what holds it: unbounded, the same contexts pass it.
+    assert any(overshot)
+
+
+def test_a_section_cut_to_fit_is_counted_truncated(mocker) -> None:
+    mgr = _make_manager(mocker)
+    results = [
+        _r(" ".join(["w"] * 100), 0.9, "text", "t-1"),
+        _r(" ".join(["w"] * 100), 0.8, "text", "t-2"),
+    ]
+    whole = mgr.optimize_context(results, query="q", max_tokens=1000)
+    assert (whole.sections_excluded, whole.sections_truncated) == (0, 0)
+    cut = mgr.optimize_context(results, query="q", max_tokens=180)
+    assert (cut.sections_included, cut.sections_excluded) == (2, 0)
+    assert cut.sections_truncated == 1
