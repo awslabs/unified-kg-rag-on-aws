@@ -863,14 +863,20 @@ def _cjk_run(chars: str) -> str:
     return rf"{part}(?:[^\S\n]?{part})*"
 
 
+# No digit before a run, nor a digit and a decimal point or thousands
+# separator, which the run would continue ("1.5万", "3,000万"). A comma
+# that only sets a clause off starts one: "据报道，三千元" (NFKC folds
+# "，" to ",") is 3000, "是的，五家" 5.
+_NO_NUMBER_BEFORE = r"(?<!\d)(?<!\d[.,])"
 _CJK_PART_TOKEN = re.compile(rf"{_DIGIT_FORM}|\S")
 _CJK_NUMBER = re.compile(
-    rf"(?<!{_HANGUL})(?<![\d.,])"
+    rf"(?<!{_HANGUL}){_NO_NUMBER_BEFORE}"
     + _cjk_run("".join(ch for ch in _CJK_CHARS if ch not in _SUM_NUMERALS))
 )
 _CURRENCY_AFTER = re.compile(r"[^\S\n]?(?:" + "|".join(_CURRENCY_COUNTERS) + ")")
 _CJK_SUM = re.compile(
-    rf"(?<!{_HANGUL})(?<![\d.,]){_cjk_run(_CJK_CHARS)}(?={_CURRENCY_AFTER.pattern})"
+    rf"(?<!{_HANGUL}){_NO_NUMBER_BEFORE}{_cjk_run(_CJK_CHARS)}"
+    rf"(?={_CURRENCY_AFTER.pattern})"
 )
 # A Han letter after a currency counter may make the counter the first
 # letter of a word ("元首", "円熟", "元宇宙", "圆满").
