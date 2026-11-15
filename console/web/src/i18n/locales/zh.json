@@ -596,7 +596,7 @@
   "settings.invalid": "无法加载",
   "settings.warnings": "可加载，但有警告",
   "settings.goneKeysTitle": "已弃用或已移除的键",
-  "settings.deprecatedKey": "{{key}} 已弃用：其值会载入 {{replacements}}。请改为设置后者；旧键将在以后的版本中移除。",
+  "settings.deprecatedKey_other": "{{key}} 已弃用：其值会载入 {{replacements}}。请改为设置后者；旧键将在以后的版本中移除。",
   "settings.removedKey": "{{key}} 已移除，会被忽略：",
   "settings.commentsDropped": "从字段保存会重写文件并丢失注释。要保留注释，请在 YAML 选项卡中编辑。",
   "settings.save": "保存到 {{file}}",

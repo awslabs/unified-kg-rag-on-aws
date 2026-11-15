@@ -275,6 +275,17 @@ describe("a query's limits, a run's budget and deprecated keys", () => {
     );
     expect(screen.getByText("지원 중단되었거나 제거된 키")).toBeInTheDocument();
     expect(container.textContent).toContain("retry.model.max_attempts, retry.ingestion_item.max_attempts");
+    // English agrees with the number of replacements (rv35).
+    const one = { ...preview, deprecated_keys: preview.deprecated_keys.map((d) => ({ ...d, replacements: ["retry.model.max_attempts"] })) };
+    for (const [shown, wording] of [[preview, "Set those instead"], [one, "Set that instead"]] as const) {
+      const english = render(
+        <I18nProvider initial="en">
+          <GoneKeys preview={shown} />
+        </I18nProvider>,
+      );
+      expect(english.container.textContent).toContain(wording);
+      english.unmount();
+    }
     // The reason is the server's English, marked as such.
     expect(screen.getByText("output fixing is always on")).toHaveAttribute("lang", "en");
     rerender(
