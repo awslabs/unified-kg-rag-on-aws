@@ -1015,6 +1015,113 @@ def test_a_type_that_seats_nothing_never_lends_its_share_twice(
     assert mgr.count_tokens(rendered) + mgr.count_tokens("the query") <= max_tokens
 
 
+@pytest.mark.parametrize("max_tokens", range(150, 3000, 37))
+@pytest.mark.parametrize("words", [40, 70, 110])
+def test_room_a_type_cannot_seat_goes_to_the_others(
+    mocker, max_tokens: int, words: int
+) -> None:
+    # Regression (rv35): handing each share out once, a type that still had
+    # candidates kept the room it could not seat (below the truncation
+    # floor); with every type such a receiver nothing was left to hand out
+    # and a 592-token budget rendered 372 tokens.
+    mgr = _make_manager(mocker)
+    floor = mgr.config.min_truncated_section_tokens
+    kinds = ("text", "entity", "relationship", "community")
+    results = [
+        _r(" ".join(["w"] * (words + 9 * (i % 3))), 0.9 - i / 100, kind, f"{kind}-{i}")
+        for i in range(40)
+        for kind in kinds
+    ]
+    out = mgr.optimize_context(results, query="the query", max_tokens=max_tokens)
+    rendered = mgr.count_tokens(mgr.build_context_string(out))
+    assert out.sections_excluded > 0
+    assert rendered + mgr.count_tokens("the query") <= max_tokens
+    # What is left of the budget past the headers (each type's reserved)
+    # could seat nothing.
+    budget = (
+        max_tokens
+        - mgr.count_tokens("the query")
+        - sum(
+            mgr.count_tokens(TokenManager._section_header(SectionType(kind)))
+            for kind in kinds
+        )
+    )
+    assert budget - out.total_tokens < floor
+
+
+def _packed_tokens(mgr: TokenManager, out: OptimizedContext) -> int:
+    """What ``out``'s sections and the headers of their types count."""
+    return out.total_tokens + sum(
+        mgr.count_tokens(TokenManager._section_header(t))
+        for t in {s.section_type for s in out.sections}
+    )
+
+
+class _V030Lending(TokenManager):
+    """0.3.0's hand-out (each round's spare lent on top of every
+    receiver's cap), the oracle the share rule keeps to where it fitted."""
+
+    def _select_per_type(  # type: ignore[override]
+        self, sections, token_budget, spare_budget_first=(), fallback=True, headers=None
+    ):
+        by_type: dict[SectionType, list[ContextSection]] = {}
+        for s in sections:
+            if s.token_count > 0:
+                by_type.setdefault(s.section_type, []).append(s)
+        for lst in by_type.values():
+            lst.sort(key=lambda s: s.priority, reverse=True)
+        shares = self._type_budget_shares(list(by_type))
+        caps = self._type_budgets(list(by_type), token_budget)
+        for _ in range(len(by_type) + 1):
+            packed = {t: self._pack_type(lst, caps[t]) for t, lst in by_type.items()}
+            spare = token_budget - sum(
+                s.token_count for seated, _ in packed.values() for s in seated
+            )
+            receivers = [t for t, (_, done) in packed.items() if not done]
+            if spare < self.config.min_truncated_section_tokens or not receivers:
+                break
+            total = sum(shares[t] for t in receivers)
+            for t in receivers:
+                caps[t] += int(
+                    spare * (shares[t] / total if total > 0 else 1 / len(receivers))
+                )
+        return [s for seated, _ in packed.values() for s in seated]
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_the_share_rule_keeps_0_3_0s_contexts_where_they_fitted(
+    mocker, seed: int
+) -> None:
+    # Regression (rv35): handing each share out once changed contexts
+    # 0.3.0 built within the budget (and underfilled them). The spare is
+    # lent as 0.3.0 lent it, and only a round that then seats past the
+    # budget lends it once.
+    import copy
+    import random
+
+    rng = random.Random(seed)
+    mgr = _make_manager(mocker)
+    oracle = copy.copy(mgr)
+    oracle.__class__ = _V030Lending
+    kept = 0
+    for _ in range(25):
+        results = [
+            _r(" ".join(["w"] * rng.randint(5, 200)), rng.random(), kind, f"{kind}{i}")
+            for kind in ("text", "entity", "relationship", "community")
+            for i in range(rng.randint(1, 6))
+        ]
+        max_tokens = rng.randint(80, 900)
+        out = mgr.optimize_context(results, "q", max_tokens=max_tokens)
+        assert _packed_tokens(mgr, out) + 1 <= max_tokens
+        before = oracle.optimize_context(results, "q", max_tokens=max_tokens)
+        if before.sections and _packed_tokens(oracle, before) + 1 <= max_tokens:
+            kept += 1
+            assert [(s.source_id, s.content) for s in out.sections] == [
+                (s.source_id, s.content) for s in before.sections
+            ]
+    assert kept
+
+
 def _local_manager() -> TokenManager:
     from unified_kg_rag.adapters.local.token_counter import (
         local_token_counter_factory,
@@ -1059,6 +1166,66 @@ def test_a_context_bounded_at_the_estimate_never_passes_it(
         )
     # The bound is what holds it: unbounded, the same contexts pass it.
     assert any(overshot)
+
+
+def _ratio_manager(mocker, ratio: float) -> TokenManager:
+    """A manager whose counter counts ``ratio`` times the local estimate."""
+    from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
+
+    counter = mocker.Mock()
+    counter.count_tokens.side_effect = lambda text: max(
+        1, int(estimate_token_count(text) * ratio)
+    )
+    config = Config()
+    return TokenManager(
+        config,
+        providers=Providers(
+            config,
+            boto_session=mocker.Mock(),
+            token_counter_factory=lambda *_, **__: counter,
+        ),
+    )
+
+
+@pytest.mark.parametrize("ratio", [0.35, 0.5, 0.55, 0.7, 1.0, 1.37, 1.8])
+@pytest.mark.parametrize(
+    "line",
+    [
+        "공급업체는 공급 계약에 따라 구매자에게 라이다 장치를 납품한다. ",
+        "供給業者は供給契約に基づき購入者にライダー装置を納入する。",
+    ],
+    ids=["ko", "ja"],
+)
+def test_a_context_bounded_at_the_estimate_fills_it_at_any_counter_ratio(
+    mocker, ratio: float, line: str
+) -> None:
+    # Regression (rv35): the re-pack took the excess, in the estimate's
+    # tokens, off a budget in the counter's: with a counter counting half
+    # the estimate the budget went below zero and the context came back
+    # empty. Packed from the query's own budget, a counter counting more
+    # than the estimate fills the bound too.
+    from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
+
+    mgr = _ratio_manager(mocker, ratio)
+    results = [
+        _r(
+            line * (1 + i % 5),
+            1 - i / 100,
+            ("entity", "relationship", "text")[i % 3],
+            f"s{i}",
+        )
+        for i in range(60)
+    ]
+    for within in (1000, 4000):
+        out = mgr.optimize_context(
+            results,
+            "q",
+            max_tokens=30_000,
+            number_sections=True,
+            estimated_within=within,
+        )
+        built = estimate_token_count(mgr.build_context_string(out))
+        assert 0.85 * within <= built <= within, (within, built)
 
 
 def test_a_section_cut_to_fit_is_counted_truncated(mocker) -> None:

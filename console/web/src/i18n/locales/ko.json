@@ -64,6 +64,7 @@
   "ask.routing.router": "auto가 {{strategy}} 전략을 선택했습니다. 라우터가 {{candidates}} 중에서 골랐습니다.",
   "ask.routing.only_candidate": "auto가 {{strategy}} 전략을 사용했습니다. 이 인덱스에서 이 필터를 적용할 수 있는 유일한 전략입니다.",
   "ask.routing.over_limits": "auto가 {{strategy}} 전략을 사용했습니다. 쿼리 한도 안에서 다른 전략({{over_limits}})을 실행할 여유가 없습니다.",
+  "ask.routing.limits_left_out": "쿼리 한도 때문에 {{over_limits}} 전략은 제외되었습니다.",
   "ask.routing.fallback": "auto가 {{strategy}} 전략으로 대체했습니다. 라우터가 사용할 수 있는 전략을 지정하지 않았습니다.",
   "ask.abstained": "답변을 거절했습니다",
   "ask.abstention.no_context": "검색에서 이 질문에 대한 컨텍스트를 찾지 못해 모델에 답변을 요청하지 않았습니다.",

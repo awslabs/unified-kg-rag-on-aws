@@ -65,6 +65,7 @@
   "ask.routing.router": "Auto chose {{strategy}}: the router picked it from {{candidates}}.",
   "ask.routing.only_candidate": "Auto used {{strategy}}: it is the only strategy that applies these filters to this index.",
   "ask.routing.over_limits": "Auto used {{strategy}}: the query's limits leave no room for the other strategies ({{over_limits}}).",
+  "ask.routing.limits_left_out": "The query's limits left out {{over_limits}}.",
   "ask.routing.fallback": "Auto fell back to {{strategy}}: the router did not name a strategy it could use.",
   "ask.abstained": "The answer declined",
   "ask.abstention.no_context": "Retrieval found no context for this question, so no model was asked to answer it.",

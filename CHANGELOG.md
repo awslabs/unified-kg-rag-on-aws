@@ -73,11 +73,11 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   routes only to strategies whose fewest calls fit (when none fits with its query translation and extractions, to
   those that fit without them, which it then skips) and makes no router call an input-token limit cannot take
   (`metadata.routing.over_limits`) and under either limit starts no speculative extraction, the answer's context is
-  cut to the tokens left after the answer prompt and the question, the built context never past them at the meter's
-  estimate (the fan-out keeps that prompt's tokens too; a cut, its sections left out or cut short, listed as
-  `query_limit: N of M sections cut`), a search (`asearch`, `kg_search`, `--mode search`) keeps nothing for an answer
-  it does not make, a query naming `drift` keeps its one action's call too (and that call's least input under an
-  input-token limit: `answering_calls`), an optional call (a query
+  cut to the tokens left after the answer prompt and the question, the built context packed down to them at the
+  meter's estimate whatever its counter counts (the fan-out keeps that prompt's tokens too; a cut, its sections left
+  out or cut short, listed as `query_limit: N of M sections cut`), a search (`asearch`, `kg_search`, `--mode search`)
+  keeps nothing for an answer it does not make, a query naming `drift` keeps its one action's call too (and that
+  call's least input under an input-token limit: `answering_calls`), an optional call (a query
   translation or extraction, the follow-up rewrite, which then searches the follow-up as written, the structured
   planner, an output repair: `usage.optional_calls`) never takes the call kept for the answer, nor under an
   input-token limit the answer's prompt, question and least context (nor, with nothing kept, a call past the limit),
@@ -197,8 +197,9 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
 Bugs present in 0.3.0.
 
 - A context could read past its token budget: a section type whose next section fell below the truncation floor
-  kept its unused share while that share was also handed to the other types (a 244-token budget built 262). The
-  token manager hands each share out once.
+  kept its unused share while that share was also handed to the other types (a 244-token budget built 262). A round
+  that seats past the budget so now lends its spare once, the room the types held unseated pooled in it; any other
+  context is the one 0.3.0 built.
 - The console's Ask page showed the raw key `ask.abstention.no_reports` for a `global` question on a namespace without
   community reports.
 - The console's hovered primary button in the dark theme fell to 4.3:1 contrast; it keeps 4.7:1.

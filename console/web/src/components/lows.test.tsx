@@ -188,11 +188,20 @@ describe("a query's limits, a run's budget and deprecated keys", () => {
     const routing = { decided_by: "only_candidate" as const, candidates: ["local"], over_limits: ["mix", "global"] };
     expect(routingNote(routing, "local", en)).toBe("Auto used local: the query's limits leave no room for the other strategies (mix, global).");
     expect(routingNote({ ...routing, over_limits: undefined }, "local", en)).toContain("only strategy that applies these filters");
-    // The router still picked among the candidates the limits left.
-    expect(routingNote({ ...routing, decided_by: "router", candidates: ["local", "drift"] }, "local", en)).toBe(
-      "Auto chose local: the router picked it from local, drift.",
+    // The router still picked among the candidates the limits left, and the
+    // note names those the limits left out (rv35).
+    const routed = { ...routing, decided_by: "router" as const, candidates: ["local", "drift"] };
+    expect(routingNote(routed, "local", en)).toBe(
+      "Auto chose local: the router picked it from local, drift. The query's limits left out mix, global.",
     );
-    expect(routingNote(routing, "local", ko)).toContain("mix, global");
+    expect(routingNote({ ...routed, decided_by: "fallback" }, "local", en)).toContain("left out mix, global");
+    expect(routingNote({ ...routed, over_limits: [] }, "local", en)).toBe("Auto chose local: the router picked it from local, drift.");
+    for (const t of [en, ko]) {
+      for (const note of [routingNote(routing, "local", t), routingNote(routed, "local", t)]) {
+        expect(note).toContain("mix, global");
+        expect(note).not.toMatch(/ask\./);
+      }
+    }
   });
 
   it("names the declines the limits and a namespace without reports cause", () => {

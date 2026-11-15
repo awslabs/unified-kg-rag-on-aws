@@ -571,9 +571,9 @@ class DriftSearchStrategy(BaseSearchStrategy):
                 self.token_manager.optimize_context,
                 local.results,
                 follow_up,
-                context_tokens or self.drift_config.local_context_tokens,
+                self.drift_config.local_context_tokens,
                 # Under an input-token limit the share is planned at the
-                # meter's estimate: the built context keeps to it.
+                # meter's estimate: the built context is packed down to it.
                 estimated_within=(
                     context_tokens
                     if usage.remaining().input_tokens is not None

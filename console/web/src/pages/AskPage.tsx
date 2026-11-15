@@ -388,12 +388,15 @@ export function partialHelp(entries: Degradation[], t: I18n["t"]): string {
   return parts.join(" ");
 }
 
-/** How auto routed: the limits' variant when they left the others out of
- * a single candidate (routing.over_limits). */
+/** How auto routed, naming the strategies the query's limits left out
+ * (routing.over_limits): the limits' variant when they left a single
+ * candidate, else a note after how it chose among the rest. */
 export function routingNote(routing: NonNullable<AskResult["routing"]>, strategy: string, t: I18n["t"]): string {
   const overLimits = routing.over_limits ?? [];
-  const key = routing.decided_by === "only_candidate" && overLimits.length ? "ask.routing.over_limits" : `ask.routing.${routing.decided_by}`;
-  return t(key, { strategy, candidates: joinList(routing.candidates, t), over_limits: joinList(overLimits, t) });
+  const values = { strategy, candidates: joinList(routing.candidates, t), over_limits: joinList(overLimits, t) };
+  if (!overLimits.length) return t(`ask.routing.${routing.decided_by}`, values);
+  if (routing.decided_by === "only_candidate") return t("ask.routing.over_limits", values);
+  return `${t(`ask.routing.${routing.decided_by}`, values)} ${t("ask.routing.limits_left_out", values)}`;
 }
 
 export function stepNames(entries: Degradation[], t: (key: string) => string): string {

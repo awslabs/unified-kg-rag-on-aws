@@ -66,6 +66,7 @@
   "ask.routing.router": "auto a choisi {{strategy}} : le routeur l’a retenue parmi {{candidates}}.",
   "ask.routing.only_candidate": "auto a utilisé {{strategy}} : c’est la seule stratégie qui applique ces filtres à cet index.",
   "ask.routing.over_limits": "auto a utilisé {{strategy}} : les limites de la requête ne laissent pas de place aux autres stratégies ({{over_limits}}).",
+  "ask.routing.limits_left_out": "Les limites de la requête ont écarté {{over_limits}}.",
   "ask.routing.fallback": "auto s’est rabattu sur {{strategy}} : le routeur n’a désigné aucune stratégie utilisable.",
   "ask.abstained": "La réponse a été refusée",
   "ask.abstention.no_context": "La recherche n’a trouvé aucun contexte pour cette question, aucun modèle n’a donc été sollicité pour y répondre.",
