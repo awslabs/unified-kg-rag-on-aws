@@ -12,7 +12,7 @@ prints. Every flag: [CLI Reference](./cli.md); what an error message means:
 | Code | Meaning |
 |---|---|
 | `0` | Success |
-| `1` | The run failed: a failed stage or query (in `run-ingestion` also a `ConfigurationError` a stage meets, an unreachable store or an unreachable model server, or a run stopped at its budget, `processing.max_run_*`: `error_class` `limit_exceeded`, `error_type` `RunBudgetExhausted`, resumed with the same `--pipeline-id`), a breached `--max-failure-rate` (`run-eval`, `run-ingestion`), a failed `run-eval --fail-if` gate, a failed upload, nothing rendered or a failed renderer |
+| `1` | The run failed: a failed stage or query (in `run-ingestion` also a `ConfigurationError` a stage meets, an unreachable store or an unreachable model server, or a run stopped at its budget, `processing.max_run_*`: `error_class` `limit_exceeded`, `error_type` `RunBudgetExhausted`, the calls it paid for in `token_usage` and `cost_usd`, resumed with the same `--pipeline-id`), a breached `--max-failure-rate` (`run-eval`, `run-ingestion`), a failed `run-eval --fail-if` gate, a failed upload, nothing rendered or a failed renderer |
 | `2` | Usage or configuration error, before any work or outside a stage ([exit code 2](#exit-code-2)) |
 | `130` | Interrupted with Ctrl-C (SIGINT) |
 | `143` | Stopped by SIGTERM (ECS `StopTask`, a Step Functions timeout); `run-ingestion` checkpoints its finished stages first, and `run-eval` uploads the finished runs' results to an `s3://` output (or keeps them locally and logs the path) |
@@ -137,7 +137,10 @@ holds:
 - **`run-ingestion`**: with `--verify-metadata`, `pipeline_id` and
   `"metadata_valid": true` (a missing or corrupt record exits `1` with the
   status document below). Otherwise the pipeline id, the status, the model
-  calls and tokens of the stages the run executed (`token_usage`), the
+  calls and tokens of the stages the run executed (`token_usage`; also in
+  the status document of a run stopped at its budget, the stage it stopped
+  in included, with their USD at `models.prices`, `cost_usd`, when every
+  model they called has a price), the
   per-stage results, and these counts:
   - `failed_documents`: the documents the run recorded `FAILED`. A model
     outage that fails every unit records none; one that fails some units

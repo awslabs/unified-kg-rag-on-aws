@@ -2863,16 +2863,24 @@ def test_ingestion_stopped_at_its_budget_exits_1_naming_the_id(
     # status.
     from types import SimpleNamespace
 
+    from unified_kg_rag.domain.pricing import ModelPrice
     from unified_kg_rag.shared.exceptions import RunBudgetExhausted
 
     monkeypatch.setattr(console, "stderr", console.stderr)
-    monkeypatch.setattr(
-        run_ingestion_pipeline, "load_cli_config", lambda _args: Config()
-    )
+    config = Config()
+    config.models.prices = {
+        "model-a": ModelPrice(
+            input_per_million_tokens=2.0, output_per_million_tokens=10.0
+        )
+    }
+    monkeypatch.setattr(run_ingestion_pipeline, "load_cli_config", lambda _args: config)
+    counts = {"llm_calls": 5, "input_tokens": 1_000_000, "output_tokens": 100_000}
+    # What the stopped run's stages paid for (the stopped stage's included).
+    usage = {**counts, "by_model": {"model-a": counts}, "stages": {}}
 
     def _run(self: run_ingestion_pipeline.IngestionPipelineRunner) -> None:
         self.pipeline = SimpleNamespace(  # type: ignore[assignment]
-            pipeline_id="run-8", next_run_writes_from=0.0
+            pipeline_id="run-8", next_run_writes_from=0.0, token_usage=usage
         )
         raise RunBudgetExhausted(
             "the run reached processing.max_run_model_calls 5",
@@ -2894,6 +2902,10 @@ def test_ingestion_stopped_at_its_budget_exits_1_naming_the_id(
     assert status["error_class"] == "limit_exceeded"
     assert status["pipeline_id"] == "run-8"
     assert "max_run_model_calls" in status["error"]
+    # Regression (rv33 obs 1): the calls a stopped run paid for, and their
+    # price, were in no output.
+    assert status["token_usage"] == usage
+    assert status["cost_usd"] == pytest.approx(3.0)
 
 
 def test_run_ingestion_estimate_prints_the_estimate_and_runs_nothing(
@@ -2988,7 +3000,9 @@ def test_a_budget_stop_prints_the_pipeline_id_to_resume_with(
 
     def _run(self: run_ingestion_pipeline.IngestionPipelineRunner) -> None:
         self.pipeline = SimpleNamespace(  # type: ignore[assignment]
-            pipeline_id="run-generated-8", next_run_writes_from=0.0
+            pipeline_id="run-generated-8",
+            next_run_writes_from=0.0,
+            token_usage={"llm_calls": 5, "input_tokens": 900, "output_tokens": 40},
         )
         raise RunBudgetExhausted(
             "the run reached processing.max_run_model_calls 5",
@@ -3003,6 +3017,22 @@ def test_a_budget_stop_prints_the_pipeline_id_to_resume_with(
     with pytest.raises(SystemExit):
         run_ingestion_pipeline.main()
     printed = capsys.readouterr()
-    assert "--pipeline-id run-generated-8" in " ".join(
-        (printed.out + printed.err).split()
-    )
+    text = " ".join((printed.out + printed.err).split())
+    assert "--pipeline-id run-generated-8" in text
+    assert "It made 5 model calls (900 input / 40 output tokens)." in text
+
+
+def test_a_runs_json_prices_its_usage_only_when_every_model_has_a_price() -> None:
+    # cost_usd of a budget stop's status (rv33 obs 1).
+    from unified_kg_rag.domain.pricing import ModelPrice
+
+    counts = {"llm_calls": 1, "input_tokens": 1_000_000, "output_tokens": 0}
+    usage = {**counts, "by_model": {"model-a": counts, "model-b": counts}}
+    config = Config()
+    assert run_ingestion_pipeline._usage_fields(config, usage) == {"token_usage": usage}
+    price = ModelPrice(input_per_million_tokens=2.0, output_per_million_tokens=10.0)
+    config.models.prices = {"model-a": price}
+    assert "cost_usd" not in run_ingestion_pipeline._usage_fields(config, usage)
+    config.models.prices["model-b"] = price
+    fields = run_ingestion_pipeline._usage_fields(config, usage)
+    assert fields["cost_usd"] == pytest.approx(4.0)

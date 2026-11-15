@@ -69,6 +69,7 @@ from unified_kg_rag.domain.ingestion.delta_detector import document_doc_id
 from unified_kg_rag.domain.ingestion.methodologies import writes_graph_store
 from unified_kg_rag.domain.models import (
     Config,
+    LLMUsage,
     PipelineConfig,
     PipelineContext,
     PipelineStageResult,
@@ -77,6 +78,7 @@ from unified_kg_rag.domain.models import (
     RetrieverRole,
     validate_path_segment,
 )
+from unified_kg_rag.domain.pricing import usage_cost_usd
 from unified_kg_rag.shared import (
     ConfigurationError,
     ConfirmationDeclinedError,
@@ -1245,14 +1247,54 @@ def _print_interrupted(runner: IngestionPipelineRunner | None, exit_code: int) -
         print_json(status)
 
 
+def _usage_fields(config: Config, usage: dict[str, Any]) -> dict[str, Any]:
+    """The JSON ``token_usage`` (``run_token_usage``) of a run stopped at its
+    budget and, when ``models.prices`` prices every model it called, its
+    ``cost_usd``, set against ``processing.max_run_usd``."""
+    fields: dict[str, Any] = {"token_usage": usage}
+    if config.models.prices:
+        spent = LLMUsage.model_validate({"by_model": usage.get("by_model") or {}})
+        usd, _ = usage_cost_usd(spent, config.models.prices)
+        if usd is not None:
+            fields["cost_usd"] = usd
+    return fields
+
+
+def _stopped_usage(runner: IngestionPipelineRunner | None) -> dict[str, Any]:
+    """The usage fields of a run that stopped before its result (at its
+    budget): the calls its executed stages paid for, the stopped one's
+    included; empty before it ran a stage."""
+    pipeline = runner.pipeline if runner else None
+    usage = pipeline.token_usage if pipeline is not None else None
+    if runner is None or usage is None:
+        return {}
+    return _usage_fields(runner.config, usage)
+
+
+def _spent_text(fields: dict[str, Any]) -> str:
+    """The stop message's note on what the run spent (empty when unknown)."""
+    usage = fields.get("token_usage")
+    if not usage:
+        return ""
+    cost = f", ${fields['cost_usd']:,.2f}" if "cost_usd" in fields else ""
+    return (
+        f" It made {usage.get('llm_calls', 0):,} model calls "
+        f"({usage.get('input_tokens', 0):,} input / "
+        f"{usage.get('output_tokens', 0):,} output tokens{cost})."
+    )
+
+
 def _print_failed(
-    runner: IngestionPipelineRunner | None, exit_code: int, error: BaseException
+    runner: IngestionPipelineRunner | None,
+    exit_code: int,
+    error: BaseException,
+    **extra: Any,
 ) -> None:
     """The JSON status of a run that failed before it printed its result,
-    with its error and, once resolved, its pipeline id."""
+    with its error, once resolved its pipeline id, and ``extra``."""
     pipeline_id = runner.pipeline.pipeline_id if runner and runner.pipeline else None
     fields: dict[str, Any] = {"pipeline_id": pipeline_id} if pipeline_id else {}
-    print_status(exit_code, error, **fields)
+    print_status(exit_code, error, **fields, **extra)
 
 
 @exits_on_sigterm
@@ -1267,11 +1309,13 @@ def main() -> None:
     except RunBudgetExhausted as e:
         # The run stopped at processing.max_run_*: its finished stages and the
         # responses it got are kept, so a re-run resumes it.
+        spent = _stopped_usage(runner)
         console.print(
             f"\n[yellow]Pipeline stopped at its budget: {markup_safe(e)}."
-            f"{_resume_hint(runner)}{_next_run_wait(runner)}[/yellow]"
+            f"{_spent_text(spent)}{_resume_hint(runner)}{_next_run_wait(runner)}"
+            "[/yellow]"
         )
-        _print_failed(runner, EXIT_FAILURE, e)
+        _print_failed(runner, EXIT_FAILURE, e, **spent)
         sys.exit(EXIT_FAILURE)
     except PipelineInterrupted as e:
         if runner and runner.reported:

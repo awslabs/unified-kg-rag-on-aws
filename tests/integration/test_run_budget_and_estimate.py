@@ -366,3 +366,66 @@ def test_concurrent_budget_stops_resume_paying_each_call_once(
     # Every call paid once: the responses of the calls in flight at a stop
     # were kept.
     assert counted.calls == full.calls
+
+
+class _RecordingSink:
+    """A metrics sink keeping every record it is sent."""
+
+    def __init__(self) -> None:
+        self.records: list[dict[str, float]] = []
+
+    def emit(
+        self,
+        namespace: str,
+        metrics: dict[str, float],
+        dimensions: dict[str, str] | None = None,
+    ) -> None:
+        self.records.append(dict(metrics))
+
+    def calls(self) -> Counter[str]:
+        counts: Counter[str] = Counter()
+        for record in self.records:
+            for name, value in record.items():
+                if name.startswith("llm_calls_"):
+                    counts[name.removeprefix("llm_calls_")] += int(value)
+        return counts
+
+
+@pytest.mark.parametrize("budget", [5, 10])
+def test_a_budget_stop_publishes_and_reports_the_calls_it_paid_for(
+    tmp_path: Path, budget: int
+) -> None:
+    # Regression (rv33 obs 1): the stopped stage's usage was dropped with the
+    # stop (a KeyboardInterrupt), so its paid calls reached no llm_calls_*
+    # metric and no token_usage, and the resume counted them as cache hits.
+    source = _corpus(tmp_path)
+    config = _config()
+    config.processing.max_run_model_calls = budget
+    counted = _Counting()
+    cache = tmp_path / "cache"
+    stores = _Stores(config)
+    pipeline = _pipeline(config, source, cache, counted, stores)
+    sink = _RecordingSink()
+    pipeline.metrics_sink = sink
+    with pytest.raises(RunBudgetExhausted):
+        pipeline.run(source, pipeline_id="budget")
+    assert sum(counted.calls.values()) == budget
+    assert sink.calls() == {"graph_extraction": budget}
+    assert pipeline.token_usage is not None
+    assert pipeline.token_usage["llm_calls"] == budget
+    assert pipeline.token_usage["stages"]["graph_extraction"]["llm_calls"] == budget
+    # The stopped stage's record keeps its calls (the console's job card).
+    saved = pipeline.state_manager.load_pipeline_metadata("budget")
+    (stopped,) = [
+        r for r in saved["stage_results"] if r["stage_name"] == "graph_extraction"
+    ]
+    assert stopped["status"] == PipelineStageStatus.RUNNING.value
+    assert stopped["metrics"]["llm_usage"]["llm_calls"] == budget
+
+    # The resume publishes the calls it pays: both runs' sum is what was paid.
+    config.processing.max_run_model_calls = None
+    resumed = _pipeline(config, source, cache, counted, stores)
+    resumed.metrics_sink = sink
+    context = resumed.run(source, pipeline_id="budget")
+    assert context.status is PipelineStageStatus.COMPLETED
+    assert sink.calls() == counted.calls

@@ -2327,3 +2327,22 @@ async def test_a_blocked_query_is_counted_under_the_strategy_it_asked_for(
     ((_, values, properties),) = sink.emitted
     assert properties["Strategy"] == "simple"
     assert values[metrics.QUERY_FAILED_METRIC] == 0.0
+
+
+def test_a_refused_call_or_a_limit_abstention_reads_as_limited() -> None:
+    # The query_limited metric and span attribute: a call the limits refused
+    # (limit_exceeded) and an abstention for them count, as does a step they
+    # left out; another degradation does not.
+    from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
+
+    _query_limited = GraphRAGChain._query_limited
+
+    assert _query_limited({}, "limit_exceeded")
+    assert _query_limited({"abstention_reason": "query_limit"}, None)
+    assert _query_limited(
+        {"degraded": [{"step": "translation", "reason": "query_limit: untranslated"}]},
+        None,
+    )
+    assert not _query_limited(
+        {"degraded": [{"step": "rerank", "reason": "error"}]}, "failure"
+    )

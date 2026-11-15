@@ -12,13 +12,16 @@ delegating method for each of them.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from unified_kg_rag.domain.models import (
+    LLMUsage,
     PipelineContext,
     PipelineMetrics,
     PipelineStageStatus,
 )
+from unified_kg_rag.domain.pricing import ModelPrice, usage_cost_usd
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.logging import log_error
@@ -32,6 +35,9 @@ logger = get_logger(__name__)
 # The PipelineStageResult.metrics key of the stage's LLM usage
 # (shared.usage snapshot).
 LLM_USAGE_METRIC = "llm_usage"
+# The USD the run's model calls cost at models.prices (one value per stage,
+# read as Sum).
+LLM_COST_METRIC = "llm_cost_usd"
 
 
 def run_token_usage(
@@ -75,6 +81,7 @@ METRIC_STAGES: dict[str, frozenset[str]] = {
     "community_rebuild_recommended": frozenset({"indexing"}),
     "community_growth_ratio": frozenset({"indexing"}),
     "runs_since_clustering": frozenset({"indexing"}),
+    "rebuild_due_reasons": frozenset({"indexing"}),
     "total_extraction_failures": frozenset({"graph_extraction"}),
     "total_documents_quarantined": frozenset({"document_loading"}),
     "total_documents_deferred": frozenset({"document_loading"}),
@@ -155,6 +162,9 @@ def create_pipeline_metrics(
         ),
         "runs_since_clustering": int(
             get_stage_metric(context, "indexing", "runs_since_clustering")
+        ),
+        "rebuild_due_reasons": int(
+            get_stage_metric(context, "indexing", "rebuild_due_reasons")
         ),
         # Per-chunk LLM failures degrade a run without failing it; surface
         # them so the ExtractionFailures alarm can catch a partial graph.
@@ -271,18 +281,25 @@ def emit_metrics(
         if isinstance(duration, (int, float)):
             scalars[f"duration_{stage_name}_seconds"] = duration
         scalars.update(extra or {})
-        pipeline.metrics_sink.emit(
-            namespace="unified_kg_rag/ingestion",
-            metrics=scalars,
-            # Log properties (not metric dimensions, each a billed series):
-            # the run and the namespace it wrote, for Logs Insights.
-            dimensions={
-                "pipeline_id": pipeline_id,
-                "namespace": resolve_namespace(pipeline.config, None),
-            },
-        )
+        _send(pipeline, pipeline_id, scalars)
     except Exception as e:  # noqa: BLE001 - metrics never break a run
         log_error(logger, logging.WARNING, "Metrics emission failed: %s", error=e)
+
+
+def _send(
+    pipeline: DataIngestionPipeline, pipeline_id: str, scalars: dict[str, float]
+) -> None:
+    """Send one record of the run's ``scalars`` to the pipeline's sink."""
+    pipeline.metrics_sink.emit(
+        namespace="unified_kg_rag/ingestion",
+        metrics=scalars,
+        # Log properties (not metric dimensions, each a billed series):
+        # the run and the namespace it wrote, for Logs Insights.
+        dimensions={
+            "pipeline_id": pipeline_id,
+            "namespace": resolve_namespace(pipeline.config, None),
+        },
+    )
 
 
 def emit_stage_metrics(
@@ -298,11 +315,40 @@ def emit_stage_metrics(
         metrics,
         context.pipeline_id,
         stage_name,
-        stage_usage_metrics(context, stage_name),
+        stage_usage_metrics(context, stage_name, pipeline.config.models.prices),
     )
 
 
-def stage_usage_metrics(context: PipelineContext, stage_name: str) -> dict[str, float]:
+def emit_stopped_stage_metrics(
+    pipeline: DataIngestionPipeline, context: PipelineContext, stage_name: str
+) -> None:
+    """Emit what ``stage_name`` paid for when a stop (a signal, the run's
+    budget) ended the run in it: a stage that finished (stopped while its
+    record was written) all it completes, as ``emit_stage_metrics``; one
+    the stop interrupted its model usage only, the calls its resume then
+    serves from the response cache as ``llm_cache_hits`` (its other metrics
+    are the run's that completes it)."""
+    record = next(
+        (r for r in reversed(context.stage_results) if r.stage_name == stage_name),
+        None,
+    )
+    if record is not None and record.status is not PipelineStageStatus.RUNNING:
+        emit_stage_metrics(pipeline, context, stage_name)
+        return
+    try:
+        if usage := stage_usage_metrics(
+            context, stage_name, pipeline.config.models.prices
+        ):
+            _send(pipeline, context.pipeline_id, usage)
+    except Exception as e:  # noqa: BLE001 - metrics never break a run
+        log_error(logger, logging.WARNING, "Metrics emission failed: %s", error=e)
+
+
+def stage_usage_metrics(
+    context: PipelineContext,
+    stage_name: str,
+    prices: Mapping[str, ModelPrice] | None = None,
+) -> dict[str, float]:
     """The flat LLM usage metrics of a stage that called a model, sent a
     model request (an embedding stage's) or was served from the response
     cache (none for a model-free stage, so no custom-metric series is
@@ -313,7 +359,10 @@ def stage_usage_metrics(context: PipelineContext, stage_name: str) -> dict[str, 
     ``llm_cache_hits``, ``llm_throttles`` and ``llm_requests`` (every
     request sent to Bedrock, the language, embedding and rerank models'
     alike, each attempt once: ``sent_requests``), whose ratio the CDK
-    stack's throttling alarm reads."""
+    stack's throttling alarm reads; and, when ``prices``
+    (``models.prices``) price every model the stage called,
+    ``llm_cost_usd`` (``usage_cost_usd``, summed over the stages by a Sum
+    statistic: the run's, which ``processing.max_run_usd`` bounds)."""
     usage = next(
         (
             r.metrics.get(LLM_USAGE_METRIC)
@@ -342,6 +391,11 @@ def stage_usage_metrics(context: PipelineContext, stage_name: str) -> dict[str, 
             f"llm_input_tokens_{stage_name}": usage.get("input_tokens", 0),
             f"llm_output_tokens_{stage_name}": usage.get("output_tokens", 0),
         }
+        if prices:
+            spent = LLMUsage.model_validate({"by_model": usage.get("by_model") or {}})
+            usd, _ = usage_cost_usd(spent, prices)
+            if usd is not None:
+                metrics[LLM_COST_METRIC] = usd
     return metrics
 
 

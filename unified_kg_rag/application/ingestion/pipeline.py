@@ -390,6 +390,8 @@ class DataIngestionPipeline:
     _stop_signal: int | None = None
     # The budget a run stopped at (processing.max_run_*), if that stopped it.
     _stopped_by: RunBudgetExhausted | None = None
+    # The context of the last run once it executes its stages (token_usage).
+    _context: PipelineContext | None = None
 
     def __init__(
         self,
@@ -1792,6 +1794,16 @@ class DataIngestionPipeline:
         stages of a resumed run were restored from the stage cache."""
         return self._executed_stages
 
+    @property
+    def token_usage(self) -> dict[str, Any] | None:
+        """The model calls and tokens of the stages the last run executed
+        (``run_token_usage``), a stopped run's too: the stage a stop
+        interrupted keeps the calls it paid for. ``None`` before a run
+        executes a stage."""
+        if self._context is None:
+            return None
+        return pipeline_metrics.run_token_usage(self._context, self._executed_stages)
+
     def _use_source_directory(self, source_directory: Path) -> None:
         """Point the stages at ``source_directory`` if they read another one.
 
@@ -2056,6 +2068,7 @@ class DataIngestionPipeline:
     ) -> None:
         total_start_time = time.time()
         self._executed_stages = frozenset()
+        self._context = context
         self.state_manager.mark_rerun(None)
         self._execute_pipeline_stages(context, start_stage_name)
         self._finalize_pipeline_execution(context, total_start_time)
@@ -2115,7 +2128,14 @@ class DataIngestionPipeline:
                     if embeds:
                         self._check_embedding_dimension(context)
                     index_creation_checked = True
-                result = self._execute_stage(stage, context)
+                try:
+                    result = self._execute_stage(stage, context)
+                except KeyboardInterrupt:
+                    # A stop in the stage: what it paid for is published.
+                    pipeline_metrics.emit_stopped_stage_metrics(
+                        self, context, stage.name
+                    )
+                    raise
                 self._emit_stage_metrics(context, stage.name)
                 with self._checkpoint_write():
                     if self.llm_response_cache is not None:
@@ -2435,6 +2455,17 @@ class DataIngestionPipeline:
             # A failed stage logged its error (PipelineStage._execute_logged).
             return result
 
+        except KeyboardInterrupt:
+            # A stop (a signal, the run's budget) ended the run in this stage
+            # (its record still the running one: not one a stop deferred to
+            # after it was written): the calls it paid for are kept with that
+            # record, which a resume runs again from the response cache.
+            if stage_usage is not None and any(
+                r is running_result for r in context.stage_results
+            ):
+                running_result.metrics[LLM_USAGE_METRIC] = stage_usage
+                self._save_stopped_stage(context, running_result)
+            raise
         except ConfirmationDeclinedError as e:
             # A question the stage asked before writing was answered no: the
             # run stops here, recorded like a failed stage for a resume.
@@ -2475,6 +2506,27 @@ class DataIngestionPipeline:
             with self._checkpoint_write():
                 self.state_manager.update_stage_result(context, failed_result)
             return failed_result
+
+    def _save_stopped_stage(
+        self, context: PipelineContext, result: PipelineStageResult
+    ) -> None:
+        """Save the record of the stage a stop interrupted (best effort: the
+        stop propagates either way), deferring a second stop until it is
+        written; the stop being raised is not raised again."""
+        outer = self._checkpointing
+        self._checkpointing = True
+        try:
+            self.state_manager.update_stage_result(context, result)
+        except Exception as e:  # noqa: BLE001 - the run stops either way
+            log_error(
+                logger,
+                logging.WARNING,
+                "Saving the usage of stopped stage '%s' failed: %s",
+                result.stage_name,
+                error=e,
+            )
+        finally:
+            self._checkpointing = outer
 
     def _save_stage_outputs_to_cache(
         self, context: PipelineContext, stage_name: str
