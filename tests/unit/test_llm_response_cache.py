@@ -282,7 +282,10 @@ def test_a_stop_after_an_unparseable_attempt_drops_its_response(
     # not parse: the resumed run must not replay that answer (free, but one
     # of its attempts spent on it). The stop refuses the retry's call, or
     # comes from another item while this one waits to retry (a throttled
-    # second attempt), so it makes no third.
+    # second attempt), so it makes no third. Ordered by events: the other
+    # item stops the batch only once this one's second attempt started, and
+    # the retry's wait (a minute) ends only by the stop: its next attempt is
+    # then the abandoned batch's, never made.
     from unified_kg_rag.shared.exceptions import RunBudgetExhausted
 
     def stop() -> RunBudgetExhausted:
@@ -292,25 +295,31 @@ def test_a_stop_after_an_unparseable_attempt_drops_its_response(
     first.open(tmp_path)
     model = _model(first, lambda system, human: f"unparseable {human}")
     attempts: list[str] = []
-    stopped = threading.Event()
+    second_attempt = threading.Event()
 
     def attempt(request: dict[str, Any]) -> str:
         text = request["text"]
         attempts.append(text)
         if text == "stop":
-            stopped.set()
+            assert second_attempt.wait(10), "q's second attempt never started"
             raise stop()
         if attempts.count(text) == 2:
             if stop_in == "call":
                 raise stop()
-            stopped.wait(5)
-            time.sleep(0.2)
+            second_attempt.set()
             raise TimeoutError("throttled")
         return _rejecting("unparseable")(_ask(model, text))
 
     texts = ["q"] if stop_in == "call" else ["q", "stop"]
     processor = BatchProcessor(
-        retry=RetryPolicy(max_attempts=3, base_delay_seconds=1.0, max_delay_seconds=0)
+        max_concurrency=2,
+        retry=RetryPolicy(
+            max_attempts=3,
+            base_delay_seconds=30.0,
+            max_delay_seconds=None,
+            max_total_seconds=None,
+            jitter="none",
+        ),
     )
     with pytest.raises(RunBudgetExhausted):
         processor.execute_with_fallback(
