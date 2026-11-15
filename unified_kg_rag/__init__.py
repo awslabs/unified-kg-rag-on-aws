@@ -8,10 +8,12 @@ internal and may change in any release. Two groups:
 - **Using the framework**: load a :class:`Config` (:func:`get_config`),
   ingest a corpus (:class:`DataIngestionPipeline`, :class:`PipelineConfig`;
   documents from memory as :class:`InputDocument`), inspect and export what
-  an index namespace holds (:func:`describe_namespace`, :func:`export_graph`),
+  an index namespace holds and why it is due for a rebuild
+  (:func:`describe_namespace`, :class:`RebuildReason`, :func:`export_graph`),
   query it (:class:`GraphRAGChain` with :class:`RAGInput`, answering with a
-  :class:`RAGOutput` and its :class:`Citation` records or, from ``search``, a
-  :class:`SearchOutput`) and evaluate it (:class:`EvaluationManager`), or
+  :class:`RAGOutput` and its :class:`Citation` records, streamed as
+  :data:`QueryEvent` events, or, from ``search``, a :class:`SearchOutput`)
+  and evaluate it (:class:`EvaluationManager`), or
   serve it to agents as read-only MCP tools (:func:`build_mcp_server`,
   :func:`build_mcp_app`, the ``mcp`` extra).
 - **Extending it**: the ports a backend implements, the :class:`Providers`
@@ -93,7 +95,16 @@ _EXPORTS: dict[str, str] = {
     "SearchOutput": "unified_kg_rag.application.retrieval.rag_chain",
     "ProcessedQuery": "unified_kg_rag.application.retrieval.rag_chain",
     "ConversationTurn": "unified_kg_rag.application.retrieval.rag_chain",
+    "AnswerChunk": "unified_kg_rag.application.retrieval.rag_chain",
+    "QueryEvent": "unified_kg_rag.application.retrieval.rag_chain",
+    "QueryResult": "unified_kg_rag.application.retrieval.rag_chain",
+    "QueryRouted": "unified_kg_rag.application.retrieval.rag_chain",
+    "QuerySources": "unified_kg_rag.application.retrieval.rag_chain",
+    "QueryStart": "unified_kg_rag.application.retrieval.rag_chain",
     "QueryLimits": "unified_kg_rag.domain.models",
+    "RebuildReason": "unified_kg_rag.domain.ingestion.rebuild_due",
+    "RebuildReasonKind": "unified_kg_rag.domain.ingestion.rebuild_due",
+    "RebuildRemedy": "unified_kg_rag.domain.ingestion.rebuild_due",
     "Citation": "unified_kg_rag.domain.models",
     "CitedDocument": "unified_kg_rag.domain.models",
     "CitationMarkerScanner": "unified_kg_rag.domain.retrieval.citations",
@@ -258,9 +269,15 @@ if TYPE_CHECKING:
     from unified_kg_rag.application.config import get_config
     from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
     from unified_kg_rag.application.retrieval.rag_chain import (
+        AnswerChunk,
         ConversationTurn,
         GraphRAGChain,
         ProcessedQuery,
+        QueryEvent,
+        QueryResult,
+        QueryRouted,
+        QuerySources,
+        QueryStart,
         RAGInput,
         RAGOutput,
         SearchOutput,
@@ -268,6 +285,11 @@ if TYPE_CHECKING:
     from unified_kg_rag.application.storage.inspection import (
         describe_namespace,
         export_graph,
+    )
+    from unified_kg_rag.domain.ingestion.rebuild_due import (
+        RebuildReason,
+        RebuildReasonKind,
+        RebuildRemedy,
     )
     from unified_kg_rag.domain.models import (
         Citation,

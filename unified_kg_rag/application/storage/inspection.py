@@ -39,6 +39,10 @@ from unified_kg_rag.domain.ingestion.document_identity import (
 from unified_kg_rag.domain.ingestion.methodologies import (
     namespace_holdings,
 )
+from unified_kg_rag.domain.ingestion.rebuild_due import (
+    RebuildReasons,
+    rebuild_reasons,
+)
 from unified_kg_rag.domain.models import (
     Config,
     DocStatus,
@@ -142,6 +146,7 @@ class NamespaceDescription(NamespaceSummary):
         description="The registry's documents of the statuses asked for "
         "(documents=), by file; None when none were asked for",
     )
+    rebuild: RebuildReasons
 
 
 class GraphKindCensus(BaseModel):
@@ -293,6 +298,7 @@ def describe_namespace(
         registry=registry,
         registry_unavailable=unavailable,
         documents=listed,
+        rebuild=rebuild_reasons(record, config),
     )
 
 

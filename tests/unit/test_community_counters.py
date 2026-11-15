@@ -219,31 +219,46 @@ def _stage(config: Config) -> Any:
     return stage
 
 
+def _written(counters: CommunityCounters) -> IndexBuildRecord:
+    """The record the stage wrote for a suffix, with ``counters``."""
+    return _full().model_copy(update={"communities": counters})
+
+
 def test_the_stage_warns_once_per_suffix_with_the_numbers(caplog) -> None:
     stage = _stage(Config())
-    counters = {"default": _counters(10, 16, 4), "tenant": _counters(8, 8, 20)}
+    records = {
+        "default": _written(_counters(10, 16, 4)),
+        "tenant": _written(_counters(8, 8, 20)),
+    }
     with caplog.at_level(logging.WARNING):
-        metrics = stage._check_community_counters(counters, None)
+        metrics = stage._check_rebuild_due(records, None)
     warnings = [r.getMessage() for r in caplog.records]
     assert len(warnings) == 2
     assert "'default'" in warnings[0] and "16 communities against the 10" in warnings[0]
     assert "'tenant'" in warnings[1] and "20 incremental runs" in warnings[1]
+    assert all("due for re-clustering" in w for w in warnings)
     assert all("indexing.reset: true" in w for w in warnings)
     assert metrics["community_growth_ratio"] == 1.6
     assert metrics["runs_since_clustering"] == 20
     assert metrics["community_counters"]["default"]["communities_now"] == 16
+    # The reasons themselves, by suffix: what the console's job card reads.
+    assert sorted(metrics["rebuild_due"]) == ["default", "tenant"]
+    ((reason,),) = [metrics["rebuild_due"]["default"]]
+    assert (reason["kind"], reason["remedy"]) == ("communities", "reset")
 
 
 def test_the_stage_stays_quiet_below_the_thresholds(caplog) -> None:
     config = Config()
     config.indexing.community_compaction.on_drift_recommendation = True
     stage = _stage(config)
+    records = {"default": _written(_counters(10, 11, 1))}
     with caplog.at_level(logging.WARNING):
-        metrics = stage._check_community_counters(
-            {"default": _counters(10, 11, 1)}, _drift(False)
-        )
+        metrics = stage._check_rebuild_due(records, _drift(False))
         assert caplog.records == []
-        stage._check_community_counters({"default": _counters(10, 11, 1)}, _drift(True))
+        assert metrics["rebuild_due"] == {}
+        drifted = stage._check_rebuild_due(records, _drift(True))
     assert len(caplog.records) == 1
+    assert "this run's community drift recommends a rebuild" in caplog.text
+    assert drifted["rebuild_due"]["default"][0]["remedy"] == "reset"
     assert metrics["community_growth_ratio"] == 1.1
     assert metrics["runs_since_clustering"] == 1

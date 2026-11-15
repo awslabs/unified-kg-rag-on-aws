@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from .retrieval import RerankStatus
+from .retrieval import RerankStatus, SearchStrategy, SearchType
 from .usage import LLMUsage
 
 
@@ -251,17 +251,15 @@ class EvaluationResult(BaseModel):
             "time from its first attempt's start to its last one's end."
         ),
     )
-    enable_thinking: bool = Field(
-        default=False,
-        description="Enable thinking mode for language model reasoning and step-by-step problem solving",
-    )
     search_strategy: str | None = Field(
         default=None,
-        description="Search strategy used for this evaluation. Options: auto, drift, local, global, simple",
+        description="Search strategy used for this evaluation, one of "
+        + ", ".join(s.value for s in SearchStrategy),
     )
     search_type: str | None = Field(
         default=None,
-        description="Search type used for this evaluation. Options: hybrid, lexical, vector",
+        description="Search type used for this evaluation, one of "
+        + ", ".join(t.value for t in SearchType),
     )
     top_k: int | None = Field(
         default=None, description="Number of top results retrieved for this evaluation."

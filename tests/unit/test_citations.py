@@ -1264,8 +1264,13 @@ async def test_a_streamed_answer_carries_its_markers(config: Config) -> None:
     scanner.finish()
     assert scanner.markers == [1, 2]
     assert CITATION_INSTRUCTIONS in prompts[-1][0]
-    # A streamed answer reads no lineage.
-    assert store.fetches == []
+    # A streamed answer is the unstreamed query: its citations' lineage is
+    # read as an unstreamed answer's is.
+    unstreamed = len(store.fetches)
+    assert unstreamed
+    store.fetches.clear()
+    await chain.ainvoke(_query())
+    assert len(store.fetches) == unstreamed
 
 
 @pytest.mark.parametrize("cites", [True, False])

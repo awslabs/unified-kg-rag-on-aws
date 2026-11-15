@@ -168,14 +168,17 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
 - `auto`는 라우터 호출 뒤에 남은 호출 수 안에 최소 호출 수(`fewest_model_calls`, 그 전략이 읽는 질의
   추출, 질문에 필요한 번역, 답변)가
   들어가는 전략으로만 분기하고, 제외한 전략은 `metadata.routing.over_limits`에 남습니다.
+  그런 전략이 없으면 번역과 추출을 빼고도 들어가는 전략으로 분기하고, 그 번역과 추출은 선택적
+  호출로 건너뜁니다.
   두 한도 가운데 하나라도 있으면 미리 시작하는 추출은 하지 않습니다.
 - 답변 컨텍스트는 남은 입력 토큰에서 답변 프롬프트 자체(템플릿과 지시문)와 질문을 빼고, 다시
   `search.token_manager.context_window_headroom_ratio`만큼 뺀 크기로 줄입니다. 호출을 펼치는
   전략도 답변 프롬프트 몫의 토큰을 답변용으로 남깁니다.
-- 호출 하나는 답변용으로 남깁니다. 그 호출을 쓰게 될 선택적 호출은 보내지 않고, 그 단계는 빼고 답하며
-  `degraded`(사유 `query_limit`)에 남깁니다. 선택적 호출은 질의 번역과 추출, structured 전략의
-  계획 호출(대체 전략이 답함), 출력 보정(`models.roles.fixing`. 해석하지 못한 응답은 보정하지 못한
-  응답으로 처리)입니다.
+- 호출 하나는 답변용으로 남기고, 입력 토큰 한도가 있으면 답변의 입력(프롬프트, 질문, 최소
+  컨텍스트)도 남깁니다. 둘 중 하나라도 쓰게 될 선택적 호출은 보내지 않고, 그 단계는 빼고 답하며
+  `degraded`(사유 `query_limit`)에 남깁니다. 선택적 호출은 질의 번역과 추출, 후속 질문
+  재작성(이때 후속 질문을 쓰인 그대로 검색), structured 전략의 계획 호출(대체 전략이
+  답함), 출력 보정(`models.roles.fixing`. 해석하지 못한 응답은 보정하지 못한 응답으로 처리)입니다.
 - 입력 토큰 한도에서는 호출을 펼치는 전략이 설정 상한이 아니라 답변이 실제로 읽을 만큼(답변 프롬프트,
   DRIFT가 지금까지 받은 답변, 최소 컨텍스트)만 답변용으로 남기고, DRIFT의 후속 호출은 남은 토큰을
   나눠 씁니다. `auto`는 한도가 감당하지 못하는 라우터 호출은 하지 않고 대체 전략으로 보냅니다.
@@ -193,6 +196,66 @@ chain.invoke(RAGInput(query="...", limits=QueryLimits(max_model_calls=6, deadlin
 ```
 
 MCP 도구 `kg_search`와 `kg_answer`도 같은 `limits` 인수를 받습니다([MCP 서버](./mcp.ko.md)).
+
+### 추론 강도
+
+`RAGInput.effort`(`low`, `medium`, `high`, `xhigh`, `max`)는 질의 하나의 답변 모델이
+얼마나 깊이 추론할지를 정하며, 해당 계층에 설정한 `aws.bedrock.default_effort` /
+`fast_effort` 대신 쓰입니다([모델](../reference/models.md)(영문)). 추론을 선택 사항으로
+두는 모델이면 추론을 켜고, 모든 모델 계열에서 그 강도의 추론 분량(`EFFORT_THINKING_TOKENS`,
+`low` 2,048토큰부터 `max` 32,768토큰까지)만큼 여유를 둡니다. 필요하면 답변의 max_tokens를
+`models.default_max_output_tokens`나 출력 상한(`search.output_ceilings`)보다 높이되, 모델의
+최댓값은 넘지 않습니다. 답변 호출만 이 값을 따르고, 라우터, 질의 처리, 전략 자체의 호출은
+계층 설정을 유지합니다. 강도 대신 추론 토큰 예산을 받는 이전 Claude 모델(4.5 이하)은 그
+강도의 예산(`low` 2,048토큰부터 `max` 32,768토큰까지)으로 추론합니다. 답변 모델이 적용할 수
+없는 강도는 모델을 호출하기 전에 거부합니다(`InvalidArgumentError`, 오류 클래스
+`invalid_argument`). 모델이 받지 않는 강도이거나, 추론하지 않는 모델(로컬 서버의 모델,
+추론 기능이 없는 Bedrock 모델)이면 그렇습니다. 그대로 두면 강도가 조용히 무시되기
+때문입니다. 지정하지 않으면 바뀌는 것이 없습니다. `RAGInput.enable_thinking`은
+더 이상 권장하지 않으며(`DeprecationWarning`), 계층의 강도로 추론을 켭니다.
+
+```python
+chain.invoke(RAGInput(query="...", effort="low"))
+```
+
+## 스트리밍
+
+`GraphRAGChain.aquery_events`(동기: `query_events`)는 `ainvoke`와 같은 질의(제한 시간, 한도, 가드레일, 메모리
+포함)를 실행하고, `kind`로 구분하는 타입이 있는 이벤트를 차례로 내보냅니다.
+
+| 이벤트 | `kind` | 시점 |
+|---|---|---|
+| `QueryStart` | `start` | 질의가 받아들여짐: `query_id`, 대화, 요청한 전략, 네임스페이스, 추적 ID |
+| `QueryRouted` | `routed` | 전략이 정해짐. `routing`은 `auto`가 고른 방법 |
+| `QuerySources` | `sources` | 답변 모델에 주는 출처. 첫 청크보다 먼저 |
+| `AnswerChunk` | `chunk` | 모델이 쓰는 대로 나오는 답변 텍스트 |
+| `QueryResult` | `result` | `ainvoke`가 돌려주는 `RAGOutput` |
+
+```python
+from unified_kg_rag import AnswerChunk, QueryResult, RAGInput
+
+async for event in chain.aquery_events(RAGInput(query="...")):
+    if isinstance(event, AnswerChunk):
+        print(event.text, end="", flush=True)
+    elif isinstance(event, QueryResult):
+        output = event.output  # 출처, 인용, 사용량, 메타데이터
+```
+
+- 청크는 미리 보기이고 기준은 `QueryResult`입니다. 출력 가드레일을 켜도 답변 모델은
+  스트리밍으로 호출하지만(첫 청크 제한 시간 적용), 가드레일이 답변 전체를 검사할 때까지 아무것도
+  보여 주지 않습니다. 검사가 끝나면 출처와 검사한 답변을 청크 하나로 보내고, 그다음에 대화를
+  메모리에 씁니다. 답변 거절이나 빈 컨텍스트의 고정 문구는 결과에만 들어 있습니다.
+  `[NO_ANSWER]` 표식(`search.abstention`)은 판단이 설 때까지 보류하고 지웁니다.
+- 실패하면 그 전에 보낸 이벤트 뒤에 예외가 납니다. `processing.ignore_errors`를 켜면
+  결과에 오류 답변이 담깁니다.
+- 질의는 읽는 쪽이 이벤트를 하나씩 가져갈 때까지 기다립니다. 읽기를 멈추고 반복자를
+  닫으면(`aclose()`, 또는 `async with aclosing(...)` 안에서 `break`) 질의는 그 자리에서
+  끝나고 메모리에는 아무것도 저장하지 않습니다. 질의 지표는 이를 실패로 세지 않습니다.
+- 질의 지표, 로그와 오류의 `query_id`·네임스페이스, 추적은 `ainvoke`와 같습니다.
+- `astream` / `stream`은 답변 텍스트만 내보냅니다. 각 청크를, 보여 준 청크가 없으면 최종
+  답변을 한 번 내보냅니다. `ainvoke(on_answer_chunk=...)`는 더 이상 권장하지 않으며
+  (`DeprecationWarning`), `AnswerChunk` 이벤트를 읽으면 됩니다. LangChain 자체의
+  `astream_events`(콜백 이벤트)는 LangChain이 정의한 대로 둡니다.
 
 ## 인용
 
@@ -229,8 +292,8 @@ MCP 도구 `kg_search`와 `kg_answer`도 같은 `limits` 인수를 받습니다(
 - PDF 본문 조각에는 페이지가 붙습니다. 이번 릴리스 전에 수집한 텍스트에는 문서를 다시
   수집하기 전까지 페이지와 상대 경로가 없습니다.
 - 스트리밍 답변에도 같은 표식이 들어 있습니다. `CitationMarkerScanner`로 청크에서 읽으면
-  청크 경계에서 잘린 표식은 닫힐 때까지 보류합니다. `astream`은 텍스트만, `ainvoke`는
-  인용까지 돌려줍니다.
+  청크 경계에서 잘린 표식은 닫힐 때까지 보류합니다. `astream`은 텍스트만 돌려주고,
+  `aquery_events`의 `QueryResult`와 `ainvoke`는 인용까지 돌려줍니다.
 - 가드레일이 차단한 답변에는 인용이 없고, 마스킹한 답변은 마스킹된 텍스트 기준으로 인용
   여부를 표시합니다. 거절한 답변은 출처와 마찬가지로 인용을 유지합니다.
 - 전략별 설정: `search.citations.strategies`는 기본값 `{global: false, drift: false}` 위에

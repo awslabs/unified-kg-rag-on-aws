@@ -50,6 +50,11 @@ Every flag: [CLI Reference](../reference/cli.md#run-describe).
 - **Build record.** The last run that wrote the namespace: pipeline id,
   `full` or `incremental`, when, how many documents, the extraction
   fingerprint and settings, and the community counters.
+- **Rebuild due.** Why the namespace is due for a rebuild under the config
+  (`rebuild`: stale communities, reports or summaries for a run with
+  `indexing.reset: true`; changed extraction settings or a methodology it
+  lacks for the next run), printed as `Rebuild due (...)` lines
+  ([Incremental indexing: Rebuild due](./incremental.md#rebuild-due)).
 - **Registry.** With the doc-status registry on, its records of the
   namespace by status (`processed`, `failed`, `quarantined`, ...). A
   registry the caller cannot read (no table, or no access to it, as the

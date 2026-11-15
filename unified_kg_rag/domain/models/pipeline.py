@@ -172,6 +172,17 @@ class IndexBuildRecord(BaseModel):
             "by an earlier version."
         ),
     )
+    answer_fingerprints: dict[str, str | None] | None = Field(
+        default=None,
+        description=(
+            "The settings fingerprints of the corpus-wide model answers the "
+            "last full build wrote (cache_keys.corpus_answer_fingerprints: "
+            "community reports, description summaries; None for one it did "
+            "not write), which incremental records keep: an incremental run "
+            "writes them for its delta alone. None when unknown (a record "
+            "written by an earlier version, or one rewritten without its run)."
+        ),
+    )
     visualization_export_run: str | None = Field(
         default=None,
         description=(
@@ -217,6 +228,9 @@ class IndexBuildRecord(BaseModel):
             )
         update: dict[str, Any] = {
             "communities": self._counted(stored.communities),
+            # The stored answers were written by the full build the stored
+            # record keeps, this run's by its delta alone.
+            "answer_fingerprints": stored.answer_fingerprints,
             **self._kept_artifacts(stored.artifacts),
         }
         base = stored if stored.mode == "full" else stored.full_build

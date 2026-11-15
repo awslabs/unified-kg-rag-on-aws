@@ -191,8 +191,9 @@ What a message means and what to do about it:
 
 ## Async code
 
-Use `await chain.ainvoke(...)` and `await chain.aclose()`, and size the
-loop's executor once at startup:
+Use `await chain.ainvoke(...)` (or `chain.aquery_events(...)` to show the
+answer as it is written, [Streaming](./query.md#streaming)) and
+`await chain.aclose()`, and size the loop's executor once at startup:
 `configure_event_loop(asyncio.get_running_loop(), config.processing.io_workers)`.
 A process serving concurrent queries on the embedded stores should also run
 with `OPENBLAS_NUM_THREADS=1` in its environment, as `run-eval` and `run-rag`

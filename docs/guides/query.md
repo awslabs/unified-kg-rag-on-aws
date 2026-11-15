@@ -189,18 +189,22 @@ is refused before its request is sent:
 - `auto` routes only to strategies whose fewest calls (`fewest_model_calls`,
   the query extractions they read, the translation the question needs, and
   the answer) fit after its router call
-  (`metadata.routing.over_limits` names those it left out), and under
+  (`metadata.routing.over_limits` names those it left out); when none does,
+  to those whose calls fit without the translation and extractions, which
+  it then skips as optional calls; and under
   either limit starts no speculative extraction.
 - The answer's context is cut to the input tokens left after the answer
   prompt's own templates and instructions and the question, less
   `search.token_manager.context_window_headroom_ratio` of them; the fan-out
   strategies keep that prompt's tokens for the answer too.
-- One call is kept for the answer: an optional call that would take it is
-  not sent, and its step is answered without (degraded, reason
-  `query_limit`). The optional calls are the query translation and
-  extractions, the structured strategy's planner (its fallback answers) and
-  an output repair (`models.roles.fixing`; the reply that did not parse
-  counts as unrepaired).
+- One call is kept for the answer, and under an input-token limit its
+  input too (its prompt, the question and the least context): an optional
+  call that would take either is not sent, and its step is answered without
+  (degraded, reason `query_limit`). The optional calls are the query
+  translation and extractions, the follow-up rewrite (the
+  follow-up is then searched as written), the structured strategy's planner
+  (its fallback answers) and an output repair (`models.roles.fixing`; the
+  reply that did not parse counts as unrepaired).
 - Under an input-token limit the fan-out keeps for the answer what it will
   read (the answer prompt, DRIFT's answers so far, the least context),
   not the configured ceilings, and DRIFT's actions share what is left;
@@ -222,6 +226,76 @@ chain.invoke(RAGInput(query="...", limits=QueryLimits(max_model_calls=6, deadlin
 
 The MCP tools `kg_search` and `kg_answer` take the same `limits` argument
 ([MCP server](./mcp.md)).
+
+### Reasoning effort
+
+`RAGInput.effort` (`low`, `medium`, `high`, `xhigh`, `max`) sets how hard
+one query's answer model reasons, in place of its tier's configured
+`aws.bedrock.default_effort` / `fast_effort`
+([Models](../reference/models.md)). It turns reasoning on for a model that
+opts in, and leaves room for that level's reasoning (its
+`EFFORT_THINKING_TOKENS`, `low` 2,048 up to `max` 32,768) on every model
+family: the answer's max_tokens is raised above it, past
+`models.default_max_output_tokens` and any output ceiling
+(`search.output_ceilings`) when needed, never past the model's maximum. Only the answer call takes it; the router,
+the query processing and the strategies' own calls keep their tier's. An
+older Claude model (4.5 and before), which takes a thinking budget, not a
+level, thinks on that level's budget (`low` 2,048 tokens up to `max` 32,768).
+An effort the answer model cannot apply is refused before any model call
+(`InvalidArgumentError`, error class `invalid_argument`): a level it does not
+take, or any level on a model that does not reason (a local server's, or a
+Bedrock model without thinking), which would otherwise drop it. Unset,
+nothing changes.
+`RAGInput.enable_thinking` is deprecated (a `DeprecationWarning`): it turns
+reasoning on at the tier's effort.
+
+```python
+chain.invoke(RAGInput(query="...", effort="low"))
+```
+
+## Streaming
+
+`GraphRAGChain.aquery_events` (sync: `query_events`) runs the query `ainvoke` runs (its deadline,
+limits, guardrail and memory included) and yields typed events, told apart
+by `kind`:
+
+| Event | `kind` | When |
+|---|---|---|
+| `QueryStart` | `start` | The query was admitted: its `query_id`, conversation, requested strategy, namespace and trace id. |
+| `QueryRouted` | `routed` | Its strategy is resolved; `routing` says how `auto` chose. |
+| `QuerySources` | `sources` | The sources the answer model is given, before the first chunk. |
+| `AnswerChunk` | `chunk` | Answer text as the model writes it. |
+| `QueryResult` | `result` | The `RAGOutput` `ainvoke` returns. |
+
+```python
+from unified_kg_rag import AnswerChunk, QueryResult, RAGInput
+
+async for event in chain.aquery_events(RAGInput(query="...")):
+    if isinstance(event, AnswerChunk):
+        print(event.text, end="", flush=True)
+    elif isinstance(event, QueryResult):
+        output = event.output  # sources, citations, usage, metadata
+```
+
+- The chunks are a preview; `QueryResult` is authoritative. Under the output
+  guardrail the answer model still streams (its first chunk bounded), but
+  nothing is shown until the guardrail screened the whole answer: then its
+  sources and the screened answer as one chunk, before the turn is written
+  to memory; a decline's or an empty context's fixed reply comes only in the result. The
+  `[NO_ANSWER]` token (`search.abstention`) is held back and stripped.
+- A failure raises after the events sent before it; with
+  `processing.ignore_errors` the result carries the error answer.
+- The query waits for the reader to take each event: a reader that stops
+  and closes the iterator (`aclose()`, or `break` inside
+  `async with aclosing(...)`) ends it there; nothing is written to memory and
+  the query metrics count no failure.
+- Its query metrics, the `query_id` and namespace of its log lines and
+  errors, and its trace are `ainvoke`'s.
+- `astream` / `stream` yield the answer text alone: each chunk, or, when
+  none was shown, the final answer once. `ainvoke(on_answer_chunk=...)` is
+  deprecated (a `DeprecationWarning`): read the `AnswerChunk` events.
+  LangChain's own `astream_events` (callback events) is left as LangChain
+  defines it.
 
 ## Citations
 
@@ -269,7 +343,8 @@ rewrite reads the earlier answers without their markers.
   pages or relative paths until its documents are ingested again.
 - A streamed answer carries the same markers: read them from the chunks with
   `CitationMarkerScanner` (a marker split across chunks is held back until it
-  closes). `astream` returns text only; `ainvoke` returns the citations.
+  closes). `astream` returns text only; the `QueryResult` of
+  `aquery_events`, as `ainvoke`, returns the citations.
 - A blocked answer has no citations; a masked one keeps them, flagged from
   the masked text; a declined answer keeps them like its sources.
 - Per strategy: `search.citations.strategies` is merged over its default

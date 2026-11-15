@@ -766,3 +766,35 @@ def test_a_factory_builds_only_the_clients_its_calls_use() -> None:
     assert factory._purpose_clients == {}
     factory._client_for(ModelPurpose.QUERY)
     assert set(factory._purpose_clients) == {ModelPurpose.QUERY}
+
+
+async def test_a_call_started_in_a_task_that_ended_settles_once() -> None:
+    # Regression (W2 review S4): LangChain starts a streamed model call in a
+    # short-lived task and ends it in the task that read the stream. The
+    # call was let go when the first task ended, so its end found nothing
+    # and counted a second call (the estimate of the first stayed).
+    handler = UsageCallbackHandler("m", role="query")
+    run_id = uuid4()
+    with usage.usage_scope() as meter:
+
+        async def start() -> None:
+            handler.on_chat_model_start(
+                {}, [[HumanMessage(content="what does the Vendor ship")]], run_id=run_id
+            )
+
+        await asyncio.ensure_future(start())
+        await asyncio.sleep(0)  # the task's done callbacks have run
+        handler.on_llm_end(
+            _result(
+                content="x",
+                usage_metadata={
+                    "input_tokens": 7,
+                    "output_tokens": 2,
+                    "total_tokens": 9,
+                },
+            ),
+            run_id=run_id,
+        )
+    snapshot = meter.snapshot()
+    assert (snapshot["llm_calls"], snapshot["estimated_calls"]) == (1, 0)
+    assert (snapshot["input_tokens"], snapshot["output_tokens"]) == (7, 2)

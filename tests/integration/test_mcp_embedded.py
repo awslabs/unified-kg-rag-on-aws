@@ -251,6 +251,7 @@ async def test_kg_describe_schema_lists_what_the_namespace_holds(
     assert result.extraction_schema is not None
     assert result.namespaces == ["default"]
     assert result.exists
+    assert result.rebuild == []
 
 
 async def test_kg_describe_schema_of_a_namespace_nothing_was_ingested_under(
@@ -279,6 +280,21 @@ async def test_kg_describe_schema_of_a_namespace_nothing_was_ingested_under(
     assert result.namespace == "nosuch" and not result.exists
     assert (result.methodologies, result.artifacts, result.strategies) == ([], [], [])
     assert result.auto_routes == []
+
+
+async def test_kg_describe_schema_says_when_a_rebuild_is_due(index: Index) -> None:
+    # The server's config summarizes descriptions with another model than
+    # the namespace's full build did.
+    config = index.config.model_copy(deep=True)
+    config.models.roles.description_summary = "synthetic-summarizer"
+    chain = GraphRAGChain(config, providers=index.providers)
+    try:
+        result = await KnowledgeGraphTools(chain).describe_schema()
+    finally:
+        await chain.aclose()
+    (reason,) = result.rebuild
+    assert (reason.kind.value, reason.remedy.value) == ("answer_settings", "reset")
+    assert reason.settings == ["description_summary"]
 
 
 # --- the strategy allowlist ------------------------------------------------

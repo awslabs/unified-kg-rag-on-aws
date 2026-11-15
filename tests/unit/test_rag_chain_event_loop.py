@@ -281,12 +281,49 @@ def test_dropped_chain_releases_its_retrievers_when_collected() -> None:
     del chain
     gc.collect()
 
+    # Released on a thread of its own (the collector may run anywhere).
+    _until(lambda: built[0].aclosed == 1 and built[1].closed == 1)
+    _until(lambda: not thread.is_alive())
     assert len(built) == 2
     # The runner-bound retriever is closed on its own loop ...
-    assert built[0].aclosed == 1 and built[0].aclose_loop is built[0].loop
+    assert built[0].aclose_loop is built[0].loop
     # ... the one whose loop is gone, synchronously.
     assert built[1].closed == 1
-    assert not thread.is_alive()
+
+
+def _until(condition: Any, within: float = 10.0) -> None:
+    deadline = time.monotonic() + within
+    while not condition():
+        assert time.monotonic() < deadline, "timed out"
+        time.sleep(0.01)
+
+
+class _ThreadClosingRetriever(_Retriever):
+    """Closes through the loop's executor, as the embedded stores do."""
+
+    async def aclose(self) -> None:
+        await asyncio.to_thread(lambda: None)
+        await super().aclose()
+
+
+def test_collecting_a_dropped_chain_never_waits_where_it_is_collected() -> None:
+    # Regression (CI python-3-13, a 120 s hang): the collector ran a dropped
+    # chain's finalizer on another chain's loop thread inside
+    # ThreadPoolExecutor.submit, under the executors' global lock; the
+    # finalizer waited up to 30 s for the dropped chain's loop, whose
+    # retriever close needed that lock to submit its own work. The
+    # finalizer must return at once wherever it runs.
+    import concurrent.futures.thread as pool_threads
+
+    chain, built = _chain(_ThreadClosingRetriever)
+    chain.invoke({"query": "q"})  # type: ignore[arg-type]
+    started = time.monotonic()
+    with pool_threads._global_shutdown_lock:
+        del chain
+        gc.collect()
+        waited = time.monotonic() - started
+    assert waited < 5, waited
+    _until(lambda: built[0].aclosed == 1)
 
 
 def test_runner_rejects_reentrant_sync_call() -> None:

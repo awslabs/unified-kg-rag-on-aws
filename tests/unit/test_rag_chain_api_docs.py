@@ -29,6 +29,8 @@ pytestmark = pytest.mark.unit
         (GraphRAGChain.asearch, ["without generating an answer", "memory"]),
         (GraphRAGChain.stream, ["str", "ainvoke", "sources"]),
         (GraphRAGChain.astream, ["str", "ainvoke", "sources"]),
+        (GraphRAGChain.aquery_events, ["QueryResult", "AnswerChunk", "ainvoke"]),
+        (GraphRAGChain.query_events, ["aquery_events", "cancels"]),
     ],
 )
 def test_public_api_documents_its_contract(obj: object, phrases: list[str]) -> None:

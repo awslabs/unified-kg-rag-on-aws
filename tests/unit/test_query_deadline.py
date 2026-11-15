@@ -357,12 +357,27 @@ async def test_null_disables_both_deadlines() -> None:
     assert "".join(chunks).strip() == _ANSWER
 
 
+class _PassingGuard:
+    """An output guardrail that passes every text (``ContentGuardPort``)."""
+
+    async def acheck(self, text: str, source: Any, **kwargs: Any) -> Any:
+        from unified_kg_rag.ports.guardrail import GuardAction, GuardVerdict
+
+        return GuardVerdict(action=GuardAction.NONE, text=text)
+
+
+@pytest.mark.parametrize("screened", [False, True], ids=["plain", "check_output"])
 async def test_a_stream_without_a_first_chunk_fails_at_the_model_timeout(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, screened: bool
 ) -> None:
+    # Under the output guardrail too (W2 review S2): its answer is streamed
+    # and held back, not asked unstreamed, so the first-chunk bound holds.
     model = _SlowChatModel(first_delay=600)
     config = _config(query_timeout_seconds=600, model_timeout_seconds=300)
     chain = _chain(config, _Factory(model))
+    if screened:
+        chain.guard = _PassingGuard()  # type: ignore[assignment]
+        chain._screen_outputs = True
     timeouts = HeldTimeouts(monkeypatch)
 
     async def consume() -> None:

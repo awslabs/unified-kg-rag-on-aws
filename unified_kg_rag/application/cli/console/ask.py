@@ -4,10 +4,11 @@
 question answered as a stream of events, and its record for the dashboard.
 
 Events (``kind`` plus fields): ``start`` (the query id, the trace id when
-tracing is on), ``chunk`` (answer text as the answer model streams it,
-``GraphRAGChain.ainvoke(on_answer_chunk=...)``, with the citation markers
-it completes, read by ``CitationMarkerScanner`` so a marker split across
-chunks counts once it closes; none for a strategy whose citations are off),
+tracing is on), ``chunk`` (answer text as the answer model streams it, the
+``AnswerChunk`` events of ``GraphRAGChain.aquery_events``, with the
+citation markers it completes, read by ``CitationMarkerScanner`` so a marker
+split across chunks counts once it closes; none for a strategy whose
+citations are off),
 then ``result`` (the answer, its citations and ``cites``, whether its
 strategy cites at all (``search.citations``), its sources with their
 provenance and context markers, then the model-written sections it may cite,
@@ -40,13 +41,16 @@ from unified_kg_rag.application.cli.console.store import ConsoleStore
 from unified_kg_rag.application.presentation.answer_view import AnswerView, SourceView
 from unified_kg_rag.application.retrieval.citations import citations_enabled
 from unified_kg_rag.application.retrieval.rag_chain import (
+    AnswerChunk,
     ConversationTurn,
     GraphRAGChain,
+    QueryResult,
     RAGInput,
     RAGOutput,
     new_query_id,
 )
 from unified_kg_rag.domain.ingestion.methodologies import namespace_holdings
+from unified_kg_rag.domain.ingestion.rebuild_due import rebuild_reasons
 from unified_kg_rag.domain.models import (
     Config,
     SearchStrategy,
@@ -354,7 +358,9 @@ class AskService:
             )
         return views
 
-    async def held_methodologies(self, suffix: str | None = None) -> dict[str, Any]:
+    async def held_methodologies(
+        self, suffix: str | None = None, *, building: Config | None = None
+    ) -> dict[str, Any]:
         """What the index namespace of ``suffix`` holds
         (``namespace_holdings``, the chain's rule), read fresh from the build
         record ingestion wrote on it (``GraphRAGChain.aread_build_record``):
@@ -362,8 +368,11 @@ class AskService:
         built, or built before methodology profiles), and ``held`` then the
         methodologies the config builds, which queries are served by;
         ``indexed`` whether anything was ingested under it at all (a
-        question on it fails with ``index_not_found`` otherwise). A store
-        error raises."""
+        question on it fails with ``index_not_found`` otherwise); and why it
+        is due for a rebuild under ``building`` (``rebuild``:
+        ``rebuild_due.rebuild_reasons``; the config of the methodologies an
+        ingestion would build, default the loaded config). A store error
+        raises."""
         async with self._using() as (chain, config):
             record = await chain.aread_build_record(suffix)
             namespace = resolve_namespace(config, suffix)
@@ -381,6 +390,10 @@ class AskService:
             "recorded": holdings.source == "build_record",
             "held": [m.value for m in holdings.methodologies],
             "indexed": indexed,
+            "rebuild": [
+                reason.model_dump(mode="json")
+                for reason in rebuild_reasons(record, building or config)
+            ],
         }
 
     async def ask(self, request: AskRequest) -> AsyncIterator[dict[str, Any]]:
@@ -526,7 +539,8 @@ class AskService:
             scanner = CitationMarkerScanner()
             # An auto query's route is known only with its result.
             scans = citations_enabled(config, request.search_strategy)
-            output = await chain.ainvoke(
+            output: RAGOutput | None = None
+            async for event in chain.aquery_events(
                 # An argument the query cannot take (a blank question) is an
                 # invalid_argument, as on the other surfaces.
                 RAGInput.checked(
@@ -544,17 +558,21 @@ class AskService:
                     ),
                     filters=request.filters,
                     suffix=request.suffix,
-                ),
-                on_answer_chunk=lambda text: queue.put_nowait(
-                    {
-                        "kind": "chunk",
-                        "text": text,
-                        "markers": scanner.feed(text) if scans else [],
-                    }
-                ),
-            )
+                )
+            ):
+                if isinstance(event, AnswerChunk):
+                    queue.put_nowait(
+                        {
+                            "kind": "chunk",
+                            "text": event.text,
+                            "markers": scanner.feed(event.text) if scans else [],
+                        }
+                    )
+                elif isinstance(event, QueryResult):
+                    output = event.output
             if scans and (tail := scanner.finish()):
                 queue.put_nowait({"kind": "chunk", "text": "", "markers": tail})
+        assert output is not None  # the events end with the result
         return output, trace_id
 
     @staticmethod

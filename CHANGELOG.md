@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking changes
 
+- `EvaluationResult.enable_thinking` is gone: nothing recorded it (it was always false). A saved result that holds
+  it still loads.
 - `config.evaluation.prices` is gone from the Python surface: read and set `config.models.prices`
   (`EvaluationConfig(prices=...)` is refused as an unknown field; a config file or `UKR__` variable that sets
   `evaluation.prices` still loads, with a WARNING). `unified_kg_rag.evaluation.comparison.answer_cost_usd` is
@@ -28,14 +30,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   callback now raises its refusal (LangChain swallowed a handler's error) and logs any other error of its own. `global`,
   `drift` and `iterative` start only the calls that fit beside what the answer will read (DRIFT's actions sharing what
   is left) and list the rest in `metadata.degraded` (reason `query_limit`), `auto` routes only to strategies whose
-  fewest calls fit and makes no router call an input-token limit cannot take (`metadata.routing.over_limits`) and under
-  either limit starts no speculative extraction, the answer's context is cut to the tokens left after the answer prompt
-  and the question (the fan-out keeps that prompt's tokens too), an optional call (a query translation or extraction,
-  the structured planner, an output repair: `usage.optional_calls`) never takes the call kept for the answer, its step
-  degraded instead, an answer the limits left no context abstains with `abstention_reason: query_limit`, and a query
-  whose answer does not fit fails with `UsageLimitExceededError` (error class `limit_exceeded`, a caller's error: not
-  counted in `query_failed`, `refused` on the console's dashboard, its message shown to an MCP caller; exit code 1,
-  console HTTP 422).
+  fewest calls fit (when none fits with its query translation and extractions, to those that fit without them, which
+  it then skips) and makes no router call an input-token limit cannot take (`metadata.routing.over_limits`) and under
+  either limit starts no speculative extraction, the answer's context is cut to the tokens left after the answer
+  prompt and the question (the fan-out keeps that prompt's tokens too), an optional call (a query translation or
+  extraction, the follow-up rewrite, which then searches the follow-up as written, the structured planner, an output
+  repair: `usage.optional_calls`) never takes the call kept for the answer, nor under an input-token limit the answer's
+  prompt, question and least context, its step degraded instead, an answer the limits left no context abstains with
+  `abstention_reason: query_limit`, and a query whose answer does not fit fails with `UsageLimitExceededError` (error
+  class `limit_exceeded`, a caller's error: not counted in `query_failed`, `refused` on the console's dashboard, its
+  message shown to an MCP caller; exit code 1, console HTTP 422).
+- One streaming path: `GraphRAGChain.aquery_events()` (sync `query_events()`) yields typed events (`QueryEvent`,
+  exported with `QueryStart`, `QueryRouted`, `QuerySources`, `AnswerChunk` and `QueryResult`): the query `ainvoke`
+  runs, its deadline, query limits, guardrail, metrics and memory included, ending with its `RAGOutput`. LangChain's
+  `astream_events` is left as LangChain defines it. `astream` / `stream` yield the text of these events, so a
+  streamed answer now reads its citations' lineage, records its answer on the query span and is traced in the query's
+  trace, as an unstreamed one is. The query waits for its reader at each event: a reader that closes the iterator
+  ends it before it writes memory, counted as no failure. Under the output guardrail the answer model still streams
+  (its first chunk bounded by `search.model_timeout_seconds`) and nothing is shown until the whole answer is
+  screened: then its sources and the screened answer, one chunk, before the turn is written. The console's Ask page
+  reads the events.
+- Rebuild due: `run-describe` (`rebuild`, `Rebuild due (...)` lines), the console's Ingest page
+  (`/api/namespace/methodologies`, under the methodologies picked) and the MCP `kg_describe_schema` tool say why a
+  namespace is due for a rebuild under the config, from one owner (`rebuild_due`, its `RebuildReason` exported):
+  community counters past `indexing.community_compaction`, reports or description summaries its full build made under
+  other settings (a run with `indexing.reset: true`), changed extraction settings or a methodology it lacks (applied
+  by the next run). The build record gains
+  `answer_fingerprints` (the full build's report and summary settings, kept by incremental records); a record
+  written earlier names none. A run logs a WARNING per reason of the records it wrote and lists them by suffix in its
+  JSON result (`rebuild_due`).
+- `RAGInput.effort` (`low` to `max`) sets one query's answer reasoning effort in place of its tier's
+  `aws.bedrock.default_effort` / `fast_effort`: it turns reasoning on for a model that opts in, raises the answer's
+  max_tokens to leave that level's reasoning room on every model family and, on an older Claude model (4.5 and
+  before), sizes its thinking budget; unset, nothing changes. An effort the answer model cannot apply (a level it
+  does not take, or a model that does not reason, as a local server's) is refused before any answer's model call
+  (`InvalidArgumentError`); a search, which makes no answer, takes any.
 - An ingestion run's budget and cost estimate. `processing.max_run_model_calls` and `processing.max_run_usd` (off by
   default; USD priced by `models.prices`) refuse the model call that would pass them and stop the run once the calls
   already sent have answered (`RunBudgetExhausted`, exported, error class `limit_exceeded`, exit 1): its finished stages
@@ -48,14 +77,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The community-counter WARNING reads `Index namespace '<suffix>' is due for a rebuild: its communities are due for
+  re-clustering: ...` (it began `Communities of '<suffix>' are due for re-clustering`), one rule with the other
+  rebuild reasons. The console's job card offers "Rebuild the namespace" when the run's `rebuild_due` holds a reason
+  for it, naming those reasons, not when a warning's text names `indexing.reset: true`: a warning hinting at the
+  setting for another cause no longer offers it, the run's community drift offers it as it recommends it
+  (`indexing.community_compaction.on_drift_recommendation`), and the job record's `warnings.reset_advised` is gone.
 - `search.auto_routable_strategies` accepts `ppr` and `tree`, loading with a WARNING that cites the measurement they
   were left out of the default on (`ppr`: within the noise of `local` at 2.4 times less cost, weaker on long chains;
   `tree`: +8 points of `answer_contains` over `naive`, below `mix` and `local`). It refused them, which made routing to
   them a code change rather than the operator's call.
 
+### Deprecated
+
+- `GraphRAGChain.ainvoke(on_answer_chunk=...)` warns (`DeprecationWarning`): read the `AnswerChunk` events of
+  `aquery_events()`. Until it is removed it is one more reader of those events, so it now also streams an answer read
+  for `[NO_ANSWER]` (`search.abstention`), the token held back and stripped.
+- `RAGInput.enable_thinking` warns (`DeprecationWarning`): set `RAGInput.effort`. Until it is removed it turns the
+  answer model's reasoning on at its tier's effort, as before.
+
 ### Fixed
 Bugs present in 0.3.0.
 
+- A `GraphRAGChain` dropped without `close()` could hang another chain's query for up to 90 s: the garbage collector
+  ran the dropped chain's finalizer wherever it triggered (once inside another chain's executor submit, under the
+  executors' global lock), and the finalizer waited there for its own loop, whose closes needed that lock. The
+  finalizer hands the release to a thread of its own and returns at once.
+- A query the input guardrail blocked was counted in the query metrics under `Strategy=invalid` (its output's
+  strategy is `blocked`): it is counted under the strategy it asked for.
+- A streamed answer (`astream`, `ainvoke(on_answer_chunk=...)`, the console) counted its model call twice in
+  `metadata["usage"]`, one of them an estimate: LangChain starts the call in a task that ends before the stream
+  does, and the usage callback let go of a call when its task ended. It lets go only of a cancelled task's call.
 - An OpenSearch bulk write whose last retry round fails whole names the error by its type and status
   (`TransportError rejected, HTTP 429`), as each earlier round's warning does, in its ERROR line and the store error
   the indexing stage shows: the server's reason, which may quote a rejected document, is logged at DEBUG.

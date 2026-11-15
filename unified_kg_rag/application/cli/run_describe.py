@@ -3,9 +3,10 @@
 """Describe an index namespace, and export its graph (``run-describe``).
 
 Prints what the namespace of ``--suffix`` holds: its methodologies and the
-search strategies they serve, each index with its item count and embedding
-model, the build record of the last ingestion run and the doc-status
-registry's records (``application.storage.inspection.describe_namespace``).
+search strategies they serve, why it is due for a rebuild under the config
+(``rebuild_due``), each index with its item count and embedding model, the
+build record of the last ingestion run and the doc-status registry's
+records (``application.storage.inspection.describe_namespace``).
 With ``--output-path`` it also writes the namespace's graph, streamed from
 the vector store, as JSON Lines or GraphML, with a census of the graph
 store's vertices and edges (``export_graph``). It calls no model.
@@ -52,6 +53,7 @@ from unified_kg_rag.application.storage.inspection import (
     export_graph,
     ingested_namespaces,
 )
+from unified_kg_rag.domain.ingestion.rebuild_due import RebuildRemedy
 from unified_kg_rag.domain.models import DocStatus
 from unified_kg_rag.shared import ConfigurationError, get_logger
 from unified_kg_rag.shared.exceptions import IndexNotFoundError
@@ -178,6 +180,16 @@ def _print(description: NamespaceDescription) -> None:
     )
     console.print(f"Strategies: {', '.join(description.strategies) or 'none'}")
     console.print(f"auto routes to: {', '.join(description.auto_routes) or 'none'}")
+    for reason in description.rebuild:
+        remedy = (
+            "rebuild with indexing.reset: true"
+            if reason.remedy is RebuildRemedy.RESET
+            else "applied by the next run"
+        )
+        console.print(
+            f"[yellow]Rebuild due ({reason.kind.value}, {remedy}): "
+            f"{markup_safe(reason.detail)}[/yellow]"
+        )
     for index in description.indices:
         if index.index is None:
             console.print(f"  {index.kind}: no index")

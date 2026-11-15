@@ -74,6 +74,7 @@ from unified_kg_rag.application.storage.indexing_manager import (
     stripped_descriptions,
 )
 from unified_kg_rag.domain.ingestion.cache_keys import (
+    corpus_answer_fingerprints,
     extraction_settings,
     is_excluded_source_path,
     leaves_source_root,
@@ -84,7 +85,6 @@ from unified_kg_rag.domain.ingestion.claim_resolver import ClaimResolver
 from unified_kg_rag.domain.ingestion.community_drift import (
     CommunityDrift,
     commit_identity,
-    reset_reasons,
     with_level0_community_ids,
 )
 from unified_kg_rag.domain.ingestion.contributions import (
@@ -118,6 +118,7 @@ from unified_kg_rag.domain.ingestion.names import (
     compact_name_key,
     normalize_entity_type,
 )
+from unified_kg_rag.domain.ingestion.rebuild_due import rebuild_reasons
 from unified_kg_rag.domain.ingestion.seed_graph import (
     DOCUMENT_SOURCE_KIND,
     SEED_RECORD_FINGERPRINT,
@@ -2783,24 +2784,24 @@ class IndexingStage(_RegistryStage):
         # The build record, written before the registry records the run's
         # documents when the registry is on (see IncrementalIndexer.record):
         # a run killed after the registry write leaves it.
-        counters: dict[str, CommunityCounters] | None = None
+        records: dict[str, IndexBuildRecord] | None = None
         # What became of the record (the run result's ``build_record``).
         record_state = "failed"
 
         def record_build(results: Mapping[str, IndexingStats]) -> None:
-            nonlocal counters, record_state
+            nonlocal records, record_state
             write = self._build_record_write(context, results)
             if write is None:
                 return
             try:
-                counters = self._record_build(
+                records = self._record_build(
                     context,
                     text_units,
                     communities,
                     tree_pruned=_tree_pruned(results),
                     rewrite=write == "rewrite",
                 )
-                if counters is not None:
+                if records is not None:
                     record_state = "written"
             except NamespaceLeaseError:
                 raise
@@ -2812,7 +2813,7 @@ class IndexingStage(_RegistryStage):
                     "documents are recorded",
                     error=e,
                 )
-            if counters is None:
+            if records is None:
                 logger.warning(
                     "The build record was not written on every index; retried "
                     "once the documents are recorded"
@@ -2949,17 +2950,17 @@ class IndexingStage(_RegistryStage):
         # Validate that no backend has completely failed
         self._validate_backend_success(indexing_results)
         delta = context.incremental_delta
-        if counters is None:
+        if records is None:
             write = self._build_record_write(context, indexing_results)
             if write is not None:
-                counters = self._record_build(
+                records = self._record_build(
                     context,
                     text_units,
                     communities,
                     tree_pruned=_tree_pruned(indexing_results),
                     rewrite=write == "rewrite",
                 )
-                if counters is not None:
+                if records is not None:
                     record_state = "written"
                 else:
                     logger.warning(
@@ -3005,46 +3006,60 @@ class IndexingStage(_RegistryStage):
             metrics["community_drift"] = drift.model_dump()
             metrics["community_drift_overlap_share"] = drift.overlap_share
             metrics["community_rebuild_recommended"] = int(drift.rebuild_recommended)
-        if counters:
-            metrics.update(self._check_community_counters(counters, drift))
+        if records:
+            metrics.update(self._check_rebuild_due(records, drift))
 
         return input_count, total_indexed, metrics
 
-    def _check_community_counters(
-        self, counters: dict[str, CommunityCounters], drift: CommunityDrift | None
+    def _check_rebuild_due(
+        self, records: dict[str, IndexBuildRecord], drift: CommunityDrift | None
     ) -> dict[str, Any]:
-        """Recommend a rebuild (one WARNING per suffix) where the community
-        counters crossed an ``indexing.community_compaction`` threshold; the
-        counters' metrics (the largest over the suffixes)."""
-        compaction = self.config.indexing.community_compaction
-        for suffix, counted in sorted(counters.items()):
-            reasons = reset_reasons(
-                counted,
-                compaction,
+        """Warn where a written record leaves its suffix due for a rebuild
+        (``rebuild_due``, the reasons ``run-describe`` reports, this run's
+        community drift among them: its community counters past an
+        ``indexing.community_compaction`` threshold, reports or summaries
+        its full build made under other settings), one WARNING per reason;
+        the metrics: those reasons by suffix (``rebuild_due``, the run
+        result's, which the console's job card reads) and the community
+        counters' (the largest over the suffixes)."""
+        due: dict[str, list[dict[str, Any]]] = {}
+        for suffix, written in sorted(records.items()):
+            reasons = rebuild_reasons(
+                written.model_dump(mode="json"),
+                self.config,
                 drift_recommended=drift is not None and drift.rebuild_recommended,
             )
-            if reasons:
+            for reason in reasons:
                 logger.warning(
-                    "Communities of '%s' are due for re-clustering: %s. "
-                    "Incremental runs append their delta's communities "
-                    "instead of re-clustering the graph; run once with "
-                    "indexing.reset: true, which reuses the unchanged "
-                    "summaries and reports.",
+                    "Index namespace '%s' is due for a rebuild: %s.",
                     suffix,
-                    "; ".join(reasons),
+                    reason.detail,
                 )
-        return {
-            "community_counters": {
-                suffix: counted.model_dump(mode="json")
-                for suffix, counted in sorted(counters.items())
-            },
-            "community_growth_ratio": max(
-                (c.growth_ratio or 0.0 for c in counters.values()), default=0.0
-            ),
-            "runs_since_clustering": max(
-                (c.runs_since for c in counters.values()), default=0
-            ),
+            if reasons:
+                due[suffix] = [reason.model_dump(mode="json") for reason in reasons]
+        counters = {
+            suffix: written.communities
+            for suffix, written in sorted(records.items())
+            if written.communities is not None
         }
+        metrics: dict[str, Any] = {"rebuild_due": due}
+        if counters:
+            metrics.update(
+                {
+                    "community_counters": {
+                        suffix: counted.model_dump(mode="json")
+                        for suffix, counted in counters.items()
+                    },
+                    "community_growth_ratio": max(
+                        (c.growth_ratio or 0.0 for c in counters.values()),
+                        default=0.0,
+                    ),
+                    "runs_since_clustering": max(
+                        (c.runs_since for c in counters.values()), default=0
+                    ),
+                }
+            )
+        return metrics
 
     def _build_record_write(
         self, context: PipelineContext, results: Mapping[str, IndexingStats]
@@ -3113,7 +3128,7 @@ class IndexingStage(_RegistryStage):
         communities: Sequence[Community] = (),
         tree_pruned: bool = True,
         rewrite: bool = False,
-    ) -> dict[str, CommunityCounters] | None:
+    ) -> dict[str, IndexBuildRecord] | None:
         """Record on each written suffix's vector indices what built them.
 
         The summary tree is built after this record, by the summary_tree
@@ -3129,9 +3144,10 @@ class IndexingStage(_RegistryStage):
         build starts each suffix's community counters with the
         ``communities`` it wrote; an incremental record adds the ones it
         appended and subtracts those its removals deleted, once per commit
-        (``IndexBuildRecord.over``). Returns the counters written, by suffix
-        (none where the stored record predates them), or ``None`` when a
-        suffix's record was written on no index (the store rejected it).
+        (``IndexBuildRecord.over``). Returns the records written (an
+        incremental one merged over the stored one), by suffix, or ``None``
+        when a suffix's record was written on no index (the store rejected
+        it).
 
         A run that ``rewrite``s a missing record indexed nothing: the record
         stands for the build the stores hold, a full one (later incremental
@@ -3187,6 +3203,14 @@ class IndexingStage(_RegistryStage):
             extraction_settings=settings,
             package_version=__version__,
             source_scopes=recorded_source_scopes(context, self.config.indexing.reset),
+            # A full build wrote every report and summary under this config;
+            # an incremental record keeps the stored ones (over()), and a
+            # rewritten record does not know them.
+            answer_fingerprints=(
+                corpus_answer_fingerprints(self.config, artifacts)
+                if not incremental and not rewritten
+                else None
+            ),
             # Only a full build exports (DataIngestionPipeline's export).
             visualization_export_run=(
                 context.pipeline_id
@@ -3204,7 +3228,7 @@ class IndexingStage(_RegistryStage):
             if delta is not None and not self.config.indexing.reset and not rewritten
             else None
         )
-        counters: dict[str, CommunityCounters] | None = {}
+        records: dict[str, IndexBuildRecord] | None = {}
         keeps_tree = tree_pruned and IndexArtifact.SUMMARY_TREE in (
             artifacts_to_build(self.config)
         )
@@ -3234,10 +3258,10 @@ class IndexingStage(_RegistryStage):
             )
             if written is None:
                 if keeps_build_records(vector_indexer):
-                    counters = None
-            elif counters is not None and written.communities is not None:
-                counters[suffix] = written.communities
-        return counters
+                    records = None
+            elif records is not None:
+                records[suffix] = written
+        return records
 
     def _record_removed_artifacts(
         self, text_units: list[TextUnit], delta: DocumentDelta | None = None

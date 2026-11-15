@@ -1076,8 +1076,12 @@ async def test_a_streamed_query_names_its_namespace_and_publishes_its_metrics(
     assert properties["error_class"] == "failure"
     assert len(raised.value.query_id) == 12  # type: ignore[attr-defined]
 
-    # A stream the caller stops reading early is no failure.
-    chain = _simple_chain()
+    # A stream the caller stops reading early is no failure: its metrics
+    # count none, and its query span (the one streaming path ends the query
+    # where it waits for its reader) and its answer's model span end
+    # without an error, as a closed generator's.
+    exporter.clear()
+    chain = _simple_chain(_TracedModelFactory())
     sink = _RecordingSink()
     chain.providers.metrics_sink = sink
     try:
@@ -1086,8 +1090,13 @@ async def test_a_streamed_query_names_its_namespace_and_publishes_its_metrics(
         await stream.aclose()
     finally:
         await chain.aclose()
-    ((_, values, _),) = sink.emitted
+    ((_, values, properties),) = sink.emitted
     assert values[metrics.QUERY_FAILED_METRIC] == 0.0
+    assert properties["Strategy"] == "simple" and "error_class" not in properties
+    for name in ("kg_rag.query", "chat vendor.model-v1"):
+        span = _one(exporter, name)
+        assert span.status.status_code != StatusCode.ERROR, name
+        assert "error.type" not in _attrs(span), name
 
 
 class _DegradingRetriever(_FakeRetriever):
@@ -1303,10 +1312,11 @@ async def test_captured_query_span_carries_redacted_query_and_answer(
     assert query["output.value"] == "Vendor ships [REDACTED]."
 
 
-async def test_streamed_query_span_carries_only_the_redacted_query(
+async def test_streamed_query_span_carries_the_redacted_query_and_answer(
     tracing: Tracing,
 ) -> None:
-    # The streamed answer is produced after the query span has ended.
+    # A streamed answer is produced inside the query span, as an unstreamed
+    # one: the span ends with it.
     exporter = tracing(capture_content=True, redact_patterns=["Vendor"])
     chain = _simple_chain()
     try:
@@ -1316,7 +1326,7 @@ async def test_streamed_query_span_carries_only_the_redacted_query(
     assert "".join(chunks) == "Vendor ships 120 units."
     query = _attrs(_one(exporter, "kg_rag.query"))
     assert query["input.value"] == "What does [REDACTED] supply?"
-    assert "output.value" not in query
+    assert query["output.value"] == "[REDACTED] ships 120 units."
 
 
 class _TracedModelFactory(_FakeModelFactory):
@@ -2228,3 +2238,40 @@ async def test_an_mcp_call_past_its_deadline_in_the_slot_queue_is_a_counted_quer
     ids = [query_failure_ids(e) for e in errors]
     assert all(len(i.get("query_id", "")) == 12 and i.get("trace_id") for i in ids)
     assert len({i["query_id"] for i in ids}) == 3
+
+
+class _BlockingInputGuard:
+    """An input guardrail that blocks every question."""
+
+    async def acheck(self, text: str, source: Any, **kwargs: Any) -> Any:
+        from unified_kg_rag.ports.guardrail import GuardAction, GuardVerdict
+
+        return GuardVerdict(action=GuardAction.BLOCKED, text="Blocked.")
+
+
+@pytest.mark.parametrize("streamed", [False, True], ids=["ainvoke", "astream"])
+async def test_a_blocked_query_is_counted_under_the_strategy_it_asked_for(
+    streamed: bool,
+) -> None:
+    # Regression (W2 review S3): a query the input guardrail blocked was
+    # published as Strategy=invalid: its output's strategy is "blocked",
+    # which no strategy is. It ran none: the requested one names it.
+    from unified_kg_rag.shared import metrics
+
+    chain = _simple_chain()
+    chain.guard = _BlockingInputGuard()  # type: ignore[assignment]
+    chain._screen_inputs = True
+    sink = _RecordingSink()
+    chain.providers.metrics_sink = sink
+    try:
+        if streamed:
+            assert (
+                "".join([c async for c in chain.astream(_SIMPLE_QUERY)]) == "Blocked."
+            )
+        else:
+            assert (await chain.ainvoke(_SIMPLE_QUERY)).answer == "Blocked."
+    finally:
+        await chain.aclose()
+    ((_, values, properties),) = sink.emitted
+    assert properties["Strategy"] == "simple"
+    assert values[metrics.QUERY_FAILED_METRIC] == 0.0

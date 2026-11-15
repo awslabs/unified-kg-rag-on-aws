@@ -184,10 +184,12 @@ class UsageLimits:
     max_llm_calls: int | None = None
     max_input_tokens: int | None = None
     max_cost: float | None = None
-    # Of max_llm_calls, those kept for the scope's last step (a query's
-    # answer): an optional call (optional_calls) that would take one is
-    # refused with OptionalCallSkipped.
+    # Of max_llm_calls and max_input_tokens, those kept for the scope's last
+    # step (a query's answer: its call, and its prompt, question and least
+    # context): an optional call (optional_calls) that would take any of
+    # them is refused with OptionalCallSkipped.
     reserved_calls: int = 0
+    reserved_tokens: int = 0
     cost: Callable[[Mapping[str, Mapping[str, int]]], float] | None = None
     refuse: LimitRefusal = _refused
     # The name each limit is reported by (the setting that sets it); one
@@ -341,9 +343,13 @@ def _admit(meter: UsageMeter | None, role: str, model: str, counts: _Counts) -> 
         node = meter
         while node is not None and refusal is None:
             if node.limits is not None:
-                refusal = node.limits._check(node, model, counts)
-                if refusal is None and optional:
+                # An optional call past what the answer keeps is skipped
+                # (OptionalCallSkipped) before any limit refuses it: one
+                # past a limit itself is past that room too.
+                if optional:
                     refusal = _optional_refusal(node, counts)
+                if refusal is None:
+                    refusal = node.limits._check(node, model, counts)
             node = node.parent
         if refusal is None:
             node = meter
@@ -391,8 +397,9 @@ _OPTIONAL: ContextVar[bool] = ContextVar("llm_usage_optional", default=False)
 @contextmanager
 def optional_calls() -> Iterator[None]:
     """The model calls made in this context are optional: one that would
-    take a call the open scopes keep for their last step
-    (``UsageLimits.reserved_calls``: a query's answer) is refused with
+    take a call or input tokens the open scopes keep for their last step
+    (``UsageLimits.reserved_calls`` / ``reserved_tokens``: a query's
+    answer) is refused with
     :class:`OptionalCallSkipped`, which the step making it answers without
     (a query translation or extraction, the structured planner, an output
     repair). The one rule of every optional call."""
@@ -404,22 +411,34 @@ def optional_calls() -> Iterator[None]:
 
 
 def _optional_refusal(meter: UsageMeter, call: _Counts) -> BaseException | None:
-    """The refusal of an optional ``call`` that would take a call ``meter``
-    keeps for its last step, if any."""
+    """The refusal of an optional ``call`` that would take a call or input
+    tokens ``meter`` keeps for its last step, if any."""
     limits = meter.limits
-    if limits is None or limits.max_llm_calls is None or not limits.reserved_calls:
+    if limits is None:
         return None
-    room = limits.max_llm_calls - limits.reserved_calls
-    if meter.total.llm_calls + call.llm_calls <= room:
-        return None
-    name = limits.names.get("max_llm_calls", "max_llm_calls")
-    return OptionalCallSkipped(
-        f"An optional model call would take one of the {limits.reserved_calls} "
-        f"call(s) {name} {limits.max_llm_calls:g} keeps for the answer; it was "
-        "not sent",
-        limit=name,
-        value=limits.max_llm_calls,
-    )
+    if limits.max_llm_calls is not None and limits.reserved_calls:
+        room = limits.max_llm_calls - limits.reserved_calls
+        if meter.total.llm_calls + call.llm_calls > room:
+            name = limits.names.get("max_llm_calls", "max_llm_calls")
+            return OptionalCallSkipped(
+                "An optional model call would take one of the "
+                f"{limits.reserved_calls} call(s) {name} {limits.max_llm_calls:g} "
+                "keeps for the answer; it was not sent",
+                limit=name,
+                value=limits.max_llm_calls,
+            )
+    if limits.max_input_tokens is not None and limits.reserved_tokens:
+        room = limits.max_input_tokens - limits.reserved_tokens
+        if meter.total.input_tokens + call.input_tokens > room:
+            name = limits.names.get("max_input_tokens", "max_input_tokens")
+            return OptionalCallSkipped(
+                "An optional model call would take some of the "
+                f"{limits.reserved_tokens} input tokens {name} "
+                f"{limits.max_input_tokens:g} keeps for the answer; it was not sent",
+                limit=name,
+                value=limits.max_input_tokens,
+            )
+    return None
 
 
 def calls_that_fit(

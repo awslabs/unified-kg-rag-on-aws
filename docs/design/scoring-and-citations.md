@@ -167,9 +167,9 @@ citations):
   uses. A number the context did not show is never a citation: it is listed
   in `metadata.unknown_citation_markers`. `CitationMarkerScanner` reads the
   same markers from streamed chunks (a marker split across chunks is held
-  back until it closes), so a client of `astream` sees the citations as they
-  are written; the citations of an answer that was streamed are parsed from
-  the whole text, as `ainvoke` does.
+  back until it closes), so a client of `aquery_events` sees the citations
+  as they are written; the citations of an answer that was streamed are
+  parsed from the whole text, as `ainvoke` does.
 - **Edges unchanged.** A blocked answer returns no citations (as no
   sources); a masked one keeps them, their `cited` flags read from the
   screened text. An empty context returns none (no model call); a declined

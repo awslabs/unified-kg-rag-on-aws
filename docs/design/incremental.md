@@ -570,7 +570,17 @@ appended communities minus those its removals deleted, keyed by a commit
 identity (pipeline id and delta, `community_drift.commit_identity`) so a
 resumed commit is counted once. `indexing.community_compaction` recommends a
 rebuild from them (`community_drift.reset_reasons`); it never resets on its
-own.
+own. The reports and description summaries are the other corpus-wide
+answers a delta writes for itself alone: a full build records the settings
+fingerprints they were made under (`IndexBuildRecord.answer_fingerprints`,
+`cache_keys.corpus_answer_fingerprints`, the fingerprints the extraction
+store and the summary reuse key by), and `over` keeps them on incremental
+records. `domain.ingestion.rebuild_due` is the one owner of "due for a
+rebuild": it reads the counters (through `reset_reasons`), those
+fingerprints, the extraction settings (`changed_settings`) and the missing
+corpus-wide artifacts (`missing_artifacts`) against the config, and
+`run-describe`, the console, `kg_describe_schema` and the indexing stage's
+WARNING all report its reasons.
 A seed graph added by a delta run is clustered on its own shards' entities
 the same way, until a rebuild; a delta community only seed units evidence
 gets no report (§4.5).

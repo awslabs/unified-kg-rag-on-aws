@@ -147,11 +147,11 @@ class Job:
     # and for the integrity question its reason (IntegrityReason).
     confirmation: str | None = None
     confirmation_reason: str | None = None
-    # The WARNING events of its log once it ended (_log_warnings): how many,
-    # the last ones, and whether one advises rebuilding the namespace.
+    # The WARNING events of its log once it ended (_log_warnings): how many
+    # and the last ones. Why the run left its namespace due for a rebuild is
+    # its result's rebuild_due, which the Ingest page reads.
     warning_count: int = 0
     warnings: list[str] = field(default_factory=list)
-    reset_advised: bool = False
     process: asyncio.subprocess.Process | None = None
     identity: str | None = None
     watcher: asyncio.Task[None] | None = None
@@ -186,7 +186,6 @@ class Job:
             "warnings": {
                 "count": self.warning_count,
                 "lines": self.warnings,
-                "reset_advised": self.reset_advised,
             },
             "pid": self.process.pid if self.process is not None else None,
             # Its pid with its start time (process_identity): a later console
@@ -712,7 +711,7 @@ class JobManager:
                     job.id,
                     error=e,
                 )
-        job.warning_count, job.warnings, job.reset_advised = await asyncio.to_thread(
+        job.warning_count, job.warnings = await asyncio.to_thread(
             _log_warnings, job.log_path
         )
         if job.status is JobStatus.FAILED:
@@ -972,30 +971,21 @@ def _log_event(line: str) -> dict[str, Any] | None:
     return None
 
 
-# How a run's warnings advise rebuilding the namespace (community drift,
-# re-clustering due, ...): the setting ``--reset`` sets for one run, which
-# the Ingest page offers as "Rebuild the namespace".
-RESET_ADVICE = "indexing.reset: true"
-
-
-def _log_warnings(log_path: Path) -> tuple[int, list[str], bool]:
-    """How many WARNING events a job's log holds, the last
-    :data:`WARNING_LINES` of them (their messages), and whether any of them
-    advises a rebuild (:data:`RESET_ADVICE`)."""
-    count, last, reset_advised = 0, [], False
+def _log_warnings(log_path: Path) -> tuple[int, list[str]]:
+    """How many WARNING events a job's log holds and the last
+    :data:`WARNING_LINES` of them (their messages)."""
+    count, last = 0, []
     try:
         with log_path.open("r", encoding="utf-8", errors="replace") as handle:
             for line in handle:
                 event = _log_event(line)
                 if event is not None and event["level"] == "warning":
                     count += 1
-                    message = str(event.get("event", ""))
-                    reset_advised = reset_advised or RESET_ADVICE in message
-                    last.append(message)
+                    last.append(str(event.get("event", "")))
                     del last[:-WARNING_LINES]
     except OSError:
-        return 0, [], False
-    return count, last, reset_advised
+        return 0, []
+    return count, last
 
 
 def _last_error(lines: list[str]) -> str | None:

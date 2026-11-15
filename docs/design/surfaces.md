@@ -22,7 +22,7 @@ writes memory; no tool takes an index name, an endpoint or a file path.
 | `kg_answer` | `GraphRAGChain.ainvoke` (with the caller's `history`, if given) | the above plus the follow-up rewrite (with a `history`) and the answer | the answer first, `abstained`/`abstention_reason`, what it was given without (`degraded`, `degraded_error`, `citations_unresolved`), then the records it cites (`records`: `cited`, the first `mcp.uncited_records` of an answer that cites none; `all`; `none`), `usage`, `blocked`, the strategy run |
 | `kg_get_entity` | the entities index by `id`, `iri` or exact `name.keyword`; without an exact match, a lexical search of `name` | none | up to `limit` entities, how they matched |
 | `kg_neighbors` | the graph walk from one entity (`max_hops`, the configured per-hop budget) and its incident relationships | none | the neighbours (hop distance, path) and the relationships with their text units and documents |
-| `kg_describe_schema` | the namespace's build record and held artifacts, the resolved extraction schema | none (a schema source may read its file or S3 object once) | held methodologies, the strategies they serve, the build, entity and relationship types and patterns, the filter keys |
+| `kg_describe_schema` | the namespace's build record and held artifacts, the resolved extraction schema | none (a schema source may read its file or S3 object once) | held methodologies, the strategies they serve, the build, why it is due for a rebuild (`rebuild_due`), entity and relationship types and patterns, the filter keys |
 
 **Supporting-content record.** Every search hit, answer source, entity and
 relationship comes back in one chunk-oriented shape, mapped from the one
@@ -319,7 +319,7 @@ when it is built and otherwise says how to build it.
 
 | Page | Server path | What runs |
 |---|---|---|
-| Ask | `POST /api/ask` (server-sent events) | One `GraphRAGChain` per loaded config, in the server's event loop. `ainvoke(on_answer_chunk=...)` hands the answer model's text over as it streams; the final `RAGOutput` follows, with its sources, `metadata.routing` (how `auto` chose), rerank status, usage and the query's trace id |
+| Ask | `POST /api/ask` (server-sent events) | One `GraphRAGChain` per loaded config, in the server's event loop. `aquery_events` hands the answer model's text over as it streams (its `AnswerChunk` events); the final `RAGOutput` follows (its `QueryResult`), with its sources, `metadata.routing` (how `auto` chose), rerank status, usage and the query's trace id |
 | Ingest | `POST /api/jobs/ingest` | `run-ingestion` in a child process, with the console's cache directory and a pipeline id per corpus |
 | Evaluate | `POST /api/jobs/evaluate`, `GET /api/evaluations/*` | `run-eval --output-format json` in a child process, writing into its own directory under the evaluation outputs; a saved run is read back as written, its per-question scores (`evaluations/questions`) through the evaluation's own saved-results reader and `per_query_means` |
 | Graph | `GET /api/graphs/data`, `GET /api/graphs/entity` | Reads a `visualization_data.json` the ingestion exported, once per version of the file (path, modification time, size); degrees, communities, source kinds and the layout of the 600 best-connected entities (`spring_layout`) are computed on read. The page gets those entities and the edges between them in full and every other entity as `{id, name, degree}`; `graphs/entity` returns one entity with every edge that touches it |
@@ -358,14 +358,28 @@ pipeline's namespace lease still decides (a run started by another
 message). Queries run while a job does; after an ingestion finishes the
 chain is rebuilt, so the next answer reads the new index.
 
-**Streaming.** `GraphRAGChain.ainvoke` takes an optional
-`on_answer_chunk` callback: the answer step then streams the answer model
-and passes each text chunk on; the returned `RAGOutput` is unchanged and
-stays authoritative (the client replaces the streamed text with its
-`answer`). It streams nothing when the output guardrail screens answers
-(nothing may be shown before screening) or when the answer is read for
-the `[NO_ANSWER]` token (`search.abstention`), so a decline is never shown
-half-written. `astream` is unchanged; it yields no sources. A streamed
+**Streaming.** `GraphRAGChain.aquery_events` is the one streaming path:
+it runs `ainvoke`'s query in a task of its own with an event sink in its
+context (`_QUERY_EVENTS`), and the steps send typed events to it: the start
+once the query is admitted, the route once the strategy is resolved, the
+sources before the answer call, each answer chunk, then the `RAGOutput` as
+`QueryResult`. The returned output stays authoritative (the client
+replaces the streamed text with its `answer`). The sink hands each event to
+the reader and waits until the reader asks for the next, so the query never
+runs ahead of it: a reader that closes the iterator cancels the query
+before it writes memory, and the query then ends as a closed stream
+(`_ReaderStopped`: its span without error, its metrics without a
+failure), not as a cancelled query. The answer step streams whenever there is a sink; under the output
+guardrail it sends nothing (nothing may be shown before screening), and
+`_ainvoke` sends the screened sources and answer (one chunk) before it
+writes memory, so no reader stop falls after the turn is written; a `[NO_ANSWER]` token
+(`search.abstention`) is held back by `MarkerStreamFilter` and stripped, so
+a decline is never shown half-written. The first chunk must come within
+`search.model_timeout_seconds`: the query's deadline moves up for that wait
+and back after it. `astream`/`stream` are the text of these events, and the
+deprecated `on_answer_chunk` callback a sink that reads only the chunks, so
+the deadline, the query limits, the guardrail, the metrics, the ids and
+memory apply to every form alike. A streamed
 answer is the unstreamed one: its text is the chunks joined, so
 `citations` and `unknown_citation_markers` come out the same
 (`test_answer_chunks.py`). Each `chunk` event carries the markers that

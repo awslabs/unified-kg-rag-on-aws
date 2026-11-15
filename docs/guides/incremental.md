@@ -172,9 +172,10 @@ twice. After a commit that reaches
 run logs a WARNING:
 
 ```
-Communities of 'default' are due for re-clustering: 24 incremental runs since
-the last full clustering (max_runs_since_clustering: 20); 163 communities
-against the 10 it clustered, 16.3x (max_community_growth: 1.5). ...
+Index namespace 'default' is due for a rebuild: its communities are due for
+re-clustering: 24 incremental runs since the last full clustering
+(max_runs_since_clustering: 20); 163 communities against the 10 it clustered,
+16.3x (max_community_growth: 1.5). ...
 ```
 
 The `community_growth_ratio` and `runs_since_clustering` metrics carry the
@@ -200,6 +201,29 @@ setting changes in [Workflows](#workflows) that stop an incremental run. The
 CDK dashboard plots `community_rebuild_recommended`, `community_growth_ratio`
 and `runs_since_clustering`; no alarm watches them
 ([Operator Runbook: Alarms](../operations.md#alarms)).
+
+### Rebuild due
+
+`run-describe`, the console's Ingest page and the MCP `kg_describe_schema`
+tool list why a namespace is due for a rebuild (`rebuild`), from its build
+record against the config they load: what the next incremental run cannot
+apply (`remedy: reset`, a run with `indexing.reset: true`) or applies at a
+cost (`remedy: next_run`).
+
+| `kind` | When | `remedy` |
+|---|---|---|
+| `communities` | The community counters crossed an `indexing.community_compaction` threshold (the WARNING above) | `reset` |
+| `answer_settings` | The community reports or description summaries the last full build wrote were made under other settings (their model, prompt, language, summarization switched on) than the config's: incremental runs write their delta's alone | `reset`: a model call per report or summary |
+| `extraction_settings` | The extraction settings changed since the last run (the changed paths in `settings`) | `next_run`: it extracts every document again |
+| `methodologies` | The config builds a corpus-wide artifact the namespace lacks | `next_run`: it rebuilds the namespace from the stored extractions |
+
+A run logs one WARNING per reason of the records it wrote
+(`Index namespace 'default' is due for a rebuild: ...`), the community
+counters' above among them, and its `--output-format json` result lists them
+by suffix (`rebuild_due`): the console's job card offers the rebuild on
+that, not on a warning's text. A build record written by an earlier version names no
+report or summary settings, so it gets no `answer_settings` reason until its
+next full build.
 
 ## Deletion scope
 

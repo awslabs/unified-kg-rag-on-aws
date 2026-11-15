@@ -219,16 +219,21 @@ class UsageCallbackHandler(BaseCallbackHandler):
                 self._tasks.pop(gone, None)
             if task is not None:
                 # A cancelled task's call gets no end or error from LangChain
-                # (its gather is cancelled): let it go when the task ends.
+                # (its gather is cancelled): let it go if its task is.
                 ended = partial(self._ended, run_id)
                 self._tasks[run_id] = (task, ended)
         if task is not None:
             task.add_done_callback(ended)
 
     def _ended(self, run_id: UUID, task: asyncio.Future[Any]) -> None:
+        """Let go of the call of a cancelled ``task`` (it gets no end).
+        One whose task finished keeps waiting for its end: LangChain starts
+        a streamed call in a short-lived task and ends it in the task that
+        read the stream (letting it go counted that end as a second call)."""
         with self._lock:
             self._tasks.pop(run_id, None)
-            self._calls.pop(run_id, None)
+            if task.cancelled():
+                self._calls.pop(run_id, None)
 
     def _take(self, run_id: UUID) -> usage.LLMCall | None:
         with self._lock:

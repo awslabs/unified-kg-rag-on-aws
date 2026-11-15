@@ -41,6 +41,7 @@ from unified_kg_rag.application.retrieval.rag_chain import (
     caller_deadline,
     new_query_id,
 )
+from unified_kg_rag.domain.ingestion.rebuild_due import RebuildReasons
 from unified_kg_rag.domain.models import (
     GraphEdge,
     QueryLimits,
@@ -357,6 +358,7 @@ class SchemaToolResult(BaseModel):
         "search.query_max_model_calls, search.query_max_input_tokens): the "
         "ceiling the limits argument of kg_search and kg_answer lowers"
     )
+    rebuild: RebuildReasons
 
 
 class _AbsorbedQueryError(GraphRAGException):
@@ -1235,6 +1237,7 @@ class KnowledgeGraphTools:
                 extraction_schema=described.schema_,
                 schema_error=described.schema_error,
                 filter_keys=described.filter_keys,
+                rebuild=described.rebuild,
                 namespaces=self.namespaces,
                 limits={
                     "max_top_k": self.settings.max_top_k,

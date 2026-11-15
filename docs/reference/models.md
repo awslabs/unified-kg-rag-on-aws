@@ -71,7 +71,7 @@ invocation needs no reindex.
 | `anthropic.claude-haiku-5-5` | Anthropic | 1M / 128K | adaptive, on by default; `effort` low–max |
 | `anthropic.claude-sonnet-5`, `anthropic.claude-opus-5` | Anthropic | 1M / 128K | adaptive, always on; `effort` |
 | `anthropic.claude-opus-4-8`, `anthropic.claude-opus-4-7` | Anthropic | 1M / 128K | adaptive, always on; `effort` low–max |
-| `anthropic.claude-opus-4-6-v1` | Anthropic | 1M / 128K | opt-in (`RAGInput.enable_thinking`), adaptive; `effort` low/medium/high/max |
+| `anthropic.claude-opus-4-6-v1` | Anthropic | 1M / 128K | opt-in (`RAGInput.effort`), adaptive; `effort` low/medium/high/max |
 | `anthropic.claude-sonnet-4-6` | Anthropic | 1M / 64K | opt-in, adaptive; `effort` low/medium/high/max |
 | `openai.gpt-6.1-sol` | OpenAI | 1M / 131K | `reasoning.effort` low–max, always on |
 | `openai.gpt-6-astra`, `openai.gpt-6-sol`, `openai.gpt-6-luna` | OpenAI | 1.05M / 128K | `reasoning.effort` low–max, always on |
@@ -96,9 +96,19 @@ Four things differ for Claude 4.7-and-later models:
   when that differs from `models.default`), otherwise `default_effort`; the shipped fast model,
   Claude Haiku 5.5, thinks adaptively, so `fast_effort` (default `low`) sets
   how much it reasons on fast-tier calls. A default-tier ingestion call uses
-  `ingestion_effort` instead when it is set. Claude Sonnet 5.5 always thinks, so `RAGInput.enable_thinking` is a
-  no-op for it — depth is `effort` only. A level the model does not accept
-  (e.g. `xhigh` on Opus 4.6 or Sonnet 4.6) fails fast.
+  `ingestion_effort` instead when it is set. One query sets its answer's
+  effort with `RAGInput.effort`, which also turns reasoning on for a model
+  that opts in (Opus 4.6, Sonnet 4.6) and leaves room for it under the
+  answer's output ceiling; Claude Sonnet 5.5 always thinks, so only the level
+  changes. `RAGInput.enable_thinking` is deprecated: it turns reasoning on at
+  the tier's effort. A level the model does not accept (e.g. `xhigh` on Opus
+  4.6 or Sonnet 4.6) fails fast; a query's `effort` is refused before any
+  model call when its answer model does not take it or does not reason.
+  Older Claude models (4.5 and before) take a thinking budget instead: a
+  query's effort thinks on that level's (`EFFORT_THINKING_TOKENS`). On every
+  family a query's effort raises the answer's max_tokens to that level's
+  reasoning plus the answer's floor (1,024 tokens), never past the model's
+  maximum; a tier's configured effort keeps `models.default_max_output_tokens`.
 - **Sampling parameters are dropped.** `temperature`/`top_k` are not accepted
   and are omitted from requests automatically; steer behaviour by prompting.
 - **Token estimates are scaled.** Their tokenizer counts roughly 1x-1.35x the

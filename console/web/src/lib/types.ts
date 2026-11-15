@@ -23,14 +23,26 @@ export interface Status {
  * build record names it (`recorded` false: no build record, as before the
  * first ingestion or one of an earlier release), whether anything was
  * ingested into it at all (`indexed` false: a question on it is refused),
- * and which of those an ingestion of the picked methodologies would no
- * longer serve. */
+ * why it is due for a rebuild under the picked methodologies, and which of
+ * those an ingestion of them would no longer serve. */
 export interface NamespaceHeld {
   namespace: string;
   recorded: boolean;
   indexed: boolean;
   held: string[];
+  // Why it is due for a rebuild under the config (rebuild_due).
+  rebuild: RebuildReason[];
   dropped: string[];
+}
+
+/** Why a namespace is due for a rebuild (`rebuild_due.RebuildReason`):
+ * `reset` for a run with indexing.reset: true, `next_run` for what the next
+ * ingestion applies. */
+export interface RebuildReason {
+  kind: "communities" | "answer_settings" | "extraction_settings" | "methodologies";
+  remedy: "reset" | "next_run";
+  detail: string;
+  settings: string[];
 }
 
 export interface StrategyInfo {
@@ -212,7 +224,7 @@ export interface JobRecord {
   // The WARNING events of its log once it ended: how many, and the last ones.
   /** Its WARNINGs once ended: how many, the last ones, and whether one
    * advises rebuilding the namespace (the run's ``--reset``). */
-  warnings?: { count: number; lines: string[]; reset_advised?: boolean };
+  warnings?: { count: number; lines: string[] };
   // An evaluation's answers so far (from its log) beside its saved runs.
   progress?: { stages?: StageProgress[]; done: number; total: number; answers?: { done: number; total: number } | null } | null;
   log?: string[];

@@ -5,7 +5,7 @@ import { isBudgetStop, JobPanel } from "../components/JobPanel";
 import { Empty, ErrorText, formatBytes, JobStatusBadge, Loading, Notice, PageHead, Sheet } from "../components/ui";
 import { useI18n } from "../i18n/i18n";
 import { errorMessage, get, send, upload } from "../lib/api";
-import type { Corpus, JobRecord, NamespaceHeld, Status } from "../lib/types";
+import type { Corpus, JobRecord, NamespaceHeld, RebuildReason, Status } from "../lib/types";
 import { useApi } from "../lib/useApi";
 
 const METHODOLOGIES = ["graphrag", "lightrag", "hipporag", "raptor"];
@@ -285,6 +285,18 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
                   </label>
                 </Notice>
               ) : null}
+              {held.data?.rebuild?.length ? (
+                <Notice tone="warn" title={t("ingest.rebuildTitle", { namespace: held.data.namespace })}>
+                  <ul style={{ margin: 0, paddingLeft: 18 }}>
+                    {held.data.rebuild.map((reason) => (
+                      <li key={`${reason.kind}-${reason.settings.join(",")}`} title={reason.detail}>
+                        {t(`ingest.rebuild.${reason.kind}`)} {t(`ingest.rebuildRemedy.${reason.remedy}`, { option: t("ingest.reset"), section: t("ingest.advanced") })}
+                        {reason.settings.length ? <span className="field-help"> {reason.settings.join(", ")}</span> : null}
+                      </li>
+                    ))}
+                  </ul>
+                </Notice>
+              ) : null}
               {error ? <Notice tone="bad">{errorMessage(t, error)}</Notice> : null}
               <div>
                 <button className="button button-primary" disabled={!corpus || !chosen.length || !!active || (dropped.length > 0 && !confirmNarrowing)} onClick={() => void start()}>
@@ -319,14 +331,7 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
                       </Notice>
                     ) : null}
                     <BudgetNotice job={job} disabled={!!active} onResume={() => void start({ job })} />
-                    {job.status === "succeeded" && job.warnings?.reset_advised && !job.params.reset ? (
-                      <Notice tone="warn" title={t("ingest.resetAdvisedTitle")}>
-                        <p style={{ margin: "0 0 8px" }}>{t("ingest.resetAdvised")}</p>
-                        <button className="button button-small" disabled={!!active} onClick={() => void start({ job, flag: "reset" })}>
-                          {t("ingest.reset")}
-                        </button>
-                      </Notice>
-                    ) : null}
+                    <ResetAdvice job={job} disabled={!!active} onReset={() => void start({ job, flag: "reset" })} />
                     <IngestResult job={job} />
                   </>
                 )}
@@ -375,6 +380,45 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
         </div>
       </div>
     </>
+  );
+}
+
+/** The reasons a reset applies that a finished ingestion reported for the
+ * namespaces it wrote (its result's `rebuild_due`), one per kind. */
+export function resetReasons(job: Pick<JobRecord, "result">): RebuildReason[] {
+  const due = job.result?.rebuild_due;
+  if (!due || typeof due !== "object") return [];
+  const kinds = new Map<string, RebuildReason>();
+  for (const reasons of Object.values(due as Record<string, unknown>)) {
+    if (!Array.isArray(reasons)) continue;
+    for (const reason of reasons as RebuildReason[]) {
+      if (reason?.remedy === "reset" && !kinds.has(reason.kind)) kinds.set(reason.kind, reason);
+    }
+  }
+  return [...kinds.values()];
+}
+
+/** A finished run that left its namespace due for a rebuild only a reset
+ * applies: its reasons, and a button that starts it again with the
+ * rebuild. Nothing for a run that was the rebuild. */
+export function ResetAdvice({ job, disabled, onReset }: { job: Pick<JobRecord, "status" | "params" | "result">; disabled: boolean; onReset: () => void }) {
+  const { t } = useI18n();
+  const reasons = resetReasons(job);
+  if (job.status !== "succeeded" || job.params?.reset || !reasons.length) return null;
+  return (
+    <Notice tone="warn" title={t("ingest.resetAdvisedTitle")}>
+      <ul style={{ margin: "0 0 8px", paddingLeft: 18 }}>
+        {reasons.map((reason) => (
+          <li key={reason.kind} title={reason.detail}>
+            {t(`ingest.rebuild.${reason.kind}`)}
+          </li>
+        ))}
+      </ul>
+      <p style={{ margin: "0 0 8px" }}>{t("ingest.resetAdvised")}</p>
+      <button className="button button-small" disabled={disabled} onClick={onReset}>
+        {t("ingest.reset")}
+      </button>
+    </Notice>
   );
 }
 

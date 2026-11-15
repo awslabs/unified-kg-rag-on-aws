@@ -22,9 +22,8 @@ from collections.abc import (
     Mapping,
     MutableMapping,
 )
-from contextlib import AbstractContextManager, aclosing, nullcontext
-from dataclasses import dataclass, field
-from typing import Any, Literal, Self, TypeVar, cast
+from contextlib import AbstractContextManager, aclosing, contextmanager, nullcontext
+from typing import Annotated, Any, Literal, Self, TypeVar, cast, get_args
 
 from langchain_core.exceptions import OutputParserException
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
@@ -149,6 +148,7 @@ from unified_kg_rag.domain.models import (
     Source,
     validate_safe_name,
 )
+from unified_kg_rag.domain.models.config import EffortLevel
 from unified_kg_rag.domain.prompts import (
     BasePrompt,
     QueryRewritePrompt,
@@ -214,6 +214,7 @@ from unified_kg_rag.shared.exceptions import (
     ErrorClass,
     InvalidArgumentError,
     MethodologyNotIndexedError,
+    OptionalCallSkipped,
     UsageLimitExceededError,
     classify,
     error_class_of,
@@ -230,7 +231,7 @@ from unified_kg_rag.shared.metrics import (
     QUERY_METRICS_NAMESPACE,
     QUERY_THROTTLED_METRIC,
 )
-from unified_kg_rag.shared.usage import UsageLimits, UsageMeter, metering, usage_scope
+from unified_kg_rag.shared.usage import UsageLimits, UsageMeter, usage_scope
 from unified_kg_rag.shared.utils import (
     configure_event_loop,
     named_choice,
@@ -244,6 +245,7 @@ from unified_kg_rag.shared.utils.concurrency import (
     gather_bounded,
     settle,
 )
+from unified_kg_rag.shared.utils.deprecation import warn_deprecated
 
 logger = get_logger(__name__)
 
@@ -507,9 +509,25 @@ class RAGInput(BaseModel):
         description="Suffix for multi-tenant or versioned indices; None reads "
         "the config's processing.document_parsing.index_value, else 'default'",
     )
+    effort: EffortLevel | None = Field(
+        default=None,
+        description="Reasoning effort of this query's answer (low, medium, "
+        "high, xhigh, max): the answer model reasons at this level "
+        "(output_config.effort on Anthropic adaptive-thinking models, "
+        "reasoning.effort on OpenAI GPT, that level's thinking budget on "
+        "older Claude models), its max_tokens raised to leave that level's "
+        "reasoning and the answer room. Refused before any model call (InvalidArgumentError) when "
+        "the answer model does not take the level or does not reason (a "
+        "local server's model, a Bedrock model without thinking). None: the "
+        "configured effort of the answer model's tier "
+        "(aws.bedrock.default_effort / fast_effort), on a model that always "
+        "reasons",
+    )
     enable_thinking: bool = Field(
         default=False,
-        description="Enable thinking mode for language model reasoning and step-by-step problem solving",
+        description="Deprecated (a DeprecationWarning): set effort instead. "
+        "True turns the answer model's reasoning on at the configured effort "
+        "of its tier, for a model that opts in",
     )
     search_strategy: SearchStrategy = Field(
         default=SearchStrategy.AUTO,
@@ -599,6 +617,17 @@ class RAGInput(BaseModel):
             # from and searched for.
             raise ValueError("The query is empty.")
         return query
+
+    @field_validator("enable_thinking")
+    @classmethod
+    def _deprecated_thinking(cls, enable: bool) -> bool:
+        if enable:
+            warn_deprecated(
+                "RAGInput.enable_thinking is deprecated: set RAGInput.effort "
+                "(low, medium, high, xhigh, max), which turns reasoning on at "
+                "that level"
+            )
+        return enable
 
     @model_validator(mode="after")
     def _one_conversation_source(self) -> "RAGInput":
@@ -731,26 +760,75 @@ def _strategy_dimension(value: Any, default: str = "auto") -> str:
         return "invalid"
 
 
-@dataclass
-class _StreamOutcome:
-    """What a streamed query's metrics and failure read (``astream``): its
-    id, its trace's, the input once admitted, the class of the failure its
-    error answer absorbed (``processing.ignore_errors``), its usage meter
-    and its answer's metadata (degraded steps, abstention), as ``ainvoke``'s
-    ``RAGOutput`` carries them."""
+class QueryStart(BaseModel):
+    """The first event of :meth:`GraphRAGChain.aquery_events`: the query
+    was admitted (its input valid, its namespace ingested)."""
 
-    query_id: str
-    trace_id: str | None = None
-    rag_input: RAGInput | None = None
-    error_class: ErrorClass | None = None
-    # The strategy that ran (auto's route), once retrieval did.
-    ran: Any = None
-    # The query's model calls and requests, once retrieval started.
-    meter: UsageMeter | None = None
-    # The streamed answer's metadata, once it was formatted.
-    metadata: dict[str, Any] = field(default_factory=dict)
-    # The query's deadline, once it started (its own limits' included).
-    deadline: "_QueryDeadline | None" = None
+    kind: Literal["start"] = "start"
+    query_id: str = Field(description="The id the query's log records carry")
+    conversation_id: str | None = Field(
+        default=None, description="The conversation the query continues"
+    )
+    requested_strategy: SearchStrategy = Field(
+        description="The strategy the query asked for (auto: routed next)"
+    )
+    namespace: str | None = Field(
+        default=None, description="The index namespace the query reads"
+    )
+    trace_id: str | None = Field(
+        default=None,
+        description="The query's trace id when observability is enabled",
+    )
+
+
+class QueryRouted(BaseModel):
+    """The strategy a query runs, once it is resolved (``auto``'s route)."""
+
+    kind: Literal["routed"] = "routed"
+    strategy: SearchStrategy = Field(description="The strategy that runs")
+    routing: dict[str, Any] | None = Field(
+        default=None,
+        description="How auto chose it (RAGOutput.metadata['routing']); None "
+        "for a strategy the query named",
+    )
+
+
+class QuerySources(BaseModel):
+    """The sources the answer model is given (``RAGOutput.sources``): sent
+    before the first answer chunk; when the output guardrail screens the
+    answer (which may withhold them), from the screened output before the
+    screened answer; when the query ended without one (blocked, an error
+    answer), just before :class:`QueryResult`."""
+
+    kind: Literal["sources"] = "sources"
+    sources: list[Source] = Field(description="The answer's sources")
+
+
+class AnswerChunk(BaseModel):
+    """A piece of the answer as the answer model writes it: a preview, the
+    ``[NO_ANSWER]`` marker stripped (``search.abstention``). Under the
+    output guardrail, one chunk: the whole answer once screened. None for
+    a fixed reply (an empty context, a decline); :class:`QueryResult`
+    carries the answer."""
+
+    kind: Literal["chunk"] = "chunk"
+    text: str = Field(description="The text written since the last chunk")
+
+
+class QueryResult(BaseModel):
+    """The last event of a query: its :class:`RAGOutput`, what ``ainvoke``
+    returns (authoritative over the chunks: a decline, a screening or a
+    failure replaces what they showed)."""
+
+    kind: Literal["result"] = "result"
+    output: RAGOutput = Field(description="The query's output")
+
+
+# One event of GraphRAGChain.aquery_events, told apart by ``kind``.
+QueryEvent = Annotated[
+    QueryStart | QueryRouted | QuerySources | AnswerChunk | QueryResult,
+    Field(discriminator="kind"),
+]
 
 
 class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
@@ -759,7 +837,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
     One chain serves many queries, including concurrent ones:
 
     - ``invoke``/``ainvoke`` return a :class:`RAGOutput` with the generated
-      answer and its sources; ``stream``/``astream`` yield the answer text.
+      answer and its sources; ``aquery_events`` (sync ``query_events``)
+      yields the same query as typed events (:data:`QueryEvent`: the start,
+      the route, the sources, the answer's chunks as the model writes them,
+      then the output), and ``stream``/``astream`` yield its answer text.
     - ``search``/``asearch`` run the same retrieval without generating an
       answer and return a :class:`SearchOutput`.
 
@@ -903,10 +984,11 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         # cached retrievers' sockets, then stop the loop. The finalizer holds
         # the caches and runner, never the chain itself, so it does not keep
         # the chain alive. Collection timing is up to the GC, so callers must
-        # still close the chain when done.
+        # still close the chain when done. It hands the release to a thread
+        # of its own: the collector may run it anywhere, under any lock.
         weakref.finalize(
             self,
-            _release_cached_resources,
+            _release_collected,
             self._retriever_cache,
             self._strategy_cache,
             self._cache_lock,
@@ -929,11 +1011,6 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         context_step: Runnable[Any, Any] = RunnablePassthrough.assign(
             optimized_context=self._context_optimization_step
         ) | RunnablePassthrough.assign(context=self._context_building_step)
-        # Streaming runs everything up to (and including) context building as
-        # one non-streamed pass, then streams only the answer LLM. Reusing the
-        # same step objects keeps stream and invoke behaviour in lockstep.
-        self._stream_context_chain: Runnable[Any, Any] = base_chain | context_step
-
         answer_step: Runnable[Any, Any] = RunnablePassthrough.assign(
             answer=self._answer_generation_step
         )
@@ -986,6 +1063,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         )
         try:
             state = await self._resolve_strategy(state, config, prefetch=prefetch)
+            await _emit(
+                QueryRouted(
+                    strategy=state["resolved_strategy"],
+                    routing=state.get(ROUTING_KEY),
+                )
+            )
             state["processed_query"] = (
                 await self._process_query_step(state, config, prefetched=prefetch)
                 if processing
@@ -1124,8 +1207,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         one is left; and the names of those dropped. A strategy's fewest
         calls are its own (``fewest_model_calls``), the query processing
         calls it reads for ``state``'s question (``query_processing_calls``:
-        its extractions and the translation) and the answer. All of them
-        without a call limit.
+        its extractions and the translation) and the answer; when none
+        fits so, those that fit without their query processing calls,
+        which are optional (skipped under the limit). All of them without a
+        call limit.
 
         Raises:
             UsageLimitExceededError: None fits, before any call of the
@@ -1136,11 +1221,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             # The router call only beside the answer's prompt and the least
             # context: else no router call, the fallback as one candidate.
             router = self._router_tokens(routable, state)
-            answer = answer_prompt_tokens(self.config) + estimate_token_count(
-                self._question(state)
-            )
-            least = self.config.search.token_manager.min_truncated_section_tokens
-            if router + answer + least > left.input_tokens:
+            if router + self._answer_reserve(self._question(state)) > (
+                left.input_tokens
+            ):
                 fallback = self._fallback_strategy(routable)
                 record_degradation(
                     DegradationStep.ROUTING,
@@ -1152,22 +1235,33 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             return routable, []
         calls = left.llm_calls
 
-        def fewest(strategy: SearchStrategy) -> int:
+        def fewest(strategy: SearchStrategy, optional: bool) -> int:
             spec = get_strategy_spec(strategy)
             return (
                 spec.strategy_class.fewest_model_calls(self.config)
-                + query_processing.query_processing_calls(self, state, strategy)
+                + (
+                    query_processing.query_processing_calls(self, state, strategy)
+                    if optional
+                    else 0
+                )
                 + 1
             )
 
-        routed = tuple(s for s in routable if fewest(s) <= calls - 1)
-        if len(routed) < 2:
-            # One (or none) beside the router's call: no router call is
-            # made, so a strategy may use that call too.
-            alone = tuple(s for s in routable if fewest(s) <= calls)
-            routed = (self._fallback_strategy(alone),) if alone else ()
+        def fitting(optional: bool) -> tuple[SearchStrategy, ...]:
+            routed = tuple(s for s in routable if fewest(s, optional) <= calls - 1)
+            if len(routed) < 2:
+                # One (or none) beside the router's call: no router call is
+                # made, so a strategy may use that call too.
+                alone = tuple(s for s in routable if fewest(s, optional) <= calls)
+                routed = (self._fallback_strategy(alone),) if alone else ()
+            return routed
+
+        # Those that fit whole first; else as if their optional calls (the
+        # query translation and extractions, skipped under the limit) were
+        # not made, as an explicit strategy answers.
+        routed = fitting(optional=True) or fitting(optional=False)
         if not routed:
-            needs = min(fewest(s) for s in routable)
+            needs = min(fewest(s, optional=False) for s in routable)
             limit = left.call_limit or "max_model_calls"
             value = left.call_limit_value or calls
             raise UsageLimitExceededError(
@@ -1493,9 +1587,18 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             return None
         try:
             rewriter = self._get_chain_for_prompt(QueryRewritePrompt, StrOutputParser())
-            rewritten = await rewriter.ainvoke(
-                {"query": state["query"], "conversation_history": history}, config
+            # Optional under the query's limits: one that would take the
+            # answer's call or input searches the follow-up as written.
+            with usage.optional_calls():
+                rewritten = await rewriter.ainvoke(
+                    {"query": state["query"], "conversation_history": history},
+                    config,
+                )
+        except OptionalCallSkipped as e:
+            query_processing.record_limit_skip(
+                DegradationStep.FOLLOW_UP_REWRITE, "searched the follow-up as is", e
             )
+            return None
         except Exception as e:
             if not self.ignore_errors or is_unreachable_error(e):
                 raise
@@ -1956,14 +2059,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         if self._context_is_empty(state):
             return RunnableLambda(lambda s: self._no_context_answer(s))
 
-        enable_thinking = state.get("enable_thinking", False)
         # Only passed when set, so the default answer chain (and its cache
         # key) is that of earlier releases.
         instructions = self._answer_instructions(state)
         answer_chain = self._get_chain_for_prompt(
             self._answer_prompt(state.get("resolved_strategy")),
             StrOutputParser(),
-            enable_thinking=enable_thinking,
+            **_answer_reasoning(state),
             **({"system_suffix": instructions} if instructions else {}),
         )
         # The answer reads the standalone question: the conversation history
@@ -1974,12 +2076,36 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             )
             | answer_chain
         )
-        sink = _ANSWER_CHUNKS.get()
-        if sink is None or self._screen_outputs or self._reads_marker(state):
-            # Nothing is shown before the output guardrail screened the
-            # answer, nor before the [NO_ANSWER] token is ruled in or out.
+        sink = _QUERY_EVENTS.get()
+        if sink is None:
             return answer
-        return _streamed_to(answer, sink)
+        if self._screen_outputs:
+            # Streamed all the same (its first chunk bounded), but nothing
+            # is shown before the output guardrail screened the whole
+            # answer: _ainvoke sends it then.
+            return _streamed_to(
+                answer,
+                None,
+                marker=None,
+                declining=False,
+                first_chunk_seconds=self.config.search.model_timeout_seconds,
+            )
+        # The start of the answer is held back until the [NO_ANSWER] token
+        # is ruled in or out (search.abstention); under on_insufficient:
+        # abstain only a decline is shown, an answer the model wrote
+        # instead becoming the fixed reply.
+        reads_marker = self._reads_marker(state)
+        return _streamed_to(
+            answer,
+            sink,
+            marker=(
+                MarkerStreamFilter(strip=self.config.search.abstention.strip_marker)
+                if reads_marker
+                else None
+            ),
+            declining=reads_marker and self._declines_insufficient(state),
+            first_chunk_seconds=self.config.search.model_timeout_seconds,
+        )
 
     @staticmethod
     def _context_insufficient(state: dict[str, Any]) -> bool:
@@ -2164,6 +2290,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         context's citations (``_citations_step``) running alongside: the
         read needs only the context, so it no longer waits for the answer.
         A failed or cancelled answer cancels the read."""
+        if not self._screen_outputs:
+            # Shown before the answer; under the output guardrail, which may
+            # withhold them, from the screened output (aquery_events).
+            await _emit(QuerySources(sources=self._reported_sources(state)))
         read_state = dict(state)
         lineage = asyncio.ensure_future(self._citations_step(read_state))
         try:
@@ -2247,21 +2377,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         # map-reduce summary) are LLM output the model may read, not retrieved
         # evidence, so they are never reported as sources on either path.
         optimized: OptimizedContext | None = state.get("optimized_context")
-        if optimized is None:
-            sources = [
-                GraphRAGChain._source_entry(r, r.content, truncated=False)
-                for r in sr.results
-                if not GraphRAGChain._is_synthesized(r.metadata)
-            ]
-        elif GraphRAGChain._context_is_empty(state):
-            # The answer step short-circuited: the model saw no context at all.
-            sources = []
-        else:
-            sources = GraphRAGChain._sources_from_sections(
-                optimized.sections,
-                sr.results,
-                entries=GraphRAGChain._section_sources(state, optimized),
-            )
+        sources = GraphRAGChain._reported_sources(state)
 
         metadata = {
             "search_strategy": sr.search_strategy,
@@ -2299,6 +2415,27 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             conversation_id=state.get("conversation_id"),
             processed_query=state["processed_query"],
             metadata=metadata,
+        )
+
+    @staticmethod
+    def _reported_sources(state: dict[str, Any]) -> list[Source]:
+        """The sources of ``state``'s answer: the sections the token
+        budgeter selected (see ``_format_output_step``)."""
+        sr: SearchResult = state["search_results"]
+        optimized: OptimizedContext | None = state.get("optimized_context")
+        if optimized is None:
+            return [
+                GraphRAGChain._source_entry(r, r.content, truncated=False)
+                for r in sr.results
+                if not GraphRAGChain._is_synthesized(r.metadata)
+            ]
+        if GraphRAGChain._context_is_empty(state):
+            # The answer step short-circuited: the model saw no context at all.
+            return []
+        return GraphRAGChain._sources_from_sections(
+            optimized.sections,
+            sr.results,
+            entries=GraphRAGChain._section_sources(state, optimized),
         )
 
     @staticmethod
@@ -2471,14 +2608,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             input: A :class:`RAGInput` or a dict of its fields.
             config: LangChain run config; its callbacks, tags and metadata
                 reach every nested LLM call.
-            on_answer_chunk: Called with each text chunk of the answer as
-                the answer model streams it, for a client that shows the
-                answer as it is written. A preview: the returned
-                ``answer`` is authoritative (a decline or a failure
-                replaces what was streamed). Nothing is streamed when the
-                output guardrail screens answers or the answer is read for
-                the ``[NO_ANSWER]`` token (``search.abstention``), nor for
-                the fixed reply to an empty context.
+            on_answer_chunk: Deprecated (a ``DeprecationWarning``): read the
+                :class:`AnswerChunk` events of :meth:`aquery_events`, which
+                also end with this output. Called with the text of each
+                answer chunk.
 
         Returns:
             A :class:`RAGOutput`: the answer, its sources and the search
@@ -2489,11 +2622,19 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 is set, in which case a degraded result with
                 ``metadata["error"] = True`` is returned instead.
         """
-        token = _ANSWER_CHUNKS.set(on_answer_chunk)
+        sink: _EventSink | None = None
+        if on_answer_chunk is not None:
+            warn_deprecated(
+                "GraphRAGChain.ainvoke(on_answer_chunk=...) is deprecated: "
+                "iterate aquery_events() and read its AnswerChunk events "
+                "(its QueryResult carries the output)"
+            )
+            sink = _ChunkCallback(on_answer_chunk)
+        token = _QUERY_EVENTS.set(sink)
         try:
             result = await self._query(input, config, search=False)
         finally:
-            _ANSWER_CHUNKS.reset(token)
+            _QUERY_EVENTS.reset(token)
         assert isinstance(result, RAGOutput)
         return result
 
@@ -2536,6 +2677,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         admission_tokens = bind_contextvars(query_id=query_id)
         try:
             rag_input, input_dict = await self._admit_query(input, deadline)
+            if not search:
+                # A search makes no answer: its effort is never spent.
+                self._check_effort(rag_input)
             self._apply_limits(deadline, rag_input)
         except Exception as e:
             tag_query_failure(e, query_id)
@@ -2569,10 +2713,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 token = _LEFTOVER_EXTRACTIONS.set(leftovers)
                 try:
                     result = await self._ainvoke(
-                        rag_input, input_dict, config, span, search, deadline
+                        rag_input, input_dict, config, span, search, deadline, query_id
                     )
-                except BaseException:
+                except BaseException as e:
                     await discard(leftovers)
+                    if isinstance(e, asyncio.CancelledError) and _reader_stopped():
+                        # Not a cancelled query: its reader's early end, a
+                        # closed stream's (the span ends without error).
+                        raise _ReaderStopped() from None
                     raise
                 finally:
                     _LEFTOVER_EXTRACTIONS.reset(token)
@@ -2604,6 +2752,17 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                     error=e,
                     usage=meter.snapshot() if meter is not None else None,
                 )
+            raise
+        except _ReaderStopped:
+            # Its events' reader stopped (a stream closed early): no
+            # failure, its latency and usage up to there. A cancelled query
+            # records nothing, as a cancelled ainvoke.
+            self._record_query_metrics(
+                started,
+                rag_input,
+                usage=meter.snapshot() if meter is not None else None,
+                ran=_routed_strategy(),
+            )
             raise
         finally:
             reset_contextvars(**log_tokens)
@@ -2671,7 +2830,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         names none (one series, not one per string)."""
         if result is not None:
             metadata = result.metadata
-            ran = result.search_results.search_strategy
+            # A blocked query ran no strategy (its output's is "blocked"):
+            # the requested one names it.
+            ran = (
+                None
+                if metadata.get("blocked")
+                else result.search_results.search_strategy
+            )
         metadata = metadata or {}
         if error is not None:
             error_class = classify(error)
@@ -2735,15 +2900,40 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         limits = self._query_limits(rag_input)
         if limits.max_model_calls is None and limits.max_input_tokens is None:
             return None
+        strategy = rag_input.search_strategy
         return UsageLimits(
             max_llm_calls=limits.max_model_calls,
             max_input_tokens=limits.max_input_tokens,
-            # The answer's call: no output repair takes it.
+            # The answer's call and its input: no optional call (a query
+            # translation or extraction, the follow-up rewrite, an output
+            # repair) takes them; auto weighs its router call against the
+            # same reserve (_routes_within_limits).
             reserved_calls=1,
+            reserved_tokens=(
+                self._answer_reserve(
+                    rag_input.query,
+                    None if strategy is SearchStrategy.AUTO else strategy,
+                )
+                if limits.max_input_tokens is not None
+                else 0
+            ),
             names={
                 "max_llm_calls": self._limit_setting(rag_input, "max_model_calls"),
                 "max_input_tokens": self._limit_setting(rag_input, "max_input_tokens"),
             },
+        )
+
+    def _answer_reserve(
+        self, question: str, strategy: SearchStrategy | None = None
+    ) -> int:
+        """The input tokens an input-token limit keeps for the answer of
+        ``question``: its prompt (``answer_prompt_tokens`` of ``strategy``,
+        without one the largest), the question and the least context
+        (``search.token_manager.min_truncated_section_tokens``)."""
+        return (
+            answer_prompt_tokens(self.config, strategy)
+            + estimate_token_count(question)
+            + self.config.search.token_manager.min_truncated_section_tokens
         )
 
     def _apply_limits(self, deadline: "_QueryDeadline", rag_input: RAGInput) -> None:
@@ -2817,6 +3007,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         span: observability.SpanHandle,
         search: bool,
         deadline: "_QueryDeadline",
+        query_id: str,
     ) -> RAGOutput | SearchOutput:
         guard_records: list[dict[str, Any]] = []
         capture: list[GroundingContext | None] = []
@@ -2827,6 +3018,17 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             async with deadline:
                 # Before the first model call (the input guardrail's).
                 self._raise_missing_namespace(input_dict)
+                if not search:
+                    trace = observability.current_trace_ids()
+                    await _emit(
+                        QueryStart(
+                            query_id=query_id,
+                            conversation_id=rag_input.conversation_id,
+                            requested_strategy=rag_input.search_strategy,
+                            namespace=rag_input.suffix,
+                            trace_id=trace[0] if trace else None,
+                        )
+                    )
                 blocking = await self._screen_input(
                     rag_input, input_dict, guard_records
                 )
@@ -2843,8 +3045,19 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                         metadata={"blocked": True, "guardrail": guard_records},
                     )
                 runnable = self._search_chain if search else self.chain
+                # The run metadata names the session, user and namespace for
+                # a tracing callback, as the query span does.
                 output: RAGOutput | SearchOutput = await runnable.ainvoke(
-                    input_dict, config
+                    input_dict,
+                    merge_configs(
+                        config,
+                        {
+                            "metadata": {
+                                **self._identity_metadata(rag_input),
+                                "namespace": rag_input.suffix,
+                            }
+                        },
+                    ),
                 )
                 answer_blocked = False
                 plan_texts: dict[str, str | None] = {}
@@ -2876,6 +3089,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                     guard_records.extend(evidence_records)
                 if isinstance(output, RAGOutput):
                     self._refresh_screened_copies(output, plan_texts)
+                    if self._screen_outputs:
+                        # The screened sources and answer, before the turn
+                        # is written: a reader that stops at either writes
+                        # none (aquery_events).
+                        await _emit(QuerySources(sources=output.sources))
+                        if output.answer:
+                            await _emit(AnswerChunk(text=output.answer))
                 if guard_records:
                     output.metadata["guardrail"] = guard_records
                 if isinstance(output, RAGOutput) and not answer_blocked:
@@ -3451,6 +3671,37 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             input_dict[_MISSING_NAMESPACE] = e
         return rag_input, input_dict
 
+    def _check_effort(self, rag_input: RAGInput) -> None:
+        """Refuse an ``effort`` the answer model cannot apply, before any
+        model call: one that does not reason (a local server's, a Bedrock
+        model without thinking), which would drop it without a word, or a
+        level it does not take (``LanguageModelInfo.supported_efforts``).
+
+        Raises:
+            InvalidArgumentError: Naming the model and what it takes.
+        """
+        effort = rag_input.effort
+        if effort is None:
+            return
+        model_id = self.config.model_id(ModelRole.ANSWER_GENERATION)
+        info = self.factory.get_model_info(model_id)
+        if not info.supports_thinking:
+            raise InvalidArgumentError(
+                f"effort '{effort}' cannot apply: the answer model "
+                f"'{model_id}' does not reason (it would answer at no effort "
+                "at all); unset effort, or answer with a model that reasons "
+                "(models.roles.answer_generation)"
+            )
+        allowed = info.supported_efforts
+        if allowed is not None and effort not in allowed:
+            raise InvalidArgumentError(
+                f"effort '{effort}' is not a level the answer model "
+                f"'{model_id}' takes: "
+                + ", ".join(
+                    level for level in get_args(EffortLevel) if level in allowed
+                )
+            )
+
     async def _check_holdings(
         self, rag_input: RAGInput, input_dict: dict[str, Any]
     ) -> None:
@@ -3553,17 +3804,99 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
     # Streaming yields answer TEXT chunks (str), not RAGOutput: callers of a
     # streamed answer want tokens as they arrive. Sources/metadata stay on the
     # non-streaming invoke/ainvoke path.
+    async def aquery_events(
+        self,
+        input: RAGInput,
+        config: RunnableConfig | None = None,
+    ) -> AsyncGenerator[QueryEvent, None]:
+        """Answer one query as typed events (:data:`QueryEvent`).
+
+        Runs the query :meth:`ainvoke` runs, its deadline, query limits,
+        guardrail, metrics and memory included, and yields, in order:
+        :class:`QueryStart` once the query is admitted, :class:`QueryRouted`
+        once its strategy is resolved, :class:`QuerySources` (the sources the
+        answer model is given), :class:`AnswerChunk` as the answer model
+        writes (under the output guardrail one, the screened answer; none
+        for a fixed reply), then
+        :class:`QueryResult` with the :class:`RAGOutput` ``ainvoke``
+        returns. A query blocked by the input guardrail, or failed under
+        ``processing.ignore_errors``, yields its start (when admitted), its
+        sources and its result; a failure without ``ignore_errors`` raises
+        after the events sent before it, as ``ainvoke`` raises it.
+
+        The query runs in a task of its own and waits for the caller to take
+        each event before it goes on, so a caller that stops reading and
+        closes the iterator (``aclose``; ``break`` closes it once collected)
+        ends it there: nothing is written to memory, its model stream is
+        closed, and its metrics count no failure. A cancelled caller cancels
+        it. LangChain's ``Runnable.astream_events`` (the callbacks' events)
+        is left as LangChain defines it.
+        """
+        channel = _EventChannel()
+
+        async def produce() -> None:
+            token = _QUERY_EVENTS.set(channel)
+            try:
+                output = await self._query(input, config, search=False)
+                assert isinstance(output, RAGOutput)
+            except _ReaderStopped:
+                return
+            except BaseException as e:
+                channel.fail(e)
+                if not isinstance(e, Exception):
+                    raise
+                return
+            finally:
+                _QUERY_EVENTS.reset(token)
+            # The query is done (its memory written): what is left is sent
+            # with no wait, so a reader has no stop point after it. A query
+            # that ended before its sources (blocked, an error answer) sends
+            # them here.
+            channel.finish(
+                *(
+                    []
+                    if channel.sources_sent
+                    else [QuerySources(sources=output.sources)]
+                ),
+                QueryResult(output=output),
+            )
+
+        task = asyncio.create_task(produce(), name="kg-rag-query-events")
+        try:
+            while (event := await channel.next()) is not None:
+                yield event
+        except GeneratorExit:
+            # The reader stopped: the query ends where it waits for it.
+            channel.stop()
+            raise
+        finally:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    def query_events(
+        self, input: RAGInput, config: RunnableConfig | None = None
+    ) -> Iterator[QueryEvent]:
+        """Answer one query as typed events; the sync form of
+        :meth:`aquery_events`, driven on the chain's long-lived event loop
+        as :meth:`stream` is. Closing the iterator early cancels the
+        query."""
+        yield from _iterate_async_generator(
+            self.aquery_events(input, config), self._loop_runner
+        )
+
     def stream(  # type: ignore[override]
         self,
         input: RAGInput,
         config: RunnableConfig | None = None,
         **kwargs: Any,
     ) -> Iterator[str]:
-        """Synchronously stream answer chunks.
+        """Synchronously stream the answer text; the sync form of
+        :meth:`astream`.
 
-        Yields the answer as ``str`` chunks only, never a :class:`RAGOutput`:
-        to get the sources and metadata as well, call :meth:`invoke` or
-        :meth:`ainvoke` instead.
+        Yields ``str`` chunks only, never a :class:`RAGOutput`: to get the
+        sources and metadata as well, call :meth:`invoke` or :meth:`ainvoke`,
+        or iterate :meth:`query_events`.
 
         Drives :meth:`astream` on the chain's long-lived event loop (the one
         ``invoke`` uses), pulling one chunk at a time. This works both from
@@ -3581,266 +3914,35 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         config: RunnableConfig | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[str]:
-        """Asynchronously stream answer chunks.
+        """Asynchronously stream the answer text: the text of
+        :meth:`aquery_events`.
 
-        Yields the answer as ``str`` chunks only, never a :class:`RAGOutput`:
-        to get the sources and metadata as well, call :meth:`ainvoke` instead.
-        With ``processing.ignore_errors`` set, a failure yields the standard
-        error message as a final chunk instead of raising.
-
-        Retrieval, query processing and context building run once (the same
-        steps ``ainvoke`` uses); only the answer-generation LLM is streamed.
-        An empty context yields the standard no-data answer once without
-        calling the LLM. On success the full answer is written to conversation
-        memory exactly as ``ainvoke`` would. With a guardrail, a blocked query
-        yields the blocked message once, and with ``check_output`` the answer
-        is generated in full, screened, and yielded as one chunk.
-
-        A streamed answer publishes its query metrics as ``ainvoke``'s do
-        (latency to its end, ``query_failed`` on an exception), the query
-        span and its log lines name its namespace and query id, and an
-        exception it raises carries them (``tag_query_failure``). A stream
-        the caller stops reading early (``aclose``) is no failure; a
-        cancelled one, as a cancelled ``ainvoke``, records no metrics.
+        Yields ``str`` chunks only, never a :class:`RAGOutput`: to get the
+        sources and metadata as well, iterate :meth:`aquery_events` or call
+        :meth:`ainvoke`. Each :class:`AnswerChunk`'s text, then, when none
+        was shown, the final answer as one chunk: the standard no-data
+        answer of an empty context (no model call), a decline's fixed
+        reply or the blocked message. With ``processing.ignore_errors`` set,
+        a failure yields the standard error message as a final chunk
+        (after a blank line when part of the answer was shown) instead of
+        raising. The query is ``ainvoke``'s: its metrics, ids, deadline,
+        limits and memory are the same; a stream closed early writes no
+        memory and counts no failure.
         """
-        started = time.monotonic()
-        # The speculative extractions its route did not read (see ainvoke).
-        leftovers: list[asyncio.Future[Any]] = []
-        outcome = _StreamOutcome(query_id=self._query_id())
-        stopped: BaseException | None = None
-        try:
-            async with aclosing(
-                self._astream(input, config, leftovers, outcome, **kwargs)
-            ) as chunks:
-                async for chunk in chunks:
-                    yield chunk
-        except BaseException as e:
-            stopped = e
-            if isinstance(e, Exception):
-                tag_query_failure(e, outcome.query_id, outcome.trace_id)
-            await discard(leftovers)
-            raise
-        finally:
-            if stopped is None or isinstance(stopped, Exception | GeneratorExit):
-                self._record_query_metrics(
-                    started,
-                    outcome.rag_input or input,
-                    error=stopped if isinstance(stopped, Exception) else None,
-                    error_class=outcome.error_class,
-                    usage=outcome.meter.snapshot() if outcome.meter else None,
-                    ran=outcome.ran,
-                    metadata=outcome.metadata,
-                )
-        self._background_extractions.keep(
-            leftovers,
-            (
-                outcome.deadline.time_left()
-                if outcome.deadline is not None
-                else self._time_left(started)
-            ),
-        )
-
-    async def _astream(
-        self,
-        input: RAGInput,
-        config: RunnableConfig | None,
-        leftovers: list[asyncio.Future[Any]],
-        outcome: _StreamOutcome,
-        **kwargs: Any,
-    ) -> AsyncGenerator[str, None]:
-        """The answer chunks of :meth:`astream`; the speculative extractions
-        the route did not read go to ``leftovers``, and what its metrics
-        read to ``outcome``."""
-        search_config = self.config.search
-        deadline = _QueryDeadline(
-            search_config.query_timeout_seconds,
-            first_chunk_seconds=search_config.model_timeout_seconds,
-        )
-        outcome.deadline = deadline
-        # Admitted within the deadline (_query), its log lines under the
-        # query's id.
-        admission_tokens = bind_contextvars(query_id=outcome.query_id)
-        try:
-            rag_input, input_dict = await self._admit_query(input, deadline)
-            self._apply_limits(deadline, rag_input)
-        finally:
-            reset_contextvars(**admission_tokens)
-        outcome.rag_input = rag_input
-        chunks: list[str] = []
-        delivered = False
-        # A refused answer, like a refused query, writes no memory.
-        answer_blocked = False
-        guard_records: list[dict[str, Any]] = []
-        try:
-            # Bound for retrieval and context building only: they run before
-            # the first yield, in one context. Each later step of the generator
-            # may run in another (stream() resumes it in a new task), where the
-            # binding would not hold and its reset would fail.
-            tokens = bind_contextvars(**self._log_context(rag_input, outcome.query_id))
-            leftovers_token = _LEFTOVER_EXTRACTIONS.set(leftovers)
-            try:
-                # Only the steps before the first yield are traced here, for the
-                # same reason; the streamed answer call gets its own model span.
-                with (
-                    self._identity(rag_input),
-                    observability.bind_attributes(namespace=rag_input.suffix),
-                    observability.span(
-                        "kg_rag.query",
-                        self._query_span_attributes(rag_input, search=False),
-                    ) as span,
-                    # Its usage, limits and degradation ledger, as
-                    # _query's; the answer's later steps meter into it again
-                    # (metering), so its limits refuse their calls too.
-                    usage_scope(limits=self._usage_limits(rag_input)) as outcome.meter,
-                    query_scope(),
-                ):
-                    ledger = current_ledger()
-                    ids = observability.current_trace_ids()
-                    outcome.trace_id = ids[0] if ids else None
-                    async with deadline.scope():
-                        self._raise_missing_namespace(input_dict)
-                        blocking = await self._screen_input(
-                            rag_input, input_dict, guard_records
-                        )
-                        if blocking is None:
-                            await self._admit_history(
-                                rag_input, input_dict, guard_records
-                            )
-                            span.set_attributes(
-                                _captured_content(input=rag_input.query)
-                            )
-                            state: dict[str, Any] = (
-                                await self._stream_context_chain.ainvoke(
-                                    input_dict, config
-                                )
-                            )
-                            outcome.ran = state.get("resolved_strategy")
-            finally:
-                _LEFTOVER_EXTRACTIONS.reset(leftovers_token)
-                reset_contextvars(**tokens)
-            if blocking is not None:
-                yield blocking.text
-                return
-            meter = outcome.meter
-            assert meter is not None
-            answer_runnable = self._answer_generation_step(state)
-            # The answer's model span starts after the query span has ended,
-            # in a trace of its own; its run metadata carries the session and
-            # user so the tracing callback can still group it.
-            answer_config = merge_configs(
-                config,
-                {
-                    "metadata": {
-                        **self._identity_metadata(rag_input),
-                        "namespace": rag_input.suffix,
-                    }
-                },
-            )
-            # The first chunk (text or not: a thinking model streams its
-            # reasoning first) must come within the model timeout of the call,
-            # so a stalled stream fails early; every chunk within the query's
-            # deadline. One deadline scope per await: the generator may resume
-            # in another task after each yield.
-            started: float | None = time.monotonic()
-            stream = aiter(answer_runnable.astream(state, answer_config))
-            # Holds back the start of the answer until the [NO_ANSWER] token
-            # is ruled in or out (search.abstention); chunks stay raw.
-            marker = (
-                MarkerStreamFilter(strip=self.config.search.abstention.strip_marker)
-                if self._reads_marker(state)
-                else None
-            )
-            # Under on_insufficient: abstain only a decline is shown; an
-            # answer the model wrote instead becomes the fixed reply.
-            declining = marker is not None and self._declines_insufficient(state)
-            while True:
-                with metering(meter):
-                    async with deadline.scope(started):
-                        try:
-                            chunk = await anext(stream)
-                        except StopAsyncIteration:
-                            break
-                started = None
-                text = str(chunk)
-                if not text:
-                    continue
-                chunks.append(text)
-                if not self._screen_outputs:
-                    shown = marker.feed(text) if marker is not None else text
-                    if declining and marker is not None and not marker.marked:
-                        shown = ""
-                    if shown:
-                        delivered = True
-                        yield shown
-            state["answer"] = "".join(chunks)
-            self._abstention_step(state)
-            if self._screen_outputs:
-                # Nothing was delivered yet: the user sees only screened text.
-                with metering(meter):
-                    async with deadline.scope():
-                        verdict = await self._screen_output(
-                            state["answer"],
-                            guard_records,
-                            grounding=(
-                                self._grounding_context(state)
-                                if self._ground_outputs
-                                else None
-                            ),
-                        )
-                state["answer"] = verdict.text
-                answer_blocked = verdict.action is GuardAction.BLOCKED
-                if verdict.text:
-                    delivered = True
-                    yield verdict.text
-            elif marker is not None:
-                rest = marker.finish()
-                if declining and not marker.marked:
-                    rest = ""
-                if not delivered and not rest and state["answer"]:
-                    # Only the token: the stripped answer's fixed reply.
-                    rest = state["answer"]
-                if rest:
-                    delivered = True
-                    yield rest
-        except Exception as e:
-            if not self.ignore_errors:
-                log_failure(
-                    logger,
-                    logging.ERROR,
-                    "RAG stream failed for query %s: %s",
-                    text_digest(rag_input.query),
-                    error=e,
-                    traceback=True,
-                )
-                if (named := named_model_error(e, self.config)) is not e:
-                    raise named from e
-                raise
-            log_failure(
-                logger,
-                logging.ERROR,
-                "RAG stream failed for query %s after %s chunk(s): %s",
-                text_digest(rag_input.query),
-                len(chunks),
-                error=e,
-            )
-            # Counted as ainvoke's error answer is.
-            outcome.error_class = classify(e)
-            # Mirror ainvoke's degraded answer. If part of the answer was
-            # already delivered, append the notice so the truncation is visible.
-            yield f"\n\n{DEFAULT_ERROR_MESSAGE}" if delivered else DEFAULT_ERROR_MESSAGE
-            return
-
-        output = self._format_output_step(state)
-        # The query's degraded steps, as _query's ledger reports them; its
-        # degradation and abstention go to the query metrics.
-        if ledger is not None:
-            output.metadata.update(ledger.metadata())
-        outcome.metadata = output.metadata
-        if answer_blocked:
-            return
-        with metering(meter):
-            async with deadline.scope():
-                await self._save_memory(output, rag_input)
+        shown = False
+        async with aclosing(self.aquery_events(input, config)) as events:
+            async for event in events:
+                if isinstance(event, AnswerChunk) and event.text:
+                    shown = True
+                    yield event.text
+                elif isinstance(event, QueryResult):
+                    answer = event.output.answer
+                    if not shown:
+                        if answer:
+                            yield answer
+                    elif event.output.metadata.get("error"):
+                        # The truncation of what was shown is visible.
+                        yield f"\n\n{answer}"
 
 
 # The state key of the answer context's section sources, with the context
@@ -4017,11 +4119,122 @@ _GROUNDING_CAPTURE: contextvars.ContextVar[list[GroundingContext | None] | None]
     contextvars.ContextVar("kg_rag_grounding_capture", default=None)
 )
 
-# The ``on_answer_chunk`` callback of the ``ainvoke`` call running in this
-# context (``None`` outside one): the answer step streams to it.
-_ANSWER_CHUNKS: contextvars.ContextVar[Callable[[str], None] | None] = (
-    contextvars.ContextVar("kg_rag_answer_chunks", default=None)
+
+class _ReaderStopped(GeneratorExit):
+    """The end of a query whose events' reader stopped reading
+    (``aquery_events`` closed early): its task is cancelled where it waits
+    for the reader, then ``_query`` raises this in place of the
+    cancellation, so its span and metrics see a closed stream's end (no
+    failure), not a cancelled query's. Raised only in ``_query``'s own
+    frames, never across a task."""
+
+
+class _EventSink:
+    """Where a query's events go (``_QUERY_EVENTS``)."""
+
+    # The strategy the query runs, once routed (its metrics' Strategy).
+    routed: SearchStrategy | None = None
+
+    async def send(self, event: QueryEvent) -> None:
+        raise NotImplementedError
+
+
+class _ChunkCallback(_EventSink):
+    """The deprecated ``ainvoke(on_answer_chunk=...)``: each answer chunk's
+    text to ``callback``, the other events dropped."""
+
+    def __init__(self, callback: Callable[[str], None]) -> None:
+        self.callback = callback
+
+    async def send(self, event: QueryEvent) -> None:
+        if isinstance(event, AnswerChunk):
+            self.callback(event.text)
+
+
+class _EventChannel(_EventSink):
+    """The events of one ``aquery_events`` query, handed from the task
+    that runs it to the reader one at a time: :meth:`send` returns once the
+    reader asks for the event after it (:meth:`next`), so the query never
+    runs ahead of its reader; a reader that stops (:meth:`stop`) leaves it
+    waiting there, to be cancelled."""
+
+    def __init__(self) -> None:
+        self._queue: asyncio.Queue[tuple[QueryEvent | None, BaseException | None]] = (
+            asyncio.Queue()
+        )
+        # The send waiting for its event to be taken, if any.
+        self._taken: asyncio.Future[None] | None = None
+        self.sources_sent = False
+        self.stopped = False
+
+    async def send(self, event: QueryEvent) -> None:
+        if isinstance(event, QuerySources):
+            self.sources_sent = True
+        taken: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        self._taken = taken
+        self._queue.put_nowait((event, None))
+        try:
+            await taken
+        finally:
+            if self._taken is taken:
+                self._taken = None
+
+    def finish(self, *events: QueryEvent) -> None:
+        """Send the last ``events``; nothing waits for them."""
+        for event in events:
+            self._queue.put_nowait((event, None))
+        self._queue.put_nowait((None, None))
+
+    def fail(self, error: BaseException) -> None:
+        """End the events with ``error``, raised to the reader."""
+        self._queue.put_nowait((None, error))
+
+    async def next(self) -> QueryEvent | None:
+        """The next event (the one before it taken), ``None`` after the
+        last; raises the query's failure."""
+        if self._taken is not None and not self._taken.done():
+            self._taken.set_result(None)
+        event, error = await self._queue.get()
+        if error is not None:
+            raise error
+        return event
+
+    def stop(self) -> None:
+        """The reader stopped (the query, cancelled next, ends as
+        :class:`_ReaderStopped`)."""
+        self.stopped = True
+
+
+# Where the events of the query running in this context go (``None``: no
+# caller reads them, and the answer is not streamed): aquery_events'
+# channel, or the deprecated on_answer_chunk callback.
+_QUERY_EVENTS: contextvars.ContextVar[_EventSink | None] = contextvars.ContextVar(
+    "kg_rag_query_events", default=None
 )
+
+
+async def _emit(event: QueryEvent) -> None:
+    """Send ``event`` to the query's reader, if any (``_QUERY_EVENTS``)."""
+    sink = _QUERY_EVENTS.get()
+    if sink is None:
+        return
+    if isinstance(event, QueryRouted):
+        sink.routed = event.strategy
+    await sink.send(event)
+
+
+def _reader_stopped() -> bool:
+    """Whether the reader of the query running in this context stopped
+    reading its events (``_EventChannel.stop``)."""
+    sink = _QUERY_EVENTS.get()
+    return isinstance(sink, _EventChannel) and sink.stopped
+
+
+def _routed_strategy() -> SearchStrategy | None:
+    """The strategy the query running in this context was routed to, as
+    its events' sink saw it (``None`` before its route, or without one)."""
+    sink = _QUERY_EVENTS.get()
+    return sink.routed if sink is not None else None
 
 
 class _Ledgered(Runnable[Any, Any]):
@@ -4051,26 +4264,76 @@ class _Ledgered(Runnable[Any, Any]):
 
 
 def _streamed_to(
-    answer: Runnable[Any, Any], sink: Callable[[str], None]
+    answer: Runnable[Any, Any],
+    sink: _EventSink | None,
+    *,
+    marker: MarkerStreamFilter | None,
+    declining: bool,
+    first_chunk_seconds: float | None,
 ) -> Runnable[Any, Any]:
-    """``answer`` run as a stream whose text chunks go to ``sink`` as they
-    arrive; returns the whole text, as the unstreamed chain would."""
+    """``answer`` run as a stream whose text goes to ``sink`` as
+    :class:`AnswerChunk` events as it arrives (to none without one: an
+    answer the output guardrail screens first); returns the whole text, as
+    the unstreamed chain would.
+
+    ``marker`` holds back the start of the answer until the ``[NO_ANSWER]``
+    token is ruled in or out and strips it; ``declining`` (under
+    ``on_insufficient: abstain``) shows only a decline. The first chunk
+    (text or not: a thinking model streams its reasoning first) must come
+    within ``first_chunk_seconds`` of the call when the query has a
+    deadline (``_first_chunk_window``), so a stalled stream fails early.
+    """
 
     async def run(state: dict[str, Any], config: RunnableConfig) -> str:
         parts: list[str] = []
         # A response cut at the output limit fails as it would unstreamed.
         token = STRICT_STREAM_TRUNCATION.set(True)
         try:
-            async for chunk in answer.astream(state, config):
-                text = str(chunk)
-                if text:
+            stream = cast(AsyncGenerator[Any, None], answer.astream(state, config))
+            async with aclosing(stream):
+                waiting_first = True
+                while True:
+                    with (
+                        _first_chunk_window(first_chunk_seconds)
+                        if waiting_first
+                        else nullcontext()
+                    ):
+                        try:
+                            chunk = await anext(stream)
+                        except StopAsyncIteration:
+                            break
+                    waiting_first = False
+                    text = str(chunk)
+                    if not text:
+                        continue
                     parts.append(text)
-                    sink(text)
+                    shown = marker.feed(text) if marker is not None else text
+                    if declining and marker is not None and not marker.marked:
+                        shown = ""
+                    if shown and sink is not None:
+                        await sink.send(AnswerChunk(text=shown))
+            if marker is not None and sink is not None:
+                rest = marker.finish()
+                if rest and not (declining and not marker.marked):
+                    await sink.send(AnswerChunk(text=rest))
         finally:
             STRICT_STREAM_TRUNCATION.reset(token)
         return "".join(parts)
 
     return RunnableLambda(run)
+
+
+def _answer_reasoning(state: dict[str, Any]) -> dict[str, Any]:
+    """The answer model's reasoning arguments of a query (``RAGInput.effort``,
+    or the deprecated ``enable_thinking``): thinking on at the query's
+    effort, which the model factory sends and sizes the output ceiling's
+    reasoning room by (``LLMFactoryPort.get_model``'s ``effort``); else at
+    the tier's configured effort when thinking is asked for; else off (a
+    model that always reasons still does, at the tier's effort)."""
+    effort = state.get("effort")
+    if effort is not None:
+        return {"enable_thinking": True, "effort": effort}
+    return {"enable_thinking": bool(state.get("enable_thinking", False))}
 
 
 def _conversation_key(
@@ -4266,6 +4529,24 @@ def _release_cached_resources(
             runner.stop()
 
 
+def _release_collected(*resources: Any) -> None:
+    """A dropped chain's GC finalizer: :func:`_release_cached_resources` of
+    ``resources`` on a thread of its own, never waited for here. The
+    collector runs a finalizer in whatever thread allocates when it
+    triggers, under whatever that thread holds (another chain's loop inside
+    ``ThreadPoolExecutor.submit``, under the executors' global lock), so a
+    release that waited there (for the dropped chain's loop, whose closes
+    may need that lock) deadlocked until its teardown timeouts."""
+    try:
+        threading.Thread(
+            target=_release_cached_resources,
+            args=resources,
+            name="kg-rag-chain-release",
+        ).start()
+    except RuntimeError:  # interpreter shutting down: no new thread
+        _release_cached_resources(*resources)
+
+
 # The search setting of each QueryLimits field (SearchConfig.query_limits).
 _QUERY_LIMIT_SETTINGS: dict[str, str] = {
     "deadline_seconds": "query_timeout_seconds",
@@ -4314,17 +4595,14 @@ class _QueryDeadline:
     ``async with`` it bounds the awaits inside to the time left: past it the
     task is cancelled (and, through ``gather_or_cancel``, the calls it fans
     out) and :class:`QueryTimeoutError` is raised. No transient retry starts
-    past it either, on worker threads too (``retry_deadline``). A streamed
-    answer resumes in a new task per chunk, so it enters one scope per await
-    (:meth:`scope`), never across a ``yield``.
+    past it either, on worker threads too (``retry_deadline``). Inside it a
+    streamed answer bounds the wait for its first chunk
+    (:func:`_first_chunk_window`).
     """
 
-    def __init__(
-        self, seconds: float | None, first_chunk_seconds: float | None = None
-    ) -> None:
+    def __init__(self, seconds: float | None) -> None:
         self.seconds = seconds
         self.setting = "search.query_timeout_seconds"
-        self.first_chunk_seconds = first_chunk_seconds
         now = self.started = time.monotonic()
         self.at = None if seconds is None else now + seconds
         caller = _CALLER_DEADLINE.get()
@@ -4350,14 +4628,9 @@ class _QueryDeadline:
         if self.at is None or at < self.at:
             self.at, self.seconds, self.setting = at, seconds, setting
 
-    def scope(self, first_chunk_from: float | None = None) -> "_DeadlineScope":
-        """A scope bounded by the deadline and, given ``first_chunk_from``
-        (the ``time.monotonic()`` a stream's model call started), by
-        ``first_chunk_seconds`` after it: the wait for its first chunk."""
-        first_chunk_at = None
-        if first_chunk_from is not None and self.first_chunk_seconds is not None:
-            first_chunk_at = first_chunk_from + self.first_chunk_seconds
-        return _DeadlineScope(self, first_chunk_at)
+    def scope(self) -> "_DeadlineScope":
+        """A scope bounded by the deadline."""
+        return _DeadlineScope(self)
 
     async def __aenter__(self) -> None:
         self._scope = self.scope()
@@ -4377,23 +4650,22 @@ class _QueryDeadline:
 class _DeadlineScope:
     """One ``async with`` window of a :class:`_QueryDeadline`."""
 
-    def __init__(self, deadline: _QueryDeadline, first_chunk_at: float | None) -> None:
+    def __init__(self, deadline: _QueryDeadline) -> None:
         self._deadline = deadline
-        self._first_chunk_at = first_chunk_at
         self._timeout: asyncio.Timeout | None = None
         self._retry_scope: AbstractContextManager[None] | None = None
-        self._first_chunk = False
+        self._window: contextvars.Token[_DeadlineScope | None] | None = None
+        # The first-chunk limit in force (first_chunk_within), else None.
+        self._first_chunk_seconds: float | None = None
 
     async def __aenter__(self) -> None:
+        self._window = _DEADLINE_SCOPE.set(self)
         at = self._deadline.at
         if at is None:
             return
-        now = time.monotonic()
-        if self._first_chunk_at is not None and self._first_chunk_at < at:
-            at, self._first_chunk = self._first_chunk_at, True
         self._retry_scope = retry_deadline(at)
         self._retry_scope.__enter__()
-        self._timeout = asyncio.timeout(max(0.0, at - now))
+        self._timeout = asyncio.timeout(max(0.0, at - time.monotonic()))
         await self._timeout.__aenter__()
 
     async def __aexit__(
@@ -4404,6 +4676,9 @@ class _DeadlineScope:
     ) -> None:
         timeout, self._timeout = self._timeout, None
         retry_scope, self._retry_scope = self._retry_scope, None
+        window, self._window = self._window, None
+        if window is not None:
+            _DEADLINE_SCOPE.reset(window)
         if retry_scope is not None:
             retry_scope.__exit__(None, None, None)
         if timeout is None:
@@ -4419,9 +4694,28 @@ class _DeadlineScope:
             # turned it into its own): still the deadline's doing.
             raise self._expired() from exc
 
+    @contextmanager
+    def first_chunk_within(self, seconds: float) -> Iterator[None]:
+        """Bound the block (a stream's wait for its first chunk) to
+        ``seconds`` too: the deadline moves up while it runs, when that is
+        earlier, and back after it."""
+        timeout, at = self._timeout, self._deadline.at
+        if timeout is None or at is None or time.monotonic() + seconds >= at:
+            yield
+            return
+        loop = asyncio.get_running_loop()
+        timeout.reschedule(loop.time() + seconds)
+        self._first_chunk_seconds = seconds
+        try:
+            yield
+        finally:
+            if not timeout.expired():
+                self._first_chunk_seconds = None
+                timeout.reschedule(loop.time() + max(0.0, at - time.monotonic()))
+
     def _expired(self) -> QueryTimeoutError:
-        if self._first_chunk:
-            limit = self._deadline.first_chunk_seconds
+        if self._first_chunk_seconds is not None:
+            limit: float | None = self._first_chunk_seconds
             setting = "search.model_timeout_seconds"
             what = "The answer stream sent no first chunk"
         else:
@@ -4435,6 +4729,22 @@ class _DeadlineScope:
             f"{message} ({setting}); its calls in flight were cancelled",
             timeout_seconds=limit,
         )
+
+
+# The deadline scope of the query running in this context (None outside
+# one).
+_DEADLINE_SCOPE: contextvars.ContextVar[_DeadlineScope | None] = contextvars.ContextVar(
+    "kg_rag_deadline_scope", default=None
+)
+
+
+def _first_chunk_window(seconds: float | None) -> AbstractContextManager[None]:
+    """The first-chunk bound of a stream (``_DeadlineScope.
+    first_chunk_within``) under the query's deadline; none without one."""
+    scope = _DEADLINE_SCOPE.get()
+    if scope is None or seconds is None:
+        return nullcontext()
+    return scope.first_chunk_within(seconds)
 
 
 class _LoopStoppedError(StoreConnectionError):
