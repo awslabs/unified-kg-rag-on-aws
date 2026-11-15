@@ -450,6 +450,10 @@ class TestStatedNumbers:
             ("队伍五千元", {5000}),
             ("新参三千円", {3000}),
             ("收拾五千元", {5000}),
+            # A sum's terms descend strictly ("拾十元" is none), each
+            # section 万 closes on its own ("拾100万" is none).
+            ("收拾十元", {10}),
+            ("收拾100万元", {1_000_000}),
             ("人參一百元一斤", {100}),
             ("大陆三万元起", {30_000}),
             ("収拾100円", {100}),
