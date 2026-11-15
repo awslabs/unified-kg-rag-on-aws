@@ -919,8 +919,12 @@ class ProcessingConfig(ConfigSection):
             "minhash: the Jaccard similarity of their character 3-gram sets, "
             "which reads lower than the sequence_matcher ratio of the same "
             "pair. null: similarity_threshold. The MinHash index proposes "
-            "the candidates (99% of the pairs at the threshold) and their "
-            "exact Jaccard similarity decides."
+            "the candidates and their exact Jaccard similarity decides. It "
+            "proposes 99% of the pairs at a threshold of 0.85 or more; a lower "
+            "one is cheaper to reach by fewer of them (at most 5% of the pairs "
+            "at half the threshold are proposed, which bounds the comparisons): "
+            "about 92% at 0.75 and 63% at 0.6, never fewer than datasketch's "
+            "own layout."
         ),
     )
     document_parsing: DocumentParsingConfig = Field(

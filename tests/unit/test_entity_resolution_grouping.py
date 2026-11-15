@@ -95,16 +95,21 @@ def test_matcher_passed_to_pool_via_initializer_not_per_task(mocker) -> None:
     )
 
 
-@pytest.mark.parametrize("threshold", [0.3, 0.5, 0.85, 0.95])
+@pytest.mark.parametrize("threshold", [0.3, 0.5, 0.6, 0.75, 0.85, 0.95])
 @pytest.mark.parametrize("num_perm", [64, 128])
-def test_the_lsh_layout_proposes_the_pairs_at_the_threshold(
+def test_the_lsh_layout_proposes_the_pairs_at_the_threshold_at_a_bounded_cost(
     threshold: float, num_perm: int
 ) -> None:
     # datasketch's own layout (8 bands of 16 rows at 0.85 and 128) proposed
-    # a pair at the threshold 46% of the time; the rest never matched.
+    # a pair at the threshold 46% of the time; the rest never matched. The
+    # recall-tuned one proposed most pairs at half a low threshold too (42
+    # bands of 3 rows at 0.6: 68% at 0.3, 118 candidates a query on a
+    # repetitive name set), so its cost is bounded, and it never proposes
+    # fewer pairs at the threshold than datasketch's.
     from datasketch import MinHashLSH
 
     from unified_kg_rag.domain.ingestion.base_resolver import (
+        LSH_MAX_PROPOSED_AT_HALF,
         LSH_RECALL_AT_THRESHOLD,
         _candidate_probability,
         _lsh_params,
@@ -112,11 +117,16 @@ def test_the_lsh_layout_proposes_the_pairs_at_the_threshold(
 
     bands, rows = _lsh_params(threshold, num_perm)
     assert bands * rows <= num_perm
-    assert _candidate_probability(threshold, bands, rows) >= LSH_RECALL_AT_THRESHOLD
     own = MinHashLSH(threshold=threshold, num_perm=num_perm)
-    assert _candidate_probability(threshold, bands, rows) >= _candidate_probability(
-        threshold, own.b, own.r
-    )
+    at = _candidate_probability(threshold, bands, rows)
+    assert at >= _candidate_probability(threshold, own.b, own.r)
+    if (bands, rows) != (own.b, own.r):
+        assert (
+            _candidate_probability(threshold / 2, bands, rows)
+            <= LSH_MAX_PROPOSED_AT_HALF
+        )
+    if threshold >= 0.85 and num_perm == 128:  # the package's permutations
+        assert at >= LSH_RECALL_AT_THRESHOLD
 
 
 def test_matchers_derive_the_lsh_layout_once(monkeypatch: pytest.MonkeyPatch) -> None:

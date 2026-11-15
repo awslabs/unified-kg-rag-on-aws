@@ -160,7 +160,9 @@ Bugs present in 0.3.0.
   with fuzzy resolution on) missed most pairs near `processing.similarity_threshold`: datasketch's LSH split (8 bands
   of 16 rows at 0.85) proposed a pair at the threshold 46% of the time, so a typo of a name never matched, and the
   MinHash estimate, off by a few hundredths, decided the rest. The index now proposes 99% of the pairs at the
-  threshold (16 bands of 8 rows) and their exact 3-gram Jaccard similarity decides.
+  threshold (16 bands of 8 rows) and their exact 3-gram Jaccard similarity decides. Below a threshold of about 0.8
+  it proposes fewer, at most 5% of the pairs at half the threshold, which bounds its comparisons (63% at 0.6, where
+  datasketch's split proposed 40%), and never fewer than datasketch's split.
 - `processing.deduplicate` dropped template documents: two contracts of one form, with other amounts, dates and ids
   in a long shared text, read as copies at its fixed 0.9 3-gram similarity, and one went unindexed without a word.
   A near-duplicate now also holds the same numbers (in any script and order), a document is dropped only as a copy

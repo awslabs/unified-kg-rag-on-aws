@@ -51,10 +51,16 @@ def _minhash_scheme() -> Any:
     return MinHash().scheme
 
 
-# The share of name pairs at the threshold the LSH index must propose. Its
+# The share of name pairs at the threshold the LSH index aims to propose. Its
 # candidates are checked against the exact Jaccard similarity, so a wider
 # net costs comparisons, never a wrong match.
 LSH_RECALL_AT_THRESHOLD = 0.99
+# The most a layout may propose of the pairs at half the threshold, which
+# bounds those comparisons: at a low threshold the layout reaching the recall
+# above proposed most such pairs (42 bands of 3 rows at 0.6 proposed 68% at
+# 0.3: 118 candidates a query, 4 times the query time, on a repetitive name
+# set). Down to 0.8 the bound leaves the recall at 0.99 or within 0.01 of it.
+LSH_MAX_PROPOSED_AT_HALF = 0.05
 
 
 def _candidate_probability(similarity: float, bands: int, rows: int) -> float:
@@ -65,30 +71,55 @@ def _candidate_probability(similarity: float, bands: int, rows: int) -> float:
 
 @lru_cache(maxsize=8)
 def _lsh_params(threshold: float, num_perm: int) -> tuple[int, int]:
-    """The ``(bands, rows)`` of the LSH index: of the splits of ``num_perm``
-    permutations that propose a pair at ``threshold`` with at least
-    :data:`LSH_RECALL_AT_THRESHOLD`, the one that proposes the fewest pairs
-    below it (the least area under its candidate curve below ``threshold``).
+    """The ``(bands, rows)`` of the LSH index for ``threshold`` and
+    ``num_perm`` permutations.
 
-    datasketch's own choice weighs missed pairs and false candidates alike:
-    at 0.85 and 128 permutations (8 bands of 16 rows) it proposed a pair at
-    the threshold 46% of the time, and a missed pair never matched.
+    Of the splits that propose at most :data:`LSH_MAX_PROPOSED_AT_HALF` of the
+    pairs at half the threshold: one that proposes the pairs at the threshold
+    with at least :data:`LSH_RECALL_AT_THRESHOLD`, and of those the one that
+    proposes the fewest pairs below it (the least area under its candidate
+    curve below ``threshold``); else the one that proposes the most at the
+    threshold. datasketch's own split instead, should it propose more at the
+    threshold (below about 0.35).
+
+    datasketch's split weighs missed pairs and false candidates alike: at
+    0.85 and 128 permutations (8 bands of 16 rows) it proposed a pair at the
+    threshold 46% of the time, and a missed pair never matched.
     """
+    from datasketch import MinHashLSH
+
     steps = 100
-    best: tuple[float, int, int] | None = None
+    reaching: tuple[float, int, int] | None = None
+    widest: tuple[float, int, int] | None = None
     for rows in range(1, num_perm + 1):
         bands = num_perm // rows
-        if _candidate_probability(threshold, bands, rows) < LSH_RECALL_AT_THRESHOLD:
+        if (
+            _candidate_probability(threshold / 2, bands, rows)
+            > LSH_MAX_PROPOSED_AT_HALF
+        ):
+            continue
+        at = _candidate_probability(threshold, bands, rows)
+        if widest is None or at > widest[0]:
+            widest = (at, bands, rows)
+        if at < LSH_RECALL_AT_THRESHOLD:
             continue
         below = sum(
             _candidate_probability(threshold * i / steps, bands, rows)
             for i in range(steps)
         )
-        if best is None or below < best[0]:
-            best = (below, bands, rows)
-    if best is None:  # a threshold so low only one-row bands reach it
-        return num_perm, 1
-    return best[1], best[2]
+        if reaching is None or below < reaching[0]:
+            reaching = (below, bands, rows)
+    own = MinHashLSH(threshold=threshold, num_perm=num_perm)
+    layouts: list[tuple[int, int]] = [(int(own.b), int(own.r))]
+    if reaching is not None:
+        layouts.append((reaching[1], reaching[2]))
+    elif widest is not None:
+        layouts.append((widest[1], widest[2]))
+    # The last of equals: ours over datasketch's.
+    return max(
+        reversed(layouts),
+        key=lambda layout: _candidate_probability(threshold, *layout),
+    )
 
 
 @lru_cache(maxsize=8)

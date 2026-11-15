@@ -221,6 +221,11 @@ ALLOWED: dict[str, str] = {
         "recall target: the share of name pairs at the threshold the LSH index "
         "proposes; the exact Jaccard check decides every match"
     ),
+    "domain/ingestion/base_resolver.py:LSH_MAX_PROPOSED_AT_HALF": (
+        "cost bound: the share of pairs at half the threshold the LSH index "
+        "may propose; the exact Jaccard check decides every match, so it sets "
+        "the comparisons made and the recall below 0.8 (measured in the PR)"
+    ),
     "domain/ingestion/base_resolver.py:_NAME_SHINGLE_CHARS": (
         "format: the shingle length of a name's MinHash signature, as before"
     ),
