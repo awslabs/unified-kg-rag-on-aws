@@ -232,15 +232,17 @@ Bugs present in 0.3.0.
   datasketch's split proposed 40%), and never fewer than datasketch's split.
 - `processing.deduplicate` dropped template documents: two contracts of one form, with other amounts, dates and ids
   in a long shared text, read as copies at its fixed 0.9 3-gram similarity, and one went unindexed without a word.
-  A near-duplicate now also holds the same numbers in the same order (digits of any script; Han numerals in a run, an
-  ordinal or before a counter or unit, by the language profiles' numerals, counters and `numeral_units`), so any
-  differing number keeps both; a document is dropped only as a copy of one that is kept (not of another dropped
-  copy), and a WARNING names the dropped documents (the first 20) and the ones they copy. It also missed most copies
+  A near-duplicate now also holds the same numbers in the same order (digits of any script and the language
+  profiles' Han numerals, the financial forms `壹拾万` and `金壱萬` included), so a number written so that differs keeps
+  both (an edit of a word holding a numeral, `一起`, keeps both too); a document is dropped only as a copy of one that
+  is kept (not of another dropped copy), and a WARNING names the dropped documents (the first 20) and the ones they
+  copy. It also missed most copies
   near its threshold: datasketch's LSH split (5 bands of 25 rows at 0.9) proposed a pair at 0.90-0.92 a third of the
   time and the MinHash estimate decided, so 0.9 read as about 0.97. The index now takes name matching's layout (12
   bands of 10 rows at 0.9: 99% of the pairs at the threshold) and the pair's exact 3-gram similarity decides.
 - `answer_match` read Japanese sums in 兆 (10^12) wrong: `一兆二千億円` as 200,000,000,000 and `3兆円` as 3. 兆 is a
-  multiplier of the Japanese profile, as 億 is.
+  multiplier of the Japanese profile, as 億 is. It also reads sums in the financial numerals (`人民币壹拾万元`,
+  `金壱萬円`).
 - A run stopped (a signal, Ctrl-C, its budget) after an ingestion item's answer failed to parse and before the item's
   next attempt kept that answer in the LLM response cache, so the resumed run replayed it and spent one of the item's
   attempts on it. A stop drops the answers of the item's failed attempts and keeps the one in flight.
