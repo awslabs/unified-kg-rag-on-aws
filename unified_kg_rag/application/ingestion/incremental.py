@@ -2301,7 +2301,8 @@ def _confirm_mass_deletion(
             )
             + f"{dropped} are near-copies processing.deduplicate dropped, "
             "whose files are in the corpus (a higher "
-            "processing.deduplicate_similarity_threshold keeps them); what "
+            "processing.deduplicate_similarity_threshold keeps near-copies, "
+            "not identical ones); what "
             "only they stated is removed from the index; continue?"
         )
     else:
