@@ -396,6 +396,19 @@ export function routingNote(routing: NonNullable<AskResult["routing"]>, strategy
   return joinSentences([t(`ask.routing.${routing.decided_by}`, values), t("ask.routing.limits_left_out", values)], t);
 }
 
+/** How auto routed, then what the strategy it chose is for, set off by
+ * the locale's sentence separator (none after Japanese and Chinese "。"). */
+export function RouteNote({ routing, strategy }: { routing: NonNullable<AskResult["routing"]>; strategy: string }) {
+  const { t } = useI18n();
+  return (
+    <p className="route-note">
+      {routingNote(routing, strategy, t)}
+      {t("common.sentenceSeparator")}
+      <span className="field-help">{t(`strategy.help.${strategy}`)}</span>
+    </p>
+  );
+}
+
 /** The steps of `entries`, once each, by their names in the UI locale
  * (`ask.step.<step>`); a step the catalog does not know (a third-party
  * strategy's) as its id. */
@@ -433,10 +446,7 @@ function TurnView({
       </div>
       <section className="sheet answer" style={selected ? { borderColor: "var(--trace)" } : undefined}>
         {result?.routing && turn.requested === "auto" ? (
-          <p className="route-note">
-            {routingNote(result.routing, result.strategy ?? "", t)}{" "}
-            <span className="field-help">{t(`strategy.help.${result.strategy}`)}</span>
-          </p>
+          <RouteNote routing={result.routing} strategy={result.strategy ?? ""} />
         ) : null}
         {turn.error ? (
           <Notice tone="bad" title={t(`ask.error.${turn.error.kind}`)}>

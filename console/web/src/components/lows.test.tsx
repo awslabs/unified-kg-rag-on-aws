@@ -11,7 +11,7 @@ import { stageName } from "./JobPanel";
 import { formatBytes, isBudgetStop, JobStatusBadge } from "./ui";
 import { fitting, NAV_FOLDED } from "../lib/useCompactNav";
 import { BudgetNotice, IngestResult, questionTitle, runModelCalls } from "../pages/IngestPage";
-import { degradedKind, partialHelp, routingNote } from "../pages/AskPage";
+import { degradedKind, partialHelp, RouteNote, routingNote } from "../pages/AskPage";
 import { GoneKeys } from "../pages/SettingsPage";
 import type { JobRecord } from "../lib/types";
 
@@ -213,6 +213,17 @@ describe("a query's limits, a run's budget and deprecated keys", () => {
       const note = routingNote(routed, "local", makeI18n(locale, () => undefined).t);
       expect(note, locale).toMatch(/。\S/);
       expect(note, locale).not.toMatch(/。 /);
+    }
+    // And so does the strategy's help after the note (rv36).
+    for (const [locale, gap] of [["ja", /外れました。特定/], ["en", /global\. \S/]] as const) {
+      const { container, unmount } = render(
+        <I18nProvider initial={locale}>
+          <RouteNote routing={routed} strategy="local" />
+        </I18nProvider>,
+      );
+      const text = container.textContent ?? "";
+      expect(text, locale).toMatch(gap);
+      unmount();
     }
   });
 
