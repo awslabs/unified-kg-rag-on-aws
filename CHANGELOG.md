@@ -46,8 +46,8 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
    documents 0.3.0 dropped as copies, which the next run indexes as new documents, and the exact index finds
    near-copies 0.3.0 missed, so a run drops more of them and an incremental run deletes the copies 0.3.0 indexed
    beside their originals (its WARNING names them; `indexing.max_deletion_share` stops a run deleting past its share
-   until confirmed). Raise `processing.deduplicate_similarity_threshold` to 0.97, which reads about as 0.3.0's 0.9
-   did, to keep them.
+   until confirmed, and its question counts these copies apart from files gone from the corpus). Raise
+   `processing.deduplicate_similarity_threshold` to 0.97, which reads about as 0.3.0's 0.9 did, to keep them.
 3. A build record written by 0.3.0 has no `answer_fingerprints`: a report or description summary setting changed since
    that build is named as a rebuild reason (`answer_settings`) only after the next full build records them.
 

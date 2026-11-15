@@ -223,6 +223,9 @@ deletes N of the M documents ...; continue?`). 일부만 동기화된 S3, 만료
   그래프 샤드도 세지 않습니다. 샤드는 `processing.seed_graphs` 설정을 따르므로 시드
   그래프를 빼거나 샤드 수가 바뀌어도 묻지 않고, 큰 시드 그래프의 많은 샤드 레코드가 일부만
   동기화된 코퍼스를 가리지도 않습니다.
+- `processing.deduplicate`가 걸러 낸 사본도 삭제되므로 셉니다. 다만 파일은 코퍼스에 있으므로
+  질문은 코퍼스에서 사라진 파일과 따로 셉니다(`processing.deduplicate_similarity_threshold`를
+  높이면 사본을 남깁니다).
 - 재구축과 레지스트리를 끈 실행은 검사하지 않습니다. 레지스트리가 없으면 모든 실행이 읽은
   것의 전체 빌드이므로, 일부만 도착할 수 있는 코퍼스는 레지스트리를 켜 두세요(시드가 있는
   빈 코퍼스는 [Seed graphs: Lifecycle](./seed-graphs.md#lifecycle)(영문)처럼
