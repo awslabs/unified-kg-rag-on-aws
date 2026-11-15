@@ -67,6 +67,7 @@
   "ask.routing.router": "auto выбрала {{strategy}}: маршрутизатор выбрал её из {{candidates}}.",
   "ask.routing.only_candidate": "auto использовала {{strategy}}: это единственная стратегия, которая применяет эти фильтры к этому индексу.",
   "ask.routing.over_limits": "auto использовала {{strategy}}: лимиты запроса не оставляют места для других стратегий ({{over_limits}}).",
+  "ask.routing.limits_left_out": "Лимиты запроса исключили {{over_limits}}.",
   "ask.routing.fallback": "auto переключилась на {{strategy}}: маршрутизатор не назвал подходящую стратегию.",
   "ask.abstained": "В ответе отказано",
   "ask.abstention.no_context": "Поиск не нашёл контекста для этого вопроса, поэтому модель не запрашивалась.",

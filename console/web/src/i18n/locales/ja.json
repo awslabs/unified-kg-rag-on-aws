@@ -64,6 +64,7 @@
   "ask.routing.router": "auto が {{strategy}} を選択しました。ルーターが {{candidates}} から選びました。",
   "ask.routing.only_candidate": "auto が {{strategy}} を使用しました。このインデックスでこれらのフィルターを適用できる唯一の戦略です。",
   "ask.routing.over_limits": "auto が {{strategy}} を使用しました。クエリの上限内では、ほかの戦略（{{over_limits}}）を実行する余地がありません。",
+  "ask.routing.limits_left_out": "クエリの上限により {{over_limits}} は候補から外れました。",
   "ask.routing.fallback": "auto が {{strategy}} にフォールバックしました。ルーターが使用可能な戦略を指定しませんでした。",
   "ask.abstained": "回答を拒否しました",
   "ask.abstention.no_context": "検索でこの質問のコンテキストが見つからなかったため、モデルに回答を求めませんでした。",

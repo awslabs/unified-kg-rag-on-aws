@@ -64,6 +64,7 @@
   "ask.routing.router": "auto 选择了 {{strategy}}：路由器从 {{candidates}} 中选出了它。",
   "ask.routing.only_candidate": "auto 使用了 {{strategy}}：它是此索引上唯一能应用这些筛选条件的策略。",
   "ask.routing.over_limits": "auto 使用了 {{strategy}}：在查询的限额内，没有余量运行其他策略（{{over_limits}}）。",
+  "ask.routing.limits_left_out": "由于查询限额，{{over_limits}} 未被纳入候选。",
   "ask.routing.fallback": "auto 回退到 {{strategy}}：路由器没有给出可用的策略。",
   "ask.abstained": "已拒答",
   "ask.abstention.no_context": "检索未找到此问题的上下文，因此没有请求模型回答。",
