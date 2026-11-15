@@ -337,8 +337,9 @@ class RetryConfig(ConfigSection):
         description=(
             "DynamoDB doc-status batch reads and writes: the keys or items "
             "DynamoDB returned unprocessed (throttling, the 16 MB response "
-            "limit) are sent again; any left after max_attempts requests fail "
-            "the run rather than read as absent."
+            "limit) are sent again, in max_attempts batch requests in all "
+            "(each of up to 10 botocore attempts, the doc-status client's own); "
+            "any left fail the run rather than read as absent."
         ),
     )
     judge_max_attempts: int = Field(
@@ -371,10 +372,11 @@ class RetryConfig(ConfigSection):
         for name in RETRY_PROFILES.keys() - _CLIENT_PROFILES:
             if getattr(self, name).client_max_attempts is not None:
                 raise ValueError(
-                    f"retry.{name}.client_max_attempts: that caller's client "
-                    "makes one request per attempt; only "
+                    f"retry.{name}.client_max_attempts: only "
                     + " and ".join(f"retry.{p}" for p in sorted(_CLIENT_PROFILES))
-                    + " set one"
+                    + " size their service clients' own attempts; that "
+                    "caller's client makes one request per attempt or keeps "
+                    "attempts the package sets"
                 )
         return self
 

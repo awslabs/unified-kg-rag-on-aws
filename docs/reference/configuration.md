@@ -978,7 +978,7 @@ OpenSearch bulk items the cluster rejected with 429/502/503/504, resent on their
 
 ### `retry.registry_batch`
 
-DynamoDB doc-status batch reads and writes: the keys or items DynamoDB returned unprocessed (throttling, the 16 MB response limit) are sent again; any left after max_attempts requests fail the run rather than read as absent.
+DynamoDB doc-status batch reads and writes: the keys or items DynamoDB returned unprocessed (throttling, the 16 MB response limit) are sent again, in max_attempts batch requests in all (each of up to 10 botocore attempts, the doc-status client's own); any left fail the run rather than read as absent.
 
 | Key | Type | Default | Evidence | Description |
 |---|---|---|---|---|
