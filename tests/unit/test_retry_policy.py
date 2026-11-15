@@ -273,3 +273,59 @@ def test_a_profile_whose_client_retries_nothing_refuses_client_attempts(
 ) -> None:
     with pytest.raises(ValueError, match=f"retry.{profile}.client_max_attempts"):
         Config(retry={profile: {"client_max_attempts": 3}})
+
+
+# --- a refused call is never retried -------------------------------------------
+
+
+def _refusals() -> list[Exception]:
+    from unified_kg_rag.shared.exceptions import (
+        OptionalCallSkipped,
+        UsageLimitExceededError,
+    )
+
+    return [
+        UsageLimitExceededError("past the limit", limit="llm_calls", value=1),
+        OptionalCallSkipped("kept for the answer", limit="llm_calls", value=1),
+    ]
+
+
+@pytest.mark.parametrize("refusal", _refusals(), ids=type)
+@pytest.mark.parametrize("predicate", [None, "everything"])
+def test_a_batch_item_refused_by_the_usage_limits_is_not_called_again(
+    refusal: Exception, predicate: str | None
+) -> None:
+    # A refusal is the query's or the run's limit, not a fault: a new call is
+    # refused again (after the backoff), whatever the factory calls transient.
+    processor = BatchProcessor(
+        retry=Config().retry.ingestion_item,
+        is_transient_error=None if predicate is None else (lambda _exc: True),
+    )
+    calls = {"n": 0}
+
+    @processor._create_retry_decorator("op")
+    def refused() -> None:
+        calls["n"] += 1
+        raise refusal
+
+    with pytest.raises(type(refusal)):
+        refused()
+    assert calls["n"] == 1
+
+
+@pytest.mark.parametrize("refusal", _refusals(), ids=type)
+async def test_a_refused_call_takes_no_transient_retry(refusal: Exception) -> None:
+    calls = {"n": 0}
+
+    async def refused() -> None:
+        calls["n"] += 1
+        raise refusal
+
+    with pytest.raises(type(refusal)):
+        await llm_retry.acall_with_transient_retry(
+            refused,
+            is_transient=lambda _exc: True,
+            operation="op",
+            policy=Config().retry.model,
+        )
+    assert calls["n"] == 1

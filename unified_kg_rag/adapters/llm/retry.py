@@ -28,7 +28,10 @@ from langchain_core.exceptions import OutputParserException
 from unified_kg_rag.domain.models.config import RetryPolicy
 from unified_kg_rag.domain.models.text_unit import TextUnit
 from unified_kg_rag.shared import get_logger
-from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
+from unified_kg_rag.shared.exceptions import (
+    LLMOutputTruncatedError,
+    UsageLimitExceededError,
+)
 from unified_kg_rag.shared.logging import log_failure
 from unified_kg_rag.shared.utils.common import (
     error_code,
@@ -384,6 +387,13 @@ def transient_error_predicate(factory: object) -> TransientErrorPredicate:
     return predicate if predicate is not None else looks_transient
 
 
+def never_retried(exc: BaseException) -> bool:
+    """Whether ``exc`` is one no caller retries, whatever its predicate says:
+    a call the usage limits refused (``UsageLimitExceededError``, an
+    ``OptionalCallSkipped`` too), which a new attempt is refused again."""
+    return isinstance(exc, UsageLimitExceededError)
+
+
 def backoff_delay(retry: int, policy: RetryPolicy) -> float:
     """The wait before retry ``retry`` (1-based) under ``policy``: the one
     backoff of every retrying caller.
@@ -410,7 +420,7 @@ def next_transient_retry_delay(
     policy: RetryPolicy,
 ) -> float | None:
     """Return the backoff before the next attempt, or None to give up on ``exc``."""
-    if not is_transient(exc) or attempt >= policy.max_attempts:
+    if never_retried(exc) or not is_transient(exc) or attempt >= policy.max_attempts:
         return None
     delay = backoff_delay(attempt, policy)
     deadline = _RETRY_DEADLINE.get()

@@ -101,7 +101,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before, are set there now, and every caller draws its waits with one backoff function. A profile set in part keeps its
   own defaults. The clients' own retries stacked under them are set there too: `client_max_attempts` of `retry.model`
   (botocore's requests per Bedrock call of ingestion and evaluation) and of `retry.bulk_item` (the OpenSearch indexing
-  client's), both 6, their 0.3.0 counts.
+  client's), both 6, their 0.3.0 counts. No caller retries a call the usage limits refused.
 
 ### Changed
 

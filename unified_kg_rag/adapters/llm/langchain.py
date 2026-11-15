@@ -25,7 +25,11 @@ from tenacity import RetryCallState
 from tqdm import tqdm
 from tqdm.asyncio import tqdm as async_tqdm
 
-from unified_kg_rag.adapters.llm.retry import backoff_delay, record_failure
+from unified_kg_rag.adapters.llm.retry import (
+    backoff_delay,
+    never_retried,
+    record_failure,
+)
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.domain.models.config import RETRY_PROFILES, RetryPolicy
 from unified_kg_rag.shared import get_logger, observability
@@ -479,8 +483,9 @@ class BatchProcessor(BaseModel):
         # started the work again after the caller had given up.
         if not isinstance(exc, Exception) or isinstance(exc, _BatchAbandoned):
             return False
-        # The same input hits the same output-token limit again.
-        if isinstance(exc, LLMOutputTruncatedError):
+        # The same input hits the same output-token limit again, and a call
+        # the usage limits refused is refused again.
+        if isinstance(exc, LLMOutputTruncatedError) or never_retried(exc):
             return False
         # A malformed LLM response or a hung call can succeed on a new attempt.
         if isinstance(exc, OutputParserException | TimeoutError):
