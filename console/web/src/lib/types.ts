@@ -151,7 +151,8 @@ export interface AskResult {
   cites?: boolean;
   unknown_citation_markers: number[];
   strategy: string | null;
-  routing: { decided_by: "router" | "only_candidate" | "fallback"; candidates: string[] } | null;
+  /** How auto chose it; over_limits: the strategies the query's limits left out. */
+  routing: { decided_by: "router" | "only_candidate" | "fallback"; candidates: string[]; over_limits?: string[] } | null;
   abstained: boolean;
   abstention_reason: string | null;
   blocked: boolean;

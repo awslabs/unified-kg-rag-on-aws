@@ -21,6 +21,7 @@ from unified_kg_rag.domain.models.config import (
     migrate_deprecated_keys,
     moved_key_hint,
     nested_model,
+    removed_key_warning,
     removed_keys,
     unknown_keys,
     without_keys,
@@ -216,9 +217,7 @@ def _removed_path(name: str) -> str | None:
 
 
 def _warn_removed(where: str, path: str) -> None:
-    _logger.warning(
-        "Config key %s is removed and ignored: %s", where, REMOVED_KEYS[path]
-    )
+    _logger.warning("%s", removed_key_warning(path, where))
 
 
 def warn_ineffective_settings(config: Config) -> None:

@@ -31,6 +31,10 @@ interface Preview {
   errors: string[];
   warnings: string[];
   unknown_keys: string[];
+  /** The deprecated keys it sets, loaded into their replacements. */
+  deprecated_keys?: { key: string; replacements: string[]; message: string }[];
+  /** The removed keys it sets, ignored (the reason in English). */
+  removed_keys?: { key: string; reason: string; message: string }[];
   endpoint_changes: { path: string; from: unknown; to: unknown }[];
   directory_changes?: { path: string; from: unknown; to: unknown }[];
 }
@@ -223,6 +227,7 @@ export function SettingsPage({ onSaved }: { onSaved: () => void }) {
                     </ul>
                   </Notice>
                 ) : null}
+                <GoneKeys preview={preview} />
                 {preview.comments_dropped ? <Notice tone="warn">{t("settings.commentsDropped")}</Notice> : null}
                 {(preview.endpoint_changes ?? []).length ? (
                   <Notice tone="warn" title={t("settings.endpointsTitle")}>
@@ -537,5 +542,33 @@ function ObservabilityPanel({ data, changes, setChange }: { data: ConfigView; ch
         <p className="field-help">{t("settings.environmentHelp")}</p>
       </div>
     </div>
+  );
+}
+
+/** The deprecated and removed keys a previewed config sets, in the page's
+ * language: the loader warns of them only in the server log. */
+export function GoneKeys({ preview }: { preview: Pick<Preview, "deprecated_keys" | "removed_keys"> }) {
+  const { t } = useI18n();
+  const deprecated = preview.deprecated_keys ?? [];
+  const removed = preview.removed_keys ?? [];
+  if (!deprecated.length && !removed.length) return null;
+  return (
+    <Notice tone="warn" title={t("settings.goneKeysTitle")}>
+      <ul style={{ margin: 0, paddingLeft: 18 }}>
+        {deprecated.map((d) => (
+          <li key={d.key}>
+            {t("settings.deprecatedKey", { key: d.key, replacements: d.replacements.join(", ") })}
+          </li>
+        ))}
+        {removed.map((r) => (
+          <li key={r.key}>
+            {t("settings.removedKey", { key: r.key })}{" "}
+            <span className="muted" lang="en">
+              {r.reason}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </Notice>
   );
 }

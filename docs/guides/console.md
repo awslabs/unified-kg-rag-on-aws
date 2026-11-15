@@ -132,13 +132,20 @@ before the first question, with a way to Ingest, and a
 question to it names the same. The answer streams in as the answer model writes it; the
 final answer then replaces it (it is the one a decline or the output
 guardrail decided). Under it: for `auto`, the strategy it chose and how
-(the router named it, it was the only candidate under the filters, or the
-router failed and it fell back), and a line with the strategy, the time,
+(the router named it, it was the only candidate under the filters or the
+only one the query's limits left room for, or the router failed and it fell
+back), and a line with the strategy, the time,
 the tokens in and out, the model calls, the cost (when `models.prices`
-prices the models), the rerank status and the trace link. A declined
+prices the models), the rerank status and the trace link. A question obeys
+the configured query limits
+([`search.query_max_*`](./query.md#model-call-and-input-token-limits)): an
+answer given without steps the limits left out is a partial answer that
+names them as skipped to stay within the limits, apart from the steps that
+failed. A declined
 answer says why (no context, the model's `[NO_ANSWER]`, an insufficient
-context under the decline policy); a blocked one says the guardrail
-blocked it. The answer's citation markers (`[1]`, `[2, 3]`) open the
+context under the decline policy, the query's limits leaving no room to find
+a context, a namespace without the community reports `global` answers from);
+a blocked one says the guardrail blocked it. The answer's citation markers (`[1]`, `[2, 3]`) open the
 source they cite in the provenance trace, and the sources the answer cites
 are listed under it with their file and pages; a number the context did
 not show is struck through. An answer of a strategy that does not cite
@@ -196,7 +203,9 @@ that question alone (`--confirm-integrity`, `--confirm-reset`,
 beforehand. A run stopped at its budget (`processing.max_run_model_calls`,
 `processing.max_run_usd`: error class `limit_exceeded`) keeps its finished
 stages and answered calls, and offers to resume it (the same options,
-without the forced recompute), with a new budget of the same size. The run's
+without the forced recompute), with a new budget of the same size; it is
+marked as stopped at its budget, a warning, in Earlier runs and on the
+Dashboard, and counts the model calls its stop reports. The run's
 stages appear as a column of stations as they finish (from the pipeline's
 own metadata), with their time, outputs and model calls, each failed
 stage's error and failed files, and the log's tail. A finished run counts
@@ -292,7 +301,10 @@ configuration's schema with each key's description as help, its default
 and whether the file sets it; find one by key or description. Changes
 collect on the right; Review checks them as a run would load the file
 (unknown keys and the `UKR__` environment included) and shows the diff of
-the file, its errors and warnings; Save writes it, refused if the file
+the file, its errors and warnings, and each deprecated key the file sets
+(loaded into its replacement, with the loader's warning: set the
+replacement instead) or removed key (ignored, with the reason); a moved key
+is an error naming its replacement. Save writes it, refused if the file
 changed on disk meanwhile. Saving from fields rewrites the YAML without its
 comments (the review says so); the YAML tab keeps them. A change to where
 a provider sends its requests (`providers.*.base_url`,

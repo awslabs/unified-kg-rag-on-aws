@@ -6,6 +6,8 @@ handling, the ingestion stage plan, job helpers and the dashboard."""
 from __future__ import annotations
 
 import json
+import logging
+import re
 from pathlib import Path
 
 import pytest
@@ -211,6 +213,68 @@ def test_a_preview_validates_like_a_run(tmp_path: Path) -> None:
         file.preview(text="- 1\n", changes=None)
     unknown = file.preview(text="search:\n  nope: 1\n", changes=None)
     assert not unknown["valid"] and unknown["unknown_keys"] == ["search.nope"]
+
+
+def test_a_preview_names_each_deprecated_and_removed_key_as_the_loader_warns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The deprecation warning reached only the server log: the Settings
+    page, where the config is edited, said nothing (rv33)."""
+    from unified_kg_rag.application import config as loader
+    from unified_kg_rag.domain.models.config import DEPRECATED_KEYS, _root
+
+    logged: set[str] = set()
+
+    class _Logger:
+        """What the loader logs."""
+
+        def __init__(self, logger: logging.Logger) -> None:
+            self.logger = logger
+
+        def warning(self, message: str, *args: object) -> None:
+            logged.add(message % args)
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self.logger, name)
+
+    monkeypatch.setattr(_root, "_logger", _Logger(_root._logger))
+    monkeypatch.setattr(loader, "_logger", _Logger(loader._logger))
+    # The loader warns of a deprecated key once a process.
+    _root._warn_deprecated.cache_clear()
+    text = (
+        "retry:\n  max_attempts: 3\n  query_store_max_attempts: 2\n"
+        "evaluation:\n  prices: {}\nfixing:\n  enabled: true\n"
+    )
+    loaded = settings_api.SettingsFile(tmp_path / "config.yaml").preview(
+        text=text, changes=None
+    )
+    assert loaded["valid"], loaded
+    deprecated = loaded["deprecated_keys"]
+    assert [d["key"] for d in deprecated] == [
+        k
+        for k in DEPRECATED_KEYS
+        if k
+        in ("evaluation.prices", "retry.max_attempts", "retry.query_store_max_attempts")
+    ]
+    assert deprecated[1]["replacements"] == [
+        "retry.model.max_attempts",
+        "retry.ingestion_item.max_attempts",
+    ]
+    # The loader's own text, each; the removed key too.
+    assert {d["message"] for d in deprecated} <= logged
+    assert [r["key"] for r in loaded["removed_keys"]] == ["fixing"]
+    assert any(
+        m.startswith("Config key 'fixing' (in ")
+        and m.endswith(loaded["removed_keys"][0]["reason"])
+        for m in logged
+    )
+    # Apart from the other warnings, which the page shows as the server words them.
+    assert loaded["warnings"] == []
+    clean = settings_api.validate({"retry": {"model": {"max_attempts": 3}}}, None)
+    assert clean["deprecated_keys"] == [] and clean["removed_keys"] == []
+    # A moved key fails the load, naming its replacement.
+    moved = settings_api.validate({"search": {"translation_model_id": "x"}}, None)
+    assert not moved["valid"] and "models.roles.query_translation" in moved["errors"][0]
 
 
 def test_moving_a_served_directory_is_saved_only_when_confirmed(
@@ -624,6 +688,32 @@ def test_the_dashboard_prices_usage_and_leaves_unpriced_models_out(
     store.close()
 
 
+def test_a_budget_stop_s_dashboard_row_names_its_error_class(tmp_path: Path) -> None:
+    """The page marks an ingestion stopped at its budget as a warning, as
+    its notice is, not a red failure: the row carries the error class."""
+    store = ConsoleStore(tmp_path / "console.sqlite3")
+    store.save_job(
+        {
+            "id": "b",
+            "kind": "ingest",
+            "namespace": "default",
+            "created": 1.0,
+            "started": 1.0,
+            "ended": 2.0,
+            "status": "failed",
+            "result": {
+                "status": "failed",
+                "error_class": "limit_exceeded",
+                "token_usage": {"llm_calls": 3, "input_tokens": 30, "output_tokens": 3},
+            },
+        }
+    )
+    (row,) = dashboard.summarize([], store.jobs(), Config(), now=3.0)["jobs"]
+    assert row["error_class"] == "limit_exceeded"
+    assert row["llm_calls"] == 3 and row["tokens"] == 33
+    store.close()
+
+
 def test_questions_not_served_stay_out_of_every_latency_and_the_decline_rate() -> None:
     """A refused or cancelled question was never served: it has no latency
     to report (totals, per strategy, per day alike) and could not decline."""
@@ -712,7 +802,6 @@ def test_every_console_error_code_is_named_in_the_page_s_language() -> None:
     """The page names a refusal by its ``code`` (``error.<code>``, else the
     Ask page's ``ask.error.<code>``); a code without one showed the server's
     English message in every locale (rv26: 415 ``unsupported``)."""
-    import re
 
     from unified_kg_rag.application.cli.console import server
 
@@ -729,3 +818,62 @@ def test_every_console_error_code_is_named_in_the_page_s_language() -> None:
         if f"error.{c}" not in catalog and f"ask.error.{c}" not in catalog
     )
     assert unnamed == []
+
+
+def _reason_heads() -> set[str]:
+    """The heads of the degraded reasons the package records: a reason
+    given as a literal (``"query_limit"``) or a ``"<head>: ..."`` prefix,
+    passed to the degradation ledger or a strategy's fallback."""
+    import ast
+
+    import unified_kg_rag
+
+    calls = {"record_degradation": 1, "record": 1, "record_unresolved": 1}
+    heads: set[str] = set()
+    for path in Path(unified_kg_rag.__file__).parent.rglob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not isinstance(node, ast.Call):
+                continue
+            name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+            index = calls.get(name or "", 0 if name == "fall_back" else None)
+            if index is None or len(node.args) <= index:
+                continue
+            arg = node.args[index]
+            if isinstance(arg, ast.JoinedStr) and arg.values:
+                arg = arg.values[0]
+            if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                if match := re.fullmatch(r"([a-z_]+)(?::.*)?", arg.value, re.DOTALL):
+                    heads.add(match.group(1))
+    return heads
+
+
+def test_every_abstention_and_skip_reason_is_named_in_the_page_s_language() -> None:
+    """The Ask page showed the raw key ``ask.abstention.query_limit`` (and
+    ``no_reports``), and called a step the limits skipped a failed one
+    (rv33). Every abstention reason has its message; every degraded reason
+    head that is one (a step left out for that reason, not failed) has the
+    partial notice's (the vitest catalog test holds every locale to the
+    English keys)."""
+    from unified_kg_rag.domain.retrieval import abstention
+
+    catalog = json.loads(
+        (Path(__file__).parents[2] / "console/web/src/i18n/locales/en.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    reasons = {
+        value
+        for name, value in vars(abstention).items()
+        if name.startswith("REASON_") and isinstance(value, str)
+    }
+    assert {"no_context", "query_limit", "no_reports"} <= reasons
+    assert sorted(r for r in reasons if f"ask.abstention.{r}" not in catalog) == []
+    skipped = _reason_heads() & reasons
+    assert "query_limit" in skipped
+    assert sorted(r for r in skipped if f"ask.partialSkipped.{r}" not in catalog) == []
+    # The page tells them apart by the same list (AskPage SKIPPED_REASONS).
+    page = (Path(__file__).parents[2] / "console/web/src/pages/AskPage.tsx").read_text(
+        encoding="utf-8"
+    )
+    listed = re.search(r"SKIPPED_REASONS = \[([^\]]*)\]", page)
+    assert listed and set(re.findall(r'"([a-z_]+)"', listed.group(1))) == skipped

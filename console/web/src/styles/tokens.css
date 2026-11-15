@@ -101,7 +101,7 @@
   --trace-ink: #c9ccff; /* 9.2:1 on its wash */
   --trace-wash: #232557;
   --primary-bg: #5b5bd6;
-  --primary-hover: #6c6ce0;
+  --primary-hover: #6565d9; /* 4.7:1 under --primary-ink: a hovered button keeps 4.5:1 */
   --primary-ink: #ffffff; /* 5.4:1 */
   --primary-meta: #dcdcff;
 

@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { useI18n } from "../i18n/i18n";
 import { errorMessage } from "../lib/api";
+import type { JobRecord } from "../lib/types";
 
 export function PageHead({ title, lede, aside }: { title: string; lede?: ReactNode; aside?: ReactNode }) {
   return (
@@ -70,10 +71,29 @@ const JOB_TONES: Record<string, string> = {
   succeeded: "badge-good",
   failed: "badge-bad",
   stopped: "badge-warn",
+  // An ingestion stopped at its budget: a warning, as its notice is.
+  budget: "badge-warn",
 };
 
-export function JobStatusBadge({ status }: { status: string }) {
+/** Whether an ingestion stopped at its budget (processing.max_run_*:
+ * error class limit_exceeded), which the Ingest page says with its own
+ * notice, offering to resume it, instead of the generic failure. */
+export function isBudgetStop(job: JobStatusOf): boolean {
+  return job.kind === "ingest" && job.status === "failed" && (job.result?.error_class ?? job.error_class) === "limit_exceeded";
+}
+
+/** What a job's status reads: its record (the error class in its result),
+ * or a dashboard row (the error class beside it). */
+export type JobStatusOf = Pick<JobRecord, "kind" | "status"> & {
+  result?: JobRecord["result"];
+  error_class?: string | null;
+};
+
+/** A job's status: an ingestion's budget stop as its own (a warning, not
+ * a failure). */
+export function JobStatusBadge({ job }: { job: JobStatusOf }) {
   const { t } = useI18n();
+  const status = isBudgetStop(job) ? "budget" : job.status;
   return <span className={`badge ${JOB_TONES[status] ?? ""}`}>{t(`job.status.${status}`)}</span>;
 }
 

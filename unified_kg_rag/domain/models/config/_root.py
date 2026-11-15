@@ -50,7 +50,7 @@ from ._mcp import McpServerConfig
 from ._merge import _changes, _plain, merge_over
 from ._migration import (
     _defined_keys_only,
-    deprecated_targets,
+    deprecated_key_warning,
     migrate_deprecated_keys,
     moved_keys,
     unknown_keys,
@@ -80,20 +80,7 @@ _logger = logging.getLogger("unified_kg_rag.domain.models.config")
 
 @functools.cache
 def _warn_deprecated(old: str) -> None:
-    targets = deprecated_targets(old)
-    if len(targets) == 1:
-        _logger.warning(
-            "Config key %s is deprecated: it loads into %s; set that key instead",
-            old,
-            targets[0],
-        )
-        return
-    _logger.warning(
-        "Config key %s is deprecated: it governed several callers and loads "
-        "into each of %s; set those keys instead",
-        old,
-        ", ".join(targets),
-    )
+    _logger.warning("%s", deprecated_key_warning(old))
 
 
 class Config(_AssignmentChecked):

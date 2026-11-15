@@ -7,10 +7,12 @@ import { I18nProvider, makeI18n, translate } from "../i18n/i18n";
 import { contentLang } from "../lib/contentLang";
 import type { Source } from "../lib/types";
 import { EvidenceTrace } from "./EvidenceTrace";
-import { isBudgetStop, stageName } from "./JobPanel";
-import { formatBytes } from "./ui";
+import { stageName } from "./JobPanel";
+import { formatBytes, isBudgetStop, JobStatusBadge } from "./ui";
 import { fitting, NAV_FOLDED } from "../lib/useCompactNav";
-import { BudgetNotice, questionTitle, runModelCalls } from "../pages/IngestPage";
+import { BudgetNotice, IngestResult, questionTitle, runModelCalls } from "../pages/IngestPage";
+import { degradedKind, partialHelp, routingNote } from "../pages/AskPage";
+import { GoneKeys } from "../pages/SettingsPage";
 import type { JobRecord } from "../lib/types";
 
 describe("small copy", () => {
@@ -161,5 +163,104 @@ describe("the top bar's steps", () => {
     expect(fitting(needed, 1250)).toBe(2);
     expect(fitting(needed, 1000)).toBe(NAV_FOLDED);
     expect(fitting([], 1000)).toBe(NAV_FOLDED);
+  });
+});
+
+describe("a query's limits, a run's budget and deprecated keys", () => {
+  const en = makeI18n("en", () => undefined).t;
+  const ko = makeI18n("ko", () => undefined).t;
+
+  it("words a step the limits skipped apart from a failed one", () => {
+    const skipped = { step: "translation", reason: "query_limit: searched untranslated", error_type: "OptionalCallSkipped" };
+    const structured = { step: "structured_query", reason: "query_limit", error_type: "UsageLimitExceededError" };
+    const failed = { step: "retrieval", reason: "vector", error_type: "ConnectionError" };
+    expect([skipped, structured, failed].map(degradedKind)).toEqual(["query_limit", "query_limit", "failed"]);
+    // A reason that only starts with the word is no limit skip.
+    expect(degradedKind({ ...failed, reason: "query_limits_unread" })).toBe("failed");
+    expect(partialHelp([skipped], en)).toBe("Some steps were skipped to stay within the query's limits: query translation. It may miss what they would have found.");
+    expect(partialHelp([skipped], en)).not.toContain("failed");
+    const both = partialHelp([failed, skipped, structured], en);
+    expect(both).toMatch(/^The answer was given without some steps that failed: store search\. .* Some steps were skipped to stay within the query's limits: query translation, /);
+    for (const text of [partialHelp([skipped], ko), partialHelp([failed], ko)]) expect(text).not.toMatch(/ask\./);
+  });
+
+  it("says the limits, not the filters, left auto one strategy", () => {
+    const routing = { decided_by: "only_candidate" as const, candidates: ["local"], over_limits: ["mix", "global"] };
+    expect(routingNote(routing, "local", en)).toBe("Auto used local: the query's limits leave no room for the other strategies (mix, global).");
+    expect(routingNote({ ...routing, over_limits: undefined }, "local", en)).toContain("only strategy that applies these filters");
+    // The router still picked among the candidates the limits left.
+    expect(routingNote({ ...routing, decided_by: "router", candidates: ["local", "drift"] }, "local", en)).toBe(
+      "Auto chose local: the router picked it from local, drift.",
+    );
+    expect(routingNote(routing, "local", ko)).toContain("mix, global");
+  });
+
+  it("names the declines the limits and a namespace without reports cause", () => {
+    for (const reason of ["query_limit", "no_reports"]) {
+      for (const t of [en, ko]) expect(t(`ask.abstention.${reason}`)).not.toBe(`ask.abstention.${reason}`);
+    }
+  });
+
+  it("marks a budget stop as a warning in the run lists, not a red failure", () => {
+    const stop = { kind: "ingest", status: "failed", result: { error_class: "limit_exceeded" } } as const;
+    const { rerender } = render(
+      <I18nProvider initial="en">
+        <JobStatusBadge job={stop} />
+      </I18nProvider>,
+    );
+    expect(screen.getByText("Stopped at budget")).toHaveClass("badge-warn");
+    // A dashboard row carries the error class beside its status.
+    rerender(
+      <I18nProvider initial="en">
+        <JobStatusBadge job={{ kind: "ingest", status: "failed", error_class: "limit_exceeded" }} />
+      </I18nProvider>,
+    );
+    expect(screen.getByText("Stopped at budget")).toHaveClass("badge-warn");
+    rerender(
+      <I18nProvider initial="en">
+        <JobStatusBadge job={{ ...stop, result: { error_class: "failure" } }} />
+      </I18nProvider>,
+    );
+    expect(screen.getByText("Failed")).toHaveClass("badge-bad");
+  });
+
+  it("counts a budget stop's model calls from the usage its stop reports", () => {
+    const stop = {
+      kind: "ingest",
+      status: "failed",
+      result: { status: "failed", error_class: "limit_exceeded", token_usage: { llm_calls: 2, input_tokens: 1200, output_tokens: 80 } },
+      progress: { done: 1, total: 5, stages: [{ name: "graph_extraction", status: "stopped", llm_calls: null }] },
+      warnings: { count: 0, lines: [] },
+    } as unknown as JobRecord;
+    expect(runModelCalls(stop)).toBe(2);
+    render(
+      <I18nProvider initial="en">
+        <IngestResult job={stop} />
+      </I18nProvider>,
+    );
+    expect(screen.getByText("2")).toBeInTheDocument();
+    expect(screen.getByText(/1,200/)).toBeInTheDocument();
+  });
+
+  it("lists the deprecated and removed keys a config sets, in the page's language", () => {
+    const preview = {
+      deprecated_keys: [{ key: "retry.max_attempts", replacements: ["retry.model.max_attempts", "retry.ingestion_item.max_attempts"], message: "Config key retry.max_attempts is deprecated" }],
+      removed_keys: [{ key: "fixing", reason: "output fixing is always on", message: "Config key fixing is removed and ignored" }],
+    };
+    const { rerender, container } = render(
+      <I18nProvider initial="ko">
+        <GoneKeys preview={preview} />
+      </I18nProvider>,
+    );
+    expect(screen.getByText("지원 중단되었거나 제거된 키")).toBeInTheDocument();
+    expect(container.textContent).toContain("retry.model.max_attempts, retry.ingestion_item.max_attempts");
+    // The reason is the server's English, marked as such.
+    expect(screen.getByText("output fixing is always on")).toHaveAttribute("lang", "en");
+    rerender(
+      <I18nProvider initial="en">
+        <GoneKeys preview={{ deprecated_keys: [], removed_keys: [] }} />
+      </I18nProvider>,
+    );
+    expect(container.textContent).toBe("");
   });
 });

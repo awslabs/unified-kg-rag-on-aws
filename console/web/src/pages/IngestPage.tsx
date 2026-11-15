@@ -1,8 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 import { useMemo, useState } from "react";
-import { isBudgetStop, JobPanel } from "../components/JobPanel";
-import { Empty, ErrorText, formatBytes, JobStatusBadge, Loading, Notice, PageHead, Sheet } from "../components/ui";
+import { JobPanel } from "../components/JobPanel";
+import { Empty, ErrorText, formatBytes, isBudgetStop, JobStatusBadge, Loading, Notice, PageHead, Sheet } from "../components/ui";
 import { useI18n } from "../i18n/i18n";
 import { errorMessage, get, send, upload } from "../lib/api";
 import type { Corpus, JobRecord, NamespaceHeld, RebuildReason, Status } from "../lib/types";
@@ -364,7 +364,7 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
                         <td className="mono">{String(job.params.corpus ?? "")}</td>
                         <td>
                           <span className="row" style={{ gap: 4 }}>
-                            <JobStatusBadge status={job.status} />
+                            <JobStatusBadge job={job} />
                             <RunFlags job={job} />
                           </span>
                         </td>
