@@ -18,6 +18,7 @@ from unified_kg_rag.domain.models.config import (
     REMOVED_KEYS,
     deprecated_targets,
     merge_over,
+    migrate_deprecated_keys,
     moved_key_hint,
     nested_model,
     removed_keys,
@@ -295,7 +296,13 @@ class ConfigLoader:
         )
         try:
             config = (
-                Config(**_merged(config_data, env_data, env_paths.values()))
+                Config(
+                    **_merged(
+                        _file_under_variables(config_data, env_paths),
+                        env_data,
+                        env_paths.values(),
+                    )
+                )
                 if env_data
                 else file_config
             )
@@ -416,6 +423,21 @@ class ConfigLoader:
                     unknown.append(name)
                 else:
                     overrides[name] = path
+        # A deprecated variable and its replacement's both set: the
+        # replacement's wins, as it would over the deprecated key in a file.
+        direct = {
+            path: name for name, path in overrides.items() if name not in variables
+        }
+        for key in [key for key in overrides if key in variables]:
+            if (winner := direct.get(overrides[key])) is not None:
+                _logger.warning(
+                    "Environment variables %s and %s both set %s: %s wins",
+                    variables[key],
+                    winner,
+                    ".".join(overrides[key]),
+                    winner,
+                )
+                del overrides[key]
         for name, path in AWS_ENV_FALLBACKS.items():
             if (
                 name in os.environ
@@ -449,6 +471,28 @@ class ConfigLoader:
     @property
     def config(self) -> Config:
         return self._config if self._config is not None else self.load_config()
+
+
+def _file_under_variables(
+    file_data: dict[str, Any], paths: dict[str, tuple[str, ...]]
+) -> dict[str, Any]:
+    """``file_data`` with its deprecated keys moved into the keys that
+    replace them (the file alone loaded, so they agree), so a variable that
+    sets one of those keys wins over the file's deprecated key as over any
+    file key, with a WARNING naming both."""
+    migrated, deprecated = migrate_deprecated_keys(file_data)
+    for old in deprecated:
+        for target in deprecated_targets(old):
+            for name, path in paths.items():
+                if ".".join(path) == target:
+                    _logger.warning(
+                        "Environment variable %s sets %s over the file's "
+                        "deprecated %s",
+                        name.split(" -> ")[0],
+                        target,
+                        old,
+                    )
+    return migrated
 
 
 def _merged(

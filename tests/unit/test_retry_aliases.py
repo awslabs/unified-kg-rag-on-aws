@@ -185,3 +185,38 @@ def test_an_alias_variable_overrides_the_file_as_its_replacements_would(
     config = ConfigLoader(config_file).load_config()
     assert config.retry.model.max_attempts == 2
     assert config.retry.ingestion_item.max_attempts == 2
+
+
+def test_a_variable_wins_over_the_files_deprecated_key_with_a_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # The deprecation warning tells a 0.3.0 user to set the profile key; set
+    # by a variable it failed the load against the file's flat key.
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(yaml.safe_dump({"retry": {"max_attempts": 3}}))
+    monkeypatch.setenv(env_var("retry.model.max_attempts"), "5")
+    with caplog.at_level(logging.WARNING):
+        config = ConfigLoader(config_file).load_config()
+    assert config.retry.model.max_attempts == 5
+    assert config.retry.ingestion_item.max_attempts == 3
+    assert any(
+        "UKR__RETRY__MODEL__MAX_ATTEMPTS sets retry.model.max_attempts over the "
+        "file's deprecated retry.max_attempts" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+def test_a_replacement_variable_wins_over_a_deprecated_one_with_a_warning(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setenv(env_var("retry.max_attempts"), "2")
+    monkeypatch.setenv(env_var("retry.model.max_attempts"), "5")
+    with caplog.at_level(logging.WARNING):
+        config = ConfigLoader().load_config()
+    assert config.retry.model.max_attempts == 5
+    assert config.retry.ingestion_item.max_attempts == 2
+    assert any(
+        "UKR__RETRY__MAX_ATTEMPTS and UKR__RETRY__MODEL__MAX_ATTEMPTS both set "
+        "retry.model.max_attempts" in r.getMessage()
+        for r in caplog.records
+    )
