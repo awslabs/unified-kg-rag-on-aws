@@ -135,7 +135,8 @@ describe("a failure inside the server", () => {
   });
 
   it("of another request is not called a query's", () => {
-    const t = (key: string, vars?: Record<string, string | number>) => `${key}${vars ? JSON.stringify(vars) : ""}`;
+    const t = (key: string, vars?: Record<string, string | number>) =>
+      key === "common.sentenceSeparator" ? " " : `${key}${vars ? JSON.stringify(vars) : ""}`;
     expect(errorMessage(t, new ApiError(500, masked, { code: "failure", error: masked }))).toBe("error.failure");
     expect(errorMessage(t, new ApiError(500, masked, { code: "failure", trace_id: "ab12" }))).toBe('error.failure error.traceId{"trace_id":"ab12"}');
   });

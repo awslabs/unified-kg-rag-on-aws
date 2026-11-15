@@ -762,6 +762,11 @@ GUARDS = [
                 2,
                 "the Hebrew letters Lucene's standard tokenizer keeps whole",
             ),
+            # Two Han words, not a range's ends.
+            "domain/languages/profiles/zh.py::PROFILE": (
+                1,
+                "the Chinese currency counters 元 and 圆",
+            ),
         },
     ),
     SourceGuard(

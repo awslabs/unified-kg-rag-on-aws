@@ -210,11 +210,12 @@ def test_a_sum_in_words_is_of_the_profiles_numerals_and_counters(
     code: LanguageCode,
 ) -> None:
     # The sum forms are numerals the profile reads (values and all), and a
-    # sum's counters are counters of it; one without the other reads none.
+    # sum's counters are none of its other words; one without the other
+    # reads none.
     language = PROFILES[code]
     numerals = {*language.counter_numerals, *language.numeral_multipliers}
     assert language.sum_numerals <= numerals
-    assert set(language.currency_counters) <= set(language.counters)
+    assert not numerals & {ch for c in language.currency_counters for ch in c}
     assert bool(language.sum_numerals) == bool(language.currency_counters)
 
 

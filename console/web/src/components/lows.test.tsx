@@ -13,6 +13,8 @@ import { fitting, NAV_FOLDED } from "../lib/useCompactNav";
 import { BudgetNotice, IngestResult, questionTitle, runModelCalls } from "../pages/IngestPage";
 import { degradedKind, partialHelp, RouteNote, routingNote } from "../pages/AskPage";
 import { GoneKeys } from "../pages/SettingsPage";
+import { failureHelp } from "../lib/api";
+import { MetricName } from "./charts";
 import type { JobRecord } from "../lib/types";
 
 describe("small copy", () => {
@@ -188,6 +190,23 @@ describe("a query's limits, a run's budget and deprecated keys", () => {
       const text = partialHelp([failed, skipped], makeI18n(locale, () => undefined).t);
       expect(text, locale).toMatch(/。\S/);
       expect(text, locale).not.toMatch(/。 /);
+    }
+  });
+
+  it("sets a failure's trace id and a metric's direction off as the language does (rv36)", () => {
+    expect(failureHelp(en, { trace_id: "ab12" })).toBe(`${translate("en", "error.failure")} Trace id: ab12.`);
+    for (const locale of ["ja", "zh"] as const) {
+      const t = makeI18n(locale, () => undefined).t;
+      expect(failureHelp(t, { trace_id: "ab12" }), locale).toMatch(/。\S/);
+      const { container, unmount } = render(
+        <I18nProvider initial={locale}>
+          <MetricName metric="retrieval/mrr" />
+        </I18nProvider>,
+      );
+      const title = (container.querySelector(".metric-name") as HTMLElement).title;
+      expect(title, locale).toBe(`${translate(locale, "metric.mrr")}${translate(locale, "evaluate.higherBetter")}`);
+      expect(title, locale).not.toMatch(/。 |。\./);
+      unmount();
     }
   });
 

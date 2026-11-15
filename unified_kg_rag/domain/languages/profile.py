@@ -126,11 +126,12 @@ class LanguageProfile:
     counters: tuple[str, ...] = ()
     # The forms of ``counter_numerals`` and ``numeral_multipliers`` that
     # write a sum of money in words (Chinese 大写 "壹拾万元", Japanese 大字
-    # "金壱萬円"), and those of its ``counters`` a sum takes ("元", "円").
-    # Outside a sum these characters are letters of other words ("大陆人",
-    # "古参社員", "收拾家务"), so a number is read in them only when the run
-    # of numerals holding them stands before a currency counter; other
-    # readers (the deduplication digest) read them everywhere.
+    # "金壱萬円"), and the counters a sum takes ("元", "円"; "圆" writes 元
+    # in a sum only, so it is none of ``counters``). Outside a sum these
+    # characters are letters of other words ("大陆人", "古参社員", "收拾家务"),
+    # so a number is read in them only when the run of numerals holding
+    # them stands before a currency counter; other readers (the
+    # deduplication digest) read them everywhere.
     sum_numerals: frozenset[str] = frozenset()
     currency_counters: tuple[str, ...] = ()
     # Numerals that state a count standing alone, with at most a particle

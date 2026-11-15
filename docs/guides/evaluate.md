@@ -95,8 +95,8 @@ A JSON array of objects. Only `question` is required; `expected_entities` /
 - `metadata.answer_type` says how `answer_match` reads a structured gold:
   `number` matches when the answer's first line writes the gold anywhere
   (digits, number words, Korean and Han numerals before a counter: `세
-  곳`, `三社`, and the financial forms in a sum only: `壹拾万元`, `金壱萬円`,
-  not `大陆人`; list enumerators, citation markers and ordinals are no
+  곳`, `三社`, and the financial forms in a well-formed sum only:
+  `壹拾万元`, `金壱萬円`, `叁佰圆整`, not `大陆人` or `大陆元首`; list enumerators, citation markers and ordinals are no
   numbers), a gold of 0 when it states there is none and writes no number
   the question does not (which number is the count is the LLM judges' to
   read), `set` needs every one of

@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 /** The console API: same origin, JSON, and the header every change needs. */
+import { joinSentences } from "../i18n/i18n";
 
 export const REQUEST_HEADER = "X-Console-Request";
 
@@ -28,7 +29,7 @@ export function failureHelp(t: Translate, ids: { query_id?: unknown; trace_id?: 
   const queryId = named(ids.query_id);
   const traceId = named(ids.trace_id);
   const help = queryId ? t("ask.error.failureHelp", { query_id: queryId }) : t("error.failure");
-  return traceId ? `${help} ${t("error.traceId", { trace_id: traceId })}` : help;
+  return traceId ? joinSentences([help, t("error.traceId", { trace_id: traceId })], t) : help;
 }
 
 /** An error as the page shows it: what kind of refusal it is, in the

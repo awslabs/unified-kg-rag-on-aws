@@ -102,9 +102,13 @@ PROFILE = LanguageProfile(
     # And a sum of money ("三千万元").
     counters=("家", "个", "個", "件", "人", "名", "台", "元"),
     # 大写 is read in a sum only: "陆" is also land ("大陆人"), "伍" a
-    # file of soldiers ("队伍"), "拾" to tidy ("收拾").
+    # file of soldiers ("队伍"), "拾" to tidy ("收拾"). A sum is of 元 or
+    # its 大写 form 圆 ("叁佰圆整"), which counts nothing else ("圆满").
+    # 圓, 块 and 日元 are no sum's counters: Japanese, read alike, writes
+    # 圓 for a whole area ("関東一圓"), 块 is also a piece ("大陆块",
+    # "一块儿") and 日 closes a date ("十五日元宵节").
     sum_numerals=frozenset("壹贰貳叁參肆伍陆陸柒捌玖拾佰仟"),
-    currency_counters=("元",),
+    currency_counters=("元", "圆"),
     polarity_words={
         "是": "yes",
         "是的": "yes",

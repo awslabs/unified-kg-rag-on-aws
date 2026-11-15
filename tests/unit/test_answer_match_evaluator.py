@@ -910,6 +910,14 @@ def test_a_number_gold_of_several_numbers_is_matched_as_a_phrase() -> None:
         ("ja", "古参社員はいません。", "0", "何人ですか？", 1.0),
         ("ja", "古参社員が担当。", "3", None, 0.0),
         ("zh", "陆家嘴", "6", None, 0.0),
+        # Regression (rv36 matching M1): nor is one before an ordinary
+        # amount or a word that a currency counter starts.
+        ("ja", "人参二百円、玉ねぎ百円です。", "200", "人参はいくらですか？", 1.0),
+        ("ja", "会費は新参三千円、古参五千円です。", "3000", None, 1.0),
+        ("zh", "每支参赛队伍五千元奖金。", "5000", "每支队伍多少奖金？", 1.0),
+        ("zh", "海參五千元一公斤。", "5000", None, 1.0),
+        ("zh", "没有，大陆元首未出席。", "0", "有几位元首出席？", 1.0),
+        ("ja", "古参円熟の職人はいません。", "0", "何人いますか？", 1.0),
         # A sum in words still states its number.
         ("zh", "合同金额为人民币壹拾万元整。", "100000", None, 1.0),
         ("ja", "代金は金参拾萬円とする。", "300000", None, 1.0),

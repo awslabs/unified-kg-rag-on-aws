@@ -651,7 +651,8 @@ _HAN_COUNTERS = tuple(
 )
 # The forms that write a sum of money in words ("壹拾万元", "金壱萬円") and
 # the counters a sum takes (``sum_numerals``, ``currency_counters``): those
-# forms state a number only in a run before one ("大陆人", "古参社員" none).
+# forms state a number only in a sum before one ("大陆人", "古参社員" none;
+# ``_sum_value``).
 _SUM_NUMERALS = frozenset(
     ch for language in _HAN_LANGUAGES for ch in language.sum_numerals
 )
@@ -850,9 +851,10 @@ _CJK_NONE = re.compile(
 )
 # Han, Sino-Korean and ASCII digits with the multipliers between them
 # ("十二", "一万二千", "1만 2천", "만 이천", "三", "1.5万", "3,000万");
-# ``_cjk_value`` reads them. A run holding a form of a sum in words is one
-# only before a currency counter ("叁仟伍佰元", "金参拾萬円", "伍元"); any
-# other run is of the remaining forms, so "人参三人" is 3, not 33.
+# ``_cjk_value`` reads them. A run of the ordinary forms is ``_CJK_NUMBER``,
+# so "人参三人" is 3, not 33; a run of any form before a currency counter
+# is a candidate sum (``_CJK_SUM``, read by ``_sum_value``: "叁仟伍佰元",
+# "金参拾萬円", "伍元").
 _CJK_CHARS = "".join([*_HAN_DIGITS, *_SINO_KOREAN_DIGITS, *_MULTIPLIERS])
 
 
@@ -863,13 +865,16 @@ def _cjk_run(chars: str) -> str:
 
 _CJK_PART_TOKEN = re.compile(rf"{_DIGIT_FORM}|\S")
 _CJK_NUMBER = re.compile(
-    rf"(?<!{_HANGUL})(?<![\d.,])(?:{_cjk_run(_CJK_CHARS)}"
-    r"(?=[^\S\n]?(?:"
-    + "|".join(_CURRENCY_COUNTERS)
-    + "))|"
+    rf"(?<!{_HANGUL})(?<![\d.,])"
     + _cjk_run("".join(ch for ch in _CJK_CHARS if ch not in _SUM_NUMERALS))
-    + ")"
 )
+_CURRENCY_AFTER = re.compile(r"[^\S\n]?(?:" + "|".join(_CURRENCY_COUNTERS) + ")")
+_CJK_SUM = re.compile(
+    rf"(?<!{_HANGUL})(?<![\d.,]){_cjk_run(_CJK_CHARS)}(?={_CURRENCY_AFTER.pattern})"
+)
+# A Han letter after a currency counter may make the counter the first
+# letter of a word ("元首", "円熟", "元宇宙", "圆满").
+_HAN_LETTER = re.compile(f"[{letter_class('han')}]")
 _CJK_COUNTER_AFTER = re.compile(
     r"[^\S\n]?(?:"
     + "|".join(sorted({*_KOREAN_COUNTERS, *_HAN_COUNTERS}, key=len, reverse=True))
@@ -877,16 +882,19 @@ _CJK_COUNTER_AFTER = re.compile(
 )
 
 
-def _cjk_value(match: re.Match[str]) -> float | None:
+def _cjk_value(match: re.Match[str], counted: bool | None = None) -> float | None:
     """The number of a ``_CJK_NUMBER`` match: Han digits before a counter
     ("三社", "二〇二四年" is no count), or digits with multipliers ("十二台",
     "一万二千", "一千零一家", "1만 2천", "십이 대") before a counter, or
     after ASCII digits alone ("3万", "1.5万", "3,000万", "1만 2천"); ``None``
     for anything else (bare ASCII digits are ``_DIGITS``'). Between
-    multipliers a Han zero holds an empty place ("一千零一" is 1001)."""
+    multipliers a Han zero holds an empty place ("一千零一" is 1001).
+    ``counted`` says whether a counter follows (a sum's currency counter);
+    by default a counter of the profiles' ``counters`` does."""
     parts = _CJK_PART_TOKEN.findall(match.group())
     multiplied = any(part in _MULTIPLIERS for part in parts)
-    counted = bool(_CJK_COUNTER_AFTER.match(match.string, match.end()))
+    if counted is None:
+        counted = bool(_CJK_COUNTER_AFTER.match(match.string, match.end()))
     if not multiplied:
         if not counted or not all(part in _HAN_DIGITS for part in parts):
             return None
@@ -911,12 +919,80 @@ def _cjk_value(match: re.Match[str]) -> float | None:
         elif digit is not None:
             return None
         else:
-            digit = (
-                float(part.replace(",", ""))
-                if part[0].isdigit()
-                else _HAN_DIGITS.get(part, _SINO_KOREAN_DIGITS.get(part, 0))
-            )
+            digit = _digit_value(part)
     return total + section + (digit or 0)
+
+
+def _digit_value(part: str) -> float:
+    """The value of a digit part of a ``_CJK_PART_TOKEN`` run."""
+    if part[0].isdigit():
+        return float(part.replace(",", ""))
+    return _HAN_DIGITS.get(part, _SINO_KOREAN_DIGITS.get(part, 0))
+
+
+def _descends(parts: list[str]) -> bool:
+    """Whether every term of the number ``parts`` writes ("三千", "五百",
+    "二") is below the place of the term before it, within each section
+    that 万 and 億 close: "叁仟伍佰" does, "拾五千" and "拾100" do not."""
+    place: float | None = None
+    digit: float | None = None
+    for part in parts:
+        if _HAN_DIGITS.get(part, 1) == 0:
+            continue
+        multiplier = _MULTIPLIERS.get(part)
+        if multiplier is None:
+            digit = _digit_value(part)
+            continue
+        if multiplier >= 10**4:
+            if digit is not None and place is not None and digit >= place:
+                return False
+            place = digit = None
+            continue
+        if place is not None and (digit or 1) * multiplier >= place:
+            return False
+        place, digit = multiplier, None
+    return digit is None or place is None or digit < place
+
+
+def _sum_value(match: re.Match[str]) -> float | None:
+    """The sum of money a ``_CJK_SUM`` match writes, ``None`` when it writes
+    none: a sum is a well-formed number (``_cjk_value``) whose terms
+    descend (``_descends``: "叁仟伍佰元", not "拾五千元"), and a lone
+    numeral is one only when no Han letter follows its counter, which would
+    begin a word ("伍元", not "大陆元首" nor "古参円熟")."""
+    value = _cjk_value(match, counted=True)
+    if value is None:
+        return None
+    parts = _CJK_PART_TOKEN.findall(match.group())
+    if not _descends(parts):
+        return None
+    counter = _CURRENCY_AFTER.match(match.string, match.end())
+    if (
+        len(parts) == 1
+        and counter is not None
+        and _HAN_LETTER.match(match.string, counter.end())
+    ):
+        return None
+    return value
+
+
+def _cjk_sums(body: str) -> Iterator[re.Match[str]]:
+    """The sums of money ``body`` writes (``_sum_value``). A form of a sum
+    starting a run may be the last letter of a word before it ("人参",
+    "队伍", "大陆"), so a run that is no sum is read again without its
+    leading forms of a sum: "人参二百円" is 200, "队伍五千元" 5000."""
+    for match in _CJK_SUM.finditer(body):
+        start = match.start()
+        while True:
+            candidate = _CJK_SUM.match(body, start)
+            if candidate is not None and _sum_value(candidate) is not None:
+                yield candidate
+                break
+            if body[start] not in _SUM_NUMERALS:
+                break
+            start += 1
+            while body[start].isspace():
+                start += 1
 
 
 def _stands_alone(text: str, start: int, end: int) -> bool:
@@ -1116,7 +1192,21 @@ def _number_forms(
             lambda match: _KOREAN_STANDALONE_ONES[match.group(1)],
         )
     )
-    forms.append((_CJK_NUMBER.finditer(body), _cjk_value))
+    # A sum of money, and the ordinary runs outside one.
+    sums = list(_cjk_sums(body))
+    forms.append((iter(sums), _sum_value))
+    forms.append(
+        (
+            (
+                match
+                for match in _CJK_NUMBER.finditer(body)
+                if not any(
+                    s.start() <= match.start() and match.end() <= s.end() for s in sums
+                )
+            ),
+            _cjk_value,
+        )
+    )
     return forms
 
 

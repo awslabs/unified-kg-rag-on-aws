@@ -369,6 +369,13 @@ class TestStatedNumbers:
             ("壹佰贰拾元", {120}),
             ("伍元", {5}),
             ("壹拾 万元", {100_000}),
+            ("叁佰元伍角", {300}),
+            ("壹萬2千円", {12_000}),
+            ("金参百円", {300}),
+            # 圆, the 大写 form of 元, counts a sum only.
+            ("人民币叁佰圆整", {300}),
+            ("人民币壹拾万圆整", {100_000}),
+            ("五百圆", {500}),
         ],
     )
     def test_cjk_counters_and_multipliers(self, text: str, numbers: set[float]) -> None:
@@ -394,6 +401,26 @@ class TestStatedNumbers:
             # An ordinary numeral beside one still counts.
             ("人参三人", {3}),
             ("陆家嘴有三家银行", {3}),
+            # Regression (rv36 matching M1): so does one before a currency
+            # counter; the run read as a sum first ("参二百", "伍五千",
+            # "拾五千") is none.
+            ("人参二百円", {200}),
+            ("队伍五千元", {5000}),
+            ("新参三千円", {3000}),
+            ("收拾五千元", {5000}),
+            ("人參一百元一斤", {100}),
+            ("大陆三万元起", {30_000}),
+            ("収拾100円", {100}),
+            # A currency counter starting a word after a lone form makes
+            # no sum.
+            ("大陆元首", set()),
+            ("登陆元宇宙", set()),
+            ("队伍元气", set()),
+            ("古参円熟", set()),
+            ("人参二百圆", {200}),
+            ("大陆圆满", set()),
+            ("终于一圆梦想", set()),
+            ("两圆相交", set()),
         ],
     )
     def test_a_sum_form_outside_a_sum_is_no_number(
