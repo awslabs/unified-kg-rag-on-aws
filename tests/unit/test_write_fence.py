@@ -458,6 +458,43 @@ def test_the_stop_fence_lets_the_main_thread_unwind() -> None:
     assert [type(e) for e in errors] == [PipelineInterrupted]
 
 
+def test_a_budget_stop_ends_another_thread_with_the_budget_s_error() -> None:
+    # A call refused at the run's budget stops every thread at its next
+    # write fence with a RunBudgetExhausted of that budget (the CLI's
+    # limit_exceeded, a resume), each thread raising its own.
+    from unified_kg_rag.application.ingestion.pipeline import _StopFence
+    from unified_kg_rag.shared.exceptions import RunBudgetExhausted
+
+    pipe = _stopping_pipeline()
+    fence = _StopFence(pipe)
+    refused = pipe._stop_for_budget(
+        "the run reached processing.max_run_model_calls 3",
+        "processing.max_run_model_calls",
+        3,
+    )
+    fence.check()  # the run's own thread unwinds
+    errors: list[BaseException] = []
+
+    def worker() -> None:
+        try:
+            fence.check()
+        except BaseException as e:  # noqa: BLE001 - collected
+            errors.append(e)
+
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert [type(e) for e in errors] == [RunBudgetExhausted] * 2
+    first, second = errors
+    assert first is not second and refused not in errors
+    for error in errors:
+        assert isinstance(error, RunBudgetExhausted)
+        assert (error.limit, error.value) == ("processing.max_run_model_calls", 3)
+        assert str(error) == str(refused)
+
+
 def test_a_stopped_run_uploads_its_checkpoint_before_releasing_the_lease(
     tmp_path: Path, mocker
 ) -> None:
