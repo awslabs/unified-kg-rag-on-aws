@@ -15,8 +15,12 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import gc
+import os
+import subprocess
+import sys
 import threading
 import time
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -324,6 +328,48 @@ def test_collecting_a_dropped_chain_never_waits_where_it_is_collected() -> None:
         waited = time.monotonic() - started
     assert waited < 5, waited
     _until(lambda: built[0].aclosed == 1)
+
+
+_COLLECTED_UNDER_THE_SHUTDOWN_LOCK = """
+import gc, sys, threading, time
+from tests.unit.test_rag_chain_event_loop import _chain, _ThreadClosingRetriever, _until
+chain, built = _chain(_ThreadClosingRetriever)
+chain.invoke({"query": "q"})
+with threading._shutdown_locks_lock:
+    del chain
+    gc.collect()
+_until(lambda: built[0].aclosed == 1)
+print("released")
+"""
+
+
+@pytest.mark.skipif(
+    not hasattr(threading, "_shutdown_locks_lock"),
+    reason="Python 3.13+ has no lock of the threads to join at shutdown",
+)
+def test_collecting_a_dropped_chain_starts_no_thread_where_it_is_collected() -> None:
+    # rv33 (3.11/3.12): the finalizer started a thread, whose start waits
+    # for it to run, which takes threading's _shutdown_locks_lock: a chain
+    # collected by a thread holding that lock (every non-daemon thread's
+    # start and join takes it, and allocates under it) hung forever. In a
+    # child process, so a hang fails the test instead of the run.
+    done = subprocess.run(
+        [sys.executable, "-c", _COLLECTED_UNDER_THE_SHUTDOWN_LOCK],
+        cwd=Path(__file__).resolve().parents[2],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+        # No AWS: the child's chain is built on fakes, its env holds no
+        # credentials either.
+        env={
+            **{k: v for k, v in os.environ.items() if not k.startswith("AWS_")},
+            "AWS_EC2_METADATA_DISABLED": "true",
+            "AWS_CONFIG_FILE": os.devnull,
+            "AWS_SHARED_CREDENTIALS_FILE": os.devnull,
+        },
+    )
+    assert done.stdout.strip() == "released", done.stderr[-2000:]
 
 
 def test_runner_rejects_reentrant_sync_call() -> None:

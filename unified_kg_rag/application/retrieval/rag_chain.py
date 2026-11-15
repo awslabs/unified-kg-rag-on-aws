@@ -6,6 +6,7 @@ import contextlib
 import contextvars
 import functools
 import logging
+import queue
 import threading
 import time
 import unicodedata
@@ -985,8 +986,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         # cached retrievers' sockets, then stop the loop. The finalizer holds
         # the caches and runner, never the chain itself, so it does not keep
         # the chain alive. Collection timing is up to the GC, so callers must
-        # still close the chain when done. It hands the release to a thread
-        # of its own: the collector may run it anywhere, under any lock.
+        # still close the chain when done. It hands the release to the
+        # release worker: the collector may run it anywhere, under any lock.
+        _COLLECTED_RELEASES.start()
         weakref.finalize(
             self,
             _release_collected,
@@ -4555,22 +4557,57 @@ def _release_cached_resources(
             runner.stop()
 
 
+class _CollectedReleases:
+    """The releases of dropped chains (:func:`_release_collected`), run one
+    after another by a daemon worker thread.
+
+    The collector runs a finalizer in whatever thread allocates when it
+    triggers, under whatever that thread holds: another chain's loop inside
+    ``ThreadPoolExecutor.submit`` (the executors' global lock), or, on
+    Python 3.11 and 3.12, threading's own lock of the threads to join at
+    shutdown, which every non-daemon thread's start and join takes. So the
+    finalizer neither waits for a release nor starts a thread (a thread's
+    start waits for it to run, which takes that lock): it puts the release
+    on a ``queue.SimpleQueue``, which a finalizer may call, and the worker,
+    started when a chain is built (never under the collector), takes it."""
+
+    def __init__(self) -> None:
+        self._queue: queue.SimpleQueue[tuple[Any, ...]] = queue.SimpleQueue()
+        self._lock = threading.Lock()
+        self._worker: threading.Thread | None = None
+
+    def start(self) -> None:
+        """Start the worker, unless it runs (once per process: a forked
+        child starts its own)."""
+        with self._lock:
+            if self._worker is None or not self._worker.is_alive():
+                self._worker = threading.Thread(
+                    target=self._run, name="kg-rag-chain-release", daemon=True
+                )
+                self._worker.start()
+
+    def put(self, resources: tuple[Any, ...]) -> None:
+        self._queue.put(resources)
+
+    def _run(self) -> None:
+        while True:
+            # Never raises.
+            _release_cached_resources(*self._queue.get())
+
+
+_COLLECTED_RELEASES = _CollectedReleases()
+
+
 def _release_collected(*resources: Any) -> None:
     """A dropped chain's GC finalizer: :func:`_release_cached_resources` of
-    ``resources`` on a thread of its own, never waited for here. The
-    collector runs a finalizer in whatever thread allocates when it
-    triggers, under whatever that thread holds (another chain's loop inside
-    ``ThreadPoolExecutor.submit``, under the executors' global lock), so a
-    release that waited there (for the dropped chain's loop, whose closes
-    may need that lock) deadlocked until its teardown timeouts."""
-    try:
-        threading.Thread(
-            target=_release_cached_resources,
-            args=resources,
-            name="kg-rag-chain-release",
-        ).start()
-    except RuntimeError:  # interpreter shutting down: no new thread
+    ``resources`` by the release worker (:class:`_CollectedReleases`),
+    never waited for here. At interpreter exit (the finalizer's ``atexit``
+    call, once the main thread has finished) the worker, a daemon, may not
+    run again: the release runs here, outside any collection."""
+    if not threading.main_thread().is_alive():
         _release_cached_resources(*resources)
+        return
+    _COLLECTED_RELEASES.put(resources)
 
 
 # The search setting of each QueryLimits field (SearchConfig.query_limits).
