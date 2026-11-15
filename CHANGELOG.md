@@ -153,6 +153,7 @@ Bugs present in 0.3.0.
 
 - The console's Ask page showed the raw key `ask.abstention.no_reports` for a `global` question on a namespace without
   community reports.
+- The console's hovered primary button in the dark theme fell to 4.3:1 contrast; it keeps 4.7:1.
 - A `GraphRAGChain` dropped without `close()` could hang another chain's query for up to 90 s: the garbage collector
   ran the dropped chain's finalizer wherever it triggered (once inside another chain's executor submit, under the
   executors' global lock), and the finalizer waited there for its own loop, whose closes needed that lock. The
