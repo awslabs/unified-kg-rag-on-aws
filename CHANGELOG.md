@@ -67,28 +67,30 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   before it is sent: the usage callback now raises its refusal (LangChain swallowed a handler's error) and logs any
   other error of its own (`setup_logging` drops LangChain's own "Error in UsageCallbackHandler... callback" WARNING of
   a refusal). `global`, `drift` and `iterative` start only the calls that fit beside what the answer will read
-  (DRIFT's actions sharing what is left, each built context kept to its share and an action the meter still refuses
-  left out as one that did not fit; each planned call counted with the question it carries, by the one estimate of
-  the answer's call, `answer_call_tokens`) and list the rest in `metadata.degraded` (reason `query_limit`), `auto`
-  routes only to strategies whose fewest calls fit (when none fits with its query translation and extractions, to
-  those that fit without them, which it then skips) and makes no router call an input-token limit cannot take
-  (`metadata.routing.over_limits`) and under either limit starts no speculative extraction, the answer's context is
-  cut to the tokens left after the answer prompt and the question, the built context packed down to them at the
-  meter's estimate whatever its counter counts (the fan-out keeps that prompt's tokens too; a cut, its sections left
-  out or cut short, listed as `query_limit: N of M sections cut`), a search (`asearch`, `kg_search`, `--mode search`)
-  keeps nothing for an answer it does not make, a query naming `drift` keeps its one action's call too (and that
-  call's least input under an input-token limit: `answering_calls`), an optional call (a query
-  translation or extraction, the follow-up rewrite, which then searches the follow-up as written, the structured
-  planner, an output repair: `usage.optional_calls`) never takes the call kept for the answer, nor under an
-  input-token limit the answer's prompt, question and least context (nor, with nothing kept, a call past the limit),
-  its step degraded instead, an answer the limits left no context abstains with `abstention_reason: query_limit`, and
-  a query whose answer does not fit fails with `UsageLimitExceededError` (exported; error class `limit_exceeded`, a
-  caller's error: not counted in `query_failed`, `refused` on the console's dashboard, its message shown to an MCP
-  caller; exit code 1, console HTTP 422). The console's Ask page names that decline, the steps the limits skipped
-  (apart from those that failed) and the strategies they left `auto` without. The `query_limited` metric (0 or 1, on
-  the CDK dashboard's "Query outcomes" widget) and the query span's `kg_rag.query_limited` count a query its limits
-  cut short (a step left out or cut, an abstention, a refusal, or the strategies `auto` was routed past), which
-  `query_degraded` could not tell from a failing step.
+  (DRIFT's actions sharing what is left, each built context kept to its share and an action the meter still refuses,
+  or whose share seats no section, left out as one that did not fit; each planned call counted with the question it
+  carries, by the one estimate of the answer's call, `answer_call_tokens`) and list the rest in `metadata.degraded`
+  (reason `query_limit`), `auto` routes only to strategies whose fewest calls fit (when none fits with its query
+  translation and extractions, to those that fit without them, which it then skips) and makes no router call an
+  input-token limit cannot take (`metadata.routing.over_limits`) and under either limit starts no speculative
+  extraction, the answer's context is cut to the tokens left after the answer prompt and the question, the built
+  context packed down to them at the meter's estimate whatever its counter counts (a pack a smaller budget no longer
+  shrinks, its cut sections ending at the same break, is cut down to the most of it that fits, empty only when no
+  section fits; the fan-out keeps that prompt's tokens too; a cut, its sections left out or cut short, listed as
+  `query_limit: N of M sections cut`), a search (`asearch`, `kg_search`, `--mode search`) keeps nothing for an answer
+  it does not make, a query naming `drift` keeps its one action's call too (and that call's least input under an
+  input-token limit: `answering_calls`), an optional call (a query translation or extraction, the follow-up rewrite,
+  which then searches the follow-up as written, the structured planner, an output repair: `usage.optional_calls`)
+  never takes the call kept for the answer, nor under an input-token limit the answer's prompt, question and least
+  context (nor, with nothing kept, a call past the limit), its step degraded instead, an answer the limits left no
+  context abstains with `abstention_reason: query_limit`, and a query whose answer does not fit fails with
+  `UsageLimitExceededError` (exported; error class `limit_exceeded`, a caller's error: not counted in `query_failed`,
+  `refused` on the console's dashboard, its message shown to an MCP caller; exit code 1, console HTTP 422). The
+  console's Ask page names that decline, the steps the limits skipped (apart from those that failed) and the
+  strategies they left `auto` without. The `query_limited` metric (0 or 1, on the CDK dashboard's "Query outcomes"
+  widget) and the query span's `kg_rag.query_limited` count a query its limits cut short (a step left out or cut, an
+  abstention, a refusal, or the strategies `auto` was routed past), which `query_degraded` could not tell from a
+  failing step.
 - One streaming path: `GraphRAGChain.aquery_events()` (sync `query_events()`) yields typed events (`QueryEvent`,
   exported with `QueryStart`, `QueryRouted`, `QuerySources`, `AnswerChunk` and `QueryResult`): the query `ainvoke`
   runs, its deadline, query limits, guardrail, metrics and memory included, ending with its `RAGOutput`. LangChain's
@@ -198,8 +200,9 @@ Bugs present in 0.3.0.
 
 - A context could read past its token budget: a section type whose next section fell below the truncation floor
   kept its unused share while that share was also handed to the other types (a 244-token budget built 262). A round
-  that seats past the budget so now lends its spare once, the room the types held unseated pooled in it; any other
-  context is the one 0.3.0 built.
+  that seats past the budget so now lends its spare once, the room the types held unseated pooled in it, and what no
+  part of it seats, with the header room of the types left unseated, is offered to each type in turn by share; any
+  other context is the one 0.3.0 built.
 - The console's Ask page showed the raw key `ask.abstention.no_reports` for a `global` question on a namespace without
   community reports.
 - The console's hovered primary button in the dark theme fell to 4.3:1 contrast; it keeps 4.7:1.

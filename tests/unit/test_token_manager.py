@@ -1228,6 +1228,30 @@ def test_a_context_bounded_at_the_estimate_fills_it_at_any_counter_ratio(
         assert 0.85 * within <= built <= within, (within, built)
 
 
+@pytest.mark.parametrize("within", [16708, 16709, 19833])
+def test_a_context_cut_at_the_same_break_still_fits_the_estimate(
+    mocker, within: int
+) -> None:
+    # Regression (rv36): a section cut to fit is counted at its room, but
+    # its text ends at the last break before it, which Japanese has few
+    # of: cutting the budget by the few tokens the context was over left
+    # it as it was, and after the last re-pack it came back empty (the
+    # answer abstained at query_limit, a DRIFT action read nothing).
+    from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
+
+    mgr = _ratio_manager(mocker, 1.0)
+    line = "供給業者は供給契約に基づき購入者にライダー装置を納入し、遅延時には違約金が課される。"
+    kinds = ("entity", "relationship", "text", "community")
+    results = [
+        _r((line * 60)[: 400 + (i * 937) % 2600], 1 - i / 100, kinds[i % 4], f"s{i}")
+        for i in range(30)
+    ]
+    out = mgr.optimize_context(results, "q", estimated_within=within)
+    built = estimate_token_count(mgr.build_context_string(out))
+    assert out.sections
+    assert 0.9 * within <= built <= within, built
+
+
 def test_a_section_cut_to_fit_is_counted_truncated(mocker) -> None:
     mgr = _make_manager(mocker)
     results = [
@@ -1239,3 +1263,62 @@ def test_a_section_cut_to_fit_is_counted_truncated(mocker) -> None:
     cut = mgr.optimize_context(results, query="q", max_tokens=180)
     assert (cut.sections_included, cut.sections_excluded) == (2, 0)
     assert cut.sections_truncated == 1
+
+
+@pytest.mark.parametrize("max_tokens", range(100, 400, 10))
+def test_a_spare_no_part_of_which_seats_goes_to_each_type_in_turn(
+    mocker, max_tokens: int
+) -> None:
+    # Regression (rv36): where 0.3.0 packed past the budget, a spare whose
+    # parts each fell below the truncation floor went whole to the type of
+    # the largest share, which could seat none of it, and the room of the
+    # headers left unseated was never lent: a Japanese question's 400-token
+    # budget seated 59 of its 133 tokens though a 58-token entity fitted.
+    # The spare is now offered to each type in turn, largest share first.
+    import copy
+
+    mgr = _make_manager(mocker)
+    oracle = copy.copy(mgr)
+    oracle.__class__ = _V030Lending
+    words = {
+        "text": [53, 97, 90, 158],
+        "community": [245],
+        "summary": [150],
+        "entity": [58, 101],
+        "relationship": [66, 71],
+    }
+    results = [
+        _r(" ".join(["w"] * n), 0.9 - i / 10, kind, f"{kind}{i}")
+        for kind, counts in words.items()
+        for i, n in enumerate(counts)
+    ]
+    out = mgr.optimize_context(results, "q", max_tokens=max_tokens)
+    left = max_tokens - 1 - _packed_tokens(mgr, out)
+    assert left >= 0
+    if _packed_tokens(oracle, oracle.optimize_context(results, "q", max_tokens)) < (
+        max_tokens
+    ):
+        return  # 0.3.0's context, kept where it fitted (the share rule)
+    chosen = {s.source_id for s in out.sections}
+    seated = {s.section_type for s in out.sections}
+    for kind in words:
+        stype = SectionType(kind)
+        if any(
+            s.section_type is stype and s.metadata.get("truncated")
+            for s in out.sections
+        ):
+            continue  # its budget is spent
+        rest = [
+            s
+            for s in mgr._create_context_sections(results)
+            if s.section_type is stype and s.source_id not in chosen
+        ]
+        if rest:
+            room = left - (
+                0
+                if stype in seated
+                else mgr.count_tokens(TokenManager._section_header(stype))
+            )
+            assert (
+                rest[0].token_count > room < mgr.config.min_truncated_section_tokens
+            ), (kind, room)

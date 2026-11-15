@@ -184,7 +184,8 @@ is refused before its request is sent:
 - `global` rates and maps, `drift` expands, primes and follows up, and
   `iterative` judges only what fits beside the answer's call. What did not
   fit is left out and listed in `metadata.degraded` (reason `query_limit`):
-  global maps its most relevant report batches, DRIFT its best follow-ups,
+  global maps its most relevant report batches, DRIFT its best follow-ups
+  (an action whose share holds no section of its evidence is left out too),
   iterative stops its rounds (`stop_reason: query_limit`). Each planned
   call is counted as the meter will count it: its prompt, the question it
   carries and what it reads.
@@ -201,7 +202,7 @@ is refused before its request is sent:
   context as built (its section headers and the blank lines between
   sections included) is packed to that room at the meter's estimate, never
   past it, whether the model's token counter counts more or less than that
-  estimate; the fan-out strategies keep that prompt's tokens for the answer
+  estimate, and never left empty while a section fits it; the fan-out strategies keep that prompt's tokens for the answer
   too. A context cut this way, its sections left out or cut short, is listed in
   `metadata.degraded` (step `context_optimization`, reason
   `query_limit: N of M sections cut`).

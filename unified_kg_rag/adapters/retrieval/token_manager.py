@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, ClassVar
 
 from pydantic import BaseModel, Field
@@ -328,14 +328,21 @@ class TokenManager:
         )
         if estimated_within is None:
             return optimized, left
-        for refit in range(_REFIT_ROUNDS + 1):
+        over: tuple[OptimizedContext, int, int] | None = None
+        for _ in range(_REFIT_ROUNDS + 1):
             if not optimized.sections:
-                return optimized, left
+                break
             built = estimate_token_count(self.build_context_string(optimized))
             if built <= estimated_within:
                 return optimized, left
-            if refit == _REFIT_ROUNDS:
+            if over is not None and built >= over[2]:
+                # The cut left the built context as it was: it came off the
+                # room of the sections cut to fit, whose text still ends at
+                # the same break (in Japanese or Chinese the last one may
+                # be hundreds of characters back), so a smaller budget
+                # would not shrink it either.
                 break
+            over = optimized, left, built
             # The budget is in the counter's tokens, the bound in the
             # estimate's: what the pieces used is cut in the ratio the whole
             # measured at (the pieces each rounded down, the separators
@@ -343,15 +350,108 @@ class TokenManager:
             used = optimized.total_tokens + sum(
                 headers[t] for t in {s.section_type for s in optimized.sections}
             )
-            available_tokens = used * estimated_within // built
             optimized, left = self._packed(
                 all_sections,
                 headers,
-                available_tokens,
+                used * estimated_within // built,
                 spare_budget_first,
                 number_sections,
             )
-        return self._packed(all_sections, headers, 0, (), number_sections)
+        if over is None:
+            return optimized, left
+        # The smallest pack still past the bound, cut down to it.
+        return (
+            self._fitted(over[0], all_sections, estimated_within, number_sections),
+            over[1],
+        )
+
+    def _fitted(
+        self,
+        over: OptimizedContext,
+        all_sections: list[ContextSection],
+        estimated_within: int,
+        number_sections: bool,
+    ) -> OptimizedContext:
+        """The longest run of ``over``'s sections (a pack past
+        ``estimated_within``) that fits it, taken by their rank in their
+        type: the best of every type, then the second best, ... (scores rank
+        only within a type), so the sections each type seated last go
+        first. When not even the first fits, the first of ``all_sections``
+        in that order that fits alone: empty only when none does."""
+
+        def context(sections: list[ContextSection]) -> OptimizedContext:
+            sections = self._numbered(sections) if number_sections else sections
+            return OptimizedContext(
+                sections=sections,
+                total_tokens=sum(s.token_count for s in sections),
+                sections_included=len(sections),
+                sections_excluded=len(all_sections) - len(sections),
+                sections_truncated=sum(
+                    1 for s in sections if self._cut(s, all_sections)
+                ),
+                numbered=number_sections,
+            )
+
+        def fits(sections: list[ContextSection]) -> bool:
+            built = self.build_context_string(context(sections))
+            return estimate_token_count(built) <= estimated_within
+
+        ranked = self._by_rank(over.sections)
+        # The estimate only grows with each section added, and with the
+        # room a section is cut to: both are found by bisection.
+        kept = ranked[: self._most(len(ranked) - 1, lambda n: fits(ranked[:n]))]
+        if len(kept) < len(ranked):
+            # The first section left out, cut to the room the others leave.
+            section = ranked[len(kept)]
+            if section.result_index is not None:
+                section = all_sections[section.result_index]
+
+            def head(room: int) -> ContextSection | None:
+                cut = self._truncate_to_tokens(section, room)
+                return cut if cut is not None and fits([*kept, cut]) else None
+
+            # Below the truncation floor no room cuts it: taken to hold
+            # there, so the rooms that do form one run from the bottom.
+            floor = self.config.min_truncated_section_tokens
+            room = self._most(
+                section.token_count - 1, lambda r: r < floor or head(r) is not None
+            )
+            last = head(room)
+            if last is not None:
+                kept = [*kept, last]
+        if not kept:
+            kept = next(
+                (
+                    [s]
+                    for s in self._by_rank(
+                        [s for s in all_sections if s.token_count > 0]
+                    )
+                    if fits([s])
+                ),
+                [],
+            )
+        return context(kept)
+
+    @staticmethod
+    def _most(top: int, holds: Callable[[int], bool]) -> int:
+        """The largest ``n`` in ``0..top`` for which ``holds(n)`` (taken to
+        hold for every smaller one), 0 when none above 0 does."""
+        lo, hi = 0, max(top, 0)
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            lo, hi = (mid, hi) if holds(mid) else (lo, mid - 1)
+        return lo
+
+    @staticmethod
+    def _by_rank(sections: list[ContextSection]) -> list[ContextSection]:
+        """``sections`` by their rank in their type (best first), each rank
+        in input order."""
+        rank: dict[SectionType, int] = {}
+        keyed: list[tuple[int, ContextSection]] = []
+        for s in sorted(sections, key=lambda s: s.priority, reverse=True):
+            keyed.append((rank.get(s.section_type, 0), s))
+            rank[s.section_type] = rank.get(s.section_type, 0) + 1
+        return [s for _, s in sorted(keyed, key=lambda k: k[0])]
 
     def _packed(
         self,
@@ -399,14 +499,20 @@ class TokenManager:
                 # Cut to fit (_truncate_to_tokens): its content is not the
                 # whole result's.
                 sections_truncated=sum(
-                    1
-                    for section in selected_sections
-                    if section.result_index is not None
-                    and section.content != all_sections[section.result_index].content
+                    1 for s in selected_sections if self._cut(s, all_sections)
                 ),
                 numbered=number_sections,
             ),
             available_tokens,
+        )
+
+    @staticmethod
+    def _cut(section: ContextSection, all_sections: list[ContextSection]) -> bool:
+        """Whether ``section`` was cut to fit (``_truncate_to_tokens``): its
+        content is not the whole result's."""
+        return (
+            section.result_index is not None
+            and section.content != all_sections[section.result_index].content
         )
 
     @classmethod
@@ -664,6 +770,7 @@ class TokenManager:
         packed = {t: self._pack_type(lst, caps[t]) for t, lst in by_type.items()}
         # A round normally spends the spare or seats a receiver completely, so
         # one round per type bounds the loop.
+        bounded = False
         for _ in range(len(by_type)):
             receivers = [t for t, (_, done) in packed.items() if not done]
             used = {
@@ -681,23 +788,25 @@ class TokenManager:
             # room they held pooled in it (each token lent once).
             lent = self._lent(caps, spare, receivers, shares, spare_budget_first)
             trial = {t: self._pack_type(lst, lent[t]) for t, lst in by_type.items()}
-            if sum(
-                s.token_count for seated, _ in trial.values() for s in seated
-            ) > token_budget + sum(
-                tokens
-                for t, tokens in (headers or {}).items()
-                if not (t in trial and trial[t][0])
+            if self._seated(trial) > token_budget + self._unseated_headers(
+                trial, headers
             ):
+                bounded = True
                 lent = self._lent(
                     {**caps, **{t: used[t] for t in receivers}},
                     spare,
                     receivers,
                     shares,
                     spare_budget_first,
-                    floor=min_spare,
                 )
+                if max(lent[t] - used[t] for t in receivers) < min_spare:
+                    # Each part is too small to cut a section to: the spare
+                    # is offered in turn instead.
+                    break
                 trial = {t: self._pack_type(lst, lent[t]) for t, lst in by_type.items()}
             caps, packed = lent, trial
+        if bounded:
+            packed = self._topped_up(by_type, packed, token_budget, shares, headers)
         selected = [s for seated, _ in packed.values() for s in seated]
 
         if selected or not fallback:
@@ -726,33 +835,74 @@ class TokenManager:
         return [head] if head is not None else []
 
     @staticmethod
+    def _seated(packed: Mapping[SectionType, tuple[list[ContextSection], bool]]) -> int:
+        return sum(s.token_count for seated, _ in packed.values() for s in seated)
+
+    @staticmethod
+    def _unseated_headers(
+        packed: Mapping[SectionType, tuple[list[ContextSection], bool]],
+        headers: Mapping[SectionType, int] | None,
+    ) -> int:
+        """The header room reserved for the types ``packed`` seats nothing
+        of: free for the others."""
+        return sum(
+            tokens
+            for t, tokens in (headers or {}).items()
+            if not (t in packed and packed[t][0])
+        )
+
+    def _topped_up(
+        self,
+        by_type: dict[SectionType, list[ContextSection]],
+        packed: dict[SectionType, tuple[list[ContextSection], bool]],
+        token_budget: int,
+        shares: dict[SectionType, float],
+        headers: Mapping[SectionType, int] | None,
+    ) -> dict[SectionType, tuple[list[ContextSection], bool]]:
+        """``packed`` with what is left of ``token_budget``, and the header
+        room of the types it seats nothing of, offered to the types with
+        candidates left in turn by share, largest first, each taking what
+        it can seat (a type it seats pays its header from it): parts lent
+        in proportion can each fall below what any receiver seats."""
+        topped = dict(packed)
+        pool = (
+            token_budget
+            - self._seated(packed)
+            + self._unseated_headers(packed, headers)
+        )
+        receivers = [t for t, (_, done) in packed.items() if not done]
+        for t in sorted(receivers, key=lambda t: shares[t], reverse=True):
+            seated = topped[t][0]
+            fee = 0 if seated else (headers or {}).get(t, 0)
+            have = sum(s.token_count for s in seated)
+            trial = self._pack_type(by_type[t], have + pool - fee)
+            took = sum(s.token_count for s in trial[0]) - have
+            if took > 0:
+                topped[t] = trial
+                pool -= took + fee
+        return topped
+
+    @staticmethod
     def _lent(
         caps: dict[SectionType, int],
         spare: int,
         receivers: list[SectionType],
         shares: dict[SectionType, float],
         spare_budget_first: Sequence[SectionType],
-        floor: int = 0,
     ) -> dict[SectionType, int]:
         """``caps`` with ``spare`` added to the receivers': all of it to the
         first ``spare_budget_first`` type among them, else in proportion to
-        their ``shares`` (equally when they are all 0). When every part
-        falls below ``floor`` (the truncation floor: it could cut no section
-        to fit), the receiver with the largest share takes it all."""
+        their ``shares`` (equally when they are all 0)."""
         lent = dict(caps)
         first = [t for t in spare_budget_first if t in receivers]
         if first:
             lent[first[0]] += spare
             return lent
         total = sum(shares[t] for t in receivers)
-        parts = {
-            t: int(spare * (shares[t] / total if total > 0 else 1 / len(receivers)))
-            for t in receivers
-        }
-        if max(parts.values()) < floor:
-            parts = {max(receivers, key=lambda t: shares[t]): spare}
-        for t, part in parts.items():
-            lent[t] += part
+        for t in receivers:
+            lent[t] += int(
+                spare * (shares[t] / total if total > 0 else 1 / len(receivers))
+            )
         return lent
 
     def _truncate_to_tokens(

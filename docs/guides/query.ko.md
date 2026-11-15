@@ -163,7 +163,8 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
 - `global`의 평가·맵 호출, `drift`의 확장·초안·후속 호출, `iterative`의 판정 호출은 답변
   호출을 남길 수 있는 만큼만 실행합니다. 들어가지 못한 호출은 빼고
   `metadata.degraded`(사유 `query_limit`)에 기록합니다. global은 관련성이 높은 보고서 묶음부터,
-  DRIFT는 점수가 높은 후속 질의부터 실행하고, iterative는 라운드를 멈춥니다
+  DRIFT는 점수가 높은 후속 질의부터 실행하고(근거 구획이 하나도 몫에 들어가지 않는 후속 호출도
+  뺍니다), iterative는 라운드를 멈춥니다
   (`stop_reason: query_limit`). 계획한 호출은 계측기가 세는 방식 그대로, 즉 프롬프트와 호출이
   담는 질문, 읽을 내용을 더해 셉니다.
 - `auto`는 라우터 호출 뒤에 남은 호출 수 안에 최소 호출 수(`fewest_model_calls`, 그 전략이 읽는 질의
@@ -175,7 +176,8 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
 - 답변 컨텍스트는 남은 입력 토큰에서 답변 프롬프트 자체(템플릿과 지시문)와 질문을 빼고, 다시
   `search.token_manager.context_window_headroom_ratio`만큼 뺀 크기로 줄입니다. 실제로 만든
   컨텍스트(구획 머리글과 구획 사이 빈 줄 포함)는 모델의 토큰 계수기가 추정치보다 많이 세든 적게
-  세든 계측기 추정치로 이 크기에 맞춰 채우고, 넘지 않습니다. 호출을 펼치는 전략도 답변 프롬프트
+  세든 계측기 추정치로 이 크기에 맞춰 채우고, 넘지 않습니다. 들어가는 구획이 하나라도 있으면
+  비우지 않습니다. 호출을 펼치는 전략도 답변 프롬프트
   몫의 토큰을 답변용으로 남깁니다. 이렇게 줄인 컨텍스트(빠진 구획과 잘린 구획)는 `metadata.degraded`(단계 `context_optimization`, 사유
   `query_limit: N of M sections cut`)에 남습니다.
 - 호출 하나는 답변용으로 남기고, 입력 토큰 한도가 있으면 답변의 입력(프롬프트, 질문, 최소

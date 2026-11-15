@@ -1136,6 +1136,36 @@ async def test_a_drift_action_the_limits_refuse_when_built_is_a_limit_stop() -> 
         await strat.asearch(SearchQuery(query="question"))
 
 
+async def test_a_drift_action_whose_context_fits_nothing_is_a_limit_stop() -> None:
+    # Regression (rv36): under an input-token limit an action whose
+    # evidence no section of fits its share was still sent, asked to
+    # answer from an empty context. It is left out as an action that did
+    # not fit, its follow-up's evidence kept; without a limit the action
+    # reads what its budget kept, as before.
+    from tests.unit import test_drift_search_logic as drift
+
+    class _Nothing(drift._Tokens):
+        def optimize_context(self, results, query, max_tokens, estimated_within=None):
+            return drift._Optimized(results[:0])
+
+    strat = drift._strategy(local=drift._Local(), n_depth=2)
+    strat.token_manager = _Nothing()  # type: ignore[assignment]
+    with (
+        degradation_scope(),
+        usage.usage_scope(usage.UsageLimits(max_input_tokens=100_000)),
+    ):
+        result = await strat.asearch(SearchQuery(query="question"))
+    assert strat.action.calls == []
+    assert result.metadata["drift_depth"] == 1  # no round after it
+    assert any(r.source.startswith("t:") for r in result.results)
+    steps = {(e["step"], e["reason"]) for e in result.metadata["degraded"]}
+    assert ("drift_action", "query_limit: 1 of 1 calls not started") in steps
+    strat = drift._strategy(local=drift._Local(), n_depth=1)
+    strat.token_manager = _Nothing()  # type: ignore[assignment]
+    await strat.asearch(SearchQuery(query="question"))
+    assert strat.action.calls and all(c["context"] == "" for c in strat.action.calls)
+
+
 def _limited_context(chain: GraphRAGChain, results: list[Any], limit: int) -> Any:
     """The answer context ``chain`` builds from ``results`` under an
     input-token ``limit``, and what it recorded as degraded."""
