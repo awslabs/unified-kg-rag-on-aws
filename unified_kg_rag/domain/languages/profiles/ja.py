@@ -90,6 +90,10 @@ PROFILE = LanguageProfile(
         # A sum of money ("一億円").
         "円",
     ),
+    # 大字 is read in a sum only: "参" is also to go or join ("古参社員",
+    # "持参人"), "拾" to pick up ("拾う"). 萬 is the older form of 万.
+    sum_numerals=frozenset("壱弐参拾"),
+    currency_counters=("円",),
     polarity_words={"はい": "yes", "いいえ": "no"},
     quote_pairs=(("「", "」"), ("『", "』")),
     chars_per_token={CLAUDE_TOKENIZER: 1.03},

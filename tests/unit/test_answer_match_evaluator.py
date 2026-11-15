@@ -899,6 +899,30 @@ def test_a_number_gold_of_several_numbers_is_matched_as_a_phrase() -> None:
     assert answer_match_evaluator.number_matches("Two suppliers.", "2 or 3") == 0.0
 
 
+@pytest.mark.parametrize(
+    ("language", "answer", "gold", "question", "score"),
+    [
+        # Regression (rv35 index M1): a word holding a form of a sum in
+        # words (陆, 参) is no number, so a gold of 0 is matched and another
+        # gold is not.
+        ("zh", "没有大陆人参加。", "0", "有多少家公司参加？", 1.0),
+        ("ja", "持参人は一人もいません。", "0", "何人が参加しましたか？", 1.0),
+        ("ja", "古参社員はいません。", "0", "何人ですか？", 1.0),
+        ("ja", "古参社員が担当。", "3", None, 0.0),
+        ("zh", "陆家嘴", "6", None, 0.0),
+        # A sum in words still states its number.
+        ("zh", "合同金额为人民币壹拾万元整。", "100000", None, 1.0),
+        ("ja", "代金は金参拾萬円とする。", "300000", None, 1.0),
+    ],
+)
+def test_a_word_holding_a_sum_form_states_no_number(
+    language: str, answer: str, gold: str, question: str | None, score: float
+) -> None:
+    assert (
+        answer_match_evaluator.number_matches(answer, gold, language, question) == score
+    )
+
+
 def test_answer_contains_reads_through_a_possessive() -> None:
     assert answer_contains("Depot's crew stores the widgets.", "Depot") == 1.0
     assert answer_contains("Depots store the widgets.", "Depot") == 0.0

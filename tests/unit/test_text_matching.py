@@ -365,9 +365,40 @@ class TestStatedNumbers:
             ("人民币壹拾万元", {100_000}),
             ("叁仟伍佰元", {3500}),
             ("金壱萬円", {10_000}),
+            ("金参拾萬円", {300_000}),
+            ("壹佰贰拾元", {120}),
+            ("伍元", {5}),
+            ("壹拾 万元", {100_000}),
         ],
     )
     def test_cjk_counters_and_multipliers(self, text: str, numbers: set[float]) -> None:
+        assert stated_numbers(text) == numbers
+
+    @pytest.mark.parametrize(
+        ("text", "numbers"),
+        [
+            # Regression (rv35 index M1): a form of a sum in words is a
+            # letter of another word outside a sum, even before a counter.
+            ("大陆人", set()),
+            ("陆家嘴", set()),
+            ("登陆台湾", set()),
+            ("队伍人数", set()),
+            ("收拾家务", set()),
+            ("放肆人", set()),
+            ("人參家", set()),
+            ("古参社員が担当します", set()),
+            ("持参人払いの小切手", set()),
+            ("降参人", set()),
+            ("拾人", set()),
+            ("没有大陆人参加", {0}),
+            # An ordinary numeral beside one still counts.
+            ("人参三人", {3}),
+            ("陆家嘴有三家银行", {3}),
+        ],
+    )
+    def test_a_sum_form_outside_a_sum_is_no_number(
+        self, text: str, numbers: set[float]
+    ) -> None:
         assert stated_numbers(text) == numbers
 
     @pytest.mark.parametrize(
