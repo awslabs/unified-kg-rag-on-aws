@@ -984,10 +984,11 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         # cached retrievers' sockets, then stop the loop. The finalizer holds
         # the caches and runner, never the chain itself, so it does not keep
         # the chain alive. Collection timing is up to the GC, so callers must
-        # still close the chain when done.
+        # still close the chain when done. It hands the release to a thread
+        # of its own: the collector may run it anywhere, under any lock.
         weakref.finalize(
             self,
-            _release_cached_resources,
+            _release_collected,
             self._retriever_cache,
             self._strategy_cache,
             self._cache_lock,
@@ -4526,6 +4527,24 @@ def _release_cached_resources(
         # stopped (stop() itself never raises).
         if runner is not None:
             runner.stop()
+
+
+def _release_collected(*resources: Any) -> None:
+    """A dropped chain's GC finalizer: :func:`_release_cached_resources` of
+    ``resources`` on a thread of its own, never waited for here. The
+    collector runs a finalizer in whatever thread allocates when it
+    triggers, under whatever that thread holds (another chain's loop inside
+    ``ThreadPoolExecutor.submit``, under the executors' global lock), so a
+    release that waited there (for the dropped chain's loop, whose closes
+    may need that lock) deadlocked until its teardown timeouts."""
+    try:
+        threading.Thread(
+            target=_release_cached_resources,
+            args=resources,
+            name="kg-rag-chain-release",
+        ).start()
+    except RuntimeError:  # interpreter shutting down: no new thread
+        _release_cached_resources(*resources)
 
 
 # The search setting of each QueryLimits field (SearchConfig.query_limits).

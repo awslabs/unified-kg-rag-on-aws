@@ -151,6 +151,48 @@ def test_a_refused_call_sends_no_request() -> None:
     assert len(server.chat_models) == 1
 
 
+@pytest.mark.parametrize("path", ["ainvoke", "astream", "abatch", "chain", "stream"])
+async def test_a_refusal_stops_the_call_on_every_path_the_queries_take(
+    path: str,
+) -> None:
+    # Enforcement rests on LangChain raising the usage callback's refusal
+    # (raise_error): pinned on every call path the queries use, sync and
+    # async, inline and through the executor, so a LangChain release (or
+    # Python version) that swallows it fails here instead of a query
+    # running past its limit, or an optional call hanging its step.
+    import asyncio
+
+    from langchain_core.output_parsers import StrOutputParser
+    from langchain_core.prompts import ChatPromptTemplate
+
+    server = FakeOllama(lambda system, human: "a reply", "unused", 4)
+    model = _ollama_model(server)
+    prompt = [HumanMessage(content="what does the Vendor ship")]
+
+    async def call() -> Any:
+        if path == "ainvoke":
+            return await model.ainvoke(prompt)
+        if path == "astream":
+            return [chunk async for chunk in model.astream(prompt)]
+        if path == "abatch":
+            return await model.abatch([prompt])
+        if path == "chain":
+            chain = ChatPromptTemplate.from_messages([("human", "{q}")]) | model
+            return await (chain | StrOutputParser()).ainvoke({"q": "ships?"})
+        return await asyncio.to_thread(lambda: list(model.stream(prompt)))
+
+    limits = usage.UsageLimits(max_llm_calls=2, reserved_calls=1)
+    with usage.usage_scope(limits):
+        usage.start_llm_call("query", "m", estimated_input_tokens=1)
+        with usage.optional_calls():
+            with pytest.raises(usage.OptionalCallSkipped):
+                await asyncio.wait_for(call(), timeout=10)
+        usage.start_llm_call("query", "m", estimated_input_tokens=1)
+        with pytest.raises(UsageLimitExceededError):
+            await asyncio.wait_for(call(), timeout=10)
+    assert server.chat_models == []
+
+
 def test_the_callbacks_own_errors_still_never_fail_a_call(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:

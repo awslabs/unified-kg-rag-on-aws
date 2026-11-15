@@ -99,6 +99,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 Bugs present in 0.3.0.
 
+- A `GraphRAGChain` dropped without `close()` could hang another chain's query for up to 90 s: the garbage collector
+  ran the dropped chain's finalizer wherever it triggered (once inside another chain's executor submit, under the
+  executors' global lock), and the finalizer waited there for its own loop, whose closes needed that lock. The
+  finalizer hands the release to a thread of its own and returns at once.
 - A query the input guardrail blocked was counted in the query metrics under `Strategy=invalid` (its output's
   strategy is `blocked`): it is counted under the strategy it asked for.
 - A streamed answer (`astream`, `ainvoke(on_answer_chunk=...)`, the console) counted its model call twice in
