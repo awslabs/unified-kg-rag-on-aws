@@ -102,17 +102,21 @@ QUERY_NAMESPACE = "unified_kg_rag/query"
 QUERY_LATENCY_METRIC = "query_latency_ms"
 # Query outcomes, one count per query (read as Sum), under the same namespace
 # and dimensions: failed (no answer), degraded (answered with a part of the
-# retrieval or generation missing) and abstained (the answer says the context
-# does not hold one). The QueryFailures alarm reads the failed ones against
+# retrieval or generation missing), abstained (the answer says the context
+# does not hold one) and limited (its limits, search.query_max_*, cut it
+# short: mostly degraded, so a limit set too low is told from a failing step).
+# The QueryFailures alarm reads the failed ones against
 # the queries' latency sample count, which every --mode rag query adds to,
 # failed ones included.
 QUERY_FAILED_METRIC = "query_failed"
 QUERY_DEGRADED_METRIC = "query_degraded"
 QUERY_ABSTAINED_METRIC = "query_abstained"
+QUERY_LIMITED_METRIC = "query_limited"
 QUERY_OUTCOME_METRICS: tuple[str, ...] = (
     QUERY_FAILED_METRIC,
     QUERY_DEGRADED_METRIC,
     QUERY_ABSTAINED_METRIC,
+    QUERY_LIMITED_METRIC,
 )
 # The model requests Bedrock throttled for each query (read as Sum, on the
 # "Query outcomes" widget): this deployment's queries slowed or timed out by
@@ -217,6 +221,9 @@ NEPTUNE_REPLICA_LAG_MS = 1000
 # of throttled requests (%) the BedrockThrottling alarm fires at.
 LLM_THROTTLES_METRIC = "llm_throttles"
 LLM_REQUESTS_METRIC = "llm_requests"
+# The USD the stages' model calls cost at models.prices (pipeline_metrics,
+# emitted only when every model a stage called is priced; read as Sum).
+LLM_COST_METRIC = "llm_cost_usd"
 LLM_THROTTLED_SHARE = 10
 # The requests a 5-minute period needs before its throttled share counts:
 # a stage of a few calls (one throttled resend of 3 requests is 33%) must not
@@ -464,8 +471,9 @@ class ObservabilityStack(Stack):
         # Degradations of an incremental run that succeeded: documents left
         # for a later run, a recommended community rebuild, extraction records
         # not stored and stored items whose derived attributes are stale. On
-        # the right, the rebuild signals that grow run by run (a ratio and a
-        # run count, one value per run: their Maximum, not a Sum).
+        # the right, the rebuild signals that grow run by run (a ratio, a
+        # run count and the reasons a namespace is due for a rebuild, one
+        # value per run: their Maximum, not a Sum).
         dashboard.add_widgets(
             cw.GraphWidget(
                 title="Incremental run health (EMF)",
@@ -480,7 +488,11 @@ class ObservabilityStack(Stack):
                 ],
                 right=[
                     self._emf(name, statistic="Maximum")
-                    for name in ("community_growth_ratio", "runs_since_clustering")
+                    for name in (
+                        "community_growth_ratio",
+                        "runs_since_clustering",
+                        "rebuild_due_reasons",
+                    )
                 ],
             ),
             cw.GraphWidget(
@@ -576,6 +588,12 @@ class ObservabilityStack(Stack):
                 left=[self._emf(f"llm_throttles_{stage}") for stage in LLM_STAGES],
                 right=[self._emf(LLM_REQUESTS_METRIC)],
                 stacked=True,
+            ),
+            # What the runs' model calls cost at models.prices (none
+            # unpriced): processing.max_run_usd's counterpart.
+            cw.GraphWidget(
+                title="LLM cost (EMF, USD at models.prices)",
+                left=[self._emf(LLM_COST_METRIC)],
             ),
         )
         # One Metrics Insights query per widget: GetMetricWidgetImage (the

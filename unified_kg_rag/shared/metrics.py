@@ -40,6 +40,11 @@ QUERY_LATENCY_METRIC = "query_latency_ms"
 QUERY_FAILED_METRIC = "query_failed"
 QUERY_DEGRADED_METRIC = "query_degraded"
 QUERY_ABSTAINED_METRIC = "query_abstained"
+# A query its limits (search.query_max_*, RAGInput.limits) cut short: a step
+# left out (a degraded reason query_limit...), an abstention for the limit or
+# a refused call (error class limit_exceeded). Mostly a degradation, so
+# query_degraded alone cannot tell a limit set too low from a failing step.
+QUERY_LIMITED_METRIC = "query_limited"
 # Of the query's requests, those Bedrock throttled (its usage's
 # throttled_requests): a query slowed by throttling, told apart.
 QUERY_THROTTLED_METRIC = "query_throttled_requests"

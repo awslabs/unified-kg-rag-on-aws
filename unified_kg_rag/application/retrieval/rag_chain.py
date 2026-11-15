@@ -230,6 +230,7 @@ from unified_kg_rag.shared.metrics import (
     QUERY_DEGRADED_METRIC,
     QUERY_FAILED_METRIC,
     QUERY_LATENCY_METRIC,
+    QUERY_LIMITED_METRIC,
     QUERY_METRICS_NAMESPACE,
     QUERY_THROTTLED_METRIC,
 )
@@ -2895,6 +2896,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             ),
             QUERY_DEGRADED_METRIC: float(bool(DegradationReport.of(metadata).degraded)),
             QUERY_ABSTAINED_METRIC: float(bool(metadata.get("abstained"))),
+            QUERY_LIMITED_METRIC: float(self._query_limited(metadata, error_class)),
         }
         if usage is not None:
             metrics[QUERY_THROTTLED_METRIC] = float(
@@ -3035,6 +3037,22 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         return settings
 
     @staticmethod
+    def _query_limited(metadata: Mapping[str, Any], error_class: object) -> bool:
+        """Whether the query's limits (``_spend_settings``) cut it short, as
+        its span's ``kg_rag.query_limited`` and its ``query_limited`` metric
+        say: a call they refused (error class ``limit_exceeded``), an
+        abstention for them or a step they left out (abstention or degraded
+        reason ``query_limit``)."""
+        return (
+            error_class == ErrorClass.LIMIT_EXCEEDED
+            or metadata.get(ABSTENTION_REASON_KEY) == REASON_QUERY_LIMIT
+            or any(
+                entry.reason.startswith(REASON_QUERY_LIMIT)
+                for entry in DegradationReport.of(metadata).degraded
+            )
+        )
+
+    @staticmethod
     def _query_outcome_attributes(
         output: RAGOutput | SearchOutput,
     ) -> dict[str, Any]:
@@ -3047,6 +3065,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             # to filter on (the strategy span names the step).
             "kg_rag.degraded": bool(DegradationReport.of(metadata).degraded),
             "kg_rag.error_class": metadata.get(ERROR_CLASS_KEY),
+            # Cut short by its limits (the query_limited metric).
+            "kg_rag.query_limited": GraphRAGChain._query_limited(
+                metadata, metadata.get(ERROR_CLASS_KEY)
+            ),
         }
         if isinstance(output, RAGOutput):
             attributes["kg_rag.strategy"] = output.search_results.search_strategy

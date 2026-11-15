@@ -149,8 +149,10 @@ run-ingestion --source-directory ./source --config-path config.yaml --estimate
 
 `processing.max_run_model_calls`와 `processing.max_run_usd`(기본값 꺼짐)는 실행 하나가 쓸 수
 있는 양을 제한합니다. 한도를 넘게 될 모델 호출은 보내지 않고, 실행은
-이미 보낸 호출의 응답을 받은 뒤 멈춥니다(`RunBudgetExhausted`. `run-ingestion`은 JSON 상태에 pipeline id와 `error_class`
-`limit_exceeded`를 담아 `1`로 종료하고, 콘솔의 수집 페이지는 이어서 실행하도록 제안합니다).
+이미 보낸 호출의 응답을 받은 뒤 멈춥니다(`RunBudgetExhausted`. `run-ingestion`은 JSON 상태와 멈춤 안내 줄에 pipeline id, `error_class`
+`limit_exceeded`와 실행이 비용을 낸 호출(멈춘 단계 포함. `token_usage`, `models.prices`로 가격을 매길 수 있으면
+`cost_usd`)을 담아 `1`로 종료하고, 콘솔의 수집 페이지는 이어서 실행하도록 제안합니다. 멈춘 단계의 호출은 그 단계의
+`llm_calls_<stage>` 지표로도 게시됩니다).
 끝난 단계는 체크포인트로 남고 받은 응답은 [LLM 응답 캐시](#llm-응답-캐시)에 남습니다. 같은
 pipeline id로 다시 실행하면 멈춘 단계부터 이어서 아직 답을 받지 못한 호출만 비용을 냅니다.
 예산은 실행마다 새로 적용되고, 캐시에서 받은 응답은 호출로 세지 않고, 조회하는 동안에도 예산을 차지하지 않습니다. `max_run_usd`는

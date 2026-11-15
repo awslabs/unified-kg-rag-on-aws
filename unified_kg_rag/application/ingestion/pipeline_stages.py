@@ -3122,7 +3122,11 @@ class IndexingStage(_RegistryStage):
             for suffix, written in sorted(records.items())
             if written.communities is not None
         }
-        metrics: dict[str, Any] = {"rebuild_due": due}
+        metrics: dict[str, Any] = {
+            "rebuild_due": due,
+            # The scalar the dashboard plots (the dict above is no metric).
+            "rebuild_due_reasons": max(map(len, due.values()), default=0),
+        }
         if counters:
             metrics.update(
                 {

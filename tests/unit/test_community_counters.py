@@ -245,6 +245,8 @@ def test_the_stage_warns_once_per_suffix_with_the_numbers(caplog) -> None:
     assert sorted(metrics["rebuild_due"]) == ["default", "tenant"]
     ((reason,),) = [metrics["rebuild_due"]["default"]]
     assert (reason["kind"], reason["remedy"]) == ("communities", "reset")
+    # The count the dashboard plots (rv33 obs 4: the dict reached no metric).
+    assert metrics["rebuild_due_reasons"] == 1
 
 
 def test_the_stage_stays_quiet_below_the_thresholds(caplog) -> None:
@@ -260,5 +262,6 @@ def test_the_stage_stays_quiet_below_the_thresholds(caplog) -> None:
     assert len(caplog.records) == 1
     assert "this run's community drift recommends a rebuild" in caplog.text
     assert drifted["rebuild_due"]["default"][0]["remedy"] == "reset"
+    assert (metrics["rebuild_due_reasons"], drifted["rebuild_due_reasons"]) == (0, 1)
     assert metrics["community_growth_ratio"] == 1.1
     assert metrics["runs_since_clustering"] == 1

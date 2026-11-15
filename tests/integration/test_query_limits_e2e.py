@@ -227,3 +227,44 @@ def test_drift_keeps_its_one_action_from_the_optional_calls(
         out = _ask(chain, SearchStrategy.DRIFT, QueryLimits(max_model_calls=2), query)
         assert out.answer == ANSWER, (query, out.metadata.get("degraded"))
         assert out.metadata["usage"]["llm_calls"] == 2
+
+
+class _RecordingSink:
+    def __init__(self) -> None:
+        self.records: list[dict[str, float]] = []
+
+    def emit(
+        self,
+        namespace: str,
+        metrics: dict[str, float],
+        dimensions: dict[str, str] | None = None,
+    ) -> None:
+        self.records.append(dict(metrics))
+
+
+@pytest.mark.parametrize(
+    ("strategy", "query", "limits"),
+    [
+        (SearchStrategy.LOCAL, KOREAN, QueryLimits(max_model_calls=1)),
+        (SearchStrategy.NAIVE, ENGLISH, QueryLimits(max_input_tokens=900)),
+    ],
+)
+def test_a_query_its_limits_cut_short_is_counted_as_limited(
+    chain: GraphRAGChain,
+    strategy: SearchStrategy,
+    query: str,
+    limits: QueryLimits,
+) -> None:
+    # Regression (rv33 obs 2): a limit hit mostly degrades the answer or
+    # abstains (no limit_exceeded error), which only query_degraded counted,
+    # with rerank and extraction failures: nothing told a limit set too low.
+    from unified_kg_rag.shared.metrics import QUERY_LIMITED_METRIC
+
+    sink = _RecordingSink()
+    chain.providers.metrics_sink = sink
+    _ask(chain, strategy, QueryLimits(), query)
+    limited = _ask(chain, strategy, limits, query)
+    assert [r[QUERY_LIMITED_METRIC] for r in sink.records] == [0.0, 1.0], (
+        limited.metadata.get("degraded"),
+        limited.metadata.get("abstention_reason"),
+    )

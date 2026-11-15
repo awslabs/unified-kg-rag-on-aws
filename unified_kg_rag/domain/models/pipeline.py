@@ -343,6 +343,13 @@ class PipelineMetrics(BaseModel):
         "commits since the last full build clustered the graph (the largest "
         "of the run's suffixes)",
     )
+    rebuild_due_reasons: int = Field(
+        default=0,
+        description="Why an index namespace the run wrote is due for a "
+        "rebuild with indexing.reset (the run result's rebuild_due): the "
+        "number of reasons (the largest of the run's suffixes; 0 when none "
+        "is due)",
+    )
     total_extraction_failures: int = Field(
         default=0,
         description="Text units whose graph extraction failed (LLM error or "

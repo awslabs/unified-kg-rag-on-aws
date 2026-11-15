@@ -1386,7 +1386,7 @@ cannot catch, such as an input without `pipeline_id`, or a failed publish).
 
 | Alarm | Fires when | What to do |
 |---|---|---|
-| `PipelineFailures` | A Step Functions execution failed | Read the failure notification (execution id, error) and the task log; fix the cause and start a run with the same `pipeline_id`, which resumes from its checkpoint ([Interrupted runs](#interrupted-runs)) |
+| `PipelineFailures` | A Step Functions execution failed | Read the failure notification (execution id, error) and the task log; fix the cause and start a run with the same `pipeline_id`, which resumes from its checkpoint ([Interrupted runs](#interrupted-runs)). A run stopped at its budget (`processing.max_run_model_calls`, `processing.max_run_usd`) also exits `1`, so it fires this alarm and the same notice, which cannot tell it from a crash: the task log tells it by its `Pipeline stopped at its budget` line, and its JSON status by `error_class` `limit_exceeded` (`error_type` `RunBudgetExhausted`) with the calls the run paid for (`token_usage`, and `cost_usd` when `models.prices` prices them). Nothing failed: start the run again with the same `pipeline_id` and a higher budget, or none ([Run budget](./guides/ingest.md#run-budget-and-cost-estimate)); it pays only for the calls not yet answered |
 | `PipelineTimedOutOrAborted` | An execution hit the state machine timeout or was stopped | A timeout: raise `sfn_timeout_hours` ([Capacity sizing](#capacity-sizing)) and re-run with the same `pipeline_id`. A stop nobody intended: check CloudTrail for `StopExecution`/`StopTask` |
 | `IndexingFailures` | Indexing reported failed items, even in a succeeded execution | Find the failed writes in the task log (store errors, rejections), fix the store, and re-run with the same `pipeline_id` ([Troubleshooting: Stores](./troubleshooting.md#stores-connection-permissions-requests)) |
 | `ExtractionFailures` | Extraction, gleaning or claim extraction failed on some units | The graph is partial. Look for throttling or model errors in the log; the next incremental run retries the affected documents ([Failed documents](#failed-documents)) |
@@ -1447,7 +1447,7 @@ These fire between runs too, so degradation shows before a run breaks on it:
 
 | Alarm | Fires when | What to do |
 |---|---|---|
-| `BedrockThrottling` | At least 10% of this deployment's model requests were throttled in a 5-minute period of 50 requests or more (`llm_throttles` over `llm_requests`, the app's own usage accounting as each stage finishes, the embedding and rerank models' requests included; a smaller period reads 0, so a stage of a few calls does not page; other Bedrock users in the account do not count, and it works with any `bedrock_region`) | Throttled requests are retried, so the run slows rather than fails: lower `processing.max_concurrency` or ask for a higher quota. The dashboard's "LLM throttled requests by stage" widget shows which stage, and its account-wide "Bedrock throttles" widget whether other callers share the quota |
+| `BedrockThrottling` | At least 10% of this deployment's model requests were throttled in a 5-minute period of 50 requests or more (`llm_throttles` over `llm_requests`, the app's own usage accounting as each stage finishes, the embedding and rerank models' requests included; a smaller period reads 0, so a stage of a few calls does not page; other Bedrock users in the account do not count, and it works with any `bedrock_region`) | Throttled requests are retried, so the run slows rather than fails: lower `processing.max_concurrency` or ask for a higher quota. Each request makes up to `retry.model.client_max_attempts` (default 6) botocore attempts, and an extraction item that still fails is retried with long waits under `retry.ingestion_item` (5 attempts, waits up to 120 s), so a run that throttles for long fails only after those; raise them to ride out a longer burst. The dashboard's "LLM throttled requests by stage" widget shows which stage, and its account-wide "Bedrock throttles" widget whether other callers share the quota |
 | `IngestionTaskMemory` | The ingestion task used at least 90% of its memory for 3 minutes (Container Insights) | Fargate kills a task over its memory, losing the running stage: raise `fargate_memory` ([Capacity sizing](#capacity-sizing)) |
 | `QueryTaskMemory` | The query task (`run-rag`, `run-eval`) used at least 90% of its memory for 3 minutes (Container Insights) | The task is killed over its memory, with the `run-eval` run in it: raise `fargate_memory` (both task definitions share it) |
 | `IngestionTaskEphemeralStorage` | The ingestion task used at least 90% of its ephemeral storage (image included) for 5 minutes (Container Insights) | A full disk fails the running stage: raise `ingestion_ephemeral_storage_gib` (up to 200) |
@@ -1460,7 +1460,8 @@ These fire between runs too, so degradation shows before a run breaks on it:
 | `QueryFailures` | At least 10% of queries failed (`query_failed` against the count of `query_latency_ms` values), in 5-minute periods of at least 10 queries, in 2 of 3 of them | A fast failure (store or rerank access denied, an empty context) lowers the p90 instead of raising it, so this alarm, not `QueryLatencyHigh`, shows it: read the failing queries' errors in the log |
 
 `GraphRAGChain` publishes each answer's `query_latency_ms` and its outcome
-(`query_failed`, `query_degraded`, `query_abstained`: 0 or 1) through the
+(`query_failed`, `query_degraded`, `query_abstained`, `query_limited`: 0 or
+1) through the
 metrics sink of its `Providers` (`--metrics-sink cloudwatch` of `run-rag`,
 `run-mcp-server`, whose EMF goes to stderr, and `run-console`; with
 `--output-format json` the EMF goes to stderr too; a serving
@@ -1475,16 +1476,28 @@ empty question; `limit_exceeded`: a query that needs more model calls or
 input tokens than its limits allow) is not counted in `query_failed`, so a
 client's mistake does not page; every failure names its class in the
 record's `error_class` property. A server limit set too low
-(`search.query_max_*`) therefore raises no alarm: watch the records whose
-`error_class` is `limit_exceeded`. A cancelled query (an MCP client that disconnects, a task
+(`search.query_max_*`) therefore raises no alarm, and its hits are mostly no
+error at all: a query its limits cut short answers without the steps that did
+not fit (a degraded reason that starts with `query_limit`) or declines
+(`abstention_reason` `query_limit`), counted in `query_degraded` with steps
+that failed. `query_limited` is 1 for each of those and for a call the limits
+refused (`limit_exceeded`), and the query span carries it as
+`kg_rag.query_limited`: watch it on the "Query outcomes" widget, and raise
+the limit when it grows. A cancelled query (an MCP client that disconnects, a task
 cancelled by its host) records nothing. `query_throttled_requests` counts
 the requests Bedrock throttled for the query, which tells a query slowed by
 throttling apart. They go under `unified_kg_rag/query` with the task's
 `Environment` and the `Strategy` that ran (the requested one for a query
 that failed before one did; `invalid` for a refused input that names no
-strategy), the `namespace` as a log property (the key of the ingestion
-records too). `QueryFailures` and the "Query outcomes" widget (the outcomes
-and `query_throttled_requests`, as sums) read them; where no surface
+strategy). Their log properties, for Logs Insights (no metric dimension,
+each a billed series): the `namespace` (the key of the ingestion records too),
+a failure's `error_class`, and what the query was let spend, each when set:
+its answer's `effort` and the limits in force, `limits.max_model_calls` and
+`limits.max_input_tokens` (the config's, lowered by its own; the query span
+carries them as `kg_rag.effort` and `kg_rag.limits.*`). A record with
+`query_limited` 1 thus names the limit that cut it, and cost reads by effort
+level. `QueryFailures` and the "Query outcomes" widget (the outcomes,
+`query_limited` included, and `query_throttled_requests`, as sums) read them; where no surface
 publishes them, the alarm stays OK and the widget empty.
 
 The dashboard also lists every alarm's state, plots the stores' own signals
@@ -1497,7 +1510,7 @@ calls, throttles and latency by model, query latency, the document outcomes
 of each run (failed, skipped, excluded, deleted, retrying, without claims),
 the incremental degradations no alarm watches
 (`total_documents_deferred`, `community_rebuild_recommended`,
-`community_growth_ratio`, `runs_since_clustering`,
+`community_growth_ratio`, `runs_since_clustering`, `rebuild_due_reasons`,
 `total_records_not_stored`, `underived_items`), and a partial RAPTOR summary
 tree (`total_tree_summaries_failed`, `total_tree_uncovered_leaves`; emitted
 as the `summary_tree` stage finishes).
@@ -1532,6 +1545,7 @@ same counts in `token_usage`:
 | `llm_output_tokens_<stage>` | Output tokens the responses reported |
 | `llm_throttles_<stage>` | Requests Bedrock throttled (HTTP 429), each attempt once: resent inside a call or the last attempt of a failed one; the language, embedding and rerank models' alike |
 | `llm_throttles`, `llm_requests` | The throttled requests and every request sent to Bedrock (each attempt once, the embedding and rerank models' too: `sent_requests` in `token_usage`), summed over the stages: `BedrockThrottling` reads their ratio |
+| `llm_cost_usd` | The USD the stage's model calls cost at `models.prices` (`usage_cost_usd`), only when every model it called has a price, summed over the stages by the "LLM cost" widget: the counterpart of `processing.max_run_usd` |
 | `llm_cache_hits` | Responses the run's LLM response cache served instead of a call (a resumed stage), chunk-boundary and community report answers the extraction store served, and description summaries a full build took from their stored copies, summed over the stages |
 
 To check them against Bedrock's own counts, compare a run's sums with the
@@ -1595,8 +1609,10 @@ A query has two bounds ([Querying](./guides/query.md#query-deadline)):
   stalled call fails after about `model_max_attempts x model_timeout_seconds`.
   A stream must also send its first chunk within `model_timeout_seconds`.
 
-Ingestion calls use their own client: a 330 s read timeout and 6 botocore
-attempts, bounded by `BatchProcessor`'s 300 s call timeout.
+Ingestion calls use their own client: a 330 s read timeout and
+`retry.model.client_max_attempts` (default 6) botocore attempts, bounded by
+`BatchProcessor`'s 300 s call timeout; an item that still fails is retried
+under `retry.ingestion_item`.
 
 **Tuning.**
 

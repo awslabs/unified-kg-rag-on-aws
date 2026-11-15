@@ -373,3 +373,32 @@ def test_throttled_requests_are_emitted_even_when_every_call_failed() -> None:
     )
     assert failed["llm_calls_graph_extraction"] == 0
     assert stage_usage_metrics(context({}), "graph_extraction") == {}
+
+
+def test_a_priced_stage_emits_what_its_calls_cost() -> None:
+    # rv33 obs 8: processing.max_run_usd had no dashboard counterpart.
+    from types import SimpleNamespace
+
+    from unified_kg_rag.application.ingestion.pipeline_metrics import (
+        LLM_COST_METRIC,
+        LLM_USAGE_METRIC,
+        stage_usage_metrics,
+    )
+    from unified_kg_rag.domain.pricing import ModelPrice
+
+    counts = {"llm_calls": 2, "input_tokens": 500_000, "output_tokens": 100_000}
+    usage = {**counts, "by_model": {"model-a": counts}}
+    context = SimpleNamespace(
+        stage_results=[
+            SimpleNamespace(
+                stage_name="graph_extraction", metrics={LLM_USAGE_METRIC: usage}
+            )
+        ]
+    )
+    price = ModelPrice(input_per_million_tokens=2.0, output_per_million_tokens=10.0)
+    priced = stage_usage_metrics(context, "graph_extraction", {"model-a": price})
+    assert priced[LLM_COST_METRIC] == 2.0
+    # Unpriced (no prices, or a model without one): no cost, never a 0.
+    assert LLM_COST_METRIC not in stage_usage_metrics(context, "graph_extraction")
+    other = stage_usage_metrics(context, "graph_extraction", {"model-b": price})
+    assert LLM_COST_METRIC not in other

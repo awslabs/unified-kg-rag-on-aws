@@ -25,6 +25,7 @@ from iac.stacks.observability_stack import (
     QUERY_DEGRADED_METRIC,
     QUERY_FAILED_METRIC,
     QUERY_LATENCY_METRIC,
+    QUERY_LIMITED_METRIC,
     QUERY_NAMESPACE,
     QUERY_THROTTLED_METRIC,
     SUMMARY_TREE_METRICS,
@@ -284,7 +285,7 @@ def test_emf_metric_names_are_pipeline_metrics_fields() -> None:
         f"llm_{kind}_{stage}"
         for kind in ("calls", "input_tokens", "output_tokens", "throttles")
         for stage in _pipeline_stages()
-    } | {"llm_cache_hits", "llm_throttles", "llm_requests"}
+    } | {"llm_cache_hits", "llm_throttles", "llm_requests", "llm_cost_usd"}
     fields = _pipeline_metric_fields()
     # Every document outcome is a PipelineMetrics field (a name drifted from
     # DOCUMENT_METRICS would alarm on a series nobody emits).
@@ -408,6 +409,19 @@ def test_bedrock_throttling_alarms_on_this_deployments_share() -> None:
         assert (alarm["Threshold"], alarm["EvaluationPeriods"]) == (10, 1)
         assert alarm["TreatMissingData"] == "notBreaching"
         assert len(alarm["AlarmActions"]) == 1
+
+
+def test_the_dashboard_plots_the_runs_model_cost() -> None:
+    # rv33 obs 8: processing.max_run_usd had no dashboard counterpart. The
+    # name is the one the package emits.
+    from iac.stacks.observability_stack import LLM_COST_METRIC
+
+    source = (_PACKAGE / "application" / "ingestion" / "pipeline_metrics.py").read_text(
+        encoding="utf-8"
+    )
+    assert f'LLM_COST_METRIC = "{LLM_COST_METRIC}"' in source
+    body = json.dumps(_dashboard_body(_template()))
+    assert f'"{EMF_NAMESPACE}", "{LLM_COST_METRIC}"' in body
 
 
 def test_ingestion_task_memory_alarms() -> None:
@@ -654,6 +668,7 @@ def test_query_latency_alarm_reads_the_run_rag_metric() -> None:
         ("FAILED", QUERY_FAILED_METRIC),
         ("DEGRADED", QUERY_DEGRADED_METRIC),
         ("ABSTAINED", QUERY_ABSTAINED_METRIC),
+        ("LIMITED", QUERY_LIMITED_METRIC),
         ("THROTTLED", QUERY_THROTTLED_METRIC),
     ):
         assert f'QUERY_{name}_METRIC = "{metric}"' in source
