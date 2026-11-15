@@ -29,6 +29,7 @@
   "common.next": "次へ",
   "common.range": "{{total}} 件中 {{from}}–{{to}}",
   "common.listSeparator": "、",
+  "common.sentenceSeparator": "",
   "common.goIngest": "取り込みへ移動",
   "ask.title": "質問",
   "ask.lede": "ナレッジグラフに質問します。どの回答にも参照したソースが表示され、各ソースから元のパッセージとグラフ上の位置をたどれます。",

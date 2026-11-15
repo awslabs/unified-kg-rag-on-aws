@@ -31,6 +31,7 @@
   "common.next": "Suivant",
   "common.range": "{{from}}–{{to}} sur {{total}}",
   "common.listSeparator": ", ",
+  "common.sentenceSeparator": " ",
   "common.goIngest": "Aller à Ingestion",
   "ask.title": "Interroger",
   "ask.lede": "Posez une question au graphe de connaissances. Chaque réponse liste les sources qu’elle a lues, et chaque source renvoie à son passage et à sa place dans le graphe.",

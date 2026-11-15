@@ -32,6 +32,7 @@
   "common.next": "Далее",
   "common.range": "{{from}}–{{to}} из {{total}}",
   "common.listSeparator": ", ",
+  "common.sentenceSeparator": " ",
   "common.goIngest": "Перейти к загрузке",
   "ask.title": "Вопросы",
   "ask.lede": "Задайте вопрос графу знаний. В каждом ответе перечислены прочитанные источники, и каждый источник ведёт к своему фрагменту и к своему месту в графе.",

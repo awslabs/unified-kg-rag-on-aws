@@ -29,6 +29,7 @@
   "common.next": "다음",
   "common.range": "{{total}}개 중 {{from}}–{{to}}",
   "common.listSeparator": ", ",
+  "common.sentenceSeparator": " ",
   "common.goIngest": "수집으로 이동",
   "ask.title": "질문",
   "ask.lede": "지식 그래프에 질문하세요. 모든 답변에는 참고한 출처가 표시되고, 각 출처에서 원래 구절과 그래프상의 위치를 확인할 수 있습니다.",

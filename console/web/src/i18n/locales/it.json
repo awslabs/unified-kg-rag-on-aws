@@ -31,6 +31,7 @@
   "common.next": "Successivo",
   "common.range": "{{from}}–{{to}} di {{total}}",
   "common.listSeparator": ", ",
+  "common.sentenceSeparator": " ",
   "common.goIngest": "Vai a Ingestione",
   "ask.title": "Chiedi",
   "ask.lede": "Fai una domanda al knowledge graph. Ogni risposta elenca le fonti che ha letto, e ogni fonte riporta al suo passaggio e alla sua posizione nel grafo.",

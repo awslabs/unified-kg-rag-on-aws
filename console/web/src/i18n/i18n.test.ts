@@ -44,7 +44,9 @@ describe.each(Object.keys(LOCALES) as Locale[])("the %s catalog", (locale) => {
       const plural = PLURAL.test(key);
       const strip = (names: string[]) => (plural ? names.filter((n) => n !== "count") : names);
       expect(strip(placeholders(text)), key).toEqual(strip(placeholders(source as string)));
-      expect(text.trim(), key).not.toBe("");
+      // A separator may be a space or nothing (common.sentenceSeparator in
+      // Japanese and Chinese, whose "。" sets a sentence off).
+      if (!key.endsWith("Separator")) expect(text.trim(), key).not.toBe("");
     }
   });
 });

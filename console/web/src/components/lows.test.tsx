@@ -182,6 +182,13 @@ describe("a query's limits, a run's budget and deprecated keys", () => {
     const both = partialHelp([failed, skipped, structured], en);
     expect(both).toMatch(/^The answer was given without some steps that failed: store search\. .* Some steps were skipped to stay within the query's limits: query translation, /);
     for (const text of [partialHelp([skipped], ko), partialHelp([failed], ko)]) expect(text).not.toMatch(/ask\./);
+    // Japanese and Chinese set a sentence off by its "。", with no space
+    // after it (rv35).
+    for (const locale of ["ja", "zh"] as const) {
+      const text = partialHelp([failed, skipped], makeI18n(locale, () => undefined).t);
+      expect(text, locale).toMatch(/。\S/);
+      expect(text, locale).not.toMatch(/。 /);
+    }
   });
 
   it("says the limits, not the filters, left auto one strategy", () => {
@@ -201,6 +208,11 @@ describe("a query's limits, a run's budget and deprecated keys", () => {
         expect(note).toContain("mix, global");
         expect(note).not.toMatch(/ask\./);
       }
+    }
+    for (const locale of ["ja", "zh"] as const) {
+      const note = routingNote(routed, "local", makeI18n(locale, () => undefined).t);
+      expect(note, locale).toMatch(/。\S/);
+      expect(note, locale).not.toMatch(/。 /);
     }
   });
 

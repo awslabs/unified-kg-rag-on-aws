@@ -30,6 +30,7 @@
   "common.next": "Weiter",
   "common.range": "{{from}}–{{to}} von {{total}}",
   "common.listSeparator": ", ",
+  "common.sentenceSeparator": " ",
   "common.goIngest": "Zum Import",
   "ask.title": "Fragen",
   "ask.lede": "Stellen Sie dem Wissensgraphen eine Frage. Jede Antwort listet die gelesenen Quellen auf, und jede Quelle führt zurück zu ihrer Passage und ihrer Stelle im Graphen.",
