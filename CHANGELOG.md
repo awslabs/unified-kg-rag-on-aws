@@ -99,7 +99,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   defaults to its caller's 0.3.0 values, so nothing waits otherwise; the ingestion item backoff (30 s doubling to 120 s,
   which ignored the section), the OpenSearch and Neptune query, bulk-item and DynamoDB batch backoffs, fixed in code
   before, are set there now, and every caller draws its waits with one backoff function. A profile set in part keeps its
-  own defaults.
+  own defaults. The clients' own retries stacked under them are set there too: `client_max_attempts` of `retry.model`
+  (botocore's requests per Bedrock call of ingestion and evaluation) and of `retry.bulk_item` (the OpenSearch indexing
+  client's), both 6, their 0.3.0 counts.
 
 ### Changed
 

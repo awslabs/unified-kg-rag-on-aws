@@ -52,7 +52,11 @@ server), `graph_store` (Neptune and Gremlin indexer requests), `query_store`
 `jitter`) and a wall-clock budget (`max_total_seconds`), and keeps its own
 defaults for the keys it leaves out; `judge_max_attempts` counts the RAGAS
 judge's attempts. Every attempt count includes the first attempt; `1`
-disables the retry. The flat keys of earlier configs (`retry.max_attempts`,
+disables the retry. Two callers' clients also retry on their own inside each
+attempt, and the counts stack: `retry.model.client_max_attempts` (6) is
+botocore's requests per Bedrock call of ingestion and evaluation (a query
+call's is `search.model_max_attempts`), `retry.bulk_item.client_max_attempts`
+(6) the OpenSearch indexing client's. The flat keys of earlier configs (`retry.max_attempts`,
 `retry.base_delay_seconds`, ...) still load, with a WARNING, into every
 profile each one governed
 ([Deprecated keys](../reference/configuration.md#deprecated-keys)); set the

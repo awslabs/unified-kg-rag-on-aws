@@ -64,12 +64,6 @@ _sleep = time.sleep
 RETRYABLE_STATUSES = frozenset({429, 502, 503, 504})
 
 
-# Transport retries of the sync (indexing) client, whose per-request timeout
-# is INDEXING_REQUEST_TIMEOUT_SECONDS. The async client serves queries and
-# takes search.store_timeout_seconds and retry.query_store instead: a
-# hung cluster blocked a query for 6 x 180 s before it answered from no
-# context.
-_CLIENT_MAX_RETRIES = 5
 # Per-attempt timeout of the connection check (ping, then cluster info) that
 # opens the sync client (the store preflight's first requests): a cluster that accepts connections
 # but never answers failed it after 6 x INDEXING_REQUEST_TIMEOUT_SECONDS
@@ -646,13 +640,26 @@ class OpenSearchClient:
             # Both clients retry timeouts and 429s: with opensearch-py's
             # defaults (retry_on_timeout=False, retry_on_status=(502, 503,
             # 504)) a 429 (throttling) would surface as a TransportError. The
-            # async (query) client's attempts are made by _aquery, with a
-            # backoff between them.
-            "max_retries": 0 if async_mode else _CLIENT_MAX_RETRIES,
+            # sync (indexing) client, whose per-request timeout is
+            # INDEXING_REQUEST_TIMEOUT_SECONDS, makes
+            # retry.bulk_item.client_max_attempts requests back to back; the
+            # async (query) client's attempts are made by _aquery under
+            # retry.query_store, with a backoff between them (its own
+            # retries held a hung cluster's query for 6 x 180 s).
+            **self._client_retries(async_mode),
             "retry_on_timeout": True,
             "retry_on_status": RETRYABLE_STATUSES,
             **({"pool_maxsize": self._query_pool_size()} if async_mode else {}),
         }
+
+    def _client_retries(self, async_mode: bool) -> dict[str, int]:
+        """opensearch-py's ``max_retries``: none on the query client, the
+        requests after the first of ``retry.bulk_item.client_max_attempts``
+        on the indexing client (unset: the library's default)."""
+        if async_mode:
+            return {"max_retries": 0}
+        attempts = self.config.retry.bulk_item.client_max_attempts
+        return {} if attempts is None else {"max_retries": attempts - 1}
 
     def _query_pool_size(self) -> int:
         """The async client's connection limit under the configured concurrency."""

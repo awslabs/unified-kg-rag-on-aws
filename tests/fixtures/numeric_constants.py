@@ -114,7 +114,6 @@ ALLOWED: dict[str, str] = {
     ),
     **_reason(
         OPERATIONAL,
-        "adapters/aws/opensearch.py:_CLIENT_MAX_RETRIES",
         "adapters/aws/opensearch.py:_PING_TIMEOUT_SECONDS",
         "adapters/aws/opensearch.py:_QUERY_SEARCHES_PER_QUERY",
         "adapters/aws/opensearch.py:_QUERY_POOL_MIN",

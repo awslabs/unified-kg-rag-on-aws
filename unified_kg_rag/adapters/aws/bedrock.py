@@ -177,7 +177,6 @@ class BaseBedrockModelFactory(Generic[ModelIdT, ModelInfoT, WrapperT], ABC):
     # prompt, retryable error — which callers that degrade gracefully (e.g. the
     # hybrid scorer's rerank fallback to RRF-only) can actually catch.
     BOTO_CONNECT_TIMEOUT: ClassVar[int] = 10
-    BOTO_MAX_ATTEMPTS: ClassVar[int] = 5
     # "adaptive" adds client-side rate limiting on top of retries, which is
     # materially better for throttling-heavy Bedrock workloads than "standard".
     BOTO_RETRY_MODE: ClassVar[Literal["legacy", "standard", "adaptive"]] = "adaptive"
@@ -205,14 +204,14 @@ class BaseBedrockModelFactory(Generic[ModelIdT, ModelInfoT, WrapperT], ABC):
     ) -> BotoConfig:
         # botocore accepts a plain retries dict at runtime; its stub uses a
         # private _RetryDict that a local dict does not nominally satisfy.
-        # max_attempts counts the retries after the first request (6 requests
-        # in all); total_max_attempts counts the first one too.
-        retries: dict[str, Any] = (
-            {"max_attempts": self.BOTO_MAX_ATTEMPTS}
-            if total_max_attempts is None
-            else {"total_max_attempts": total_max_attempts}
-        )
-        retries["mode"] = self.BOTO_RETRY_MODE
+        # total_max_attempts counts the first request too: a query client's
+        # search.model_max_attempts, else retry.model.client_max_attempts
+        # (unset: botocore's default).
+        if total_max_attempts is None:
+            total_max_attempts = self.config.retry.model.client_max_attempts
+        retries: dict[str, Any] = {"mode": self.BOTO_RETRY_MODE}
+        if total_max_attempts is not None:
+            retries["total_max_attempts"] = total_max_attempts
         if read_timeout is not None:
             return BotoConfig(
                 connect_timeout=self.BOTO_CONNECT_TIMEOUT,

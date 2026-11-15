@@ -44,7 +44,10 @@ Ollama), `graph_store`(Neptune·Gremlin 인덱서 요청), `query_store`(OpenSea
 프로필마다 `max_attempts`, 백오프(`base_delay_seconds`, `max_delay_seconds`, `jitter`)와
 실행 시간 한도(`max_total_seconds`)를 정하고, 지정하지 않은 키는 그 프로필의 기본값을
 유지합니다. `judge_max_attempts`는 RAGAS 평가 모델의 시도 횟수입니다. 시도 횟수는 모두 첫
-시도를 포함하며, `1`이면 재시도하지 않습니다. 이전 설정의 평면 키(`retry.max_attempts`,
+시도를 포함하며, `1`이면 재시도하지 않습니다. 두 호출자는 클라이언트도 시도마다 자체 재시도를 하고, 그
+횟수는 곱해집니다. `retry.model.client_max_attempts`(6)는 수집·평가용 Bedrock 호출 하나에 botocore가
+보내는 요청 수이고(질의 호출은 `search.model_max_attempts`), `retry.bulk_item.client_max_attempts`(6)는
+OpenSearch 인덱싱 클라이언트의 요청 수입니다. 이전 설정의 평면 키(`retry.max_attempts`,
 `retry.base_delay_seconds`, ...)는 지원 중단(deprecation) WARNING과 함께 각 키가 맡던 모든 프로필에
 그대로 적용됩니다([Deprecated keys](../reference/configuration.md#deprecated-keys), 영문). 프로필 키로
 바꾸세요.

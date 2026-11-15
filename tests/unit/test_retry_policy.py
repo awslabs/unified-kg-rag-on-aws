@@ -59,7 +59,7 @@ def test_every_profile_is_pinned() -> None:
 def test_a_profile_set_in_part_keeps_its_own_defaults() -> None:
     retry = Config(retry={"graph_store": {"max_attempts": 6}}).retry
     assert _values(retry.graph_store) == (6, 2.0, None, None, "full")
-    assert retry.model == RetryPolicy()
+    assert retry.model == RetryPolicy(**RETRY_PROFILES["model"])
 
 
 def test_a_profile_rejects_an_unknown_key() -> None:
@@ -217,3 +217,59 @@ def test_bulk_items_are_resent_under_the_bulk_item_profile(mocker) -> None:
     client._bulk_with_item_retries([{"_id": "a"}], lambda ok, _: ok)
     assert sent == [1, 1]  # max_attempts rounds in all
     assert sleep.call_count == 1
+
+
+# --- the service clients' own attempts, stacked under the profiles ------------
+
+
+def test_the_client_attempts_default_to_the_clients_former_counts() -> None:
+    # botocore's max_attempts 5 (6 requests) on every non-query Bedrock
+    # client, opensearch-py's max_retries 5 on the indexing client.
+    retry = Config().retry
+    assert retry.model.client_max_attempts == 6
+    assert retry.bulk_item.client_max_attempts == 6
+    for name in RETRY_PROFILES.keys() - {"model", "bulk_item"}:
+        assert getattr(retry, name).client_max_attempts is None, name
+
+
+@pytest.mark.parametrize(
+    "factory_name",
+    [
+        "BedrockLanguageModelFactory",
+        "BedrockEmbeddingModelFactory",
+        "BedrockRerankModelFactory",
+    ],
+)
+def test_a_bedrock_client_makes_the_model_profiles_requests(factory_name: str) -> None:
+    from unified_kg_rag.adapters.aws import bedrock as bedrock_mod
+
+    factory_cls = getattr(bedrock_mod, factory_name)
+    factory = factory_cls.__new__(factory_cls)
+    factory.config = Config(retry={"model": {"client_max_attempts": 3}})
+    retries = factory._boto_config(read_timeout=300).retries
+    assert retries["total_max_attempts"] == 3
+    assert "max_attempts" not in retries
+    # A query client keeps search.model_max_attempts.
+    query = factory._boto_config(read_timeout=30, total_max_attempts=2).retries
+    assert query["total_max_attempts"] == 2
+
+
+def test_the_opensearch_indexing_client_makes_the_bulk_item_profiles_requests() -> None:
+    client = opensearch_mod.OpenSearchClient.__new__(opensearch_mod.OpenSearchClient)
+    client.config = Config(
+        aws={"opensearch": {"endpoint": "search.example"}},
+        retry={"bulk_item": {"client_max_attempts": 2}},
+    )
+    client.opensearch_config = client.config.aws.opensearch
+    client._get_auth = lambda async_mode: None  # type: ignore[method-assign]
+    assert client._get_base_connection_params(async_mode=False)["max_retries"] == 1
+    # The query client's attempts are retry.query_store's own.
+    assert client._get_base_connection_params(async_mode=True)["max_retries"] == 0
+
+
+@pytest.mark.parametrize("profile", ["ingestion_item", "query_store", "graph_store"])
+def test_a_profile_whose_client_retries_nothing_refuses_client_attempts(
+    profile: str,
+) -> None:
+    with pytest.raises(ValueError, match=f"retry.{profile}.client_max_attempts"):
+        Config(retry={profile: {"client_max_attempts": 3}})

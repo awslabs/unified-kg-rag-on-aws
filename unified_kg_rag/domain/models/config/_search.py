@@ -241,7 +241,7 @@ class SearchConfig(ConfigSection):
         description=(
             "Attempts, including the first, that botocore makes for one "
             "query-time Bedrock request (read timeouts, throttling, 5xx); "
-            "ingestion clients make 6. With model_timeout_seconds it bounds a"
+            "ingestion clients make retry.model.client_max_attempts. With model_timeout_seconds it bounds a"
             " stalled call to about model_max_attempts x "
             "model_timeout_seconds. Throttling and model errors past it are "
             "retried with backoff within the retry section's budget "

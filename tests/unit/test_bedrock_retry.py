@@ -216,5 +216,7 @@ def test_embedding_factory_applies_configured_policy(mocker) -> None:
 
 def test_the_model_profile_is_the_policy_default() -> None:
     # The Bedrock embedding and query-time policy a custom factory gets from
-    # RetryPolicy() is the retry.model profile.
-    assert Config().retry.model == RetryPolicy()
+    # RetryPolicy() is the retry.model profile's (its client_max_attempts
+    # sizes the package's own Bedrock clients, which a custom factory has not).
+    model = Config().retry.model
+    assert model.model_copy(update={"client_max_attempts": None}) == RetryPolicy()

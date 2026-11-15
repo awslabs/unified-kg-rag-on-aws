@@ -185,6 +185,22 @@ class RetryPolicy(ConfigSection):
         ),
         json_schema_extra=evidence("operational"),
     )
+    client_max_attempts: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Requests the service's own client makes for one attempt, the "
+            "first included, retrying throttling, 5xx and timeouts itself "
+            "before this profile's backoff: botocore's total_max_attempts on "
+            "the Bedrock clients of ingestion and evaluation calls "
+            "(retry.model; query-time calls take search.model_max_attempts), "
+            "opensearch-py's max_retries + 1, back to back, on the OpenSearch "
+            "indexing client (retry.bulk_item). The two stack: a call can make "
+            "max_attempts x client_max_attempts requests. Set only on those "
+            "two profiles; null leaves the client its library default."
+        ),
+        json_schema_extra=evidence("operational"),
+    )
     jitter: RetryJitter = Field(
         default="equal",
         description=(
@@ -210,7 +226,7 @@ TransientRetryConfig = RetryPolicy
 # values before the section had profiles. A profile a config sets in part
 # keeps its own defaults for the rest (RetryConfig._profile_defaults).
 RETRY_PROFILES: dict[str, dict[str, Any]] = {
-    "model": {},
+    "model": {"client_max_attempts": 6},
     "ingestion_item": {
         "base_delay_seconds": 30.0,
         "max_delay_seconds": 120.0,
@@ -234,6 +250,7 @@ RETRY_PROFILES: dict[str, dict[str, Any]] = {
         "base_delay_seconds": 1.0,
         "max_delay_seconds": 30.0,
         "max_total_seconds": None,
+        "client_max_attempts": 6,
     },
     "registry_batch": {
         "max_attempts": 8,
@@ -243,6 +260,10 @@ RETRY_PROFILES: dict[str, dict[str, Any]] = {
         "jitter": "none",
     },
 }
+
+
+# The profiles whose caller's client retries on its own (client_max_attempts).
+_CLIENT_PROFILES = frozenset({"model", "bulk_item"})
 
 
 def _profile(name: str) -> Any:
@@ -350,6 +371,18 @@ class RetryConfig(ConfigSection):
             )
             for key, value in data.items()
         }
+
+    @model_validator(mode="after")
+    def _client_attempts_where_a_client_retries(self) -> "RetryConfig":
+        for name in RETRY_PROFILES.keys() - _CLIENT_PROFILES:
+            if getattr(self, name).client_max_attempts is not None:
+                raise ValueError(
+                    f"retry.{name}.client_max_attempts: that caller's client "
+                    "makes one request per attempt; only "
+                    + " and ".join(f"retry.{p}" for p in sorted(_CLIENT_PROFILES))
+                    + " set one"
+                )
+        return self
 
 
 class BedrockConfig(ConfigSection):
