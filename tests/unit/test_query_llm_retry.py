@@ -10,6 +10,7 @@ delays are configured to zero so no test waits.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Iterator
 from typing import Any
 
@@ -278,8 +279,8 @@ def test_non_bedrock_factory_gets_no_chain_retry() -> None:
 # --- end-to-end through GraphRAGChain -------------------------------------
 
 
-def _rag_chain(model: _ScriptedModel) -> GraphRAGChain:
-    config = _config()
+def _rag_chain(model: _ScriptedModel, config: Config | None = None) -> GraphRAGChain:
+    config = config or _config()
     retriever = StaticRetriever(
         [hit("Vendor ships parts to Buyer under the supply agreement.")]
     )
@@ -358,3 +359,37 @@ async def test_chain_run_is_named_after_its_prompt(purpose: ModelPurpose) -> Non
     chain = _query_chain(_ScriptedModel(), purpose=purpose)
     await chain.ainvoke(_QUERY, {"callbacks": [names]})
     assert names.names == ["StrategySelectionPrompt"]
+
+
+# --- a stream's first-chunk window bounds its retries -----------------------
+
+_LONG_BACKOFF = RetryPolicy(
+    max_attempts=3, base_delay_seconds=30.0, max_delay_seconds=30.0
+)
+
+
+async def _consume(chain: GraphRAGChain, surface: str) -> None:
+    if surface == "astream":
+        async for _ in chain.astream(_RAG_INPUT):
+            pass
+    else:
+        async for _ in chain.aquery_events(_RAG_INPUT):
+            pass
+
+
+@pytest.mark.parametrize("surface", ["astream", "aquery_events"])
+async def test_a_retry_past_the_first_chunk_window_raises_the_model_error(
+    surface: str,
+) -> None:
+    # Regression (rv33): the first-chunk window moved only the asyncio
+    # timeout, so a backoff that crossed it was taken and the stream failed
+    # as a timeout. No retry starts that cannot reach a first chunk in time:
+    # the model's error is raised, at once, as unstreamed.
+    config = _config(_LONG_BACKOFF)
+    config.search.query_timeout_seconds = 600
+    config.search.model_timeout_seconds = 1.0
+    model = _ScriptedModel([_model_error()])
+    chain = _rag_chain(model, config)
+    with pytest.raises(ClientError):
+        await asyncio.wait_for(_consume(chain, surface), timeout=30)
+    assert model.calls == 1

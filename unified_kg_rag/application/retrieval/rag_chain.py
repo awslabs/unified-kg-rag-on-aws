@@ -4698,16 +4698,20 @@ class _DeadlineScope:
     def first_chunk_within(self, seconds: float) -> Iterator[None]:
         """Bound the block (a stream's wait for its first chunk) to
         ``seconds`` too: the deadline moves up while it runs, when that is
-        earlier, and back after it."""
+        earlier, and back after it. No transient retry starts in it that
+        could not end by then either (``retry_deadline``): the model's error
+        is raised, not a first-chunk timeout after a backoff."""
         timeout, at = self._timeout, self._deadline.at
-        if timeout is None or at is None or time.monotonic() + seconds >= at:
+        now = time.monotonic()
+        if timeout is None or at is None or now + seconds >= at:
             yield
             return
         loop = asyncio.get_running_loop()
         timeout.reschedule(loop.time() + seconds)
         self._first_chunk_seconds = seconds
         try:
-            yield
+            with retry_deadline(now + seconds):
+                yield
         finally:
             if not timeout.expired():
                 self._first_chunk_seconds = None
