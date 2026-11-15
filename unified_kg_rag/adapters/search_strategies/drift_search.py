@@ -112,6 +112,12 @@ class DriftSearchStrategy(BaseSearchStrategy):
         # The query expansion, a primer call per fold and one action.
         return 1 + config.search.drift_search.primer_folds + 1
 
+    @classmethod
+    def answering_model_calls(cls, config: Config) -> int:
+        # One action: the expansion and the primer are optional, and the
+        # question itself is followed up without them.
+        return 1
+
     def __init__(
         self,
         config: Config,
@@ -222,10 +228,13 @@ class DriftSearchStrategy(BaseSearchStrategy):
             # which reads the answers so far; the rounds end with them, and
             # each reads an even share of what is left.
             answer_tokens = self._answer_tokens(answers)
+            # Each action reads its follow-up besides the question.
+            follow_ups = [estimate_token_count(q) for q in batch]
             fit = self._calls_within_limits(
                 DriftActionPrompt,
-                [self._min_context_tokens] * len(batch),
-                reserve_tokens=answer_tokens,
+                query,
+                [tokens + self._min_context_tokens for tokens in follow_ups],
+                answer_context=answer_tokens,
             )
             if fit < len(batch):
                 self._record_limit_stop(DegradationStep.DRIFT_ACTION, fit, len(batch))
@@ -240,8 +249,10 @@ class DriftSearchStrategy(BaseSearchStrategy):
                 context_tokens = self._context_share(
                     len(batch),
                     DriftActionPrompt,
+                    query,
                     ceiling=self.drift_config.local_context_tokens,
-                    reserve_tokens=answer_tokens,
+                    answer_context=answer_tokens,
+                    call_tokens=max(follow_ups[: len(batch)]),
                 )
                 done = await gather_or_cancel(
                     self._act(sub, query, semaphore, stats, config, context_tokens)
@@ -377,10 +388,11 @@ class DriftSearchStrategy(BaseSearchStrategy):
         # reports).
         if not self._calls_within_limits(
             DriftHydePrompt,
+            query,
             [template[0].content],
             reserve_calls=3,
-            reserve_tokens=self._least_call_tokens(DriftPrimerPrompt)
-            + self._least_call_tokens(DriftActionPrompt),
+            reserve_tokens=self._least_call_tokens(DriftPrimerPrompt, query)
+            + self._least_call_tokens(DriftActionPrompt, query),
         ):
             self._record_limit_stop(DegradationStep.DRIFT_EXPANSION, 0, 1)
         else:
@@ -439,9 +451,10 @@ class DriftSearchStrategy(BaseSearchStrategy):
         # action and the answer.
         fit = self._calls_within_limits(
             DriftPrimerPrompt,
+            query,
             ["\n\n".join(r.content for r in fold) for fold in folds],
             reserve_calls=2,
-            reserve_tokens=self._least_call_tokens(DriftActionPrompt),
+            reserve_tokens=self._least_call_tokens(DriftActionPrompt, query),
         )
         if fit < len(folds):
             self._record_limit_stop(DegradationStep.DRIFT_PRIMER, fit, len(folds))

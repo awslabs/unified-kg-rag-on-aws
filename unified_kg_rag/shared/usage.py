@@ -412,29 +412,42 @@ def optional_calls() -> Iterator[None]:
 
 def _optional_refusal(meter: UsageMeter, call: _Counts) -> BaseException | None:
     """The refusal of an optional ``call`` that would take a call or input
-    tokens ``meter`` keeps for its last step, if any."""
+    tokens ``meter`` keeps for its last step (none kept: past its limit),
+    if any."""
     limits = meter.limits
     if limits is None:
         return None
-    if limits.max_llm_calls is not None and limits.reserved_calls:
+    if limits.max_llm_calls is not None:
         room = limits.max_llm_calls - limits.reserved_calls
         if meter.total.llm_calls + call.llm_calls > room:
             name = limits.names.get("max_llm_calls", "max_llm_calls")
             return OptionalCallSkipped(
-                "An optional model call would take one of the "
-                f"{limits.reserved_calls} call(s) {name} {limits.max_llm_calls:g} "
-                "keeps for the answer; it was not sent",
+                (
+                    "An optional model call would take one of the "
+                    f"{limits.reserved_calls} call(s) {name} "
+                    f"{limits.max_llm_calls:g} keeps for the answer"
+                    if limits.reserved_calls
+                    else "An optional model call would take "
+                    f"{name} past {limits.max_llm_calls:g}"
+                )
+                + "; it was not sent",
                 limit=name,
                 value=limits.max_llm_calls,
             )
-    if limits.max_input_tokens is not None and limits.reserved_tokens:
+    if limits.max_input_tokens is not None:
         room = limits.max_input_tokens - limits.reserved_tokens
         if meter.total.input_tokens + call.input_tokens > room:
             name = limits.names.get("max_input_tokens", "max_input_tokens")
             return OptionalCallSkipped(
-                "An optional model call would take some of the "
-                f"{limits.reserved_tokens} input tokens {name} "
-                f"{limits.max_input_tokens:g} keeps for the answer; it was not sent",
+                (
+                    "An optional model call would take some of the "
+                    f"{limits.reserved_tokens} input tokens {name} "
+                    f"{limits.max_input_tokens:g} keeps for the answer"
+                    if limits.reserved_tokens
+                    else "An optional model call would take "
+                    f"{name} past {limits.max_input_tokens:g}"
+                )
+                + "; it was not sent",
                 limit=name,
                 value=limits.max_input_tokens,
             )

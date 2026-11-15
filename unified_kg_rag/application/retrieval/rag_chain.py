@@ -66,10 +66,11 @@ from unified_kg_rag.adapters.llm.retry import retry_deadline
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.base import (
+    ANSWERED_KEY,
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
+    answer_call_tokens,
     answer_prompt_class,
-    answer_prompt_tokens,
     current_ledger,
     degradation_scope,
     query_scope,
@@ -1221,9 +1222,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             # The router call only beside the answer's prompt and the least
             # context: else no router call, the fallback as one candidate.
             router = self._router_tokens(routable, state)
-            if router + self._answer_reserve(self._question(state)) > (
-                left.input_tokens
-            ):
+            answer = (
+                answer_call_tokens(self.config, None, self._question(state))
+                if state.get(ANSWERED_KEY, True)
+                else 0
+            )
+            if router + answer > left.input_tokens:
                 fallback = self._fallback_strategy(routable)
                 record_degradation(
                     DegradationStep.ROUTING,
@@ -1673,6 +1677,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 "search_strategy": resolved_strategy.value,
                 "query_language": query_processing.query_language(self, state),
                 HELD_ARTIFACTS_KEY: sorted(a.value for a in held),
+                # Only a search's (answered by default).
+                **({} if state.get(ANSWERED_KEY, True) else {ANSWERED_KEY: False}),
             },
         )
         with observability.span(
@@ -1967,39 +1973,61 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             getattr(self, "_background_closes", None),
         )
 
-    def _context_budget(self, state: dict[str, Any]) -> int | None:
-        """The answer's context budget: the query's ``max_tokens``, cut to
-        what its input-token limit leaves after the answer call's own prompt
-        and question (``answer_prompt_tokens``), less the headroom the
-        context window keeps (``context_window_headroom_ratio``); ``None``
-        (the token manager's own) without either."""
+    def _context_budget(self, state: dict[str, Any]) -> tuple[int | None, bool]:
+        """The answer's context budget, and whether the query's input-token
+        limit set it: the query's ``max_tokens`` (``None``: the token
+        manager's own, both holding the question too), or, when that is
+        less, the context that limit leaves after the answer call's own
+        prompt and question (``answer_call_tokens``), less the headroom the
+        context window keeps (``context_window_headroom_ratio``)."""
         budget: int | None = state.get("max_tokens")
         left = usage.remaining().input_tokens
         if left is None:
-            return budget
-        left -= answer_prompt_tokens(
-            self.config, state.get("resolved_strategy")
-        ) + estimate_token_count(self._question(state))
-        token_manager = self.config.search.token_manager
-        room = max(1, int(left * (1 - token_manager.context_window_headroom_ratio)))
-        if room < token_manager.min_truncated_section_tokens:
-            # No section would fit: an empty context the limit made, which
-            # the answer names (abstention reason query_limit).
-            record_degradation(
-                DegradationStep.CONTEXT_OPTIMIZATION,
-                "query_limit: the input-token limit leaves the answer no context",
-                UsageLimitExceededError.__name__,
-            )
-        return room if budget is None else min(budget, room)
+            return budget, False
+        left -= answer_call_tokens(
+            self.config, state.get("resolved_strategy"), self._question(state), 0
+        )
+        ratio = self.config.search.token_manager.context_window_headroom_ratio
+        room = max(0, int(left * (1 - ratio)))
+        ceiling = self.token_manager.context_ceiling
+        if room >= (ceiling if budget is None else min(budget, ceiling)):
+            return budget, False
+        return room, True
 
     def _optimize_context(self, state: dict[str, Any]) -> OptimizedContext:
         query: ProcessedQuery = state["processed_query"]
         search_results: SearchResult = state["search_results"]
         strategy = state.get("resolved_strategy")
-        return self.token_manager.optimize_context(
+        number = citations.citations_enabled(self.config, strategy)
+        budget, limited = self._context_budget(state)
+        if (
+            limited
+            and budget is not None
+            and budget < (self.config.search.token_manager.min_truncated_section_tokens)
+        ):
+            # No section would fit: an empty context the limit made, which
+            # the answer names (abstention reason query_limit); a designed
+            # cut, so the token manager is not asked to fill it.
+            record_degradation(
+                DegradationStep.CONTEXT_OPTIMIZATION,
+                "query_limit: the input-token limit leaves the answer no context",
+                UsageLimitExceededError.__name__,
+            )
+            return OptimizedContext(
+                sections=[],
+                total_tokens=0,
+                sections_included=0,
+                sections_excluded=len(search_results.results),
+                numbered=number,
+            )
+        if limited and budget is not None:
+            # The limit's room is the context's; the token manager's budget
+            # holds the question too.
+            budget += self.token_manager.count_tokens(query.final_query)
+        optimized = self.token_manager.optimize_context(
             retrieval_results=search_results.results,
             query=query.final_query,
-            max_tokens=self._context_budget(state),
+            max_tokens=budget,
             spare_budget_first=(
                 get_strategy_spec(
                     wrapped_strategy(strategy, self.config)
@@ -2008,8 +2036,21 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 else ()
             ),
             # search.citations, per strategy: auto's route, iterative's base.
-            number_sections=citations.citations_enabled(self.config, strategy),
+            number_sections=number,
         )
+        if limited and optimized.sections_excluded:
+            # The answer reads less than it would without the limit.
+            total = optimized.sections_included + optimized.sections_excluded
+            record_degradation(
+                DegradationStep.CONTEXT_OPTIMIZATION,
+                f"query_limit: {optimized.sections_excluded} of {total} sections cut",
+                UsageLimitExceededError.__name__,
+            )
+        elif not optimized.sections and any(r.content for r in search_results.results):
+            # Retrieved evidence no section of which fits the budget: the
+            # decline that follows is the budget's, not "nothing found".
+            record_degradation(DegradationStep.CONTEXT_OPTIMIZATION, "context_budget")
+        return optimized
 
     def _context_optimization_step(self, state: dict[str, Any]) -> OptimizedContext:
         """Select the budgeted sections once and keep them in chain state.
@@ -2038,12 +2079,6 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 sections_included=0,
                 sections_excluded=len(state["search_results"].results),
             )
-        if not optimized.sections and any(
-            r.content for r in state["search_results"].results
-        ):
-            # Retrieved evidence no section of which fits the budget: the
-            # decline that follows is the budget's, not "nothing found".
-            record_degradation(DegradationStep.CONTEXT_OPTIMIZATION, "context_budget")
         return optimized
 
     def _context_building_step(self, state: dict[str, Any]) -> str:
@@ -2703,7 +2738,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                     "kg_rag.query", self._query_span_attributes(rag_input, search)
                 ) as span,
                 # Its calls past the query's limits are refused (shared.usage).
-                usage_scope(limits=self._usage_limits(rag_input)) as meter,
+                usage_scope(limits=self._usage_limits(rag_input, search)) as meter,
                 # The query's store-lookup memo and degradation ledger.
                 query_scope(),
             ):
@@ -2894,27 +2929,37 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             return f"limits.{field}"
         return f"search.{_QUERY_LIMIT_SETTINGS[field]}"
 
-    def _usage_limits(self, rag_input: RAGInput) -> UsageLimits | None:
+    def _usage_limits(self, rag_input: RAGInput, search: bool) -> UsageLimits | None:
         """The model-call and input-token limits of ``rag_input``'s usage
-        scope (``shared.usage``); ``None`` without either."""
+        scope (``shared.usage``); ``None`` without either. A ``search``
+        makes no answer, so keeps nothing for it."""
         limits = self._query_limits(rag_input)
         if limits.max_model_calls is None and limits.max_input_tokens is None:
             return None
-        strategy = rag_input.search_strategy
+        strategy = (
+            None
+            if rag_input.search_strategy is SearchStrategy.AUTO
+            else rag_input.search_strategy
+        )
         return UsageLimits(
             max_llm_calls=limits.max_model_calls,
             max_input_tokens=limits.max_input_tokens,
-            # The answer's call and its input: no optional call (a query
-            # translation or extraction, the follow-up rewrite, an output
-            # repair) takes them; auto weighs its router call against the
-            # same reserve (_routes_within_limits).
-            reserved_calls=1,
-            reserved_tokens=(
-                self._answer_reserve(
-                    rag_input.query,
-                    None if strategy is SearchStrategy.AUTO else strategy,
+            # The answer's call and its input, and the calls a named
+            # strategy cannot answer without (``answering_model_calls``):
+            # no optional call (a query translation or extraction, the
+            # follow-up rewrite, an output repair) takes them; auto weighs
+            # its router call against the answer's (_routes_within_limits).
+            reserved_calls=(0 if search else 1)
+            + (
+                0
+                if strategy is None
+                else get_strategy_spec(strategy).strategy_class.answering_model_calls(
+                    self.config
                 )
-                if limits.max_input_tokens is not None
+            ),
+            reserved_tokens=(
+                answer_call_tokens(self.config, strategy, rag_input.query)
+                if limits.max_input_tokens is not None and not search
                 else 0
             ),
             names={
@@ -2923,32 +2968,11 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             },
         )
 
-    def _answer_reserve(
-        self, question: str, strategy: SearchStrategy | None = None
-    ) -> int:
-        """The input tokens an input-token limit keeps for the answer of
-        ``question``: its prompt (``answer_prompt_tokens`` of ``strategy``,
-        without one the largest), the question and the least context
-        (``search.token_manager.min_truncated_section_tokens``)."""
-        return (
-            answer_prompt_tokens(self.config, strategy)
-            + estimate_token_count(question)
-            + self.config.search.token_manager.min_truncated_section_tokens
-        )
-
     def _apply_limits(self, deadline: "_QueryDeadline", rag_input: RAGInput) -> None:
         """Lower ``deadline`` to ``rag_input``'s own deadline
         (``limits.deadline_seconds``), once it is admitted."""
         own = rag_input.limits.deadline_seconds if rag_input.limits else None
         deadline.lower_to(own, "limits.deadline_seconds")
-
-    def _time_left(self, started: float) -> float | None:
-        """Seconds left of the query deadline (``search.query_timeout_seconds``)
-        of a query that started at ``time.monotonic()`` ``started``."""
-        seconds = self.config.search.query_timeout_seconds
-        if seconds is None:
-            return None
-        return max(0.0, seconds - (time.monotonic() - started))
 
     @staticmethod
     def _identity(rag_input: RAGInput) -> AbstractContextManager[None]:
@@ -3048,7 +3072,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 # The run metadata names the session, user and namespace for
                 # a tracing callback, as the query span does.
                 output: RAGOutput | SearchOutput = await runnable.ainvoke(
-                    input_dict,
+                    # Whether an answer follows the search: under the query's
+                    # limits only then is room kept for it.
+                    {**input_dict, ANSWERED_KEY: not search},
                     merge_configs(
                         config,
                         {

@@ -717,6 +717,42 @@ def answer_prompt_tokens(config: Config, strategy: SearchStrategy | None = None)
     return templates + estimate_token_count("".join(instructions))
 
 
+def answer_call_tokens(
+    config: Config,
+    strategy: SearchStrategy | None,
+    question: str,
+    context_tokens: int | None = None,
+) -> int:
+    """The input of the answer call of ``question`` reading
+    ``context_tokens`` of context (``None``: the least,
+    ``search.token_manager.min_truncated_section_tokens``), at the local
+    estimate the usage meter counts a call's start at: its prompt and
+    instructions (``answer_prompt_tokens`` of ``strategy``), the question
+    and the context. The one estimate of the answer's call: what an
+    input-token limit keeps for it (the query's reserve, auto's router
+    check, a strategy's plan of its own calls) and what it leaves its
+    context."""
+    if context_tokens is None:
+        context_tokens = config.search.token_manager.min_truncated_section_tokens
+    return (
+        answer_prompt_tokens(config, strategy)
+        + estimate_token_count(question)
+        + context_tokens
+    )
+
+
+# SearchQuery.metadata: whether an answer is generated from the search
+# (False for GraphRAGChain.asearch); under the query's limits a strategy
+# keeps room for the answer only then (``answered``).
+ANSWERED_KEY = "answered"
+
+
+def answered(query: SearchQuery) -> bool:
+    """Whether an answer is generated from ``query``'s search
+    (``ANSWERED_KEY``; a query without it is)."""
+    return query.metadata.get(ANSWERED_KEY, True) is not False
+
+
 class BaseSearchStrategy(ABC):
     """A search algorithm over role-keyed retrievers.
 
@@ -745,6 +781,16 @@ class BaseSearchStrategy(ABC):
         strategies whose fewest calls fit (the chain adds the query
         extractions the strategy reads, ``query_inputs``, and the
         translation). 0 for a search that retrieves only."""
+        return 0
+
+    @classmethod
+    def answering_model_calls(cls, config: Config) -> int:
+        """The model calls of its own a search cannot answer without (DRIFT's
+        one action: without it nothing is found); a query that names the
+        strategy keeps them, beside the answer's, from its optional calls (a
+        translation, the follow-up rewrite) under a call limit
+        (``search.query_max_model_calls``). 0 for a search that answers from
+        what it retrieves when its model calls are cut."""
         return 0
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
@@ -784,56 +830,75 @@ class BaseSearchStrategy(ABC):
     def _calls_within_limits(
         self,
         prompt_class: type[BasePrompt],
+        query: SearchQuery,
         inputs: Sequence[str | int | Callable[[], str]],
         *,
         reserve_calls: int = 1,
         reserve_tokens: int = 0,
+        answer_context: int | None = None,
     ) -> int:
-        """How many of the leading calls of ``prompt_class``, one per input
-        (the text it fills the prompt with, a callable returning it, read
-        only under a limit, or its estimated tokens), the
-        query's limits (``search.query_max_model_calls``,
-        ``search.query_max_input_tokens``) leave room for, after
-        ``reserve_calls`` and ``reserve_tokens`` kept for what must follow
-        (the answer's call by default; with it, the answer prompt's own
-        tokens too, ``answer_prompt_tokens``). Each call is estimated as the
-        usage meter counts it at its start: its prompt's templates and its
-        input by the local estimate. All of them without a limit."""
+        """How many of the leading calls of ``prompt_class`` on ``query``,
+        one per input (the text it fills the prompt with besides the
+        question, a callable returning it, read only under a limit, or its
+        estimated tokens), the query's limits
+        (``search.query_max_model_calls``, ``search.query_max_input_tokens``)
+        leave room for, after ``reserve_calls`` calls and ``reserve_tokens``
+        kept for what must follow: other planned calls and, when the query
+        is answered (``answered``), the answer's call reading
+        ``answer_context`` (``_answer_reserve``), one of ``reserve_calls``.
+        Each call is estimated as ``_call_tokens``. All of them without a
+        limit."""
         left = usage.remaining()
         if left.unlimited:
             return len(inputs)
-        overhead = self._prompt_tokens(prompt_class)
         return usage.calls_that_fit(
             [
-                overhead
-                + (
-                    item
-                    if isinstance(item, int)
-                    else estimate_token_count(item() if callable(item) else item)
+                self._call_tokens(
+                    prompt_class,
+                    query,
+                    (
+                        item
+                        if isinstance(item, int)
+                        else estimate_token_count(item() if callable(item) else item)
+                    ),
                 )
                 for item in inputs
             ],
-            reserve_calls=reserve_calls,
+            reserve_calls=max(0, reserve_calls - (0 if answered(query) else 1)),
             reserve_tokens=reserve_tokens
-            + (self._answer_prompt_tokens() if reserve_calls else 0),
+            + (self._answer_reserve(query, answer_context) if reserve_calls else 0),
         )
 
-    def _answer_prompt_tokens(self) -> int:
-        """``answer_prompt_tokens`` of the answer to this strategy's search
-        (the strategy it is registered as; without one, the largest)."""
+    def _answer_reserve(self, query: SearchQuery, context: int | None = None) -> int:
+        """What an input-token limit keeps for the answer to ``query``'s
+        search reading ``context`` tokens (``answer_call_tokens``, by
+        default the least context; the strategy it is registered as): 0
+        for a search that is not answered (``answered``)."""
+        if not answered(query):
+            return 0
         # Lazy: the registry imports this module.
         from unified_kg_rag.adapters.retrieval.strategy_registry import (
             registered_as,
         )
 
-        return answer_prompt_tokens(self.config, registered_as(type(self)))
+        return answer_call_tokens(
+            self.config, registered_as(type(self)), query.query, context
+        )
 
-    def _prompt_tokens(self, prompt_class: type[BasePrompt]) -> int:
-        """A call of ``prompt_class``'s own tokens (its templates) at the
-        local estimate the usage meter counts a call's start at."""
+    def _call_tokens(
+        self, prompt_class: type[BasePrompt], query: SearchQuery, item: int = 0
+    ) -> int:
+        """A planned call of ``prompt_class`` on ``query`` at the local
+        estimate the usage meter counts a call's start at: its prompt's
+        templates, the question (every strategy prompt carries it) and
+        ``item`` tokens of the rest it is filled with."""
         resolved = prompt_class.resolve(custom_prompts=self.config.custom_prompts)
-        return estimate_token_count(
-            resolved.system_prompt_template + resolved.human_prompt_template
+        return (
+            estimate_token_count(
+                resolved.system_prompt_template + resolved.human_prompt_template
+            )
+            + estimate_token_count(query.query)
+            + item
         )
 
     @property
@@ -843,31 +908,38 @@ class BaseSearchStrategy(ABC):
         (``search.token_manager.min_truncated_section_tokens``)."""
         return self.config.search.token_manager.min_truncated_section_tokens
 
-    def _least_call_tokens(self, prompt_class: type[BasePrompt]) -> int:
-        """The input of the smallest useful call of ``prompt_class``: its
-        prompt and the least context (``_min_context_tokens``)."""
-        return self._prompt_tokens(prompt_class) + self._min_context_tokens
+    def _least_call_tokens(
+        self, prompt_class: type[BasePrompt], query: SearchQuery
+    ) -> int:
+        """The input of the smallest useful call of ``prompt_class`` on
+        ``query``: its prompt, the question and the least context
+        (``_min_context_tokens``)."""
+        return self._call_tokens(prompt_class, query, self._min_context_tokens)
 
     def _context_share(
         self,
         calls: int,
         prompt_class: type[BasePrompt],
+        query: SearchQuery,
         *,
         ceiling: int,
         reserve_tokens: int = 0,
+        answer_context: int | None = None,
+        call_tokens: int = 0,
     ) -> int:
-        """The context each of ``calls`` calls of ``prompt_class`` may read:
-        ``ceiling``, or under the query's input-token limit
-        (``search.query_max_input_tokens``) an even share of what it leaves
-        after ``reserve_tokens``, the answer's prompt
-        (``answer_prompt_tokens``) and each call's own prompt, at least
-        ``_min_context_tokens``. The calls' contexts are cut to it, as the
-        answer's is to what is left."""
+        """The context each of ``calls`` calls of ``prompt_class`` on
+        ``query`` may read: ``ceiling``, or under the query's input-token
+        limit (``search.query_max_input_tokens``) an even share of what it
+        leaves after ``reserve_tokens``, the answer's call
+        (``_answer_reserve`` of ``answer_context``) and each call's own
+        input besides its context (``_call_tokens`` of ``call_tokens``), at
+        least ``_min_context_tokens``. The calls' contexts are cut to it,
+        as the answer's is to what is left."""
         left = usage.remaining().input_tokens
         if left is None or calls <= 0:
             return ceiling
-        room = left - reserve_tokens - self._answer_prompt_tokens()
-        share = room // calls - self._prompt_tokens(prompt_class)
+        room = left - reserve_tokens - self._answer_reserve(query, answer_context)
+        share = room // calls - self._call_tokens(prompt_class, query, call_tokens)
         return max(self._min_context_tokens, min(ceiling, share))
 
     @staticmethod
