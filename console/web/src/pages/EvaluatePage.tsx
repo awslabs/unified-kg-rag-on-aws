@@ -5,7 +5,7 @@ import { DeltaPlot, higherIsBetter, MetricName } from "../components/charts";
 import { JobPanel } from "../components/JobPanel";
 import { StrategyPicker } from "../components/StrategyPicker";
 import { Empty, ErrorText, Loading, Notice, PageHead, Pager, Sheet } from "../components/ui";
-import { useI18n, type I18n } from "../i18n/i18n";
+import { joinSentences, useI18n, type I18n } from "../i18n/i18n";
 import { errorMessage, get, send } from "../lib/api";
 import type { Comparison, JobRecord, QuestionScores, SavedRun, Status, StrategyInfo } from "../lib/types";
 import { useApi } from "../lib/useApi";
@@ -331,12 +331,17 @@ function RunView({ refName }: { refName: string }) {
           }
         >
           <p className="field-help" style={{ marginTop: 0 }}>
-            {t("evaluate.pairedHelp", { resamples: intervalResamples(comparison, shown, number) })}{" "}
-            {shownRole
-              ? t(`evaluate.armRoleHelp.${shownRole}`)
-              : comparison.multiplicity && !comparison.multiplicity.unadjusted?.includes(shown)
-                ? t("evaluate.pairedHolmHelp", { alpha: number(comparison.multiplicity.alpha) })
-                : t("evaluate.pairedPlainHelp")}
+            {joinSentences(
+              [
+                t("evaluate.pairedHelp", { resamples: intervalResamples(comparison, shown, number) }),
+                shownRole
+                  ? t(`evaluate.armRoleHelp.${shownRole}`)
+                  : comparison.multiplicity && !comparison.multiplicity.unadjusted?.includes(shown)
+                    ? t("evaluate.pairedHolmHelp", { alpha: number(comparison.multiplicity.alpha) })
+                    : t("evaluate.pairedPlainHelp"),
+              ],
+              t,
+            )}
           </p>
           <DeltaPlot deltas={deltas} confidence={comparison.bootstrap?.confidence ?? 0.95} multiplicity={comparison.multiplicity && !comparison.multiplicity.unadjusted?.includes(shown) ? comparison.multiplicity : null} noFinding={shownRole != null} />
           {comparison.warnings?.length ? (

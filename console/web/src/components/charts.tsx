@@ -4,7 +4,7 @@
  * plot, a bar series and a histogram. Every value they draw is also printed
  * next to its mark or in a table, so colour never carries it alone. */
 import { useState } from "react";
-import { useI18n } from "../i18n/i18n";
+import { joinSentences, useI18n } from "../i18n/i18n";
 import type { Delta, Multiplicity } from "../lib/types";
 
 // Rates where less is better, and diagnostics with no better direction
@@ -36,7 +36,7 @@ export function MetricName({ metric }: { metric: string }) {
   const hint = t(direction === null ? "evaluate.noDirection" : direction ? "evaluate.higherBetter" : "evaluate.lowerBetter");
   const key = metricKey(metric);
   const described = t(key);
-  const help = described === key ? hint : `${described} ${hint}.`;
+  const help = described === key ? hint : joinSentences([described, hint], t);
   return (
     <span className="metric-name" title={help}>
       <span className="mono">{metric}</span>

@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { JobPanel } from "../components/JobPanel";
 import { Empty, ErrorText, formatBytes, isBudgetStop, JobStatusBadge, Loading, Notice, PageHead, Sheet } from "../components/ui";
-import { joinList, useI18n } from "../i18n/i18n";
+import { joinList, joinSentences, useI18n } from "../i18n/i18n";
 import { errorMessage, get, send, upload } from "../lib/api";
 import type { Corpus, JobRecord, NamespaceHeld, RebuildReason, Status } from "../lib/types";
 import { useApi } from "../lib/useApi";
@@ -132,7 +132,7 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
   };
 
   // A run is incremental only with the doc-status registry on.
-  const lede = status?.backend?.doc_status ? `${t("ingest.lede")} ${t("ingest.ledeIncremental")}` : t("ingest.lede");
+  const lede = status?.backend?.doc_status ? joinSentences([t("ingest.lede"), t("ingest.ledeIncremental")], t) : t("ingest.lede");
 
   return (
     <>
@@ -290,7 +290,7 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
                   <ul style={{ margin: 0, paddingLeft: 18 }}>
                     {held.data.rebuild.map((reason) => (
                       <li key={`${reason.kind}-${reason.settings.join(",")}`} title={reason.detail}>
-                        {t(`ingest.rebuild.${reason.kind}`)} {t(`ingest.rebuildRemedy.${reason.remedy}`, { option: t("ingest.reset"), section: t("ingest.advanced") })}
+                        {joinSentences([t(`ingest.rebuild.${reason.kind}`), t(`ingest.rebuildRemedy.${reason.remedy}`, { option: t("ingest.reset"), section: t("ingest.advanced") })], t)}
                         {reason.settings.length ? <span className="field-help"> {reason.settings.join(", ")}</span> : null}
                       </li>
                     ))}

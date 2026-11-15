@@ -23,11 +23,11 @@ function serve(held: NamespaceHeld) {
   );
 }
 
-const page = (locale: "en" | "ko") =>
+const page = (locale: "en" | "ko" | "ja" | "zh", shown: Status = status) =>
   render(
     <I18nProvider initial={locale}>
       <TrailProvider>
-        <IngestPage status={status} onJobsChanged={() => undefined} />
+        <IngestPage status={shown} onJobsChanged={() => undefined} />
       </TrailProvider>
     </I18nProvider>,
   );
@@ -64,6 +64,22 @@ describe("rebuild due", () => {
     serve(held);
     page("ko");
     expect(await screen.findByText("default를 다시 빌드할 때가 되었습니다")).toBeInTheDocument();
+  });
+
+  it("sets its sentences off as the language does (rv36)", async () => {
+    // Japanese and Chinese set a sentence off by its "。", with no space.
+    for (const locale of ["ja", "zh"] as const) {
+      serve(held);
+      const { unmount } = page(locale, { ...status, backend: { doc_status: "sqlite" } });
+      await screen.findByText(translate(locale, "ingest.rebuildTitle", { namespace: "default" }));
+      const lede = `${translate(locale, "ingest.lede")}${translate(locale, "ingest.ledeIncremental")}`;
+      expect(screen.getByText(lede), locale).toBeInTheDocument();
+      const items = screen.getAllByRole("listitem").map((item) => item.textContent ?? "");
+      const remedy = translate(locale, "ingest.rebuildRemedy.next_run");
+      expect(items.some((text) => text.includes(`${translate(locale, "ingest.rebuild.extraction_settings")}${remedy}`)), locale).toBe(true);
+      unmount();
+      vi.unstubAllGlobals();
+    }
   });
 
   it("says nothing for a namespace that is not due", async () => {
