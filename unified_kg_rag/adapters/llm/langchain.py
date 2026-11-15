@@ -70,8 +70,25 @@ class _BatchAbandoned(Exception):
     """An item's next attempt, not made: its batch was abandoned."""
 
 
-# The discards registered by the calls of the batch item being processed.
-_ITEM_DISCARDS: ContextVar[list[Callable[[], None]] | None] = ContextVar(
+class _ItemResponses:
+    """The discards registered by the calls of the batch item being
+    processed, and how many of them its failed attempts registered (those
+    before the attempt in flight)."""
+
+    def __init__(self) -> None:
+        self.discards: list[Callable[[], None]] = []
+        self.of_failed_attempts = 0
+
+    def attempt_starts(self) -> None:
+        self.of_failed_attempts = len(self.discards)
+
+    def discard(self, *, failed_attempts_only: bool = False) -> None:
+        end = self.of_failed_attempts if failed_attempts_only else None
+        for discard in self.discards[:end]:
+            discard()
+
+
+_ITEM_DISCARDS: ContextVar[_ItemResponses | None] = ContextVar(
     "batch_item_discards", default=None
 )
 
@@ -80,11 +97,14 @@ def discard_if_item_fails(discard: Callable[[], None]) -> None:
     """Call ``discard`` if the item ``BatchProcessor.execute_with_fallback``
     is processing fails every attempt (the LLM response cache drops the
     responses that item got, so a later run asks the model again instead of
-    replaying them). Outside an item, or when the item succeeds or its batch
-    is abandoned, it is not called."""
-    discards = _ITEM_DISCARDS.get()
-    if discards is not None:
-        discards.append(discard)
+    replaying them), or if a stop (a budget's, a signal's) ends it after the
+    attempt that registered it failed (a resumed run would replay a response
+    that did not parse, spending an attempt on it). Outside an item, or when
+    the item succeeds, it is not called; nor at a stop for the attempt in
+    flight, whose answer a resumed run takes."""
+    responses = _ITEM_DISCARDS.get()
+    if responses is not None:
+        responses.discards.append(discard)
 
 
 class _Attempt:
@@ -367,6 +387,9 @@ class BatchProcessor(BaseModel):
         # Bound every item call by the wall-clock ceiling so a hung item
         # aborts and is retried instead of blocking.
         def timed_sequential_func(single_input: dict[str, Any]) -> Any:
+            responses = _ITEM_DISCARDS.get()
+            if responses is not None:
+                responses.attempt_starts()
             if abandoned.is_set():
                 raise _BatchAbandoned
             return self._run_with_timeout(
@@ -380,27 +403,27 @@ class BatchProcessor(BaseModel):
         )
 
         def process_one(idx: int, single_input: dict[str, Any]) -> Any:
-            discards: list[Callable[[], None]] = []
-
-            def discard_responses() -> None:
-                for discard in discards:
-                    discard()
-
-            token = _ITEM_DISCARDS.set(discards)
+            responses = _ItemResponses()
+            token = _ITEM_DISCARDS.set(responses)
             try:
                 result = retrying_sequential_func(single_input)
                 if item_discards is not None:
-                    item_discards[idx] = discard_responses
+                    item_discards[idx] = responses.discard
                 return result
             except _BatchAbandoned:
+                responses.discard(failed_attempts_only=True)
                 return BATCH_ITEM_FAILED
             except Exception as error:  # noqa: BLE001 - isolate one item's failure
-                discard_responses()
+                responses.discard()
                 if errors is not None:
                     errors[idx] = error
                 # The stage's ledger: what it failed with, if it fails.
                 record_failure(error)
                 return self._failed(task_name, error)
+            except BaseException:
+                # A stop: what the failed attempts got is no answer.
+                responses.discard(failed_attempts_only=True)
+                raise
             finally:
                 _ITEM_DISCARDS.reset(token)
 

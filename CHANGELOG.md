@@ -209,6 +209,9 @@ Bugs present in 0.3.0.
   bands of 10 rows at 0.9: 99% of the pairs at the threshold) and the pair's exact 3-gram similarity decides.
 - `answer_match` read Japanese sums in 兆 (10^12) wrong: `一兆二千億円` as 200,000,000,000 and `3兆円` as 3. 兆 is a
   multiplier of the Japanese profile, as 億 is.
+- A run stopped (a signal, Ctrl-C, its budget) after an ingestion item's answer failed to parse and before the item's
+  next attempt kept that answer in the LLM response cache, so the resumed run replayed it and spent one of the item's
+  attempts on it. A stop drops the answers of the item's failed attempts and keeps the one in flight.
 - An ingestion LLM item whose output did not parse waited the backoff of a throttled call (up to 30 s, then 60 s,
   then 120 s) before it was asked again; it is asked again at once. Throttling, timeouts and transient errors keep
   the backoff (`retry.ingestion_item`).
