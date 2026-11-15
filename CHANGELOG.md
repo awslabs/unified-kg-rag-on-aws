@@ -141,7 +141,7 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   `similarity_threshold`, as before. It keys the stage caches only where it changes a match: under `minhash`, set to
   another value than `similarity_threshold`.
 - `processing.deduplicate_similarity_threshold` (default 0.9, the fixed value before): the 3-gram similarity at which
-  `processing.deduplicate` reads two documents as copies.
+  `processing.deduplicate` reads two documents as copies, up to 1.0 (its index takes name matching's layout).
 - The `text_chunking` stage warns when chunk sizes counted in characters (`length_unit: chars`) meet a corpus whose
   characters cost at least twice Latin text's estimated tokens (Han, Hangul, Kana, Thai, Greek, Hebrew, Devanagari,
   Arabic: a chunk then holds that many times the tokens of an English one), and when text units are estimated over
@@ -232,7 +232,7 @@ Bugs present in 0.3.0.
   it proposes fewer, at most 5% of the pairs at half the threshold, which bounds its comparisons (63% at 0.6, where
   datasketch's split proposed 40%), and never fewer than datasketch's split. A threshold of about 0.985 or more, which
   the keys accept, raised `ValueError` (datasketch's split had fewer than the two bands its index takes); the
-  search's split stands there, as for `processing.deduplicate_similarity_threshold`.
+  search's split stands there.
 - `processing.deduplicate` dropped template documents: two contracts of one form, with other amounts, dates and ids
   in a long shared text, read as copies at its fixed 0.9 3-gram similarity, and one went unindexed without a word.
   A near-duplicate now also holds the same numbers in the same order (digits of any script and the language
