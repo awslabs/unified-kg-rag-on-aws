@@ -80,7 +80,9 @@ def lsh_params(threshold: float, num_perm: int) -> tuple[int, int]:
     proposes the fewest pairs below it (the least area under its candidate
     curve below ``threshold``); else the one that proposes the most at the
     threshold. datasketch's own split instead, should it propose more at the
-    threshold (below about 0.35).
+    threshold (below about 0.35). Every split has the two bands or more
+    datasketch's index takes; from about 0.985 datasketch's own has fewer
+    (it refuses it) and the search's stands.
 
     datasketch's split weighs missed pairs and false candidates alike: at
     0.85 and 128 permutations (8 bands of 16 rows) it proposed a pair at the
@@ -91,7 +93,7 @@ def lsh_params(threshold: float, num_perm: int) -> tuple[int, int]:
     steps = 100
     reaching: tuple[float, int, int] | None = None
     widest: tuple[float, int, int] | None = None
-    for rows in range(1, num_perm + 1):
+    for rows in range(1, num_perm // 2 + 1):
         bands = num_perm // rows
         if (
             _candidate_probability(threshold / 2, bands, rows)
@@ -109,8 +111,12 @@ def lsh_params(threshold: float, num_perm: int) -> tuple[int, int]:
         )
         if reaching is None or below < reaching[0]:
             reaching = (below, bands, rows)
-    own = MinHashLSH(threshold=threshold, num_perm=num_perm)
-    layouts: list[tuple[int, int]] = [(int(own.b), int(own.r))]
+    layouts: list[tuple[int, int]] = []
+    try:
+        own = MinHashLSH(threshold=threshold, num_perm=num_perm)
+        layouts.append((int(own.b), int(own.r)))
+    except ValueError:
+        pass  # fewer than two bands
     if reaching is not None:
         layouts.append((reaching[1], reaching[2]))
     elif widest is not None:
