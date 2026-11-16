@@ -360,6 +360,7 @@ describe("the Settings page on load", () => {
     type: "object",
     properties: {
       retry: { type: "object", properties: { model_server: { type: "object", properties: { max_attempts: { type: "integer", default: 5, description: "Attempts" } } } } },
+      models: { type: "object", properties: { prices: { type: "object", additionalProperties: { type: "object" }, description: "Prices" } } },
     },
   };
   const deprecated = { key: "retry.model_server_max_attempts", replacements: ["retry.model_server.max_attempts"], conflicts: [] as string[], message: "Config key retry.model_server_max_attempts is deprecated" };
@@ -444,6 +445,34 @@ describe("the Settings page on load", () => {
     // The edit goes as is; the server retires the deprecated key it replaces.
     expect(await screen.findByRole("button", { name: /Save/ })).toBeEnabled();
     expect(sent).toEqual([{ changes: [{ path: "retry.model_server.max_attempts", value: 4 }] }]);
+  });
+
+  it("starts a field both a deprecated key and the file set from their merged value (rv44)", async () => {
+    // models.prices and the deprecated evaluation.prices: the field showed
+    // the file's models.prices alone, and an edit dropped the other prices.
+    const price = { input_per_million_tokens: 1, output_per_million_tokens: 2 };
+    const merged = { "extra-model": price, m1: price };
+    const config = {
+      ...view([], { models: { prices: merged } }),
+      text: "",
+      data: { evaluation: { prices: { "extra-model": price } }, models: { prices: { m1: price } } },
+      deprecated_keys: [{ key: "evaluation.prices", replacements: ["models.prices"], conflicts: [], values: { "models.prices": merged }, message: "Config key evaluation.prices is deprecated" }],
+    };
+    const sent = serveReview(config, validPreview("models:\n  prices: {}\n"));
+    render(
+      <I18nProvider initial="en">
+        <SettingsPage onSaved={() => undefined} />
+      </I18nProvider>,
+    );
+    fireEvent.change(await screen.findByRole("searchbox"), { target: { value: "models.prices" } });
+    const input = await screen.findByDisplayValue(JSON.stringify(merged));
+    expect(screen.getByText(/in the file · set by evaluation\.prices \(deprecated\)/)).toBeInTheDocument();
+    const edited = { ...merged, m3: price };
+    fireEvent.change(input, { target: { value: JSON.stringify(edited) } });
+    fireEvent.blur(input);
+    fireEvent.click(screen.getByRole("button", { name: "Review changes" }));
+    expect(await screen.findByRole("button", { name: /Save/ })).toBeEnabled();
+    expect(sent).toEqual([{ changes: [{ path: "models.prices", value: edited }] }]);
   });
 
   it("removes a deprecated key from its notice, then reviews it (rv43)", async () => {

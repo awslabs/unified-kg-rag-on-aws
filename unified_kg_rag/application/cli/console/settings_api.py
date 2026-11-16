@@ -382,15 +382,20 @@ def gone_keys(data: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     warning the loader logs (``message``), so the page words them in its
     language.
 
-    A deprecated key lists its ``replacements`` (the keys it loads into) and
+    A deprecated key lists its ``replacements`` (the keys it loads into),
     the ones ``data`` also sets to a different value (``conflicts``), which
-    fail the load until one of the two goes."""
+    fail the load until one of the two goes, and each replacement's value
+    once the key is retired into it (``values``, masked: a mapping merged
+    under the replacement's own entries, as the loader merges them). The
+    form starts a replacement's field from it, so an edit saves what the
+    file loads, not the replacement's own entries alone."""
     return {
         "deprecated_keys": [
             {
                 "key": old,
                 "replacements": list(deprecated_targets(old)),
                 "conflicts": conflicts,
+                "values": _retired_values(data, old),
                 "message": deprecated_key_warning(old),
             }
             for old, conflicts in deprecated_keys(data).items()
@@ -404,6 +409,20 @@ def gone_keys(data: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
             for path in removed_keys(data)
         ],
     }
+
+
+def _retired_values(data: dict[str, Any], old: str) -> dict[str, Any]:
+    """The value of each replacement of ``old`` once ``data`` retires it
+    (:func:`retire_deprecated_key`), masked."""
+    retired = masked(retire_deprecated_key(data, old))
+    values: dict[str, Any] = {}
+    for new in deprecated_targets(old):
+        node: Any = retired
+        for key in new.split("."):
+            node = node.get(key) if isinstance(node, dict) else None
+        if node is not None:
+            values[new] = node
+    return values
 
 
 def apply_changes(

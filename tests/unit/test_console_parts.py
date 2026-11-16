@@ -293,6 +293,7 @@ def test_the_settings_view_names_deprecated_keys_on_load(tmp_path: Path) -> None
             "key": "retry.model_server_max_attempts",
             "replacements": ["retry.model_server.max_attempts"],
             "conflicts": [],
+            "values": {"retry.model_server.max_attempts": 2},
             "message": settings_api.deprecated_key_warning(
                 "retry.model_server_max_attempts"
             ),
@@ -462,6 +463,54 @@ def test_editing_a_price_keeps_the_deprecated_prices() -> None:
     # An unrelated edit keeps the deprecated key.
     kept = settings_api.apply_changes(data, [{"path": "search.top_k", "value": 5}])
     assert kept["evaluation"] == data["evaluation"]
+
+
+def test_a_price_field_both_price_keys_set_starts_from_their_merged_prices(
+    tmp_path: Path,
+) -> None:
+    """With models.prices and the deprecated evaluation.prices both set,
+    the field showed the file's models.prices alone, and a save of an edit
+    of it dropped the evaluation.prices entries the load had merged (rv44).
+    The view gives each replacement's value with the deprecated key moved
+    into it, which the form starts the field from."""
+    import yaml
+
+    price = {"input_per_million_tokens": 1, "output_per_million_tokens": 2}
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "evaluation": {"prices": {"extra-model": price, "m1": price}},
+                "models": {"prices": {"m1": {**price, "input_per_million_tokens": 5}}},
+            }
+        )
+    )
+    file = settings_api.SettingsFile(path)
+    view = file.view()
+    merged = view["effective"]["models"]["prices"]
+    assert set(merged) == {"extra-model", "m1"}
+    (deprecated,) = view["deprecated_keys"]
+    assert deprecated["values"] == {
+        "models.prices": {
+            "extra-model": price,
+            "m1": {**price, "input_per_million_tokens": 5},
+        }
+    }
+    # The form's edit: the merged map plus a new entry.
+    edited = {**deprecated["values"]["models.prices"], "m3": price}
+    preview = file.preview(
+        text=None, changes=[{"path": "models.prices", "value": edited}]
+    )
+    assert preview["valid"], preview["errors"]
+    saved = yaml.safe_load(preview["text"])
+    assert "evaluation" not in saved
+    assert set(saved["models"]["prices"]) == {"extra-model", "m1", "m3"}
+    file.save(text=preview["text"], base_sha=view["sha"])
+    assert set(file.view()["effective"]["models"]["prices"]) == {
+        "extra-model",
+        "m1",
+        "m3",
+    }
 
 
 def test_moving_a_served_directory_is_saved_only_when_confirmed(

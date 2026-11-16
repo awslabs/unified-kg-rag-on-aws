@@ -60,8 +60,9 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   deprecated keys (`DEPRECATED_KEYS`, file and `UKR__` variables alike, listed in the configuration reference). The
   console's Settings page lists each deprecated key the file sets, and each removed one, with the loader's warning,
   when it opens and in a review (a deprecated key set beside its replacement to another value too, which keeps the
-  file from loading), and marks a field a deprecated key loads into as set by it, with the value in force. Editing
-  that field, or the notice's Remove, moves the key's value into each replacement the file does not set and drops it.
+  file from loading), and marks a field a deprecated key loads into as set by it, with the value in force (a mapping
+  the file sets too starts from both merged). Editing that field, or the notice's Remove, moves the key's value into
+  each replacement the file does not set and drops it.
   An ingestion run it prices publishes its USD as the `llm_cost_usd` metric (the CDK dashboard's "LLM cost" widget).
 - Query limits beside the deadline:
   - Limits: `search.query_max_model_calls` and `search.query_max_input_tokens` (off by default) bound one query's
