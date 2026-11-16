@@ -123,8 +123,10 @@ if __name__ == "__main__":
 - The documents belong to the source scope `"api"` unless `source_scope=`
   names another; a directory corpus's documents are deleted by their
   relative paths with `source_scope=` its scope (its `source_scope`, or
-  its resolved directory: an absolute path given here is resolved, symlinks
-  followed, as a corpus run resolves its directory).
+  its resolved directory). The registry's spelling of the scope is used:
+  the scope as given, one with other trailing or doubled slashes, else, for
+  a directory of this host, the stored scope that names it once symlinks
+  are followed.
 - Both return the run's `PipelineContext`; `incremental_delta` lists what
   was new, changed, deleted and `kept`. `delete_documents` raises
   `DocumentNotFoundError`, before any write, for an id the registry does

@@ -278,7 +278,9 @@ def normalize_source_scope(source_scope: str) -> str:
     """``source_scope`` in the form two spellings of one corpus compare equal.
 
     A local path loses trailing and repeated slashes (the pipeline stores the
-    resolved directory, which has neither). An ``s3://`` URI loses its
+    resolved directory, which has neither). A ``..`` segment is kept:
+    ``a/link/..`` is not ``a`` when ``link`` is a symlink, and only the
+    string is read here. An ``s3://`` URI loses its
     trailing slashes: the container entrypoint's S3 sync (as ``aws s3
     sync`` does) reads ``s3://bucket/corpus`` and ``s3://bucket/corpus/`` as
     the same folder.
