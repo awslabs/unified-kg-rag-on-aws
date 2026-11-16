@@ -84,20 +84,23 @@ class ConsoleStore:
         with self._lock:
             self._db.executescript(_SCHEMA)
             # A file an older console wrote lacks the columns added since.
-            # Checked and added under the write lock: another console
-            # opening the file at once would add them in between.
-            self._db.execute("BEGIN IMMEDIATE")
-            try:
-                have = {
-                    r["name"] for r in self._db.execute("PRAGMA table_info(queries)")
-                }
-                for name, statement in _ADDED_QUERY_COLUMNS.items():
-                    if name not in have:
-                        self._db.execute(statement)
-            except BaseException:
-                self._db.rollback()
-                raise
-            self._db.commit()
+            # Only then is the write lock taken (a reader of a current file
+            # would hold its commit), and they are checked again under it:
+            # another console opening the file at once may add them first.
+            if self._missing_columns():
+                self._db.execute("BEGIN IMMEDIATE")
+                try:
+                    for name in self._missing_columns():
+                        self._db.execute(_ADDED_QUERY_COLUMNS[name])
+                except BaseException:
+                    self._db.rollback()
+                    raise
+                self._db.commit()
+
+    def _missing_columns(self) -> list[str]:
+        """The added query columns the file lacks."""
+        have = {r["name"] for r in self._db.execute("PRAGMA table_info(queries)")}
+        return [name for name in _ADDED_QUERY_COLUMNS if name not in have]
 
     def close(self) -> None:
         with self._lock:

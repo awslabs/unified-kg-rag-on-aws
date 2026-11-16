@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from pathlib import Path
 
 import pytest
@@ -1147,6 +1148,29 @@ def test_consoles_opening_an_older_store_at_once_each_open_it(
         }
         assert "abstention_reason" in columns
     assert failures == []
+
+
+@pytest.mark.timeout(60)
+def test_a_console_opens_a_current_store_another_connection_is_reading(
+    tmp_path: Path,
+) -> None:
+    """The open took the write lock to check for missing columns even when
+    none was missing: while another connection held a read transaction its
+    commit waited and failed after 5 s, "database is locked" (rv44)."""
+    import sqlite3
+
+    path = tmp_path / "console.sqlite3"
+    ConsoleStore(path).close()
+    reader = sqlite3.connect(path)
+    reader.execute("BEGIN")
+    reader.execute("SELECT COUNT(*) FROM queries").fetchone()
+    try:
+        started = time.monotonic()
+        ConsoleStore(path).close()
+        assert time.monotonic() - started < 2
+    finally:
+        reader.rollback()
+        reader.close()
 
 
 def test_a_decline_at_a_query_limit_is_counted_apart_from_the_decline_rate(
