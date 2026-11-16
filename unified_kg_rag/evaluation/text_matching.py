@@ -871,16 +871,23 @@ _CJK_NONE = re.compile(
 _CJK_CHARS = "".join([*_HAN_DIGITS, *_SINO_KOREAN_DIGITS, *_MULTIPLIERS])
 
 
-def _han_decimal(digits: str, after_multiplier: bool = False) -> str:
+def _han_decimal(
+    digits: str, after_multiplier: bool = False, within: bool = False
+) -> str:
     """Han ``digits`` with a decimal point between them ("一点五"), or
     ``after_multiplier`` the point and the digits after a smaller
     multiplier ("十点五万" is 10.5万), before the multipliers that close a
     section and end the number ("一点五万"; in "一点一万二千" the places
     below 万 go on, so it holds no decimal and 点 is another word: "a
-    little", 12,000)."""
+    little", 12,000). ``within`` a run it is not tried at a digit after a
+    digit: failing at the first digit of a row it fails at every later
+    one, and trying each scanned the rest of a long row at every digit."""
     if not _DECIMAL_POINTS:
         return "(?!)"
-    whole = rf"(?<=[{_SMALL_MULTIPLIERS}])" if after_multiplier else rf"[{digits}]+"
+    if after_multiplier:
+        whole = rf"(?<=[{_SMALL_MULTIPLIERS}])"
+    else:
+        whole = (rf"(?<![{digits}])" if within else "") + rf"[{digits}]+"
     return (
         rf"{whole}[{_DECIMAL_POINTS}][{digits}]+"
         rf"(?=[^\S\n]?[{_SECTION_MULTIPLIERS}]+"
@@ -893,8 +900,13 @@ def _cjk_run(chars: str) -> str:
     continues one ("十点五万"), so "收拾点五万" (拾 outside a sum is no
     numeral) holds no "点五万"."""
     digits = "".join(ch for ch in chars if ch in _HAN_DIGITS)
-    part = f"(?:{_DIGIT_FORM}|{_han_decimal(digits)}|[{chars}])"
-    return rf"{part}(?:[^\S\n]?{part}|{_han_decimal(digits, True)})*"
+
+    def part(within: bool) -> str:
+        # Digits are one part, all of them: a pattern failing after the
+        # run would otherwise try every way of splitting them.
+        return f"(?:(?>{_DIGIT_FORM})|{_han_decimal(digits, within=within)}|[{chars}])"
+
+    return rf"{part(False)}(?:[^\S\n]?{part(True)}|{_han_decimal(digits, True)})*"
 
 
 # No digit before a run, nor, before a run starting with a digit, a digit
@@ -906,7 +918,7 @@ def _cjk_run(chars: str) -> str:
 _NO_NUMBER_BEFORE = r"(?<!\d)(?:(?<!\d[.,])|(?!\d))"
 _ALL_HAN_DIGITS = "".join(_HAN_DIGITS)
 _CJK_PART_TOKEN = re.compile(
-    rf"{_DIGIT_FORM}|{_han_decimal(_ALL_HAN_DIGITS)}"
+    rf"{_DIGIT_FORM}|{_han_decimal(_ALL_HAN_DIGITS, within=True)}"
     rf"|{_han_decimal(_ALL_HAN_DIGITS, True)}|\S"
 )
 _CJK_NUMBER = re.compile(
@@ -914,10 +926,10 @@ _CJK_NUMBER = re.compile(
     + _cjk_run("".join(ch for ch in _CJK_CHARS if ch not in _SUM_NUMERALS))
 )
 _CURRENCY_AFTER = re.compile(r"[^\S\n]?(?:" + "|".join(_CURRENCY_COUNTERS) + ")")
-_CJK_SUM = re.compile(
-    rf"(?<!{_HANGUL}){_NO_NUMBER_BEFORE}{_cjk_run(_CJK_CHARS)}"
-    rf"(?={_CURRENCY_AFTER.pattern})"
-)
+# The run is matched whole and its currency counter looked for after it
+# (``_cjk_sums``): no shorter run ends before a counter, and a lookahead
+# for one tried a run with none after it again from each of its letters.
+_CJK_SUM = re.compile(rf"(?<!{_HANGUL}){_NO_NUMBER_BEFORE}{_cjk_run(_CJK_CHARS)}")
 # A Han letter after a currency counter may make the counter the first
 # letter of a word ("元首", "円熟", "元宇宙", "圆满").
 _HAN_LETTER = re.compile(f"[{letter_class('han')}]")
@@ -952,6 +964,7 @@ def _cjk_value(match: re.Match[str], counted: bool | None = None) -> float | Non
         return None
     total = section = Decimal(0)
     digit: Decimal | None = None
+    largest = 0
     for part in parts:
         if _HAN_DIGITS.get(part, 1) == 0:
             continue
@@ -959,8 +972,14 @@ def _cjk_value(match: re.Match[str], counted: bool | None = None) -> float | Non
             multiplier = _MULTIPLIERS[part]
             if multiplier >= 10**4:
                 # 万, 億: they multiply the whole section before them
-                # ("十二万" is 120,000).
-                total += ((section + (digit or 0)) or 1) * multiplier
+                # ("十二万" is 120,000); one larger than every section
+                # before it multiplies all of them, as "mil millones" does
+                # (``_compose``): "两万亿" is 2e12, "1万亿5000亿" 1.5e12.
+                if total and multiplier > largest:
+                    total = (total + section + (digit or 0)) * multiplier
+                else:
+                    total += ((section + (digit or 0)) or 1) * multiplier
+                largest = max(largest, multiplier)
                 section = Decimal(0)
             else:
                 section += (1 if digit is None else digit) * multiplier
@@ -1016,7 +1035,14 @@ def _sum_value(match: re.Match[str]) -> float | None:
     none: a sum is a well-formed number (``_cjk_value``) whose terms
     descend (``_descends``: "叁仟伍佰元", not "拾五千元"), and a lone
     numeral is one only when no Han letter follows its counter, which would
-    begin a word ("伍元", not "大陆元首" nor "古参円熟")."""
+    begin a word ("伍元", not "大陆元首" nor "古参円熟"). The forms of a sum
+    write a fraction in its own units (角, 分), never with a decimal point,
+    so a run writing both is none ("收拾点五万元": 拾 tidies up)."""
+    run = match.group()
+    if any(ch in _SUM_NUMERALS for ch in run) and any(
+        ch in _DECIMAL_POINTS for ch in run
+    ):
+        return None
     value = _cjk_value(match, counted=True)
     if value is None:
         return None
@@ -1039,10 +1065,16 @@ def _cjk_sums(body: str) -> Iterator[re.Match[str]]:
     "队伍", "大陆"), so a run that is no sum is read again without its
     leading forms of a sum: "人参二百円" is 200, "队伍五千元" 5000."""
     for match in _CJK_SUM.finditer(body):
+        if not _CURRENCY_AFTER.match(body, match.end()):
+            continue
         start = match.start()
         while True:
             candidate = _CJK_SUM.match(body, start)
-            if candidate is not None and _sum_value(candidate) is not None:
+            if (
+                candidate is not None
+                and _CURRENCY_AFTER.match(body, candidate.end())
+                and _sum_value(candidate) is not None
+            ):
                 yield candidate
                 break
             if body[start] not in _SUM_NUMERALS:
@@ -1088,9 +1120,12 @@ _ORDINAL_BEFORE = re.compile(r"第\s?$")
 # unless "but" corrects them ("not one but three") or a partitive follows
 # ("is not one of them").
 _NOT_ONE_BEFORE = re.compile(r"\bnot\s+(?:even\s+)?(?:a\s+single\s+)?$", re.IGNORECASE)
-_BUT_AFTER = re.compile(r"(?:\s+\w+)?\s*,?\s*but\b|\s+of\b", re.IGNORECASE)
+# The spaces around the comma are each taken whole: split between the two
+# runs every way, a long run of them took time quadratic in its length.
+_BUT = r"(?:\s+\w+)?(?>\s*),?(?>\s*)but\b"
+_BUT_AFTER = re.compile(rf"{_BUT}|\s+of\b", re.IGNORECASE)
 _NOT_A_SINGLE = re.compile(
-    r"\bnot\s+(?:even\s+)?a\s+single\b(?!(?:\s+\w+)?\s*,?\s*but\b)", re.IGNORECASE
+    rf"\bnot\s+(?:even\s+)?a\s+single\b(?!{_BUT})", re.IGNORECASE
 )
 # One with "even" after it is zero: "한 곳도 없습니다", "一社もありません",
 # "一家也没有".

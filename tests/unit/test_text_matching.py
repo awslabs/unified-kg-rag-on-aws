@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 import time
 
 import pytest
@@ -443,6 +445,11 @@ class TestStatedNumbers:
             ("十点五万元", {105_000}),
             ("二十点五万元", {205_000}),
             ("收拾点五万家", {50_000}),
+            # The forms of a sum write no decimal point, so before a
+            # currency counter "拾点五" is no sum either.
+            ("收拾点五万元", {50_000}),
+            # A space may stand before the lower places too.
+            ("一点一万 二千元", {12_000}),
         ],
     )
     def test_a_han_decimal_point_before_a_section_multiplier(
@@ -490,6 +497,87 @@ class TestStatedNumbers:
                         if stated_numbers(text) != {gold}:
                             wrong.append((text, sorted(stated_numbers(text))))
         assert not wrong, wrong[:5]
+
+    @pytest.mark.parametrize(
+        ("text", "numbers"),
+        [
+            # Regression (rv39 matching M1): a larger section multiplier
+            # after a smaller one multiplies everything before it; it was
+            # added ("两万亿元" read 100,020,000).
+            ("两万亿元", {2 * 10**12}),
+            ("126万亿元", {126 * 10**12}),
+            ("1.5万亿元", {15 * 10**11}),
+            ("一万二千亿元", {12 * 10**11}),
+            ("壹万贰仟亿元", {12 * 10**11}),
+            ("五千万亿元", {5 * 10**15}),
+            ("1万亿5000亿元", {15 * 10**11}),
+            ("2万亿3千万元", {2_000_030_000_000}),
+            ("金壱万億円", {10**12}),
+            ("五万兆円", {5 * 10**16}),
+            # A smaller one after a larger one adds, as before.
+            ("一亿二千万元", {120_000_000}),
+            ("三亿零五万元", {300_050_000}),
+            ("1兆2000億円", {12 * 10**11}),
+            ("一兆二千億円", {12 * 10**11}),
+            ("亿万富翁", set()),
+            ("万万没想到", set()),
+        ],
+    )
+    def test_a_larger_section_multiplies_the_smaller_before_it(
+        self, text: str, numbers: set[float]
+    ) -> None:
+        assert stated_numbers(text) == numbers
+
+    def test_every_amount_in_a_section_of_sections_reads(self) -> None:
+        han = "〇一二三四五六七八九"
+
+        def han_int(n: int) -> str:
+            hundreds, rest = divmod(n, 100)
+            tens, ones = divmod(rest, 10)
+            return (
+                (han[hundreds] + "百" if hundreds else "")
+                + (han[tens] + "十" if tens else "零" if hundreds and ones else "")
+                + (han[ones] if ones else "")
+            )
+
+        wrong = []
+        for sections, counter in (
+            ("万亿", "元"),
+            ("萬億", "元"),
+            ("万億", "円"),
+            ("만억", "원"),
+        ):
+            for n in [*range(1, 200), 500, 999]:
+                forms = {str(n): n * 10**12, f"{n}.5": (2 * n + 1) * 10**12 // 2}
+                if sections != "만억":
+                    forms[han_int(n)] = n * 10**12
+                for form, gold in forms.items():
+                    text = f"{form}{sections}{counter}"
+                    if stated_numbers(text) != {gold}:
+                        wrong.append((text, sorted(stated_numbers(text))))
+        assert not wrong, wrong[:5]
+
+    def test_a_long_run_reads_in_linear_time(self) -> None:
+        # Regression (rv39 matching H1): the parts a run of digits split
+        # into were tried every way before a run that no currency counter
+        # followed gave up (28 digits took a minute, 104 never returned),
+        # a Han decimal rescanned the rest of a run at every digit, a run
+        # with no counter after it was tried again from each letter, and
+        # the spaces after "not one" were split every way before a "but".
+        # Linear, all of these take milliseconds; a child process, so
+        # that a regression fails at the timeout instead of hanging.
+        script = (
+            "from unified_kg_rag.evaluation.text_matching import stated_numbers\n"
+            "for text in ['1' * 40, '序列号 ' + '1234 ' * 12, '一' * 60_000 + '万元',"
+            " '一' * 60_000, '壹' * 60_000, '一 ' * 30_000, '1' * 100_000,"
+            " 'The hash is 12345678901234567890123 and costs 5 dollars',"
+            " 'Not one' + ' ' * 200_000 + 'x', 'not a single' + ' ' * 200_000 + 'x']:\n"
+            "    stated_numbers(text)\n"
+        )
+        try:
+            subprocess.run([sys.executable, "-c", script], check=True, timeout=60)
+        except subprocess.TimeoutExpired:
+            pytest.fail("stated_numbers took over 60 s on a long run")
 
     @pytest.mark.parametrize(
         ("text", "numbers"),
