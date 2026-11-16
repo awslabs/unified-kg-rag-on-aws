@@ -313,8 +313,9 @@ class BatchProcessor(BaseModel):
         next item as soon as a slot frees up, so a slow item holds only its
         own slot. Each item is its own call under its own
         ``call_timeout_seconds``; an item whose call fails with a retryable
-        error is retried alone, in its slot (``retry.max_attempts``). Results are
-        1:1 with the prepared inputs; an item that failed every attempt is
+        error is retried alone, in its slot, under the processor's ``retry``
+        (the ``retry.ingestion_item`` profile by default). Results are 1:1
+        with the prepared inputs; an item that failed every attempt is
         :data:`BATCH_ITEM_FAILED`, and its last error is put in ``errors``
         (when given) under its index (classified by
         ``adapters.llm.retry.item_error_predicate``), and the responses its
@@ -594,8 +595,9 @@ class BatchProcessor(BaseModel):
 
         Each item is one awaited ``sequential_func`` call (``Runnable.ainvoke``),
         up to ``max_concurrency`` in flight; an item whose call fails with a
-        retryable error is retried alone (``retry.max_attempts``). An item
-        that failed every attempt is :data:`BATCH_ITEM_FAILED`, its last
+        retryable error is retried alone, under the processor's ``retry``
+        (the ``retry.ingestion_item`` profile by default). An item that
+        failed every attempt is :data:`BATCH_ITEM_FAILED`, its last
         error in ``errors`` (when given) under its index. ``item_ids`` names
         the ids of an item's input (a dataset's ``query_id``) that its log
         lines, its failure's included, carry.
