@@ -435,7 +435,13 @@ class ReasoningStripper(Runnable[Any, Any]):
 
 class _ReasoningStream:
     """``ReasoningStripper`` over a stream: held chunks until the start
-    tells, then the block's chunks emptied, then the answer as it comes."""
+    tells, then the block's chunks emptied, then the answer as it comes.
+
+    A chunk without text before any text (a server streaming the reasoning
+    separately, Ollama's native thinking) passes on, and the block's chunks
+    pass on emptied as they come, not at its end: downstream sees the model
+    streaming, so a stream's first-chunk window measures the model's first
+    byte, not the length of its reasoning."""
 
     def __init__(self, prompt_name: str) -> None:
         self.prompt_name = prompt_name
@@ -454,6 +460,8 @@ class _ReasoningStream:
                 return [_with_content(chunk, "")]
             self.mode = "answer"
             return [_with_content(chunk, text.lstrip())]
+        if self.mode == "start" and not text and not self.held:
+            return [chunk]
         self.held.append(chunk)
         self.text += text
         if self.mode == "start":
@@ -465,7 +473,8 @@ class _ReasoningStream:
             self.mode = "reasoning"
         end = leading_reasoning_end(self.text)
         if end is None:
-            return []
+            held, self.held = self.held, []
+            return [_with_content(c, "") for c in held]
         rest = self.text[end:]
         emptied = [_with_content(c, "") for c in self.held[:-1]]
         last = _with_content(self.held[-1], rest)
@@ -479,10 +488,8 @@ class _ReasoningStream:
         return held
 
     def flush(self) -> list[Any]:
-        if self.mode == "reasoning" and self.held:
-            # Never closed: the output ran out while reasoning.
-            held, self.held = self.held, []
-            return [_with_content(c, "") for c in held]
+        # A block never closed (the output ran out while reasoning) has
+        # passed on emptied already.
         return self._release()
 
 

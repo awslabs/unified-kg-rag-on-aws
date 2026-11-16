@@ -1609,7 +1609,9 @@ A query has two bounds ([Querying](./guides/query.md#query-deadline)):
   90 s) per request and `search.model_max_attempts` (default 2) botocore
   attempts, for query-time LLM calls, query embeddings and Bedrock rerank. A
   stalled call fails after about `model_max_attempts x model_timeout_seconds`.
-  A stream must also send its first chunk within `model_timeout_seconds`.
+  A stream must also send its first chunk within `model_timeout_seconds`:
+  any chunk counts, so a reasoning model that streams its reasoning (inline
+  `<think>` or Ollama's native thinking) is not cut off while it reasons.
 
 Ingestion calls use their own client: a 330 s read timeout and
 `retry.model.client_max_attempts` (default 6) botocore attempts, bounded by

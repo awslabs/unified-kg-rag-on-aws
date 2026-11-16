@@ -133,7 +133,8 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
 - `processing.ignore_errors`를 켜면 오류 답변을 대신 돌려주고, 메시지는
   `search_results.metadata.error`에 남습니다.
 - 스트리밍 답변은 모델 호출 후 `search.model_timeout_seconds` 안에 첫 청크를 보내야 합니다.
-  청크가 오기 시작하면 전체 제한 시간이 적용됩니다.
+  청크가 오기 시작하면 전체 제한 시간이 적용됩니다. 어떤 청크든 첫 청크로 칩니다. 추론 모델이
+  스트리밍하는 추론(답변에서는 빠짐)도 이 대기를 끝냅니다.
 - `null`로 두면 두 제한을 모두 끕니다.
 
 질의의 모델 호출(답변 생성과 그 밖의 질의 시점 LLM 호출, 질의 임베딩, Bedrock 재순위화)은

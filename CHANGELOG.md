@@ -199,6 +199,11 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
 ### Fixed
 Bugs present in 0.3.0.
 
+- A local reasoning model's streamed answer (`astream`, the console's Ask page) failed with `QueryTimeoutError` after
+  `search.model_timeout_seconds` while the model was still reasoning, though `ainvoke` answered: the reasoning
+  stripper held every reasoning chunk (inline `<think>`, and Ollama's native thinking, whose chunks have no text)
+  until the answer began, so the first-chunk window timed the whole reasoning. The chunks pass on emptied as they
+  come, so the window ends on the model's first chunk; the answer text is the same.
 - A context could read past its token budget: a section type whose next section fell below the truncation floor
   kept its unused share while that share was also handed to the other types (a 244-token budget built 262). A round
   that seats past the budget so now lends its spare once, the room the types held unseated pooled in it, and what no
