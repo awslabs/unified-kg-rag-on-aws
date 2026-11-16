@@ -87,7 +87,8 @@ class StageCalls(BaseModel):
         description="exact; at most (a stage that may make fewer: gleaning "
         "rounds past the first, units a stored translation serves); or about "
         "(over the units of an intelligent chunking, cut here as without "
-        "boundary answers)"
+        "boundary answers, or over text translated into another index "
+        "language, counted at the source text)"
     )
 
 

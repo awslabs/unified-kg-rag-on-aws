@@ -217,7 +217,7 @@ def test_a_run_stops_at_its_call_budget_and_resumes_from_the_cache(
         pipeline.run(source, pipeline_id="budget")
     assert isinstance(stopped.value, PipelineInterrupted)
     assert stopped.value.limit == "processing.max_run_model_calls"
-    assert "re-run with the same pipeline id" in str(stopped.value)
+    assert "re-run with the same pipeline id ('budget')" in str(stopped.value)
     # The call past the budget was not sent.
     assert sum(counted.calls.values()) == needed // 2
 
@@ -296,12 +296,36 @@ def test_gleaning_and_translation_count_as_upper_bounds(tmp_path: Path) -> None:
     rows = {row.stage: row for row in estimate.stages}
     units = estimate.text_units
     # Every round of every unit, and each language a model call writes.
-    assert (rows["gleaning"].calls, rows["gleaning"].bound) == (3 * units, "at most")
+    assert rows["gleaning"].calls == 3 * units
     assert (rows["translation"].calls, rows["translation"].bound) == (
         2 * units,
         "at most",
     )
+    # Translated into Korean, the extraction and gleaning read the Korean
+    # text, which the estimate cannot measure before it is written: it was
+    # labelled exact at the English text's tokens.
+    assert rows["graph_extraction"].bound == "about"
+    assert rows["gleaning"].bound == "about"
+
+
+def test_the_extraction_is_exact_when_the_index_language_is_the_sources(
+    tmp_path: Path,
+) -> None:
+    from unified_kg_rag.domain.models.config import LanguageCode
+
+    config = _config()
+    config.processing.claim_extraction.enabled = True
+    translation = config.processing.translation
+    translation.enabled = True
+    translation.target_language = translation.source_language
+    translation.additional_target_languages = [LanguageCode.JA]
+    corpus = _corpus(tmp_path)
+    rows = {r.stage: r for r in estimate_ingestion(config, corpus).stages}
     assert rows["graph_extraction"].bound == "exact"
+    assert rows["claim_extraction"].bound == "at most"
+    translation.target_language = LanguageCode.KO
+    rows = {r.stage: r for r in estimate_ingestion(config, corpus).stages}
+    assert rows["claim_extraction"].bound == "about"
 
 
 def test_a_usd_budget_ignores_the_embedding_and_rerank_requests(

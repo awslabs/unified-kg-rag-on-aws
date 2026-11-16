@@ -16,7 +16,10 @@ entity is asked for no claim, one a stored translation serves is not
 translated). A call's input is its prompt's templates and the type blocks
 the config fills in, plus the text it reads (a gleaning call the unit's
 extraction too, at its estimated output), by the token estimate the usage
-meter counts a call's start at. No store or model is reached.
+meter counts a call's start at. Translated into another language, the
+extraction, gleaning and claims read the unit's translation, whose length
+only the translation tells: they are counted at the source text, ``about``.
+No store or model is reached.
 """
 
 from __future__ import annotations
@@ -29,6 +32,7 @@ from unified_kg_rag.adapters.ingestion.chunker import PreChunker, SimpleTextChun
 from unified_kg_rag.adapters.ingestion.loader import DirectoryLoader
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.application.ingestion.pipeline_stages import DocumentParsingStage
+from unified_kg_rag.domain.ingestion.cache_keys import index_language
 from unified_kg_rag.domain.ingestion.delta_detector import assign_document_identity
 from unified_kg_rag.domain.ingestion.estimate import (
     OUTPUT_TOKENS_PER_INPUT_TOKEN,
@@ -125,6 +129,13 @@ def estimate_ingestion(
     stages = [s for s in selected if s in stages] if stages is not None else selected
     processing = config.processing
     rows: list[StageCalls] = []
+    translation = processing.translation
+    translates = translation.enabled and not translation.is_noop
+    # What the extraction reads: the unit's translation into the index
+    # language when it is another (get_text_for_processing).
+    reads_translation = translates and index_language(config) != (
+        translation.source_language.value
+    )
 
     def per_unit(
         stage: PipelineStageType,
@@ -134,15 +145,20 @@ def estimate_ingestion(
         rounds: int = 1,
         extra_per_unit: int = 0,
         bound: EstimateBound = "exact",
+        translated: bool = False,
     ) -> None:
         overhead = _prompt_tokens(prompt, config) + extra_per_unit
+        if translated and reads_translation:
+            bound = "about"
+        elif intelligent and bound == "exact":
+            bound = "about"
         rows.append(
             StageCalls(
                 stage=stage.value,
                 role=role.value,
                 calls=len(units) * rounds,
                 input_tokens=rounds * (len(units) * overhead + sum(unit_tokens)),
-                bound="about" if intelligent and bound == "exact" else bound,
+                bound=bound,
             )
         )
 
@@ -168,8 +184,7 @@ def estimate_ingestion(
                 bound="exact",
             )
         )
-    translation = processing.translation
-    if _S.TRANSLATION in stages and translation.enabled and not translation.is_noop:
+    if _S.TRANSLATION in stages and translates:
         languages = len(
             [
                 code
@@ -186,7 +201,12 @@ def estimate_ingestion(
         )
     extraction_overhead = _prompt_tokens(GraphExtractionPrompt, config)
     if _S.GRAPH_EXTRACTION in stages:
-        per_unit(_S.GRAPH_EXTRACTION, ModelRole.GRAPH_EXTRACTION, GraphExtractionPrompt)
+        per_unit(
+            _S.GRAPH_EXTRACTION,
+            ModelRole.GRAPH_EXTRACTION,
+            GraphExtractionPrompt,
+            translated=True,
+        )
     if _S.GLEANING in stages and processing.gleaning.enabled:
         # A round reads the unit's extraction (about the extraction's
         # output) beside the text.
@@ -201,6 +221,7 @@ def estimate_ingestion(
             rounds=processing.gleaning.max_rounds,
             extra_per_unit=extraction_output,
             bound="at most",
+            translated=True,
         )
     if _S.CLAIM_EXTRACTION in stages and processing.claim_extraction.enabled:
         # A unit whose extraction names no entity is not asked.
@@ -209,6 +230,7 @@ def estimate_ingestion(
             ModelRole.CLAIM_EXTRACTION,
             ClaimExtractionPrompt,
             bound="at most",
+            translated=True,
         )
     return price_stages(
         rows,

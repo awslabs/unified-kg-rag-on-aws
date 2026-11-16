@@ -294,7 +294,8 @@ def detect_delta(
         changes: The run is a set of document changes
             (:class:`DocumentChanges`), not a corpus: the stored documents
             of the scope it does not hold are ``kept`` (and ``unchanged``),
-            and only those ``changes.delete`` names are ``deleted``.
+            and only those ``changes.delete`` names, and the dropped
+            copies (``changes.copies``) it holds, are ``deleted``.
 
     Returns:
         The :class:`DocumentDelta` plus the ``{doc_id: content_hash}``
@@ -331,11 +332,13 @@ def detect_delta(
     # Before anything moves between the lists: a new document has no record,
     # every other one of the corpus has one of the scope (its id holds it).
     # Seed shards do not count: they follow the configuration, and a large
-    # seed graph's many shards would dilute a mass deletion's share.
+    # seed graph's many shards would dilute a mass deletion's share. A run of
+    # changes also read the documents it keeps.
     delta.scope_documents = (
         len(fingerprints.keys() - seeds)
         - len(set(delta.new) - seeds)
         + len(delta.deleted)
+        + len(delta.kept)
         - len(delta.seed_deleted)
     )
     exempt = keep_seed_settings_unchanged(delta, seeds)
@@ -397,9 +400,13 @@ class DocumentChanges:
     (``DataIngestionPipeline.insert_documents`` / ``delete_documents``): its
     documents are added or updated, the documents ``delete`` names (registry
     doc id -> the caller's id) are deleted, and every other stored document
-    of the scope is kept."""
+    of the scope is kept. ``copies`` (registry doc ids) are the documents
+    ``processing.deduplicate`` dropped: those the scope holds are deleted,
+    as a corpus run deletes them (their text is another document's), and
+    the others, never indexed, are left out."""
 
     delete: Mapping[str, str] = field(default_factory=dict)
+    copies: frozenset[str] = frozenset()
 
 
 def _apply_changes(delta: DocumentDelta, changes: DocumentChanges) -> None:
@@ -420,8 +427,9 @@ def _apply_changes(delta: DocumentDelta, changes: DocumentChanges) -> None:
             + " in the doc-status registry for this index namespace and source "
             "scope: nothing was deleted"
         )
-    delta.kept = [doc_id for doc_id in delta.deleted if doc_id not in changes.delete]
-    delta.deleted = [doc_id for doc_id in delta.deleted if doc_id in changes.delete]
+    deleted = set(changes.delete) | changes.copies
+    delta.kept = [doc_id for doc_id in delta.deleted if doc_id not in deleted]
+    delta.deleted = [doc_id for doc_id in delta.deleted if doc_id in deleted]
     delta.unchanged.extend(delta.kept)
 
 

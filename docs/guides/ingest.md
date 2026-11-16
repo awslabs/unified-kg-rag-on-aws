@@ -161,7 +161,10 @@ run-ingestion --source-directory ./source --config-path config.yaml --estimate
   last one added to) and the claims (at most one per unit). Each call is its
   prompt's templates plus the text it reads, by the token estimate the usage
   records count a call's start at; a fake-model run of a test corpus makes
-  the calls and reads the tokens the estimate gives within 15%.
+  the calls and reads the tokens the estimate gives within 15%. Translated
+  into another language, the extraction, gleaning and claims read the
+  translation, whose length is known only once it is written: they are
+  counted at the source text and marked `about`.
 - Output tokens are estimated at 0.52 times the input, the ratio of the
   measured benchmark build
   ([evidence](../concepts/defaults-and-evidence.md#how-the-measurements-were-run)).
@@ -181,6 +184,8 @@ to resume it; the stopped stage's calls are published as its
 `llm_calls_<stage>` metrics too), its
 finished stages checkpointed and its responses in the
 [LLM response cache](#llm-response-cache). A re-run with the same pipeline id
+(the stop's message names it; from Python, `pipeline.pipeline_id`, the id
+an `insert_documents` call without a `pipeline_id` was given)
 resumes at the stage it stopped in and pays only for the calls not yet
 answered; each run gets the budget anew, and a cached response is no call
 (nor holds the budget while it is looked up).

@@ -1937,10 +1937,12 @@ def filter_to_delta(
     (``DataIngestionPipeline.insert_documents`` / ``delete_documents``): its
     documents are added or updated, the documents of the scope with these
     relative paths (ids) are deleted, and the scope's other documents are
-    kept (``DocumentChanges``); no mass deletion is asked, the caller named
-    them. Such a run cannot reset. ``deduplicated`` are the documents
-    ``processing.deduplicate`` dropped as copies: the deletion question
-    counts them apart from the files gone from the corpus.
+    kept (``DocumentChanges``); no mass deletion is asked for the ids the
+    caller named. Such a run cannot reset. ``deduplicated`` are the documents
+    ``processing.deduplicate`` dropped as copies: those the registry holds
+    are deleted in either kind of run (a document updated to a copy of
+    another loses its earlier text), and the deletion question counts them
+    apart from the files gone from the corpus.
 
     An unparsed document (its file's source digest is its record's, see
     ``source_parsing``) the run processes after all is read by
@@ -1987,7 +1989,9 @@ def filter_to_delta(
     )
     for document in [*documents, *deduplicated]:
         assign_registry_source(document, source_scope)
-    copies = {document_doc_id(document) for document in deduplicated}
+    copies = frozenset(document_doc_id(document) for document in deduplicated)
+    if changes is not None:
+        changes = DocumentChanges(delete=changes.delete, copies=copies)
     settings = extraction_settings(config)
     context.incremental_extraction_settings = settings
     context.incremental_extraction_fingerprint = settings.fingerprint
@@ -2098,14 +2102,23 @@ def filter_to_delta(
         _refuse_seeds_over_documents(
             _seed_scope_records(store, delta, scope), source_scope
         )
-    if changes is None:
-        _confirm_mass_deletion(
-            delta,
-            config.indexing.max_deletion_share,
-            source_scope,
-            confirm_deletions,
-            copies,
-        )
+    # A run of changes deletes what its caller named unasked; the copies
+    # deduplication dropped are asked about as in a corpus run.
+    _confirm_mass_deletion(
+        (
+            delta
+            if changes is None
+            else delta.model_copy(
+                update={
+                    "deleted": [d for d in delta.deleted if d not in changes.delete]
+                }
+            )
+        ),
+        config.indexing.max_deletion_share,
+        source_scope,
+        confirm_deletions,
+        copies,
+    )
     _warn_about_a_shared_seed(doc_status, documents, delta, namespace, scope)
     to_read = set(delta.to_process)
     documents = _read_unparsed(

@@ -234,6 +234,16 @@ From Python, `DataIngestionPipeline.insert_documents` and `delete_documents`
 run documents given from memory as named changes instead: what a call
 names is added, updated or deleted, and the scope's other documents are
 kept ([Python library: Documents from memory](./python-library.md#documents-from-memory)).
+With `processing.deduplicate` on, the copies a call's documents hold are
+dropped as in a corpus run, and the loading stage's `deduplicated` metric
+names them:
+
+- A stored document updated to a copy of another is deleted, its earlier
+  text with it, and the deletion counts toward
+  [Mass deletions](#mass-deletions) (the ids a `delete_documents` call
+  names do not).
+- A new copy is never indexed and gets no record: `delete_documents` raises
+  `DocumentNotFoundError` for it, as for any id the index does not hold.
 
 ### Keep the corpus in place
 

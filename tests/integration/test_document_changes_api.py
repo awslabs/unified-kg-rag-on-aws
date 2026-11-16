@@ -495,3 +495,145 @@ def test_a_deletion_names_the_documents_it_removes(
     ]
     assert "of 1 deleted or changed documents from 'default': ticket-2" in audit
     assert "ticket-1" not in audit
+
+
+_SUPPLY = "Vendor supplies widgets to Buyer under the yearly framework agreement."
+_STORAGE = "Depot stores widgets for Carrier in the harbor warehouse every week."
+
+
+def _texts(config: Config, providers: Any) -> str:
+    """The stored text units' texts, in one string (a unit is a chunk)."""
+    return " ".join(sorted(_stored_texts(config, providers)))
+
+
+def _loading_metrics(context: PipelineContext) -> dict[str, Any]:
+    (result,) = [
+        r
+        for r in context.stage_results
+        if r.stage_name == PipelineStageType.DOCUMENT_LOADING.value
+    ]
+    return result.metrics
+
+
+def test_an_update_to_a_copy_deletes_the_replaced_text(setup) -> None:
+    # Regression (rv42): with processing.deduplicate, a batch that updated b
+    # to a copy of a dropped b's new text and kept its old one (records,
+    # units, graph) as a document the run does not name; a corpus run
+    # deletes it.
+    config, providers, pipeline = setup
+    config.processing.deduplicate = True
+    _ok(pipeline.insert_documents([{"id": "a", "text": _SUPPLY}]))
+    _ok(pipeline.insert_documents([{"id": "b", "text": _STORAGE}]))
+    assert _entity_names(providers) == {"Vendor", "Buyer", "Depot", "Carrier"}
+
+    context = _ok(
+        pipeline.insert_documents(
+            [{"id": "a", "text": _SUPPLY}, {"id": "b", "text": _SUPPLY}]
+        )
+    )
+
+    assert set(_records(providers)) == {"a"}
+    assert "harbor" not in _texts(config, providers)
+    assert _entity_names(providers) == {"Vendor", "Buyer"}
+    assert len(context.incremental_delta.deleted) == 1
+    metrics = _loading_metrics(context)
+    assert (metrics["deduplicated"], metrics["documents_deduplicated"]) == (["b"], 1)
+
+
+def test_new_copies_are_named_and_never_recorded(setup) -> None:
+    # A batch of an update to a copy (b), a new copy (c) and a new document
+    # (d): b's earlier text is deleted, c is named and gets no record (there
+    # is nothing of it to delete), d is added.
+    config, providers, pipeline = setup
+    config.processing.deduplicate = True
+    _ok(
+        pipeline.insert_documents(
+            [{"id": "a", "text": _SUPPLY}, {"id": "b", "text": _STORAGE}]
+        )
+    )
+
+    context = _ok(
+        pipeline.insert_documents(
+            [
+                {"id": "a", "text": _SUPPLY},
+                {"id": "b", "text": _SUPPLY},
+                {"id": "c", "text": _SUPPLY},
+                {"id": "d", "text": "Carrier ships widgets for Buyer."},
+            ]
+        )
+    )
+
+    assert set(_records(providers)) == {"a", "d"}
+    texts = _texts(config, providers)
+    assert "harbor" not in texts and "Carrier ships widgets for Buyer." in texts
+    assert _loading_metrics(context)["deduplicated"] == ["b", "c"]
+    with pytest.raises(DocumentNotFoundError, match="'c'"):
+        pipeline.delete_documents(["c"])
+
+
+def test_copies_to_delete_are_asked_about_as_in_a_corpus_run(setup) -> None:
+    # Over indexing.max_deletion_share of the scope, the copies a run of
+    # changes would delete are asked about, as a corpus run asks.
+    from unified_kg_rag.shared.exceptions import ConfirmationDeclinedError
+
+    config, providers, pipeline = setup
+    config.processing.deduplicate = True
+    config.indexing.max_deletion_share = 0.1
+    stored = [
+        {"id": f"t{n}", "text": f"Depot stores crate {n} for Carrier."}
+        for n in range(9)
+    ]
+    _ok(pipeline.insert_documents([{"id": "a", "text": _SUPPLY}, *stored]))
+
+    with pytest.raises(ConfirmationDeclinedError, match="near-copies"):
+        pipeline.insert_documents(
+            [
+                {"id": "a", "text": _SUPPLY},
+                {"id": "t1", "text": _SUPPLY},
+                {"id": "t2", "text": _SUPPLY},
+            ]
+        )
+    assert len(_records(providers)) == 10
+
+
+def test_an_update_to_a_copy_killed_mid_deletion_is_finished(setup, mocker) -> None:
+    # Killed while the commit deletes b's record, the run retried under its
+    # pipeline id finishes the deletion.
+    from unified_kg_rag.adapters.doc_status.sqlite import SQLiteDocStatusStore
+
+    config, providers, pipeline = setup
+    config.processing.deduplicate = True
+    _ok(
+        pipeline.insert_documents(
+            [{"id": "a", "text": _SUPPLY}, {"id": "b", "text": _STORAGE}]
+        )
+    )
+    mocker.patch.object(SQLiteDocStatusStore, "delete", side_effect=_Killed)
+    batch = [{"id": "a", "text": _SUPPLY}, {"id": "b", "text": _SUPPLY}]
+    with pytest.raises(_Killed):
+        pipeline.insert_documents(batch, pipeline_id="copy-1")
+    mocker.stopall()
+
+    _ok(pipeline.insert_documents(batch, pipeline_id="copy-1"))
+
+    assert set(_records(providers)) == {"a"}
+    assert "harbor" not in _texts(config, providers)
+    assert _entity_names(providers) == {"Vendor", "Buyer"}
+
+
+def test_a_budget_stop_names_the_id_an_insert_resumes_with(setup) -> None:
+    # insert_documents without a pipeline_id runs under a new one, which the
+    # stop's advice ("re-run with the same pipeline id") did not name.
+    from unified_kg_rag.shared.exceptions import RunBudgetExhausted
+
+    config, providers, pipeline = setup
+    config.processing.max_run_model_calls = 1
+    batch = [{"id": "a", "text": _SUPPLY}, {"id": "b", "text": _STORAGE}]
+    with pytest.raises(RunBudgetExhausted) as stopped:
+        pipeline.insert_documents(batch)
+    pipeline_id = pipeline.pipeline_id
+    assert pipeline_id and f"same pipeline id ({pipeline_id!r})" in str(stopped.value)
+
+    config.processing.max_run_model_calls = None
+    _ok(pipeline.insert_documents(batch, pipeline_id=pipeline_id))
+    assert set(_records(providers)) == {"a", "b"}

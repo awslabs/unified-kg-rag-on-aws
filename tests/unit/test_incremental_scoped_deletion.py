@@ -210,6 +210,45 @@ def test_dedup_drops_a_failed_original_for_its_new_copy(
     assert [d.file_name for d in context.documents] == [copy_name]
 
 
+def test_dedup_does_not_prefer_an_original_an_interrupted_run_left_pending(
+    tmp_path, mocker
+) -> None:
+    # A PENDING record (a run interrupted before its commit) is neither
+    # indexed nor failed: the copies tie, and the first in path order is
+    # kept. Counting it as indexed would keep it over a copy sorting first.
+    root = tmp_path / "corpus"
+    store = FakeDocStatusStore()
+    config = _config()
+    config.processing.deduplicate = True
+    text = "Vendor A supplies parts to Buyer under the yearly framework agreement."
+    _write(root, {"z_original.txt": text})
+    first = _run(root, store, config, mocker)
+    original_id = _doc_id(first, "z_original.txt")
+    record = store.get(original_id)
+    assert record is not None
+    store.put(record.model_copy(update={"status": DocStatus.PENDING}))
+
+    _write(root, {"a_copy.txt": text})
+    context = PipelineContext(
+        pipeline_id="pid",
+        config={},
+        status=PipelineStageStatus.RUNNING,
+        start_time=datetime(2026, 1, 1),
+        source_directory=root,
+    )
+    context.add_stage_result(
+        DocumentParsingStage(config, source_directory=root).execute(context)
+    )
+    DocumentLoadingStage(config, source_directory=root, doc_status=store).execute(
+        context
+    )
+
+    delta = context.incremental_delta
+    assert delta.new == [_doc_id(context, "a_copy.txt")]
+    assert delta.deleted == [original_id]
+    assert [d.file_name for d in context.documents] == ["a_copy.txt"]
+
+
 @pytest.mark.parametrize("copy_name", ["a_copy.txt", "z_copy.txt"])
 def test_dedup_keeps_an_original_indexed_without_some_claims(
     tmp_path, mocker, copy_name

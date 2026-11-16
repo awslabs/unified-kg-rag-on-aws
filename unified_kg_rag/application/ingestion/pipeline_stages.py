@@ -842,6 +842,13 @@ class DocumentLoadingStage(_RegistryStage):
             ),
             "failed_files": failed_files,
             "files_failed": len(failed_files),
+            # The copies deduplication dropped, by relative path (an
+            # insert_documents id): never indexed, or deleted when the
+            # registry held them (filter_to_delta).
+            "deduplicated": [
+                d.metadata.get(RELATIVE_PATH_KEY) or d.file_path for d in deduplicated
+            ],
+            "documents_deduplicated": len(deduplicated),
         }
 
         return input_count + len(seeds), output_count, metrics
