@@ -368,3 +368,24 @@ def test_a_renamed_export_still_resolves_with_a_deprecation_warning() -> None:
     # Attributed to this line, not to the package or the import machinery.
     assert {w.filename for w in messages} == {__file__}
     assert "TransientRetryConfig" not in unified_kg_rag.__all__
+
+
+def test_a_renamed_import_in_a_module_body_warns_at_that_line(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The importing module's body runs under the import machinery: the
+    # warning still names its line, not importlib's frames or the package.
+    import warnings
+
+    (tmp_path / "renamed_import_user.py").write_text(
+        "from unified_kg_rag import TransientRetryConfig  # noqa: F401\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.delitem(sys.modules, "renamed_import_user", raising=False)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        importlib.import_module("renamed_import_user")
+    messages = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+    assert [(Path(w.filename).name, w.lineno) for w in messages] == [
+        ("renamed_import_user.py", 1)
+    ]

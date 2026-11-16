@@ -318,6 +318,34 @@ def test_the_warning_names_the_first_20_dropped_documents(
     assert warning.endswith(" and 2 more")
 
 
+@pytest.mark.parametrize(
+    ("dropped", "tail"), [(20, "similarity 1.00)"), (21, " and 1 more")]
+)
+def test_the_warning_counts_more_only_past_the_named_ones(
+    caplog: pytest.LogCaptureFixture, dropped: int, tail: str
+) -> None:
+    # Exactly 20 dropped: all named, no "and 0 more" clause.
+    text = "the quick brown fox jumps over the lazy dog repeatedly today"
+    documents = [
+        Document(
+            page_content=text,
+            document_id=f"d{i:02d}",
+            file_name=f"d{i:02d}.txt",
+            file_path=f"/corpus/d{i:02d}.txt",
+        )
+        for i in range(dropped + 1)
+    ]
+    loader = DirectoryLoader("/")
+    loader.max_workers = 1
+    with caplog.at_level("WARNING"):
+        loader.deduplicate_documents(documents, threshold=0.9)
+    (warning,) = [
+        r.getMessage() for r in caplog.records if "Deduplication" in r.getMessage()
+    ]
+    assert warning.count("(of 'd00.txt'") == 20
+    assert warning.endswith(tail)
+
+
 def test_numbers_match_in_any_digit_script_in_their_order() -> None:
     from unified_kg_rag.adapters.ingestion.loader import numbers_digest
 

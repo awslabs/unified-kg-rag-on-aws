@@ -4,11 +4,13 @@
 
 from __future__ import annotations
 
+import functools
 import re
 import string
 import unicodedata
 from collections.abc import Callable, Iterable, Iterator
 from decimal import Decimal
+from typing import NamedTuple
 
 from unified_kg_rag.domain.languages import (
     LanguageCode,
@@ -240,13 +242,34 @@ def _continues_word(a: str, b: str) -> bool:
     return wordlike(a) and wordlike(b)
 
 
-def _substring_at_boundary(needle: str, haystack: str) -> bool:
+def _substring_at_boundary(
+    needle: str, haystack: str, *, hangul_bounds: bool = False
+) -> bool:
+    """True if ``needle`` occurs in ``haystack`` where no word or number
+    continues it on either side (``_continues_word``), nor, with
+    ``hangul_bounds``, a Hangul letter.
+
+    ``hangul_bounds`` is for a Latin word or a number inside Chinese,
+    Japanese or Thai text, which put no space around it ("AWSは",
+    "合同于2024年签订"): a Han, Kana or Thai neighbour is a word boundary
+    there. A Latin letter or a digit is not ("AI" is not in "airport", "2"
+    not in "12年"), nor a Han numeral after a digit ("3" is not in "3億").
+    Korean is left to the token rules of :func:`phrase_in_text`: a Hangul
+    neighbour is a particle, a unit or a magnitude numeral they already
+    judge ("3억").
+    """
+
+    def bounds(ch: str) -> bool:
+        return hangul_bounds and is_hangul(ch)
+
     start = haystack.find(needle)
     while start != -1:
         end = start + len(needle)
+        before = haystack[start - 1] if start else ""
+        after = haystack[end] if end < len(haystack) else ""
         if not (
-            (start and _continues_word(haystack[start - 1], needle[0]))
-            or (end < len(haystack) and _continues_word(needle[-1], haystack[end]))
+            (before and (bounds(before) or _continues_word(before, needle[0])))
+            or (after and (bounds(after) or _continues_word(needle[-1], after)))
         ):
             return True
         start = haystack.find(needle, start + 1)
@@ -543,7 +566,7 @@ def phrase_in_text(phrase: str, text: str, language: str | None = None) -> bool:
     matched as such a substring where no Hangul letter is next to it, since
     Chinese, Japanese and Thai put no space around a Latin word or a
     number: "AWS" matches "AWSは" and "2024" "2024年", but "AI" does not
-    match "airport附近", nor "2" "12年" (``_substring_beside_unspaced``).
+    match "airport附近", nor "2" "12年" (``_substring_at_boundary``).
 
     LIMITATION (CJK, Thai): without a morphological segmenter there is no
     morpheme
@@ -579,37 +602,11 @@ def phrase_in_text(phrase: str, text: str, language: str | None = None) -> bool:
         drop_dense_script_spaces(" ".join(expected), spaceless=True), actual
     ):
         return True
-    return has_unspaced_script(text) and _substring_beside_unspaced(
+    return has_unspaced_script(text) and _substring_at_boundary(
         drop_dense_script_spaces(" ".join(expected), spaceless=True),
         drop_dense_script_spaces(" ".join(actual), spaceless=True),
+        hangul_bounds=True,
     )
-
-
-def _substring_beside_unspaced(needle: str, haystack: str) -> bool:
-    """True if ``needle`` occurs in ``haystack`` where no word, number or
-    Hangul letter continues it on either side.
-
-    Chinese, Japanese and Thai write no space between words, so a Latin word
-    or a number inside them ("AWSは", "合同于2024年签订") is not a whitespace
-    token of its own; a Han, Kana or Thai neighbour is a word boundary. A
-    Latin letter or
-    a digit is not ("AI" is not in "airport", "2" not in "12年"), nor a Han
-    numeral after a digit ("3" is not in "3億"). Korean is left to the token
-    rules above: a Hangul neighbour is a particle, a unit or a magnitude
-    numeral they already judge ("3억").
-    """
-    start = haystack.find(needle)
-    while start != -1:
-        end = start + len(needle)
-        before = haystack[start - 1] if start else ""
-        after = haystack[end] if end < len(haystack) else ""
-        if not (
-            (before and (is_hangul(before) or _continues_word(before, needle[0])))
-            or (after and (is_hangul(after) or _continues_word(needle[-1], after)))
-        ):
-            return True
-        start = haystack.find(needle, start + 1)
-    return False
 
 
 # --- the number an answer states ----------------------------------------------
@@ -677,7 +674,12 @@ _LOWER_PARTS = "".join([*_HAN_DIGITS, *_SINO_KOREAN_DIGITS, _SMALL_MULTIPLIERS])
 # a numeral nor a counter, nor the letter naming a currency counter after
 # it ("3兆美元"); there the number is the digits before it ("5兆瓦" is 5).
 # The others keep their value before a unit ("5千瓦" is 5,000 瓦, "5万吨"
-# 50,000 吨), so they multiply before any letter.
+# 50,000 吨), so they multiply before any letter. Those of the answer's
+# language when it is a Han profile (none in Japanese: "3兆回" is 3e12
+# times), else those of every Han profile (``_prefixes``). Whatever the
+# language, none leads a run: with no number before it, such a multiplier
+# is a letter of a word ("预兆", "前兆", "京兆"), and what follows it is
+# read alone ("预兆三个" is 3).
 _PREFIX_MULTIPLIERS = "".join(
     sorted(
         {
@@ -687,6 +689,10 @@ _PREFIX_MULTIPLIERS = "".join(
         }
     )
 )
+_HAN_PREFIXES = {
+    language.code.value: "".join(sorted(language.prefix_multipliers))
+    for language in _HAN_LANGUAGES
+}
 _UNIT_AFTER = (
     r"(?!"
     + "|".join(sorted({*_HAN_COUNTERS, *_CURRENCY_COUNTERS}, key=len, reverse=True))
@@ -694,14 +700,16 @@ _UNIT_AFTER = (
     + rf"|[{letter_class('han')}](?:{'|'.join(_CURRENCY_COUNTERS)}))"
     + rf"[{letter_class('han', 'latin')}]"
 )
-_CLOSING_PREFIX = (
-    rf"[{_PREFIX_MULTIPLIERS}](?!{_UNIT_AFTER})" if _PREFIX_MULTIPLIERS else "(?!)"
-)
-# A multiplier that multiplies the number before it, where it stands.
-_MULTIPLIES = re.compile(
-    "[" + "".join(ch for ch in _MULTIPLIERS if ch not in _PREFIX_MULTIPLIERS) + "]"
-    f"|{_CLOSING_PREFIX}"
-)
+
+
+def _prefixes(language: str | None) -> str:
+    """The prefix multipliers read in an answer in ``language``."""
+    return _HAN_PREFIXES.get(language or "", _PREFIX_MULTIPLIERS)
+
+
+def _closing_prefix(prefixes: str) -> str:
+    """One of ``prefixes`` where it closes an amount (not before a unit)."""
+    return rf"[{prefixes}](?!{_UNIT_AFTER})" if prefixes else "(?!)"
 
 
 def _magnitude(value: int) -> int:
@@ -895,10 +903,10 @@ _CJK_NONE = re.compile(
 # Han, Sino-Korean and ASCII digits with the multipliers between them
 # ("十二", "一万二千", "1만 2천", "만 이천", "三", "1.5万", "3,000万", and
 # a Han decimal before 万 or 億: "一点五万");
-# ``_cjk_value`` reads them. A run of the ordinary forms is ``_CJK_NUMBER``,
-# so "人参三人" is 3, not 33; a run of any form before a currency counter
-# is a candidate sum (``_CJK_SUM``, read by ``_sum_value``: "叁仟伍佰元",
-# "金参拾萬円", "伍元").
+# ``_cjk_value`` reads them. A run of the ordinary forms is
+# ``_HanForms.number``, so "人参三人" is 3, not 33; a run of any form before
+# a currency counter is a candidate sum (``_HanForms.sum``, read by
+# ``_sum_value``: "叁仟伍佰元", "金参拾萬円", "伍元").
 _CJK_CHARS = "".join([*_HAN_DIGITS, *_SINO_KOREAN_DIGITS, *_MULTIPLIERS])
 
 
@@ -926,20 +934,21 @@ def _han_decimal(
     )
 
 
-def _cjk_run(chars: str) -> str:
-    """A run of ``chars``' parts; a decimal after a multiplier only
-    continues one ("十点五万"), so "收拾点五万" (拾 outside a sum is no
-    numeral) holds no "点五万"."""
+def _cjk_run(chars: str, prefixes: str) -> str:
+    """A run of ``chars``' parts, of which ``prefixes`` multiply only where
+    they close an amount and no prefix multiplier leads; a decimal after a
+    multiplier only continues one ("十点五万"), so "收拾点五万" (拾 outside a
+    sum is no numeral) holds no "点五万"."""
     digits = "".join(ch for ch in chars if ch in _HAN_DIGITS)
-    letters = "".join(ch for ch in chars if ch not in _PREFIX_MULTIPLIERS)
-    prefix = f"|{_CLOSING_PREFIX}" if len(letters) < len(chars) else ""
+    leading = "".join(ch for ch in chars if ch not in _PREFIX_MULTIPLIERS)
+    letters = "".join(ch for ch in chars if ch not in prefixes)
+    prefix = f"|{_closing_prefix(prefixes)}" if len(letters) < len(chars) else ""
 
     def part(within: bool) -> str:
         # Digits are one part, all of them: a pattern failing after the
         # run would otherwise try every way of splitting them.
-        return (
-            f"(?:(?>{_DIGIT_FORM})|{_han_decimal(digits, within=within)}"
-            f"|[{letters}]{prefix})"
+        return f"(?:(?>{_DIGIT_FORM})|{_han_decimal(digits, within=within)}" + (
+            f"|[{letters}]{prefix})" if within else f"|[{leading}])"
         )
 
     return rf"{part(False)}(?:[^\S\n]?{part(True)}|{_han_decimal(digits, True)})*"
@@ -957,15 +966,47 @@ _CJK_PART_TOKEN = re.compile(
     rf"{_DIGIT_FORM}|{_han_decimal(_ALL_HAN_DIGITS, within=True)}"
     rf"|{_han_decimal(_ALL_HAN_DIGITS, True)}|\S"
 )
-_CJK_NUMBER = re.compile(
-    rf"(?<!{_HANGUL}){_NO_NUMBER_BEFORE}"
-    + _cjk_run("".join(ch for ch in _CJK_CHARS if ch not in _SUM_NUMERALS))
-)
 _CURRENCY_AFTER = re.compile(r"[^\S\n]?(?:" + "|".join(_CURRENCY_COUNTERS) + ")")
-# The run is matched whole and its currency counter looked for after it
-# (``_cjk_sums``): no shorter run ends before a counter, and a lookahead
-# for one tried a run with none after it again from each of its letters.
-_CJK_SUM = re.compile(rf"(?<!{_HANGUL}){_NO_NUMBER_BEFORE}{_cjk_run(_CJK_CHARS)}")
+
+
+class _HanForms(NamedTuple):
+    """The Han numeral patterns of one set of prefix multipliers."""
+
+    # A multiplier that multiplies the number before it, where it stands.
+    multiplies: re.Pattern[str]
+    # A run of Han, Sino-Korean and ASCII numerals (``_cjk_value``).
+    number: re.Pattern[str]
+    # A run that may write a sum of money (``_sum_value``). It is matched
+    # whole and its currency counter looked for after it (``_cjk_sums``):
+    # no shorter run ends before a counter, and a lookahead for one tried a
+    # run with none after it again from each of its letters.
+    sum: re.Pattern[str]
+
+
+@functools.cache
+def _han_forms(prefixes: str) -> _HanForms:
+    """The Han numeral patterns where ``prefixes`` are prefix multipliers."""
+    return _HanForms(
+        multiplies=re.compile(
+            "[" + "".join(ch for ch in _MULTIPLIERS if ch not in prefixes) + "]"
+            f"|{_closing_prefix(prefixes)}"
+        ),
+        number=re.compile(
+            rf"(?<!{_HANGUL}){_NO_NUMBER_BEFORE}"
+            + _cjk_run(
+                "".join(ch for ch in _CJK_CHARS if ch not in _SUM_NUMERALS), prefixes
+            )
+        ),
+        sum=re.compile(
+            rf"(?<!{_HANGUL}){_NO_NUMBER_BEFORE}{_cjk_run(_CJK_CHARS, prefixes)}"
+        ),
+    )
+
+
+# Compiled at import, as every other pattern here: the forms of an answer
+# in a language other than Japanese and Chinese.
+_han_forms(_PREFIX_MULTIPLIERS)
+
 # A Han letter after a currency counter may make the counter the first
 # letter of a word ("元首", "円熟", "元宇宙", "圆满").
 _HAN_LETTER = re.compile(f"[{letter_class('han')}]")
@@ -977,7 +1018,7 @@ _CJK_COUNTER_AFTER = re.compile(
 
 
 def _cjk_value(match: re.Match[str], counted: bool | None = None) -> float | None:
-    """The number of a ``_CJK_NUMBER`` match: Han digits before a counter
+    """The number of a ``_HanForms.number`` match: Han digits before a counter
     ("三社", "二〇二四年" is no count), or digits with multipliers ("十二台",
     "一万二千", "一千零一家", "1만 2천", "십이 대") before a counter, or
     after ASCII digits alone ("3万", "1.5万", "3,000万", "1만 2천"); ``None``
@@ -1067,7 +1108,7 @@ def _descends(parts: list[str]) -> bool:
 
 
 def _sum_value(match: re.Match[str]) -> float | None:
-    """The sum of money a ``_CJK_SUM`` match writes, ``None`` when it writes
+    """The sum of money a ``_HanForms.sum`` match writes, ``None`` when it writes
     none: a sum is a well-formed number (``_cjk_value``) whose terms
     descend (``_descends``: "叁仟伍佰元", not "拾五千元"), and a lone
     numeral is one only when no Han letter follows its counter, which would
@@ -1095,17 +1136,17 @@ def _sum_value(match: re.Match[str]) -> float | None:
     return value
 
 
-def _cjk_sums(body: str) -> Iterator[re.Match[str]]:
+def _cjk_sums(body: str, pattern: re.Pattern[str]) -> Iterator[re.Match[str]]:
     """The sums of money ``body`` writes (``_sum_value``). A form of a sum
     starting a run may be the last letter of a word before it ("人参",
     "队伍", "大陆"), so a run that is no sum is read again without its
     leading forms of a sum: "人参二百円" is 200, "队伍五千元" 5000."""
-    for match in _CJK_SUM.finditer(body):
+    for match in pattern.finditer(body):
         if not _CURRENCY_AFTER.match(body, match.end()):
             continue
         start = match.start()
         while True:
-            candidate = _CJK_SUM.match(body, start)
+            candidate = pattern.match(body, start)
             if (
                 candidate is not None
                 and _CURRENCY_AFTER.match(body, candidate.end())
@@ -1286,6 +1327,7 @@ def _number_forms(
     digits, the number words of ``language`` or English (with its words for
     none), Korean native numerals and Han numerals."""
     grammar = _LANGUAGE_NUMBERS.get(language or "")
+    han = _han_forms(_prefixes(language))
 
     def digits(match: re.Match[str]) -> float | None:
         start, number = match.start(), match.group()
@@ -1295,7 +1337,7 @@ def _number_forms(
         if not _stands_alone(body, start, match.end()):
             return None
         # A multiplier after them scales them ("3万", "1만"): _cjk_value.
-        if _MULTIPLIES.match(body, match.end()):
+        if han.multiplies.match(body, match.end()):
             return None
         return float(number.replace(",", ""))
 
@@ -1321,13 +1363,13 @@ def _number_forms(
         )
     )
     # A sum of money, and the ordinary runs outside one.
-    sums = list(_cjk_sums(body))
+    sums = list(_cjk_sums(body, han.sum))
     forms.append((iter(sums), _sum_value))
     forms.append(
         (
             (
                 match
-                for match in _CJK_NUMBER.finditer(body)
+                for match in han.number.finditer(body)
                 if not any(
                     s.start() <= match.start() and match.end() <= s.end() for s in sums
                 )

@@ -402,3 +402,32 @@ def test_a_priced_stage_emits_what_its_calls_cost() -> None:
     assert LLM_COST_METRIC not in stage_usage_metrics(context, "graph_extraction")
     other = stage_usage_metrics(context, "graph_extraction", {"model-b": price})
     assert LLM_COST_METRIC not in other
+
+
+def test_a_stop_emits_an_interrupted_stage_s_usage_only(mocker) -> None:
+    # A stage the stop interrupted (its record still RUNNING) reports what
+    # it paid for, not the counts its resume completes; a stage stopped
+    # after it finished reports all it completes.
+    from unified_kg_rag.application.ingestion.pipeline_metrics import (
+        emit_stopped_stage_metrics,
+    )
+    from unified_kg_rag.domain.models import PipelineStageStatus
+
+    pipe = _usage_pipeline(mocker)
+    sink = pipe.metrics_sink
+    mocker.patch.object(pipe, "_create_pipeline_metrics", return_value=_metrics())
+    context = _context()
+    result = pipe._run_stage(_stage("graph_extraction", 4), context)
+    context.stage_results.append(result)
+
+    result.status = PipelineStageStatus.RUNNING
+    emit_stopped_stage_metrics(pipe, context, "graph_extraction")
+    assert sink.metrics["llm_calls_graph_extraction"] == 4
+    assert sink.metrics["llm_cache_hits"] == 1
+    assert all(name.startswith("llm_") for name in sink.metrics)
+
+    result.status = PipelineStageStatus.COMPLETED
+    emit_stopped_stage_metrics(pipe, context, "graph_extraction")
+    assert sink.metrics["llm_calls_graph_extraction"] == 4
+    assert sink.metrics["duration_graph_extraction_seconds"] == 1.0
+    assert "total_extraction_failures" in sink.metrics

@@ -7,7 +7,6 @@ import sys
 import warnings
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
 
 import pydantic
 
@@ -35,19 +34,12 @@ def warn_deprecated(message: str) -> None:
     from a validator named a pydantic frame, which they hide)."""
     frame = sys._getframe(1)
     level = 2
-    while frame.f_back is not None and (
-        _internal(frame.f_code.co_filename) or _bootstrap(frame)
-    ):
+    # Only this package's or pydantic's frames are passed: the import
+    # machinery never runs between them and the caller (the root
+    # ``__getattr__`` ignores importlib's read of a name, and no module of
+    # this package warns while it is imported), and ``warnings.warn``
+    # skips its frames itself.
+    while frame.f_back is not None and _internal(frame.f_code.co_filename):
         frame = frame.f_back
-        # warnings.warn skips the import machinery's frames itself
-        # (``from unified_kg_rag import <name>`` reads the name there
-        # before the caller's line): only the others count.
-        if not _bootstrap(frame):
-            level += 1
+        level += 1
     warnings.warn(message, DeprecationWarning, stacklevel=level)
-
-
-def _bootstrap(frame: Any) -> bool:
-    """Whether ``frame`` is the import machinery's, as ``warnings`` tells."""
-    filename = frame.f_code.co_filename
-    return "importlib" in filename and "_bootstrap" in filename

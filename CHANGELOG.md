@@ -256,7 +256,9 @@ Bugs present in 0.3.0.
 - `answer_match` read Japanese sums in 兆 (10^12) wrong: `一兆二千億円` as 200,000,000,000 and `3兆円` as 3. 兆 is a
   multiplier of the Japanese and Chinese profiles, as 億 is, where it can close an amount (`新台币3兆元`, `3兆美元`);
   before another Han or Latin letter it is the Chinese prefix mega (the new `LanguageProfile.prefix_multipliers`), so
-  `5兆瓦` and `2.4兆赫` read 5 and 2.4. It also reads sums in the financial numerals (`人民币壹拾万元`,
+  `5兆瓦` and `2.4兆赫` read 5 and 2.4; in a Japanese answer, where 兆 is never mega, it multiplies there too (`3兆回`
+  is 3×10^12). With no number before it, 兆 is a letter of a word and leads no number: `预兆三个` and `前兆三件` read
+  3, not 10^12 + 3. It also reads sums in the financial numerals (`人民币壹拾万元`,
   `金壱萬円`, `叁佰圆整`), only as a well-formed number before 元, 圆 or 円: outside a sum they are letters of other
   words (`大陆人`, `古参社員`, `大陆元首`), and an ordinary amount after such a word keeps its reading (`人参二百円`
   is 200, `队伍五千元` 5000). A Chinese decimal that ends its number before 万 or 億 is read too, in an answer in any
