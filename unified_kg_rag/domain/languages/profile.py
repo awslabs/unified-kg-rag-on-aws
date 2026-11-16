@@ -138,6 +138,7 @@ class LanguageProfile:
     # read between digits before a multiplier of ten thousand or more only:
     # below it a number writes its places in full ("一千五百"), and the
     # mark is also another word ("三点五十分" is a time, "一点" a little).
+    # Like the other Han numeral forms, they are read in every language.
     numeral_decimal_points: frozenset[str] = frozenset()
     # Numerals that state a count standing alone, with at most a particle
     # or the copula after them ("하나입니다", "셋이에요"), by value; the forms

@@ -943,12 +943,38 @@ def test_a_word_holding_a_sum_form_states_no_number(
         # A gold of 0 with a count of its own after the comma.
         ("没有，三家都未参与。", "0", "有几家公司参与？", 0.0),
         ("并非没有，三家公司参与。", "0", "有几家公司参与？", 0.0),
+        # Regression (rv38 matching M3): after a digit and a comma too.
+        ("排名第3，五家公司并列。", "5", None, 1.0),
+        ("价格为3，五千元。", "1000", None, 0.0),
     ],
 )
 def test_a_number_after_a_chinese_comma_is_read(
     answer: str, gold: str, question: str | None, score: float
 ) -> None:
     assert answer_match_evaluator.number_matches(answer, gold, "zh", question) == score
+
+
+@pytest.mark.parametrize(
+    ("answer", "gold", "language"),
+    [
+        # Regression (rv38 matching M1): a decimal times 억, 億 or 亿 read
+        # in binary floating point missed the exact gold.
+        ("2023년 매출은 1.1억원입니다.", "110000000", "ko"),
+        ("계약 금액은 2.3억 원입니다.", "230000000", "ko"),
+        ("売上高は4.1億円です。", "410000000", "ja"),
+        ("予算は8.2兆円です。", "8200000000000", "ja"),
+        ("合同金额为2.3亿元。", "230000000", "zh"),
+        ("投资额为两点三亿元。", "230000000", "zh"),
+        ("共有1.11万家企业。", "11100", "zh"),
+        ("The contract is worth 2.3亿元.", "230000000", "en"),
+        # A gold written so reads the same.
+        ("合同金额为2.3亿元。", "2.3亿元", "zh"),
+    ],
+)
+def test_a_decimal_amount_matches_its_exact_gold(
+    answer: str, gold: str, language: str
+) -> None:
+    assert answer_match_evaluator.number_matches(answer, gold, language, None) == 1.0
 
 
 def test_answer_contains_reads_through_a_possessive() -> None:
