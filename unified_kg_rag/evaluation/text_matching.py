@@ -240,13 +240,34 @@ def _continues_word(a: str, b: str) -> bool:
     return wordlike(a) and wordlike(b)
 
 
-def _substring_at_boundary(needle: str, haystack: str) -> bool:
+def _substring_at_boundary(
+    needle: str, haystack: str, *, hangul_bounds: bool = False
+) -> bool:
+    """True if ``needle`` occurs in ``haystack`` where no word or number
+    continues it on either side (``_continues_word``), nor, with
+    ``hangul_bounds``, a Hangul letter.
+
+    ``hangul_bounds`` is for a Latin word or a number inside Chinese,
+    Japanese or Thai text, which put no space around it ("AWSは",
+    "合同于2024年签订"): a Han, Kana or Thai neighbour is a word boundary
+    there. A Latin letter or a digit is not ("AI" is not in "airport", "2"
+    not in "12年"), nor a Han numeral after a digit ("3" is not in "3億").
+    Korean is left to the token rules of :func:`phrase_in_text`: a Hangul
+    neighbour is a particle, a unit or a magnitude numeral they already
+    judge ("3억").
+    """
+
+    def bounds(ch: str) -> bool:
+        return hangul_bounds and is_hangul(ch)
+
     start = haystack.find(needle)
     while start != -1:
         end = start + len(needle)
+        before = haystack[start - 1] if start else ""
+        after = haystack[end] if end < len(haystack) else ""
         if not (
-            (start and _continues_word(haystack[start - 1], needle[0]))
-            or (end < len(haystack) and _continues_word(needle[-1], haystack[end]))
+            (before and (bounds(before) or _continues_word(before, needle[0])))
+            or (after and (bounds(after) or _continues_word(needle[-1], after)))
         ):
             return True
         start = haystack.find(needle, start + 1)
@@ -543,7 +564,7 @@ def phrase_in_text(phrase: str, text: str, language: str | None = None) -> bool:
     matched as such a substring where no Hangul letter is next to it, since
     Chinese, Japanese and Thai put no space around a Latin word or a
     number: "AWS" matches "AWSは" and "2024" "2024年", but "AI" does not
-    match "airport附近", nor "2" "12年" (``_substring_beside_unspaced``).
+    match "airport附近", nor "2" "12年" (``_substring_at_boundary``).
 
     LIMITATION (CJK, Thai): without a morphological segmenter there is no
     morpheme
@@ -579,37 +600,11 @@ def phrase_in_text(phrase: str, text: str, language: str | None = None) -> bool:
         drop_dense_script_spaces(" ".join(expected), spaceless=True), actual
     ):
         return True
-    return has_unspaced_script(text) and _substring_beside_unspaced(
+    return has_unspaced_script(text) and _substring_at_boundary(
         drop_dense_script_spaces(" ".join(expected), spaceless=True),
         drop_dense_script_spaces(" ".join(actual), spaceless=True),
+        hangul_bounds=True,
     )
-
-
-def _substring_beside_unspaced(needle: str, haystack: str) -> bool:
-    """True if ``needle`` occurs in ``haystack`` where no word, number or
-    Hangul letter continues it on either side.
-
-    Chinese, Japanese and Thai write no space between words, so a Latin word
-    or a number inside them ("AWSは", "合同于2024年签订") is not a whitespace
-    token of its own; a Han, Kana or Thai neighbour is a word boundary. A
-    Latin letter or
-    a digit is not ("AI" is not in "airport", "2" not in "12年"), nor a Han
-    numeral after a digit ("3" is not in "3億"). Korean is left to the token
-    rules above: a Hangul neighbour is a particle, a unit or a magnitude
-    numeral they already judge ("3억").
-    """
-    start = haystack.find(needle)
-    while start != -1:
-        end = start + len(needle)
-        before = haystack[start - 1] if start else ""
-        after = haystack[end] if end < len(haystack) else ""
-        if not (
-            (before and (is_hangul(before) or _continues_word(before, needle[0])))
-            or (after and (is_hangul(after) or _continues_word(needle[-1], after)))
-        ):
-            return True
-        start = haystack.find(needle, start + 1)
-    return False
 
 
 # --- the number an answer states ----------------------------------------------
