@@ -60,7 +60,8 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   deprecated keys (`DEPRECATED_KEYS`, file and `UKR__` variables alike, listed in the configuration reference). The
   console's Settings page lists each deprecated key the file sets, and each removed one, with the loader's warning,
   when it opens and in a review (a deprecated key set beside its replacement to another value too, which keeps the
-  file from loading), and marks a field a deprecated key loads into as set by it, with the value in force.
+  file from loading), and marks a field a deprecated key loads into as set by it, with the value in force. Editing
+  that field, or the notice's Remove, moves the key's value into each replacement the file does not set and drops it.
   An ingestion run it prices publishes its USD as the `llm_cost_usd` metric (the CDK dashboard's "LLM cost" widget).
 - Query limits beside the deadline:
   - Limits: `search.query_max_model_calls` and `search.query_max_input_tokens` (off by default) bound one query's
@@ -97,10 +98,12 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
     `UsageLimitExceededError` (exported; error class `limit_exceeded`, a caller's error: not counted in
     `query_failed`, `refused` on the console's dashboard, its message shown to an MCP caller; exit code 1, console
     HTTP 422). A query an MCP call's deadline ends names the setting it came from
-    (`limits.deadline_seconds` or `search.query_timeout_seconds`), and the `limits` schema agents read is plain text.
+    (`limits.deadline_seconds` or `search.query_timeout_seconds`) and the seconds it configures, and the `limits`
+    schema agents read is plain text.
   - Console and CLI: the Ask page names that decline, the steps the limits skipped (apart from those that failed)
-    and the strategies they left `auto` without, and `run-rag`'s text output says the same. The console records
-    each decline's reason, and its Dashboard counts declines at a limit apart, out of the decline rate.
+    and the strategies they left `auto` without, and `run-rag`'s text output says the same (naming the settings to
+    raise). The console records each decline's reason (an older store gains the column, consoles opening it at once
+    too), and its Dashboard counts declines at a limit apart, out of the decline rate and each strategy's declines.
   - Metrics: the `query_limited` metric (0 or 1, on the CDK dashboard's "Query outcomes" widget, and named in the
     `--metrics-sink` help of `run-rag`, `run-mcp-server` and `run-console`) and the query span's
     `kg_rag.query_limited` count a query its limits cut short (a step left out or cut, an abstention, a refusal, or
@@ -132,8 +135,9 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   changes. An effort the answer model cannot apply (a level it does not take, or a model that does not reason, as a
   local server's) is refused before any answer's model call (`InvalidArgumentError`); a search, which makes no answer,
   takes any. `run-rag --effort` and `run-eval --effort` set it (a dataset item's `metadata.effort` wins in `run-eval`,
-  whose warm-up checks every effort the run asks for, an item's too, and fails one the model refuses before any
-  answer, exit 2); the MCP tools and the console's Ask page do not take it. The query span (`kg_rag.effort`,
+  which checks every effort each run asks for, an item's, an `--arm`'s and the closed-book arm's too, before any run
+  answers in either run order, and fails one a model refuses, exit 2; the closed-book arm answers at it); the MCP
+  tools and the console's Ask page do not take it. The query span (`kg_rag.effort`,
   `kg_rag.limits.max_model_calls`, `kg_rag.limits.max_input_tokens`) and the query metrics record (`effort`,
   `limits.*` properties) name the effort and the limits in force.
 - An ingestion run's budget and cost estimate. `processing.max_run_model_calls` and `processing.max_run_usd` (off by
@@ -144,14 +148,16 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   stop's JSON status and message give the calls the run paid for (`token_usage`, `cost_usd` when priced), and the
   stage it stopped in keeps its calls in its record and publishes them (`llm_calls_<stage>`), so the stop and its
   resume count each paid call once. `run-ingestion` refuses a `max_run_usd` run whose stages call a model
-  `models.prices` does not price before any stage runs (exit 2, error class `configuration`), naming it.
+  `models.prices` does not price before any stage runs (exit 2, error class `configuration`), naming it (the
+  description summaries of the community detection and the indexing included).
   `run-ingestion --estimate` parses, deduplicates (`processing.deduplicate`) and chunks the corpus without a model
   call and prints each stage's calls, tokens and USD for the stages the text units decide (extraction, gleaning,
   claims, translation, intelligent chunking; `about` for the stages that read text translated into another
   language, counted at the source text), naming the graph-dependent ones it cannot count. The console's Ingest
   page offers to resume a run stopped at its budget (its options without the forced recompute), and its run lists and
-  the Dashboard mark such a run as stopped at its budget, a warning, not failed. The Dashboard and the Ingest job card
-  give an ingestion job's USD at `models.prices`.
+  the Dashboard mark such a run as stopped at its budget, a warning, not failed, its card keeping its own stages after
+  the resume. The Dashboard and the Ingest job card give a job's USD as its run recorded it (`cost_usd`), else an
+  ingestion job's at `models.prices`.
 - Every numeric configuration default says what it rests on: an evidence tag (`json_schema_extra=evidence(...)`,
   `domain/models/evidence.py`) of `measured` (linked to its run in Defaults and evidence), `upstream` or `deviation`
   (naming the original's value), `operational` or `unmeasured`. The configuration reference prints it in an Evidence
@@ -217,6 +223,9 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
 ### Fixed
 Bugs present in 0.3.0.
 
+- The console's Settings page read a field a `UKR__` variable of the console sets as its default, and passed an edit
+  of it that had no effect (the variable wins over the file): the field names the variable, and a review lists such
+  changes.
 - A local reasoning model's streamed answer (`astream`, the console's Ask page) failed with `QueryTimeoutError` after
   `search.model_timeout_seconds` while the model was still reasoning, though `ainvoke` answered: the reasoning
   stripper held every reasoning chunk (inline `<think>`, and Ollama's native thinking, whose chunks have no text)
@@ -285,7 +294,8 @@ Bugs present in 0.3.0.
   before another Han or Latin letter it is the Chinese prefix mega (the new `LanguageProfile.prefix_multipliers`), so
   `5兆瓦` and `2.4兆赫` read 5 and 2.4; in a Japanese answer, where 兆 is never mega, it multiplies there too (`3兆回`
   is 3×10^12). With no number before it, 兆 is a letter of a word and leads no number: `预兆三个` and `前兆三件` read
-  3, not 10^12 + 3. It also reads sums in the financial numerals (`人民币壹拾万元`,
+  3, not 10^12 + 3; before a currency counter too (`營收破兆元`, `数兆円` read none). It also reads sums in the
+  financial numerals (`人民币壹拾万元`,
   `金壱萬円`, `叁佰圆整`), only as a well-formed number before 元, 圆 or 円: outside a sum they are letters of other
   words (`大陆人`, `古参社員`, `大陆元首`), and an ordinary amount after such a word keeps its reading (`人参二百円`
   is 200, `队伍五千元` 5000). A Chinese decimal that ends its number before 万 or 億 is read too, in an answer in any

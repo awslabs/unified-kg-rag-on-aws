@@ -84,10 +84,19 @@ class ConsoleStore:
         with self._lock:
             self._db.executescript(_SCHEMA)
             # A file an older console wrote lacks the columns added since.
-            have = {r["name"] for r in self._db.execute("PRAGMA table_info(queries)")}
-            for name, statement in _ADDED_QUERY_COLUMNS.items():
-                if name not in have:
-                    self._db.execute(statement)
+            # Checked and added under the write lock: another console
+            # opening the file at once would add them in between.
+            self._db.execute("BEGIN IMMEDIATE")
+            try:
+                have = {
+                    r["name"] for r in self._db.execute("PRAGMA table_info(queries)")
+                }
+                for name, statement in _ADDED_QUERY_COLUMNS.items():
+                    if name not in have:
+                        self._db.execute(statement)
+            except BaseException:
+                self._db.rollback()
+                raise
             self._db.commit()
 
     def close(self) -> None:

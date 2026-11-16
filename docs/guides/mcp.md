@@ -63,7 +63,8 @@ query limit for that call (`search.query_timeout_seconds`,
 raising it; `kg_describe_schema` reports the server's own as
 `query_limits`. The call's `deadline_seconds` covers its wait for a call
 slot too. A call past one fails with `limit_exceeded`, whose message names
-the limit, or is answered without the steps that did not fit, listed in
+the limit (a deadline with the seconds it configures, the slot wait
+included), or is answered without the steps that did not fit, listed in
 `degraded` ([Query limits](./query.md#model-call-and-input-token-limits)).
 They take no answer `effort` (`RAGInput.effort`): unlike a limit, an effort
 can raise a call's cost and latency, so a caller's would need a server

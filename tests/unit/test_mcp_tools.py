@@ -1084,10 +1084,15 @@ async def test_one_deadline_covers_the_slot_wait_and_the_work(
     first, second = await asyncio.wait_for(calls, timeout=30)
     assert not isinstance(first, BaseException)
     assert isinstance(second, QueryTimeoutError)
-    # It states the time the query had after its wait, not the setting's,
-    # and the setting it came from (rv42: "the caller's deadline").
-    assert "(what the call's search.query_timeout_seconds left it)" in str(second)
-    assert "slot" not in str(second)
+    # It states the deadline the caller configured, not the time left of it
+    # ("within 0.0009 s" for a 0.001 s deadline, rv43), and the setting it
+    # came from (rv42: "the caller's deadline"); the chain's own timeout,
+    # not the backstop's, with the time the query had.
+    assert (
+        "within 600 s (the call's search.query_timeout_seconds, the wait for a "
+        "call slot included)"
+    ) in str(second)
+    assert str(second).startswith("The query did not finish")
     assert second.timeout_seconds < 600
 
 

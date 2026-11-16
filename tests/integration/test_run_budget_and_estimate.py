@@ -226,6 +226,62 @@ def test_the_models_a_usd_budget_must_price_cover_every_model_a_run_calls(
     assert called and called <= checked, called - checked
 
 
+def test_every_model_role_a_stage_calls_is_one_its_budget_prices() -> None:
+    """STAGE_MODEL_ROLES mapped the description summary to the resolution
+    only, but the community detection and the indexing summarize too: a run
+    of either without the resolution passed the budget's price check and
+    could stop at its first summary (rv43). Every ``ModelRole`` a stage's
+    code reaches (the stage class and the classes it names, other stages
+    aside) is mapped to that stage."""
+    import inspect
+    import re
+    import sys
+
+    from unified_kg_rag.application.ingestion.pipeline_stages import PipelineStage
+    from unified_kg_rag.domain.ingestion.estimate import (
+        STAGE_MODEL_ROLES,
+        run_model_roles,
+    )
+    from unified_kg_rag.domain.models import ModelRole, PipelineStageType
+
+    def reached(cls: type, seen: set[type]) -> set[ModelRole]:
+        if cls in seen:
+            return set()
+        seen.add(cls)
+        source = inspect.getsource(cls)
+        roles = {ModelRole[m] for m in re.findall(r"ModelRole\.([A-Z_]+)", source)}
+        module = sys.modules[cls.__module__]
+        for name in set(re.findall(r"\b([A-Z]\w+)\b", source)):
+            named = getattr(module, name, None)
+            if (
+                inspect.isclass(named)
+                and not issubclass(named, PipelineStage)
+                and named.__module__.startswith(
+                    ("unified_kg_rag.adapters", "unified_kg_rag.application")
+                )
+            ):
+                roles |= reached(named, seen)
+        return roles
+
+    calling = {}
+    for stage, cls in DataIngestionPipeline.STAGE_CLASSES.items():
+        # The output fixer repairs any stage's output: added to every run.
+        roles = reached(cls, set()) - {ModelRole.FIXING}
+        mapped = {role for role, _ in STAGE_MODEL_ROLES.get(stage, ())}
+        assert roles == mapped, (stage, roles, mapped)
+        if roles:
+            calling[stage] = roles
+    # The scan finds the stages that call a model (it is no vacuous pass).
+    assert ModelRole.DESCRIPTION_SUMMARY in calling[PipelineStageType.INDEXING]
+    assert len(calling) == 9
+    # A run without the resolution prices the summaries the others make.
+    config = _config()
+    config.processing.graph_extraction.description_summarization.enabled = True
+    assert ModelRole.DESCRIPTION_SUMMARY in run_model_roles(
+        config, [PipelineStageType.INDEXING]
+    )
+
+
 def test_the_estimate_prices_with_models_prices(tmp_path: Path) -> None:
     config = _config()
     config.graph.community_detection.report_generation.enabled = True

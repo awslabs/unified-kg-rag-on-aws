@@ -22,7 +22,7 @@ from typing import Any
 
 import yaml
 
-from unified_kg_rag.application.config import ConfigLoader, env_var
+from unified_kg_rag.application.config import ConfigLoader, env_var, environment_keys
 from unified_kg_rag.domain.models import Config, Methodology
 from unified_kg_rag.domain.models.config import (
     REMOVED_KEYS,
@@ -31,6 +31,7 @@ from unified_kg_rag.domain.models.config import (
     deprecated_targets,
     removed_key_warning,
     removed_keys,
+    retire_deprecated_key,
     unknown_keys,
 )
 from unified_kg_rag.shared import get_logger
@@ -126,6 +127,26 @@ def endpoint_changes(old: dict[str, Any], new: dict[str, Any]) -> list[dict[str,
                 {"path": path, "from": before.get(path), "to": after.get(path)}
             )
     return changes
+
+
+def environment_overrides(
+    old: dict[str, Any], new: dict[str, Any]
+) -> list[dict[str, str]]:
+    """The keys ``new`` changes from ``old`` that an environment variable
+    sets (:func:`environment_keys`): the variable's value stays in force,
+    so the change has no effect while it is set."""
+    before, after = _flat(old), _flat(new)
+    changed = [
+        p for p in sorted(set(before) | set(after)) if before.get(p) != after.get(p)
+    ]
+    return [
+        {"path": path, "variable": variable}
+        for path, variable in sorted(environment_keys(new).items())
+        if any(
+            c == path or c.startswith(f"{path}.") or path.startswith(f"{c}.")
+            for c in changed
+        )
+    ]
 
 
 def directory_changes(old: dict[str, Any], new: dict[str, Any]) -> list[dict[str, Any]]:
@@ -391,10 +412,18 @@ def apply_changes(
     """``data`` with each change applied: ``{"path": "a.b", "value": v}``
     sets a key, ``"value": None`` with ``"unset": true`` removes it.
 
+    A change that sets a key a deprecated key in ``data`` loads into, or
+    that removes the deprecated key, first retires it
+    (:func:`retire_deprecated_key`: its value moves into the replacements
+    ``data`` does not set): an edit of a field the form shows as set by the
+    deprecated key would otherwise disagree with it, and fail the load.
+
     Raises:
         InvalidArgumentError: A malformed path.
     """
     result = yaml.safe_load(yaml.safe_dump(data)) or {}
+    for old in _retired(result, changes):
+        result = retire_deprecated_key(result, old)
     for change in changes:
         path = str(change.get("path") or "")
         keys = [k for k in path.split(".") if k]
@@ -413,6 +442,28 @@ def apply_changes(
             target[keys[-1]] = change.get("value")
     pruned: dict[str, Any] = _prune(result)
     return pruned
+
+
+def _retired(data: dict[str, Any], changes: list[dict[str, Any]]) -> list[str]:
+    """The deprecated keys ``data`` sets that ``changes`` retire: one that
+    sets a key at, above or under a replacement, or that unsets the
+    deprecated key itself."""
+
+    def related(path: str, key: str) -> bool:
+        return path == key or path.startswith(f"{key}.") or key.startswith(f"{path}.")
+
+    retired = []
+    for old in deprecated_keys(data):
+        for change in changes:
+            path = str(change.get("path") or "")
+            if (
+                related(path, old)
+                if change.get("unset")
+                else any(related(path, new) for new in deprecated_targets(old))
+            ):
+                retired.append(old)
+                break
+    return retired
 
 
 def _prune(data: Any) -> Any:
@@ -470,8 +521,10 @@ class SettingsFile:
             "load_error": load_error,
             "effective": masked(effective) if effective else None,
             # Shown on load, not only in a review: the Fields form marks the
-            # fields a deprecated key loads into.
+            # fields a deprecated key loads into, and those an environment
+            # variable sets (its value wins over the file's).
             **gone_keys(data),
+            "environment_keys": environment_keys(data),
             "methodologies": [m.value for m in Methodology],
             "tracing_environment": {
                 name: name in os.environ for name in TRACING_VARIABLES
@@ -514,6 +567,7 @@ class SettingsFile:
         return {
             "text": new_text,
             "diff": diff,
+            "environment_overrides": environment_overrides(base, new_data),
             "endpoint_changes": endpoint_changes(base, new_data),
             "directory_changes": directory_changes(base, new_data),
             "changed": new_text != current,

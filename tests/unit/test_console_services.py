@@ -1081,6 +1081,34 @@ async def test_an_ingestion_job_exports_no_graph_of_its_own(
     assert built == []
 
 
+async def test_an_ended_ingestion_keeps_its_own_stages(tmp_path: Path) -> None:
+    """An earlier job's card showed the stages of the pipeline's latest run,
+    read from its metadata, which a later job of the pipeline rewrote: a
+    budget-stopped job read "9 of 9 stages done" (rv43)."""
+    manager = _manager(tmp_path)
+    metadata = tmp_path / "cache" / "console-p1" / "pipeline_metadata.json"
+    metadata.parent.mkdir(parents=True)
+
+    def write(*stages: tuple[str, str]) -> None:
+        results = [
+            {"stage_name": name, "status": status, "start_time": "2999-01-01T00:00:00"}
+            for name, status in stages
+        ]
+        metadata.write_text(json.dumps({"stage_results": results}))
+
+    job = _ingest_job(manager, tmp_path, '{"status": "limit_exceeded"}', code=1)
+    job.plan = ["graph_extraction", "indexing"]
+    job.started = time.time()
+    write(("graph_extraction", "running"))
+    await manager._watch(job)
+    before = manager.get(job.id)["progress"]
+    assert [s["status"] for s in before["stages"]] == ["stopped", "not_run"]
+    # A later job of the pipeline finishes every stage.
+    write(("graph_extraction", "completed"), ("indexing", "completed"))
+    assert manager.get(job.id)["progress"] == before
+    assert manager.all_jobs()[0]["progress"] == before
+
+
 def _event(level: str, text: str) -> str:
     return json.dumps({"event": text, "logger": "x", "level": level})
 

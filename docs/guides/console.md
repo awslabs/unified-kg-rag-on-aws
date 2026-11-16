@@ -303,11 +303,17 @@ history deletes the recorded questions.
 **Settings.** The config file, as fields or as YAML. Above them, from the
 moment the page opens, a notice lists each deprecated or removed key the
 file sets (and a deprecated key set beside its replacement to another
-value, which keeps the file from loading). Fields come from the
+value, which keeps the file from loading); its Remove moves a deprecated
+key's value into each replacement the file does not set and drops the key,
+so nothing in force changes. Fields come from the
 configuration's schema with each key's description as help, its default
 and whether the file sets it, or a deprecated key the file sets loads into
 it (set by that key, showing the value in force); find one by key or
-description. Changes
+description. Editing a field a deprecated key sets replaces that key the
+same way: the saved file holds only the new keys. A field a `UKR__`
+environment variable of the console sets names the variable: its value
+wins over the file's, so the review lists a change to it as one that has
+no effect while the variable is set. Changes
 collect on the right; Review checks them as a run would load the file
 (unknown keys and the `UKR__` environment included) and shows the diff of
 the file, its errors and warnings, and each deprecated key the file sets

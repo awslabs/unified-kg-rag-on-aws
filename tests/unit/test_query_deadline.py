@@ -288,6 +288,20 @@ async def test_a_callers_deadline_names_its_setting_and_a_short_one_is_not_0_s()
     ]
 
 
+async def test_a_callers_deadline_states_the_seconds_it_configures() -> None:
+    """An MCP call with limits.deadline_seconds 0.001 failed "within
+    0.0009 s": the time left of it, which no caller set (rv43)."""
+    chain = _chain(
+        _config(query_timeout_seconds=300), _Factory(_SlowChatModel(first_delay=60))
+    )
+    # The wait for a slot took part of it.
+    with caller_deadline(time.monotonic() + 0.2, "the call's x.deadline", 0.25):
+        with pytest.raises(QueryTimeoutError) as raised:
+            await asyncio.wait_for(chain.ainvoke(_query()), timeout=30)
+    assert "within 0.25 s (the call's x.deadline)" in str(raised.value)
+    assert raised.value.timeout_seconds <= 0.2
+
+
 async def test_asearch_is_bounded_too() -> None:
     chain = _chain(_config(query_timeout_seconds=0.3), _Factory(_SlowChatModel()))
 

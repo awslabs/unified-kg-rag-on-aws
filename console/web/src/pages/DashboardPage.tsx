@@ -36,7 +36,9 @@ interface Dashboard {
   strategies: {
     strategy: string;
     queries: number;
+    /** Declines, those at a query limit apart (``limited``). */
     abstained: number;
+    limited?: number;
     errors: number;
     latency_p50: number | null;
     latency_p95: number | null;
@@ -130,6 +132,7 @@ export function DashboardPage() {
                     <th className="num">{t("dashboard.tokensPerQuestion")}</th>
                     <th className="num">{t("dashboard.costPerQuestion")}</th>
                     <th className="num">{t("dashboard.declined")}</th>
+                    {d.totals.limited ? <th className="num">{t("dashboard.limited")}</th> : null}
                     <th className="num">{t("dashboard.errors")}</th>
                   </tr>
                 </thead>
@@ -143,6 +146,7 @@ export function DashboardPage() {
                       <td className="num">{number(s.tokens_per_query, { maximumFractionDigits: 0 })}</td>
                       <td className="num">{s.cost_per_query != null ? usd(s.cost_per_query) : "—"}</td>
                       <td className="num">{number(s.abstained)}</td>
+                      {d.totals.limited ? <td className="num">{number(s.limited ?? 0)}</td> : null}
                       <td className="num">{number(s.errors)}</td>
                     </tr>
                   ))}

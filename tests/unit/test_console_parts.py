@@ -318,6 +318,152 @@ def test_the_settings_view_names_deprecated_keys_on_load(tmp_path: Path) -> None
     assert agree["deprecated_keys"][0]["conflicts"] == []
 
 
+@pytest.mark.parametrize(
+    ("text", "changes", "saved", "in_force"),
+    [
+        # One replacement: the edit replaces the deprecated key.
+        (
+            "retry:\n  model_server_max_attempts: 2\n",
+            [{"path": "retry.model_server.max_attempts", "value": 4}],
+            {"retry": {"model_server": {"max_attempts": 4}}},
+            {"model_server": 4},
+        ),
+        # The same value: still only the new key.
+        (
+            "retry:\n  model_server_max_attempts: 2\n",
+            [{"path": "retry.model_server.max_attempts", "value": 2}],
+            {"retry": {"model_server": {"max_attempts": 2}}},
+            {"model_server": 2},
+        ),
+        # Several: the others keep the deprecated key's value.
+        (
+            "retry:\n  max_attempts: 1\n",
+            [{"path": "retry.model.max_attempts", "value": 2}],
+            {
+                "retry": {
+                    "model": {"max_attempts": 2},
+                    "ingestion_item": {"max_attempts": 1},
+                }
+            },
+            {"model": 2, "ingestion_item": 1},
+        ),
+        # A replacement the file sets keeps its value.
+        (
+            "retry:\n  max_attempts: 1\n  ingestion_item:\n    max_attempts: 1\n",
+            [{"path": "retry.model.max_attempts", "value": 5}],
+            {
+                "retry": {
+                    "ingestion_item": {"max_attempts": 1},
+                    "model": {"max_attempts": 5},
+                }
+            },
+            {"model": 5, "ingestion_item": 1},
+        ),
+        # The notice's Remove: the value moves, nothing in force changes.
+        (
+            "retry:\n  max_attempts: 1\n",
+            [{"path": "retry.max_attempts", "unset": True}],
+            {
+                "retry": {
+                    "model": {"max_attempts": 1},
+                    "ingestion_item": {"max_attempts": 1},
+                }
+            },
+            {"model": 1, "ingestion_item": 1},
+        ),
+    ],
+)
+def test_editing_a_field_a_deprecated_key_sets_saves_only_new_keys(
+    tmp_path: Path,
+    text: str,
+    changes: list[dict[str, object]],
+    saved: dict[str, object],
+    in_force: dict[str, int],
+) -> None:
+    """The form names the deprecated key a field is set by, but an edit of
+    the field disagreed with it: the review said "would not load" and Save
+    stayed off; only the YAML tab could save it (rv43)."""
+    import yaml
+
+    path = tmp_path / "config.yaml"
+    path.write_text(text)
+    file = settings_api.SettingsFile(path)
+    preview = file.preview(text=None, changes=changes)
+    assert preview["valid"], preview["errors"]
+    assert preview["deprecated_keys"] == []
+    assert yaml.safe_load(preview["text"]) == saved
+    file.save(text=preview["text"], base_sha=settings_api.digest(text))
+    retry = file.view()["effective"]["retry"]
+    assert {name: retry[name]["max_attempts"] for name in in_force} == in_force
+
+
+def test_the_settings_view_names_the_keys_the_environment_sets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A UKR__ variable wins over the file, but the field read "default" and
+    an edit of it passed review with no effect (rv43)."""
+    monkeypatch.setenv("UKR__RETRY__MODEL_SERVER_MAX_ATTEMPTS", "2")
+    monkeypatch.setenv("UKR__LOGGING__LEVEL", "warning")
+    path = tmp_path / "config.yaml"
+    path.write_text("logging:\n  level: INFO\n")
+    file = settings_api.SettingsFile(path)
+    view = file.view()
+    # The deprecated variable by the key it loads into; names, never values.
+    assert view["environment_keys"] == {
+        "retry.model_server.max_attempts": "UKR__RETRY__MODEL_SERVER_MAX_ATTEMPTS",
+        "logging.level": "UKR__LOGGING__LEVEL",
+    }
+    assert view["effective"]["retry"]["model_server"]["max_attempts"] == 2
+    preview = file.preview(
+        text=None,
+        changes=[
+            {"path": "retry.model_server.max_attempts", "value": 4},
+            {"path": "retry.model.max_attempts", "value": 3},
+        ],
+    )
+    assert preview["valid"]
+    assert preview["environment_overrides"] == [
+        {
+            "path": "retry.model_server.max_attempts",
+            "variable": "UKR__RETRY__MODEL_SERVER_MAX_ATTEMPTS",
+        }
+    ]
+
+
+def test_editing_a_price_keeps_the_deprecated_prices() -> None:
+    """A mapping: the edit joins the deprecated key's entries."""
+    data = {
+        "evaluation": {
+            "prices": {
+                "m1": {"input_per_million_tokens": 1, "output_per_million_tokens": 2}
+            }
+        }
+    }
+    result = settings_api.apply_changes(
+        data,
+        [
+            {
+                "path": "models.prices.m2",
+                "value": {
+                    "input_per_million_tokens": 3,
+                    "output_per_million_tokens": 4,
+                },
+            }
+        ],
+    )
+    assert result == {
+        "models": {
+            "prices": {
+                "m1": {"input_per_million_tokens": 1, "output_per_million_tokens": 2},
+                "m2": {"input_per_million_tokens": 3, "output_per_million_tokens": 4},
+            }
+        }
+    }
+    # An unrelated edit keeps the deprecated key.
+    kept = settings_api.apply_changes(data, [{"path": "search.top_k", "value": 5}])
+    assert kept["evaluation"] == data["evaluation"]
+
+
 def test_moving_a_served_directory_is_saved_only_when_confirmed(
     tmp_path: Path,
 ) -> None:
@@ -874,6 +1020,66 @@ def test_a_failed_question_could_not_decline_and_a_refused_one_ran_no_strategy()
     assert only_failed["totals"]["decline_rate"] is None
 
 
+_OLD_QUERIES = (
+    "CREATE TABLE queries (id TEXT PRIMARY KEY, created REAL NOT NULL, "
+    "question TEXT NOT NULL, requested_strategy TEXT NOT NULL, strategy TEXT, "
+    "suffix TEXT, latency_seconds REAL, outcome TEXT NOT NULL, "
+    "abstained INTEGER NOT NULL DEFAULT 0, rerank_status TEXT, usage TEXT, "
+    "cost_usd REAL, trace_id TEXT, error TEXT)"
+)
+
+
+def _open_store(path: str, barrier: object, results: object) -> None:
+    barrier.wait()  # type: ignore[attr-defined]
+    try:
+        ConsoleStore(Path(path)).close()
+        results.put("ok")  # type: ignore[attr-defined]
+    except Exception as e:  # noqa: BLE001 - reported to the test
+        results.put(f"{type(e).__name__}: {e}")  # type: ignore[attr-defined]
+
+
+@pytest.mark.timeout(60)
+def test_consoles_opening_an_older_store_at_once_each_open_it(
+    tmp_path: Path,
+) -> None:
+    """Each checked for a missing column, then added it: a second console
+    opening the same older file in between failed, "duplicate column name"
+    (rv43)."""
+    import multiprocessing
+    import sqlite3
+
+    context = multiprocessing.get_context("spawn")
+    failures = []
+    for trial in range(2):
+        path = tmp_path / f"console{trial}.sqlite3"
+        old = sqlite3.connect(path)
+        # All of the older schema, so only the added column is missing.
+        old.executescript(
+            _OLD_QUERIES + ";"
+            "CREATE INDEX queries_created ON queries (created);"
+            "CREATE TABLE jobs (id TEXT PRIMARY KEY, kind TEXT NOT NULL, "
+            "namespace TEXT NOT NULL, created REAL NOT NULL, record TEXT NOT NULL);"
+        )
+        old.close()
+        count = 6
+        barrier, results = context.Barrier(count), context.Queue()
+        processes = [
+            context.Process(target=_open_store, args=(str(path), barrier, results))
+            for _ in range(count)
+        ]
+        for process in processes:
+            process.start()
+        outcomes = [results.get(timeout=30) for _ in processes]
+        for process in processes:
+            process.join(timeout=30)
+        failures += [o for o in outcomes if o != "ok"]
+        columns = {
+            r[1] for r in sqlite3.connect(path).execute("PRAGMA table_info(queries)")
+        }
+        assert "abstention_reason" in columns
+    assert failures == []
+
+
 def test_a_decline_at_a_query_limit_is_counted_apart_from_the_decline_rate(
     tmp_path: Path,
 ) -> None:
@@ -884,13 +1090,7 @@ def test_a_decline_at_a_query_limit_is_counted_apart_from_the_decline_rate(
     path = tmp_path / "console.sqlite3"
     # A file an older console wrote, without the reason column.
     old = sqlite3.connect(path)
-    old.execute(
-        "CREATE TABLE queries (id TEXT PRIMARY KEY, created REAL NOT NULL, "
-        "question TEXT NOT NULL, requested_strategy TEXT NOT NULL, strategy TEXT, "
-        "suffix TEXT, latency_seconds REAL, outcome TEXT NOT NULL, "
-        "abstained INTEGER NOT NULL DEFAULT 0, rerank_status TEXT, usage TEXT, "
-        "cost_usd REAL, trace_id TEXT, error TEXT)"
-    )
+    old.execute(_OLD_QUERIES)
     old.execute(
         "INSERT INTO queries (id, created, question, requested_strategy, outcome) "
         "VALUES ('old', 999.0, 'q', 'local', 'answered')"
@@ -920,11 +1120,40 @@ def test_a_decline_at_a_query_limit_is_counted_apart_from_the_decline_rate(
         )
     queries = store.queries()
     assert {q["id"]: q["abstention_reason"] for q in queries}["3"] == "query_limit"
-    totals = dashboard.summarize(queries, [], Config())["totals"]
+    summary = dashboard.summarize(queries, [], Config())
+    totals = summary["totals"]
     # Of the old answer, the answer and the corpus decline: one in three.
     assert totals["limited"] == 2 and totals["abstained"] == 3
     assert totals["decline_rate"] == pytest.approx(1 / 3)
+    # Per strategy too: its declines are the corpus's, the limit's apart
+    # (the row counted 3 beside a total that left the 2 out, rv43).
+    (local,) = summary["strategies"]
+    assert (local["abstained"], local["limited"]) == (1, 2)
     store.close()
+
+
+def test_a_job_s_cost_is_the_one_its_run_recorded() -> None:
+    """A stopped run's cost was priced again at today's prices: a price
+    removed since turned its recorded $0.03 into none (rv43)."""
+    usage = {
+        "by_model": {"m": {"llm_calls": 1, "input_tokens": 1000, "output_tokens": 0}}
+    }
+    job = {
+        "kind": "ingest",
+        "result": {"token_usage": usage, "cost_usd": 0.03},
+    }
+    assert dashboard.job_cost(job, Config()) == 0.03
+    # Without one, priced from its usage at models.prices.
+    priced = Config(
+        models={
+            "prices": {
+                "m": {"input_per_million_tokens": 2.0, "output_per_million_tokens": 0}
+            }
+        }
+    )
+    job["result"] = {"token_usage": usage}
+    assert dashboard.job_cost(job, priced) == pytest.approx(0.002)
+    assert dashboard.job_cost(job, Config()) is None
 
 
 def test_a_saved_run_is_traced_to_the_console_job_that_wrote_it(tmp_path: Path) -> None:

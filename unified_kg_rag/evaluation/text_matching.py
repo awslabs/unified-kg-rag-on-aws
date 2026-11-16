@@ -679,7 +679,8 @@ _LOWER_PARTS = "".join([*_HAN_DIGITS, *_SINO_KOREAN_DIGITS, _SMALL_MULTIPLIERS])
 # times), else those of every Han profile (``_prefixes``). Whatever the
 # language, none leads a run: with no number before it, such a multiplier
 # is a letter of a word ("预兆", "前兆", "京兆"), and what follows it is
-# read alone ("预兆三个" is 3).
+# read alone ("预兆三个" is 3); before a currency counter too, as "数兆円"
+# and "兆円単位" state no number ("營收破兆元" reads none either).
 _PREFIX_MULTIPLIERS = "".join(
     sorted(
         {

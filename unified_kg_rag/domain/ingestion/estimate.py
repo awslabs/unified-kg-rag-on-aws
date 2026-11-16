@@ -60,13 +60,21 @@ EstimateBound = Literal["exact", "at most", "about"]
 # any model.
 OUTPUT_TOKENS_PER_INPUT_TOKEN = 26.9 / 51.4
 
+
+# Whether a config's run summarizes descriptions over the threshold: the
+# resolution's merges, the community detection's stored members and the
+# indexing's merges into the stored graph each may.
+def _summarizes(config: Config) -> bool:
+    return config.processing.graph_extraction.description_summarization.enabled
+
+
 # The stages whose model calls depend on the graph the extraction finds: what
 # each calls the model for, and whether a config's run calls it at all.
 GRAPH_DEPENDENT_STAGES: dict[str, tuple[str, Callable[[Config], bool]]] = {
     "graph_resolution": (
         "a summary of each entity or relationship whose merged descriptions "
         "exceed the summary threshold",
-        lambda c: c.processing.graph_extraction.description_summarization.enabled,
+        _summarizes,
     ),
     "community_detection": (
         "a report of each community",
@@ -76,40 +84,45 @@ GRAPH_DEPENDENT_STAGES: dict[str, tuple[str, Callable[[Config], bool]]] = {
     "summary_tree": ("a summary of each cluster of the summary tree", lambda c: True),
 }
 
-# The model role each stage calls, and whether a config's run calls it at
-# all: the models a run's budget (processing.max_run_usd) must price.
+
+_SUMMARY = (ModelRole.DESCRIPTION_SUMMARY, _summarizes)
+
+# The model roles each stage calls, each with whether a config's run calls
+# it at all: the models a run's budget (processing.max_run_usd) must price.
+# Every role a stage's code calls is listed (tested against the stage
+# classes); the output fixer's is added to any run that calls a model.
 STAGE_MODEL_ROLES: dict[
-    PipelineStageType, tuple[ModelRole, Callable[[Config], bool]]
+    PipelineStageType, tuple[tuple[ModelRole, Callable[[Config], bool]], ...]
 ] = {
     PipelineStageType.TEXT_CHUNKING: (
-        ModelRole.CHUNKING,
-        lambda c: c.processing.chunking.chunker_type is ChunkingStrategy.INTELLIGENT,
+        (
+            ModelRole.CHUNKING,
+            lambda c: c.processing.chunking.chunker_type
+            is ChunkingStrategy.INTELLIGENT,
+        ),
     ),
     PipelineStageType.TRANSLATION: (
-        ModelRole.TRANSLATION,
-        lambda c: c.processing.translation.enabled
-        and not c.processing.translation.is_noop,
+        (
+            ModelRole.TRANSLATION,
+            lambda c: c.processing.translation.enabled
+            and not c.processing.translation.is_noop,
+        ),
     ),
-    PipelineStageType.GRAPH_EXTRACTION: (ModelRole.GRAPH_EXTRACTION, lambda c: True),
+    PipelineStageType.GRAPH_EXTRACTION: ((ModelRole.GRAPH_EXTRACTION, lambda c: True),),
     PipelineStageType.GLEANING: (
-        ModelRole.GLEANING,
-        lambda c: c.processing.gleaning.enabled,
+        (ModelRole.GLEANING, lambda c: c.processing.gleaning.enabled),
     ),
-    PipelineStageType.GRAPH_RESOLUTION: (
-        ModelRole.DESCRIPTION_SUMMARY,
-        GRAPH_DEPENDENT_STAGES["graph_resolution"][1],
-    ),
+    PipelineStageType.GRAPH_RESOLUTION: (_SUMMARY,),
     PipelineStageType.CLAIM_EXTRACTION: (
-        ModelRole.CLAIM_EXTRACTION,
-        lambda c: c.processing.claim_extraction.enabled,
+        (ModelRole.CLAIM_EXTRACTION, lambda c: c.processing.claim_extraction.enabled),
     ),
     PipelineStageType.COMMUNITY_DETECTION: (
-        ModelRole.COMMUNITY_REPORT,
-        GRAPH_DEPENDENT_STAGES["community_detection"][1],
+        (ModelRole.COMMUNITY_REPORT, GRAPH_DEPENDENT_STAGES["community_detection"][1]),
+        _SUMMARY,
     ),
+    PipelineStageType.INDEXING: (_SUMMARY,),
     PipelineStageType.SUMMARY_TREE: (
-        ModelRole.SUMMARY_TREE,
-        GRAPH_DEPENDENT_STAGES["summary_tree"][1],
+        (ModelRole.SUMMARY_TREE, GRAPH_DEPENDENT_STAGES["summary_tree"][1]),
     ),
 }
 
@@ -122,10 +135,12 @@ def run_model_roles(
     (it repairs their malformed output)."""
     roles = [
         role
-        for stage, (role, calls) in STAGE_MODEL_ROLES.items()
-        if stage in stages and calls(config)
+        for stage, called in STAGE_MODEL_ROLES.items()
+        if stage in stages
+        for role, calls in called
+        if calls(config)
     ]
-    return [*roles, ModelRole.FIXING] if roles else []
+    return [*dict.fromkeys(roles), ModelRole.FIXING] if roles else []
 
 
 def unpriced_run_models(

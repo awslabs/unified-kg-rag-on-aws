@@ -97,6 +97,7 @@ def summarize(
         lambda: {
             "queries": 0,
             "abstained": 0,
+            "limited": 0,
             "errors": 0,
             "latencies": [],
             "cost_usd": 0.0,
@@ -121,7 +122,11 @@ def summarize(
         if query.get("outcome") != "refused":
             row = by_strategy[strategy]
             row["queries"] += 1
-            row["abstained"] += int(bool(query.get("abstained")))
+            # A decline at a query limit apart, as in the totals.
+            row["limited"] += int(_limited(query))
+            row["abstained"] += int(
+                bool(query.get("abstained")) and not _limited(query)
+            )
             row["errors"] += int(query.get("outcome") in _FAILED)
             if latency is not None:
                 row["latencies"].append(latency)
@@ -153,6 +158,7 @@ def summarize(
             "strategy": name,
             "queries": row["queries"],
             "abstained": row["abstained"],
+            "limited": row["limited"],
             "errors": row["errors"],
             "latency_p50": quantile(row["latencies"], 0.5),
             "latency_p95": quantile(row["latencies"], 0.95),
@@ -253,10 +259,13 @@ def _job_usage(job: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def job_cost(job: Mapping[str, Any], config: Config) -> float | None:
-    """A job's USD, when priced: an ingestion's from its model usage at
+    """A job's USD, when priced: the one its run recorded (``cost_usd``, at
+    the prices then), else an ingestion's from its model usage at
     ``models.prices`` (a run stopped at its budget included), an
     evaluation's from its comparison's cost block."""
     result = job.get("result") or {}
+    if isinstance(result.get("cost_usd"), int | float):
+        return float(result["cost_usd"])
     if job.get("kind") == "ingest":
         by_model = (result.get("token_usage") or {}).get("by_model") or {}
         if not by_model:

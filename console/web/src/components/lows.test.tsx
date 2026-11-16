@@ -410,4 +410,75 @@ describe("the Settings page on load", () => {
     expect(await screen.findByText("지원 중단되었거나 제거된 키")).toBeInTheDocument();
     expect(container.textContent).toContain("retry.model_server_max_attempts 키와 retry.model_server.max_attempts 키에 서로 다른 값이 설정되어 있어");
   });
+
+  /** The server: the view, and a preview that records each request. */
+  const serveReview = (config: unknown, preview: unknown) => {
+    const sent: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        const u = String(url);
+        if (u.includes("config/preview")) {
+          sent.push(JSON.parse(String(init?.body)));
+          return new Response(JSON.stringify(preview), { status: 200 });
+        }
+        return new Response(JSON.stringify(u.includes("config/schema") ? schema : config), { status: 200 });
+      }),
+    );
+    return sent;
+  };
+  const validPreview = (text: string) => ({ text, diff: "-a\n+b\n", changed: true, comments_dropped: false, valid: true, errors: [], warnings: [], unknown_keys: [], deprecated_keys: [], removed_keys: [], endpoint_changes: [], directory_changes: [] });
+
+  it("saves an edit of a field a deprecated key sets from the Fields form (rv43)", async () => {
+    const sent = serveReview(view([deprecated], { retry: { model_server: { max_attempts: 2 } } }), validPreview("retry:\n  model_server:\n    max_attempts: 4\n"));
+    render(
+      <I18nProvider initial="en">
+        <SettingsPage onSaved={() => undefined} />
+      </I18nProvider>,
+    );
+    fireEvent.change(await screen.findByRole("searchbox"), { target: { value: "retry.model_server.max_attempts" } });
+    const input = await screen.findByDisplayValue("2");
+    fireEvent.change(input, { target: { value: "4" } });
+    fireEvent.blur(input);
+    fireEvent.click(screen.getByRole("button", { name: "Review changes" }));
+    // The edit goes as is; the server retires the deprecated key it replaces.
+    expect(await screen.findByRole("button", { name: /Save/ })).toBeEnabled();
+    expect(sent).toEqual([{ changes: [{ path: "retry.model_server.max_attempts", value: 4 }] }]);
+  });
+
+  it("removes a deprecated key from its notice, then reviews it (rv43)", async () => {
+    const sent = serveReview(view([deprecated], { retry: { model_server: { max_attempts: 2 } } }), validPreview("retry:\n  model_server:\n    max_attempts: 2\n"));
+    render(
+      <I18nProvider initial="en">
+        <SettingsPage onSaved={() => undefined} />
+      </I18nProvider>,
+    );
+    const remove = await screen.findByRole("button", { name: "Remove retry.model_server_max_attempts: its value moves into the keys that replace it" });
+    expect(remove).toHaveTextContent("Remove");
+    fireEvent.click(remove);
+    // Pending, listed as removed (not reset to its default): no second Remove.
+    expect(screen.queryByRole("button", { name: /^Remove retry/ })).not.toBeInTheDocument();
+    expect(screen.getByText("retry.model_server_max_attempts").nextSibling).toHaveTextContent("Remove");
+    fireEvent.click(screen.getByRole("button", { name: "Review changes" }));
+    expect(await screen.findByRole("button", { name: /Save/ })).toBeEnabled();
+    expect(sent).toEqual([{ changes: [{ path: "retry.model_server_max_attempts", unset: true }] }]);
+  });
+
+  it("names the environment variable that sets a field, and warns an edit of it has no effect (rv43)", async () => {
+    const config = { ...view([], { retry: { model_server: { max_attempts: 2 } } }), text: "", data: {}, environment_keys: { "retry.model_server.max_attempts": "UKR__RETRY__MODEL_SERVER__MAX_ATTEMPTS" } };
+    serveReview(config, { ...validPreview("retry:\n  model_server:\n    max_attempts: 4\n"), environment_overrides: [{ path: "retry.model_server.max_attempts", variable: "UKR__RETRY__MODEL_SERVER__MAX_ATTEMPTS" }] });
+    render(
+      <I18nProvider initial="en">
+        <SettingsPage onSaved={() => undefined} />
+      </I18nProvider>,
+    );
+    fireEvent.change(await screen.findByRole("searchbox"), { target: { value: "retry.model_server.max_attempts" } });
+    expect(await screen.findByText(/set by UKR__RETRY__MODEL_SERVER__MAX_ATTEMPTS \(environment variable, wins over the file\)/)).toBeInTheDocument();
+    const input = screen.getByDisplayValue("2");
+    fireEvent.change(input, { target: { value: "4" } });
+    fireEvent.blur(input);
+    fireEvent.click(screen.getByRole("button", { name: "Review changes" }));
+    expect(await screen.findByText("Set by an environment variable")).toBeInTheDocument();
+    expect(screen.getByText("retry.model_server.max_attempts (UKR__RETRY__MODEL_SERVER__MAX_ATTEMPTS)")).toBeInTheDocument();
+  });
 });

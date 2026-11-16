@@ -398,58 +398,7 @@ class ConfigLoader:
         Raises:
             ConfigurationError: An environment variable holds an invalid value.
         """
-        overrides: dict[str, tuple[str, ...]] = {}
-        # The variable each override reads (a deprecated key's sets several).
-        variables: dict[str, str] = {}
-        unknown: list[str] = []
-        for name in sorted(os.environ):
-            if name.upper().startswith(ENV_PREFIX):
-                path = _env_path(name)
-                replaced: list[tuple[str, tuple[str, ...]]] = []
-                if path is None:
-                    for replacement in _deprecated_variables(name):
-                        if (target := _env_path(replacement)) is not None:
-                            replaced.append((replacement, target))
-                    if replaced:
-                        _logger.warning(
-                            "Environment variable %s is deprecated: set %s",
-                            name,
-                            ", ".join(replacement for replacement, _ in replaced),
-                        )
-                removed = _removed_path(name)
-                if removed is not None:
-                    _warn_removed(f"environment variable {name}", removed)
-                elif replaced:
-                    for replacement, target in replaced:
-                        key = name if len(replaced) == 1 else f"{name} -> {replacement}"
-                        overrides[key] = target
-                        variables[key] = name
-                elif path is None:
-                    unknown.append(name)
-                else:
-                    overrides[name] = path
-        # A deprecated variable and its replacement's both set: the
-        # replacement's wins, as it would over the deprecated key in a file.
-        direct = {
-            path: name for name, path in overrides.items() if name not in variables
-        }
-        for key in [key for key in overrides if key in variables]:
-            if (winner := direct.get(overrides[key])) is not None:
-                _logger.warning(
-                    "Environment variables %s and %s both set %s: %s wins",
-                    variables[key],
-                    winner,
-                    ".".join(overrides[key]),
-                    winner,
-                )
-                del overrides[key]
-        for name, path in AWS_ENV_FALLBACKS.items():
-            if (
-                name in os.environ
-                and path not in overrides.values()
-                and not _is_set(file_data, path)
-            ):
-                overrides[name] = path
+        overrides, variables, unknown = _variable_paths(file_data)
         layer: dict[str, Any] = {}
         for name, path in overrides.items():
             value = os.environ[variables.get(name, name)]
@@ -476,6 +425,80 @@ class ConfigLoader:
     @property
     def config(self) -> Config:
         return self._config if self._config is not None else self.load_config()
+
+
+def _variable_paths(
+    file_data: dict[str, Any], *, warn: bool = True
+) -> tuple[dict[str, tuple[str, ...]], dict[str, str], list[str]]:
+    """The config path each set environment variable applies to (keyed by
+    variable; a deprecated key's variable once per key it loads into, as
+    ``NAME -> REPLACEMENT``), the variable each such key reads, and the
+    ``UKR__`` variables that name no config key. ``AWS_PROFILE`` /
+    ``AWS_REGION`` only where ``file_data`` leaves their key unset. With
+    ``warn``, a WARNING for each deprecated or removed variable."""
+    overrides: dict[str, tuple[str, ...]] = {}
+    # The variable each override reads (a deprecated key's sets several).
+    variables: dict[str, str] = {}
+    unknown: list[str] = []
+    for name in sorted(os.environ):
+        if name.upper().startswith(ENV_PREFIX):
+            path = _env_path(name)
+            replaced: list[tuple[str, tuple[str, ...]]] = []
+            if path is None:
+                for replacement in _deprecated_variables(name):
+                    if (target := _env_path(replacement)) is not None:
+                        replaced.append((replacement, target))
+                if replaced and warn:
+                    _logger.warning(
+                        "Environment variable %s is deprecated: set %s",
+                        name,
+                        ", ".join(replacement for replacement, _ in replaced),
+                    )
+            removed = _removed_path(name)
+            if removed is not None:
+                if warn:
+                    _warn_removed(f"environment variable {name}", removed)
+            elif replaced:
+                for replacement, target in replaced:
+                    key = name if len(replaced) == 1 else f"{name} -> {replacement}"
+                    overrides[key] = target
+                    variables[key] = name
+            elif path is None:
+                unknown.append(name)
+            else:
+                overrides[name] = path
+    # A deprecated variable and its replacement's both set: the
+    # replacement's wins, as it would over the deprecated key in a file.
+    direct = {path: name for name, path in overrides.items() if name not in variables}
+    for key in [key for key in overrides if key in variables]:
+        if (winner := direct.get(overrides[key])) is not None:
+            if warn:
+                _logger.warning(
+                    "Environment variables %s and %s both set %s: %s wins",
+                    variables[key],
+                    winner,
+                    ".".join(overrides[key]),
+                    winner,
+                )
+            del overrides[key]
+    for name, path in AWS_ENV_FALLBACKS.items():
+        if (
+            name in os.environ
+            and path not in overrides.values()
+            and not _is_set(file_data, path)
+        ):
+            overrides[name] = path
+    return overrides, variables, unknown
+
+
+def environment_keys(file_data: dict[str, Any]) -> dict[str, str]:
+    """The config keys the environment sets over a file holding
+    ``file_data``, dotted, each with the variable that sets it (names only,
+    never values): the value in force there is the variable's."""
+    overrides, variables, _ = _variable_paths(file_data, warn=False)
+    return {
+        ".".join(path): variables.get(name, name) for name, path in overrides.items()
+    }
 
 
 def _file_under_variables(

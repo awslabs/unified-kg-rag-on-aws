@@ -2126,7 +2126,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         answer_chain = self._get_chain_for_prompt(
             self._answer_prompt(state.get("resolved_strategy")),
             StrOutputParser(),
-            **_answer_reasoning(state),
+            **answer_reasoning(state),
             **({"system_suffix": instructions} if instructions else {}),
         )
         # The answer reads the standalone question: the conversation history
@@ -3786,35 +3786,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
 
     def check_effort(self, effort: EffortLevel | None) -> None:
         """Refuse an ``effort`` the answer model cannot apply, before any
-        model call: one that does not reason (a local server's, a Bedrock
-        model without thinking), which would drop it without a word, or a
-        level it does not take (``LanguageModelInfo.supported_efforts``).
-        ``run-eval`` checks every effort its dataset asks for with it before
-        answering any.
+        model call (:func:`check_answer_effort`). ``run-eval`` checks every
+        effort its dataset asks for with it before answering any.
 
         Raises:
             InvalidArgumentError: Naming the model and what it takes.
         """
-        if effort is None:
-            return
-        model_id = self.config.model_id(ModelRole.ANSWER_GENERATION)
-        info = self.factory.get_model_info(model_id)
-        if not info.supports_thinking:
-            raise InvalidArgumentError(
-                f"effort '{effort}' cannot apply: the answer model "
-                f"'{model_id}' does not reason (it would answer at no effort "
-                "at all); unset effort, or answer with a model that reasons "
-                "(models.roles.answer_generation)"
-            )
-        allowed = info.supported_efforts
-        if allowed is not None and effort not in allowed:
-            raise InvalidArgumentError(
-                f"effort '{effort}' is not a level the answer model "
-                f"'{model_id}' takes: "
-                + ", ".join(
-                    level for level in get_args(EffortLevel) if level in allowed
-                )
-            )
+        check_answer_effort(self.config, self.factory, effort)
 
     async def _check_holdings(
         self, rag_input: RAGInput, input_dict: dict[str, Any]
@@ -4442,7 +4420,39 @@ def _streamed_to(
     return RunnableLambda(run)
 
 
-def _answer_reasoning(state: dict[str, Any]) -> dict[str, Any]:
+def check_answer_effort(
+    config: Config, factory: LLMFactoryPort, effort: EffortLevel | None
+) -> None:
+    """Refuse an ``effort`` the answer model
+    (``models.roles.answer_generation``) cannot apply, before any model
+    call: one that does not reason (a local server's, a Bedrock model
+    without thinking), which would drop it without a word, or a level it
+    does not take (``LanguageModelInfo.supported_efforts``).
+
+    Raises:
+        InvalidArgumentError: Naming the model and what it takes.
+    """
+    if effort is None:
+        return
+    model_id = config.model_id(ModelRole.ANSWER_GENERATION)
+    info = factory.get_model_info(model_id)
+    if not info.supports_thinking:
+        raise InvalidArgumentError(
+            f"effort '{effort}' cannot apply: the answer model "
+            f"'{model_id}' does not reason (it would answer at no effort "
+            "at all); unset effort, or answer with a model that reasons "
+            "(models.roles.answer_generation)"
+        )
+    allowed = info.supported_efforts
+    if allowed is not None and effort not in allowed:
+        raise InvalidArgumentError(
+            f"effort '{effort}' is not a level the answer model "
+            f"'{model_id}' takes: "
+            + ", ".join(level for level in get_args(EffortLevel) if level in allowed)
+        )
+
+
+def answer_reasoning(state: dict[str, Any]) -> dict[str, Any]:
     """The answer model's reasoning arguments of a query (``RAGInput.effort``,
     or the deprecated ``enable_thinking``): thinking on at the query's
     effort, which the model factory sends and sizes the output ceiling's
@@ -4710,9 +4720,9 @@ _QUERY_LIMIT_SETTINGS: dict[str, str] = {
 
 
 # An absolute deadline (``time.monotonic()``) a caller set for the queries it
-# runs, and the setting it came from (``caller_deadline``): a query's own
-# deadline is never later.
-_CALLER_DEADLINE: contextvars.ContextVar[tuple[float, str] | None] = (
+# runs, the setting it came from and its configured seconds, if stated
+# (``caller_deadline``): a query's own deadline is never later.
+_CALLER_DEADLINE: contextvars.ContextVar[tuple[float, str, float | None] | None] = (
     contextvars.ContextVar("kg_rag_caller_deadline", default=None)
 )
 
@@ -4726,11 +4736,15 @@ def new_query_id() -> str:
 
 @contextlib.contextmanager
 def caller_deadline(
-    at: float | None, setting: str = "the caller's deadline"
+    at: float | None,
+    setting: str = "the caller's deadline",
+    seconds: float | None = None,
 ) -> Iterator[None]:
     """Queries started in this context end by ``at`` (``time.monotonic()``),
     if it comes before their own ``search.query_timeout_seconds``; a query
-    timed out by it names ``setting`` (the caller's setting it came from).
+    timed out by it names ``setting`` (the caller's setting it came from)
+    and ``seconds``, the deadline that setting configures (without it, the
+    time the query had left of it when it started).
 
     A surface that bounds a whole call (the MCP server: the wait for a call
     slot and the query under one deadline) passes its deadline here, so the
@@ -4738,7 +4752,7 @@ def caller_deadline(
     one (metrics, ids, the span's ``error_class``) instead of being cancelled
     from outside unrecorded.
     """
-    token = _CALLER_DEADLINE.set(None if at is None else (at, setting))
+    token = _CALLER_DEADLINE.set(None if at is None else (at, setting, seconds))
     try:
         yield
     finally:
@@ -4767,14 +4781,18 @@ class _QueryDeadline:
     def __init__(self, seconds: float | None) -> None:
         self.seconds = seconds
         self.setting = "search.query_timeout_seconds"
+        # The deadline a timeout states: the setting's seconds.
+        self.stated = seconds
         now = self.started = time.monotonic()
         self.at = None if seconds is None else now + seconds
         caller = _CALLER_DEADLINE.get()
         if caller is not None and (self.at is None or caller[0] < self.at):
             # The query's budget is the time its caller left it (after a
-            # wait for a call slot), not the setting.
-            self.at, self.setting = caller
+            # wait for a call slot), not the setting; a timeout states the
+            # caller's configured deadline when it gave one, else that time.
+            self.at, self.setting, stated = caller
             self.seconds = max(0.0, self.at - now)
+            self.stated = self.seconds if stated is None else stated
         self._scope: _DeadlineScope | None = None
 
     def time_left(self) -> float | None:
@@ -4790,6 +4808,7 @@ class _QueryDeadline:
         at = self.started + seconds
         if self.at is None or at < self.at:
             self.at, self.seconds, self.setting = at, seconds, setting
+            self.stated = seconds
 
     def scope(self) -> "_DeadlineScope":
         """A scope bounded by the deadline."""
@@ -4888,14 +4907,18 @@ class _DeadlineScope:
     def _expired(self) -> QueryTimeoutError:
         if self._first_chunk_seconds is not None:
             limit: float | None = self._first_chunk_seconds
+            stated = limit
             setting = "search.model_timeout_seconds"
             what = "The answer stream sent no first chunk"
         else:
             limit = self._deadline.seconds
+            stated = self._deadline.stated
             setting = self._deadline.setting
             what = "The query did not finish"
         assert limit is not None
-        message = f"{what} within {deadline_text(limit)} s"
+        message = (
+            f"{what} within {deadline_text(limit if stated is None else stated)} s"
+        )
         logger.warning("%s (%s); cancelled its calls in flight", message, setting)
         return QueryTimeoutError(
             f"{message} ({setting}); its calls in flight were cancelled",

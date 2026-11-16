@@ -39,6 +39,9 @@ interface ConfigView {
   /** The deprecated and removed keys the file sets, shown on load. */
   deprecated_keys?: DeprecatedKey[];
   removed_keys?: RemovedKey[];
+  /** The keys an environment variable sets (key -> variable): its value
+   * wins over the file's. */
+  environment_keys?: Record<string, string>;
 }
 
 interface Preview {
@@ -54,6 +57,8 @@ interface Preview {
   removed_keys?: RemovedKey[];
   endpoint_changes: { path: string; from: unknown; to: unknown }[];
   directory_changes?: { path: string; from: unknown; to: unknown }[];
+  /** The changed keys an environment variable sets: no effect while it is. */
+  environment_overrides?: { path: string; variable: string }[];
 }
 
 interface Change {
@@ -135,6 +140,8 @@ export function SettingsPage({ onSaved }: { onSaved: () => void }) {
     );
   const data = view.data;
   const pending = Object.keys(changes).length;
+  // A deprecated or removed key a pending change unsets is removed, not reset.
+  const goneKeys = new Set([...(data.deprecated_keys ?? []), ...(data.removed_keys ?? [])].map((k) => k.key));
 
   return (
     <>
@@ -153,7 +160,7 @@ export function SettingsPage({ onSaved }: { onSaved: () => void }) {
         </Notice>
       ) : null}
       {saved ? <Notice tone="good" title={t("settings.saved")}>{t("settings.savedHelp")}</Notice> : null}
-      <GoneKeys preview={data} />
+      <GoneKeys preview={data} pending={changes} onRemove={data.writable ? (key) => setChange({ path: key, unset: true }, key) : undefined} />
       <div className="grid-2" style={{ marginTop: 16 }}>
         <section className="sheet">
           <div className="tabs" role="tablist" aria-label={t("settings.sections")}>
@@ -202,7 +209,7 @@ export function SettingsPage({ onSaved }: { onSaved: () => void }) {
                 {Object.values(changes).map((c) => (
                   <li key={c.path} className="row" style={{ justifyContent: "space-between" }}>
                     <span className="mono">{c.path}</span>
-                    <span className="mono muted">{c.unset ? t("settings.unset") : JSON.stringify(c.value)}</span>
+                    <span className="mono muted">{c.unset ? (goneKeys.has(c.path) ? t("settings.removeKey") : t("settings.unset")) : JSON.stringify(c.value)}</span>
                     <button className="link-button" onClick={() => setChange(null, c.path)}>
                       {t("settings.undo")}
                     </button>
@@ -246,6 +253,18 @@ export function SettingsPage({ onSaved }: { onSaved: () => void }) {
                   </Notice>
                 ) : null}
                 <GoneKeys preview={preview} />
+                {(preview.environment_overrides ?? []).length ? (
+                  <Notice tone="warn" title={t("settings.environmentOverridesTitle")}>
+                    <ul style={{ margin: "0 0 8px", paddingLeft: 18 }}>
+                      {(preview.environment_overrides ?? []).map((o) => (
+                        <li key={o.path} className="mono">
+                          {o.path} ({o.variable})
+                        </li>
+                      ))}
+                    </ul>
+                    <p style={{ margin: 0 }}>{t("settings.environmentOverridesHelp")}</p>
+                  </Notice>
+                ) : null}
                 {preview.comments_dropped ? <Notice tone="warn">{t("settings.commentsDropped")}</Notice> : null}
                 {(preview.endpoint_changes ?? []).length ? (
                   <Notice tone="warn" title={t("settings.endpointsTitle")}>
@@ -401,6 +420,9 @@ function FieldEditor({
   // A deprecated key the file sets loads into this field: the value in force
   // is its value, not the default.
   const feeder = inFile === undefined ? (data.deprecated_keys ?? []).find((d) => d.replacements.includes(field.path)) : undefined;
+  // An environment variable that sets this field, or a key of its mapping,
+  // wins over the file.
+  const variable = Object.entries(data.environment_keys ?? {}).find(([key]) => key === field.path || key.startsWith(`${field.path}.`))?.[1];
   const [text, setText] = useState(display(current ?? effective));
   const [problem, setProblem] = useState<string | null>(null);
   const id = `field-${field.path}`;
@@ -467,6 +489,7 @@ function FieldEditor({
       {field.description ? <span className="field-help">{field.description}</span> : null}
       <span className="id">
         {inFile !== undefined ? t("settings.inFile") : feeder ? t("settings.setByDeprecated", { key: feeder.key }) : t("settings.fromDefault")}
+        {variable ? ` · ${t("settings.setByEnvironment", { variable })}` : ""}
         {field.hasDefault ? ` · ${t("settings.default", { value: display(field.defaultValue) || "∅" })}` : ""}
         {inFile !== undefined && field.kind !== "secret" ? (
           <>
@@ -569,7 +592,18 @@ function ObservabilityPanel({ data, changes, setChange }: { data: ConfigView; ch
 /** The deprecated and removed keys a config sets (the file on load, or a
  * previewed edit), in the page's language: the loader warns of them only in
  * the server log. */
-export function GoneKeys({ preview }: { preview: Pick<Preview, "deprecated_keys" | "removed_keys"> }) {
+export function GoneKeys({
+  preview,
+  pending = {},
+  onRemove,
+}: {
+  preview: Pick<Preview, "deprecated_keys" | "removed_keys">;
+  /** The pending changes, by key: a key being removed has no Remove. */
+  pending?: Record<string, Change>;
+  /** Remove a key (a deprecated one's value moves into its replacements,
+   * on the server); none in a review. */
+  onRemove?: (key: string) => void;
+}) {
   const { t } = useI18n();
   const deprecated = preview.deprecated_keys ?? [];
   const removed = preview.removed_keys ?? [];
@@ -590,6 +624,7 @@ export function GoneKeys({ preview }: { preview: Pick<Preview, "deprecated_keys"
                 <strong>{t("settings.deprecatedConflict", { key: d.key, conflicts: joinList(d.conflicts, t) })}</strong>
               </>
             ) : null}
+            <RemoveKey keyPath={d.key} label={t("settings.removeDeprecatedLabel", { key: d.key })} pending={pending} onRemove={onRemove} />
           </li>
         ))}
         {removed.map((r) => (
@@ -598,9 +633,23 @@ export function GoneKeys({ preview }: { preview: Pick<Preview, "deprecated_keys"
             <span className="muted" lang="en">
               {r.reason}
             </span>
+            <RemoveKey keyPath={r.key} label={t("settings.removeRemovedLabel", { key: r.key })} pending={pending} onRemove={onRemove} />
           </li>
         ))}
       </ul>
     </Notice>
+  );
+}
+
+function RemoveKey({ keyPath, label, pending, onRemove }: { keyPath: string; label: string; pending: Record<string, Change>; onRemove?: (key: string) => void }) {
+  const { t } = useI18n();
+  if (!onRemove || pending[keyPath]) return null;
+  return (
+    <>
+      {" "}
+      <button className="link-button" aria-label={label} title={label} onClick={() => onRemove(keyPath)}>
+        {t("settings.removeKey")}
+      </button>
+    </>
   );
 }
