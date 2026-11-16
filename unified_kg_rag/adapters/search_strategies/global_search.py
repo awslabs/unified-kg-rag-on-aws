@@ -550,13 +550,28 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         rated next, down to the leaves, and a relevant child drops its
         parent. A depth with no relevant report and nothing queued rates the
         whole next depth, down to ``community_depth`` (MS GraphRAG's
-        ``max_level``, which bounds only that fallback). Returns the relevant
-        reports, most relevant first.
+        ``max_level``, which bounds only that fallback). Under the query's
+        limits a depth rates only the reports that fit beside the answer
+        (and the least map call when a map can follow, ``_maps``); the
+        others are kept unrated, as a report whose rating failed, and the
+        descent stops there. Returns the relevant reports, most relevant
+        first.
         """
         max_depth = self.global_search_config.community_depth
         threshold = self.global_search_config.relevance_threshold
         semaphore = asyncio.Semaphore(self.max_concurrency)
         relevant: dict[str, tuple[float, int, RetrievalResult]] = {}
+
+        def keep(
+            report: RetrievalResult, score: float, order: int, children: list[str]
+        ) -> None:
+            # A relevant report drops its parent; its children are rated next.
+            metadata = report.metadata or {}
+            relevant[self._community_id(report)] = (score, order, report)
+            children.extend(metadata.get("child_community_ids") or [])
+            if parent := metadata.get("parent_community_id"):
+                relevant.pop(str(parent), None)
+
         rated = 0
         unrated = 0
         depth = 0
@@ -568,22 +583,24 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             )
             while queue:
                 # Under the query's limits: the ratings that fit beside the
-                # least map call and the answer, the most relevant level last.
+                # answer and, when a map can follow, the least map call.
+                maps = self._maps(len(relevant) + len(queue))
                 fit = self._calls_within_limits(
                     CommunityRelevancePrompt,
                     query,
                     [r.content for r in queue],
-                    reserve_calls=2,
-                    reserve_tokens=self._least_call_tokens(GlobalMapPrompt, query),
+                    reserve_calls=1 + int(maps),
+                    reserve_tokens=(
+                        self._least_call_tokens(GlobalMapPrompt, query) if maps else 0
+                    ),
                 )
                 limited = fit < len(queue)
+                cut: list[RetrievalResult] = []
                 if limited:
                     self._record_limit_stop(
                         DegradationStep.COMMUNITY_RATING, fit, len(queue)
                     )
-                    queue = queue[:fit]
-                    if not queue:
-                        break
+                    queue, cut = queue[:fit], queue[fit:]
                 scores = await asyncio.gather(
                     *(
                         self._rate_report(r, query, semaphore, config=config)
@@ -635,11 +652,12 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                         score = outcome
                     if score < threshold:
                         continue
-                    metadata = report.metadata or {}
-                    relevant[self._community_id(report)] = (score, rated, report)
-                    children.extend(metadata.get("child_community_ids") or [])
-                    if parent := metadata.get("parent_community_id"):
-                        relevant.pop(str(parent), None)
+                    keep(report, score, rated, children)
+                # As a failed rating: a report the limits left unrated is
+                # kept, after those rated.
+                for report in cut:
+                    unrated += 1
+                    keep(report, threshold, rated + 1, children)
                 depth += 1
                 if limited:
                     # A cut level ends the descent: its unrated reports'
@@ -791,6 +809,13 @@ class GlobalSearchStrategy(BaseSearchStrategy):
     # Map-reduce
     # ------------------------------------------------------------------ #
 
+    def _maps(self, reports: int) -> bool:
+        """Whether the map phase runs over ``reports`` selected reports:
+        map-reduce on (``enable_map_reduce``) and at least
+        ``map_reduce_min_results`` of them."""
+        settings = self.global_search_config
+        return settings.enable_map_reduce and reports >= settings.map_reduce_min_results
+
     async def _apply_map_reduce(
         self,
         results: list[RetrievalResult],
@@ -832,7 +857,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         reports = [
             r for r in results if r.retriever_type == SectionType.COMMUNITY.value
         ]
-        if len(reports) < self.global_search_config.map_reduce_min_results:
+        if not self._maps(len(reports)):
             return results
         stats = {} if stats is None else stats
 

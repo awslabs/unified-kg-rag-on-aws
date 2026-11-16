@@ -497,6 +497,70 @@ class _Counted:
         return await self.chain.ainvoke(inputs, config)
 
 
+def _dynamic(**settings: Any) -> tuple[GlobalSearchStrategy, Any]:
+    """Global search with dynamic selection over the R0/R1 hierarchy of
+    ``test_global_search_logic`` (R0, A and A1 relevant), its ratings
+    counted by the query's meter; with its rater."""
+    from tests.unit.test_global_search_logic import _Rater
+    from tests.unit.test_global_search_logic import _strategy as _logic_strategy
+
+    strat = _logic_strategy(use_dynamic_selection=True, **settings)
+    rater = _Rater({"R0", "A", "A1"})
+    strat.community_relevance_scorer = _Counted(rater)
+    return strat, rater
+
+
+@pytest.mark.parametrize(
+    ("calls", "rated", "kept"),
+    [
+        # No rating beside the map call and the answer: both roots kept
+        # unrated (it used to abstain, nothing selected).
+        (2, [], {"R0", "R1"}),
+        # One rating: R1 (irrelevant) dropped, R0 kept unrated (it used to
+        # be dropped too); the cut depth ends the descent.
+        (3, ["R1"], {"R0"}),
+    ],
+)
+async def test_global_dynamic_selection_keeps_the_reports_it_cannot_rate(
+    calls: int, rated: list[str], kept: set[str]
+) -> None:
+    # Regression (rv42): reports the limits left unrated were dropped, where
+    # a report whose rating failed is kept at the threshold (MS GraphRAG).
+    from tests.unit.test_global_search_logic import _mapped
+
+    strat, rater = _dynamic()
+    with usage.usage_scope(usage.UsageLimits(max_llm_calls=calls)):
+        result = await strat.asearch(SearchQuery(query="themes"))
+    assert rater.rated == rated
+    assert _mapped(strat) == kept
+    assert result.metadata["global_rated_report_count"] == len(rated)
+    assert result.metadata["global_unrated_report_count"] == 2 - len(rated)
+    (entry,) = result.metadata["degraded"]
+    assert (entry["step"], entry["reason"]) == (
+        "community_rating",
+        f"query_limit: {2 - len(rated)} of 2 calls not started",
+    )
+
+
+async def test_global_dynamic_selection_reserves_no_map_call_none_follows() -> None:
+    # Without map-reduce, the call a map would take rates a report.
+    strat, rater = _dynamic(enable_map_reduce=False)
+    with usage.usage_scope(usage.UsageLimits(max_llm_calls=2)):
+        result = await strat.asearch(SearchQuery(query="themes"))
+    assert rater.rated == ["R1"]
+    assert {r.source for r in result.results} == {"r-R0"}
+    # Too few reports for the map (map_reduce_min_results): the same.
+    strat, rater = _dynamic(map_reduce_min_results=3)
+    with usage.usage_scope(usage.UsageLimits(max_llm_calls=2)):
+        await strat.asearch(SearchQuery(query="themes"))
+    assert rater.rated == ["R1"]
+    # A map that may follow keeps its call.
+    strat, rater = _dynamic()
+    with usage.usage_scope(usage.UsageLimits(max_llm_calls=2)):
+        await strat.asearch(SearchQuery(query="themes"))
+    assert rater.rated == []
+
+
 async def test_drift_runs_only_the_actions_that_fit_beside_the_answer() -> None:
     from tests.unit.test_drift_search_logic import _action, _Local
     from tests.unit.test_drift_search_logic import _strategy as _drift_strategy
