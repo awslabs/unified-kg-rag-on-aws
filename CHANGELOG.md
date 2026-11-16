@@ -234,6 +234,13 @@ Bugs present in 0.3.0.
   come, so the window ends on the model's first chunk; the answer text is the same. A stream is still retried on a
   transient error (a connection dropped while the model reasons, a stall after an empty chunk) until answer text
   reaches the caller, past the window too: the window's retry bound ends with it.
+- A Bedrock stream (`astream`, the console) that failed after its response started was never retried, though
+  `ainvoke` was: a stream's error event is coded in camelCase (`throttlingException`), and urllib3's errors of a
+  dropped or stalled stream reach the caller as they are, so neither read as transient. They do now, with
+  `ModelStreamErrorException` ("retry your request"), until answer text reaches the caller; validation and access
+  errors still fail at once. An OpenAI-compatible stream is retried the same way after its response started (its
+  client retries only until then). A model's read timeout is named as one, with `search.model_timeout_seconds`,
+  instead of "an unexpected error".
 - A context could read past its token budget: a section type whose next section fell below the truncation floor
   kept its unused share while that share was also handed to the other types (a 244-token budget built 262). A round
   that seats past the budget so now lends its spare once, the room the types held unseated pooled in it, and what no

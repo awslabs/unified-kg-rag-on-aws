@@ -182,6 +182,39 @@ def test_a_model_clients_own_error_is_named_a_language_model_error() -> None:
         assert named_model_error(kept, config) is kept
 
 
+def test_a_model_read_timeout_is_named_as_one_to_the_operator() -> None:
+    # rv44 query low: a model that sent nothing within its read timeout
+    # read "The call failed with an unexpected error" on the console.
+    from botocore.exceptions import ReadTimeoutError
+    from urllib3 import exceptions as urllib3_exc
+
+    from unified_kg_rag.adapters.llm.reachability import named_model_error
+
+    config = Config()
+    config.search.model_timeout_seconds = 12.5
+    _, openai_timeout = _openai_errors()
+    for raw in (
+        httpx.ReadTimeout("timed out"),
+        openai_timeout,
+        ReadTimeoutError(endpoint_url="https://bedrock-runtime.test"),
+        urllib3_exc.ReadTimeoutError(None, "/", "Read timed out."),
+    ):
+        named = named_model_error(raw, config)
+        assert isinstance(named, x.LanguageModelError), raw
+        assert named.__cause__ is raw
+        shown = x.shown_error_text(named, audience="operator")
+        assert shown != INTERNAL_ERROR_MESSAGE, raw
+        assert "timed out" in shown
+        assert "search.model_timeout_seconds, 12.5 s" in shown
+        # An MCP caller still sees no model server's detail.
+        assert x.shown_error_text(named, audience="caller") == INTERNAL_ERROR_MESSAGE
+    # A connect timeout is a server that could not be reached.
+    assert isinstance(
+        named_model_error(httpx.ConnectTimeout("timed out"), config),
+        x.ModelUnreachableError,
+    )
+
+
 def test_the_openai_clients_connection_error_is_unreachable_not_its_timeout() -> None:
     connection, timeout = _openai_errors()
     assert is_unreachable_error(connection)

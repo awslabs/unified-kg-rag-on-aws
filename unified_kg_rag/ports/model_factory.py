@@ -359,8 +359,12 @@ class ModelFactoryPort(Protocol[ModelIdT, ModelT, InfoT]):
     without it ``adapters.llm.retry.looks_like_item_error`` (HTTP
     400/413/422 read from ``status_code`` or ``response.status_code``) and
     unparseable or cut-off output count. A factory that
-    also defines ``transient_retry`` (the Bedrock and Ollama ones) gets a
-    chain-level retry of query chains from ``setup_chain`` under that policy.
+    also defines ``transient_retry`` (the Bedrock and local ones) gets a
+    chain-level retry of query chains from ``setup_chain`` under that policy;
+    one whose client retries a whole call itself defines
+    ``is_stream_transient_error(exc) -> bool`` too (the OpenAI-compatible
+    one), the errors its client did not retry, and only streams are retried,
+    on those.
     """
 
     def get_model(self, model_id: ModelIdT, **kwargs: Any) -> ModelT: ...

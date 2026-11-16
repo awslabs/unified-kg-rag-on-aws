@@ -1613,9 +1613,13 @@ A query has two bounds ([Querying](./guides/query.md#query-deadline)):
   any chunk counts, so a reasoning model that streams its reasoning (inline
   `<think>` or Ollama's native thinking) is not cut off while it reasons.
   Until answer text arrives, a stream is retried on a transient error as an
-  unstreamed call is: a connection dropped while the model reasons, or a
-  stall after a chunk without text (it fails at the client's read timeout
-  with the model's error, not `QueryTimeoutError`).
+  unstreamed call is, on every provider: a connection dropped while the
+  model reasons, a Bedrock stream's throttling or model-stream error event,
+  or a stall after a chunk without text (it fails at the client's read
+  timeout with the model's error, which names the timeout, not
+  `QueryTimeoutError`). On an OpenAI-compatible server the client retries
+  a call until its response starts and the framework only a stream that
+  fails after that, so the attempts are not multiplied.
 
 Ingestion calls use their own client: a 330 s read timeout and
 `retry.model.client_max_attempts` (default 6) botocore attempts, bounded by

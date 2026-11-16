@@ -18,11 +18,18 @@ import pytest
 from botocore.exceptions import (
     ClientError,
     EndpointConnectionError,
+    EventStreamError,
     ReadTimeoutError,
 )
+from urllib3 import exceptions as urllib3_exc
 
 from unified_kg_rag.adapters.aws.bedrock import BedrockEmbeddingsWrapper
-from unified_kg_rag.adapters.aws.bedrock_retry import is_transient_bedrock_error
+from unified_kg_rag.adapters.aws.bedrock_retry import (
+    bedrock_error_code,
+    is_bedrock_item_error,
+    is_transient_bedrock_error,
+)
+from unified_kg_rag.adapters.aws.bedrock_throttles import _throttled
 from unified_kg_rag.adapters.llm import retry as llm_retry
 from unified_kg_rag.adapters.llm.retry import backoff_delay, call_with_transient_retry
 from unified_kg_rag.domain.models import Config, EmbeddingModelId
@@ -76,6 +83,7 @@ def _wrapper(client: _FakeRuntimeClient, **kwargs: Any) -> BedrockEmbeddingsWrap
     "code",
     [
         "ModelErrorException",
+        "ModelStreamErrorException",
         "ModelNotReadyException",
         "ModelTimeoutException",
         "ServiceUnavailableException",
@@ -98,6 +106,54 @@ def test_connection_errors_are_retryable() -> None:
     assert is_transient_bedrock_error(EndpointConnectionError(endpoint_url="x"))
     assert is_transient_bedrock_error(ReadTimeoutError(endpoint_url="x"))
     assert not is_transient_bedrock_error(ValueError("bad"))
+
+
+@pytest.mark.parametrize(
+    ("event_code", "transient"),
+    [
+        ("throttlingException", True),
+        ("internalServerException", True),
+        ("serviceUnavailableException", True),
+        ("modelStreamErrorException", True),
+        ("modelTimeoutException", True),
+        ("validationException", False),
+    ],
+)
+def test_an_event_stream_error_is_classified_by_its_code(
+    event_code: str, transient: bool
+) -> None:
+    # Regression (rv44 query medium): an event stream codes its error by the
+    # event's camelCase member name, which matched no code.
+    error = EventStreamError(
+        {"Error": {"Code": event_code, "Message": "synthetic"}}, "ConverseStream"
+    )
+    assert is_transient_bedrock_error(error) is transient
+    assert bedrock_error_code(error.response["Error"]) == (
+        event_code[0].upper() + event_code[1:]
+    )
+
+
+def test_a_stream_s_validation_event_is_the_item_s_error() -> None:
+    error = EventStreamError(
+        {"Error": {"Code": "validationException", "Message": "Input is too long"}},
+        "ConverseStream",
+    )
+    assert is_bedrock_item_error(error)
+
+
+def test_a_throttling_event_code_counts_as_throttled() -> None:
+    assert _throttled((None, {"Error": {"Code": "throttlingException"}}))
+    assert not _throttled((None, {"Error": {"Code": "validationException"}}))
+
+
+def test_urllib3_errors_of_a_stream_s_events_are_retryable() -> None:
+    # botocore's event stream reads the raw response: urllib3's errors of a
+    # dropped or stalled connection are raised as they are.
+    assert is_transient_bedrock_error(urllib3_exc.ProtocolError("broken"))
+    assert is_transient_bedrock_error(
+        urllib3_exc.ReadTimeoutError(None, "/", "Read timed out.")
+    )
+    assert not is_transient_bedrock_error(urllib3_exc.LocationValueError("bad"))
 
 
 def test_backoff_delay_is_bounded_and_grows() -> None:

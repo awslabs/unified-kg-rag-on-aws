@@ -310,9 +310,11 @@ class RetryConfig(ConfigSection):
         description=(
             "Requests to an OpenAI-compatible or Ollama model server "
             "(providers.llm, providers.embedding) on transient errors. The "
-            "OpenAI client retries itself, max_attempts times; on Ollama, "
-            "whose client does not, query chains and embedding calls are "
-            "retried by the framework (ingestion items keep ingestion_item)."
+            "OpenAI client retries a call itself, max_attempts times, until "
+            "its response starts, and the framework a query's stream that "
+            "fails after that; on Ollama, whose client does not retry, query "
+            "chains and embedding calls are retried by the framework "
+            "(ingestion items keep ingestion_item)."
         ),
     )
     graph_store: RetryPolicy = Field(

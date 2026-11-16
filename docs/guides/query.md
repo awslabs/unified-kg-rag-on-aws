@@ -156,7 +156,9 @@ with `QueryTimeoutError` (exported from `unified_kg_rag`; also a builtin
   `search.model_timeout_seconds` of its model call; once chunks flow, the
   overall deadline applies. Any chunk counts: a reasoning model's streamed
   reasoning (dropped from the answer) ends that wait. Until answer text
-  arrives, a transient error is retried as for an unstreamed query.
+  arrives, a transient error (a Bedrock stream's throttling event or a
+  dropped connection included) is retried as for an unstreamed query, on
+  every provider.
 - `null` turns both deadlines off.
 
 The query's model calls (answer generation and the other query-time LLM

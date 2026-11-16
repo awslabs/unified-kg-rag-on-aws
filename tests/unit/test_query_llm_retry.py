@@ -15,11 +15,12 @@ from collections.abc import AsyncIterator, Iterator
 from typing import Any
 
 import pytest
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, EventStreamError
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import AIMessageChunk
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import Runnable, RunnableConfig, RunnableLambda
+from urllib3 import exceptions as urllib3_exc
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
 from tests.fixtures.fakes.chat_models import fake_model_info
@@ -563,3 +564,158 @@ async def test_a_failed_repair_leaves_the_answer_unrepaired(asynchronous: bool) 
             chain.invoke(_QUERY)
     assert (model.calls, fixer.calls) == (1, 1)
     assert isinstance(raised.value.__cause__, ClientError)
+
+
+# --- a Bedrock stream's own failures are transient --------------------------
+
+
+def _event_stream_error(code: str) -> EventStreamError:
+    # botocore codes an event stream's error by the event's member name.
+    return EventStreamError(
+        {"Error": {"Code": code, "Message": "synthetic failure"}}, "ConverseStream"
+    )
+
+
+def _bedrock_reasoning() -> list[AIMessageChunk]:
+    # ChatBedrockConverse's reasoning: content blocks without answer text.
+    block = {"type": "reasoning_content", "reasoning_content": {"text": "a "}}
+    return [AIMessageChunk(content=[dict(block, index=0)]) for _ in range(3)]
+
+
+# What a stream raises after its response started, none of which botocore
+# retries: an error event (ConverseStream's and InvokeModelWithResponseStream's
+# members), or urllib3's own error while the events are read.
+_STREAM_FAILURES = {
+    "throttling": lambda: _event_stream_error("throttlingException"),
+    "internal": lambda: _event_stream_error("internalServerException"),
+    "unavailable": lambda: _event_stream_error("serviceUnavailableException"),
+    "stream-error": lambda: _event_stream_error("modelStreamErrorException"),
+    "model-timeout": lambda: _event_stream_error("modelTimeoutException"),
+    "dropped": lambda: urllib3_exc.ProtocolError("Connection broken"),
+    "stalled": lambda: urllib3_exc.ReadTimeoutError(None, "/", "Read timed out."),
+}
+
+
+@pytest.mark.parametrize("failure", sorted(_STREAM_FAILURES))
+@pytest.mark.parametrize("surface", ["astream", "aquery_events"])
+async def test_a_bedrock_stream_failing_after_reasoning_is_retried(
+    failure: str, surface: str
+) -> None:
+    # Regression (rv44 query medium): an error event's code is camelCase
+    # (throttlingException), and urllib3's errors reach the caller as they
+    # are; neither was transient, so a stream that failed while Claude
+    # reasoned was never retried, though ainvoke's call was.
+    config = _config()
+    config.providers.rerank.kind = "none"
+    model = _ScriptedModel(
+        reasoning=_bedrock_reasoning(),
+        after_reasoning=[_STREAM_FAILURES[failure]()],
+    )
+    chain = _rag_chain(model, config)
+    if surface == "astream":
+        answer = "".join([c async for c in chain.astream(_RAG_INPUT)])
+    else:
+        answer = "".join(
+            [
+                event.text
+                async for event in chain.aquery_events(_RAG_INPUT)
+                if isinstance(event, AnswerChunk)
+            ]
+        )
+    assert answer.strip() == _ANSWER
+    assert model.calls == 2
+
+
+async def test_a_bedrock_stream_failing_after_answer_text_is_not_retried() -> None:
+    # The text reached the caller: a retry would repeat it.
+    config = _config()
+    config.providers.rerank.kind = "none"
+    text = AIMessageChunk(content=[{"type": "text", "text": "PARTIAL ", "index": 1}])
+    model = _ScriptedModel(
+        reasoning=[*_bedrock_reasoning(), text],
+        after_reasoning=[_event_stream_error("throttlingException")],
+    )
+    chunks: list[str] = []
+    with pytest.raises(EventStreamError):
+        async for chunk in _rag_chain(model, config).astream(_RAG_INPUT):
+            chunks.append(chunk)
+    assert "".join(chunks).count("PARTIAL") == 1
+    assert model.calls == 1
+
+
+@pytest.mark.parametrize(
+    "code", ["validationException", "accessDeniedException", "ValidationException"]
+)
+async def test_a_bedrock_stream_s_client_error_event_is_not_retried(code: str) -> None:
+    error = _event_stream_error(code)
+    model = _ScriptedModel(reasoning=_bedrock_reasoning(), after_reasoning=[error])
+    with pytest.raises(EventStreamError) as raised:
+        async for _ in _query_chain(model).astream(_QUERY):
+            pass
+    assert raised.value is error
+    assert model.calls == 1
+
+
+# --- what counts as output a retry would repeat -----------------------------
+
+
+class _StreamThenFail(Runnable[Any, Any]):
+    """Streams ``chunks``, then fails with a transient error, once."""
+
+    def __init__(self, chunks: list[Any]) -> None:
+        self.chunks = chunks
+        self.calls = 0
+
+    def invoke(
+        self, input: Any, config: RunnableConfig | None = None, **kwargs: Any
+    ) -> Any:
+        raise NotImplementedError
+
+    async def astream(
+        self, input: Any, config: RunnableConfig | None = None, **kwargs: Any
+    ) -> AsyncIterator[Any]:
+        self.calls += 1
+        for chunk in self.chunks:
+            yield chunk
+        if self.calls == 1:
+            raise _model_error()
+
+
+@pytest.mark.parametrize(
+    "chunk",
+    [
+        # A structured parser's value: content that is not text.
+        {"strategy": "local"},
+        # Whitespace is text the caller received.
+        " ",
+        AIMessageChunk(content="\n"),
+    ],
+    ids=["structured", "whitespace", "whitespace-message"],
+)
+async def test_a_stream_is_not_retried_after_any_output(chunk: Any) -> None:
+    bound = _StreamThenFail([chunk])
+    chain = with_transient_retry(
+        bound,
+        operation="op",
+        retry=_NO_WAIT,
+        is_transient=BedrockLanguageModelFactory.is_transient_error,
+    )
+    with pytest.raises(ClientError):
+        async for _ in chain.astream(_QUERY):
+            pass
+    assert bound.calls == 1
+
+
+@pytest.mark.parametrize(
+    "chunk", ["", AIMessageChunk(content="")], ids=["empty", "empty-message"]
+)
+async def test_a_stream_is_retried_after_empty_chunks(chunk: Any) -> None:
+    bound = _StreamThenFail([chunk])
+    chain = with_transient_retry(
+        bound,
+        operation="op",
+        retry=_NO_WAIT,
+        is_transient=BedrockLanguageModelFactory.is_transient_error,
+    )
+    assert [c async for c in chain.astream(_QUERY)] == [chunk, chunk]
+    assert bound.calls == 2
