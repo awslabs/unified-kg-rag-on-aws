@@ -452,6 +452,26 @@ def test_the_settings_view_names_the_keys_the_environment_sets(
     ]
 
 
+def test_the_settings_view_tells_a_variable_that_only_fills_an_unset_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AWS_REGION sets aws.region_name only while the file leaves it unset,
+    but the field read "wins over the file" (rv44): the view names the
+    variables that only fill a key, for the form to say so."""
+    monkeypatch.setenv("AWS_REGION", "us-west-2")
+    path = tmp_path / "config.yaml"
+    path.write_text("logging:\n  level: INFO\n")
+    view = settings_api.SettingsFile(path).view()
+    assert view["environment_keys"]["aws.region_name"] == "AWS_REGION"
+    assert "AWS_REGION" in view["environment_fallbacks"]
+    assert not any(v.startswith("UKR__") for v in view["environment_fallbacks"])
+    path.write_text("aws:\n  region_name: eu-west-1\n")
+    assert (
+        "aws.region_name"
+        not in settings_api.SettingsFile(path).view()["environment_keys"]
+    )
+
+
 def test_editing_a_price_keeps_the_deprecated_prices() -> None:
     """A mapping: the edit joins the deprecated key's entries."""
     data = {

@@ -607,6 +607,7 @@
   "settings.removeDeprecatedLabel": "{{key}} を削除: 値はこのキーを置き換えるキーに移ります",
   "settings.removeRemovedLabel": "{{key}} を削除",
   "settings.setByEnvironment": "環境変数 {{variable}} で設定（ファイルより優先）",
+  "settings.setByEnvironmentFallback": "環境変数 {{variable}} で設定（ファイルがこのキーを設定していない間）",
   "settings.environmentOverridesTitle": "環境変数で設定されたキー",
   "settings.environmentOverridesHelp": "これらのキーは環境変数で設定され、その値がファイルの値より優先されます。コンソールの環境に変数が設定されている間、変更は反映されません。",
   "settings.commentsDropped": "フィールドから保存すると、コメントを除いてファイルが書き直されます。コメントを残すには YAML タブで編集してください。",

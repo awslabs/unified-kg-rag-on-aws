@@ -23,7 +23,12 @@ from typing import Any
 
 import yaml
 
-from unified_kg_rag.application.config import ConfigLoader, env_var, environment_keys
+from unified_kg_rag.application.config import (
+    AWS_ENV_FALLBACKS,
+    ConfigLoader,
+    env_var,
+    environment_keys,
+)
 from unified_kg_rag.domain.models import Config, Methodology
 from unified_kg_rag.domain.models.config import (
     REMOVED_KEYS,
@@ -546,6 +551,9 @@ class SettingsFile:
             # variable sets (its value wins over the file's).
             **gone_keys(data),
             "environment_keys": environment_keys(data),
+            # The variables that only fill a key the file leaves unset (the
+            # AWS SDK's own), where the others win over the file.
+            "environment_fallbacks": sorted(AWS_ENV_FALLBACKS),
             "methodologies": [m.value for m in Methodology],
             "tracing_environment": {
                 name: name in os.environ for name in TRACING_VARIABLES

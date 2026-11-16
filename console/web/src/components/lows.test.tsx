@@ -493,6 +493,19 @@ describe("the Settings page on load", () => {
     expect(sent).toEqual([{ changes: [{ path: "retry.model_server_max_attempts", unset: true }] }]);
   });
 
+  it("says a variable that only fills an unset key applies while the file leaves it unset (rv44)", async () => {
+    const config = { ...view([], { retry: { model_server: { max_attempts: 2 } } }), text: "", data: {}, environment_keys: { "retry.model_server.max_attempts": "AWS_FALLBACK" }, environment_fallbacks: ["AWS_FALLBACK"] };
+    serveReview(config, validPreview(""));
+    render(
+      <I18nProvider initial="en">
+        <SettingsPage onSaved={() => undefined} />
+      </I18nProvider>,
+    );
+    fireEvent.change(await screen.findByRole("searchbox"), { target: { value: "retry.model_server.max_attempts" } });
+    expect(await screen.findByText(/set by AWS_FALLBACK \(environment variable, while the file leaves this key unset\)/)).toBeInTheDocument();
+    expect(screen.queryByText(/wins over the file/)).not.toBeInTheDocument();
+  });
+
   it("names the environment variable that sets a field, and warns an edit of it has no effect (rv43)", async () => {
     const config = { ...view([], { retry: { model_server: { max_attempts: 2 } } }), text: "", data: {}, environment_keys: { "retry.model_server.max_attempts": "UKR__RETRY__MODEL_SERVER__MAX_ATTEMPTS" } };
     serveReview(config, { ...validPreview("retry:\n  model_server:\n    max_attempts: 4\n"), environment_overrides: [{ path: "retry.model_server.max_attempts", variable: "UKR__RETRY__MODEL_SERVER__MAX_ATTEMPTS" }] });

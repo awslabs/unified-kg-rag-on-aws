@@ -631,6 +631,7 @@
   "settings.removeDeprecatedLabel": "Remove {{key}}: its value moves into the keys that replace it",
   "settings.removeRemovedLabel": "Remove {{key}}",
   "settings.setByEnvironment": "set by {{variable}} (environment variable, wins over the file)",
+  "settings.setByEnvironmentFallback": "set by {{variable}} (environment variable, while the file leaves this key unset)",
   "settings.environmentOverridesTitle": "Set by an environment variable",
   "settings.environmentOverridesHelp": "An environment variable sets these keys, and its value wins over the file's: the change has no effect while the variable is set in the console's environment.",
   "settings.commentsDropped": "Saving from fields rewrites the file without its comments. Edit the YAML tab to keep them.",

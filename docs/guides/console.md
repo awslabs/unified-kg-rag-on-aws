@@ -314,7 +314,8 @@ merged); find one by key or description. Editing a field a deprecated key sets r
 same way: the saved file holds only the new keys. A field a `UKR__`
 environment variable of the console sets names the variable: its value
 wins over the file's, so the review lists a change to it as one that has
-no effect while the variable is set. Changes
+no effect while the variable is set (`AWS_PROFILE` and `AWS_REGION` fill
+their key only while the file leaves it unset, and the field says so). Changes
 collect on the right; Review checks them as a run would load the file
 (unknown keys and the `UKR__` environment included) and shows the diff of
 the file, its errors and warnings, and each deprecated key the file sets

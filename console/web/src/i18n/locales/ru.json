@@ -679,6 +679,7 @@
   "settings.removeDeprecatedLabel": "Удалить {{key}}: значение перейдёт в ключи, которые его заменяют",
   "settings.removeRemovedLabel": "Удалить {{key}}",
   "settings.setByEnvironment": "задано переменной окружения {{variable}} (важнее файла)",
+  "settings.setByEnvironmentFallback": "задано переменной окружения {{variable}} (пока этот ключ не задан в файле)",
   "settings.environmentOverridesTitle": "Заданы переменной окружения",
   "settings.environmentOverridesHelp": "Эти ключи задаёт переменная окружения, и её значение важнее значения из файла: изменение не подействует, пока переменная задана в окружении консоли.",
   "settings.commentsDropped": "Сохранение из полей перезаписывает файл без комментариев. Чтобы сохранить их, редактируйте на вкладке YAML.",

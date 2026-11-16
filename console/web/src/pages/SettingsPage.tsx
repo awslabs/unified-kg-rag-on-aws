@@ -45,6 +45,8 @@ interface ConfigView {
   /** The keys an environment variable sets (key -> variable): its value
    * wins over the file's. */
   environment_keys?: Record<string, string>;
+  /** The variables that only fill a key the file leaves unset. */
+  environment_fallbacks?: string[];
 }
 
 interface Preview {
@@ -495,7 +497,7 @@ function FieldEditor({
       {field.description ? <span className="field-help">{field.description}</span> : null}
       <span className="id">
         {[inFile !== undefined ? t("settings.inFile") : null, feeder ? t("settings.setByDeprecated", { key: feeder.key }) : null].filter(Boolean).join(" · ") || t("settings.fromDefault")}
-        {variable ? ` · ${t("settings.setByEnvironment", { variable })}` : ""}
+        {variable ? ` · ${t((data.environment_fallbacks ?? []).includes(variable) ? "settings.setByEnvironmentFallback" : "settings.setByEnvironment", { variable })}` : ""}
         {field.hasDefault ? ` · ${t("settings.default", { value: display(field.defaultValue) || "∅" })}` : ""}
         {inFile !== undefined && field.kind !== "secret" ? (
           <>

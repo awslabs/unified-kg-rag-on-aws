@@ -631,6 +631,7 @@
   "settings.removeDeprecatedLabel": "{{key}} entfernen: der Wert geht in die Schlüssel über, die ihn ersetzen",
   "settings.removeRemovedLabel": "{{key}} entfernen",
   "settings.setByEnvironment": "gesetzt durch {{variable}} (Umgebungsvariable, hat Vorrang vor der Datei)",
+  "settings.setByEnvironmentFallback": "gesetzt durch {{variable}} (Umgebungsvariable, solange die Datei diesen Schlüssel nicht setzt)",
   "settings.environmentOverridesTitle": "Durch eine Umgebungsvariable gesetzt",
   "settings.environmentOverridesHelp": "Eine Umgebungsvariable setzt diese Schlüssel, und ihr Wert hat Vorrang vor dem der Datei: Die Änderung wirkt nicht, solange die Variable in der Umgebung der Konsole gesetzt ist.",
   "settings.commentsDropped": "Speichern aus den Feldern schreibt die Datei ohne ihre Kommentare neu. Bearbeiten Sie den YAML-Tab, um sie zu behalten.",

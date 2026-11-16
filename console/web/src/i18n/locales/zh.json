@@ -607,6 +607,7 @@
   "settings.removeDeprecatedLabel": "删除 {{key}}：其值移入替代它的键",
   "settings.removeRemovedLabel": "删除 {{key}}",
   "settings.setByEnvironment": "由环境变量 {{variable}} 设置（优先于文件）",
+  "settings.setByEnvironmentFallback": "由环境变量 {{variable}} 设置（在文件未设置此键时）",
   "settings.environmentOverridesTitle": "由环境变量设置",
   "settings.environmentOverridesHelp": "这些键由环境变量设置，其值优先于文件中的值：只要控制台环境中设置了该变量，更改就不会生效。",
   "settings.commentsDropped": "从字段保存会重写文件并丢失注释。要保留注释，请在 YAML 选项卡中编辑。",
