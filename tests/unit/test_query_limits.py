@@ -1072,6 +1072,38 @@ def test_the_answer_estimate_holds_every_instruction_the_chain_appends(
             assert answer_prompt_tokens(config) >= sent, strategy
 
 
+def test_auto_without_a_router_call_still_checks_the_call_limit() -> None:
+    # Regression (rv42): the fallback an input-token limit routed to
+    # skipped the call limit, so with both set a fallback needing more
+    # calls than allowed was not refused up front.
+    from unified_kg_rag.adapters.retrieval.base import answer_prompt_tokens
+
+    chain = _router_chain()
+    candidates = (SearchStrategy.DRIFT, SearchStrategy.GLOBAL, SearchStrategy.NAIVE)
+    small = answer_prompt_tokens(chain.config) + 200
+    with usage.usage_scope(usage.UsageLimits(max_input_tokens=small)):
+        assert chain._routes_within_limits(candidates, _UNPROCESSED) == (
+            (SearchStrategy.DRIFT,),
+            ["global", "naive"],
+        )
+    # DRIFT's fewest calls and the answer do not fit two calls: the first
+    # that does, with no router call.
+    limits = usage.UsageLimits(max_input_tokens=small, max_llm_calls=2)
+    with usage.usage_scope(limits), degradation_scope() as ledger:
+        assert chain._routes_within_limits(candidates, _UNPROCESSED) == (
+            (SearchStrategy.GLOBAL,),
+            ["drift", "naive"],
+        )
+    (entry,) = ledger.entries
+    assert entry.reason == "query_limit: no router call, routed to 'global'"
+    limits = usage.UsageLimits(max_input_tokens=small, max_llm_calls=1)
+    with usage.usage_scope(limits):
+        with pytest.raises(UsageLimitExceededError, match="needs at least"):
+            chain._routes_within_limits(
+                (SearchStrategy.DRIFT, SearchStrategy.GLOBAL), _UNPROCESSED
+            )
+
+
 # --- what an optional call leaves the answer (W1 verification residuals) ----
 
 
