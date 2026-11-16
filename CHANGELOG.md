@@ -254,6 +254,8 @@ Bugs present in 0.3.0.
   words (`大陆人`, `古参社員`, `大陆元首`), and an ordinary amount after such a word keeps its reading (`人参二百円`
   is 200, `队伍五千元` 5000). A Chinese decimal that ends its number before 万 or 億 is read too, in an answer in any
   language as every Han numeral (`一点五万元` 15,000, not 50,000; `十点五万元` 105,000); `一点一万二千元` stays 12,000.
+  The financial forms write no decimal point, so `收拾点五万元` holds no sum: it is 50,000. A long run of digits or
+  numerals reads in time linear in its length.
 - `answer_match` dropped or misread a Han numeral after a Chinese comma, which NFKC folds to `,`, as if it continued
   a digit group: `是的，五家供应商。` stated no number, `据报道，三千元。` 1000, and `没有，三家都未参与。` matched a gold
   of 0, and with a digit before the comma `价格为3，五千元。` read 1000 and `排名第3，五家公司并列。` no 5. Only a digit
@@ -261,6 +263,11 @@ Bugs present in 0.3.0.
 - `answer_match` multiplied a decimal by 万, 億, 亿, 兆, 만 or 억 in binary floating point, so the reading missed the
   exact gold: `2.3亿元` read 229,999,999.99999997, and `1.1억원` and `4.1億円` scored 0 (a fifth of the one-place
   decimals before 億 or 억). The reading is exact decimal arithmetic.
+- `answer_match` added a larger section multiplier after a smaller one instead of multiplying by it, so every
+  万亿, 萬億, 万億 and 만억 amount was wrong: `两万亿元` read 100,020,000 and `1.5万亿元` 100,015,000. One larger than
+  every section before it multiplies all of them, as in `mil millones` (`两万亿元` is 2×10¹², `1万亿5000亿元`
+  1.5×10¹²); a smaller one adds, as before (`一亿二千万元` 120,000,000). Reading `not one` or `not a single` before a
+  long run of spaces also took time quadratic in its length.
 - A run stopped (a signal, Ctrl-C, its budget) after an ingestion item's answer failed to parse and before the item's
   next attempt kept that answer in the LLM response cache, so the resumed run replayed it and spent one of the item's
   attempts on it. A stop drops the answers of the item's failed attempts and keeps the one in flight.
