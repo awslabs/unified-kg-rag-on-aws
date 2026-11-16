@@ -66,7 +66,11 @@ from unified_kg_rag.application.cli.query_args import namespace_name, suffix_arg
 from unified_kg_rag.application.config import load_cli_dotenv, resolve_relative_paths
 from unified_kg_rag.application.ingestion.pipeline_manager import INTEGRITY_QUESTIONS
 from unified_kg_rag.domain.ingestion.delta_detector import document_doc_id
-from unified_kg_rag.domain.ingestion.methodologies import writes_graph_store
+from unified_kg_rag.domain.ingestion.estimate import unpriced_run_models
+from unified_kg_rag.domain.ingestion.methodologies import (
+    selected_stages,
+    writes_graph_store,
+)
 from unified_kg_rag.domain.models import (
     Config,
     LLMUsage,
@@ -817,6 +821,28 @@ class IngestionPipelineRunner:
         if error:
             usage_error(error)
 
+    def _require_budget_prices(self, pipeline_config: PipelineConfig) -> None:
+        """Refuse a run under ``processing.max_run_usd`` that calls a model
+        ``models.prices`` does not price, before any stage runs (exit 2):
+        it would stop at that model's first call, reading as a budget stop,
+        when the fix is a price."""
+        if self.args.verify_metadata or self.config.processing.max_run_usd is None:
+            return
+        stages = selected_stages(self.config) & {
+            stage for stage, on in pipeline_config.stages_enabled.items() if on
+        }
+        if unpriced := unpriced_run_models(self.config, stages):
+            usage_error(
+                "processing.max_run_usd needs a models.prices entry for "
+                + ", ".join(
+                    f"{model} ({', '.join(roles)})" for model, roles in unpriced.items()
+                )
+                + ": add its input_per_million_tokens and "
+                "output_per_million_tokens, or unset processing.max_run_usd",
+                error_type=ConfigurationError.__name__,
+                error_class=ErrorClass.CONFIGURATION,
+            )
+
     def run(self) -> None:
         if getattr(self.args, "estimate", False):
             self._estimate()
@@ -832,6 +858,7 @@ class IngestionPipelineRunner:
         if error := missing_extras_error(self.config, seeds=True):
             usage_error(error)
         self._require_indexing_endpoints(pipeline_config)
+        self._require_budget_prices(pipeline_config)
         self.pipeline = DataIngestionPipeline(
             config=self.config,
             pipeline_config=pipeline_config,

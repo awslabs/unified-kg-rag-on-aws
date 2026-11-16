@@ -2908,6 +2908,55 @@ def test_ingestion_stopped_at_its_budget_exits_1_naming_the_id(
     assert status["cost_usd"] == pytest.approx(3.0)
 
 
+def test_a_budget_in_usd_with_an_unpriced_model_is_refused_before_any_stage(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """processing.max_run_usd with a model models.prices does not price
+    stopped the run at its first model call, after parsing and chunking, as
+    a budget stop (exit 1, "raise the budget"), when the fix is a price
+    (rv42): refused first, a configuration error (exit 2) naming it."""
+    from unified_kg_rag.domain.models import ModelRole
+    from unified_kg_rag.domain.pricing import ModelPrice
+
+    monkeypatch.setattr(console, "stderr", console.stderr)
+    # The JSON status run-ingestion --output-format json turns on.
+    monkeypatch.setitem(conventions._json, "enabled", True)
+    monkeypatch.setitem(conventions._json, "printed", False)
+    config = Config()
+    config.processing.max_run_usd = 5.0
+    priced = str(config.model_id(ModelRole.GRAPH_EXTRACTION))
+    unpriced = str(config.model_id(ModelRole.DESCRIPTION_SUMMARY))
+    assert priced != unpriced
+    config.models.prices = {
+        priced: ModelPrice(input_per_million_tokens=3, output_per_million_tokens=15)
+    }
+    src = tmp_path / "src"
+    src.mkdir()
+    args = run_ingestion_pipeline.CommandLineInterface._setup_arguments().parse_args(
+        ["--source-directory", str(src), "--output-format", "json"]
+    )
+    monkeypatch.setattr(run_ingestion_pipeline, "load_cli_config", lambda _args: config)
+    runner = run_ingestion_pipeline.IngestionPipelineRunner(args)
+    pipeline_config = runner._create_pipeline_config()
+    with pytest.raises(SystemExit) as exc:
+        runner._require_budget_prices(pipeline_config)
+    assert exc.value.code == 2
+    status = json.loads(capsys.readouterr().out)
+    assert status["error_class"] == "configuration"
+    assert f"models.prices entry for {unpriced} (" in status["error"]
+    assert priced not in status["error"]
+    # Priced, or with no USD budget, it runs.
+    config.models.prices[unpriced] = ModelPrice(
+        input_per_million_tokens=1, output_per_million_tokens=5
+    )
+    runner._require_budget_prices(pipeline_config)
+    config.models.prices = {}
+    config.processing.max_run_usd = None
+    runner._require_budget_prices(pipeline_config)
+
+
 def test_run_ingestion_estimate_prints_the_estimate_and_runs_nothing(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -3036,3 +3085,25 @@ def test_a_runs_json_prices_its_usage_only_when_every_model_has_a_price() -> Non
     config.models.prices["model-b"] = price
     fields = run_ingestion_pipeline._usage_fields(config, usage)
     assert fields["cost_usd"] == pytest.approx(4.0)
+
+
+def test_every_query_surface_s_metrics_help_names_every_query_metric() -> None:
+    """The --metrics-sink help of run-rag, run-mcp-server and run-console
+    left query_limited out (rv42). docs/reference/cli.md is the parsers' help
+    (test_cli_reference checks it is current)."""
+    from unified_kg_rag.shared import metrics
+
+    names = [
+        getattr(metrics, n)
+        for n in dir(metrics)
+        if n.startswith("QUERY_") and n.endswith("_METRIC")
+    ]
+    reference = (Path(__file__).parents[2] / "docs/reference/cli.md").read_text()
+    rows = [
+        line
+        for line in reference.splitlines()
+        if line.startswith("| `--metrics-sink`") and "unified_kg_rag/query" in line
+    ]
+    assert len(rows) == 3
+    for row in rows:
+        assert [n for n in names if n not in row] == [], row

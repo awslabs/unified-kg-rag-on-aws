@@ -112,7 +112,7 @@ def test_an_interrupted_comparison_completed_and_rebuilt_has_the_same_deltas(
     # The warm-up queries' calls are in no run's usage: skipped, the server's
     # call count is the runs' usage exactly.
 
-    async def _no_warm_up(self: Any, query: Any) -> None:
+    async def _no_warm_up(self: Any, query: Any, efforts: Any = ()) -> None:
         return None
 
     monkeypatch.setattr(EvaluationManager, "warm_up", _no_warm_up)

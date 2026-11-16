@@ -443,6 +443,10 @@ class AskService:
                         )
                     ),
                     abstained=result["abstained"],
+                    # Why it declined: a query limit's (query_limit) is the
+                    # caller's budget, not the corpus, and the dashboard
+                    # counts it apart from the decline rate.
+                    abstention_reason=result.get("abstention_reason"),
                     rerank_status=(result.get("rerank") or {}).get("status"),
                     usage=result.get("usage"),
                     cost_usd=result.get("cost_usd"),

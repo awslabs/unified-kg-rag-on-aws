@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS queries (
     latency_seconds REAL,
     outcome TEXT NOT NULL,
     abstained INTEGER NOT NULL DEFAULT 0,
+    abstention_reason TEXT,
     rerank_status TEXT,
     usage TEXT,
     cost_usd REAL,
@@ -55,12 +56,19 @@ QUERY_COLUMNS = (
     "latency_seconds",
     "outcome",
     "abstained",
+    "abstention_reason",
     "rerank_status",
     "usage",
     "cost_usd",
     "trace_id",
     "error",
 )
+
+# The query columns added after the first release of the file, each with the
+# statement that adds it: an existing file gains them on open.
+_ADDED_QUERY_COLUMNS = {
+    "abstention_reason": "ALTER TABLE queries ADD COLUMN abstention_reason TEXT",
+}
 
 
 class ConsoleStore:
@@ -75,6 +83,11 @@ class ConsoleStore:
         self._db.row_factory = sqlite3.Row
         with self._lock:
             self._db.executescript(_SCHEMA)
+            # A file an older console wrote lacks the columns added since.
+            have = {r["name"] for r in self._db.execute("PRAGMA table_info(queries)")}
+            for name, statement in _ADDED_QUERY_COLUMNS.items():
+                if name not in have:
+                    self._db.execute(statement)
             self._db.commit()
 
     def close(self) -> None:

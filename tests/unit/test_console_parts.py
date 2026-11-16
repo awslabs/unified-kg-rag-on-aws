@@ -277,6 +277,47 @@ def test_a_preview_names_each_deprecated_and_removed_key_as_the_loader_warns(
     assert not moved["valid"] and "models.roles.query_translation" in moved["errors"][0]
 
 
+def test_the_settings_view_names_deprecated_keys_on_load(tmp_path: Path) -> None:
+    """The deprecated keys a file sets were listed only by a review, which
+    the form allows only with a change pending; and keys that disagree with
+    their replacements were listed as none (rv42)."""
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "retry:\n  model_server_max_attempts: 2\nfixing:\n  enabled: true\n"
+    )
+    view = settings_api.SettingsFile(path).view()
+    assert view["load_error"] is None
+    assert view["effective"]["retry"]["model_server"]["max_attempts"] == 2
+    assert view["deprecated_keys"] == [
+        {
+            "key": "retry.model_server_max_attempts",
+            "replacements": ["retry.model_server.max_attempts"],
+            "conflicts": [],
+            "message": settings_api.deprecated_key_warning(
+                "retry.model_server_max_attempts"
+            ),
+        }
+    ]
+    assert [r["key"] for r in view["removed_keys"]] == ["fixing"]
+    # A deprecated key and its replacement set to different values fail the
+    # load; the page names the pair instead of listing nothing.
+    path.write_text(
+        "retry:\n  model_server_max_attempts: 2\n  model_server:\n    max_attempts: 4\n"
+    )
+    conflict = settings_api.SettingsFile(path).view()
+    assert "disagree" in conflict["load_error"]
+    assert conflict["deprecated_keys"][0]["conflicts"] == [
+        "retry.model_server.max_attempts"
+    ]
+    # The same value agrees.
+    path.write_text(
+        "retry:\n  model_server_max_attempts: 2\n  model_server:\n    max_attempts: 2\n"
+    )
+    agree = settings_api.SettingsFile(path).view()
+    assert agree["load_error"] is None
+    assert agree["deprecated_keys"][0]["conflicts"] == []
+
+
 def test_moving_a_served_directory_is_saved_only_when_confirmed(
     tmp_path: Path,
 ) -> None:
@@ -714,6 +755,50 @@ def test_a_budget_stop_s_dashboard_row_names_its_error_class(tmp_path: Path) -> 
     store.close()
 
 
+def test_an_ingestion_job_s_dashboard_cost_is_priced_from_its_usage(
+    tmp_path: Path,
+) -> None:
+    """Ingestion jobs always showed no cost, even with prices set: only an
+    evaluation's comparison was read (rv42)."""
+    store = ConsoleStore(tmp_path / "console.sqlite3")
+    for job_id, model in (("priced", "m"), ("unpriced", "other")):
+        store.save_job(
+            {
+                "id": job_id,
+                "kind": "ingest",
+                "namespace": "default",
+                "created": 1.0,
+                "started": 1.0,
+                "ended": 2.0,
+                "status": "failed",
+                "result": {
+                    "status": "failed",
+                    "error_class": "limit_exceeded",
+                    "token_usage": _usage(model, 2, 2000, 200),
+                },
+            }
+        )
+    config = Config.model_validate(
+        {
+            "models": {
+                "prices": {
+                    "m": {
+                        "input_per_million_tokens": 3,
+                        "output_per_million_tokens": 15,
+                    }
+                }
+            }
+        }
+    )
+    rows = {
+        r["id"]: r
+        for r in dashboard.summarize([], store.jobs(), config, now=3.0)["jobs"]
+    }
+    assert rows["priced"]["cost_usd"] == pytest.approx((2000 * 3 + 200 * 15) / 1e6)
+    assert rows["unpriced"]["cost_usd"] is None
+    store.close()
+
+
 def test_questions_not_served_stay_out_of_every_latency_and_the_decline_rate() -> None:
     """A refused or cancelled question was never served: it has no latency
     to report (totals, per strategy, per day alike) and could not decline."""
@@ -787,6 +872,59 @@ def test_a_failed_question_could_not_decline_and_a_refused_one_ran_no_strategy()
     assert strategy["tokens_per_query"] == pytest.approx(100.0)
     only_failed = dashboard.summarize([query("failed")], [], Config())
     assert only_failed["totals"]["decline_rate"] is None
+
+
+def test_a_decline_at_a_query_limit_is_counted_apart_from_the_decline_rate(
+    tmp_path: Path,
+) -> None:
+    """Declines at a query limit (limits.*) read as the corpus's: the rate
+    counted them and no figure named them; the store kept no reason (rv42)."""
+    import sqlite3
+
+    path = tmp_path / "console.sqlite3"
+    # A file an older console wrote, without the reason column.
+    old = sqlite3.connect(path)
+    old.execute(
+        "CREATE TABLE queries (id TEXT PRIMARY KEY, created REAL NOT NULL, "
+        "question TEXT NOT NULL, requested_strategy TEXT NOT NULL, strategy TEXT, "
+        "suffix TEXT, latency_seconds REAL, outcome TEXT NOT NULL, "
+        "abstained INTEGER NOT NULL DEFAULT 0, rerank_status TEXT, usage TEXT, "
+        "cost_usd REAL, trace_id TEXT, error TEXT)"
+    )
+    old.execute(
+        "INSERT INTO queries (id, created, question, requested_strategy, outcome) "
+        "VALUES ('old', 999.0, 'q', 'local', 'answered')"
+    )
+    old.commit()
+    old.close()
+    store = ConsoleStore(path)
+    rows = [
+        ("1", "answered", False, None),
+        ("2", "abstained", True, "no_relevant_context"),
+        ("3", "abstained", True, "query_limit"),
+        ("4", "abstained", True, "query_limit"),
+    ]
+    for query_id, outcome, abstained, reason in rows:
+        store.record_query(
+            {
+                "id": query_id,
+                "created": 1000.0,
+                "question": "q",
+                "requested_strategy": "local",
+                "strategy": "local",
+                "outcome": outcome,
+                "abstained": abstained,
+                "abstention_reason": reason,
+                "latency_seconds": 1.0,
+            }
+        )
+    queries = store.queries()
+    assert {q["id"]: q["abstention_reason"] for q in queries}["3"] == "query_limit"
+    totals = dashboard.summarize(queries, [], Config())["totals"]
+    # Of the old answer, the answer and the corpus decline: one in three.
+    assert totals["limited"] == 2 and totals["abstained"] == 3
+    assert totals["decline_rate"] == pytest.approx(1 / 3)
+    store.close()
 
 
 def test_a_saved_run_is_traced_to_the_console_job_that_wrote_it(tmp_path: Path) -> None:

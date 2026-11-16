@@ -164,6 +164,28 @@ def test_the_server_lists_read_only_tools_only() -> None:
 
 
 @requires_mcp
+def test_the_tool_schemas_an_agent_reads_hold_no_docstring_markup() -> None:
+    """The limits schema carried QueryLimits' RST (``RAGInput.limits``,
+    :meth:`lowered_by`) to every agent (rv42)."""
+    import asyncio
+    import json
+    import re
+
+    from mcp import Client
+
+    server = build_mcp_server(SimpleNamespace(config=Config()))  # type: ignore[arg-type]
+
+    async def schemas() -> str:
+        async with Client(server) as client:
+            tools = (await client.list_tools()).tools
+            return json.dumps([t.input_schema for t in tools], ensure_ascii=False)
+
+    text = asyncio.run(schemas())
+    assert "deadline_seconds" in text  # the limits schema is among them
+    assert re.findall(r"``|:(?:meth|class|func|attr|data):`", text) == []
+
+
+@requires_mcp
 def test_kg_answer_takes_a_bounded_history_over_the_protocol(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

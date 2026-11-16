@@ -393,10 +393,12 @@ def _absorb_input_failure(
 
 
 def record_limit_skip(step: str, reason: str, error: OptionalCallSkipped) -> None:
-    """Record ``step`` left out to keep the answer's call or input (reason
-    ``query_limit``): the one record of a skipped optional call the chain
-    makes (a query input, the follow-up rewrite)."""
-    logger.info("%s skipped to keep the answer's call or input (%s)", step, error.limit)
+    """Record ``step`` left out at the query's limits (reason
+    ``query_limit``): its call would pass the limit, or take what it keeps
+    for the answer (none in a search, which makes no answer). The one
+    record of a skipped optional call the chain makes (a query input, the
+    follow-up rewrite)."""
+    logger.info("%s skipped at the query's limit (%s)", step, error.limit)
     record_degradation(step, f"query_limit: {reason}", error)
 
 

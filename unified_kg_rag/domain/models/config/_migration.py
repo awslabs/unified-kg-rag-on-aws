@@ -288,8 +288,37 @@ def migrate_deprecated_keys(data: dict[str, Any]) -> tuple[dict[str, Any], list[
         ValueError: A deprecated key and a replacement are both set, to
             different values (naming both).
     """
+    data, migrated, conflicts = _migrate(data)
+    if conflicts:
+        raise ValueError(
+            "deprecated settings disagree with their replacements: "
+            + "; ".join(
+                f"{old} and {new} are both set, to different values"
+                for old, new in conflicts
+            )
+            + " (set the replacement only)"
+        )
+    return data, migrated
+
+
+def deprecated_keys(data: dict[str, Any]) -> dict[str, list[str]]:
+    """The deprecated keys ``data`` sets, each with the replacements it also
+    sets to a different value (the disagreement
+    :func:`migrate_deprecated_keys` refuses; none when they agree)."""
+    _, migrated, conflicts = _migrate(data)
+    return {
+        old: [new for conflicting, new in conflicts if conflicting == old]
+        for old in migrated
+    }
+
+
+def _migrate(
+    data: dict[str, Any],
+) -> tuple[dict[str, Any], list[str], list[tuple[str, str]]]:
+    """``data`` migrated, the deprecated keys moved and the
+    ``(deprecated, replacement)`` pairs set to different values."""
     migrated: list[str] = []
-    conflicts: list[str] = []
+    conflicts: list[tuple[str, str]] = []
     for old in DEPRECATED_KEYS:
         if not _sets(data, old):
             continue
@@ -304,14 +333,8 @@ def migrate_deprecated_keys(data: dict[str, Any]) -> tuple[dict[str, Any], list[
             elif isinstance(current, dict) and isinstance(value, dict):
                 _put(data, new, {**value, **current})
             elif current != value:
-                conflicts.append(f"{old} and {new} are both set, to different values")
-    if conflicts:
-        raise ValueError(
-            "deprecated settings disagree with their replacements: "
-            + "; ".join(conflicts)
-            + " (set the replacement only)"
-        )
-    return data, migrated
+                conflicts.append((old, new))
+    return data, migrated, conflicts
 
 
 def _get(data: Any, path: str) -> Any:

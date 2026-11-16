@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { modelIds } from "../App";
 import { I18nProvider, makeI18n, translate } from "../i18n/i18n";
 import { contentLang } from "../lib/contentLang";
@@ -12,7 +12,7 @@ import { formatBytes, isBudgetStop, JobStatusBadge } from "./ui";
 import { fitting, NAV_FOLDED } from "../lib/useCompactNav";
 import { BudgetNotice, IngestResult, questionTitle, runModelCalls } from "../pages/IngestPage";
 import { degradedKind, partialHelp, RouteNote, routingNote } from "../pages/AskPage";
-import { GoneKeys } from "../pages/SettingsPage";
+import { GoneKeys, SettingsPage } from "../pages/SettingsPage";
 import { failureHelp } from "../lib/api";
 import { MetricName } from "./charts";
 import type { JobRecord } from "../lib/types";
@@ -293,6 +293,32 @@ describe("a query's limits, a run's budget and deprecated keys", () => {
     expect(screen.getByText(/1,200/)).toBeInTheDocument();
   });
 
+  it("shows an ingestion's USD when its models are priced, and no row when not (rv42)", () => {
+    const job = (cost?: number) =>
+      ({
+        id: "j",
+        kind: "ingest",
+        status: "succeeded",
+        result: { status: "succeeded", token_usage: { llm_calls: 2, input_tokens: 1200, output_tokens: 80 } },
+        ...(cost === undefined ? {} : { cost_usd: cost }),
+        warnings: { count: 0, lines: [] },
+      }) as unknown as JobRecord;
+    const priced = render(
+      <I18nProvider initial="en">
+        <IngestResult job={job(0.0057)} />
+      </I18nProvider>,
+    );
+    expect(screen.getByText("Cost")).toBeInTheDocument();
+    expect(priced.container.textContent).toContain("$0.0057");
+    priced.unmount();
+    render(
+      <I18nProvider initial="en">
+        <IngestResult job={job()} />
+      </I18nProvider>,
+    );
+    expect(screen.queryByText("Cost")).not.toBeInTheDocument();
+  });
+
   it("lists the deprecated and removed keys a config sets, in the page's language", () => {
     const preview = {
       deprecated_keys: [{ key: "retry.max_attempts", replacements: ["retry.model.max_attempts", "retry.ingestion_item.max_attempts"], message: "Config key retry.max_attempts is deprecated" }],
@@ -324,5 +350,64 @@ describe("a query's limits, a run's budget and deprecated keys", () => {
       </I18nProvider>,
     );
     expect(container.textContent).toBe("");
+  });
+});
+
+describe("the Settings page on load", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const schema = {
+    type: "object",
+    properties: {
+      retry: { type: "object", properties: { model_server: { type: "object", properties: { max_attempts: { type: "integer", default: 5, description: "Attempts" } } } } },
+    },
+  };
+  const deprecated = { key: "retry.model_server_max_attempts", replacements: ["retry.model_server.max_attempts"], conflicts: [] as string[], message: "Config key retry.model_server_max_attempts is deprecated" };
+  const view = (keys: (typeof deprecated)[], effective: unknown) => ({
+    path: "c.yaml",
+    writable: true,
+    sha: "s",
+    text: "retry:\n  model_server_max_attempts: 2\n",
+    data: { retry: { model_server_max_attempts: 2 } },
+    secrets_in_file: [],
+    parse_error: null,
+    load_error: effective ? null : "deprecated settings disagree with their replacements",
+    effective,
+    methodologies: [],
+    tracing_environment: {},
+    otel_installed: false,
+    deprecated_keys: keys,
+    removed_keys: [],
+  });
+  const serve = (config: unknown) =>
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => new Response(JSON.stringify(String(url).includes("config/schema") ? schema : config), { status: 200 })),
+    );
+
+  it("names the deprecated keys the file sets, and the field one loads into, without a review (rv42)", async () => {
+    serve(view([deprecated], { retry: { model_server: { max_attempts: 2 } } }));
+    const { container } = render(
+      <I18nProvider initial="en">
+        <SettingsPage onSaved={() => undefined} />
+      </I18nProvider>,
+    );
+    expect(await screen.findByText("Deprecated and removed keys")).toBeInTheDocument();
+    expect(container.textContent).toContain("retry.model_server_max_attempts is deprecated: it loads into retry.model_server.max_attempts");
+    // The field shows the value in force and where it comes from, not "default".
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "retry.model_server.max_attempts" } });
+    expect(await screen.findByDisplayValue("2")).toBeInTheDocument();
+    expect(screen.getByText(/set by retry\.model_server_max_attempts \(deprecated\)/)).toBeInTheDocument();
+  });
+
+  it("says a deprecated key that disagrees with its replacement keeps the config from loading", async () => {
+    serve(view([{ ...deprecated, conflicts: ["retry.model_server.max_attempts"] }], null));
+    const { container } = render(
+      <I18nProvider initial="ko">
+        <SettingsPage onSaved={() => undefined} />
+      </I18nProvider>,
+    );
+    expect(await screen.findByText("지원 중단되었거나 제거된 키")).toBeInTheDocument();
+    expect(container.textContent).toContain("retry.model_server_max_attempts 키와 retry.model_server.max_attempts 키에 서로 다른 값이 설정되어 있어");
   });
 });

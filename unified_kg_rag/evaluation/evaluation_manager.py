@@ -11,7 +11,7 @@ import subprocess
 import time
 import uuid
 from collections import Counter, defaultdict
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -730,7 +730,9 @@ class EvaluationManager:
         manager: EvaluationManager = arms[0].manager
         return await manager._answer_arms(arms, show_progress)
 
-    async def warm_up(self, query: EvaluationQuery) -> None:
+    async def warm_up(
+        self, query: EvaluationQuery, efforts: Iterable[str | None] = ()
+    ) -> None:
         """Answer one synthetic query the way ``query`` is answered (its
         strategy, suffix, top_k, search type), outside any timing, score and
         usage scope, so the next timed answer does not pay for opening the
@@ -742,7 +744,13 @@ class EvaluationManager:
         does not hold), an ``IndexNotFoundError`` (nothing ingested under
         the suffix) or an ``InvalidArgumentError`` of the run's settings
         (an ``effort`` the answer model does not take), so the run stops
-        before answering the dataset."""
+        before answering the dataset. The other ``efforts`` the run's queries
+        ask for (their items' ``metadata.effort``) are checked first, with
+        the chain's ``check_effort`` (no model call): an item whose effort
+        the answer model refuses stops the run too, as ``--effort`` does."""
+        if check := getattr(self.rag_chain, "check_effort", None):
+            for effort in dict.fromkeys(e for e in efforts if e is not None):
+                check(effort)
         inputs = {
             key: query.metadata[key] for key in _WARM_UP_KEYS if key in query.metadata
         }

@@ -228,7 +228,20 @@ class QueryLimits(BaseModel):
     (:meth:`lowered_by`).
     """
 
-    model_config = ConfigDict(extra="forbid")
+    # The schema's description is plain text: the MCP tools' schema shows
+    # it to agents, which read no docstring markup.
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "description": (
+                "What one query may spend: its deadline, its model calls and "
+                "their input tokens; null caps nothing. The server's limits "
+                "(search.query_timeout_seconds, search.query_max_model_calls, "
+                "search.query_max_input_tokens) bound every query; a query's "
+                "own can only lower them."
+            )
+        },
+    )
 
     deadline_seconds: float | None = Field(
         default=None,

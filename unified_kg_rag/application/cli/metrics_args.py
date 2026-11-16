@@ -24,7 +24,13 @@ from typing import TextIO
 
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.metrics import (
+    QUERY_ABSTAINED_METRIC,
+    QUERY_DEGRADED_METRIC,
+    QUERY_FAILED_METRIC,
+    QUERY_LATENCY_METRIC,
+    QUERY_LIMITED_METRIC,
     QUERY_METRICS_DIMENSION_KEYS,
+    QUERY_THROTTLED_METRIC,
     CloudWatchEMFSink,
     MetricsSink,
     NullMetricsSink,
@@ -33,6 +39,14 @@ from unified_kg_rag.shared.metrics import (
 logger = get_logger(__name__)
 
 METRICS_SINKS = ("none", "cloudwatch")
+
+# The query metrics each query surface's --metrics-sink help names: one
+# list, so a new metric reaches every surface's help.
+QUERY_METRICS_HELP = (
+    f"{QUERY_LATENCY_METRIC}, the outcome counts {QUERY_FAILED_METRIC}, "
+    f"{QUERY_DEGRADED_METRIC}, {QUERY_ABSTAINED_METRIC} and "
+    f"{QUERY_LIMITED_METRIC}, and {QUERY_THROTTLED_METRIC}"
+)
 
 
 def add_metrics_sink_argument(parser: argparse.ArgumentParser, help: str) -> None:

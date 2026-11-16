@@ -288,17 +288,26 @@ rate, the errors and the refused questions (refused as asked, on an empty
 namespace or with a filter to change: not errors, like a cancelled
 one left out of every time and of the decline rate, and not counted as a
 strategy's) and the cost (a failed question is left out of the decline rate
-too: it could not decline);
+too: it could not decline; so is one declined at a query limit, counted
+apart as declined at a limit, since the limit, not the corpus, left it no
+room to answer);
 questions and median time per day; per
 strategy, model and role the calls, tokens and cost; and the jobs with
-their duration, calls, tokens and cost. Costs need `models.prices`
+their duration, calls, tokens and cost (an ingestion's priced from its
+calls, a run stopped at its budget included; the Ingest page's job card
+shows it too). Costs need `models.prices`
 ([Cost and prices](./evaluate.md#comparing-strategies)); a model without a
 price is listed and left out instead of counted as free. Clear question
 history deletes the recorded questions.
 
-**Settings.** The config file, as fields or as YAML. Fields come from the
+**Settings.** The config file, as fields or as YAML. Above them, from the
+moment the page opens, a notice lists each deprecated or removed key the
+file sets (and a deprecated key set beside its replacement to another
+value, which keeps the file from loading). Fields come from the
 configuration's schema with each key's description as help, its default
-and whether the file sets it; find one by key or description. Changes
+and whether the file sets it, or a deprecated key the file sets loads into
+it (set by that key, showing the value in force); find one by key or
+description. Changes
 collect on the right; Review checks them as a run would load the file
 (unknown keys and the `UKR__` environment included) and shows the diff of
 the file, its errors and warnings, and each deprecated key the file sets

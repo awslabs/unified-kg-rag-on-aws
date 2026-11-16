@@ -7,6 +7,22 @@ import { errorMessage, get, send } from "../lib/api";
 import { fieldsOf, flatten, parseValue, valueAt, type JsonSchema, type SchemaField } from "../lib/schema";
 import { useApi } from "../lib/useApi";
 
+/** A deprecated key a config sets: loaded into its replacements, unless it
+ * disagrees with one the config also sets (``conflicts``: the load fails). */
+interface DeprecatedKey {
+  key: string;
+  replacements: string[];
+  conflicts?: string[];
+  message: string;
+}
+
+/** A removed key a config sets, ignored (the reason in English). */
+interface RemovedKey {
+  key: string;
+  reason: string;
+  message: string;
+}
+
 interface ConfigView {
   path: string | null;
   writable: boolean;
@@ -20,6 +36,9 @@ interface ConfigView {
   methodologies: string[];
   tracing_environment: Record<string, boolean>;
   otel_installed: boolean;
+  /** The deprecated and removed keys the file sets, shown on load. */
+  deprecated_keys?: DeprecatedKey[];
+  removed_keys?: RemovedKey[];
 }
 
 interface Preview {
@@ -31,10 +50,8 @@ interface Preview {
   errors: string[];
   warnings: string[];
   unknown_keys: string[];
-  /** The deprecated keys it sets, loaded into their replacements. */
-  deprecated_keys?: { key: string; replacements: string[]; message: string }[];
-  /** The removed keys it sets, ignored (the reason in English). */
-  removed_keys?: { key: string; reason: string; message: string }[];
+  deprecated_keys?: DeprecatedKey[];
+  removed_keys?: RemovedKey[];
   endpoint_changes: { path: string; from: unknown; to: unknown }[];
   directory_changes?: { path: string; from: unknown; to: unknown }[];
 }
@@ -136,6 +153,7 @@ export function SettingsPage({ onSaved }: { onSaved: () => void }) {
         </Notice>
       ) : null}
       {saved ? <Notice tone="good" title={t("settings.saved")}>{t("settings.savedHelp")}</Notice> : null}
+      <GoneKeys preview={data} />
       <div className="grid-2" style={{ marginTop: 16 }}>
         <section className="sheet">
           <div className="tabs" role="tablist" aria-label={t("settings.sections")}>
@@ -380,6 +398,9 @@ function FieldEditor({
   const inFile = valueAt(data.data, field.path);
   const effective = valueAt(data.effective, field.path);
   const current = change ? (change.unset ? undefined : change.value) : inFile;
+  // A deprecated key the file sets loads into this field: the value in force
+  // is its value, not the default.
+  const feeder = inFile === undefined ? (data.deprecated_keys ?? []).find((d) => d.replacements.includes(field.path)) : undefined;
   const [text, setText] = useState(display(current ?? effective));
   const [problem, setProblem] = useState<string | null>(null);
   const id = `field-${field.path}`;
@@ -445,7 +466,7 @@ function FieldEditor({
       ) : null}
       {field.description ? <span className="field-help">{field.description}</span> : null}
       <span className="id">
-        {inFile !== undefined ? t("settings.inFile") : t("settings.fromDefault")}
+        {inFile !== undefined ? t("settings.inFile") : feeder ? t("settings.setByDeprecated", { key: feeder.key }) : t("settings.fromDefault")}
         {field.hasDefault ? ` · ${t("settings.default", { value: display(field.defaultValue) || "∅" })}` : ""}
         {inFile !== undefined && field.kind !== "secret" ? (
           <>
@@ -545,8 +566,9 @@ function ObservabilityPanel({ data, changes, setChange }: { data: ConfigView; ch
   );
 }
 
-/** The deprecated and removed keys a previewed config sets, in the page's
- * language: the loader warns of them only in the server log. */
+/** The deprecated and removed keys a config sets (the file on load, or a
+ * previewed edit), in the page's language: the loader warns of them only in
+ * the server log. */
 export function GoneKeys({ preview }: { preview: Pick<Preview, "deprecated_keys" | "removed_keys"> }) {
   const { t } = useI18n();
   const deprecated = preview.deprecated_keys ?? [];
@@ -562,6 +584,12 @@ export function GoneKeys({ preview }: { preview: Pick<Preview, "deprecated_keys"
               replacements: joinList(d.replacements, t),
               count: d.replacements.length,
             })}
+            {d.conflicts?.length ? (
+              <>
+                {t("common.sentenceSeparator")}
+                <strong>{t("settings.deprecatedConflict", { key: d.key, conflicts: joinList(d.conflicts, t) })}</strong>
+              </>
+            ) : null}
           </li>
         ))}
         {removed.map((r) => (
