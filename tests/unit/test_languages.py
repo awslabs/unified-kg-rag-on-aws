@@ -220,6 +220,17 @@ def test_a_sum_in_words_is_of_the_profiles_numerals_and_counters(
 
 
 @pytest.mark.parametrize("code", list(PROFILES))
+def test_a_prefix_multiplier_is_one_of_the_profiles_multipliers(
+    code: LanguageCode,
+) -> None:
+    # A multiplier that is also a unit's prefix ("5兆瓦") is one character
+    # the profile reads as a multiplier.
+    language = PROFILES[code]
+    assert language.prefix_multipliers <= set(language.numeral_multipliers)
+    assert all(len(ch) == 1 for ch in language.prefix_multipliers)
+
+
+@pytest.mark.parametrize("code", list(PROFILES))
 def test_a_decimal_point_of_numerals_is_none_of_them(code: LanguageCode) -> None:
     # A profile's Han decimal point stands between its numerals, so it is
     # one character, none of them, and only of a profile that has some.

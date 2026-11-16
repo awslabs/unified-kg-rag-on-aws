@@ -448,6 +448,9 @@ class TestStatedNumbers:
             # The forms of a sum write no decimal point, so before a
             # currency counter "拾点五" is no sum either.
             ("收拾点五万元", {50_000}),
+            # Wherever the financial form stands in the run: "二拾点五万元"
+            # is no 205,000 either.
+            ("二拾点五万元", {50_000}),
             # A space may stand before the lower places too.
             ("一点一万 二千元", {12_000}),
         ],
@@ -527,6 +530,59 @@ class TestStatedNumbers:
         self, text: str, numbers: set[float]
     ) -> None:
         assert stated_numbers(text) == numbers
+
+    @pytest.mark.parametrize(
+        ("text", "numbers"),
+        [
+            # Regression (rv40 matching M1): Chinese 兆 before a unit is the
+            # prefix mega, so the number is the digits before it.
+            ("5兆瓦", {5}),
+            ("装机容量为5兆瓦。", {5}),
+            ("2.4兆赫", {2.4}),
+            ("文件大小为300兆字节。", {300}),
+            ("5兆B", {5}),
+            ("1500兆Hz", {1500}),
+            ("五兆瓦", set()),
+            # Where it can close an amount it multiplies: before a counter,
+            # a currency counter (also one named after one letter), a
+            # numeral, kana, punctuation, a space or the end.
+            ("3兆円", {3 * 10**12}),
+            ("新台币3兆元", {3 * 10**12}),
+            ("3兆美元", {3 * 10**12}),
+            ("3兆多元", {3 * 10**12}),
+            ("1兆2000億円", {12 * 10**11}),
+            ("一兆二千億円", {12 * 10**11}),
+            ("五万兆円", {5 * 10**16}),
+            ("1兆人", {10**12}),
+            ("3兆ドル", {3 * 10**12}),
+            ("3兆。", {3 * 10**12}),
+            ("3兆 瓦", {3 * 10**12}),
+            ("3兆", {3 * 10**12}),
+            # The other multipliers keep their value before a unit: 5千瓦 is
+            # 5,000 瓦, 5万吨 50,000 吨.
+            ("5千瓦", {5000}),
+            ("5万吨", {50_000}),
+            ("5亿美元", {500_000_000}),
+            ("三万人", {30_000}),
+        ],
+    )
+    def test_a_prefix_multiplier_multiplies_only_where_it_closes_an_amount(
+        self, text: str, numbers: set[float]
+    ) -> None:
+        assert stated_numbers(text) == numbers
+
+    def test_mega_before_any_unit_reads_the_digits_before_it(self) -> None:
+        # Regression (rv40 matching M1): every one of these read 10^12
+        # times the number.
+        units = ["瓦", "瓦时", "赫兹", "字节", "比特", "帕", "像素", "吨", "bps", "W"]
+        wrong = [
+            (text, sorted(stated_numbers(text)))
+            for unit in units
+            for number in ("1", "5", "2.4", "300", "1500")
+            for template in ("装机容量为{}兆{}。", "约{}兆{}", "答案是{}兆{}")
+            if stated_numbers(text := template.format(number, unit)) != {float(number)}
+        ]
+        assert not wrong, wrong[:5]
 
     def test_every_amount_in_a_section_of_sections_reads(self) -> None:
         han = "〇一二三四五六七八九"

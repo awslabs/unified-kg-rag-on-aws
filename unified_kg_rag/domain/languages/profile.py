@@ -123,6 +123,13 @@ class LanguageProfile:
     # ``numeral_multipliers`` (Sino-Korean "이" in "십이", "삼만"): alone
     # they are other words ("이" is "this").
     multiplier_numerals: Mapping[str, int] = field(default_factory=dict)
+    # Those of ``numeral_multipliers`` that before a unit are its prefix of
+    # another value: Chinese 兆 is 10^12 in "新台币3兆元" and mega in "5兆瓦"
+    # (5 MW) and "2.4兆赫". One multiplies only where it can close an
+    # amount, so not before a Han or Latin letter that is neither a numeral
+    # nor a counter (a currency counter named after one letter, "3兆美元",
+    # still closes one); there the number is the digits before it.
+    prefix_multipliers: frozenset[str] = frozenset()
     counters: tuple[str, ...] = ()
     # The forms of ``counter_numerals`` and ``numeral_multipliers`` that
     # write a sum of money in words (Chinese 大写 "壹拾万元", Japanese 大字

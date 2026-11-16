@@ -249,7 +249,9 @@ Bugs present in 0.3.0.
   time and the MinHash estimate decided, so 0.9 read as about 0.97. The index now takes name matching's layout (12
   bands of 10 rows at 0.9: 99% of the pairs at the threshold) and the pair's exact 3-gram similarity decides.
 - `answer_match` read Japanese sums in 兆 (10^12) wrong: `一兆二千億円` as 200,000,000,000 and `3兆円` as 3. 兆 is a
-  multiplier of the Japanese profile, as 億 is. It also reads sums in the financial numerals (`人民币壹拾万元`,
+  multiplier of the Japanese and Chinese profiles, as 億 is, where it can close an amount (`新台币3兆元`, `3兆美元`);
+  before another Han or Latin letter it is the Chinese prefix mega (the new `LanguageProfile.prefix_multipliers`), so
+  `5兆瓦` and `2.4兆赫` read 5 and 2.4. It also reads sums in the financial numerals (`人民币壹拾万元`,
   `金壱萬円`, `叁佰圆整`), only as a well-formed number before 元, 圆 or 円: outside a sum they are letters of other
   words (`大陆人`, `古参社員`, `大陆元首`), and an ordinary amount after such a word keeps its reading (`人参二百円`
   is 200, `队伍五千元` 5000). A Chinese decimal that ends its number before 万 or 億 is read too, in an answer in any
