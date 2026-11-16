@@ -1,9 +1,10 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""The bare numeric module constants of the package, each with its reason.
+"""The bare numeric constants of the package, each with its reason.
 
 ``tests/unit/test_numeric_constants.py`` fails a module-level constant
-bound to a number (``NAME = 0.85``) that is not listed here, and an entry
+bound to a number (``NAME = 0.85``) or an upper-case class attribute bound
+to one (``<module>:<Class>.<NAME>``) that is not listed here, and an entry
 whose constant is gone. A number that tunes what is retrieved, extracted or
 answered belongs in the configuration, with an evidence tag
 (``domain/models/evidence.py``); list a new constant here only when it is
@@ -37,7 +38,9 @@ def _reason(reason: str, *keys: str) -> dict[str, str]:
     return dict.fromkeys(keys, reason)
 
 
-# ``<module path under unified_kg_rag/>:<NAME>`` -> why it is a constant.
+# ``<module path under unified_kg_rag/>:<NAME>`` (or ``:<Class>.<NAME>``) -> why
+# it is a constant. docs/concepts/defaults-and-evidence.md lists the class
+# attributes with their reasons.
 ALLOWED: dict[str, str] = {
     **_reason(
         LIMIT,
@@ -68,6 +71,7 @@ ALLOWED: dict[str, str] = {
         "shared/utils/files.py:NAME_MAX",
         "shared/utils/files.py:_MAX_LINKS",
         "domain/retrieval/graph_query.py:_EXACT_INTEGRAL",
+        "ports/model_factory.py:LanguageModelInfo.BETA_1M_CONTEXT_WINDOW_SIZE",
     ),
     **_reason(
         UPSTREAM,
@@ -84,6 +88,8 @@ ALLOWED: dict[str, str] = {
         "evaluation/benchmarks/autoq.py:RRF_K",
         "evaluation/benchmarks/autoq.py:RRF_SCORE_WEIGHT",
         "evaluation/benchmarks/autoq.py:RRF_SOURCE_WEIGHT",
+        # GraphRAG: drift_search reduce/local_search_temperature 0 (config/defaults.py).
+        "adapters/aws/bedrock.py:BedrockLanguageModelFactory.DEFAULT_TEMPERATURE",
     ),
     **_reason(
         FORMAT,
@@ -179,6 +185,19 @@ ALLOWED: dict[str, str] = {
         "shared/write_fence.py:INDEXING_REQUEST_TIMEOUT_SECONDS",
         "shared/write_fence.py:REGISTRY_CONNECT_TIMEOUT_SECONDS",
         "shared/write_fence.py:REGISTRY_READ_TIMEOUT_SECONDS",
+        "adapters/aws/bedrock.py:BaseBedrockModelFactory.BOTO_READ_TIMEOUT",
+        "adapters/aws/bedrock.py:BaseBedrockModelFactory.BOTO_CONNECT_TIMEOUT",
+        "adapters/aws/bedrock.py:BaseBedrockModelFactory.BOTO_MIN_POOL_CONNECTIONS",
+        "adapters/aws/bedrock.py:BaseBedrockModelFactory.BOTO_MAX_POOL_CONNECTIONS",
+        "adapters/aws/opensearch.py:OpenSearchClient.BULK_CHUNK_SIZE",
+        "adapters/guardrail/bedrock.py:BedrockGuardrail.BOTO_CONNECT_TIMEOUT",
+        "adapters/guardrail/bedrock.py:BedrockGuardrail.BOTO_READ_TIMEOUT",
+        "adapters/observability/usage_callback.py:UsageCallbackHandler.MAX_UNSETTLED",
+        "adapters/retrieval/token_manager.py:TokenManager.COUNT_CONCURRENCY",
+        "adapters/retrievers/opensearch_retriever.py:OpenSearchRetriever.QUERY_EMBEDDING_CACHE_SIZE",
+        "adapters/retrievers/opensearch_retriever.py:OpenSearchRetriever._WINDOW_CUTS_REMEMBERED",
+        "application/ingestion/cache_manager.py:CacheManager.CHUNK_ITEMS",
+        "application/ingestion/cache_manager.py:CacheManager.MAX_FILE_BYTES",
     ),
     **_reason(
         CAP,
@@ -252,6 +271,15 @@ ALLOWED: dict[str, str] = {
         "application/cli/run_rag_chain.py:_FILES_SHOWN",
         "application/cli/run_rag_chain.py:_SNIPPET_CHARS",
         "domain/retrieval/graph_query.py:_EXAMPLE_MAX_CHARS",
+        "adapters/aws/s3_cache.py:S3CacheManager._MAX_REPORTED_FAILURES",
+        "adapters/renderers/interactive.py:InteractiveRenderer.NODE_SIZE_BASE",
+        "adapters/renderers/interactive.py:InteractiveRenderer.NODE_SIZE_FACTOR",
+        "adapters/renderers/interactive.py:InteractiveRenderer.MIN_EDGE_WIDTH",
+        "adapters/renderers/interactive.py:InteractiveRenderer.MAX_EDGE_WIDTH",
+        "adapters/renderers/interactive.py:InteractiveRenderer.MIN_EDGE_OPACITY",
+        "adapters/renderers/interactive.py:InteractiveRenderer.MAX_EDGE_OPACITY",
+        "adapters/renderers/interactive.py:InteractiveRenderer.LAYOUT_EXTENT",
+        "adapters/storage/neptune_indexer.py:NeptuneIndexer._PROGRESS_LOG_EVERY",
     ),
     **_reason(
         NUMERIC,
@@ -265,6 +293,8 @@ ALLOWED: dict[str, str] = {
         "evaluation/pairwise.py:_MIN_CORRELATION_PAIRS",
         "evaluation/gates.py:MIN_GATE_PAIRS",
         "evaluation/comparison.py:RATE_DIFFERENCE_ALPHA",
+        "adapters/aws/token_counter.py:BedrockTokenCounter.MAX_TRUNCATION_ITERATIONS",
+        "adapters/retrieval/token_manager.py:TokenManager.MIN_DERIVED_CONTEXT_TOKENS",
     ),
     **_reason(
         DERIVED,
@@ -280,6 +310,10 @@ ALLOWED: dict[str, str] = {
         "domain/models/provider_config.py:LOCAL_MAX_CONTEXT_TOKENS",
         "ports/model_factory.py:CEILING_ANSWER_TOKENS",
         "adapters/aws/bedrock.py:_MAX_BUFFER_DIVISOR",
+        # The equal hybrid weights the seed_score_ratio scale is read at.
+        "adapters/search_strategies/local_search.py:LocalSearchStrategy._SEED_RATIO_VECTOR_WEIGHT",
+        # search.reranking.top_k's default, the value its one caller passes.
+        "adapters/aws/bedrock.py:BedrockRerankModelFactory.DEFAULT_TOP_K",
     ),
     **_reason(
         UNMEASURED,
@@ -311,5 +345,12 @@ ALLOWED: dict[str, str] = {
         "evaluation/benchmarks/autoq.py:CLAIM_BATCH",
         "evaluation/text_matching.py:_MAX_KOREAN_SUFFIX",
         "shared/utils/model_output.py:_LABEL_WORDS",
+        "adapters/aws/bedrock.py:BedrockLanguageModelFactory.DEFAULT_TOP_K",
+        "adapters/aws/bedrock.py:BedrockLanguageModelFactory.DEFAULT_THINKING_BUDGET_TOKENS",
+        "adapters/evaluators/ragas_evaluator.py:RagasEvaluator.BUFFER_TOKENS",
+        "adapters/retrieval/token_manager.py:TokenManager.CONTEXT_BUFFER_TOKENS",
+        "application/prompts/tuner.py:PromptTuner.MAX_SAMPLE_CHARS",
+        "application/prompts/tuner.py:PromptTuner.MAX_EXAMPLES",
+        "application/prompts/tuner.py:PromptTuner.EXAMPLE_CHUNK_CHARS",
     ),
 }

@@ -1064,6 +1064,77 @@ estimate / its tokens: en 1.30, es 0.92, de 0.82, vi 0.58, hi 0.56, he 0.63);
 its truncation at 8,192 tokens keeps the script estimate, which chunk sizes
 stay far under.
 
+## Fixed values in code
+
+A number that changes what is retrieved, extracted or answered is a
+configuration field with an evidence tag. Every other number bound to a
+name in the package is listed with its reason in
+`tests/fixtures/numeric_constants.py`, which a unit test keeps complete:
+the module-level constants, and the upper-case class attributes below.
+None of these is configurable. Each one's reason follows.
+
+**Shape results; no run compared values.** These are candidates for the
+experiment plan. They stay fixed because a setting already covers what a
+user tunes, or because they act only in a narrow path:
+
+- `BedrockLanguageModelFactory.DEFAULT_TOP_K` (50): Bedrock's `top_k`,
+  sent only to an in-region model id (not an inference profile) that takes
+  sampling parameters. At the default temperature 0 the model always picks
+  its most likely token, so this value does not change the answer.
+- `BedrockLanguageModelFactory.DEFAULT_THINKING_BUDGET_TOKENS` (2048): the
+  reasoning budget of a Claude model before 4.6 (which takes
+  `budget_tokens`, not an effort) when a call reasons without an effort,
+  as the deprecated `RAGInput.enable_thinking` does. It equals the `low`
+  effort's budget, and `RAGInput.effort` sets the budget per query.
+- `TokenManager.CONTEXT_BUFFER_TOKENS` (512): held back from the context
+  budget for the answer prompt's own text. `max_context_tokens` and
+  `context_window_headroom_ratio` size that budget.
+- `RagasEvaluator.BUFFER_TOKENS` (128): the margin kept when the RAGAS
+  judge's contexts are cut to its token budget. It affects evaluation
+  only.
+- `PromptTuner.MAX_SAMPLE_CHARS` (8000), `MAX_EXAMPLES` (3) and
+  `EXAMPLE_CHUNK_CHARS` (1200): how much of the corpus `run-prompt-tuning`
+  profiles, and the count and size of the worked examples it writes. Its
+  output is a `custom_prompts` file that you review and edit.
+
+**Taken from the original library, derived or a guard:**
+
+- `BedrockLanguageModelFactory.DEFAULT_TEMPERATURE` (0): MS GraphRAG's
+  answer temperatures (`reduce_temperature` and
+  `local_search_temperature` in its defaults) are 0 as well.
+- `LocalSearchStrategy._SEED_RATIO_VECTOR_WEIGHT` (0.5): the equal hybrid
+  weights that `search.local_search.seed_score_ratio` is read at.
+- `BedrockRerankModelFactory.DEFAULT_TOP_K` (100): the default of
+  `search.reranking.top_k`, which the one caller passes.
+- `TokenManager.MIN_DERIVED_CONTEXT_TOKENS` (1024): the lowest context
+  budget derived from a model whose output reservation fills its window.
+  Without it the budget would be zero or less, and every section would be
+  excluded.
+- `BedrockTokenCounter.MAX_TRUNCATION_ITERATIONS` (8): the most recounts
+  a text cut to a token limit makes before keeping the last cut that fits.
+- `LanguageModelInfo.BETA_1M_CONTEXT_WINDOW_SIZE` (1,000,000): the
+  context window that `aws.bedrock.enable_1m_context` opts a model into.
+
+**Operational or presentation only.** These do not change what is
+retrieved or answered:
+
+- Timeouts and connection pools: `BaseBedrockModelFactory.BOTO_READ_TIMEOUT`
+  (330 s), `BOTO_CONNECT_TIMEOUT` (10 s), `BOTO_MIN_POOL_CONNECTIONS` (10),
+  `BOTO_MAX_POOL_CONNECTIONS` (200), and `BedrockGuardrail.BOTO_CONNECT_TIMEOUT`
+  (10 s) and `BOTO_READ_TIMEOUT` (30 s). Their code comments give the
+  reasons.
+- Batching, caches and memory: `OpenSearchClient.BULK_CHUNK_SIZE` (100),
+  `TokenManager.COUNT_CONCURRENCY` (8),
+  `OpenSearchRetriever.QUERY_EMBEDDING_CACHE_SIZE` (256),
+  `OpenSearchRetriever._WINDOW_CUTS_REMEMBERED` (1024),
+  `UsageCallbackHandler.MAX_UNSETTLED` (4096), `CacheManager.CHUNK_ITEMS`
+  (1000) and `CacheManager.MAX_FILE_BYTES` (50 MiB).
+- What a log line, an error or a chart shows:
+  `S3CacheManager._MAX_REPORTED_FAILURES` (5),
+  `NeptuneIndexer._PROGRESS_LOG_EVERY` (2000), and the interactive
+  renderer's node sizes, edge widths and opacities, and layout extent
+  (`InteractiveRenderer.NODE_SIZE_BASE` through `LAYOUT_EXTENT`).
+
 ## Reproducing a measurement
 
 The same tooling runs any of these comparisons on your corpus or on
