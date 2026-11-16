@@ -211,16 +211,17 @@ def summarize(
         )
     limited = sum(map(_limited, queries))
     decided = sum(map(_could_decline, queries)) - limited
-    abstained = sum(bool(q.get("abstained")) for q in queries)
+    # The declines of the corpus, as each strategy's row counts them: those
+    # at a query limit are counted apart (``limited``).
+    abstained = sum(bool(q.get("abstained")) and not _limited(q) for q in queries)
     return {
         "totals": {
             "queries": len(queries),
             "answered": sum(q["outcome"] == "answered" for q in queries),
             "abstained": abstained,
             # Of the questions served that answered or declined: neither
-            # refused, cancelled nor failed, nor declined at a query limit
-            # (``limited``, counted apart).
-            "decline_rate": (abstained - limited) / decided if decided else None,
+            # refused, cancelled nor failed, nor declined at a query limit.
+            "decline_rate": abstained / decided if decided else None,
             "limited": limited,
             "errors": sum(q["outcome"] in _FAILED for q in queries),
             # Questions refused as asked (a namespace without an index, a

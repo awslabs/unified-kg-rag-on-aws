@@ -22,6 +22,7 @@ interface Dashboard {
   totals: {
     queries: number;
     answered: number;
+    /** Declines, those at a query limit apart (``limited``). */
     abstained: number;
     decline_rate: number | null;
     /** Declines at a query limit: counted apart, out of the decline rate. */

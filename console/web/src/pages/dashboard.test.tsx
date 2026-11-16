@@ -6,7 +6,7 @@ import { I18nProvider } from "../i18n/i18n";
 import { DashboardPage } from "./DashboardPage";
 
 function serve(refused: number, limited = 0) {
-  const totals = { queries: 4, answered: 3, abstained: limited, decline_rate: 0, limited, errors: 0, refused, latency_p50: 1, latency_p95: 2, cost_usd: null, priced_queries: 0 };
+  const totals = { queries: 4, answered: 3, abstained: 0, decline_rate: 0, limited, errors: 0, refused, latency_p50: 1, latency_p95: 2, cost_usd: null, priced_queries: 0 };
   const strategy = { strategy: "local", queries: 4 - refused, abstained: 0, limited, errors: 0, latency_p50: 1, latency_p95: 2, tokens_per_query: 10, cost_usd: null, cost_per_query: null };
   const body = { totals, strategies: [strategy], models: [], roles: [], timeline: [], jobs: [], unpriced_models: [], prices_configured: false };
   vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(body), { status: 200 })));

@@ -104,7 +104,8 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   - Console and CLI: the Ask page names that decline, the steps the limits skipped (apart from those that failed)
     and the strategies they left `auto` without, and `run-rag`'s text output says the same (naming the settings to
     raise). The console records each decline's reason (an older store gains the column, consoles opening it at once
-    too), and its Dashboard counts declines at a limit apart, out of the decline rate and each strategy's declines.
+    too, and a current one opens beside a reader), and its Dashboard counts declines at a limit apart (`limited`),
+    out of the decline rate and the declines of the totals and of each strategy alike.
   - Metrics: the `query_limited` metric (0 or 1, on the CDK dashboard's "Query outcomes" widget, and named in the
     `--metrics-sink` help of `run-rag`, `run-mcp-server` and `run-console`) and the query span's
     `kg_rag.query_limited` count a query its limits cut short (a step left out or cut, an abstention, a refusal, or

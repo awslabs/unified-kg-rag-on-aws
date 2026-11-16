@@ -1216,7 +1216,9 @@ def test_a_decline_at_a_query_limit_is_counted_apart_from_the_decline_rate(
     summary = dashboard.summarize(queries, [], Config())
     totals = summary["totals"]
     # Of the old answer, the answer and the corpus decline: one in three.
-    assert totals["limited"] == 2 and totals["abstained"] == 3
+    # The declines are the corpus's, in the totals as per strategy (the
+    # totals counted the limit's too, 3 beside the row's 1, rv44).
+    assert totals["limited"] == 2 and totals["abstained"] == 1
     assert totals["decline_rate"] == pytest.approx(1 / 3)
     # Per strategy too: its declines are the corpus's, the limit's apart
     # (the row counted 3 beside a total that left the 2 out, rv43).
