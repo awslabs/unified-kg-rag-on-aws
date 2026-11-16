@@ -69,6 +69,12 @@ late a 10 ms ticker wakes up: the time the loop spent in code that does not
 yield, which delays every concurrent query. A rising p99 lag with
 concurrency points at CPU work on the loop that belongs in a thread.
 
+`--stream` (with `sweep` or `soak`) asks through `aquery_events`, the
+streamed answer the console and `astream` serve, instead of `ainvoke`: the
+answer stream's first-chunk window (`search.model_timeout_seconds`) is then
+under load too, and each level adds the time to the first answer chunk
+(`first_chunk_p50`, `first_chunk_p95`).
+
 ### Soak
 
 ```bash
@@ -184,9 +190,17 @@ writes `report.md` to the job summary. It fails when a gate fails:
 |---|---|
 | Errors on the fixed corpus (every sweep level and the soak) | 0 |
 | Flagged answers (every sweep level and the soak): no sources, abstained, empty, degraded, unresolved citations | 0 (every query of the mix is answerable from the demo corpus, and the fake models are deterministic) |
-| Event-loop lag p99 (every sweep level and the soak) | under 100 ms |
+| Event-loop lag p99 (every sweep level and the soak) | under 100 ms (holds up to concurrency 16, the nightly's highest level) |
 | RSS over the soak's second half | fails only when it grows both at 10 MB/h or more and by 8 MB or more |
 | Chaos scenarios | each converges (the kill exactly, the others `--incremental`), graph-store census included; the kill's resume, started at once, finds no lease held |
+
+The lag gate is set for the nightly's levels. At concurrency 64 the p99 lag
+measured 120 to 140 ms on a shared development host, as on 0.3.0 (and
+with `--stream`), with the slow callbacks spread across the
+strategies: the CPU worker threads contend with the loop for the GIL, with
+no one blocking call to move. A sweep past 16 can fail the lag gate without
+a regression: compare its lag with the same level on the base commit, or
+pass `load.py gate --max-loop-lag-ms`.
 
 A faulted run that failed no document and exited 0 (the injected faults all
 retried away) left the recovery path untested: its scenario's `status` is
