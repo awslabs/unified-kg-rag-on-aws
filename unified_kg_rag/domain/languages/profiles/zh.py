@@ -98,7 +98,11 @@ PROFILE = LanguageProfile(
         "萬": 10**4,
         "亿": 10**8,
         "億": 10**8,
+        # 10^12 in Taiwan ("新台币3兆元"); before a unit, the prefix mega
+        # ("5兆瓦", 5 MW).
+        "兆": 10**12,
     },
+    prefix_multipliers=frozenset("兆"),
     # And a sum of money ("三千万元").
     counters=("家", "个", "個", "件", "人", "名", "台", "元"),
     # 大写 is read in a sum only: "陆" is also land ("大陆人"), "伍" a

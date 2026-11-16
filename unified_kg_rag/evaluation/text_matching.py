@@ -671,6 +671,37 @@ _SECTION_MULTIPLIERS = "".join(ch for ch, v in _MULTIPLIERS.items() if v >= 10**
 _SMALL_MULTIPLIERS = "".join(ch for ch, v in _MULTIPLIERS.items() if v < 10**4)
 # The parts of a run below a section: digits and the smaller multipliers.
 _LOWER_PARTS = "".join([*_HAN_DIGITS, *_SINO_KOREAN_DIGITS, _SMALL_MULTIPLIERS])
+# The multipliers that before a unit are its prefix of another value
+# (``prefix_multipliers``: 兆 is mega in "5兆瓦"). One multiplies only where
+# it can close an amount: not before a Han or Latin letter that is neither
+# a numeral nor a counter, nor the letter naming a currency counter after
+# it ("3兆美元"); there the number is the digits before it ("5兆瓦" is 5).
+# The others keep their value before a unit ("5千瓦" is 5,000 瓦, "5万吨"
+# 50,000 吨), so they multiply before any letter.
+_PREFIX_MULTIPLIERS = "".join(
+    sorted(
+        {
+            ch
+            for language in (*_HAN_LANGUAGES, _KO)
+            for ch in language.prefix_multipliers
+        }
+    )
+)
+_UNIT_AFTER = (
+    r"(?!"
+    + "|".join(sorted({*_HAN_COUNTERS, *_CURRENCY_COUNTERS}, key=len, reverse=True))
+    + rf"|[{''.join([*_HAN_DIGITS, *_MULTIPLIERS])}]"
+    + rf"|[{letter_class('han')}](?:{'|'.join(_CURRENCY_COUNTERS)}))"
+    + rf"[{letter_class('han', 'latin')}]"
+)
+_CLOSING_PREFIX = (
+    rf"[{_PREFIX_MULTIPLIERS}](?!{_UNIT_AFTER})" if _PREFIX_MULTIPLIERS else "(?!)"
+)
+# A multiplier that multiplies the number before it, where it stands.
+_MULTIPLIES = re.compile(
+    "[" + "".join(ch for ch in _MULTIPLIERS if ch not in _PREFIX_MULTIPLIERS) + "]"
+    f"|{_CLOSING_PREFIX}"
+)
 
 
 def _magnitude(value: int) -> int:
@@ -900,11 +931,16 @@ def _cjk_run(chars: str) -> str:
     continues one ("十点五万"), so "收拾点五万" (拾 outside a sum is no
     numeral) holds no "点五万"."""
     digits = "".join(ch for ch in chars if ch in _HAN_DIGITS)
+    letters = "".join(ch for ch in chars if ch not in _PREFIX_MULTIPLIERS)
+    prefix = f"|{_CLOSING_PREFIX}" if len(letters) < len(chars) else ""
 
     def part(within: bool) -> str:
         # Digits are one part, all of them: a pattern failing after the
         # run would otherwise try every way of splitting them.
-        return f"(?:(?>{_DIGIT_FORM})|{_han_decimal(digits, within=within)}|[{chars}])"
+        return (
+            f"(?:(?>{_DIGIT_FORM})|{_han_decimal(digits, within=within)}"
+            f"|[{letters}]{prefix})"
+        )
 
     return rf"{part(False)}(?:[^\S\n]?{part(True)}|{_han_decimal(digits, True)})*"
 
@@ -1259,7 +1295,7 @@ def _number_forms(
         if not _stands_alone(body, start, match.end()):
             return None
         # A multiplier after them scales them ("3万", "1만"): _cjk_value.
-        if body[match.end() : match.end() + 1] in _MULTIPLIERS:
+        if _MULTIPLIES.match(body, match.end()):
             return None
         return float(number.replace(",", ""))
 
