@@ -4397,7 +4397,10 @@ def _streamed_to(
     has a deadline (``_first_chunk_window``), so a stalled stream fails
     early. Any chunk counts, text or not: a reasoning model's reasoning
     reaches here as it streams, emptied (``ReasoningStripper``), so the
-    window measures the model's first byte, not how long it reasons.
+    window measures the model's first byte, not how long it reasons. A
+    stream that stalls after a chunk without text fails as the unstreamed
+    call does, at the model client's read timeout, after the transient
+    retries (no answer text reached the caller yet).
     """
 
     async def run(state: dict[str, Any], config: RunnableConfig) -> str:
@@ -4874,6 +4877,7 @@ class _DeadlineScope:
                 now + seconds,
                 "the answer stream's first-chunk window "
                 "(search.model_timeout_seconds)",
+                window=True,
             ):
                 yield
         finally:

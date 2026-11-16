@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import contextvars
+import dataclasses
 import logging
 import random
 import re
@@ -55,34 +56,62 @@ _jitter_rng = random.SystemRandom()
 
 T = TypeVar("T")
 
-# The time.monotonic() past which no retry starts: the deadline of the query
-# a call is made for (GraphRAGChain sets it). A context variable, so it
-# reaches the worker threads LangChain and asyncio.to_thread run the blocking
-# model calls on; None outside a query.
-_RETRY_DEADLINE: contextvars.ContextVar[float | None] = contextvars.ContextVar(
+
+@dataclasses.dataclass
+class _RetryDeadline:
+    """The time.monotonic() past which no retry starts (None: no deadline),
+    and what sets it, as the give-up warning names it. A window's
+    (``retry_deadline(window=True)``) is in force only while ``open``; after
+    it, its enclosing deadline is (``outer``)."""
+
+    at: float | None
+    name: str
+    outer: _RetryDeadline | None = None
+    open: bool = True
+
+
+# The deadline of the query a call is made for (GraphRAGChain sets it). A
+# context variable, so it reaches the worker threads LangChain and
+# asyncio.to_thread run the blocking model calls on; None outside a query.
+_RETRY_DEADLINE: contextvars.ContextVar[_RetryDeadline | None] = contextvars.ContextVar(
     "kg_rag_retry_deadline", default=None
-)
-# What sets that deadline, as the give-up warning names it.
-_RETRY_DEADLINE_NAME: contextvars.ContextVar[str] = contextvars.ContextVar(
-    "kg_rag_retry_deadline_name", default="the query deadline"
 )
 
 
 @contextlib.contextmanager
 def retry_deadline(
-    deadline: float | None, name: str = "the query deadline"
+    deadline: float | None,
+    name: str = "the query deadline",
+    *,
+    window: bool = False,
 ) -> Iterator[None]:
     """No transient retry starts past ``deadline`` (``time.monotonic()``)
     in this context: a call abandoned by a timed-out query does not keep
-    re-sending its request from a worker thread. ``name`` says what set it
-    (a retry given up for it names it)."""
-    token = _RETRY_DEADLINE.set(deadline)
-    name_token = _RETRY_DEADLINE_NAME.set(name)
+    re-sending its request from a worker thread, which still holds the
+    deadline after the block. ``name`` says what set it (a retry given up
+    for it names it).
+
+    A ``window`` (a stream's first-chunk window) bounds only the block: once
+    it ends, the enclosing deadline applies again, in a context copied while
+    it ran as well (LangChain drives a stream in a copy of the context its
+    first chunk was asked for in), so a retry after the window is not
+    refused for it."""
+    record = _RetryDeadline(
+        deadline, name, outer=_RETRY_DEADLINE.get() if window else None
+    )
+    token = _RETRY_DEADLINE.set(record)
     try:
         yield
     finally:
-        _RETRY_DEADLINE_NAME.reset(name_token)
+        record.open = not window
         _RETRY_DEADLINE.reset(token)
+
+
+def _deadline_in_force() -> _RetryDeadline | None:
+    record = _RETRY_DEADLINE.get()
+    while record is not None and not record.open:
+        record = record.outer
+    return record
 
 
 def current_deadline() -> float | None:
@@ -90,7 +119,8 @@ def current_deadline() -> float | None:
     (``retry_deadline``), or ``None`` outside one or without a deadline:
     a strategy with optional rounds (``iterative``) starts none it cannot
     finish."""
-    return _RETRY_DEADLINE.get()
+    record = _deadline_in_force()
+    return None if record is None else record.at
 
 
 TransientErrorPredicate = Callable[[BaseException], bool]
@@ -452,13 +482,17 @@ def next_transient_retry_delay(
     if never_retried(exc) or not is_transient(exc) or attempt >= policy.max_attempts:
         return None
     delay = backoff_delay(attempt, policy)
-    deadline = _RETRY_DEADLINE.get()
-    if deadline is not None and time.monotonic() + delay >= deadline:
+    deadline = _deadline_in_force()
+    if (
+        deadline is not None
+        and deadline.at is not None
+        and (time.monotonic() + delay >= deadline.at)
+    ):
         logger.warning(
             "Giving up on '%s' after %s attempts (%s is reached): %s",
             operation,
             attempt,
-            _RETRY_DEADLINE_NAME.get(),
+            deadline.name,
             error_name(exc),
         )
         return None

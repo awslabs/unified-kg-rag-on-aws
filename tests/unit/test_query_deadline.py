@@ -17,6 +17,7 @@ accepts connections and never answers.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import re
 import socket
 import threading
@@ -40,7 +41,11 @@ from unified_kg_rag.adapters.aws.bedrock import (
     BedrockLanguageModelFactory,
     BedrockRerankModelFactory,
 )
-from unified_kg_rag.adapters.llm.retry import next_transient_retry_delay, retry_deadline
+from unified_kg_rag.adapters.llm.retry import (
+    current_deadline,
+    next_transient_retry_delay,
+    retry_deadline,
+)
 from unified_kg_rag.adapters.local.token_counter import local_token_counter_factory
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
@@ -596,6 +601,21 @@ def test_no_transient_retry_starts_past_the_query_deadline() -> None:
         assert delay() is None
     with retry_deadline(time.monotonic() + 60):
         assert delay() is not None
+
+
+def test_a_window_bounds_retries_only_while_it_runs_even_in_copied_contexts() -> None:
+    # A context copied in a window (LangChain's stream task) is bound by the
+    # window only while it runs; a query deadline still binds a context
+    # copied in it after the query (a call it abandoned).
+    past, later = time.monotonic() - 1, time.monotonic() + 60
+    with retry_deadline(later):
+        with retry_deadline(past, "the window", window=True):
+            in_window = contextvars.copy_context()
+            assert in_window.run(current_deadline) == past
+        assert in_window.run(current_deadline) == later
+        in_query = contextvars.copy_context()
+    assert current_deadline() is None
+    assert in_query.run(current_deadline) == later
 
 
 # --- query-time model clients ----------------------------------------------------

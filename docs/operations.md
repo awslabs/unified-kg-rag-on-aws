@@ -1612,6 +1612,10 @@ A query has two bounds ([Querying](./guides/query.md#query-deadline)):
   A stream must also send its first chunk within `model_timeout_seconds`:
   any chunk counts, so a reasoning model that streams its reasoning (inline
   `<think>` or Ollama's native thinking) is not cut off while it reasons.
+  Until answer text arrives, a stream is retried on a transient error as an
+  unstreamed call is: a connection dropped while the model reasons, or a
+  stall after a chunk without text (it fails at the client's read timeout
+  with the model's error, not `QueryTimeoutError`).
 
 Ingestion calls use their own client: a 330 s read timeout and
 `retry.model.client_max_attempts` (default 6) botocore attempts, bounded by
