@@ -2011,7 +2011,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         )
         ratio = self.config.search.token_manager.context_window_headroom_ratio
         room = max(0, int(left * (1 - ratio)))
-        ceiling = self.token_manager.context_ceiling
+        ceiling = self.token_manager.context_ceiling_at(state.get("effort"))
         if room >= (ceiling if budget is None else min(budget, ceiling)):
             return budget, False
         return room, True
@@ -2059,6 +2059,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             # search.citations, per strategy: auto's route, iterative's base.
             number_sections=number,
             estimated_within=budget if limited else None,
+            # Its output takes more of the window (RAGInput.effort).
+            effort=state.get("effort"),
         )
         cut = optimized.sections_excluded + optimized.sections_truncated
         if limited and cut:

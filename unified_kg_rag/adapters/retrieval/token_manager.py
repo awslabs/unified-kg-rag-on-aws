@@ -14,11 +14,13 @@ from unified_kg_rag.domain.models import (
     RetrievalResult,
     SectionType,
 )
+from unified_kg_rag.domain.models.config import EFFORT_THINKING_TOKENS
 from unified_kg_rag.domain.prompts import AnswerGenerationPrompt
 from unified_kg_rag.domain.retrieval.citations import neutralize_markers
 from unified_kg_rag.ports.model_factory import (
     LanguageModelInfo,
     effective_max_output_tokens,
+    reasoning_output_tokens,
 )
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
@@ -140,6 +142,8 @@ class TokenManager:
             config.models.default_max_output_tokens,
             AnswerGenerationPrompt.min_output_tokens,
         )
+        self._answer_model_info = answer_model_info
+        self._answer_output_tokens = answer_output_tokens
         self._max_context_tokens = self._resolve_max_context_tokens(
             answer_model_id, answer_model_info, answer_output_tokens
         )
@@ -158,11 +162,7 @@ class TokenManager:
         configured = self.config.max_context_tokens
         headroom = self.config.context_window_headroom_ratio
         window = model_info.effective_context_window(self._enable_1m_context)
-        budget_ceiling = int((window - output_tokens) * (1.0 - headroom))
-        # A model whose output reservation swallows its window would yield a
-        # non-positive ceiling; keep a usable floor instead of returning <= 0,
-        # which optimize_context treats as "exclude everything".
-        budget_ceiling = max(budget_ceiling, self.MIN_DERIVED_CONTEXT_TOKENS)
+        budget_ceiling = self._budget_ceiling(model_info, output_tokens)
 
         if configured is None:
             # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure - LLM token counts, not credentials
@@ -189,12 +189,43 @@ class TokenManager:
             return budget_ceiling
         return configured
 
+    def _budget_ceiling(self, model_info: LanguageModelInfo, output_tokens: int) -> int:
+        """The prompt-side budget the answer model's window leaves beside
+        ``output_tokens`` of output, less the headroom
+        (``context_window_headroom_ratio``)."""
+        headroom = self.config.context_window_headroom_ratio
+        window = model_info.effective_context_window(self._enable_1m_context)
+        # A model whose output reservation swallows its window would yield a
+        # non-positive ceiling; keep a usable floor instead of returning <= 0,
+        # which optimize_context treats as "exclude everything".
+        return max(
+            int((window - output_tokens) * (1.0 - headroom)),
+            self.MIN_DERIVED_CONTEXT_TOKENS,
+        )
+
     @property
     def context_ceiling(self) -> int:
         """The most context (and question) tokens a budget may take: what the
         answer model accepts (``max_context_tokens``) less the prompt's
         buffer."""
         return self._max_context_tokens - self.CONTEXT_BUFFER_TOKENS
+
+    def context_ceiling_at(self, effort: str | None) -> int:
+        """``context_ceiling`` of an answer at a query's ``effort``
+        (``RAGInput.effort``; ``None``: the tier's), whose max_tokens is
+        raised for that level's reasoning (``reasoning_output_tokens``, as
+        the model factory sends it): what the window leaves beside that
+        output, when it is less."""
+        info = self._answer_model_info
+        if effort is None or not info.supports_thinking:
+            return self.context_ceiling
+        output = reasoning_output_tokens(
+            self._answer_output_tokens, EFFORT_THINKING_TOKENS[effort], info
+        )
+        return (
+            min(self._max_context_tokens, self._budget_ceiling(info, output))
+            - self.CONTEXT_BUFFER_TOKENS
+        )
 
     def count_tokens(self, text: str) -> int:
         if not text:
@@ -239,6 +270,7 @@ class TokenManager:
         spare_budget_first: Sequence[SectionType] = (),
         number_sections: bool = False,
         estimated_within: int | None = None,
+        effort: str | None = None,
     ) -> OptimizedContext:
         """The sections of ``retrieval_results`` that fit the context budget.
 
@@ -256,6 +288,8 @@ class TokenManager:
         limit leaves the context. ``max_tokens`` stays the query's own
         budget; a context past the bound is packed again into a budget cut
         in the ratio the whole measured at, until it fits.
+        ``effort`` is the answer's (``context_ceiling_at``): the budget is
+        capped by what the window leaves beside its output.
         """
         with observability.span(
             "kg_rag.context_build", results_in=len(retrieval_results)
@@ -267,6 +301,7 @@ class TokenManager:
                 spare_budget_first,
                 number_sections,
                 estimated_within,
+                effort,
             )
             # Tokens used vs the budget the sections had to fit in.
             span.set_attributes(
@@ -287,12 +322,13 @@ class TokenManager:
         spare_budget_first: Sequence[SectionType] = (),
         number_sections: bool = False,
         estimated_within: int | None = None,
+        effort: str | None = None,
     ) -> tuple[OptimizedContext, int]:
         # A caller-supplied budget is still capped by what the answer model can
         # accept, so a large --top-k / RAGInput.max_tokens cannot overflow it.
         # The prompt buffer comes off that ceiling only: subtracting it from a
         # small explicit budget too (max_tokens <= 513) left nothing for context.
-        ceiling = self.context_ceiling
+        ceiling = self.context_ceiling_at(effort)
         target_tokens = min(max_tokens, ceiling) if max_tokens else ceiling
         query_tokens = self.count_tokens(query)
         available_tokens = target_tokens - query_tokens

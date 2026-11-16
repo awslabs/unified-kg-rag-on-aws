@@ -58,12 +58,12 @@ from unified_kg_rag.domain.models.config import (
     RetryPolicy,
 )
 from unified_kg_rag.ports.model_factory import (
-    CEILING_ANSWER_TOKENS,
     EmbeddingModelInfo,
     LanguageModelInfo,
     RerankModelInfo,
     ceiled_output_tokens,
     effective_max_output_tokens,
+    reasoning_output_tokens,
 )
 from unified_kg_rag.shared import (
     AWSServiceError,
@@ -822,12 +822,8 @@ class BedrockLanguageModelFactory(
             # refuses unless it is below max_tokens) raises the default cap
             # to leave the answer its floor above it, never past the
             # model's maximum. A tier's effort keeps the configured cap.
-            final_max_tokens = max(
-                final_max_tokens,
-                min(
-                    thinking_tokens + CEILING_ANSWER_TOKENS,
-                    model_info.max_output_tokens,
-                ),
+            final_max_tokens = reasoning_output_tokens(
+                final_max_tokens, thinking_tokens, model_info
             )
         config = self._build_base_config(
             resolved_model_id, is_cross_region, model_info, **kwargs
