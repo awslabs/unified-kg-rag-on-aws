@@ -200,10 +200,11 @@ class SearchConfig(ConfigSection):
             "the calls that fit beside the answer, the rest recorded in "
             "metadata.degraded (reason query_limit); auto routes only to "
             "the strategies whose fewest calls fit and starts no speculative "
-            "extraction; a query whose answer call does not fit fails with "
-            "UsageLimitExceededError (error class limit_exceeded). "
-            "RAGInput.limits.max_model_calls lowers it for one query. null "
-            "(default): no cap."
+            "extraction, and fails with UsageLimitExceededError (error class "
+            "limit_exceeded) before any call when none fits; a query naming "
+            "a strategy whose answer call does not fit abstains (reason "
+            "query_limit). RAGInput.limits.max_model_calls lowers it for one "
+            "query. null (default): no cap."
         ),
     )
     query_max_input_tokens: int | None = Field(

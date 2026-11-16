@@ -266,6 +266,21 @@ def citations_enabled(config: Config, strategy: SearchStrategy | str | None) -> 
     return settings.enabled_for(resolved, base if base is not resolved else None)
 
 
+def holds_query_result(strategy: SearchStrategy | None, config: Config) -> bool:
+    """Whether the answer context of ``strategy`` under ``config`` may hold
+    a graph query result: its class's, or for a wrapper the strategy it
+    wraps' (``BaseSearchStrategy.holds_query_result``); for ``auto`` or no
+    strategy, whether any registered one's may."""
+    _register_built_in_strategies()
+    if strategy is None or strategy is SearchStrategy.AUTO:
+        strategies = list(_REGISTRY)
+    else:
+        strategies = [strategy, wrapped_strategy(strategy, config)]
+    return any(
+        get_strategy_spec(s).strategy_class.holds_query_result for s in strategies
+    )
+
+
 def query_inputs(strategy: SearchStrategy, config: Config) -> frozenset[QueryInput]:
     """The query-side extractions ``strategy`` reads under ``config``: its
     own, or those of the strategy it wraps (``wrapped_strategy``)."""

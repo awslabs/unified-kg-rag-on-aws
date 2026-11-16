@@ -69,29 +69,31 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   a refusal). `global`, `drift` and `iterative` start only the calls that fit beside what the answer will read
   (DRIFT's actions sharing what is left, each built context kept to its share and an action the meter still refuses,
   or whose share seats no section, left out as one that did not fit; each planned call counted with the question it
-  carries, by the one estimate of the answer's call, `answer_call_tokens`) and list the rest in `metadata.degraded`
-  (reason `query_limit`), `auto` routes only to strategies whose fewest calls fit (when none fits with its query
-  translation and extractions, to those that fit without them, which it then skips) and makes no router call an
-  input-token limit cannot take (`metadata.routing.over_limits`) and under either limit starts no speculative
-  extraction, the answer's context is cut to the tokens left after the answer prompt and the question, the built
-  context packed down to them at the meter's estimate whatever its counter counts (a pack a smaller budget no longer
-  shrinks, its cut sections ending at the same break, is cut down to the most of it that fits, its synthesized
-  sections kept first as packing seats them, empty only when no section fits whole or cut down; the fan-out keeps
-  that prompt's tokens too; a cut, its sections left out or cut short, listed as
+  carries, by the one estimate of the answer's call, `answer_call_tokens`, whose instructions are the chain's own
+  rule, `answer_instructions`) and list the rest in `metadata.degraded` (reason `query_limit`; under
+  `use_dynamic_selection` global keeps the reports left unrated, as a failed rating, and keeps a map call only when a
+  map can follow), `auto` routes only to strategies whose fewest calls fit (when none fits with its query translation
+  and extractions, to those that fit without them, which it then skips) and makes no router call an input-token limit
+  cannot take, routing to the fallback among those that fit the call limit (`metadata.routing.over_limits`) and under
+  either limit starts no speculative extraction, the answer's context is cut to the tokens left after the answer
+  prompt and the question, the built context packed down to them at the meter's estimate whatever its counter counts
+  (a pack a smaller budget no longer shrinks, its cut sections ending at the same break, is cut down to the most of it
+  that fits, its synthesized sections kept first as packing seats them, empty only when no section fits whole or cut
+  down; the fan-out keeps that prompt's tokens too; a cut, its sections left out or cut short, listed as
   `query_limit: N of M sections cut`), a search (`asearch`, `kg_search`, `--mode search`) keeps nothing for an answer
   it does not make, a query naming `drift` keeps its one action's call too (and that call's least input under an
   input-token limit: `answering_calls`), an optional call (a query translation or extraction, the follow-up rewrite,
   which then searches the follow-up as written, the structured planner, an output repair: `usage.optional_calls`)
   never takes the call kept for the answer, nor under an input-token limit the answer's prompt, question and least
   context (nor, with nothing kept, a call past the limit), its step degraded instead, an answer the limits left no
-  context abstains with `abstention_reason: query_limit`, and a query whose answer does not fit fails with
-  `UsageLimitExceededError` (exported; error class `limit_exceeded`, a caller's error: not counted in `query_failed`,
-  `refused` on the console's dashboard, its message shown to an MCP caller; exit code 1, console HTTP 422). The
-  console's Ask page names that decline, the steps the limits skipped (apart from those that failed) and the
-  strategies they left `auto` without. The `query_limited` metric (0 or 1, on the CDK dashboard's "Query outcomes"
-  widget) and the query span's `kg_rag.query_limited` count a query its limits cut short (a step left out or cut, an
-  abstention, a refusal, or the strategies `auto` was routed past), which `query_degraded` could not tell from a
-  failing step.
+  context abstains with `abstention_reason: query_limit` (a query naming its strategy included), and an `auto` query
+  none of whose strategies fits the call limit fails before any call with `UsageLimitExceededError` (exported; error
+  class `limit_exceeded`, a caller's error: not counted in `query_failed`, `refused` on the console's dashboard, its
+  message shown to an MCP caller; exit code 1, console HTTP 422). The console's Ask page names that decline, the steps
+  the limits skipped (apart from those that failed) and the strategies they left `auto` without. The `query_limited`
+  metric (0 or 1, on the CDK dashboard's "Query outcomes" widget) and the query span's `kg_rag.query_limited` count a
+  query its limits cut short (a step left out or cut, an abstention, a refusal, or the strategies `auto` was routed
+  past), which `query_degraded` could not tell from a failing step.
 - One streaming path: `GraphRAGChain.aquery_events()` (sync `query_events()`) yields typed events (`QueryEvent`,
   exported with `QueryStart`, `QueryRouted`, `QuerySources`, `AnswerChunk` and `QueryResult`): the query `ainvoke`
   runs, its deadline, query limits, guardrail, metrics and memory included, ending with its `RAGOutput`. LangChain's
@@ -114,14 +116,14 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   `rebuild_due_reasons` metric (the CDK dashboard's "Incremental run health" widget).
 - `RAGInput.effort` (`low` to `max`) sets one query's answer reasoning effort in place of its tier's
   `aws.bedrock.default_effort` / `fast_effort`: it turns reasoning on for a model that opts in, raises the answer's
-  max_tokens to leave that level's reasoning room on every model family and, on an older Claude model (4.5 and
-  before), sizes its thinking budget; unset, nothing changes. An effort the answer model cannot apply (a level it
-  does not take, or a model that does not reason, as a local server's) is refused before any answer's model call
-  (`InvalidArgumentError`); a search, which makes no answer, takes any. `run-rag --effort` and `run-eval --effort` set
-  it (a dataset item's `metadata.effort` wins in `run-eval`, whose warm-up fails such an effort before the dataset,
-  exit 2); the MCP tools and the console's Ask page do not take it.
-  The query span (`kg_rag.effort`, `kg_rag.limits.max_model_calls`, `kg_rag.limits.max_input_tokens`) and the query
-  metrics record (`effort`, `limits.*` properties) name the effort and the limits in force.
+  max_tokens to leave that level's reasoning room on every model family (its context sized to what the model's window
+  leaves beside that output) and, on an older Claude model (4.5 and before), sizes its thinking budget; unset, nothing
+  changes. An effort the answer model cannot apply (a level it does not take, or a model that does not reason, as a
+  local server's) is refused before any answer's model call (`InvalidArgumentError`); a search, which makes no answer,
+  takes any. `run-rag --effort` and `run-eval --effort` set it (a dataset item's `metadata.effort` wins in `run-eval`,
+  whose warm-up fails such an effort before the dataset, exit 2); the MCP tools and the console's Ask page do not take
+  it. The query span (`kg_rag.effort`, `kg_rag.limits.max_model_calls`, `kg_rag.limits.max_input_tokens`) and the
+  query metrics record (`effort`, `limits.*` properties) name the effort and the limits in force.
 - An ingestion run's budget and cost estimate. `processing.max_run_model_calls` and `processing.max_run_usd` (off by
   default; USD priced by `models.prices`) refuse the model call that would pass them and stop the run once the calls
   already sent have answered (`RunBudgetExhausted`, exported, error class `limit_exceeded`, exit 1): its finished

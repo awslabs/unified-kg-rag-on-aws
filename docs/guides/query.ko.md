@@ -163,7 +163,9 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
 
 - `global`의 평가·맵 호출, `drift`의 확장·초안·후속 호출, `iterative`의 판정 호출은 답변
   호출을 남길 수 있는 만큼만 실행합니다. 들어가지 못한 호출은 빼고
-  `metadata.degraded`(사유 `query_limit`)에 기록합니다. global은 관련성이 높은 보고서 묶음부터,
+  `metadata.degraded`(사유 `query_limit`)에 기록합니다. global은 관련성이 높은 보고서 묶음부터
+  맵 호출을 하고(`use_dynamic_selection`에서는 평가하지 못한 보고서를 평가에 실패한 보고서처럼
+  남기고 그 깊이에서 하향 탐색을 멈춥니다),
   DRIFT는 점수가 높은 후속 질의부터 실행하고(근거 구획이 하나도 몫에 들어가지 않는 후속 호출도
   뺍니다), iterative는 라운드를 멈춥니다
   (`stop_reason: query_limit`). 계획한 호출은 계측기가 세는 방식 그대로, 즉 프롬프트와 호출이
@@ -192,11 +194,15 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
 - 입력 토큰 한도에서는 호출을 펼치는 전략이 설정 상한이 아니라 답변이 실제로 읽을 만큼(답변 프롬프트,
   DRIFT가 지금까지 받은 답변, 최소 컨텍스트)만 답변용으로 남기고, DRIFT의 후속 호출은 남은 토큰을
   나눠 씁니다. 후속 호출마다 만든 컨텍스트는 제 몫을 넘지 않으며, 그래도 계측기가 거부한 후속
-  호출은 들어가지 못한 호출로 빼고 그 후속 질의로 찾은 근거는 남깁니다. `auto`는 한도가 감당하지 못하는 라우터 호출은 하지 않고 대체 전략으로 보냅니다.
-- 답변 호출이 들어가지 못하는 질의는 `UsageLimitExceededError`(`unified_kg_rag`에서 내보냄,
+  호출은 들어가지 못한 호출로 빼고 그 후속 질의로 찾은 근거는 남깁니다. `auto`는 한도가 감당하지 못하는 라우터 호출은 하지 않고, 호출 수 한도에 들어가는 전략 가운데 대체 전략으로 보냅니다.
+- 전략을 지정한 질의에서 답변 호출이 들어가지 못하면(한도가 남긴 크기에 컨텍스트 구획이 하나도
+  들어가지 않으면) 답변 호출 없이 정해진 거절 답변을 돌려주고 `abstention_reason: query_limit`을
+  남깁니다. 미리 실패하는 것은 `auto`뿐입니다. 분기할 수 있는 전략 가운데 호출 수 한도에 들어가는
+  전략이 없으면 호출을 하나도 하기 전에 `UsageLimitExceededError`(`unified_kg_rag`에서 내보냄,
   오류 분류 `limit_exceeded`, 종료 코드 `1`. 호출하는 쪽의 오류로 보고 `query_failed` 지표에는
-  세지 않음)로 실패하고, `processing.ignore_errors`를 켜면
-  오류 답변을 돌려줍니다.
+  세지 않음)로 실패하고, `processing.ignore_errors`를 켜면 오류 답변을 돌려줍니다.
+- 질의의 `effort`(아래)는 그 수준의 추론 몫만큼 답변의 `max_tokens`를 늘립니다. 이때 답변
+  컨텍스트는 모델의 컨텍스트 창에서 그 출력 몫을 뺀 만큼만 씁니다.
 
 호출하는 쪽은 질의 하나에 대해 세 한도를 낮출 수만 있고 올릴 수는 없습니다.
 

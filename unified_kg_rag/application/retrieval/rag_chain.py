@@ -157,11 +157,7 @@ from unified_kg_rag.domain.prompts import (
     StrategySelectionPrompt,
 )
 from unified_kg_rag.domain.prompts.retrieval import (
-    ABSTENTION_INSTRUCTIONS,
-    CITATION_INSTRUCTIONS,
-    DECLINE_INSTRUCTIONS,
-    HEDGE_INSTRUCTIONS,
-    QUERY_RESULT_INSTRUCTIONS,
+    answer_instructions,
     describe_routable_strategies,
 )
 from unified_kg_rag.domain.retrieval import source_fields
@@ -1214,32 +1210,54 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         its extractions and the translation) and the answer; when none
         fits so, those that fit without their query processing calls,
         which are optional (skipped under the limit). All of them without a
-        call limit.
+        call limit. When the query's input-token limit leaves no room for
+        the router's call beside the answer's, none is made: the one route
+        is the fallback of those that fit the call limit alone.
 
         Raises:
             UsageLimitExceededError: None fits, before any call of the
                 route, naming the limit and its value.
         """
         left = usage.remaining()
+        # The router call only beside the answer's prompt and the least
+        # context: else no router call, the fallback as one candidate.
+        no_router = False
         if left.input_tokens is not None and len(routable) > 1:
-            # The router call only beside the answer's prompt and the least
-            # context: else no router call, the fallback as one candidate.
-            router = self._router_tokens(routable, state)
             answer = (
                 answer_call_tokens(self.config, None, self._question(state))
                 if state.get(ANSWERED_KEY, True)
                 else 0
             )
-            if router + answer > left.input_tokens:
-                fallback = self._fallback_strategy(routable)
-                record_degradation(
-                    DegradationStep.ROUTING,
-                    f"query_limit: no router call, routed to '{fallback.value}'",
-                    UsageLimitExceededError.__name__,
-                )
-                return (fallback,), [s.value for s in routable if s is not fallback]
+            no_router = (
+                self._router_tokens(routable, state) + answer > left.input_tokens
+            )
+        routed = self._routes_within_calls(routable, state, no_router=no_router)
+        if no_router:
+            record_degradation(
+                DegradationStep.ROUTING,
+                f"query_limit: no router call, routed to '{routed[0].value}'",
+                UsageLimitExceededError.__name__,
+            )
+        return routed, [s.value for s in routable if s not in routed]
+
+    def _routes_within_calls(
+        self,
+        routable: tuple[SearchStrategy, ...],
+        state: dict[str, Any],
+        *,
+        no_router: bool,
+    ) -> tuple[SearchStrategy, ...]:
+        """``_routes_within_limits`` under the call limit: of ``routable``,
+        those whose fewest calls fit beside the router's, or the fallback
+        of those that fit alone when at most one does or there is no
+        router call (``no_router``).
+
+        Raises:
+            UsageLimitExceededError: None fits.
+        """
+        left = usage.remaining()
         if left.llm_calls is None:
-            return routable, []
+            return (self._fallback_strategy(routable),) if no_router else routable
         calls = left.llm_calls
 
         def fewest(strategy: SearchStrategy, optional: bool) -> int:
@@ -1256,9 +1274,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
 
         def fitting(optional: bool) -> tuple[SearchStrategy, ...]:
             routed = tuple(s for s in routable if fewest(s, optional) <= calls - 1)
-            if len(routed) < 2:
-                # One (or none) beside the router's call: no router call is
-                # made, so a strategy may use that call too.
+            if no_router or len(routed) < 2:
+                # One (or none) beside the router's call, or no room for
+                # its input: no router call is made, so a strategy may use
+                # that call too.
                 alone = tuple(s for s in routable if fewest(s, optional) <= calls)
                 routed = (self._fallback_strategy(alone),) if alone else ()
             return routed
@@ -1279,7 +1298,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 limit=limit,
                 value=value,
             )
-        return routed, [s.value for s in routable if s not in routed]
+        return routed
 
     def _router_tokens(
         self, routable: tuple[SearchStrategy, ...], state: dict[str, Any]
@@ -1992,7 +2011,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         )
         ratio = self.config.search.token_manager.context_window_headroom_ratio
         room = max(0, int(left * (1 - ratio)))
-        ceiling = self.token_manager.context_ceiling
+        ceiling = self.token_manager.context_ceiling_at(state.get("effort"))
         if room >= (ceiling if budget is None else min(budget, ceiling)):
             return budget, False
         return room, True
@@ -2040,6 +2059,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             # search.citations, per strategy: auto's route, iterative's base.
             number_sections=number,
             estimated_within=budget if limited else None,
+            # Its output takes more of the window (RAGInput.effort).
+            effort=state.get("effort"),
         )
         cut = optimized.sections_excluded + optimized.sections_truncated
         if limited and cut:
@@ -2164,26 +2185,21 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         )
 
     def _answer_instructions(self, state: dict[str, Any]) -> str:
-        """The text appended to the answer's system prompt: the citation
-        instructions of a numbered context (``search.citations``), the graph
-        query result's instruction when the context holds one (the
-        structured strategy), then the ``search.abstention`` text ("" with
-        all off)."""
-        parts = []
+        """The text appended to the answer's system prompt
+        (``answer_instructions``): the citation instructions of a numbered
+        context (``search.citations``), the graph query result's
+        instruction when the context holds one (the structured strategy),
+        then the ``search.abstention`` text ("" with all off)."""
         optimized: OptimizedContext | None = state.get("optimized_context")
-        if optimized is not None and any(
-            s.marker is not None for s in optimized.sections
-        ):
-            parts.append(CITATION_INSTRUCTIONS)
-        if self._declines_insufficient(state):
-            return "".join([*parts, DECLINE_INSTRUCTIONS])
-        if self._holds_query_result(state):
-            parts.append(QUERY_RESULT_INSTRUCTIONS)
-        if self.config.search.abstention.mode == "mark":
-            parts.append(ABSTENTION_INSTRUCTIONS)
-        if self._context_insufficient(state):
-            parts.append(HEDGE_INSTRUCTIONS)
-        return "".join(parts)
+        abstention = self.config.search.abstention
+        return answer_instructions(
+            cites=optimized is not None
+            and any(s.marker is not None for s in optimized.sections),
+            query_result=self._holds_query_result(state),
+            mark=abstention.mode == "mark",
+            insufficient=self._context_insufficient(state),
+            decline_insufficient=abstention.on_insufficient == "abstain",
+        )
 
     @staticmethod
     def _holds_query_result(state: dict[str, Any]) -> bool:

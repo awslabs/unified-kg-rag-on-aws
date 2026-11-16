@@ -36,7 +36,10 @@ from unified_kg_rag.adapters.llm.chain_factory import (
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.hybrid_scorer import HybridScorer, RerankTrace
-from unified_kg_rag.adapters.retrieval.strategy_registry import citations_enabled
+from unified_kg_rag.adapters.retrieval.strategy_registry import (
+    citations_enabled,
+    holds_query_result,
+)
 from unified_kg_rag.adapters.retrieval.token_manager import (
     TokenManager,
 )
@@ -71,13 +74,7 @@ from unified_kg_rag.domain.prompts import (
     BasePrompt,
     ComprehensiveAnswerPrompt,
 )
-from unified_kg_rag.domain.prompts.retrieval import (
-    ABSTENTION_INSTRUCTIONS,
-    CITATION_INSTRUCTIONS,
-    DECLINE_INSTRUCTIONS,
-    HEDGE_INSTRUCTIONS,
-    QUERY_RESULT_INSTRUCTIONS,
-)
+from unified_kg_rag.domain.prompts.retrieval import answer_instructions
 from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.degradation import (
     DegradationLedger,
@@ -684,14 +681,14 @@ def answer_prompt_tokens(config: Config, strategy: SearchStrategy | None = None)
     """What the answer call reads besides its context and question, at the
     local estimate the usage meter counts a call's start at: its prompt's
     templates (``strategy``'s style; without one the larger of the two) and
-    the instructions the chain may append to it for ``strategy``
-    (``GraphRAGChain._answer_instructions``: the citations' when its
-    answers cite, the graph query result's for structured, the abstention
-    marker's under ``search.abstention.mode: mark``, and the longer of the
-    hedge and the decline, which a strategy that flags its context
-    insufficient gets); without a strategy all that any may get. What an
-    input-token limit keeps for the answer beside its context
-    (``search.query_max_input_tokens``)."""
+    the most of the instructions the chain may append to it for
+    ``strategy`` (``answer_instructions``: the citations' when its answers
+    cite, ``citations_enabled``; the graph query result's for a strategy
+    whose context holds one, ``BaseSearchStrategy.holds_query_result``;
+    the abstention marker's under ``search.abstention.mode: mark``; the
+    hedge or decline of a context flagged insufficient); without a
+    strategy all that any may get. What an input-token limit keeps for the
+    answer beside its context (``search.query_max_input_tokens``)."""
     classes = (
         [answer_prompt_class(config, strategy)]
         if strategy is not None
@@ -706,15 +703,20 @@ def answer_prompt_tokens(config: Config, strategy: SearchStrategy | None = None)
                 resolved.system_prompt_template + resolved.human_prompt_template
             ),
         )
-    search = config.search
-    instructions = [max(HEDGE_INSTRUCTIONS, DECLINE_INSTRUCTIONS, key=len)]
-    if strategy is None or search.citations.enabled_for(strategy):
-        instructions.append(CITATION_INSTRUCTIONS)
-    if strategy in (None, SearchStrategy.STRUCTURED):
-        instructions.append(QUERY_RESULT_INSTRUCTIONS)
-    if search.abstention.mode == "mark":
-        instructions.append(ABSTENTION_INSTRUCTIONS)
-    return templates + estimate_token_count("".join(instructions))
+    abstention = config.search.abstention
+    instructions = max(
+        estimate_token_count(
+            answer_instructions(
+                cites=strategy is None or citations_enabled(config, strategy),
+                query_result=holds_query_result(strategy, config),
+                mark=abstention.mode == "mark",
+                insufficient=insufficient,
+                decline_insufficient=abstention.on_insufficient == "abstain",
+            )
+        )
+        for insufficient in (False, True)
+    )
+    return templates + instructions
 
 
 def answer_call_tokens(
@@ -789,6 +791,9 @@ class BaseSearchStrategy(ABC):
     # Section types that take the context budget other types leave unused
     # before the rest share it (``TokenManager.optimize_context``).
     spare_context_budget_first: ClassVar[tuple[SectionType, ...]] = ()
+    # Whether its answer context may open with a graph query result, which
+    # the answer gets an instruction for (``answer_prompt_tokens``).
+    holds_query_result: ClassVar[bool] = False
 
     @classmethod
     def fewest_model_calls(cls, config: Config) -> int:

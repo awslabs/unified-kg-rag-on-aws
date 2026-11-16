@@ -497,6 +497,70 @@ class _Counted:
         return await self.chain.ainvoke(inputs, config)
 
 
+def _dynamic(**settings: Any) -> tuple[GlobalSearchStrategy, Any]:
+    """Global search with dynamic selection over the R0/R1 hierarchy of
+    ``test_global_search_logic`` (R0, A and A1 relevant), its ratings
+    counted by the query's meter; with its rater."""
+    from tests.unit.test_global_search_logic import _Rater
+    from tests.unit.test_global_search_logic import _strategy as _logic_strategy
+
+    strat = _logic_strategy(use_dynamic_selection=True, **settings)
+    rater = _Rater({"R0", "A", "A1"})
+    strat.community_relevance_scorer = _Counted(rater)
+    return strat, rater
+
+
+@pytest.mark.parametrize(
+    ("calls", "rated", "kept"),
+    [
+        # No rating beside the map call and the answer: both roots kept
+        # unrated (it used to abstain, nothing selected).
+        (2, [], {"R0", "R1"}),
+        # One rating: R1 (irrelevant) dropped, R0 kept unrated (it used to
+        # be dropped too); the cut depth ends the descent.
+        (3, ["R1"], {"R0"}),
+    ],
+)
+async def test_global_dynamic_selection_keeps_the_reports_it_cannot_rate(
+    calls: int, rated: list[str], kept: set[str]
+) -> None:
+    # Regression (rv42): reports the limits left unrated were dropped, where
+    # a report whose rating failed is kept at the threshold (MS GraphRAG).
+    from tests.unit.test_global_search_logic import _mapped
+
+    strat, rater = _dynamic()
+    with usage.usage_scope(usage.UsageLimits(max_llm_calls=calls)):
+        result = await strat.asearch(SearchQuery(query="themes"))
+    assert rater.rated == rated
+    assert _mapped(strat) == kept
+    assert result.metadata["global_rated_report_count"] == len(rated)
+    assert result.metadata["global_unrated_report_count"] == 2 - len(rated)
+    (entry,) = result.metadata["degraded"]
+    assert (entry["step"], entry["reason"]) == (
+        "community_rating",
+        f"query_limit: {2 - len(rated)} of 2 calls not started",
+    )
+
+
+async def test_global_dynamic_selection_reserves_no_map_call_none_follows() -> None:
+    # Without map-reduce, the call a map would take rates a report.
+    strat, rater = _dynamic(enable_map_reduce=False)
+    with usage.usage_scope(usage.UsageLimits(max_llm_calls=2)):
+        result = await strat.asearch(SearchQuery(query="themes"))
+    assert rater.rated == ["R1"]
+    assert {r.source for r in result.results} == {"r-R0"}
+    # Too few reports for the map (map_reduce_min_results): the same.
+    strat, rater = _dynamic(map_reduce_min_results=3)
+    with usage.usage_scope(usage.UsageLimits(max_llm_calls=2)):
+        await strat.asearch(SearchQuery(query="themes"))
+    assert rater.rated == ["R1"]
+    # A map that may follow keeps its call.
+    strat, rater = _dynamic()
+    with usage.usage_scope(usage.UsageLimits(max_llm_calls=2)):
+        await strat.asearch(SearchQuery(query="themes"))
+    assert rater.rated == []
+
+
 async def test_drift_runs_only_the_actions_that_fit_beside_the_answer() -> None:
     from tests.unit.test_drift_search_logic import _action, _Local
     from tests.unit.test_drift_search_logic import _strategy as _drift_strategy
@@ -518,6 +582,47 @@ async def test_drift_runs_only_the_actions_that_fit_beside_the_answer() -> None:
         "drift_action",
         "query_limit: 1 of 3 calls not started",
     )
+
+
+@pytest.mark.parametrize(
+    ("calls", "expanded", "primed", "stops"),
+    [
+        # One call short of the whole plan (the expansion, three primer
+        # folds, the action, the answer): a fold is left out, not the action.
+        (5, True, 2, {"drift_primer": "query_limit: 1 of 3 calls not started"}),
+        # The expansion only beside the least primer call, action and
+        # answer: skipped, one fold primed, the action still runs.
+        (
+            3,
+            False,
+            1,
+            {
+                "drift_expansion": "query_limit: 1 of 1 calls not started",
+                "drift_primer": "query_limit: 2 of 3 calls not started",
+            },
+        ),
+    ],
+)
+async def test_drift_cuts_its_primer_and_expansion_before_its_action(
+    calls: int, expanded: bool, primed: int, stops: dict[str, str]
+) -> None:
+    from tests.unit.test_drift_search_logic import _strategy as _drift_strategy
+
+    strat = _drift_strategy()
+    for name in ("hyde", "primer", "action"):
+        setattr(strat, name, _Counted(getattr(strat, name)))
+    with usage.usage_scope(usage.UsageLimits(max_llm_calls=calls)):
+        result = await strat.asearch(SearchQuery(query="question"))
+    assert len(strat.hyde.calls) == int(expanded)
+    assert len(strat.primer.calls) == primed
+    # The call the answer needs most: DRIFT's action.
+    assert len(strat.action.calls) == 1
+    degraded = {
+        e["step"]: e["reason"]
+        for e in result.metadata["degraded"]
+        if e["step"] != "drift_action"
+    }
+    assert degraded == stops
 
 
 async def test_iterative_stops_its_rounds_at_the_querys_limits() -> None:
@@ -547,6 +652,32 @@ async def test_iterative_stops_its_rounds_at_the_querys_limits() -> None:
         result = await strategy.asearch(_query())
     assert result.metadata["iterative"]["rounds"] == 1
     assert len(script.calls["controller"]) == 2
+
+
+def test_iterative_keeps_the_answer_room_for_the_context_it_judged() -> None:
+    # The answer reads about the context the verdict judged, not the least
+    # context: a limit that holds the verdict and an answer on the least
+    # context but not on that one stops the rounds.
+    from tests.unit.test_iterative_search import _query, _Script
+    from tests.unit.test_iterative_search import _strategy as _iterative_strategy
+    from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
+    from unified_kg_rag.adapters.search_strategies.iterative_search import _Run
+    from unified_kg_rag.domain.prompts import IterativeControllerPrompt
+
+    strategy, *_ = _iterative_strategy(_Script())
+    query = _query()
+    context = "Vendor ships to Kestrel Depot. " * 200
+    tokens = estimate_token_count(context)
+    assert tokens > strategy._min_context_tokens
+    run = _Run()
+    needed = strategy._call_tokens(
+        IterativeControllerPrompt, query, tokens
+    ) + strategy._answer_reserve(query, tokens)
+    for limit, room in ((needed, True), (needed - 1, False)):
+        with usage.usage_scope(usage.UsageLimits(max_input_tokens=limit)):
+            with degradation_scope():
+                assert strategy._room_for(context, query, run) is room
+    assert run.stop_reason == "query_limit"
 
 
 def test_a_cache_probed_call_counts_only_once_the_cache_missed() -> None:
@@ -848,6 +979,129 @@ def test_auto_makes_no_router_call_an_input_token_limit_cannot_take() -> None:
             (SearchStrategy.LOCAL,),
             ["mix", "naive"],
         )
+
+
+def _answer_states(strategy: SearchStrategy, cites: bool) -> list[dict[str, Any]]:
+    """The answer states of ``strategy``'s queries the chain appends the
+    most instructions for: a numbered context when it cites, a graph query
+    result for structured, a context flagged insufficient or not."""
+    from unified_kg_rag.adapters.retrieval.token_manager import (
+        ContextSection,
+        OptimizedContext,
+    )
+    from unified_kg_rag.domain.models import SearchResult, SectionType
+
+    def section(section_type: SectionType, marker: int | None) -> ContextSection:
+        return ContextSection(
+            content="c",
+            token_count=1,
+            priority=1.0,
+            section_type=section_type,
+            source_id="s",
+            marker=marker,
+        )
+
+    sections = [section(SectionType.TEXT, 1 if cites else None)]
+    if strategy is SearchStrategy.STRUCTURED:
+        sections.append(section(SectionType.QUERY_RESULT, None))
+    optimized = OptimizedContext(
+        sections=sections,
+        total_tokens=len(sections),
+        sections_included=len(sections),
+        sections_excluded=0,
+        numbered=cites,
+    )
+    return [
+        {
+            "optimized_context": optimized,
+            "search_results": SearchResult(
+                query=SearchQuery(query="q"),
+                results=[],
+                total_results=0,
+                search_strategy=strategy.value,
+                processing_time=0.0,
+                metadata={"context_sufficient": sufficient},
+            ),
+        }
+        for sufficient in (True, False)
+    ]
+
+
+@pytest.mark.parametrize("mode", ["off", "mark"])
+@pytest.mark.parametrize("on_insufficient", ["hedge", "abstain"])
+@pytest.mark.parametrize(
+    "only_base_cites", [False, True], ids=["default-citations", "only-base-cites"]
+)
+def test_the_answer_estimate_holds_every_instruction_the_chain_appends(
+    mode: str, on_insufficient: str, only_base_cites: bool
+) -> None:
+    # The estimate an input-token limit keeps for the answer is never below
+    # the prompt the chain sends, for every registered strategy: the
+    # abstention marker's text under mode mark, the graph query result's
+    # for structured, iterative's citations when only its base cites.
+    from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
+    from unified_kg_rag.adapters.retrieval.base import (
+        answer_prompt_class,
+        answer_prompt_tokens,
+    )
+    from unified_kg_rag.adapters.retrieval.strategy_registry import (
+        citations_enabled,
+        wrapped_strategy,
+    )
+
+    config = Config()
+    config.search.abstention.mode = mode  # type: ignore[assignment]
+    config.search.abstention.on_insufficient = on_insufficient  # type: ignore[assignment]
+    if only_base_cites:
+        # Citations off but for iterative's base, which iterative follows.
+        base = wrapped_strategy(SearchStrategy.ITERATIVE, config)
+        config.search.citations.enabled = False
+        config.search.citations.strategies = {base: True}
+    chain = _router_chain()
+    chain.config = config
+    for strategy in (s for s in SearchStrategy if s is not SearchStrategy.AUTO):
+        resolved = answer_prompt_class(config, strategy).resolve(
+            custom_prompts=config.custom_prompts
+        )
+        templates = estimate_token_count(
+            resolved.system_prompt_template + resolved.human_prompt_template
+        )
+        for state in _answer_states(strategy, citations_enabled(config, strategy)):
+            sent = templates + estimate_token_count(chain._answer_instructions(state))
+            assert answer_prompt_tokens(config, strategy) >= sent, strategy
+            assert answer_prompt_tokens(config) >= sent, strategy
+
+
+def test_auto_without_a_router_call_still_checks_the_call_limit() -> None:
+    # Regression (rv42): the fallback an input-token limit routed to
+    # skipped the call limit, so with both set a fallback needing more
+    # calls than allowed was not refused up front.
+    from unified_kg_rag.adapters.retrieval.base import answer_prompt_tokens
+
+    chain = _router_chain()
+    candidates = (SearchStrategy.DRIFT, SearchStrategy.GLOBAL, SearchStrategy.NAIVE)
+    small = answer_prompt_tokens(chain.config) + 200
+    with usage.usage_scope(usage.UsageLimits(max_input_tokens=small)):
+        assert chain._routes_within_limits(candidates, _UNPROCESSED) == (
+            (SearchStrategy.DRIFT,),
+            ["global", "naive"],
+        )
+    # DRIFT's fewest calls and the answer do not fit two calls: the first
+    # that does, with no router call.
+    limits = usage.UsageLimits(max_input_tokens=small, max_llm_calls=2)
+    with usage.usage_scope(limits), degradation_scope() as ledger:
+        assert chain._routes_within_limits(candidates, _UNPROCESSED) == (
+            (SearchStrategy.GLOBAL,),
+            ["drift", "naive"],
+        )
+    (entry,) = ledger.entries
+    assert entry.reason == "query_limit: no router call, routed to 'global'"
+    limits = usage.UsageLimits(max_input_tokens=small, max_llm_calls=1)
+    with usage.usage_scope(limits):
+        with pytest.raises(UsageLimitExceededError, match="needs at least"):
+            chain._routes_within_limits(
+                (SearchStrategy.DRIFT, SearchStrategy.GLOBAL), _UNPROCESSED
+            )
 
 
 # --- what an optional call leaves the answer (W1 verification residuals) ----

@@ -337,3 +337,95 @@ def test_the_deprecation_is_shown_through_a_symlinked_install(tmp_path) -> None:
     assert done.returncode == 0, done.stderr
     shown = [line for line in done.stderr.splitlines() if "DeprecationWarning" in line]
     assert len(shown) == 1 and shown[0].startswith("<string>:"), done.stderr
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        LanguageModelId.CLAUDE_V4_5_SONNET,  # a manual budget, a 200K window
+        LanguageModelId.CLAUDE_V4_6_SONNET,  # adaptive thinking, opt-in
+    ],
+)
+def test_the_answer_context_leaves_the_window_room_for_the_effort_s_output(
+    monkeypatch, recorded_chat, model  # noqa: F811 - the fixture
+) -> None:
+    # Regression (rv42): the context ceiling reserved the default output
+    # cap, while a query's effort raises the answer's max_tokens (33,792 at
+    # max); with a small cap, a context at the ceiling plus that output
+    # went past the model's window.
+    from unittest.mock import MagicMock
+
+    from unified_kg_rag.adapters.providers import Providers
+    from unified_kg_rag.adapters.retrieval.token_manager import TokenManager
+    from unified_kg_rag.domain.models.config import EFFORT_LEVELS
+    from unified_kg_rag.domain.prompts import AnswerGenerationPrompt
+
+    _resolve_to(monkeypatch, f"global.{model.value}")
+    # The context budget sized from the window (not the shipped 30,000).
+    config = Config.model_validate(
+        {
+            "models": {"default": model.value, "default_max_output_tokens": 2048},
+            "search": {"token_manager": {"max_context_tokens": None}},
+        }
+    )
+    factory = _lang_factory(config)
+    model_id = config.model_id(ModelRole.ANSWER_GENERATION)
+    info = factory.get_model_info(model_id)
+    counter = MagicMock()
+    counter.count_tokens.side_effect = lambda text: len(text.split())
+    manager = TokenManager(
+        config,
+        providers=Providers(
+            config,
+            boto_session=MagicMock(),
+            llm_factory=factory,
+            token_counter_factory=lambda *_, **__: counter,
+        ),
+    )
+    window = info.effective_context_window(config.aws.bedrock.enable_1m_context)
+    allowed = info.supported_efforts or EFFORT_LEVELS
+    for effort in [None, *sorted(allowed)]:
+        factory.get_model(
+            model_id,
+            enable_thinking=True,
+            min_output_tokens=AnswerGenerationPrompt.min_output_tokens,
+            **({"effort": effort} if effort else {}),
+        )
+        _, kwargs = recorded_chat[-1]
+        ceiling = manager.context_ceiling_at(effort)
+        prompt = ceiling + manager.CONTEXT_BUFFER_TOKENS
+        assert prompt + kwargs["max_tokens"] <= window, effort
+    # Without an effort the ceiling is the one sized at the configured cap.
+    assert manager.context_ceiling_at(None) == manager.context_ceiling
+    assert manager.context_ceiling_at("max") < manager.context_ceiling
+
+
+async def test_the_answer_context_is_sized_at_the_query_s_effort(
+    config: Config,
+) -> None:
+    # The chain sizes the answer's context at the query's effort
+    # (TokenManager.context_ceiling_at), its budget check too.
+    factory = _RecordingFactory()
+    chain, _, _ = _make_chain(config, factory=factory)
+    efforts: list[str | None] = []
+    ceilings: list[str | None] = []
+    manager = chain.token_manager
+    optimize, ceiling_at = manager.optimize_context, manager.context_ceiling_at
+
+    def recorded_optimize(*args: Any, **kwargs: Any) -> Any:
+        efforts.append(kwargs.get("effort"))
+        return optimize(*args, **kwargs)
+
+    def recorded_ceiling(effort: str | None) -> int:
+        ceilings.append(effort)
+        return ceiling_at(effort)
+
+    manager.optimize_context = recorded_optimize  # type: ignore[method-assign]
+    manager.context_ceiling_at = recorded_ceiling  # type: ignore[method-assign]
+    await chain.ainvoke(_input(effort="max"))
+    assert efforts == ["max"]
+    from unified_kg_rag.shared import usage
+
+    with usage.usage_scope(usage.UsageLimits(max_input_tokens=10_000_000)):
+        chain._context_budget({"effort": "low", "query": "q"})
+    assert ceilings == ["max", "low"]

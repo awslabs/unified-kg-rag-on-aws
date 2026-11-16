@@ -289,6 +289,21 @@ def ceiled_output_tokens(max_tokens: int, ceiling: int, thinking_tokens: int) ->
     return min(max_tokens, max(ceiling, thinking_tokens + CEILING_ANSWER_TOKENS))
 
 
+def reasoning_output_tokens(
+    max_tokens: int, thinking_tokens: int, model_info: LanguageModelInfo
+) -> int:
+    """max_tokens for a request whose reasoning the caller asked for (a
+    query's effort; an older Claude's manual budget): ``max_tokens``
+    raised to leave the answer :data:`CEILING_ANSWER_TOKENS` above the
+    reasoning (``thinking_tokens``, which counts toward max_tokens), never
+    past the model's maximum. What the answer of a query at an effort asks
+    for, which its context leaves room for (``TokenManager``)."""
+    return max(
+        max_tokens,
+        min(thinking_tokens + CEILING_ANSWER_TOKENS, model_info.max_output_tokens),
+    )
+
+
 # Generic over the model-id enum and the returned model type so each concrete
 # factory keeps its narrow id type (EmbeddingModelId etc.) WITHOUT breaking
 # structural conformance. A non-generic union here would be contravariantly

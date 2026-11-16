@@ -129,7 +129,11 @@ def test_auto_under_a_small_token_limit_degrades_rather_than_fails(
     # query failed where every explicit strategy degraded.
     out = _ask(chain, SearchStrategy.AUTO, QueryLimits(max_input_tokens=limit), ENGLISH)
     assert out.answer == ANSWER or out.metadata["abstention_reason"] == "query_limit"
-    assert out.metadata["routing"]["decided_by"] == "only_candidate"
+    routing = out.metadata["routing"]
+    assert routing["decided_by"] == "only_candidate"
+    # The candidates the limit dropped: what makes the query query_limited.
+    assert routing["over_limits"]
+    assert not set(routing["over_limits"]) & set(routing["candidates"])
 
 
 def test_an_answer_context_the_limit_emptied_names_the_limit(
@@ -153,12 +157,12 @@ def test_a_limit_that_cuts_the_answer_context_says_so(chain: GraphRAGChain) -> N
     # rv33: an input-token limit that cut some of the answer's sections
     # recorded nothing, so a server limit set too low lowered answers with
     # query_degraded at 0. The demo's local query reads 8 sections in about
-    # 940 tokens: at 1,100 the limit (less the context-window headroom)
+    # 940 tokens: at 1,000 the limit (less the context-window headroom)
     # cuts some.
     full = _ask(chain, SearchStrategy.LOCAL, QueryLimits(), ENGLISH)
     assert "degraded" not in full.metadata or not full.metadata["degraded"]
     out = _ask(
-        chain, SearchStrategy.LOCAL, QueryLimits(max_input_tokens=1_100), ENGLISH
+        chain, SearchStrategy.LOCAL, QueryLimits(max_input_tokens=1_000), ENGLISH
     )
     assert out.answer == ANSWER
     assert len(out.sources) < len(full.sources)
