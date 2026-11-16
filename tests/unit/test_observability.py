@@ -1149,6 +1149,8 @@ async def test_a_streamed_query_names_its_namespace_and_publishes_its_metrics(
         span = _one(exporter, name)
         assert span.status.status_code != StatusCode.ERROR, name
         assert "error.type" not in _attrs(span), name
+    # The strategy it ran, as its metrics name it (rv42 ops low: missing).
+    assert _attrs(_one(exporter, "kg_rag.query"))["kg_rag.strategy"] == "simple"
 
 
 class _DegradingRetriever(_FakeRetriever):

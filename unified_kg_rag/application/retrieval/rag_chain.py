@@ -2759,7 +2759,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                     await discard(leftovers)
                     if isinstance(e, asyncio.CancelledError) and _reader_stopped():
                         # Not a cancelled query: its reader's early end, a
-                        # closed stream's (the span ends without error).
+                        # closed stream's (the span ends without error,
+                        # naming the strategy it ran, as its metrics do).
+                        if (ran := _routed_strategy()) is not None:
+                            span.set_attributes({"kg_rag.strategy": ran.value})
                         raise _ReaderStopped() from None
                     raise
                 finally:

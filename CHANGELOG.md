@@ -95,14 +95,14 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
 - One streaming path: `GraphRAGChain.aquery_events()` (sync `query_events()`) yields typed events (`QueryEvent`,
   exported with `QueryStart`, `QueryRouted`, `QuerySources`, `AnswerChunk` and `QueryResult`): the query `ainvoke`
   runs, its deadline, query limits, guardrail, metrics and memory included, ending with its `RAGOutput`. LangChain's
-  `astream_events` is left as LangChain defines it. `astream` / `stream` yield the text of these events, so a
-  streamed answer now reads its citations' lineage, records its answer on the query span and is traced in the query's
-  trace, as an unstreamed one is. The query waits for its reader at each event: a reader that closes the iterator
-  ends it before it writes memory, counted as no failure. Under the output guardrail the answer model still streams
-  (its first chunk bounded by `search.model_timeout_seconds`) and nothing is shown until the whole answer is
-  screened: then its sources and the screened answer, one chunk, before the turn is written. The console's Ask page
-  reads the events. A transient retry while the stream waits for its first chunk starts only if it can end within
-  that window, as in 0.3.0: past it the model's error is raised, not a first-chunk timeout.
+  `astream_events` is left as LangChain defines it. `astream` / `stream` yield the text of these events, so a streamed
+  answer now reads its citations' lineage, records its answer on the query span and is traced in the query's trace, as
+  an unstreamed one is. The query waits for its reader at each event: a reader that closes the iterator ends it before
+  it writes memory, counted as no failure (its query span names the strategy it ran). Under the output guardrail the
+  answer model still streams (its first chunk bounded by `search.model_timeout_seconds`) and nothing is shown until
+  the whole answer is screened: then its sources and the screened answer, one chunk, before the turn is written. The
+  console's Ask page reads the events. A transient retry while the stream waits for its first chunk starts only if it
+  can end within that window, as in 0.3.0: past it the model's error is raised, not a first-chunk timeout.
 - Rebuild due: `run-describe` (`rebuild`, `Rebuild due (...)` lines), the console's Ingest page
   (`/api/namespace/methodologies`, under the methodologies picked) and the MCP `kg_describe_schema` tool say why a
   namespace is due for a rebuild under the config, from one owner (`rebuild_due`; `RebuildReason`, `RebuildReasonKind`
