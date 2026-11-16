@@ -34,7 +34,7 @@ from pydantic import Field
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
 from tests.fixtures.fakes.chat_models import fake_model_info
 from tests.fixtures.held_timeouts import HeldTimeouts
-from unified_kg_rag import QueryTimeoutError
+from unified_kg_rag import AnswerChunk, QueryTimeoutError
 from unified_kg_rag.adapters.aws.bedrock import (
     BedrockEmbeddingModelFactory,
     BedrockLanguageModelFactory,
@@ -83,6 +83,12 @@ class _SlowChatModel(BaseChatModel):
     first_delay: float = 0.0
     chunk_delay: float = 0.0
     stall_on: str | None = None
+    # Streamed first; then the answer waits for an entry in ``go`` and
+    # starts with ``reasoning_end``.
+    reasoning: list[AIMessageChunk] = Field(default_factory=list)
+    reasoning_end: str = ""
+    reasoned: list[bool] = Field(default_factory=list)
+    go: list[bool] = Field(default_factory=list)
     started: list[bool] = Field(default_factory=list)
     stalled: list[bool] = Field(default_factory=list)
     answered: list[bool] = Field(default_factory=list)
@@ -123,6 +129,14 @@ class _SlowChatModel(BaseChatModel):
         self.started.append(True)
         try:
             await asyncio.sleep(self._delay_for(messages))
+            if self.reasoning:
+                for chunk in self.reasoning:
+                    yield ChatGenerationChunk(message=chunk)
+                self.reasoned.append(True)
+                await _until(self.go)
+                yield ChatGenerationChunk(
+                    message=AIMessageChunk(content=self.reasoning_end)
+                )
             for word in _ANSWER.split(" "):
                 yield ChatGenerationChunk(message=AIMessageChunk(content=word + " "))
                 await asyncio.sleep(self.chunk_delay)
@@ -396,6 +410,56 @@ async def test_a_stream_without_a_first_chunk_fails_at_the_model_timeout(
     assert "first chunk" in str(raised.value)
     await _until(model.cancelled)
     assert model.cancelled == [True]
+
+
+@pytest.mark.parametrize("surface", ["astream", "aquery_events"])
+@pytest.mark.parametrize(
+    ("reasoning", "reasoning_end"),
+    [
+        # Ollama's native thinking: the reasoning is not in the content.
+        (
+            [AIMessageChunk(content="", additional_kwargs={"reasoning_content": "a"})]
+            * 3,
+            "",
+        ),
+        ([AIMessageChunk(content=p) for p in ["<think>", "a ", "b "]], "</think>\n"),
+    ],
+    ids=["native", "inline"],
+)
+async def test_a_stream_reasoning_past_the_first_chunk_window_still_answers(
+    monkeypatch: pytest.MonkeyPatch,
+    surface: str,
+    reasoning: list[AIMessageChunk],
+    reasoning_end: str,
+) -> None:
+    # Regression (rv42 ops medium): the reasoning stripper held every
+    # reasoning chunk, so a local reasoning model's stream (aquery_events,
+    # astream, the console's /api/ask) failed at search.model_timeout_seconds
+    # while it was still thinking; ainvoke answered.
+    model = _SlowChatModel(reasoning=reasoning, reasoning_end=reasoning_end)
+    config = _config(query_timeout_seconds=600, model_timeout_seconds=300)
+    chain = _chain(config, _Factory(model))
+    timeouts = HeldTimeouts(monkeypatch)
+
+    async def consume() -> str:
+        if surface == "astream":
+            return "".join([chunk async for chunk in chain.astream(_query())])
+        return "".join(
+            [
+                event.text
+                async for event in chain.aquery_events(_query())
+                if isinstance(event, AnswerChunk)
+            ]
+        )
+
+    stream = asyncio.ensure_future(consume())
+    await _until(model.reasoned)
+    # The reasoning ended the first-chunk window (300 s): the model, still
+    # reasoning, is waited for under the query deadline (600 s) alone.
+    await timeouts.wait_open(beyond=400)
+    model.go.append(True)
+    answer = await asyncio.wait_for(stream, timeout=30)
+    assert answer.strip() == _ANSWER
 
 
 async def test_a_stream_that_stalls_after_its_first_chunk_ends_at_the_deadline(

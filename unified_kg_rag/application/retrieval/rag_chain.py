@@ -2759,7 +2759,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                     await discard(leftovers)
                     if isinstance(e, asyncio.CancelledError) and _reader_stopped():
                         # Not a cancelled query: its reader's early end, a
-                        # closed stream's (the span ends without error).
+                        # closed stream's (the span ends without error,
+                        # naming the strategy it ran, as its metrics do).
+                        if (ran := _routed_strategy()) is not None:
+                            span.set_attributes({"kg_rag.strategy": ran.value})
                         raise _ReaderStopped() from None
                     raise
                 finally:
@@ -4369,9 +4372,11 @@ def _streamed_to(
     ``marker`` holds back the start of the answer until the ``[NO_ANSWER]``
     token is ruled in or out and strips it; ``declining`` (under
     ``on_insufficient: abstain``) shows only a decline. The first chunk
-    (text or not: a thinking model streams its reasoning first) must come
-    within ``first_chunk_seconds`` of the call when the query has a
-    deadline (``_first_chunk_window``), so a stalled stream fails early.
+    must come within ``first_chunk_seconds`` of the call when the query
+    has a deadline (``_first_chunk_window``), so a stalled stream fails
+    early. Any chunk counts, text or not: a reasoning model's reasoning
+    reaches here as it streams, emptied (``ReasoningStripper``), so the
+    window measures the model's first byte, not how long it reasons.
     """
 
     async def run(state: dict[str, Any], config: RunnableConfig) -> str:

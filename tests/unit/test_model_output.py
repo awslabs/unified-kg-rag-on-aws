@@ -12,6 +12,9 @@ are the one normaliser and the one reader.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from typing import Any
+
 import pytest
 from langchain_core.exceptions import OutputParserException
 from langchain_core.messages import AIMessage, AIMessageChunk
@@ -73,6 +76,58 @@ def test_a_stream_drops_its_leading_reasoning(parts: list[str], expected: str) -
     assert text == expected
     # No chunk is dropped: the last carries the stop reason and usage.
     assert count == len(parts)
+
+
+@pytest.mark.parametrize(
+    ("reasoning", "close"),
+    [
+        # Ollama's native thinking: the reasoning is not in the content.
+        (
+            [AIMessageChunk(content="", additional_kwargs={"reasoning_content": "a"})]
+            * 3,
+            [],
+        ),
+        # Inline, its opening tag split.
+        (
+            [AIMessageChunk(content=p) for p in ["<th", "ink>", "a ", "b "]],
+            ["</think>\n"],
+        ),
+    ],
+    ids=["native", "inline"],
+)
+def test_a_streams_reasoning_passes_on_as_it_comes(
+    reasoning: list[AIMessageChunk], close: list[str]
+) -> None:
+    # Regression (rv42 ops medium): the stripper held every reasoning chunk
+    # until the answer began, so a streamed answer's first-chunk window
+    # (search.model_timeout_seconds) measured the whole reasoning and a
+    # local reasoning model's stream failed while it was still thinking.
+    pulled: list[Any] = []
+    answer = [AIMessageChunk(content=p) for p in [*close, "Vendor", " ships"]]
+
+    def model() -> Iterator[AIMessageChunk]:
+        for chunk in [*reasoning, *answer]:
+            pulled.append(chunk)
+            yield chunk
+
+    out = ReasoningStripper("p").transform(model())
+    first = [next(out) for _ in reasoning]
+    # Each reasoning chunk passed on, emptied, before the answer was read.
+    assert len(pulled) == len(reasoning)
+    assert [c.content for c in first] == [""] * len(reasoning)
+    rest = list(out)
+    assert "".join(str(c.content) for c in rest) == "Vendor ships"
+    assert len(first) + len(rest) == len(reasoning) + len(answer)
+
+
+def test_a_stream_of_content_blocks_passes_as_it_is() -> None:
+    # Bedrock's typed reasoning blocks: nothing held, nothing copied.
+    chunks = [
+        AIMessageChunk(content=[{"type": "reasoning_content", "text": "a"}]),
+        AIMessageChunk(content=[{"type": "text", "text": "B"}]),
+    ]
+    out = list(ReasoningStripper("p").transform(iter(chunks)))
+    assert all(o is c for o, c in zip(out, chunks, strict=True))
 
 
 async def test_the_stripper_reads_a_message_and_a_string() -> None:

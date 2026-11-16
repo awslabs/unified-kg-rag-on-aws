@@ -540,6 +540,55 @@ def test_an_answer_without_evidence_is_flagged(load: ModuleType) -> None:
     )
 
 
+class _EventsChain:
+    """A chain whose answer streams one chunk, then its result."""
+
+    def __init__(self) -> None:
+        self.streamed = 0
+
+    async def aquery_events(self, rag_input: Any) -> Any:
+        from unified_kg_rag import AnswerChunk, QueryResult
+        from unified_kg_rag.application.retrieval.rag_chain import (
+            ProcessedQuery,
+            RAGOutput,
+        )
+        from unified_kg_rag.domain.models import SearchQuery, SearchResult, Source
+
+        self.streamed += 1
+        yield AnswerChunk(text="Umbra Freight.")
+        yield QueryResult(
+            output=RAGOutput(
+                answer="Umbra Freight.",
+                sources=[Source(content="Umbra Freight delivers", source="tu-1")],
+                search_results=SearchResult(
+                    query=SearchQuery(query=rag_input.query),
+                    results=[],
+                    total_results=0,
+                    search_strategy=rag_input.search_strategy,
+                    processing_time=0.0,
+                ),
+                conversation_id=None,
+                processed_query=ProcessedQuery(
+                    original_query=rag_input.query, final_query=rag_input.query
+                ),
+            )
+        )
+
+    async def ainvoke(self, rag_input: Any) -> Any:
+        raise AssertionError("a streamed sweep asks through aquery_events")
+
+
+async def test_a_streamed_sweep_times_the_first_answer_chunk(load: ModuleType) -> None:
+    # rv42 ops low: the in-process modes only called ainvoke, so the answer
+    # stream (aquery_events, its first-chunk window) was never load-tested.
+    chain = _EventsChain()
+    report = await load.run_level(chain, 2, 4, 30.0, [("Who?", "mix")], 0, True)
+    assert chain.streamed == 4 and report["ok"] == 4 and not report["flags"]
+    assert report["first_chunk_p50"] is not None
+    assert report["first_chunk_p95"] is not None
+    assert "first_chunk_p50" not in load.Tally().report(1.0)
+
+
 def test_the_gate_mode_exits_one_on_a_failed_gate(
     load: ModuleType, tmp_path: Path
 ) -> None:

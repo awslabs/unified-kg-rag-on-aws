@@ -21,6 +21,9 @@ Modes:
   RSS, file descriptors (SQLite files and sockets apart), threads, gc
   objects, asyncio tasks and conversations every ``--sample`` seconds
   (``--csv``), and the per-hour slope of each over the second half.
+- ``--stream`` (``sweep``, ``soak``): ask through ``aquery_events``, the
+  streamed answer (its first-chunk window under load), and add the time to
+  the first answer chunk (``first_chunk_p50``, ``first_chunk_p95``).
 - ``http``: ``sweep`` through a running console's ``/api/ask`` (server-sent
   events), with the time to the first event; its loop lag is this
   client's (``client_loop_lag_*``), not the console's.
@@ -31,7 +34,7 @@ Modes:
 Usage::
 
     uv run --extra local python scripts/loadtest/load.py sweep \
-        --config WS/config.yaml --levels 1,4,16 --queries 140
+        --config WS/config.yaml --levels 1,4,16 --queries 140 [--stream]
     uv run --extra local python scripts/loadtest/load.py soak \
         --config WS/config.yaml --concurrency 8 --duration 600 --memory-share 0.3
     uv run --extra local python scripts/loadtest/load.py http \
@@ -162,9 +165,12 @@ class Tally:
     errors: Counter[str] = field(default_factory=Counter)
     flags: Counter[str] = field(default_factory=Counter)
     lags: Histogram = field(default_factory=Histogram)
+    # A streamed answer's time to its first event (``first_name``: which).
+    firsts: array[float] = field(default_factory=lambda: array("d"))
+    first_name: str | None = None
 
     def report(self, wall: float) -> dict[str, Any]:
-        return summarize(
+        report = summarize(
             self.latencies,
             self.errors,
             wall,
@@ -172,6 +178,12 @@ class Tally:
             self.lags,
             self.error_latencies,
         )
+        if self.first_name is not None:
+            for key, q in (("p50", 0.5), ("p95", 0.95)):
+                report[f"{self.first_name}_{key}"] = (
+                    round(percentile(self.firsts, q), 3) if self.firsts else None
+                )
+        return report
 
     def failed(self, strategy: str, error_class: str, started: float) -> None:
         self.errors[f"{strategy}:{error_class}"] += 1
@@ -204,33 +216,51 @@ async def ask(
     tally: Tally,
     query_seconds: float,
     conversation: str | None = None,
+    stream: bool = False,
 ) -> None:
     """One query: its latency on success (and its flags, :meth:`Tally.answered`),
     else its ``strategy:error_class`` and latency (a raised error, or the
-    error answer of ``processing.ignore_errors``)."""
-    from unified_kg_rag import RAGInput, classify_error
+    error answer of ``processing.ignore_errors``). ``stream``: asked through
+    ``aquery_events`` (the console's path, with the answer stream's
+    first-chunk window), its time to the first answer chunk recorded."""
+    from unified_kg_rag import AnswerChunk, QueryResult, RAGInput, classify_error
     from unified_kg_rag.application.presentation.answer_view import AnswerView
+
+    rag_input = RAGInput(
+        query=query,
+        search_strategy=strategy,
+        use_memory=conversation is not None,
+        conversation_id=conversation,
+    )
+    first: float | None = None
+
+    async def answer() -> Any:
+        nonlocal first
+        if not stream:
+            return await chain.ainvoke(rag_input)
+        output = None
+        async for event in chain.aquery_events(rag_input):
+            if isinstance(event, AnswerChunk) and first is None:
+                first = time.perf_counter() - started
+            elif isinstance(event, QueryResult):
+                output = event.output
+        return output
 
     started = time.perf_counter()
     try:
-        output = await asyncio.wait_for(
-            chain.ainvoke(
-                RAGInput(
-                    query=query,
-                    search_strategy=strategy,
-                    use_memory=conversation is not None,
-                    conversation_id=conversation,
-                )
-            ),
-            query_seconds,
-        )
+        output = await asyncio.wait_for(answer(), query_seconds)
     except Exception as e:  # noqa: BLE001 - counted by class
         tally.failed(strategy, classify_error(e).value, started)
+        return
+    if output is None:
+        tally.failed(strategy, "no_result", started)
         return
     view = AnswerView.from_output(output)
     if view.error:
         tally.failed(strategy, view.error_class or "failure", started)
         return
+    if first is not None:
+        tally.firsts.append(first)
     # The fields the flags read, not a dump of every source's text.
     fields = ("answer", "sources", "abstained", "degraded", "citations_unresolved")
     tally.answered(strategy, {k: getattr(view, k) for k in fields}, started)
@@ -267,17 +297,18 @@ async def run_level(
     query_seconds: float,
     mix: list[tuple[str, str]],
     seed: int,
+    stream: bool = False,
 ) -> dict[str, Any]:
     rng = random.Random(seed)
     queue: asyncio.Queue[tuple[str, str]] = asyncio.Queue()
     for _ in range(total):
         queue.put_nowait(rng.choice(mix))
-    tally = Tally()
+    tally = Tally(first_name="first_chunk" if stream else None)
 
     async def worker() -> None:
         while not queue.empty():
             query, strategy = queue.get_nowait()
-            await ask(chain, query, strategy, tally, query_seconds)
+            await ask(chain, query, strategy, tally, query_seconds, stream=stream)
 
     wall = await with_loop_lag(
         tally, asyncio.gather(*(worker() for _ in range(concurrency)))
@@ -326,10 +357,11 @@ async def soak(
     mix: list[tuple[str, str]],
     memory_share: float,
     csv: Path | None,
+    stream: bool = False,
 ) -> dict[str, Any]:
     stop = time.monotonic() + duration
     rng = random.Random(1)
-    tally = Tally()
+    tally = Tally(first_name="first_chunk" if stream else None)
     window: list[float] = []
     samples: list[dict[str, Any]] = []
     conversations = 0
@@ -343,7 +375,9 @@ async def soak(
                 conversations += 1
                 conversation = f"soak-{conversations}"
             done = len(tally.latencies)
-            await ask(chain, query, strategy, tally, query_seconds, conversation)
+            await ask(
+                chain, query, strategy, tally, query_seconds, conversation, stream
+            )
             window.extend(tally.latencies[done:])
 
     async def sampler() -> None:
@@ -401,8 +435,7 @@ async def http_level(
     queue: asyncio.Queue[tuple[str, str]] = asyncio.Queue()
     for _ in range(total):
         queue.put_nowait(rng.choice(mix))
-    tally = Tally()
-    first_events: list[float] = []
+    tally = Tally(first_name="first_event")
     headers = {"X-Console-Token": token, "X-Console-Request": "1"}
     limits = httpx.Limits(max_connections=concurrency + 4)
     async with httpx.AsyncClient(
@@ -437,7 +470,7 @@ async def http_level(
                 tally.failed(strategy, kind, started)
             else:
                 tally.answered(strategy, result, started)
-                first_events.append(first or 0.0)
+                tally.firsts.append(first or 0.0)
 
         async def worker() -> None:
             while not queue.empty():
@@ -455,12 +488,6 @@ async def http_level(
     # The lag of this client's loop, not the console's: named apart.
     for key in ("loop_lag_p99_ms", "loop_lag_max_ms"):
         report[f"client_{key}"] = report.pop(key)
-    report["first_event_p50"] = (
-        round(percentile(first_events, 0.5), 3) if first_events else None
-    )
-    report["first_event_p95"] = (
-        round(percentile(first_events, 0.95), 3) if first_events else None
-    )
     return report
 
 
@@ -504,6 +531,11 @@ def main(argv: list[str] | None = None) -> int:
         "--strategies", default="", help="comma-separated (default: all)"
     )
     parser.add_argument("--console", help="http: the console's URL")
+    parser.add_argument(
+        "--stream",
+        action="store_true",
+        help="sweep, soak: ask through aquery_events (the streamed answer)",
+    )
     parser.add_argument("--output", type=Path, help="also write the report here")
     parser.add_argument("--max-errors", type=int, default=Gates.max_errors)
     parser.add_argument("--max-loop-lag-ms", type=float, default=Gates.loop_lag_p99_ms)
@@ -579,13 +611,18 @@ def main(argv: list[str] | None = None) -> int:
                         mix,
                         args.memory_share,
                         args.csv,
+                        args.stream,
                     )
                 }
-            warm = await run_level(chain, 1, len(mix), args.timeout, mix, 0)
+            warm = await run_level(
+                chain, 1, len(mix), args.timeout, mix, 0, args.stream
+            )
             return {
                 "warm_up": warm,
                 "sweep": [
-                    await run_level(chain, c, args.queries, args.timeout, mix, c)
+                    await run_level(
+                        chain, c, args.queries, args.timeout, mix, c, args.stream
+                    )
                     for c in levels
                 ],
             }
