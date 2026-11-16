@@ -54,13 +54,15 @@ pytestmark = pytest.mark.unit
 
 class _SlowStore(FakeDocStatusStore):
     """Lease renewals that follow ``plan``: a number takes the lease when
-    sent (as DynamoDB does) and answers that many seconds later; ``None``
-    hangs until ``unreachable`` is set and then fails, taking nothing."""
+    sent (as DynamoDB does) and answers that many seconds later (or once
+    ``answer`` is set); ``None`` hangs until ``unreachable`` is set and then
+    fails, taking nothing."""
 
     def __init__(self) -> None:
         super().__init__()
         self.plan: list[float | None] = []
         self.unreachable = threading.Event()
+        self.answer = threading.Event()
 
     def try_acquire_lease(self, namespace: str, owner: str, seconds: float) -> bool:
         if not self.plan:
@@ -71,7 +73,7 @@ class _SlowStore(FakeDocStatusStore):
             raise RuntimeError("registry unreachable")
         held = super().try_acquire_lease(namespace, owner, seconds)
         self.plan.pop(0)
-        time.sleep(delay)
+        self.answer.wait(delay)
         return held
 
 
@@ -112,13 +114,14 @@ def test_ending_a_run_does_not_wait_for_a_hung_renewal(
     store = _SlowStore()
     lease = NamespaceLease(store, "ns", 0.6)
     with lease:
-        store.plan = [2.0]
+        store.plan = [30.0]
         while store.plan:
             time.sleep(0.01)  # the slow renewal was sent
         started = time.time()
-    assert time.time() - started < 1
+    assert time.time() - started < 10
     # The renewal in flight took the lease again; once it answers, the
     # heartbeat releases it.
+    store.answer.set()
     assert lease._thread is not None
     lease._thread.join(5)
     assert store.lease_holder("ns") is None
@@ -785,8 +788,10 @@ def test_a_stop_does_not_wait_for_the_model_calls_in_flight() -> None:
     # timeout, past the task's stop timeout).
     from unified_kg_rag.adapters.llm.langchain import BatchProcessor
 
+    answer = threading.Event()
+
     def call(_: dict[str, Any]) -> str:
-        time.sleep(3)
+        answer.wait(30)
         return "ok"
 
     def stop(signum: int, _: Any) -> None:
@@ -807,7 +812,8 @@ def test_a_stop_does_not_wait_for_the_model_calls_in_flight() -> None:
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
         signal.signal(signal.SIGALRM, previous)
-    assert time.time() - started < 1.5
+        answer.set()
+    assert time.time() - started < 10
 
 
 class _RecordingProcessPool(ProcessPoolExecutor):
@@ -1043,15 +1049,13 @@ def test_a_stopped_pool_block_does_not_wait_for_its_running_tasks() -> None:
         started.set()
         release.wait(10)
 
-    began = time.time()
     try:
         with pytest.raises(PipelineInterrupted):
             with ContextThreadPoolExecutor(max_workers=1) as pool:
                 future = pool.submit(task)
                 started.wait(5)
                 raise PipelineInterrupted(signal.SIGTERM)
-        assert time.time() - began < 2
-        assert not future.done()
+        assert not future.done()  # waited for, it would have ended
     finally:
         release.set()
 
@@ -1099,7 +1103,7 @@ def test_a_stopped_runs_checkpoint_upload_does_not_wait_for_the_takeover(
         assert lease.writes_from > time.time() + 20
         started = time.time()
         pipe._checkpoint_on_stop()
-    assert time.time() - started < 2
+    assert time.time() - started < 10  # the takeover wait is ~35 s
     pipe.s3_cache_manager.sync_pipeline_to_s3.assert_called_once()
 
 
@@ -1132,7 +1136,7 @@ def test_a_stage_start_does_not_wait_for_the_takeover(
         assert lease.writes_from > time.time() + 20
         started = time.time()
         pipe._execute_pipeline_stages(context, None)  # type: ignore[arg-type]
-        assert time.time() - started < 2
+        assert time.time() - started < 10  # the takeover wait is ~35 s
     assert executed == ["loading", "parsing"]
 
 

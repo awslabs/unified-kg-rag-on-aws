@@ -163,6 +163,11 @@ def _short_requests(monkeypatch: pytest.MonkeyPatch, seconds: float) -> None:
     )
 
 
+def _no_takeover_wait() -> None:
+    """A lease's ``interrupt``: called at each poll of a takeover wait."""
+    raise AssertionError("waited for a takeover")
+
+
 def test_a_takeover_of_an_expired_lease_waits_for_late_writes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -172,25 +177,26 @@ def test_a_takeover_of_an_expired_lease_waits_for_late_writes(
     # now waits until the old expiry plus the longest request.
     _short_requests(monkeypatch, 0.6)
     store = FakeDocStatusStore()
-    store.leases["ns"] = ("frozen-run", time.time() - 0.1)  # expired, not released
-    with NamespaceLease(store, "ns", 60) as lease:
-        started = time.time()
+    expiry = time.time() - 0.1
+    store.leases["ns"] = ("frozen-run", expiry)  # expired, not released
+    polls: list[float] = []  # the wait checks for a stop at every poll
+    with NamespaceLease(
+        store, "ns", 60, interrupt=lambda: polls.append(time.time())
+    ) as lease:
+        # The old expiry plus the longest request (0.6 s) and the margin.
+        assert lease.writes_from == pytest.approx(expiry + 0.7, abs=1e-3)
         check_write_fence()
-        waited = time.time() - started
+        assert time.time() >= lease.writes_from
+        waited = len(polls)
         check_write_fence()  # once waited, writes go through at once
-        again = time.time() - started - waited
-    assert 0.4 <= waited < 2
-    assert again < 0.1
-    assert lease.writes_from > 0
+        assert len(polls) == waited
 
 
 def test_a_released_lease_needs_no_wait(monkeypatch: pytest.MonkeyPatch) -> None:
     _short_requests(monkeypatch, 30)
     store = FakeDocStatusStore()
-    with NamespaceLease(store, "ns", 60):
-        started = time.time()
+    with NamespaceLease(store, "ns", 60, interrupt=_no_takeover_wait):
         check_write_fence()
-    assert time.time() - started < 0.5
 
 
 def test_a_takeover_wait_ends_on_a_stop(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -199,17 +205,19 @@ def test_a_takeover_wait_ends_on_a_stop(monkeypatch: pytest.MonkeyPatch) -> None
     _short_requests(monkeypatch, 30)
     store = FakeDocStatusStore()
     store.leases["ns"] = ("dead-run", time.time() - 1)
-    stop_at = time.time() + 0.3
+    polls: list[None] = []
 
     def interrupt() -> None:
-        if time.time() >= stop_at:
+        polls.append(None)
+        if len(polls) == 2:  # a stop requested during the wait
             raise PipelineInterrupted(15)
 
     with NamespaceLease(store, "ns", 60, interrupt=interrupt):
         started = time.time()
         with pytest.raises(PipelineInterrupted):
             check_write_fence()
-    assert time.time() - started < 2
+    # At the poll after the stop, not at the end of the ~35 s wait.
+    assert time.time() - started < 10
 
 
 @pytest.mark.parametrize("live", [True, False])
@@ -384,10 +392,8 @@ def test_a_stage_start_does_not_wait_for_the_takeover(
     _short_requests(monkeypatch, 30)
     store = FakeDocStatusStore()
     store.leases["ns"] = ("dead-run", time.time() - 1)
-    with NamespaceLease(store, "ns", 60) as lease:
-        started = time.time()
+    with NamespaceLease(store, "ns", 60, interrupt=_no_takeover_wait) as lease:
         check_fences_held()
-        assert time.time() - started < 0.5
         assert lease.writes_from > time.time()
         lease._lose("taken")
         with pytest.raises(NamespaceLeaseError):

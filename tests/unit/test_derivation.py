@@ -481,14 +481,15 @@ def test_an_edge_between_entities_that_now_merge_is_dropped() -> None:
 
 def test_unit_order_is_linear_in_the_units() -> None:
     # Regression: the set of the stored units was rebuilt for every unit, so
-    # a hub citing 40k units took ~100 s to order.
+    # a hub citing 40k units took ~100 s to order (these 20k ~20 s; linear,
+    # a few ms: the bound leaves room for a loaded runner).
     units = [f"u{i}" for i in range(20_000)]
     stored = units[::-1][:-1]
 
     started = time.perf_counter()
     ordered = _ordered_units(stored, units)
 
-    assert time.perf_counter() - started < 1.0
+    assert time.perf_counter() - started < 5
     assert ordered == [*stored, units[0]]
 
 

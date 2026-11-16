@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import json
 import threading
-import time
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +15,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.outputs import ChatGeneration
 
 from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
+from tests.fixtures.held_timeouts import HeldCallTimeouts
 from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED, BatchProcessor
 from unified_kg_rag.adapters.llm.response_cache import (
     CachingLLMFactory,
@@ -362,38 +362,36 @@ def test_a_served_response_its_item_rejects_is_dropped(tmp_path: Path) -> None:
     assert respond.calls == 2
 
 
-def _late_first_attempt(second: str) -> tuple[Any, threading.Event]:
+def _late_first_attempt(second: str, held: HeldCallTimeouts) -> Any:
     """A model whose first call hangs past the call timeout and answers
     "late" once released; later calls answer ``second``."""
-    release, answered = threading.Event(), threading.Event()
     calls: list[str] = []
 
     def respond(system: str, human: str) -> str:
         calls.append(human)
         if len(calls) == 1:
-            release.wait(10)
-            answered.set()
+            held.hang()
             return "late"
         return second
 
-    respond.release = release  # type: ignore[attr-defined]
-    return respond, answered
+    return respond
 
 
 @pytest.mark.parametrize("second", ["good", "bad"])
 def test_a_timed_out_attempt_s_late_answer_is_not_stored(
-    tmp_path: Path, second: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, second: str
 ) -> None:
     # The abandoned call answered after its item's retry: stored last, a
     # re-run was served it (over the retry's good answer), or kept it after
     # the item's failure had already dropped its responses.
-    respond, answered = _late_first_attempt(second)
+    held = HeldCallTimeouts(monkeypatch)
+    respond = _late_first_attempt(second, held)
     cache = LLMResponseCache(flush_every=100)
     cache.open(tmp_path)
     model = _model(cache, respond)
     results = BatchProcessor(
         retry=RetryPolicy(max_attempts=2, base_delay_seconds=1.0, max_delay_seconds=0),
-        call_timeout_seconds=1,
+        call_timeout_seconds=60,
     ).execute_with_fallback(
         ["q"],
         lambda items: [{"text": text} for text in items],
@@ -402,9 +400,8 @@ def test_a_timed_out_attempt_s_late_answer_is_not_stored(
         show_progress=False,
     )
     assert results == (["good"] if second == "good" else [BATCH_ITEM_FAILED])
-    respond.release.set()  # type: ignore[attr-defined]
-    assert answered.wait(10)
-    time.sleep(0.2)  # the abandoned call's cache update
+    held.release.set()
+    held.settle()  # the abandoned call answered, its cache update done
     cache.close()
 
     rerun = LLMResponseCache(flush_every=100)

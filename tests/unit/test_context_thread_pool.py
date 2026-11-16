@@ -99,7 +99,6 @@ def test_shut_down_after_shuts_the_pool_down_when_the_block_ends() -> None:
 
 def test_shut_down_after_does_not_wait_for_running_tasks_on_error() -> None:
     import threading
-    import time
 
     from unified_kg_rag.shared.utils.concurrency import shut_down_after
 
@@ -110,7 +109,6 @@ def test_shut_down_after_does_not_wait_for_running_tasks_on_error() -> None:
         started.set()
         release.wait(10)
 
-    began = time.time()
     try:
         with pytest.raises(RuntimeError, match="stage failed"):
             with shut_down_after(ThreadPoolExecutor(max_workers=1)) as pool:
@@ -118,7 +116,7 @@ def test_shut_down_after_does_not_wait_for_running_tasks_on_error() -> None:
                 queued = pool.submit(running)
                 started.wait(5)
                 raise RuntimeError("stage failed")
-        assert time.time() - began < 2
+        # Waited for, the running task would have ended.
         assert queued.cancelled() and not future.done()
     finally:
         release.set()

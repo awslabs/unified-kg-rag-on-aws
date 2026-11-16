@@ -20,11 +20,12 @@ import random
 import threading
 import time
 from collections import Counter
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 import pytest
 from langchain_core.runnables import RunnableLambda
 
+from tests.fixtures.held_timeouts import HeldCallTimeouts
 from unified_kg_rag.adapters.aws.bedrock import BaseBedrockModelFactory
 from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED, BatchProcessor
 from unified_kg_rag.domain.models.config import RetryPolicy
@@ -37,6 +38,15 @@ def release_hung_calls() -> Iterator[threading.Event]:
     release = threading.Event()
     yield release
     release.set()
+
+
+@pytest.fixture
+def held_calls(monkeypatch: pytest.MonkeyPatch) -> Iterator[HeldCallTimeouts]:
+    """Call timeouts that expire only for the calls that hang: the others
+    never time out, so the call counts hold on a loaded runner."""
+    held = HeldCallTimeouts(monkeypatch)
+    yield held
+    held.release.set()
 
 
 def test_run_with_timeout_aborts_hung_call(release_hung_calls) -> None:
@@ -66,11 +76,11 @@ def test_run_with_timeout_zero_disables() -> None:
 
 
 class _SlowFirstCall:
-    """Per-item call whose first call for item ``slow`` hangs until released."""
+    """Per-item call whose first call for item ``slow`` hangs (``hang``)."""
 
-    def __init__(self, slow: int, release: threading.Event) -> None:
+    def __init__(self, slow: int, hang: Callable[[], object]) -> None:
         self.slow = slow
-        self.release = release
+        self.hang = hang
         self.calls: Counter[int] = Counter()
         self._lock = threading.Lock()
 
@@ -79,16 +89,16 @@ class _SlowFirstCall:
             self.calls[item["v"]] += 1
             first = self.calls[item["v"]] == 1
         if item["v"] == self.slow and first:
-            self.release.wait()
+            self.hang()
         return {"echo": item["v"]}
 
 
-def test_one_slow_item_times_out_alone(release_hung_calls) -> None:
+def test_one_slow_item_times_out_alone(held_calls: HeldCallTimeouts) -> None:
     # Each item has its own timeout: the finished items keep their results
     # and only the slow one is called again.
-    fake = _SlowFirstCall(slow=3, release=release_hung_calls)
+    fake = _SlowFirstCall(slow=3, hang=held_calls.hang)
     bp = BatchProcessor(
-        call_timeout_seconds=1,
+        call_timeout_seconds=60,
         retry=RetryPolicy(base_delay_seconds=1.0, max_delay_seconds=0),
     )
     results = bp.execute_with_fallback(
@@ -103,7 +113,9 @@ def test_one_slow_item_times_out_alone(release_hung_calls) -> None:
     assert sum(fake.calls.values()) == 11
 
 
-def test_item_slow_on_every_attempt_fails_in_place(release_hung_calls) -> None:
+def test_item_slow_on_every_attempt_fails_in_place(
+    held_calls: HeldCallTimeouts,
+) -> None:
     # Each of the max_attempts calls times out; only that position is
     # marked failed.
     calls: Counter[int] = Counter()
@@ -113,11 +125,11 @@ def test_item_slow_on_every_attempt_fails_in_place(release_hung_calls) -> None:
         with lock:
             calls[item["v"]] += 1
         if item["v"] == 1:
-            release_hung_calls.wait()
+            held_calls.hang()
         return {"echo": item["v"]}
 
     bp = BatchProcessor(
-        call_timeout_seconds=1,
+        call_timeout_seconds=60,
         retry=RetryPolicy(max_attempts=2, base_delay_seconds=1.0, max_delay_seconds=0),
     )
     results = bp.execute_with_fallback(
