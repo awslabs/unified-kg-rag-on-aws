@@ -244,6 +244,13 @@ names them:
   names do not).
 - A new copy is never indexed and gets no record: `delete_documents` raises
   `DocumentNotFoundError` for it, as for any id the index does not hold.
+  It stays out when the document it copies later changes or is deleted (a
+  corpus run would index it then, its file being read again): insert it
+  again to index it.
+- A stored document a call does not send stays as it is, also when a failed
+  entity or relationship write records it `FAILED` (see
+  [Failed documents](#failed-documents)): a corpus run retries it, a call
+  only when it inserts the document again.
 
 ### Keep the corpus in place
 
@@ -281,7 +288,7 @@ terminal, stops the run (exit 1).
   partial sync.
 - Copies `processing.deduplicate` drops are deleted too and count, but the
   question counts them apart from the files gone from the corpus: their files
-  are present (a higher `processing.deduplicate_similarity_threshold` keeps
+  are present, or, from `insert_documents`, their text is in the batch (a higher `processing.deduplicate_similarity_threshold` keeps
   near-copies; identical copies are dropped at any threshold).
 - A reset and a run with the registry off are not checked. Without the
   registry every run is a full build of what it reads, so keep the registry
@@ -337,6 +344,11 @@ community covering it got no report, when an artifact stage crashed in a
 the extraction record of one of its text units could not be stored. A store
 that rejects an entity, relationship, claim or report write fails no
 document: the next run writes the item again without extracting anything.
+Only when that note cannot be written does the write fail the documents
+stating the item, also stored ones the run did not process; the WARNING
+(`... cite N documents outside this run ...`) names those, and a corpus run
+retries them while an `insert_documents` call retries one only when it
+inserts it again.
 The next run processes a `FAILED` document again, even if the file did not change, until
 `indexing.max_document_failures` (default `3`) consecutive failures of the
 same content; editing the file or raising the limit retries it after that.

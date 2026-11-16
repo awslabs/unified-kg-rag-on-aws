@@ -422,6 +422,19 @@ def test_a_stop_while_a_refused_stage_is_saved_waits_for_it(tmp_path, mocker) ->
     stage.execute.assert_not_called()
 
 
+def test_a_refused_stage_names_the_pipeline_id_to_resume_with(tmp_path, mocker) -> None:
+    pipe = _pipeline_with_failing_sync(tmp_path, mocker)
+    pipe.state_manager = mocker.MagicMock()
+    pipe._executed_stages = frozenset()
+    pipe.pipeline_id = "pid-7"
+    mocker.patch.object(pipe, "_failed_corpus_stage", return_value="translation")
+    stage = mocker.MagicMock()
+    stage.name = "indexing"
+    result = pipe._execute_stage(stage, _stage_context(tmp_path))
+    assert result.status is PipelineStageStatus.FAILED
+    assert "resume with the same pipeline id ('pid-7')" in (result.error_message or "")
+
+
 def test_checkpoint_writes_nest(tmp_path, mocker) -> None:
     # An inner write must not end the outer one's deferral, nor raise a stop
     # requested inside it before the outer write is done.

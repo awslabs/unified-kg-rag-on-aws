@@ -123,7 +123,8 @@ if __name__ == "__main__":
 - The documents belong to the source scope `"api"` unless `source_scope=`
   names another; a directory corpus's documents are deleted by their
   relative paths with `source_scope=` its scope (its `source_scope`, or
-  its absolute directory).
+  its resolved directory: an absolute path given here is resolved, symlinks
+  followed, as a corpus run resolves its directory).
 - Both return the run's `PipelineContext`; `incremental_delta` lists what
   was new, changed, deleted and `kept`. `delete_documents` raises
   `DocumentNotFoundError`, before any write, for an id the registry does
@@ -183,8 +184,9 @@ the stores only. `run-describe` prints them
   `confirm_deletions=` answers an incremental run that deletes more than
   `indexing.max_deletion_share` of its source scope's documents
   ([Incremental indexing: Mass deletions](./incremental.md#mass-deletions)).
-  Without the callable, or on a no, `run` raises `ConfirmationDeclinedError`
-  before it writes.
+  Without the callable, or on a no, `run` (and `insert_documents`, for the
+  copies it would delete) raises `ConfirmationDeclinedError` before it
+  writes.
 
 What a message means and what to do about it:
 [Troubleshooting](../troubleshooting.md).

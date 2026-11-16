@@ -144,7 +144,8 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   default; USD priced by `models.prices`) refuse the model call that would pass them and stop the run once the calls
   already sent have answered (`RunBudgetExhausted`, exported, error class `limit_exceeded`, exit 1): its finished
   stages are checkpointed and those answers kept in the LLM response cache, whose hits take none of the budget, so a
-  re-run with the same pipeline id (the stop's message names it) resumes and pays only for what was not answered. The
+  re-run with the same pipeline id (the stop's message names it, as does a refusal to index after a failed corpus
+  stage) resumes and pays only for what was not answered. The
   stop's JSON status and message give the calls the run paid for (`token_usage`, `cost_usd` when priced), and the
   stage it stopped in keeps its calls in its record and publishes them (`llm_calls_<stage>`), so the stop and its
   resume count each paid call once. `run-ingestion` refuses a `max_run_usd` run whose stages call a model
@@ -288,7 +289,16 @@ Bugs present in 0.3.0.
   and graph), as a document the call did not name; a corpus run deletes it. A copy dropped from a call's documents is
   now deleted when the registry holds it, asked about under `indexing.max_deletion_share` as in a corpus run, and the
   loading stage's metrics name the dropped copies (`deduplicated`, `documents_deduplicated`). A new copy gets no
-  record, so `delete_documents` refuses its id as one the index does not hold.
+  record, so `delete_documents` refuses its id as one the index does not hold, and stays out when its original later
+  changes (insert it again). The question says the copies are in the batch and names Python's answer too
+  (`DataIngestionPipeline(confirm_deletions=...)`).
+- `insert_documents` left a stored document it was not sent `FAILED` without naming it: when a batch merges into an
+  entity that document states too and the entity or relationship write fails with no note for the next run, a corpus
+  run retries it but a call keeps it. The WARNING now names those documents (the first 10) and says to insert them
+  again.
+- `insert_documents` and `delete_documents` took an absolute directory given as `source_scope` as spelled, where a
+  corpus run keys its records by its resolved directory: a path through a symlink opened a second scope and indexed
+  the corpus's documents again. Such a path is now resolved.
 - `answer_match` read Japanese sums in 兆 (10^12) wrong: `一兆二千億円` as 200,000,000,000 and `3兆円` as 3. 兆 is a
   multiplier of the Japanese and Chinese profiles, as 億 is, where it can close an amount (`新台币3兆元`, `3兆美元`);
   before another Han or Latin letter it is the Chinese prefix mega (the new `LanguageProfile.prefix_multipliers`), so
