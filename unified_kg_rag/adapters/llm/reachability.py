@@ -34,12 +34,26 @@ from unified_kg_rag.shared.utils.common import http_status
 # Errors of a connection that was never made, by class name so this module
 # imports no client: httpx's ConnectError and ConnectTimeout, the OpenAI
 # client's APIConnectionError (not its APITimeoutError subclass: a server
-# that accepted the request and did not answer is reachable) and botocore's
-# EndpointConnectionError.
+# that accepted the request and did not answer is reachable), urllib3's
+# NewConnectionError and botocore's EndpointConnectionError. A bare
+# ConnectionError is not one of them: the Ollama client's "Failed to
+# connect" is raised during httpx's ConnectError (its context, which
+# :func:`causes` reaches), while langchain-aws raises one for a stream that
+# ended without its last event, from a server that was reached.
 _CONNECT_ERROR_NAMES = frozenset(
-    {"ConnectError", "ConnectTimeout", "APIConnectionError", "EndpointConnectionError"}
+    {
+        "ConnectError",
+        "ConnectTimeout",
+        "APIConnectionError",
+        "NewConnectionError",
+        "EndpointConnectionError",
+    }
 )
 _REACHED_NAMES = frozenset({"APITimeoutError"})
+# A request whose server sent nothing in time, by class name: httpx's
+# ReadTimeout, the OpenAI client's APITimeoutError, botocore's and urllib3's
+# ReadTimeoutError (a Bedrock call's, or its stream's).
+_READ_TIMEOUT_NAMES = frozenset({"ReadTimeout", "ReadTimeoutError", "APITimeoutError"})
 # Ollama's default endpoint, which its client uses without a base_url.
 _OLLAMA_DEFAULT = "http://localhost:11434"
 
@@ -58,11 +72,8 @@ def is_unreachable_error(exc: BaseException) -> bool:
         names = {cls.__name__ for cls in type(error).__mro__}
         if names & _REACHED_NAMES:
             return False
-        if (
-            names & _CONNECT_ERROR_NAMES
-            # The Ollama client's own "Failed to connect" is a bare one.
-            or type(error) is ConnectionError
-            or isinstance(error, ConnectionRefusedError | socket.gaierror)
+        if names & _CONNECT_ERROR_NAMES or isinstance(
+            error, ConnectionRefusedError | socket.gaierror
         ):
             return True
     return False
@@ -198,11 +209,24 @@ def named_model_error(exc: BaseException, config: Config) -> BaseException:
     transport error: Ollama's ``ResponseError``, httpx's
     ``RemoteProtocolError`` or ``ReadTimeout``) as a
     :class:`LanguageModelError`; any other (the package's own, a store's)
-    as is."""
+    as is. A read timeout's names the setting that bounds it, as the
+    package's own text: a surface then says the model timed out, not that
+    the call failed unexpectedly."""
     if is_unreachable_error(exc):
         return model_unreachable_error(exc, config)
     if isinstance(exc, GraphRAGException):
         return exc
+    if any(cls.__name__ in _READ_TIMEOUT_NAMES for cls in type(exc).__mro__):
+        timed_out = LanguageModelError(
+            f"A language model call timed out ({type(exc).__name__}): the "
+            f"model server sent nothing within a query's read timeout "
+            f"(search.model_timeout_seconds, "
+            f"{config.search.model_timeout_seconds:g} s; a local server's "
+            f"providers.llm.timeout_seconds when lower)."
+        )
+        timed_out.own_text = True
+        timed_out.__cause__ = exc
+        return timed_out
     if http_status(exc) is not None or looks_transient(exc):
         named = LanguageModelError(
             f"A language model call failed ({type(exc).__name__}): {exc}"

@@ -21,6 +21,7 @@ from typing import Any
 
 import httpx
 import pytest
+from urllib3 import exceptions as urllib3_exc
 
 from unified_kg_rag.adapters.llm.reachability import (
     is_unreachable_error,
@@ -123,6 +124,40 @@ def _raised_from(error: BaseException, cause: BaseException) -> BaseException:
         return e
 
 
+def _ollama_connect_error() -> BaseException:
+    # How the Ollama client raises it (ollama._client: ``except
+    # httpx.ConnectError: raise ConnectionError(...) from None``).
+    try:
+        try:
+            raise httpx.ConnectError("All connection attempts failed")
+        except httpx.ConnectError:
+            raise ConnectionError("Failed to connect to Ollama") from None
+    except ConnectionError as e:
+        return e
+
+
+def test_the_ollama_clients_refused_connection_is_unreachable() -> None:
+    # The real client's chain, not a stand-in: a refused connection is named
+    # as the ModelUnreachableError of the configured server.
+    ollama = pytest.importorskip("ollama")
+
+    def refuse(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("All connection attempts failed", request=request)
+
+    client = ollama.Client(
+        host="http://127.0.0.1:9", transport=httpx.MockTransport(refuse)
+    )
+    with pytest.raises(ConnectionError) as raised:
+        client.chat(model="synthetic-chat", messages=[{"role": "user", "content": "x"}])
+    assert type(raised.value) is ConnectionError
+    assert is_unreachable_error(raised.value)
+    from unified_kg_rag.adapters.llm.reachability import named_model_error
+
+    assert isinstance(
+        named_model_error(raised.value, Config()), x.ModelUnreachableError
+    )
+
+
 @pytest.mark.parametrize(
     ("error", "unreachable"),
     [
@@ -130,9 +165,19 @@ def _raised_from(error: BaseException, cause: BaseException) -> BaseException:
         (httpx.ConnectTimeout("timed out"), True),
         (httpx.ReadTimeout("no answer"), False),
         (ConnectionRefusedError(111, "refused"), True),
-        # The Ollama client's own "Failed to connect to Ollama".
-        (ConnectionError("Failed to connect to Ollama"), True),
+        # The Ollama client's own "Failed to connect to Ollama", raised
+        # during httpx's ConnectError (``from None`` keeps it the context).
+        (_ollama_connect_error(), True),
+        # langchain-aws's for a stream that ended without messageStop: the
+        # server was reached.
+        (
+            ConnectionError(
+                "Incomplete Bedrock response stream: missing messageStop event."
+            ),
+            False,
+        ),
         (ConnectionResetError("dropped"), False),
+        (urllib3_exc.NewConnectionError(None, "Failed to establish"), True),
         (socket.gaierror(-2, "Name or service not known"), True),
         # A store's is the store's, whatever it was raised from.
         (
@@ -143,7 +188,7 @@ def _raised_from(error: BaseException, cause: BaseException) -> BaseException:
         (
             _raised_from(
                 x.EmbeddingModelError("Query embedding failed"),
-                ConnectionError("Failed to connect to Ollama"),
+                _ollama_connect_error(),
             ),
             True,
         ),
@@ -180,6 +225,39 @@ def test_a_model_clients_own_error_is_named_a_language_model_error() -> None:
     )
     for kept in (RuntimeError("a bug"), x.StoreConnectionError("down"), KeyError("k")):
         assert named_model_error(kept, config) is kept
+
+
+def test_a_model_read_timeout_is_named_as_one_to_the_operator() -> None:
+    # rv44 query low: a model that sent nothing within its read timeout
+    # read "The call failed with an unexpected error" on the console.
+    from botocore.exceptions import ReadTimeoutError
+    from urllib3 import exceptions as urllib3_exc
+
+    from unified_kg_rag.adapters.llm.reachability import named_model_error
+
+    config = Config()
+    config.search.model_timeout_seconds = 12.5
+    _, openai_timeout = _openai_errors()
+    for raw in (
+        httpx.ReadTimeout("timed out"),
+        openai_timeout,
+        ReadTimeoutError(endpoint_url="https://bedrock-runtime.test"),
+        urllib3_exc.ReadTimeoutError(None, "/", "Read timed out."),
+    ):
+        named = named_model_error(raw, config)
+        assert isinstance(named, x.LanguageModelError), raw
+        assert named.__cause__ is raw
+        shown = x.shown_error_text(named, audience="operator")
+        assert shown != INTERNAL_ERROR_MESSAGE, raw
+        assert "timed out" in shown
+        assert "search.model_timeout_seconds, 12.5 s" in shown
+        # An MCP caller still sees no model server's detail.
+        assert x.shown_error_text(named, audience="caller") == INTERNAL_ERROR_MESSAGE
+    # A connect timeout is a server that could not be reached.
+    assert isinstance(
+        named_model_error(httpx.ConnectTimeout("timed out"), config),
+        x.ModelUnreachableError,
+    )
 
 
 def test_the_openai_clients_connection_error_is_unreachable_not_its_timeout() -> None:

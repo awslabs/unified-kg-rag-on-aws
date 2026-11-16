@@ -11,6 +11,7 @@ import json
 import re
 from pathlib import Path
 
+import httpx
 import numpy as np
 import pytest
 
@@ -505,7 +506,11 @@ def test_an_unreachable_model_stops_generation_naming_the_server(
 
     def unreachable(system: str, human: str) -> str:
         calls.append(system)
-        raise ConnectionError("Failed to connect to Ollama.")
+        # As the Ollama client raises it: during httpx's ConnectError.
+        try:
+            raise httpx.ConnectError("All connection attempts failed")
+        except httpx.ConnectError:
+            raise ConnectionError("Failed to connect to Ollama.") from None
 
     monkeypatch.setattr(
         "unified_kg_rag.application.cli.assertion_benchmark.build_providers",

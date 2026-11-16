@@ -476,9 +476,13 @@ def test_ollama_ingestion_chain_keeps_the_batch_retry_only() -> None:
     assert not isinstance(chain, TransientRetryRunnable)
 
 
-async def test_openai_compatible_query_is_retried_by_its_client_only() -> None:
-    # The OpenAI client retries (max_attempts - 1 retries), so the chain gets
-    # no second retry layer that would multiply the attempts.
+@pytest.mark.parametrize("streamed", [False, True], ids=["ainvoke", "astream"])
+async def test_openai_compatible_query_is_retried_by_its_client_only(
+    streamed: bool,
+) -> None:
+    # The OpenAI client retries (max_attempts - 1 retries) until a response
+    # starts, so the chain gets no second retry layer of that that would
+    # multiply the attempts, a stream's included.
     server = FailingServer(503, failures=10)
     factory = OpenAICompatibleLanguageModelFactory(
         _config("openai_compatible", max_attempts=2),
@@ -486,9 +490,14 @@ async def test_openai_compatible_query_is_retried_by_its_client_only() -> None:
     )
     chain = _query_chain(factory)
 
-    assert not isinstance(chain, TransientRetryRunnable)
+    assert isinstance(chain, TransientRetryRunnable)
+    assert not chain.retries_calls
     with pytest.raises(Exception, match="synthetic failure"):
-        await chain.ainvoke(_ANSWER_INPUT)
+        if streamed:
+            async for _ in chain.astream(_ANSWER_INPUT):
+                pass
+        else:
+            await chain.ainvoke(_ANSWER_INPUT)
     assert server.calls == 2
 
     recovering = FailingServer(503)
@@ -497,6 +506,99 @@ async def test_openai_compatible_query_is_retried_by_its_client_only() -> None:
     )
     assert await _query_chain(factory).ainvoke(_ANSWER_INPUT) == recovering.reply
     assert recovering.calls == 2
+
+
+class _DroppedEvents(httpx.AsyncByteStream, httpx.SyncByteStream):
+    """An SSE body that sends ``events`` and then loses its connection."""
+
+    def __init__(self, events: list[dict[str, Any]]) -> None:
+        self.events = [f"data: {json.dumps(e)}\n\n".encode() for e in events]
+
+    def __iter__(self) -> Any:
+        yield from self.events
+        raise httpx.RemoteProtocolError("peer closed connection")
+
+    async def __aiter__(self) -> Any:
+        for event in self.events:
+            yield event
+        raise httpx.RemoteProtocolError("peer closed connection")
+
+
+class _DroppingStreamServer:
+    """An OpenAI-compatible server whose first stream sends ``first`` (delta
+    payloads), then drops; later streams answer ``reply`` in full."""
+
+    def __init__(
+        self, first: list[dict[str, Any]], reply: str = "Vendor ships."
+    ) -> None:
+        self.first = first
+        self.reply = reply
+        self.calls = 0
+
+    @staticmethod
+    def _event(delta: dict[str, Any], finish: str | None = None) -> dict[str, Any]:
+        return {
+            "id": "chatcmpl-1",
+            "object": "chat.completion.chunk",
+            "created": 0,
+            "model": "synthetic-chat",
+            "choices": [{"index": 0, "delta": delta, "finish_reason": finish}],
+        }
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.calls += 1
+        headers = {"content-type": "text/event-stream"}
+        if self.calls == 1:
+            events = [self._event(delta) for delta in self.first]
+            return httpx.Response(200, headers=headers, stream=_DroppedEvents(events))
+        body = "".join(
+            f"data: {json.dumps(e)}\n\n"
+            for e in (
+                self._event({"role": "assistant", "content": ""}),
+                self._event({"content": self.reply}),
+                self._event({}, "stop"),
+            )
+        )
+        return httpx.Response(200, headers=headers, content=body + "data: [DONE]\n\n")
+
+
+@pytest.mark.usefixtures("no_backoff")
+@pytest.mark.parametrize(
+    "first",
+    [
+        [],
+        [{"role": "assistant", "content": ""}],
+        [{"role": "assistant", "content": ""}, *[{"reasoning_content": "a "}] * 3],
+    ],
+    ids=["no-event", "empty-start", "reasoning"],
+)
+async def test_openai_compatible_stream_dropped_before_output_is_retried(
+    first: list[dict[str, Any]],
+) -> None:
+    # rv44 query low: the OpenAI client retries a call only until its
+    # response starts, so a stream dropped after that (before any answer
+    # text) failed the query, though its ainvoke was retried by the client.
+    server = _DroppingStreamServer(first)
+    factory = OpenAICompatibleLanguageModelFactory(
+        _config("openai_compatible"), transport=httpx.MockTransport(server)
+    )
+    chunks = [c async for c in _query_chain(factory).astream(_ANSWER_INPUT)]
+    assert "".join(chunks) == server.reply
+    assert server.calls == 2
+
+
+@pytest.mark.usefixtures("no_backoff")
+async def test_openai_compatible_stream_dropped_after_text_is_not_retried() -> None:
+    server = _DroppingStreamServer([{"role": "assistant", "content": "PARTIAL "}])
+    factory = OpenAICompatibleLanguageModelFactory(
+        _config("openai_compatible"), transport=httpx.MockTransport(server)
+    )
+    chunks: list[str] = []
+    with pytest.raises(httpx.RemoteProtocolError):
+        async for chunk in _query_chain(factory).astream(_ANSWER_INPUT):
+            chunks.append(chunk)
+    assert "".join(chunks) == "PARTIAL "
+    assert server.calls == 1
 
 
 @pytest.mark.parametrize(

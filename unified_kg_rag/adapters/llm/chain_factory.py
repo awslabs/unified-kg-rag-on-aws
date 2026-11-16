@@ -352,7 +352,8 @@ def _content_text(message: Any) -> str | None:
 
 
 def _carries_output(chunk: Any) -> bool:
-    """Whether a streamed chunk carries output: text, or content that is not
+    """Whether a streamed chunk carries output: text (whitespace too: it
+    reached the caller, and a retry would repeat it), or content that is not
     text (a structured parser's value). An empty chunk (a reasoning model's
     reasoning, emptied by ``ReasoningStripper`` or sent apart from the
     content, or a server's empty first chunk) carries none."""
@@ -519,6 +520,11 @@ class TransientRetryRunnable(Runnable[Any, Any]):
     reasoning model's emptied reasoning chunks, or an empty first chunk, do
     not stop it, since a retry after them repeats nothing the caller saw.
     Once output reached the caller a failure propagates.
+
+    ``retries_calls=False`` (a model client that retries a whole call
+    itself, the OpenAI one) leaves ``invoke``/``ainvoke`` to that client and
+    retries only streams, whose failure after the response started no
+    client retries.
     """
 
     def __init__(
@@ -528,11 +534,13 @@ class TransientRetryRunnable(Runnable[Any, Any]):
         operation: str,
         retry: RetryPolicy,
         is_transient: TransientErrorPredicate,
+        retries_calls: bool = True,
     ) -> None:
         self.bound = bound
         self.operation = operation
         self.retry = retry
         self.is_transient = is_transient
+        self.retries_calls = retries_calls
 
     @property
     def InputType(self) -> Any:  # noqa: N802 - LangChain API name
@@ -557,6 +565,8 @@ class TransientRetryRunnable(Runnable[Any, Any]):
     def invoke(
         self, input: Any, config: RunnableConfig | None = None, **kwargs: Any
     ) -> Any:
+        if not self.retries_calls:
+            return self.bound.invoke(input, config, **kwargs)
         return call_with_transient_retry(
             lambda: self.bound.invoke(input, config, **kwargs),
             is_transient=self.is_transient,
@@ -567,6 +577,8 @@ class TransientRetryRunnable(Runnable[Any, Any]):
     async def ainvoke(
         self, input: Any, config: RunnableConfig | None = None, **kwargs: Any
     ) -> Any:
+        if not self.retries_calls:
+            return await self.bound.ainvoke(input, config, **kwargs)
         return await acall_with_transient_retry(
             lambda: self.bound.ainvoke(input, config, **kwargs),
             is_transient=self.is_transient,
@@ -629,12 +641,17 @@ def with_transient_retry(
     operation: str,
     retry: RetryPolicy | None,
     is_transient: TransientErrorPredicate | None = None,
+    retries_calls: bool = True,
 ) -> Runnable[Any, Any]:
     """Wrap ``runnable`` in :class:`TransientRetryRunnable` unless retry is off."""
     if retry is None or retry.max_attempts <= 1 or is_transient is None:
         return runnable
     return TransientRetryRunnable(
-        runnable, operation=operation, retry=retry, is_transient=is_transient
+        runnable,
+        operation=operation,
+        retry=retry,
+        is_transient=is_transient,
+        retries_calls=retries_calls,
     )
 
 
@@ -924,13 +941,16 @@ def setup_chain(
 
     ``QUERY`` (the default) gets, when the factory classifies transient
     errors and has a chain retry policy (``is_transient_error`` and
-    ``transient_retry``, the Bedrock and Ollama factories), a transient-error
+    ``transient_retry``, the Bedrock and local factories), a transient-error
     retry around the whole chain (a model server that could not be reached is
     not retried: the query fails naming it). Ingestion and evaluation call sites pass
     their purpose explicitly: they get no chain-level retry, because ``BatchProcessor`` already retries them and a
-    second layer would multiply the attempts. A factory without a
-    ``transient_retry`` policy (the OpenAI-compatible one) leaves query
-    retries to its client. ``min_output_tokens`` overrides the prompt's static
+    second layer would multiply the attempts. A factory whose client retries
+    a whole call itself (the OpenAI-compatible one) names the errors it did
+    not retry, a stream's after its response started
+    (``is_stream_transient_error``): only streams are retried, on those. A
+    factory without a ``transient_retry`` policy leaves query retries to its
+    client. ``min_output_tokens`` overrides the prompt's static
     floor with one derived from the config (``BasePrompt.output_floor``).
     ``system_suffix`` is appended to the resolved system template (built-in
     or custom), e.g. the answer prompts' ``search.abstention`` instructions;
@@ -974,11 +994,13 @@ def setup_chain(
         is_transient = getattr(factory, "is_transient_error", None)
         if model_purpose is not ModelPurpose.QUERY or is_transient is None:
             return chain
+        streamed_only = getattr(factory, "is_stream_transient_error", None)
         return with_transient_retry(
             chain,
             operation=prompt_class.__name__,
             retry=getattr(factory, "transient_retry", None),
-            is_transient=_reachable_and(is_transient),
+            is_transient=_reachable_and(streamed_only or is_transient),
+            retries_calls=streamed_only is None,
         )
     except Exception as e:
         log_error(

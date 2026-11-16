@@ -7,19 +7,33 @@ set of 5xx codes, and connection-level errors. Bedrock surfaces several
 transient model-side failures outside that set — most notably
 ``ModelErrorException`` (HTTP 424, "The system encountered an unexpected
 error"), ``ModelNotReadyException`` and ``ModelTimeoutException`` (HTTP 408,
-the model took too long) — which botocore raises on the first occurrence. :func:`is_transient_bedrock_error` names exactly those failures, for
-the bounded backoff of ``adapters.llm.retry`` and the batch processor's
-retries, leaving validation, access-denied and other client errors to fail
-fast. :func:`is_bedrock_item_error` names the errors an ingestion item causes
-itself (a ``ValidationException`` of its request), which count against its
-document.
+the model took too long) — which botocore raises on the first occurrence.
+A streamed call (ConverseStream, InvokeModelWithResponseStream) fails after
+its response started in two more ways botocore never retries: an error event
+(``EventStreamError``, its code the event's camelCase member name:
+``throttlingException``, ``modelStreamErrorException``), and a connection
+that drops or stalls while the events are read (urllib3's ``ProtocolError``
+or ``ReadTimeoutError``, raised as is: botocore's event stream reads the raw
+response; langchain-aws's built-in ``ConnectionError`` for a stream that
+ended without its ``messageStop`` event). :func:`is_transient_bedrock_error` names exactly those failures,
+for the bounded backoff of ``adapters.llm.retry``, the query chains' retry
+and the batch processor's retries, leaving validation, access-denied and
+other client errors to fail fast. :func:`is_bedrock_item_error` names the
+errors an ingestion item causes itself (a ``ValidationException`` of its
+request), which count against its document. Both, and the throttle count of
+``adapters.aws.bedrock_throttles``, read a code by :func:`bedrock_error_code`,
+so an event's spelling and a response's are one code.
 """
 
 from __future__ import annotations
 
+import builtins
 import re
+from collections.abc import Mapping
+from typing import Any
 
 from botocore import exceptions as boto_exc
+from urllib3 import exceptions as urllib3_exc
 
 # The error codes Bedrock runtime (bedrock-runtime, bedrock-agent-runtime)
 # throttles a request with (HTTP 429): what adapters.aws.bedrock_throttles
@@ -29,13 +43,16 @@ THROTTLING_ERROR_CODES: frozenset[str] = frozenset({"ThrottlingException"})
 # Error codes Bedrock runtime returns for conditions that resolve on their own.
 # ThrottlingException / ServiceUnavailableException / InternalServerException
 # are normally absorbed by botocore's own retries; they are listed so a burst
-# that outlasts botocore's attempts still gets the backoff.
+# that outlasts botocore's attempts still gets the backoff (and a stream's
+# error event, which botocore does not retry, gets one at all).
+# ModelStreamErrorException is a stream's alone ("Retry your request").
 TRANSIENT_BEDROCK_ERROR_CODES: frozenset[str] = (
     frozenset(
         {
             "ModelErrorException",
             "ModelNotReadyException",
             "ModelTimeoutException",
+            "ModelStreamErrorException",
             "ServiceUnavailableException",
             "InternalServerException",
         }
@@ -44,13 +61,32 @@ TRANSIENT_BEDROCK_ERROR_CODES: frozenset[str] = (
 )
 
 
+def bedrock_error_code(error: Mapping[str, Any] | None) -> str:
+    """The code of a parsed Bedrock error (a response's or an event's
+    ``Error``), spelled as a response spells it: an event stream's error is
+    coded by the event's member name, the same code with a lowercase first
+    letter (``throttlingException``)."""
+    code = str((error or {}).get("Code") or "")
+    return code[:1].upper() + code[1:]
+
+
 def is_transient_bedrock_error(exc: BaseException) -> bool:
     """Return True if ``exc`` is a Bedrock/botocore failure worth retrying."""
     if isinstance(exc, boto_exc.ClientError):
-        code = exc.response.get("Error", {}).get("Code", "")
-        return code in TRANSIENT_BEDROCK_ERROR_CODES
-    # Connect/read timeouts, endpoint-unreachable and dropped connections.
-    return isinstance(exc, boto_exc.ConnectionError | boto_exc.HTTPClientError)
+        return bedrock_error_code(exc.response.get("Error")) in (
+            TRANSIENT_BEDROCK_ERROR_CODES
+        )
+    # Connect/read timeouts, endpoint-unreachable and dropped connections:
+    # botocore's, urllib3's own while a stream's events are read, and the
+    # built-in ones (a stream cut short; a refused or reset connection).
+    return isinstance(
+        exc,
+        boto_exc.ConnectionError
+        | boto_exc.HTTPClientError
+        | urllib3_exc.ProtocolError
+        | urllib3_exc.ReadTimeoutError
+        | builtins.ConnectionError,
+    )
 
 
 # ValidationExceptions of the model or the request settings, not of the
@@ -77,6 +113,6 @@ def is_bedrock_item_error(exc: BaseException) -> bool:
     if not isinstance(exc, boto_exc.ClientError):
         return False
     error = exc.response.get("Error", {})
-    return error.get("Code") == "ValidationException" and not (
+    return bedrock_error_code(error) == "ValidationException" and not (
         _CONFIGURATION_VALIDATION.search(str(error.get("Message", "")))
     )

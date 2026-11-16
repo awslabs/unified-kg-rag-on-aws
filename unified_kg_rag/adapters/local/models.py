@@ -268,7 +268,9 @@ def _tracing_callbacks(
 
 
 def local_transient_retry(config: Config) -> RetryPolicy:
-    """Retry policy for a client that does not retry on its own (Ollama).
+    """Retry policy for what a local server's client does not retry on its
+    own (an Ollama call, an OpenAI-compatible stream after its response
+    started).
 
     The ``retry.model_server`` profile.
     """
@@ -299,7 +301,8 @@ class _LocalLanguageModelFactory:
         client) and HTTP 408/429/5xx (``openai.APIStatusError``,
         ``ollama.ResponseError``). The ingestion batch retries use it on both
         servers, and ``setup_chain`` the query-chain retry on Ollama
-        (``transient_retry``).
+        (``transient_retry``; on an OpenAI-compatible server the streams'
+        retry reads ``is_stream_transient_error``).
         """
         return looks_transient(exc)
 
@@ -440,13 +443,33 @@ class OpenAICompatibleLanguageModelFactory(_LocalLanguageModelFactory):
     ``providers.llm.base_url`` points at the server's ``/v1`` root (vLLM,
     llama.cpp server, LM Studio, or OpenAI itself when unset).
 
-    The OpenAI client retries transient errors itself
-    (``retry.model_server.max_attempts``), so this factory defines no
-    ``transient_retry`` and query chains are not wrapped in a second retry.
+    The OpenAI client retries a call's transient errors itself
+    (``retry.model_server.max_attempts``) until its response starts. A
+    stream that fails after that (a connection dropped or a read timed out
+    between its events) is not retried by the client: query chains retry
+    their streams on those errors alone (``is_stream_transient_error``),
+    under ``transient_retry``, while no output has reached the caller, and
+    leave a whole call to the client.
     """
 
     provider_name = "openai"
     kind = "openai_compatible"
+
+    @property
+    def transient_retry(self) -> RetryPolicy:
+        """The retry policy ``setup_chain`` applies to query-chain streams."""
+        return local_transient_retry(self.config)
+
+    @staticmethod
+    def is_stream_transient_error(exc: BaseException) -> bool:
+        """Whether a query chain's stream retries ``exc``: a transient error
+        (:func:`looks_transient`) the OpenAI client did not retry already.
+        Its retries end in its own ``APIError`` (``APIConnectionError``,
+        ``APITimeoutError``, ``APIStatusError``); a stream's events are read
+        past them, where httpx's errors are raised as they are."""
+        return looks_transient(exc) and not any(
+            cls.__name__ == "APIError" for cls in type(exc).__mro__
+        )
 
     def _build(
         self,

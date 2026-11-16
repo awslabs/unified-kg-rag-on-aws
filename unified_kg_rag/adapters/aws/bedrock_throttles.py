@@ -25,7 +25,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from unified_kg_rag.adapters.aws.bedrock_retry import THROTTLING_ERROR_CODES
+from unified_kg_rag.adapters.aws.bedrock_retry import (
+    THROTTLING_ERROR_CODES,
+    bedrock_error_code,
+)
 from unified_kg_rag.shared import usage
 
 __all__ = ["count_requests"]
@@ -71,7 +74,10 @@ def _throttled(response: Any) -> bool:
     if getattr(http_response, "status_code", None) == 429:
         return True
     error = parsed.get("Error") if isinstance(parsed, Mapping) else None
-    return isinstance(error, Mapping) and error.get("Code") in THROTTLING_ERROR_CODES
+    return (
+        isinstance(error, Mapping)
+        and bedrock_error_code(error) in THROTTLING_ERROR_CODES
+    )
 
 
 def count_requests(client: Any, service: str, role: str) -> None:
