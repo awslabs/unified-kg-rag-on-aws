@@ -1029,16 +1029,18 @@ def _answer_states(strategy: SearchStrategy, cites: bool) -> list[dict[str, Any]
 
 @pytest.mark.parametrize("mode", ["off", "mark"])
 @pytest.mark.parametrize("on_insufficient", ["hedge", "abstain"])
-@pytest.mark.parametrize(
-    "only_base_cites", [False, True], ids=["default-citations", "only-base-cites"]
-)
+@pytest.mark.parametrize("citations", ["on", "off", "base-only", "iterative-only"])
+@pytest.mark.parametrize("style", ["concise", "comprehensive"])
 def test_the_answer_estimate_holds_every_instruction_the_chain_appends(
-    mode: str, on_insufficient: str, only_base_cites: bool
+    mode: str, on_insufficient: str, citations: str, style: str
 ) -> None:
-    # The estimate an input-token limit keeps for the answer is never below
-    # the prompt the chain sends, for every registered strategy: the
-    # abstention marker's text under mode mark, the graph query result's
-    # for structured, iterative's citations when only its base cites.
+    # The estimate an input-token limit keeps for the answer is the largest
+    # prompt the chain sends, for every registered strategy: the abstention
+    # marker's text under mode mark, the graph query result's for
+    # structured, iterative's citations when only its base cites. Exact, so
+    # an estimate that holds room no prompt takes fails too. Without a
+    # strategy (auto, before it routes) it is a bound: both prompt styles'
+    # templates and the citations' instructions, whatever the config.
     from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
     from unified_kg_rag.adapters.retrieval.base import (
         answer_prompt_class,
@@ -1052,24 +1054,34 @@ def test_the_answer_estimate_holds_every_instruction_the_chain_appends(
     config = Config()
     config.search.abstention.mode = mode  # type: ignore[assignment]
     config.search.abstention.on_insufficient = on_insufficient  # type: ignore[assignment]
-    if only_base_cites:
-        # Citations off but for iterative's base, which iterative follows.
-        base = wrapped_strategy(SearchStrategy.ITERATIVE, config)
+    strategies = [s for s in SearchStrategy if s is not SearchStrategy.AUTO]
+    if citations != "on":
         config.search.citations.enabled = False
+    if citations == "base-only":
+        # Iterative's base cites, so iterative, which follows it, cites too.
+        base = wrapped_strategy(SearchStrategy.ITERATIVE, config)
         config.search.citations.strategies = {base: True}
+    elif citations == "iterative-only":
+        config.search.citations.strategies = {SearchStrategy.ITERATIVE: True}
+    if style == "comprehensive":
+        config.search.answer_prompt_style = dict.fromkeys(strategies, "comprehensive")
     chain = _router_chain()
     chain.config = config
-    for strategy in (s for s in SearchStrategy if s is not SearchStrategy.AUTO):
+    largest = 0
+    for strategy in strategies:
         resolved = answer_prompt_class(config, strategy).resolve(
             custom_prompts=config.custom_prompts
         )
         templates = estimate_token_count(
             resolved.system_prompt_template + resolved.human_prompt_template
         )
-        for state in _answer_states(strategy, citations_enabled(config, strategy)):
-            sent = templates + estimate_token_count(chain._answer_instructions(state))
-            assert answer_prompt_tokens(config, strategy) >= sent, strategy
-            assert answer_prompt_tokens(config) >= sent, strategy
+        sent = max(
+            templates + estimate_token_count(chain._answer_instructions(state))
+            for state in _answer_states(strategy, citations_enabled(config, strategy))
+        )
+        assert answer_prompt_tokens(config, strategy) == sent, strategy
+        largest = max(largest, sent)
+    assert answer_prompt_tokens(config) >= largest
 
 
 def test_auto_without_a_router_call_still_checks_the_call_limit() -> None:

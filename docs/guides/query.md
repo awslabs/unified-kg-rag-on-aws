@@ -153,7 +153,8 @@ with `QueryTimeoutError` (exported from `unified_kg_rag`; also a builtin
 - A streamed answer must also send its first chunk within
   `search.model_timeout_seconds` of its model call; once chunks flow, the
   overall deadline applies. Any chunk counts: a reasoning model's streamed
-  reasoning (dropped from the answer) ends that wait.
+  reasoning (dropped from the answer) ends that wait. Until answer text
+  arrives, a transient error is retried as for an unstreamed query.
 - `null` turns both deadlines off.
 
 The query's model calls (answer generation and the other query-time LLM

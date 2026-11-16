@@ -351,6 +351,15 @@ def _content_text(message: Any) -> str | None:
     return content if isinstance(content, str) else None
 
 
+def _carries_output(chunk: Any) -> bool:
+    """Whether a streamed chunk carries output: text, or content that is not
+    text (a structured parser's value). An empty chunk (a reasoning model's
+    reasoning, emptied by ``ReasoningStripper`` or sent apart from the
+    content, or a server's empty first chunk) carries none."""
+    text = _content_text(chunk)
+    return text is None or bool(text)
+
+
 def _with_content(message: Any, text: str) -> Any:
     if isinstance(message, str):
         return text
@@ -505,8 +514,11 @@ class TransientRetryRunnable(Runnable[Any, Any]):
     exhausted retries re-raise the original exception unchanged.
 
     ``batch``/``abatch`` use the base-class per-input ``invoke``/``ainvoke``, so
-    each input is retried independently. Streaming retries only while no chunk
-    has been emitted; once output reached the caller a failure propagates.
+    each input is retried independently. Streaming retries only while no
+    chunk carrying output (``_carries_output``) has been emitted: a
+    reasoning model's emptied reasoning chunks, or an empty first chunk, do
+    not stop it, since a retry after them repeats nothing the caller saw.
+    Once output reached the caller a failure propagates.
     """
 
     def __init__(
@@ -573,7 +585,7 @@ class TransientRetryRunnable(Runnable[Any, Any]):
             emitted = False
             try:
                 for chunk in self.bound.stream(input, config, **kwargs):
-                    emitted = True
+                    emitted = emitted or _carries_output(chunk)
                     yield chunk
                 return
             except Exception as exc:
@@ -592,7 +604,7 @@ class TransientRetryRunnable(Runnable[Any, Any]):
             emitted = False
             try:
                 async for chunk in self.bound.astream(input, config, **kwargs):
-                    emitted = True
+                    emitted = emitted or _carries_output(chunk)
                     yield chunk
                 return
             except Exception as exc:

@@ -17,12 +17,14 @@ from typing import Any
 import pytest
 from botocore.exceptions import ClientError
 from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.messages import AIMessageChunk
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import Runnable, RunnableConfig, RunnableLambda
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
 from tests.fixtures.fakes.chat_models import fake_model_info
 from tests.fixtures.fakes.retrievers import StaticRetriever, hit
+from unified_kg_rag import AnswerChunk
 from unified_kg_rag.adapters.aws.bedrock import BedrockLanguageModelFactory
 from unified_kg_rag.adapters.llm.chain_factory import (
     TransientRetryRunnable,
@@ -73,7 +75,9 @@ class _ScriptedModel(Runnable[Any, str]):
     """Fake chat model: raises ``errors`` in order, then returns ``answer``.
 
     Streaming yields the answer word by word and can fail after a number of
-    chunks, to exercise the no-retry-after-output rule.
+    chunks, to exercise the no-retry-after-output rule. A stream first yields
+    ``reasoning`` (chunks without answer text), then raises the next of
+    ``after_reasoning`` if any is left.
     """
 
     def __init__(
@@ -82,10 +86,14 @@ class _ScriptedModel(Runnable[Any, str]):
         *,
         answer: str = _ANSWER,
         fail_stream_after: int | None = None,
+        reasoning: list[Any] | None = None,
+        after_reasoning: list[BaseException] | None = None,
     ) -> None:
         self.errors = list(errors or [])
         self.answer = answer
         self.fail_stream_after = fail_stream_after
+        self.reasoning = list(reasoning or [])
+        self.after_reasoning = list(after_reasoning or [])
         self.calls = 0
 
     def _next(self) -> str:
@@ -106,8 +114,11 @@ class _ScriptedModel(Runnable[Any, str]):
 
     def stream(
         self, input: Any, config: RunnableConfig | None = None, **kwargs: Any
-    ) -> Iterator[str]:
+    ) -> Iterator[Any]:
         answer = self._next()
+        yield from self.reasoning
+        if self.after_reasoning:
+            raise self.after_reasoning.pop(0)
         for i, word in enumerate(answer.split(" ")):
             if self.fail_stream_after is not None and i >= self.fail_stream_after:
                 raise _model_error()
@@ -115,7 +126,7 @@ class _ScriptedModel(Runnable[Any, str]):
 
     async def astream(
         self, input: Any, config: RunnableConfig | None = None, **kwargs: Any
-    ) -> AsyncIterator[str]:
+    ) -> AsyncIterator[Any]:
         for chunk in self.stream(input, config, **kwargs):
             yield chunk
 
@@ -236,6 +247,42 @@ def test_sync_stream_does_not_retry_after_output_was_emitted() -> None:
     with pytest.raises(ClientError):
         list(_query_chain(model).stream(_QUERY))
     assert model.calls == 1
+
+
+# Chunks a stream sends before any answer text: they reach the caller
+# emptied (or empty), so a retry after them repeats no output.
+_TEXTLESS_STARTS = {
+    # Ollama's native thinking: the reasoning is not in the content.
+    "native": [AIMessageChunk(content="", additional_kwargs={"reasoning_content": "a"})]
+    * 3,
+    # A reasoning block in the answer, emptied by the reasoning stripper.
+    "inline": ["<think>", "a ", "</think>\n"],
+    # A server's empty first chunk.
+    "empty": [""],
+}
+
+
+@pytest.mark.parametrize("start", sorted(_TEXTLESS_STARTS))
+async def test_stream_retries_after_chunks_without_answer_text(start: str) -> None:
+    # Regression (rv43 query medium): reasoning chunks pass on emptied (so a
+    # stream's first-chunk window ends on them), and the retry took them for
+    # output: a transient error while the model reasoned failed the stream,
+    # though ainvoke retried it.
+    model = _ScriptedModel(
+        reasoning=_TEXTLESS_STARTS[start], after_reasoning=[_model_error()]
+    )
+    chunks = [c async for c in _query_chain(model).astream(_QUERY)]
+    assert "".join(chunks).strip() == _ANSWER
+    assert model.calls == 2
+
+
+@pytest.mark.parametrize("start", sorted(_TEXTLESS_STARTS))
+def test_sync_stream_retries_after_chunks_without_answer_text(start: str) -> None:
+    model = _ScriptedModel(
+        reasoning=_TEXTLESS_STARTS[start], after_reasoning=[_model_error()]
+    )
+    assert "".join(_query_chain(model).stream(_QUERY)).strip() == _ANSWER
+    assert model.calls == 2
 
 
 def test_retry_disabled_returns_plain_chain() -> None:
@@ -422,6 +469,50 @@ async def test_a_retry_past_the_first_chunk_window_raises_the_model_error(
     ]
     assert "first-chunk window (search.model_timeout_seconds)" in gave_up
     assert "query deadline" not in gave_up
+
+
+@pytest.mark.parametrize("surface", ["astream", "aquery_events"])
+@pytest.mark.parametrize("start", sorted(_TEXTLESS_STARTS))
+async def test_a_retry_after_reasoning_is_not_bounded_by_the_window(
+    surface: str, start: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Regression (rv43 query medium): the model's first chunk, its reasoning,
+    # ends the first-chunk window, but LangChain runs the stream in a copy of
+    # the context the window was open in, so the window's retry deadline
+    # outlived it there: a transient error while the model reasoned past the
+    # window was not retried. The query deadline alone now bounds that retry.
+    real_sleep = asyncio.sleep
+    backoffs: list[float] = []
+
+    async def sleep(delay: float, *args: Any, **kwargs: Any) -> Any:
+        if delay > 0:
+            backoffs.append(delay)
+            delay = 0
+        return await real_sleep(delay, *args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "sleep", sleep)
+    config = _config(_LONG_BACKOFF)
+    config.search.query_timeout_seconds = 6000
+    config.search.model_timeout_seconds = _WINDOW_SECONDS
+    config.providers.rerank.kind = "none"
+    model = _ScriptedModel(
+        reasoning=_TEXTLESS_STARTS[start], after_reasoning=[_model_error()]
+    )
+    chain = _rag_chain(model, config)
+    if surface == "astream":
+        answer = "".join(
+            [c async for c in chain.astream(_RAG_INPUT.model_copy(deep=True))]
+        )
+    else:
+        answer = "".join(
+            [
+                event.text
+                async for event in chain.aquery_events(_RAG_INPUT.model_copy(deep=True))
+                if isinstance(event, AnswerChunk)
+            ]
+        )
+    assert answer.strip() == _ANSWER
+    assert (model.calls, len(backoffs)) == (2, 1)
 
 
 # --- an output repair's failure does not re-run the answered call -----------
