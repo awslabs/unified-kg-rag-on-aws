@@ -931,6 +931,26 @@ def test_a_word_holding_a_sum_form_states_no_number(
     )
 
 
+@pytest.mark.parametrize(
+    ("answer", "gold", "question", "score"),
+    [
+        # Regression (rv37 matching M1): NFKC folds a Chinese comma to
+        # ",", which hid the number after it as a digit group's.
+        ("是的，五家供应商。", "5", None, 1.0),
+        ("据报道，三千元。", "3000", None, 1.0),
+        ("据报道，三千元。", "1000", None, 0.0),
+        ("截至2023年，十二家公司", "12", None, 1.0),
+        # A gold of 0 with a count of its own after the comma.
+        ("没有，三家都未参与。", "0", "有几家公司参与？", 0.0),
+        ("并非没有，三家公司参与。", "0", "有几家公司参与？", 0.0),
+    ],
+)
+def test_a_number_after_a_chinese_comma_is_read(
+    answer: str, gold: str, question: str | None, score: float
+) -> None:
+    assert answer_match_evaluator.number_matches(answer, gold, "zh", question) == score
+
+
 def test_answer_contains_reads_through_a_possessive() -> None:
     assert answer_contains("Depot's crew stores the widgets.", "Depot") == 1.0
     assert answer_contains("Depots store the widgets.", "Depot") == 0.0

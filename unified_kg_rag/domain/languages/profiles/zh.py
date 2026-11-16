@@ -109,6 +109,8 @@ PROFILE = LanguageProfile(
     # "一块儿") and 日 closes a date ("十五日元宵节").
     sum_numerals=frozenset("壹贰貳叁參肆伍陆陸柒捌玖拾佰仟"),
     currency_counters=("元", "圆"),
+    # "一点五万元" (15,000).
+    numeral_decimal_points=frozenset("点點"),
     polarity_words={
         "是": "yes",
         "是的": "yes",

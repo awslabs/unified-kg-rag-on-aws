@@ -251,7 +251,10 @@ Bugs present in 0.3.0.
   multiplier of the Japanese profile, as 億 is. It also reads sums in the financial numerals (`人民币壹拾万元`,
   `金壱萬円`, `叁佰圆整`), only as a well-formed number before 元, 圆 or 円: outside a sum they are letters of other
   words (`大陆人`, `古参社員`, `大陆元首`), and an ordinary amount after such a word keeps its reading (`人参二百円`
-  is 200, `队伍五千元` 5000).
+  is 200, `队伍五千元` 5000). A Chinese decimal before 万 or 億 is read too (`一点五万元` 15,000, not 50,000).
+- `answer_match` dropped or misread a Han numeral after a Chinese comma, which NFKC folds to `,`, as if it continued
+  a digit group: `是的，五家供应商。` stated no number, `据报道，三千元。` 1000, and `没有，三家都未参与。` matched a gold
+  of 0. Only a digit with a separator continues a number (`1.5万`, `3,000万`).
 - A run stopped (a signal, Ctrl-C, its budget) after an ingestion item's answer failed to parse and before the item's
   next attempt kept that answer in the LLM response cache, so the resumed run replayed it and spent one of the item's
   attempts on it. A stop drops the answers of the item's failed attempts and keeps the one in flight.

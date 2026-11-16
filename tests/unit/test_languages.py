@@ -219,6 +219,18 @@ def test_a_sum_in_words_is_of_the_profiles_numerals_and_counters(
     assert bool(language.sum_numerals) == bool(language.currency_counters)
 
 
+@pytest.mark.parametrize("code", list(PROFILES))
+def test_a_decimal_point_of_numerals_is_none_of_them(code: LanguageCode) -> None:
+    # A profile's Han decimal point stands between its numerals, so it is
+    # one character, none of them, and only of a profile that has some.
+    language = PROFILES[code]
+    numerals = {*language.counter_numerals, *language.numeral_multipliers}
+    for point in language.numeral_decimal_points:
+        assert len(point) == 1
+        assert point not in numerals
+    assert not language.numeral_decimal_points or language.counter_numerals
+
+
 def test_a_profile_is_frozen() -> None:
     with pytest.raises(AttributeError):
         PROFILES[KO].name = "x"  # type: ignore[misc]

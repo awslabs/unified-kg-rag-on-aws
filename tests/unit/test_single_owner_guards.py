@@ -407,7 +407,14 @@ def _code_point_range(node: ast.AST, source: Source) -> bool:
     (:func:`_script_bounds`: ``0xAC00 <= cp <= 0xD7A3``, ``(12352, 12447)``,
     ``range(44032, 55204)``, ``chr(0x3040) <= ch``, ``0x3040 <= ord(ch) <=
     0x9FFF``), or a character compared with one script bound
-    (``0xAC00 <= ord(ch)``, ``ch >= "\\u3040"``)."""
+    (``0xAC00 <= ord(ch)``, ``ch >= "\\u3040"``).
+
+    Known limit: a pair is a range's bounds only in increasing order (a
+    decreasing pair bounds nothing), so two one-character words of one
+    script are flagged in code-point order and not in the other:
+    ``("元", "圆")`` is a hit, ``("圆", "元")`` none. A set of words
+    (``frozenset("点點")``) is no pair. A real hit gets an ``allowed``
+    entry with its reason."""
     if isinstance(node, ast.Compare):
         if not all(
             isinstance(op, ast.Lt | ast.LtE | ast.Gt | ast.GtE) for op in node.ops
@@ -1114,6 +1121,8 @@ _G4 = next(g for g in GUARDS if g.name.startswith("G4 ")).find
         (_G4, "ok = 1024 <= port <= 49151\nok = 1000 <= year <= 2999\n", []),
         (_G4, "T = (1000, 30000)\nr = range(1000, 5000, 1000)\n", []),
         (_G4, "S = range(0x3040, 0x30A0)\nok = 0x0400 <= cp <= 0x04FF\n", 2),
+        # Two one-character words: a pair in code-point order only.
+        (_G4, 'C = ("元", "圆")\nD = ("圆", "元")\nE = frozenset("点點")\n', 1),
         (
             calls_mentioning(("collections.Counter",), f"{_SCRIPTS}.script_of"),
             f"from collections import Counter as C\nfrom {_SCRIPTS} import script_of"

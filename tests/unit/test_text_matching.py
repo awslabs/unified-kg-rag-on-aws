@@ -384,6 +384,48 @@ class TestStatedNumbers:
     @pytest.mark.parametrize(
         ("text", "numbers"),
         [
+            # Regression (rv37 matching M1): a comma before a run sets a
+            # clause off, NFKC folding "，" to "," or written ASCII; only a
+            # digit with a separator continues a number ("1.5万", "3,000万").
+            ("是的，五家供应商。", {5}),
+            ("据报道，三千元。", {3000}),
+            ("截至2023年，十二家公司", {12, 2023}),
+            ("每人，五十元", {50}),
+            ("据报道，５万元。", {50_000}),
+            ("合同金额,三万元", {30_000}),
+            ("，叁佰圆整", {300}),
+            ("はい,三社です。", {3}),
+            ("没有，三家都未参与。", {0, 3}),
+            ("1,5万", set()),
+        ],
+    )
+    def test_a_comma_setting_a_clause_off_starts_a_run(
+        self, text: str, numbers: set[float]
+    ) -> None:
+        assert stated_numbers(text) == numbers
+
+    @pytest.mark.parametrize(
+        ("text", "numbers"),
+        [
+            # A Han decimal point before 万 or 億 (zh numeral_decimal_points).
+            ("一点五万元", {15_000}),
+            ("十二点五万元", {125_000}),
+            ("投资额为一点二亿元", {120_000_000}),
+            ("一點五萬元", {15_000}),
+            # Before a smaller multiplier it is another word: a time, a
+            # little.
+            ("三点五十分", set()),
+            ("便宜一点五千元", {5000}),
+        ],
+    )
+    def test_a_han_decimal_point_before_a_section_multiplier(
+        self, text: str, numbers: set[float]
+    ) -> None:
+        assert stated_numbers(text) == numbers
+
+    @pytest.mark.parametrize(
+        ("text", "numbers"),
+        [
             # Regression (rv35 index M1): a form of a sum in words is a
             # letter of another word outside a sum, even before a counter.
             ("大陆人", set()),
@@ -408,6 +450,10 @@ class TestStatedNumbers:
             ("队伍五千元", {5000}),
             ("新参三千円", {3000}),
             ("收拾五千元", {5000}),
+            # A sum's terms descend strictly ("拾十元" is none), each
+            # section 万 closes on its own ("拾100万" is none).
+            ("收拾十元", {10}),
+            ("收拾100万元", {1_000_000}),
             ("人參一百元一斤", {100}),
             ("大陆三万元起", {30_000}),
             ("収拾100円", {100}),
