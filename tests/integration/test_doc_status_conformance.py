@@ -595,11 +595,12 @@ def test_sqlite_locked_registry_waits_store_timeout_seconds(tmp_path: Path) -> N
     store.put(_record("d1"))
     holder = sqlite3.connect(path, isolation_level=None)
     holder.execute("BEGIN IMMEDIATE")
+    # The lock wait SQLite applies (sqlite3's default is 5000 ms).
+    (busy_ms,) = store.connection.execute("PRAGMA busy_timeout").fetchone()
+    assert busy_ms == 200
     try:
-        started = time.monotonic()
         with pytest.raises(DocStatusRegistryError, match="stayed locked for 0.2s"):
             store.put(_record("d2"))
-        assert time.monotonic() - started < 3
     finally:
         holder.execute("ROLLBACK")
         holder.close()

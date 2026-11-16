@@ -161,12 +161,16 @@ def test_evicted_retriever_whose_close_drives_a_loop_is_closed() -> None:
 
 
 class _SlowClosingRetriever(_Retriever):
-    """Closes like a Neptune client whose websocket close hangs."""
+    """Closes like a Neptune client whose websocket close hangs; ``returned``
+    counts the closes that returned (released or timed out)."""
 
     release = threading.Event()
+    returned = 0
 
     def close(self) -> None:
-        assert self.release.wait(timeout=10)
+        released = self.release.wait(timeout=10)
+        type(self).returned += 1
+        assert released
         super().close()
 
 
@@ -174,13 +178,13 @@ def test_evicting_a_slowly_closing_retriever_does_not_stall_the_query() -> None:
     # Regression: the eviction on the query path joined the close thread for
     # up to 30 s, so a slow Neptune close stalled the next query.
     _SlowClosingRetriever.release.clear()
+    _SlowClosingRetriever.returned = 0
     chain, built = _chain(_SlowClosingRetriever)
     try:
         _run_on_fresh_loop(chain.ainvoke({"query": "q"}))  # type: ignore[arg-type]
-        started = time.monotonic()
         _run_on_fresh_loop(chain.ainvoke({"query": "q"}))  # type: ignore[arg-type]
-        assert time.monotonic() - started < 2
-        assert built[0].closed == 0  # still closing in the background
+        # Still closing in the background: the query did not wait for it.
+        assert _SlowClosingRetriever.returned == 0
     finally:
         _SlowClosingRetriever.release.set()
         chain.close()
@@ -194,6 +198,7 @@ def test_chain_close_does_not_wait_for_another_chains_background_close() -> None
     # (or GC-finalizing) one chain waited up to 30 s for another chain's slow
     # close, which could block the event loop the finalizer ran on.
     _SlowClosingRetriever.release.clear()
+    _SlowClosingRetriever.returned = 0
     slow, slow_built = _chain(_SlowClosingRetriever)
     other, _ = _chain()
     try:
@@ -202,12 +207,11 @@ def test_chain_close_does_not_wait_for_another_chains_background_close() -> None
         assert slow_built[0].closed == 0  # still closing in the background
         _run_on_fresh_loop(other.ainvoke({"query": "q"}))  # type: ignore[arg-type]
 
-        started = time.monotonic()
+        # Neither waits for the other chain's close, still in flight.
         other.close()
-        assert time.monotonic() - started < 2
-        started = time.monotonic()
+        assert _SlowClosingRetriever.returned == 0
         _run_on_fresh_loop(other.aclose())
-        assert time.monotonic() - started < 2
+        assert _SlowClosingRetriever.returned == 0
     finally:
         _SlowClosingRetriever.release.set()
         slow.close()
