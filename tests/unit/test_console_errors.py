@@ -285,3 +285,33 @@ async def test_an_error_after_the_response_started_is_logged_once_and_not_answer
         for r in caplog.records
         if r.levelno >= logging.INFO
     )
+
+
+def test_a_job_s_record_carries_its_usd_for_the_job_card(tmp_path: Path) -> None:
+    """The Ingest job card showed no USD, the Dashboard priced only
+    evaluations (rv42): jobs/{id} prices an ingestion as the dashboard does."""
+    from unified_kg_rag.application.cli.console.store import ConsoleStore
+
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        "models:\n  prices:\n    m:\n      input_per_million_tokens: 3\n"
+        "      output_per_million_tokens: 15\n"
+    )
+    counts = {"llm_calls": 2, "input_tokens": 2000, "output_tokens": 200}
+    store = ConsoleStore(tmp_path / "cache" / "console" / "console.sqlite3")
+    store.save_job(
+        {
+            "id": "j1",
+            "kind": "ingest",
+            "namespace": "default",
+            "created": 1.0,
+            "started": 1.0,
+            "ended": 2.0,
+            "status": "succeeded",
+            "result": {"token_usage": {**counts, "by_model": {"m": counts}}},
+        }
+    )
+    store.close()
+    job = _client(tmp_path, config).get("/api/jobs/j1", headers=HEADERS)
+    assert job.status_code == 200, job.text
+    assert job.json()["cost_usd"] == pytest.approx((2000 * 3 + 200 * 15) / 1e6)

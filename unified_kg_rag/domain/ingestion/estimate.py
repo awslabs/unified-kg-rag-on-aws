@@ -26,8 +26,18 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from unified_kg_rag.domain.models import Config, PipelineStageType
-from unified_kg_rag.domain.pricing import ModelPrice, price_of, tokens_cost_usd
+from unified_kg_rag.domain.models import (
+    ChunkingStrategy,
+    Config,
+    ModelRole,
+    PipelineStageType,
+)
+from unified_kg_rag.domain.pricing import (
+    ModelPrice,
+    price_of,
+    token_rates,
+    tokens_cost_usd,
+)
 
 __all__ = [
     "GRAPH_DEPENDENT_STAGES",
@@ -36,8 +46,11 @@ __all__ = [
     "RunEstimate",
     "StageCalls",
     "StageEstimate",
+    "STAGE_MODEL_ROLES",
     "graph_dependent_calls",
     "price_stages",
+    "run_model_roles",
+    "unpriced_run_models",
 ]
 
 EstimateBound = Literal["exact", "at most", "about"]
@@ -62,6 +75,71 @@ GRAPH_DEPENDENT_STAGES: dict[str, tuple[str, Callable[[Config], bool]]] = {
     ),
     "summary_tree": ("a summary of each cluster of the summary tree", lambda c: True),
 }
+
+# The model role each stage calls, and whether a config's run calls it at
+# all: the models a run's budget (processing.max_run_usd) must price.
+STAGE_MODEL_ROLES: dict[
+    PipelineStageType, tuple[ModelRole, Callable[[Config], bool]]
+] = {
+    PipelineStageType.TEXT_CHUNKING: (
+        ModelRole.CHUNKING,
+        lambda c: c.processing.chunking.chunker_type is ChunkingStrategy.INTELLIGENT,
+    ),
+    PipelineStageType.TRANSLATION: (
+        ModelRole.TRANSLATION,
+        lambda c: c.processing.translation.enabled
+        and not c.processing.translation.is_noop,
+    ),
+    PipelineStageType.GRAPH_EXTRACTION: (ModelRole.GRAPH_EXTRACTION, lambda c: True),
+    PipelineStageType.GLEANING: (
+        ModelRole.GLEANING,
+        lambda c: c.processing.gleaning.enabled,
+    ),
+    PipelineStageType.GRAPH_RESOLUTION: (
+        ModelRole.DESCRIPTION_SUMMARY,
+        GRAPH_DEPENDENT_STAGES["graph_resolution"][1],
+    ),
+    PipelineStageType.CLAIM_EXTRACTION: (
+        ModelRole.CLAIM_EXTRACTION,
+        lambda c: c.processing.claim_extraction.enabled,
+    ),
+    PipelineStageType.COMMUNITY_DETECTION: (
+        ModelRole.COMMUNITY_REPORT,
+        GRAPH_DEPENDENT_STAGES["community_detection"][1],
+    ),
+    PipelineStageType.SUMMARY_TREE: (
+        ModelRole.SUMMARY_TREE,
+        GRAPH_DEPENDENT_STAGES["summary_tree"][1],
+    ),
+}
+
+
+def run_model_roles(
+    config: Config, stages: Collection[PipelineStageType]
+) -> list[ModelRole]:
+    """The model roles a run of ``stages`` under ``config`` calls
+    (:data:`STAGE_MODEL_ROLES`), and the output fixer's when it calls any
+    (it repairs their malformed output)."""
+    roles = [
+        role
+        for stage, (role, calls) in STAGE_MODEL_ROLES.items()
+        if stage in stages and calls(config)
+    ]
+    return [*roles, ModelRole.FIXING] if roles else []
+
+
+def unpriced_run_models(
+    config: Config, stages: Collection[PipelineStageType]
+) -> dict[str, list[str]]:
+    """The models a run of ``stages`` calls that ``models.prices`` gives no
+    token rates, each with the roles it serves: a run under
+    ``processing.max_run_usd`` would stop at its first call."""
+    unpriced: dict[str, list[str]] = {}
+    for role in run_model_roles(config, stages):
+        model = str(config.model_id(role))
+        if token_rates(price_of(config.models.prices, model)) is None:
+            unpriced.setdefault(model, []).append(role.value)
+    return unpriced
 
 
 def graph_dependent_calls(

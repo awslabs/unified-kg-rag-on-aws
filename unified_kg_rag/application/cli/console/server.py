@@ -908,9 +908,16 @@ def create_app(
     @app.get("/api/jobs/{job_id}")
     async def job(job_id: str) -> dict[str, Any]:
         try:
-            return state.jobs.get(job_id)
+            record = state.jobs.get(job_id)
         except KeyError:
             raise HTTPException(404, f"no job '{job_id}'") from None
+        # Its USD at models.prices, as the dashboard prices it (the job
+        # card's; none while the config does not load).
+        try:
+            config = state.load_config()
+        except ConfigurationError:
+            return record
+        return {**record, "cost_usd": dashboard.job_cost(record, config)}
 
     @app.post("/api/jobs/{job_id}/stop")
     async def stop(job_id: str) -> dict[str, Any]:

@@ -3781,15 +3781,20 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         return rag_input, input_dict
 
     def _check_effort(self, rag_input: RAGInput) -> None:
+        """:meth:`check_effort` of the query's ``effort``."""
+        self.check_effort(rag_input.effort)
+
+    def check_effort(self, effort: EffortLevel | None) -> None:
         """Refuse an ``effort`` the answer model cannot apply, before any
         model call: one that does not reason (a local server's, a Bedrock
         model without thinking), which would drop it without a word, or a
         level it does not take (``LanguageModelInfo.supported_efforts``).
+        ``run-eval`` checks every effort its dataset asks for with it before
+        answering any.
 
         Raises:
             InvalidArgumentError: Naming the model and what it takes.
         """
-        effort = rag_input.effort
         if effort is None:
             return
         model_id = self.config.model_id(ModelRole.ANSWER_GENERATION)
@@ -4702,9 +4707,10 @@ _QUERY_LIMIT_SETTINGS: dict[str, str] = {
 
 
 # An absolute deadline (``time.monotonic()``) a caller set for the queries it
-# runs (``caller_deadline``): a query's own deadline is never later.
-_CALLER_DEADLINE: contextvars.ContextVar[float | None] = contextvars.ContextVar(
-    "kg_rag_caller_deadline", default=None
+# runs, and the setting it came from (``caller_deadline``): a query's own
+# deadline is never later.
+_CALLER_DEADLINE: contextvars.ContextVar[tuple[float, str] | None] = (
+    contextvars.ContextVar("kg_rag_caller_deadline", default=None)
 )
 
 
@@ -4716,9 +4722,12 @@ def new_query_id() -> str:
 
 
 @contextlib.contextmanager
-def caller_deadline(at: float | None) -> Iterator[None]:
+def caller_deadline(
+    at: float | None, setting: str = "the caller's deadline"
+) -> Iterator[None]:
     """Queries started in this context end by ``at`` (``time.monotonic()``),
-    if it comes before their own ``search.query_timeout_seconds``.
+    if it comes before their own ``search.query_timeout_seconds``; a query
+    timed out by it names ``setting`` (the caller's setting it came from).
 
     A surface that bounds a whole call (the MCP server: the wait for a call
     slot and the query under one deadline) passes its deadline here, so the
@@ -4726,11 +4735,17 @@ def caller_deadline(at: float | None) -> Iterator[None]:
     one (metrics, ids, the span's ``error_class``) instead of being cancelled
     from outside unrecorded.
     """
-    token = _CALLER_DEADLINE.set(at)
+    token = _CALLER_DEADLINE.set(None if at is None else (at, setting))
     try:
         yield
     finally:
         _CALLER_DEADLINE.reset(token)
+
+
+def deadline_text(seconds: float) -> str:
+    """``seconds`` as a timeout message states it: to the hundredth, one
+    under 5 ms to its first digit (``0.001``, not ``0``)."""
+    return f"{round(seconds, 2) or float(f'{seconds:.1g}'):g}"
 
 
 class _QueryDeadline:
@@ -4752,12 +4767,11 @@ class _QueryDeadline:
         now = self.started = time.monotonic()
         self.at = None if seconds is None else now + seconds
         caller = _CALLER_DEADLINE.get()
-        if caller is not None and (self.at is None or caller < self.at):
+        if caller is not None and (self.at is None or caller[0] < self.at):
             # The query's budget is the time its caller left it (after a
             # wait for a call slot), not the setting.
-            self.at = caller
-            self.seconds = max(0.0, caller - now)
-            self.setting = "the caller's deadline"
+            self.at, self.setting = caller
+            self.seconds = max(0.0, self.at - now)
         self._scope: _DeadlineScope | None = None
 
     def time_left(self) -> float | None:
@@ -4877,7 +4891,7 @@ class _DeadlineScope:
             setting = self._deadline.setting
             what = "The query did not finish"
         assert limit is not None
-        message = f"{what} within {round(limit, 2):g} s"
+        message = f"{what} within {deadline_text(limit)} s"
         logger.warning("%s (%s); cancelled its calls in flight", message, setting)
         return QueryTimeoutError(
             f"{message} ({setting}); its calls in flight were cancelled",

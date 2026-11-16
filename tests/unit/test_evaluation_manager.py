@@ -835,6 +835,36 @@ class TestWarmUp:
         with pytest.raises(type(error)):
             await manager.warm_up(EvaluationQuery(query_id="q1", question="Who?"))
 
+    async def test_an_item_effort_the_model_refuses_fails_the_warm_up(
+        self, config: Config
+    ) -> None:
+        """An item's metadata.effort the answer model refuses failed that
+        item alone, the run exiting 0, while --effort stopped it (rv42):
+        every effort the run asks for is checked before any answer."""
+        from unified_kg_rag.shared.exceptions import InvalidArgumentError
+
+        checked: list[str] = []
+        answered: list[dict] = []
+
+        class _Chain:
+            def check_effort(self, effort):
+                checked.append(effort)
+                if effort == "high":
+                    raise InvalidArgumentError("the answer model does not reason")
+
+            async def ainvoke(self, inputs, config=None):
+                answered.append(inputs)
+
+        config.evaluation.enabled_evaluators = [EvaluatorType.ANSWER_MATCH]
+        manager = EvaluationManager(config, rag_chain=_Chain())
+        first = EvaluationQuery(query_id="q1", question="Who?")
+        with pytest.raises(InvalidArgumentError, match="does not reason"):
+            await manager.warm_up(first, efforts=[None, "low", "high", "low"])
+        assert checked == ["low", "high"] and answered == []
+        checked.clear()
+        await manager.warm_up(first, efforts=[None, "low"])
+        assert checked == ["low"] and len(answered) == 1
+
     def test_the_manifest_records_dense_script_and_the_usage_schema(
         self, config: Config
     ) -> None:

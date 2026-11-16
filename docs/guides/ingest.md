@@ -160,11 +160,14 @@ run-ingestion --source-directory ./source --config-path config.yaml --estimate
   `max_rounds`: an upper bound, since a round re-sends only the units the
   last one added to) and the claims (at most one per unit). Each call is its
   prompt's templates plus the text it reads, by the token estimate the usage
-  records count a call's start at; a fake-model run of a test corpus makes
-  the calls and reads the tokens the estimate gives within 15%. Translated
-  into another language, the extraction, gleaning and claims read the
-  translation, whose length is known only once it is written: they are
-  counted at the source text and marked `about`.
+  records count a call's start at. A fake-model run of a test corpus checks
+  it: the calls of each stage within 15% of those the run made, and the
+  input tokens of the extraction and the claims within 15% of what the same
+  estimator counts in the prompts the run sent. That checks the prompts the
+  estimate assembles, not a model's tokenizer: the tokens Bedrock reports
+  can differ. Translated into another language, the extraction, gleaning
+  and claims read the translation, whose length is known only once it is
+  written: they are counted at the source text and marked `about`.
 - Output tokens are estimated at 0.52 times the input, the ratio of the
   measured benchmark build
   ([evidence](../concepts/defaults-and-evidence.md#how-the-measurements-were-run)).
@@ -191,8 +194,12 @@ answered; each run gets the budget anew, and a cached response is no call
 (nor holds the budget while it is looked up).
 `max_run_usd` prices the calls so far at the tokens they reported and those
 in flight at their estimated input, and the stop waits for the calls in
-flight, so a run can end past it by their output; a model without a price stops the run at its first
-call, naming it. Embedding requests count in neither.
+flight, so a run can end past it by their output. `run-ingestion` refuses
+a `max_run_usd` run whose stages call a model without a price before any
+stage runs: it exits `2` (`error_class` `configuration`) naming the model
+and its roles. A pipeline run from Python, or a call the check did not
+foresee, stops at that model's first call instead, naming it. Embedding
+requests count in neither.
 
 ## Large and heterogeneous corpora
 

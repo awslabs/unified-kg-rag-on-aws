@@ -405,3 +405,50 @@ async def test_an_odd_dataset_is_balanced_over_two_repeats(eval_config) -> None:
             s: sum(p for p, t in enumerate(asked) if t == s) for s in ("local", "mix")
         }
         assert positions["local"] == positions["mix"], (i, asked)
+
+
+@pytest.mark.parametrize("order", ["sequential", "interleaved"])
+async def test_an_item_effort_the_answer_model_refuses_stops_the_run_first(
+    eval_config, tmp_path, order: str
+) -> None:
+    """An item's metadata.effort the answer model refuses failed that item
+    alone and the run exited 0; --effort stopped it with exit 2 (rv42)."""
+    from unified_kg_rag.shared.exceptions import InvalidArgumentError
+
+    data = tmp_path / "eval.json"
+    data.write_text(
+        json.dumps(
+            [
+                {"question": "Who ships 0?", "answer": "Vendor"},
+                {
+                    "question": "Who ships 1?",
+                    "answer": "Vendor",
+                    "metadata": {"effort": "high"},
+                },
+            ]
+        )
+    )
+
+    class _NoReasoningChain(_DriftingChain):
+        def check_effort(self, effort: str | None) -> None:
+            if effort is not None:
+                raise InvalidArgumentError(
+                    f"effort '{effort}' cannot apply: the answer model does not reason"
+                )
+
+    args = run_evaluation.CommandLineInterface().parser.parse_args(
+        [
+            "--data-path",
+            str(data),
+            "--output-directory",
+            str(tmp_path / "out"),
+            "--search-strategy",
+            "local,mix",
+            "--run-order",
+            order,
+        ]
+    )
+    chain = _NoReasoningChain()
+    with pytest.raises(InvalidArgumentError, match="'high' cannot apply"):
+        await run_evaluation.EvaluationRunner(args, chain, eval_config).run()
+    assert chain.calls == 0  # no answer, not even the warm-up's

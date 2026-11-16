@@ -49,6 +49,7 @@ from unified_kg_rag.application.cli.mcp_server import (
 )
 from unified_kg_rag.application.cli.mcp_tools import KnowledgeGraphTools
 from unified_kg_rag.application.cli.metrics_args import (
+    QUERY_METRICS_HELP,
     add_metrics_sink_argument,
     build_metrics_sink,
 )
@@ -75,6 +76,7 @@ from unified_kg_rag.shared import (
 )
 from unified_kg_rag.shared.exceptions import error_text
 from unified_kg_rag.shared.logging import log_error
+from unified_kg_rag.shared.metrics import QUERY_METRICS_NAMESPACE
 from unified_kg_rag.shared.utils import event_loop
 
 logger = get_logger(__name__)
@@ -151,9 +153,8 @@ def build_parser() -> argparse.ArgumentParser:
         parser,
         "Where to send query metrics: 'none' (default) or 'cloudwatch' "
         "(CloudWatch EMF to stderr, with the logs, as stdout is the protocol's: "
-        "query_latency_ms, the outcome counts query_failed, query_degraded "
-        "and query_abstained, and query_throttled_requests of each kg_answer "
-        "call under unified_kg_rag/query, "
+        f"{QUERY_METRICS_HELP} of each kg_answer call under "
+        f"{QUERY_METRICS_NAMESPACE}, "
         "with an Environment dimension when UKR_METRICS_ENVIRONMENT is set and "
         "the Strategy that ran), which the CDK stack's query alarms read",
     )

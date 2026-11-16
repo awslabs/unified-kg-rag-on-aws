@@ -21,6 +21,7 @@ from unified_kg_rag.application.cli.conventions import status_error_class
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.domain.models.usage import LLMUsage, LLMUsageCounts
 from unified_kg_rag.domain.pricing import price_of, usage_cost_usd
+from unified_kg_rag.domain.retrieval.abstention import REASON_QUERY_LIMIT
 from unified_kg_rag.shared.utils.stats import quantile
 
 _COUNTERS = (
@@ -57,6 +58,15 @@ def _could_decline(query: Mapping[str, Any]) -> bool:
     """Whether the question was served and ended in an answer or a decline:
     the decline rate's denominator."""
     return _served(query) and query.get("outcome") not in _FAILED
+
+
+def _limited(query: Mapping[str, Any]) -> bool:
+    """Whether the question declined at a query limit (``limits.*``): the
+    caller's budget left no room to answer, which says nothing of the corpus
+    the decline rate reads."""
+    return bool(query.get("abstained")) and (
+        query.get("abstention_reason") == REASON_QUERY_LIMIT
+    )
 
 
 def _latency(query: Mapping[str, Any]) -> float | None:
@@ -190,10 +200,11 @@ def summarize(
                     if usage
                     else None
                 ),
-                "cost_usd": _job_cost(job),
+                "cost_usd": job_cost(job, config),
             }
         )
-    decided = sum(map(_could_decline, queries))
+    limited = sum(map(_limited, queries))
+    decided = sum(map(_could_decline, queries)) - limited
     abstained = sum(bool(q.get("abstained")) for q in queries)
     return {
         "totals": {
@@ -201,8 +212,10 @@ def summarize(
             "answered": sum(q["outcome"] == "answered" for q in queries),
             "abstained": abstained,
             # Of the questions served that answered or declined: neither
-            # refused, cancelled nor failed.
-            "decline_rate": abstained / decided if decided else None,
+            # refused, cancelled nor failed, nor declined at a query limit
+            # (``limited``, counted apart).
+            "decline_rate": (abstained - limited) / decided if decided else None,
+            "limited": limited,
             "errors": sum(q["outcome"] in _FAILED for q in queries),
             # Questions refused as asked (a namespace without an index, a
             # filter to change): the caller's to fix, not errors, and left
@@ -239,9 +252,20 @@ def _job_usage(job: Mapping[str, Any]) -> dict[str, Any]:
     return total
 
 
-def _job_cost(job: Mapping[str, Any]) -> float | None:
-    """An evaluation job's USD from its comparison's cost block, when priced."""
-    comparison = (job.get("result") or {}).get("comparison") or {}
+def job_cost(job: Mapping[str, Any], config: Config) -> float | None:
+    """A job's USD, when priced: an ingestion's from its model usage at
+    ``models.prices`` (a run stopped at its budget included), an
+    evaluation's from its comparison's cost block."""
+    result = job.get("result") or {}
+    if job.get("kind") == "ingest":
+        by_model = (result.get("token_usage") or {}).get("by_model") or {}
+        if not by_model:
+            return None
+        usd, _ = usage_cost_usd(
+            LLMUsage.model_validate({"by_model": by_model}), config.models.prices
+        )
+        return usd
+    comparison = result.get("comparison") or {}
     strategies = (comparison.get("cost") or {}).get("strategies") or {}
     totals = [
         s.get("usd_total")

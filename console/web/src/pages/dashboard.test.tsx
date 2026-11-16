@@ -5,8 +5,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../i18n/i18n";
 import { DashboardPage } from "./DashboardPage";
 
-function serve(refused: number) {
-  const totals = { queries: 4, answered: 3, abstained: 0, decline_rate: 0, errors: 0, refused, latency_p50: 1, latency_p95: 2, cost_usd: null, priced_queries: 0 };
+function serve(refused: number, limited = 0) {
+  const totals = { queries: 4, answered: 3, abstained: limited, decline_rate: 0, limited, errors: 0, refused, latency_p50: 1, latency_p95: 2, cost_usd: null, priced_queries: 0 };
   const strategy = { strategy: "local", queries: 4 - refused, abstained: 0, errors: 0, latency_p50: 1, latency_p95: 2, tokens_per_query: 10, cost_usd: null, cost_per_query: null };
   const body = { totals, strategies: [strategy], models: [], roles: [], timeline: [], jobs: [], unpriced_models: [], prices_configured: false };
   vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(body), { status: 200 })));
@@ -34,5 +34,27 @@ describe("DashboardPage", () => {
     );
     await screen.findByText("Refused");
     expect(screen.queryByText(/counts refused questions too/)).not.toBeInTheDocument();
+  });
+
+  it("counts declines at a query limit apart from the decline rate (rv42)", async () => {
+    serve(0, 2);
+    render(
+      <I18nProvider initial="ko">
+        <DashboardPage />
+      </I18nProvider>,
+    );
+    expect(await screen.findByText("한도로 거절")).toBeInTheDocument();
+    expect(screen.getByText(/거절 비율에서 뺍니다/)).toBeInTheDocument();
+  });
+
+  it("shows no such figure when none declined at a limit", async () => {
+    serve(0);
+    render(
+      <I18nProvider initial="en">
+        <DashboardPage />
+      </I18nProvider>,
+    );
+    await screen.findByText("Refused");
+    expect(screen.queryByText("Declined at a limit")).not.toBeInTheDocument();
   });
 });

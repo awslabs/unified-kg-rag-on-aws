@@ -36,6 +36,7 @@ __all__ = [
     "REASON_NO_REPORTS",
     "REASON_QUERY_LIMIT",
     "MarkerStreamFilter",
+    "skipped_at_limit",
     "split_marker",
 ]
 
@@ -55,6 +56,13 @@ REASON_NO_REPORTS = "no_reports"
 # The query's limits (search.query_max_*, RAGInput.limits) left out every
 # step that would have found a context: no "no information" in its place.
 REASON_QUERY_LIMIT = "query_limit"
+
+
+def skipped_at_limit(reason: str) -> bool:
+    """Whether a degraded step's ``reason`` says the query's limits left it
+    out (``query_limit``, or ``query_limit: <detail>``), not that it failed."""
+    return reason == REASON_QUERY_LIMIT or reason.startswith(f"{REASON_QUERY_LIMIT}:")
+
 
 # Characters a streamed answer holds back, at most, before the marker is
 # ruled in or out (leading decoration plus the token), and the characters

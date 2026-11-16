@@ -446,6 +446,18 @@ async def test_a_blocked_answer_is_recorded_as_blocked(tmp_path: Path) -> None:
     await service.close()
 
 
+async def test_a_decline_is_recorded_with_its_reason(tmp_path: Path) -> None:
+    """The dashboard counts a decline at a query limit apart (rv42)."""
+    store = ConsoleStore(tmp_path / "s.sqlite3")
+    chain = _Chain(_output(abstained=True, abstention_reason="query_limit"))
+    service = AskService(Config, store, chain_factory=lambda _c: chain)
+    await _drain(service, "q")
+    (row,) = store.queries()
+    assert (row["outcome"], row["abstention_reason"]) == ("abstained", "query_limit")
+    assert dashboard.summarize([row], [], Config())["totals"]["limited"] == 1
+    await service.close()
+
+
 def test_run_ingestion_has_a_flag_for_the_integrity_question_alone() -> None:
     from unified_kg_rag.application.cli.run_ingestion_pipeline import (
         CommandLineInterface,

@@ -180,6 +180,11 @@ async def test_an_effort_the_answer_model_cannot_apply_is_refused_first(
     assert factory.kwargs == []  # no model was built, none was called
     # Without one the same model answers.
     assert (await chain.ainvoke(_input())).answer == _ANSWER
+    # The same check without a query (run-eval's warm-up of every item's
+    # effort), and none for no effort.
+    with pytest.raises(ToolArgumentError, match=match):
+        chain.check_effort(effort)
+    chain.check_effort(None)
 
 
 def test_an_older_claude_thinks_on_the_effort_s_budget(

@@ -38,6 +38,7 @@ from unified_kg_rag.application.cli.conventions import (
 from unified_kg_rag.application.cli.display import console, markup_safe
 from unified_kg_rag.application.cli.help_text import doc_epilog
 from unified_kg_rag.application.cli.metrics_args import (
+    QUERY_METRICS_HELP,
     add_metrics_sink_argument,
     build_metrics_sink,
 )
@@ -46,6 +47,7 @@ from unified_kg_rag.application.plugins import load_plugins
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import ConfigurationError, get_logger
 from unified_kg_rag.shared.extras import extra_hint
+from unified_kg_rag.shared.metrics import QUERY_METRICS_NAMESPACE
 
 logger = get_logger(__name__)
 
@@ -150,9 +152,8 @@ def _build_parser() -> argparse.ArgumentParser:
         parser,
         "Where to send the questions' query metrics: 'none' (default) or "
         "'cloudwatch' (CloudWatch EMF to stdout, to stderr with --output-format "
-        "json: query_latency_ms, the outcome counts query_failed, "
-        "query_degraded and query_abstained, and query_throttled_requests under "
-        "unified_kg_rag/query, with an Environment dimension when "
+        f"json: {QUERY_METRICS_HELP} under {QUERY_METRICS_NAMESPACE}, with an "
+        "Environment dimension when "
         "UKR_METRICS_ENVIRONMENT is set and the Strategy that ran)",
     )
     add_config_arguments(parser)

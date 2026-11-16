@@ -1613,3 +1613,25 @@ def test_a_section_the_limit_cuts_short_is_listed_as_cut() -> None:
         "context_optimization",
         "query_limit: 1 of 1 sections cut",
     )
+
+
+def test_a_skipped_optional_call_is_logged_as_skipped_at_the_limit(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The line said the call was skipped "to keep the answer's call or
+    input", also in a search, which keeps nothing for an answer (rv42)."""
+    import logging
+
+    from unified_kg_rag.application.retrieval.query_processing import (
+        record_limit_skip,
+    )
+    from unified_kg_rag.shared.exceptions import OptionalCallSkipped
+
+    error = OptionalCallSkipped("over", limit="search.query_max_model_calls", value=2)
+    with caplog.at_level(logging.INFO):
+        record_limit_skip("translation", "no call left", error)
+    assert (
+        "translation skipped at the query's limit (search.query_max_model_calls)"
+        in caplog.text
+    )
+    assert "keep the answer" not in caplog.text

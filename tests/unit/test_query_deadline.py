@@ -51,6 +51,7 @@ from unified_kg_rag.application.retrieval.rag_chain import (
     RAGInput,
     RAGOutput,
     caller_deadline,
+    deadline_text,
 )
 from unified_kg_rag.domain.models import (
     Config,
@@ -258,6 +259,28 @@ async def test_a_callers_earlier_deadline_states_the_budget_the_query_had() -> N
     # The budget left, rounded to hundredths.
     assert re.search(r"within 0(\.\d{1,2})? s", str(raised.value))
     assert "300" not in str(raised.value)
+
+
+async def test_a_callers_deadline_names_its_setting_and_a_short_one_is_not_0_s() -> (
+    None
+):
+    """MCP's limits.deadline_seconds: 0.001 failed with "did not finish
+    within 0 s (the caller's deadline)", naming neither (rv42)."""
+    chain = _chain(
+        _config(query_timeout_seconds=300), _Factory(_SlowChatModel(first_delay=60))
+    )
+    with caller_deadline(time.monotonic() + 0.3, "limits.deadline_seconds"):
+        with pytest.raises(QueryTimeoutError) as raised:
+            await asyncio.wait_for(chain.ainvoke(_query()), timeout=30)
+    assert "(limits.deadline_seconds)" in str(raised.value)
+    assert [deadline_text(s) for s in (0.001, 0.0004, 0.0, 0.3, 12.345, 600)] == [
+        "0.001",
+        "0.0004",
+        "0",
+        "0.3",
+        "12.35",
+        "600",
+    ]
 
 
 async def test_asearch_is_bounded_too() -> None:

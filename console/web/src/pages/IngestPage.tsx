@@ -488,7 +488,7 @@ export function IngestResult({ job }: { job: JobRecord }) {
   return (
     <>
       {noEntities ? <Notice tone="warn" title={t("ingest.result.noEntitiesTitle")}>{t("ingest.result.noEntities")}</Notice> : null}
-      <IngestCounts result={result} usage={{ ...usage, llm_calls: runModelCalls(job) as number }} warnings={warnings.count} pipelineId={job.pipeline_id} />
+      <IngestCounts result={result} usage={{ ...usage, llm_calls: runModelCalls(job) as number }} cost={job.cost_usd ?? null} warnings={warnings.count} pipelineId={job.pipeline_id} />
       {warnings.lines.length ? (
         <details>
           <summary>{t("ingest.result.showWarnings")}</summary>
@@ -506,15 +506,17 @@ export function IngestResult({ job }: { job: JobRecord }) {
 function IngestCounts({
   result,
   usage,
+  cost,
   warnings,
   pipelineId,
 }: {
   result: Record<string, unknown>;
   usage: Record<string, number>;
+  cost: number | null;
   warnings: number;
   pipelineId: string | null;
 }) {
-  const { t, number } = useI18n();
+  const { t, number, usd } = useI18n();
   return (
     <dl className="kv">
       <dt>{t("ingest.result.pipeline")}</dt>
@@ -529,6 +531,12 @@ function IngestCounts({
       <dd>
         {number(usage.input_tokens)} / {number(usage.output_tokens)}
       </dd>
+      {cost != null ? (
+        <>
+          <dt>{t("ingest.result.cost")}</dt>
+          <dd>{usd(cost)}</dd>
+        </>
+      ) : null}
       <dt>{t("ingest.result.warnings")}</dt>
       <dd>{number(warnings)}</dd>
     </dl>

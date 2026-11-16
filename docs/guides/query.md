@@ -52,7 +52,10 @@ What the text output shows:
   20 unless `--verbose`.
 - **A partial answer** (one given without a step that failed, such as a
   throttled map call of global search) says so on a line after it:
-  `Partial answer: given without global_map (1/3 reports unrated)`; a
+  `Partial answer: given without steps that failed: global_map (1/3 reports
+  unrated)`; the steps the query's limits skipped are a line of their own
+  (`Skipped to stay within the query's limits: ...`), and an answer they
+  left no context declines with `Declined: the query's limits ...`; a
   citation lineage read that failed adds `Some citations name no document`.
   `--verbose` also lists the model-written sections the answer may cite
   (global search's key points, DRIFT's intermediate answers).
@@ -271,7 +274,9 @@ An effort the answer model cannot apply is refused before any model call
 take, or any level on a model that does not reason (a local server's, or a
 Bedrock model without thinking), which would otherwise drop it. Unset,
 nothing changes. `run-rag --effort` and `run-eval --effort` set it for every
-query of the run (in `run-eval` a dataset item's `metadata.effort` wins); the
+query of the run (in `run-eval` a dataset item's `metadata.effort` wins, and
+its warm-up checks every effort the run asks for, an item's included, so one
+the answer model refuses stops the run with exit `2` before any answer); the
 query span (`kg_rag.effort`) and the query metrics record (`effort`) name it.
 The MCP tools and the console's Ask page do not take it: unlike a limit, an
 effort can raise a query's cost and latency, so an MCP caller's would need a

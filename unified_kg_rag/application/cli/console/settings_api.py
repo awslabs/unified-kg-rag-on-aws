@@ -27,8 +27,8 @@ from unified_kg_rag.domain.models import Config, Methodology
 from unified_kg_rag.domain.models.config import (
     REMOVED_KEYS,
     deprecated_key_warning,
+    deprecated_keys,
     deprecated_targets,
-    migrate_deprecated_keys,
     removed_key_warning,
     removed_keys,
     unknown_keys,
@@ -352,7 +352,28 @@ def validate(data: dict[str, Any], config_path: Path | None) -> dict[str, Any]:
         "errors": errors,
         "warnings": warnings,
         "unknown_keys": unknown,
-        "deprecated_keys": _deprecated(data),
+        **gone_keys(data),
+    }
+
+
+def gone_keys(data: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    """The deprecated keys ``data`` sets and the removed ones, each with the
+    warning the loader logs (``message``), so the page words them in its
+    language.
+
+    A deprecated key lists its ``replacements`` (the keys it loads into) and
+    the ones ``data`` also sets to a different value (``conflicts``), which
+    fail the load until one of the two goes."""
+    return {
+        "deprecated_keys": [
+            {
+                "key": old,
+                "replacements": list(deprecated_targets(old)),
+                "conflicts": conflicts,
+                "message": deprecated_key_warning(old),
+            }
+            for old, conflicts in deprecated_keys(data).items()
+        ],
         "removed_keys": [
             {
                 "key": path,
@@ -362,24 +383,6 @@ def validate(data: dict[str, Any], config_path: Path | None) -> dict[str, Any]:
             for path in removed_keys(data)
         ],
     }
-
-
-def _deprecated(data: dict[str, Any]) -> list[dict[str, Any]]:
-    """The deprecated keys ``data`` sets, as the load moves them
-    (``migrate_deprecated_keys``; none when they disagree with their
-    replacements, an error of the load)."""
-    try:
-        _, deprecated = migrate_deprecated_keys(data)
-    except ValueError:
-        return []
-    return [
-        {
-            "key": old,
-            "replacements": list(deprecated_targets(old)),
-            "message": deprecated_key_warning(old),
-        }
-        for old in deprecated
-    ]
 
 
 def apply_changes(
@@ -437,7 +440,8 @@ class SettingsFile:
 
     def view(self) -> dict[str, Any]:
         """The file (masked) and its digest, the effective config (masked),
-        the methodologies and the tracing environment."""
+        the deprecated and removed keys it sets (:func:`gone_keys`), the
+        methodologies and the tracing environment."""
         text = self.read()
         secrets: list[str] = []
         data: dict[str, Any] = {}
@@ -465,6 +469,9 @@ class SettingsFile:
             "parse_error": parse_error,
             "load_error": load_error,
             "effective": masked(effective) if effective else None,
+            # Shown on load, not only in a review: the Fields form marks the
+            # fields a deprecated key loads into.
+            **gone_keys(data),
             "methodologies": [m.value for m in Methodology],
             "tracing_environment": {
                 name: name in os.environ for name in TRACING_VARIABLES

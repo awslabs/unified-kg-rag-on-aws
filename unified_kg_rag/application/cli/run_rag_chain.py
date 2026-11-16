@@ -51,6 +51,7 @@ from unified_kg_rag.application.cli.display import (
 from unified_kg_rag.application.cli.help_text import doc_epilog
 from unified_kg_rag.application.cli.lazy import lazy_names
 from unified_kg_rag.application.cli.metrics_args import (
+    QUERY_METRICS_HELP,
     add_metrics_sink_argument,
     build_metrics_sink,
 )
@@ -69,6 +70,10 @@ from unified_kg_rag.application.cli.query_args import (
 )
 from unified_kg_rag.application.config import load_cli_dotenv
 from unified_kg_rag.domain.models import Citation, SearchStrategy
+from unified_kg_rag.domain.retrieval.abstention import (
+    REASON_QUERY_LIMIT,
+    skipped_at_limit,
+)
 from unified_kg_rag.domain.retrieval.store_names import namespace_suffix
 from unified_kg_rag.shared import (
     ConfigurationError,
@@ -87,6 +92,7 @@ from unified_kg_rag.shared.exceptions import (
     shown_error_text,
 )
 from unified_kg_rag.shared.logging import log_error
+from unified_kg_rag.shared.metrics import QUERY_METRICS_NAMESPACE
 from unified_kg_rag.shared.utils import event_loop
 
 if TYPE_CHECKING:
@@ -205,13 +211,36 @@ def print_citations(view: AnswerView) -> None:
     )
 
 
-def _outcome_lines(outcome: QueryOutcome) -> list[str]:
-    """What the answer (or search) was given without: its degraded steps
-    (a partial answer) and the citation reads that failed."""
+def _outcome_lines(
+    outcome: QueryOutcome, abstention_reason: str | None = None
+) -> list[str]:
+    """What the answer (or search) was given without, as the console says
+    it: a decline at the query's limits, the steps that failed (a partial
+    answer) apart from those its limits skipped, and the citation reads that
+    failed."""
     lines = []
-    if outcome.partial:
-        steps = "; ".join(f"{d.step} ({d.reason})" for d in outcome.degraded)
-        lines.append(f"Partial answer: given without {steps}")
+    if abstention_reason == REASON_QUERY_LIMIT:
+        lines.append(
+            "Declined: the query's limits (search.query_max_*, RAGInput.limits) "
+            "left no room for the steps that would have found a context; "
+            "raise the limit to answer"
+        )
+    degraded = outcome.degraded if outcome.partial else []
+    failed = [d for d in degraded if not skipped_at_limit(d.reason)]
+    skipped = [d for d in degraded if skipped_at_limit(d.reason)]
+    if failed:
+        steps = "; ".join(f"{d.step} ({d.reason})" for d in failed)
+        lines.append(f"Partial answer: given without steps that failed: {steps}")
+    if skipped:
+        steps = "; ".join(
+            (
+                f"{d.step} ({d.reason.removeprefix(REASON_QUERY_LIMIT).lstrip(': ')})"
+                if d.reason != REASON_QUERY_LIMIT
+                else d.step
+            )
+            for d in skipped
+        )
+        lines.append(f"Skipped to stay within the query's limits: {steps}")
     if outcome.citations_unresolved:
         steps = ", ".join(dict.fromkeys(d.step for d in outcome.citations_unresolved))
         lines.append(f"Some citations name no document: {steps} failed")
@@ -477,9 +506,8 @@ class CommandLineInterface:
             parser,
             "Where to send query metrics: 'none' (default) or 'cloudwatch' "
             "(CloudWatch EMF to stdout, to stderr with --output-format json: "
-            "query_latency_ms, the outcome counts query_failed, query_degraded "
-            "and query_abstained, and query_throttled_requests of each --mode "
-            "rag query under unified_kg_rag/query, with an Environment "
+            f"{QUERY_METRICS_HELP} of each --mode rag query under "
+            f"{QUERY_METRICS_NAMESPACE}, with an Environment "
             "dimension when UKR_METRICS_ENVIRONMENT is set and the Strategy "
             "that ran)",
         )
@@ -971,7 +999,9 @@ class RAGChainRunner:
             console.print(f"[bold blue]Search Results ({len(hits)})[/bold blue]")
             console.print("=" * 50)
             _print_hits(hits, limit=None if verbose else _HITS_SHOWN)
-        for line in _outcome_lines(outcome):
+        for line in _outcome_lines(
+            outcome, view.abstention_reason if view is not None else None
+        ):
             console.print(line, markup=False, highlight=False, style="yellow")
 
         if verbose:

@@ -237,6 +237,43 @@ def _printed(document: dict[str, Any], *, verbose: bool = False) -> str:
     return out.getvalue()
 
 
+async def test_run_rag_says_a_decline_at_its_limits_and_the_steps_skipped() -> None:
+    """The text output printed the generic "could not find" answer and a
+    "Partial answer" line, never that it declined at its limits, and told
+    no skipped step from a failed one, as the console does (rv42)."""
+    ledger = DegradationLedger()
+    ledger.record(
+        DegradationStep.CONTEXT_OPTIMIZATION,
+        "query_limit: the input-token limit leaves the answer no context",
+        None,
+    )
+    ledger.record(DegradationStep.TRANSLATION, "searched untranslated", "Timeout")
+    metadata = {
+        **ledger.metadata(),
+        "abstained": True,
+        "abstention_reason": "query_limit",
+    }
+    runner = object.__new__(run_rag_chain.RAGChainRunner)
+    runner.args = run_rag_chain.CommandLineInterface._setup_arguments().parse_args(
+        ["-q", "hi"]
+    )
+    runner.metrics_sink = MagicMock()
+    runner.rag_chain = MagicMock()
+    runner.rag_chain.ainvoke = AsyncMock(return_value=_output(metadata))
+    text = _printed(await runner._run_query(RAGInput(query="hi")))
+    assert "Declined: the query's limits (search.query_max_*" in text
+    assert (
+        "Skipped to stay within the query's limits: context_optimization (the "
+        "input-token limit leaves the answer no context)" in text
+    )
+    assert (
+        "Partial answer: given without steps that failed: translation "
+        "(searched untranslated)" in text
+    )
+    (failed,) = [line for line in text.splitlines() if "steps that failed" in line]
+    assert "context_optimization" not in failed
+
+
 async def test_run_rag_prints_a_partial_answer_and_its_written_sections() -> None:
     runner = object.__new__(run_rag_chain.RAGChainRunner)
     runner.args = run_rag_chain.CommandLineInterface._setup_arguments().parse_args(
@@ -248,7 +285,8 @@ async def test_run_rag_prints_a_partial_answer_and_its_written_sections() -> Non
     document = await runner._run_query(RAGInput(query="hi"))
     text = _printed(document)
     assert (
-        "Partial answer: given without global_map (1/3 reports unrated); "
+        "Partial answer: given without steps that failed: global_map (1/3 "
+        "reports unrated); "
         "translation (searched untranslated)" in text
     )
     assert "Some citations name no document: citation_lineage failed" in text

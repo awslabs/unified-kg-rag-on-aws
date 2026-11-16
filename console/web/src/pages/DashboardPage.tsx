@@ -24,6 +24,8 @@ interface Dashboard {
     answered: number;
     abstained: number;
     decline_rate: number | null;
+    /** Declines at a query limit: counted apart, out of the decline rate. */
+    limited?: number;
     errors: number;
     refused: number;
     latency_p50: number | null;
@@ -94,11 +96,13 @@ export function DashboardPage() {
             <Stat label={t("dashboard.latencyP50")} value={seconds(d.totals.latency_p50)} />
             <Stat label={t("dashboard.latencyP95")} value={seconds(d.totals.latency_p95)} />
             <Stat label={t("dashboard.declineRate")} value={percent(d.totals.decline_rate, 1)} />
+            {d.totals.limited ? <Stat label={t("dashboard.limited")} value={number(d.totals.limited)} /> : null}
             <Stat label={t("dashboard.errors")} value={number(d.totals.errors)} />
             <Stat label={t("dashboard.refused")} value={number(d.totals.refused)} />
             <Stat label={t("dashboard.cost")} value={d.totals.cost_usd != null ? usd(d.totals.cost_usd) : "—"} />
           </div>
           {d.totals.refused ? <p className="field-help">{t("dashboard.questionsHint")}</p> : null}
+          {d.totals.limited ? <p className="field-help">{t("dashboard.limitedHint")}</p> : null}
           {!d.prices_configured ? (
             <Notice title={t("dashboard.noPricesTitle")}>{t("dashboard.noPrices")}</Notice>
           ) : d.unpriced_models.length ? (

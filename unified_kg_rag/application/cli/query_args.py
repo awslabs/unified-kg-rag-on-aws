@@ -113,9 +113,17 @@ def add_query_arguments(
         "model reasons at that level, a deeper one at more output tokens and "
         "latency; only the answer call takes it (the query's other calls keep "
         "their tier's). A model that does not reason, or does not take the "
-        "level, refuses it before any call (exit 2). Default: the answer "
-        "model's tier effort (aws.bedrock.default_effort). A search (run-rag "
-        "--mode search) makes no answer and ignores it",
+        "level, refuses it before any call (exit 2). Default: the effort of "
+        "the answer model's tier (aws.bedrock.default_effort, or fast_effort "
+        "when models.roles.answer_generation is the fast tier's model). "
+        + (
+            # run-eval
+            "A dataset item's metadata.effort wins over it; the warm-up checks "
+            "every effort the run asks for, so one the model refuses stops "
+            "the run before any answer"
+            if multiple_strategies
+            else "A search (--mode search) makes no answer and ignores it"
+        ),
     )
     add_removed_flag(
         parser,

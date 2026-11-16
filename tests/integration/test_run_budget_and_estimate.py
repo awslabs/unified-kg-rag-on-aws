@@ -133,12 +133,13 @@ def _pipeline(
     cache: Path,
     respond: Any,
     stores: _Stores | None = None,
+    factory: _MeteredFactory | None = None,
 ) -> Any:
     stores = stores or _Stores(config)
     providers = Providers(
         config,
         boto_session=MagicMock(),
-        llm_factory=_MeteredFactory(respond),
+        llm_factory=factory or _MeteredFactory(respond),
         embedding_factory=HashingEmbeddingFactory(),
         doc_status=stores.doc_status,
         vector_indexer_factory=lambda: stores.vectors,
@@ -185,6 +186,44 @@ def test_the_estimate_is_within_15_percent_of_a_runs_calls(tmp_path: Path) -> No
     assert sum(counted.calls.values()) == pytest.approx(estimate.calls, rel=0.15)
     assert "community_detection" not in estimate.not_estimated
     assert estimate.usd is None and estimate.unpriced_models
+
+
+def test_the_models_a_usd_budget_must_price_cover_every_model_a_run_calls(
+    tmp_path: Path,
+) -> None:
+    """run-ingestion refuses a processing.max_run_usd run before any stage
+    when a model it calls has no price (rv42): the roles it checks
+    (run_model_roles) must hold every model the run then calls."""
+    from unified_kg_rag.domain.ingestion.estimate import run_model_roles
+    from unified_kg_rag.domain.ingestion.methodologies import selected_stages
+    from unified_kg_rag.domain.models import ModelRole
+
+    config = _config()
+    config.graph.community_detection.report_generation.enabled = True
+    config.processing.graph_extraction.description_summarization.enabled = True
+    for role in ModelRole:
+        setattr(config.models.roles, role.value, f"model-{role.value}")
+    called: set[str] = set()
+
+    class _Recording(_MeteredFactory):
+        def get_model(self, model_id: Any, **kwargs: Any) -> ScriptedChatModel:
+            called.add(str(model_id))
+            return super().get_model(model_id, **kwargs)
+
+    source = _corpus(tmp_path, documents=4)
+    pipeline = _pipeline(
+        config,
+        source,
+        tmp_path / "cache",
+        stages._respond,
+        factory=_Recording(stages._respond),
+    )
+    context = pipeline.run(source, pipeline_id="roles")
+    assert context.status is PipelineStageStatus.COMPLETED
+    checked = {
+        f"model-{r.value}" for r in run_model_roles(config, selected_stages(config))
+    }
+    assert called and called <= checked, called - checked
 
 
 def test_the_estimate_prices_with_models_prices(tmp_path: Path) -> None:

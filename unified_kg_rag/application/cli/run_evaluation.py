@@ -490,6 +490,12 @@ def pairwise_warnings(
     return warnings
 
 
+def _query_efforts(queries: Iterable[Any]) -> list[str | None]:
+    """The effort each query asks for (``--effort``, or its item's
+    ``metadata.effort``, which wins), for the warm-up to check."""
+    return [(q.metadata or {}).get("effort") for q in queries]
+
+
 def _over(failed: int, total: int, max_failure_rate: float) -> bool:
     return total == 0 or failed >= total or failed / total > max_failure_rate
 
@@ -2001,8 +2007,11 @@ class EvaluationRunner:
             )
             if repeat == 1 and queries and strategy != CLOSED_BOOK_ARM:
                 # Untimed: the first strategy must not pay for warming
-                # the connections and models the others then reuse.
-                await manager.warm_up(run_queries[0])
+                # the connections and models the others then reuse. Every
+                # effort the items ask for is checked before any answer.
+                await manager.warm_up(
+                    run_queries[0], efforts=_query_efforts(run_queries)
+                )
             run_start = time.time()
             # On the run's root spans (kg_rag.batch, kg_rag.evaluate), so
             # the runs of a comparison tell apart.
@@ -2141,7 +2150,9 @@ class EvaluationRunner:
             run_queries = arms[(strategy, 1)].queries
             if run_queries and strategy != CLOSED_BOOK_ARM:
                 # Untimed, as before a sequential run.
-                await manager.warm_up(run_queries[0])
+                await manager.warm_up(
+                    run_queries[0], efforts=_query_efforts(run_queries)
+                )
         n_queries = len(arms[planned[0]].queries)
         console.rule(
             f"[bold]Running Evaluation on {n_queries} Queries x {len(planned)} "

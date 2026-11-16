@@ -214,6 +214,9 @@ export interface JobRecord {
    * ``error`` is then the CLIs' generic English message). */
   masked_error?: string | null;
   result: Record<string, unknown> | null;
+  /** Its USD at models.prices, when every model it called has one (the
+   * server's, as the dashboard prices it; jobs/{id} only). */
+  cost_usd?: number | null;
   pipeline_id: string | null;
   output_directory: string | null;
   plan: string[];
