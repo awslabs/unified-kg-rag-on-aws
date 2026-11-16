@@ -129,7 +129,11 @@ def test_auto_under_a_small_token_limit_degrades_rather_than_fails(
     # query failed where every explicit strategy degraded.
     out = _ask(chain, SearchStrategy.AUTO, QueryLimits(max_input_tokens=limit), ENGLISH)
     assert out.answer == ANSWER or out.metadata["abstention_reason"] == "query_limit"
-    assert out.metadata["routing"]["decided_by"] == "only_candidate"
+    routing = out.metadata["routing"]
+    assert routing["decided_by"] == "only_candidate"
+    # The candidates the limit dropped: what makes the query query_limited.
+    assert routing["over_limits"]
+    assert not set(routing["over_limits"]) & set(routing["candidates"])
 
 
 def test_an_answer_context_the_limit_emptied_names_the_limit(

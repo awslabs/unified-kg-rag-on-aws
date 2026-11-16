@@ -584,6 +584,47 @@ async def test_drift_runs_only_the_actions_that_fit_beside_the_answer() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("calls", "expanded", "primed", "stops"),
+    [
+        # One call short of the whole plan (the expansion, three primer
+        # folds, the action, the answer): a fold is left out, not the action.
+        (5, True, 2, {"drift_primer": "query_limit: 1 of 3 calls not started"}),
+        # The expansion only beside the least primer call, action and
+        # answer: skipped, one fold primed, the action still runs.
+        (
+            3,
+            False,
+            1,
+            {
+                "drift_expansion": "query_limit: 1 of 1 calls not started",
+                "drift_primer": "query_limit: 2 of 3 calls not started",
+            },
+        ),
+    ],
+)
+async def test_drift_cuts_its_primer_and_expansion_before_its_action(
+    calls: int, expanded: bool, primed: int, stops: dict[str, str]
+) -> None:
+    from tests.unit.test_drift_search_logic import _strategy as _drift_strategy
+
+    strat = _drift_strategy()
+    for name in ("hyde", "primer", "action"):
+        setattr(strat, name, _Counted(getattr(strat, name)))
+    with usage.usage_scope(usage.UsageLimits(max_llm_calls=calls)):
+        result = await strat.asearch(SearchQuery(query="question"))
+    assert len(strat.hyde.calls) == int(expanded)
+    assert len(strat.primer.calls) == primed
+    # The call the answer needs most: DRIFT's action.
+    assert len(strat.action.calls) == 1
+    degraded = {
+        e["step"]: e["reason"]
+        for e in result.metadata["degraded"]
+        if e["step"] != "drift_action"
+    }
+    assert degraded == stops
+
+
 async def test_iterative_stops_its_rounds_at_the_querys_limits() -> None:
     from tests.unit.test_iterative_search import INSUFFICIENT, _query, _Script
     from tests.unit.test_iterative_search import _strategy as _iterative_strategy
@@ -611,6 +652,32 @@ async def test_iterative_stops_its_rounds_at_the_querys_limits() -> None:
         result = await strategy.asearch(_query())
     assert result.metadata["iterative"]["rounds"] == 1
     assert len(script.calls["controller"]) == 2
+
+
+def test_iterative_keeps_the_answer_room_for_the_context_it_judged() -> None:
+    # The answer reads about the context the verdict judged, not the least
+    # context: a limit that holds the verdict and an answer on the least
+    # context but not on that one stops the rounds.
+    from tests.unit.test_iterative_search import _query, _Script
+    from tests.unit.test_iterative_search import _strategy as _iterative_strategy
+    from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
+    from unified_kg_rag.adapters.search_strategies.iterative_search import _Run
+    from unified_kg_rag.domain.prompts import IterativeControllerPrompt
+
+    strategy, *_ = _iterative_strategy(_Script())
+    query = _query()
+    context = "Vendor ships to Kestrel Depot. " * 200
+    tokens = estimate_token_count(context)
+    assert tokens > strategy._min_context_tokens
+    run = _Run()
+    needed = strategy._call_tokens(
+        IterativeControllerPrompt, query, tokens
+    ) + strategy._answer_reserve(query, tokens)
+    for limit, room in ((needed, True), (needed - 1, False)):
+        with usage.usage_scope(usage.UsageLimits(max_input_tokens=limit)):
+            with degradation_scope():
+                assert strategy._room_for(context, query, run) is room
+    assert run.stop_reason == "query_limit"
 
 
 def test_a_cache_probed_call_counts_only_once_the_cache_missed() -> None:
