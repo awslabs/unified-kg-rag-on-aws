@@ -1246,10 +1246,17 @@ def test_a_context_cut_at_the_same_break_still_fits_the_estimate(
         _r((line * 60)[: 400 + (i * 937) % 2600], 1 - i / 100, kinds[i % 4], f"s{i}")
         for i in range(30)
     ]
+    packs = []
+    packed = mgr._packed
+    mgr._packed = lambda *a, **k: packs.append(a) or packed(*a, **k)  # type: ignore[method-assign]
     out = mgr.optimize_context(results, "q", estimated_within=within)
     built = estimate_token_count(mgr.build_context_string(out))
     assert out.sections
     assert 0.9 * within <= built <= within, built
+    # The re-pack that left it as it was ended the re-packs.
+    from unified_kg_rag.adapters.retrieval import token_manager
+
+    assert len(packs) < token_manager._REFIT_ROUNDS + 1
 
 
 def test_a_section_cut_to_fit_is_counted_truncated(mocker) -> None:
@@ -1322,3 +1329,238 @@ def test_a_spare_no_part_of_which_seats_goes_to_each_type_in_turn(
             assert (
                 rest[0].token_count > room < mgr.config.min_truncated_section_tokens
             ), (kind, room)
+
+
+def _sentence(i: int, words: int = 120) -> str:
+    """A section of ``words`` words naming ``i``, no bracketed number in it."""
+    return " ".join(f"vendor{i} ships part{i} to buyer{i}".split() * (words // 5))
+
+
+def _cut_by_fitted(monkeypatch, mgr: TokenManager, results, within: int, **kwargs):
+    """``results`` packed whole, then cut to ``within`` by ``_fitted`` (no
+    re-pack first)."""
+    from unified_kg_rag.adapters.retrieval import token_manager
+
+    monkeypatch.setattr(token_manager, "_REFIT_ROUNDS", 0)
+    return mgr.optimize_context(results, "q", estimated_within=within, **kwargs)
+
+
+def _built(mgr: TokenManager, sections, numbered: bool) -> int:
+    from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
+
+    sections = TokenManager._numbered(sections) if numbered else sections
+    return estimate_token_count(
+        mgr.build_context_string(
+            OptimizedContext(
+                sections=sections,
+                total_tokens=sum(s.token_count for s in sections),
+                sections_included=len(sections),
+                sections_excluded=0,
+                numbered=numbered,
+            )
+        )
+    )
+
+
+def test_a_context_cut_to_its_bound_is_numbered_again(monkeypatch) -> None:
+    # The cut keeps sections of a pack numbered before it: each kept one is
+    # numbered again, 1..n in the order the context renders them, and [n]
+    # still names the result its text came from.
+    import re
+
+    mgr = _local_manager()
+    results = [_r(_sentence(i), 0.9 - i / 10, "text", f"t{i}") for i in range(4)]
+    results.append(_r(_sentence(9), 0.1, "entity", "e0"))
+    sections = mgr._create_context_sections(results, number_sections=True)
+    within = _built(mgr, [sections[0], sections[1], sections[4]], True) + 5
+    out = _cut_by_fitted(monkeypatch, mgr, results, within, number_sections=True)
+    context = mgr.build_context_string(out)
+    assert {s.source_id for s in out.sections} == {"t0", "t1", "e0"}
+    assert [int(n) for n in re.findall(r"^\[(\d+)\] ", context, re.M)] == [1, 2, 3]
+    for section in out.sections:
+        assert f"[{section.marker}] {results[section.result_index].content}" in context
+
+
+def test_a_cut_to_the_bound_takes_sections_by_their_rank_in_their_type(
+    monkeypatch,
+) -> None:
+    # Scores rank only within a type: the cut drops the lowest-ranked
+    # chunks, not the one entity scored below them.
+    mgr = _local_manager()
+    results = [_r(_sentence(i), 0.9 - i / 10, "text", f"t{i}") for i in range(4)]
+    results.append(_r(_sentence(9), 0.1, "entity", "e0"))
+    sections = mgr._create_context_sections(results)
+    within = _built(mgr, [sections[0], sections[1], sections[4]], False) + 5
+    out = _cut_by_fitted(monkeypatch, mgr, results, within)
+    assert {(s.source_id, s.content) for s in out.sections} == {
+        (r.source, r.content) for r in (results[0], results[1], results[4])
+    }
+
+
+def test_a_bound_only_one_whole_section_fits_seats_it(monkeypatch) -> None:
+    # Not even the cut's best section fits, nor a cut of it: the first
+    # section in rank order that fits alone is seated whole, not nothing.
+    mgr = _local_manager()
+    results = [
+        _r(_sentence(1, 300), 0.9, "text", "t1"),
+        _r("Vendor", 0.5, "entity", "e1"),
+    ]
+    sections = mgr._create_context_sections(results, number_sections=True)
+    within = _built(mgr, [sections[1]], True)
+    out = _cut_by_fitted(monkeypatch, mgr, results, within, number_sections=True)
+    assert [(s.source_id, s.content, s.marker) for s in out.sections] == [
+        ("e1", "Vendor", 1)
+    ]
+    assert (out.sections_included, out.sections_excluded) == (1, 1)
+
+
+def test_a_spare_seating_one_type_goes_to_the_largest_share(mocker) -> None:
+    # A spare only one type's section can take, handed out in turn by share:
+    # document chunks (the larger share) take it before the claim.
+    mgr = _make_manager(mocker)
+    shares = mgr.config.type_budgets
+    assert shares.share(SectionType.TEXT) > shares.share(SectionType.CLAIM)
+    results = [
+        _r(" ".join(["w"] * 85), 0.63, "claim", "c0"),
+        _r(" ".join(["w"] * 129), 0.92, "text", "t0"),
+        _r(" ".join(["w"] * 185), 0.28, "text", "t1"),
+        _r(" ".join(["w"] * 17), 0.66, "relationship", "r0"),
+    ]
+    out = mgr.optimize_context(results, "q", max_tokens=94)
+    assert [s.source_id for s in out.sections] == ["t0"]
+    assert _packed_tokens(mgr, out) + 1 <= 94
+
+
+def test_a_spare_too_small_to_part_is_not_lent_in_parts(mocker) -> None:
+    # Once the receivers seat past the budget, a spare whose parts are each
+    # below the truncation floor is offered whole to each type in turn:
+    # lent in parts, the relationship took it back to seat its chunk whole
+    # and the entities' second section, which the spare cuts, went unseated.
+    mgr = _make_manager(mocker)
+    results = [
+        _r(" ".join(["w"] * 128), 0.9, "relationship", "r0"),
+        _r(" ".join(["w"] * 60), 0.14, "claim", "c0"),
+        _r(" ".join(["w"] * 150), 0.83, "entity", "e0"),
+        _r(" ".join(["w"] * 86), 0.77, "entity", "e1"),
+    ]
+    out = mgr.optimize_context(results, "q", max_tokens=330)
+    assert [s.source_id for s in out.sections] == ["r0", "e0", "e1"]
+    assert out.sections_truncated == 2
+    assert _packed_tokens(mgr, out) + 1 == 330
+
+
+def test_every_re_pack_past_the_bound_is_measured(monkeypatch) -> None:
+    # The re-packs run out without one fitting: each is measured before the
+    # smallest is cut to the bound, and none is packed only to go unused.
+    from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
+    from unified_kg_rag.adapters.retrieval import token_manager
+
+    mgr = _local_manager()
+    results = [_r(_sentence(i, 400), 0.9 - i / 100, "text", f"t{i}") for i in range(20)]
+    # An estimate no context fits, shrinking with it: never a stall.
+    monkeypatch.setattr(
+        token_manager, "estimate_token_count", lambda t: estimate_token_count(t) + 10**4
+    )
+    packs: list[int] = []
+    measured: list[int] = []
+    packed, build = mgr._packed, mgr.build_context_string
+
+    def counting_pack(*args, **kwargs):
+        out = packed(*args, **kwargs)
+        packs.append(out[0].total_tokens)
+        return out
+
+    def counting_build(context):
+        if context.sections and len(context.sections) > 1:
+            measured.append(context.total_tokens)
+        return build(context)
+
+    monkeypatch.setattr(mgr, "_packed", counting_pack)
+    monkeypatch.setattr(mgr, "build_context_string", counting_build)
+    mgr.optimize_context(results, "q", estimated_within=10**4)
+    assert len(packs) == token_manager._REFIT_ROUNDS + 1
+    assert packs == sorted(packs, reverse=True) and len(set(packs)) == len(packs)
+    assert set(packs) <= set(measured)
+
+
+def test_a_bound_no_whole_section_fits_seats_the_first_that_fits_cut(
+    monkeypatch,
+) -> None:
+    # A tiny bound (a small DRIFT share): the best chunk does not fit cut
+    # down beside its long id, nor any section whole; the entity, which
+    # renders without one, fits cut down, so the context is not empty.
+    from unified_kg_rag.adapters.local.token_counter import (
+        local_token_counter_factory,
+    )
+
+    config = Config()
+    config.search.token_manager.min_truncated_section_tokens = 16
+    mgr = TokenManager(
+        config,
+        providers=Providers(
+            config, token_counter_factory=local_token_counter_factory(config)
+        ),
+    )
+    long_id = "-".join(f"part{i}" for i in range(30))
+    results = [
+        _r(_sentence(1, 300), 0.9, "text", long_id),
+        _r(_sentence(2, 300), 0.5, "entity", "e1"),
+    ]
+    out = _cut_by_fitted(monkeypatch, mgr, results, 30)
+    assert [s.source_id for s in out.sections] == ["e1"]
+    assert out.sections_truncated == 1
+    assert _built(mgr, out.sections, False) <= 30
+
+
+@pytest.mark.parametrize("fit", [3, 4])
+def test_a_cut_to_the_bound_keeps_the_synthesized_sections_first(
+    monkeypatch, fit: int
+) -> None:
+    # Packing seats the synthesized sections (global search's key points)
+    # ahead of the evidence: a cut to the bound drops evidence before them,
+    # not a key point while it keeps a community report.
+    mgr = _local_manager()
+    results = [
+        RetrievalResult(
+            content=_sentence(10 + i),
+            score=0.6 - i / 10,
+            retriever_type="general",
+            source=f"k{i}",
+            metadata={"synthesized": True, "citable": True},
+        )
+        for i in range(2)
+    ]
+    results += [_r(_sentence(i), 0.9 - i / 10, "community", f"c{i}") for i in range(3)]
+    sections = mgr._create_context_sections(results, number_sections=True)
+    within = _built(mgr, sections[:fit], True) + 5
+    out = _cut_by_fitted(monkeypatch, mgr, results, within, number_sections=True)
+    assert sorted(s.source_id for s in out.sections) == sorted(
+        r.source for r in results[:fit]
+    )
+    assert out.sections_truncated == 0
+
+
+@pytest.mark.parametrize("within", [5, 6, 7])
+def test_a_cut_too_small_to_carry_a_character_does_not_end_the_search(
+    monkeypatch, within: int
+) -> None:
+    # With a truncation floor of 1 the smallest rooms are short of the
+    # section's own prefix and cut nothing: taken as rooms that fit, they
+    # no longer hid the larger ones that do, and the context is not empty.
+    from unified_kg_rag.adapters.local.token_counter import (
+        local_token_counter_factory,
+    )
+
+    config = Config()
+    config.search.token_manager.min_truncated_section_tokens = 1
+    mgr = TokenManager(
+        config,
+        providers=Providers(
+            config, token_counter_factory=local_token_counter_factory(config)
+        ),
+    )
+    results = [_r("供給業者は購入者に装置を納入する。" * 20, 0.9, "claim", "doc-1")]
+    out = _cut_by_fitted(monkeypatch, mgr, results, within, number_sections=True)
+    assert [s.source_id for s in out.sections] == ["doc-1"]
+    assert out.sections_truncated == 1
+    assert _built(mgr, out.sections, True) <= within
