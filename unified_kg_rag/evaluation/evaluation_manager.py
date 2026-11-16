@@ -730,6 +730,18 @@ class EvaluationManager:
         manager: EvaluationManager = arms[0].manager
         return await manager._answer_arms(arms, show_progress)
 
+    def check_efforts(self, efforts: Iterable[str | None]) -> None:
+        """Refuse the run when its answer model cannot apply one of
+        ``efforts`` (the chain's ``check_effort``, no model call; a chain
+        without one checks none).
+
+        Raises:
+            InvalidArgumentError: Naming the effort and the model.
+        """
+        if check := getattr(self.rag_chain, "check_effort", None):
+            for effort in dict.fromkeys(e for e in efforts if e is not None):
+                check(effort)
+
     async def warm_up(
         self, query: EvaluationQuery, efforts: Iterable[str | None] = ()
     ) -> None:
@@ -748,9 +760,7 @@ class EvaluationManager:
         ask for (their items' ``metadata.effort``) are checked first, with
         the chain's ``check_effort`` (no model call): an item whose effort
         the answer model refuses stops the run too, as ``--effort`` does."""
-        if check := getattr(self.rag_chain, "check_effort", None):
-            for effort in dict.fromkeys(e for e in efforts if e is not None):
-                check(effort)
+        self.check_efforts(efforts)
         inputs = {
             key: query.metadata[key] for key in _WARM_UP_KEYS if key in query.metadata
         }

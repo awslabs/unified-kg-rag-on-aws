@@ -2283,7 +2283,7 @@ async def test_an_mcp_call_past_its_deadline_in_the_slot_queue_is_a_counted_quer
         await chain.aclose()
     assert all(isinstance(e, QueryTimeoutError) for e in errors), errors
     # One timed out in the chain, two waiting for the slot: three queries.
-    assert sum("slot" in str(e) for e in errors) == 2
+    assert sum(str(e).startswith("The call did not finish") for e in errors) == 2
     assert len(sink.emitted) == 3
     for _, values, properties in sink.emitted:
         assert values[metrics.QUERY_FAILED_METRIC] == 1.0

@@ -324,17 +324,39 @@ def _migrate(
             continue
         if not migrated:
             data = copy.deepcopy(data)
-        value = _pop(data, old)
         migrated.append(old)
-        for new in deprecated_targets(old):
-            current = _get(data, new)
-            if current is _ABSENT:
-                _put(data, new, copy.deepcopy(value))
-            elif isinstance(current, dict) and isinstance(value, dict):
-                _put(data, new, {**value, **current})
-            elif current != value:
-                conflicts.append((old, new))
+        conflicts.extend((old, new) for new in _move(data, old))
     return data, migrated, conflicts
+
+
+def retire_deprecated_key(data: dict[str, Any], old: str) -> dict[str, Any]:
+    """``data`` (copied) without the deprecated ``old``, its value moved
+    into each replacement ``data`` does not set (a mapping merged under the
+    replacement's own entries, as :func:`migrate_deprecated_keys` loads
+    it); a replacement set to another value keeps it, as the refusal of the
+    disagreement asks. ``data`` unchanged when it does not set ``old``."""
+    if not _sets(data, old):
+        return data
+    data = copy.deepcopy(data)
+    _move(data, old)
+    return data
+
+
+def _move(data: dict[str, Any], old: str) -> list[str]:
+    """Move the deprecated ``old`` (which ``data`` sets) into its
+    replacements, in place: the replacements set to a different value,
+    which keep theirs."""
+    value = _pop(data, old)
+    disagree = []
+    for new in deprecated_targets(old):
+        current = _get(data, new)
+        if current is _ABSENT:
+            _put(data, new, copy.deepcopy(value))
+        elif isinstance(current, dict) and isinstance(value, dict):
+            _put(data, new, {**value, **current})
+        elif current != value:
+            disagree.append(new)
+    return disagree
 
 
 def _get(data: Any, path: str) -> Any:

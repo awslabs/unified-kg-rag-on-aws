@@ -492,7 +492,7 @@ def pairwise_warnings(
 
 def _query_efforts(queries: Iterable[Any]) -> list[str | None]:
     """The effort each query asks for (``--effort``, or its item's
-    ``metadata.effort``, which wins), for the warm-up to check."""
+    ``metadata.effort``, which wins), checked before any run answers."""
     return [(q.metadata or {}).get("effort") for q in queries]
 
 
@@ -1986,6 +1986,10 @@ class EvaluationRunner:
             },
             compared_runs=list(managers),
         )
+        # Every effort every run asks for, checked before any run answers:
+        # a sequential run warms up only when it starts.
+        for label, manager in managers.items():
+            manager.check_efforts(_query_efforts(arm_queries(label)))
         if context.run_order == "interleaved":
             await self._answer_interleaved(
                 planned, managers, arm_queries, context, recorded
@@ -2007,11 +2011,8 @@ class EvaluationRunner:
             )
             if repeat == 1 and queries and strategy != CLOSED_BOOK_ARM:
                 # Untimed: the first strategy must not pay for warming
-                # the connections and models the others then reuse. Every
-                # effort the items ask for is checked before any answer.
-                await manager.warm_up(
-                    run_queries[0], efforts=_query_efforts(run_queries)
-                )
+                # the connections and models the others then reuse.
+                await manager.warm_up(run_queries[0])
             run_start = time.time()
             # On the run's root spans (kg_rag.batch, kg_rag.evaluate), so
             # the runs of a comparison tell apart.
@@ -2150,9 +2151,7 @@ class EvaluationRunner:
             run_queries = arms[(strategy, 1)].queries
             if run_queries and strategy != CLOSED_BOOK_ARM:
                 # Untimed, as before a sequential run.
-                await manager.warm_up(
-                    run_queries[0], efforts=_query_efforts(run_queries)
-                )
+                await manager.warm_up(run_queries[0])
         n_queries = len(arms[planned[0]].queries)
         console.rule(
             f"[bold]Running Evaluation on {n_queries} Queries x {len(planned)} "

@@ -261,7 +261,13 @@ async def test_run_rag_says_a_decline_at_its_limits_and_the_steps_skipped() -> N
     runner.rag_chain = MagicMock()
     runner.rag_chain.ainvoke = AsyncMock(return_value=_output(metadata))
     text = _printed(await runner._run_query(RAGInput(query="hi")))
-    assert "Declined: the query's limits (search.query_max_*" in text
+    # The settings a CLI user sets, not the Python API's RAGInput.limits (rv43).
+    assert (
+        "Declined: the query's limits (search.query_max_model_calls or "
+        "UKR__SEARCH__QUERY_MAX_MODEL_CALLS, search.query_max_input_tokens or "
+        "UKR__SEARCH__QUERY_MAX_INPUT_TOKENS)"
+    ) in " ".join(text.split())
+    assert "RAGInput" not in text
     assert (
         "Skipped to stay within the query's limits: context_optimization (the "
         "input-token limit leaves the answer no context)" in text

@@ -452,3 +452,130 @@ async def test_an_item_effort_the_answer_model_refuses_stops_the_run_first(
     with pytest.raises(InvalidArgumentError, match="'high' cannot apply"):
         await run_evaluation.EvaluationRunner(args, chain, eval_config).run()
     assert chain.calls == 0  # no answer, not even the warm-up's
+
+
+def _effort_dataset(tmp_path: Path) -> Path:
+    data = tmp_path / "eval.json"
+    data.write_text(
+        json.dumps(
+            [
+                {"question": "Who ships 0?", "answer": "Vendor"},
+                {
+                    "question": "Who ships 1?",
+                    "answer": "Vendor",
+                    "metadata": {"effort": "high"},
+                },
+            ]
+        )
+    )
+    return data
+
+
+class _RefusingChain(_DriftingChain):
+    """A chain whose answer model takes no effort."""
+
+    def __init__(self, config: Any = None) -> None:
+        super().__init__()
+
+    def check_effort(self, effort: str | None) -> None:
+        from unified_kg_rag.shared.exceptions import InvalidArgumentError
+
+        if effort is not None:
+            raise InvalidArgumentError(
+                f"effort '{effort}' cannot apply: the answer model does not reason"
+            )
+
+
+class _ReasoningChain(_DriftingChain):
+    def check_effort(self, effort: str | None) -> None:
+        return None
+
+
+async def test_a_sequential_run_checks_every_arm_s_efforts_before_any_answer(
+    eval_config, tmp_path
+) -> None:
+    """Each sequential run checked its efforts in its own warm-up: an --arm
+    whose answer model refuses an item's effort stopped only after the base
+    runs had answered the whole dataset (rv43)."""
+    from unified_kg_rag.shared.exceptions import InvalidArgumentError
+
+    overlay = tmp_path / "arm.yaml"
+    overlay.write_text("models:\n  default_max_output_tokens: 512\n")
+    args = run_evaluation.CommandLineInterface().parser.parse_args(
+        [
+            "--data-path",
+            str(_effort_dataset(tmp_path)),
+            "--output-directory",
+            str(tmp_path / "out"),
+            "--search-strategy",
+            "local,mix",
+            "--run-order",
+            "sequential",
+            "--arm",
+            f"small={overlay}",
+        ]
+    )
+    # The arm's stores (checked before its chain is built), never reached.
+    eval_config.aws.neptune.endpoint = "neptune.example.invalid"
+    eval_config.aws.opensearch.endpoint = "search.example.invalid"
+    base = _ReasoningChain()
+    runner = run_evaluation.EvaluationRunner(
+        args, base, eval_config, chain_factory=_RefusingChain
+    )
+    with pytest.raises(InvalidArgumentError, match="'high' cannot apply"):
+        await runner.run()
+    assert base.calls == 0
+
+
+async def test_the_closed_book_arm_answers_at_the_items_effort_and_checks_it(
+    eval_config, tmp_path
+) -> None:
+    """The closed-book arm ignored an item's effort, so a comparison against
+    it mixed efforts without a word (rv43): it answers at the effort, and
+    one its answer model refuses stops the run before any answer."""
+    from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
+    from unified_kg_rag.adapters.providers import Providers
+    from unified_kg_rag.evaluation.closed_book import closed_book_chain
+    from unified_kg_rag.shared.exceptions import InvalidArgumentError
+
+    asked: list[dict[str, Any]] = []
+
+    class _Factory(ScriptedLLMFactory):
+        reasons = False
+
+        def get_model(self, model_id: Any, **kwargs: Any) -> Any:
+            asked.append(kwargs)
+            return super().get_model(model_id, **kwargs)
+
+        def get_model_info(self, model_id: Any) -> Any:
+            info = super().get_model_info(model_id)
+            return info.model_copy(update={"supports_thinking": self.reasons})
+
+    factory = _Factory(lambda system, human: "Vendor")
+    providers = Providers(eval_config, llm_factory=factory)
+    base = _ReasoningChain()
+    base.providers = providers  # type: ignore[attr-defined]
+    args = run_evaluation.CommandLineInterface().parser.parse_args(
+        [
+            "--data-path",
+            str(_effort_dataset(tmp_path)),
+            "--output-directory",
+            str(tmp_path / "out"),
+            "--search-strategy",
+            "local",
+            "--closed-book",
+        ]
+    )
+    # The answer model does not reason: refused, before any answer.
+    with pytest.raises(InvalidArgumentError, match="'high' cannot apply"):
+        await run_evaluation.EvaluationRunner(args, base, eval_config).run()
+    assert base.calls == 0 and asked == []
+    # A model that reasons answers at the item's effort, the others at none.
+    factory.reasons = True
+    chain = closed_book_chain(eval_config, providers)
+    await chain.ainvoke({"query": "Who?", "effort": "high"})
+    await chain.ainvoke({"query": "Who?"})
+    assert [(k.get("enable_thinking"), k.get("effort")) for k in asked] == [
+        (True, "high"),
+        (False, None),
+    ]

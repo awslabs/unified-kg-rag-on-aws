@@ -152,6 +152,9 @@ class Job:
     # its result's rebuild_due, which the Ingest page reads.
     warning_count: int = 0
     warnings: list[str] = field(default_factory=list)
+    # An ingestion's stages as they stood when it ended: the pipeline's
+    # metadata is the latest run's, which a later job of it rewrites.
+    final_progress: dict[str, Any] | None = None
     process: asyncio.subprocess.Process | None = None
     identity: str | None = None
     watcher: asyncio.Task[None] | None = None
@@ -698,6 +701,8 @@ class JobManager:
             job.status = JobStatus.STOPPED
         else:
             job.status = JobStatus.FAILED
+        if job.kind is JobKind.INGEST:
+            job.final_progress = self.progress(job)
         if job.kind is JobKind.INGEST and self.on_ingest_end is not None:
             # With its status, before any await: no question meets the
             # replaced index through the old chain once the job reads ended.
@@ -808,6 +813,8 @@ class JobManager:
         return [j.record() for j in self.jobs.values() if j.status in _ACTIVE]
 
     def progress(self, job: Job) -> dict[str, Any]:
+        if job.final_progress is not None:
+            return job.final_progress
         running = job.status in _ACTIVE
         if job.kind is JobKind.INGEST:
             assert job.pipeline_id is not None

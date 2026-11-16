@@ -56,7 +56,8 @@ extra가 없으면 `run-mcp-server`는 extra 이름을 알려 주고 종료 코�
 `max_input_tokens`는 그 호출에 한해 서버의 질의 한도(`search.query_timeout_seconds`,
 `search.query_max_model_calls`, `search.query_max_input_tokens`)를 낮추기만 하고 올리지는
 않습니다. 서버 자체의 한도는 `kg_describe_schema`가 `query_limits`로 알려 줍니다. 호출의
-`deadline_seconds`에는 호출 슬롯을 기다리는 시간도 들어갑니다. 한도를 넘는 호출은 한도 이름이 들어간 메시지와 함께 `limit_exceeded`로 실패하거나,
+`deadline_seconds`에는 호출 슬롯을 기다리는 시간도 들어갑니다. 한도를 넘는 호출은 한도 이름(마감 시간이면
+슬롯 대기를 포함해 설정한 초)이 들어간 메시지와 함께 `limit_exceeded`로 실패하거나,
 들어가지 못한 단계를 빼고 답하며 그 단계를 `degraded`에 남깁니다
 ([질의 한도](./query.ko.md#모델-호출-수와-입력-토큰-한도)).
 답변의 추론 강도(`effort`, `RAGInput.effort`)는 받지 않습니다. 한도와 달리 추론 강도는 호출의 비용과 지연을

@@ -68,7 +68,7 @@ from unified_kg_rag.application.cli.query_args import (
     namespace_name,
     query_suffix,
 )
-from unified_kg_rag.application.config import load_cli_dotenv
+from unified_kg_rag.application.config import env_var, load_cli_dotenv
 from unified_kg_rag.domain.models import Citation, SearchStrategy
 from unified_kg_rag.domain.retrieval.abstention import (
     REASON_QUERY_LIMIT,
@@ -220,10 +220,12 @@ def _outcome_lines(
     failed."""
     lines = []
     if abstention_reason == REASON_QUERY_LIMIT:
+        settings = ("search.query_max_model_calls", "search.query_max_input_tokens")
         lines.append(
-            "Declined: the query's limits (search.query_max_*, RAGInput.limits) "
-            "left no room for the steps that would have found a context; "
-            "raise the limit to answer"
+            "Declined: the query's limits ("
+            + ", ".join(f"{key} or {env_var(key)}" for key in settings)
+            + ") left no room for the steps that would have found a context; "
+            "raise them in --config-path's file or the environment to answer"
         )
     degraded = outcome.degraded if outcome.partial else []
     failed = [d for d in degraded if not skipped_at_limit(d.reason)]

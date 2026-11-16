@@ -51,7 +51,8 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
   답변 뒤 한 줄에 그렇다고 알립니다(`Partial answer: given without steps that failed:
   global_map (1/3 reports unrated)`). 질의 한도 때문에 건너뛴 단계는 따로 한 줄로
   알리고(`Skipped to stay within the query's limits: ...`), 한도 때문에 컨텍스트가 없어
-  거절한 답변은 `Declined: the query's limits ...`로 알립니다. 인용 계보(lineage) 읽기가
+  거절한 답변은 `Declined: the query's limits ...`로 알리며 올릴 설정(`search.query_max_model_calls`,
+  `search.query_max_input_tokens` 또는 그 `UKR__` 변수)을 함께 알려 줍니다. 인용 계보(lineage) 읽기가
   실패하면 `Some citations name no document`가 붙습니다. `--verbose`는 답변이 인용할 수 있는 모델 작성 섹션(global 검색의
   핵심 요점, DRIFT의 중간 답변)도 나열합니다.
 - **`--output-format json`**은 결과를 문서 하나로 출력합니다. 답변의 `search_results`에서는
@@ -233,8 +234,10 @@ MCP 도구 `kg_search`와 `kg_answer`도 같은 `limits` 인수를 받습니다(
 추론 기능이 없는 Bedrock 모델)이면 그렇습니다. 그대로 두면 강도가 조용히 무시되기
 때문입니다. 지정하지 않으면 바뀌는 것이 없습니다. `run-rag --effort`와 `run-eval --effort`는
 실행의 모든 질의에 이 값을 지정합니다(`run-eval`에서는 데이터셋 항목의 `metadata.effort`가
-우선하고, 워밍업에서 항목의 값을 포함해 실행이 요청하는 모든 추론 강도를 확인하므로 답변 모델이
-거부하는 값이 있으면 답변하기 전에 `2`로 종료합니다). 질의 스팬(`kg_rag.effort`)과 질의 지표 기록(`effort`)에도 남습니다. MCP 도구와
+우선합니다. 항목의 값을 포함해 실행들이 요청하는 모든 추론 강도를 어느 `--run-order`에서든
+어떤 실행도 답하기 전에 실행마다(`--arm`과 closed-book 비교군 포함) 그 답변 모델로 확인하므로,
+답변 모델이 거부하는 값이 있으면 답변하기 전에 `2`로 종료합니다. closed-book 비교군도 전략처럼
+항목의 추론 강도로 답합니다). 질의 스팬(`kg_rag.effort`)과 질의 지표 기록(`effort`)에도 남습니다. MCP 도구와
 콘솔의 Ask 페이지는 이 값을 받지 않습니다. 한도와 달리 추론 강도는 질의의 비용과 지연을 늘릴 수
 있어, MCP 호출자에게 열려면 먼저 서버 쪽 상한이 필요합니다. `RAGInput.enable_thinking`은
 더 이상 권장하지 않으며(`DeprecationWarning`), 계층의 강도로 추론을 켭니다.

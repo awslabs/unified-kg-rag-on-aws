@@ -668,8 +668,13 @@ class KnowledgeGraphTools:
                         assert when is not None
                         scope.reschedule(when + _BACKSTOP_GRACE_SECONDS)
                     # A query it times out names the call's setting
-                    # (limits.deadline_seconds or the server's).
-                    with caller_deadline(at, f"what the call's {setting} left it"):
+                    # (limits.deadline_seconds or the server's) and its
+                    # seconds, the deadline the caller knows.
+                    with caller_deadline(
+                        at,
+                        f"the call's {setting}, the wait for a call slot included",
+                        seconds,
+                    ):
                         return await run()
         except QueryTimeoutError:
             raise

@@ -582,9 +582,21 @@ class TestStatedNumbers:
             ("前兆三件", "ja", {3}),
             ("吉兆5家", "zh", {5}),
             ("前兆3件", "ja", {3}),
-            # With no number before it, 兆 writes no amount at all.
+            # With no number before it, 兆 writes no amount at all, before a
+            # currency counter too (rv43): reading "破兆元" ("breaks a
+            # trillion yuan") as 10^12 would read "数兆円" ("several
+            # trillion yen") and "兆円単位" ("in trillions of yen") so as
+            # well, which state no number. A bare 万 or 億 before one reads
+            # its value ("破万元" is 10^4), as 0.3.0 read it; 0.3.0 read no
+            # bare 兆 as 10^12 either.
             ("兆円単位", "ja", set()),
             ("数兆円", "ja", set()),
+            ("營收破兆元", "zh", set()),
+            ("營收破兆元", None, set()),
+            ("売上高が兆円を突破", "ja", set()),
+            ("兆円", "ja", set()),
+            ("破万元", "zh", {10**4}),
+            ("億円", "ja", {10**8}),
             # After a number it still multiplies.
             ("三兆円", "ja", {3 * 10**12}),
             ("1兆2000億円", "ja", {12 * 10**11}),
