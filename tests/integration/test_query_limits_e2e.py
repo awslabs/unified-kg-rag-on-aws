@@ -157,12 +157,12 @@ def test_a_limit_that_cuts_the_answer_context_says_so(chain: GraphRAGChain) -> N
     # rv33: an input-token limit that cut some of the answer's sections
     # recorded nothing, so a server limit set too low lowered answers with
     # query_degraded at 0. The demo's local query reads 8 sections in about
-    # 940 tokens: at 1,100 the limit (less the context-window headroom)
+    # 940 tokens: at 1,000 the limit (less the context-window headroom)
     # cuts some.
     full = _ask(chain, SearchStrategy.LOCAL, QueryLimits(), ENGLISH)
     assert "degraded" not in full.metadata or not full.metadata["degraded"]
     out = _ask(
-        chain, SearchStrategy.LOCAL, QueryLimits(max_input_tokens=1_100), ENGLISH
+        chain, SearchStrategy.LOCAL, QueryLimits(max_input_tokens=1_000), ENGLISH
     )
     assert out.answer == ANSWER
     assert len(out.sources) < len(full.sources)

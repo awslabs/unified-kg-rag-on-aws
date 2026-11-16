@@ -157,11 +157,7 @@ from unified_kg_rag.domain.prompts import (
     StrategySelectionPrompt,
 )
 from unified_kg_rag.domain.prompts.retrieval import (
-    ABSTENTION_INSTRUCTIONS,
-    CITATION_INSTRUCTIONS,
-    DECLINE_INSTRUCTIONS,
-    HEDGE_INSTRUCTIONS,
-    QUERY_RESULT_INSTRUCTIONS,
+    answer_instructions,
     describe_routable_strategies,
 )
 from unified_kg_rag.domain.retrieval import source_fields
@@ -2164,26 +2160,21 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         )
 
     def _answer_instructions(self, state: dict[str, Any]) -> str:
-        """The text appended to the answer's system prompt: the citation
-        instructions of a numbered context (``search.citations``), the graph
-        query result's instruction when the context holds one (the
-        structured strategy), then the ``search.abstention`` text ("" with
-        all off)."""
-        parts = []
+        """The text appended to the answer's system prompt
+        (``answer_instructions``): the citation instructions of a numbered
+        context (``search.citations``), the graph query result's
+        instruction when the context holds one (the structured strategy),
+        then the ``search.abstention`` text ("" with all off)."""
         optimized: OptimizedContext | None = state.get("optimized_context")
-        if optimized is not None and any(
-            s.marker is not None for s in optimized.sections
-        ):
-            parts.append(CITATION_INSTRUCTIONS)
-        if self._declines_insufficient(state):
-            return "".join([*parts, DECLINE_INSTRUCTIONS])
-        if self._holds_query_result(state):
-            parts.append(QUERY_RESULT_INSTRUCTIONS)
-        if self.config.search.abstention.mode == "mark":
-            parts.append(ABSTENTION_INSTRUCTIONS)
-        if self._context_insufficient(state):
-            parts.append(HEDGE_INSTRUCTIONS)
-        return "".join(parts)
+        abstention = self.config.search.abstention
+        return answer_instructions(
+            cites=optimized is not None
+            and any(s.marker is not None for s in optimized.sections),
+            query_result=self._holds_query_result(state),
+            mark=abstention.mode == "mark",
+            insufficient=self._context_insufficient(state),
+            decline_insufficient=abstention.on_insufficient == "abstain",
+        )
 
     @staticmethod
     def _holds_query_result(state: dict[str, Any]) -> bool:

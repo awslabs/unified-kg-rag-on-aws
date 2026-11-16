@@ -261,6 +261,8 @@ class StructuredSearchStrategy(BaseSearchStrategy):
     # The graph core every graph methodology builds (required_artifacts
     # decides what serves it: graphrag, lightrag and hipporag namespaces).
     methodology = Methodology.GRAPHRAG
+    # Its context opens with the graph query's result.
+    holds_query_result = True
 
     @classmethod
     def fewest_model_calls(cls, config: Config) -> int:

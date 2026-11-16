@@ -981,6 +981,97 @@ def test_auto_makes_no_router_call_an_input_token_limit_cannot_take() -> None:
         )
 
 
+def _answer_states(strategy: SearchStrategy, cites: bool) -> list[dict[str, Any]]:
+    """The answer states of ``strategy``'s queries the chain appends the
+    most instructions for: a numbered context when it cites, a graph query
+    result for structured, a context flagged insufficient or not."""
+    from unified_kg_rag.adapters.retrieval.token_manager import (
+        ContextSection,
+        OptimizedContext,
+    )
+    from unified_kg_rag.domain.models import SearchResult, SectionType
+
+    def section(section_type: SectionType, marker: int | None) -> ContextSection:
+        return ContextSection(
+            content="c",
+            token_count=1,
+            priority=1.0,
+            section_type=section_type,
+            source_id="s",
+            marker=marker,
+        )
+
+    sections = [section(SectionType.TEXT, 1 if cites else None)]
+    if strategy is SearchStrategy.STRUCTURED:
+        sections.append(section(SectionType.QUERY_RESULT, None))
+    optimized = OptimizedContext(
+        sections=sections,
+        total_tokens=len(sections),
+        sections_included=len(sections),
+        sections_excluded=0,
+        numbered=cites,
+    )
+    return [
+        {
+            "optimized_context": optimized,
+            "search_results": SearchResult(
+                query=SearchQuery(query="q"),
+                results=[],
+                total_results=0,
+                search_strategy=strategy.value,
+                processing_time=0.0,
+                metadata={"context_sufficient": sufficient},
+            ),
+        }
+        for sufficient in (True, False)
+    ]
+
+
+@pytest.mark.parametrize("mode", ["off", "mark"])
+@pytest.mark.parametrize("on_insufficient", ["hedge", "abstain"])
+@pytest.mark.parametrize(
+    "only_base_cites", [False, True], ids=["default-citations", "only-base-cites"]
+)
+def test_the_answer_estimate_holds_every_instruction_the_chain_appends(
+    mode: str, on_insufficient: str, only_base_cites: bool
+) -> None:
+    # The estimate an input-token limit keeps for the answer is never below
+    # the prompt the chain sends, for every registered strategy: the
+    # abstention marker's text under mode mark, the graph query result's
+    # for structured, iterative's citations when only its base cites.
+    from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
+    from unified_kg_rag.adapters.retrieval.base import (
+        answer_prompt_class,
+        answer_prompt_tokens,
+    )
+    from unified_kg_rag.adapters.retrieval.strategy_registry import (
+        citations_enabled,
+        wrapped_strategy,
+    )
+
+    config = Config()
+    config.search.abstention.mode = mode  # type: ignore[assignment]
+    config.search.abstention.on_insufficient = on_insufficient  # type: ignore[assignment]
+    if only_base_cites:
+        # Citations off but for iterative's base, which iterative follows.
+        base = wrapped_strategy(SearchStrategy.ITERATIVE, config)
+        config.search.citations.enabled = False
+        config.search.citations.strategies = {base: True}
+    chain = _router_chain()
+    chain.config = config
+    for strategy in (s for s in SearchStrategy if s is not SearchStrategy.AUTO):
+        resolved = answer_prompt_class(config, strategy).resolve(
+            custom_prompts=config.custom_prompts
+        )
+        templates = estimate_token_count(
+            resolved.system_prompt_template + resolved.human_prompt_template
+        )
+        for state in _answer_states(strategy, citations_enabled(config, strategy)):
+            sent = templates + estimate_token_count(chain._answer_instructions(state))
+            assert answer_prompt_tokens(config, strategy) >= sent, strategy
+            assert answer_prompt_tokens(config) >= sent, strategy
+
+
 # --- what an optional call leaves the answer (W1 verification residuals) ----
 
 

@@ -192,6 +192,35 @@ the passages, which are only a few examples. When the result says "at least" or 
 the user's query."""
 
 
+def answer_instructions(
+    *,
+    cites: bool,
+    query_result: bool,
+    mark: bool,
+    insufficient: bool,
+    decline_insufficient: bool,
+) -> str:
+    """The text appended to the answer's system prompt ("" with all off):
+    the citation instructions of a numbered context (``cites``), then the
+    decline when the context is flagged ``insufficient`` and
+    ``decline_insufficient`` (search.abstention.on_insufficient: abstain),
+    else the graph query result's (``query_result``: the context holds
+    one), the abstention marker's (``mark``: search.abstention.mode: mark)
+    and the hedge for an ``insufficient`` context. The one rule of what the
+    answer reads besides its prompt: the chain appends it, the query's
+    limits estimate it (``answer_prompt_tokens``)."""
+    parts = [CITATION_INSTRUCTIONS] if cites else []
+    if insufficient and decline_insufficient:
+        return "".join([*parts, DECLINE_INSTRUCTIONS])
+    if query_result:
+        parts.append(QUERY_RESULT_INSTRUCTIONS)
+    if mark:
+        parts.append(ABSTENTION_INSTRUCTIONS)
+    if insufficient:
+        parts.append(HEDGE_INSTRUCTIONS)
+    return "".join(parts)
+
+
 # The scale of the community relevance rating: MS GraphRAG's rate prompt
 # (``query/context_builder/rate_prompt.py``), 0 (irrelevant) to 5.
 RELEVANCE_RATING_MAX = 5
