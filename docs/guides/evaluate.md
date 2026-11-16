@@ -99,7 +99,9 @@ A JSON array of objects. Only `question` is required; `expected_entities` /
   numeral: `一点五万元`, `十点五万元`, not `一点一万二千元`, which is 12,000, and the financial forms in a well-formed sum only:
   `壹拾万元`, `金壱萬円`, `叁佰圆整`, not `大陆人` or `大陆元首`; 兆 is 10¹² where it can close an amount, before a
   counter, a numeral, kana, punctuation or the end (`3兆円`, `新台币3兆元`, `3兆美元`, `1兆2000億円`), and before
-  another Han or Latin letter the prefix mega, so the number is the digits before it (`5兆瓦` is 5, `2.4兆赫` 2.4); list
+  another Han or Latin letter the prefix mega, so the number is the digits before it (`5兆瓦` is 5, `2.4兆赫` 2.4),
+  except in a Japanese answer, where 兆 is never mega (`3兆回` is 3×10¹²); with no number before it, 兆 is a letter of
+  a word and leads no number (`预兆三个` and `前兆三件` are 3); list
   enumerators, citation markers and ordinals are no numbers), a gold of 0 when it states there is none and writes no number
   the question does not (which number is the count is the LLM judges' to
   read), `set` needs every one of
@@ -112,7 +114,7 @@ A JSON array of objects. Only `question` is required; `expected_entities` /
   the data does not hold). `prepare-benchmark structural` writes them
   ([Evaluation output: answer_match](../reference/evaluation-output.md#answer_match)).
   Known limits of the Han numerals: a 兆 ending the line is 10¹² (`带宽为100兆`, 100 Mbps, reads 10¹⁴) and one
-  before a word that is no unit the prefix (`3兆的预算` reads 3); 亿亿 is not read (`一亿二千万亿元` reads
+  before a word that is no unit the prefix (`3兆的预算` reads 3) in an answer that is not Japanese; 亿亿 is not read (`一亿二千万亿元` reads
   220,000,000); a space joins two amounts (`5万 3亿元` reads 5.0003×10¹², `2만 억원` 2×10¹²); and a run of financial
   forms with a decimal point is no sum, so a bare 万 left after it reads 10,000 (`壹点伍万元`).
 - Mark a question the corpus cannot answer with

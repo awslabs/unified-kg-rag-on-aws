@@ -571,6 +571,54 @@ class TestStatedNumbers:
     ) -> None:
         assert stated_numbers(text) == numbers
 
+    @pytest.mark.parametrize(
+        ("text", "language", "numbers"),
+        [
+            # Regression (rv41 matching): a word ending in 兆 before a Han
+            # numeral and a counter read 10^12 plus the count.
+            ("预兆三个", "zh", {3}),
+            ("京兆三家", "zh", {3}),
+            ("征兆两个", None, {2}),
+            ("前兆三件", "ja", {3}),
+            ("吉兆5家", "zh", {5}),
+            ("前兆3件", "ja", {3}),
+            # With no number before it, 兆 writes no amount at all.
+            ("兆円単位", "ja", set()),
+            ("数兆円", "ja", set()),
+            # After a number it still multiplies.
+            ("三兆円", "ja", {3 * 10**12}),
+            ("1兆2000億円", "ja", {12 * 10**11}),
+            ("3兆元", "zh", {3 * 10**12}),
+            # The multipliers no profile reads as a prefix still lead a run.
+            ("万人", "zh", {10**4}),
+        ],
+    )
+    def test_no_prefix_multiplier_leads_a_number(
+        self, text: str, language: str | None, numbers: set[float]
+    ) -> None:
+        assert stated_numbers(text, language) == numbers
+
+    @pytest.mark.parametrize(
+        ("text", "zh", "ja"),
+        [
+            # 兆 is never mega in Japanese: before any word it is 10^12.
+            ("3兆回", {3}, {3 * 10**12}),
+            ("2兆枚", {2}, {2 * 10**12}),
+            ("3兆規模", {3}, {3 * 10**12}),
+            ("1000兆超", {1000}, {10**15}),
+            # Where Chinese reads it as a multiplier too, both agree.
+            ("5兆円規模", {5 * 10**12}, {5 * 10**12}),
+            ("3兆円", {3 * 10**12}, {3 * 10**12}),
+        ],
+    )
+    def test_prefix_multipliers_are_the_answer_language_s(
+        self, text: str, zh: set[float], ja: set[float]
+    ) -> None:
+        assert stated_numbers(text, "zh") == zh
+        assert stated_numbers(text, "ja") == ja
+        # A language that writes no Han numerals reads every Han profile's.
+        assert stated_numbers(text, "en") == stated_numbers(text) == zh
+
     def test_mega_before_any_unit_reads_the_digits_before_it(self) -> None:
         # Regression (rv40 matching M1): every one of these read 10^12
         # times the number.
