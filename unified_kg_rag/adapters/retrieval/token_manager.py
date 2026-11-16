@@ -378,10 +378,13 @@ class TokenManager:
         ``estimated_within``) that fits it, taken in the order packing seats
         them (``_by_rank``): the synthesized sections first, then the best
         of every type, then the second best, ... (scores rank only within a
-        type), so the sections each type seated last go first. When not even
-        the first fits, the first of ``all_sections`` in that order that
-        fits alone whole, else the first that fits alone cut down: empty
-        only when none does."""
+        type), so the sections each type seated last go first. The run keeps
+        its sections as the pack seated them (one the pack cut stays cut
+        there); the room past it goes to the first section left out, cut
+        down from its whole text, or to none when no cut of it fits. When
+        not even the first fits, the first of ``all_sections`` in that order
+        that fits alone whole, else the first that fits alone cut down:
+        empty only when none does."""
 
         def context(sections: list[ContextSection]) -> OptimizedContext:
             sections = self._numbered(sections) if number_sections else sections
@@ -406,17 +409,28 @@ class TokenManager:
             """``section`` cut to the room ``kept`` leaves it, if any."""
             if section.result_index is not None:
                 section = all_sections[section.result_index]
+            top = section.token_count - 1
+
+            def cut_to(room: int) -> ContextSection | None:
+                return self._truncate_to_tokens(section, room)
+
+            # The rooms too small to cut the section to (below the
+            # truncation floor, or short of its prefix) are one run at the
+            # bottom, found without building a context. The cut to the
+            # first room above them is the smallest: when it does not fit,
+            # no cut does, and the section is passed over at one build.
+            uncut = self._most(top, lambda room: cut_to(room) is None)
+            least = cut_to(uncut + 1) if uncut < top else None
+            if least is None or not fits([*kept, least]):
+                return None
 
             def holds(room: int) -> bool:
-                # A room too small to cut the section to (below the
-                # truncation floor, or short of its prefix) is taken to
-                # hold, so the rooms that cut it form one run above them.
-                cut = self._truncate_to_tokens(section, room)
+                # A room below the run that cuts the section is taken to
+                # hold, so the rooms that cut it to fit form one run.
+                cut = cut_to(room)
                 return cut is None or fits([*kept, cut])
 
-            cut = self._truncate_to_tokens(
-                section, self._most(section.token_count - 1, holds)
-            )
+            cut = cut_to(self._most(top, holds))
             return cut if cut is not None and fits([*kept, cut]) else None
 
         ranked = self._by_rank(over.sections)
