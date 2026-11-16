@@ -1680,3 +1680,29 @@ def test_a_section_the_pack_cut_is_cut_again_from_its_whole_text(
     assert redone is not None and redone.content == cut.content
     larger = mgr._truncate_to_tokens(whole[1], room + 1)
     assert larger is not None and _built(mgr, [first, larger], False) > within
+
+
+def test_a_section_no_cut_of_which_fits_is_passed_over_at_one_build(
+    monkeypatch,
+) -> None:
+    # A bound none of the sections fits, whole or cut (a tiny DRIFT share):
+    # each is measured whole once and cut once, at the smallest cut there
+    # is, not bisected over rooms that cannot fit either.
+    mgr = _floored_manager(1)
+    results = [
+        _r(_sentence(i, 300), 0.9 - i / 100, "text", f"chunk-{i}-of-the-corpus")
+        for i in range(20)
+    ]
+    builds: list[int] = []
+    build = mgr.build_context_string
+
+    def counting_build(context):
+        builds.append(len(context.sections))
+        return build(context)
+
+    monkeypatch.setattr(mgr, "build_context_string", counting_build)
+    out = _cut_by_fitted(monkeypatch, mgr, results, 5)
+    assert out.sections == []
+    # One section measured: the run of one, the first left out cut, then
+    # each section of the fallback whole and cut.
+    assert builds.count(1) == 2 + 2 * len(results), builds
