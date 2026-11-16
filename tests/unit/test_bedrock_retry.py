@@ -154,6 +154,12 @@ def test_urllib3_errors_of_a_stream_s_events_are_retryable() -> None:
         urllib3_exc.ReadTimeoutError(None, "/", "Read timed out.")
     )
     assert not is_transient_bedrock_error(urllib3_exc.LocationValueError("bad"))
+    # langchain-aws's for a stream that ended without its messageStop event.
+    assert is_transient_bedrock_error(
+        ConnectionError(
+            "Incomplete Bedrock response stream: missing messageStop event."
+        )
+    )
 
 
 def test_backoff_delay_is_bounded_and_grows() -> None:

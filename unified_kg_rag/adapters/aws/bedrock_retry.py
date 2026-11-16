@@ -14,7 +14,8 @@ its response started in two more ways botocore never retries: an error event
 ``throttlingException``, ``modelStreamErrorException``), and a connection
 that drops or stalls while the events are read (urllib3's ``ProtocolError``
 or ``ReadTimeoutError``, raised as is: botocore's event stream reads the raw
-response). :func:`is_transient_bedrock_error` names exactly those failures,
+response; langchain-aws's built-in ``ConnectionError`` for a stream that
+ended without its ``messageStop`` event). :func:`is_transient_bedrock_error` names exactly those failures,
 for the bounded backoff of ``adapters.llm.retry``, the query chains' retry
 and the batch processor's retries, leaving validation, access-denied and
 other client errors to fail fast. :func:`is_bedrock_item_error` names the
@@ -26,6 +27,7 @@ so an event's spelling and a response's are one code.
 
 from __future__ import annotations
 
+import builtins
 import re
 from collections.abc import Mapping
 from typing import Any
@@ -75,13 +77,15 @@ def is_transient_bedrock_error(exc: BaseException) -> bool:
             TRANSIENT_BEDROCK_ERROR_CODES
         )
     # Connect/read timeouts, endpoint-unreachable and dropped connections:
-    # botocore's, and urllib3's own while a stream's events are read.
+    # botocore's, urllib3's own while a stream's events are read, and the
+    # built-in ones (a stream cut short; a refused or reset connection).
     return isinstance(
         exc,
         boto_exc.ConnectionError
         | boto_exc.HTTPClientError
         | urllib3_exc.ProtocolError
-        | urllib3_exc.ReadTimeoutError,
+        | urllib3_exc.ReadTimeoutError
+        | builtins.ConnectionError,
     )
 
 

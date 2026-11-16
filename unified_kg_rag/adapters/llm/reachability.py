@@ -34,10 +34,20 @@ from unified_kg_rag.shared.utils.common import http_status
 # Errors of a connection that was never made, by class name so this module
 # imports no client: httpx's ConnectError and ConnectTimeout, the OpenAI
 # client's APIConnectionError (not its APITimeoutError subclass: a server
-# that accepted the request and did not answer is reachable) and botocore's
-# EndpointConnectionError.
+# that accepted the request and did not answer is reachable), urllib3's
+# NewConnectionError and botocore's EndpointConnectionError. A bare
+# ConnectionError is not one of them: the Ollama client's "Failed to
+# connect" is raised during httpx's ConnectError (its context, which
+# :func:`causes` reaches), while langchain-aws raises one for a stream that
+# ended without its last event, from a server that was reached.
 _CONNECT_ERROR_NAMES = frozenset(
-    {"ConnectError", "ConnectTimeout", "APIConnectionError", "EndpointConnectionError"}
+    {
+        "ConnectError",
+        "ConnectTimeout",
+        "APIConnectionError",
+        "NewConnectionError",
+        "EndpointConnectionError",
+    }
 )
 _REACHED_NAMES = frozenset({"APITimeoutError"})
 # A request whose server sent nothing in time, by class name: httpx's
@@ -62,11 +72,8 @@ def is_unreachable_error(exc: BaseException) -> bool:
         names = {cls.__name__ for cls in type(error).__mro__}
         if names & _REACHED_NAMES:
             return False
-        if (
-            names & _CONNECT_ERROR_NAMES
-            # The Ollama client's own "Failed to connect" is a bare one.
-            or type(error) is ConnectionError
-            or isinstance(error, ConnectionRefusedError | socket.gaierror)
+        if names & _CONNECT_ERROR_NAMES or isinstance(
+            error, ConnectionRefusedError | socket.gaierror
         ):
             return True
     return False

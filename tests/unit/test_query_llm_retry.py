@@ -593,6 +593,10 @@ _STREAM_FAILURES = {
     "model-timeout": lambda: _event_stream_error("modelTimeoutException"),
     "dropped": lambda: urllib3_exc.ProtocolError("Connection broken"),
     "stalled": lambda: urllib3_exc.ReadTimeoutError(None, "/", "Read timed out."),
+    # langchain-aws's for a stream that ended without its messageStop event.
+    "incomplete": lambda: ConnectionError(
+        "Incomplete Bedrock response stream: missing messageStop event."
+    ),
 }
 
 
@@ -626,19 +630,25 @@ async def test_a_bedrock_stream_failing_after_reasoning_is_retried(
     assert model.calls == 2
 
 
-async def test_a_bedrock_stream_failing_after_answer_text_is_not_retried() -> None:
+@pytest.mark.parametrize("failure", ["throttling", "incomplete"])
+async def test_a_bedrock_stream_failing_after_answer_text_is_not_retried(
+    failure: str,
+) -> None:
     # The text reached the caller: a retry would repeat it.
     config = _config()
     config.providers.rerank.kind = "none"
     text = AIMessageChunk(content=[{"type": "text", "text": "PARTIAL ", "index": 1}])
+    error = _STREAM_FAILURES[failure]()
     model = _ScriptedModel(
-        reasoning=[*_bedrock_reasoning(), text],
-        after_reasoning=[_event_stream_error("throttlingException")],
+        reasoning=[*_bedrock_reasoning(), text], after_reasoning=[error]
     )
     chunks: list[str] = []
-    with pytest.raises(EventStreamError):
+    # A model client's error the package does not name is raised as it is,
+    # else as the LanguageModelError raised from it.
+    with pytest.raises(Exception) as raised:
         async for chunk in _rag_chain(model, config).astream(_RAG_INPUT):
             chunks.append(chunk)
+    assert error in (raised.value, raised.value.__cause__)
     assert "".join(chunks).count("PARTIAL") == 1
     assert model.calls == 1
 
