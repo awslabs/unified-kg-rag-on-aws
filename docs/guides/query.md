@@ -185,9 +185,11 @@ is refused before its request is sent:
 - `global` rates and maps, `drift` expands, primes and follows up, and
   `iterative` judges only what fits beside the answer's call. What did not
   fit is left out and listed in `metadata.degraded` (reason `query_limit`):
-  global maps its most relevant report batches, DRIFT its best follow-ups
-  (an action whose share holds no section of its evidence is left out too),
-  iterative stops its rounds (`stop_reason: query_limit`). Each planned
+  global maps its most relevant report batches (under
+  `use_dynamic_selection` the reports left unrated are kept, as a report
+  whose rating failed, and the descent stops there), DRIFT its best
+  follow-ups (an action whose share holds no section of its evidence is
+  left out too), iterative stops its rounds (`stop_reason: query_limit`). Each planned
   call is counted as the meter will count it: its prompt, the question it
   carries and what it reads.
 - `auto` routes only to strategies whose fewest calls (`fewest_model_calls`,
@@ -225,13 +227,19 @@ is refused before its request is sent:
   not the configured ceilings, and DRIFT's actions share what is left,
   each action's built context kept to its share (an action the meter still
   refuses is left out as one that did not fit, its follow-up's evidence
-  kept); `auto` makes no router call the limit cannot take, routing to its
-  fallback.
-- A query whose answer call does not fit fails with
-  `UsageLimitExceededError` (exported from `unified_kg_rag`; error class
-  `limit_exceeded`, exit code `1`; a caller's error, not counted in the
-  `query_failed` metric), or returns the error answer under
-  `processing.ignore_errors`.
+  kept); `auto` makes no router call the limit cannot take, routing to the
+  fallback among the strategies that fit the call limit.
+- A query that names a strategy whose answer call does not fit (no section
+  of its context fits the room the limit leaves) abstains: it returns the
+  fixed decline with `abstention_reason: query_limit`, no answer call made.
+  Only `auto` fails up front: when no strategy it may route to fits the
+  call limit, it raises `UsageLimitExceededError` (exported from
+  `unified_kg_rag`; error class `limit_exceeded`, exit code `1`; a caller's
+  error, not counted in the `query_failed` metric) before any call, or
+  returns the error answer under `processing.ignore_errors`.
+- A query's `effort` (below) raises its answer's `max_tokens` for that
+  level's reasoning; the answer's context then takes only what the model's
+  window leaves beside that output.
 
 A caller lowers any of the three for one query, never raises them:
 
