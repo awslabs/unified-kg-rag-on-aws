@@ -228,6 +228,8 @@ Bugs present in 0.3.0.
 - The console's Settings page read a field a `UKR__` variable of the console sets as its default, and passed an edit
   of it that had no effect (the variable wins over the file): the field names the variable, and a review lists such
   changes.
+- Saving from the console's Fields form rewrote the whole config file in alphabetical key order, so the review's diff
+  changed every line; it keeps the file's order (comments are still dropped, as the review says).
 - A local reasoning model's streamed answer (`astream`, the console's Ask page) failed with `QueryTimeoutError` after
   `search.model_timeout_seconds` while the model was still reasoning, though `ainvoke` answered: the reasoning
   stripper held every reasoning chunk (inline `<think>`, and Ollama's native thinking, whose chunks have no text)

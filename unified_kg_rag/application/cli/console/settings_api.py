@@ -11,6 +11,7 @@ should hold it instead, so the console never writes a credential to disk.
 
 from __future__ import annotations
 
+import copy
 import difflib
 import functools
 import hashlib
@@ -286,12 +287,12 @@ def masked(data: Any) -> Any:
     """``data`` with every secret replaced by :data:`MASK`."""
     if not isinstance(data, dict):
         return data
-    copy = yaml.safe_load(yaml.safe_dump(data)) or {}
+    result: Any = copy.deepcopy(data)
     for pattern in secret_paths():
-        for path, value in list(_matches(copy, pattern)):
+        for path, value in list(_matches(result, pattern)):
             if value in (None, ""):
                 continue
-            target = copy
+            target = result
             for key in path[:-1]:
                 target = target[int(key)] if isinstance(target, list) else target[key]
             last = path[-1]
@@ -299,7 +300,7 @@ def masked(data: Any) -> Any:
                 target[int(last)] = MASK
             else:
                 target[last] = MASK
-    return copy
+    return result
 
 
 def _secret_error(paths: list[str]) -> SecretRefused:
@@ -440,7 +441,8 @@ def apply_changes(
     Raises:
         InvalidArgumentError: A malformed path.
     """
-    result = yaml.safe_load(yaml.safe_dump(data)) or {}
+    # A copy in the file's key order (a YAML round trip would sort it).
+    result = copy.deepcopy(data)
     for old in _retired(result, changes):
         result = retire_deprecated_key(result, old)
     for change in changes:

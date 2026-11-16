@@ -321,8 +321,8 @@ the file, its errors and warnings, and each deprecated key the file sets
 (loaded into its replacement, with the loader's warning: set the
 replacement instead) or removed key (ignored, with the reason); a moved key
 is an error naming its replacement. Save writes it, refused if the file
-changed on disk meanwhile. Saving from fields rewrites the YAML without its
-comments (the review says so); the YAML tab keeps them. A change to where
+changed on disk meanwhile. Saving from fields rewrites the YAML in its key order
+but without its comments (the review says so); the YAML tab keeps them. A change to where
 a provider sends its requests (`providers.*.base_url`,
 `aws.neptune.endpoint`, `aws.opensearch.endpoint`, their ports) is listed in
 the review and saved only once confirmed there: the requests carry the

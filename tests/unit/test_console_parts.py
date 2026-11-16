@@ -197,6 +197,26 @@ def test_changes_set_and_unset_keys(tmp_path: Path) -> None:
         settings_api.apply_changes(data, [{"path": "a..b;rm", "value": 1}])
 
 
+def test_saving_from_fields_keeps_the_file_s_key_order(tmp_path: Path) -> None:
+    """The form's changes were applied to a copy made through a sorted YAML
+    dump: the saved file had every key in alphabetical order, and the diff
+    rewrote every line (rv44). Comments are still lost (the review says so)."""
+    path = tmp_path / "config.yaml"
+    text = "search:\n  top_k: 3\n  rerank_top_k: 2\nlogging:\n  level: INFO\n"
+    path.write_text(text)
+    preview = settings_api.SettingsFile(path).preview(
+        text=None,
+        changes=[
+            {"path": "logging.level", "value": "DEBUG"},
+            {"path": "indexing.batch_size", "value": 8},
+        ],
+    )
+    assert preview["text"] == (
+        "search:\n  top_k: 3\n  rerank_top_k: 2\nlogging:\n  level: DEBUG\n"
+        "indexing:\n  batch_size: 8\n"
+    )
+
+
 def test_a_preview_validates_like_a_run(tmp_path: Path) -> None:
     path = tmp_path / "config.yaml"
     path.write_text("# my comment\nsearch:\n  reranking:\n    enabled: true\n")
