@@ -215,7 +215,7 @@ holds:
   `stages` (each estimated stage's `stage`, `role`, `model`, `calls`,
   `input_tokens`, `output_tokens`, `usd`, `null` without a price, and
   `bound`: `exact`, `at most` or `about`, over the units of an intelligent
-  chunking), their totals `calls`, `input_tokens`, `output_tokens` and `usd`
+  chunking or text translated into another language), their totals `calls`, `input_tokens`, `output_tokens` and `usd`
   (`null` when a model has no price), the `unpriced_models`, `not_estimated`
   (the graph-dependent stages, each with what it calls the model for) and
   `output_tokens_per_input_token`

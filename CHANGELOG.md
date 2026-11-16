@@ -128,12 +128,14 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   default; USD priced by `models.prices`) refuse the model call that would pass them and stop the run once the calls
   already sent have answered (`RunBudgetExhausted`, exported, error class `limit_exceeded`, exit 1): its finished
   stages are checkpointed and those answers kept in the LLM response cache, whose hits take none of the budget, so a
-  re-run with the same pipeline id resumes and pays only for what was not answered. The stop's JSON status and message
-  give the calls the run paid for (`token_usage`, `cost_usd` when priced), and the stage it stopped in keeps its calls
-  in its record and publishes them (`llm_calls_<stage>`), so the stop and its resume count each paid call once.
+  re-run with the same pipeline id (the stop's message names it) resumes and pays only for what was not answered. The
+  stop's JSON status and message give the calls the run paid for (`token_usage`, `cost_usd` when priced), and the
+  stage it stopped in keeps its calls in its record and publishes them (`llm_calls_<stage>`), so the stop and its
+  resume count each paid call once.
   `run-ingestion --estimate` parses, deduplicates (`processing.deduplicate`) and chunks the corpus without a model
   call and prints each stage's calls, tokens and USD for the stages the text units decide (extraction, gleaning,
-  claims, translation, intelligent chunking), naming the graph-dependent ones it cannot count. The console's Ingest
+  claims, translation, intelligent chunking; `about` for the stages that read text translated into another
+  language, counted at the source text), naming the graph-dependent ones it cannot count. The console's Ingest
   page offers to resume a run stopped at its budget (its options without the forced recompute), and its run lists and
   the Dashboard mark such a run as stopped at its budget, a warning, not failed.
 - Every numeric configuration default says what it rests on: an evidence tag (`json_schema_extra=evidence(...)`,
@@ -254,7 +256,14 @@ Bugs present in 0.3.0.
   copy. It also missed most copies
   near its threshold: datasketch's LSH split (5 bands of 25 rows at 0.9) proposed a pair at 0.90-0.92 a third of the
   time and the MinHash estimate decided, so 0.9 read as about 0.97. The index now takes name matching's layout (12
-  bands of 10 rows at 0.9: 99% of the pairs at the threshold) and the pair's exact 3-gram similarity decides.
+  bands of 10 rows at 0.9: 99% of the pairs at the threshold) and the pair's exact 3-gram similarity decides, each
+  shingle set freed once no pair needs it (a dropped copy's when it is dropped).
+- `insert_documents` with `processing.deduplicate` kept a document's replaced text: a batch that updated a stored
+  document to a copy of another dropped the new text as a copy and kept the old one indexed (its record, text units
+  and graph), as a document the call did not name; a corpus run deletes it. A copy dropped from a call's documents is
+  now deleted when the registry holds it, asked about under `indexing.max_deletion_share` as in a corpus run, and the
+  loading stage's metrics name the dropped copies (`deduplicated`, `documents_deduplicated`). A new copy gets no
+  record, so `delete_documents` refuses its id as one the index does not hold.
 - `answer_match` read Japanese sums in 兆 (10^12) wrong: `一兆二千億円` as 200,000,000,000 and `3兆円` as 3. 兆 is a
   multiplier of the Japanese and Chinese profiles, as 億 is, where it can close an amount (`新台币3兆元`, `3兆美元`);
   before another Han or Latin letter it is the Chinese prefix mega (the new `LanguageProfile.prefix_multipliers`), so

@@ -1607,13 +1607,15 @@ class DataIngestionPipeline:
         if calls is None and usd is None:
             return None
         prices = self.config.models.prices
+        # Named: a call without a pipeline_id (insert_documents) gets a new
+        # one, which the caller would otherwise read from pipeline_id only.
+        resume = f"re-run with the same pipeline id ({self.pipeline_id!r}) to resume"
 
         def refuse(limit: str, value: float, would: float) -> BaseException:
             spent = f"${would:.2f}" if limit.endswith("usd") else f"{would:g} calls"
             return self._stop_for_budget(
                 f"the run reached {limit} {value:g} (the next model call would "
-                f"take it to {spent}); its finished stages are checkpointed: "
-                "re-run with the same pipeline id to resume",
+                f"take it to {spent}); its finished stages are checkpointed: " + resume,
                 limit,
                 value,
             )
@@ -1624,8 +1626,7 @@ class DataIngestionPipeline:
             if total is None:
                 raise self._stop_for_budget(
                     "processing.max_run_usd needs a models.prices entry for "
-                    f"{', '.join(sorted(unpriced))}; add one and re-run with the "
-                    "same pipeline id to resume",
+                    f"{', '.join(sorted(unpriced))}; add one and " + resume,
                     "processing.max_run_usd",
                     usd or 0.0,
                 )

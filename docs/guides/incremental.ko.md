@@ -194,6 +194,14 @@ re-clustering: 24 incremental runs since the last full clustering
 Python에서 `DataIngestionPipeline.insert_documents`와 `delete_documents`는 메모리에 있는
 문서를 이름을 붙인 변경으로 실행합니다. 호출이 지정한 문서만 추가·갱신·삭제하고, 같은 범위의
 다른 문서는 그대로 둡니다([Python library: Documents from memory](./python-library.md#documents-from-memory), 영문).
+`processing.deduplicate`를 켜면 호출한 문서 중 사본은 코퍼스 실행처럼 걸러 내고, 로딩
+단계의 `deduplicated` 지표가 그 id를 알려 줍니다.
+
+- 저장된 문서를 다른 문서의 사본으로 갱신하면 그 문서가 이전 텍스트와 함께 삭제되며, 이
+  삭제는 [대량 삭제](#대량-삭제) 검사에 셉니다(`delete_documents` 호출이 지정한 id는
+  세지 않습니다).
+- 새 사본은 인덱싱되지 않고 레코드도 생기지 않습니다. 인덱스에 없는 다른 id처럼
+  `delete_documents`는 이 사본에 `DocumentNotFoundError`를 냅니다.
 
 ### 코퍼스를 제자리에 두기
 

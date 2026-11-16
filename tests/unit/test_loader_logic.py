@@ -509,3 +509,47 @@ def test_a_numeral_inside_a_word_keeps_a_copy_on_the_safe_side() -> None:
     assert numbers_digest("我们一起出发") != numbers_digest("我们出发")
     # Words of no numeral leave the digest.
     assert numbers_digest("仓库，检查") == numbers_digest("仓库，检查。")
+
+
+def test_dedup_frees_each_shingle_set_once_no_pair_needs_it(monkeypatch) -> None:
+    # Every shingle set built was kept for the whole pass, the dropped
+    # copies' too: many copies of a large document held its 3-gram set
+    # (megabytes for a long CJK text) once each.
+    import weakref
+
+    from unified_kg_rag.adapters.ingestion import loader as loader_module
+
+    class Shingles(frozenset):
+        pass
+
+    live: set[int] = set()
+    peak = [0]
+    build = loader_module.document_shingles
+
+    def tracked(text: str, n_grams: int) -> frozenset[str]:
+        shingles = Shingles(build(text, n_grams))
+        live.add(id(shingles))
+        weakref.finalize(shingles, live.discard, id(shingles))
+        peak[0] = max(peak[0], len(live))
+        return shingles
+
+    text = "Vendor supplies widgets to Buyer under the yearly framework agreement. "
+    texts = [text * 4 + "x" * n for n in range(6)]
+    signatures = {}
+    for index, content in enumerate(texts):
+        result = compute_minhash(
+            (index, content),
+            loader_module.DEDUP_MINHASH_PERMUTATIONS,
+            loader_module.DEDUP_N_GRAMS,
+        )
+        assert result is not None
+        signatures[index] = (result[1], result[2])
+    monkeypatch.setattr(loader_module, "document_shingles", tracked)
+
+    duplicates = DirectoryLoader("/")._find_duplicates(
+        signatures, texts, {i: i for i in range(len(texts))}, 0.9
+    )
+
+    assert set(duplicates) == {1, 2, 3, 4, 5}
+    assert peak[0] <= 2
+    assert not live

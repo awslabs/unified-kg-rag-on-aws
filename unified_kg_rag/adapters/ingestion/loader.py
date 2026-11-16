@@ -393,7 +393,9 @@ class DirectoryLoader:
         The LSH index proposes pairs, at the threshold 99% of them; the
         exact Jaccard similarity of their ``texts``' shingle sets decides
         (the MinHash estimate is off by a few hundredths either way). Only
-        proposed documents' shingle sets are built.
+        proposed documents' shingle sets are built, and each is freed once
+        no later pair needs it: a dropped copy's when it is dropped, a kept
+        document's after its own pairs (it ranks before every document left).
         """
         lsh = MinHashLSH(
             threshold=threshold,
@@ -426,6 +428,8 @@ class DirectoryLoader:
                 similarity = jaccard(shingles_of(doc_idx), shingles_of(other))
                 if similarity >= threshold:
                     duplicates[other] = (doc_idx, similarity)
+                    shingles.pop(other, None)
+            shingles.pop(doc_idx, None)
         return duplicates
 
 
