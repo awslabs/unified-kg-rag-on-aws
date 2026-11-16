@@ -8,12 +8,16 @@ OpenTelemetry SDK: the core-install CI job runs it (the span test is in
 
 from __future__ import annotations
 
+import asyncio
+import time
+from collections.abc import Callable
 from typing import Any
 
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
+from tests.fixtures.held_timeouts import HeldTimeouts
 from unified_kg_rag.adapters.retrieval.base import graph_relevance
 from unified_kg_rag.application.cli import mcp_tools
 from unified_kg_rag.application.cli.mcp_tools import (
@@ -108,6 +112,22 @@ def _relationship() -> RetrievalResult:
             "weight": 8.0,
             "text_unit_ids": [_UNIT],
         },
+    )
+
+
+async def _until(done: Callable[[], bool], within: float = 30.0) -> None:
+    """Wait (bounded) until ``done()`` holds."""
+    deadline = time.monotonic() + within
+    while not done():
+        assert time.monotonic() < deadline, "timed out waiting for the call"
+        await asyncio.sleep(0.01)
+
+
+def _open_scopes(timeouts: HeldTimeouts) -> list[asyncio.Timeout]:
+    """The deadline scopes still open, the soonest first."""
+    return sorted(
+        (t for t in timeouts.opened if not t.exited and t.when() is not None),
+        key=lambda t: t.when() or 0.0,
     )
 
 
@@ -776,10 +796,12 @@ async def test_a_backstop_timeout_counts_a_query_the_chain_did_not_record_once(
     """``kg_answer`` records a timed-out query as a failed one only when the
     chain never returned: past the chain's answer its own metrics stand, and
     a second record would count the query twice."""
-    import asyncio
-
-    monkeypatch.setattr(mcp_tools, "_BACKSTOP_GRACE_SECONDS", 0.05)
     unrun: list[Any] = []
+    stalled: list[bool] = []
+
+    async def stall(*_args: Any, **_kwargs: Any) -> Any:
+        stalled.append(True)
+        await asyncio.sleep(3600)
 
     class StallingChain(FakeChain):
         def record_unrun_query(self, query: Any, error: Any, *, started: float) -> None:
@@ -787,20 +809,23 @@ async def test_a_backstop_timeout_counts_a_query_the_chain_did_not_record_once(
 
         async def ainvoke(self, rag_input: RAGInput) -> RAGOutput:
             if stalls == "chain":
-                await asyncio.sleep(5)
+                await stall()
             return await super().ainvoke(rag_input)
 
     config = Config()
-    config.search.query_timeout_seconds = 0.05
+    config.search.query_timeout_seconds = 600
     tools = KnowledgeGraphTools(StallingChain(config))  # type: ignore[arg-type]
-
-    async def slow(*_args: Any, **_kwargs: Any) -> Any:
-        await asyncio.sleep(5)
-
     if stalls == "shaping":
-        monkeypatch.setattr(tools, "_shaped", slow)
+        monkeypatch.setattr(tools, "_shaped", stall)
+    # The backstop fires once the stalled step is in flight, not on a short
+    # wall-clock deadline the steps before it could outlast on a slow runner.
+    timeouts = HeldTimeouts(monkeypatch)
+    call = asyncio.ensure_future(tools.answer("q"))
+    await _until(lambda: bool(stalled))
+    await timeouts.wait_open()
+    timeouts.expire()
     with pytest.raises(QueryTimeoutError):
-        await tools.answer("q")
+        await asyncio.wait_for(call, timeout=30)
     assert len(unrun) == recorded
 
 
@@ -1020,86 +1045,118 @@ async def test_the_schema_is_resolved_once_and_its_error_returned(
     assert first.query_limits == tools.chain.config.search.query_limits()
 
 
-async def test_one_deadline_covers_the_slot_wait_and_the_work() -> None:
-    import asyncio
-
+async def test_one_deadline_covers_the_slot_wait_and_the_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from unified_kg_rag.application.retrieval.rag_chain import _QueryDeadline
+
+    release = asyncio.Event()
+    working: list[int] = []
 
     class SlowChain(FakeChain):
         async def asearch(self, rag_input: RAGInput) -> SearchOutput:
             # The chain's own deadline, as its queries keep it.
             async with _QueryDeadline(self.config.search.query_timeout_seconds):
-                await asyncio.sleep(0.3)
+                working.append(len(working))
+                # The first holds the slot until released; the second works
+                # until its deadline ends it.
+                await (release.wait() if working[-1] == 0 else asyncio.sleep(3600))
             return await super().asearch(rag_input)
 
     config = Config()
-    config.search.query_timeout_seconds = 0.5
+    config.search.query_timeout_seconds = 600
     tools = KnowledgeGraphTools(
         SlowChain(config),  # type: ignore[arg-type]
         settings=McpServerConfig(max_concurrent_calls=1),
     )
-    # The second call waits 0.3 s for the slot, then works 0.3 s: past the
-    # 0.5 s deadline in all, though each part is within it. The chain's own
-    # deadline ends it (so the chain records it), not the server's backstop.
-    started = asyncio.get_running_loop().time()
-    first, second = await asyncio.gather(
-        tools.search("q"), tools.search("q"), return_exceptions=True
-    )
+    timeouts = HeldTimeouts(monkeypatch)
+    # The second call waits for the slot, then works past what is left of
+    # the deadline after that wait. The chain's own deadline ends it (so the
+    # chain records it), not the server's backstop a grace later: the test
+    # expires only the soonest scope open then, the chain's.
+    calls = asyncio.gather(tools.search("q"), tools.search("q"), return_exceptions=True)
+    await _until(lambda: bool(working))
+    release.set()
+    await _until(lambda: len(working) == 2)
+    chain_scope, backstop = _open_scopes(timeouts)
+    assert (backstop.when() or 0) - (chain_scope.when() or 0) >= 0.5
+    chain_scope.reschedule(asyncio.get_running_loop().time())
+    first, second = await asyncio.wait_for(calls, timeout=30)
     assert not isinstance(first, BaseException)
     assert isinstance(second, QueryTimeoutError)
     # It states the time the query had after its wait, not the setting.
     assert "(the caller's deadline)" in str(second)
-    assert second.timeout_seconds < 0.5
-    assert asyncio.get_running_loop().time() - started < 0.5 + 0.25
+    assert "slot" not in str(second)
+    assert second.timeout_seconds < 600
 
 
-async def test_a_slot_wait_past_the_deadline_times_out_at_the_deadline() -> None:
-    import asyncio
+async def test_a_slot_wait_past_the_deadline_times_out_at_the_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    release = asyncio.Event()
+    working: list[bool] = []
 
     class SlowChain(FakeChain):
         async def asearch(self, rag_input: RAGInput) -> SearchOutput:
-            await asyncio.sleep(0.4)
+            working.append(True)
+            await release.wait()
             return await super().asearch(rag_input)
 
     config = Config()
-    config.search.query_timeout_seconds = 0.2
+    config.search.query_timeout_seconds = 600
     tools = KnowledgeGraphTools(
         SlowChain(config),  # type: ignore[arg-type]
         settings=McpServerConfig(max_concurrent_calls=1),
     )
-    first, second = await asyncio.gather(
-        tools.search("q"), tools.search("q"), return_exceptions=True
-    )
+    timeouts = HeldTimeouts(monkeypatch)
+    first = asyncio.ensure_future(tools.search("q"))
+    await _until(lambda: bool(working))
+    second = asyncio.ensure_future(tools.search("q"))
+    await _until(lambda: len(_open_scopes(timeouts)) == 2)
+    # The deadline passes: the soonest scope is the waiting call's; the
+    # working one's is its backstop, a grace later.
+    at_deadline, backstop = _open_scopes(timeouts)
+    assert (backstop.when() or 0) - (at_deadline.when() or 0) >= 0.5
+    at_deadline.reschedule(asyncio.get_running_loop().time())
     # The second never got a slot: the server times it out at the deadline.
-    assert isinstance(second, QueryTimeoutError)
-    assert "slot" in str(second)
-    # The first does not watch the deadline: only the backstop, a grace
-    # later, would end it.
-    assert not isinstance(first, BaseException)
+    with pytest.raises(QueryTimeoutError, match="slot"):
+        await asyncio.wait_for(second, timeout=30)
+    # The first does not watch the deadline: past it, it still finishes.
+    release.set()
+    await asyncio.wait_for(first, timeout=30)
+    assert len(working) == 1
 
 
 async def test_a_callers_own_deadline_covers_its_wait_for_a_slot() -> None:
     # Regression (W1 review L5): limits.deadline_seconds was applied inside
     # the chain only, so a call asking for 0.2 s could wait the server's
     # whole deadline for a slot first.
-    import asyncio
+    release = asyncio.Event()
+    working: list[bool] = []
 
     class SlowChain(FakeChain):
         async def asearch(self, rag_input: RAGInput) -> SearchOutput:
-            await asyncio.sleep(0.6)
+            working.append(True)
+            await release.wait()
             return await super().asearch(rag_input)
 
     tools = KnowledgeGraphTools(
         SlowChain(Config()),  # type: ignore[arg-type]
         settings=McpServerConfig(max_concurrent_calls=1),
     )
+    # The slot stays taken until the second call has failed: only its own
+    # 0.2 s can end its wait (the server's deadline is minutes away).
     first = asyncio.ensure_future(tools.search("q"))
-    await asyncio.sleep(0.05)
-    started = asyncio.get_running_loop().time()
-    with pytest.raises(QueryTimeoutError) as second:
-        await tools.search("q", limits={"deadline_seconds": 0.2})
-    assert asyncio.get_running_loop().time() - started < 0.45
-    assert "limits.deadline_seconds" in str(second.value)
+    await _until(lambda: bool(working))
+    try:
+        with pytest.raises(QueryTimeoutError) as second:
+            await asyncio.wait_for(
+                tools.search("q", limits={"deadline_seconds": 0.2}), timeout=30
+            )
+        assert "limits.deadline_seconds" in str(second.value)
+        assert "slot" in str(second.value)
+    finally:
+        release.set()
     await first
 
 

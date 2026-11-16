@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -1007,12 +1008,31 @@ async def test_a_deadline_cancels_the_map_calls_and_starts_no_more() -> None:
     strat.max_concurrency = 2
     strat.map_rater = _HangingMapChain()
     batches = _batches(strat, _communities(10))
-    with pytest.raises(TimeoutError):
-        async with asyncio.timeout(0.2):
+    rater = strat.map_rater
+
+    async def until(done: Any) -> None:
+        deadline = time.monotonic() + 10
+        while not done():
+            assert time.monotonic() < deadline, "timed out waiting for the map"
+            await asyncio.sleep(0.01)
+
+    async def map_phase() -> None:
+        async with asyncio.timeout(3600) as scope:
+            scopes.append(scope)
             await strat._run_map_phase(batches, SearchQuery(query="q"))
-    await asyncio.sleep(0.3)
-    assert strat.map_rater.started == 2  # type: ignore[attr-defined]
-    assert strat.map_rater.cancelled == 2  # type: ignore[attr-defined]
+
+    # The deadline passes once both calls are in flight (not on a short
+    # wall-clock timeout the setup could outlast on a slow runner).
+    scopes: list[asyncio.Timeout] = []
+    phase = asyncio.ensure_future(map_phase())
+    await until(lambda: rater.started >= 2)
+    scopes[0].reschedule(asyncio.get_running_loop().time())
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(phase, timeout=10)
+    await until(lambda: rater.cancelled >= 2)
+    await asyncio.sleep(0.3)  # a queued call would have started by now
+    assert rater.started == 2  # type: ignore[attr-defined]
+    assert rater.cancelled == 2  # type: ignore[attr-defined]
 
 
 class _TimingOutFirstReport(_SyncMapChain):

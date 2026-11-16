@@ -363,8 +363,18 @@ async def test_chain_run_is_named_after_its_prompt(purpose: ModelPurpose) -> Non
 
 # --- a stream's first-chunk window bounds its retries -----------------------
 
+# The window, the backoff and the query deadline (and the retry budget) sit
+# an order of magnitude apart: the backoff crosses the window but neither
+# the deadline nor the budget, so only the window can refuse the retry; and
+# the window is far beyond any stall a loaded runner puts between the
+# stream's start and its model call (a 1 s window expired there on CI,
+# before the model was reached).
+_WINDOW_SECONDS = 60.0
 _LONG_BACKOFF = RetryPolicy(
-    max_attempts=3, base_delay_seconds=30.0, max_delay_seconds=30.0
+    max_attempts=3,
+    base_delay_seconds=600.0,
+    max_delay_seconds=600.0,
+    max_total_seconds=6000.0,
 )
 
 
@@ -379,20 +389,33 @@ async def _consume(chain: GraphRAGChain, surface: str) -> None:
 
 @pytest.mark.parametrize("surface", ["astream", "aquery_events"])
 async def test_a_retry_past_the_first_chunk_window_raises_the_model_error(
-    surface: str, caplog: pytest.LogCaptureFixture
+    surface: str, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Regression (rv33): the first-chunk window moved only the asyncio
     # timeout, so a backoff that crossed it was taken and the stream failed
     # as a timeout. No retry starts that cannot reach a first chunk in time:
     # the model's error is raised, at once, as unstreamed.
+    real_sleep = asyncio.sleep
+    backoffs: list[float] = []
+
+    async def sleep(delay: float, *args: Any, **kwargs: Any) -> Any:
+        # A backoff taken is recorded and skipped: a retry the window should
+        # have refused then answers at once instead of waiting it out.
+        if delay > 0:
+            backoffs.append(delay)
+            delay = 0
+        return await real_sleep(delay, *args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "sleep", sleep)
     config = _config(_LONG_BACKOFF)
-    config.search.query_timeout_seconds = 600
-    config.search.model_timeout_seconds = 1.0
+    config.search.query_timeout_seconds = 6000
+    config.search.model_timeout_seconds = _WINDOW_SECONDS
+    config.providers.rerank.kind = "none"
     model = _ScriptedModel([_model_error()])
     chain = _rag_chain(model, config)
     with caplog.at_level("WARNING"), pytest.raises(ClientError):
         await asyncio.wait_for(_consume(chain, surface), timeout=30)
-    assert model.calls == 1
+    assert (model.calls, backoffs) == (1, [])
     # The give-up names the window's setting, not the query deadline (rv34).
     (gave_up,) = [
         r.getMessage() for r in caplog.records if "Giving up" in r.getMessage()

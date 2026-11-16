@@ -22,6 +22,7 @@ import pytest
 
 from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
 from tests.fixtures.fakes.tokens import WordTokenCounter
+from tests.fixtures.held_timeouts import HeldTimeouts
 from unified_kg_rag.adapters.llm.retry import retry_deadline
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.strategy_registry import (
@@ -103,10 +104,13 @@ class _Base:
         self.answer = answer
         self.queries: list[SearchQuery] = []
         self.delay = 0.0
+        # The delay each search waits (or waited) out, in the order started.
+        self.waits: list[float] = []
         self.cancelled = False
 
     async def asearch(self, query: SearchQuery, config: Any = None) -> SearchResult:
         self.queries.append(query)
+        self.waits.append(self.delay)
         try:
             await asyncio.sleep(self.delay)
         except asyncio.CancelledError:
@@ -580,19 +584,55 @@ async def test_a_fatal_controller_error_fails_the_query() -> None:
 # --- the query deadline --------------------------------------------------------
 
 
-async def test_the_deadline_cancels_a_follow_up_round_mid_way() -> None:
+# The deadline leaves the rounds 540 s once the answer's 60 s is set aside: no
+# runner is slow enough to spend it, so the tests expire the rounds' scope
+# (HeldTimeouts) at the moment they choose, while a follow-up round waits out
+# its never-ending search, instead of racing a short budget on the wall clock.
+_ANSWER_SECONDS = 60.0
+_DEADLINE_SECONDS = 600.0
+_NEVER = 3600.0
+
+
+async def _until(done: Callable[[], bool], within: float = 30.0) -> None:
+    """Wait (bounded) until ``done()`` holds."""
+    deadline = time.monotonic() + within
+    while not done():
+        assert time.monotonic() < deadline, "timed out waiting for the search"
+        await asyncio.sleep(0.01)
+
+
+async def _search_cut_at_deadline(
+    strategy: IterativeSearchStrategy,
+    timeouts: HeldTimeouts,
+    in_flight: Callable[[], bool],
+) -> SearchResult:
+    """``strategy``'s search under a long query deadline whose rounds' scope
+    is expired once ``in_flight()`` holds (a follow-up round is waiting)."""
+    with retry_deadline(time.monotonic() + _DEADLINE_SECONDS):
+        search = asyncio.ensure_future(strategy.asearch(_query()))
+        await _until(lambda: in_flight() or search.done())
+        if not search.done():
+            await timeouts.wait_open()
+            timeouts.expire()
+        return await asyncio.wait_for(search, timeout=30)
+
+
+async def test_the_deadline_cancels_a_follow_up_round_mid_way(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     config = Config()
-    config.search.model_timeout_seconds = 1.0
+    config.search.model_timeout_seconds = _ANSWER_SECONDS
     script = _Script(controller=[INSUFFICIENT, SUFFICIENT])
     strategy, _, later, _, _ = _strategy(script, config=config)
-    later.delay = 30.0
+    later.delay = _NEVER
+    timeouts = HeldTimeouts(monkeypatch)
 
     started = time.monotonic()
-    # 0.4 s are left for the rounds once the answer's 1 s is set aside.
-    with retry_deadline(time.monotonic() + 1.4):
-        result = await strategy.asearch(_query())
+    result = await _search_cut_at_deadline(
+        strategy, timeouts, lambda: bool(later.waits)
+    )
 
-    assert time.monotonic() - started < 5
+    assert time.monotonic() - started < 30
     assert later.cancelled
     assert result.results == ROUND_0
     meta = result.metadata["iterative"]
@@ -603,19 +643,23 @@ async def test_the_deadline_cancels_a_follow_up_round_mid_way() -> None:
     assert result.metadata["insufficiency_reason"] == "deadline"
 
 
-async def test_a_deadline_after_a_judged_round_keeps_that_verdict() -> None:
+async def test_a_deadline_after_a_judged_round_keeps_that_verdict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     config = Config()
-    config.search.model_timeout_seconds = 1.0
+    config.search.model_timeout_seconds = _ANSWER_SECONDS
     script = _Script(controller=[INSUFFICIENT, _verdict(False, ["Harbor"])])
     strategy, _, later, _, _ = _strategy(config=config, script=script)
 
     def round_answer(query: SearchQuery) -> list[RetrievalResult]:
-        later.delay = 30.0  # the second follow-up round outlasts the deadline
+        later.delay = _NEVER  # the second follow-up round outlasts the deadline
         return [DEPOT, HARBOR]
 
     later.answer = round_answer
-    with retry_deadline(time.monotonic() + 1.4):
-        result = await strategy.asearch(_query())
+    timeouts = HeldTimeouts(monkeypatch)
+    result = await _search_cut_at_deadline(
+        strategy, timeouts, lambda: _NEVER in later.waits
+    )
 
     assert "Depot is located in Harbor." in _contents(result)
     meta = result.metadata["iterative"]
