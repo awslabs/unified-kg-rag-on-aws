@@ -585,7 +585,7 @@ def test_copies_to_delete_are_asked_about_as_in_a_corpus_run(setup) -> None:
     ]
     _ok(pipeline.insert_documents([{"id": "a", "text": _SUPPLY}, *stored]))
 
-    with pytest.raises(ConfirmationDeclinedError, match="near-copies"):
+    with pytest.raises(ConfirmationDeclinedError, match="near-copies") as asked:
         pipeline.insert_documents(
             [
                 {"id": "a", "text": _SUPPLY},
@@ -594,6 +594,27 @@ def test_copies_to_delete_are_asked_about_as_in_a_corpus_run(setup) -> None:
             ]
         )
     assert len(_records(providers)) == 10
+    # The batch, not a corpus, holds the copies; Python's remedy is named.
+    message = str(asked.value)
+    assert "sent in this batch" in message and "in the corpus" not in message
+    assert "DataIngestionPipeline(confirm_deletions=...)" in message
+
+
+def test_delete_documents_of_most_of_a_scope_is_not_asked(setup) -> None:
+    # The documents delete_documents names are the caller's request, left
+    # out of the indexing.max_deletion_share question (no one can answer it
+    # here, so asking would refuse the deletion).
+    config, providers, pipeline = setup
+    config.indexing.max_deletion_share = 0.1
+    stored = [
+        {"id": f"t{n}", "text": f"Depot stores crate {n} for Carrier."}
+        for n in range(11)
+    ]
+    _ok(pipeline.insert_documents([{"id": "a", "text": _SUPPLY}, *stored]))
+
+    _ok(pipeline.delete_documents([d["id"] for d in stored]))
+
+    assert set(_records(providers)) == {"a"}
 
 
 def test_an_update_to_a_copy_killed_mid_deletion_is_finished(setup, mocker) -> None:
@@ -637,3 +658,67 @@ def test_a_budget_stop_names_the_id_an_insert_resumes_with(setup) -> None:
     config.processing.max_run_model_calls = None
     _ok(pipeline.insert_documents(batch, pipeline_id=pipeline_id))
     assert set(_records(providers)) == {"a", "b"}
+
+
+def test_a_document_a_failed_write_records_failed_is_named_to_re_insert(
+    setup, mocker, caplog: pytest.LogCaptureFixture
+) -> None:
+    # A batch merges into an entity a stored document it does not send also
+    # states, and that entity's write fails: the stored document is recorded
+    # FAILED so a later run writes it again. A corpus run re-reads its file;
+    # a run of document changes keeps it until it is inserted again, so the
+    # warning names it and says so.
+    import logging
+
+    from unified_kg_rag.adapters.storage.sqlite_graph_indexer import (
+        SQLiteGraphIndexer,
+    )
+
+    config, providers, pipeline = setup
+    config.retry.ingestion_item.max_attempts = 1
+    _ok(pipeline.insert_documents([{"id": "a", "text": _SUPPLY}]))
+    mocker.patch.object(
+        SQLiteGraphIndexer, "upsert_entities", side_effect=ConnectionError("down")
+    )
+    with caplog.at_level(logging.WARNING):
+        pipeline.insert_documents([{"id": "n", "text": "Buyer orders widgets."}])
+    mocker.stopall()
+    assert _records(providers)["a"] is DocStatus.FAILED
+    (warning,) = [
+        r.getMessage() for r in caplog.records if "outside this run" in r.getMessage()
+    ]
+    assert warning.endswith(": a") and "insert_documents" in warning
+
+    _ok(pipeline.insert_documents([{"id": "a", "text": _SUPPLY}]))
+    assert _records(providers)["a"] is DocStatus.PROCESSED
+
+
+def test_a_directory_scope_given_through_a_symlink_is_the_corpus_run_s(
+    setup, tmp_path: Path
+) -> None:
+    # A corpus run keys its records by its resolved directory; a run of
+    # changes given that directory through a symlink used the path as
+    # given, opened a second scope and indexed the corpus's documents again.
+    config, providers, pipeline = setup
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "notes.txt").write_text(_SUPPLY)
+    link = tmp_path / "link"
+    link.symlink_to(corpus, target_is_directory=True)
+    _ok(pipeline.run(link))
+
+    _ok(
+        pipeline.insert_documents(
+            [
+                {"id": "notes.txt", "text": _SUPPLY},
+                {"id": "more.txt", "text": _STORAGE},
+            ],
+            source_scope=f"{link}/",
+        )
+    )
+    scopes = {r.scope for r in all_records(providers.build_doc_status())}
+    assert sorted(_records(providers)) == ["more.txt", "notes.txt"]
+    assert len(scopes) == 1 and scopes.pop().endswith(f"|{corpus.resolve()}")
+
+    _ok(pipeline.delete_documents(["more.txt"], source_scope=str(link)))
+    assert sorted(_records(providers)) == ["notes.txt"]

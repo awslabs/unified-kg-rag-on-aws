@@ -46,6 +46,7 @@ from unified_kg_rag.application.ingestion.incremental import (
     open_attempts,
     other_source_scopes,
     record_item_failures,
+    resolved_source_scope,
     retired_scope_readings,
 )
 from unified_kg_rag.application.ingestion.namespace_lease import (
@@ -812,7 +813,9 @@ class DataIngestionPipeline:
             source_scope: The registry source scope the documents belong to
                 (``processing.document_parsing.source_scope`` for this run);
                 ``"api"`` by default. A directory corpus's scope is its
-                ``source_scope`` or its absolute directory.
+                ``source_scope`` or its resolved directory: an absolute path
+                given here is resolved (symlinks followed) as a corpus run
+                resolves its directory.
             pipeline_id: As for :meth:`run`; a new one by default.
 
         Returns:
@@ -842,7 +845,9 @@ class DataIngestionPipeline:
         repeated = sorted(name for name, count in counts.items() if count > 1)
         if repeated:
             raise ValueError(f"document ids given more than once: {repeated[:10]}")
-        return self._run_changes(given, (), source_scope, pipeline_id)
+        return self._run_changes(
+            given, (), resolved_source_scope(source_scope), pipeline_id
+        )
 
     def delete_documents(
         self,
@@ -878,6 +883,7 @@ class DataIngestionPipeline:
             # The id rule of insert_documents (a relative path).
             InputDocument(id=name, text="-")
         self._check_changes_run(source_scope)
+        source_scope = resolved_source_scope(source_scope)
         # Before the run takes the lease: the loading stage checks again
         # under it (detect_delta).
         namespace = config_registry_namespace(
@@ -2327,7 +2333,7 @@ class DataIngestionPipeline:
                     "does not hold every document's text units; committing "
                     "would record documents as processed without their content, "
                     "or delete them as missing from the corpus. Fix the failure "
-                    "and resume with the same pipeline id."
+                    f"and resume with the same pipeline id ({self.pipeline_id!r})."
                 ),
             )
             logger.error("%s", result.error_message)

@@ -71,6 +71,7 @@ from unified_kg_rag.domain.ingestion.document_identity import (
     compute_doc_id,
     config_registry_namespace,
     doc_id_namespace,
+    is_local_path_scope,
     is_unparsed,
     normalize_source_path,
     normalize_source_scope,
@@ -1039,12 +1040,17 @@ class IncrementalIndexer:
         records = {r.doc_id: r for r in owner_of_unit.values()}
         if not records:
             return {}
+        # A corpus run reads their files again; a run of document changes
+        # keeps what it is not sent, so they are named to send again.
+        names = sorted(r.file_path or r.doc_id for r in records.values())
         logger.warning(
             "%d failed writes the next run cannot write from a note cite %d "
             "documents outside this run; recording them FAILED so the next "
-            "run rewrites them",
+            "corpus run rewrites them (from insert_documents, insert them "
+            "again): %s",
             len(owners),
             len(records),
+            ", ".join(names[:10]) + (", ..." if len(names) > 10 else ""),
         )
         check_write_fence()
         self._put(
@@ -1460,6 +1466,20 @@ def run_registry_scope(
         source_scope,
         failed_doc_ids,
     )
+
+
+def resolved_source_scope(source_scope: str) -> str:
+    """``source_scope`` as a corpus run keys its records: an absolute
+    directory path resolved (symlinks followed, as the run resolves its
+    source directory, see :func:`run_registry_scope`), anything else (a
+    name, a URI) as given."""
+    if (
+        isinstance(source_scope, str)
+        and is_local_path_scope(source_scope)
+        and Path(source_scope).is_absolute()
+    ):
+        return Path(source_scope).resolve().as_posix()
+    return source_scope
 
 
 def _same_failure(
@@ -2118,6 +2138,7 @@ def filter_to_delta(
         source_scope,
         confirm_deletions,
         copies,
+        batch=changes is not None,
     )
     _warn_about_a_shared_seed(doc_status, documents, delta, namespace, scope)
     to_read = set(delta.to_process)
@@ -2269,6 +2290,7 @@ def _confirm_mass_deletion(
     source_scope: str,
     confirm: Callable[[str], bool] | None,
     copies: Collection[str] = (),
+    batch: bool = False,
 ) -> None:
     """Ask before a run deletes more than ``max_share`` of its scope's
     documents.
@@ -2285,9 +2307,11 @@ def _confirm_mass_deletion(
     ``MASS_DELETION_MIN_DOCUMENTS`` documents, or ``max_share`` ``None`` or
     1.0, is not checked. The question tells the documents whose files are
     gone from the ``copies`` (doc ids) ``processing.deduplicate`` dropped,
-    whose files are in the corpus. ``confirm`` answers (``--confirm-deletions``,
-    ``UKR_CONFIRM_DELETIONS=1`` or ``--yes``); ``None`` cannot, and the run
-    stops before it writes.
+    whose text is in the corpus, or in the batch of a run of document
+    changes (``batch``). ``confirm`` answers (``--confirm-deletions``,
+    ``UKR_CONFIRM_DELETIONS=1`` or ``--yes``, or
+    ``DataIngestionPipeline(confirm_deletions=...)``); ``None`` cannot, and
+    the run stops before it writes.
 
     Raises:
         ConfirmationDeclinedError: The deletion is not confirmed.
@@ -2313,7 +2337,8 @@ def _confirm_mass_deletion(
                 else ""
             )
             + f"{dropped} are near-copies processing.deduplicate dropped, "
-            "whose files are in the corpus (a higher "
+            + ("sent in this batch" if batch else "whose files are in the corpus")
+            + " (a higher "
             "processing.deduplicate_similarity_threshold keeps near-copies, "
             "not identical ones); what "
             "only they stated is removed from the index; continue?"
@@ -2333,7 +2358,8 @@ def _confirm_mass_deletion(
     if confirm is None:
         raise ConfirmationDeclinedError(
             f"{question} No one can confirm it (run-ingestion "
-            "--confirm-deletions does)"
+            "--confirm-deletions does, or DataIngestionPipeline("
+            "confirm_deletions=...) from Python)"
         )
     if not confirm(question):
         raise ConfirmationDeclinedError(f"Deletion cancelled: {question}")
