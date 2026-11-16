@@ -231,11 +231,16 @@ def test_every_model_role_a_stage_calls_is_one_its_budget_prices() -> None:
     only, but the community detection and the indexing summarize too: a run
     of either without the resolution passed the budget's price check and
     could stop at its first summary (rv43). Every ``ModelRole`` a stage's
-    code reaches (the stage class and the classes it names, other stages
-    aside) is mapped to that stage."""
+    code reaches is mapped to that stage: the stage class and every class
+    or function of the package's adapters and application it names, by
+    name, as ``module.name`` or by a lazy import, followed transitively
+    (other stages aside).
+    Only the classes were followed, so a role used in a module-level helper,
+    or in a class another module's function builds, was missed (rv44)."""
+    import importlib
     import inspect
     import re
-    import sys
+    import types
 
     from unified_kg_rag.application.ingestion.pipeline_stages import PipelineStage
     from unified_kg_rag.domain.ingestion.estimate import (
@@ -244,22 +249,41 @@ def test_every_model_role_a_stage_calls_is_one_its_budget_prices() -> None:
     )
     from unified_kg_rag.domain.models import ModelRole, PipelineStageType
 
-    def reached(cls: type, seen: set[type]) -> set[ModelRole]:
-        if cls in seen:
+    packages = ("unified_kg_rag.adapters", "unified_kg_rag.application")
+
+    def followed(value: object) -> bool:
+        value = inspect.unwrap(value) if callable(value) else value
+        return (
+            (inspect.isclass(value) or inspect.isfunction(value))
+            and getattr(value, "__module__", "").startswith(packages)
+            and not (inspect.isclass(value) and issubclass(value, PipelineStage))
+        )
+
+    def reached(code: object, seen: set[object]) -> set[ModelRole]:
+        code = inspect.unwrap(code) if callable(code) else code
+        if code in seen:
             return set()
-        seen.add(cls)
-        source = inspect.getsource(cls)
+        seen.add(code)
+        source = inspect.getsource(code)  # type: ignore[arg-type]
         roles = {ModelRole[m] for m in re.findall(r"ModelRole\.([A-Z_]+)", source)}
-        module = sys.modules[cls.__module__]
-        for name in set(re.findall(r"\b([A-Z]\w+)\b", source)):
-            named = getattr(module, name, None)
-            if (
-                inspect.isclass(named)
-                and not issubclass(named, PipelineStage)
-                and named.__module__.startswith(
-                    ("unified_kg_rag.adapters", "unified_kg_rag.application")
-                )
-            ):
+        scope = dict(vars(inspect.getmodule(code)))
+        # The names a function imports where it runs (a lazy import).
+        for module_name, grouped, single in re.findall(
+            r"^\s*from (unified_kg_rag[\w.]*) import (?:\(([\w\s,]+)\)|([\w ,]+)$)",
+            source,
+            re.MULTILINE,
+        ):
+            module = importlib.import_module(module_name)
+            for name in re.findall(r"\w+", grouped or single):
+                if not hasattr(module, name):  # a submodule not imported yet
+                    importlib.import_module(f"{module_name}.{name}")
+                scope[name] = getattr(module, name)
+        names = [scope.get(name) for name in set(re.findall(r"\b\w+\b", source))]
+        for owner, name in set(re.findall(r"\b(\w+)\.(\w+)\b", source)):
+            if isinstance(module := scope.get(owner), types.ModuleType):
+                names.append(getattr(module, name, None))
+        for named in names:
+            if followed(named):
                 roles |= reached(named, seen)
         return roles
 
