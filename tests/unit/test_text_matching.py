@@ -397,6 +397,18 @@ class TestStatedNumbers:
             ("はい,三社です。", {3}),
             ("没有，三家都未参与。", {0, 3}),
             ("1,5万", set()),
+            # Regression (rv38 matching M3): after a digit and a separator
+            # only a digit continues the number; a Han numeral starts one.
+            ("价格为3，五千元", {3, 5000}),
+            ("2023.十二家", {2023, 12}),
+            ("截至2023.11.16，三家公司参与。", {3}),
+            ("排名第3，五家公司并列。", {5}),
+            ("IP 10.0.0.1，五家", {5}),
+            ("1.5万", {15_000}),
+            ("3,000万", {30_000_000}),
+            # A digit after a decimal point continues the number, as after a
+            # thousands separator: "16万" here is no 160,000.
+            ("2023.11.16万", set()),
         ],
     )
     def test_a_comma_setting_a_clause_off_starts_a_run(
@@ -416,12 +428,68 @@ class TestStatedNumbers:
             # little.
             ("三点五十分", set()),
             ("便宜一点五千元", {5000}),
+            # A space may stand before the multiplier, as between parts.
+            ("一点五 万元", {15_000}),
+            # Regression (rv38 matching M2): a decimal ends its number, so
+            # with lower places after the multiplier 点 is another word.
+            ("便宜了一点一万二千元", {12_000}),
+            ("比去年多一点五万五千元", {55_000}),
+            ("三点一万二千元", {12_000}),
+            ("一点五万5千元", {55_000}),
+            ("一点五万이천개", {52_000}),
+            # After a multiplier of the run the point starts the decimal
+            # ("十点五万" is 10.5万); after a letter that is no numeral
+            # outside a sum it does not ("收拾" tidies up).
+            ("十点五万元", {105_000}),
+            ("二十点五万元", {205_000}),
+            ("收拾点五万家", {50_000}),
         ],
     )
     def test_a_han_decimal_point_before_a_section_multiplier(
         self, text: str, numbers: set[float]
     ) -> None:
         assert stated_numbers(text) == numbers
+
+    @pytest.mark.parametrize(
+        ("multiplier", "value", "counter"),
+        [
+            ("万", 10**4, "元"),
+            ("萬", 10**4, "元"),
+            ("亿", 10**8, "元"),
+            ("億", 10**8, "円"),
+            ("兆", 10**12, "円"),
+            ("만", 10**4, "원"),
+            ("억", 10**8, "원"),
+        ],
+    )
+    def test_a_decimal_times_a_multiplier_is_exact(
+        self, multiplier: str, value: int, counter: str
+    ) -> None:
+        # Regression (rv38 matching M1): binary floating point read
+        # "2.3亿元" as 229,999,999.99999997, which no gold equals. Every
+        # x.y and x.yz below 100, in digits and in Han digits, reads exactly.
+        han = "〇一二三四五六七八九"
+
+        def han_int(n: int) -> str:
+            tens, ones = divmod(n, 10)
+            prefix = "" if not tens else ("" if tens == 1 else han[tens]) + "十"
+            return prefix + (han[ones] if ones else "")
+
+        wrong = []
+        for whole in range(1, 100):
+            for places in (1, 2):
+                for fraction in range(1, 10**places):
+                    digits = f"{whole}.{fraction:0{places}d}"
+                    gold = int(digits.replace(".", "")) * value // 10**places
+                    forms = [digits]
+                    if multiplier not in "만억":
+                        decimals = "".join(han[int(d)] for d in digits.split(".")[1])
+                        forms.append(f"{han_int(whole)}点{decimals}")
+                    for form in forms:
+                        text = f"{form}{multiplier}{counter}"
+                        if stated_numbers(text) != {gold}:
+                            wrong.append((text, sorted(stated_numbers(text))))
+        assert not wrong, wrong[:5]
 
     @pytest.mark.parametrize(
         ("text", "numbers"),

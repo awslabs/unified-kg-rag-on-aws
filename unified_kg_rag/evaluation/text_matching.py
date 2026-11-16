@@ -8,6 +8,7 @@ import re
 import string
 import unicodedata
 from collections.abc import Callable, Iterable, Iterator
+from decimal import Decimal
 
 from unified_kg_rag.domain.languages import (
     LanguageCode,
@@ -660,11 +661,16 @@ _CURRENCY_COUNTERS = tuple(
     dict.fromkeys(c for language in _HAN_LANGUAGES for c in language.currency_counters)
 )
 # The decimal points of Han digits ("一点五万"; ``numeral_decimal_points``),
-# read before a multiplier that closes a section (万, 億) only.
+# read before a multiplier that closes a section (万, 億) only; like the
+# digits, multipliers and sum forms, those of every Han profile, in an
+# answer in any language.
 _DECIMAL_POINTS = "".join(
     sorted({p for language in _HAN_LANGUAGES for p in language.numeral_decimal_points})
 )
 _SECTION_MULTIPLIERS = "".join(ch for ch, v in _MULTIPLIERS.items() if v >= 10**4)
+_SMALL_MULTIPLIERS = "".join(ch for ch, v in _MULTIPLIERS.items() if v < 10**4)
+# The parts of a run below a section: digits and the smaller multipliers.
+_LOWER_PARTS = "".join([*_HAN_DIGITS, *_SINO_KOREAN_DIGITS, _SMALL_MULTIPLIERS])
 
 
 def _magnitude(value: int) -> int:
@@ -865,29 +871,44 @@ _CJK_NONE = re.compile(
 _CJK_CHARS = "".join([*_HAN_DIGITS, *_SINO_KOREAN_DIGITS, *_MULTIPLIERS])
 
 
-def _han_decimal(digits: str) -> str:
-    """Han ``digits`` with a decimal point between them ("一点五"), before
-    a multiplier that closes a section ("一点五万")."""
+def _han_decimal(digits: str, after_multiplier: bool = False) -> str:
+    """Han ``digits`` with a decimal point between them ("一点五"), or
+    ``after_multiplier`` the point and the digits after a smaller
+    multiplier ("十点五万" is 10.5万), before the multipliers that close a
+    section and end the number ("一点五万"; in "一点一万二千" the places
+    below 万 go on, so it holds no decimal and 点 is another word: "a
+    little", 12,000)."""
     if not _DECIMAL_POINTS:
         return "(?!)"
+    whole = rf"(?<=[{_SMALL_MULTIPLIERS}])" if after_multiplier else rf"[{digits}]+"
     return (
-        rf"[{digits}]+[{_DECIMAL_POINTS}][{digits}]+"
-        rf"(?=[^\S\n]?[{_SECTION_MULTIPLIERS}])"
+        rf"{whole}[{_DECIMAL_POINTS}][{digits}]+"
+        rf"(?=[^\S\n]?[{_SECTION_MULTIPLIERS}]+"
+        rf"(?![^\S\n]?(?:\d|[{_LOWER_PARTS}])))"
     )
 
 
 def _cjk_run(chars: str) -> str:
-    decimal = _han_decimal("".join(ch for ch in chars if ch in _HAN_DIGITS))
-    part = f"(?:{_DIGIT_FORM}|{decimal}|[{chars}])"
-    return rf"{part}(?:[^\S\n]?{part})*"
+    """A run of ``chars``' parts; a decimal after a multiplier only
+    continues one ("十点五万"), so "收拾点五万" (拾 outside a sum is no
+    numeral) holds no "点五万"."""
+    digits = "".join(ch for ch in chars if ch in _HAN_DIGITS)
+    part = f"(?:{_DIGIT_FORM}|{_han_decimal(digits)}|[{chars}])"
+    return rf"{part}(?:[^\S\n]?{part}|{_han_decimal(digits, True)})*"
 
 
-# No digit before a run, nor a digit and a decimal point or thousands
-# separator, which the run would continue ("1.5万", "3,000万"). A comma
-# that only sets a clause off starts one: "据报道，三千元" (NFKC folds
-# "，" to ",") is 3000, "是的，五家" 5.
-_NO_NUMBER_BEFORE = r"(?<!\d)(?<!\d[.,])"
-_CJK_PART_TOKEN = re.compile(rf"{_DIGIT_FORM}|{_han_decimal(''.join(_HAN_DIGITS))}|\S")
+# No digit before a run, nor, before a run starting with a digit, a digit
+# and a decimal point or thousands separator, which the digit would
+# continue ("1.5万", "3,000万"). A comma that only sets a clause off
+# starts one, and so does any separator before a Han numeral, which
+# continues no digits: "据报道，三千元" (NFKC folds "，" to ",") is 3000,
+# "是的，五家" 5, "价格为3，五千元" 3 and 5000.
+_NO_NUMBER_BEFORE = r"(?<!\d)(?:(?<!\d[.,])|(?!\d))"
+_ALL_HAN_DIGITS = "".join(_HAN_DIGITS)
+_CJK_PART_TOKEN = re.compile(
+    rf"{_DIGIT_FORM}|{_han_decimal(_ALL_HAN_DIGITS)}"
+    rf"|{_han_decimal(_ALL_HAN_DIGITS, True)}|\S"
+)
 _CJK_NUMBER = re.compile(
     rf"(?<!{_HANGUL}){_NO_NUMBER_BEFORE}"
     + _cjk_run("".join(ch for ch in _CJK_CHARS if ch not in _SUM_NUMERALS))
@@ -913,9 +934,12 @@ def _cjk_value(match: re.Match[str], counted: bool | None = None) -> float | Non
     "一万二千", "一千零一家", "1만 2천", "십이 대") before a counter, or
     after ASCII digits alone ("3万", "1.5万", "3,000万", "1만 2천"); ``None``
     for anything else (bare ASCII digits are ``_DIGITS``'). Between
-    multipliers a Han zero holds an empty place ("一千零一" is 1001).
-    ``counted`` says whether a counter follows (a sum's currency counter);
-    by default a counter of the profiles' ``counters`` does."""
+    multipliers a Han zero holds an empty place ("一千零一" is 1001). The
+    arithmetic is decimal (exact to 28 significant digits), rounded to a
+    float once at the end as a gold's digits are, so "2.3亿" is 230,000,000
+    (binary floating point made it 229,999,999.99999997). ``counted`` says
+    whether a counter follows (a sum's currency counter); by default a
+    counter of the profiles' ``counters`` does."""
     parts = _CJK_PART_TOKEN.findall(match.group())
     multiplied = any(part in _MULTIPLIERS for part in parts)
     if counted is None:
@@ -926,8 +950,8 @@ def _cjk_value(match: re.Match[str], counted: bool | None = None) -> float | Non
         return float("".join(str(_HAN_DIGITS[part]) for part in parts))
     if not counted and not parts[0][0].isdigit():
         return None
-    total = section = 0.0
-    digit: float | None = None
+    total = section = Decimal(0)
+    digit: Decimal | None = None
     for part in parts:
         if _HAN_DIGITS.get(part, 1) == 0:
             continue
@@ -937,7 +961,7 @@ def _cjk_value(match: re.Match[str], counted: bool | None = None) -> float | Non
                 # 万, 億: they multiply the whole section before them
                 # ("十二万" is 120,000).
                 total += ((section + (digit or 0)) or 1) * multiplier
-                section = 0
+                section = Decimal(0)
             else:
                 section += (1 if digit is None else digit) * multiplier
             digit = None
@@ -945,30 +969,30 @@ def _cjk_value(match: re.Match[str], counted: bool | None = None) -> float | Non
             return None
         else:
             digit = _digit_value(part)
-    return total + section + (digit or 0)
+    return float(total + section + (digit or 0))
 
 
-def _digit_value(part: str) -> float:
-    """The value of a digit part of a ``_CJK_PART_TOKEN`` run: digits
+def _digit_value(part: str) -> Decimal:
+    """The exact value of a digit part of a ``_CJK_PART_TOKEN`` run: digits
     ("1,500", "1.5"), a Han or Sino-Korean digit, or Han digits with a
-    decimal point ("一点五" is 1.5)."""
+    decimal point ("一点五" is 1.5; "点五" after a multiplier, 0.5)."""
     if part[0].isdigit():
-        return float(part.replace(",", ""))
+        return Decimal(part.replace(",", ""))
     if len(part) > 1:
-        return float(
+        return Decimal(
             "".join(
                 "." if ch in _DECIMAL_POINTS else str(_HAN_DIGITS[ch]) for ch in part
             )
         )
-    return _HAN_DIGITS.get(part, _SINO_KOREAN_DIGITS.get(part, 0))
+    return Decimal(_HAN_DIGITS.get(part, _SINO_KOREAN_DIGITS.get(part, 0)))
 
 
 def _descends(parts: list[str]) -> bool:
     """Whether every term of the number ``parts`` writes ("三千", "五百",
     "二") is below the place of the term before it, within each section
     that 万 and 億 close: "叁仟伍佰" does, "拾五千" and "拾100" do not."""
-    place: float | None = None
-    digit: float | None = None
+    place: int | None = None
+    digit: Decimal | None = None
     for part in parts:
         if _HAN_DIGITS.get(part, 1) == 0:
             continue

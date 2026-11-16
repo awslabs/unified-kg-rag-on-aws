@@ -95,7 +95,10 @@ PROFILE = LanguageProfile(
     sum_numerals=frozenset("壱弐参拾"),
     currency_counters=("円",),
     # No numeral_decimal_points: "一・五万円" may be 15,000, but "・" also
-    # joins a range ("二・三日", two or three days; "三・四万円").
+    # joins a range ("二・三日", two or three days; "三・四万円"). The Han
+    # numerals are read with every Han profile's forms, so Chinese 点 is
+    # a decimal point in Japanese text too: "一点五万円" is 15,000, even
+    # where 一点 counts one work at 50,000 yen.
     polarity_words={"はい": "yes", "いいえ": "no"},
     quote_pairs=(("「", "」"), ("『", "』")),
     chars_per_token={CLAUDE_TOKENIZER: 1.03},
