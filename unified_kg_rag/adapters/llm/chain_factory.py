@@ -16,8 +16,14 @@ import dataclasses
 import logging
 import threading
 import time
-from collections.abc import AsyncIterator, Collection, Iterator
-from contextlib import AbstractContextManager
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterator,
+    Collection,
+    Generator,
+    Iterator,
+)
+from contextlib import AbstractContextManager, aclosing
 from typing import TYPE_CHECKING, Any, Literal
 
 from langchain_classic.output_parsers import OutputFixingParser
@@ -606,7 +612,11 @@ class TransientRetryRunnable(Runnable[Any, Any]):
     # Streaming keeps its own loop: a retry is allowed only before the first
     # chunk, which the call-level helpers cannot observe. Each chunk is read
     # in its attempt (the model call starts on the first read), and the
-    # attempt is left before the chunk is yielded to the caller.
+    # attempt is left before the chunk is yielded to the caller. A caller
+    # that stops reading closes the model's stream at once, so its call
+    # settles then: astream closes its reader explicitly, as an async
+    # generator is closed only on a later turn of the loop; stream's is
+    # closed as the for loop's frame unwinds.
     def stream(
         self, input: Any, config: RunnableConfig | None = None, **kwargs: Any
     ) -> Iterator[Any]:
@@ -638,11 +648,14 @@ class TransientRetryRunnable(Runnable[Any, Any]):
         while True:
             emitted = False
             try:
-                async for chunk in _ain_attempt(
-                    self.bound.astream(input, config, **kwargs), retried.attempt()
-                ):
-                    emitted = emitted or _carries_output(chunk)
-                    yield chunk
+                async with aclosing(
+                    _ain_attempt(
+                        self.bound.astream(input, config, **kwargs), retried.attempt()
+                    )
+                ) as chunks:
+                    async for chunk in chunks:
+                        emitted = emitted or _carries_output(chunk)
+                        yield chunk
                 return
             except Exception as exc:
                 delay = None if emitted else self._delay(exc, attempt, started_at)
@@ -654,7 +667,7 @@ class TransientRetryRunnable(Runnable[Any, Any]):
 
 def _in_attempt(
     chunks: Iterator[Any], attempt: AbstractContextManager[Any]
-) -> Iterator[Any]:
+) -> Generator[Any, None, None]:
     """``chunks``, each read in ``attempt`` (``shared.usage``)."""
     try:
         while True:
@@ -672,7 +685,7 @@ def _in_attempt(
 
 async def _ain_attempt(
     chunks: AsyncIterator[Any], attempt: AbstractContextManager[Any]
-) -> AsyncIterator[Any]:
+) -> AsyncGenerator[Any, None]:
     """``chunks``, each read in ``attempt`` (``shared.usage``)."""
     try:
         while True:

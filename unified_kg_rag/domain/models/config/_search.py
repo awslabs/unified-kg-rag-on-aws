@@ -205,9 +205,11 @@ class SearchConfig(ConfigSection):
             "a strategy whose answer call does not fit abstains (reason "
             "query_limit). A retry of a call that failed transiently (a "
             "stream cut before its answer text) is that one call here, so it "
-            "reuses the room its failed attempt held; the usage counts every "
-            "attempt sent. RAGInput.limits.max_model_calls lowers it for one "
-            "query. null (default): no cap."
+            "reuses the room its failed attempt held: one query can send up "
+            "to retry.model.max_attempts times this many model calls, and the "
+            "usage (like an ingestion run's processing.max_run_* budgets) counts "
+            "every attempt sent. RAGInput.limits.max_model_calls lowers it "
+            "for one query. null (default): no cap."
         ),
     )
     query_max_input_tokens: int | None = Field(
@@ -219,7 +221,9 @@ class SearchConfig(ConfigSection):
             "(then at what the model reports). Enforced as "
             "query_max_model_calls (auto starts no speculative extraction "
             "under it either; a retried call counts once, at its latest "
-            "attempt). The fan-out and the optional calls keep for "
+            "attempt, so the calls sent can read up to "
+            "retry.model.max_attempts times it, which the usage counts). "
+            "The fan-out and the optional calls keep for "
             "the answer its prompt, the question and the least context "
             "(a search, which makes no answer, keeps nothing), and for a "
             "named drift query its action's too; the answer's context is "

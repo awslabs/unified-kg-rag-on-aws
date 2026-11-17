@@ -71,7 +71,8 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
     and the deadline for one query, never raising them. They count the calls a query plans: a retry of a call that
     failed transiently (a stream cut before its answer text) reuses the room its failed attempt held, so it is not
     refused, while the usage counts every attempt sent, as an ingestion run's `processing.max_run_*` budget does
-    (`UsageLimits.counts_retries`, `shared.usage.RetriedCall`). A call past a limit is refused before it is sent: the
+    (`UsageLimits.counts_retries`, `shared.usage.RetriedCall`), so one query can send up to
+    `retry.model.max_attempts` times what its limits allow. A call past a limit is refused before it is sent: the
     usage callback now raises its refusal (LangChain swallowed a handler's error) and logs any other error of its own
     (`setup_logging` drops LangChain's own "Error in UsageCallbackHandler... callback" WARNING of a refusal).
   - Fan-out: `global`, `drift` and `iterative` start only the calls that fit beside what the answer will read

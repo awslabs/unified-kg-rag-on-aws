@@ -1112,3 +1112,115 @@ async def test_a_retried_call_without_limits_counts_each_attempt(how: str) -> No
     got = LLMUsage.model_validate(meter.snapshot())
     assert (got.llm_calls, got.estimated_calls, got.failed_calls) == (2, 2, 0)
     assert got.input_tokens == 2 * estimate_token_count(_PROMPT)
+
+
+class _Fixer:
+    """A factory whose fixing model, metered by ``handler``, answers the
+    repair with ``{"answer": "Vendor"}``."""
+
+    def __init__(self, handler: UsageCallbackHandler) -> None:
+        self.handler = handler
+        self.calls = 0
+
+    def get_model(self, **kwargs: Any) -> Any:
+        from langchain_core.language_models import BaseChatModel
+        from langchain_core.outputs import ChatResult
+
+        fixer = self
+
+        class Fix(BaseChatModel):
+            @property
+            def _llm_type(self) -> str:
+                return "fixer"
+
+            def _generate(self, *args: Any, **kw: Any) -> ChatResult:
+                fixer.calls += 1
+                message = AIMessage('{"answer": "Vendor"}')
+                return ChatResult(generations=[ChatGeneration(message=message)])
+
+        return Fix(callbacks=[self.handler])
+
+
+@pytest.mark.parametrize("how", ["invoke", "ainvoke"])
+@pytest.mark.parametrize("faults", [0, 1])
+async def test_an_answer_and_its_repair_in_one_attempt_count_as_two_calls(
+    how: str, faults: int
+) -> None:
+    # rv47 test low: the output repair runs inside the retried chain, in the
+    # attempt that answered. It is a call of its own there (it supersedes
+    # no call of its attempt, so a third call past max_llm_calls=2 is
+    # refused), and an optional one whose room is read without the retried
+    # attempts (the answer's dropped first attempt does not skip it).
+    from unified_kg_rag.adapters.llm.chain_factory import create_json_output_parser
+
+    handler = UsageCallbackHandler("vendor.model-v1", role="query")
+    model, state = _DropOnce.build(faults, handler)
+    fixer = _Fixer(handler)
+    parser = create_json_output_parser(
+        fixer, "fixer", answer_keys=("answer",)  # type: ignore[arg-type]
+    )
+    chain = _retried(model | parser)
+    with usage.usage_scope(limits=_query_limits(max_llm_calls=2)) as meter:
+        if how == "invoke":
+            answer = chain.invoke(_PROMPT)
+        else:
+            answer = await chain.ainvoke(_PROMPT)
+        assert usage.remaining().llm_calls == 0
+        with pytest.raises(UsageLimitExceededError):
+            usage.start_llm_call("query", "m", estimated_input_tokens=1)
+    assert answer == {"answer": "Vendor"}
+    assert (state["attempts"], fixer.calls) == (faults + 1, 1)
+    assert meter.snapshot()["llm_calls"] == faults + 2
+
+
+async def test_a_stream_closed_early_settles_its_call_at_once() -> None:
+    # rv47 test low: a caller that stops reading a retried stream (a client
+    # disconnect, a consumer that takes the first chunks) closes the model's
+    # stream too, so its call settles then, not when the stream is
+    # collected (an async generator only on a later turn of the loop).
+    handler = UsageCallbackHandler("vendor.model-v1", role="query")
+    model, _ = _DropOnce.build(0, handler)
+    with usage.usage_scope():
+        chunks = _retried(model).stream(_PROMPT)
+        next(chunks)
+        assert handler._calls
+        chunks.close()
+        assert not handler._calls
+        streamed = _retried(model).astream(_PROMPT)
+        await anext(streamed)
+        assert handler._calls
+        await streamed.aclose()
+        assert not handler._calls
+
+
+async def test_an_attempts_reader_closes_its_model_stream_when_closed() -> None:
+    # The model's stream may be held elsewhere too (so not collected when
+    # the reader is): closing the reader closes it all the same.
+    from unified_kg_rag.adapters.llm.chain_factory import _ain_attempt, _in_attempt
+
+    closed: list[str] = []
+
+    def source() -> Any:
+        try:
+            yield 1
+            yield 2
+        finally:
+            closed.append("sync")
+
+    async def asource() -> Any:
+        try:
+            yield 1
+            yield 2
+        finally:
+            closed.append("async")
+
+    attempt = usage.RetriedCall().attempt()
+    held = source()
+    reader = _in_attempt(held, attempt)
+    assert next(reader) == 1
+    reader.close()
+    aheld = asource()
+    areader = _ain_attempt(aheld, attempt)
+    assert await anext(areader) == 1
+    await areader.aclose()
+    assert closed == ["sync", "async"]
