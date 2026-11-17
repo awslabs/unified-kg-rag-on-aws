@@ -172,7 +172,7 @@ properties; ... properties dropped, ... ends lifted, ...`; DEBUG names each
 dropped, lifted, merged, skipped and qualified term. A property the
 reader cannot type (only a domain, range or `owl:FunctionalProperty`)
 gets its own INFO line, `Ontology: N properties not read ...`, naming the
-first five.
+first ten.
 
 ## Freezing the mapping
 
