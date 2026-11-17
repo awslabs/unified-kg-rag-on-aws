@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -24,6 +25,7 @@ from unified_kg_rag.adapters.local.models import OllamaLanguageModelFactory
 from unified_kg_rag.adapters.observability.usage_callback import UsageCallbackHandler
 from unified_kg_rag.domain.models import Config, LLMUsage, ModelPurpose
 from unified_kg_rag.shared import observability, usage
+from unified_kg_rag.shared.exceptions import UsageLimitExceededError
 
 pytestmark = pytest.mark.unit
 
@@ -414,7 +416,7 @@ async def test_a_settled_call_leaves_its_task_and_settles_once() -> None:
     run_id = uuid4()
     with usage.usage_scope() as meter:
         handler.on_chat_model_start({}, [[HumanMessage(content="hi")]], run_id=run_id)
-        call = handler._calls[run_id]
+        call = handler._calls[run_id].call
         handler.on_llm_end(
             _result(
                 content="x",
@@ -802,11 +804,18 @@ async def test_a_call_started_in_a_task_that_ended_settles_once() -> None:
 
 
 class _CutModel:
-    """A chat model whose response fails after ``chunks`` streamed chunks
-    (0: before any), streamed or invoked."""
+    """A chat model whose response fails (``error``, by default a
+    ``RuntimeError``) after ``chunks`` streamed chunks of ``text`` (0:
+    before any), streamed or invoked."""
 
     @staticmethod
-    def build(chunks: int, handler: UsageCallbackHandler) -> Any:
+    def build(
+        chunks: int,
+        handler: UsageCallbackHandler,
+        *,
+        text: str = "",
+        error: Callable[[], BaseException] = lambda: RuntimeError("throttled"),
+    ) -> Any:
         from langchain_core.language_models import BaseChatModel
         from langchain_core.messages import AIMessageChunk
         from langchain_core.outputs import ChatGenerationChunk, ChatResult
@@ -817,12 +826,12 @@ class _CutModel:
                 return "cut"
 
             def _generate(self, *args: Any, **kwargs: Any) -> ChatResult:
-                raise RuntimeError("throttled")
+                raise error()
 
             def _stream(self, *args: Any, **kwargs: Any) -> Any:
                 for _ in range(chunks):
-                    yield ChatGenerationChunk(message=AIMessageChunk(content=""))
-                raise RuntimeError("throttled")
+                    yield ChatGenerationChunk(message=AIMessageChunk(content=text))
+                raise error()
 
         return Cut(callbacks=[handler])
 
@@ -835,8 +844,9 @@ def test_a_failed_call_counts_its_estimate_once_its_response_started(
     # chunks counted 0 tokens, so the attempts its retry spent were outside
     # limits.max_input_tokens. One rule for a stream and an invoke: a call
     # whose response started (a chunk arrived: the model read the prompt)
-    # keeps its estimate; one that failed before any response is a failed
-    # call (an invoke never has a started response).
+    # keeps its estimate; one whose response never started is a failed call
+    # (this model's invoke streams nothing; ChatOllama's streams inside the
+    # call, so a drop mid-response keeps its estimate there too).
     handler = UsageCallbackHandler("vendor.model-v1", role="query")
     prompt = "a fairly long prompt " * 50
     estimate = estimate_token_count(prompt)
@@ -855,4 +865,250 @@ def test_a_failed_call_counts_its_estimate_once_its_response_started(
         assert (got.llm_calls, got.failed_calls, got.input_tokens) == (0, 1, 0)
     failed = LLMUsage.model_validate(invoked.snapshot())
     assert (failed.llm_calls, failed.failed_calls, failed.input_tokens) == (0, 1, 0)
-    assert not handler._streamed
+    assert not handler._calls
+
+
+def test_a_failed_stream_counts_the_output_it_sent_and_the_sdks_resends() -> None:
+    # rv46 test low: a failed stream's output estimate and its request
+    # retries were each settable to 0 without a test failing.
+    from botocore.exceptions import EventStreamError
+
+    def error() -> BaseException:
+        return EventStreamError(
+            {
+                "Error": {"Code": "throttlingException", "Message": "slow down"},
+                "ResponseMetadata": {"RetryAttempts": 2},
+            },
+            "ConverseStream",
+        )
+
+    handler = UsageCallbackHandler("vendor.model-v1", role="query")
+    text = "Vendor ships parts "
+    model = _CutModel.build(3, handler, text=text, error=error)
+    with usage.usage_scope() as meter:
+        with pytest.raises(EventStreamError):
+            list(model.stream("what does the Vendor ship"))
+    got = LLMUsage.model_validate(meter.snapshot())
+    assert (got.llm_calls, got.estimated_calls) == (1, 1)
+    assert got.output_tokens == estimate_token_count(text * 3) > 0
+    assert got.request_retries == 2
+
+
+async def test_a_long_lived_handler_holds_no_call_it_cannot_settle() -> None:
+    # rv46 test low: tokens of a call the handler does not hold (made
+    # outside a scope, or after it settled), and a streamed call whose task
+    # was cancelled, left their run ids in a set that only grew.
+    handler = UsageCallbackHandler("m", role="query")
+    for _ in range(3):
+        handler.on_llm_new_token("x", run_id=uuid4())
+    settled = uuid4()
+    with usage.usage_scope():
+        handler.on_chat_model_start({}, [[HumanMessage(content="q")]], run_id=settled)
+        handler.on_llm_end(_result(content="x"), run_id=settled)
+        handler.on_llm_new_token("late", run_id=settled)
+        cancelled = uuid4()
+
+        async def start() -> None:
+            handler.on_chat_model_start(
+                {}, [[HumanMessage(content="q")]], run_id=cancelled
+            )
+            handler.on_llm_new_token("a", run_id=cancelled)
+            await asyncio.sleep(10)
+
+        task = asyncio.ensure_future(start())
+        await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await asyncio.sleep(0)
+    assert not handler._calls and not handler._tasks
+
+
+class _DropOnce:
+    """A chat model whose first ``faults`` responses stream two chunks and
+    drop (``ConnectionResetError``), then answer: through ``stream`` and
+    ``astream``, and through ``invoke``/``ainvoke``, which stream inside
+    the call as ``ChatOllama``'s do (``on_llm_new_token``)."""
+
+    ANSWER = "Vendor ships parts to Buyer."
+
+    @staticmethod
+    def build(faults: int, handler: UsageCallbackHandler) -> Any:
+        from langchain_core.language_models import BaseChatModel
+        from langchain_core.messages import AIMessageChunk
+        from langchain_core.outputs import ChatGenerationChunk, ChatResult
+
+        state = {"attempts": 0}
+
+        def chunks() -> Any:
+            state["attempts"] += 1
+            for _ in range(2):
+                yield ChatGenerationChunk(message=AIMessageChunk(content=""))
+            if state["attempts"] <= faults:
+                raise ConnectionResetError("connection dropped mid-stream")
+            yield ChatGenerationChunk(message=AIMessageChunk(content=_DropOnce.ANSWER))
+
+        class Drop(BaseChatModel):
+            @property
+            def _llm_type(self) -> str:
+                return "drop-once"
+
+            def _generate(
+                self,
+                messages: Any,
+                stop: Any = None,
+                run_manager: Any = None,
+                **kw: Any,
+            ) -> ChatResult:
+                text = ""
+                for chunk in chunks():
+                    if run_manager is not None:
+                        run_manager.on_llm_new_token(chunk.text, chunk=chunk)
+                    text += chunk.text
+                return ChatResult(generations=[ChatGeneration(message=AIMessage(text))])
+
+            def _stream(self, *args: Any, **kwargs: Any) -> Any:
+                yield from chunks()
+
+        model = Drop(callbacks=[handler])
+        return model, state
+
+
+def _retried(model: Any) -> Any:
+    from unified_kg_rag.adapters.llm.chain_factory import with_transient_retry
+    from unified_kg_rag.domain.models.config import RetryPolicy
+
+    return with_transient_retry(
+        model,
+        operation="answer",
+        retry=RetryPolicy(
+            max_attempts=3, base_delay_seconds=0.0, max_delay_seconds=0.0
+        ),
+        is_transient=lambda e: isinstance(e, ConnectionError),
+    )
+
+
+async def _answer(chain: Any, how: str, prompt: str) -> str:
+    if how == "invoke":
+        return str(chain.invoke(prompt).content)
+    if how == "ainvoke":
+        return str((await chain.ainvoke(prompt)).content)
+    if how == "stream":
+        return "".join(c.text for c in chain.stream(prompt))
+    return "".join([c.text async for c in chain.astream(prompt)])
+
+
+_PATHS = ["invoke", "ainvoke", "stream", "astream"]
+_PROMPT = "a fairly long prompt about the Vendor and the Buyer " * 20
+
+
+def _query_limits(**kwargs: Any) -> usage.UsageLimits:
+    # A query's (search.query_max_*): they bound the calls it plans.
+    return usage.UsageLimits(counts_retries=False, **kwargs)
+
+
+@pytest.mark.parametrize("how", _PATHS)
+@pytest.mark.parametrize("limit", ["calls", "tokens"])
+@pytest.mark.parametrize(("faults", "spare"), [(1, 0), (2, 0), (2, 1)])
+async def test_a_retry_within_a_query_limit_reuses_its_failed_attempts_room(
+    how: str, limit: str, faults: int, spare: int
+) -> None:
+    # Regression (rv46 medium, from #794): a stream that dropped after its
+    # response started keeps its estimate, so under a binding query limit
+    # (the answer packed up to query_max_input_tokens, or the one call
+    # query_max_model_calls keeps for it) its retry was refused and a
+    # transient fault failed the query as limit_exceeded. A query's limits
+    # count each logical call once; the usage still counts each attempt.
+    handler = UsageCallbackHandler("vendor.model-v1", role="query")
+    model, state = _DropOnce.build(faults, handler)
+    estimate = estimate_token_count(_PROMPT)
+    limits = (
+        _query_limits(max_llm_calls=1 + spare)
+        if limit == "calls"
+        else _query_limits(max_input_tokens=(1 + spare) * estimate)
+    )
+    with usage.usage_scope(limits=limits) as meter:
+        assert await _answer(_retried(model), how, _PROMPT) == _DropOnce.ANSWER
+        left = usage.remaining()
+    assert state["attempts"] == faults + 1
+    got = LLMUsage.model_validate(meter.snapshot())
+    # Every attempt was sent: each is a call, all estimated (no usage
+    # reported), the dropped ones at their prompt's estimate.
+    attempts = faults + 1
+    assert (got.llm_calls, got.estimated_calls, got.failed_calls) == (
+        attempts,
+        attempts,
+        0,
+    )
+    assert got.input_tokens == attempts * estimate
+    # What the limit counted: the one logical call, the rest still room.
+    assert (left.llm_calls, left.input_tokens) == (
+        (spare, None) if limit == "calls" else (None, spare * estimate)
+    )
+
+
+def test_an_attempt_superseded_in_flight_leaves_the_limits_when_it_settles() -> None:
+    # A retry may start before its failed attempt's call is settled (its
+    # end comes later): what that call settles at stays out of the limits
+    # that count a call once, whatever it is.
+    limits = _query_limits(max_llm_calls=3, max_input_tokens=100)
+    with usage.usage_scope(limits=limits) as meter:
+        retried = usage.RetriedCall()
+        with retried.attempt():
+            first = usage.start_llm_call("query", "m", estimated_input_tokens=30)
+        with retried.attempt():
+            second = usage.start_llm_call("query", "m", estimated_input_tokens=30)
+        assert usage.remaining() == usage.Remaining(
+            llm_calls=2,
+            input_tokens=70,
+            call_limit="max_llm_calls",
+            call_limit_value=3,
+        )
+        first.finish(input_tokens=45, output_tokens=5)
+        second.fail()
+        left = usage.remaining()
+    assert (left.llm_calls, left.input_tokens) == (3, 100)
+    got = meter.snapshot()
+    assert (got["llm_calls"], got["input_tokens"], got["failed_calls"]) == (1, 45, 1)
+
+
+@pytest.mark.parametrize("how", _PATHS)
+async def test_a_fault_on_every_attempt_within_a_query_limit_is_the_models_error(
+    how: str,
+) -> None:
+    handler = UsageCallbackHandler("vendor.model-v1", role="query")
+    model, state = _DropOnce.build(99, handler)
+    limits = _query_limits(
+        max_llm_calls=1, max_input_tokens=estimate_token_count(_PROMPT)
+    )
+    with usage.usage_scope(limits=limits) as meter:
+        with pytest.raises(ConnectionResetError):
+            await _answer(_retried(model), how, _PROMPT)
+    assert state["attempts"] == 3
+    got = LLMUsage.model_validate(meter.snapshot())
+    assert (got.llm_calls, got.estimated_calls) == (3, 3)
+
+
+@pytest.mark.parametrize("how", _PATHS)
+async def test_a_run_budget_counts_every_attempt_of_a_retried_call(how: str) -> None:
+    # An ingestion run's budget (processing.max_run_*) bounds what was sent
+    # and billed: a retry's attempts each take a call of it.
+    handler = UsageCallbackHandler("vendor.model-v1", role="ingestion")
+    model, state = _DropOnce.build(1, handler)
+    with usage.usage_scope(limits=usage.UsageLimits(max_llm_calls=1)) as meter:
+        with pytest.raises(UsageLimitExceededError):
+            await _answer(_retried(model), how, _PROMPT)
+    assert state["attempts"] == 1
+    assert meter.snapshot()["llm_calls"] == 1
+
+
+@pytest.mark.parametrize("how", _PATHS)
+async def test_a_retried_call_without_limits_counts_each_attempt(how: str) -> None:
+    handler = UsageCallbackHandler("vendor.model-v1", role="query")
+    model, state = _DropOnce.build(1, handler)
+    with usage.usage_scope() as meter:
+        assert await _answer(_retried(model), how, _PROMPT) == _DropOnce.ANSWER
+    assert state["attempts"] == 2
+    got = LLMUsage.model_validate(meter.snapshot())
+    assert (got.llm_calls, got.estimated_calls, got.failed_calls) == (2, 2, 0)
+    assert got.input_tokens == 2 * estimate_token_count(_PROMPT)

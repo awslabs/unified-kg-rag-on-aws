@@ -732,3 +732,29 @@ async def test_a_stream_is_retried_after_empty_chunks(chunk: Any) -> None:
     )
     assert [c async for c in chain.astream(_QUERY)] == [chunk, chunk]
     assert bound.calls == 2
+
+
+@pytest.mark.parametrize("failure", ["dropped", "corrupt-frame"])
+@pytest.mark.parametrize("surface", ["astream", "aquery_events"])
+async def test_a_bedrock_streams_transport_error_after_its_retries_is_the_models(
+    failure: str, surface: str
+) -> None:
+    # rv46 query low: once the retries ran out, urllib3's ProtocolError and
+    # botocore's ChecksumMismatch reached the caller raw (error class
+    # failure); they are the model call's, as a LanguageModelError.
+    from unified_kg_rag.shared.exceptions import LanguageModelError
+
+    config = _config()
+    config.providers.rerank.kind = "none"
+    errors = [_STREAM_FAILURES[failure]() for _ in range(_NO_WAIT.max_attempts)]
+    model = _ScriptedModel(reasoning=_bedrock_reasoning(), after_reasoning=errors)
+    chain = _rag_chain(model, config)
+    with pytest.raises(LanguageModelError) as raised:
+        if surface == "astream":
+            async for _ in chain.astream(_RAG_INPUT):
+                pass
+        else:
+            async for _ in chain.aquery_events(_RAG_INPUT):
+                pass
+    assert raised.value.__cause__ is errors[-1]
+    assert model.calls == _NO_WAIT.max_attempts

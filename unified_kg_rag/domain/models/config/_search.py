@@ -203,7 +203,10 @@ class SearchConfig(ConfigSection):
             "extraction, and fails with UsageLimitExceededError (error class "
             "limit_exceeded) before any call when none fits; a query naming "
             "a strategy whose answer call does not fit abstains (reason "
-            "query_limit). RAGInput.limits.max_model_calls lowers it for one "
+            "query_limit). A retry of a call that failed transiently (a "
+            "stream cut before its answer text) is that one call here, so it "
+            "reuses the room its failed attempt held; the usage counts every "
+            "attempt sent. RAGInput.limits.max_model_calls lowers it for one "
             "query. null (default): no cap."
         ),
     )
@@ -215,7 +218,8 @@ class SearchConfig(ConfigSection):
             "call counted at its start at the local estimate of its prompt "
             "(then at what the model reports). Enforced as "
             "query_max_model_calls (auto starts no speculative extraction "
-            "under it either). The fan-out and the optional calls keep for "
+            "under it either; a retried call counts once, at its latest "
+            "attempt). The fan-out and the optional calls keep for "
             "the answer its prompt, the question and the least context "
             "(a search, which makes no answer, keeps nothing), and for a "
             "named drift query its action's too; the answer's context is "

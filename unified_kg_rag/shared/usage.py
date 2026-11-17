@@ -52,6 +52,14 @@ query's limits (``search.query_max_*``) and an ingestion run's budget
 :func:`calls_that_fit` let a step with optional calls (a strategy's
 fan-out) start only what fits.
 
+A retry attempts one call again (:class:`RetriedCall`: the query chain's
+retry of a transient model error, a stream cut before its answer text
+included). The usage counts every attempt, as sent; a run budget does too,
+since it bounds what was spent. A query's limits bound the calls the query
+plans instead (``UsageLimits(counts_retries=False)``): a retry's attempt
+reuses the room its failed attempt held, so a transient fault under a
+binding limit is retried rather than refused.
+
 The scope is a ``contextvars`` value, so it follows the code into the tasks
 and threads it hands its context to (``asyncio`` tasks, ``to_thread``, the
 package's ``ContextThreadPoolExecutor``), and concurrent queries, each in its
@@ -63,7 +71,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from contextvars import ContextVar
+from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -78,6 +86,7 @@ __all__ = [
     "RERANK_DOCUMENTS_PER_UNIT",
     "LLMCall",
     "Remaining",
+    "RetriedCall",
     "UsageLimits",
     "UsageMeter",
     "cache_probed",
@@ -143,9 +152,14 @@ class _Counts:
     rerank_calls: int = 0
     rerank_search_units: int = 0
 
-    def add(self, other: _Counts) -> None:
+    def add(self, other: _Counts, sign: int = 1) -> None:
         for name in COUNT_FIELDS:
-            setattr(self, name, getattr(self, name) + getattr(other, name))
+            setattr(self, name, getattr(self, name) + sign * getattr(other, name))
+
+    def minus(self, other: _Counts) -> _Counts:
+        counts = _Counts(**self.as_dict())
+        counts.add(other, -1)
+        return counts
 
     def as_dict(self) -> dict[str, int]:
         return {name: getattr(self, name) for name in COUNT_FIELDS}
@@ -180,6 +194,12 @@ class UsageLimits:
     :data:`COUNT_FIELDS` mapping, the refused call's estimate included) and
     may raise itself (a model it has no price for); it runs under the
     module's lock, so it must not read a meter.
+
+    ``counts_retries``: whether every attempt of a retried call
+    (:class:`RetriedCall`) counts against the limits, as a run budget's
+    must (each was sent and billed), or only its latest, as a query's
+    limits do (they bound the calls the query plans: a retry reuses the
+    room its failed attempt held). The usage counts every attempt either way.
     """
 
     max_llm_calls: int | None = None
@@ -191,6 +211,7 @@ class UsageLimits:
     # them is refused with OptionalCallSkipped.
     reserved_calls: int = 0
     reserved_tokens: int = 0
+    counts_retries: bool = True
     cost: Callable[[Mapping[str, Mapping[str, int]]], float] | None = None
     refuse: LimitRefusal = _refused
     # The name each limit is reported by (the setting that sets it); one
@@ -202,10 +223,14 @@ class UsageLimits:
             raise ValueError("UsageLimits.max_cost needs a cost function")
 
     def _check(
-        self, meter: UsageMeter, model: str, call: _Counts
+        self,
+        total: _Counts,
+        by_model: Mapping[str, _Counts],
+        model: str,
+        call: _Counts,
     ) -> BaseException | None:
-        """The refusal of ``call`` (on ``model``) in ``meter``, if any."""
-        total = meter.total
+        """The refusal of ``call`` (on ``model``) where the limits count
+        ``total``, ``by_model`` by model, if any."""
         if (
             self.max_llm_calls is not None
             and total.llm_calls + call.llm_calls > self.max_llm_calls
@@ -225,12 +250,12 @@ class UsageLimits:
                 total.input_tokens + call.input_tokens,
             )
         if self.max_cost is not None and self.cost is not None:
-            by_model = {name: c.as_dict() for name, c in meter.by_model.items()}
-            pending = _Counts(**by_model.get(model, {}))
+            priced = {name: c.as_dict() for name, c in by_model.items()}
+            pending = _Counts(**priced.get(model, {}))
             pending.add(call)
-            by_model[model] = pending.as_dict()
+            priced[model] = pending.as_dict()
             try:
-                cost = self.cost(by_model)
+                cost = self.cost(priced)
             except Exception as e:  # noqa: BLE001 - the refusal names it
                 return e
             if cost > self.max_cost:
@@ -266,11 +291,43 @@ class UsageMeter:
     by_role: dict[str, _Counts] = field(default_factory=dict)
     by_model: dict[str, _Counts] = field(default_factory=dict)
     limits: UsageLimits | None = None
+    # Of total and by_model, what the earlier attempts of retried calls
+    # count (RetriedCall): limits that count each call once leave it out.
+    retried: _Counts = field(default_factory=_Counts)
+    retried_by_model: dict[str, _Counts] = field(default_factory=dict)
 
     def _add(self, role: str, model: str, counts: _Counts) -> None:
         self.total.add(counts)
         self.by_role.setdefault(role, _Counts()).add(counts)
         self.by_model.setdefault(model, _Counts()).add(counts)
+
+    def _add_retried(self, model: str, counts: _Counts) -> None:
+        self.retried.add(counts)
+        self.retried_by_model.setdefault(model, _Counts()).add(counts)
+
+    def _limited(
+        self, superseding: Sequence[LLMCall] = ()
+    ) -> tuple[_Counts, dict[str, _Counts]]:
+        """What this scope's limits count, in total and by model, once the
+        calls of ``superseding`` (earlier attempts a retry's call is about
+        to supersede) are, for limits that count a call once, left out
+        (the caller holds the module's lock)."""
+        total = _Counts(**self.total.as_dict())
+        by_model = {name: _Counts(**c.as_dict()) for name, c in self.by_model.items()}
+        if self.limits is None or self.limits.counts_retries:
+            return total, by_model
+        left_out: list[Mapping[str, _Counts]] = [self.retried_by_model]
+        left_out += [
+            {call._model: call._counted}
+            for call in superseding
+            # By identity: meters are dataclasses, equal when their counts are.
+            if any(node is self for node in _chain(call._meter))
+        ]
+        for counts_by_model in left_out:
+            for name, counts in counts_by_model.items():
+                total.add(counts, -1)
+                by_model.setdefault(name, _Counts()).add(counts, -1)
+        return total, by_model
 
     def snapshot(self) -> dict[str, Any]:
         """Plain-data copy: the totals, ``by_role`` and ``by_model``
@@ -329,34 +386,52 @@ def _record(role: str, model: str, counts: _Counts) -> None:
 
 def _add_to(meter: UsageMeter | None, role: str, model: str, counts: _Counts) -> None:
     with _LOCK:
-        while meter is not None:
-            meter._add(role, model, counts)
-            meter = meter.parent
+        for node in _chain(meter):
+            node._add(role, model, counts)
 
 
-def _admit(meter: UsageMeter | None, role: str, model: str, counts: _Counts) -> None:
-    """Add ``counts`` (a call starting) to ``meter`` and its parents, unless
-    the limits of one of them refuse it: then raise the refusal and add
-    nothing."""
+def _chain(meter: UsageMeter | None) -> list[UsageMeter]:
+    """``meter`` and its enclosing scopes' meters, innermost first."""
+    chain = []
+    while meter is not None:
+        chain.append(meter)
+        meter = meter.parent
+    return chain
+
+
+def _admit(call: LLMCall) -> None:
+    """Count ``call`` (starting) in its meter and their parents, unless the
+    limits of one of them refuse it: then raise the refusal and count
+    nothing. A retry's call supersedes the calls of its earlier attempts
+    (:class:`RetriedCall`) for the limits that count a call once."""
     refusal: BaseException | None = None
     optional = _OPTIONAL.get()
+    counts = call._pending()
     with _LOCK:
-        node = meter
-        while node is not None and refusal is None:
-            if node.limits is not None:
-                # An optional call past what the answer keeps is skipped
-                # (OptionalCallSkipped) before any limit refuses it: one
-                # past a limit itself is past that room too.
-                if optional:
-                    refusal = _optional_refusal(node, counts)
-                if refusal is None:
-                    refusal = node.limits._check(node, model, counts)
-            node = node.parent
+        superseding = call._attempt.superseded() if call._attempt else []
+        for node in _chain(call._meter):
+            if node.limits is None:
+                continue
+            total, by_model = node._limited(superseding)
+            # An optional call past what the answer keeps is skipped
+            # (OptionalCallSkipped) before any limit refuses it: one past a
+            # limit itself is past that room too.
+            if optional:
+                refusal = _optional_refusal(node.limits, total, counts)
+            if refusal is None:
+                refusal = node.limits._check(total, by_model, call._model, counts)
+            if refusal is not None:
+                break
         if refusal is None:
-            node = meter
-            while node is not None:
-                node._add(role, model, counts)
-                node = node.parent
+            for node in _chain(call._meter):
+                node._add(call._role, call._model, counts)
+            call._counted = counts
+            for earlier in superseding:
+                earlier._superseded = True
+                for node in _chain(earlier._meter):
+                    node._add_retried(earlier._model, earlier._counted)
+            if call._attempt is not None:
+                call._attempt.admitted(call)
     if refusal is not None:
         raise refusal
 
@@ -368,21 +443,22 @@ def remaining() -> Remaining:
     tokens: int | None = None
     call_limit: tuple[str, int] | None = None
     with _LOCK:
-        node = _CURRENT.get()
-        while node is not None:
+        for node in _chain(_CURRENT.get()):
             limits = node.limits
-            if limits is not None and limits.max_llm_calls is not None:
-                left = max(0, limits.max_llm_calls - node.total.llm_calls)
+            if limits is None:
+                continue
+            total, _ = node._limited()
+            if limits.max_llm_calls is not None:
+                left = max(0, limits.max_llm_calls - total.llm_calls)
                 if calls is None or left < calls:
                     calls = left
                     call_limit = (
                         limits.names.get("max_llm_calls", "max_llm_calls"),
                         limits.max_llm_calls,
                     )
-            if limits is not None and limits.max_input_tokens is not None:
-                left = max(0, limits.max_input_tokens - node.total.input_tokens)
+            if limits.max_input_tokens is not None:
+                left = max(0, limits.max_input_tokens - total.input_tokens)
                 tokens = left if tokens is None else min(tokens, left)
-            node = node.parent
     return Remaining(
         llm_calls=calls,
         input_tokens=tokens,
@@ -411,16 +487,15 @@ def optional_calls() -> Iterator[None]:
         _OPTIONAL.reset(token)
 
 
-def _optional_refusal(meter: UsageMeter, call: _Counts) -> BaseException | None:
+def _optional_refusal(
+    limits: UsageLimits, total: _Counts, call: _Counts
+) -> BaseException | None:
     """The refusal of an optional ``call`` that would take a call or input
-    tokens ``meter`` keeps for its last step (none kept: past its limit),
-    if any."""
-    limits = meter.limits
-    if limits is None:
-        return None
+    tokens ``limits`` keep for their scope's last step (none kept: past
+    the limit), where they count ``total``, if any."""
     if limits.max_llm_calls is not None:
         room = limits.max_llm_calls - limits.reserved_calls
-        if meter.total.llm_calls + call.llm_calls > room:
+        if total.llm_calls + call.llm_calls > room:
             name = limits.names.get("max_llm_calls", "max_llm_calls")
             return OptionalCallSkipped(
                 (
@@ -437,7 +512,7 @@ def _optional_refusal(meter: UsageMeter, call: _Counts) -> BaseException | None:
             )
     if limits.max_input_tokens is not None:
         room = limits.max_input_tokens - limits.reserved_tokens
-        if meter.total.input_tokens + call.input_tokens > room:
+        if total.input_tokens + call.input_tokens > room:
             name = limits.names.get("max_input_tokens", "max_input_tokens")
             return OptionalCallSkipped(
                 (
@@ -477,13 +552,72 @@ def calls_that_fit(
     return fit
 
 
+# The attempt of a retried call the model calls made here belong to.
+_ATTEMPT: ContextVar[_Attempt | None] = ContextVar("llm_usage_attempt", default=None)
+
+
+class RetriedCall:
+    """One call that a retry may attempt several times (the query chain's
+    retry of a transient model error): each attempt is entered with
+    ``with attempt:`` for :meth:`attempt`'s value, re-entrant (a stream's
+    attempt around each chunk it reads).
+
+    The model calls started in an attempt count as usual, in the usage and
+    in every limit. Once a call of a later attempt is admitted, the calls of
+    the earlier ones stop counting against the limits that count a call
+    once (``UsageLimits(counts_retries=False)``, a query's): the retry
+    reuses the room its failed attempt held, whatever that attempt was
+    settled at (a stream cut after its response started keeps its
+    estimate). Limits that count retries, and the usage, still count them.
+    """
+
+    def __init__(self) -> None:
+        self._attempts = 0
+        # The admitted calls of the latest attempt that made one, by attempt.
+        self._calls: list[tuple[int, LLMCall]] = []
+
+    def attempt(self) -> _Attempt:
+        """The next attempt."""
+        self._attempts += 1
+        return _Attempt(self, self._attempts)
+
+
+class _Attempt:
+    """One attempt of a :class:`RetriedCall` (see there)."""
+
+    def __init__(self, call: RetriedCall, number: int) -> None:
+        self._call = call
+        self._number = number
+        self._tokens: list[Token[_Attempt | None]] = []
+
+    def __enter__(self) -> _Attempt:
+        self._tokens.append(_ATTEMPT.set(self))
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        _ATTEMPT.reset(self._tokens.pop())
+
+    def superseded(self) -> list[LLMCall]:
+        """The calls of the earlier attempts a call of this one supersedes
+        (the caller holds the module's lock)."""
+        return [call for number, call in self._call._calls if number < self._number]
+
+    def admitted(self, call: LLMCall) -> None:
+        """``call`` of this attempt was admitted: the earlier attempts'
+        calls are superseded (the caller holds the module's lock)."""
+        kept = self._call._calls
+        kept[:] = [(n, c) for n, c in kept if n >= self._number]
+        kept.append((self._number, call))
+
+
 class LLMCall:
     """One model call counted from its start (:func:`start_llm_call`), until
     it is settled: :meth:`finish`, :meth:`served_from_cache` or :meth:`fail`.
 
     Until then it counts as an estimated call at its estimated input tokens,
     in the scopes open where it started; settling replaces that estimate
-    (once: a second settle does nothing).
+    (once: a second settle does nothing). Started in an attempt of a
+    :class:`RetriedCall`, it is one of that attempt's calls.
     """
 
     def __init__(
@@ -500,7 +634,11 @@ class LLMCall:
         self._model = model
         self._estimate = estimate
         self._settled = False
-        self._admitted = False
+        self._attempt = _ATTEMPT.get()
+        # What the call counts in its scopes (nothing until admitted), and
+        # whether a later attempt of its retried call superseded it.
+        self._counted = _Counts()
+        self._superseded = False
         if probes_cache:
             # Counted (and checked) once the cache missed (cache_probed): a
             # hit is no call and must not hold a limit's room while in
@@ -510,8 +648,7 @@ class LLMCall:
             self._admit()
 
     def _admit(self) -> None:
-        _admit(self._meter, self._role, self._model, self._pending())
-        self._admitted = True
+        _admit(self)
 
     @property
     def estimated_input_tokens(self) -> int:
@@ -526,19 +663,17 @@ class LLMCall:
             if self._settled:
                 return
             self._settled = True
-        probing = _PROBING.get()
-        if probing and self in probing:
-            probing.remove(self)
-        # A call the cache was still to look up was never counted: its
-        # settle adds what it is (a hit, or a call no lookup preceded).
-        pending = self._pending() if self._admitted else _Counts()
-        delta = _Counts(
-            **{
-                name: getattr(counts, name) - getattr(pending, name)
-                for name in COUNT_FIELDS
-            }
-        )
-        _add_to(self._meter, self._role, self._model, delta)
+            probing = _PROBING.get()
+            if probing and self in probing:
+                probing.remove(self)
+            # A call the cache was still to look up was never counted: its
+            # settle adds what it is (a hit, or a call no lookup preceded).
+            delta = counts.minus(self._counted)
+            self._counted = counts
+            for node in _chain(self._meter):
+                node._add(self._role, self._model, delta)
+                if self._superseded:
+                    node._add_retried(self._model, delta)
 
     def finish(
         self,

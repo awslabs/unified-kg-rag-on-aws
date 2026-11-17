@@ -63,7 +63,10 @@ from unified_kg_rag.adapters.llm.reachability import (
     is_unreachable_error,
     named_model_error,
 )
-from unified_kg_rag.adapters.llm.retry import retry_deadline
+from unified_kg_rag.adapters.llm.retry import (
+    retry_deadline,
+    transient_error_predicate,
+)
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.base import (
@@ -2998,6 +3001,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 if limits.max_input_tokens is not None
                 else 0
             ),
+            # They bound the calls the query plans: a retry of a call that
+            # failed transiently reuses the room its failed attempt held.
+            counts_retries=False,
             names={
                 "max_llm_calls": self._limit_setting(rag_input, "max_model_calls"),
                 "max_input_tokens": self._limit_setting(rag_input, "max_input_tokens"),
@@ -3214,8 +3220,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         except Exception as raised:
             # A model server that cannot be reached, named (provider kind,
             # base_url), and a model client's own error as a
-            # LanguageModelError, rather than as its transport's error.
-            e = named_model_error(raised, self.config)
+            # LanguageModelError, rather than as its transport's error
+            # (one the factory retries as transient too).
+            e = named_model_error(
+                raised,
+                self.config,
+                is_transient=transient_error_predicate(self.factory),
+            )
             if not self.ignore_errors:
                 if e is raised:
                     raise

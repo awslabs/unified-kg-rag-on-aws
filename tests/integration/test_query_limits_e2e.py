@@ -14,10 +14,13 @@ failed where it could have answered (W1 verification 2).
 
 from __future__ import annotations
 
+import json
 import logging
 import re
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
+import httpx
 import pytest
 
 from tests.fixtures.fakes.model_servers import FakeOllama
@@ -40,6 +43,8 @@ from unified_kg_rag.application.retrieval.rag_chain import (
     SearchOutput,
 )
 from unified_kg_rag.domain.models import PipelineStageStatus, SearchStrategy
+from unified_kg_rag.domain.models.config import RetryPolicy
+from unified_kg_rag.shared.exceptions import ErrorClass, classify
 
 pytestmark = pytest.mark.integration
 
@@ -272,3 +277,137 @@ def test_a_query_its_limits_cut_short_is_counted_as_limited(
         limited.metadata.get("degraded"),
         limited.metadata.get("abstention_reason"),
     )
+
+
+class _DroppedStream(httpx.SyncByteStream, httpx.AsyncByteStream):
+    """A response that streams the model's reasoning, then drops."""
+
+    def __init__(self, model: str) -> None:
+        self.line = (
+            json.dumps(
+                {
+                    "model": model,
+                    "created_at": "2026-01-01T00:00:00Z",
+                    "message": {"role": "assistant", "content": "", "thinking": "a"},
+                    "done": False,
+                }
+            )
+            + "\n"
+        ).encode()
+
+    def __iter__(self) -> Iterator[bytes]:
+        yield self.line
+        yield self.line
+        raise httpx.ReadError("connection dropped")
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        for part in self:
+            yield part
+
+
+class _DropsAnswers(FakeOllama):
+    """``FakeOllama`` whose next ``drops`` answers drop mid-stream."""
+
+    drops = 0
+    sent = 0
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        answers = self.answers
+        response = super().__call__(request)
+        if self.answers == answers:
+            return response
+        self.sent += 1
+        if self.drops <= 0:
+            return response
+        self.drops -= 1
+        model = json.loads(request.content)["model"]
+        return httpx.Response(200, stream=_DroppedStream(model))
+
+
+@pytest.fixture
+def dropping(
+    tmp_path: Path, no_aws
+) -> tuple[GraphRAGChain, _DropsAnswers]:  # noqa: F811
+    config = _config(tmp_path / "stores", tmp_path / "viz")
+    config.retry.model_server = RetryPolicy(
+        max_attempts=3, base_delay_seconds=0.0, max_delay_seconds=0.0
+    )
+    server = _DropsAnswers(_respond, ANSWER, DIM)
+    providers = _providers(config, server, FakeCrossEncoder("synthetic-reranker"))
+    source = tmp_path / "corpus"
+    source.mkdir()
+    (source / "logistics.txt").write_text("Depot stores widgets for Vendor.")
+    context = _ingest(config, providers, source, tmp_path / "run-1")
+    assert context.status is PipelineStageStatus.COMPLETED, _errors(context)
+    return GraphRAGChain(config=config, providers=providers), server
+
+
+async def _answer_via(chain: GraphRAGChain, how: str, rag_input: RAGInput) -> str:
+    if how == "ainvoke":
+        out = await chain.ainvoke(rag_input)
+        assert isinstance(out, RAGOutput)
+        return out.answer
+    if how == "astream":
+        return "".join([c async for c in chain.astream(rag_input)])
+    from unified_kg_rag import AnswerChunk
+
+    return "".join(
+        [
+            e.text
+            async for e in chain.aquery_events(rag_input)
+            if isinstance(e, AnswerChunk)
+        ]
+    )
+
+
+@pytest.mark.parametrize("how", ["ainvoke", "astream", "events"])
+async def test_a_dropped_answer_stream_is_retried_within_binding_query_limits(
+    dropping: tuple[GraphRAGChain, _DropsAnswers], how: str
+) -> None:
+    # Regression (rv46 medium, from #794): an answer stream that dropped
+    # after its reasoning started keeps its estimated input tokens, so with
+    # the answer packed up to search.query_max_input_tokens, or holding the
+    # one call search.query_max_model_calls keeps for it, the retry was
+    # refused and the query failed as limit_exceeded. Query limits count
+    # each call once; the usage counts both attempts sent.
+    chain, server = dropping
+    for limits in (
+        QueryLimits(max_model_calls=1),
+        QueryLimits(max_input_tokens=1_000),
+        QueryLimits(max_model_calls=1, max_input_tokens=1_000),
+    ):
+        rag_input = RAGInput(
+            query=ENGLISH, search_strategy=SearchStrategy.NAIVE, limits=limits
+        )
+        server.drops, server.sent = 1, 0
+        assert await _answer_via(chain, how, rag_input) == ANSWER, limits
+        assert server.sent == 2, limits
+        if how == "ainvoke":
+            usage = (await chain.ainvoke(rag_input)).metadata["usage"]
+            assert usage["llm_calls"] == 1, usage
+        # A fault on every attempt ends with the model's error, not a limit.
+        server.drops, server.sent = 99, 0
+        with pytest.raises(Exception) as raised:
+            await _answer_via(chain, how, rag_input)
+        assert classify(raised.value) is not ErrorClass.LIMIT_EXCEEDED, raised.value
+        assert server.sent == 3, limits
+
+
+async def test_a_dropped_answer_stream_counts_both_attempts_in_the_usage(
+    dropping: tuple[GraphRAGChain, _DropsAnswers],
+) -> None:
+    chain, server = dropping
+    server.drops = 1
+    out = await chain.ainvoke(
+        RAGInput(
+            query=ENGLISH,
+            search_strategy=SearchStrategy.NAIVE,
+            limits=QueryLimits(max_model_calls=1),
+        )
+    )
+    assert isinstance(out, RAGOutput)
+    assert out.answer == ANSWER
+    usage = out.metadata["usage"]
+    # The dropped attempt at its estimate, the answer as the server reported.
+    assert (usage["llm_calls"], usage["estimated_calls"]) == (2, 1), usage
+    assert usage["failed_calls"] == 0, usage

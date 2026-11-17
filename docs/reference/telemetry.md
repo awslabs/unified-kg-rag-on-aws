@@ -88,7 +88,12 @@ from its stored copy, or a query entity or keyword extraction the chain's
 extraction cache served (`search.query_extraction_cache_size`), counts as
 a cache hit, not a call; a call that
 failed before its response started is not in `llm_calls` but in
-`failed_calls`; retries are calls.
+`failed_calls`; retries are calls: each attempt sent counts. A query's
+limits (`search.query_max_model_calls`, `search.query_max_input_tokens`)
+count a retried call once instead, at its latest attempt, so a transient
+fault under a binding limit is retried rather than refused; an ingestion
+run's budget (`processing.max_run_model_calls`, `processing.max_run_usd`)
+bounds what was sent and counts every attempt.
 `input_tokens` includes the prompt-cache reads and writes, which are also
 counted apart (`cache_read_input_tokens`, `cache_write_input_tokens`, from
 Bedrock's `cacheReadInputTokens` / `cacheWriteInputTokens`) since they are
@@ -109,10 +114,12 @@ tokens or price). A call that has not answered when the
 usage is read (an `auto` query's unread extraction, still running in the
 background), was cancelled in flight (by `search.query_timeout_seconds`,
 say) or failed once its response had started streaming (a stream cut
-mid-answer, which the query chain retries) was sent and is billed, so it
+mid-answer, which the query chain retries; also an Ollama `invoke`, whose
+client streams inside the call) was sent and is billed, so it
 counts in `llm_calls` and in
-`estimated_calls`, at an estimate of its input tokens and no output tokens;
-one that answers later is settled in `run-eval`'s run usage. A call that
+`estimated_calls`, at an estimate of its input tokens; its output tokens
+are 0, but for a failed stream's, estimated from the text it streamed.
+One that answers later is settled in `run-eval`'s run usage. A call that
 answers without reporting usage (a local server that returns none, say)
 stays estimated the same way, rather than reading as free, with its output
 tokens estimated from its text and its resent requests counted.

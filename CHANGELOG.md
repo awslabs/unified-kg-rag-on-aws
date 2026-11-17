@@ -68,9 +68,11 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   - Limits: `search.query_max_model_calls` and `search.query_max_input_tokens` (off by default) bound one query's
     model calls and their input tokens, and `RAGInput.limits` (`QueryLimits`, exported; the MCP tools' `limits`,
     whose deadline covers the wait for a call slot, the server's own reported by `kg_describe_schema`) lowers them
-    and the deadline for one query, never raising them (a stream attempt that failed after its response started
-    counts at its estimate). A call past a limit is refused before it is sent: the usage
-    callback now raises its refusal (LangChain swallowed a handler's error) and logs any other error of its own
+    and the deadline for one query, never raising them. They count the calls a query plans: a retry of a call that
+    failed transiently (a stream cut before its answer text) reuses the room its failed attempt held, so it is not
+    refused, while the usage counts every attempt sent, as an ingestion run's `processing.max_run_*` budget does
+    (`UsageLimits.counts_retries`, `shared.usage.RetriedCall`). A call past a limit is refused before it is sent: the
+    usage callback now raises its refusal (LangChain swallowed a handler's error) and logs any other error of its own
     (`setup_logging` drops LangChain's own "Error in UsageCallbackHandler... callback" WARNING of a refusal).
   - Fan-out: `global`, `drift` and `iterative` start only the calls that fit beside what the answer will read
     (DRIFT's actions sharing what is left, each built context kept to its share and an action the meter still
@@ -255,9 +257,12 @@ Bugs present in 0.3.0.
   An OpenAI-compatible stream is retried the same way after its response started (its client retries only until
   then). A model's read timeout is named as one, with `search.model_timeout_seconds`, instead of "an unexpected
   error"; the OpenAI client's connect timeout (the same `APITimeoutError`) is an unreachable server, as Ollama's is.
-  A call that failed once its response had started keeps its estimated input tokens (an estimated call, not a failed
-  one), so a stream retry's spent attempts count in the usage; one that failed before any response (an `ainvoke`'s
-  always) is still a failed call at 0 tokens.
+  A call that failed once its response had started (a stream, or an Ollama `invoke`, whose client streams inside the
+  call) keeps its estimated input tokens, and the output it streamed estimated (an estimated call, not a failed one),
+  so a stream retry's spent attempts count in the usage; one whose response never started is still a failed call at
+  0 tokens. Once the retries run out, urllib3's `ProtocolError` and botocore's `ChecksumMismatch` reach the caller as
+  a `LanguageModelError`, not raw, and an httpx `PoolTimeout` is named a wait for a free connection of the client's
+  pool, not a server that sent nothing within its read timeout.
 - A context could read past its token budget: a section type whose next section fell below the truncation floor
   kept its unused share while that share was also handed to the other types (a 244-token budget built 262). A round
   that seats past the budget so now lends its spare once, the room the types held unseated pooled in it, and what no
@@ -323,9 +328,9 @@ Bugs present in 0.3.0.
 - `insert_documents` and `delete_documents` took an absolute directory given as `source_scope` as spelled, where a
   corpus run keys its records by its resolved directory: a path through a symlink opened a second scope and indexed
   the corpus's documents again. Both now use the registry's spelling of the scope: as given, with other trailing or
-  doubled slashes, else, for a directory of this host, the stored scope naming it through a symlink. A run keyed by
-  the scope as given warns when another stored scope names the same directory (a document under both is stored
-  twice), and `DocumentNotFoundError` names the other spelling a missing id is under.
+  doubled slashes, else, for a directory of this host, the stored scope naming it through a symlink. A corpus run, or
+  a run of changes keyed by the scope as given, warns when another stored scope names the same directory (a document
+  under both is stored twice), and `DocumentNotFoundError` names the other spelling a missing id is under.
 - `answer_match` read Japanese sums in 兆 (10^12) wrong: `一兆二千億円` as 200,000,000,000 and `3兆円` as 3. 兆 is a
   multiplier of the Japanese and Chinese profiles, as 億 is, where it can close an amount (`新台币3兆元`, `3兆美元`);
   before another Han or Latin letter it is the Chinese prefix mega (the new `LanguageProfile.prefix_multipliers`), so

@@ -570,3 +570,51 @@ def test_the_openai_clients_connect_timeout_is_unreachable_its_read_timeout_not(
     named = named_model_error(read, config)
     assert isinstance(named, x.LanguageModelError)
     assert "read timeout" in str(named)
+
+
+def test_a_bedrock_streams_own_errors_are_named_after_its_retries() -> None:
+    # rv46 query low: after the stream retries ran out, urllib3's
+    # ProtocolError and botocore's ChecksumMismatch reached the caller raw
+    # (error class failure), not as the LanguageModelError a model client's
+    # error is: what the factory retries as transient is the model's error.
+    from botocore.eventstream import ChecksumMismatch
+    from urllib3 import exceptions as urllib3_exc
+
+    from unified_kg_rag.adapters.aws.bedrock_retry import is_transient_bedrock_error
+    from unified_kg_rag.adapters.llm.reachability import named_model_error
+
+    config = Config()
+    for raw in (
+        urllib3_exc.ProtocolError("Connection broken"),
+        ChecksumMismatch(0x1234ABCD, 0x0BADF00D),
+    ):
+        # Without the factory's predicate, no package rule knows them.
+        assert named_model_error(raw, config) is raw
+        named = named_model_error(raw, config, is_transient=is_transient_bedrock_error)
+        assert isinstance(named, x.LanguageModelError), raw
+        assert named.__cause__ is raw
+        assert type(raw).__name__ in str(named)
+    # A store's error stays the store's.
+    kept = x.StoreConnectionError("down")
+    assert named_model_error(kept, config, is_transient=lambda e: True) is kept
+
+
+def test_a_pool_timeout_is_named_a_wait_for_a_connection_not_a_read() -> None:
+    # rv46 query low: httpx's PoolTimeout (no connection of the client's
+    # pool came free in time), raised as is or inside the OpenAI client's
+    # APITimeoutError, read "the model server sent nothing within a
+    # query's read timeout": nothing was sent to it.
+    from unified_kg_rag.adapters.llm.reachability import named_model_error
+
+    config = Config()
+    _, openai_timeout = _openai_errors()
+    for raw in (
+        httpx.PoolTimeout("timed out"),
+        _raised_from(openai_timeout, httpx.PoolTimeout("timed out")),
+    ):
+        named = named_model_error(raw, config)
+        assert isinstance(named, x.LanguageModelError), raw
+        shown = x.shown_error_text(named, audience="operator")
+        assert "free connection" in shown, shown
+        assert "sent nothing" not in shown
+        assert not is_unreachable_error(raw)

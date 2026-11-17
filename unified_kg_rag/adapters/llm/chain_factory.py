@@ -17,6 +17,7 @@ import logging
 import threading
 import time
 from collections.abc import AsyncIterator, Collection, Iterator
+from contextlib import AbstractContextManager
 from typing import TYPE_CHECKING, Any, Literal
 
 from langchain_classic.output_parsers import OutputFixingParser
@@ -525,6 +526,10 @@ class TransientRetryRunnable(Runnable[Any, Any]):
     itself, the OpenAI one) leaves ``invoke``/``ainvoke`` to that client and
     retries only streams, whose failure after the response started no
     client retries.
+
+    The attempts are those of one call (``shared.usage.RetriedCall``): a
+    query's limits count it once, so a retry reuses the room its failed
+    attempt held; the usage counts each attempt.
     """
 
     def __init__(
@@ -567,8 +572,14 @@ class TransientRetryRunnable(Runnable[Any, Any]):
     ) -> Any:
         if not self.retries_calls:
             return self.bound.invoke(input, config, **kwargs)
+        retried = usage.RetriedCall()
+
+        def attempt() -> Any:
+            with retried.attempt():
+                return self.bound.invoke(input, config, **kwargs)
+
         return call_with_transient_retry(
-            lambda: self.bound.invoke(input, config, **kwargs),
+            attempt,
             is_transient=self.is_transient,
             operation=self.operation,
             policy=self.retry,
@@ -579,24 +590,35 @@ class TransientRetryRunnable(Runnable[Any, Any]):
     ) -> Any:
         if not self.retries_calls:
             return await self.bound.ainvoke(input, config, **kwargs)
+        retried = usage.RetriedCall()
+
+        async def attempt() -> Any:
+            with retried.attempt():
+                return await self.bound.ainvoke(input, config, **kwargs)
+
         return await acall_with_transient_retry(
-            lambda: self.bound.ainvoke(input, config, **kwargs),
+            attempt,
             is_transient=self.is_transient,
             operation=self.operation,
             policy=self.retry,
         )
 
     # Streaming keeps its own loop: a retry is allowed only before the first
-    # chunk, which the call-level helpers cannot observe.
+    # chunk, which the call-level helpers cannot observe. Each chunk is read
+    # in its attempt (the model call starts on the first read), and the
+    # attempt is left before the chunk is yielded to the caller.
     def stream(
         self, input: Any, config: RunnableConfig | None = None, **kwargs: Any
     ) -> Iterator[Any]:
         started_at = time.monotonic()
         attempt = 1
+        retried = usage.RetriedCall()
         while True:
             emitted = False
             try:
-                for chunk in self.bound.stream(input, config, **kwargs):
+                for chunk in _in_attempt(
+                    self.bound.stream(input, config, **kwargs), retried.attempt()
+                ):
                     emitted = emitted or _carries_output(chunk)
                     yield chunk
                 return
@@ -612,10 +634,13 @@ class TransientRetryRunnable(Runnable[Any, Any]):
     ) -> AsyncIterator[Any]:
         started_at = time.monotonic()
         attempt = 1
+        retried = usage.RetriedCall()
         while True:
             emitted = False
             try:
-                async for chunk in self.bound.astream(input, config, **kwargs):
+                async for chunk in _ain_attempt(
+                    self.bound.astream(input, config, **kwargs), retried.attempt()
+                ):
                     emitted = emitted or _carries_output(chunk)
                     yield chunk
                 return
@@ -625,6 +650,42 @@ class TransientRetryRunnable(Runnable[Any, Any]):
                     raise
                 await asyncio.sleep(delay)
                 attempt += 1
+
+
+def _in_attempt(
+    chunks: Iterator[Any], attempt: AbstractContextManager[Any]
+) -> Iterator[Any]:
+    """``chunks``, each read in ``attempt`` (``shared.usage``)."""
+    try:
+        while True:
+            with attempt:
+                try:
+                    chunk = next(chunks)
+                except StopIteration:
+                    return
+            yield chunk
+    finally:
+        close = getattr(chunks, "close", None)
+        if close is not None:
+            close()
+
+
+async def _ain_attempt(
+    chunks: AsyncIterator[Any], attempt: AbstractContextManager[Any]
+) -> AsyncIterator[Any]:
+    """``chunks``, each read in ``attempt`` (``shared.usage``)."""
+    try:
+        while True:
+            with attempt:
+                try:
+                    chunk = await anext(chunks)
+                except StopAsyncIteration:
+                    return
+            yield chunk
+    finally:
+        aclose = getattr(chunks, "aclose", None)
+        if aclose is not None:
+            await aclose()
 
 
 def _reachable_and(is_transient: TransientErrorPredicate) -> TransientErrorPredicate:
