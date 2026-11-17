@@ -17,6 +17,7 @@ from unified_kg_rag.domain.ingestion.delta_detector import (
     fingerprint_documents,
     registry_scope,
     scope_namespace,
+    scope_source,
 )
 from unified_kg_rag.domain.models import DocStatus, DocStatusRecord, Document
 from unified_kg_rag.ports import DocStatusPort
@@ -210,6 +211,19 @@ def test_scope_namespace_reads_the_namespace_of_a_registry_scope() -> None:
     assert scope_namespace(registry_scope("tenant", "s3://bucket/p/")) == "tenant"
     assert scope_namespace(None) is None
     assert scope_namespace("no-separator") is None
+
+
+def test_scope_source_reads_the_source_of_a_scope_of_its_namespace() -> None:
+    # The inverse of registry_scope for one namespace: a source scope may
+    # itself hold the separator, another namespace's scope has none here.
+    assert scope_source(registry_scope("default-x", "/corpus|a"), "default-x") == (
+        "/corpus|a"
+    )
+    assert scope_source(registry_scope("tenant", ""), "tenant") == ""
+    assert scope_source(registry_scope("tenant-b", "/c"), "tenant") is None
+    assert scope_source(registry_scope("tenant", "/c"), "tenant-b") is None
+    assert scope_source(None, "tenant") is None
+    assert scope_source("tenant", "tenant") is None
 
 
 def _failed_corpus(store: FakeDocStatusStore, count: int) -> list[Document]:
