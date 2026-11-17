@@ -425,7 +425,15 @@ jobs:
       - name: Build
         run: npm run build
       - name: Audit
-        run: npm audit --audit-level=moderate
+        # Fails on an advisory at moderate or above that
+        # .github/npm-audit-accepted.txt does not list with the reason it does
+        # not apply and the date it is accepted until (past it, it gates
+        # again). shell: bash adds pipefail.
+        shell: bash
+        run: >-
+          npm audit --json --audit-level=none
+          | python3 ../../.github/scripts/check_npm_audit.py
+          --accepted ../../.github/npm-audit-accepted.txt
       - name: Licenses of the bundled dependencies
         # The runtime dependencies the built client bundles, from the
         # lockfile, against the Python dependencies' denylist (copyleft,
