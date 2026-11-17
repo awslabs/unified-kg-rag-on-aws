@@ -5,7 +5,11 @@ on the embedded SQLite stores and the fake models; nothing leaves the host.
 
 1. Ingest the demo corpus with every methodology; ``load.py sweep`` and
    ``load.py soak`` query it (the soak with ``MALLOC_ARENA_MAX=2``,
-   :data:`SOAK_ENV`).
+   :data:`SOAK_ENV`), and one streamed level (``sweep --stream``) under
+   mid-stream faults (:data:`STREAM_KNOBS`): reasoning before every answer,
+   a share of the answers dropped after it (retried: no text was shown)
+   and after their first chunk (not retried: the reader saw text), whose
+   failures must be exactly the latter (:func:`stream_problem`).
 2. Build a synthetic corpus once in full, as the reference.
 3. Chaos, on that corpus in the same workspace, reset between scenarios
    (record ids name the source path):
@@ -67,6 +71,16 @@ def _env(**extra: str) -> dict[str, str]:
 # floor, so it sees what the code holds (docs/guides/load-testing.md).
 SOAK_ENV = {"MALLOC_ARENA_MAX": "2"}
 
+# The streamed level: one concurrency, the answers' mid-stream faults. A
+# query whose every attempt loses its reasoning (retry.model's 3) fails as
+# well: at these rates about one night in 250.
+STREAM_LEVEL = {"concurrency": 8, "queries": 140}
+STREAM_KNOBS = {
+    "reasoning_chunks": 2.0,
+    "reasoning_drop_rate": 0.03,
+    "answer_drop_rate": 0.03,
+}
+
 
 def _script(name: str) -> str:
     found = Path(sys.executable).with_name(name)
@@ -110,8 +124,17 @@ class Models:
         return answer
 
     def chaos(self, **knobs: float) -> None:
-        reset = {"error_rate": 0.0, "drop_rate": 0.0, "hang_rate": 0.0, "delay": 0.0}
+        reset = {
+            "error_rate": 0.0,
+            "drop_rate": 0.0,
+            "hang_rate": 0.0,
+            "delay": 0.0,
+            **dict.fromkeys(STREAM_KNOBS, 0.0),
+        }
         self._call("/chaos", {**reset, **knobs})
+
+    def stats(self) -> dict[str, Any]:
+        return self._call("/stats")
 
     def chat_calls(self) -> int:
         return int(self._call("/stats")["chat"])
@@ -259,12 +282,18 @@ def reset(workspace: Path) -> None:
 
 
 def load(
-    mode: str, config: Path, out: Path, *args: str, env: dict[str, str] | None = None
+    mode: str,
+    config: Path,
+    out: Path,
+    *args: str,
+    env: dict[str, str] | None = None,
+    name: str | None = None,
 ) -> dict[str, Any]:
     """``load.py <mode>`` in a process of its own (``env``: added to its
-    environment), its report read back."""
-    report = out / f"{mode}.json"
-    with (out / f"{mode}.log").open("w", encoding="utf-8") as log:
+    environment), its report read back (``name``: of its report and log
+    files, the mode's by default)."""
+    report = out / f"{name or mode}.json"
+    with (out / f"{name or mode}.log").open("w", encoding="utf-8") as log:
         subprocess.run(  # nosec B603 - fixed argv
             [
                 sys.executable,
@@ -283,6 +312,63 @@ def load(
         )
     result: dict[str, Any] = json.loads(report.read_text(encoding="utf-8"))
     return result
+
+
+def stream_level(models: Models, config: Path, out: Path) -> dict[str, Any]:
+    """The streamed level (``sweep --stream``) under :data:`STREAM_KNOBS`:
+    its report (with its warm-up's errors and flags), the faults the server
+    injected and :func:`stream_problem`'s verdict."""
+    before = models.stats()
+    models.chaos(**STREAM_KNOBS)
+    try:
+        report = load(
+            "sweep",
+            config,
+            out,
+            "--levels",
+            str(STREAM_LEVEL["concurrency"]),
+            "--queries",
+            str(STREAM_LEVEL["queries"]),
+            "--stream",
+            name="stream",
+        )
+    finally:
+        models.chaos()
+    after = models.stats()
+    drops = {k: after[k] - before[k] for k in ("reasoning_drops", "answer_drops")}
+    (level,) = report["sweep"]
+    return {
+        **level,
+        "knobs": STREAM_KNOBS,
+        "injected": drops,
+        "problem": stream_problem([report["warm_up"], level], drops),
+        "untested": stream_untested(drops),
+    }
+
+
+def stream_problem(levels: list[dict[str, Any]], drops: dict[str, int]) -> str:
+    """Why the streamed levels failed ("": they did not): each answer
+    dropped after its first chunk fails its query (the reader saw text, so
+    it is not retried) and nothing else may (an answer dropped after its
+    reasoning only is retried), and no answer is flagged."""
+    errors = sum(level["errors"] for level in levels)
+    problems = []
+    if errors != drops["answer_drops"]:
+        problems.append(
+            f"{errors} streamed queries failed, {drops['answer_drops']} answers "
+            "were dropped after their first chunk"
+        )
+    flagged = sum(sum((level.get("flags") or {}).values()) for level in levels)
+    if flagged:
+        problems.append(f"{flagged} flagged answers")
+    return "; ".join(problems)
+
+
+def stream_untested(drops: dict[str, int]) -> str:
+    """What the streamed level left untested ("": nothing): a mid-stream
+    fault the server never injected."""
+    missing = [kind for kind, count in drops.items() if not count]
+    return f"the streamed level injected no {', '.join(missing)}" if missing else ""
 
 
 def killed_run(models: Models, ws: Path, after_calls: int) -> tuple[bool, int]:
@@ -433,10 +519,12 @@ def markdown(report: dict[str, Any]) -> str:
         "| Loop lag p99 (ms) |",
         "|---|---|---|---|---|---|---|---|",
     ]
-    for level in [*report["sweep"], report["soak"]]:
-        name = (
-            "soak" if "duration_seconds" in level else "sweep"
-        ) + f" c={level['concurrency']}"
+    runs = [("sweep", level) for level in report["sweep"]]
+    if report.get("stream"):
+        runs.append(("stream", report["stream"]))
+    runs.append(("soak", report["soak"]))
+    for kind, level in runs:
+        name = f"{kind} c={level['concurrency']}"
         lines.append(
             f"| {name} | {level['requests']} | {level['errors']} "
             f"| {sum((level.get('flags') or {}).values())} | {level['throughput_rps']} "
@@ -497,6 +585,7 @@ def main(argv: list[str] | None = None) -> int:
             "--queries",
             str(args.sweep_queries),
         )
+        stream = stream_level(models, config, out)
         soak = load(
             "soak",
             config,
@@ -525,11 +614,16 @@ def main(argv: list[str] | None = None) -> int:
         "seconds": round(time.monotonic() - started, 1),
         "ingest": build,
         "sweep": sweep["sweep"],
+        "stream": stream,
         "soak": soak["soak"],
         "chaos": chaos,
     }
     report["gate_failures"] = check_gates(report, Gates())
     report["gate_notes"] = gate_notes(report)
+    if stream["problem"]:
+        report["gate_failures"].append(f"stream: {stream['problem']}")
+    if stream["untested"]:
+        report["gate_notes"].append(stream["untested"])
     if os.environ.get("GITHUB_ACTIONS") == "true":
         for note in report["gate_notes"]:
             print(f"::warning title=load test::{note}")

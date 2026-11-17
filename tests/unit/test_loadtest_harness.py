@@ -873,13 +873,23 @@ def test_the_nightly_soak_runs_with_two_malloc_arenas(
 
         def __init__(self, out: Path) -> None: ...
 
+        def chaos(self, **_: float) -> None: ...
+
+        def stats(self) -> dict[str, int]:
+            return {"reasoning_drops": 0, "answer_drops": 0}
+
         def close(self) -> None: ...
 
-    def load(mode: str, *_args: Any, env: dict[str, str] | None = None) -> Any:
-        calls[mode] = dict(env or {})
+    def load(
+        mode: str,
+        *_args: Any,
+        env: dict[str, str] | None = None,
+        name: str | None = None,
+    ) -> Any:
+        calls[name or mode] = dict(env or {})
         timed = {"throughput_rps": 1.0, "p50": 0.1, "p99": 0.2}
         if mode == "sweep":
-            return {"sweep": [{**_level(), **timed}]}
+            return {"warm_up": _level(), "sweep": [{**_level(), **timed}]}
         return {"soak": {**_soak(1, 0.5), **timed, "duration_seconds": 60}}
 
     monkeypatch.setattr(nightly, "Models", _Models)
@@ -894,7 +904,7 @@ def test_the_nightly_soak_runs_with_two_malloc_arenas(
 
     assert nightly.main([str(tmp_path / "out")]) == 0
 
-    assert calls == {"sweep": {}, "soak": {"MALLOC_ARENA_MAX": "2"}}
+    assert calls == {"sweep": {}, "stream": {}, "soak": {"MALLOC_ARENA_MAX": "2"}}
     assert nightly._env(**nightly.SOAK_ENV)["MALLOC_ARENA_MAX"] == "2"
 
 
@@ -950,3 +960,158 @@ def test_the_chaos_scenarios_gate_on_injected_faults(
         assert by_name[name]["status"] == "not_converged"
         assert "injected no fault" in by_name[name]["detail"]
     assert by_name["kill"]["status"] == "converged"
+
+
+def test_the_streamed_level_fails_exactly_its_answers_dropped_mid_text(
+    nightly: ModuleType,
+) -> None:
+    """rv48 ops low: the nightly never streamed under mid-stream faults. An
+    answer dropped after its first chunk fails its query; one dropped after
+    its reasoning only is retried and fails nothing."""
+    drops = {"reasoning_drops": 4, "answer_drops": 3}
+    warm, level = _level(errors=1), _level(errors=2)
+    assert nightly.stream_problem([warm, level], drops) == ""
+    assert nightly.stream_problem([warm, _level(errors=3)], drops) == (
+        "4 streamed queries failed, 3 answers were dropped after their first chunk"
+    )
+    flagged = _level(errors=2, flags={"no_sources:mix": 1})
+    assert nightly.stream_problem([warm, flagged], drops) == "1 flagged answers"
+    assert nightly.stream_untested(drops) == ""
+    assert nightly.stream_untested({"reasoning_drops": 0, "answer_drops": 2}) == (
+        "the streamed level injected no reasoning_drops"
+    )
+
+
+def _chat(port: int) -> tuple[list[dict[str, Any]], bool]:
+    """A streamed answer call to the chaos server: its chunks, and whether
+    it ended cleanly (False: the connection dropped mid-stream)."""
+    import http.client
+
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    body = {
+        "model": "demo-model",
+        "stream": True,
+        "messages": [
+            {
+                "role": "system",
+                "content": "answers questions from knowledge graph" " context",
+            },
+            {"role": "user", "content": "Who delivers the lidar units?"},
+        ],
+    }
+    try:
+        connection.request("POST", "/api/chat", body=json.dumps(body).encode())
+        response = connection.getresponse()
+        chunks: list[dict[str, Any]] = []
+        try:
+            for line in response:
+                chunks.append(json.loads(line))
+        except http.client.IncompleteRead:
+            return chunks, False
+        return chunks, bool(chunks) and chunks[-1].get("done") is True
+    finally:
+        connection.close()
+
+
+def test_a_streamed_answer_reasons_first_and_drops_mid_stream_by_the_knobs(
+    chaos_models: ModuleType, server: tuple[Any, int]
+) -> None:
+    chaos, port = server
+    chaos.update({"reasoning_chunks": 2})
+    chunks, clean = _chat(port)
+    assert clean and [c["message"].get("thinking") for c in chunks[:2]] == [
+        "step 0 ",
+        "step 1 ",
+    ]
+    assert not any(c["message"]["content"] for c in chunks[:2])
+    assert len([c for c in chunks if c["message"]["content"]]) > 1
+    chaos.update({"reasoning_drop_rate": 1.0})
+    chunks, clean = _chat(port)
+    assert not clean and not any(c["message"]["content"] for c in chunks)
+    chaos.update({"reasoning_drop_rate": 0.0, "answer_drop_rate": 1.0})
+    chunks, clean = _chat(port)
+    assert not clean and len([c for c in chunks if c["message"]["content"]]) == 1
+    assert (chaos.stats["reasoning_drops"], chaos.stats["answer_drops"]) == (1, 1)
+
+
+def test_the_stream_faults_draw_nothing_while_off(chaos_models: ModuleType) -> None:
+    # The other faults' seeded draws stay as they were without the knobs.
+    chaos = chaos_models.Chaos(seed=5)
+    state = chaos.rng.getstate()
+    assert chaos.stream_fault() is None
+    assert chaos.rng.getstate() == state
+    assert chaos_models.Chaos(answer_drop_rate=1.0).stream_fault() == "answer_drop"
+
+
+class _SSEConsole:
+    """A stand-in console: ``/api/ask`` streams a start, two answer chunks
+    and the result, and counts the clients that left before the result."""
+
+    def __init__(self) -> None:
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        console = self
+        self.left = 0
+
+        class Handler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, *_: Any) -> None:
+                return None
+
+            def do_POST(self) -> None:  # noqa: N802
+                self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Transfer-Encoding", "chunked")
+                self.end_headers()
+                events = [
+                    {"kind": "start"},
+                    {"kind": "chunk", "text": "Umbra "},
+                    {"kind": "chunk", "text": "Freight."},
+                    {
+                        "kind": "result",
+                        "answer": "Umbra Freight.",
+                        "sources": [{"source": "tu-1"}],
+                    },
+                ]
+                try:
+                    for event in events:
+                        data = f"data: {json.dumps(event)}\n\n".encode()
+                        self.wfile.write(f"{len(data):X}\r\n".encode() + data + b"\r\n")
+                        self.wfile.flush()
+                        time.sleep(0.02)
+                    self.wfile.write(b"0\r\n\r\n")
+                except OSError:
+                    console.left += 1
+
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.httpd.daemon_threads = True
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        self.url = f"http://127.0.0.1:{self.httpd.server_address[1]}"
+
+    def close(self) -> None:
+        self.httpd.shutdown()
+        self.httpd.server_close()
+
+
+@pytest.mark.parametrize("share", [0.0, 1.0])
+async def test_an_http_level_disconnects_after_the_first_chunk_then_asks_again(
+    load: ModuleType, share: float
+) -> None:
+    """rv48 ops: a client that disconnects mid-answer is counted apart, and
+    a question asked after the disconnects must answer."""
+    console = _SSEConsole()
+    try:
+        report = await load.http_level(
+            console.url, "t", 2, 6, 10.0, [("Who?", "mix")], 0, share
+        )
+    finally:
+        console.close()
+    if share:
+        assert report["disconnected"] == 6
+        # the one question asked after them answered
+        assert (report["ok"], report["errors"]) == (1, 0)
+    else:
+        assert "disconnected" not in report
+        assert (report["ok"], report["errors"]) == (6, 0)

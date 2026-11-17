@@ -26,7 +26,11 @@ Modes:
   the first answer chunk (``first_chunk_p50``, ``first_chunk_p95``).
 - ``http``: ``sweep`` through a running console's ``/api/ask`` (server-sent
   events), with the time to the first event; its loop lag is this
-  client's (``client_loop_lag_*``), not the console's.
+  client's (``client_loop_lag_*``), not the console's. With
+  ``--disconnect-share``, that share of the questions disconnect after
+  their first answer chunk (``disconnected``, counted apart), and one more
+  question asked after the level must still answer: the queries the
+  console was left answering must not hold its model connections.
 - ``gate``: check a report (any mode's, or the nightly's) against the
   nightly gates (harness.Gates); exit 1 naming each failure, and name what
   the run left untested (a chaos scenario ``not_exercised``) without failing.
@@ -426,23 +430,27 @@ async def http_level(
     query_seconds: float,
     mix: list[tuple[str, str]],
     seed: int,
+    disconnect_share: float = 0.0,
 ) -> dict[str, Any]:
     import httpx
 
     if urlparse(base).hostname not in LOOPBACK:
         raise SystemExit(f"refusing the non-loopback console {base}")
     rng = random.Random(seed)
-    queue: asyncio.Queue[tuple[str, str]] = asyncio.Queue()
+    queue: asyncio.Queue[tuple[str, str, bool]] = asyncio.Queue()
     for _ in range(total):
-        queue.put_nowait(rng.choice(mix))
+        query, strategy = rng.choice(mix)
+        queue.put_nowait((query, strategy, rng.random() < disconnect_share))
     tally = Tally(first_name="first_event")
+    disconnected = 0
     headers = {"X-Console-Token": token, "X-Console-Request": "1"}
     limits = httpx.Limits(max_connections=concurrency + 4)
     async with httpx.AsyncClient(
         base_url=base, headers=headers, timeout=query_seconds, limits=limits
     ) as client:
 
-        async def one(query: str, strategy: str) -> None:
+        async def one(query: str, strategy: str, disconnect: bool = False) -> None:
+            nonlocal disconnected
             started = time.perf_counter()
             first = None
             result: dict[str, Any] | None = None
@@ -459,6 +467,11 @@ async def http_level(
                         first if first is not None else time.perf_counter() - started
                     )
                     event = json.loads(line[6:])
+                    if disconnect and event.get("kind") == "chunk":
+                        # Leaving the stream closes the connection: the
+                        # console sees the client go away mid-answer.
+                        disconnected += 1
+                        return
                     if event.get("kind") in ("result", "error"):
                         result = event
             if result is None:
@@ -472,19 +485,26 @@ async def http_level(
                 tally.answered(strategy, result, started)
                 tally.firsts.append(first or 0.0)
 
+        async def asked(query: str, strategy: str, disconnect: bool) -> None:
+            started = time.perf_counter()
+            try:
+                await one(query, strategy, disconnect)
+            except httpx.HTTPError as e:
+                tally.failed(strategy, type(e).__name__, started)
+
         async def worker() -> None:
             while not queue.empty():
-                query, strategy = queue.get_nowait()
-                started = time.perf_counter()
-                try:
-                    await one(query, strategy)
-                except httpx.HTTPError as e:
-                    tally.failed(strategy, type(e).__name__, started)
+                await asked(*queue.get_nowait())
 
         wall = await with_loop_lag(
             tally, asyncio.gather(*(worker() for _ in range(concurrency)))
         )
+        if disconnect_share:
+            # After the disconnects, the console must still answer.
+            await asked(*mix[0], False)
     report = {"concurrency": concurrency, **tally.report(wall)}
+    if disconnect_share:
+        report["disconnected"] = disconnected
     # The lag of this client's loop, not the console's: named apart.
     for key in ("loop_lag_p99_ms", "loop_lag_max_ms"):
         report[f"client_{key}"] = report.pop(key)
@@ -531,6 +551,13 @@ def main(argv: list[str] | None = None) -> int:
         "--strategies", default="", help="comma-separated (default: all)"
     )
     parser.add_argument("--console", help="http: the console's URL")
+    parser.add_argument(
+        "--disconnect-share",
+        type=float,
+        default=0.0,
+        help="http: share of questions whose client disconnects after the "
+        "first answer chunk (then one more question must answer)",
+    )
     parser.add_argument(
         "--stream",
         action="store_true",
@@ -589,7 +616,14 @@ def main(argv: list[str] | None = None) -> int:
             "http": [
                 asyncio.run(
                     http_level(
-                        args.console, token, c, args.queries, args.timeout, mix, c
+                        args.console,
+                        token,
+                        c,
+                        args.queries,
+                        args.timeout,
+                        mix,
+                        c,
+                        args.disconnect_share,
                     )
                 )
                 for c in levels

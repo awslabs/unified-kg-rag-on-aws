@@ -123,12 +123,13 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   runs, its deadline, query limits, guardrail, metrics and memory included, ending with its `RAGOutput`. LangChain's
   `astream_events` is left as LangChain defines it. `astream` / `stream` yield the text of these events, so a streamed
   answer now reads its citations' lineage, records its answer on the query span and is traced in the query's trace, as
-  an unstreamed one is. The query waits for its reader at each event: a reader that closes the iterator ends it before
-  it writes memory, counted as no failure (its query span names the strategy it ran). Under the output guardrail the
-  answer model still streams (its first chunk bounded by `search.model_timeout_seconds`) and nothing is shown until
-  the whole answer is screened: then its sources and the screened answer, one chunk, before the turn is written. The
-  console's Ask page reads the events. A transient retry while the stream waits for its first chunk starts only if it
-  can end within that window, as in 0.3.0: past it the model's error is raised, not a first-chunk timeout.
+  an unstreamed one is. The query waits for its reader at each event: a reader that closes the iterator, or is
+  cancelled, ends it at its next event, before it writes memory, counted as no failure (its query span names the
+  strategy it ran). Under the output guardrail the answer model still streams (its first chunk bounded by
+  `search.model_timeout_seconds`) and nothing is shown until the whole answer is screened: then its sources and the
+  screened answer, one chunk, before the turn is written. The console's Ask page reads the events. A transient retry
+  while the stream waits for its first chunk starts only if it can end within that window, as in 0.3.0: past it the
+  model's error is raised, not a first-chunk timeout.
 - Rebuild due: `run-describe` (`rebuild`, `Rebuild due (...)` lines), the console's Ingest page
   (`/api/namespace/methodologies`, under the methodologies picked) and the MCP `kg_describe_schema` tool say why a
   namespace is due for a rebuild under the config, from one owner (`rebuild_due`; `RebuildReason`, `RebuildReasonKind`
@@ -200,6 +201,11 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   evaluation) and of `retry.bulk_item` (the OpenSearch indexing client's), both 6, their 0.3.0 counts; only those two
   profiles (`ClientRetryPolicy`) have the key, and setting it on another one is refused naming them, in a file, a
   `UKR__` variable, `Config(...)` or an assignment alike. No caller retries a call the usage limits refused.
+- The load harness covers the answer stream: `load.py http --disconnect-share` disconnects that share of questions
+  after their first answer chunk, then asks one that must answer; the chaos model server streams reasoning chunks
+  (`reasoning_chunks`) and drops answers after their reasoning or first chunk (`reasoning_drop_rate`,
+  `answer_drop_rate`); the nightly runs one `sweep --stream` level under them, whose errors must equal the answers
+  dropped after their first chunk.
 
 ### Changed
 
@@ -241,6 +247,13 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
 ### Fixed
 Bugs present in 0.3.0.
 
+- A streamed answer whose caller was cancelled mid-answer (a console client that disconnects, a cancelled task, an
+  `asyncio.timeout` around `astream`) was cancelled wherever it was. Cancelled while the model's stream waited for a
+  chunk, LangChain left the response open, holding a model client connection: on an Ollama or OpenAI-compatible
+  server the pool of 100 filled and the console stopped answering, the loop logging `aclose(): asynchronous generator
+  is already running`. A reader that stops or is cancelled now ends the query at its next event, cancelling it only
+  after `search.model_timeout_seconds`, and the query records its latency and usage as a stream closed early (no
+  failure) instead of nothing.
 - The console's Settings page read a field a `UKR__` variable of the console sets as its default, and passed an edit
   of it that had no effect (the variable wins over the file): the field names the variable (`AWS_PROFILE` and
   `AWS_REGION` as filling it while the file leaves it unset), and a review lists such changes (removing a key

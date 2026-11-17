@@ -230,6 +230,100 @@ async def test_a_reader_that_stops_cancels_the_query(config: Config) -> None:
     assert memory.messages == []
 
 
+class _MetricsSink:
+    def __init__(self) -> None:
+        self.emitted: list[dict[str, float]] = []
+
+    def emit(
+        self, namespace: str, metrics: dict[str, float], dimensions: Any = None
+    ) -> None:
+        self.emitted.append(metrics)
+
+
+async def _cancelled_after_first_chunk(chain: GraphRAGChain, wait: float) -> None:
+    """Read the query's events in a task, cancelled (a disconnected client)
+    ``wait`` seconds after the first answer chunk, while it waits for the
+    next event."""
+    chunked = asyncio.Event()
+
+    async def read() -> None:
+        async for event in chain.aquery_events(
+            _input(use_memory=True, conversation_id="c-9")
+        ):
+            if isinstance(event, AnswerChunk):
+                chunked.set()
+
+    reader = asyncio.create_task(read())
+    await chunked.wait()
+    await asyncio.sleep(wait)
+    reader.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await reader
+
+
+async def test_a_cancelled_reader_ends_the_query_as_a_reader_that_stopped(
+    config: Config,
+) -> None:
+    from unified_kg_rag.shared import metrics
+
+    chain, _, memory = _make_chain(config)
+    sink = _MetricsSink()
+    chain.providers.metrics_sink = sink
+    await _cancelled_after_first_chunk(chain, 0)
+    assert not [t for t in asyncio.all_tasks() if t.get_name() == "kg-rag-query-events"]
+    assert memory.messages == []
+    # Not a failure: its latency up to there, as a stream closed early.
+    (values,) = sink.emitted
+    assert values[metrics.QUERY_FAILED_METRIC] == 0.0
+    assert values[metrics.QUERY_LATENCY_METRIC] > 0
+
+
+async def test_a_reader_cancelled_while_no_event_comes_cancels_at_the_bound(
+    config: Config,
+) -> None:
+    # The answer model holds its next chunk: the cancelled reader waits for
+    # the query's next event search.model_timeout_seconds, then cancels it.
+    config.search.model_timeout_seconds = 0.3
+    chain, _, memory = _make_chain(config, factory=_HeldFactory())
+    started = asyncio.get_running_loop().time()
+    await _cancelled_after_first_chunk(chain, 0.05)
+    elapsed = asyncio.get_running_loop().time() - started
+    assert 0.3 <= elapsed < 5
+    assert not [t for t in asyncio.all_tasks() if t.get_name() == "kg-rag-query-events"]
+    assert memory.messages == []
+
+
+async def test_a_reader_cancelled_again_while_it_waits_leaves_the_bound_to_end_it(
+    config: Config,
+) -> None:
+    # An anyio cancel scope cancels the reader at every await: its wait for
+    # the query's next event is cut short, and the query is not cancelled
+    # there (mid-chunk) but still ends at its next event or at the bound.
+    config.search.model_timeout_seconds = 0.3
+    chain, _, _ = _make_chain(config, factory=_HeldFactory())
+    chunked = asyncio.Event()
+
+    async def read() -> None:
+        async for event in chain.aquery_events(_input()):
+            if isinstance(event, AnswerChunk):
+                chunked.set()
+
+    reader = asyncio.create_task(read())
+    await chunked.wait()
+    await asyncio.sleep(0.05)
+    reader.cancel()
+    await asyncio.sleep(0.05)
+    reader.cancel()
+    again = asyncio.get_running_loop().time()
+    with pytest.raises(asyncio.CancelledError):
+        await reader
+    (query,) = [t for t in asyncio.all_tasks() if t.get_name() == "kg-rag-query-events"]
+    await asyncio.wait({query}, timeout=5)
+    # Cancelled at the bound after the second cancellation, not at it.
+    assert asyncio.get_running_loop().time() - again >= 0.25
+    assert query.done()
+
+
 async def test_a_reader_that_stops_after_the_answer_saves_nothing(
     config: Config,
 ) -> None:

@@ -366,8 +366,15 @@ sources before the answer call, each answer chunk, then the `RAGOutput` as
 `QueryResult`. The returned output stays authoritative (the client
 replaces the streamed text with its `answer`). The sink hands each event to
 the reader and waits until the reader asks for the next, so the query never
-runs ahead of it: a reader that closes the iterator cancels the query
-before it writes memory, and the query then ends as a closed stream
+runs ahead of it. A reader that stops (closes the iterator, or is
+cancelled while it waits: a client that disconnected) stops the sink, and
+the query's waiting or next send raises `CancelledError` there, before it
+writes memory; the reader waits for that up to
+`search.model_timeout_seconds`, then cancels the task. Ending at a send
+matters: the answer's model stream is then paused between two chunks and
+closes cleanly, whereas a cancellation that lands while LangChain's
+per-chunk task reads the model leaves its response open (an httpx pool
+connection held for good). The query then ends as a closed stream
 (`_ReaderStopped`: its span without error, its metrics without a
 failure), not as a cancelled query. The answer step streams whenever there is a sink; under the output
 guardrail it sends nothing (nothing may be shown before screening), and

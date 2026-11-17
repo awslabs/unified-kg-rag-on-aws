@@ -7,7 +7,11 @@ It binds 127.0.0.1 only. Each ``/api/chat`` and ``/api/embed`` request, in
 this order, may wait (``delay`` plus up to ``jitter`` seconds), hang
 (``hang_rate``, for ``hang_seconds``), lose its connection with no response
 (``drop_rate``) or be answered with ``error_status`` (``error_rate``: 429
-throttling, 500, 503). The knobs change at run time:
+throttling, 500, 503). A streamed ``/api/chat`` answer may start with
+``reasoning_chunks`` reasoning chunks (Ollama's ``thinking`` field, no
+answer text) and lose its connection mid-stream: after its reasoning,
+before any answer text (``reasoning_drop_rate``), or after its first
+answer chunk (``answer_drop_rate``). The knobs change at run time:
 ``POST /chaos {"error_rate": 0.3}`` answers the knobs now in force, and
 ``GET /stats`` the request counts, the faults injected and the requests in
 flight.
@@ -43,7 +47,12 @@ KNOBS: dict[str, float] = {
     "hang_seconds": 30.0,
     "delay": 0.0,
     "jitter": 0.0,
+    "reasoning_chunks": 0.0,
+    "reasoning_drop_rate": 0.0,
+    "answer_drop_rate": 0.0,
 }
+# The mid-stream faults of a streamed chat answer, in draw order.
+STREAM_FAULTS = ("reasoning_drop", "answer_drop")
 
 
 class Chaos:
@@ -55,7 +64,18 @@ class Chaos:
             raise ValueError(f"unknown chaos knobs: {sorted(unknown)}")
         self.knobs: dict[str, float] = {**KNOBS, **knobs}
         self.stats: dict[str, int] = dict.fromkeys(
-            ("chat", "embed", "hangs", "drops", "errors", "inflight", "max_inflight"), 0
+            (
+                "chat",
+                "embed",
+                "hangs",
+                "drops",
+                "errors",
+                "reasoning_drops",
+                "answer_drops",
+                "inflight",
+                "max_inflight",
+            ),
+            0,
         )
         self.lock = threading.Lock()
         self.rng = random.Random(seed)
@@ -95,6 +115,26 @@ class Chaos:
                 wait += k["hang_seconds"]
             return wait, fault
 
+    def stream_fault(self) -> str | None:
+        """Draw a streamed answer's mid-stream fault (``"reasoning_drop"``,
+        ``"answer_drop"`` or None); no draw while both rates are 0, so the
+        other faults' draws stay as without these knobs."""
+        with self.lock:
+            rates = [self.knobs[f"{name}_rate"] for name in STREAM_FAULTS]
+            if not any(rates):
+                return None
+            draw = self.rng.random()
+            for name, rate in zip(STREAM_FAULTS, rates, strict=True):
+                if draw < rate:
+                    return name
+                draw -= rate
+            return None
+
+    def count(self, fault: str) -> None:
+        """Count a mid-stream ``fault`` once it is injected."""
+        with self.lock:
+            self.stats[f"{fault}s"] += 1
+
     def end(self) -> None:
         with self.lock:
             self.stats["inflight"] -= 1
@@ -120,6 +160,56 @@ def make_server(
         def _drain(self) -> None:
             self.rfile.read(int(self.headers.get("Content-Length") or 0))
 
+        def _drop(self) -> None:
+            self.close_connection = True
+            try:
+                self.connection.shutdown(2)
+            except OSError:
+                pass
+
+        def _chunk(self, chunk: dict[str, Any]) -> None:
+            line = (json.dumps(chunk, ensure_ascii=False) + "\n").encode("utf-8")
+            self.wfile.write(f"{len(line):X}\r\n".encode() + line + b"\r\n")
+            self.wfile.flush()
+
+        def _chat(self) -> None:
+            """A chat answer as the fake models stream it, with the
+            reasoning chunks and the mid-stream fault the knobs draw."""
+            length = int(self.headers.get("Content-Length") or 0)
+            body = json.loads(self.rfile.read(length) or b"{}")
+            streamed = body.get("stream", True)
+            fault = chaos.stream_fault() if streamed else None
+            self.send_response(200)
+            self.send_header("Content-Type", "application/x-ndjson")
+            self.send_header("Transfer-Encoding", "chunked")
+            self.end_headers()
+            if streamed:
+                for i in range(int(chaos.knobs["reasoning_chunks"])):
+                    self._chunk(
+                        {
+                            "model": body.get("model"),
+                            "created_at": "2026-01-01T00:00:00Z",
+                            "message": {
+                                "role": "assistant",
+                                "content": "",
+                                "thinking": f"step {i} ",
+                            },
+                            "done": False,
+                        }
+                    )
+            if fault == "reasoning_drop":
+                chaos.count(fault)
+                self._drop()
+                return
+            for n, chunk in enumerate(models.chat(body)):
+                # After the first answer chunk, if there is a next one.
+                if n == 1 and fault == "answer_drop":
+                    chaos.count(fault)
+                    self._drop()
+                    return
+                self._chunk(chunk)
+            self.wfile.write(b"0\r\n\r\n")
+
         def do_POST(self) -> None:  # noqa: N802
             if self.path == "/chaos":
                 length = int(self.headers.get("Content-Length") or 0)
@@ -139,18 +229,18 @@ def make_server(
                     time.sleep(wait)
                 if fault == "drop":
                     self._drain()
-                    self.close_connection = True
-                    try:
-                        self.connection.shutdown(2)
-                    except OSError:
-                        pass
+                    self._drop()
                 elif fault == "error":
                     self._drain()
                     self._json(
                         int(chaos.knobs["error_status"]), {"error": "injected fault"}
                     )
+                elif self.path == "/api/chat":
+                    self._chat()
                 else:
                     super().do_POST()
+            except OSError:
+                pass  # the client went away mid-answer
             finally:
                 chaos.end()
 
