@@ -49,6 +49,13 @@ describe.each(Object.keys(LOCALES) as Locale[])("the %s catalog", (locale) => {
       if (!key.endsWith("Separator")) expect(text.trim(), key).not.toBe("");
     }
   });
+
+  it("gives each Dashboard tile of one row its own label", () => {
+    // "Declined" and "Refused" both read 拒否 / Rechazadas / Refusées (rv48).
+    const tiles = ["questions", "latencyP50", "latencyP95", "declineRate", "limited", "errors", "refused", "cost"];
+    const labels = tiles.map((tile) => catalog[`dashboard.${tile}`]);
+    expect(new Set(labels).size, labels.join(" | ")).toBe(tiles.length);
+  });
 });
 
 describe("the Korean catalog", () => {

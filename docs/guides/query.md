@@ -191,9 +191,13 @@ counted at its start at the local estimate of its prompt). They count the
 calls the query plans: a retry of a call that failed transiently (a stream
 cut before its answer text) counts as that call, reusing the room its
 failed attempt held, while the usage (`metadata.usage`) counts every attempt
-sent. So one query can send up to `retry.model.max_attempts` times the
-calls and input tokens the limits allow; an ingestion run's budgets
-(`processing.max_run_*`) count every attempt. A call past one is refused before its request is sent:
+sent. So one query can send up to its backend's query retry attempts
+(`retry.model.max_attempts` on Bedrock, `retry.model_server.max_attempts` on
+Ollama and OpenAI-compatible servers) times the calls and input tokens the
+limits allow, and each attempt's client may resend it on its own (Bedrock up
+to `search.model_max_attempts` requests; an OpenAI-compatible client up to
+`retry.model_server.max_attempts`, before the response starts). An ingestion
+run's budgets (`processing.max_run_*`) count every attempt. A call past one is refused before its request is sent:
 
 - `global` rates and maps, `drift` expands, primes and follows up, and
   `iterative` judges only what fits beside the answer's call. What did not

@@ -39,6 +39,7 @@ from unified_kg_rag.application.retrieval.rag_chain import (
     RAGOutput,
     SearchOutput,
     caller_deadline,
+    deadline_text,
     new_query_id,
 )
 from unified_kg_rag.domain.ingestion.rebuild_due import RebuildReasons
@@ -683,7 +684,7 @@ class KnowledgeGraphTools:
                 raise
             assert seconds is not None
             error = QueryTimeoutError(
-                f"The call did not finish within {seconds:g} s "
+                f"The call did not finish within {deadline_text(seconds)} s "
                 f"({setting}, the wait for a call slot included).",
                 timeout_seconds=seconds,
             )

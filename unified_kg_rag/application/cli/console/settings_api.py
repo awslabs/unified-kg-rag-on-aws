@@ -135,12 +135,13 @@ def endpoint_changes(old: dict[str, Any], new: dict[str, Any]) -> list[dict[str,
     return changes
 
 
-def environment_overrides(
-    old: dict[str, Any], new: dict[str, Any]
+def _changed_environment_keys(
+    old: dict[str, Any], new: dict[str, Any], *, fallbacks: bool
 ) -> list[dict[str, str]]:
     """The keys ``new`` changes from ``old`` that an environment variable
-    sets (:func:`environment_keys`): the variable's value stays in force,
-    so the change has no effect while it is set."""
+    sets once ``new`` is written (:func:`environment_keys`): those of the
+    variables that only fill a key the file leaves unset
+    (``AWS_ENV_FALLBACKS``) with ``fallbacks``, else the others'."""
     before, after = _flat(old), _flat(new)
     changed = [
         p for p in sorted(set(before) | set(after)) if before.get(p) != after.get(p)
@@ -148,11 +149,28 @@ def environment_overrides(
     return [
         {"path": path, "variable": variable}
         for path, variable in sorted(environment_keys(new).items())
-        if any(
+        if (variable in AWS_ENV_FALLBACKS) is fallbacks
+        and any(
             c == path or c.startswith(f"{path}.") or path.startswith(f"{c}.")
             for c in changed
         )
     ]
+
+
+def environment_overrides(
+    old: dict[str, Any], new: dict[str, Any]
+) -> list[dict[str, str]]:
+    """The keys ``new`` changes from ``old`` that an environment variable
+    sets over the file: the variable's value stays in force, so the change
+    has no effect while it is set."""
+    return _changed_environment_keys(old, new, fallbacks=False)
+
+
+def environment_fills(old: dict[str, Any], new: dict[str, Any]) -> list[dict[str, str]]:
+    """The keys ``new`` removes that a variable filling an unset key
+    (``AWS_REGION``, ``AWS_PROFILE``) then sets: the change takes effect,
+    the value in force becoming the variable's rather than the default."""
+    return _changed_environment_keys(old, new, fallbacks=True)
 
 
 def directory_changes(old: dict[str, Any], new: dict[str, Any]) -> list[dict[str, Any]]:
@@ -410,11 +428,20 @@ def gone_keys(data: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
             {
                 "key": path,
                 "reason": REMOVED_KEYS[path],
+                "reason_id": removed_reason_id(path),
                 "message": removed_key_warning(path),
             }
             for path in removed_keys(data)
         ],
     }
+
+
+def removed_reason_id(path: str) -> str:
+    """The id the page words the reason the removed ``path`` is gone by
+    (``settings.removedReason.<id>``): the first removed key with the same
+    reason, so the keys of one removed section share their message."""
+    reason = REMOVED_KEYS[path]
+    return next(key for key, why in REMOVED_KEYS.items() if why == reason)
 
 
 def _retired_values(data: dict[str, Any], old: str) -> dict[str, Any]:
@@ -472,8 +499,10 @@ def apply_changes(
 
 def _retired(data: dict[str, Any], changes: list[dict[str, Any]]) -> list[str]:
     """The deprecated keys ``data`` sets that ``changes`` retire: one that
-    sets a key at, above or under a replacement, or that unsets the
-    deprecated key itself."""
+    sets or unsets a key at, above or under a replacement, or that unsets
+    the deprecated key itself. Unsetting a replacement ("Use the default")
+    retires its deprecated feeder too, else the feeder's value stays in
+    force."""
 
     def related(path: str, key: str) -> bool:
         return path == key or path.startswith(f"{key}.") or key.startswith(f"{path}.")
@@ -482,10 +511,8 @@ def _retired(data: dict[str, Any], changes: list[dict[str, Any]]) -> list[str]:
     for old in deprecated_keys(data):
         for change in changes:
             path = str(change.get("path") or "")
-            if (
-                related(path, old)
-                if change.get("unset")
-                else any(related(path, new) for new in deprecated_targets(old))
+            if (change.get("unset") and related(path, old)) or any(
+                related(path, new) for new in deprecated_targets(old)
             ):
                 retired.append(old)
                 break
@@ -597,6 +624,7 @@ class SettingsFile:
             "text": new_text,
             "diff": diff,
             "environment_overrides": environment_overrides(base, new_data),
+            "environment_fills": environment_fills(base, new_data),
             "endpoint_changes": endpoint_changes(base, new_data),
             "directory_changes": directory_changes(base, new_data),
             "changed": new_text != current,

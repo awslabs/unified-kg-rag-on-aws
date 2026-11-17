@@ -3030,6 +3030,34 @@ def test_run_ingestion_estimate_reads_enabled_stages_and_notes_only_its_stages(
     assert "gleaning" not in (printed.out + printed.err).lower()
 
 
+def test_run_ingestion_estimate_table_keeps_model_ids_whole_at_80_columns(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    # Regression (rv48 surfaces L1): at 80 columns (a pipe, a CI log) the
+    # Stage and Model cells were cut short, so the Sonnet and the Haiku rows
+    # both read "global.anthro…".
+    import io
+
+    from rich.console import Console
+
+    out = io.StringIO()
+    monkeypatch.setattr(run_ingestion_pipeline, "console", Console(file=out, width=80))
+    config = Config()
+    config.processing.chunking.chunker_type = "simple"  # type: ignore[assignment]
+    monkeypatch.setattr(run_ingestion_pipeline, "load_cli_config", lambda _args: config)
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "contract.txt").write_text("Vendor supplies widgets to Buyer. " * 20)
+    monkeypatch.setattr(
+        sys, "argv", ["run-ingestion", "--source-directory", str(src), "--estimate"]
+    )
+    run_ingestion_pipeline.main()
+    printed = out.getvalue()
+    assert "graph_extract" in printed
+    assert "\u2026" not in printed
+
+
 def test_a_budget_stop_prints_the_pipeline_id_to_resume_with(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

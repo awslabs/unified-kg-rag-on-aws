@@ -100,7 +100,7 @@ from unified_kg_rag.domain.models.seed_graph import (
 )
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import DataProcessingError, SeedGraphError
-from unified_kg_rag.shared.utils import compute_hash, entity_key
+from unified_kg_rag.shared.utils import compute_hash, entity_key, first_names
 
 logger = get_logger(__name__)
 
@@ -878,11 +878,13 @@ class _Converter:
         if policy == "error":
             raise self.fail(
                 f"{len(collisions)} names are shared by distinct nodes (ids "
-                + "; ".join(
-                    ", ".join(node.id for part in parts for node in part)
-                    for parts in collisions[:5]
+                + first_names(
+                    (
+                        ", ".join(node.id for part in parts for node in part)
+                        for parts in collisions
+                    ),
+                    separator="; ",
                 )
-                + (" ..." if len(collisions) > 5 else "")
                 + "); set on_name_collision to merge or qualify"
             )
         if policy == "merge":
@@ -1091,10 +1093,8 @@ class _Converter:
         )
 
 
-def _listed(values: Iterable[str], limit: int = 5) -> str:
-    ordered = sorted(values)
-    shown = ", ".join(repr(v) for v in ordered[:limit])
-    return shown + (f" and {len(ordered) - limit} more" if len(ordered) > limit else "")
+def _listed(values: Iterable[str]) -> str:
+    return first_names(repr(v) for v in sorted(values))
 
 
 def convert_seed(

@@ -143,6 +143,23 @@ def test_a_deprecated_key_and_its_replacement_that_disagree_are_refused() -> Non
     assert data == {"a": {"old": 1}, "b": {"new": 2}}
 
 
+def test_a_conflict_is_named_under_the_deprecated_key_that_disagrees() -> None:
+    # Regression (rv48): with two deprecated keys set and only one of them
+    # disagreeing with a replacement, nothing pinned which one the conflict
+    # was named under (the console's Settings notice names it).
+    data = {
+        "retry": {
+            "max_attempts": 5,
+            "base_delay_seconds": 2.0,
+            "model": {"max_attempts": 3},
+        }
+    }
+    assert config_package.deprecated_keys(data) == {
+        "retry.max_attempts": ["retry.model.max_attempts"],
+        "retry.base_delay_seconds": [],
+    }
+
+
 def test_an_unknown_key_beside_a_deprecated_one_is_still_refused() -> None:
     with pytest.raises(ValueError, match="evaluation.pricez"):
         Config(evaluation={"prices": {}, "pricez": {}})

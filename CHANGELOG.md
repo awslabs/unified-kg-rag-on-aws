@@ -58,11 +58,12 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   prices the model under every profile when no other entry disagrees. `evaluation.prices` is deprecated: it loads
   into `models.prices` with a WARNING (an entry both name keeps the `models.prices` price), through one rule for
   deprecated keys (`DEPRECATED_KEYS`, file and `UKR__` variables alike, listed in the configuration reference). The
-  console's Settings page lists each deprecated key the file sets, and each removed one, with the loader's warning,
-  when it opens and in a review (a deprecated key set beside its replacement to another value too, which keeps the
-  file from loading), and marks a field a deprecated key loads into as set by it, with the value in force (a mapping
-  the file sets too starts from both merged). Editing that field, or the notice's Remove, moves the key's value into
-  each replacement the file does not set and drops it.
+  console's Settings page lists each deprecated key the file sets, and each removed one, with the loader's warning
+  (a removed key's reason in the page's language), when it opens and in a review (a deprecated key set beside its
+  replacement to another value too, which keeps the file from loading), and marks a field a deprecated key loads into
+  as set by it, with the value in force (a mapping the file sets too starts from both merged). Editing that field,
+  "Use the default" on it, or the notice's Remove, moves the key's value into each replacement the file does not set
+  and drops it, so a reset field takes its default (removing `models.prices` removes `evaluation.prices` too).
   An ingestion run it prices publishes its USD as the `llm_cost_usd` metric (the CDK dashboard's "LLM cost" widget).
 - Query limits beside the deadline:
   - Limits: `search.query_max_model_calls` and `search.query_max_input_tokens` (off by default) bound one query's
@@ -71,9 +72,12 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
     and the deadline for one query, never raising them. They count the calls a query plans: a retry of a call that
     failed transiently (a stream cut before its answer text) reuses the room its failed attempt held, so it is not
     refused, while the usage counts every attempt sent, as an ingestion run's `processing.max_run_*` budget does
-    (`UsageLimits.counts_retries`, `shared.usage.RetriedCall`), so one query can send up to
-    `retry.model.max_attempts` times what its limits allow. A call past a limit is refused before it is sent: the
-    usage callback now raises its refusal (LangChain swallowed a handler's error) and logs any other error of its own
+    (`UsageLimits.counts_retries`, `shared.usage.RetriedCall`), so one query can send up to its backend's query
+    retry attempts (`retry.model.max_attempts` on Bedrock, `retry.model_server.max_attempts` on Ollama and
+    OpenAI-compatible servers) times what its limits allow, each attempt resendable by its client
+    (`search.model_max_attempts` Bedrock requests; an OpenAI-compatible stream before its response starts). A call
+    past a limit is refused before it is sent: the usage callback now raises its refusal (LangChain swallowed a
+    handler's error) and logs any other error of its own
     (`setup_logging` drops LangChain's own "Error in UsageCallbackHandler... callback" WARNING of a refusal).
   - Fan-out: `global`, `drift` and `iterative` start only the calls that fit beside what the answer will read
     (DRIFT's actions sharing what is left, each built context kept to its share and an action the meter still
@@ -160,7 +164,8 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   `run-ingestion --estimate` parses, deduplicates (`processing.deduplicate`) and chunks the corpus without a model
   call and prints each stage's calls, tokens and USD for the stages the text units decide (extraction, gleaning,
   claims, translation, intelligent chunking; `about` for the stages that read text translated into another
-  language, counted at the source text), naming the graph-dependent ones it cannot count. The console's Ingest
+  language, counted at the source text), naming the graph-dependent ones it cannot count (its table folds a long
+  model id or stage name at 80 columns rather than cutting it). The console's Ingest
   page offers to resume a run stopped at its budget (its options without the forced recompute), and its run lists and
   the Dashboard mark such a run as stopped at its budget, a warning, not failed, its card keeping its own stages after
   the resume. The Dashboard and the Ingest job card give a job's USD as its run recorded it (`cost_usd`), else an
@@ -238,7 +243,9 @@ Bugs present in 0.3.0.
 
 - The console's Settings page read a field a `UKR__` variable of the console sets as its default, and passed an edit
   of it that had no effect (the variable wins over the file): the field names the variable (`AWS_PROFILE` and
-  `AWS_REGION` as filling it while the file leaves it unset), and a review lists such changes.
+  `AWS_REGION` as filling it while the file leaves it unset), and a review lists such changes (removing a key
+  `AWS_PROFILE` or `AWS_REGION` then fills as taking effect, the variable's value in force).
+- The console's Dashboard gave its Declined and Refused tiles one word in Japanese, Spanish and French.
 - Saving from the console's Fields form rewrote the whole config file in alphabetical key order, so the review's diff
   changed every line; it keeps the file's order (comments are still dropped, as the review says).
 - A local reasoning model's streamed answer (`astream`, the console's Ask page) failed with `QueryTimeoutError` after
@@ -255,15 +262,17 @@ Bugs present in 0.3.0.
   `ConnectionError` now counts as one only when raised from a connect failure (as the Ollama client's is). They are
   retried now, with `ModelStreamErrorException` ("retry your request") and botocore's `ChecksumMismatch` (an event
   frame corrupted in transit), until answer text reaches the caller; validation and access errors still fail at once.
-  An OpenAI-compatible stream is retried the same way after its response started (its client retries only until
-  then). A model's read timeout is named as one, with `search.model_timeout_seconds`, instead of "an unexpected
-  error"; the OpenAI client's connect timeout (the same `APITimeoutError`) is an unreachable server, as Ollama's is.
-  A call that failed once its response had started (a stream, or an Ollama `invoke`, whose client streams inside the
-  call) keeps its estimated input tokens, and the output it streamed estimated (an estimated call, not a failed one),
-  so a stream retry's spent attempts count in the usage; one whose response never started is still a failed call at
-  0 tokens. Once the retries run out, urllib3's `ProtocolError` and botocore's `ChecksumMismatch` reach the caller as
-  a `LanguageModelError`, not raw, and an httpx `PoolTimeout` is named a wait for a free connection of the client's
-  pool, not a server that sent nothing within its read timeout.
+- An OpenAI-compatible stream that failed after its response started was not retried (its client retries only until
+  then); it is retried as a Bedrock stream is.
+- A model's read timeout failed as "an unexpected error"; it is named as one, with `search.model_timeout_seconds`.
+  The OpenAI client's connect timeout (the same `APITimeoutError`) is an unreachable server, as Ollama's is.
+- A call that failed once its response had started (a stream, or an Ollama `invoke`, whose client streams inside the
+  call) counted as a failed call at 0 tokens; it keeps its estimated input tokens, and the output it streamed
+  estimated (an estimated call, not a failed one), so a stream retry's spent attempts count in the usage. One whose
+  response never started is still a failed call at 0 tokens.
+- Once the retries ran out, urllib3's `ProtocolError` and botocore's `ChecksumMismatch` reached the caller raw; they
+  are a `LanguageModelError`, and an httpx `PoolTimeout` is named a wait for a free connection of the client's pool,
+  not a server that sent nothing within its read timeout.
 - A context could read past its token budget: a section type whose next section fell below the truncation floor
   kept its unused share while that share was also handed to the other types (a 244-token budget built 262). A round
   that seats past the budget so now lends its spare once, the room the types held unseated pooled in it, and what no

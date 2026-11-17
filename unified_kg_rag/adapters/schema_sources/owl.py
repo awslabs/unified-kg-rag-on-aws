@@ -58,6 +58,7 @@ from unified_kg_rag.domain.models.schema import SchemaDocument
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import SchemaSourceError
 from unified_kg_rag.shared.extras import extra_hint
+from unified_kg_rag.shared.utils import first_names
 from unified_kg_rag.shared.utils.s3_uri import is_s3_uri
 from unified_kg_rag.shared.utils.validation import format_validation_errors
 
@@ -279,7 +280,7 @@ def read_ontology(
             "or annotation, and no sub- or super-property of one): %s; type "
             "them owl:ObjectProperty to map them",
             len(unread),
-            ", ".join(unread[:5]) + (", ..." if len(unread) > 5 else ""),
+            first_names(unread),
         )
     relative = sorted(
         term.iri

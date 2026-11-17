@@ -42,7 +42,7 @@ from unified_kg_rag.domain.retrieval.index_prefixes import configured_index_pref
 from unified_kg_rag.domain.retrieval.linking import choose_links
 from unified_kg_rag.domain.retrieval.ppr import summed_seed_weights
 from unified_kg_rag.shared import get_logger
-from unified_kg_rag.shared.utils import text_digest
+from unified_kg_rag.shared.utils import first_names, text_digest
 from unified_kg_rag.shared.utils.concurrency import (
     cancel_on_exit,
     gather_bounded,
@@ -221,10 +221,9 @@ class LocalSearchStrategy(PPRRankingMixin):
         candidate_hits = await self._find_candidate_entities(query)
         candidate_entity_ids = [str(hit.source) for hit in candidate_hits]
         logger.debug(
-            "Found %s candidate entities: '%s%s'",
+            "Found %s candidate entities: %s",
             len(candidate_entity_ids),
-            ", ".join(candidate_entity_ids[:5]),
-            "..." if len(candidate_entity_ids) > 5 else "",
+            first_names(candidate_entity_ids),
         )
 
         # The candidates were found under the caller's filters.
@@ -255,10 +254,9 @@ class LocalSearchStrategy(PPRRankingMixin):
 
         expanded_entity_ids = self._get_ids(filtered_entity_nodes, "id")
         logger.debug(
-            "Expanded to %s entities: '%s%s'",
+            "Expanded to %s entities: %s",
             len(expanded_entity_ids),
-            ", ".join(expanded_entity_ids[:5]),
-            "..." if len(expanded_entity_ids) > 5 else "",
+            first_names(expanded_entity_ids),
         )
 
         # Fusion keeps at most the text quota of them: fetch no more (the
@@ -275,10 +273,9 @@ class LocalSearchStrategy(PPRRankingMixin):
         if not ranked_unit_ids:
             ranked_unit_ids = await self._rank_text_unit_ids(filtered_entity_nodes)
         logger.debug(
-            "Found %s text units: '%s%s'",
+            "Found %s text units: %s",
             len(ranked_unit_ids),
-            ", ".join(ranked_unit_ids[:5]),
-            "..." if len(ranked_unit_ids) > 5 else "",
+            first_names(ranked_unit_ids),
         )
 
         async def text_units_of_quota() -> dict[str, list[RetrievalResult]]:
