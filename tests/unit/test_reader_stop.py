@@ -220,12 +220,8 @@ async def test_a_wait_not_stopped_lasts_its_delay() -> None:
     assert not stop._waiters
 
 
-@pytest.mark.parametrize("event", ["before-send", "needs-retry"])
-def test_a_botocore_client_sends_nothing_after_the_stop(event: str) -> None:
-    # botocore's own resends (and its rate limiter's sends) pass these
-    # events in the calling thread: each raises once the reader stopped.
+def _bedrock_client() -> Any:
     import boto3
-    from botocore.awsrequest import AWSResponse
 
     from unified_kg_rag.adapters.aws.bedrock import stop_at_reader_stop
 
@@ -236,22 +232,33 @@ def test_a_botocore_client_sends_nothing_after_the_stop(event: str) -> None:
         aws_secret_access_key="example",
     )
     stop_at_reader_stop(client, "bedrock-runtime")
-    name = f"{event}.bedrock-runtime.Converse"
-    # An attempt that answered: no resend is due.
-    kwargs: dict[str, Any] = (
-        {
-            "attempts": 1,
-            "response": (
-                AWSResponse("https://bedrock.invalid", 200, {}, None),
-                {"ResponseMetadata": {"HTTPStatusCode": 200}},
-            ),
-            "caught_exception": None,
-            "request_dict": {"context": {}},
-            "operation": client.meta.service_model.operation_model("Converse"),
-        }
-        if event == "needs-retry"
-        else {"request": None}
-    )
+    return client
+
+
+def _attempt(client: Any, status: int) -> dict[str, Any]:
+    """``needs-retry``'s arguments for an attempt answered with ``status``."""
+    from botocore.awsrequest import AWSResponse
+
+    error = {"Error": {"Code": "ThrottlingException"}} if status >= 300 else {}
+    return {
+        "attempts": 1,
+        "response": (
+            AWSResponse("https://bedrock.invalid", status, {}, None),
+            {"ResponseMetadata": {"HTTPStatusCode": status}, **error},
+        ),
+        "caught_exception": None,
+        "request_dict": {"context": {}},
+        "operation": client.meta.service_model.operation_model("ConverseStream"),
+    }
+
+
+@pytest.mark.parametrize("event", ["before-send", "needs-retry"])
+def test_a_botocore_client_sends_nothing_after_the_stop(event: str) -> None:
+    # botocore's own resends (and its rate limiter's sends) pass these
+    # events in the calling thread: each raises once the reader stopped.
+    client = _bedrock_client()
+    name = f"{event}.bedrock-runtime.ConverseStream"
+    kwargs = _attempt(client, 429) if event == "needs-retry" else {"request": None}
     stop = ReaderStop()
     with reader_stop_scope(stop):
         client.meta.events.emit(name, **kwargs)
@@ -260,6 +267,19 @@ def test_a_botocore_client_sends_nothing_after_the_stop(event: str) -> None:
             client.meta.events.emit(name, **kwargs)
     # Outside the stopped query's context nothing is stopped.
     client.meta.events.emit(name, **kwargs)
+
+
+def test_a_botocore_attempt_that_answered_is_left_to_its_caller() -> None:
+    # needs-retry fires after a successful attempt too: its response is an
+    # open event stream its caller reads and closes on the stop, so raising
+    # there would leave the model's response open.
+    client = _bedrock_client()
+    stop = ReaderStop()
+    stop.set()
+    with reader_stop_scope(stop):
+        client.meta.events.emit(
+            "needs-retry.bedrock-runtime.ConverseStream", **_attempt(client, 200)
+        )
 
 
 async def test_the_openai_client_sends_no_request_after_the_stop() -> None:

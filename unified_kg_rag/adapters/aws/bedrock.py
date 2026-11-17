@@ -496,22 +496,43 @@ def _raise_if_reader_stopped(**_: Any) -> None:
     raise_if_reader_stopped()
 
 
+def _raise_if_failed_and_reader_stopped(
+    response: Any = None, caught_exception: Any = None, **_: Any
+) -> None:
+    """``needs-retry``: no resend of a failed attempt once the reader
+    stopped. It fires after a successful attempt too, whose response (an
+    open event stream) the caller reads and closes: that one is left alone,
+    as raising there would leave it open."""
+    http_response = response[0] if isinstance(response, tuple) else None
+    if caught_exception is not None or (
+        getattr(http_response, "status_code", 200) >= 300
+    ):
+        raise_if_reader_stopped()
+
+
 def stop_at_reader_stop(client: Any, service: str) -> None:
     """Make the requests botocore sends and resends inside one call of
     ``client`` stop points of a query whose reader stopped
     (``shared.reader_stop``), as the application's retry backoffs are:
     no request is sent after the stop, before or after the client-side rate
-    limiter's wait (``adaptive`` mode), and no resend follows a throttled
+    limiter's wait (``adaptive`` mode), and no resend follows a failed
     attempt. The stop raises ``asyncio.CancelledError`` in the calling
-    thread, where no response is held; outside such a query the handlers
-    do nothing."""
+    thread, where no response is held (a successful attempt's open stream
+    is left to its caller); outside such a query the handlers do
+    nothing."""
     events = client.meta.events
+    events.register_first(
+        f"needs-retry.{service}",
+        _raise_if_failed_and_reader_stopped,
+        unique_id=f"kg-rag-stop-needs-retry.{service}",
+    )
     # A more specific event's handlers run before a less specific one's:
     # the limiter's is on the bare "before-send", so the check after it is.
-    for event in (f"needs-retry.{service}", f"before-send.{service}"):
-        events.register_first(
-            event, _raise_if_reader_stopped, unique_id=f"kg-rag-stop-{event}"
-        )
+    events.register_first(
+        f"before-send.{service}",
+        _raise_if_reader_stopped,
+        unique_id=f"kg-rag-stop-before-send.{service}",
+    )
     events.register_last(
         "before-send", _raise_if_reader_stopped, unique_id="kg-rag-stop-before-send"
     )
