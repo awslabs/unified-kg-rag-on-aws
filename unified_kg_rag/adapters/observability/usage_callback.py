@@ -8,10 +8,12 @@ starts, at an estimate of its prompt's tokens, and settled when it ends with
 the tokens the response reports (parsed as the tracing handler parses them,
 ``response_token_usage``: prompt-cache reads and writes apart too) and the
 requests botocore resent inside it (``request_retries``). A response the
-LLM response cache served counts as a cache hit instead, a failed call as
-``failed_calls`` only; a call still running or
-cancelled in flight, or one whose response reports no token usage (a
-model or server that returns none), keeps its estimate
+LLM response cache served counts as a cache hit instead, a call that failed
+before its response started as ``failed_calls`` only; a call still running
+or cancelled in flight, one that failed once its response had started (a
+streamed chunk arrived: the model read the prompt, so a retried stream's
+attempts count against a query's input limit), or one whose response
+reports no token usage (a model or server that returns none), keeps its estimate
 (``estimated_calls``; the output tokens of such a response are estimated
 from its text). LangChain
 reports no end or error for a call whose task was cancelled, so such a call
@@ -138,6 +140,8 @@ class UsageCallbackHandler(BaseCallbackHandler):
         # The task each call started in, and the callback that lets the call
         # go when that task ends (removed when the call settles).
         self._tasks: dict[UUID, tuple[asyncio.Future[Any], Callable[..., None]]] = {}
+        # The unsettled calls whose response has started (a chunk arrived).
+        self._streamed: set[UUID] = set()
         self._lock = threading.Lock()
         # The calls with reported usage and their estimated and reported
         # input tokens, for the estimate drift check.
@@ -217,6 +221,7 @@ class UsageCallbackHandler(BaseCallbackHandler):
             while len(self._calls) > self.MAX_UNSETTLED:
                 gone, _ = self._calls.popitem(last=False)
                 self._tasks.pop(gone, None)
+                self._streamed.discard(gone)
             if task is not None:
                 # A cancelled task's call gets no end or error from LangChain
                 # (its gather is cancelled): let it go if its task is.
@@ -234,11 +239,19 @@ class UsageCallbackHandler(BaseCallbackHandler):
             self._tasks.pop(run_id, None)
             if task.cancelled():
                 self._calls.pop(run_id, None)
+                self._streamed.discard(run_id)
 
     def _take(self, run_id: UUID) -> usage.LLMCall | None:
+        call, _ = self._take_streamed(run_id)
+        return call
+
+    def _take_streamed(self, run_id: UUID) -> tuple[usage.LLMCall | None, bool]:
+        """The call of ``run_id``, let go, and whether its response started."""
         with self._lock:
             call = self._calls.pop(run_id, None)
             started = self._tasks.pop(run_id, None)
+            streamed = run_id in self._streamed
+            self._streamed.discard(run_id)
         if started is not None:
             task, ended = started
             current = _current_task()
@@ -246,7 +259,7 @@ class UsageCallbackHandler(BaseCallbackHandler):
             # callback stays and finds nothing to let go.
             if current is not None and current.get_loop() is task.get_loop():
                 task.remove_done_callback(ended)
-        return call
+        return call, streamed
 
     def _record(self, run_id: UUID, response: LLMResult) -> None:
         call = self._take(run_id)
@@ -318,6 +331,14 @@ class UsageCallbackHandler(BaseCallbackHandler):
         self._start(run_id, list(prompts))
 
     @_logged
+    def on_llm_new_token(self, token: Any, *, run_id: UUID, **kwargs: Any) -> None:
+        if run_id in self._streamed:
+            return
+        with self._lock:
+            if run_id in self._calls:
+                self._streamed.add(run_id)
+
+    @_logged
     def on_llm_end(self, response: LLMResult, *, run_id: UUID, **kwargs: Any) -> None:
         self._record(run_id, response)
 
@@ -327,11 +348,26 @@ class UsageCallbackHandler(BaseCallbackHandler):
     ) -> None:
         # A stream the consumer stopped reading (GeneratorExit) was a call
         # all the same; a cancelled one keeps its estimate (the request was
-        # sent); a failed call returned no usage.
+        # sent); a failed call returned no usage: one whose response had
+        # started keeps its estimate (the model read its prompt, as a
+        # cancelled call's), with the output it streamed estimated, and one
+        # that failed before (an invoke's always) is a failed call.
         response = kwargs.get("response")
         if isinstance(error, GeneratorExit) and isinstance(response, LLMResult):
             self._record(run_id, response)
             return
-        call = self._take(run_id)
-        if call is not None and not isinstance(error, asyncio.CancelledError):
-            call.fail(request_retries=error_retry_attempts(error))
+        call, streamed = self._take_streamed(run_id)
+        if call is None or isinstance(error, asyncio.CancelledError):
+            return
+        retries = error_retry_attempts(error)
+        if streamed:
+            call.finish_estimated(
+                output_tokens=(
+                    _estimated_output_tokens(response)
+                    if isinstance(response, LLMResult)
+                    else 0
+                ),
+                request_retries=retries,
+            )
+        else:
+            call.fail(request_retries=retries)

@@ -68,7 +68,8 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   - Limits: `search.query_max_model_calls` and `search.query_max_input_tokens` (off by default) bound one query's
     model calls and their input tokens, and `RAGInput.limits` (`QueryLimits`, exported; the MCP tools' `limits`,
     whose deadline covers the wait for a call slot, the server's own reported by `kg_describe_schema`) lowers them
-    and the deadline for one query, never raising them. A call past a limit is refused before it is sent: the usage
+    and the deadline for one query, never raising them (a stream attempt that failed after its response started
+    counts at its estimate). A call past a limit is refused before it is sent: the usage
     callback now raises its refusal (LangChain swallowed a handler's error) and logs any other error of its own
     (`setup_logging` drops LangChain's own "Error in UsageCallbackHandler... callback" WARNING of a refusal).
   - Fan-out: `global`, `drift` and `iterative` start only the calls that fit beside what the answer will read
@@ -247,10 +248,14 @@ Bugs present in 0.3.0.
   dropped or stalled stream reach the caller as they are, so neither read as transient. langchain-aws's
   `ConnectionError` for a stream cut before its last event even failed as an unreachable server: a bare
   `ConnectionError` now counts as one only when raised from a connect failure (as the Ollama client's is). They are
-  retried now, with `ModelStreamErrorException` ("retry your request"), until answer text reaches the caller;
-  validation and access errors still fail at once. An OpenAI-compatible stream is retried the same way after its
-  response started (its client retries only until then). A model's read timeout is named as one, with
-  `search.model_timeout_seconds`, instead of "an unexpected error".
+  retried now, with `ModelStreamErrorException` ("retry your request") and botocore's `ChecksumMismatch` (an event
+  frame corrupted in transit), until answer text reaches the caller; validation and access errors still fail at once.
+  An OpenAI-compatible stream is retried the same way after its response started (its client retries only until
+  then). A model's read timeout is named as one, with `search.model_timeout_seconds`, instead of "an unexpected
+  error"; the OpenAI client's connect timeout (the same `APITimeoutError`) is an unreachable server, as Ollama's is.
+  A call that failed once its response had started keeps its estimated input tokens (an estimated call, not a failed
+  one), so a stream retry's spent attempts count in the usage; one that failed before any response (an `ainvoke`'s
+  always) is still a failed call at 0 tokens.
 - A context could read past its token budget: a section type whose next section fell below the truncation floor
   kept its unused share while that share was also handed to the other types (a 244-token budget built 262). A round
   that seats past the budget so now lends its spare once, the room the types held unseated pooled in it, and what no

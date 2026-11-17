@@ -15,6 +15,7 @@ from collections.abc import AsyncIterator, Iterator
 from typing import Any
 
 import pytest
+from botocore.eventstream import ChecksumMismatch
 from botocore.exceptions import ClientError, EventStreamError
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import AIMessageChunk
@@ -593,6 +594,8 @@ _STREAM_FAILURES = {
     "model-timeout": lambda: _event_stream_error("modelTimeoutException"),
     "dropped": lambda: urllib3_exc.ProtocolError("Connection broken"),
     "stalled": lambda: urllib3_exc.ReadTimeoutError(None, "/", "Read timed out."),
+    # An event frame corrupted in transit (rv45 query low).
+    "corrupt-frame": lambda: ChecksumMismatch(0x1234ABCD, 0x0BADF00D),
     # langchain-aws's for a stream that ended without its messageStop event.
     "incomplete": lambda: ConnectionError(
         "Incomplete Bedrock response stream: missing messageStop event."
