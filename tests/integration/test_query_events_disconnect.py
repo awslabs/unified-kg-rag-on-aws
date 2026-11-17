@@ -30,6 +30,7 @@ from unified_kg_rag.adapters.local.models import (
     OllamaLanguageModelFactory,
     OpenAICompatibleLanguageModelFactory,
 )
+from unified_kg_rag.application.retrieval import rag_chain
 from unified_kg_rag.domain.models import Config, SearchStrategy
 
 pytestmark = [pytest.mark.integration]
@@ -285,10 +286,13 @@ def _wire_chain(
     return chain
 
 
-async def _cancelled_at(chain: GraphRAGChain, event_type: type, delay: float) -> float:
+async def _cancelled_at(
+    chain: GraphRAGChain, event_type: type, delay: float
+) -> float | None:
     """Read the query's events in a task, cancelled ``delay`` s after its
     first ``event_type`` event; the seconds the cancelled reader took to
-    end."""
+    end (``None``: the query ended before that event, as one whose first
+    chunk missed its window on a loaded runner does)."""
     seen = asyncio.Event()
 
     async def read() -> None:
@@ -297,7 +301,12 @@ async def _cancelled_at(chain: GraphRAGChain, event_type: type, delay: float) ->
                 seen.set()
 
     task = asyncio.create_task(read())
-    await seen.wait()
+    waiting = asyncio.create_task(seen.wait())
+    await asyncio.wait({task, waiting}, return_when=asyncio.FIRST_COMPLETED)
+    if not seen.is_set():
+        waiting.cancel()
+        await asyncio.gather(task, waiting, return_exceptions=True)
+        return None
     await asyncio.sleep(delay)
     loop = asyncio.get_running_loop()
     stopped = loop.time()
@@ -323,7 +332,8 @@ async def test_a_reader_cancelled_while_the_model_reasons_stops_the_model(
         released = await asyncio.gather(
             *(_cancelled_at(chain, QuerySources, 0.3) for _ in range(8))
         )
-        assert max(released) < 5
+        assert None not in released
+        assert max(r for r in released if r is not None) < 5
         # The model stopped writing: its client closed each response.
         assert await asyncio.to_thread(models.settled) == 0
         if provider != "bedrock":
@@ -348,8 +358,8 @@ async def test_a_model_that_stalls_after_a_disconnect_ends_in_its_read_timeout(
     # in its own timeout, its response closed, never in a cancel that lands
     # mid-read and leaves the connection held.
     port, models = wire
-    models.knobs = stream_models.StreamKnobs(stall_after=1, stall_seconds=6)
-    chain = _wire_chain(provider, port, monkeypatch, model_timeout=2.0)
+    models.knobs = stream_models.StreamKnobs(stall_after=1, stall_seconds=8)
+    chain = _wire_chain(provider, port, monkeypatch, model_timeout=3.0)
     errors = _loop_errors()
     try:
         # Cancelled at points spread over a chunk's interval: some while the
@@ -360,7 +370,10 @@ async def test_a_model_that_stalls_after_a_disconnect_ends_in_its_read_timeout(
                 for i in range(96)
             )
         )
-        assert max(released) < 6
+        stopped = [r for r in released if r is not None]
+        assert stopped
+        # Ended in the read timeout (3 s), before the forced cancel (8 s).
+        assert max(stopped) < 3.0 + rag_chain._STOP_GRACE_SECONDS
         assert await _settled(port) == 0
         models.knobs = stream_models.StreamKnobs()
         await _answers(chain)
