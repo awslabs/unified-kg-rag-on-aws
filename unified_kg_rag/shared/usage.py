@@ -320,7 +320,13 @@ class UsageMeter:
         left_out += [
             {call._model: call._counted}
             for call in superseding
-            # By identity: meters are dataclasses, equal when their counts are.
+            # Only from the scopes that counted it. Every attempt of a
+            # retried call starts its calls in the meter open where the
+            # retry runs, which is the one the package's limited scopes
+            # (a query's, a run's) enclose, so this filter drops nothing
+            # there; it keeps a limited scope opened inside one attempt from
+            # being credited with a call it never counted. By identity:
+            # meters are dataclasses, equal when their counts are.
             if any(node is self for node in _chain(call._meter))
         ]
         for counts_by_model in left_out:
