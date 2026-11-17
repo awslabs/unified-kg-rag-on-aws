@@ -274,6 +274,7 @@ ALLOWED: dict[str, str] = {
         "application/cli/run_rag_chain.py:_FILES_SHOWN",
         "application/cli/run_rag_chain.py:_SNIPPET_CHARS",
         "domain/retrieval/graph_query.py:_EXAMPLE_MAX_CHARS",
+        "domain/retrieval/graph_query.py:_PLAN_NAMES_SHOWN",
         "adapters/aws/s3_cache.py:S3CacheManager._MAX_REPORTED_FAILURES",
         "adapters/renderers/interactive.py:InteractiveRenderer.NODE_SIZE_BASE",
         "adapters/renderers/interactive.py:InteractiveRenderer.NODE_SIZE_FACTOR",

@@ -132,6 +132,10 @@ PROJECTION_KEYS: tuple[str, ...] = (
 )
 # Sampled string values longer than this are not shown as examples.
 _EXAMPLE_MAX_CHARS = 60
+# The stored names a plan's text lists per linked mention, the rest counted:
+# the text is model-visible (the answer prompt, metadata.structured), so it
+# stays short; a log line lists shared.utils.NAMES_SHOWN.
+_PLAN_NAMES_SHOWN = 5
 _NUMERIC_OPS = RANGE_BOUNDS
 
 VertexMap = Mapping[str, Sequence[Any]]
@@ -828,7 +832,7 @@ def _node_text(node: ResolvedNode, linked: Mapping[str, Sequence[str]]) -> str:
         parts.append(
             f"named {_quoted(node.mention)}"
             + (
-                f" = {first_names(_quoted(n) for n in names)}"
+                f" = {first_names((_quoted(n) for n in names), _PLAN_NAMES_SHOWN)}"
                 if names
                 else " (linked to nothing)"
             )

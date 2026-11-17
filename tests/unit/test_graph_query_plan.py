@@ -472,6 +472,11 @@ def test_the_plan_is_described_by_code() -> None:
     # which entities were counted.
     assert '(x, named "가나다 상사" = "가나다 상사")' in text
     assert "(linked to nothing)" in describe_plan(mention, {})
+    # The answer model reads at most five of them, the rest counted (rv49:
+    # the shared log-line list of ten had doubled it).
+    many = [f"Vendor {n}" for n in range(7)]
+    listed = ", ".join(f'"{name}"' for name in many[:5])
+    assert f"= {listed} and 2 more)" in describe_plan(mention, {"x": many})
     assert "-[MAKES *1..2]->" in text
     assert "twice" not in text
     # A symmetric pattern's count: each pair in both orders, and it says so.
