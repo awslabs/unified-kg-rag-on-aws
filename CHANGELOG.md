@@ -341,6 +341,13 @@ Bugs present in 0.3.0.
   doubled slashes, else, for a directory of this host, the stored scope naming it through a symlink. A corpus run, or
   a run of changes keyed by the scope as given, warns when another stored scope names the same directory (a document
   under both is stored twice), and `DocumentNotFoundError` names the other spelling a missing id is under.
+- `processing.deduplicate` on an incremental run looked the copies up under the source scope as given, while the
+  diff keys the run by the spelling the registry holds (a configured scope that gained a trailing slash, or an
+  `insert_documents` scope through a symlink): no copy read as indexed or `FAILED`, so input order chose, and an
+  indexed document sent unchanged beside a new copy of it was deleted and the copy extracted and indexed instead.
+  The run now resolves the stored spelling once and keys deduplication's choice and the diff by it, so the indexed
+  copy is kept (a `FAILED` one still gives way); the parsing stage looks up the files to skip under it too, where
+  such a scope parsed every file again.
 - `answer_match` read Japanese sums in 兆 (10^12) wrong: `一兆二千億円` as 200,000,000,000 and `3兆円` as 3. 兆 is a
   multiplier of the Japanese and Chinese profiles, as 億 is, where it can close an amount (`新台币3兆元`, `3兆美元`);
   before another Han or Latin letter it is the Chinese prefix mega (the new `LanguageProfile.prefix_multipliers`), so

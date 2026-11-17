@@ -660,7 +660,7 @@ of the documents plus the configured seeds. No model reads a seed.
   write, `incremental._confirm_reset_of_seed_scopes` lists the namespace
   once (the quarantine check reads the same listing), counts as the run's
   own every record of a spelling of its source scope
-  (`normalize_source_scope`, as the incremental diff's `_stored_spelling`
+  (`normalize_source_scope`, as the incremental diff's `stored_scope_spelling`
   does) and, when another scope holds seed paths (`is_seed_path`), or the
   corpus is seeds alone, the scope holds seed records of its own and
   another scope holds documents, asks the

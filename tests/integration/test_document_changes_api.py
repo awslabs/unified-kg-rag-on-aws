@@ -839,7 +839,9 @@ def _insert_as_0_3_0(
     from unified_kg_rag.application.ingestion import incremental
 
     with monkeypatch.context() as patched:
-        patched.setattr(incremental, "_stored_spelling", lambda *a, **k: None)
+        patched.setattr(
+            incremental, "stored_scope_spelling", lambda given, *a, **k: given
+        )
         _ok(pipeline._run_changes([InputDocument(id=name, text=text)], (), scope, None))
 
 
@@ -957,3 +959,129 @@ def test_a_changes_run_warns_of_copies_under_another_spelling_of_its_directory(
     assert f"same directory as the source scope {str(corpus.resolve())!r}" in (
         warned[0]
     )
+
+
+def _dedup_corpus(tmp_path: Path) -> tuple[Path, Path]:
+    """A corpus of z.txt and other.txt, and a symlink to it."""
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "z.txt").write_text(_SUPPLY)
+    (corpus / "other.txt").write_text(_STORAGE)
+    link = tmp_path / "link"
+    link.symlink_to(corpus, target_is_directory=True)
+    return corpus, link
+
+
+@pytest.mark.parametrize("spelling", ["resolved", "trailing", "link"])
+def test_deduplication_keeps_the_indexed_copy_under_any_spelling_of_the_scope(
+    setup, tmp_path: Path, spelling: str
+) -> None:
+    # rv48 ingestion medium: deduplication looked the copies up under the
+    # scope as given, the diff under the spelling the registry holds. Under
+    # another spelling no copy read as indexed, so input order kept the new
+    # copy a and deleted the indexed z it duplicates.
+    config, providers, pipeline = setup
+    config.processing.deduplicate = True
+    corpus, link = _dedup_corpus(tmp_path)
+    _ok(pipeline.run(corpus))
+    resolved = corpus.resolve().as_posix()
+    scope = {"resolved": resolved, "trailing": f"{resolved}/", "link": str(link)}[
+        spelling
+    ]
+
+    context = _ok(
+        pipeline.insert_documents(
+            [{"id": "a.txt", "text": _SUPPLY}, {"id": "z.txt", "text": _SUPPLY}],
+            source_scope=scope,
+        )
+    )
+
+    assert sorted(_records(providers)) == ["other.txt", "z.txt"]
+    assert _loading_metrics(context)["deduplicated"] == ["a.txt"]
+    assert context.incremental_delta.deleted == []
+    assert _scopes(providers) == {resolved}
+
+
+def test_a_corpus_run_keeps_the_indexed_copy_under_a_respelled_explicit_scope(
+    setup, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # The same for a corpus run whose configured source scope gained a
+    # trailing slash since the run that indexed z. The spelling is resolved
+    # once: deduplication and the diff key by it, and it is named once.
+    config, providers, pipeline = setup
+    config.processing.deduplicate = True
+    corpus, _ = _dedup_corpus(tmp_path)
+    resolved = corpus.resolve().as_posix()
+    config.processing.document_parsing.source_scope = resolved
+    _ok(pipeline.run(corpus))
+    (corpus / "a.txt").write_text(_SUPPLY)
+
+    config.processing.document_parsing.source_scope = f"{resolved}/"
+    with caplog.at_level("WARNING"):
+        context = _ok(pipeline.run(corpus))
+
+    assert sorted(_records(providers)) == ["other.txt", "z.txt"]
+    assert _loading_metrics(context)["deduplicated"] == ["a.txt"]
+    assert _scopes(providers) == {resolved}
+    respelled = [r for r in caplog.records if "using the stored spelling" in r.message]
+    assert len(respelled) == 1
+
+
+def test_deduplication_gives_a_failed_copy_way_under_another_spelling(
+    setup, tmp_path: Path
+) -> None:
+    # A FAILED copy gives way to any other (it may have used up its
+    # retries), under any spelling of the scope: z, first in the batch and
+    # FAILED, is dropped (and its record deleted), its copy a indexed.
+    config, providers, pipeline = setup
+    config.processing.deduplicate = True
+    corpus, link = _dedup_corpus(tmp_path)
+    _ok(pipeline.run(corpus))
+    store = providers.build_doc_status()
+    (record,) = [r for r in all_records(store) if r.file_path == "z.txt"]
+    store.put(
+        record.model_copy(update={"status": DocStatus.FAILED, "error_info": "boom"})
+    )
+
+    context = _ok(
+        pipeline.insert_documents(
+            [{"id": "z.txt", "text": _SUPPLY}, {"id": "a.txt", "text": _SUPPLY}],
+            source_scope=str(link),
+        )
+    )
+
+    assert _records(providers) == {
+        "a.txt": DocStatus.PROCESSED,
+        "other.txt": DocStatus.PROCESSED,
+    }
+    assert _loading_metrics(context)["deduplicated"] == ["z.txt"]
+
+
+def _parsing_metrics(context: PipelineContext) -> dict[str, Any]:
+    (result,) = [
+        r
+        for r in context.stage_results
+        if r.stage_name == PipelineStageType.DOCUMENT_PARSING.value
+    ]
+    return result.metrics
+
+
+def test_an_unchanged_file_is_not_parsed_again_under_a_respelled_scope(
+    setup, tmp_path: Path
+) -> None:
+    # The parse of an unchanged file is skipped by its record, looked up
+    # under the spelling the registry holds: a configured scope that gained
+    # a trailing slash parsed every file again.
+    config, providers, pipeline = setup
+    corpus, _ = _dedup_corpus(tmp_path)
+    resolved = corpus.resolve().as_posix()
+    config.processing.document_parsing.source_scope = resolved
+    _ok(pipeline.run(corpus))
+
+    config.processing.document_parsing.source_scope = f"{resolved}/"
+    context = _ok(pipeline.run(corpus))
+
+    metrics = _parsing_metrics(context)
+    assert (metrics["files_unparsed"], metrics["parsed_files"]) == (2, [])
+    assert len(context.incremental_delta.unchanged) == 2
+    assert _scopes(providers) == {resolved}

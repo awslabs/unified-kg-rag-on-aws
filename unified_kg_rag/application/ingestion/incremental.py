@@ -1494,6 +1494,92 @@ def changes_source_scopes(
     return _same_directory_scopes(source_scope, namespace, stored_scopes)
 
 
+def stored_scope_spelling(
+    source_scope: str, namespace: str, stored_scopes: Iterable[str], changes: bool
+) -> str:
+    """The spelling of ``source_scope`` a run keys its registry lookups by:
+    the first spelling the registry holds ``namespace``'s records under
+    (:func:`stored_source_scopes`; for a run of document changes,
+    :func:`changes_source_scopes`), else ``source_scope`` itself.
+
+    The one rule for every lookup of a run (deduplication's preferences,
+    the parses skipped for unchanged files, the diff): a lookup under
+    another spelling than the diff's would miss the records the diff
+    finds."""
+    spellings = (changes_source_scopes if changes else stored_source_scopes)(
+        source_scope, namespace, stored_scopes
+    )
+    return spellings[0] if spellings else source_scope
+
+
+def keyed_by_stored_spelling(
+    config: Config,
+    store: DocStatusPort,
+    source_directory: Path,
+    changes: bool,
+    held: bool,
+    warn: bool = True,
+) -> Config:
+    """``config`` with its source scope respelled to the one the run keys
+    its registry lookups by (:func:`stored_scope_spelling`).
+
+    ``held`` tells that a lookup under the scope as given found a record:
+    the registry holds the scope as given, which is then the spelling, with
+    no read. Otherwise the namespace's stored scopes are read (one projected
+    registry read). ``warn`` names the respelling (once per run: the diff
+    names it when no earlier lookup did).
+
+    Raises:
+        DocStatusRegistryError: The registry cannot be read.
+    """
+    if held:
+        return config
+    scope, namespace, source_scope, _ = run_registry_scope(config, source_directory, [])
+    try:
+        stored = store.diff({}, scope=scope).stored_scopes
+    except (DocStatusRegistryError, ConfigurationError):
+        raise
+    except Exception as e:
+        raise DocStatusRegistryError(
+            f"Doc-status registry: could not read the source scopes of index "
+            f"namespace {namespace!r} ({error_name(e)})"
+        ) from e
+    return _respelled(
+        config,
+        source_scope,
+        stored_scope_spelling(source_scope, namespace, stored, changes),
+        changes,
+        warn,
+    )
+
+
+def _respelled(
+    config: Config, source_scope: str, spelling: str, changes: bool, warn: bool = True
+) -> Config:
+    """``config`` keyed by ``spelling``, the stored spelling of its
+    ``source_scope`` (itself when they are the same)."""
+    if spelling == source_scope:
+        return config
+    if warn:
+        # The corpus was indexed under another spelling of its source (an
+        # s3:// URI with or without a trailing slash; for a run of changes,
+        # also its directory through a symlink): keyed by this one, the run
+        # would index every document again beside the stored copies and
+        # never delete those.
+        logger.warning(
+            "The registry holds this corpus under the source scope %r, another "
+            "spelling of %r; using the stored spelling (%s to skip this check)",
+            spelling,
+            source_scope,
+            (
+                "pass it as source_scope"
+                if changes
+                else "set processing.document_parsing.source_scope to it"
+            ),
+        )
+    return config.updated({"processing.document_parsing.source_scope": spelling})
+
+
 def _same_directory_scopes(
     source_scope: str, namespace: str, stored_scopes: Iterable[str]
 ) -> list[str]:
@@ -1574,8 +1660,11 @@ def dedup_preferences(
     config: Config,
     doc_status: Callable[[], DocStatusPort],
     source_directory: Path,
-) -> tuple[Callable[[Document], bool], Callable[[Document], bool]]:
-    """Which near-duplicate to keep: ``(indexed, failed)`` predicates.
+    changes: bool = False,
+) -> tuple[Callable[[Document], bool], Callable[[Document], bool], Config]:
+    """Which near-duplicate to keep: ``(indexed, failed)`` predicates, and
+    ``config`` keyed by the stored spelling of its source scope
+    (:func:`keyed_by_stored_spelling`), for the run's diff to key by too.
 
     The incremental diff treats a dropped document as deleted, so a new
     near-copy that happened to be kept would delete the indexed original and
@@ -1586,16 +1675,29 @@ def dedup_preferences(
     its copy would leave neither indexed. A FAILED record of a document
     indexed without some claims (``_CLAIMS_MISSING``) counts as indexed: its
     graph is in the stores. A PENDING record (an interrupted run) is neither.
+    The records are looked up under the spelling the diff keys by (for a run
+    of ``changes``, symlinks followed): under another, none would be found.
     """
-    _, _, source_scope, _ = run_registry_scope(
-        config, source_directory, unread_source_files(context)
-    )
+    unread = unread_source_files(context)
     keys: dict[int, str] = {}
-    for document in documents:
-        assign_registry_source(document, source_scope)
-        keys[id(document)] = document_doc_id(document)
+
+    def lookup(config: Config) -> dict[str, DocStatusRecord]:
+        _, _, source_scope, _ = run_registry_scope(config, source_directory, unread)
+        for document in documents:
+            assign_registry_source(document, source_scope)
+            keys[id(document)] = document_doc_id(document)
+        return store.get_many(set(keys.values()))
+
     try:
-        stored = doc_status().get_many(set(keys.values()))
+        store = doc_status()
+        stored = lookup(config)
+        respelled = keyed_by_stored_spelling(
+            config, store, source_directory, changes, held=bool(stored)
+        )
+        if respelled is not config:
+            stored = lookup(respelled)
+    except DocStatusRegistryError:
+        raise
     except Exception as e:
         raise DocStatusRegistryError(
             f"Doc-status registry: could not read it to deduplicate the "
@@ -1616,7 +1718,7 @@ def dedup_preferences(
     def failed(document: Document) -> bool:
         return status(document) is DocStatus.FAILED
 
-    return indexed, failed
+    return indexed, failed, respelled
 
 
 def run_extraction_fingerprint(
@@ -1768,7 +1870,8 @@ def _same_source(record_scope: str | None, namespace: str, source_scope: str) ->
     """Whether a record of ``record_scope`` is a record of the run's corpus:
     of ``namespace`` and a spelling of ``source_scope``
     (:func:`normalize_source_scope`: an ``s3://`` URI with or without a
-    trailing slash), as an incremental run keys it (``_stored_spelling``).
+    trailing slash), as an incremental run keys it
+    (``stored_scope_spelling``).
 
     The callers pass the records of ``namespace``'s listing, each scoped
     ``namespace|source``, so the namespace check never fails there. It is
@@ -2161,33 +2264,16 @@ def filter_to_delta(
             "(providers.doc_status.enabled: false) to "
             "run without it."
         ) from e
-    stored_spelling = _stored_spelling(
-        source_scope, namespace, delta, changes is not None
+    spelling = stored_scope_spelling(
+        source_scope, namespace, delta.stored_scopes, changes is not None
     )
-    if stored_spelling is not None:
-        # The corpus was indexed under another spelling of its source (an
-        # s3:// URI with or without a trailing slash; for a run of changes,
-        # also its directory through a symlink): diffing under this one
-        # would index every document again beside the stored copies and
-        # never delete those. Key the run by the stored spelling instead.
-        logger.warning(
-            "The registry holds this corpus under the source scope %r, another "
-            "spelling of %r; using the stored spelling (%s to skip this check)",
-            stored_spelling,
-            source_scope,
-            (
-                "pass it as source_scope"
-                if changes is not None
-                else "set processing.document_parsing.source_scope to it"
-            ),
-        )
-        respelled = config.updated(
-            {"processing.document_parsing.source_scope": stored_spelling}
-        )
+    if spelling != source_scope:
+        # Keyed by the stored spelling instead (a lookup earlier in the run
+        # passes ``config`` keyed by it already, see dedup_preferences).
         return filter_to_delta(
             documents,
             context,
-            respelled,
+            _respelled(config, source_scope, spelling, changes is not None),
             doc_status,
             source_directory,
             confirm,
@@ -2712,22 +2798,6 @@ def delta_still_applies(
         if moved:
             return False
     return True
-
-
-def _stored_spelling(
-    source_scope: str,
-    namespace: str,
-    delta: DocumentDelta,
-    changes: bool,
-) -> str | None:
-    """Another spelling of ``source_scope`` the registry holds this
-    namespace's records under, when it holds none under ``source_scope``
-    itself (see :func:`stored_source_scopes`; for a run of document
-    changes, :func:`changes_source_scopes`)."""
-    spellings = (changes_source_scopes if changes else stored_source_scopes)(
-        source_scope, namespace, delta.stored_scopes
-    )
-    return spellings[0] if spellings and spellings[0] != source_scope else None
 
 
 def _warn_about_other_local_scopes(

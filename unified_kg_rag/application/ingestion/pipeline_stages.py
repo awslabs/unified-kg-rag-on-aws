@@ -56,6 +56,7 @@ from unified_kg_rag.application.ingestion.incremental import (
     dedup_preferences,
     filter_to_delta,
     index_delta,
+    keyed_by_stored_spelling,
     record_rebuilt_annotations,
     recorded_source_scopes,
     reset_namespaces,
@@ -772,17 +773,21 @@ class DocumentLoadingStage(_RegistryStage):
 
         incremental = self._registry_on
         deduplicated: list[Document] = []
+        # The config the registry lookups key by: its source scope spelled as
+        # the registry holds it, once deduplication looked that up.
+        keyed = self.config
         if self.config.processing.deduplicate:
             # Deduplication compares the texts.
             documents = self._read_unparsed(documents)
             keep = avoid = None
             if incremental and not self.config.indexing.reset:
-                keep, avoid = dedup_preferences(
+                keep, avoid, keyed = dedup_preferences(
                     documents,
                     context,
                     self.config,
                     self._build_doc_status_store,
                     self.loader.source_directory,
+                    changes=self.deletions is not None,
                 )
             kept = self.loader.deduplicate_documents(
                 documents,
@@ -803,7 +808,7 @@ class DocumentLoadingStage(_RegistryStage):
         delta_skipped = 0
         if incremental:
             documents, delta_skipped = self._apply_incremental_filter(
-                documents, context, deduplicated
+                documents, context, deduplicated, keyed
             )
         elif corpus_is_seeds_only(documents):
             self._confirm_seeds_alone()
@@ -959,13 +964,16 @@ class DocumentLoadingStage(_RegistryStage):
         documents: list[Document],
         context: PipelineContext,
         deduplicated: Sequence[Document] = (),
+        config: Config | None = None,
     ) -> tuple[list[Document], int]:
         """Keep the new and changed documents (see ``incremental.filter_to_delta``;
-        ``deduplicated``: the copies deduplication dropped)."""
+        ``deduplicated``: the copies deduplication dropped; ``config``: the
+        run's config keyed by the stored spelling of its source scope, once
+        an earlier lookup resolved it)."""
         return filter_to_delta(
             documents,
             context,
-            self.config,
+            config or self.config,
             self._build_doc_status_store,
             self.loader.source_directory,
             self.confirm,
@@ -1162,12 +1170,23 @@ class DocumentParsingStage(_RegistryStage):
         ):
             return digests, {}
         # Resolved, as the loading stage keys the run (DirectoryLoader).
-        _, _, source_scope, _ = run_registry_scope(
-            self.config, self.source_directory.resolve(), []
-        )
+        root = self.source_directory.resolve()
+        _, _, source_scope, _ = run_registry_scope(self.config, root, [])
         try:
+            reusable = reusable_records(parser, digests, self._doc_status, source_scope)
+            if reusable or not digests:
+                return digests, reusable
+            # None reusable: maybe because the registry holds the corpus under
+            # another spelling of its scope, which the diff keys the run by
+            # (and names).
+            keyed = keyed_by_stored_spelling(
+                self.config, self._doc_status, root, False, held=False, warn=False
+            )
+            if keyed is self.config:
+                return digests, {}
+            _, _, spelling, _ = run_registry_scope(keyed, root, [])
             return digests, reusable_records(
-                parser, digests, self._doc_status, source_scope
+                parser, digests, self._doc_status, spelling
             )
         except Exception as e:  # noqa: BLE001 - every file is parsed instead
             log_error(

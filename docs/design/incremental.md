@@ -483,7 +483,14 @@ every write and check that the next run converges to a fresh full build.
   out; an incremental run keys text units by the registry `doc_id`, which
   also holds the source scope (`document_parsing.source_scope`, else the
   resolved source directory), so each belongs to one record and the ids hold
-  only from the same directory or with a fixed scope. Changing either rule
+  only from the same directory or with a fixed scope. A run keys every
+  registry lookup by one spelling of its source scope
+  (`incremental.stored_scope_spelling`): the one the registry holds the
+  namespace's records under (an `s3://` URI with or without a trailing
+  slash; for a run of changes also its directory through a symlink), else
+  the scope as given. Deduplication's preferences and the parses skipped
+  for unchanged files look up under it too, not only the diff: under
+  another spelling an indexed copy would read as new. Changing either rule
   requires a re-index.
 - **Derived content** (`domain/ingestion/derivation.py`). The merge and the
   strip keep each touched item's structure (id, text units, per-unit
