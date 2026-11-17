@@ -164,6 +164,8 @@ ALLOWED: dict[str, str] = {
         "application/retrieval/methodology_check.py:HELD_TTL_SECONDS",
         "application/retrieval/rag_chain.py:_JOINED_CHECK_CHARS",
         "application/retrieval/rag_chain.py:_TEARDOWN_TIMEOUT_SECONDS",
+        "application/retrieval/rag_chain.py:_STOP_GRACE_SECONDS",
+        "application/retrieval/rag_chain.py:_INTERRUPT_WAIT_SECONDS",
         "application/storage/cross_run_merge.py:_DERIVE_ROUNDS",
         "application/storage/pending_writes.py:_PART_BYTES",
         "application/storage/visualization_export.py:_READ_BATCH",

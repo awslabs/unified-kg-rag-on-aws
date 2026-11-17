@@ -369,8 +369,13 @@ the reader and waits until the reader asks for the next, so the query never
 runs ahead of it. A reader that stops (closes the iterator, or is
 cancelled while it waits: a client that disconnected) stops the sink, and
 the query's waiting or next send raises `CancelledError` there, before it
-writes memory; the reader waits for that up to
-`search.model_timeout_seconds`, then cancels the task. Ending at a send
+writes memory, as does its answer model's next chunk, one that sends
+nothing included (reasoning, a held-back marker, an answer the output
+guardrail screens first: `_streamed_to` checks the sink after each chunk).
+The reader waits for that up to `search.model_timeout_seconds` plus a
+grace (`_STOP_GRACE_SECONDS`), then cancels the task: past the model
+clients' read timeout, so a model that stalls ends in its client's own
+timeout, its response closed. Ending at a send or a chunk
 matters: the answer's model stream is then paused between two chunks and
 closes cleanly, whereas a cancellation that lands while LangChain's
 per-chunk task reads the model leaves its response open (an httpx pool
