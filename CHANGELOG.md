@@ -262,15 +262,17 @@ Bugs present in 0.3.0.
   `ConnectionError` now counts as one only when raised from a connect failure (as the Ollama client's is). They are
   retried now, with `ModelStreamErrorException` ("retry your request") and botocore's `ChecksumMismatch` (an event
   frame corrupted in transit), until answer text reaches the caller; validation and access errors still fail at once.
-  An OpenAI-compatible stream is retried the same way after its response started (its client retries only until
-  then). A model's read timeout is named as one, with `search.model_timeout_seconds`, instead of "an unexpected
-  error"; the OpenAI client's connect timeout (the same `APITimeoutError`) is an unreachable server, as Ollama's is.
-  A call that failed once its response had started (a stream, or an Ollama `invoke`, whose client streams inside the
-  call) keeps its estimated input tokens, and the output it streamed estimated (an estimated call, not a failed one),
-  so a stream retry's spent attempts count in the usage; one whose response never started is still a failed call at
-  0 tokens. Once the retries run out, urllib3's `ProtocolError` and botocore's `ChecksumMismatch` reach the caller as
-  a `LanguageModelError`, not raw, and an httpx `PoolTimeout` is named a wait for a free connection of the client's
-  pool, not a server that sent nothing within its read timeout.
+- An OpenAI-compatible stream that failed after its response started was not retried (its client retries only until
+  then); it is retried as a Bedrock stream is.
+- A model's read timeout failed as "an unexpected error"; it is named as one, with `search.model_timeout_seconds`.
+  The OpenAI client's connect timeout (the same `APITimeoutError`) is an unreachable server, as Ollama's is.
+- A call that failed once its response had started (a stream, or an Ollama `invoke`, whose client streams inside the
+  call) counted as a failed call at 0 tokens; it keeps its estimated input tokens, and the output it streamed
+  estimated (an estimated call, not a failed one), so a stream retry's spent attempts count in the usage. One whose
+  response never started is still a failed call at 0 tokens.
+- Once the retries ran out, urllib3's `ProtocolError` and botocore's `ChecksumMismatch` reached the caller raw; they
+  are a `LanguageModelError`, and an httpx `PoolTimeout` is named a wait for a free connection of the client's pool,
+  not a server that sent nothing within its read timeout.
 - A context could read past its token budget: a section type whose next section fell below the truncation floor
   kept its unused share while that share was also handed to the other types (a 244-token budget built 262). A round
   that seats past the budget so now lends its spare once, the room the types held unseated pooled in it, and what no
