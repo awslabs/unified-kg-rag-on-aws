@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -287,12 +288,16 @@ def _wire_chain(
 
 
 async def _cancelled_at(
-    chain: GraphRAGChain, event_type: type, delay: float
+    chain: GraphRAGChain,
+    event_type: type,
+    delay: float,
+    stops: list[float] | None = None,
 ) -> float | None:
     """Read the query's events in a task, cancelled ``delay`` s after its
-    first ``event_type`` event; the seconds the cancelled reader took to
-    end (``None``: the query ended before that event, as one whose first
-    chunk missed its window on a loaded runner does)."""
+    first ``event_type`` event (when, by ``time.monotonic``, appended to
+    ``stops``); the seconds the cancelled reader took to end (``None``:
+    the query ended before that event, as one whose first chunk missed its
+    window on a loaded runner does)."""
     seen = asyncio.Event()
 
     async def read() -> None:
@@ -310,6 +315,8 @@ async def _cancelled_at(
     await asyncio.sleep(delay)
     loop = asyncio.get_running_loop()
     stopped = loop.time()
+    if stops is not None:
+        stops.append(time.monotonic())
     task.cancel()
     await asyncio.gather(task, return_exceptions=True)
     return loop.time() - stopped
@@ -382,4 +389,70 @@ async def test_a_model_that_stalls_after_a_disconnect_ends_in_its_read_timeout(
         await chain.aclose()
     gc.collect()
     await asyncio.sleep(0.1)
+    assert errors == []
+
+
+# --- a throttled model: the retry backoff is a stop point -------------------
+
+# Readers stopped while their answer call backs off from a throttled model.
+THROTTLED_READERS = 8
+
+
+@pytest.mark.parametrize(
+    "provider", ["ollama", "openai", "bedrock", "bedrock-adaptive"]
+)
+async def test_a_reader_cancelled_in_retry_backoff_stops_the_query(
+    wire: tuple[int, stream_models.StreamModels],
+    monkeypatch: pytest.MonkeyPatch,
+    provider: str,
+) -> None:
+    # The model refuses every call (HTTP 429), so the answer call is in its
+    # transient retries, before any chunk, when the reader is cancelled:
+    # the backoffs are stop points (the application's and botocore's own),
+    # so the reader is released at once, no model call follows the stop and
+    # the query is recorded as a stopped reader's, not as a failure once its
+    # retry budget is spent.
+    from unified_kg_rag.adapters.aws.bedrock import BaseBedrockModelFactory
+
+    port, models = wire
+    models.knobs = stream_models.StreamKnobs(throttled=True)
+    if provider == "bedrock":
+        # botocore's adaptive mode (the default) also waits in its
+        # client-side rate limiter, which no stop interrupts.
+        monkeypatch.setattr(BaseBedrockModelFactory, "BOTO_RETRY_MODE", "standard")
+    chain = _wire_chain(provider.split("-")[0], port, monkeypatch, model_timeout=60)
+    recorded: list[BaseException | None] = []
+    record = chain._record_query_metrics
+
+    def recording(*args: Any, **kwargs: Any) -> Any:
+        recorded.append(kwargs.get("error"))
+        return record(*args, **kwargs)
+
+    monkeypatch.setattr(chain, "_record_query_metrics", recording)
+    errors = _loop_errors()
+    try:
+        stops: list[float] = []
+        released = await asyncio.gather(
+            *(
+                _cancelled_at(chain, QuerySources, 0.3, stops)
+                for _ in range(THROTTLED_READERS)
+            )
+        )
+        assert None not in released
+        # The waits no stop interrupts, though no request follows them: the
+        # OpenAI client's own backoff (at most 1 s at its second retry), and
+        # under adaptive mode botocore's rate limiter (well within the bound).
+        bound = {"openai": 2.0, "bedrock-adaptive": 60.0}.get(provider, 1.0)
+        assert max(r for r in released if r is not None) < bound
+        # No model call after the readers stopped, the botocore client's
+        # own resends included (past a margin for a request sent as the
+        # last reader stopped, which arrives a moment later).
+        await asyncio.sleep(2.5)
+        assert [t for t in models.throttled_at if t > max(stops) + 0.1] == []
+        assert recorded == [None] * THROTTLED_READERS
+        models.knobs = stream_models.StreamKnobs()
+        await _answers(chain)
+    finally:
+        models.knobs = stream_models.StreamKnobs()
+        await chain.aclose()
     assert errors == []

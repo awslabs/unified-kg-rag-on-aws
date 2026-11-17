@@ -124,8 +124,9 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   `astream_events` is left as LangChain defines it. `astream` / `stream` yield the text of these events, so a streamed
   answer now reads its citations' lineage, records its answer on the query span and is traced in the query's trace, as
   an unstreamed one is. The query waits for its reader at each event: a reader that closes the iterator, or is
-  cancelled, ends it at its next event or its answer model's next chunk (reasoning, an answer held back or screened
-  first included), before it writes memory, counted as no failure (its query span names the strategy it ran).
+  cancelled, ends it at its next event, its answer model's next chunk (reasoning, an answer held back or screened
+  first included) or its next retry wait, before it writes memory, counted as no failure (its query span names the
+  strategy it ran).
   Under the output guardrail the answer model still streams (its first chunk bounded by
   `search.model_timeout_seconds`) and nothing is shown until the whole answer is screened: then its sources and the
   screened answer, one chunk, before the turn is written. The console's Ask page reads the events. A transient retry
@@ -254,13 +255,15 @@ Bugs present in 0.3.0.
   `asyncio.timeout` around `astream`) was cancelled wherever it was. Cancelled while the model's stream waited for a
   chunk, LangChain left the response open, holding a model client connection: on an Ollama or OpenAI-compatible
   server the pool of 100 filled and the console stopped answering, the loop logging `aclose(): asynchronous generator
-  is already running`. A reader that stops or is cancelled now ends the query at its next event or its answer
-  model's next chunk (a reasoning chunk too), cancelling it only a few seconds past `search.model_timeout_seconds`
-  (a model that stalls ends first in its client's read timeout, its response closed), and the query records its
-  latency and usage as a stream closed early (no failure) instead of nothing.
+  is already running`. A reader that stops or is cancelled now ends the query at its next event, its answer
+  model's next chunk (a reasoning chunk too) or its next retry wait (a throttled model is not called again, the
+  Bedrock and OpenAI clients' own resends included), cancelling it only a few seconds past
+  `search.model_timeout_seconds` (a model that stalls ends first in its client's read timeout, its response closed),
+  and the query records its latency and usage as a stream closed early (no failure, whatever it raised past the
+  stop) instead of nothing.
 - `Ctrl-C` while a sync `stream()` or `query_events()` waited for the answer's next chunk raised `RuntimeError:
   aclose(): asynchronous generator is already running` and left the query running on the chain's loop; it raises
-  `KeyboardInterrupt` and cancels the query.
+  `KeyboardInterrupt`, and the query ends at its next event, answer chunk or retry wait, as a closed stream's does.
 - An MCP client that disconnected from the streamable-HTTP server mid-call left its call running to the end, holding
   one of the `mcp.max_concurrent_calls` slots (128 callers that left after 0.3 s kept the next call waiting 8 s);
   the disconnect now cancels the call and frees its slot.

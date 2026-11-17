@@ -233,6 +233,7 @@ from unified_kg_rag.shared.metrics import (
     QUERY_METRICS_NAMESPACE,
     QUERY_THROTTLED_METRIC,
 )
+from unified_kg_rag.shared.reader_stop import ReaderStop, reader_stop_scope
 from unified_kg_rag.shared.usage import UsageLimits, UsageMeter, usage_scope
 from unified_kg_rag.shared.utils import (
     configure_event_loop,
@@ -2776,10 +2777,16 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                     )
                 except BaseException as e:
                     await discard(leftovers)
-                    if isinstance(e, asyncio.CancelledError) and _reader_stopped():
-                        # Not a cancelled query: its reader's early end, a
-                        # closed stream's (the span ends without error,
-                        # naming the strategy it ran, as its metrics do).
+                    if (
+                        isinstance(e, Exception | asyncio.CancelledError)
+                        and _reader_stopped()
+                    ):
+                        # Not a cancelled or failed query: its reader's
+                        # early end, a closed stream's, whatever it raised
+                        # past the stop (a call the stop cut short, a retry
+                        # budget spent for nobody); the span ends without
+                        # error, naming the strategy it ran, as its metrics
+                        # do.
                         if (ran := _routed_strategy()) is not None:
                             span.set_attributes({"kg_rag.strategy": ran.value})
                         raise _ReaderStopped() from None
@@ -3929,8 +3936,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
 
         The query runs in a task of its own and waits for the caller to take
         each event before it goes on, so a caller that stops reading ends it
-        at its next event or its answer model's next chunk (one without
-        text too: reasoning, an answer held back): one that closes the
+        at its next event, its answer model's next chunk (one without
+        text too: reasoning, an answer held back) or its next retry wait
+        (a throttled model's backoff, none of its calls sent after the
+        stop; ``shared.reader_stop``): one that closes the
         iterator (``aclose``; ``break`` closes it once collected) or is
         cancelled while it waits for an event (a client that disconnected,
         a caller's ``asyncio.timeout``). The close, or the cancellation,
@@ -3947,7 +3956,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         async def produce() -> None:
             token = _QUERY_EVENTS.set(channel)
             try:
-                output = await self._query(input, config, search=False)
+                with reader_stop_scope(channel.reader_stop):
+                    output = await self._query(input, config, search=False)
                 assert isinstance(output, RAGOutput)
             except _ReaderStopped:
                 return
@@ -4012,7 +4022,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         its next event, as closing :meth:`aquery_events` does (and cancels
         it when none comes a few seconds past
         ``search.model_timeout_seconds``); an interrupt (``Ctrl-C``) while
-        it waits for one cancels the query and is raised."""
+        it waits for one is raised, and the query ends as a closed one
+        does, at its next event, answer chunk or retry wait."""
         yield from _iterate_async_generator(
             self.aquery_events(input, config), self._loop_runner
         )
@@ -4299,7 +4310,13 @@ class _EventChannel(_EventSink):
         # The send waiting for its event to be taken, if any.
         self._taken: asyncio.Future[None] | None = None
         self.sources_sent = False
-        self.stopped = False
+        # Set by stop(); also ends the query's retry backoffs, which the
+        # query's task binds (reader_stop_scope).
+        self.reader_stop = ReaderStop()
+
+    @property
+    def stopped(self) -> bool:
+        return self.reader_stop.is_set()
 
     async def send(self, event: QueryEvent) -> None:
         if self.stopped:
@@ -4338,7 +4355,7 @@ class _EventChannel(_EventSink):
     def stop(self) -> None:
         """The reader stopped: the send waiting for it, if any, raises
         ``CancelledError`` (the query ends as :class:`_ReaderStopped`)."""
-        self.stopped = True
+        self.reader_stop.set()
         if self._taken is not None and not self._taken.done():
             self._taken.cancel()
 

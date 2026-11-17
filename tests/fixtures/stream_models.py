@@ -6,6 +6,9 @@ does: Ollama (``/api/chat``, NDJSON), an OpenAI-compatible server
 event stream). A streamed answer reasons first (``reasoning_seconds`` of
 reasoning chunks, no answer text), then writes ``chunks`` answer chunks,
 optionally stalling after one of them (``stall_after``, ``stall_seconds``).
+With ``throttled`` set, every chat call is refused as each provider
+throttles (HTTP 429: Bedrock's ``ThrottlingException``, an error body for
+the others) and counted (``throttled``).
 
 It counts the streamed responses it is writing and those whose client left
 before the end, so a test sees whether a model is still generating for a
@@ -37,6 +40,8 @@ class StreamKnobs:
     # The answer chunk after which the stream stalls (None: it does not).
     stall_after: int | None = None
     stall_seconds: float = 0.0
+    # Refuse every chat call with HTTP 429 (a throttled model).
+    throttled: bool = False
 
 
 @dataclass
@@ -47,6 +52,10 @@ class StreamModels:
     writing: int = 0
     completed: int = 0
     left: int = 0
+    # Chat calls refused as throttled (StreamKnobs.throttled), and when each
+    # came (time.monotonic).
+    throttled: int = 0
+    throttled_at: list[float] = field(default_factory=list)
     lock: threading.Lock = field(default_factory=threading.Lock)
 
     def count(self, name: str, delta: int = 1) -> None:
@@ -311,10 +320,29 @@ def _handler(models: StreamModels) -> type[BaseHTTPRequestHandler]:
                 self.send_error(404)
                 return
             knobs = models.knobs
+            if knobs.throttled:
+                models.count("throttled")
+                models.throttled_at.append(time.monotonic())
+                self._throttled(isinstance(wire, _Bedrock))
+                return
             if not streamed:
                 self._json(wire.whole("".join(_words(knobs.chunks))))
                 return
             self._stream(wire, knobs)
+
+        def _throttled(self, bedrock: bool) -> None:
+            data = json.dumps(
+                {"message": "Too many requests"}
+                if bedrock
+                else {"error": {"message": "Too many requests", "type": "rate_limit"}}
+            ).encode()
+            self.send_response(429)
+            self.send_header("Content-Type", "application/json")
+            if bedrock:
+                self.send_header("x-amzn-ErrorType", "ThrottlingException")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
 
         def _stream(self, wire: _Wire, knobs: StreamKnobs) -> None:
             self.send_response(200)

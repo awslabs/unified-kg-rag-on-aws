@@ -20,8 +20,10 @@ class FakeEvents:
     def __init__(self) -> None:
         self.handlers: list[tuple[str, Any]] = []
 
-    def register(self, event_name: str, handler: Any) -> None:
+    def register(self, event_name: str, handler: Any, **_: Any) -> None:
         self.handlers.append((event_name, handler))
+
+    register_first = register_last = register
 
 
 class FakeClient:

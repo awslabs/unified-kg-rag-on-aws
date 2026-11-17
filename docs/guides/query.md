@@ -339,14 +339,19 @@ async for event in chain.aquery_events(RAGInput(query="...")):
 - A failure raises after the events sent before it; with
   `processing.ignore_errors` the result carries the error answer.
 - The query waits for the reader to take each event: a reader that stops
-  ends it at its next event, or at the answer model's next chunk, one
+  ends it at its next event, at the answer model's next chunk, one
   that shows nothing included (reasoning, the held-back start of an
-  answer, an answer the output guardrail screens first). It stops when it
-  closes the iterator (`aclose()`, or `break` inside
+  answer, an answer the output guardrail screens first), or at its next
+  retry wait (a throttled or failing model's backoff: no model call is
+  sent after the stop; a wait the client runs itself, botocore's
+  client-side rate limiter or the OpenAI client's own backoff, ends with
+  its request unsent). It stops
+  when it closes the iterator (`aclose()`, or `break` inside
   `async with aclosing(...)`) or is cancelled while it waits for an event:
   a console client that disconnects, an `asyncio.timeout` around
   `astream`, a cancelled caller task, a `Ctrl-C` while the sync `stream()`
-  or `query_events()` waits (the `KeyboardInterrupt` is raised). The close
+  or `query_events()` waits (the `KeyboardInterrupt` is raised at once; the
+  query ends at its next event, chunk or retry wait like a close). The close
   or cancellation waits for that up to a few seconds past
   `search.model_timeout_seconds`, then cancels the query: a model that
   stalls ends first in its client's read timeout (recorded as that

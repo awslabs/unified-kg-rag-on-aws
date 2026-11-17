@@ -283,6 +283,50 @@ async def test_a_cancelled_reader_ends_the_query_as_a_reader_that_stopped(
     assert values[metrics.QUERY_LATENCY_METRIC] > 0
 
 
+class _FailingModel(GenericFakeChatModel):
+    """Fails its stream before any chunk, a moment after the call: a
+    client's own retries giving up, which no stop point interrupts."""
+
+    async def _astream(self, *args: Any, **kwargs: Any) -> Any:  # type: ignore[override]
+        await asyncio.sleep(0.3)
+        raise RuntimeError("synthetic retry budget spent")
+        yield  # pragma: no cover
+
+
+class _FailingFactory(_HeldFactory):
+    def __init__(self) -> None:
+        super().__init__()
+        self.model = _FailingModel(messages=iter([]))
+
+
+async def test_a_failure_after_the_reader_stopped_is_a_stopped_reader_s_end(
+    config: Config,
+) -> None:
+    # Whatever the query raises once its reader stopped (here a call that
+    # gives up after the stop) ends it as a stopped reader's: no failure.
+    from unified_kg_rag.shared import metrics
+
+    chain, _, memory = _make_chain(config, factory=_FailingFactory())
+    sink = _MetricsSink()
+    chain.providers.metrics_sink = sink
+    sourced = asyncio.Event()
+
+    async def read() -> None:
+        async for event in chain.aquery_events(_input()):
+            if isinstance(event, QuerySources):
+                sourced.set()
+
+    reader = asyncio.create_task(read())
+    await sourced.wait()
+    await asyncio.sleep(0.05)
+    reader.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await reader
+    (values,) = sink.emitted
+    assert values[metrics.QUERY_FAILED_METRIC] == 0.0
+    assert memory.messages == []
+
+
 async def test_a_reader_cancelled_while_no_event_comes_cancels_at_the_bound(
     config: Config, monkeypatch: pytest.MonkeyPatch
 ) -> None:

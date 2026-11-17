@@ -375,8 +375,14 @@ cancelled while it waits: a client that disconnected) stops the sink, and
 the query's waiting or next send raises `CancelledError` there, before it
 writes memory, as does its answer model's next chunk, one that sends
 nothing included (reasoning, a held-back marker, an answer the output
-guardrail screens first: `_streamed_to` checks the sink after each chunk).
-The reader waits for that up to `search.model_timeout_seconds` plus a
+guardrail screens first: `_streamed_to` checks the sink after each chunk),
+as do the retry backoffs: the sink's stop is also the query's
+`shared.reader_stop.ReaderStop`, which the application's retry loops
+(`TransientRetryRunnable`, `acall_with_transient_retry`) check before each
+attempt and race their wait against, and the model clients that resend a
+call themselves (Bedrock's botocore, the OpenAI client) check before each
+request, so a throttled model is not called again for a reader that left. Whatever the query raises once its reader stopped ends it
+as a stopped reader's. The reader waits for that up to `search.model_timeout_seconds` plus a
 grace (`_STOP_GRACE_SECONDS`), then cancels the task: past the model
 clients' read timeout, so a model that stalls ends in its client's own
 timeout, its response closed. Ending at a send or a chunk

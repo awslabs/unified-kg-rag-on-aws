@@ -42,6 +42,7 @@ from unified_kg_rag.ports.model_factory import (
 from unified_kg_rag.shared import ConfigurationError, get_logger, observability
 from unified_kg_rag.shared.exceptions import class_names
 from unified_kg_rag.shared.extras import extra_hint
+from unified_kg_rag.shared.reader_stop import raise_if_reader_stopped
 
 logger = get_logger(__name__)
 
@@ -190,6 +191,10 @@ def _per_loop_httpx_client_class() -> type:
     return PerLoopHttpxAsyncClient
 
 
+async def _stop_before_request(_request: Any) -> None:
+    raise_if_reader_stopped()
+
+
 def openai_http_async_client(timeout: float, transport: Any = None) -> Any:
     """``http_async_client`` for ``ChatOpenAI`` / ``OpenAIEmbeddings``.
 
@@ -201,12 +206,20 @@ def openai_http_async_client(timeout: float, transport: Any = None) -> Any:
     sends through one client per event loop, without keep-alive, as for
     Ollama.
 
+    The OpenAI client retries a call itself: each request it sends, a
+    resend included, is a stop point of a query whose reader stopped
+    (``shared.reader_stop``), so none is sent after the stop (the client's
+    own backoff wait still runs to its end).
+
     ``transport`` (tests: ``httpx.MockTransport``) opens no connection, so a
     plain client on it is returned.
     """
     httpx = importlib.import_module("httpx")
+    hooks = {"request": [_stop_before_request]}
     if transport is not None:
-        return httpx.AsyncClient(transport=transport, timeout=timeout)
+        return httpx.AsyncClient(
+            transport=transport, timeout=timeout, event_hooks=hooks
+        )
 
     def build() -> Any:
         # The OpenAI client's own defaults, but for keep-alive.
@@ -215,6 +228,7 @@ def openai_http_async_client(timeout: float, transport: Any = None) -> Any:
             limits=_no_keepalive_limits(),
             follow_redirects=True,
             verify=tls_context(),
+            event_hooks=hooks,
         )
 
     return _per_loop_httpx_client_class()(

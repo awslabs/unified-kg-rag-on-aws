@@ -10,7 +10,6 @@ so they live in the adapters layer rather than the shared kernel — keeping
 
 from __future__ import annotations
 
-import asyncio
 import contextvars
 import dataclasses
 import logging
@@ -69,6 +68,11 @@ from unified_kg_rag.shared import (
 )
 from unified_kg_rag.shared.exceptions import OptionalCallSkipped
 from unified_kg_rag.shared.logging import log_error, log_failure, warn_once
+from unified_kg_rag.shared.reader_stop import (
+    abackoff_wait,
+    backoff_wait,
+    raise_if_reader_stopped,
+)
 from unified_kg_rag.shared.utils.model_output import (
     leading_reasoning_end,
     may_open_reasoning,
@@ -536,6 +540,12 @@ class TransientRetryRunnable(Runnable[Any, Any]):
     The attempts are those of one call (``shared.usage.RetriedCall``): a
     query's limits count it once, so a retry reuses the room its failed
     attempt held; the usage counts each attempt.
+
+    Each backoff is a stop point of a query whose reader stopped
+    (``shared.reader_stop``): no attempt starts after the stop and a wait
+    under way ends at it, raising ``asyncio.CancelledError`` between two
+    attempts, where no response is held. A client that retries a call
+    itself (the OpenAI one, ``retries_calls=False``) keeps its own waits.
     """
 
     def __init__(
@@ -624,6 +634,7 @@ class TransientRetryRunnable(Runnable[Any, Any]):
         attempt = 1
         retried = usage.RetriedCall()
         while True:
+            raise_if_reader_stopped()
             emitted = False
             try:
                 for chunk in _in_attempt(
@@ -636,7 +647,7 @@ class TransientRetryRunnable(Runnable[Any, Any]):
                 delay = None if emitted else self._delay(exc, attempt, started_at)
                 if delay is None:
                     raise
-                time.sleep(delay)
+                backoff_wait(delay)
                 attempt += 1
 
     async def astream(
@@ -646,6 +657,7 @@ class TransientRetryRunnable(Runnable[Any, Any]):
         attempt = 1
         retried = usage.RetriedCall()
         while True:
+            raise_if_reader_stopped()
             emitted = False
             try:
                 async with aclosing(
@@ -661,7 +673,7 @@ class TransientRetryRunnable(Runnable[Any, Any]):
                 delay = None if emitted else self._delay(exc, attempt, started_at)
                 if delay is None:
                     raise
-                await asyncio.sleep(delay)
+                await abackoff_wait(delay)
                 attempt += 1
 
 
