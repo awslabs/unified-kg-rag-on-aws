@@ -825,3 +825,123 @@ def test_a_record_inserted_through_a_symlink_by_0_3_0_stays_reachable(
     assert _scopes(providers) == {str(link)}
     _ok(pipeline.delete_documents(["old.txt"], source_scope=scope))
     assert sorted(_records(providers)) == ["new.txt"]
+
+
+def _insert_as_0_3_0(
+    pipeline: DataIngestionPipeline,
+    monkeypatch: pytest.MonkeyPatch,
+    scope: str,
+    name: str,
+    text: str,
+) -> None:
+    # 0.3.0's insert_documents keyed its records by the scope as given,
+    # never by another stored spelling of it.
+    from unified_kg_rag.application.ingestion import incremental
+
+    with monkeypatch.context() as patched:
+        patched.setattr(incremental, "_stored_spelling", lambda *a, **k: None)
+        _ok(pipeline._run_changes([InputDocument(id=name, text=text)], (), scope, None))
+
+
+def _by_scope(providers: Any) -> dict[str, set[str]]:
+    held: dict[str, set[str]] = {}
+    for r in all_records(providers.build_doc_status()):
+        held.setdefault(r.scope.partition("|")[2], set()).add(r.file_path)
+    return held
+
+
+def test_two_alike_spellings_held_are_each_taken_as_given(
+    setup, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # rv45 ingestion low: a registry holding /h/c and /h/c/ (0.3.0 keyed
+    # each as given). A run of changes takes the scope as given when the
+    # registry holds it, before any look-alike spelling: taking a
+    # look-alike first sent each run on to the other spelling, forever.
+    config, providers, pipeline = setup
+    plain, slashed = f"{tmp_path}/h/c", f"{tmp_path}/h/c/"
+    _insert_as_0_3_0(pipeline, monkeypatch, plain, "a.txt", _SUPPLY)
+    _insert_as_0_3_0(pipeline, monkeypatch, slashed, "b.txt", _STORAGE)
+
+    for number, given in enumerate((plain, slashed, f"{tmp_path}/h/c//")):
+        _ok(
+            pipeline.insert_documents(
+                [{"id": f"n{number}.txt", "text": f"{_SUPPLY} Lot {number}."}],
+                source_scope=given,
+            )
+        )
+    # A spelling it does not hold takes the first held one, sorted.
+    assert _by_scope(providers) == {
+        plain: {"a.txt", "n0.txt", "n2.txt"},
+        slashed: {"b.txt", "n1.txt"},
+    }
+    _ok(pipeline.delete_documents(["n1.txt"], source_scope=slashed))
+    _ok(pipeline.delete_documents(["n0.txt"], source_scope=plain))
+    _ok(pipeline.delete_documents(["n2.txt"], source_scope=f"{tmp_path}/h/c//"))
+    assert _by_scope(providers) == {plain: {"a.txt"}, slashed: {"b.txt"}}
+
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "a.txt").write_text(_SUPPLY)
+    config.processing.document_parsing.source_scope = slashed
+    _ok(pipeline.run(corpus))
+    assert _by_scope(providers) == {plain: {"a.txt"}, slashed: {"a.txt"}}
+
+
+def test_a_deletion_split_across_spellings_names_where_each_id_is(
+    setup, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # rv45 ingestion low: the ids are under two spellings of the scope. The
+    # call deletes nothing (one call deletes under one spelling) and names
+    # the spelling each missing id is under; on a tie the scope as given is
+    # the one looked in.
+    config, providers, pipeline = setup
+    plain, slashed = f"{tmp_path}/h/c", f"{tmp_path}/h/c/"
+    _insert_as_0_3_0(pipeline, monkeypatch, plain, "a.txt", _SUPPLY)
+    _insert_as_0_3_0(pipeline, monkeypatch, slashed, "b.txt", _STORAGE)
+    with pytest.raises(DocumentNotFoundError) as raised:
+        pipeline.delete_documents(["a.txt", "b.txt", "z.txt"], source_scope=plain)
+    message = str(raised.value)
+    assert "No document 'b.txt', 'z.txt' in the doc-status" in message
+    assert f"source scope {plain!r}: nothing was deleted" in message
+    assert f"; 'b.txt' is under {slashed!r}, another spelling of it" in message
+    assert "'z.txt' is" not in message
+    assert _by_scope(providers) == {plain: {"a.txt"}, slashed: {"b.txt"}}
+
+
+def test_a_changes_run_warns_of_copies_under_another_spelling_of_its_directory(
+    setup,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # rv45 ingestion low: a corpus run keyed the resolved directory and
+    # 0.3.0's insert_documents the path through a symlink. A run of changes
+    # through the link is keyed by the link (the registry holds it), so an
+    # update of a corpus document there is a second copy: it is named.
+    config, providers, pipeline = setup
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "notes.txt").write_text(_SUPPLY)
+    link = tmp_path / "link"
+    link.symlink_to(corpus, target_is_directory=True)
+    _ok(pipeline.run(corpus))
+    with caplog.at_level("WARNING"):
+        # One spelling held: nothing to warn of.
+        _ok(
+            pipeline.insert_documents(
+                [{"id": "other.txt", "text": _STORAGE}], source_scope=str(corpus)
+            )
+        )
+    assert "stored twice" not in caplog.text
+    _insert_as_0_3_0(pipeline, monkeypatch, str(link), "more.txt", _STORAGE)
+
+    with caplog.at_level("WARNING"):
+        _ok(
+            pipeline.insert_documents(
+                [{"id": "notes.txt", "text": _STORAGE}], source_scope=str(link)
+            )
+        )
+    warned = [r.getMessage() for r in caplog.records if "stored twice" in r.message]
+    assert len(warned) == 1
+    assert repr(str(corpus.resolve())) in warned[0]
+    assert f"same directory as the source scope {str(link)!r}" in warned[0]

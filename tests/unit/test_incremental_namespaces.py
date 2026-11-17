@@ -77,3 +77,24 @@ def test_loading_stage_namespace_carries_store_prefix_tag(tmp_path: Path) -> Non
     assert tag
 
     assert _load_namespace(config, tmp_path) == f"default@{tag}"
+
+
+def test_a_changes_runs_symlink_fallback_reads_its_own_namespace_alone(
+    tmp_path: Path,
+) -> None:
+    # rv45 ingestion low (mutant): a run of changes given a directory the
+    # registry holds through a symlink takes that stored scope, but only one
+    # of its own namespace: another namespace's records of the directory
+    # are that tenant's (doc ids carry the namespace).
+    from unified_kg_rag.application.ingestion.incremental import (
+        changes_source_scopes,
+    )
+
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(corpus, target_is_directory=True)
+    # Namespaces of one length: a prefix check alone tells them apart.
+    stored = [f"tenb|{link}"]
+    assert changes_source_scopes(str(corpus), "tena", stored) == []
+    assert changes_source_scopes(str(corpus), "tenb", stored) == [str(link)]

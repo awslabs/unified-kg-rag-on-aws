@@ -126,11 +126,14 @@ if __name__ == "__main__":
   its resolved directory). The registry's spelling of the scope is used:
   the scope as given, one with other trailing or doubled slashes, else, for
   a directory of this host, the stored scope that names it once symlinks
-  are followed.
+  are followed. A run keyed by the scope as given warns when another stored
+  scope names the same directory (0.3.0's `insert_documents` keyed a path
+  through a symlink as given): a document under both is stored twice.
 - Both return the run's `PipelineContext`; `incremental_delta` lists what
   was new, changed, deleted and `kept`. `delete_documents` raises
   `DocumentNotFoundError`, before any write, for an id the registry does
-  not hold in the scope; retried with the `pipeline_id` of an interrupted
+  not hold in the scope (naming the other spelling of the scope an id is
+  under, if any: one call deletes under one spelling); retried with the `pipeline_id` of an interrupted
   deletion, it takes the ids that run already deleted as done and finishes
   the others. Without the registry, or with `indexing.reset`,
   both raise `ConfigurationError`: a full build of the given documents

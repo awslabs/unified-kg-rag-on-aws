@@ -892,7 +892,7 @@ class DataIngestionPipeline:
         if registry is None:
             registry = self.providers.build_doc_status()
         try:
-            source_scope, doc_ids, gone, done = self._deletion_scope(
+            source_scope, doc_ids, gone, done, elsewhere = self._deletion_scope(
                 registry, names, namespace, source_scope, pipeline_id
             )
         finally:
@@ -910,11 +910,24 @@ class DataIngestionPipeline:
             names = [name for doc_id, name in doc_ids.items() if doc_id not in done]
         missing = [doc_ids[doc_id] for doc_id in gone if doc_id not in done]
         if missing:
+            # The ids another spelling of the scope holds, by that spelling:
+            # one call deletes under one spelling.
+            under: dict[str, list[str]] = {}
+            for name in missing:
+                if name in elsewhere:
+                    under.setdefault(elsewhere[name], []).append(name)
             raise DocumentNotFoundError(
                 f"No document {', '.join(map(repr, missing[:10]))}"
                 + (f" (and {len(missing) - 10} more)" if len(missing) > 10 else "")
                 + f" in the doc-status registry for index namespace {namespace!r} "
                 f"and source scope {source_scope!r}: nothing was deleted"
+                + "".join(
+                    f"; {', '.join(map(repr, held[:10]))}"
+                    + (f" (and {len(held) - 10} more)" if len(held) > 10 else "")
+                    + f" {'is' if len(held) == 1 else 'are'} under {spelling!r}, "
+                    "another spelling of it (delete with that source_scope)"
+                    for spelling, held in under.items()
+                )
             )
         return self._run_changes([], tuple(names), source_scope, pipeline_id)
 
@@ -925,10 +938,11 @@ class DataIngestionPipeline:
         namespace: str,
         source_scope: str,
         pipeline_id: str | None,
-    ) -> tuple[str, dict[str, str], list[str], set[str]]:
+    ) -> tuple[str, dict[str, str], list[str], set[str], dict[str, str]]:
         """The spelling of ``source_scope`` that holds the ``names`` to
         delete, with their doc ids (to name), the ids the registry does not
-        hold and those of them the interrupted run ``pipeline_id`` deleted.
+        hold, those of them the interrupted run ``pipeline_id`` deleted, and
+        the other spelling each name it does not hold is under, if any.
 
         The scope as given is looked up first. When it does not hold every
         name, so is each spelling of it the registry holds the namespace's
@@ -944,19 +958,28 @@ class DataIngestionPipeline:
 
         best = lookup(source_scope)
         if not best[2] or len(best[2]) == len(best[3]):
-            return best
+            return (*best, {})
         stored = {
             record.scope
             for record in registry.list_namespace(namespace)
             if record.scope is not None
         }
+        looked = [best]
         for spelling in changes_source_scopes(source_scope, namespace, stored):
             if spelling == source_scope:
                 continue
             found = lookup(spelling)
+            looked.append(found)
             if len(found[2]) - len(found[3]) < len(best[2]) - len(best[3]):
                 best = found
-        return best
+        missing = {best[1][doc_id] for doc_id in best[2]}
+        elsewhere: dict[str, str] = {}
+        for scope, doc_ids, gone, _ in looked:
+            if scope != best[0]:
+                for doc_id, name in doc_ids.items():
+                    if name in missing and doc_id not in gone:
+                        elsewhere.setdefault(name, scope)
+        return (*best, elsewhere)
 
     def _deleted_by(self, pipeline_id: str | None, doc_ids: list[str]) -> set[str]:
         """The ``doc_ids`` the saved delta of the run ``pipeline_id`` deletes

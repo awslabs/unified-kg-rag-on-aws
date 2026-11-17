@@ -1483,12 +1483,22 @@ def changes_source_scopes(
     its resolved source directory, and 0.3.0's ``insert_documents`` by the
     path as given.
 
-    So the filesystem is read only for that fallback, and a path of another
-    host is compared as a string.
+    So the filesystem is read only for that fallback (and for the warning
+    of :func:`_warn_about_copies_under_other_spellings`), and a path of
+    another host is compared as a string.
     """
     spellings = stored_source_scopes(source_scope, namespace, stored_scopes)
     if spellings:
         return spellings
+    return _same_directory_scopes(source_scope, namespace, stored_scopes)
+
+
+def _same_directory_scopes(
+    source_scope: str, namespace: str, stored_scopes: Iterable[str]
+) -> list[str]:
+    """The stored local scopes of ``namespace`` (sorted) naming the
+    directory of this host ``source_scope`` names, once symlinks are
+    followed; none when ``source_scope`` names none."""
     directory = _existing_directory(source_scope)
     if directory is None:
         return []
@@ -1499,6 +1509,30 @@ def changes_source_scopes(
         if stored.startswith(prefix)
         for source in [stored[len(prefix) :]]
         if _existing_directory(source) == directory
+    )
+
+
+def _warn_about_copies_under_other_spellings(
+    source_scope: str, namespace: str, stored_scopes: Iterable[str]
+) -> None:
+    """Warn a run of changes keyed by ``source_scope`` as given (the
+    registry holds it) that other stored local scopes name its directory:
+    a document indexed under two of them (0.3.0's ``insert_documents``
+    keyed a path through a symlink as given, a corpus run by its resolved
+    directory) is stored, and retrieved, twice."""
+    held = _same_directory_scopes(source_scope, namespace, stored_scopes)
+    others = [source for source in held if source != source_scope]
+    if source_scope not in held or not others:
+        return
+    logger.warning(
+        "The doc-status registry also holds records of index namespace %r under "
+        "%s, which name the same directory as the source scope %r: a document "
+        "indexed under more than one of them is stored twice. Delete the copies "
+        "under the spelling no longer used (delete_documents with it as "
+        "source_scope).",
+        namespace,
+        ", ".join(map(repr, others)),
+        source_scope,
     )
 
 
@@ -2156,6 +2190,10 @@ def filter_to_delta(
             deletions=deletions,
             read_unparsed=read_unparsed,
             deduplicated=deduplicated,
+        )
+    if changes is not None:
+        _warn_about_copies_under_other_spellings(
+            source_scope, namespace, delta.stored_scopes
         )
     # Before any write, under the stored spelling of the scope.
     if seeds_only:
