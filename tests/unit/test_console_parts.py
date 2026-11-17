@@ -393,6 +393,21 @@ def test_the_settings_view_names_deprecated_keys_on_load(tmp_path: Path) -> None
             },
             {"model": 1, "ingestion_item": 1},
         ),
+        # "Use the default" on a replacement the deprecated key also feeds:
+        # the value in force stayed the deprecated key's 3 (rv48).
+        (
+            "retry:\n  max_attempts: 3\n  model:\n    max_attempts: 3\n",
+            [{"path": "retry.model.max_attempts", "unset": True}],
+            {"retry": {"ingestion_item": {"max_attempts": 3}}},
+            {"model": 5, "ingestion_item": 3},
+        ),
+        # ... and on one only the deprecated key sets.
+        (
+            "retry:\n  max_attempts: 3\n",
+            [{"path": "retry.model.max_attempts", "unset": True}],
+            {"retry": {"ingestion_item": {"max_attempts": 3}}},
+            {"model": 5, "ingestion_item": 3},
+        ),
     ],
 )
 def test_editing_a_field_a_deprecated_key_sets_saves_only_new_keys(
@@ -472,6 +487,30 @@ def test_the_settings_view_tells_a_variable_that_only_fills_an_unset_key(
     )
 
 
+def test_removing_a_key_a_fallback_variable_fills_is_not_called_no_effect(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Removing aws.region_name with AWS_REGION set was listed as "no
+    effect while the variable is set", but it takes effect: the region in
+    force becomes the variable's (rv48)."""
+    monkeypatch.setenv("AWS_REGION", "eu-west-1")
+    path = tmp_path / "config.yaml"
+    path.write_text("aws:\n  region_name: us-east-1\n")
+    file = settings_api.SettingsFile(path)
+    removed = file.preview(
+        text=None, changes=[{"path": "aws.region_name", "value": None, "unset": True}]
+    )
+    assert removed["environment_overrides"] == []
+    assert removed["environment_fills"] == [
+        {"path": "aws.region_name", "variable": "AWS_REGION"}
+    ]
+    # A key the file sets wins over the fallback: nothing to say.
+    edited = file.preview(
+        text=None, changes=[{"path": "aws.region_name", "value": "ap-northeast-2"}]
+    )
+    assert edited["environment_overrides"] == edited["environment_fills"] == []
+
+
 def test_editing_a_price_keeps_the_deprecated_prices() -> None:
     """A mapping: the edit joins the deprecated key's entries."""
     data = {
@@ -504,6 +543,15 @@ def test_editing_a_price_keeps_the_deprecated_prices() -> None:
     # An unrelated edit keeps the deprecated key.
     kept = settings_api.apply_changes(data, [{"path": "search.top_k", "value": 5}])
     assert kept["evaluation"] == data["evaluation"]
+    # Removing models.prices removes the entries the deprecated key feeds
+    # it too, which otherwise stayed in force (rv48).
+    both = {**data, "models": {"prices": result["models"]["prices"]}}
+    assert (
+        settings_api.apply_changes(
+            both, [{"path": "models.prices", "value": None, "unset": True}]
+        )
+        == {}
+    )
 
 
 def test_a_price_field_both_price_keys_set_starts_from_their_merged_prices(
@@ -1300,6 +1348,36 @@ def test_every_console_error_code_is_named_in_the_page_s_language() -> None:
         if f"error.{c}" not in catalog and f"ask.error.{c}" not in catalog
     )
     assert unnamed == []
+
+
+def test_every_removed_key_reason_is_named_in_the_page_s_language() -> None:
+    """The reason a removed key is gone stayed the server's English in every
+    locale, where the deprecated-key messages are the page's (rv48): each
+    reason has its message, the English one the loader's own words."""
+    from unified_kg_rag.domain.models.config import REMOVED_KEYS
+
+    catalog = json.loads(
+        (Path(__file__).parents[2] / "console/web/src/i18n/locales/en.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    worded = {
+        path: catalog.get(
+            f"settings.removedReason.{settings_api.removed_reason_id(path)}"
+        )
+        for path in REMOVED_KEYS
+    }
+    assert {
+        path: text for path, text in worded.items() if text != REMOVED_KEYS[path]
+    } == {}
+    # One message per reason: the keys of a removed section share it.
+    ids = {settings_api.removed_reason_id(path) for path in REMOVED_KEYS}
+    assert len(ids) == len(set(REMOVED_KEYS.values()))
+    assert sorted(
+        k.removeprefix("settings.removedReason.")
+        for k in catalog
+        if k.startswith("settings.removedReason.")
+    ) == sorted(ids)
 
 
 def _reason_heads() -> set[str]:

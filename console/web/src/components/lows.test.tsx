@@ -322,7 +322,10 @@ describe("a query's limits, a run's budget and deprecated keys", () => {
   it("lists the deprecated and removed keys a config sets, in the page's language", () => {
     const preview = {
       deprecated_keys: [{ key: "retry.max_attempts", replacements: ["retry.model.max_attempts", "retry.ingestion_item.max_attempts"], message: "Config key retry.max_attempts is deprecated" }],
-      removed_keys: [{ key: "fixing", reason: "output fixing is always on", message: "Config key fixing is removed and ignored" }],
+      removed_keys: [
+        { key: "fixing", reason: "output fixing is always on (the default before); models.roles.fixing picks its model", reason_id: "fixing", message: "Config key fixing is removed and ignored" },
+        { key: "search.future", reason: "a reason this page does not know", reason_id: "search.future", message: "Config key search.future is removed and ignored" },
+      ],
     };
     const { rerender, container } = render(
       <I18nProvider initial="ko">
@@ -342,8 +345,10 @@ describe("a query's limits, a run's budget and deprecated keys", () => {
       expect(english.container.textContent).toContain(wording);
       english.unmount();
     }
-    // The reason is the server's English, marked as such.
-    expect(screen.getByText("output fixing is always on")).toHaveAttribute("lang", "en");
+    // The reason is in the page's language (rv48); one the page does not
+    // know is the server's English, marked as such.
+    expect(screen.getByText("출력 보정은 언제나 켜져 있습니다(이전 기본값). models.roles.fixing이 그 모델을 고릅니다")).not.toHaveAttribute("lang");
+    expect(screen.getByText("a reason this page does not know")).toHaveAttribute("lang", "en");
     rerender(
       <I18nProvider initial="en">
         <GoneKeys preview={{ deprecated_keys: [], removed_keys: [] }} />
@@ -522,5 +527,23 @@ describe("the Settings page on load", () => {
     fireEvent.click(screen.getByRole("button", { name: "Review changes" }));
     expect(await screen.findByText("Set by an environment variable")).toBeInTheDocument();
     expect(screen.getByText("retry.model_server.max_attempts (UKR__RETRY__MODEL_SERVER__MAX_ATTEMPTS)")).toBeInTheDocument();
+  });
+
+  it("says removing a key a fallback variable fills takes effect, not that it has none (rv48)", async () => {
+    const config = { ...view([], { retry: { model_server: { max_attempts: 2 } } }), text: "", data: {} };
+    serveReview(config, { ...validPreview("retry:\n  model_server:\n    max_attempts: 4\n"), environment_fills: [{ path: "aws.region_name", variable: "AWS_REGION" }] });
+    render(
+      <I18nProvider initial="en">
+        <SettingsPage onSaved={() => undefined} />
+      </I18nProvider>,
+    );
+    fireEvent.change(await screen.findByRole("searchbox"), { target: { value: "retry.model_server.max_attempts" } });
+    const input = await screen.findByDisplayValue("2");
+    fireEvent.change(input, { target: { value: "4" } });
+    fireEvent.blur(input);
+    fireEvent.click(screen.getByRole("button", { name: "Review changes" }));
+    expect(await screen.findByText("Filled by an environment variable")).toBeInTheDocument();
+    expect(screen.getByText("aws.region_name (AWS_REGION)")).toBeInTheDocument();
+    expect(screen.queryByText(/has no effect/)).not.toBeInTheDocument();
   });
 });

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { useMemo, useState } from "react";
 import { ErrorText, Loading, Notice, PageHead, Sheet } from "../components/ui";
-import { joinList, useI18n } from "../i18n/i18n";
+import { joinList, LOCALES, useI18n } from "../i18n/i18n";
 import { errorMessage, get, send } from "../lib/api";
 import { fieldsOf, flatten, parseValue, valueAt, type JsonSchema, type SchemaField } from "../lib/schema";
 import { useApi } from "../lib/useApi";
@@ -23,7 +23,16 @@ interface DeprecatedKey {
 interface RemovedKey {
   key: string;
   reason: string;
+  /** The reason's message, `settings.removedReason.<id>`. */
+  reason_id?: string;
   message: string;
+}
+
+/** The page's wording of why a removed key is gone, else the server's
+ * English (a reason a newer server adds). */
+function removedReason(r: RemovedKey, t: (key: string) => string): { text: string; english: boolean } {
+  const key = `settings.removedReason.${r.reason_id ?? ""}`;
+  return r.reason_id && key in LOCALES.en.catalog ? { text: t(key), english: false } : { text: r.reason, english: true };
 }
 
 interface ConfigView {
@@ -64,6 +73,7 @@ interface Preview {
   directory_changes?: { path: string; from: unknown; to: unknown }[];
   /** The changed keys an environment variable sets: no effect while it is. */
   environment_overrides?: { path: string; variable: string }[];
+  environment_fills?: { path: string; variable: string }[];
 }
 
 interface Change {
@@ -268,6 +278,18 @@ export function SettingsPage({ onSaved }: { onSaved: () => void }) {
                       ))}
                     </ul>
                     <p style={{ margin: 0 }}>{t("settings.environmentOverridesHelp")}</p>
+                  </Notice>
+                ) : null}
+                {(preview.environment_fills ?? []).length ? (
+                  <Notice tone="warn" title={t("settings.environmentFillsTitle")}>
+                    <ul style={{ margin: "0 0 8px", paddingLeft: 18 }}>
+                      {(preview.environment_fills ?? []).map((o) => (
+                        <li key={o.path} className="mono">
+                          {o.path} ({o.variable})
+                        </li>
+                      ))}
+                    </ul>
+                    <p style={{ margin: 0 }}>{t("settings.environmentFillsHelp")}</p>
                   </Notice>
                 ) : null}
                 {preview.comments_dropped ? <Notice tone="warn">{t("settings.commentsDropped")}</Notice> : null}
@@ -635,15 +657,18 @@ export function GoneKeys({
             <RemoveKey keyPath={d.key} label={t("settings.removeDeprecatedLabel", { key: d.key })} pending={pending} onRemove={onRemove} />
           </li>
         ))}
-        {removed.map((r) => (
+        {removed.map((r) => {
+          const reason = removedReason(r, t);
+          return (
           <li key={r.key}>
             {t("settings.removedKey", { key: r.key })}{" "}
-            <span className="muted" lang="en">
-              {r.reason}
+            <span className="muted" lang={reason.english ? "en" : undefined}>
+              {reason.text}
             </span>
             <RemoveKey keyPath={r.key} label={t("settings.removeRemovedLabel", { key: r.key })} pending={pending} onRemove={onRemove} />
           </li>
-        ))}
+          );
+        })}
       </ul>
     </Notice>
   );

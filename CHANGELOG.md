@@ -58,11 +58,12 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   prices the model under every profile when no other entry disagrees. `evaluation.prices` is deprecated: it loads
   into `models.prices` with a WARNING (an entry both name keeps the `models.prices` price), through one rule for
   deprecated keys (`DEPRECATED_KEYS`, file and `UKR__` variables alike, listed in the configuration reference). The
-  console's Settings page lists each deprecated key the file sets, and each removed one, with the loader's warning,
-  when it opens and in a review (a deprecated key set beside its replacement to another value too, which keeps the
-  file from loading), and marks a field a deprecated key loads into as set by it, with the value in force (a mapping
-  the file sets too starts from both merged). Editing that field, or the notice's Remove, moves the key's value into
-  each replacement the file does not set and drops it.
+  console's Settings page lists each deprecated key the file sets, and each removed one, with the loader's warning
+  (a removed key's reason in the page's language), when it opens and in a review (a deprecated key set beside its
+  replacement to another value too, which keeps the file from loading), and marks a field a deprecated key loads into
+  as set by it, with the value in force (a mapping the file sets too starts from both merged). Editing that field,
+  "Use the default" on it, or the notice's Remove, moves the key's value into each replacement the file does not set
+  and drops it, so a reset field takes its default (removing `models.prices` removes `evaluation.prices` too).
   An ingestion run it prices publishes its USD as the `llm_cost_usd` metric (the CDK dashboard's "LLM cost" widget).
 - Query limits beside the deadline:
   - Limits: `search.query_max_model_calls` and `search.query_max_input_tokens` (off by default) bound one query's
@@ -163,7 +164,8 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   `run-ingestion --estimate` parses, deduplicates (`processing.deduplicate`) and chunks the corpus without a model
   call and prints each stage's calls, tokens and USD for the stages the text units decide (extraction, gleaning,
   claims, translation, intelligent chunking; `about` for the stages that read text translated into another
-  language, counted at the source text), naming the graph-dependent ones it cannot count. The console's Ingest
+  language, counted at the source text), naming the graph-dependent ones it cannot count (its table folds a long
+  model id or stage name at 80 columns rather than cutting it). The console's Ingest
   page offers to resume a run stopped at its budget (its options without the forced recompute), and its run lists and
   the Dashboard mark such a run as stopped at its budget, a warning, not failed, its card keeping its own stages after
   the resume. The Dashboard and the Ingest job card give a job's USD as its run recorded it (`cost_usd`), else an
@@ -241,7 +243,9 @@ Bugs present in 0.3.0.
 
 - The console's Settings page read a field a `UKR__` variable of the console sets as its default, and passed an edit
   of it that had no effect (the variable wins over the file): the field names the variable (`AWS_PROFILE` and
-  `AWS_REGION` as filling it while the file leaves it unset), and a review lists such changes.
+  `AWS_REGION` as filling it while the file leaves it unset), and a review lists such changes (removing a key
+  `AWS_PROFILE` or `AWS_REGION` then fills as taking effect, the variable's value in force).
+- The console's Dashboard gave its Declined and Refused tiles one word in Japanese, Spanish and French.
 - Saving from the console's Fields form rewrote the whole config file in alphabetical key order, so the review's diff
   changed every line; it keeps the file's order (comments are still dropped, as the review says).
 - A local reasoning model's streamed answer (`astream`, the console's Ask page) failed with `QueryTimeoutError` after
