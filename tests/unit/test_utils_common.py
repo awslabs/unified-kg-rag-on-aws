@@ -299,3 +299,26 @@ class TestDefaultMaxWorkers:
         # The regression: int(2 * 0.8) = 1 (a single worker), never 0.
         monkeypatch.setattr(common_mod, "_available_cpu_count", lambda: 2)
         assert default_max_workers() == 1
+
+
+def test_first_names_lists_the_first_ones_and_counts_the_rest() -> None:
+    from unified_kg_rag.shared.utils import NAMES_SHOWN, first_names
+
+    assert first_names([]) == ""
+    assert first_names(["a", "b"]) == "a, b"
+    names = [f"n{i}" for i in range(NAMES_SHOWN + 3)]
+    assert first_names(names) == ", ".join(names[:NAMES_SHOWN]) + " and 3 more"
+    assert (
+        first_names(iter(["a b", "c", "d"]), 2, separator="; ") == "a b; c and 1 more"
+    )
+
+
+def test_class_names_names_an_error_s_class_and_its_bases() -> None:
+    from unified_kg_rag.shared.exceptions import class_names
+
+    class ConnectTimeout(TimeoutError):
+        pass
+
+    names = class_names(ConnectTimeout())
+    assert {"ConnectTimeout", "TimeoutError", "OSError", "BaseException"} <= names
+    assert "ConnectError" not in names

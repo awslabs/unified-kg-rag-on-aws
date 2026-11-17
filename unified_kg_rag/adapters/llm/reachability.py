@@ -27,6 +27,7 @@ from unified_kg_rag.shared.exceptions import (
     LanguageModelError,
     ModelUnreachableError,
     causes,
+    class_names,
 )
 from unified_kg_rag.shared.utils import safe_url
 from unified_kg_rag.shared.utils.common import http_status
@@ -78,13 +79,12 @@ def is_unreachable_error(exc: BaseException) -> bool:
             return True
         if isinstance(error, AWSServiceError):
             return False
-        names = {cls.__name__ for cls in type(error).__mro__}
+        names = class_names(error)
         if names & _REACHED_NAMES:
             # The OpenAI client raises one timeout class for both: its
             # connect timeout is a server that could not be reached.
             return any(
-                "ConnectTimeout" in {cls.__name__ for cls in type(cause).__mro__}
-                for cause in chain[at + 1 :]
+                "ConnectTimeout" in class_names(cause) for cause in chain[at + 1 :]
             )
         if names & _CONNECT_ERROR_NAMES or isinstance(
             error, ConnectionRefusedError | socket.gaierror
@@ -238,12 +238,8 @@ def named_model_error(
         return model_unreachable_error(exc, config)
     if isinstance(exc, GraphRAGException):
         return exc
-    pool = any(
-        cls.__name__ == _POOL_TIMEOUT_NAME
-        for cause in causes(exc)
-        for cls in type(cause).__mro__
-    )
-    if pool or any(cls.__name__ in _READ_TIMEOUT_NAMES for cls in type(exc).__mro__):
+    pool = any(_POOL_TIMEOUT_NAME in class_names(cause) for cause in causes(exc))
+    if pool or class_names(exc) & _READ_TIMEOUT_NAMES:
         timeout = (
             f"(search.model_timeout_seconds, "
             f"{config.search.model_timeout_seconds:g} s; a local server's "
@@ -266,12 +262,7 @@ def named_model_error(
     if (
         http_status(exc) is not None
         or looks_transient(exc)
-        or (
-            is_transient(exc)
-            and not any(
-                cls.__name__ == _SERVICE_ERROR_NAME for cls in type(exc).__mro__
-            )
-        )
+        or (is_transient(exc) and _SERVICE_ERROR_NAME not in class_names(exc))
     ):
         named = LanguageModelError(
             f"A language model call failed ({type(exc).__name__}): {exc}"

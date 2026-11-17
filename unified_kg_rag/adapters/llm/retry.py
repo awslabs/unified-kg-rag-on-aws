@@ -32,6 +32,7 @@ from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import (
     LLMOutputTruncatedError,
     UsageLimitExceededError,
+    class_names,
 )
 from unified_kg_rag.shared.logging import log_failure
 from unified_kg_rag.shared.utils.common import (
@@ -149,7 +150,7 @@ def looks_transient(exc: BaseException) -> bool:
     status = http_status(exc)
     if status is not None:
         return status in _TRANSIENT_HTTP_STATUSES or 500 <= status < 600
-    return any(cls.__name__ in _TRANSPORT_ERROR_NAMES for cls in type(exc).__mro__)
+    return bool(class_names(exc) & _TRANSPORT_ERROR_NAMES)
 
 
 # HTTP statuses of a request the server rejects for what it carries.

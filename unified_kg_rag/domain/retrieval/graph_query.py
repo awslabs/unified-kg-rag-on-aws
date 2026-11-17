@@ -63,6 +63,7 @@ from unified_kg_rag.domain.retrieval.filters import (
 )
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import InvalidGraphQueryError
+from unified_kg_rag.shared.utils import first_names
 
 logger = get_logger(__name__)
 
@@ -824,11 +825,13 @@ def _node_text(node: ResolvedNode, linked: Mapping[str, Sequence[str]]) -> str:
     ]
     if node.mention is not None:
         names = list(dict.fromkeys(linked.get(node.var, ())))
-        shown = ", ".join(_quoted(n) for n in names[:5])
-        more = f" and {len(names) - 5} more" if len(names) > 5 else ""
         parts.append(
             f"named {_quoted(node.mention)}"
-            + (f" = {shown}{more}" if names else " (linked to nothing)")
+            + (
+                f" = {first_names(_quoted(n) for n in names)}"
+                if names
+                else " (linked to nothing)"
+            )
         )
     parts.extend(_condition_text(c) for c in node.conditions)
     return "(" + ", ".join(parts) + ")"

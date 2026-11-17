@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from .common import (
     EMBEDDING_FIELD_SUFFIX,
+    NAMES_SHOWN,
     clean_display_name,
     compute_hash,
     default_max_workers,
@@ -10,6 +11,7 @@ from .common import (
     error_digest,
     error_locator,
     error_name,
+    first_names,
     generate_stable_id,
     id_content,
     interleave,
@@ -35,6 +37,7 @@ from .model_output import named_choice, parse_model_object, strip_leading_reason
 
 __all__ = [
     "EMBEDDING_FIELD_SUFFIX",
+    "NAMES_SHOWN",
     "ContextThreadPoolExecutor",
     "clean_display_name",
     "compute_hash",
@@ -45,6 +48,7 @@ __all__ = [
     "error_digest",
     "error_locator",
     "error_name",
+    "first_names",
     "generate_stable_id",
     "id_content",
     "interleave",

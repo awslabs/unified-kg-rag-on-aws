@@ -18,6 +18,13 @@ def causes(exc: BaseException) -> Iterator[BaseException]:
         current = current.__cause__ or current.__context__
 
 
+def class_names(exc: BaseException) -> frozenset[str]:
+    """The names of ``exc``'s class and of its bases: how the package tells
+    an error of a client it does not import (httpx, openai, botocore) by
+    its class."""
+    return frozenset(cls.__name__ for cls in type(exc).__mro__)
+
+
 def own_text(exc: BaseException) -> str | None:
     """The package's own message of ``exc`` (its ``own_text``), composed of
     ids, counts, settings, paths and log-safe error names (``error_name``),

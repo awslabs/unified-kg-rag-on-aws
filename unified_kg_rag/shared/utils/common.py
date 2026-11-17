@@ -127,6 +127,20 @@ def _drop_symbols(text: str) -> str:
 
 RE_EXTRA_SPACES = re.compile(r"\s+")
 
+# The names a log line or a message lists before "and N more".
+NAMES_SHOWN = 10
+
+
+def first_names(
+    names: Iterable[str], limit: int = NAMES_SHOWN, *, separator: str = ", "
+) -> str:
+    """The first ``limit`` of ``names`` joined by ``separator``, then
+    ``and N more`` for the rest: the one way a log line or a message
+    lists a long run of names (files, ids, terms)."""
+    listed = list(names)
+    shown = separator.join(listed[:limit])
+    return shown + (f" and {len(listed) - limit} more" if len(listed) > limit else "")
+
 
 def interleave(lists: Iterable[Iterable[_T]]) -> list[_T]:
     """The items of several ranked lists in one: their first items, then

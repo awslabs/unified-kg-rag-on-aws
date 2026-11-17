@@ -40,6 +40,7 @@ from unified_kg_rag.ports.model_factory import (
     effective_max_output_tokens,
 )
 from unified_kg_rag.shared import ConfigurationError, get_logger, observability
+from unified_kg_rag.shared.exceptions import class_names
 from unified_kg_rag.shared.extras import extra_hint
 
 logger = get_logger(__name__)
@@ -467,9 +468,7 @@ class OpenAICompatibleLanguageModelFactory(_LocalLanguageModelFactory):
         Its retries end in its own ``APIError`` (``APIConnectionError``,
         ``APITimeoutError``, ``APIStatusError``); a stream's events are read
         past them, where httpx's errors are raised as they are."""
-        return looks_transient(exc) and not any(
-            cls.__name__ == "APIError" for cls in type(exc).__mro__
-        )
+        return looks_transient(exc) and "APIError" not in class_names(exc)
 
     def _build(
         self,
