@@ -99,6 +99,8 @@ __all__ = [
     "retire_source_scopes",
     "retired_scope_groups",
     "scope_namespace",
+    "scope_source",
+    "stored_source_scopes",
 ]
 
 logger = get_logger(__name__)
@@ -224,6 +226,16 @@ def registry_scope(namespace: str, source_scope: str) -> str:
     return f"{namespace}|{source_scope}"
 
 
+def scope_source(scope: str | None, namespace: str) -> str | None:
+    """The source scope of the :func:`registry_scope` ``scope`` when it is a
+    scope of ``namespace``; ``None`` for another namespace's, or a record
+    written before scopes existed."""
+    prefix = f"{namespace}|"
+    if scope is None or not scope.startswith(prefix):
+        return None
+    return scope[len(prefix) :]
+
+
 def stored_source_scopes(
     source_scope: str, namespace: str, stored_scopes: Iterable[str]
 ) -> list[str]:
@@ -238,9 +250,10 @@ def stored_source_scopes(
     spelled another way than its corpus run spelled it (a trailing or
     doubled slash) reaches the same records.
     """
-    prefix = f"{namespace}|"
     held = {
-        stored[len(prefix) :] for stored in stored_scopes if stored.startswith(prefix)
+        source
+        for stored in stored_scopes
+        if (source := scope_source(stored, namespace)) is not None
     }
     own = normalize_source_scope(source_scope)
     return [
@@ -663,20 +676,21 @@ def retire_source_scopes(
 
 def _stored_scope_spellings(retired: str, stored_scopes: Iterable[str]) -> list[str]:
     """``retired`` and every stored scope of its namespace whose source scope
-    normalizes to the same value."""
+    normalizes to the same value (:func:`stored_source_scopes`)."""
     namespace = scope_namespace(retired)
     if namespace is None:
         return [retired]
-    source = normalize_source_scope(retired[len(namespace) + 1 :])
+    # Never None: the namespace is read from ``retired``.
+    source = scope_source(retired, namespace) or ""
     return list(
         dict.fromkeys(
             [
                 retired,
                 *(
-                    stored
-                    for stored in stored_scopes
-                    if scope_namespace(stored) == namespace
-                    and normalize_source_scope(stored[len(namespace) + 1 :]) == source
+                    registry_scope(namespace, spelling)
+                    for spelling in stored_source_scopes(
+                        source, namespace, stored_scopes
+                    )
                 ),
             ]
         )
@@ -702,7 +716,6 @@ def other_local_scopes(
     Returns:
         The source scopes, sorted.
     """
-    prefix = f"{namespace}|"
     skip = {
         scope,
         *(
@@ -712,11 +725,11 @@ def other_local_scopes(
         ),
     }
     return sorted(
-        stored[len(prefix) :]
+        source
         for stored in delta.stored_scopes
-        if stored.startswith(prefix)
-        and stored not in skip
-        and is_local_path_scope(stored[len(prefix) :])
+        if stored not in skip
+        and (source := scope_source(stored, namespace)) is not None
+        and is_local_path_scope(source)
     )
 
 

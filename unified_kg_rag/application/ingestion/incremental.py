@@ -62,6 +62,7 @@ from unified_kg_rag.domain.ingestion.delta_detector import (
     registry_scope,
     retired_scope_groups,
     scope_namespace,
+    scope_source,
     stored_source_scopes,
 )
 from unified_kg_rag.domain.ingestion.derivation import with_entity_ids
@@ -1502,13 +1503,11 @@ def _same_directory_scopes(
     directory = _existing_directory(source_scope)
     if directory is None:
         return []
-    prefix = f"{namespace}|"
     return sorted(
         source
         for stored in set(stored_scopes)
-        if stored.startswith(prefix)
-        for source in [stored[len(prefix) :]]
-        if _existing_directory(source) == directory
+        if (source := scope_source(stored, namespace)) is not None
+        and _existing_directory(source) == directory
     )
 
 
@@ -1717,7 +1716,7 @@ def other_source_scopes(
     records = _namespace_records(lambda: doc_status, namespace, "the rebuild")
     return sorted(
         {
-            _source_scope_of(r.scope)
+            _source_scope_of(r.scope, namespace)
             for r in records
             if not _same_source(r.scope, namespace, source_scope)
         }
@@ -1734,7 +1733,8 @@ def recorded_source_scopes(context: PipelineContext, reset: bool) -> list[str] |
     scope, delta = context.incremental_scope, context.incremental_delta
     if scope is None or delta is None:
         return None
-    namespace, _, own = scope.partition("|")
+    namespace = scope_namespace(scope) or scope
+    own = scope_source(scope, namespace) or ""
     scopes: set[str] = set()
     if delta.new or delta.changed or delta.unchanged or delta.failed:
         scopes.add(own)
@@ -1746,17 +1746,16 @@ def recorded_source_scopes(context: PipelineContext, reset: bool) -> list[str] |
             source
             for stored in delta.stored_scopes
             if stored != scope
-            for owner, _, source in [stored.partition("|")]
-            if owner == namespace
-            and source
-            and normalize_source_scope(source) not in retired
+            for source in [scope_source(stored, namespace)]
+            if source and normalize_source_scope(source) not in retired
         }
     return sorted(scopes)
 
 
-def _source_scope_of(scope: str | None) -> str:
-    """The source scope part of a registry ``scope`` (``namespace|source``)."""
-    return (scope or "").partition("|")[2] or "(no scope)"
+def _source_scope_of(scope: str | None, namespace: str) -> str:
+    """The source scope of a record of ``namespace`` scoped ``scope``, to
+    name it (``(no scope)`` for a record without one)."""
+    return scope_source(scope, namespace) or "(no scope)"
 
 
 def corpus_is_seeds_only(documents: Sequence[Document]) -> bool:
@@ -1772,17 +1771,14 @@ def _same_source(record_scope: str | None, namespace: str, source_scope: str) ->
     trailing slash), as an incremental run keys it (``_stored_spelling``).
 
     The callers pass the records of ``namespace``'s listing, each scoped
-    ``namespace|source``, so the separator and namespace checks never fail
-    there. They are defensive, and kept: without them a record of another
-    namespace, or of a scope without a source part (``partition`` gives an
-    empty source), would count as the run's own when the run's source
-    scope normalises alike, and its documents would be deleted or kept by
-    the wrong run."""
-    namespace_of, separator, source = (record_scope or "").partition("|")
-    return (
-        bool(separator)
-        and namespace_of == namespace
-        and normalize_source_scope(source) == normalize_source_scope(source_scope)
+    ``namespace|source``, so the namespace check never fails there. It is
+    defensive, and kept: without it a record of another namespace, or of a
+    scope without a source part, would count as the run's own when the
+    run's source scope normalises alike, and its documents would be
+    deleted or kept by the wrong run."""
+    source = scope_source(record_scope, namespace)
+    return source is not None and (
+        normalize_source_scope(source) == normalize_source_scope(source_scope)
     )
 
 
@@ -1887,10 +1883,18 @@ def _confirm_reset_of_seed_scopes(
     own = [r for r in records if _same_source(r.scope, namespace, source_scope)]
     theirs = [r for r in records if not _same_source(r.scope, namespace, source_scope)]
     others = sorted(
-        {_source_scope_of(r.scope) for r in theirs if is_seed_path(r.file_path)}
+        {
+            _source_scope_of(r.scope, namespace)
+            for r in theirs
+            if is_seed_path(r.file_path)
+        }
     )
     documents = sorted(
-        {_source_scope_of(r.scope) for r in theirs if not is_seed_path(r.file_path)}
+        {
+            _source_scope_of(r.scope, namespace)
+            for r in theirs
+            if not is_seed_path(r.file_path)
+        }
     )
     if seeds_only:
         _refuse_seeds_over_documents(own, source_scope)
@@ -1981,7 +1985,7 @@ def _warn_about_a_shared_seed(
         if record.scope != scope and is_seed_path(record.file_path):
             name = (record.file_path or "").split("/")[1]
             if name in names:
-                held[name].add(_source_scope_of(record.scope))
+                held[name].add(_source_scope_of(record.scope, namespace))
     for name, scopes in sorted(held.items()):
         logger.warning(
             "Seed graph %r is already imported by source scope(s) %s of index "
