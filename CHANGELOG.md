@@ -201,6 +201,11 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   evaluation) and of `retry.bulk_item` (the OpenSearch indexing client's), both 6, their 0.3.0 counts; only those two
   profiles (`ClientRetryPolicy`) have the key, and setting it on another one is refused naming them, in a file, a
   `UKR__` variable, `Config(...)` or an assignment alike. No caller retries a call the usage limits refused.
+- The load harness covers the answer stream: `load.py http --disconnect-share` disconnects that share of questions
+  after their first answer chunk, then asks one that must answer; the chaos model server streams reasoning chunks
+  (`reasoning_chunks`) and drops answers after their reasoning or first chunk (`reasoning_drop_rate`,
+  `answer_drop_rate`); the nightly runs one `sweep --stream` level under them, whose errors must equal the answers
+  dropped after their first chunk.
 
 ### Changed
 

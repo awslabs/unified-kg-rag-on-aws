@@ -22,10 +22,10 @@ a loopback address, or that screens with the Bedrock guardrail.
 | Script | What it does |
 |---|---|
 | `scripts/loadtest/workspace.py` | Writes a workspace: the demo corpus (or `--docs N` synthetic documents in English, Korean or both), the demo's eval dataset and a `backend: local` config on the embedded SQLite stores (`--stores containers`: the stores of `docker/compose.local.yaml`), with every methodology so every strategy runs |
-| `scripts/loadtest/chaos_models.py` | The fake model server (`console/demo/fake_models.py`) with fault injection: delay and jitter, hangs, dropped connections and error answers (429, 500, 503), changed at run time with `POST /chaos`; `GET /stats` counts requests, faults and requests in flight |
+| `scripts/loadtest/chaos_models.py` | The fake model server (`console/demo/fake_models.py`) with fault injection: delay and jitter, hangs, dropped connections and error answers (429, 500, 503), and, for a streamed answer, reasoning chunks before it and a connection dropped after its reasoning or after its first answer chunk, changed at run time with `POST /chaos`; `GET /stats` counts requests, faults and requests in flight |
 | `scripts/loadtest/load.py` | `sweep`, `soak` and `http` load modes, and `gate`, which checks a report against the nightly gates |
 | `scripts/loadtest/compare_exports.py` | The convergence check: two `run-describe --include-text` exports hold the same records with the same content |
-| `scripts/loadtest/nightly.py` | The nightly run below, end to end: a sweep, a soak and three chaos scenarios, then the gates |
+| `scripts/loadtest/nightly.py` | The nightly run below, end to end: a sweep, a streamed level under mid-stream faults, a soak and three chaos scenarios, then the gates |
 | `scripts/loadtest/harness.py` | The statistics and the gates, which `tests/unit/test_loadtest_harness.py` checks in every pull request |
 
 ## Set up
@@ -117,6 +117,13 @@ first event (`first_event_p50`, `first_event_p95`). An error event counts
 under its `error_kind`, and a result is flagged as in the sweep. The loop lag
 it reports is this client's (`client_loop_lag_p99_ms`), not the console's.
 
+`--disconnect-share 0.5` makes that share of the questions disconnect after
+their first answer chunk, as a closed browser tab does (`disconnected`
+counts them, apart from the answers and errors), then asks one more
+question after the level, which must answer. A console whose cancelled
+queries held their model connections would fill the model client's pool and
+time out the questions after them, which the error gate catches.
+
 ### Bulk ingestion throughput
 
 ```bash
@@ -157,6 +164,7 @@ uv run python scripts/loadtest/compare_exports.py reference.jsonl after.jsonl [-
 | Model throttling and errors | `curl -X POST 127.0.0.1:11613/chaos -d '{"error_rate": 0.3, "error_status": 429}'` (or 500, 503) during a run, `{"error_rate": 0}` and run again | The faulted run records the documents it could not finish `FAILED` (or fails a stage over its failure budget, exit 1); the clean run after it exits 0 with none failed and converges with `--incremental` |
 | Dropped connections | `{"drop_rate": 0.05}` | As above |
 | Hung model | `{"hang_rate": 0.15, "hang_seconds": 60}` during a sweep with `search.query_timeout_seconds` set | Every query ends within the query deadline, as an answer or as a `timeout` error: `max` and `error_max` stay under it |
+| Mid-stream drops | `{"reasoning_chunks": 2, "reasoning_drop_rate": 0.15, "answer_drop_rate": 0.05}` during a `sweep --stream` | An answer dropped after its reasoning only is retried (nothing was shown); one dropped after its first chunk fails its query (not retried: the reader saw text). The level's errors equal the server's `answer_drops` (`GET /stats`) |
 | Store outage | With `--stores containers`: `docker compose -f docker/compose.local.yaml pause opensearch` (or `gremlin-server`) during a run or a sweep, then `unpause` | Queries fail as `store_unreachable` or `timeout` (a strategy that does not read the paused store still answers); the next ingestion run converges |
 | Killed run | `kill -9` the `run-ingestion` process mid-run, then at once run again with the same `--pipeline-id` | The resume takes the killed run's lease over (the SQLite registry hands on the lease of a holder of this host whose process has exited: no `NamespaceLeaseError`), reuses the finished stages and converges exactly |
 | Concurrent runs | Two `run-ingestion` runs on one namespace | The second stops with `NamespaceLeaseError` (the console: `409 job_conflict`) |
@@ -179,7 +187,9 @@ everything else.
 [`load-test`](../../.github/workflows/load-test.yml) runs
 `scripts/loadtest/nightly.py` every night on the embedded stores (and on
 demand): ingest the demo corpus, a sweep at
-concurrency 1, 4 and 16, a 10-minute soak at 8 with 30% memory turns, and three
+concurrency 1, 4 and 16, one streamed level (`sweep --stream`, 140 queries
+at concurrency 8) whose answers reason first and lose their connection 3%
+of the time after the reasoning and 3% after the first chunk, a 10-minute soak at 8 with 30% memory turns, and three
 chaos scenarios on a 60-document synthetic corpus (30% 429s, then 15% 503s
 with 5% dropped connections, each followed by a clean run; a SIGKILL halfway
 through a run, then its resume at once). It uploads `report.md`, `report.json`, the
@@ -192,6 +202,7 @@ writes `report.md` to the job summary. It fails when a gate fails:
 | Flagged answers (every sweep level and the soak): no sources, abstained, empty, degraded, unresolved citations | 0 (every query of the mix is answerable from the demo corpus, and the fake models are deterministic) |
 | Event-loop lag p99 (every sweep level and the soak) | under 100 ms (holds up to concurrency 16, the nightly's highest level) |
 | RSS over the soak's second half | fails only when it grows both at 10 MB/h or more and by 8 MB or more |
+| Streamed level (warm-up included) | its errors equal the answers the server dropped after their first chunk, and 0 flagged answers; a level during which either drop never happened is reported under "Not tested this run" |
 | Chaos scenarios | each converges (the kill exactly, the others `--incremental`), graph-store census included; the kill's resume, started at once, finds no lease held |
 
 The lag gate is set for the nightly's levels. At concurrency 64 the p99 lag
@@ -210,6 +221,10 @@ some documents on most nights; failing it would flake an estimated one
 night in twenty. A faulted run during which the model server injected no
 fault at all fails its scenario: at those rates that is a chaos server
 ignoring its knobs, not luck.
+
+A streamed query whose three attempts all lose their connection after the
+reasoning fails as well, and so fails the streamed level's gate: at the
+nightly's rates that is about one night in 250.
 
 The RSS floor (8 MB) sits well above the noise of a clean 10-minute soak
 (8 to 13.5 MB/h measured, from about 1 MB over its second half), so the
