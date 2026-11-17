@@ -137,7 +137,11 @@ twice (structured content and its JSON text), so it is up to about 2-4
 times that on the wire. Each call runs under one deadline
 (`search.query_timeout_seconds`) that covers the wait for one of the
 `mcp.max_concurrent_calls` slots and the work, the chain's own deadline
-inside it included. Work that does not watch the deadline (the graph tools'
+inside it included. Over streamable HTTP the SDK answers a stateless JSON
+POST only once its call returns and does not watch the connection, so
+`build_mcp_app` reads the request's messages itself
+(`_cancelled_on_disconnect`): an `http.disconnect` cancels the request and
+its tool call, freeing the slot. Work that does not watch the deadline (the graph tools'
 store calls) ends at a backstop `_BACKSTOP_GRACE_SECONDS` (1 s) past it. A
 `kg_answer` that times out in the slot queue or at the backstop has no
 query metric of the chain's own, so the tool records one

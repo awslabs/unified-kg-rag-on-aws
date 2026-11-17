@@ -259,6 +259,9 @@ Bugs present in 0.3.0.
 - `Ctrl-C` while a sync `stream()` or `query_events()` waited for the answer's next chunk raised `RuntimeError:
   aclose(): asynchronous generator is already running` and left the query running on the chain's loop; it raises
   `KeyboardInterrupt` and cancels the query.
+- An MCP client that disconnected from the streamable-HTTP server mid-call left its call running to the end, holding
+  one of the `mcp.max_concurrent_calls` slots (128 callers that left after 0.3 s kept the next call waiting 8 s);
+  the disconnect now cancels the call and frees its slot.
 - The console's Settings page read a field a `UKR__` variable of the console sets as its default, and passed an edit
   of it that had no effect (the variable wins over the file): the field names the variable (`AWS_PROFILE` and
   `AWS_REGION` as filling it while the file leaves it unset), and a review lists such changes (removing a key
