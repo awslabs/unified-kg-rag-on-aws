@@ -1485,8 +1485,11 @@ limit cut short included), for an `auto` query routed past the strategies
 that did not fit (`routing.over_limits`) and for a call the limits refused
 (`limit_exceeded`), and the query span carries it as
 `kg_rag.query_limited`: watch it on the "Query outcomes" widget, and raise
-the limit when it grows. A cancelled query (an MCP client that disconnects, a task
-cancelled by its host) records nothing. `query_throttled_requests` counts
+the limit when it grows. A cancelled `ainvoke` (an MCP client that disconnects, a
+task cancelled by its host) records nothing; a streamed query whose reader
+stops or is cancelled (a console client that disconnects, a caller's timeout
+around `astream`) is recorded as a stream closed early: its latency and
+usage up to there, no failure. `query_throttled_requests` counts
 the requests Bedrock throttled for the query, which tells a query slowed by
 throttling apart. They go under `unified_kg_rag/query` with the task's
 `Environment` and the `Strategy` that ran (the requested one for a query
