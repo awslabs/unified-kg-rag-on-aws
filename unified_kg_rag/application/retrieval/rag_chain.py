@@ -3929,13 +3929,15 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
 
         The query runs in a task of its own and waits for the caller to take
         each event before it goes on, so a caller that stops reading ends it
-        at its next event: one that closes the iterator (``aclose``;
-        ``break`` closes it once collected) or is cancelled while it waits
-        for an event (a client that disconnected, a caller's
-        ``asyncio.timeout``). The close, or the cancellation, waits for that
-        event, ``search.model_timeout_seconds`` at most, then cancels the
-        query; ended between two of its answer's chunks, its model stream is
-        closed and its connection released. Nothing is written to memory,
+        at its next event or its answer model's next chunk (one without
+        text too: reasoning, an answer held back): one that closes the
+        iterator (``aclose``; ``break`` closes it once collected) or is
+        cancelled while it waits for an event (a client that disconnected,
+        a caller's ``asyncio.timeout``). The close, or the cancellation,
+        waits for that, a few seconds past ``search.model_timeout_seconds``
+        at most (a stalled model ends in its client's read timeout first),
+        then cancels the query; ended between two of its answer's chunks,
+        its model stream is closed and its connection released. Nothing is written to memory,
         and its metrics record its latency and usage up to there with no
         failure. LangChain's ``Runnable.astream_events`` (the callbacks'
         events) is left as LangChain defines it.
@@ -3980,7 +3982,11 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 # answer model waits for a chunk, LangChain's stream leaves
                 # the model's response open (its connection held).
                 channel.stop()
-                bound = self.config.search.model_timeout_seconds
+                # Past the model clients' read timeout (at most
+                # model_timeout_seconds): a model that stalls ends the
+                # query in its client's own timeout, its response closed,
+                # not in a cancel that lands mid-read.
+                bound = self.config.search.model_timeout_seconds + _STOP_GRACE_SECONDS
                 try:
                     await asyncio.wait({task}, timeout=bound)
                 except BaseException:
@@ -4004,7 +4010,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         :meth:`aquery_events`, driven on the chain's long-lived event loop
         as :meth:`stream` is. Closing the iterator early ends the query at
         its next event, as closing :meth:`aquery_events` does (and cancels
-        it when none comes within ``search.model_timeout_seconds``)."""
+        it when none comes a few seconds past
+        ``search.model_timeout_seconds``); an interrupt (``Ctrl-C``) while
+        it waits for one cancels the query and is raised."""
         yield from _iterate_async_generator(
             self.aquery_events(input, config), self._loop_runner
         )
@@ -4438,6 +4446,12 @@ def _streamed_to(
                         except StopAsyncIteration:
                             break
                     waiting_first = False
+                    # Every chunk is a stop point, one that sends nothing
+                    # too (reasoning, a held-back marker, a decline's start,
+                    # an answer the output guardrail screens first): a
+                    # reader that stopped does not wait for the next send.
+                    if _reader_stopped():
+                        raise asyncio.CancelledError
                     text = str(chunk)
                     if not text:
                         continue
@@ -4576,6 +4590,18 @@ _T = TypeVar("_T")
 
 # Upper bound on waiting for retrievers to close on another thread's loop.
 _TEARDOWN_TIMEOUT_SECONDS = 30.0
+# Seconds past search.model_timeout_seconds that a stopped events reader
+# waits for its query to end (aquery_events): the read timeout of a query's
+# model clients is at most model_timeout_seconds, counted from a read that
+# began before the stop, so a stalled answer stream raises its own read
+# timeout within the wait; this leaves that error the time to unwind the
+# query on a loaded loop.
+_STOP_GRACE_SECONDS = 5.0
+# Seconds a sync call interrupted while it waits (KeyboardInterrupt) waits
+# for its cancelled call to end before the interrupt is raised: enough for
+# a query to end at its answer's next chunk and close its model stream,
+# not so long that Ctrl-C seems ignored.
+_INTERRUPT_WAIT_SECONDS = 2.0
 
 
 def _close_retrievers(retrievers: list[BaseGraphRAGRetriever]) -> None:
@@ -5024,8 +5050,13 @@ class _LoopRunner:
                 was in flight (the chain was closed under it).
         """
 
+        ended = threading.Event()
+
         async def _await() -> _T:
-            return await awaitable
+            try:
+                return await awaitable
+            finally:
+                ended.set()
 
         # One lock hold from finding (or starting) the loop to registering the
         # call: stop() cannot land in between, so a call is never submitted
@@ -5046,6 +5077,14 @@ class _LoopRunner:
                 raise _LoopStoppedError(
                     "GraphRAGChain was closed while this call was in flight"
                 ) from None
+            raise
+        except BaseException:
+            if not future.done():
+                # Interrupted while it waits (Ctrl-C): the call is
+                # cancelled, not left running on the loop, and given a
+                # moment to end (a query at its answer's next chunk).
+                future.cancel()
+                ended.wait(_INTERRUPT_WAIT_SECONDS)
             raise
         finally:
             with self._lock:
@@ -5132,9 +5171,11 @@ def _iterate_async_generator(
                 item = loop_runner.run(agen.__anext__())
             except StopAsyncIteration:
                 return
-            except _LoopStoppedError:
-                # The close cancelled the step, which ended the iterator; an
-                # aclose would only restart the stopped loop.
+            except BaseException:
+                # The step ended the iterator: it raised from inside it, or
+                # it was cancelled (the chain closed, an interrupt), which
+                # ends the iterator as the step unwinds. An aclose would only
+                # restart a stopped loop, or find the step still running.
                 stopped = True
                 raise
             yield item

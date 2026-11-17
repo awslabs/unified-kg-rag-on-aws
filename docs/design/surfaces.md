@@ -137,7 +137,11 @@ twice (structured content and its JSON text), so it is up to about 2-4
 times that on the wire. Each call runs under one deadline
 (`search.query_timeout_seconds`) that covers the wait for one of the
 `mcp.max_concurrent_calls` slots and the work, the chain's own deadline
-inside it included. Work that does not watch the deadline (the graph tools'
+inside it included. Over streamable HTTP the SDK answers a stateless JSON
+POST only once its call returns and does not watch the connection, so
+`build_mcp_app` reads the request's messages itself
+(`_cancelled_on_disconnect`): an `http.disconnect` cancels the request and
+its tool call, freeing the slot. Work that does not watch the deadline (the graph tools'
 store calls) ends at a backstop `_BACKSTOP_GRACE_SECONDS` (1 s) past it. A
 `kg_answer` that times out in the slot queue or at the backstop has no
 query metric of the chain's own, so the tool records one
@@ -369,8 +373,13 @@ the reader and waits until the reader asks for the next, so the query never
 runs ahead of it. A reader that stops (closes the iterator, or is
 cancelled while it waits: a client that disconnected) stops the sink, and
 the query's waiting or next send raises `CancelledError` there, before it
-writes memory; the reader waits for that up to
-`search.model_timeout_seconds`, then cancels the task. Ending at a send
+writes memory, as does its answer model's next chunk, one that sends
+nothing included (reasoning, a held-back marker, an answer the output
+guardrail screens first: `_streamed_to` checks the sink after each chunk).
+The reader waits for that up to `search.model_timeout_seconds` plus a
+grace (`_STOP_GRACE_SECONDS`), then cancels the task: past the model
+clients' read timeout, so a model that stalls ends in its client's own
+timeout, its response closed. Ending at a send or a chunk
 matters: the answer's model stream is then paused between two chunks and
 closes cleanly, whereas a cancellation that lands while LangChain's
 per-chunk task reads the model leaves its response open (an httpx pool

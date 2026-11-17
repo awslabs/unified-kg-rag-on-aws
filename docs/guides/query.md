@@ -339,14 +339,19 @@ async for event in chain.aquery_events(RAGInput(query="...")):
 - A failure raises after the events sent before it; with
   `processing.ignore_errors` the result carries the error answer.
 - The query waits for the reader to take each event: a reader that stops
-  ends it at its next event. It stops when it closes the iterator
-  (`aclose()`, or `break` inside `async with aclosing(...)`) or is
-  cancelled while it waits for an event: a console client that
-  disconnects, an `asyncio.timeout` around `astream`, a cancelled caller
-  task. The close or cancellation waits for that event up to
-  `search.model_timeout_seconds`, then cancels the query. Ended between two
-  answer chunks, the model's response is closed and its connection
-  released. Nothing is written to memory, and the query metrics record its
+  ends it at its next event, or at the answer model's next chunk, one
+  that shows nothing included (reasoning, the held-back start of an
+  answer, an answer the output guardrail screens first). It stops when it
+  closes the iterator (`aclose()`, or `break` inside
+  `async with aclosing(...)`) or is cancelled while it waits for an event:
+  a console client that disconnects, an `asyncio.timeout` around
+  `astream`, a cancelled caller task, a `Ctrl-C` while the sync `stream()`
+  or `query_events()` waits (the `KeyboardInterrupt` is raised). The close
+  or cancellation waits for that up to a few seconds past
+  `search.model_timeout_seconds`, then cancels the query: a model that
+  stalls ends first in its client's read timeout (recorded as that
+  failure). Ended between two answer chunks, the model's response is
+  closed and its connection released. Nothing is written to memory, and the query metrics record its
   latency and usage up to there as no failure. A cancelled `ainvoke` records
   nothing.
 - Its query metrics, the `query_id` and namespace of its log lines and

@@ -937,3 +937,69 @@ def test_http_on_any_loopback_address_refuses_foreign_hosts_and_origins(
     # The access log goes to stderr: stdout stays empty.
     assert out == ""
     assert "POST /mcp" in err
+
+
+@requires_mcp
+async def test_a_client_that_disconnects_frees_its_call_slot(
+    index: Index, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The SDK answers a stateless JSON POST once its tool call returns and
+    # does not watch the connection meanwhile: a client that left held its
+    # call slot until its query ended. Its disconnect now cancels the call.
+    import asyncio
+
+    import httpx
+    import uvicorn
+
+    from unified_kg_rag.application.cli.mcp_server import build_mcp_app
+
+    real_screen = GraphRAGChain._screen_input
+    calls: list[str] = []
+    cancelled = asyncio.Event()
+
+    async def slow_first(self: GraphRAGChain, *args: Any, **kwargs: Any) -> Any:
+        calls.append("screen")
+        if len(calls) == 1:
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+        return await real_screen(self, *args, **kwargs)
+
+    monkeypatch.setattr(GraphRAGChain, "_screen_input", slow_first)
+    chain = index.chain()
+    tools = KnowledgeGraphTools(chain, settings=McpServerConfig(max_concurrent_calls=1))
+    host = "127.0.0.1"
+    port = _free_port(host)
+    server = uvicorn.Server(
+        uvicorn.Config(build_mcp_app(tools), host=host, port=port, log_config=None)
+    )
+    serving = asyncio.create_task(server.serve())
+    call = {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {
+            "name": "kg_answer",
+            "arguments": {"query": "가젯을 보관하는 곳은?", "strategy": "local"},
+        },
+    }
+    try:
+        for _ in range(200):
+            if server.started:
+                break
+            await asyncio.sleep(0.05)
+        url = f"http://{host}:{port}/mcp"
+        async with httpx.AsyncClient(headers=_HEADERS, timeout=60) as client:
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(client.post(url, json=call), 0.5)
+            await asyncio.wait_for(cancelled.wait(), 10)
+            # The one slot is free: the next call answers at once.
+            answered = await asyncio.wait_for(client.post(url, json=call), 30)
+        assert answered.status_code == 200
+        assert not answered.json()["result"].get("isError"), answered.text
+    finally:
+        server.should_exit = True
+        await serving
+        await chain.aclose()

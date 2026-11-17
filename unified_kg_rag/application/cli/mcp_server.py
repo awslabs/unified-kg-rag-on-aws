@@ -159,6 +159,42 @@ def _post_only(app: Any, path: str) -> Any:
     return guarded
 
 
+def _cancelled_on_disconnect(app: Any) -> Any:
+    """``app`` cancelled when its HTTP client disconnects: the SDK answers
+    a stateless JSON POST only once its tool call returns and does not watch
+    the connection meanwhile, so a client that left would otherwise hold its
+    call slot (``mcp.max_concurrent_calls``) until its query ended. Its
+    request messages are read here and handed on; an ``http.disconnect``
+    cancels the request, whose tool call is cancelled with it."""
+    import anyio
+
+    async def cancellable(scope: dict[str, Any], receive: Any, send: Any) -> None:
+        if scope.get("type") != "http":
+            await app(scope, receive, send)
+            return
+        handed, messages = anyio.create_memory_object_stream[dict[str, Any]](
+            max_buffer_size=float("inf")
+        )
+        async with handed, messages, anyio.create_task_group() as group:
+
+            async def watch() -> None:
+                while True:
+                    message = await receive()
+                    await handed.send(message)
+                    if message["type"] == "http.disconnect":
+                        group.cancel_scope.cancel()
+                        return
+
+            async def serve() -> None:
+                await app(scope, messages.receive, send)
+                group.cancel_scope.cancel()
+
+            group.start_soon(watch)
+            group.start_soon(serve)
+
+    return cancellable
+
+
 def build_mcp_app(
     chain: GraphRAGChain | KnowledgeGraphTools,
     *,
@@ -190,7 +226,7 @@ def build_mcp_app(
         json_response=True,
         transport_security=_security(allowed_hosts, allowed_origins),
     )
-    return _post_only(app, path)
+    return _post_only(_cancelled_on_disconnect(app), path)
 
 
 def mcp_extra_error() -> str | None:

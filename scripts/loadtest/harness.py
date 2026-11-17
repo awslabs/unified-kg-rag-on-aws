@@ -217,6 +217,10 @@ class Gates:
     # deterministic fake models every query is answerable, so any is a
     # regression (an empty context answers "could not find" with no error).
     max_flags: int = 0
+    # Model connections still open after an http level settled
+    # (held_model_connections): each is a response a stopped query left
+    # open, which fills the model client's pool in time.
+    max_held_model_connections: int = 0
     require_convergence: bool = True
 
 
@@ -278,6 +282,12 @@ def check_gates(report: Mapping[str, Any], gates: Gates = Gates()) -> list[str]:
             failures.append(
                 f"{name}: {flags.total()} flagged answers (max {gates.max_flags}): "
                 + ", ".join(f"{kind} {n}" for kind, n in sorted(flags.items()))
+            )
+        held = level.get("held_model_connections")
+        if held is not None and held > gates.max_held_model_connections:
+            failures.append(
+                f"{name}: {held} model connections held after the level "
+                f"(max {gates.max_held_model_connections})"
             )
         lag = level.get(lag_key)
         if lag is None:

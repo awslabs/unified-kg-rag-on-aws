@@ -52,7 +52,7 @@ from typing import Any
 from chaos_models import call
 from compare_exports import EXACT, INCREMENTAL, Tolerance, compare_files, converged
 from harness import Gates, check_gates, gate_notes, local_only_env
-from workspace import write_workspace
+from workspace import RETRY_ATTEMPTS, write_workspace
 
 HERE = Path(__file__).resolve().parent
 # What a workspace reset keeps.
@@ -72,13 +72,19 @@ def _env(**extra: str) -> dict[str, str]:
 SOAK_ENV = {"MALLOC_ARENA_MAX": "2"}
 
 # The streamed level: one concurrency, the answers' mid-stream faults. A
-# query whose every attempt loses its reasoning (retry.model's 3) fails as
-# well: at these rates about one night in 250.
+# reasoning drop hits any streamed chat call (the Ollama client streams the
+# query's other calls too, about 270 a level with its warm-up), and a call
+# whose every attempt lost its reasoning would fail its query (degraded, so
+# flagged): at 3% that is about 270 x 0.03^3, one night in 140. The server
+# drops one request body's reasoning at most RETRY_ATTEMPTS - 1 times, so
+# single and double retries stay exercised and no call runs out of them,
+# however the concurrent requests interleave on its shared draws.
 STREAM_LEVEL = {"concurrency": 8, "queries": 140}
 STREAM_KNOBS = {
     "reasoning_chunks": 2.0,
     "reasoning_drop_rate": 0.03,
     "answer_drop_rate": 0.03,
+    "reasoning_drops_per_body": float(RETRY_ATTEMPTS - 1),
 }
 
 

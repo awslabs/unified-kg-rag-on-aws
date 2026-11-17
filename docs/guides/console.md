@@ -132,7 +132,8 @@ before the first question, with a way to Ingest, and a
 question to it names the same. The answer streams in as the answer model writes it; the
 final answer then replaces it (it is the one a decline or the output
 guardrail decided). A browser that leaves mid-answer (a closed tab, a lost
-connection) stops its question: the query ends at its next answer chunk,
+connection) stops its question: the query ends at the answer model's next
+chunk (a reasoning chunk included), a few seconds past
 `search.model_timeout_seconds` at most, so its model connection is
 released, and the history records it as cancelled. Under it: for `auto`, the strategy it chose and how
 (the router named it, it was the only candidate under the filters or the
