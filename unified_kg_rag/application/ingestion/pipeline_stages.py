@@ -739,6 +739,9 @@ class DocumentLoadingStage(_RegistryStage):
         context.incremental_extraction_fingerprint = None
         context.incremental_extraction_settings = None
         context.incremental_retired_scopes = []
+        # Whether this is a run of document changes, read once: every
+        # consumer below takes this value (the callable is always set).
+        deletions = self.deletions() if self.deletions is not None else None
 
         failed_files: list[str] = []
         if self._parsing_completed(context):
@@ -754,7 +757,7 @@ class DocumentLoadingStage(_RegistryStage):
             input_count = len(discovered_files)
             # A deletion from memory stages no document: no empty corpus to
             # warn of ("No supported files found").
-            deletion_only = self.deletions is not None and not discovered_files
+            deletion_only = deletions is not None and not discovered_files
             documents = [] if deletion_only else self.loader.load()
             for document in documents:
                 assign_document_identity(
@@ -763,7 +766,7 @@ class DocumentLoadingStage(_RegistryStage):
                     self.config.indexing.additional_suffix,
                     store_namespace_tag(self.config.indexing),
                 )
-                if self.deletions is not None:
+                if deletions is not None:
                     # Documents given from memory, staged in a temporary
                     # directory: their path is their id.
                     document.file_path = document.metadata[RELATIVE_PATH_KEY]
@@ -787,7 +790,7 @@ class DocumentLoadingStage(_RegistryStage):
                     self.config,
                     self._build_doc_status_store,
                     self.loader.source_directory,
-                    changes=self.deletions is not None,
+                    changes=deletions is not None,
                 )
             kept = self.loader.deduplicate_documents(
                 documents,
@@ -808,7 +811,7 @@ class DocumentLoadingStage(_RegistryStage):
         delta_skipped = 0
         if incremental:
             documents, delta_skipped = self._apply_incremental_filter(
-                documents, context, deduplicated, keyed
+                documents, context, deduplicated, keyed, deletions
             )
         elif corpus_is_seeds_only(documents):
             self._confirm_seeds_alone()
@@ -965,11 +968,13 @@ class DocumentLoadingStage(_RegistryStage):
         context: PipelineContext,
         deduplicated: Sequence[Document] = (),
         config: Config | None = None,
+        deletions: Sequence[str] | None = None,
     ) -> tuple[list[Document], int]:
         """Keep the new and changed documents (see ``incremental.filter_to_delta``;
         ``deduplicated``: the copies deduplication dropped; ``config``: the
         run's config keyed by the stored spelling of its source scope, once
-        an earlier lookup resolved it)."""
+        an earlier lookup resolved it; ``deletions``: the run's, read once
+        per run, None for a corpus run)."""
         return filter_to_delta(
             documents,
             context,
@@ -981,7 +986,7 @@ class DocumentLoadingStage(_RegistryStage):
             guard_reset_deletions=(
                 self.rebuild_for_artifacts is not None and self.rebuild_for_artifacts()
             ),
-            deletions=self.deletions() if self.deletions is not None else None,
+            deletions=deletions,
             read_unparsed=self._source_parser().read_unparsed,
             deduplicated=deduplicated,
         )

@@ -762,3 +762,28 @@ def test_a_bare_value_that_is_the_runs_own_name_points_to_dot_slash(
         retired_scope_groups(["docs"], "docs", "default", retired_scope_readings)
     assert "'./docs'" in str(exc.value)
     assert "working directory" not in str(exc.value)
+
+
+def test_an_empty_json_corpus_run_warns_of_its_empty_corpus(tmp_path, caplog) -> None:
+    # The pipeline always installs the loading stage's deletions callable; a
+    # corpus run (it returns None) is no deletion from memory, so an empty
+    # corpus of pre-parsed JSON is warned of as one.
+    root = tmp_path / "corpus"
+    root.mkdir()
+    stage = DocumentLoadingStage(
+        _config(),
+        source_directory=root,
+        doc_status=FakeDocStatusStore(),
+        deletions=lambda: None,
+    )
+    context = PipelineContext(
+        pipeline_id="pid",
+        config={},
+        status=PipelineStageStatus.RUNNING,
+        start_time=datetime(2026, 1, 1),
+        source_directory=root,
+    )
+    with caplog.at_level("WARNING"):
+        stage._execute_core(context)
+
+    assert any("No supported files found" in r.message for r in caplog.records)

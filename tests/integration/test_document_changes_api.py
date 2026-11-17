@@ -34,6 +34,7 @@ from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
 from unified_kg_rag.domain.models import (
     Config,
     DocStatus,
+    Document,
     Methodology,
     PipelineConfig,
     PipelineContext,
@@ -1085,3 +1086,99 @@ def test_an_unchanged_file_is_not_parsed_again_under_a_respelled_scope(
     assert (metrics["files_unparsed"], metrics["parsed_files"]) == (2, [])
     assert len(context.incremental_delta.unchanged) == 2
     assert _scopes(providers) == {resolved}
+
+
+def _scoped_records(providers: Any) -> set[tuple[str, str]]:
+    return {
+        (r.scope.partition("|")[2], r.file_path)
+        for r in all_records(providers.build_doc_status())
+    }
+
+
+@pytest.mark.parametrize("deduplicate", [False, True])
+def test_a_corpus_run_follows_no_symlink_to_a_stored_scope(
+    setup, tmp_path: Path, caplog: pytest.LogCaptureFixture, deduplicate: bool
+) -> None:
+    # rv49 ingestion medium: with deduplication on, every corpus run read as
+    # a run of document changes (the loading stage tested that the pipeline
+    # had installed its deletions callable, which it always does), so a
+    # corpus run of the resolved directory followed the symlink to the scope
+    # the registry held, took it over and deleted mem.txt, which only a run
+    # of changes had stated there.
+    config, providers, pipeline = setup
+    config.processing.deduplicate = deduplicate
+    corpus, link = _dedup_corpus(tmp_path)
+    config.processing.document_parsing.source_scope = str(link)
+    _ok(pipeline.run(corpus))
+    _ok(
+        pipeline.insert_documents(
+            [{"id": "mem.txt", "text": "Carrier ships parts to Depot every Monday."}],
+            source_scope=str(link),
+        )
+    )
+    config.processing.document_parsing.source_scope = None
+
+    with caplog.at_level("WARNING"):
+        _ok(pipeline.run(corpus))
+
+    resolved = corpus.resolve().as_posix()
+    assert _scoped_records(providers) == {
+        (resolved, "other.txt"),
+        (resolved, "z.txt"),
+        (str(link), "mem.txt"),
+        (str(link), "other.txt"),
+        (str(link), "z.txt"),
+    }
+    assert not [r for r in caplog.records if "using the stored spelling" in r.message]
+
+
+@pytest.mark.parametrize("deduplicate", [False, True])
+def test_a_corpus_run_keeps_its_symlinked_source_scope(
+    setup, tmp_path: Path, deduplicate: bool
+) -> None:
+    # The other way round: an explicit symlinked source scope is the corpus
+    # run's own, whatever processing.deduplicate is; it is not replaced by
+    # the resolved directory the registry holds.
+    config, providers, pipeline = setup
+    config.processing.deduplicate = deduplicate
+    corpus, link = _dedup_corpus(tmp_path)
+    _ok(pipeline.run(corpus))
+    config.processing.document_parsing.source_scope = str(link)
+
+    _ok(pipeline.run(corpus))
+
+    assert _scopes(providers) == {corpus.resolve().as_posix(), str(link)}
+
+
+def test_a_json_corpus_run_keeps_each_documents_file_path(tmp_path: Path) -> None:
+    # A corpus of pre-parsed Document JSON (no parsing stage) keeps the
+    # original path each document records; only documents given from memory
+    # take their id as their path.
+    config = _config(tmp_path / "stores", tmp_path / "viz")
+    providers = _providers(
+        config, FakeOllama(_respond, ANSWER, DIM), FakeCrossEncoder("rerank")
+    )
+    stages = dict.fromkeys(PipelineStageType, True)
+    stages[PipelineStageType.DOCUMENT_PARSING] = False
+    pipeline = DataIngestionPipeline(
+        config,
+        PipelineConfig(stages_enabled=stages, local_directory=tmp_path / "cache"),
+        providers=providers,
+    )
+    corpus = tmp_path / "parsed"
+    corpus.mkdir()
+    original = "/archive/contracts/supply.pdf"
+    (corpus / "supply.json").write_text(
+        Document(
+            page_content=_SUPPLY,
+            document_id="supply",
+            file_name="supply.pdf",
+            file_path=original,
+        ).model_dump_json()
+    )
+    try:
+        context = _ok(pipeline.run(corpus))
+    finally:
+        pipeline.close()
+
+    assert [d.file_path for d in context.documents] == [original]
