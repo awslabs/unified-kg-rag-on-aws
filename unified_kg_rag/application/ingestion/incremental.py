@@ -1515,11 +1515,12 @@ def _same_directory_scopes(
 def _warn_about_copies_under_other_spellings(
     source_scope: str, namespace: str, stored_scopes: Iterable[str]
 ) -> None:
-    """Warn a run of changes keyed by ``source_scope`` as given (the
-    registry holds it) that other stored local scopes name its directory:
-    a document indexed under two of them (0.3.0's ``insert_documents``
-    keyed a path through a symlink as given, a corpus run by its resolved
-    directory) is stored, and retrieved, twice."""
+    """Warn a run keyed by ``source_scope`` (the registry holds it: a
+    corpus run's, or a run of changes' scope as given) that other stored
+    local scopes name its directory: a document indexed under two of them
+    (0.3.0's ``insert_documents`` keyed a path through a symlink as given,
+    a corpus run by its resolved directory) is stored, and retrieved,
+    twice."""
     held = _same_directory_scopes(source_scope, namespace, stored_scopes)
     others = [source for source in held if source != source_scope]
     if source_scope not in held or not others:
@@ -2191,10 +2192,9 @@ def filter_to_delta(
             read_unparsed=read_unparsed,
             deduplicated=deduplicated,
         )
-    if changes is not None:
-        _warn_about_copies_under_other_spellings(
-            source_scope, namespace, delta.stored_scopes
-        )
+    _warn_about_copies_under_other_spellings(
+        source_scope, namespace, delta.stored_scopes
+    )
     # Before any write, under the stored spelling of the scope.
     if seeds_only:
         _refuse_seeds_over_documents(

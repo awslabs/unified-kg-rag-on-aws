@@ -945,3 +945,15 @@ def test_a_changes_run_warns_of_copies_under_another_spelling_of_its_directory(
     assert len(warned) == 1
     assert repr(str(corpus.resolve())) in warned[0]
     assert f"same directory as the source scope {str(link)!r}" in warned[0]
+
+    # rv46 ingestion low: a corpus run over the same mixed registry keeps
+    # both copies too, and is warned the same way (one shared check).
+    caplog.clear()
+    with caplog.at_level("WARNING"):
+        _ok(pipeline.run(corpus))
+    warned = [r.getMessage() for r in caplog.records if "stored twice" in r.message]
+    assert len(warned) == 1
+    assert repr(str(link)) in warned[0]
+    assert f"same directory as the source scope {str(corpus.resolve())!r}" in (
+        warned[0]
+    )

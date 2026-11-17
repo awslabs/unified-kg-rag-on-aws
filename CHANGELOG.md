@@ -328,9 +328,9 @@ Bugs present in 0.3.0.
 - `insert_documents` and `delete_documents` took an absolute directory given as `source_scope` as spelled, where a
   corpus run keys its records by its resolved directory: a path through a symlink opened a second scope and indexed
   the corpus's documents again. Both now use the registry's spelling of the scope: as given, with other trailing or
-  doubled slashes, else, for a directory of this host, the stored scope naming it through a symlink. A run keyed by
-  the scope as given warns when another stored scope names the same directory (a document under both is stored
-  twice), and `DocumentNotFoundError` names the other spelling a missing id is under.
+  doubled slashes, else, for a directory of this host, the stored scope naming it through a symlink. A corpus run, or
+  a run of changes keyed by the scope as given, warns when another stored scope names the same directory (a document
+  under both is stored twice), and `DocumentNotFoundError` names the other spelling a missing id is under.
 - `answer_match` read Japanese sums in 兆 (10^12) wrong: `一兆二千億円` as 200,000,000,000 and `3兆円` as 3. 兆 is a
   multiplier of the Japanese and Chinese profiles, as 億 is, where it can close an amount (`新台币3兆元`, `3兆美元`);
   before another Han or Latin letter it is the Chinese prefix mega (the new `LanguageProfile.prefix_multipliers`), so
