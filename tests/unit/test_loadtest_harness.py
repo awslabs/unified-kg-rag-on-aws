@@ -1077,12 +1077,36 @@ def test_a_body_s_reasoning_is_dropped_at_most_its_cap(
     assert capped.rng.getstate() == plain.rng.getstate()
 
 
+def test_a_body_s_drops_past_the_window_no_longer_count(
+    chaos_models: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A repeated question sends the same body later: past the window it is
+    # dropped again, so repeated bodies do not use up the cap for good.
+    now = [100.0]
+    monkeypatch.setattr(chaos_models.time, "monotonic", lambda: now[0])
+    chaos = chaos_models.Chaos(
+        reasoning_drop_rate=1.0, reasoning_drops_per_body=2, reasoning_drops_window=30
+    )
+    assert [chaos.stream_fault(b"call") for _ in range(3)] == [
+        "reasoning_drop",
+        "reasoning_drop",
+        None,
+    ]
+    now[0] += 29
+    assert chaos.stream_fault(b"call") is None
+    now[0] += 2
+    assert chaos.stream_fault(b"call") == "reasoning_drop"
+
+
 def test_the_nightly_never_drops_a_call_s_reasoning_on_every_attempt(
     nightly: ModuleType,
 ) -> None:
     from workspace import RETRY_ATTEMPTS  # type: ignore[import-not-found]
 
     assert nightly.STREAM_KNOBS["reasoning_drops_per_body"] == RETRY_ATTEMPTS - 1 > 0
+    # The window outlasts a call's retries (the workspace's waits are at most
+    # 2 s each).
+    assert nightly.STREAM_KNOBS["reasoning_drops_window"] > 2.0 * RETRY_ATTEMPTS
 
 
 class _SSEConsole:
@@ -1151,7 +1175,8 @@ async def test_an_http_level_disconnects_after_the_first_chunk_then_asks_again(
     finally:
         console.close()
     if share:
-        assert report["disconnected"] == 6
+        # The level's six, then the burst's, whatever the level's concurrency.
+        assert report["disconnected"] == 6 + load.DISCONNECT_BURST
         # the one question asked after them answered
         assert (report["ok"], report["errors"]) == (1, 0)
     else:

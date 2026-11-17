@@ -204,10 +204,11 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   profiles (`ClientRetryPolicy`) have the key, and setting it on another one is refused naming them, in a file, a
   `UKR__` variable, `Config(...)` or an assignment alike. No caller retries a call the usage limits refused.
 - The load harness covers the answer stream: `load.py http --disconnect-share` disconnects that share of questions
-  after their first answer chunk, then asks one that must answer, and with `--models` gates on the connections left
-  open to the chaos model server after each level (`held_model_connections`); the chaos model server streams reasoning
-  chunks (`reasoning_chunks`) and drops answers after their reasoning or first chunk (`reasoning_drop_rate`,
-  `answer_drop_rate`, one request body's reasoning at most `reasoning_drops_per_body` times); the nightly runs one
+  after their first answer chunk, then 16 at once at any concurrency, then asks one that must answer, and with
+  `--models` gates on the connections left open to the chaos model server after each level
+  (`held_model_connections`); the chaos model server streams reasoning chunks (`reasoning_chunks`) and drops answers
+  after their reasoning or first chunk (`reasoning_drop_rate`, `answer_drop_rate`, one request body's reasoning at
+  most `reasoning_drops_per_body` times within `reasoning_drops_window` seconds); the nightly runs one
   `sweep --stream` level under them, capped below its retry attempts, whose errors must equal the answers dropped
   after their first chunk.
 

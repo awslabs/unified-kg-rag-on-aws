@@ -76,15 +76,20 @@ SOAK_ENV = {"MALLOC_ARENA_MAX": "2"}
 # query's other calls too, about 270 a level with its warm-up), and a call
 # whose every attempt lost its reasoning would fail its query (degraded, so
 # flagged): at 3% that is about 270 x 0.03^3, one night in 140. The server
-# drops one request body's reasoning at most RETRY_ATTEMPTS - 1 times, so
-# single and double retries stay exercised and no call runs out of them,
-# however the concurrent requests interleave on its shared draws.
+# drops one request body's reasoning at most RETRY_ATTEMPTS - 1 times within
+# REASONING_DROPS_WINDOW, so single and double retries stay exercised and no
+# call runs out of them, however the concurrent requests interleave on its
+# shared draws, while a repeated question later is dropped again.
 STREAM_LEVEL = {"concurrency": 8, "queries": 140}
+# Seconds well past one call's attempts (the workspace's backoff waits at
+# most 2 s per retry).
+REASONING_DROPS_WINDOW = 30.0
 STREAM_KNOBS = {
     "reasoning_chunks": 2.0,
     "reasoning_drop_rate": 0.03,
     "answer_drop_rate": 0.03,
     "reasoning_drops_per_body": float(RETRY_ATTEMPTS - 1),
+    "reasoning_drops_window": REASONING_DROPS_WINDOW,
 }
 
 
