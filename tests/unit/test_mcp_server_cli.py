@@ -353,3 +353,35 @@ def test_the_query_tools_pass_a_callers_limits_through(
     assert "query_limit" in json.dumps(answer_schema["limits"])
     assert refused
     assert [i.limits for i in chain.inputs] == [QueryLimits(**limits)] * 2
+
+
+async def _failing_app(scope: dict[str, object], receive: object, send: object) -> None:
+    await receive()  # type: ignore[operator]
+    raise RuntimeError("inner failure")
+
+
+@pytest.mark.parametrize("disconnects", [False, True])
+async def test_the_disconnect_watch_raises_the_app_s_own_failure(
+    disconnects: bool,
+) -> None:
+    # The app runs in a task group beside the disconnect watch: its failure
+    # reaches the host as raised, not wrapped in an ExceptionGroup a host's
+    # handler for that type would not match.
+    import asyncio
+
+    app = mcp_server._cancelled_on_disconnect(_failing_app)
+    messages = [{"type": "http.request", "body": b"{}", "more_body": False}]
+
+    async def receive() -> dict[str, object]:
+        if messages:
+            return messages.pop()
+        if not disconnects:
+            await asyncio.sleep(10)
+        return {"type": "http.disconnect"}
+
+    async def send(message: dict[str, object]) -> None:
+        return None
+
+    with pytest.raises(RuntimeError, match="inner failure") as raised:
+        await app({"type": "http"}, receive, send)
+    assert not isinstance(raised.value.__context__, BaseExceptionGroup)
