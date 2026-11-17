@@ -799,3 +799,60 @@ async def test_a_call_started_in_a_task_that_ended_settles_once() -> None:
     snapshot = meter.snapshot()
     assert (snapshot["llm_calls"], snapshot["estimated_calls"]) == (1, 0)
     assert (snapshot["input_tokens"], snapshot["output_tokens"]) == (7, 2)
+
+
+class _CutModel:
+    """A chat model whose response fails after ``chunks`` streamed chunks
+    (0: before any), streamed or invoked."""
+
+    @staticmethod
+    def build(chunks: int, handler: UsageCallbackHandler) -> Any:
+        from langchain_core.language_models import BaseChatModel
+        from langchain_core.messages import AIMessageChunk
+        from langchain_core.outputs import ChatGenerationChunk, ChatResult
+
+        class Cut(BaseChatModel):
+            @property
+            def _llm_type(self) -> str:
+                return "cut"
+
+            def _generate(self, *args: Any, **kwargs: Any) -> ChatResult:
+                raise RuntimeError("throttled")
+
+            def _stream(self, *args: Any, **kwargs: Any) -> Any:
+                for _ in range(chunks):
+                    yield ChatGenerationChunk(message=AIMessageChunk(content=""))
+                raise RuntimeError("throttled")
+
+        return Cut(callbacks=[handler])
+
+
+@pytest.mark.parametrize("chunks", [0, 1])
+def test_a_failed_call_counts_its_estimate_once_its_response_started(
+    chunks: int,
+) -> None:
+    # rv45 query low: a retried Bedrock stream that failed after its first
+    # chunks counted 0 tokens, so the attempts its retry spent were outside
+    # limits.max_input_tokens. One rule for a stream and an invoke: a call
+    # whose response started (a chunk arrived: the model read the prompt)
+    # keeps its estimate; one that failed before any response is a failed
+    # call (an invoke never has a started response).
+    handler = UsageCallbackHandler("vendor.model-v1", role="query")
+    prompt = "a fairly long prompt " * 50
+    estimate = estimate_token_count(prompt)
+    model = _CutModel.build(chunks, handler)
+    with usage.usage_scope() as streamed:
+        with pytest.raises(RuntimeError):
+            list(model.stream(prompt))
+    with usage.usage_scope() as invoked:
+        with pytest.raises(RuntimeError):
+            model.invoke(prompt)
+    got = LLMUsage.model_validate(streamed.snapshot())
+    if chunks:
+        assert (got.llm_calls, got.estimated_calls, got.failed_calls) == (1, 1, 0)
+        assert got.input_tokens == estimate
+    else:
+        assert (got.llm_calls, got.failed_calls, got.input_tokens) == (0, 1, 0)
+    failed = LLMUsage.model_validate(invoked.snapshot())
+    assert (failed.llm_calls, failed.failed_calls, failed.input_tokens) == (0, 1, 0)
+    assert not handler._streamed

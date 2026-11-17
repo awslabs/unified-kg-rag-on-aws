@@ -67,8 +67,10 @@ class LLMUsageCounts(BaseModel):
     failed_calls: int = Field(
         default=0,
         description=(
-            "Calls that ended in an error and reported no usage; not in "
-            "llm_calls. A request Bedrock accepted and then failed still "
+            "Calls that ended in an error before their response started and "
+            "reported no usage; not in llm_calls (one that failed once its "
+            "response had started streaming is an estimated call). A "
+            "request Bedrock accepted and then failed still "
             "counts as an invocation in CloudWatch."
         ),
     )
@@ -84,9 +86,11 @@ class LLMUsageCounts(BaseModel):
         description=(
             "Of llm_calls, those that had reported no usage when this was "
             "read: still running in the background (an auto query's unread "
-            "speculative extraction) or cancelled in flight (a query "
-            "deadline). The request was sent, so it is billed; their input "
-            "tokens are estimated from the prompt and their output tokens 0."
+            "speculative extraction), cancelled in flight (a query "
+            "deadline) or failed once its response had started streaming. "
+            "The request was sent, so it is billed; their input "
+            "tokens are estimated from the prompt and their output tokens 0 "
+            "(a failed stream's from the text it sent)."
         ),
     )
 

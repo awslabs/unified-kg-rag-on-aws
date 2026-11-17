@@ -24,7 +24,8 @@ served, is a cache hit, not a call: it spends no tokens.
 A call counts from the moment it starts (:func:`start_llm_call`), at an
 estimate of its input tokens, and is settled when it ends: a returned call
 by the tokens its response reports, a failed one (it returned no usage) is
-taken back out of ``llm_calls`` and counted in ``failed_calls``. A call
+taken back out of ``llm_calls`` and counted in ``failed_calls`` (unless its
+response had started: the callback keeps that one's estimate). A call
 that has not ended when a scope is read (one still running in the
 background, as an auto query's unread speculative
 extraction, or one cancelled in flight by a query deadline) counts with its

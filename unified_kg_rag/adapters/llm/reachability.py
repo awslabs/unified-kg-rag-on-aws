@@ -34,7 +34,8 @@ from unified_kg_rag.shared.utils.common import http_status
 # Errors of a connection that was never made, by class name so this module
 # imports no client: httpx's ConnectError and ConnectTimeout, the OpenAI
 # client's APIConnectionError (not its APITimeoutError subclass: a server
-# that accepted the request and did not answer is reachable), urllib3's
+# that accepted the request and did not answer is reachable, unless the
+# timeout it was raised from is httpx's ConnectTimeout), urllib3's
 # NewConnectionError and botocore's EndpointConnectionError. A bare
 # ConnectionError is not one of them: the Ollama client's "Failed to
 # connect" is raised during httpx's ConnectError (its context, which
@@ -64,14 +65,20 @@ def is_unreachable_error(exc: BaseException) -> bool:
     server that could not be made: refused, no route, a name that does not
     resolve, no connection in time. Never a store's (``AWSServiceError``:
     ``StoreConnectionError``, which the store clients raise for theirs)."""
-    for error in causes(exc):
+    chain = list(causes(exc))
+    for at, error in enumerate(chain):
         if isinstance(error, ModelUnreachableError):
             return True
         if isinstance(error, AWSServiceError):
             return False
         names = {cls.__name__ for cls in type(error).__mro__}
         if names & _REACHED_NAMES:
-            return False
+            # The OpenAI client raises one timeout class for both: its
+            # connect timeout is a server that could not be reached.
+            return any(
+                "ConnectTimeout" in {cls.__name__ for cls in type(cause).__mro__}
+                for cause in chain[at + 1 :]
+            )
         if names & _CONNECT_ERROR_NAMES or isinstance(
             error, ConnectionRefusedError | socket.gaierror
         ):

@@ -528,3 +528,45 @@ async def test_a_waiters_own_cancellation_is_not_copied() -> None:
         await waiter
     assert not shared.cancelled()
     shared.set_result(None)
+
+
+def _openai_client_error(
+    transport_error: type[httpx.TimeoutException],
+) -> BaseException:
+    # The real client's chain: it raises APITimeoutError from the transport's
+    # timeout, a connect one as much as a read one.
+    openai = pytest.importorskip("openai")
+
+    def fail(request: httpx.Request) -> httpx.Response:
+        raise transport_error("timed out", request=request)
+
+    client = openai.OpenAI(
+        base_url="http://127.0.0.1:9/v1",
+        api_key="synthetic",
+        max_retries=0,
+        http_client=httpx.Client(transport=httpx.MockTransport(fail)),
+    )
+    with pytest.raises(openai.APITimeoutError) as raised:
+        client.chat.completions.create(
+            model="synthetic-chat", messages=[{"role": "user", "content": "x"}]
+        )
+    return raised.value
+
+
+def test_the_openai_clients_connect_timeout_is_unreachable_its_read_timeout_not() -> (
+    None
+):
+    # rv45 query low: an OpenAI-compatible server whose connect timed out
+    # read "sent nothing within a query's read timeout", where Ollama's same
+    # failure is a server that could not be reached.
+    from unified_kg_rag.adapters.llm.reachability import named_model_error
+
+    config = Config()
+    connect = _openai_client_error(httpx.ConnectTimeout)
+    assert is_unreachable_error(connect)
+    assert isinstance(named_model_error(connect, config), x.ModelUnreachableError)
+    read = _openai_client_error(httpx.ReadTimeout)
+    assert not is_unreachable_error(read)
+    named = named_model_error(read, config)
+    assert isinstance(named, x.LanguageModelError)
+    assert "read timeout" in str(named)

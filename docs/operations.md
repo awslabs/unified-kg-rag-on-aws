@@ -1565,7 +1565,8 @@ exactly. `Invocations` counts every request Bedrock accepted, those that
 later failed included, and not throttled ones, while `llm_calls` counts
 each returned call once: a call botocore resent after a read timeout or a
 server error is one call but several invocations (`request_retries` in
-`token_usage`), a call that failed in the end is in `failed_calls` only,
+`token_usage`), a call that failed in the end before its response started
+is in `failed_calls` only,
 and calls made outside a usage scope (the `run-eval`
 [warm-up queries](./reference/evaluation-output.md#comparison), scripts) are not counted. How far
 the two counts were apart on real runs:

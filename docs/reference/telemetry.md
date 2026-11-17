@@ -86,8 +86,9 @@ ingestion response cache served, a chunk-boundary or community report
 answer the extraction store served, a description summary a full build took
 from its stored copy, or a query entity or keyword extraction the chain's
 extraction cache served (`search.query_extraction_cache_size`), counts as
-a cache hit, not a call; a failed
-call is not in `llm_calls` but in `failed_calls`; retries are calls.
+a cache hit, not a call; a call that
+failed before its response started is not in `llm_calls` but in
+`failed_calls`; retries are calls.
 `input_tokens` includes the prompt-cache reads and writes, which are also
 counted apart (`cache_read_input_tokens`, `cache_write_input_tokens`, from
 Bedrock's `cacheReadInputTokens` / `cacheWriteInputTokens`) since they are
@@ -106,8 +107,10 @@ warm-up queries), plus every embedding call: the usage counts language
 model calls only (an embedding span has its text and character counts, no
 tokens or price). A call that has not answered when the
 usage is read (an `auto` query's unread extraction, still running in the
-background) or was cancelled in flight (by `search.query_timeout_seconds`,
-say) was sent and is billed, so it counts in `llm_calls` and in
+background), was cancelled in flight (by `search.query_timeout_seconds`,
+say) or failed once its response had started streaming (a stream cut
+mid-answer, which the query chain retries) was sent and is billed, so it
+counts in `llm_calls` and in
 `estimated_calls`, at an estimate of its input tokens and no output tokens;
 one that answers later is settled in `run-eval`'s run usage. A call that
 answers without reporting usage (a local server that returns none, say)

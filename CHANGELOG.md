@@ -68,7 +68,8 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   - Limits: `search.query_max_model_calls` and `search.query_max_input_tokens` (off by default) bound one query's
     model calls and their input tokens, and `RAGInput.limits` (`QueryLimits`, exported; the MCP tools' `limits`,
     whose deadline covers the wait for a call slot, the server's own reported by `kg_describe_schema`) lowers them
-    and the deadline for one query, never raising them. A call past a limit is refused before it is sent: the usage
+    and the deadline for one query, never raising them (a stream attempt that failed after its response started
+    counts at its estimate). A call past a limit is refused before it is sent: the usage
     callback now raises its refusal (LangChain swallowed a handler's error) and logs any other error of its own
     (`setup_logging` drops LangChain's own "Error in UsageCallbackHandler... callback" WARNING of a refusal).
   - Fan-out: `global`, `drift` and `iterative` start only the calls that fit beside what the answer will read
@@ -204,10 +205,12 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   were left out of the default on (`ppr`: within the noise of `local` at 2.4 times less cost, weaker on long chains;
   `tree`: +8 points of `answer_contains` over `naive`, below `mix` and `local`). It refused them, which made routing to
   them a code change rather than the operator's call.
-- Dependencies: pypdf 7.0 (same page text, labels and offsets as 6.21.4), langchain-core 1.8.1, langchain-aws 1.9.2,
-  pydantic 2.14.3, boto3 1.43.126 (also in the CDK lock), the `ollama/ollama` 0.40.15 image in
-  `docker/compose.local.yaml`. pypdf and langchain-core versions are part of the parser fingerprint, so the first
-  ingestion after upgrading parses every file again once.
+- Dependencies: pypdf 7.0, langchain-core 1.8.1, langchain-aws 1.9.2, pydantic 2.14.3, boto3 1.43.126 (also in the
+  CDK lock), the `ollama/ollama` 0.40.15 image in `docker/compose.local.yaml`. pypdf and langchain-core versions are
+  part of the parser fingerprint, so the first ingestion after upgrading parses every file again once. pypdf 7 gives
+  the same page text, labels and offsets as 6.21.4 on the repo's PDF fixtures, but separates words a line shifts
+  between baselines (`AlphaBeta Gamma` for `AlphaBetaGamma`): such a document's text changes, so that first run also
+  extracts and indexes it again once (model calls).
 
 ### Deprecated
 
@@ -247,10 +250,14 @@ Bugs present in 0.3.0.
   dropped or stalled stream reach the caller as they are, so neither read as transient. langchain-aws's
   `ConnectionError` for a stream cut before its last event even failed as an unreachable server: a bare
   `ConnectionError` now counts as one only when raised from a connect failure (as the Ollama client's is). They are
-  retried now, with `ModelStreamErrorException` ("retry your request"), until answer text reaches the caller;
-  validation and access errors still fail at once. An OpenAI-compatible stream is retried the same way after its
-  response started (its client retries only until then). A model's read timeout is named as one, with
-  `search.model_timeout_seconds`, instead of "an unexpected error".
+  retried now, with `ModelStreamErrorException` ("retry your request") and botocore's `ChecksumMismatch` (an event
+  frame corrupted in transit), until answer text reaches the caller; validation and access errors still fail at once.
+  An OpenAI-compatible stream is retried the same way after its response started (its client retries only until
+  then). A model's read timeout is named as one, with `search.model_timeout_seconds`, instead of "an unexpected
+  error"; the OpenAI client's connect timeout (the same `APITimeoutError`) is an unreachable server, as Ollama's is.
+  A call that failed once its response had started keeps its estimated input tokens (an estimated call, not a failed
+  one), so a stream retry's spent attempts count in the usage; one that failed before any response (an `ainvoke`'s
+  always) is still a failed call at 0 tokens.
 - A context could read past its token budget: a section type whose next section fell below the truncation floor
   kept its unused share while that share was also handed to the other types (a 244-token budget built 262). A round
   that seats past the budget so now lends its spare once, the room the types held unseated pooled in it, and what no
@@ -316,7 +323,9 @@ Bugs present in 0.3.0.
 - `insert_documents` and `delete_documents` took an absolute directory given as `source_scope` as spelled, where a
   corpus run keys its records by its resolved directory: a path through a symlink opened a second scope and indexed
   the corpus's documents again. Both now use the registry's spelling of the scope: as given, with other trailing or
-  doubled slashes, else, for a directory of this host, the stored scope naming it through a symlink.
+  doubled slashes, else, for a directory of this host, the stored scope naming it through a symlink. A run keyed by
+  the scope as given warns when another stored scope names the same directory (a document under both is stored
+  twice), and `DocumentNotFoundError` names the other spelling a missing id is under.
 - `answer_match` read Japanese sums in 兆 (10^12) wrong: `一兆二千億円` as 200,000,000,000 and `3兆円` as 3. 兆 is a
   multiplier of the Japanese and Chinese profiles, as 億 is, where it can close an amount (`新台币3兆元`, `3兆美元`);
   before another Han or Latin letter it is the Chinese prefix mega (the new `LanguageProfile.prefix_multipliers`), so
