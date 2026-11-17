@@ -796,12 +796,13 @@ GUARDS = [
                 "a stage's failed file entries (pipeline metrics), not a stored "
                 "item",
             ),
-            "application/ingestion/summary_tree_stage.py::SummaryTreeStage._tree_of": (
+            "application/ingestion/summary_tree_stage.py::SummaryTreeStage._tree_name": (
                 2,
-                "keys a document's tree by its stored file_path; that host path "
-                "is the trees' partition and hashed into their node ids, so "
-                "reading source_fields.relative_path instead re-keys every stored "
-                "tree (left to the wave-2 re-key bundle)",
+                "names a document's tree by its stored file_path (the tree is "
+                "keyed by document_id); that host path is the trees' partition "
+                "and hashed into their node ids, so reading "
+                "source_fields.relative_path instead re-keys every stored tree "
+                "(left to the wave-2 re-key bundle)",
             ),
             "adapters/doc_status/dynamodb.py::DynamoDBDocStatusStore._serialize": (
                 1,
