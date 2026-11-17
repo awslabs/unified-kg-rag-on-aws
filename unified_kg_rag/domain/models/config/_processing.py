@@ -813,7 +813,9 @@ class ProcessingConfig(ConfigSection):
         ge=1,
         description=(
             "Model calls one ingestion run may make in all (every stage, the "
-            "output fixer's too), counted from each call's start. The call "
+            "output fixer's too), counted from each call's start: every "
+            "attempt sent counts, a retried call's too (a query's "
+            "search.query_max_model_calls counts a retried call once). The call "
             "that would pass it is not sent: the run stops (RunBudgetExhausted, "
             "error class limit_exceeded; run-ingestion exits 1) once the calls "
             "already sent have answered, its finished stages checkpointed and "

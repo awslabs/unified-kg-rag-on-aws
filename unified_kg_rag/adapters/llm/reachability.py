@@ -18,7 +18,7 @@ from __future__ import annotations
 import socket
 from urllib.parse import urlsplit
 
-from unified_kg_rag.adapters.llm.retry import looks_transient
+from unified_kg_rag.adapters.llm.retry import TransientErrorPredicate, looks_transient
 from unified_kg_rag.domain.models import Config, ModelRole
 from unified_kg_rag.domain.models.provider_config import BEDROCK, OLLAMA
 from unified_kg_rag.shared.exceptions import (
@@ -55,6 +55,13 @@ _REACHED_NAMES = frozenset({"APITimeoutError"})
 # ReadTimeout, the OpenAI client's APITimeoutError, botocore's and urllib3's
 # ReadTimeoutError (a Bedrock call's, or its stream's).
 _READ_TIMEOUT_NAMES = frozenset({"ReadTimeout", "ReadTimeoutError", "APITimeoutError"})
+# A request that waited past its timeout for a free connection of its
+# client's pool (httpx's PoolTimeout, as is or inside APITimeoutError): it
+# was never sent.
+_POOL_TIMEOUT_NAME = "PoolTimeout"
+# botocore's error of a service that answered (a Bedrock ClientError, an
+# event stream's EventStreamError): raised as botocore raised it.
+_SERVICE_ERROR_NAME = "ClientError"
 # Ollama's default endpoint, which its client uses without a base_url.
 _OLLAMA_DEFAULT = "http://localhost:11434"
 
@@ -208,33 +215,64 @@ def model_unreachable_error(
     )
 
 
-def named_model_error(exc: BaseException, config: Config) -> BaseException:
+def named_model_error(
+    exc: BaseException,
+    config: Config,
+    *,
+    is_transient: TransientErrorPredicate = looks_transient,
+) -> BaseException:
     """``exc`` as the package names a failed model call: a model server that
     cannot be reached as the :class:`ModelUnreachableError` naming it
     (:func:`model_unreachable_error`), a model client's own error that
-    reached the caller after its retries (one with an HTTP status, or a
+    reached the caller after its retries (one with an HTTP status, a
     transport error: Ollama's ``ResponseError``, httpx's
-    ``RemoteProtocolError`` or ``ReadTimeout``) as a
-    :class:`LanguageModelError`; any other (the package's own, a store's)
-    as is. A read timeout's names the setting that bounds it, as the
-    package's own text: a surface then says the model timed out, not that
-    the call failed unexpectedly."""
+    ``RemoteProtocolError`` or ``ReadTimeout``, or one the model factory
+    retries as transient, ``is_transient``, but for botocore's
+    ``ClientError`` of a service that answered: urllib3's ``ProtocolError``
+    or botocore's ``ChecksumMismatch`` of a Bedrock stream) as a
+    :class:`LanguageModelError`; any other (the package's own, a store's,
+    botocore's ``ClientError``) as is. A timeout's names the setting that bounds it, as the package's
+    own text: a surface then says the model timed out (or that its call
+    waited for a free connection), not that the call failed unexpectedly."""
     if is_unreachable_error(exc):
         return model_unreachable_error(exc, config)
     if isinstance(exc, GraphRAGException):
         return exc
-    if any(cls.__name__ in _READ_TIMEOUT_NAMES for cls in type(exc).__mro__):
-        timed_out = LanguageModelError(
-            f"A language model call timed out ({type(exc).__name__}): the "
-            f"model server sent nothing within a query's read timeout "
+    pool = any(
+        cls.__name__ == _POOL_TIMEOUT_NAME
+        for cause in causes(exc)
+        for cls in type(cause).__mro__
+    )
+    if pool or any(cls.__name__ in _READ_TIMEOUT_NAMES for cls in type(exc).__mro__):
+        timeout = (
             f"(search.model_timeout_seconds, "
             f"{config.search.model_timeout_seconds:g} s; a local server's "
-            f"providers.llm.timeout_seconds when lower)."
+            f"providers.llm.timeout_seconds when lower)"
+        )
+        timed_out = LanguageModelError(
+            f"A language model call timed out ({type(exc).__name__}): "
+            + (
+                "it waited for a free connection of its client's pool past "
+                f"its timeout {timeout}, so its request was never sent: more "
+                "calls were in flight than the pool holds."
+                if pool
+                else "the model server sent nothing within a query's read "
+                f"timeout {timeout}."
+            )
         )
         timed_out.own_text = True
         timed_out.__cause__ = exc
         return timed_out
-    if http_status(exc) is not None or looks_transient(exc):
+    if (
+        http_status(exc) is not None
+        or looks_transient(exc)
+        or (
+            is_transient(exc)
+            and not any(
+                cls.__name__ == _SERVICE_ERROR_NAME for cls in type(exc).__mro__
+            )
+        )
+    ):
         named = LanguageModelError(
             f"A language model call failed ({type(exc).__name__}): {exc}"
         )

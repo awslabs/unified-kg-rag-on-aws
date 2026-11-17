@@ -187,8 +187,11 @@ The deadline is one of a query's limits (`QueryLimits`). Two more are off by
 default: `search.query_max_model_calls` (every model call of the query: the
 router, the query processing, the strategy's own calls and the answer) and
 `search.query_max_input_tokens` (the input tokens of those calls, each
-counted at its start at the local estimate of its prompt). A call past one
-is refused before its request is sent:
+counted at its start at the local estimate of its prompt). They count the
+calls the query plans: a retry of a call that failed transiently (a stream
+cut before its answer text) counts as that call, reusing the room its
+failed attempt held, while the usage (`metadata.usage`) counts every attempt
+sent. A call past one is refused before its request is sent:
 
 - `global` rates and maps, `drift` expands, primes and follows up, and
   `iterative` judges only what fits beside the answer's call. What did not
