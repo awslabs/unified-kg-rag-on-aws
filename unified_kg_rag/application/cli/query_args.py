@@ -118,8 +118,9 @@ def add_query_arguments(
         "when models.roles.answer_generation is the fast tier's model). "
         + (
             # run-eval
-            "A dataset item's metadata.effort wins over it; the warm-up checks "
-            "every effort the run asks for, so one the model refuses stops "
+            "A dataset item's metadata.effort wins over it; every effort the "
+            "run asks for is checked before any run starts (with each --arm's "
+            "and --closed-book's answer model), so one a model refuses stops "
             "the run before any answer"
             if multiple_strategies
             else "A search (--mode search) makes no answer and ignores it"

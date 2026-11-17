@@ -60,8 +60,9 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   deprecated keys (`DEPRECATED_KEYS`, file and `UKR__` variables alike, listed in the configuration reference). The
   console's Settings page lists each deprecated key the file sets, and each removed one, with the loader's warning,
   when it opens and in a review (a deprecated key set beside its replacement to another value too, which keeps the
-  file from loading), and marks a field a deprecated key loads into as set by it, with the value in force. Editing
-  that field, or the notice's Remove, moves the key's value into each replacement the file does not set and drops it.
+  file from loading), and marks a field a deprecated key loads into as set by it, with the value in force (a mapping
+  the file sets too starts from both merged). Editing that field, or the notice's Remove, moves the key's value into
+  each replacement the file does not set and drops it.
   An ingestion run it prices publishes its USD as the `llm_cost_usd` metric (the CDK dashboard's "LLM cost" widget).
 - Query limits beside the deadline:
   - Limits: `search.query_max_model_calls` and `search.query_max_input_tokens` (off by default) bound one query's
@@ -103,7 +104,8 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   - Console and CLI: the Ask page names that decline, the steps the limits skipped (apart from those that failed)
     and the strategies they left `auto` without, and `run-rag`'s text output says the same (naming the settings to
     raise). The console records each decline's reason (an older store gains the column, consoles opening it at once
-    too), and its Dashboard counts declines at a limit apart, out of the decline rate and each strategy's declines.
+    too, and a current one opens beside a reader), and its Dashboard counts declines at a limit apart (`limited`),
+    out of the decline rate and the declines of the totals and of each strategy alike.
   - Metrics: the `query_limited` metric (0 or 1, on the CDK dashboard's "Query outcomes" widget, and named in the
     `--metrics-sink` help of `run-rag`, `run-mcp-server` and `run-console`) and the query span's
     `kg_rag.query_limited` count a query its limits cut short (a step left out or cut, an abstention, a refusal, or
@@ -225,8 +227,10 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
 Bugs present in 0.3.0.
 
 - The console's Settings page read a field a `UKR__` variable of the console sets as its default, and passed an edit
-  of it that had no effect (the variable wins over the file): the field names the variable, and a review lists such
-  changes.
+  of it that had no effect (the variable wins over the file): the field names the variable (`AWS_PROFILE` and
+  `AWS_REGION` as filling it while the file leaves it unset), and a review lists such changes.
+- Saving from the console's Fields form rewrote the whole config file in alphabetical key order, so the review's diff
+  changed every line; it keeps the file's order (comments are still dropped, as the review says).
 - A local reasoning model's streamed answer (`astream`, the console's Ask page) failed with `QueryTimeoutError` after
   `search.model_timeout_seconds` while the model was still reasoning, though `ainvoke` answered: the reasoning
   stripper held every reasoning chunk (inline `<think>`, and Ollama's native thinking, whose chunks have no text)
@@ -307,7 +311,8 @@ Bugs present in 0.3.0.
   again.
 - `insert_documents` and `delete_documents` took an absolute directory given as `source_scope` as spelled, where a
   corpus run keys its records by its resolved directory: a path through a symlink opened a second scope and indexed
-  the corpus's documents again. Such a path is now resolved.
+  the corpus's documents again. Both now use the registry's spelling of the scope: as given, with other trailing or
+  doubled slashes, else, for a directory of this host, the stored scope naming it through a symlink.
 - `answer_match` read Japanese sums in 兆 (10^12) wrong: `一兆二千億円` as 200,000,000,000 and `3兆円` as 3. 兆 is a
   multiplier of the Japanese and Chinese profiles, as 億 is, where it can close an amount (`新台币3兆元`, `3兆美元`);
   before another Han or Latin letter it is the Chinese prefix mega (the new `LanguageProfile.prefix_multipliers`), so

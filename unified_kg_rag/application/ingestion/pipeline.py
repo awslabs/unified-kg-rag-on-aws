@@ -42,11 +42,11 @@ from unified_kg_rag.application.ingestion.cache_manager import (
     CacheManager,
 )
 from unified_kg_rag.application.ingestion.incremental import (
+    changes_source_scopes,
     close_attempts,
     open_attempts,
     other_source_scopes,
     record_item_failures,
-    resolved_source_scope,
     retired_scope_readings,
 )
 from unified_kg_rag.application.ingestion.namespace_lease import (
@@ -813,9 +813,11 @@ class DataIngestionPipeline:
             source_scope: The registry source scope the documents belong to
                 (``processing.document_parsing.source_scope`` for this run);
                 ``"api"`` by default. A directory corpus's scope is its
-                ``source_scope`` or its resolved directory: an absolute path
-                given here is resolved (symlinks followed) as a corpus run
-                resolves its directory.
+                ``source_scope`` as spelled, or its resolved directory. The
+                registry's spelling of the scope is used: the scope as
+                given, one spelled with other trailing or doubled slashes,
+                else, for a directory of this host, the stored scope naming
+                it once symlinks are followed (``changes_source_scopes``).
             pipeline_id: As for :meth:`run`; a new one by default.
 
         Returns:
@@ -845,9 +847,7 @@ class DataIngestionPipeline:
         repeated = sorted(name for name, count in counts.items() if count > 1)
         if repeated:
             raise ValueError(f"document ids given more than once: {repeated[:10]}")
-        return self._run_changes(
-            given, (), resolved_source_scope(source_scope), pipeline_id
-        )
+        return self._run_changes(given, (), source_scope, pipeline_id)
 
     def delete_documents(
         self,
@@ -883,28 +883,23 @@ class DataIngestionPipeline:
             # The id rule of insert_documents (a relative path).
             InputDocument(id=name, text="-")
         self._check_changes_run(source_scope)
-        source_scope = resolved_source_scope(source_scope)
         # Before the run takes the lease: the loading stage checks again
         # under it (detect_delta).
         namespace = config_registry_namespace(
             self.config.indexing, self.config.processing.document_parsing.index_value
         )
-        doc_ids = {
-            compute_doc_id(name, namespace, source_scope): name for name in names
-        }
         registry = self._doc_status
         if registry is None:
-            built = self.providers.build_doc_status()
-            try:
-                held = built.get_many(list(doc_ids))
-            finally:
-                close = getattr(built, "close", None)
+            registry = self.providers.build_doc_status()
+        try:
+            source_scope, doc_ids, gone, done = self._deletion_scope(
+                registry, names, namespace, source_scope, pipeline_id
+            )
+        finally:
+            if registry is not self._doc_status:
+                close = getattr(registry, "close", None)
                 if callable(close):
                     close()
-        else:
-            held = registry.get_many(list(doc_ids))
-        gone = [doc_id for doc_id in doc_ids if doc_id not in held]
-        done = self._deleted_by(pipeline_id, gone)
         if done:
             logger.info(
                 "%d of the documents to delete were deleted by the interrupted "
@@ -922,6 +917,46 @@ class DataIngestionPipeline:
                 f"and source scope {source_scope!r}: nothing was deleted"
             )
         return self._run_changes([], tuple(names), source_scope, pipeline_id)
+
+    def _deletion_scope(
+        self,
+        registry: DocStatusPort,
+        names: list[str],
+        namespace: str,
+        source_scope: str,
+        pipeline_id: str | None,
+    ) -> tuple[str, dict[str, str], list[str], set[str]]:
+        """The spelling of ``source_scope`` that holds the ``names`` to
+        delete, with their doc ids (to name), the ids the registry does not
+        hold and those of them the interrupted run ``pipeline_id`` deleted.
+
+        The scope as given is looked up first. When it does not hold every
+        name, so is each spelling of it the registry holds the namespace's
+        records under (``changes_source_scopes``: one a corpus run spelled
+        otherwise, or its directory through a symlink), and the one reaching
+        the most names is taken (the earliest on a tie)."""
+
+        def lookup(scope: str) -> tuple[str, dict[str, str], list[str], set[str]]:
+            doc_ids = {compute_doc_id(name, namespace, scope): name for name in names}
+            held = registry.get_many(list(doc_ids))
+            gone = [doc_id for doc_id in doc_ids if doc_id not in held]
+            return scope, doc_ids, gone, self._deleted_by(pipeline_id, gone)
+
+        best = lookup(source_scope)
+        if not best[2] or len(best[2]) == len(best[3]):
+            return best
+        stored = {
+            record.scope
+            for record in registry.list_namespace(namespace)
+            if record.scope is not None
+        }
+        for spelling in changes_source_scopes(source_scope, namespace, stored):
+            if spelling == source_scope:
+                continue
+            found = lookup(spelling)
+            if len(found[2]) - len(found[3]) < len(best[2]) - len(best[3]):
+                best = found
+        return best
 
     def _deleted_by(self, pipeline_id: str | None, doc_ids: list[str]) -> set[str]:
         """The ``doc_ids`` the saved delta of the run ``pipeline_id`` deletes

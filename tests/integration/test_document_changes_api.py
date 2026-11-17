@@ -722,3 +722,106 @@ def test_a_directory_scope_given_through_a_symlink_is_the_corpus_run_s(
 
     _ok(pipeline.delete_documents(["more.txt"], source_scope=str(link)))
     assert sorted(_records(providers)) == ["notes.txt"]
+
+
+def _scopes(providers: Any) -> set[str]:
+    return {
+        r.scope.partition("|")[2] for r in all_records(providers.build_doc_status())
+    }
+
+
+@pytest.mark.parametrize(
+    "spelling", ["trailing", "doubled", "dotdot", "symlink", "other_host_under_link"]
+)
+def test_an_explicit_corpus_scope_is_taken_as_the_corpus_run_spells_it(
+    setup, tmp_path: Path, spelling: str
+) -> None:
+    # A corpus run keys its records by processing.document_parsing.
+    # source_scope as spelled. The same string given to insert_documents and
+    # delete_documents names the same records: no second scope, no
+    # DocumentNotFoundError, whatever the directory resolves to here.
+    config, providers, pipeline = setup
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "notes.txt").write_text(_SUPPLY)
+    link = tmp_path / "link"
+    link.symlink_to(corpus, target_is_directory=True)
+    scope = {
+        "trailing": f"{corpus}/",
+        "doubled": str(corpus).replace("/corpus", "//corpus"),
+        "dotdot": f"{corpus}/../corpus",
+        "symlink": str(link),
+        "other_host_under_link": f"{link}/elsewhere",
+    }[spelling]
+    config.processing.document_parsing.source_scope = scope
+    _ok(pipeline.run(corpus))
+
+    _ok(
+        pipeline.insert_documents(
+            [{"id": "more.txt", "text": _STORAGE}], source_scope=scope
+        )
+    )
+    assert _scopes(providers) == {scope}
+    assert sorted(_records(providers)) == ["more.txt", "notes.txt"]
+
+    _ok(pipeline.delete_documents(["notes.txt"], source_scope=scope))
+    assert sorted(_records(providers)) == ["more.txt"]
+    assert _scopes(providers) == {scope}
+
+
+def test_another_spelling_of_a_path_of_another_host_is_compared_as_a_string(
+    setup, tmp_path: Path
+) -> None:
+    # A configured scope naming no directory here (the corpus another host
+    # syncs) is matched by its spelling alone: trailing and doubled slashes
+    # name the same records, with no filesystem to resolve it against.
+    config, providers, pipeline = setup
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "notes.txt").write_text(_SUPPLY)
+    scope = f"{tmp_path}/elsewhere"
+    config.processing.document_parsing.source_scope = scope
+    _ok(pipeline.run(corpus))
+
+    _ok(
+        pipeline.insert_documents(
+            [{"id": "more.txt", "text": _STORAGE}], source_scope=f"{scope}/"
+        )
+    )
+    assert _scopes(providers) == {scope}
+    _ok(
+        pipeline.delete_documents(
+            ["notes.txt"], source_scope=scope.replace("/elsewhere", "//elsewhere/")
+        )
+    )
+    assert sorted(_records(providers)) == ["more.txt"]
+
+
+@pytest.mark.parametrize("spelling", ["link", "link/", "resolved"])
+def test_a_record_inserted_through_a_symlink_by_0_3_0_stays_reachable(
+    setup, tmp_path: Path, spelling: str
+) -> None:
+    # 0.3.0's insert_documents keyed an absolute path as given: a record
+    # under a symlinked spelling is deleted by that spelling, another
+    # spelling of it, or the directory it resolves to.
+    config, providers, pipeline = setup
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(corpus, target_is_directory=True)
+    _ok(
+        pipeline._run_changes(
+            [InputDocument(id="old.txt", text=_STORAGE)], (), str(link), None
+        )
+    )
+    assert _scopes(providers) == {str(link)}
+    scope = {"link": str(link), "link/": f"{link}/", "resolved": str(corpus)}[spelling]
+
+    _ok(
+        pipeline.insert_documents(
+            [{"id": "new.txt", "text": _SUPPLY}], source_scope=scope
+        )
+    )
+    assert _scopes(providers) == {str(link)}
+    _ok(pipeline.delete_documents(["old.txt"], source_scope=scope))
+    assert sorted(_records(providers)) == ["new.txt"]

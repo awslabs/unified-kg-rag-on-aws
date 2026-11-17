@@ -655,6 +655,7 @@
   "settings.removeDeprecatedLabel": "Rimuovi {{key}}: il suo valore passa alle chiavi che la sostituiscono",
   "settings.removeRemovedLabel": "Rimuovi {{key}}",
   "settings.setByEnvironment": "impostata da {{variable}} (variabile d'ambiente, prevale sul file)",
+  "settings.setByEnvironmentFallback": "impostata da {{variable}} (variabile d'ambiente, finché il file non imposta questa chiave)",
   "settings.environmentOverridesTitle": "Impostate da una variabile d'ambiente",
   "settings.environmentOverridesHelp": "Una variabile d'ambiente imposta queste chiavi e il suo valore prevale su quello del file: la modifica non ha effetto finché la variabile è impostata nell'ambiente della console.",
   "settings.commentsDropped": "Salvare dai campi riscrive il file senza i suoi commenti. Modifica nella scheda YAML per mantenerli.",

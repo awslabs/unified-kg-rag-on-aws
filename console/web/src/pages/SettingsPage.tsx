@@ -13,6 +13,9 @@ interface DeprecatedKey {
   key: string;
   replacements: string[];
   conflicts?: string[];
+  /** Each replacement's value with the key moved into it (a mapping merged
+   * under the replacement's own entries), as the file loads. */
+  values?: Record<string, unknown>;
   message: string;
 }
 
@@ -42,6 +45,8 @@ interface ConfigView {
   /** The keys an environment variable sets (key -> variable): its value
    * wins over the file's. */
   environment_keys?: Record<string, string>;
+  /** The variables that only fill a key the file leaves unset. */
+  environment_fallbacks?: string[];
 }
 
 interface Preview {
@@ -416,10 +421,13 @@ function FieldEditor({
   const { t } = useI18n();
   const inFile = valueAt(data.data, field.path);
   const effective = valueAt(data.effective, field.path);
-  const current = change ? (change.unset ? undefined : change.value) : inFile;
   // A deprecated key the file sets loads into this field: the value in force
-  // is its value, not the default.
-  const feeder = inFile === undefined ? (data.deprecated_keys ?? []).find((d) => d.replacements.includes(field.path)) : undefined;
+  // is its value (merged under the field's own entries for a mapping), not
+  // the default or the field's entries alone, so the field starts from it and
+  // an edit saves what the file loads.
+  const feeder = (data.deprecated_keys ?? []).find((d) => d.replacements.includes(field.path));
+  const fromFile = feeder?.values && field.path in feeder.values ? feeder.values[field.path] : inFile;
+  const current = change ? (change.unset ? undefined : change.value) : fromFile;
   // An environment variable that sets this field, or a key of its mapping,
   // wins over the file.
   const variable = Object.entries(data.environment_keys ?? {}).find(([key]) => key === field.path || key.startsWith(`${field.path}.`))?.[1];
@@ -428,7 +436,7 @@ function FieldEditor({
   const id = `field-${field.path}`;
 
   const commit = (value: unknown) => {
-    if (JSON.stringify(value) === JSON.stringify(inFile)) setChange(null, field.path);
+    if (JSON.stringify(value) === JSON.stringify(fromFile)) setChange(null, field.path);
     else setChange({ path: field.path, value }, field.path);
   };
 
@@ -488,8 +496,8 @@ function FieldEditor({
       ) : null}
       {field.description ? <span className="field-help">{field.description}</span> : null}
       <span className="id">
-        {inFile !== undefined ? t("settings.inFile") : feeder ? t("settings.setByDeprecated", { key: feeder.key }) : t("settings.fromDefault")}
-        {variable ? ` · ${t("settings.setByEnvironment", { variable })}` : ""}
+        {[inFile !== undefined ? t("settings.inFile") : null, feeder ? t("settings.setByDeprecated", { key: feeder.key }) : null].filter(Boolean).join(" · ") || t("settings.fromDefault")}
+        {variable ? ` · ${t((data.environment_fallbacks ?? []).includes(variable) ? "settings.setByEnvironmentFallback" : "settings.setByEnvironment", { variable })}` : ""}
         {field.hasDefault ? ` · ${t("settings.default", { value: display(field.defaultValue) || "∅" })}` : ""}
         {inFile !== undefined && field.kind !== "secret" ? (
           <>

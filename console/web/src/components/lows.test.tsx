@@ -360,6 +360,7 @@ describe("the Settings page on load", () => {
     type: "object",
     properties: {
       retry: { type: "object", properties: { model_server: { type: "object", properties: { max_attempts: { type: "integer", default: 5, description: "Attempts" } } } } },
+      models: { type: "object", properties: { prices: { type: "object", additionalProperties: { type: "object" }, description: "Prices" } } },
     },
   };
   const deprecated = { key: "retry.model_server_max_attempts", replacements: ["retry.model_server.max_attempts"], conflicts: [] as string[], message: "Config key retry.model_server_max_attempts is deprecated" };
@@ -446,6 +447,34 @@ describe("the Settings page on load", () => {
     expect(sent).toEqual([{ changes: [{ path: "retry.model_server.max_attempts", value: 4 }] }]);
   });
 
+  it("starts a field both a deprecated key and the file set from their merged value (rv44)", async () => {
+    // models.prices and the deprecated evaluation.prices: the field showed
+    // the file's models.prices alone, and an edit dropped the other prices.
+    const price = { input_per_million_tokens: 1, output_per_million_tokens: 2 };
+    const merged = { "extra-model": price, m1: price };
+    const config = {
+      ...view([], { models: { prices: merged } }),
+      text: "",
+      data: { evaluation: { prices: { "extra-model": price } }, models: { prices: { m1: price } } },
+      deprecated_keys: [{ key: "evaluation.prices", replacements: ["models.prices"], conflicts: [], values: { "models.prices": merged }, message: "Config key evaluation.prices is deprecated" }],
+    };
+    const sent = serveReview(config, validPreview("models:\n  prices: {}\n"));
+    render(
+      <I18nProvider initial="en">
+        <SettingsPage onSaved={() => undefined} />
+      </I18nProvider>,
+    );
+    fireEvent.change(await screen.findByRole("searchbox"), { target: { value: "models.prices" } });
+    const input = await screen.findByDisplayValue(JSON.stringify(merged));
+    expect(screen.getByText(/in the file · set by evaluation\.prices \(deprecated\)/)).toBeInTheDocument();
+    const edited = { ...merged, m3: price };
+    fireEvent.change(input, { target: { value: JSON.stringify(edited) } });
+    fireEvent.blur(input);
+    fireEvent.click(screen.getByRole("button", { name: "Review changes" }));
+    expect(await screen.findByRole("button", { name: /Save/ })).toBeEnabled();
+    expect(sent).toEqual([{ changes: [{ path: "models.prices", value: edited }] }]);
+  });
+
   it("removes a deprecated key from its notice, then reviews it (rv43)", async () => {
     const sent = serveReview(view([deprecated], { retry: { model_server: { max_attempts: 2 } } }), validPreview("retry:\n  model_server:\n    max_attempts: 2\n"));
     render(
@@ -462,6 +491,19 @@ describe("the Settings page on load", () => {
     fireEvent.click(screen.getByRole("button", { name: "Review changes" }));
     expect(await screen.findByRole("button", { name: /Save/ })).toBeEnabled();
     expect(sent).toEqual([{ changes: [{ path: "retry.model_server_max_attempts", unset: true }] }]);
+  });
+
+  it("says a variable that only fills an unset key applies while the file leaves it unset (rv44)", async () => {
+    const config = { ...view([], { retry: { model_server: { max_attempts: 2 } } }), text: "", data: {}, environment_keys: { "retry.model_server.max_attempts": "AWS_FALLBACK" }, environment_fallbacks: ["AWS_FALLBACK"] };
+    serveReview(config, validPreview(""));
+    render(
+      <I18nProvider initial="en">
+        <SettingsPage onSaved={() => undefined} />
+      </I18nProvider>,
+    );
+    fireEvent.change(await screen.findByRole("searchbox"), { target: { value: "retry.model_server.max_attempts" } });
+    expect(await screen.findByText(/set by AWS_FALLBACK \(environment variable, while the file leaves this key unset\)/)).toBeInTheDocument();
+    expect(screen.queryByText(/wins over the file/)).not.toBeInTheDocument();
   });
 
   it("names the environment variable that sets a field, and warns an edit of it has no effect (rv43)", async () => {

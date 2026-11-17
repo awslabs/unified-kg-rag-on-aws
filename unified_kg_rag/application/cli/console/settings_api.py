@@ -11,6 +11,7 @@ should hold it instead, so the console never writes a credential to disk.
 
 from __future__ import annotations
 
+import copy
 import difflib
 import functools
 import hashlib
@@ -22,7 +23,12 @@ from typing import Any
 
 import yaml
 
-from unified_kg_rag.application.config import ConfigLoader, env_var, environment_keys
+from unified_kg_rag.application.config import (
+    AWS_ENV_FALLBACKS,
+    ConfigLoader,
+    env_var,
+    environment_keys,
+)
 from unified_kg_rag.domain.models import Config, Methodology
 from unified_kg_rag.domain.models.config import (
     REMOVED_KEYS,
@@ -286,12 +292,12 @@ def masked(data: Any) -> Any:
     """``data`` with every secret replaced by :data:`MASK`."""
     if not isinstance(data, dict):
         return data
-    copy = yaml.safe_load(yaml.safe_dump(data)) or {}
+    result: Any = copy.deepcopy(data)
     for pattern in secret_paths():
-        for path, value in list(_matches(copy, pattern)):
+        for path, value in list(_matches(result, pattern)):
             if value in (None, ""):
                 continue
-            target = copy
+            target = result
             for key in path[:-1]:
                 target = target[int(key)] if isinstance(target, list) else target[key]
             last = path[-1]
@@ -299,7 +305,7 @@ def masked(data: Any) -> Any:
                 target[int(last)] = MASK
             else:
                 target[last] = MASK
-    return copy
+    return result
 
 
 def _secret_error(paths: list[str]) -> SecretRefused:
@@ -382,15 +388,20 @@ def gone_keys(data: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     warning the loader logs (``message``), so the page words them in its
     language.
 
-    A deprecated key lists its ``replacements`` (the keys it loads into) and
+    A deprecated key lists its ``replacements`` (the keys it loads into),
     the ones ``data`` also sets to a different value (``conflicts``), which
-    fail the load until one of the two goes."""
+    fail the load until one of the two goes, and each replacement's value
+    once the key is retired into it (``values``, masked: a mapping merged
+    under the replacement's own entries, as the loader merges them). The
+    form starts a replacement's field from it, so an edit saves what the
+    file loads, not the replacement's own entries alone."""
     return {
         "deprecated_keys": [
             {
                 "key": old,
                 "replacements": list(deprecated_targets(old)),
                 "conflicts": conflicts,
+                "values": _retired_values(data, old),
                 "message": deprecated_key_warning(old),
             }
             for old, conflicts in deprecated_keys(data).items()
@@ -404,6 +415,20 @@ def gone_keys(data: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
             for path in removed_keys(data)
         ],
     }
+
+
+def _retired_values(data: dict[str, Any], old: str) -> dict[str, Any]:
+    """The value of each replacement of ``old`` once ``data`` retires it
+    (:func:`retire_deprecated_key`), masked."""
+    retired = masked(retire_deprecated_key(data, old))
+    values: dict[str, Any] = {}
+    for new in deprecated_targets(old):
+        node: Any = retired
+        for key in new.split("."):
+            node = node.get(key) if isinstance(node, dict) else None
+        if node is not None:
+            values[new] = node
+    return values
 
 
 def apply_changes(
@@ -421,7 +446,8 @@ def apply_changes(
     Raises:
         InvalidArgumentError: A malformed path.
     """
-    result = yaml.safe_load(yaml.safe_dump(data)) or {}
+    # A copy in the file's key order (a YAML round trip would sort it).
+    result = copy.deepcopy(data)
     for old in _retired(result, changes):
         result = retire_deprecated_key(result, old)
     for change in changes:
@@ -525,6 +551,9 @@ class SettingsFile:
             # variable sets (its value wins over the file's).
             **gone_keys(data),
             "environment_keys": environment_keys(data),
+            # The variables that only fill a key the file leaves unset (the
+            # AWS SDK's own), where the others win over the file.
+            "environment_fallbacks": sorted(AWS_ENV_FALLBACKS),
             "methodologies": [m.value for m in Methodology],
             "tracing_environment": {
                 name: name in os.environ for name in TRACING_VARIABLES

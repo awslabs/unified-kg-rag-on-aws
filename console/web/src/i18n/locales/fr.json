@@ -655,6 +655,7 @@
   "settings.removeDeprecatedLabel": "Supprimer {{key}} : sa valeur passe dans les clés qui la remplacent",
   "settings.removeRemovedLabel": "Supprimer {{key}}",
   "settings.setByEnvironment": "définie par {{variable}} (variable d'environnement, prime sur le fichier)",
+  "settings.setByEnvironmentFallback": "définie par {{variable}} (variable d'environnement, tant que le fichier ne définit pas cette clé)",
   "settings.environmentOverridesTitle": "Définies par une variable d'environnement",
   "settings.environmentOverridesHelp": "Une variable d'environnement définit ces clés et sa valeur prime sur celle du fichier : la modification est sans effet tant que la variable est définie dans l'environnement de la console.",
   "settings.commentsDropped": "Enregistrer depuis les champs réécrit le fichier sans ses commentaires. Modifiez l’onglet YAML pour les conserver.",

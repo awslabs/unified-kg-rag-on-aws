@@ -62,6 +62,7 @@ from unified_kg_rag.domain.ingestion.delta_detector import (
     registry_scope,
     retired_scope_groups,
     scope_namespace,
+    stored_source_scopes,
 )
 from unified_kg_rag.domain.ingestion.derivation import with_entity_ids
 from unified_kg_rag.domain.ingestion.document_identity import (
@@ -1468,18 +1469,50 @@ def run_registry_scope(
     )
 
 
-def resolved_source_scope(source_scope: str) -> str:
-    """``source_scope`` as a corpus run keys its records: an absolute
-    directory path resolved (symlinks followed, as the run resolves its
-    source directory, see :func:`run_registry_scope`), anything else (a
-    name, a URI) as given."""
-    if (
-        isinstance(source_scope, str)
-        and is_local_path_scope(source_scope)
-        and Path(source_scope).is_absolute()
-    ):
-        return Path(source_scope).resolve().as_posix()
-    return source_scope
+def changes_source_scopes(
+    source_scope: str, namespace: str, stored_scopes: Iterable[str]
+) -> list[str]:
+    """The spellings of ``source_scope`` a run of document changes
+    (``insert_documents``, ``delete_documents``) may mean, in the order it
+    picks one: the stored spellings of :func:`stored_source_scopes` (the
+    scope as given first, as a corpus run with
+    ``processing.document_parsing.source_scope`` keys its records). Only
+    when the registry holds none, and ``source_scope`` is a directory of
+    this host, the stored local scopes naming that directory once symlinks
+    are followed: a corpus run with the default scope keys its records by
+    its resolved source directory, and 0.3.0's ``insert_documents`` by the
+    path as given.
+
+    So the filesystem is read only for that fallback, and a path of another
+    host is compared as a string.
+    """
+    spellings = stored_source_scopes(source_scope, namespace, stored_scopes)
+    if spellings:
+        return spellings
+    directory = _existing_directory(source_scope)
+    if directory is None:
+        return []
+    prefix = f"{namespace}|"
+    return sorted(
+        source
+        for stored in set(stored_scopes)
+        if stored.startswith(prefix)
+        for source in [stored[len(prefix) :]]
+        if _existing_directory(source) == directory
+    )
+
+
+def _existing_directory(source_scope: str) -> Path | None:
+    """The directory of this host a local absolute ``source_scope`` names,
+    symlinks followed; None for a URI, a name, or a path that is no
+    directory here."""
+    if not is_local_path_scope(source_scope) or not Path(source_scope).is_absolute():
+        return None
+    try:
+        directory = Path(source_scope).resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None
+    return directory if directory.is_dir() else None
 
 
 def _same_failure(
@@ -2089,18 +2122,25 @@ def filter_to_delta(
             "(providers.doc_status.enabled: false) to "
             "run without it."
         ) from e
-    stored_spelling = _stored_spelling(source_scope, namespace, scope, delta)
+    stored_spelling = _stored_spelling(
+        source_scope, namespace, delta, changes is not None
+    )
     if stored_spelling is not None:
         # The corpus was indexed under another spelling of its source (an
-        # s3:// URI with or without a trailing slash): diffing under this
-        # one would index every document again beside the stored copies and
+        # s3:// URI with or without a trailing slash; for a run of changes,
+        # also its directory through a symlink): diffing under this one
+        # would index every document again beside the stored copies and
         # never delete those. Key the run by the stored spelling instead.
         logger.warning(
             "The registry holds this corpus under the source scope %r, another "
-            "spelling of %r; using the stored spelling (set "
-            "processing.document_parsing.source_scope to it to skip this check)",
+            "spelling of %r; using the stored spelling (%s to skip this check)",
             stored_spelling,
             source_scope,
+            (
+                "pass it as source_scope"
+                if changes is not None
+                else "set processing.document_parsing.source_scope to it"
+            ),
         )
         respelled = config.updated(
             {"processing.document_parsing.source_scope": stored_spelling}
@@ -2633,23 +2673,19 @@ def delta_still_applies(
 
 
 def _stored_spelling(
-    source_scope: str, namespace: str, scope: str, delta: DocumentDelta
+    source_scope: str,
+    namespace: str,
+    delta: DocumentDelta,
+    changes: bool,
 ) -> str | None:
     """Another spelling of ``source_scope`` the registry holds this
-    namespace's records under, when it holds none under ``scope`` itself
-    (see :func:`normalize_source_scope`)."""
-    if scope in delta.stored_scopes:
-        return None
-    prefix = f"{namespace}|"
-    own = normalize_source_scope(source_scope)
-    spellings = sorted(
-        stored[len(prefix) :]
-        for stored in delta.stored_scopes
-        if stored.startswith(prefix)
-        and stored[len(prefix) :] != source_scope
-        and normalize_source_scope(stored[len(prefix) :]) == own
+    namespace's records under, when it holds none under ``source_scope``
+    itself (see :func:`stored_source_scopes`; for a run of document
+    changes, :func:`changes_source_scopes`)."""
+    spellings = (changes_source_scopes if changes else stored_source_scopes)(
+        source_scope, namespace, delta.stored_scopes
     )
-    return spellings[0] if spellings else None
+    return spellings[0] if spellings and spellings[0] != source_scope else None
 
 
 def _warn_about_other_local_scopes(

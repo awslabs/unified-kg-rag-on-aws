@@ -224,6 +224,35 @@ def registry_scope(namespace: str, source_scope: str) -> str:
     return f"{namespace}|{source_scope}"
 
 
+def stored_source_scopes(
+    source_scope: str, namespace: str, stored_scopes: Iterable[str]
+) -> list[str]:
+    """The spellings of ``source_scope`` the registry holds ``namespace``'s
+    records under, in the order a run picks one: ``source_scope`` itself,
+    then (sorted) every other stored source scope
+    :func:`normalize_source_scope` reads as the same.
+
+    ``stored_scopes`` are registry scopes (``DocumentDelta.stored_scopes``,
+    or the records' scopes). Only the strings are compared: a run of
+    ``source_scope`` keys its documents by the first spelling, so a scope
+    spelled another way than its corpus run spelled it (a trailing or
+    doubled slash) reaches the same records.
+    """
+    prefix = f"{namespace}|"
+    held = {
+        stored[len(prefix) :] for stored in stored_scopes if stored.startswith(prefix)
+    }
+    own = normalize_source_scope(source_scope)
+    return [
+        *([source_scope] if source_scope in held else []),
+        *sorted(
+            source
+            for source in held
+            if source != source_scope and normalize_source_scope(source) == own
+        ),
+    ]
+
+
 def scope_namespace(scope: str | None) -> str | None:
     """The index namespace of a :func:`registry_scope`.
 

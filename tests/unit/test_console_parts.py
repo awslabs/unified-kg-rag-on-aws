@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from pathlib import Path
 
 import pytest
@@ -197,6 +198,26 @@ def test_changes_set_and_unset_keys(tmp_path: Path) -> None:
         settings_api.apply_changes(data, [{"path": "a..b;rm", "value": 1}])
 
 
+def test_saving_from_fields_keeps_the_file_s_key_order(tmp_path: Path) -> None:
+    """The form's changes were applied to a copy made through a sorted YAML
+    dump: the saved file had every key in alphabetical order, and the diff
+    rewrote every line (rv44). Comments are still lost (the review says so)."""
+    path = tmp_path / "config.yaml"
+    text = "search:\n  top_k: 3\n  rerank_top_k: 2\nlogging:\n  level: INFO\n"
+    path.write_text(text)
+    preview = settings_api.SettingsFile(path).preview(
+        text=None,
+        changes=[
+            {"path": "logging.level", "value": "DEBUG"},
+            {"path": "indexing.batch_size", "value": 8},
+        ],
+    )
+    assert preview["text"] == (
+        "search:\n  top_k: 3\n  rerank_top_k: 2\nlogging:\n  level: DEBUG\n"
+        "indexing:\n  batch_size: 8\n"
+    )
+
+
 def test_a_preview_validates_like_a_run(tmp_path: Path) -> None:
     path = tmp_path / "config.yaml"
     path.write_text("# my comment\nsearch:\n  reranking:\n    enabled: true\n")
@@ -293,6 +314,7 @@ def test_the_settings_view_names_deprecated_keys_on_load(tmp_path: Path) -> None
             "key": "retry.model_server_max_attempts",
             "replacements": ["retry.model_server.max_attempts"],
             "conflicts": [],
+            "values": {"retry.model_server.max_attempts": 2},
             "message": settings_api.deprecated_key_warning(
                 "retry.model_server_max_attempts"
             ),
@@ -430,6 +452,26 @@ def test_the_settings_view_names_the_keys_the_environment_sets(
     ]
 
 
+def test_the_settings_view_tells_a_variable_that_only_fills_an_unset_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AWS_REGION sets aws.region_name only while the file leaves it unset,
+    but the field read "wins over the file" (rv44): the view names the
+    variables that only fill a key, for the form to say so."""
+    monkeypatch.setenv("AWS_REGION", "us-west-2")
+    path = tmp_path / "config.yaml"
+    path.write_text("logging:\n  level: INFO\n")
+    view = settings_api.SettingsFile(path).view()
+    assert view["environment_keys"]["aws.region_name"] == "AWS_REGION"
+    assert "AWS_REGION" in view["environment_fallbacks"]
+    assert not any(v.startswith("UKR__") for v in view["environment_fallbacks"])
+    path.write_text("aws:\n  region_name: eu-west-1\n")
+    assert (
+        "aws.region_name"
+        not in settings_api.SettingsFile(path).view()["environment_keys"]
+    )
+
+
 def test_editing_a_price_keeps_the_deprecated_prices() -> None:
     """A mapping: the edit joins the deprecated key's entries."""
     data = {
@@ -462,6 +504,54 @@ def test_editing_a_price_keeps_the_deprecated_prices() -> None:
     # An unrelated edit keeps the deprecated key.
     kept = settings_api.apply_changes(data, [{"path": "search.top_k", "value": 5}])
     assert kept["evaluation"] == data["evaluation"]
+
+
+def test_a_price_field_both_price_keys_set_starts_from_their_merged_prices(
+    tmp_path: Path,
+) -> None:
+    """With models.prices and the deprecated evaluation.prices both set,
+    the field showed the file's models.prices alone, and a save of an edit
+    of it dropped the evaluation.prices entries the load had merged (rv44).
+    The view gives each replacement's value with the deprecated key moved
+    into it, which the form starts the field from."""
+    import yaml
+
+    price = {"input_per_million_tokens": 1, "output_per_million_tokens": 2}
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "evaluation": {"prices": {"extra-model": price, "m1": price}},
+                "models": {"prices": {"m1": {**price, "input_per_million_tokens": 5}}},
+            }
+        )
+    )
+    file = settings_api.SettingsFile(path)
+    view = file.view()
+    merged = view["effective"]["models"]["prices"]
+    assert set(merged) == {"extra-model", "m1"}
+    (deprecated,) = view["deprecated_keys"]
+    assert deprecated["values"] == {
+        "models.prices": {
+            "extra-model": price,
+            "m1": {**price, "input_per_million_tokens": 5},
+        }
+    }
+    # The form's edit: the merged map plus a new entry.
+    edited = {**deprecated["values"]["models.prices"], "m3": price}
+    preview = file.preview(
+        text=None, changes=[{"path": "models.prices", "value": edited}]
+    )
+    assert preview["valid"], preview["errors"]
+    saved = yaml.safe_load(preview["text"])
+    assert "evaluation" not in saved
+    assert set(saved["models"]["prices"]) == {"extra-model", "m1", "m3"}
+    file.save(text=preview["text"], base_sha=view["sha"])
+    assert set(file.view()["effective"]["models"]["prices"]) == {
+        "extra-model",
+        "m1",
+        "m3",
+    }
 
 
 def test_moving_a_served_directory_is_saved_only_when_confirmed(
@@ -1080,6 +1170,29 @@ def test_consoles_opening_an_older_store_at_once_each_open_it(
     assert failures == []
 
 
+@pytest.mark.timeout(60)
+def test_a_console_opens_a_current_store_another_connection_is_reading(
+    tmp_path: Path,
+) -> None:
+    """The open took the write lock to check for missing columns even when
+    none was missing: while another connection held a read transaction its
+    commit waited and failed after 5 s, "database is locked" (rv44)."""
+    import sqlite3
+
+    path = tmp_path / "console.sqlite3"
+    ConsoleStore(path).close()
+    reader = sqlite3.connect(path)
+    reader.execute("BEGIN")
+    reader.execute("SELECT COUNT(*) FROM queries").fetchone()
+    try:
+        started = time.monotonic()
+        ConsoleStore(path).close()
+        assert time.monotonic() - started < 2
+    finally:
+        reader.rollback()
+        reader.close()
+
+
 def test_a_decline_at_a_query_limit_is_counted_apart_from_the_decline_rate(
     tmp_path: Path,
 ) -> None:
@@ -1123,7 +1236,9 @@ def test_a_decline_at_a_query_limit_is_counted_apart_from_the_decline_rate(
     summary = dashboard.summarize(queries, [], Config())
     totals = summary["totals"]
     # Of the old answer, the answer and the corpus decline: one in three.
-    assert totals["limited"] == 2 and totals["abstained"] == 3
+    # The declines are the corpus's, in the totals as per strategy (the
+    # totals counted the limit's too, 3 beside the row's 1, rv44).
+    assert totals["limited"] == 2 and totals["abstained"] == 1
     assert totals["decline_rate"] == pytest.approx(1 / 3)
     # Per strategy too: its declines are the corpus's, the limit's apart
     # (the row counted 3 beside a total that left the 2 out, rv43).

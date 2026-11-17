@@ -308,20 +308,22 @@ key's value into each replacement the file does not set and drops the key,
 so nothing in force changes. Fields come from the
 configuration's schema with each key's description as help, its default
 and whether the file sets it, or a deprecated key the file sets loads into
-it (set by that key, showing the value in force); find one by key or
-description. Editing a field a deprecated key sets replaces that key the
+it (set by that key, showing the value in force: a mapping the file sets
+too, such as `models.prices` beside `evaluation.prices`, shows both
+merged); find one by key or description. Editing a field a deprecated key sets replaces that key the
 same way: the saved file holds only the new keys. A field a `UKR__`
 environment variable of the console sets names the variable: its value
 wins over the file's, so the review lists a change to it as one that has
-no effect while the variable is set. Changes
+no effect while the variable is set (`AWS_PROFILE` and `AWS_REGION` fill
+their key only while the file leaves it unset, and the field says so). Changes
 collect on the right; Review checks them as a run would load the file
 (unknown keys and the `UKR__` environment included) and shows the diff of
 the file, its errors and warnings, and each deprecated key the file sets
 (loaded into its replacement, with the loader's warning: set the
 replacement instead) or removed key (ignored, with the reason); a moved key
 is an error naming its replacement. Save writes it, refused if the file
-changed on disk meanwhile. Saving from fields rewrites the YAML without its
-comments (the review says so); the YAML tab keeps them. A change to where
+changed on disk meanwhile. Saving from fields rewrites the YAML in its key order
+but without its comments (the review says so); the YAML tab keeps them. A change to where
 a provider sends its requests (`providers.*.base_url`,
 `aws.neptune.endpoint`, `aws.opensearch.endpoint`, their ports) is listed in
 the review and saved only once confirmed there: the requests carry the
