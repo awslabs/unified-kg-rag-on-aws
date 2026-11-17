@@ -6,6 +6,7 @@ extra (these run on a core install too)."""
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -348,5 +349,7 @@ def test_the_query_tools_pass_a_callers_limits_through(
 
     answer_schema, search_schema, refused = asyncio.run(run())
     assert "limits" in answer_schema and "limits" in search_schema
+    # The schema text names the commonest outcome of a limit too (rv48).
+    assert "query_limit" in json.dumps(answer_schema["limits"])
     assert refused
     assert [i.limits for i in chain.inputs] == [QueryLimits(**limits)] * 2

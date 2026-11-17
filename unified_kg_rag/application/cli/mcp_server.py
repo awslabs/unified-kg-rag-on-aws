@@ -475,8 +475,10 @@ def build_mcp_server(
                         "Lower this call's limits: deadline_seconds, "
                         "max_model_calls, max_input_tokens (the server's own "
                         "are the ceiling; a call past one fails with "
-                        "limit_exceeded, or the answer is given without the "
-                        "steps that did not fit, listed in degraded)"
+                        "limit_exceeded, or the steps that did not fit are "
+                        "left out, listed in degraded; kg_answer abstains, "
+                        "abstention_reason query_limit, when the answer "
+                        "call itself does not fit)"
                     )
                 ),
             ],
