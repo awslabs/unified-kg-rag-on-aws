@@ -521,7 +521,9 @@ function FieldEditor({
         {[inFile !== undefined ? t("settings.inFile") : null, feeder ? t("settings.setByDeprecated", { key: feeder.key }) : null].filter(Boolean).join(" · ") || t("settings.fromDefault")}
         {variable ? ` · ${t((data.environment_fallbacks ?? []).includes(variable) ? "settings.setByEnvironmentFallback" : "settings.setByEnvironment", { variable })}` : ""}
         {field.hasDefault ? ` · ${t("settings.default", { value: display(field.defaultValue) || "∅" })}` : ""}
-        {inFile !== undefined && field.kind !== "secret" ? (
+        {/* A field only a deprecated key feeds is reset too: the server
+            retires the key, else its value stayed in force. */}
+        {(inFile !== undefined || feeder) && field.kind !== "secret" ? (
           <>
             {" · "}
             <button className="link-button" onClick={() => setChange({ path: field.path, unset: true }, field.path)}>
