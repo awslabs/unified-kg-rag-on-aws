@@ -490,8 +490,11 @@ every write and check that the next run converges to a fresh full build.
   slash; for a run of changes also its directory through a symlink), else
   the scope as given. Deduplication's preferences and the parses skipped
   for unchanged files look up under it too, not only the diff: under
-  another spelling an indexed copy would read as new. Changing either rule
-  requires a re-index.
+  another spelling an indexed copy would read as new. The first lookup that
+  finds nothing under the scope as given reads the namespace's stored scopes,
+  and the run keeps them (`PipelineContext.registry_stored_scopes`), so they
+  are read at most once a run and the diff is keyed by the stored spelling
+  at once. Changing either rule requires a re-index.
 - **Derived content** (`domain/ingestion/derivation.py`). The merge and the
   strip keep each touched item's structure (id, text units, per-unit
   weights); its content is then derived from the records of the text units it

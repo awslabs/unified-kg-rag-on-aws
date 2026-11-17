@@ -434,6 +434,30 @@ def test_editing_a_field_a_deprecated_key_sets_saves_only_new_keys(
     assert {name: retry[name]["max_attempts"] for name in in_force} == in_force
 
 
+def test_using_the_default_on_a_mapping_only_a_deprecated_key_sets(
+    tmp_path: Path,
+) -> None:
+    """The form offers "Use the default" on a field only a deprecated key
+    feeds (rv49): the reset retires the key, so the saved file sets
+    neither and the field takes its default."""
+    import yaml
+
+    price = {"input_per_million_tokens": 1.0, "output_per_million_tokens": 2.0}
+    text = yaml.safe_dump({"evaluation": {"prices": {"m1": price}}})
+    path = tmp_path / "config.yaml"
+    path.write_text(text)
+    file = settings_api.SettingsFile(path)
+    assert set(file.view()["effective"]["models"]["prices"]) == {"m1"}
+    preview = file.preview(
+        text=None, changes=[{"path": "models.prices", "unset": True}]
+    )
+    assert preview["valid"], preview["errors"]
+    assert preview["deprecated_keys"] == []
+    assert yaml.safe_load(preview["text"]) in (None, {})
+    file.save(text=preview["text"], base_sha=settings_api.digest(text))
+    assert file.view()["effective"]["models"]["prices"] == {}
+
+
 def test_the_settings_view_names_the_keys_the_environment_sets(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

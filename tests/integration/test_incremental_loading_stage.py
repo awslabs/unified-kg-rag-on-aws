@@ -36,6 +36,7 @@ class _Ctx:
     incremental_fingerprints: dict[str, str] = {}
     documents: list[Document] = []
     incremental_scope: str | None = None
+    registry_stored_scopes: list[str] | None = None
     failed_source_files: list[str] = []
     skipped_source_files: list[str] = []
     pipeline_id = "pipeline"

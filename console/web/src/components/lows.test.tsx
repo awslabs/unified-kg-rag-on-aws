@@ -480,6 +480,24 @@ describe("the Settings page on load", () => {
     expect(sent).toEqual([{ changes: [{ path: "models.prices", value: edited }] }]);
   });
 
+  it("offers the default on a field only a deprecated key sets (rv49)", async () => {
+    // The file sets only retry.model_server_max_attempts: the field had no
+    // "Use the default", so its value stayed the deprecated key's.
+    const sent = serveReview(view([deprecated], { retry: { model_server: { max_attempts: 2 } } }), validPreview("{}\n"));
+    render(
+      <I18nProvider initial="en">
+        <SettingsPage onSaved={() => undefined} />
+      </I18nProvider>,
+    );
+    fireEvent.change(await screen.findByRole("searchbox"), { target: { value: "retry.model_server.max_attempts" } });
+    await screen.findByDisplayValue("2");
+    fireEvent.click(screen.getByRole("button", { name: "Use the default" }));
+    fireEvent.click(screen.getByRole("button", { name: "Review changes" }));
+    expect(await screen.findByRole("button", { name: /Save/ })).toBeEnabled();
+    // The server retires the deprecated key the reset field is fed by.
+    expect(sent).toEqual([{ changes: [{ path: "retry.model_server.max_attempts", unset: true }] }]);
+  });
+
   it("removes a deprecated key from its notice, then reviews it (rv43)", async () => {
     const sent = serveReview(view([deprecated], { retry: { model_server: { max_attempts: 2 } } }), validPreview("retry:\n  model_server:\n    max_attempts: 2\n"));
     render(

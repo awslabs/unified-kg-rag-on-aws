@@ -631,6 +631,16 @@ class PipelineContext(BaseModel):
         "scopes missing here. None when unknown: a context saved before this "
         "field existed.",
     )
+    registry_stored_scopes: list[str] | None = Field(
+        default=None,
+        exclude=True,
+        description="The registry scopes of the run's index namespace, read "
+        "by the first lookup of the run that needs them (one under the source "
+        "scope as given found nothing: the registry may hold it spelled "
+        "another way) and reused by every later lookup, so the namespace is "
+        "read for them once. None until read. Not kept in the run metadata: "
+        "a resumed run reads them again.",
+    )
     failed_source_files: list[str] = Field(
         default_factory=list,
         description="Corpus files that failed to parse or load this run. "
