@@ -1028,8 +1028,13 @@ class IngestionPipelineRunner:
             "Output tokens",
             "USD",
         ):
+            # The text columns fold rather than cut: at 80 columns (a pipe, a
+            # CI log) a cut model id no longer says which model a row bills.
+            text = column in ("Stage", "Model")
             table.add_column(
-                column, justify="left" if column in ("Stage", "Model") else "right"
+                column,
+                justify="left" if text else "right",
+                overflow="fold" if text else "ellipsis",
             )
         for stage in estimate.stages:
             bound = "" if stage.bound == "exact" else f" ({stage.bound})"
