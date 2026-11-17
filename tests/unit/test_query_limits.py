@@ -1108,6 +1108,16 @@ def test_auto_without_a_router_call_still_checks_the_call_limit() -> None:
         )
     (entry,) = ledger.entries
     assert entry.reason == "query_limit: no router call, routed to 'global'"
+    # A loose call limit several strategies fit beside a router call: still
+    # no room for the router's input, so one route, not all three (rv48).
+    limits = usage.UsageLimits(max_input_tokens=small, max_llm_calls=50)
+    with usage.usage_scope(limits), degradation_scope() as ledger:
+        assert chain._routes_within_limits(candidates, _UNPROCESSED) == (
+            (SearchStrategy.DRIFT,),
+            ["global", "naive"],
+        )
+    (entry,) = ledger.entries
+    assert entry.reason == "query_limit: no router call, routed to 'drift'"
     limits = usage.UsageLimits(max_input_tokens=small, max_llm_calls=1)
     with usage.usage_scope(limits):
         with pytest.raises(UsageLimitExceededError, match="needs at least"):
