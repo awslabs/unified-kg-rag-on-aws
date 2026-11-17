@@ -35,6 +35,7 @@ from unified_kg_rag.application.ingestion.estimate import estimate_ingestion
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
 from unified_kg_rag.domain.models import (
     Config,
+    ModelRole,
     PipelineConfig,
     PipelineStageStatus,
     PipelineStageType,
@@ -425,6 +426,26 @@ def test_gleaning_and_translation_count_as_upper_bounds(tmp_path: Path) -> None:
     # labelled exact at the English text's tokens.
     assert rows["graph_extraction"].bound == "about"
     assert rows["gleaning"].bound == "about"
+
+
+def test_the_estimate_counts_the_stages_their_budget_says_call_a_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # rv48: the estimate re-derived which stages call a model beside
+    # STAGE_MODEL_ROLES, which a run's budget prices by; it reads that.
+    from unified_kg_rag.domain.ingestion import estimate as domain_estimate
+
+    config = _config()
+    config.processing.claim_extraction.enabled = True
+    corpus = _corpus(tmp_path)
+    counted = {row.stage for row in estimate_ingestion(config, corpus).stages}
+    assert {"gleaning", "claim_extraction"} <= counted
+    never = ((ModelRole.GLEANING, lambda c: False),)
+    monkeypatch.setitem(
+        domain_estimate.STAGE_MODEL_ROLES, PipelineStageType.GLEANING, never
+    )
+    counted = {row.stage for row in estimate_ingestion(config, corpus).stages}
+    assert "gleaning" not in counted and "claim_extraction" in counted
 
 
 def test_the_extraction_is_exact_when_the_index_language_is_the_sources(

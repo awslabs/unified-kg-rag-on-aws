@@ -41,6 +41,7 @@ from unified_kg_rag.domain.ingestion.estimate import (
     StageCalls,
     graph_dependent_calls,
     price_stages,
+    stage_calls_model,
 )
 from unified_kg_rag.domain.ingestion.methodologies import selected_stages
 from unified_kg_rag.domain.ingestion.seed_graph import is_seed_document
@@ -127,10 +128,12 @@ def estimate_ingestion(
     unit_tokens = [estimate_token_count(unit.text) for unit in units]
     selected = selected_stages(config)
     stages = [s for s in selected if s in stages] if stages is not None else selected
+    # The stages of the run that call a model under config.
+    calling = {stage for stage in stages if stage_calls_model(config, stage)}
     processing = config.processing
     rows: list[StageCalls] = []
     translation = processing.translation
-    translates = translation.enabled and not translation.is_noop
+    translates = stage_calls_model(config, _S.TRANSLATION)
     # What the extraction reads: the unit's translation into the index
     # language when it is another (get_text_for_processing).
     reads_translation = translates and index_language(config) != (
@@ -162,7 +165,7 @@ def estimate_ingestion(
             )
         )
 
-    if intelligent and _S.TEXT_CHUNKING in stages:
+    if _S.TEXT_CHUNKING in calling:
         assert isinstance(chunker, PreChunker)
         asked = [
             pre
@@ -184,7 +187,7 @@ def estimate_ingestion(
                 bound="exact",
             )
         )
-    if _S.TRANSLATION in stages and translates:
+    if _S.TRANSLATION in calling:
         languages = len(
             [
                 code
@@ -200,14 +203,14 @@ def estimate_ingestion(
             bound="at most",
         )
     extraction_overhead = _prompt_tokens(GraphExtractionPrompt, config)
-    if _S.GRAPH_EXTRACTION in stages:
+    if _S.GRAPH_EXTRACTION in calling:
         per_unit(
             _S.GRAPH_EXTRACTION,
             ModelRole.GRAPH_EXTRACTION,
             GraphExtractionPrompt,
             translated=True,
         )
-    if _S.GLEANING in stages and processing.gleaning.enabled:
+    if _S.GLEANING in calling:
         # A round reads the unit's extraction (about the extraction's
         # output) beside the text.
         extraction_output = round(
@@ -223,7 +226,7 @@ def estimate_ingestion(
             bound="at most",
             translated=True,
         )
-    if _S.CLAIM_EXTRACTION in stages and processing.claim_extraction.enabled:
+    if _S.CLAIM_EXTRACTION in calling:
         # A unit whose extraction names no entity is not asked.
         per_unit(
             _S.CLAIM_EXTRACTION,

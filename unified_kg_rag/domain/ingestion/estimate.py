@@ -127,6 +127,12 @@ STAGE_MODEL_ROLES: dict[
 }
 
 
+def stage_calls_model(config: Config, stage: PipelineStageType) -> bool:
+    """Whether a run of ``stage`` under ``config`` calls a model
+    (:data:`STAGE_MODEL_ROLES`)."""
+    return any(calls(config) for _, calls in STAGE_MODEL_ROLES.get(stage, ()))
+
+
 def run_model_roles(
     config: Config, stages: Collection[PipelineStageType]
 ) -> list[ModelRole]:
