@@ -33,6 +33,9 @@ DEMO = REPO_ROOT / "console" / "demo"
 
 # Every methodology, so all twelve strategies have their artifacts.
 ALL_METHODOLOGIES = ["graphrag", "lightrag", "hipporag", "raptor"]
+# The workspace's retry.model / retry.model_server attempts (the first
+# included).
+RETRY_ATTEMPTS = 3
 
 # The demo corpus' entities (console/demo/fake_models.py ENTITIES), so the
 # fake extractor finds them in the synthetic documents too.
@@ -125,7 +128,11 @@ def write_workspace(
     # faults retries absorb: 429, 503, dropped connections), with a short
     # backoff so a run under faults takes seconds, not minutes.
     # Ingestion items keep their own backoff (retry.ingestion_item).
-    fast = {"max_attempts": 3, "base_delay_seconds": 0.2, "max_delay_seconds": 2.0}
+    fast = {
+        "max_attempts": RETRY_ATTEMPTS,
+        "base_delay_seconds": 0.2,
+        "max_delay_seconds": 2.0,
+    }
     config["retry"] = {
         "model": dict(fast),
         "model_server": dict(fast),

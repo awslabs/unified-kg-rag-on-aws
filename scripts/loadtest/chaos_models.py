@@ -11,10 +11,15 @@ throttling, 500, 503). A streamed ``/api/chat`` answer may start with
 ``reasoning_chunks`` reasoning chunks (Ollama's ``thinking`` field, no
 answer text) and lose its connection mid-stream: after its reasoning,
 before any answer text (``reasoning_drop_rate``), or after its first
-answer chunk (``answer_drop_rate``). The knobs change at run time:
+answer chunk (``answer_drop_rate``). ``reasoning_drops_per_body`` (0: no
+cap) caps how many times the reasoning of one request body (a call and its
+retries send the same) is dropped, so a client that retries a call that
+many times plus one always gets an answer. The knobs change at run time:
 ``POST /chaos {"error_rate": 0.3}`` answers the knobs now in force, and
-``GET /stats`` the request counts, the faults injected and the requests in
-flight.
+``GET /stats`` the request counts, the faults injected, the requests in
+flight and the client connections open (``connections``, the stats
+request's own included): the query clients keep no idle connection, so one
+open after a run is a response its client left unclosed.
 
 Usage::
 
@@ -25,6 +30,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import hashlib
 import http.client
 import json
 import random
@@ -50,6 +56,7 @@ KNOBS: dict[str, float] = {
     "reasoning_chunks": 0.0,
     "reasoning_drop_rate": 0.0,
     "answer_drop_rate": 0.0,
+    "reasoning_drops_per_body": 0.0,
 }
 # The mid-stream faults of a streamed chat answer, in draw order.
 STREAM_FAULTS = ("reasoning_drop", "answer_drop")
@@ -74,11 +81,17 @@ class Chaos:
                 "answer_drops",
                 "inflight",
                 "max_inflight",
+                "connections",
             ),
             0,
         )
         self.lock = threading.Lock()
         self.rng = random.Random(seed)
+        # Reasoning drops per request body (its digest), for the cap. Never
+        # reset by a body served in full: concurrent queries can send the
+        # same body (a repeated question), and one served would reset the
+        # count of another still retrying.
+        self.body_drops: dict[str, int] = {}
 
     def update(self, changes: dict[str, Any]) -> dict[str, float]:
         """Apply the known knobs of ``changes``; an unknown one is refused."""
@@ -115,10 +128,12 @@ class Chaos:
                 wait += k["hang_seconds"]
             return wait, fault
 
-    def stream_fault(self) -> str | None:
-        """Draw a streamed answer's mid-stream fault (``"reasoning_drop"``,
-        ``"answer_drop"`` or None); no draw while both rates are 0, so the
-        other faults' draws stay as without these knobs."""
+    def stream_fault(self, body: bytes = b"") -> str | None:
+        """Draw the mid-stream fault (``"reasoning_drop"``, ``"answer_drop"``
+        or None) of a streamed answer to ``body``; no draw while both rates
+        are 0, so the other faults' draws stay as without these knobs. A
+        reasoning drop past ``reasoning_drops_per_body`` for ``body`` is
+        none (the draw still made, so the later ones stay the same)."""
         with self.lock:
             rates = [self.knobs[f"{name}_rate"] for name in STREAM_FAULTS]
             if not any(rates):
@@ -126,9 +141,21 @@ class Chaos:
             draw = self.rng.random()
             for name, rate in zip(STREAM_FAULTS, rates, strict=True):
                 if draw < rate:
-                    return name
+                    return self._capped(name, body)
                 draw -= rate
             return None
+
+    def _capped(self, fault: str, body: bytes) -> str | None:
+        """``fault``, or None for a reasoning drop past its body's cap
+        (caller holds the lock)."""
+        cap = int(self.knobs["reasoning_drops_per_body"])
+        if fault != "reasoning_drop" or not cap:
+            return fault
+        key = hashlib.sha256(body).hexdigest()
+        if self.body_drops.get(key, 0) >= cap:
+            return None
+        self.body_drops[key] = self.body_drops.get(key, 0) + 1
+        return fault
 
     def count(self, fault: str) -> None:
         """Count a mid-stream ``fault`` once it is injected."""
@@ -149,6 +176,18 @@ def make_server(
     base: Any = fake_models.make_handler(models)
 
     class Handler(base):  # type: ignore[misc, valid-type]
+        def setup(self) -> None:
+            super().setup()
+            with chaos.lock:
+                chaos.stats["connections"] += 1
+
+        def finish(self) -> None:
+            try:
+                super().finish()
+            finally:
+                with chaos.lock:
+                    chaos.stats["connections"] -= 1
+
         def do_GET(self) -> None:  # noqa: N802
             if self.path == "/stats":
                 with chaos.lock:
@@ -176,9 +215,10 @@ def make_server(
             """A chat answer as the fake models stream it, with the
             reasoning chunks and the mid-stream fault the knobs draw."""
             length = int(self.headers.get("Content-Length") or 0)
-            body = json.loads(self.rfile.read(length) or b"{}")
+            raw = self.rfile.read(length)
+            body = json.loads(raw or b"{}")
             streamed = body.get("stream", True)
-            fault = chaos.stream_fault() if streamed else None
+            fault = chaos.stream_fault(raw) if streamed else None
             self.send_response(200)
             self.send_header("Content-Type", "application/x-ndjson")
             self.send_header("Transfer-Encoding", "chunked")

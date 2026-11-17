@@ -14,6 +14,7 @@ import importlib
 import json
 import math
 import os
+import socket
 import threading
 import time
 from collections.abc import Iterator
@@ -229,6 +230,11 @@ def test_an_http_report_is_gated() -> None:
     assert harness.check_gates({"http": [_http_level(requests=0)]}) == [
         "http concurrency 4: no requests ran"
     ]
+    held = {"http": [_http_level(held_model_connections=3)]}
+    assert harness.check_gates(held) == [
+        "http concurrency 4: 3 model connections held after the level (max 0)"
+    ]
+    assert harness.check_gates({"http": [_http_level(held_model_connections=0)]}) == []
 
 
 @pytest.mark.parametrize(
@@ -1043,6 +1049,42 @@ def test_the_stream_faults_draw_nothing_while_off(chaos_models: ModuleType) -> N
     assert chaos_models.Chaos(answer_drop_rate=1.0).stream_fault() == "answer_drop"
 
 
+def test_a_body_s_reasoning_is_dropped_at_most_its_cap(
+    chaos_models: ModuleType,
+) -> None:
+    # A call and its retries send the same body: dropped at most the cap's
+    # times, it always gets an answer within cap + 1 attempts, whatever the
+    # order of the concurrent requests' draws.
+    chaos = chaos_models.Chaos(reasoning_drop_rate=1.0, reasoning_drops_per_body=2)
+    assert [chaos.stream_fault(b"call") for _ in range(4)] == [
+        "reasoning_drop",
+        "reasoning_drop",
+        None,
+        None,
+    ]
+    assert chaos.stream_fault(b"another call") == "reasoning_drop"
+    # 0: no cap.
+    uncapped = chaos_models.Chaos(reasoning_drop_rate=1.0)
+    assert {uncapped.stream_fault(b"call") for _ in range(5)} == {"reasoning_drop"}
+    # A capped drop still makes its draw: the later ones stay the same.
+    capped = chaos_models.Chaos(
+        seed=9, reasoning_drop_rate=0.5, reasoning_drops_per_body=1
+    )
+    plain = chaos_models.Chaos(seed=9, reasoning_drop_rate=0.5)
+    for _ in range(20):
+        capped.stream_fault(b"call")
+        plain.stream_fault(b"call")
+    assert capped.rng.getstate() == plain.rng.getstate()
+
+
+def test_the_nightly_never_drops_a_call_s_reasoning_on_every_attempt(
+    nightly: ModuleType,
+) -> None:
+    from workspace import RETRY_ATTEMPTS  # type: ignore[import-not-found]
+
+    assert nightly.STREAM_KNOBS["reasoning_drops_per_body"] == RETRY_ATTEMPTS - 1 > 0
+
+
 class _SSEConsole:
     """A stand-in console: ``/api/ask`` streams a start, two answer chunks
     and the result, and counts the clients that left before the result."""
@@ -1115,3 +1157,30 @@ async def test_an_http_level_disconnects_after_the_first_chunk_then_asks_again(
     else:
         assert "disconnected" not in report
         assert (report["ok"], report["errors"]) == (6, 0)
+
+
+async def test_an_http_level_reports_the_model_connections_left_open(
+    load: ModuleType, server: tuple[Any, int], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """rv49 query: a console whose stopped queries held their model
+    responses open is caught by the connections left open to the model
+    server, which its error gate alone does not see below the pool's size."""
+    _, port = server
+    models = f"http://127.0.0.1:{port}"
+    monkeypatch.setattr(load, "HELD_SETTLE_SECONDS", 0.5)
+    console = _SSEConsole()
+    # A response its client left open: a connection the server still has.
+    held = socket.create_connection(("127.0.0.1", port))
+    try:
+        report = await load.http_level(
+            console.url, "t", 2, 4, 10.0, [("Who?", "mix")], 0, 1.0, models
+        )
+        assert report["held_model_connections"] == 1
+    finally:
+        held.close()
+        console.close()
+    assert await load.held_model_connections(models, settle=5) == 0
+    with pytest.raises(SystemExit, match="non-loopback"):
+        await load.http_level(
+            console.url, "t", 1, 1, 1.0, [("Who?", "mix")], 0, 0.0, "http://10.0.0.1:1"
+        )

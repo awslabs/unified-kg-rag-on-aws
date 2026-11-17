@@ -29,8 +29,10 @@ Modes:
   client's (``client_loop_lag_*``), not the console's. With
   ``--disconnect-share``, that share of the questions disconnect after
   their first answer chunk (``disconnected``, counted apart), and one more
-  question asked after the level must still answer: the queries the
-  console was left answering must not hold its model connections.
+  question asked after the level must still answer. With ``--models`` (the
+  chaos model server the console asks), the connections still open to it
+  once the level settled (``held_model_connections``) must be none: the
+  queries the console was left answering must not hold them.
 - ``gate``: check a report (any mode's, or the nightly's) against the
   nightly gates (harness.Gates); exit 1 naming each failure, and name what
   the run left untested (a chaos scenario ``not_exercised``) without failing.
@@ -431,11 +433,13 @@ async def http_level(
     mix: list[tuple[str, str]],
     seed: int,
     disconnect_share: float = 0.0,
+    models: str | None = None,
 ) -> dict[str, Any]:
     import httpx
 
-    if urlparse(base).hostname not in LOOPBACK:
-        raise SystemExit(f"refusing the non-loopback console {base}")
+    for url in (base, models):
+        if url is not None and urlparse(url).hostname not in LOOPBACK:
+            raise SystemExit(f"refusing the non-loopback server {url}")
     rng = random.Random(seed)
     queue: asyncio.Queue[tuple[str, str, bool]] = asyncio.Queue()
     for _ in range(total):
@@ -505,10 +509,37 @@ async def http_level(
     report = {"concurrency": concurrency, **tally.report(wall)}
     if disconnect_share:
         report["disconnected"] = disconnected
+    if models is not None:
+        report["held_model_connections"] = await held_model_connections(models)
     # The lag of this client's loop, not the console's: named apart.
     for key in ("loop_lag_p99_ms", "loop_lag_max_ms"):
         report[f"client_{key}"] = report.pop(key)
     return report
+
+
+# Seconds a level's model connections get to close: a query its client
+# stopped ends at its answer's next chunk, and the fake models stream with
+# no stall.
+HELD_SETTLE_SECONDS = 10.0
+
+
+async def held_model_connections(models: str, settle: float | None = None) -> int:
+    """The client connections still open to the chaos model server at
+    ``models`` (its ``GET /stats`` ``connections``, less the stats
+    request's own) after up to ``settle`` seconds (default
+    :data:`HELD_SETTLE_SECONDS`): the query clients keep no idle
+    connection, so each is a model response left open."""
+    import httpx
+
+    settle = HELD_SETTLE_SECONDS if settle is None else settle
+    deadline = time.monotonic() + settle
+    async with httpx.AsyncClient(base_url=models, timeout=10) as client:
+        while True:
+            response = await client.get("/stats", headers={"Connection": "close"})
+            held = int(response.json()["connections"]) - 1
+            if held <= 0 or time.monotonic() >= deadline:
+                return max(held, 0)
+            await asyncio.sleep(0.2)
 
 
 async def in_process(config_path: str, run: Callable[[Any], Awaitable[Any]]) -> Any:
@@ -557,6 +588,11 @@ def main(argv: list[str] | None = None) -> int:
         default=0.0,
         help="http: share of questions whose client disconnects after the "
         "first answer chunk (then one more question must answer)",
+    )
+    parser.add_argument(
+        "--models",
+        help="http: the chaos model server the console asks (its URL): "
+        "report the connections still open to it after each level",
     )
     parser.add_argument(
         "--stream",
@@ -624,6 +660,7 @@ def main(argv: list[str] | None = None) -> int:
                         mix,
                         c,
                         args.disconnect_share,
+                        args.models,
                     )
                 )
                 for c in levels
