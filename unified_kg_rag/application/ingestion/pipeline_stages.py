@@ -1107,7 +1107,7 @@ class DocumentParsingStage(_RegistryStage):
         digests: dict[Path, str] | None = None
         reusable: dict[Path, Document] = {}
         if self._registry_on:
-            digests, reusable = self._reusable_parses(parser, files_to_parse)
+            digests, reusable = self._reusable_parses(parser, files_to_parse, context)
         parsed, failed_files = parser.parse(
             [path for path in files_to_parse if path not in reusable], digests
         )
@@ -1151,7 +1151,7 @@ class DocumentParsingStage(_RegistryStage):
         return input_count, output_count, metrics
 
     def _reusable_parses(
-        self, parser: SourceFileParser, files: list[Path]
+        self, parser: SourceFileParser, files: list[Path], context: PipelineContext
     ) -> tuple[dict[Path, str], dict[Path, Document]]:
         """Every file's source digest, and the unparsed documents of the
         files whose PROCESSED record holds theirs
@@ -1185,7 +1185,13 @@ class DocumentParsingStage(_RegistryStage):
             # another spelling of its scope, which the diff keys the run by
             # (and names).
             keyed = keyed_by_stored_spelling(
-                self.config, self._doc_status, root, False, held=False, warn=False
+                self.config,
+                self._doc_status,
+                root,
+                context,
+                False,
+                held=False,
+                warn=False,
             )
             if keyed is self.config:
                 return digests, {}

@@ -1182,3 +1182,33 @@ def test_a_json_corpus_run_keeps_each_documents_file_path(tmp_path: Path) -> Non
         pipeline.close()
 
     assert [d.file_path for d in context.documents] == [original]
+
+
+@pytest.mark.parametrize("deduplicate", [False, True])
+def test_a_respelled_scope_reads_the_namespace_scopes_once(
+    setup, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, deduplicate: bool
+) -> None:
+    # The first lookup that finds nothing under the scope as given (the
+    # parsing stage's, or deduplication's) reads the namespace's stored
+    # scopes; the run keeps them, so the diff is keyed by the stored
+    # spelling at once instead of diffing under the scope as given first.
+    config, providers, pipeline = setup
+    config.processing.deduplicate = deduplicate
+    corpus, _ = _dedup_corpus(tmp_path)
+    resolved = corpus.resolve().as_posix()
+    config.processing.document_parsing.source_scope = resolved
+    _ok(pipeline.run(corpus))
+    config.processing.document_parsing.source_scope = f"{resolved}/"
+    store_type = type(providers.build_doc_status())
+    diff = store_type.diff
+    incoming: list[dict[str, str]] = []
+
+    def counted(self: Any, fingerprints: dict[str, str], *args: Any, **kwargs: Any):
+        incoming.append(fingerprints)
+        return diff(self, fingerprints, *args, **kwargs)
+
+    monkeypatch.setattr(store_type, "diff", counted)
+    context = _ok(pipeline.run(corpus))
+
+    assert len(context.incremental_delta.unchanged) == 2
+    assert [bool(fingerprints) for fingerprints in incoming] == [False, True]
