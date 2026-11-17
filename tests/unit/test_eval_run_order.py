@@ -570,9 +570,14 @@ async def test_the_closed_book_arm_answers_at_the_items_effort_and_checks_it(
     with pytest.raises(InvalidArgumentError, match="'high' cannot apply"):
         await run_evaluation.EvaluationRunner(args, base, eval_config).run()
     assert base.calls == 0 and asked == []
+    # The arm used directly refuses it too, before its model call (rv48:
+    # only run-eval's up-front check pinned it).
+    chain = closed_book_chain(eval_config, providers)
+    with pytest.raises(InvalidArgumentError, match="'high' cannot apply"):
+        await chain.ainvoke({"query": "Who?", "effort": "high"})
+    assert asked == []
     # A model that reasons answers at the item's effort, the others at none.
     factory.reasons = True
-    chain = closed_book_chain(eval_config, providers)
     await chain.ainvoke({"query": "Who?", "effort": "high"})
     await chain.ainvoke({"query": "Who?"})
     assert [(k.get("enable_thinking"), k.get("effort")) for k in asked] == [

@@ -1157,10 +1157,13 @@ async def test_a_callers_own_deadline_covers_its_wait_for_a_slot() -> None:
     try:
         with pytest.raises(QueryTimeoutError) as second:
             await asyncio.wait_for(
-                tools.search("q", limits={"deadline_seconds": 0.2}), timeout=30
+                tools.search("q", limits={"deadline_seconds": 0.2345}), timeout=30
             )
         assert "limits.deadline_seconds" in str(second.value)
         assert "slot" in str(second.value)
+        # Its seconds as a query's timeout states them (rv48: 0.2345 s here,
+        # 0.23 s there).
+        assert "within 0.23 s (" in str(second.value)
     finally:
         release.set()
     await first
