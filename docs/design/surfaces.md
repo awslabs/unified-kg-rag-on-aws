@@ -383,10 +383,15 @@ attempt and race their wait against, and the model clients that resend a
 call themselves (Bedrock's botocore, the OpenAI client) check before each
 request, so a throttled model is not called again for a reader that left.
 A stop ends only its own query's work: a call concurrent queries share (a
-query embedding, `single_flight`) runs in a context of its own, under a
-`SharedStop` set once every waiting query's reader stopped, and a waiter
-whose reader stops leaves it (`await_unless_stopped`) while it goes on for
-the others. Whatever the query raises once its reader stopped ends it
+query embedding, `single_flight`) runs in a context of its own
+(`SharedContext`), under a `SharedStop` set once every waiting query's
+reader stopped, and a waiter whose reader stops leaves it
+(`await_unless_stopped`) while it goes on for the others; a waiter
+cancelled otherwise keeps it running. The other per-query state it reads
+is its waiters' as well (`share_with_waiters`), never its first caller's
+alone: no retry starts past the latest retry deadline of the waiters still
+holding it, and its usage counts once, in the meter of the earliest waiter
+still waiting (its log and trace ids stay the first caller's). Whatever the query raises once its reader stopped ends it
 as a stopped reader's. The reader waits for that up to `search.model_timeout_seconds` plus a
 grace (`_STOP_GRACE_SECONDS`), then cancels the task: past the model
 clients' read timeout, so a model that stalls ends in its client's own

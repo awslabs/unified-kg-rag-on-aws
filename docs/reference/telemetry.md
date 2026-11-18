@@ -105,7 +105,11 @@ counts every request sent to Bedrock and `throttled_requests` those Bedrock
 throttled, each attempt once (a botocore hook of the model clients: the
 language, embedding and rerank models'; not the CountTokens client, whose
 free calls would dilute the share, nor the guardrail's; a throttling error
-inside a response stream is not counted). So Bedrock's
+inside a response stream is not counted). A query embedding concurrent
+queries share (the same text, embedded once for all of them) counts once,
+in the earliest of them still waiting for it: the query that sent it, then,
+once that one stopped waiting (it timed out, its reader left), the next;
+the others reuse it as they would a cached one. So Bedrock's
 CloudWatch `Invocations` can exceed `llm_calls` by up to `request_retries +
 failed_calls`, plus any calls made outside a usage scope (the `run-eval`
 warm-up queries), plus every embedding call: the usage counts language

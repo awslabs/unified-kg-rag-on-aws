@@ -1561,6 +1561,88 @@ async def test_failed_embedding_with_every_waiter_cancelled_is_not_logged(
     assert reported == []
 
 
+class _Unavailable(Exception):
+    """An HTTP 503 from the embedding model."""
+
+    status_code = 503
+
+
+class _ThrottledEmbedder:
+    """An embedding model answering after ``refusals`` HTTP 503s, retried
+    by the package's transient retry; each attempt is a request sent."""
+
+    def __init__(self, refusals: int) -> None:
+        self.refusals = refusals
+        self.requests = 0
+        self.refused = asyncio.Event()
+
+    async def aembed_query(self, text: str) -> list[float]:
+        from unified_kg_rag.adapters.llm.retry import (
+            acall_with_transient_retry,
+            looks_transient,
+        )
+        from unified_kg_rag.domain.models.config import RetryPolicy
+
+        async def attempt() -> list[float]:
+            from unified_kg_rag.shared import usage
+
+            self.requests += 1
+            usage.record_request("embedding", "embedder")
+            if self.requests <= self.refusals:
+                self.refused.set()
+                raise _Unavailable("Service Unavailable")
+            return [float(len(text)), 1.0]
+
+        return await acall_with_transient_retry(
+            attempt,
+            is_transient=looks_transient,
+            operation="embed:embedder",
+            policy=RetryPolicy(max_attempts=10, base_delay_seconds=0.05, jitter="none"),
+        )
+
+
+async def test_a_shared_query_embedding_is_bounded_by_no_one_callers_deadline(
+    retriever,
+) -> None:
+    """Query A, with a short deadline, starts the query embedding; query B,
+    with a long one, waits for it. The model answers 503 past A's deadline:
+    the call goes on retrying for B (its deadline is the latest of its
+    waiters'), B gets the vector, and the requests it sent are counted once
+    between the two queries' meters, the ones sent after A gave up in B's."""
+    import time
+
+    from unified_kg_rag.adapters.llm.retry import retry_deadline
+    from unified_kg_rag.domain.models import SearchType
+    from unified_kg_rag.shared import usage
+
+    embedder = _ThrottledEmbedder(refusals=4)
+    object.__setattr__(retriever, "_embedding_model", embedder)
+    object.__setattr__(retriever, "_query_embedding_cache", OrderedDict())
+    object.__setattr__(retriever, "_pending_embeddings", {})
+    meters: dict[str, usage.UsageMeter] = {}
+
+    async def query(name: str, seconds: float) -> list[float] | None:
+        with usage.usage_scope() as meter, retry_deadline(time.monotonic() + seconds):
+            meters[name] = meter
+            async with asyncio.timeout(seconds):
+                return await retriever._get_query_vector(
+                    "Vendor", SearchType.VECTOR, ["v"]
+                )
+
+    a = asyncio.ensure_future(query("A", 0.08))
+    await embedder.refused.wait()
+    b = asyncio.ensure_future(query("B", 30.0))
+    with pytest.raises(TimeoutError):
+        await a
+    sent_by_a = meters["A"].total.sent_requests
+    async with asyncio.timeout(30):
+        assert await b == [6.0, 1.0]
+    assert embedder.requests == 5
+    assert meters["A"].total.sent_requests == sent_by_a  # none after it left
+    assert sent_by_a + meters["B"].total.sent_requests == embedder.requests
+    assert meters["B"].total.sent_requests > 0
+
+
 async def test_query_embedding_cache_is_bounded(retriever, monkeypatch) -> None:
 
     from unified_kg_rag.domain.models import SearchType
