@@ -17,10 +17,12 @@ Outside such a query no stop is bound and the waits are plain sleeps.
 
 A stop ends only the work its reader owns. A call several queries share (an
 in-flight cache, ``shared.utils.concurrency.single_flight``) is each
-waiter's: it runs under a :class:`SharedStop` of its own
-(:func:`detached_context`), set once every waiter's reader stopped, and a
-waiter whose reader stops leaves it (:func:`await_unless_stopped`), so one
-reader's stop never ends another's query.
+waiter's: it runs in a :class:`SharedContext`, under a :class:`SharedStop`
+of its own set once every waiter's reader stopped, and a waiter whose reader
+stops leaves it (:func:`await_unless_stopped`), so one reader's stop never
+ends another's query. The other per-query state such a call reads is taken
+from all its waiters the same way (:func:`share_with_waiters`), never from
+its first caller alone.
 """
 
 from __future__ import annotations
@@ -29,9 +31,9 @@ import asyncio
 import contextvars
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Hashable, Iterator
 from contextlib import contextmanager
-from typing import Any, TypeVar
+from typing import Any, Protocol, TypeVar
 
 _T = TypeVar("_T")
 
@@ -136,6 +138,70 @@ def detached_context(stop: ReaderStop | None = None) -> contextvars.Context:
     context = contextvars.copy_context()
     context.run(_READER_STOP.set, stop)
     return context
+
+
+class WaiterState(Protocol):
+    """One piece of per-query context state (a context variable a query
+    binds: its retry deadline, its usage meter) as a call several queries
+    share takes it from its waiters (:class:`SharedContext`)."""
+
+    def bind(self) -> None:
+        """Bind the call's value of the state; run in the call's context,
+        before any waiter joined."""
+
+    def join(self) -> Hashable:
+        """A waiter came for the call; run in its context, so it reads the
+        waiter's value. Returns the waiter's seat for :meth:`leave`."""
+
+    def leave(self, seat: Hashable, *, stopped: bool) -> None:
+        """The waiter of ``seat`` stopped waiting for the call: its reader
+        stopped (``stopped``), or it was answered, failed or cancelled
+        otherwise."""
+
+
+# The factories of the per-query state a shared call takes from its
+# waiters (share_with_waiters), one new state per call.
+_WAITER_STATES: list[Callable[[], WaiterState]] = []
+
+
+def share_with_waiters(state: Callable[[], WaiterState]) -> None:
+    """Have each call several queries share take a piece of per-query
+    context state from all its waiters through a new ``state()``
+    (:class:`WaiterState`) instead of from its first caller's context: the
+    module that owns the context variable registers it when it is
+    imported."""
+    if state not in _WAITER_STATES:
+        _WAITER_STATES.append(state)
+
+
+class SharedContext:
+    """The context a call several queries share runs in
+    (``single_flight(share_failure=True)``): a copy of its first caller's
+    (log and trace ids: the call is logged and traced where it was sent
+    from) with the per-query state of all its waiters in place of that
+    caller's own: a :class:`SharedStop` set once every waiter's reader
+    stopped, and each state registered with :func:`share_with_waiters`.
+    Created, joined and left on the event loop the call runs on."""
+
+    def __init__(self) -> None:
+        self.stop = SharedStop()
+        self._states = [state() for state in _WAITER_STATES]
+        self.context = detached_context(self.stop)
+        for state in self._states:
+            self.context.run(state.bind)
+
+    def join(self) -> list[Hashable]:
+        """A waiter came for the call (run in its context); its seats."""
+        self.stop.join()
+        return [state.join() for state in self._states]
+
+    def leave(self, seats: list[Hashable], *, stopped: bool) -> bool:
+        """The waiter of ``seats`` stopped waiting: its reader stopped
+        (``stopped``), or it ended otherwise. Whether that stopped the call
+        (the last reader's stop: :meth:`SharedStop.leave`)."""
+        for state, seat in zip(self._states, seats, strict=True):
+            state.leave(seat, stopped=stopped)
+        return stopped and self.stop.leave()
 
 
 async def await_unless_stopped(future: asyncio.Future[_T]) -> None:

@@ -20,7 +20,7 @@ import re
 import threading
 import time
 from collections import Counter
-from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Hashable, Iterator, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from langchain_core.exceptions import OutputParserException
@@ -38,6 +38,7 @@ from unified_kg_rag.shared.reader_stop import (
     abackoff_wait,
     backoff_wait,
     raise_if_reader_stopped,
+    share_with_waiters,
 )
 from unified_kg_rag.shared.utils.common import (
     error_code,
@@ -126,6 +127,46 @@ def current_deadline() -> float | None:
     finish."""
     record = _deadline_in_force()
     return None if record is None else record.at
+
+
+class _WaitersDeadline:
+    """The retry deadline of a call several queries share
+    (``shared.reader_stop.SharedContext``): the latest deadline of the
+    waiters still holding it (none when one of them has none), so a query
+    with a short deadline does not give up a call a query with a longer one
+    still waits for; a waiter whose reader stopped no longer holds it. The
+    call is bounded by its retry policy's own budget either way."""
+
+    def __init__(self) -> None:
+        self._record = _RetryDeadline(None, "the query deadline")
+        self._held: dict[object, tuple[float | None, str]] = {}
+
+    def bind(self) -> None:
+        _RETRY_DEADLINE.set(self._record)
+
+    def join(self) -> object:
+        seat = object()
+        record = _deadline_in_force()
+        self._held[seat] = (None, "") if record is None else (record.at, record.name)
+        self._update()
+        return seat
+
+    def leave(self, seat: Hashable, *, stopped: bool) -> None:
+        if stopped:
+            self._held.pop(seat, None)
+            self._update()
+
+    def _update(self) -> None:
+        if not self._held:
+            return
+        held = self._held.values()
+        if any(at is None for at, _ in held):
+            self._record.at = None
+            return
+        self._record.at, self._record.name = max(held, key=lambda h: h[0] or 0.0)
+
+
+share_with_waiters(_WaitersDeadline)
 
 
 TransientErrorPredicate = Callable[[BaseException], bool]

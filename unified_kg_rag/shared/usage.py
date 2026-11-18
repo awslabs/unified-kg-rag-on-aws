@@ -63,13 +63,19 @@ binding limit is retried rather than refused.
 The scope is a ``contextvars`` value, so it follows the code into the tasks
 and threads it hands its context to (``asyncio`` tasks, ``to_thread``, the
 package's ``ContextThreadPoolExecutor``), and concurrent queries, each in its
-own task, keep separate counts.
+own task, keep separate counts. A call concurrent queries share (a query
+embedding, ``shared.utils.concurrency.single_flight``) is counted once, in
+the meter of the earliest of its waiters still waiting for it: its first
+caller's, then, once that one stopped waiting (its deadline passed, its
+reader stopped), the next one's, so the requests it sends after a query
+ended count in a query still reporting, and the others reuse it as they
+would a cached embedding.
 """
 
 from __future__ import annotations
 
 import threading
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Hashable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
@@ -79,6 +85,7 @@ from unified_kg_rag.shared.exceptions import (
     OptionalCallSkipped,
     UsageLimitExceededError,
 )
+from unified_kg_rag.shared.reader_stop import share_with_waiters
 
 __all__ = [
     "CACHED_RESPONSE_KEY",
@@ -295,6 +302,10 @@ class UsageMeter:
     # count (RetriedCall): limits that count each call once leave it out.
     retried: _Counts = field(default_factory=_Counts)
     retried_by_model: dict[str, _Counts] = field(default_factory=dict)
+    # The meter of a shared call (_WaitersMeter): it counts nothing itself,
+    # what is recorded in it counts in ``parent``, the meter of the waiter
+    # it is attributed to at the time.
+    forwards: bool = False
 
     def _add(self, role: str, model: str, counts: _Counts) -> None:
         self.total.add(counts)
@@ -397,12 +408,59 @@ def _add_to(meter: UsageMeter | None, role: str, model: str, counts: _Counts) ->
 
 
 def _chain(meter: UsageMeter | None) -> list[UsageMeter]:
-    """``meter`` and its enclosing scopes' meters, innermost first."""
+    """``meter`` and its enclosing scopes' meters, innermost first (a
+    shared call's meter, which forwards, left out)."""
     chain = []
     while meter is not None:
-        chain.append(meter)
+        if not meter.forwards:
+            chain.append(meter)
         meter = meter.parent
     return chain
+
+
+def _attributed(meter: UsageMeter | None) -> UsageMeter | None:
+    """The meter ``meter`` counts in now: itself, or the meter a shared
+    call's meter forwards to."""
+    with _LOCK:
+        while meter is not None and meter.forwards:
+            meter = meter.parent
+        return meter
+
+
+class _WaitersMeter:
+    """The usage meter of a call several queries share
+    (``shared.reader_stop.SharedContext``): it forwards to the meter of the
+    earliest waiter still waiting that meters usage, and keeps the last one
+    once none waits, so each request the call sends counts once, in a
+    query that reports it."""
+
+    def __init__(self) -> None:
+        self._meter = UsageMeter(forwards=True)
+        self._waiting: dict[object, UsageMeter | None] = {}
+
+    def bind(self) -> None:
+        _CURRENT.set(self._meter)
+
+    def join(self) -> object:
+        seat = object()
+        self._waiting[seat] = _CURRENT.get()
+        self._update()
+        return seat
+
+    def leave(self, seat: Hashable, *, stopped: bool) -> None:
+        self._waiting.pop(seat, None)
+        self._update()
+
+    def _update(self) -> None:
+        if not self._waiting:
+            return
+        meters = self._waiting.values()
+        owner = next((m for m in meters if m is not None), None)
+        with _LOCK:
+            self._meter.parent = owner
+
+
+share_with_waiters(_WaitersMeter)
 
 
 def _admit(call: LLMCall) -> None:
@@ -743,7 +801,9 @@ def start_llm_call(
             counted then.
     """
     return LLMCall(
-        _CURRENT.get(),
+        # A shared call's model call counts where its meter forwards when it
+        # starts, so it settles in the scopes that counted it.
+        _attributed(_CURRENT.get()),
         role,
         model,
         estimated_input_tokens,

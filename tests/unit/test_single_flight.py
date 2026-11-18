@@ -407,3 +407,58 @@ async def test_a_stopped_first_callers_own_call_stops_and_a_waiter_calls_itself(
             await a
         assert await b == "value"
     assert call.attempts == 2
+
+
+async def test_a_shared_call_takes_its_deadline_and_meter_from_its_waiters() -> None:
+    """No single waiter's per-query state bounds or counts a shared call:
+    its retry deadline is the latest of the waiters still holding it (none
+    once one has none), and its usage counts in the meter of the earliest
+    waiter still waiting."""
+    from unified_kg_rag.adapters.llm.retry import current_deadline, retry_deadline
+    from unified_kg_rag.shared import usage
+
+    memo: dict[str, Any] = {}
+    seen: list[float | None] = []
+    step, stepped = asyncio.Event(), asyncio.Event()
+
+    async def call() -> str:
+        while True:
+            await step.wait()
+            step.clear()
+            seen.append(current_deadline())
+            usage.record_request("embedding", "embedder")
+            stepped.set()
+            if len(seen) == 4:
+                return "value"
+
+    async def waiter(at: float | None, stop: ReaderStop) -> Any:
+        with usage.usage_scope() as meter, retry_deadline(at):
+            meters.append(meter)
+            return await _read(stop, memo, call, share_failure=True)
+
+    async def advance() -> None:
+        stepped.clear()
+        step.set()
+        await stepped.wait()
+
+    meters: list[usage.UsageMeter] = []
+    stops = [ReaderStop(), ReaderStop(), ReaderStop()]
+    a = asyncio.ensure_future(waiter(1000.0, stops[0]))
+    b = asyncio.ensure_future(waiter(2000.0, stops[1]))
+    await asyncio.sleep(0)
+    await advance()  # A and B: B's later deadline; A's meter
+    stops[1].set()
+    with pytest.raises(asyncio.CancelledError):
+        await b
+    await advance()  # B's reader stopped: A's deadline
+    c = asyncio.ensure_future(waiter(None, stops[2]))
+    await asyncio.sleep(0)
+    await advance()  # C has no deadline: none
+    a.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await a
+    await advance()  # A cancelled (still holding the deadline); C's meter
+    async with asyncio.timeout(_BACKSTOP):
+        assert await c == "value"
+    assert seen == [2000.0, 1000.0, None, None]
+    assert [m.total.sent_requests for m in meters] == [3, 0, 1]

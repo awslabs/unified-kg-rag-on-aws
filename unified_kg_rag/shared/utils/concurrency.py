@@ -34,9 +34,8 @@ from typing import Any, Literal, ParamSpec, TypeVar
 
 from unified_kg_rag.shared.exceptions import waiter_copy
 from unified_kg_rag.shared.reader_stop import (
-    SharedStop,
+    SharedContext,
     await_unless_stopped,
-    detached_context,
     reader_stopped,
 )
 
@@ -163,21 +162,24 @@ async def single_flight(
     task of its own, so a cancelled first caller does not end it, and its
     error reaches each waiter as a copy of its own (:func:`await_shared`:
     the waiters are different queries). The call is every waiter's, not
-    its first caller's: a waiter whose reader stops (``shared.reader_stop``)
-    leaves it, and it stops at its next stop point only once every waiter's
-    reader stopped (``SharedStop``, bound in its own context in place of the
-    first caller's stop), when ``memo`` drops it too.
+    its first caller's (it runs in a ``shared.reader_stop.SharedContext``):
+    a waiter whose reader stops leaves it, and it stops at its next stop
+    point only once every waiter's reader stopped, when ``memo`` drops it
+    too; a waiter cancelled otherwise keeps it running. The per-query state
+    it reads is its waiters' too (``share_with_waiters``): no retry starts
+    past the latest deadline of the waiters still holding it, and its usage
+    is counted once, in the meter of the earliest waiter still waiting.
     ``share_failure=False``: the call runs in the first caller's task, its
     reader's stop included, and when it raises or is cancelled each waiter
     runs ``compute`` itself."""
     pending = memo.get(key)
     if share_failure:
         if pending is None:
-            stop = SharedStop()
+            call_context = SharedContext()
             pending = asyncio.get_running_loop().create_task(
-                _called(compute), context=detached_context(stop)
+                _called(compute), context=call_context.context
             )
-            _SHARED_STOPS[pending] = stop
+            _SHARED_CONTEXTS[pending] = call_context
             memo[key] = pending
             pending.add_done_callback(
                 functools.partial(_settle_shared, memo, key, keep)
@@ -209,9 +211,10 @@ async def _called(compute: Callable[[], Awaitable[_T]]) -> _T:
     return await compute()
 
 
-# The stop of each shared call in flight (``single_flight(share_failure=
-# True)``), set once each of its waiters' readers stopped.
-_SHARED_STOPS: weakref.WeakKeyDictionary[asyncio.Future[Any], SharedStop] = (
+# The context of each shared call in flight (``single_flight(share_failure=
+# True)``): its stop, set once each of its waiters' readers stopped, and the
+# per-query state it takes from its waiters.
+_SHARED_CONTEXTS: weakref.WeakKeyDictionary[asyncio.Future[Any], SharedContext] = (
     weakref.WeakKeyDictionary()
 )
 
@@ -224,16 +227,17 @@ async def _await_shared_call(
     """:func:`await_shared` of a shared call, as one of its waiters: the
     call stops once every waiter's reader stopped, and is dropped from
     ``memo`` then, so a later caller starts its own."""
-    stop = _SHARED_STOPS.get(call)
-    if stop is not None:
-        stop.join()
+    shared = _SHARED_CONTEXTS.get(call)
+    seats = shared.join() if shared is not None else []
+    stopped = False
     try:
         return await await_shared(call)
     except asyncio.CancelledError:
-        if stop is not None and not call.done() and reader_stopped():
-            if stop.leave():
-                _drop(memo, key, call)
+        stopped = not call.done() and reader_stopped()
         raise
+    finally:
+        if shared is not None and shared.leave(seats, stopped=stopped):
+            _drop(memo, key, call)
 
 
 def _drop(memo: MutableMapping[Any, Any], key: Hashable, future: Any) -> None:

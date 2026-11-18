@@ -263,6 +263,12 @@ Bugs present in 0.3.0.
   and the query records its latency and usage as a stream closed early (no failure, whatever it raised past the
   stop) instead of nothing. A stop ends only its reader's query: a call concurrent queries share (a query
   embedding) goes on for the others and stops once each of their readers stopped.
+- A query embedding concurrent queries shared ran under the first query's retry deadline and counted in its usage
+  alone: a query with a short `search.query_timeout_seconds` gave up the embedding at its deadline while the model
+  was throttled or unavailable, failing a query with a longer one that waited for it (`EmbeddingModelError`), and
+  the requests sent after the first query ended were in no query's usage. No retry of a shared call starts past the
+  latest deadline of the queries still waiting for it, and its requests count once, in the earliest of them still
+  waiting (`sent_requests`, `throttled_requests`); a query that shares no call counts as before.
 - A query cut off by its deadline (`search.query_timeout_seconds`, `limits.deadline_seconds`) or by its answer
   stream's first-chunk window (`search.model_timeout_seconds`) could leave the answer model's response open. A cut
   that landed while a chunk was on its way up from the model's read left LangChain's and the model client's stream
