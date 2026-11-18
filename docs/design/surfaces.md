@@ -385,11 +385,21 @@ request, so a throttled model is not called again for a reader that left. Whatev
 as a stopped reader's. The reader waits for that up to `search.model_timeout_seconds` plus a
 grace (`_STOP_GRACE_SECONDS`), then cancels the task: past the model
 clients' read timeout, so a model that stalls ends in its client's own
-timeout, its response closed. Ending at a send or a chunk
-matters: the answer's model stream is then paused between two chunks and
-closes cleanly, whereas a cancellation that lands while LangChain's
-per-chunk task reads the model leaves its response open (an httpx pool
-connection held for good). The query then ends as a closed stream
+timeout, its response closed. Ending at a send or a chunk ends the query
+where nothing is in flight. A cancellation that lands elsewhere (a deadline,
+the first-chunk window, the reader's forced cancel) closes the answer's
+model responses all the same: LangChain's and the model clients' stream
+generators read each other with `async for`, which closes nothing it
+leaves, so a cancellation landing while a chunk is on its way up leaves
+them suspended, the response open until garbage collection finalizes them
+(a reference cycle can keep them). `_streamed_to` runs the stream in
+`shared.model_responses.closing_responses`, which closes every response its
+model clients opened (registered from their HTTP hooks: httpx's response
+hook, botocore's `after-call`) still open when the stream ends. A Bedrock
+stream is read on a worker thread: its socket is shut down for reading,
+ending a blocked read, then closed off the loop; one whose request the
+thread sent only after the stream ended is closed on that thread at once.
+The query then ends as a closed stream
 (`_ReaderStopped`: its span without error, its metrics without a
 failure), not as a cancelled query. The answer step streams whenever there is a sink; under the output
 guardrail it sends nothing (nothing may be shown before screening), and

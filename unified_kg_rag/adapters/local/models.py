@@ -42,6 +42,7 @@ from unified_kg_rag.ports.model_factory import (
 from unified_kg_rag.shared import ConfigurationError, get_logger, observability
 from unified_kg_rag.shared.exceptions import class_names
 from unified_kg_rag.shared.extras import extra_hint
+from unified_kg_rag.shared.model_responses import track_response
 from unified_kg_rag.shared.reader_stop import raise_if_reader_stopped
 
 logger = get_logger(__name__)
@@ -95,6 +96,18 @@ def tls_context() -> Any:
     return httpx.create_ssl_context()
 
 
+async def _track_response(response: Any) -> None:
+    track_response(response)
+
+
+# The async clients' hooks: each response is closed when the query it is
+# opened for ends (shared.model_responses), though a cancellation left the
+# generators reading it suspended.
+_ASYNC_EVENT_HOOKS: dict[str, list[Callable[[Any], Any]]] = {
+    "response": [_track_response]
+}
+
+
 def ollama_client_kwargs(timeout: float) -> dict[str, Any]:
     """``client_kwargs`` for an Ollama model: the request ``timeout`` and
     the shared TLS context (:func:`tls_context`)."""
@@ -103,11 +116,13 @@ def ollama_client_kwargs(timeout: float) -> dict[str, Any]:
 
 def ollama_async_client_kwargs(timeout: float | None = None) -> dict[str, Any]:
     """``async_client_kwargs`` for an Ollama model: no keep-alive connections,
-    the shared TLS context, and the request ``timeout`` when one is given (a
-    query call's)."""
+    the shared TLS context, each response closed at its query's end
+    (``_ASYNC_EVENT_HOOKS``), and the request ``timeout`` when one is given
+    (a query call's)."""
     kwargs: dict[str, Any] = {
         "limits": _no_keepalive_limits(),
         "verify": tls_context(),
+        "event_hooks": _ASYNC_EVENT_HOOKS,
     }
     if timeout is not None:
         kwargs["timeout"] = timeout
@@ -203,8 +218,8 @@ def openai_http_async_client(timeout: float, transport: Any = None) -> Any:
     the first call on every later loop meets a keep-alive connection of the
     closed one, fails with "Event loop is closed" and the OpenAI client sends
     it again (billed twice, and failed with ``max_attempts: 1``). This client
-    sends through one client per event loop, without keep-alive, as for
-    Ollama.
+    sends through one client per event loop, without keep-alive, each
+    response closed at its query's end, as for Ollama.
 
     The OpenAI client retries a call itself: each request it sends, a
     resend included, is a stop point of a query whose reader stopped
@@ -215,7 +230,7 @@ def openai_http_async_client(timeout: float, transport: Any = None) -> Any:
     plain client on it is returned.
     """
     httpx = importlib.import_module("httpx")
-    hooks = {"request": [_stop_before_request]}
+    hooks = {"request": [_stop_before_request], **_ASYNC_EVENT_HOOKS}
     if transport is not None:
         return httpx.AsyncClient(
             transport=transport, timeout=timeout, event_hooks=hooks

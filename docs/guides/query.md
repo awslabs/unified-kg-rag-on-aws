@@ -158,7 +158,8 @@ with `QueryTimeoutError` (exported from `unified_kg_rag`; also a builtin
   reasoning (dropped from the answer) ends that wait. Until answer text
   arrives, a transient error (a Bedrock stream's throttling event or a
   dropped connection included) is retried as for an unstreamed query, on
-  every provider.
+  every provider. Cut off by either limit, the stream closes the answer
+  model's response, so a timed-out query holds no connection to the model.
 - `null` turns both deadlines off.
 
 The query's model calls (answer generation and the other query-time LLM

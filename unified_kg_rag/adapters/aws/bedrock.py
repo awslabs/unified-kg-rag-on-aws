@@ -1,8 +1,10 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import asyncio
 import contextlib
 import contextvars
 import logging
+import socket
 import threading
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterator, Sequence
@@ -12,6 +14,7 @@ from typing import Any, ClassVar, Generic, Literal, TypeVar
 import boto3
 from aws_assume_role_lib.aws_assume_role_lib import assume_role
 from botocore.config import Config as BotoConfig
+from botocore.eventstream import EventStream
 from botocore.exceptions import (
     BotoCoreError,
     ClientError,
@@ -81,6 +84,7 @@ from unified_kg_rag.shared.genai import (
     embedding_span,
 )
 from unified_kg_rag.shared.logging import log_error
+from unified_kg_rag.shared.model_responses import track_response
 from unified_kg_rag.shared.reader_stop import raise_if_reader_stopped
 
 logger = get_logger(__name__)
@@ -267,10 +271,14 @@ class BaseBedrockModelFactory(Generic[ModelIdT, ModelInfoT, WrapperT], ABC):
     def _instrument_client(self, client: Any, purpose: ModelPurpose) -> None:
         """Count every request a new runtime client of ``purpose``'s calls
         sends, and those throttled (``sent_requests``,
-        ``throttled_requests``), which botocore retries inside a call."""
+        ``throttled_requests``), which botocore retries inside a call; stop
+        its requests at a stopped reader (``stop_at_reader_stop``); and close
+        each event stream it opens when its answer stream ends
+        (``track_event_streams``)."""
         service = self._get_boto_service_name()
         count_requests(client, service, self._usage_role(purpose))
         stop_at_reader_stop(client, service)
+        track_event_streams(client, service)
 
     def _client_for(self, purpose: ModelPurpose) -> Any:
         """The runtime client for a call made for ``purpose``, one per
@@ -339,6 +347,53 @@ def _is_credential_error(exc: BaseException) -> bool:
         isinstance(exc, ClientError)
         and exc.response.get("Error", {}).get("Code") in _CREDENTIAL_ERROR_CODES
     )
+
+
+class _OpenEventStream:
+    """An event stream's HTTP response (urllib3's), closed for its query
+    (``shared.model_responses``) from any thread. It is read on a worker
+    thread, and closing a response waits for a read in progress, so its
+    socket is shut down for reading first: a read blocked on it returns at
+    once. Released to the pool (read to its end), it is left alone."""
+
+    def __init__(self, raw: Any) -> None:
+        self._raw = raw
+
+    @property
+    def is_closed(self) -> bool:
+        raw = self._raw
+        return bool(getattr(raw, "closed", False)) or raw.connection is None
+
+    def close(self) -> None:
+        sock = getattr(self._raw.connection, "sock", None)
+        if sock is not None:
+            with contextlib.suppress(OSError):
+                sock.shutdown(socket.SHUT_RD)
+        self._raw.close()
+
+    async def aclose(self) -> None:
+        # Not on the event loop: the close waits for a read in progress.
+        await asyncio.to_thread(self.close)
+
+
+def _track_event_streams(
+    http_response: Any = None, parsed: Any = None, **_: Any
+) -> None:
+    if isinstance(parsed, dict) and any(
+        isinstance(value, EventStream) for value in parsed.values()
+    ):
+        raw = getattr(http_response, "raw", None)
+        if raw is not None and hasattr(raw, "connection"):
+            track_response(_OpenEventStream(raw))
+
+
+def track_event_streams(client: Any, service: str) -> None:
+    """Close each event stream (``ConverseStream``'s, ``InvokeModelWith
+    ResponseStream``'s) a call of ``client`` opens when the stream of the
+    query it is opened for ends (``shared.model_responses``): it is read on
+    a worker thread, which reads on, holding the connection, after the
+    query is cancelled."""
+    client.meta.events.register(f"after-call.{service}", _track_event_streams)
 
 
 class BedrockCrossRegionModelHelper:
