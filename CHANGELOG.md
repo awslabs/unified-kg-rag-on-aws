@@ -208,7 +208,8 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   after their reasoning or first chunk (`reasoning_drop_rate`, `answer_drop_rate`, one request body's reasoning at
   most `reasoning_drops_per_body` times within `reasoning_drops_window` seconds); the nightly runs one
   `sweep --stream` level under them, capped below its retry attempts, whose errors must equal the answers dropped
-  after their first chunk.
+  after their first chunk, and one `http --disconnect-share --models` level against the console, which must leave no
+  model connection held.
 
 ### Changed
 

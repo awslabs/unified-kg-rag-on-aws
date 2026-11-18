@@ -24,6 +24,8 @@ from typing import Any
 
 import pytest
 
+from tests.fixtures.console_demo import requires_console
+
 pytestmark = pytest.mark.unit
 
 LOADTEST = Path(__file__).resolve().parents[2] / "scripts" / "loadtest"
@@ -741,10 +743,22 @@ def test_the_nightly_workspace_ingests_and_exports(tmp_path: Path) -> None:
             "p50": 0.1,
             "p99": 0.2,
         },
+        "http": [
+            {
+                **_level(concurrency=16),
+                "throughput_rps": 1.0,
+                "p50": 0.1,
+                "p99": 0.2,
+                "client_loop_lag_p99_ms": 3.0,
+                "held_model_connections": 0,
+            }
+        ],
         "chaos": [{"name": "kill", "converged": True, "detail": ""}],
         "gate_failures": [],
     }
-    assert "Gates: passed" in nightly.markdown(report)
+    text = nightly.markdown(report)
+    assert "Gates: passed" in text
+    assert "| http c=16 |" in text
 
 
 @pytest.fixture(scope="module")
@@ -887,6 +901,13 @@ def test_the_nightly_soak_runs_with_two_malloc_arenas(
 
         def close(self) -> None: ...
 
+    class _Console:
+        url = "http://127.0.0.1:1"
+
+        def __init__(self, *_: Any) -> None: ...
+
+        def close(self) -> None: ...
+
     def load(
         mode: str,
         *_args: Any,
@@ -897,9 +918,13 @@ def test_the_nightly_soak_runs_with_two_malloc_arenas(
         timed = {"throughput_rps": 1.0, "p50": 0.1, "p99": 0.2}
         if mode == "sweep":
             return {"warm_up": _level(), "sweep": [{**_level(), **timed}]}
+        if mode == "http":
+            lag = {"client_loop_lag_p99_ms": 1.0, "held_model_connections": 0}
+            return {"http": [{**_level(), **timed, **lag}]}
         return {"soak": {**_soak(1, 0.5), **timed, "duration_seconds": 60}}
 
     monkeypatch.setattr(nightly, "Models", _Models)
+    monkeypatch.setattr(nightly, "Console", _Console)
     monkeypatch.setattr(nightly, "write_workspace", lambda *a, **k: tmp_path / "c")
     monkeypatch.setattr(nightly, "ingest", lambda *a, **k: _run())
     monkeypatch.setattr(nightly, "load", load)
@@ -911,7 +936,12 @@ def test_the_nightly_soak_runs_with_two_malloc_arenas(
 
     assert nightly.main([str(tmp_path / "out")]) == 0
 
-    assert calls == {"sweep": {}, "stream": {}, "soak": {"MALLOC_ARENA_MAX": "2"}}
+    assert calls == {
+        "sweep": {},
+        "stream": {},
+        "http": {"UKR_CONSOLE_TOKEN": nightly.CONSOLE_TOKEN},
+        "soak": {"MALLOC_ARENA_MAX": "2"},
+    }
     assert nightly._env(**nightly.SOAK_ENV)["MALLOC_ARENA_MAX"] == "2"
 
 
@@ -1217,3 +1247,25 @@ async def test_an_http_level_reports_the_model_connections_left_open(
         await load.http_level(
             console.url, "t", 1, 1, 1.0, [("Who?", "mix")], 0, 0.0, "http://10.0.0.1:1"
         )
+
+
+@requires_console
+def test_the_nightly_console_serves_its_workspace(tmp_path: Path) -> None:
+    """The console the nightly's http level asks starts over a workspace on
+    a free loopback port, which it reports, and stops."""
+    nightly = _import("nightly")
+    models = nightly.Models(tmp_path)
+    try:
+        ws = tmp_path / "ws"
+        nightly.write_workspace(ws, models.port, docs=1)
+        console = nightly.Console(ws, tmp_path)
+        try:
+            assert console.url.startswith("http://127.0.0.1:")
+            port = int(console.url.rsplit(":", 1)[1])
+            with socket.create_connection(("127.0.0.1", port), timeout=10):
+                pass
+        finally:
+            console.close()
+        assert console.process.returncode is not None
+    finally:
+        models.close()

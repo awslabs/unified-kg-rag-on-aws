@@ -2,13 +2,17 @@ name: load-test
 
 # Nightly load, soak and chaos run on the embedded SQLite stores with the
 # fake model server (scripts/loadtest/nightly.py, docs/guides/load-testing.md):
-# no AWS, no model, nothing leaves the runner. A concurrency sweep and a
-# 10-minute soak over the demo corpus, then a 429 throttle, 503s with dropped
-# connections and a SIGKILL mid-run resumed at once, each checked to
-# converge with a full build. Gates: 0 errors and 0 answers without evidence
-# on the fixed corpus, event-loop lag p99 under 100 ms, RSS not growing both
-# 10 MB/h or more and 8 MB or more over the soak's second half, every chaos
-# scenario converging. The report (report.md, report.json, the logs and
+# no AWS, no model, nothing leaves the runner. A concurrency sweep, one
+# streamed level under mid-stream drops (reasoning and answer chunks) and a
+# 10-minute soak over the demo corpus, one level through the console with a
+# share of its questions disconnecting mid-answer, then a 429 throttle, 503s
+# with dropped connections and a SIGKILL mid-run resumed at once, each checked
+# to converge with a full build. Gates: 0 errors and 0 answers without
+# evidence on the fixed corpus (the streamed level's errors exactly its
+# answers dropped after their first chunk), no model connection left held by
+# the disconnected questions, event-loop lag p99 under 100 ms, RSS not growing
+# both 10 MB/h or more and 8 MB or more over the soak's second half, every
+# chaos scenario converging. The report (report.md, report.json, the logs and
 # exports) is uploaded as an artifact. It reports only: no branch protection
 # requires it, and pull requests do not run it (tests/unit/test_loadtest_harness.py
 # keeps the harness's arithmetic and verdicts checked there, and runs one
@@ -43,8 +47,9 @@ jobs:
           python-version: "3.12"
 
       - name: Sync dependencies
-        # local: the Ollama client the fake model server is reached with.
-        run: uv sync --locked --no-dev --extra local
+        # local: the Ollama client the fake model server is reached with;
+        # console: the console the http level asks.
+        run: uv sync --locked --no-dev --extra local --extra console
 
       - name: Load, soak and chaos run
         run: uv run --frozen --no-dev python scripts/loadtest/nightly.py "$RUNNER_TEMP/loadtest"
