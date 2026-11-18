@@ -17,6 +17,7 @@ import asyncio
 import gc
 import threading
 from collections.abc import Iterator
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -80,14 +81,23 @@ def _held_connections(port: int) -> int:
     return held
 
 
+# A hang backstop (seconds), far past anything a passing run waits: these
+# tests assert on what happened (connections, writes, the stop's order),
+# not on how long a step took.
+BACKSTOP = 60.0
+
+
 async def _settled(port: int) -> int:
-    """The connections still held to ``port`` after up to 2 s (a closed
-    response leaves the pool a moment later)."""
-    for _ in range(40):
-        if not (held := _held_connections(port)):
-            return 0
+    """The connections still held to ``port`` once none is (a closed
+    response leaves the pool a moment later), or after the backstop."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + BACKSTOP
+    # Polled: a pool has no event for a connection leaving it.
+    while True:
+        held = _held_connections(port)
+        if not held or loop.time() >= deadline:
+            return held
         await asyncio.sleep(0.05)
-    return held
 
 
 def _loop_errors() -> list[str]:
@@ -144,7 +154,7 @@ class _AskReader:
 
 
 async def _answers(chain: GraphRAGChain) -> None:
-    output = await asyncio.wait_for(chain.ainvoke(_input()), 15)
+    output = await asyncio.wait_for(chain.ainvoke(_input()), BACKSTOP)
     assert output.answer and not output.metadata.get("error")
 
 
@@ -230,7 +240,7 @@ async def test_console_disconnects_leave_the_console_answering(
         for _ in range(-(-256 // STOPPED)):
             await _stopped_mid_answer(_AskReader(service, request))
         assert await _settled(models) == 0
-        async with asyncio.timeout(15):
+        async with asyncio.timeout(BACKSTOP):
             events = [e async for e in service.ask(request)]
         assert events[-1]["kind"] == "result"
         # Each disconnect is recorded as cancelled, not failed.
@@ -254,15 +264,25 @@ def wire() -> Iterator[tuple[int, stream_models.StreamModels]]:
 
 
 def _wire_chain(
-    provider: str, port: int, monkeypatch: pytest.MonkeyPatch, model_timeout: float
+    provider: str,
+    port: int,
+    monkeypatch: pytest.MonkeyPatch,
+    model_timeout: float,
+    backoff: float | None = None,
 ) -> GraphRAGChain:
     """A chain whose answer model is ``provider``'s client, talking to the
-    loopback server on ``port``."""
+    loopback server on ``port``; its model retries back off ``backoff`` s
+    (with no budget) when given."""
     from unified_kg_rag.adapters.aws.bedrock import BedrockLanguageModelFactory
 
     config = Config()
     config.providers.rerank.kind = "none"
     config.search.model_timeout_seconds = model_timeout
+    if backoff is not None:
+        for policy in (config.retry.model, config.retry.model_server):
+            policy.base_delay_seconds = policy.max_delay_seconds = backoff
+            policy.jitter = "none"
+            policy.max_total_seconds = None
     factory: Any
     if provider == "ollama":
         config.providers.llm.kind = "ollama"
@@ -328,13 +348,16 @@ async def test_a_reader_cancelled_while_the_model_reasons_stops_the_model(
     port, models = wire
     models.knobs = stream_models.StreamKnobs(reasoning_seconds=40)
     chain = _wire_chain(provider, port, monkeypatch, model_timeout=60)
+    # No forced cancel rescues a query that misses its stop points: it would
+    # run into the backstop (the model reasons for 40 s).
+    monkeypatch.setattr(rag_chain, "_STOP_GRACE_SECONDS", 3600.0)
     errors = _loop_errors()
     try:
-        released = await asyncio.gather(
-            *(_cancelled_at(chain, QuerySources, 0.3) for _ in range(8))
-        )
+        async with asyncio.timeout(BACKSTOP / 2):
+            released = await asyncio.gather(
+                *(_cancelled_at(chain, QuerySources, 0.3) for _ in range(8))
+            )
         assert None not in released
-        assert max(r for r in released if r is not None) < 5
         # The model stopped writing: its client closed each response.
         assert await asyncio.to_thread(models.settled) == 0
         if provider != "bedrock":
@@ -359,26 +382,32 @@ async def test_a_model_that_stalls_after_a_disconnect_ends_in_its_read_timeout(
     # in its own timeout, its response closed, never in a cancel that lands
     # mid-read and leaves the connection held.
     port, models = wire
-    models.knobs = stream_models.StreamKnobs(stall_after=1, stall_seconds=8)
+    stalled = stream_models.StreamKnobs(stall_after=1, stall_seconds=3600)
+    models.knobs = stalled
     chain = _wire_chain(provider, port, monkeypatch, model_timeout=3.0)
+    # Only the read timeout can end the stalled reads: no forced cancel
+    # comes (a query it missed would run into the backstop), and no
+    # first-chunk window, which a loaded runner can miss before the stall:
+    # it cancels the query wherever it is, not this test's subject.
+    monkeypatch.setattr(rag_chain, "_STOP_GRACE_SECONDS", 3600.0)
+    monkeypatch.setattr(rag_chain, "_first_chunk_window", lambda _s: nullcontext())
     errors = _loop_errors()
     try:
         # Cancelled at points spread over a chunk's interval: some while the
         # query waits for the reader, most in the stalled read.
-        released = await asyncio.gather(
-            *(
-                _cancelled_at(chain, AnswerChunk, CHUNK_DELAY * (i % 7) / 7)
-                for i in range(96)
+        async with asyncio.timeout(BACKSTOP):
+            released = await asyncio.gather(
+                *(
+                    _cancelled_at(chain, AnswerChunk, CHUNK_DELAY * (i % 7) / 7)
+                    for i in range(96)
+                )
             )
-        )
-        stopped = [r for r in released if r is not None]
-        assert stopped
-        # Ended in the read timeout (3 s), before the forced cancel (8 s).
-        assert max(stopped) < 3.0 + rag_chain._STOP_GRACE_SECONDS
+        assert [r for r in released if r is not None]
         assert await _settled(port) == 0
         models.knobs = stream_models.StreamKnobs()
         await _answers(chain)
     finally:
+        stalled.unstall.set()
         models.knobs = stream_models.StreamKnobs()
         await chain.aclose()
     gc.collect()
@@ -407,7 +436,7 @@ async def _cancelled_once_throttled(
     # The server's count is the module's: this test's calls are those past it.
     refused = models.throttled + THROTTLED_READERS
     tasks = [asyncio.create_task(read()) for _ in range(THROTTLED_READERS)]
-    async with asyncio.timeout(30):
+    async with asyncio.timeout(BACKSTOP):
         while models.throttled < refused:
             assert not any(t.done() for t in tasks)
             await asyncio.sleep(0.01)
@@ -493,7 +522,14 @@ async def test_a_reader_cancelled_in_retry_backoff_stops_the_query(
         # botocore's adaptive mode (the default) also waits in its
         # client-side rate limiter, which no stop interrupts.
         monkeypatch.setattr(BaseBedrockModelFactory, "BOTO_RETRY_MODE", "standard")
-    chain = _wire_chain(provider.split("-")[0], port, monkeypatch, model_timeout=60)
+    # Backoffs past the backstop that still fit the query's deadline (180 s)
+    # and its first chunk's window (the model timeout): neither one nor a
+    # forced cancel ends a stopped query here, so one whose backoff is not a
+    # stop point runs into the backstop.
+    chain = _wire_chain(
+        provider.split("-")[0], port, monkeypatch, model_timeout=170, backoff=100
+    )
+    monkeypatch.setattr(rag_chain, "_STOP_GRACE_SECONDS", 3600.0)
     errors = _loop_errors()
     try:
         # Warm: a first call's imports and connections are not the backoff.
@@ -508,12 +544,10 @@ async def test_a_reader_cancelled_in_retry_backoff_stops_the_query(
         monkeypatch.setattr(chain, "_record_query_metrics", recording)
         models.knobs = stream_models.StreamKnobs(throttled=True)
         order = _StopOrder(monkeypatch)
-        released = await _cancelled_once_throttled(chain, models)
-        # The waits no stop interrupts, though no request follows them: the
-        # OpenAI client's own backoff (at most 1 s at its second retry), and
-        # under adaptive mode botocore's rate limiter (well within the bound).
-        bound = {"openai": 2.0, "bedrock-adaptive": 60.0}.get(provider, 1.0)
-        assert max(released) < bound
+        # The waits the clients run themselves (the OpenAI client's backoff,
+        # botocore's and its adaptive rate limiter) still end, unsent.
+        async with asyncio.timeout(BACKSTOP):
+            await _cancelled_once_throttled(chain, models)
         # Every reader's stop came, and no request passed its stop check
         # after its query's stop (the botocore and OpenAI clients' own
         # resends included): one that passed it before is in flight ...

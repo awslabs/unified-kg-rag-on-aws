@@ -662,8 +662,9 @@ def test_injected_errors_change_at_run_time(
     call(port, "/chaos", {"error_rate": 0.0})
     assert call(port, "/api/embed", {"input": ["x"]})[0] == 200
     assert chaos.stats["embed"] == 2 and chaos.stats["errors"] == 1
-    # the handler counts a request done after its response is sent
-    deadline = time.monotonic() + 5
+    # the handler counts a request done after its response is sent (a
+    # backstop, not a measure)
+    deadline = time.monotonic() + 60
     while chaos.stats["inflight"] and time.monotonic() < deadline:
         time.sleep(0.01)
     assert chaos.stats["inflight"] == 0
@@ -1210,7 +1211,8 @@ async def test_an_http_level_reports_the_model_connections_left_open(
     finally:
         held.close()
         console.close()
-    assert await load.held_model_connections(models, settle=5) == 0
+    # Once the held socket closed, none is left (60 s: a backstop).
+    assert await load.held_model_connections(models, settle=60) == 0
     with pytest.raises(SystemExit, match="non-loopback"):
         await load.http_level(
             console.url, "t", 1, 1, 1.0, [("Who?", "mix")], 0, 0.0, "http://10.0.0.1:1"

@@ -17,9 +17,10 @@ from __future__ import annotations
 import asyncio
 import itertools
 import signal
+import sys
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import Any
 
 import pytest
@@ -202,19 +203,45 @@ async def test_a_failure_raises_after_the_events_before_it(config: Config) -> No
     assert memory.messages == []
 
 
+# Set once a _HeldModel holds its next chunk, with the stop of the query
+# it streams for (shared.reader_stop): the cues the stop tests wait on.
+_HOLDING = threading.Event()
+_HELD_FOR: list[Any] = []
+# A hang backstop (seconds), far past anything a passing run waits: the
+# stop tests assert on order, not on how long a step took.
+_BACKSTOP = 60.0
+
+
 class _HeldModel(GenericFakeChatModel):
     """Streams one chunk, then a second only after a long wait."""
 
     async def _astream(self, *args: Any, **kwargs: Any) -> Any:  # type: ignore[override]
+        from unified_kg_rag.shared import reader_stop
+
         yield ChatGenerationChunk(message=AIMessageChunk(content="Vendor "))
+        _HELD_FOR.append(reader_stop._READER_STOP.get())
+        _HOLDING.set()
         await asyncio.sleep(600)
         yield ChatGenerationChunk(message=AIMessageChunk(content="ships."))
+
+
+async def _until(condition: Callable[[], bool]) -> None:
+    """Wait for ``condition`` (a cue), turn by turn of the loop."""
+    async with asyncio.timeout(_BACKSTOP):
+        # Polled: the cues (a threading.Event, a reader's stop) have no
+        # asyncio event of their own.
+        while True:
+            if condition():
+                return
+            await asyncio.sleep(0)
 
 
 class _HeldFactory(_StreamingModelFactory):
     def __init__(self) -> None:
         super().__init__()
         self.model = _HeldModel(messages=iter([]))
+        _HOLDING.clear()
+        _HELD_FOR.clear()
 
     def get_model(self, model_id: Any, **kwargs: Any) -> Any:
         self.get_model_calls += 1
@@ -245,10 +272,10 @@ class _MetricsSink:
         self.emitted.append(metrics)
 
 
-async def _cancelled_after_first_chunk(chain: GraphRAGChain, wait: float) -> None:
+async def _cancelled_after_first_chunk(chain: GraphRAGChain, held: bool) -> None:
     """Read the query's events in a task, cancelled (a disconnected client)
-    ``wait`` seconds after the first answer chunk, while it waits for the
-    next event."""
+    after the first answer chunk, once the model holds its next one when
+    ``held`` (a _HeldModel: the reader then waits for an event none sends)."""
     chunked = asyncio.Event()
 
     async def read() -> None:
@@ -260,10 +287,12 @@ async def _cancelled_after_first_chunk(chain: GraphRAGChain, wait: float) -> Non
 
     reader = asyncio.create_task(read())
     await chunked.wait()
-    await asyncio.sleep(wait)
+    if held:
+        await _until(_HOLDING.is_set)
     reader.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await reader
+        async with asyncio.timeout(_BACKSTOP):
+            await reader
 
 
 async def test_a_cancelled_reader_ends_the_query_as_a_reader_that_stopped(
@@ -274,7 +303,7 @@ async def test_a_cancelled_reader_ends_the_query_as_a_reader_that_stopped(
     chain, _, memory = _make_chain(config)
     sink = _MetricsSink()
     chain.providers.metrics_sink = sink
-    await _cancelled_after_first_chunk(chain, 0)
+    await _cancelled_after_first_chunk(chain, held=False)
     assert not [t for t in asyncio.all_tasks() if t.get_name() == "kg-rag-query-events"]
     assert memory.messages == []
     # Not a failure: its latency up to there, as a stream closed early.
@@ -284,11 +313,14 @@ async def test_a_cancelled_reader_ends_the_query_as_a_reader_that_stopped(
 
 
 class _FailingModel(GenericFakeChatModel):
-    """Fails its stream before any chunk, a moment after the call: a
-    client's own retries giving up, which no stop point interrupts."""
+    """Fails its stream before any chunk once its query's reader stopped:
+    a client's own retries giving up, which no stop point interrupts."""
 
     async def _astream(self, *args: Any, **kwargs: Any) -> Any:  # type: ignore[override]
-        await asyncio.sleep(0.3)
+        from unified_kg_rag.shared.reader_stop import reader_stopped
+
+        _HOLDING.set()
+        await _until(reader_stopped)
         raise RuntimeError("synthetic retry budget spent")
         yield  # pragma: no cover
 
@@ -318,10 +350,13 @@ async def test_a_failure_after_the_reader_stopped_is_a_stopped_reader_s_end(
 
     reader = asyncio.create_task(read())
     await sourced.wait()
-    await asyncio.sleep(0.05)
+    # The model is called: its failure comes only after the stop.
+    await _until(_HOLDING.is_set)
     reader.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await reader
+        async with asyncio.timeout(_BACKSTOP):
+            await reader
+    # Recorded before the cancelled reader returned.
     (values,) = sink.emitted
     assert values[metrics.QUERY_FAILED_METRIC] == 0.0
     assert memory.messages == []
@@ -337,10 +372,12 @@ async def test_a_reader_cancelled_while_no_event_comes_cancels_at_the_bound(
     monkeypatch.setattr(rag_chain, "_STOP_GRACE_SECONDS", 0.3)
     config.search.model_timeout_seconds = 0.3
     chain, _, memory = _make_chain(config, factory=_HeldFactory())
-    started = asyncio.get_running_loop().time()
-    await _cancelled_after_first_chunk(chain, 0.05)
-    elapsed = asyncio.get_running_loop().time() - started
-    assert 0.6 <= elapsed < 5
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    await _cancelled_after_first_chunk(chain, held=True)
+    # Not cancelled before the bound (a lower bound: a loaded runner only
+    # makes it later); the held chunk never came, so the bound ended it.
+    assert loop.time() - started >= 0.6
     assert not [t for t in asyncio.all_tasks() if t.get_name() == "kg-rag-query-events"]
     assert memory.messages == []
 
@@ -363,16 +400,21 @@ async def test_a_reader_cancelled_again_while_it_waits_leaves_the_bound_to_end_i
 
     reader = asyncio.create_task(read())
     await chunked.wait()
-    await asyncio.sleep(0.05)
+    await _until(_HOLDING.is_set)
     reader.cancel()
-    await asyncio.sleep(0.05)
+    # The reader stopped its query (its stop is set right before it waits
+    # for the query), and now waits for it: cancel it again there.
+    (stop,) = _HELD_FOR
+    await _until(stop.is_set)
     reader.cancel()
     again = asyncio.get_running_loop().time()
     with pytest.raises(asyncio.CancelledError):
         await reader
     (query,) = [t for t in asyncio.all_tasks() if t.get_name() == "kg-rag-query-events"]
-    await asyncio.wait({query}, timeout=5)
-    # Cancelled at the bound after the second cancellation, not at it.
+    # Not cancelled at the second cancellation: still running past it ...
+    assert not query.done()
+    await asyncio.wait({query}, timeout=_BACKSTOP)
+    # ... and cancelled at the bound (0.3 s) after it, a lower bound.
     assert asyncio.get_running_loop().time() - again >= 0.25
     assert query.done()
 
@@ -641,22 +683,28 @@ async def test_a_screened_stream_broken_after_its_answer_saves_nothing(
     assert memory.messages == []
 
 
-# When each _ReasoningModel stream ended (loop time).
-_REASONING_ENDED: list[float] = []
+# Each _ReasoningModel chunk, by whether its query's reader had stopped
+# when it was written, and "ended" once its stream ended.
+_REASONING: list[str] = []
+_REASONING_STARTED = threading.Event()
 
 
 class _ReasoningModel(GenericFakeChatModel):
     """Reasons at length: chunks without text (a reasoning model's
-    reasoning, emptied), then its answer; records when its stream ends."""
+    reasoning, emptied), then its answer; records each chunk and its end."""
 
     async def _astream(self, *args: Any, **kwargs: Any) -> Any:  # type: ignore[override]
+        from unified_kg_rag.shared.reader_stop import reader_stopped
+
         try:
             for _ in range(30_000):
+                _REASONING.append("after-stop" if reader_stopped() else "before")
                 yield ChatGenerationChunk(message=AIMessageChunk(content=""))
+                _REASONING_STARTED.set()
                 await asyncio.sleep(0.02)
             yield ChatGenerationChunk(message=AIMessageChunk(content=_ANSWER))
         finally:
-            _REASONING_ENDED.append(asyncio.get_running_loop().time())
+            _REASONING.append("ended")
 
 
 class _ReasoningFactory(_StreamingModelFactory):
@@ -677,29 +725,49 @@ async def test_a_reader_cancelled_while_the_model_reasons_ends_it_at_its_next_ch
     if screened:
         chain.guard = _PassingGuard()  # type: ignore[assignment]
         chain._screen_outputs = True
-    _REASONING_ENDED.clear()
-    routed = asyncio.Event()
+    _REASONING.clear()
+    _REASONING_STARTED.clear()
 
     async def read() -> None:
-        async for event in chain.aquery_events(
+        async for _ in chain.aquery_events(
             _input(use_memory=True, conversation_id="c-11")
         ):
-            if isinstance(event, QueryRouted):
-                routed.set()
+            pass
 
     reader = asyncio.create_task(read())
-    await routed.wait()
-    await asyncio.sleep(0.2)  # the model is reasoning
-    loop = asyncio.get_running_loop()
-    stopped = loop.time()
+    # The model is reasoning (its first chunk read).
+    await _until(_REASONING_STARTED.is_set)
     reader.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await reader
-    assert loop.time() - stopped < 5
-    (ended,) = _REASONING_ENDED
-    assert ended - stopped < 5
+        async with asyncio.timeout(_BACKSTOP):
+            await reader
+    # Ended at its next chunk, not at the wait's bound (60 s + a grace):
+    # at most the one chunk written as the reader stopped came after the
+    # stop, and the model's stream had ended before the reader returned.
+    assert _REASONING.count("after-stop") <= 1
+    assert _REASONING[-1] == "ended"
     assert not [t for t in asyncio.all_tasks() if t.get_name() == "kg-rag-query-events"]
     assert memory.messages == []
+
+
+def _interrupt_once_waiting() -> None:
+    """Send SIGINT to the main thread once it blocks in the chain's loop
+    runner, waiting for a step (``_LoopRunner.run``'s ``future.result``)."""
+    main = threading.main_thread().ident
+    assert main is not None
+    deadline = time.monotonic() + _BACKSTOP
+    while time.monotonic() < deadline:
+        frame = sys._current_frames().get(main)
+        names = []
+        while frame is not None:
+            names.append(frame.f_code.co_name)
+            frame = frame.f_back
+        # Innermost first: a wait inside result(), inside the runner's run().
+        if "result" in names and "run" in names and names[0] == "wait":
+            signal.pthread_kill(main, signal.SIGINT)
+            return
+        time.sleep(0.001)
+    raise AssertionError("the main thread never waited for the step")
 
 
 @pytest.mark.parametrize("wait", [None, 0.0], ids=["ended", "still-ending"])
@@ -726,9 +794,9 @@ def test_an_interrupt_while_a_sync_stream_waits_cancels_the_query(
         while not isinstance(first := next(stream), AnswerChunk | str):
             pass
         assert first
-        interrupt = threading.Timer(
-            0.2, signal.pthread_kill, (threading.main_thread().ident, signal.SIGINT)
-        )
+        # The interrupt lands once the main thread waits for the next chunk
+        # (blocked in the loop runner's wait), whenever that is.
+        interrupt = threading.Thread(target=_interrupt_once_waiting)
         interrupt.start()
         with pytest.raises(KeyboardInterrupt):
             next(stream)
@@ -739,10 +807,10 @@ def test_an_interrupt_while_a_sync_stream_waits_cancels_the_query(
                 t for t in asyncio.all_tasks() if t.get_name() == "kg-rag-query-events"
             ]
 
-        for _ in range(50):
-            if not chain._loop_runner.run(queries()):
-                break
-            time.sleep(0.1)
+        # The query ends (cancelled): a backstop, not a measure.
+        deadline = time.monotonic() + _BACKSTOP
+        while chain._loop_runner.run(queries()) and time.monotonic() < deadline:
+            time.sleep(0.01)
         assert chain._loop_runner.run(queries()) == []
         assert memory.messages == []
     finally:

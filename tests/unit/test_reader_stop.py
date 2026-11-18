@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import threading
-import time
 from collections.abc import AsyncIterator, Iterator
 from typing import Any
 
@@ -35,14 +34,18 @@ from unified_kg_rag.shared.reader_stop import (
 
 pytestmark = pytest.mark.unit
 
-# Long waits: a stop that does not end them fails the test's timing.
+# Backoffs no test outlives: a stop that does not end one hangs the test
+# into the backstop. The stops are set as the first attempt fails (a cue),
+# so they land before or during the first backoff, never on a timer.
 _SLOW = RetryPolicy(
     max_attempts=5,
-    base_delay_seconds=30.0,
-    max_delay_seconds=30.0,
+    base_delay_seconds=3600.0,
+    max_delay_seconds=3600.0,
     jitter="none",
     max_total_seconds=None,
 )
+# A hang backstop (seconds), far past anything a passing run waits.
+_BACKSTOP = 60.0
 
 
 class _Throttled(Exception):
@@ -54,35 +57,39 @@ def _transient(exc: BaseException) -> bool:
 
 
 class _Refusing(Runnable[Any, Any]):
-    """A model that refuses every call (a throttled one), counting them."""
+    """A model that refuses every call (a throttled one), counting them;
+    ``on_call`` runs at each (a test's cue to stop its query)."""
 
-    def __init__(self) -> None:
+    def __init__(self, on_call: Any = None) -> None:
         self.calls = 0
+        self.on_call = on_call
+
+    def _refuse(self) -> None:
+        self.calls += 1
+        if self.on_call is not None:
+            self.on_call()
+        raise _Throttled
 
     def invoke(
         self, input: Any, config: RunnableConfig | None = None, **kwargs: Any
     ) -> Any:
-        self.calls += 1
-        raise _Throttled
+        self._refuse()
 
     async def ainvoke(
         self, input: Any, config: RunnableConfig | None = None, **kwargs: Any
     ) -> Any:
-        self.calls += 1
-        raise _Throttled
+        self._refuse()
 
     def stream(
         self, input: Any, config: RunnableConfig | None = None, **kwargs: Any
     ) -> Iterator[Any]:
-        self.calls += 1
-        raise _Throttled
+        self._refuse()
         yield  # pragma: no cover
 
     async def astream(
         self, input: Any, config: RunnableConfig | None = None, **kwargs: Any
     ) -> AsyncIterator[Any]:
-        self.calls += 1
-        raise _Throttled
+        self._refuse()
         yield  # pragma: no cover
 
 
@@ -92,58 +99,63 @@ def _retrying(model: _Refusing) -> TransientRetryRunnable:
     )
 
 
-async def _stopped_after(stop: ReaderStop, seconds: float, call: Any) -> float:
-    """Run ``call()`` under ``stop``, set ``seconds`` in; the seconds from
-    the stop to its end, which must be a ``CancelledError``."""
+def _stop_soon(stop: ReaderStop) -> Any:
+    """An ``on_call`` that sets ``stop`` on the loop's next turn: the call
+    fails, its retry starts its backoff, then the reader stops."""
     loop = asyncio.get_running_loop()
-    stopped_at: list[float] = []
+    return lambda: loop.call_soon(stop.set)
 
-    def set_stop() -> None:
-        stopped_at.append(loop.time())
-        stop.set()
 
-    loop.call_later(seconds, set_stop)
+def _stop_from_a_thread(stop: ReaderStop) -> Any:
+    """An ``on_call`` that sets ``stop`` from another thread (a sync call's
+    reader stops on the chain's loop)."""
+    return lambda: threading.Thread(target=stop.set).start()
+
+
+async def _stopped(stop: ReaderStop, call: Any) -> None:
+    """Run ``call()`` under ``stop``: it must end with ``CancelledError``
+    (its backoff of an hour cut short), within the backstop."""
     with reader_stop_scope(stop), pytest.raises(asyncio.CancelledError):
-        await call()
-    return loop.time() - stopped_at[0]
+        async with asyncio.timeout(_BACKSTOP):
+            await call()
 
 
 async def test_ainvoke_backoff_ends_at_the_stop() -> None:
-    model = _Refusing()
-    released = await _stopped_after(
-        ReaderStop(), 0.1, lambda: _retrying(model).ainvoke("q")
-    )
-    assert released < 0.5
+    stop = ReaderStop()
+    model = _Refusing(_stop_soon(stop))
+    await _stopped(stop, lambda: _retrying(model).ainvoke("q"))
     assert model.calls == 1
 
 
 async def test_astream_backoff_ends_at_the_stop() -> None:
-    model = _Refusing()
+    stop = ReaderStop()
+    model = _Refusing(_stop_soon(stop))
 
     async def read() -> None:
         async for _ in _retrying(model).astream("q"):
             pass
 
-    assert await _stopped_after(ReaderStop(), 0.1, read) < 0.5
+    await _stopped(stop, read)
     assert model.calls == 1
 
 
 async def test_acall_with_transient_retry_backoff_ends_at_the_stop() -> None:
+    stop = ReaderStop()
     calls = 0
+    stop_soon = _stop_soon(stop)
 
     async def call() -> None:
         nonlocal calls
         calls += 1
+        stop_soon()
         raise _Throttled
 
-    released = await _stopped_after(
-        ReaderStop(),
-        0.1,
+    await _stopped(
+        stop,
         lambda: acall_with_transient_retry(
             call, is_transient=_transient, operation="store", policy=_SLOW
         ),
     )
-    assert released < 0.5
     assert calls == 1
 
 
@@ -156,42 +168,58 @@ async def test_no_attempt_starts_after_the_stop() -> None:
     assert model.calls == 0
 
 
+def _in_a_worker(run: Any) -> BaseException | None:
+    """``run()`` in a thread, joined within the backstop; what it raised."""
+    raised: list[BaseException | None] = [None]
+
+    def target() -> None:
+        try:
+            run()
+        except BaseException as e:  # noqa: BLE001 - handed to the test
+            raised[0] = e
+
+    worker = threading.Thread(target=target, daemon=True)
+    worker.start()
+    worker.join(_BACKSTOP)
+    assert not worker.is_alive(), "the backoff was not cut short"
+    return raised[0]
+
+
 @pytest.mark.parametrize("api", ["stream", "invoke"])
 def test_sync_backoff_ends_at_a_stop_from_another_thread(api: str) -> None:
-    model = _Refusing()
     stop = ReaderStop()
+    model = _Refusing(_stop_from_a_thread(stop))
     retrying = _retrying(model)
 
     def run() -> None:
-        if api == "stream":
-            list(retrying.stream("q"))
-        else:
-            retrying.invoke("q")
+        with reader_stop_scope(stop):
+            if api == "stream":
+                list(retrying.stream("q"))
+            else:
+                retrying.invoke("q")
 
-    threading.Timer(0.1, stop.set).start()
-    started = time.monotonic()
-    with reader_stop_scope(stop), pytest.raises(asyncio.CancelledError):
-        run()
-    assert time.monotonic() - started < 0.6
+    assert isinstance(_in_a_worker(run), asyncio.CancelledError)
     assert model.calls == 1
 
 
 def test_call_with_transient_retry_honours_the_stop() -> None:
+    stop = ReaderStop()
     calls = 0
+    stop_from_a_thread = _stop_from_a_thread(stop)
 
     def call() -> None:
         nonlocal calls
         calls += 1
+        stop_from_a_thread()
         raise _Throttled
 
-    stop = ReaderStop()
-    threading.Timer(0.1, stop.set).start()
-    started = time.monotonic()
-    with reader_stop_scope(stop), pytest.raises(asyncio.CancelledError):
-        call_with_transient_retry(
-            call, is_transient=_transient, operation="embed", policy=_SLOW
-        )
-    assert time.monotonic() - started < 0.6
+    def run() -> None:
+        with reader_stop_scope(stop):
+            call_with_transient_retry(
+                call, is_transient=_transient, operation="embed", policy=_SLOW
+            )
+
+    assert isinstance(_in_a_worker(run), asyncio.CancelledError)
     assert calls == 1
 
 
