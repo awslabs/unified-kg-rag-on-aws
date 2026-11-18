@@ -275,3 +275,67 @@ def test_a_failed_tree_write_fails_the_stage_and_keeps_the_old_tree(
     assert "the previous tree" in (result.error_message or "")
     assert raptor.shape(raptor.tree_nodes(providers)) == built
     assert raptor.tree_record(providers) == record
+
+
+def _two_sections(tmp_path: Path, paths: dict[str, str]) -> list[tuple[int, list[str]]]:
+    """The summary nodes (level, text units) of a ``scope: document`` build
+    over two pre-parsed documents (one English, one Korean) recording the
+    ``paths`` (by JSON file stem)."""
+    config, providers, _, _ = raptor.setup(tmp_path)
+    tree = config.indexing.summary_tree
+    tree.scope = "document"
+    tree.min_leaves_per_tree = 6
+    parsed = tmp_path / "parsed"
+    parsed.mkdir(parents=True)
+    passages = {
+        "manual-en": [f"Kestrel Depot section {i} ships widgets." for i in range(6)],
+        "manual-ko": [
+            f"케스트럴 창고 {i}구역은 매일 아침 부품과 상자를 북쪽 항구로 보낸다."
+            for i in range(6)
+        ],
+    }
+    for stem, texts in passages.items():
+        (parsed / f"{stem}.json").write_text(
+            json.dumps(
+                {
+                    "document_id": stem,
+                    "file_name": Path(paths[stem]).name,
+                    "file_path": paths[stem],
+                    "page_content": "\n\n".join(texts),
+                }
+            )
+        )
+
+    context = raptor.ingest(config, providers, parsed, tmp_path / "run-1", PARSED)
+
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    indexer = providers.build_vector_indexer()
+    try:
+        rows = indexer.scan_text_units(None, fields=["attributes"]) or []
+    finally:
+        indexer.close()
+    document_of = {str(r["id"]): r["attributes"]["relative_path"] for r in rows}
+    assert Counter(document_of.values()) == {"manual-en.json": 6, "manual-ko.json": 6}
+    nodes = []
+    for node in _nodes(providers):
+        # Every node summarizes one document's text.
+        assert len({document_of[unit] for unit in node["text_unit_ids"]}) == 1
+        nodes.append((node["level"], sorted(node["text_unit_ids"])))
+    return sorted(nodes)
+
+
+def test_a_document_scope_tree_is_one_documents_whatever_path_it_records(
+    tmp_path: Path, no_aws  # noqa: F811 - the fixture
+) -> None:
+    # Two sections of one export, recording its path: each is its own
+    # tree, the trees of two documents recording distinct paths.
+    same = "/exports/manual.pdf"
+    shared = _two_sections(tmp_path / "shared", {"manual-en": same, "manual-ko": same})
+    distinct = _two_sections(
+        tmp_path / "distinct",
+        {"manual-en": "/exports/manual-en.pdf", "manual-ko": "/exports/manual-ko.pdf"},
+    )
+
+    # Both documents are large enough for a tree of their own.
+    assert len(shared) >= 2
+    assert shared == distinct

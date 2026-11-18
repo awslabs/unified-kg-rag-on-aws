@@ -263,7 +263,17 @@ class SummaryTreeStage(_RegistryStage):
     def _tree_of(self, attributes: dict[str, Any]) -> str | None:
         """The tree a text unit of ``attributes`` belongs to: the corpus's
         (``None``), its ``partition_by`` value tuple's, or its document's
-        (its stored file path)."""
+        (its ``document_id``, the identity a citation groups by: two
+        pre-parsed documents may record one original path). A text unit
+        that stores no document id (a seed graph's) is its file's."""
+        if self.config.indexing.summary_tree.scope == "document":
+            return str(attributes.get("document_id") or self._tree_name(attributes))
+        return self._tree_name(attributes)
+
+    def _tree_name(self, attributes: dict[str, Any]) -> str | None:
+        """The name of the tree :meth:`_tree_of` the text unit of
+        ``attributes`` (the ``partition`` its nodes, and their ids, carry):
+        under ``scope: document`` its document's stored file path."""
         tree = self.config.indexing.summary_tree
         if tree.scope == "document":
             return str(attributes.get("file_path") or attributes.get("file_name") or "")
@@ -302,14 +312,20 @@ class SummaryTreeStage(_RegistryStage):
         # (texts and vectors) at most max_leaves_in_memory: one tree is no
         # larger (_check_tree_size), and the trees of a corpus split by
         # partition_by or scope: document are not all held at once.
+        names = {
+            self._tree_of(attributes): self._tree_name(attributes)
+            for attributes in (row.get("attributes") or {} for row in rows)
+        }
         for batch in self._tree_batches(rows):
             groups = self._leaves(indexer, suffix, batch, rows)
-            for name in sorted(groups, key=lambda name: name or ""):
-                leaves = groups.pop(name)
+            for key in sorted(groups, key=lambda key: key or ""):
+                leaves = groups.pop(key)
                 leaf_count += len(leaves)
                 if tree.scope == "document" and len(leaves) < tree.min_leaves_per_tree:
                     continue
-                build = self._build(indexer, leaves, suffix, name, reusable, counts)
+                build = self._build(
+                    indexer, leaves, suffix, names[key], reusable, counts
+                )
                 nodes.extend(build.nodes)
                 vectors.update(build.vectors)
                 stops.add(build.stop_reason)
