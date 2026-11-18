@@ -321,6 +321,74 @@ async def test_a_shared_call_stops_once_every_waiters_reader_stopped() -> None:
     assert call.attempts == 2
 
 
+class _GatedThenStopPoint:
+    """A call that waits for ``release`` (not a stop point), then passes
+    one (a zero backoff) and returns; counts its calls."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.release = asyncio.Event()
+
+    async def __call__(self) -> str:
+        self.calls += 1
+        await self.release.wait()
+        await abackoff_wait(0)
+        return f"value {self.calls}"
+
+
+async def test_a_caller_after_every_reader_stopped_starts_its_own_call() -> None:
+    """Every waiter's reader stops while the call is between stop points:
+    it runs on to its next one, but a caller arriving meanwhile, whose
+    reader never stopped, is not handed the stopped call (it would end in
+    ``CancelledError``): it starts its own and gets its result."""
+    memo: dict[str, Any] = {}
+    call = _GatedThenStopPoint()
+    stops = [ReaderStop(), ReaderStop()]
+    readers = [
+        asyncio.ensure_future(_read(stop, memo, call, share_failure=True))
+        for stop in stops
+    ]
+    await asyncio.sleep(0)
+    stopped = memo["k"]
+    for stop in stops:
+        stop.set()
+    async with asyncio.timeout(_BACKSTOP):
+        outcomes = await asyncio.gather(*readers, return_exceptions=True)
+    assert all(isinstance(o, asyncio.CancelledError) for o in outcomes)
+    assert not stopped.done()  # not at a stop point yet
+    later = asyncio.ensure_future(_read(None, memo, call, share_failure=True))
+    await asyncio.sleep(0)
+    call.release.set()
+    async with asyncio.timeout(_BACKSTOP):
+        assert await later == "value 2"
+        await asyncio.wait({stopped})
+    assert stopped.cancelled() and call.calls == 2
+
+
+async def test_a_waiter_cancelled_otherwise_keeps_a_shared_call_running() -> None:
+    """Waiter A is cancelled from outside (a host's cancel, a timeout of
+    its own), waiter B's reader stops: A's cancellation is no reader's
+    stop, so the call is not stopped for it (a cancelled caller never ends
+    a shared call), and it finishes; a waiter joining before it ends gets
+    its result."""
+    memo: dict[str, Any] = {}
+    call = _Throttled()
+    b_stop = ReaderStop()
+    a = asyncio.ensure_future(_read(ReaderStop(), memo, call, share_failure=True))
+    b = asyncio.ensure_future(_read(b_stop, memo, call, share_failure=True))
+    await call.refused.wait()
+    shared = memo["k"]
+    a.cancel()
+    b_stop.set()
+    async with asyncio.timeout(_BACKSTOP):
+        outcomes = await asyncio.gather(a, b, return_exceptions=True)
+    assert all(isinstance(o, asyncio.CancelledError) for o in outcomes)
+    assert memo.get("k") is shared and not shared.done()
+    async with asyncio.timeout(_BACKSTOP):
+        assert await _read(ReaderStop(), memo, call, share_failure=True) == "value"
+    assert shared.result() == "value" and call.attempts == 2
+
+
 async def test_a_stopped_first_callers_own_call_stops_and_a_waiter_calls_itself() -> (
     None
 ):
