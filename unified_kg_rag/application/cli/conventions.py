@@ -101,13 +101,16 @@ _CHILD_EXIT_SECONDS = 1.0
 # ends it at once.
 _STOP_GRACE_SECONDS = 100.0
 # The task a stop cancels (see stoppable), the signal that stopped the
-# run once one did, and whether the loop's thread waits in a blocking call
-# (see interruptible).
+# run once one did, whether the loop's thread waits in a blocking call
+# (see interruptible), and the turn a Ctrl-C cancels instead of the task,
+# with whether one did (see interruptible_turn).
 _stop: dict[str, Any] = {
     "task": None,
     "signum": None,
     "interruptible": False,
     "line_printed": False,
+    "turn": None,
+    "turn_interrupted": False,
 }
 # Set when a stop starts the grace period of the watchdog thread, and when
 # a second signal ends it.
@@ -415,6 +418,19 @@ def exits_on_sigterm(main: Callable[_P, _R]) -> Callable[_P, _R]:
             # Ctrl-C outside the loop (an interactive prompt, the CLI's
             # synchronous code): what the CLI handles.
             raise KeyboardInterrupt
+        turn = _stop["turn"]
+        if (
+            in_loop
+            and signum == signal.SIGINT
+            and turn is not None
+            and not turn.done()
+            and not _stop["turn_interrupted"]
+        ):
+            # A Ctrl-C during an interactive turn ends the turn; a second
+            # one while it unwinds stops the CLI below.
+            _stop["turn_interrupted"] = True
+            turn.get_loop().call_soon_threadsafe(turn.cancel)
+            return
         _stop["signum"] = signum
         if _exit_at_once["enabled"]:
             _stop_started.set()
@@ -434,7 +450,14 @@ def exits_on_sigterm(main: Callable[_P, _R]) -> Callable[_P, _R]:
         # Set from the command line before it is parsed, so an argparse
         # error or a config that fails to load still prints a JSON status.
         _json.update(enabled=wants_json(argv), printed=False)
-        _stop.update(task=None, signum=None, interruptible=False, line_printed=False)
+        _stop.update(
+            task=None,
+            signum=None,
+            interruptible=False,
+            line_printed=False,
+            turn=None,
+            turn_interrupted=False,
+        )
         _start_stop_watchdog()
         if _json["enabled"]:
             console.stderr = True
@@ -496,6 +519,33 @@ async def stoppable(main: Awaitable[_R]) -> _R:
     :func:`exits_on_sigterm`."""
     _stop["task"] = asyncio.current_task()
     return await main
+
+
+class TurnInterrupted(Exception):
+    """A Ctrl-C ended an interactive turn (see :func:`interruptible_turn`)."""
+
+
+async def interruptible_turn(turn: Awaitable[_R]) -> _R:
+    """Await ``turn`` (an interactive CLI's answer) as a task of its own,
+    which a Ctrl-C cancels instead of the task :func:`stoppable` runs: the
+    session goes on. Raises :class:`TurnInterrupted` once the cancelled
+    turn has ended. A second Ctrl-C while it ends, and a SIGTERM, stop the
+    CLI as they do outside a turn (the stop cancels the turn too)."""
+    task = asyncio.ensure_future(turn)
+    _stop.update(turn=task, turn_interrupted=False)
+    try:
+        return await task
+    except asyncio.CancelledError:
+        current = asyncio.current_task()
+        if (
+            _stop["turn_interrupted"]
+            and task.cancelled()
+            and (current is None or not current.cancelling())
+        ):
+            raise TurnInterrupted from None
+        raise
+    finally:
+        _stop.update(turn=None, turn_interrupted=False)
 
 
 @contextlib.contextmanager

@@ -422,6 +422,111 @@ def test_a_ctrl_c_outside_the_loop_is_the_clis_keyboardinterrupt() -> None:
     assert main() == "conversation ended"
 
 
+def test_a_ctrl_c_during_a_turn_ends_the_turn_and_the_session_goes_on() -> None:
+    # rv53 low: a Ctrl-C while run-rag -i answered cancelled the main task
+    # and ended the session (exit 130). It now cancels the turn only.
+    import asyncio
+
+    from unified_kg_rag.application.cli.conventions import (
+        TurnInterrupted,
+        interruptible_turn,
+        stoppable,
+    )
+
+    events: list[str] = []
+
+    async def answer() -> str:
+        try:
+            os.kill(os.getpid(), signal.SIGINT)
+            await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            events.append("turn cancelled")
+            raise
+        return "answered"
+
+    async def run() -> int:
+        try:
+            await interruptible_turn(answer())
+        except TurnInterrupted:
+            events.append("back at the prompt")
+        # The next turn answers, and a stop outside a turn ends the run.
+        events.append(await interruptible_turn(asyncio.sleep(0, "answered")))
+        os.kill(os.getpid(), signal.SIGINT)
+        await asyncio.sleep(5)
+        return 0
+
+    @exits_on_sigterm
+    def main() -> int:
+        return asyncio.run(stoppable(run()))
+
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 130
+    assert events == ["turn cancelled", "back at the prompt", "answered"]
+
+
+def test_a_second_ctrl_c_while_a_turn_ends_stops_the_cli() -> None:
+    # The turn cancelled at the first Ctrl-C takes its time to unwind; a
+    # second one stops the CLI as a Ctrl-C outside a turn does.
+    import asyncio
+
+    from unified_kg_rag.application.cli.conventions import (
+        interruptible_turn,
+        stoppable,
+    )
+
+    events: list[str] = []
+
+    async def answer() -> None:
+        try:
+            os.kill(os.getpid(), signal.SIGINT)
+            await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            events.append("turn cancelled")
+            os.kill(os.getpid(), signal.SIGINT)
+            await asyncio.sleep(5)  # a slow unwind the second stop cuts
+            raise
+
+    async def run() -> int:
+        try:
+            await interruptible_turn(answer())
+        except asyncio.CancelledError:
+            events.append("main cancelled")
+            raise
+        return 0
+
+    @exits_on_sigterm
+    def main() -> int:
+        return asyncio.run(stoppable(run()))
+
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 130
+    assert events == ["turn cancelled", "main cancelled"]
+
+
+def test_a_sigterm_during_a_turn_stops_the_cli() -> None:
+    import asyncio
+
+    from unified_kg_rag.application.cli.conventions import (
+        interruptible_turn,
+        stoppable,
+    )
+
+    async def answer() -> None:
+        os.kill(os.getpid(), signal.SIGTERM)
+        await asyncio.sleep(5)
+
+    @exits_on_sigterm
+    def main() -> int:
+        asyncio.run(stoppable(interruptible_turn(answer())))
+        return 0
+
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 143
+
+
 def test_a_finished_cli_ends_its_process_with_its_exit_code_at_once() -> None:
     # The interpreter's shutdown resets the signal handlers, so a SIGTERM
     # in it ended a finished run with -15 (85 of 160 run-rag stops after

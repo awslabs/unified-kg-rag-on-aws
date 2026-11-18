@@ -27,12 +27,14 @@ from unified_kg_rag.application.cli.conventions import (
     EXIT_USAGE,
     RUN_FAILED,
     ArgumentParser,
+    TurnInterrupted,
     add_output_format_argument,
     add_removed_flag,
     exits_on_sigterm,
     failed,
     failure_fields,
     interruptible,
+    interruptible_turn,
     json_output,
     print_json,
     print_status,
@@ -759,7 +761,15 @@ class RAGChainRunner:
                         state["filters"] if isinstance(state["filters"], dict) else None
                     ),
                 )
-                result = await self._run_query(rag_input)
+                try:
+                    # A Ctrl-C while it answers ends this question only.
+                    result = await interruptible_turn(self._run_query(rag_input))
+                except TurnInterrupted:
+                    console.print(
+                        "\n[yellow]Question stopped. Ask another, or press "
+                        "Ctrl-C again to end the session.[/yellow]"
+                    )
+                    continue
                 self._print_result(result, verbose=self.args.verbose)
                 state["conversation_id"] = result.get(
                     "conversation_id", state["conversation_id"]
