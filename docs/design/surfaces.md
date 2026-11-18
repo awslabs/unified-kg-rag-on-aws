@@ -397,7 +397,9 @@ model responses all the same: LangChain's and the model clients' stream
 generators read each other with `async for`, which closes nothing it
 leaves, so a cancellation landing while a chunk is on its way up leaves
 them suspended, the response open until garbage collection finalizes them
-(a reference cycle can keep them). `_streamed_to` runs the stream in
+(a reference cycle can keep them). `_streamed_to` runs the stream, and
+the answer step without a sink its call (`ChatOllama` streams under
+`ainvoke` too), in
 `shared.model_responses.closing_responses`, which closes every response its
 model clients opened (registered from their HTTP hooks: httpx's response
 hook, botocore's `after-call`) still open when the stream ends. A Bedrock

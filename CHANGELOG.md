@@ -268,9 +268,9 @@ Bugs present in 0.3.0.
   that landed while a chunk was on its way up from the model's read left LangChain's and the model client's stream
   generators suspended, which close nothing until garbage collection: the response held a connection of the Ollama
   or OpenAI-compatible client's pool (1-2 of 96 queries that missed a 3 s window under load), and a Bedrock stream's
-  worker thread read on until its read timeout. The answer stream now closes every model response it opened when it
-  ends, however it ends (a Bedrock stream's socket is shut down first, ending a blocked read); the query still fails
-  with `QueryTimeoutError` at the limit.
+  worker thread read on until its read timeout. The answer call, streamed or not (Ollama streams under `ainvoke`
+  too), now closes every model response it opened when it ends, however it ends (a Bedrock stream's socket is shut
+  down first, ending a blocked read); the query still fails with `QueryTimeoutError` at the limit.
 - `Ctrl-C` while a sync `stream()` or `query_events()` waited for the answer's next chunk raised `RuntimeError:
   aclose(): asynchronous generator is already running` and left the query running on the chain's loop; it raises
   `KeyboardInterrupt`, and the query ends at its next event, answer chunk or retry wait, as a closed stream's does.

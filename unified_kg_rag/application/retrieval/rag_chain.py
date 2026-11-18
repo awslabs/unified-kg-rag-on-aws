@@ -2144,7 +2144,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         )
         sink = _QUERY_EVENTS.get()
         if sink is None:
-            return answer
+            return _closing_responses_of(answer)
         if self._screen_outputs:
             # Streamed all the same (its first chunk bounded), but nothing
             # is shown before the output guardrail screened the whole
@@ -4417,6 +4417,20 @@ class _Ledgered(Runnable[Any, Any]):
     @staticmethod
     def _ledger() -> AbstractContextManager[Any]:
         return nullcontext() if current_ledger() is not None else degradation_scope()
+
+
+def _closing_responses_of(answer: Runnable[Any, Any]) -> Runnable[Any, Any]:
+    """``answer`` unstreamed, its model responses closed when its call ends,
+    however it ends (``shared.model_responses``), as :func:`_streamed_to`
+    closes a stream's: a chat client may stream under ``ainvoke`` too
+    (``ChatOllama`` does), and a cancellation (a deadline) that lands
+    between two chunks leaves its generators suspended, the response open."""
+
+    async def run(state: dict[str, Any], config: RunnableConfig) -> Any:
+        async with closing_responses():
+            return await answer.ainvoke(state, config)
+
+    return RunnableLambda(answer.invoke, afunc=run)
 
 
 def _streamed_to(
