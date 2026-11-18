@@ -556,6 +556,54 @@ def test_an_access_line_drops_its_query_string(
     _assert_no_marker(stream.getvalue())
 
 
+@pytest.mark.parametrize(
+    ("template", "host", "shown"),
+    [
+        (
+            "Uvicorn running on %s://%s:%d (Press CTRL+C to quit)",
+            "127.0.0.1",
+            "Uvicorn running on http://127.0.0.1:18895 (Press CTRL+C to quit)",
+        ),
+        (
+            "Uvicorn running on %s://[%s]:%d (Press CTRL+C to quit)",
+            "::1",
+            "Uvicorn running on http://[::1]:18895 (Press CTRL+C to quit)",
+        ),
+    ],
+)
+def test_the_servers_start_line_keeps_its_address(
+    tmp_path: Path, template: str, host: str, shown: str
+) -> None:
+    # rv53 low: the bind address the operator gave was digested like a
+    # library's text ("running on len=4 sha=...://len=9 sha=...:18895").
+    stream, _ = _setup(tmp_path)
+    try:
+        logging.getLogger("uvicorn.error").info(template, "http", host, 18895)
+        # The same logger's other records are a library's text as before.
+        logging.getLogger("uvicorn.error").error("Bind failed: %s", MARKER)
+        _flush()
+    finally:
+        setup_logging(Config())
+    start, failed = [json.loads(line) for line in stream.getvalue().splitlines()]
+    assert start["event"] == shown
+    assert failed["event"].startswith("Bind failed: len=")
+    _assert_no_marker(stream.getvalue())
+
+
+def test_a_metadata_template_on_another_logger_is_digested(tmp_path: Path) -> None:
+    # The access line's template keeps its arguments on the access logger
+    # only: another library logging the same template is digested.
+    stream, _ = _setup(tmp_path)
+    try:
+        logging.getLogger("thirdparty").info(
+            '%s - "%s %s HTTP/%s" %d', MARKER, "GET", "/", "1.1", 200
+        )
+        _flush()
+    finally:
+        setup_logging(Config())
+    _assert_no_marker(stream.getvalue())
+
+
 def test_a_library_warning_is_logged_by_category_without_its_text(
     tmp_path: Path,
 ) -> None:

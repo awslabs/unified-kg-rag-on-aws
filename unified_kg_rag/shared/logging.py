@@ -5,7 +5,7 @@ import numbers
 import sys
 import threading
 import warnings
-from collections.abc import Hashable, Mapping
+from collections.abc import Callable, Hashable, Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol, TextIO
@@ -132,12 +132,6 @@ _PACKAGE_LOGGER = __name__.partition(".")[0]
 _warnings_logger = logging.getLogger(f"{_PACKAGE_LOGGER}.warnings")
 
 
-# Library loggers whose records are request metadata the package's own
-# servers log, not text: uvicorn's access line (client, method, path without
-# its query string, status) of the MCP server's HTTP transport.
-_METADATA_LOGGERS = frozenset({"uvicorn.access"})
-
-
 def _is_package_record(record: logging.LogRecord) -> bool:
     return record.name == _PACKAGE_LOGGER or record.name.startswith(
         f"{_PACKAGE_LOGGER}."
@@ -154,6 +148,40 @@ def _without_query(path: object) -> object:
     """An access line's path without its query string (it may hold a key:
     ``/mcp?api_key=...``)."""
     return path.partition("?")[0] if isinstance(path, str) else path
+
+
+def _kept(value: object) -> object:
+    return value
+
+
+# Library records that are metadata the package's own servers log, not text,
+# by logger and message template: an argument sanitizer per placeholder.
+# uvicorn's access line (client, method, path without its query string,
+# version, status) and its start line (scheme, the bind address the operator
+# gave, port) of the MCP server's HTTP transport and the console. Any other
+# record of these loggers (a failed bind's error) is a library's text.
+_ACCESS_LINE = (_kept, _kept, _without_query, _kept, _kept)
+_ADDRESS = (_kept, _kept, _kept)
+_METADATA_RECORDS: Mapping[
+    str, Mapping[str, tuple[Callable[[object], object], ...]]
+] = {
+    "uvicorn.access": {'%s - "%s %s HTTP/%s" %d': _ACCESS_LINE},
+    "uvicorn.error": {
+        "Uvicorn running on %s://%s:%d (Press CTRL+C to quit)": _ADDRESS,
+        "Uvicorn running on %s://[%s]:%d (Press CTRL+C to quit)": _ADDRESS,
+    },
+}
+
+
+def _metadata_args(record: logging.LogRecord) -> tuple[object, ...] | None:
+    """A metadata record's sanitized arguments; ``None`` for any other."""
+    template = record.msg if isinstance(record.msg, str) else None
+    sanitizers = _METADATA_RECORDS.get(record.name, {}).get(template or "")
+    if sanitizers is None or not isinstance(record.args, tuple):
+        return None
+    if len(record.args) != len(sanitizers):
+        return None
+    return tuple(keep(arg) for keep, arg in zip(sanitizers, record.args, strict=True))
 
 
 def _safe_arg(value: object) -> object:
@@ -184,17 +212,16 @@ class LibraryRecordFilter(logging.Filter):
     is rewritten once, whichever handler meets it first. A library that
     formats the text into the message itself (an f-string) is not caught:
     set its level in ``logging.library_levels``. DEBUG records keep
-    everything, as the package's own do. uvicorn's access line keeps its
-    arguments but the query string of its path."""
+    everything, as the package's own do. A metadata record of the package's
+    own servers (``_METADATA_RECORDS``: uvicorn's access and start lines)
+    keeps its arguments, an access line's path without its query string."""
 
     def filter(self, record: logging.LogRecord) -> bool:
         if getattr(record, _FILTERED, False) or record.levelno < logging.INFO:
             return True
-        if record.name in _METADATA_LOGGERS:
-            # uvicorn's access line: client, method, path, version, status.
-            if isinstance(record.args, tuple) and len(record.args) == 5:
-                client, method, path, version, status = record.args
-                record.args = (client, method, _without_query(path), version, status)
+        metadata = _metadata_args(record)
+        if metadata is not None:
+            record.args = metadata
             setattr(record, _FILTERED, True)
             return True
         # A structlog event (``get_logger``: the package's own, also a
