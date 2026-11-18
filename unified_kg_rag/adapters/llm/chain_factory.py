@@ -71,6 +71,7 @@ from unified_kg_rag.shared.logging import log_error, log_failure, warn_once
 from unified_kg_rag.shared.reader_stop import (
     abackoff_wait,
     backoff_wait,
+    blank_in_shared_calls,
     raise_if_reader_stopped,
 )
 from unified_kg_rag.shared.utils.model_output import (
@@ -258,6 +259,7 @@ _TRUNCATION_MARKERS = {
 STRICT_STREAM_TRUNCATION: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "kg_rag_strict_stream_truncation", default=False
 )
+blank_in_shared_calls(STRICT_STREAM_TRUNCATION)
 
 
 def _truncation_reason(message: Any) -> str | None:
@@ -656,8 +658,10 @@ class TransientRetryRunnable(Runnable[Any, Any]):
         started_at = time.monotonic()
         attempt = 1
         retried = usage.RetriedCall()
+        # No stop check here: on the event loop a stopped reader's query is
+        # cancelled (GraphRAGChain.aquery_events), and the backoff below
+        # ends at the stop.
         while True:
-            raise_if_reader_stopped()
             emitted = False
             try:
                 async with aclosing(

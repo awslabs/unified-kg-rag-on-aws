@@ -551,3 +551,88 @@ async def test_a_stopped_reader_leaves_the_shared_work_it_awaits() -> None:
     asyncio.get_running_loop().call_later(0.01, other.set_result, "value")
     await await_unless_stopped(other)
     assert other.result() == "value"
+
+
+# The package's context variables a call several queries share keeps from
+# its first caller, and why: none is a query's own state.
+_KEPT_IN_SHARED_CALLS = {
+    # Rebound to the call's own stop (SharedContext).
+    "shared/reader_stop.py:_READER_STOP": "the call's SharedStop",
+    # Taken from all its waiters (share_with_waiters).
+    "adapters/llm/retry.py:_RETRY_DEADLINE": "the waiters' latest deadline",
+    "shared/usage.py:_CURRENT": "the earliest waiter's meter",
+    # Where the call was sent from: logged and traced there.
+    "shared/observability.py:_BOUND_ATTRIBUTES": "span attributes",
+    "adapters/aws/bedrock.py:_IN_EMBEDDING_SPAN": "span nesting",
+    # A run's, not a query's.
+    "shared/write_fence.py:_FENCES": "an ingestion run's write fences",
+    "shared/store_lookups.py:_CACHE": "a run's store-lookup cache",
+    "adapters/llm/retry.py:_LEDGER": "a stage's failure ledger",
+    "adapters/llm/response_cache.py:_UNCACHED": "a run's cache bypass",
+    "application/retrieval/query_processing.py:_EXTRACTION_SCOPE": (
+        "a run's extraction cache scope"
+    ),
+}
+
+
+def _creates_variable(value: Any) -> bool:
+    """Whether ``value`` (an assignment's AST) calls ``ContextVar``."""
+    import ast
+
+    if not isinstance(value, ast.Call):
+        return False
+    func = value.func
+    name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
+    return name == "ContextVar"
+
+
+def _package_context_variables() -> dict[str, Any]:
+    """Every module-level ``ContextVar`` of the package, by
+    ``path:name``."""
+    import ast
+    import importlib
+    from pathlib import Path
+
+    import unified_kg_rag
+
+    root = Path(unified_kg_rag.__file__).parent
+    found: dict[str, Any] = {}
+    for path in sorted(root.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in tree.body:
+            target = (
+                node.target
+                if isinstance(node, ast.AnnAssign)
+                else (
+                    node.targets[0]
+                    if isinstance(node, ast.Assign) and len(node.targets) == 1
+                    else None
+                )
+            )
+            value = getattr(node, "value", None)
+            if not isinstance(target, ast.Name) or not _creates_variable(value):
+                continue
+            relative = path.relative_to(root)
+            module = importlib.import_module(
+                ".".join(["unified_kg_rag", *relative.with_suffix("").parts])
+            )
+            found[f"{relative.as_posix()}:{target.id}"] = getattr(module, target.id)
+    return found
+
+
+def test_a_shared_call_starts_without_any_query_s_own_state() -> None:
+    # Every context variable is either blanked in a call several queries
+    # share (blank_in_shared_calls) or kept for a stated reason: a new one
+    # is classified here, so none leaks a first caller's state by accident.
+    from unified_kg_rag.shared.reader_stop import _BLANKED
+
+    variables = _package_context_variables()
+    assert len(variables) > len(_KEPT_IN_SHARED_CALLS)
+    unclassified = [
+        key
+        for key, variable in variables.items()
+        if variable not in _BLANKED and key not in _KEPT_IN_SHARED_CALLS
+    ]
+    assert unclassified == []
+    assert [k for k in _KEPT_IN_SHARED_CALLS if k not in variables] == []
+    assert [k for k in _KEPT_IN_SHARED_CALLS if variables[k] in _BLANKED] == []

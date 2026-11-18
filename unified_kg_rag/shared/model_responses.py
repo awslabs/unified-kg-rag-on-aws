@@ -30,6 +30,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from unified_kg_rag.shared.logging import get_logger
+from unified_kg_rag.shared.reader_stop import blank_in_shared_calls
 
 logger = get_logger(__name__)
 
@@ -70,6 +71,9 @@ class _OpenResponses:
 _OPEN_RESPONSES: contextvars.ContextVar[_OpenResponses | None] = contextvars.ContextVar(
     "kg_rag_open_responses", default=None
 )
+# A call several queries share closes no query's responses, nor is it
+# refused once one query's scope ended.
+blank_in_shared_calls(_OPEN_RESPONSES)
 
 # Closes started outside a scope's await (a response tracked after its scope
 # ended, a scope cancelled again while it closed): kept until done.

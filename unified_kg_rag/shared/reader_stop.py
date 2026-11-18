@@ -3,15 +3,15 @@
 """The stop of a query whose reader stopped reading its events.
 
 A query streamed to a reader (``GraphRAGChain.aquery_events``) runs in a
-task of its own and ends at its next stop point once the reader stops: its
-next event, its answer model's next chunk, and the retry loops' backoff
-waits (:func:`backoff_wait`, :func:`abackoff_wait`), which a stopped reader
-would otherwise keep calling a throttled model for until the retry budget
-runs out. The query binds its :class:`ReaderStop` (:func:`reader_stop_scope`)
-and its reader sets it; a retry loop checks it before each attempt and
-races its wait against it. A stop raises ``asyncio.CancelledError`` where
-nothing is held (between attempts), which the query ends as a stopped
-reader's, not as a failure.
+task of its own, which a reader that stops cancels at once. The query
+binds its :class:`ReaderStop` (:func:`reader_stop_scope`) and the reader
+sets it first: it reaches what the cancellation does not, the work the
+query left on worker threads (a retry loop there checks it before each
+attempt and races its backoff wait against it, :func:`backoff_wait`, and
+the model clients that resend a call themselves check it before each
+request), so a stopped reader's query sends no model request, and it tells
+the query's end as a stopped reader's, not as a failure. A stop raises
+``asyncio.CancelledError`` where nothing is held (between attempts).
 
 Outside such a query no stop is bound and the waits are plain sleeps.
 
@@ -21,8 +21,9 @@ waiter's: it runs in a :class:`SharedContext`, under a :class:`SharedStop`
 of its own set once every waiter's reader stopped, and a waiter whose reader
 stops leaves it (:func:`await_unless_stopped`), so one reader's stop never
 ends another's query. The other per-query state such a call reads is taken
-from all its waiters the same way (:func:`share_with_waiters`), never from
-its first caller alone.
+from all its waiters the same way (:func:`share_with_waiters`), or it starts
+without it (:func:`blank_in_shared_calls`), never from its first caller
+alone.
 """
 
 from __future__ import annotations
@@ -130,13 +131,36 @@ def reader_stop_scope(stop: ReaderStop) -> Iterator[ReaderStop]:
         _READER_STOP.reset(token)
 
 
+# The context variables of per-query state a call several queries share
+# starts without (blank_in_shared_calls), each with its default.
+_BLANKED: dict[contextvars.ContextVar[Any], Any] = {}
+
+
+def blank_in_shared_calls(*variables: contextvars.ContextVar[Any]) -> None:
+    """Have each call several queries share start with ``variables`` at
+    their defaults instead of its first caller's values: per-query state
+    (its events' reader, its open model responses, its memo and ledgers)
+    that is no other waiter's. The module that owns a variable registers it
+    when it is imported; state the call must take from all its waiters is
+    registered with :func:`share_with_waiters` instead."""
+    for variable in variables:
+        _BLANKED[variable] = contextvars.Context().run(variable.get)
+
+
 def detached_context(stop: ReaderStop | None = None) -> contextvars.Context:
     """A copy of the current context with ``stop`` bound in place of the
-    reader's (``None``: no stop), for work that is not this reader's alone
-    (``loop.create_task(..., context=...)``). The rest of the context (log
-    and trace ids, the usage meter) is kept."""
+    reader's (``None``: no stop) and the per-query state registered with
+    :func:`blank_in_shared_calls` at its defaults, for work that is not this
+    reader's alone (``loop.create_task(..., context=...)``). The rest of the
+    context (log and trace ids, the usage meter) is kept."""
     context = contextvars.copy_context()
-    context.run(_READER_STOP.set, stop)
+
+    def detach() -> None:
+        _READER_STOP.set(stop)
+        for variable, default in _BLANKED.items():
+            variable.set(default)
+
+    context.run(detach)
     return context
 
 
@@ -213,7 +237,6 @@ async def await_unless_stopped(future: asyncio.Future[_T]) -> None:
     if stop is None:
         await asyncio.wait({future})
         return
-    raise_if_reader_stopped()
     await stop._until(future)
     if not future.done():
         raise asyncio.CancelledError
@@ -240,7 +263,7 @@ def backoff_wait(delay: float, sleep: Callable[[float], object] | None = None) -
     if stop is None:
         (sleep or time.sleep)(delay)
         return
-    raise_if_reader_stopped()
+    # Set already, it returns at once.
     stop._wait(delay)
     raise_if_reader_stopped()
 
@@ -252,6 +275,6 @@ async def abackoff_wait(delay: float) -> None:
     if stop is None:
         await asyncio.sleep(delay)
         return
-    raise_if_reader_stopped()
+    # Set already, it returns at once.
     await stop._await(delay)
     raise_if_reader_stopped()

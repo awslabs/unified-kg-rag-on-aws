@@ -234,7 +234,12 @@ from unified_kg_rag.shared.metrics import (
     QUERY_THROTTLED_METRIC,
 )
 from unified_kg_rag.shared.model_responses import closing_responses
-from unified_kg_rag.shared.reader_stop import ReaderStop, reader_stop_scope
+from unified_kg_rag.shared.reader_stop import (
+    ReaderStop,
+    blank_in_shared_calls,
+    reader_stop_scope,
+    reader_stopped,
+)
 from unified_kg_rag.shared.usage import UsageLimits, UsageMeter, usage_scope
 from unified_kg_rag.shared.utils import (
     configure_event_loop,
@@ -2773,14 +2778,24 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 leftovers: list[asyncio.Future[Any]] = []
                 token = _LEFTOVER_EXTRACTIONS.set(leftovers)
                 try:
-                    result = await self._ainvoke(
-                        rag_input, input_dict, config, span, search, deadline, query_id
-                    )
+                    # Every model response the query opens (its answer's,
+                    # and its other calls': a translation, an extraction,
+                    # a map step) is closed when it ends, however it ends.
+                    async with closing_responses():
+                        result = await self._ainvoke(
+                            rag_input,
+                            input_dict,
+                            config,
+                            span,
+                            search,
+                            deadline,
+                            query_id,
+                        )
                 except BaseException as e:
                     await discard(leftovers)
                     if (
                         isinstance(e, Exception | asyncio.CancelledError)
-                        and _reader_stopped()
+                        and reader_stopped()
                     ):
                         # Not a cancelled or failed query: its reader's
                         # early end, a closed stream's, whatever it raised
@@ -3936,21 +3951,17 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         after the events sent before it, as ``ainvoke`` raises it.
 
         The query runs in a task of its own and waits for the caller to take
-        each event before it goes on, so a caller that stops reading ends it
-        at its next event, its answer model's next chunk (one without
-        text too: reasoning, an answer held back) or its next retry wait
-        (a throttled model's backoff, none of its calls sent after the
-        stop; ``shared.reader_stop``): one that closes the
-        iterator (``aclose``; ``break`` closes it once collected) or is
-        cancelled while it waits for an event (a client that disconnected,
-        a caller's ``asyncio.timeout``). The close, or the cancellation,
-        waits for that, a few seconds past ``search.model_timeout_seconds``
-        at most (a stalled model ends in its client's read timeout first),
-        then cancels the query; ended between two of its answer's chunks,
-        its model stream is closed and its connection released. Nothing is written to memory,
-        and its metrics record its latency and usage up to there with no
-        failure. LangChain's ``Runnable.astream_events`` (the callbacks'
-        events) is left as LangChain defines it.
+        each event before it goes on. A caller that stops reading (one that
+        closes the iterator: ``aclose``, or ``break`` once it is collected;
+        or one cancelled while it waits for an event: a client that
+        disconnected, a caller's ``asyncio.timeout``) cancels the query at
+        once, wherever it is, as its deadline would: its model responses
+        are closed and their connections released
+        (``shared.model_responses``), and its worker threads send no model
+        request after the stop (``shared.reader_stop``). Nothing is written
+        to memory, and its metrics record its latency and usage up to there
+        with no failure. LangChain's ``Runnable.astream_events`` (the
+        callbacks' events) is left as LangChain defines it.
         """
         channel = _EventChannel()
 
@@ -3970,7 +3981,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             finally:
                 _QUERY_EVENTS.reset(token)
             # The query is done (its memory written): what is left is sent
-            # with no wait, so a reader has no stop point after it. A query
+            # with no wait, so a reader that stops now cancels nothing. A query
             # that ended before its sources (blocked, an error answer) sends
             # them here.
             channel.finish(
@@ -3988,43 +3999,22 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 yield event
         finally:
             if not task.done():
-                # The reader stopped, closed or cancelled: the query ends at
-                # its next event, not wherever it is. Cancelled while its
-                # answer model waits for a chunk, LangChain's stream leaves
-                # the model's response open (its connection held).
+                # The reader stopped, closed or cancelled: the stop first
+                # (the query then ends as a stopped reader's, and its worker
+                # threads send nothing more), then the query is cancelled.
                 channel.stop()
-                # Past the model clients' read timeout (at most
-                # model_timeout_seconds): a model that stalls ends the
-                # query in its client's own timeout, its response closed,
-                # not in a cancel that lands mid-read.
-                bound = self.config.search.model_timeout_seconds + _STOP_GRACE_SECONDS
-                try:
-                    await asyncio.wait({task}, timeout=bound)
-                except BaseException:
-                    # Cancelled again while it waits (an anyio cancel scope
-                    # cancels at every await): the query still ends at its
-                    # next event, cancelled past the bound.
-                    if not task.done():
-                        forced = asyncio.get_running_loop().call_later(
-                            bound, task.cancel
-                        )
-                        task.add_done_callback(lambda _: forced.cancel())
-                    raise
-                if not task.done():
-                    task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+                task.cancel()
+            await _ended(task)
 
     def query_events(
         self, input: RAGInput, config: RunnableConfig | None = None
     ) -> Iterator[QueryEvent]:
         """Answer one query as typed events; the sync form of
         :meth:`aquery_events`, driven on the chain's long-lived event loop
-        as :meth:`stream` is. Closing the iterator early ends the query at
-        its next event, as closing :meth:`aquery_events` does (and cancels
-        it when none comes a few seconds past
-        ``search.model_timeout_seconds``); an interrupt (``Ctrl-C``) while
-        it waits for one is raised, and the query ends as a closed one
-        does, at its next event, answer chunk or retry wait."""
+        as :meth:`stream` is. Closing the iterator early cancels the query,
+        as closing :meth:`aquery_events` does; an interrupt (``Ctrl-C``)
+        while it waits for an event is raised at once, and the query is
+        cancelled the same way on the chain's loop."""
         yield from _iterate_async_generator(
             self.aquery_events(input, config), self._loop_runner
         )
@@ -4300,9 +4290,8 @@ class _EventChannel(_EventSink):
     """The events of one ``aquery_events`` query, handed from the task
     that runs it to the reader one at a time: :meth:`send` returns once the
     reader asks for the event after it (:meth:`next`), so the query never
-    runs ahead of its reader; once the reader stops (:meth:`stop`), the
-    send waiting, or the next one, raises ``CancelledError``: the query
-    ends there, between two steps of its answer's stream."""
+    runs ahead of its reader. A reader that stops sets the query's stop
+    (:meth:`stop`), then cancels the query."""
 
     def __init__(self) -> None:
         self._queue: asyncio.Queue[tuple[QueryEvent | None, BaseException | None]] = (
@@ -4311,17 +4300,10 @@ class _EventChannel(_EventSink):
         # The send waiting for its event to be taken, if any.
         self._taken: asyncio.Future[None] | None = None
         self.sources_sent = False
-        # Set by stop(); also ends the query's retry backoffs, which the
-        # query's task binds (reader_stop_scope).
+        # Set by stop(); the query's task binds it (reader_stop_scope).
         self.reader_stop = ReaderStop()
 
-    @property
-    def stopped(self) -> bool:
-        return self.reader_stop.is_set()
-
     async def send(self, event: QueryEvent) -> None:
-        if self.stopped:
-            raise asyncio.CancelledError
         if isinstance(event, QuerySources):
             self.sources_sent = True
         taken: asyncio.Future[None] = asyncio.get_running_loop().create_future()
@@ -4354,11 +4336,10 @@ class _EventChannel(_EventSink):
         return event
 
     def stop(self) -> None:
-        """The reader stopped: the send waiting for it, if any, raises
-        ``CancelledError`` (the query ends as :class:`_ReaderStopped`)."""
+        """The reader stopped: the query, cancelled next, ends as
+        :class:`_ReaderStopped`, and its worker threads send no model
+        request (``shared.reader_stop``)."""
         self.reader_stop.set()
-        if self._taken is not None and not self._taken.done():
-            self._taken.cancel()
 
 
 # Where the events of the query running in this context go (``None``: no
@@ -4367,6 +4348,12 @@ class _EventChannel(_EventSink):
 _QUERY_EVENTS: contextvars.ContextVar[_EventSink | None] = contextvars.ContextVar(
     "kg_rag_query_events", default=None
 )
+
+
+# A call several queries share (shared.reader_stop.SharedContext) sends
+# no query's events, keeps none of its extractions or grounding and runs
+# under none of its deadlines (it takes the latest of its waiters').
+blank_in_shared_calls(_QUERY_EVENTS, _LEFTOVER_EXTRACTIONS, _GROUNDING_CAPTURE)
 
 
 async def _emit(event: QueryEvent) -> None:
@@ -4379,11 +4366,25 @@ async def _emit(event: QueryEvent) -> None:
     await sink.send(event)
 
 
-def _reader_stopped() -> bool:
-    """Whether the reader of the query running in this context stopped
-    reading its events (``_EventChannel.stop``)."""
-    sink = _QUERY_EVENTS.get()
-    return isinstance(sink, _EventChannel) and sink.stopped
+async def _ended(task: asyncio.Task[Any]) -> None:
+    """Wait for ``task`` (a query its reader cancelled) to end, never
+    cancelling it again: a waiter cancelled again while it waits (an anyio
+    cancel scope cancels at every await) would pass that on to it through
+    ``asyncio.gather``, in the middle of its unwinding, where it cuts the
+    close of a model response short and leaves its connection held. Its
+    outcome is retrieved, so none is logged as never retrieved."""
+    try:
+        await asyncio.wait({task})
+    finally:
+        if task.done():
+            _retrieved(task)
+        else:
+            task.add_done_callback(_retrieved)
+
+
+def _retrieved(task: asyncio.Future[Any]) -> None:
+    if not task.cancelled():
+        task.exception()
 
 
 def _routed_strategy() -> SearchStrategy | None:
@@ -4421,10 +4422,11 @@ class _Ledgered(Runnable[Any, Any]):
 
 def _closing_responses_of(answer: Runnable[Any, Any]) -> Runnable[Any, Any]:
     """``answer`` unstreamed, its model responses closed when its call ends,
-    however it ends (``shared.model_responses``), as :func:`_streamed_to`
-    closes a stream's: a chat client may stream under ``ainvoke`` too
-    (``ChatOllama`` does), and a cancellation (a deadline) that lands
-    between two chunks leaves its generators suspended, the response open."""
+    however it ends (``shared.model_responses``): a chat client may stream
+    under ``ainvoke`` too (``ChatOllama`` does), and a cancellation that
+    lands between two chunks leaves its generators suspended, the response
+    open. A query closes them anyway (``_query``); this closes them for a
+    caller that drives :attr:`GraphRAGChain.chain` itself."""
 
     async def run(state: dict[str, Any], config: RunnableConfig) -> Any:
         async with closing_responses():
@@ -4465,10 +4467,11 @@ def _streamed_to(
         token = STRICT_STREAM_TRUNCATION.set(True)
         try:
             stream = cast(AsyncGenerator[Any, None], answer.astream(state, config))
-            # Closed first, then its model responses: a cancellation that
-            # lands while the stream's generators wait between chunks leaves
-            # them suspended, the response open.
-            async with closing_responses(), aclosing(stream):
+            # Closed here, its model responses when the query ends
+            # (closing_responses): a cancellation that lands while the
+            # stream's generators wait between chunks leaves them suspended,
+            # the response open.
+            async with aclosing(stream):
                 waiting_first = True
                 while True:
                     with (
@@ -4481,12 +4484,6 @@ def _streamed_to(
                         except StopAsyncIteration:
                             break
                     waiting_first = False
-                    # Every chunk is a stop point, one that sends nothing
-                    # too (reasoning, a held-back marker, a decline's start,
-                    # an answer the output guardrail screens first): a
-                    # reader that stopped does not wait for the next send.
-                    if _reader_stopped():
-                        raise asyncio.CancelledError
                     text = str(chunk)
                     if not text:
                         continue
@@ -4625,18 +4622,6 @@ _T = TypeVar("_T")
 
 # Upper bound on waiting for retrievers to close on another thread's loop.
 _TEARDOWN_TIMEOUT_SECONDS = 30.0
-# Seconds past search.model_timeout_seconds that a stopped events reader
-# waits for its query to end (aquery_events): the read timeout of a query's
-# model clients is at most model_timeout_seconds, counted from a read that
-# began before the stop, so a stalled answer stream raises its own read
-# timeout within the wait; this leaves that error the time to unwind the
-# query on a loaded loop.
-_STOP_GRACE_SECONDS = 5.0
-# Seconds a sync call interrupted while it waits (KeyboardInterrupt) waits
-# for its cancelled call to end before the interrupt is raised: enough for
-# a query to end at its answer's next chunk and close its model stream,
-# not so long that Ctrl-C seems ignored.
-_INTERRUPT_WAIT_SECONDS = 2.0
 
 
 def _close_retrievers(retrievers: list[BaseGraphRAGRetriever]) -> None:
@@ -4824,6 +4809,7 @@ _QUERY_LIMIT_SETTINGS: dict[str, str] = {
 _CALLER_DEADLINE: contextvars.ContextVar[tuple[float, str, float | None] | None] = (
     contextvars.ContextVar("kg_rag_caller_deadline", default=None)
 )
+blank_in_shared_calls(_CALLER_DEADLINE)
 
 
 def new_query_id() -> str:
@@ -5030,6 +5016,7 @@ class _DeadlineScope:
 _DEADLINE_SCOPE: contextvars.ContextVar[_DeadlineScope | None] = contextvars.ContextVar(
     "kg_rag_deadline_scope", default=None
 )
+blank_in_shared_calls(_DEADLINE_SCOPE)
 
 
 def _first_chunk_window(seconds: float | None) -> AbstractContextManager[None]:
@@ -5085,13 +5072,8 @@ class _LoopRunner:
                 was in flight (the chain was closed under it).
         """
 
-        ended = threading.Event()
-
         async def _await() -> _T:
-            try:
-                return await awaitable
-            finally:
-                ended.set()
+            return await awaitable
 
         # One lock hold from finding (or starting) the loop to registering the
         # call: stop() cannot land in between, so a call is never submitted
@@ -5115,11 +5097,10 @@ class _LoopRunner:
             raise
         except BaseException:
             if not future.done():
-                # Interrupted while it waits (Ctrl-C): the call is
-                # cancelled, not left running on the loop, and given a
-                # moment to end (a query at its answer's next chunk).
+                # Interrupted while it waits (Ctrl-C): the interrupt is
+                # raised at once, the call cancelled on the loop (not left
+                # running there), where it ends on its own.
                 future.cancel()
-                ended.wait(_INTERRUPT_WAIT_SECONDS)
             raise
         finally:
             with self._lock:

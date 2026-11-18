@@ -545,3 +545,56 @@ async def test_a_shared_model_call_settles_in_the_meter_that_counted_it() -> Non
     owner, other = (meter.total for meter in meters)
     assert (owner.llm_calls, owner.input_tokens, owner.estimated_calls) == (1, 7, 0)
     assert (other.llm_calls, other.input_tokens, other.estimated_calls) == (0, 0, 0)
+
+
+async def test_a_shared_call_inherits_no_per_query_state_of_its_first_caller() -> None:
+    """The call is no one query's: it runs with none of its first caller's
+    per-query state (its events' reader, its open model responses, its
+    memo, ledgers and deadline scope), only its stop and the state taken
+    from all its waiters."""
+    from unified_kg_rag.application.retrieval import rag_chain
+    from unified_kg_rag.shared import model_responses
+    from unified_kg_rag.shared.reader_stop import _BLANKED, reader_stopped
+
+    memo: dict[str, Any] = {}
+    release = asyncio.Event()
+    inside: dict[str, Any] = {}
+
+    async def call() -> str:
+        inside["blanked"] = {v.name: v.get() for v in _BLANKED}
+        inside["defaults"] = dict(_BLANKED)
+        await release.wait()
+        inside["stopped"] = reader_stopped()
+        inside["responses"] = model_responses._OPEN_RESPONSES.get()
+        inside["events"] = rag_chain._QUERY_EVENTS.get()
+        return "value"
+
+    channel = rag_chain._EventChannel()
+    first = channel.reader_stop
+
+    async def waiter_a() -> Any:
+        token = rag_chain._QUERY_EVENTS.set(channel)
+        try:
+            async with model_responses.closing_responses():
+                return await _read(first, memo, call, share_failure=True)
+        finally:
+            rag_chain._QUERY_EVENTS.reset(token)
+
+    a = asyncio.ensure_future(waiter_a())
+    await asyncio.sleep(0)
+    b = asyncio.ensure_future(_read(ReaderStop(), memo, call, share_failure=True))
+    await asyncio.sleep(0)
+    channel.stop()
+    with pytest.raises(asyncio.CancelledError):
+        async with asyncio.timeout(_BACKSTOP):
+            await a
+    release.set()
+    async with asyncio.timeout(_BACKSTOP):
+        assert await b == "value"
+    assert _BLANKED
+    assert inside["blanked"] == {v.name: d for v, d in inside["defaults"].items()}
+    # After A's reader stopped and its scope ended: not stopped, and none
+    # of A's.
+    assert inside["stopped"] is False
+    assert inside["responses"] is None
+    assert inside["events"] is None

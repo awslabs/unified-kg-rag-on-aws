@@ -371,50 +371,52 @@ sources before the answer call, each answer chunk, then the `RAGOutput` as
 replaces the streamed text with its `answer`). The sink hands each event to
 the reader and waits until the reader asks for the next, so the query never
 runs ahead of it. A reader that stops (closes the iterator, or is
-cancelled while it waits: a client that disconnected) stops the sink, and
-the query's waiting or next send raises `CancelledError` there, before it
-writes memory, as does its answer model's next chunk, one that sends
-nothing included (reasoning, a held-back marker, an answer the output
-guardrail screens first: `_streamed_to` checks the sink after each chunk),
-as do the retry backoffs: the sink's stop is also the query's
-`shared.reader_stop.ReaderStop`, which the application's retry loops
-(`TransientRetryRunnable`, `acall_with_transient_retry`) check before each
-attempt and race their wait against, and the model clients that resend a
-call themselves (Bedrock's botocore, the OpenAI client) check before each
-request, so a throttled model is not called again for a reader that left.
-A stop ends only its own query's work: a call concurrent queries share (a
-query embedding, `single_flight`) runs in a context of its own
-(`SharedContext`), under a `SharedStop` set once every waiting query's
-reader stopped, and a waiter whose reader stops leaves it
-(`await_unless_stopped`) while it goes on for the others; a waiter
-cancelled otherwise keeps it running. The other per-query state it reads
-is its waiters' as well (`share_with_waiters`), never its first caller's
-alone: no retry starts past the latest retry deadline of the waiters still
-holding it, and its usage counts once, in the meter of the earliest waiter
-still waiting (its log and trace ids stay the first caller's). Whatever the query raises once its reader stopped ends it
-as a stopped reader's. The reader waits for that up to `search.model_timeout_seconds` plus a
-grace (`_STOP_GRACE_SECONDS`), then cancels the task: past the model
-clients' read timeout, so a model that stalls ends in its client's own
-timeout, its response closed. Ending at a send or a chunk ends the query
-where nothing is in flight. A cancellation that lands elsewhere (a deadline,
-the first-chunk window, the reader's forced cancel) closes the answer's
-model responses all the same: LangChain's and the model clients' stream
-generators read each other with `async for`, which closes nothing it
-leaves, so a cancellation landing while a chunk is on its way up leaves
-them suspended, the response open until garbage collection finalizes them
-(a reference cycle can keep them). `_streamed_to` runs the stream, and
-the answer step without a sink its call (`ChatOllama` streams under
-`ainvoke` too), in
-`shared.model_responses.closing_responses`, which closes every response its
-model clients opened (registered from their HTTP hooks: httpx's response
-hook, botocore's `after-call`) still open when the stream ends. A Bedrock
-stream is read on a worker thread: its socket is shut down for reading,
-ending a blocked read, then closed off the loop, under a lock with the
-response's own release of its connection, so a connection back in the pool
-is left alone. A request the thread would send after the stream ended is
-refused at botocore's `before-send` (no billed call), and a stream opened
-then anyway is closed on that thread at once.
-The query then ends as a closed stream
+cancelled while it waits: a client that disconnected) sets the query's
+`shared.reader_stop.ReaderStop`, then cancels the query at once, as its
+deadline does, wherever it is, before it writes memory; it waits for the
+query to end without cancelling it again (`_ended`: an anyio cancel scope
+cancels the reader at every await, and a second cancellation passed on
+would cut the close of a model response short, its connection held). The
+stop is what the cancellation does not reach: the work the query left on
+worker threads and the clients' own resends. The application's retry
+loops check it before each attempt and race their wait against it, and
+the model clients that resend a call themselves (Bedrock's botocore, the
+OpenAI client) check it before each request, so a throttled model is not
+called again for a reader that left. Bedrock's checks sit before and after
+botocore's client-side rate limiter (on `before-send`) and last on the bare
+`needs-retry`, so an attempt the stop ends unresent is still counted
+(`count_requests`) and seen by the adaptive limiter. A stop ends only its
+own query's work: a call concurrent queries share (a query embedding,
+`single_flight`) runs in a context of its own (`SharedContext`), under a
+`SharedStop` set once every waiting query's reader stopped, and a waiter
+whose reader stops leaves it (`await_unless_stopped`) while it goes on for
+the others; a waiter cancelled otherwise keeps it running. The other
+per-query state it reads is its waiters' as well (`share_with_waiters`) or
+blank (`blank_in_shared_calls`: the events' sink, the open model
+responses, the query memo and ledgers), never its first caller's alone: no
+retry starts past the latest retry deadline of the waiters still holding
+it, and its usage counts once, in the meter of the earliest waiter still
+waiting (its log and trace ids stay the first caller's;
+`test_reader_stop.py` checks that every context variable is either). A
+cancellation, the reader's or a deadline's or the first-chunk window's,
+closes the query's model responses wherever it lands: LangChain's and the
+model clients' stream generators read each other with `async for`, which
+closes nothing it leaves, so a cancellation landing while a chunk is on
+its way up leaves them suspended, the response open until garbage
+collection finalizes them (a reference cycle can keep them). `_query` runs
+the query in `shared.model_responses.closing_responses`, which closes every
+response its model clients opened (registered from their HTTP hooks:
+httpx's response hook, botocore's `after-call`), the answer's and its other
+calls' (a translation, an extraction), still open when the query ends; the
+answer step without a sink runs its call in one too (`ChatOllama` streams
+under `ainvoke`), for a caller that drives the composed chain itself. A
+Bedrock stream is read on a worker thread: its socket is shut down for
+reading, ending a blocked read, then closed off the loop, under a lock with
+the response's own release of its connection, so a connection back in the
+pool is left alone. A request the thread would send after the query ended
+is refused at botocore's `before-send` (no billed call), and a stream
+opened then anyway is closed on that thread at once. Whatever the query
+raises once its reader stopped ends it as a closed stream
 (`_ReaderStopped`: its span without error, its metrics without a
 failure), not as a cancelled query. The answer step streams whenever there is a sink; under the output
 guardrail it sends nothing (nothing may be shown before screening), and

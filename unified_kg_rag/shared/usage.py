@@ -85,7 +85,7 @@ from unified_kg_rag.shared.exceptions import (
     OptionalCallSkipped,
     UsageLimitExceededError,
 )
-from unified_kg_rag.shared.reader_stop import share_with_waiters
+from unified_kg_rag.shared.reader_stop import blank_in_shared_calls, share_with_waiters
 
 __all__ = [
     "CACHED_RESPONSE_KEY",
@@ -302,9 +302,9 @@ class UsageMeter:
     # count (RetriedCall): limits that count each call once leave it out.
     retried: _Counts = field(default_factory=_Counts)
     retried_by_model: dict[str, _Counts] = field(default_factory=dict)
-    # The meter of a shared call (_WaitersMeter): it counts nothing itself,
-    # what is recorded in it counts in ``parent``, the meter of the waiter
-    # it is attributed to at the time.
+    # The meter of a shared call (_WaitersMeter), which no one reads: what
+    # is recorded in it counts in ``parent``, the meter of the waiter it is
+    # attributed to at the time.
     forwards: bool = False
 
     def _add(self, role: str, model: str, counts: _Counts) -> None:
@@ -408,12 +408,10 @@ def _add_to(meter: UsageMeter | None, role: str, model: str, counts: _Counts) ->
 
 
 def _chain(meter: UsageMeter | None) -> list[UsageMeter]:
-    """``meter`` and its enclosing scopes' meters, innermost first (a
-    shared call's meter, which forwards, left out)."""
+    """``meter`` and its enclosing scopes' meters, innermost first."""
     chain = []
     while meter is not None:
-        if not meter.forwards:
-            chain.append(meter)
+        chain.append(meter)
         meter = meter.parent
     return chain
 
@@ -618,6 +616,9 @@ def calls_that_fit(
 
 # The attempt of a retried call the model calls made here belong to.
 _ATTEMPT: ContextVar[_Attempt | None] = ContextVar("llm_usage_attempt", default=None)
+# A call several queries share is none of its first caller's calls: not
+# probed, optional or retried with them.
+blank_in_shared_calls(_PROBING, _OPTIONAL, _ATTEMPT)
 
 
 class RetriedCall:

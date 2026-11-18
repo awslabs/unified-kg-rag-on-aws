@@ -123,10 +123,8 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   runs, its deadline, query limits, guardrail, metrics and memory included, ending with its `RAGOutput`. LangChain's
   `astream_events` is left as LangChain defines it. `astream` / `stream` yield the text of these events, so a streamed
   answer now reads its citations' lineage, records its answer on the query span and is traced in the query's trace, as
-  an unstreamed one is. The query waits for its reader at each event: a reader that closes the iterator, or is
-  cancelled, ends it at its next event, its answer model's next chunk (reasoning, an answer held back or screened
-  first included) or its next retry wait, before it writes memory, counted as no failure (its query span names the
-  strategy it ran).
+  an unstreamed one is. The query waits for its reader at each event; a reader that stops ends it as the Fixed entry
+  on a cancelled streamed answer says, its query span naming the strategy it ran.
   Under the output guardrail the answer model still streams (its first chunk bounded by
   `search.model_timeout_seconds`) and nothing is shown until the whole answer is screened: then its sources and the
   screened answer, one chunk, before the turn is written. The console's Ask page reads the events. A transient retry
@@ -256,33 +254,33 @@ Bugs present in 0.3.0.
 
 - A streamed answer whose caller was cancelled mid-answer (a console client that disconnects, a cancelled task, an
   `asyncio.timeout` around `astream`) was cancelled wherever it was. Cancelled while the model's stream waited for a
-  chunk, LangChain left the response open, holding a model client connection: on an Ollama or OpenAI-compatible
-  server the pool of 100 filled and the console stopped answering, the loop logging `aclose(): asynchronous generator
-  is already running`. A reader that stops or is cancelled now ends the query at its next event, its answer
-  model's next chunk (a reasoning chunk too) or its next retry wait (a throttled model is not called again, the
-  Bedrock and OpenAI clients' own resends included), cancelling it only a few seconds past
-  `search.model_timeout_seconds` (a model that stalls ends first in its client's read timeout, its response closed),
-  and the query records its latency and usage as a stream closed early (no failure, whatever it raised past the
-  stop) instead of nothing. A stop ends only its reader's query: a call concurrent queries share (a query
-  embedding) goes on for the others and stops once each of their readers stopped.
+  chunk, LangChain left the response open, holding a model client connection: on an Ollama or OpenAI-compatible server
+  the pool of 100 filled and the console stopped answering, the loop logging `aclose(): asynchronous generator is
+  already running`. A reader that stops or is cancelled cancels the query at once, as its deadline does, and the query
+  now closes every model response it opened (see the deadline entry below); no model request is sent after the stop
+  (the Bedrock and OpenAI clients' own resends included, an attempt sent before it still counted in `sent_requests`
+  and seen by botocore's adaptive rate limiter), and the query records its latency and usage as a stream closed early
+  (no failure, whatever it raised past the stop) instead of nothing. A stop ends only its reader's query: a call
+  concurrent queries share (a query embedding) goes on for the others and stops once each of their readers stopped.
 - A query embedding concurrent queries shared ran under the first query's retry deadline and counted in its usage
-  alone: a query with a short `search.query_timeout_seconds` gave up the embedding at its deadline while the model
-  was throttled or unavailable, failing a query with a longer one that waited for it (`EmbeddingModelError`), and
-  the requests sent after the first query ended were in no query's usage. No retry of a shared call starts past the
-  latest deadline of the queries still waiting for it, and its requests count once, in the earliest of them still
-  waiting (`sent_requests`, `throttled_requests`); a query that shares no call counts as before.
+  alone: a query with a shorter deadline (its `limits.deadline_seconds`, or the same timeout started earlier) gave up
+  the embedding at its deadline while the model was throttled or unavailable, failing a query with a longer one that
+  waited for it (`EmbeddingModelError`), and the requests sent after the first query ended were in no query's usage.
+  No retry of a shared call starts past the latest deadline of the queries still waiting for it, its requests count
+  once, in the earliest of them still waiting (`sent_requests`, `throttled_requests`), and it takes no other per-query
+  state from the first query; a query that shares no call counts as before.
 - A query cut off by its deadline (`search.query_timeout_seconds`, `limits.deadline_seconds`) or by its answer
   stream's first-chunk window (`search.model_timeout_seconds`) could leave the answer model's response open. A cut
   that landed while a chunk was on its way up from the model's read left LangChain's and the model client's stream
-  generators suspended, which close nothing until garbage collection: the response held a connection of the Ollama
-  or OpenAI-compatible client's pool (1-2 of 96 queries that missed a 3 s window under load), and a Bedrock stream's
-  worker thread read on until its read timeout. The answer call, streamed or not (Ollama streams under `ainvoke`
-  too), now closes every model response it opened when it ends, however it ends (a Bedrock stream's socket is shut
-  down first, ending a blocked read), and a Bedrock worker thread sends no request after it ended; the query still
-  fails with `QueryTimeoutError` at the limit.
+  generators suspended, which close nothing until garbage collection: the response held a connection of the Ollama or
+  OpenAI-compatible client's pool (1-2 of 96 queries that missed a 3 s window under load), and a Bedrock stream's
+  worker thread read on until its read timeout. The query now closes every model response it opened when it ends,
+  however it ends: its answer's, streamed or not (Ollama streams under `ainvoke` too), and its other calls' (a
+  translation, an extraction); a Bedrock stream's socket is shut down first, ending a blocked read, and its worker
+  thread sends no request after the query ended. The query still fails with `QueryTimeoutError` at the limit.
 - `Ctrl-C` while a sync `stream()` or `query_events()` waited for the answer's next chunk raised `RuntimeError:
   aclose(): asynchronous generator is already running` and left the query running on the chain's loop; it raises
-  `KeyboardInterrupt`, and the query ends at its next event, answer chunk or retry wait, as a closed stream's does.
+  `KeyboardInterrupt` at once and cancels the query, as closing the stream does.
 - An MCP client that disconnected from the streamable-HTTP server mid-call left its call running to the end, holding
   one of the `mcp.max_concurrent_calls` slots (128 callers that left after 0.3 s kept the next call waiting 8 s);
   the disconnect now cancels the call and frees its slot, logged as cancelled, not failed, and its span marked

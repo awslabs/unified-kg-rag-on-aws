@@ -96,6 +96,7 @@ from unified_kg_rag.domain.retrieval.store_names import graph_label, store_name
 from unified_kg_rag.shared import get_logger, observability, usage
 from unified_kg_rag.shared.exceptions import InvalidFilterError, UsageLimitExceededError
 from unified_kg_rag.shared.logging import log_error, warn_once
+from unified_kg_rag.shared.reader_stop import blank_in_shared_calls
 from unified_kg_rag.shared.utils.common import compute_hash, safe_float_parse
 from unified_kg_rag.shared.utils.concurrency import (
     gather_bounded,
@@ -155,6 +156,8 @@ _QUERY_SCOPE: ContextVar[dict[str, Any] | None] = ContextVar(
 _LEDGER: ContextVar[DegradationLedger | None] = ContextVar(
     "kg_rag_degradation_ledger", default=None
 )
+# A call several queries share fills no one query's memo or ledger.
+blank_in_shared_calls(_QUERY_SCOPE, _LEDGER)
 
 
 @contextmanager
