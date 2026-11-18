@@ -16,6 +16,7 @@ from collections.abc import AsyncIterator, Iterator
 from typing import Any
 
 import pytest
+from botocore.httpsession import URLLib3Session
 from langchain_core.runnables import Runnable, RunnableConfig
 
 from unified_kg_rag.adapters.llm.chain_factory import TransientRetryRunnable
@@ -48,6 +49,9 @@ _SLOW = RetryPolicy(
 )
 # A hang backstop (seconds), far past anything a passing run waits.
 _BACKSTOP = 60.0
+# botocore's own send, before the suite blocks it (the Bedrock loopback
+# below lets only requests to 127.0.0.1 through).
+_REAL_SEND = URLLib3Session.send
 
 
 class _Throttled(Exception):
@@ -310,6 +314,176 @@ def test_a_botocore_attempt_that_answered_is_left_to_its_caller() -> None:
         client.meta.events.emit(
             "needs-retry.bedrock-runtime.ConverseStream", **_attempt(client, 200)
         )
+
+
+class _ThrottlingServer:
+    """A loopback Bedrock endpoint that answers every request 429
+    (ThrottlingException), counting what it received; ``on_request(n)``
+    runs as it answers the n-th."""
+
+    def __init__(self, on_request: Any = None) -> None:
+        import json
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        self.received = 0
+        server = self
+
+        class Handler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, *_: Any) -> None:
+                pass
+
+            def do_POST(self) -> None:  # noqa: N802
+                self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                server.received += 1
+                if on_request is not None:
+                    on_request(server.received)
+                body = json.dumps({"message": "Too many requests"}).encode()
+                self.send_response(429)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("x-amzn-ErrorType", "ThrottlingException")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        self.http = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=self.http.serve_forever, daemon=True).start()
+
+    def client(self, monkeypatch: pytest.MonkeyPatch) -> Any:
+        """An adaptive-mode client of this endpoint, its stops and attempt
+        counter registered as the model factories register them."""
+        import boto3
+        from botocore.config import Config as BotoConfig
+        from botocore.httpsession import URLLib3Session
+
+        from unified_kg_rag.adapters.aws.bedrock import stop_at_reader_stop
+        from unified_kg_rag.adapters.aws.bedrock_throttles import count_requests
+
+        url = f"http://127.0.0.1:{self.http.server_address[1]}"
+
+        def local_only_send(session: URLLib3Session, request: Any) -> Any:
+            assert request.url.startswith(f"{url}/")
+            return _REAL_SEND(session, request)
+
+        monkeypatch.setattr(URLLib3Session, "send", local_only_send)
+        client = boto3.client(
+            "bedrock-runtime",
+            region_name="us-west-2",
+            endpoint_url=url,
+            aws_access_key_id="AKIDEXAMPLE",
+            aws_secret_access_key="example",
+            config=BotoConfig(retries={"mode": "adaptive", "total_max_attempts": 5}),
+        )
+        count_requests(client, "bedrock-runtime", "answer_generation")
+        stop_at_reader_stop(client, "bedrock-runtime")
+        # No real backoff: the stops land on the requests, not on a timer.
+        monkeypatch.setattr("botocore.endpoint.time.sleep", lambda _s: None)
+        return client
+
+    def close(self) -> None:
+        self.http.shutdown()
+        self.http.server_close()
+
+
+def _converse(client: Any) -> None:
+    client.converse(
+        modelId="m", messages=[{"role": "user", "content": [{"text": "hi"}]}]
+    )
+
+
+def _spy(monkeypatch: pytest.MonkeyPatch, cls: Any, name: str, before: Any) -> None:
+    original = getattr(cls, name)
+
+    def spied(self: Any, *args: Any, **kwargs: Any) -> Any:
+        before()
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(cls, name, spied)
+
+
+def test_a_throttled_attempt_ended_by_the_stop_is_counted_and_seen(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The stop comes while the 2nd attempt is answered (429): that attempt
+    # was sent, so it counts (sent and throttled) and the adaptive rate
+    # limiter sees its throttle before the stop ends the call unresent.
+    from botocore.retries import adaptive
+
+    from unified_kg_rag.shared import usage
+
+    stop = ReaderStop()
+
+    def stop_at_the_second(received: int) -> None:
+        if received == 2:
+            stop.set()
+
+    server = _ThrottlingServer(stop_at_the_second)
+    seen: list[None] = []
+    _spy(
+        monkeypatch,
+        adaptive.ClientRateLimiter,
+        "on_receiving_response",
+        lambda: seen.append(None),
+    )
+    try:
+        client = server.client(monkeypatch)
+        with usage.usage_scope() as meter, reader_stop_scope(stop):
+            with pytest.raises(asyncio.CancelledError):
+                _converse(client)
+    finally:
+        server.close()
+    assert server.received == 2
+    snapshot = meter.snapshot()
+    assert snapshot["sent_requests"] == server.received
+    assert snapshot["throttled_requests"] == server.received
+    assert len(seen) == server.received
+
+
+def test_a_stop_during_the_rate_limiter_wait_sends_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The 1st throttle turns the adaptive limiter on; the stop comes while
+    # the 2nd attempt waits for its token, after the check before the
+    # limiter: the check after it refuses the request.
+    from botocore.retries import bucket
+
+    stop = ReaderStop()
+    server = _ThrottlingServer()
+    _spy(monkeypatch, bucket.TokenBucket, "acquire", stop.set)
+    try:
+        client = server.client(monkeypatch)
+        with reader_stop_scope(stop):
+            with pytest.raises(asyncio.CancelledError):
+                _converse(client)
+    finally:
+        server.close()
+    assert stop.is_set()
+    assert server.received == 1
+
+
+def test_a_stop_before_a_resend_takes_no_rate_limiter_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The stop comes during botocore's backoff after the 1st throttle (the
+    # limiter now on): the check before the limiter refuses the resend
+    # before it takes a token.
+    from botocore.retries import bucket
+
+    stop = ReaderStop()
+    server = _ThrottlingServer()
+    tokens: list[None] = []
+    _spy(monkeypatch, bucket.TokenBucket, "acquire", lambda: tokens.append(None))
+    try:
+        client = server.client(monkeypatch)
+        monkeypatch.setattr("botocore.endpoint.time.sleep", lambda _s: stop.set())
+        with reader_stop_scope(stop):
+            with pytest.raises(asyncio.CancelledError):
+                _converse(client)
+    finally:
+        server.close()
+    assert server.received == 1
+    assert tokens == []
 
 
 async def test_the_openai_client_sends_no_request_after_the_stop() -> None:

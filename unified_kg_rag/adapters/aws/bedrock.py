@@ -601,13 +601,19 @@ def stop_at_reader_stop(client: Any, service: str) -> None:
     it is for ended (``shared.model_responses``) is refused the same way:
     nobody reads it."""
     events = client.meta.events
-    events.register_first(
-        f"needs-retry.{service}",
+    # A more specific event's handlers run before a less specific one's.
+    # Last of all, on the bare "needs-retry": the failed attempt that ends
+    # at the stop was sent, so the attempt counter (count_requests) and the
+    # adaptive rate limiter (on the bare event too) see it first; botocore
+    # waits for a resend only after every handler returned.
+    events.register_last(
+        "needs-retry",
         _raise_if_failed_and_reader_stopped,
-        unique_id=f"kg-rag-stop-needs-retry.{service}",
+        unique_id="kg-rag-stop-needs-retry",
     )
-    # A more specific event's handlers run before a less specific one's:
-    # the limiter's is on the bare "before-send", so the check after it is.
+    # Before the limiter's wait and after it (the limiter's handler is on
+    # the bare "before-send"): no limiter token is taken after the stop,
+    # and nothing is sent after a stop during the wait.
     events.register_first(
         f"before-send.{service}",
         _raise_if_unread,
