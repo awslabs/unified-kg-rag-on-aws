@@ -1108,6 +1108,22 @@ def test_per_loop_client_is_reused_within_a_loop_and_rebuilt_across_loops() -> N
     assert len(proxy._clients) == 1
 
 
+def test_no_test_patches_asyncio_for_the_whole_process() -> None:
+    # rv53 flake: the test above saw one client across two asyncio.run
+    # calls. nest_asyncio (ragas applies it when its sync API runs inside a
+    # running loop) replaces asyncio.run with one that reuses a loop it
+    # never closes, for every later test of the worker. The session refuses
+    # it (tests/conftest.py), so the test that would apply it fails instead.
+    nest_asyncio = pytest.importorskip("nest_asyncio")
+
+    async def inside_a_loop() -> None:
+        with pytest.raises(RuntimeError, match="nest_asyncio"):
+            nest_asyncio.apply()
+
+    asyncio.run(inside_a_loop())
+    assert not hasattr(asyncio, "_nest_patched")
+
+
 _FD_DIR = Path("/proc/self/fd")
 
 
