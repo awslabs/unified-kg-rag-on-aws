@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import gc
-import time
+import threading
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -288,16 +288,12 @@ def _wire_chain(
 
 
 async def _cancelled_at(
-    chain: GraphRAGChain,
-    event_type: type,
-    delay: float,
-    stops: list[float] | None = None,
+    chain: GraphRAGChain, event_type: type, delay: float
 ) -> float | None:
     """Read the query's events in a task, cancelled ``delay`` s after its
-    first ``event_type`` event (when, by ``time.monotonic``, appended to
-    ``stops``); the seconds the cancelled reader took to end (``None``:
-    the query ended before that event, as one whose first chunk missed its
-    window on a loaded runner does)."""
+    first ``event_type`` event; the seconds the cancelled reader took to
+    end (``None``: the query ended before that event, as one whose first
+    chunk missed its window on a loaded runner does)."""
     seen = asyncio.Event()
 
     async def read() -> None:
@@ -315,8 +311,6 @@ async def _cancelled_at(
     await asyncio.sleep(delay)
     loop = asyncio.get_running_loop()
     stopped = loop.time()
-    if stops is not None:
-        stops.append(time.monotonic())
     task.cancel()
     await asyncio.gather(task, return_exceptions=True)
     return loop.time() - stopped
@@ -398,6 +392,86 @@ async def test_a_model_that_stalls_after_a_disconnect_ends_in_its_read_timeout(
 THROTTLED_READERS = 8
 
 
+async def _cancelled_once_throttled(
+    chain: GraphRAGChain, models: stream_models.StreamModels
+) -> list[float]:
+    """Start ``THROTTLED_READERS`` readers, cancel each once the model has
+    refused as many calls (every answer call then in its retries), at
+    points spread over 0.1 s; the seconds each cancelled reader took to
+    end."""
+
+    async def read() -> None:
+        async for _ in chain.aquery_events(_input()):
+            pass
+
+    # The server's count is the module's: this test's calls are those past it.
+    refused = models.throttled + THROTTLED_READERS
+    tasks = [asyncio.create_task(read()) for _ in range(THROTTLED_READERS)]
+    async with asyncio.timeout(30):
+        while models.throttled < refused:
+            assert not any(t.done() for t in tasks)
+            await asyncio.sleep(0.01)
+    loop = asyncio.get_running_loop()
+
+    async def cancel(i: int, task: asyncio.Task[None]) -> float:
+        await asyncio.sleep(0.1 * i / THROTTLED_READERS)
+        stopped = loop.time()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        return loop.time() - stopped
+
+    return list(await asyncio.gather(*(cancel(i, t) for i, t in enumerate(tasks))))
+
+
+class _StopOrder:
+    """The order, in the client, of each stop (``ReaderStop.set``) and each
+    stop check a request passed (``raise_if_reader_stopped``, in every
+    module that gates a model request on it), under one lock, so no wall
+    clock decides which came first: a request that passed its check before
+    the stop and is sent after it is one in flight, not one sent after the
+    stop."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from unified_kg_rag.adapters.aws import bedrock
+        from unified_kg_rag.adapters.llm import chain_factory, retry
+        from unified_kg_rag.adapters.local import models
+        from unified_kg_rag.shared import reader_stop
+
+        self.lock = threading.Lock()
+        self.recording = True
+        self.events: list[tuple[str, object]] = []
+        check = reader_stop.raise_if_reader_stopped
+        set_stop = reader_stop.ReaderStop.set
+
+        def checked() -> None:
+            with self.lock:
+                check()
+                if self.recording:
+                    self.events.append(("passed", reader_stop._READER_STOP.get()))
+
+        def stopped(stop: Any) -> None:
+            with self.lock:
+                if self.recording:
+                    self.events.append(("stop", stop))
+                set_stop(stop)
+
+        monkeypatch.setattr(reader_stop.ReaderStop, "set", stopped)
+        for module in (reader_stop, retry, chain_factory, bedrock, models):
+            monkeypatch.setattr(module, "raise_if_reader_stopped", checked)
+
+    def passed_after_a_stop(self) -> list[object]:
+        """The checks passed with no stop bound, or after their query's
+        stop: each would let a request out after it."""
+        stops: set[int] = set()
+        late: list[object] = []
+        for kind, stop in self.events:
+            if kind == "stop":
+                stops.add(id(stop))
+            elif stop is None or id(stop) in stops:
+                late.append(stop)
+        return late
+
+
 @pytest.mark.parametrize(
     "provider", ["ollama", "openai", "bedrock", "bedrock-adaptive"]
 )
@@ -415,41 +489,43 @@ async def test_a_reader_cancelled_in_retry_backoff_stops_the_query(
     from unified_kg_rag.adapters.aws.bedrock import BaseBedrockModelFactory
 
     port, models = wire
-    models.knobs = stream_models.StreamKnobs(throttled=True)
     if provider == "bedrock":
         # botocore's adaptive mode (the default) also waits in its
         # client-side rate limiter, which no stop interrupts.
         monkeypatch.setattr(BaseBedrockModelFactory, "BOTO_RETRY_MODE", "standard")
     chain = _wire_chain(provider.split("-")[0], port, monkeypatch, model_timeout=60)
-    recorded: list[BaseException | None] = []
-    record = chain._record_query_metrics
-
-    def recording(*args: Any, **kwargs: Any) -> Any:
-        recorded.append(kwargs.get("error"))
-        return record(*args, **kwargs)
-
-    monkeypatch.setattr(chain, "_record_query_metrics", recording)
     errors = _loop_errors()
     try:
-        stops: list[float] = []
-        released = await asyncio.gather(
-            *(
-                _cancelled_at(chain, QuerySources, 0.3, stops)
-                for _ in range(THROTTLED_READERS)
-            )
-        )
-        assert None not in released
+        # Warm: a first call's imports and connections are not the backoff.
+        await _answers(chain)
+        recorded: list[BaseException | None] = []
+        record = chain._record_query_metrics
+
+        def recording(*args: Any, **kwargs: Any) -> Any:
+            recorded.append(kwargs.get("error"))
+            return record(*args, **kwargs)
+
+        monkeypatch.setattr(chain, "_record_query_metrics", recording)
+        models.knobs = stream_models.StreamKnobs(throttled=True)
+        order = _StopOrder(monkeypatch)
+        released = await _cancelled_once_throttled(chain, models)
         # The waits no stop interrupts, though no request follows them: the
         # OpenAI client's own backoff (at most 1 s at its second retry), and
         # under adaptive mode botocore's rate limiter (well within the bound).
         bound = {"openai": 2.0, "bedrock-adaptive": 60.0}.get(provider, 1.0)
-        assert max(r for r in released if r is not None) < bound
-        # No model call after the readers stopped, the botocore client's
-        # own resends included (past a margin for a request sent as the
-        # last reader stopped, which arrives a moment later).
+        assert max(released) < bound
+        # Every reader's stop came, and no request passed its stop check
+        # after its query's stop (the botocore and OpenAI clients' own
+        # resends included): one that passed it before is in flight ...
+        assert sum(kind == "stop" for kind, _ in order.events) == THROTTLED_READERS
+        assert any(kind == "passed" for kind, _ in order.events)
+        assert order.passed_after_a_stop() == []
+        # ... and none reached the model once the readers were released.
+        calls = models.throttled
         await asyncio.sleep(2.5)
-        assert [t for t in models.throttled_at if t > max(stops) + 0.1] == []
+        assert models.throttled == calls
         assert recorded == [None] * THROTTLED_READERS
+        order.recording = False
         models.knobs = stream_models.StreamKnobs()
         await _answers(chain)
     finally:

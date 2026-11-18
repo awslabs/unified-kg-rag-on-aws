@@ -1151,7 +1151,13 @@ class _SSEConsole:
                 except OSError:
                     console.left += 1
 
-        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        class Server(ThreadingHTTPServer):
+            # Room for the disconnect burst's 16 connections at once (the
+            # default backlog of 5 overflowed on a loaded runner and reset
+            # some: ReadError, counted as errors, not disconnects).
+            request_queue_size = 64
+
+        self.httpd = Server(("127.0.0.1", 0), Handler)
         self.httpd.daemon_threads = True
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
         self.url = f"http://127.0.0.1:{self.httpd.server_address[1]}"

@@ -52,10 +52,8 @@ class StreamModels:
     writing: int = 0
     completed: int = 0
     left: int = 0
-    # Chat calls refused as throttled (StreamKnobs.throttled), and when each
-    # came (time.monotonic).
+    # Chat calls refused as throttled (StreamKnobs.throttled).
     throttled: int = 0
-    throttled_at: list[float] = field(default_factory=list)
     lock: threading.Lock = field(default_factory=threading.Lock)
 
     def count(self, name: str, delta: int = 1) -> None:
@@ -322,7 +320,6 @@ def _handler(models: StreamModels) -> type[BaseHTTPRequestHandler]:
             knobs = models.knobs
             if knobs.throttled:
                 models.count("throttled")
-                models.throttled_at.append(time.monotonic())
                 self._throttled(isinstance(wire, _Bedrock))
                 return
             if not streamed:
