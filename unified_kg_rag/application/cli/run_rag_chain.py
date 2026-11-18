@@ -93,7 +93,7 @@ from unified_kg_rag.shared.exceptions import (
 )
 from unified_kg_rag.shared.logging import log_error
 from unified_kg_rag.shared.metrics import QUERY_METRICS_NAMESPACE
-from unified_kg_rag.shared.utils import event_loop
+from unified_kg_rag.shared.utils import event_loop, first_names
 
 if TYPE_CHECKING:
     from unified_kg_rag.application.bootstrap import build_providers
@@ -367,10 +367,7 @@ def _sources_line(sources: list[SourceView]) -> str:
             counts[view.kind] = counts.get(view.kind, 0) + 1
     parts = []
     if files:
-        named = ", ".join(files[:_FILES_SHOWN])
-        if len(files) > _FILES_SHOWN:
-            named += f" and {len(files) - _FILES_SHOWN} more"
-        parts.append(f"files: {named}")
+        parts.append(f"files: {first_names(files, _FILES_SHOWN)}")
     if counts:
         parts.append(
             ", ".join(

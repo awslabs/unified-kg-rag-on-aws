@@ -178,7 +178,7 @@ from unified_kg_rag.shared.store_lookups import (
     remove_lookup_cache,
 )
 from unified_kg_rag.shared.usage import usage_scope
-from unified_kg_rag.shared.utils import compute_hash
+from unified_kg_rag.shared.utils import compute_hash, first_names
 from unified_kg_rag.shared.write_fence import (
     check_fences_held,
     install_write_fence,
@@ -917,13 +917,11 @@ class DataIngestionPipeline:
                 if name in elsewhere:
                     under.setdefault(elsewhere[name], []).append(name)
             raise DocumentNotFoundError(
-                f"No document {', '.join(map(repr, missing[:10]))}"
-                + (f" (and {len(missing) - 10} more)" if len(missing) > 10 else "")
+                f"No document {first_names(map(repr, missing))}"
                 + f" in the doc-status registry for index namespace {namespace!r} "
                 f"and source scope {source_scope!r}: nothing was deleted"
                 + "".join(
-                    f"; {', '.join(map(repr, held[:10]))}"
-                    + (f" (and {len(held) - 10} more)" if len(held) > 10 else "")
+                    f"; {first_names(map(repr, held))}"
                     + f" {'is' if len(held) == 1 else 'are'} under {spelling!r}, "
                     "another spelling of it (delete with that source_scope)"
                     for spelling, held in under.items()
