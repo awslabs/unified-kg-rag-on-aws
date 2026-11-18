@@ -346,7 +346,9 @@ async for event in chain.aquery_events(RAGInput(query="...")):
   retry wait (a throttled or failing model's backoff: no model call is
   sent after the stop; a wait the client runs itself, botocore's
   client-side rate limiter or the OpenAI client's own backoff, ends with
-  its request unsent). It stops
+  its request unsent). A stop ends that reader's query only: a call
+  concurrent queries share (one embedding of a text they both embed) goes
+  on for the others, and stops only once each of their readers stopped. It stops
   when it closes the iterator (`aclose()`, or `break` inside
   `async with aclosing(...)`) or is cancelled while it waits for an event:
   a console client that disconnects, an `asyncio.timeout` around

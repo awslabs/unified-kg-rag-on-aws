@@ -7,10 +7,16 @@ extractions), under both failure policies."""
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from typing import Any
 
 import pytest
 
+from unified_kg_rag.shared.reader_stop import (
+    ReaderStop,
+    abackoff_wait,
+    reader_stop_scope,
+)
 from unified_kg_rag.shared.utils.concurrency import single_flight
 
 pytestmark = pytest.mark.unit
@@ -232,3 +238,104 @@ def test_an_extraction_in_flight_on_another_loop_is_none_of_this_loops() -> None
 
 async def _get(inflight: Any) -> Any:
     return inflight["k"]
+
+
+class _Throttled:
+    """A call whose first ``refusals`` attempts (across calls) are refused,
+    each followed by a retry's backoff of ``backoff`` seconds (a stop point
+    of the reader bound where it runs)."""
+
+    def __init__(self, refusals: int = 1, backoff: float = 0.2) -> None:
+        self.refusals = refusals
+        self.backoff = backoff
+        self.attempts = 0
+        self.refused = asyncio.Event()
+
+    async def __call__(self) -> str:
+        while True:
+            self.attempts += 1
+            if self.attempts > self.refusals:
+                return "value"
+            self.refused.set()
+            await abackoff_wait(self.backoff)
+
+
+async def _read(stop: ReaderStop | None, memo: dict[str, Any], call: Any, **kw: Any):
+    with reader_stop_scope(stop) if stop is not None else contextlib.nullcontext():
+        return await single_flight(memo, "k", call, **kw)
+
+
+# A hang backstop (seconds), far past anything a passing run waits.
+_BACKSTOP = 60.0
+
+
+@pytest.mark.parametrize("second_stop", [True, False], ids=["stoppable", "no-stop"])
+async def test_a_stopped_reader_does_not_stop_a_shared_call_others_await(
+    second_stop: bool,
+) -> None:
+    """The first caller's reader stops during the shared call's backoff: it
+    leaves the call at once, and the call goes on for the other waiter (a
+    streamed query's, or one with no stop bound), who gets its result."""
+    memo: dict[str, Any] = {}
+    call = _Throttled()
+    first = ReaderStop()
+    a = asyncio.ensure_future(_read(first, memo, call, share_failure=True))
+    await asyncio.sleep(0)
+    other = ReaderStop() if second_stop else None
+    b = asyncio.ensure_future(_read(other, memo, call, share_failure=True))
+    await call.refused.wait()
+    first.set()
+    with pytest.raises(asyncio.CancelledError):
+        async with asyncio.timeout(_BACKSTOP):
+            await a
+    assert "k" in memo  # the call runs on, still shared
+    async with asyncio.timeout(_BACKSTOP):
+        assert await b == "value"
+    assert call.attempts == 2
+
+
+async def test_a_shared_call_stops_once_every_waiters_reader_stopped() -> None:
+    """With every waiter's reader stopped the shared call ends at its next
+    stop point (its hour-long backoff), and a later caller starts its own."""
+    memo: dict[str, Any] = {}
+    call = _Throttled(backoff=3600.0)
+    stops = [ReaderStop(), ReaderStop()]
+    readers = [
+        asyncio.ensure_future(_read(stop, memo, call, share_failure=True))
+        for stop in stops
+    ]
+    await call.refused.wait()
+    shared = memo["k"]
+    stops[0].set()
+    await asyncio.sleep(0.05)
+    assert not shared.done() and memo["k"] is shared  # still the other's
+    stops[1].set()
+    async with asyncio.timeout(_BACKSTOP):
+        outcomes = await asyncio.gather(*readers, return_exceptions=True)
+        await asyncio.wait({shared})
+    assert all(isinstance(o, asyncio.CancelledError) for o in outcomes)
+    assert shared.cancelled()
+    assert "k" not in memo or memo["k"] is not shared
+    async with asyncio.timeout(_BACKSTOP):
+        assert await _read(None, memo, call, share_failure=True) == "value"
+    assert call.attempts == 2
+
+
+async def test_a_stopped_first_callers_own_call_stops_and_a_waiter_calls_itself() -> (
+    None
+):
+    """``share_failure=False``: the call is the first caller's own, its
+    reader's stop included; its waiter then calls for itself."""
+    memo: dict[str, Any] = {}
+    call = _Throttled(backoff=3600.0)
+    first = ReaderStop()
+    a = asyncio.ensure_future(_read(first, memo, call, share_failure=False))
+    await asyncio.sleep(0)
+    b = asyncio.ensure_future(_read(None, memo, call, share_failure=False))
+    await call.refused.wait()
+    first.set()
+    async with asyncio.timeout(_BACKSTOP):
+        with pytest.raises(asyncio.CancelledError):
+            await a
+        assert await b == "value"
+    assert call.attempts == 2

@@ -27,7 +27,9 @@ from unified_kg_rag.domain.models.config import RetryPolicy
 from unified_kg_rag.shared.reader_stop import (
     ReaderStop,
     abackoff_wait,
+    await_unless_stopped,
     backoff_wait,
+    detached_context,
     reader_stop_scope,
     reader_stopped,
 )
@@ -335,3 +337,43 @@ async def test_the_openai_client_sends_no_request_after_the_stop() -> None:
         # Outside the stopped query's context nothing is stopped.
         await client.post("http://127.0.0.1:1/v1/chat/completions")
     assert len(sent) == 2
+
+
+async def test_a_detached_context_binds_its_own_stop_only() -> None:
+    import contextvars
+
+    other: contextvars.ContextVar[str] = contextvars.ContextVar("other")
+    mine, shared = ReaderStop(), ReaderStop()
+    mine.set()
+    other.set("kept")
+    with reader_stop_scope(mine):
+        assert reader_stopped()
+        assert not detached_context().run(reader_stopped)
+        assert detached_context().run(other.get) == "kept"
+        shared.set()
+        assert detached_context(shared).run(reader_stopped)
+        # The reader's own context still has its stop.
+        assert reader_stopped()
+
+
+async def test_a_stopped_reader_leaves_the_shared_work_it_awaits() -> None:
+    work = asyncio.get_running_loop().create_future()
+    stop = ReaderStop()
+    with reader_stop_scope(stop):
+        waiting = asyncio.ensure_future(await_unless_stopped(work))
+        await asyncio.sleep(0)
+        stop.set()
+        with pytest.raises(asyncio.CancelledError):
+            async with asyncio.timeout(_BACKSTOP):
+                await waiting
+        # Ended at its own stop, not cancelled: the work is not its alone.
+        assert not work.done()
+        assert not stop._waiters
+    work.set_result("value")
+    # Done, or without a stop bound, it is a plain wait.
+    with reader_stop_scope(ReaderStop()):
+        await await_unless_stopped(work)
+    other = asyncio.get_running_loop().create_future()
+    asyncio.get_running_loop().call_later(0.01, other.set_result, "value")
+    await await_unless_stopped(other)
+    assert other.result() == "value"
