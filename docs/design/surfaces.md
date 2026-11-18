@@ -404,8 +404,11 @@ the answer step without a sink its call (`ChatOllama` streams under
 model clients opened (registered from their HTTP hooks: httpx's response
 hook, botocore's `after-call`) still open when the stream ends. A Bedrock
 stream is read on a worker thread: its socket is shut down for reading,
-ending a blocked read, then closed off the loop; one whose request the
-thread sent only after the stream ended is closed on that thread at once.
+ending a blocked read, then closed off the loop, under a lock with the
+response's own release of its connection, so a connection back in the pool
+is left alone. A request the thread would send after the stream ended is
+refused at botocore's `before-send` (no billed call), and a stream opened
+then anyway is closed on that thread at once.
 The query then ends as a closed stream
 (`_ReaderStopped`: its span without error, its metrics without a
 failure), not as a cancelled query. The answer step streams whenever there is a sink; under the output

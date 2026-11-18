@@ -84,7 +84,10 @@ from unified_kg_rag.shared.genai import (
     embedding_span,
 )
 from unified_kg_rag.shared.logging import log_error
-from unified_kg_rag.shared.model_responses import track_response
+from unified_kg_rag.shared.model_responses import (
+    raise_if_scope_ended,
+    track_response,
+)
 from unified_kg_rag.shared.reader_stop import raise_if_reader_stopped
 
 logger = get_logger(__name__)
@@ -354,10 +357,26 @@ class _OpenEventStream:
     (``shared.model_responses``) from any thread. It is read on a worker
     thread, and closing a response waits for a read in progress, so its
     socket is shut down for reading first: a read blocked on it returns at
-    once. Released to the pool (read to its end), it is left alone."""
+    once. Released to the pool (read to its end), it is left alone.
+
+    The reading thread releases the connection as the stream ends
+    (``release_conn``: back in the pool, then no longer the response's), so
+    a close at that moment could shut down and close a connection another
+    request had already taken. The response's release and the close run
+    under one lock: the close touches the connection only while it is
+    still this response's."""
 
     def __init__(self, raw: Any) -> None:
         self._raw = raw
+        self._lock = threading.RLock()
+        release = getattr(raw, "release_conn", None)
+        if callable(release):
+
+            def release_conn() -> None:
+                with self._lock:
+                    release()
+
+            raw.release_conn = release_conn
 
     @property
     def is_closed(self) -> bool:
@@ -365,11 +384,12 @@ class _OpenEventStream:
         return bool(getattr(raw, "closed", False)) or raw.connection is None
 
     def close(self) -> None:
-        sock = getattr(self._raw.connection, "sock", None)
-        if sock is not None:
-            with contextlib.suppress(OSError):
-                sock.shutdown(socket.SHUT_RD)
-        self._raw.close()
+        with self._lock:
+            sock = getattr(self._raw.connection, "sock", None)
+            if sock is not None:
+                with contextlib.suppress(OSError):
+                    sock.shutdown(socket.SHUT_RD)
+            self._raw.close()
 
     async def aclose(self) -> None:
         # Not on the event loop: the close waits for a read in progress.
@@ -547,8 +567,11 @@ class BedrockCrossRegionModelHelper:
         )
 
 
-def _raise_if_reader_stopped(**_: Any) -> None:
+def _raise_if_unread(**_: Any) -> None:
+    """``before-send``: no request once the reader stopped, nor once the
+    answer stream it is for ended (a late worker thread's)."""
     raise_if_reader_stopped()
+    raise_if_scope_ended()
 
 
 def _raise_if_failed_and_reader_stopped(
@@ -574,7 +597,9 @@ def stop_at_reader_stop(client: Any, service: str) -> None:
     attempt. The stop raises ``asyncio.CancelledError`` in the calling
     thread, where no response is held (a successful attempt's open stream
     is left to its caller); outside such a query the handlers do
-    nothing."""
+    nothing. A request a worker thread would send after the answer stream
+    it is for ended (``shared.model_responses``) is refused the same way:
+    nobody reads it."""
     events = client.meta.events
     events.register_first(
         f"needs-retry.{service}",
@@ -585,11 +610,11 @@ def stop_at_reader_stop(client: Any, service: str) -> None:
     # the limiter's is on the bare "before-send", so the check after it is.
     events.register_first(
         f"before-send.{service}",
-        _raise_if_reader_stopped,
+        _raise_if_unread,
         unique_id=f"kg-rag-stop-before-send.{service}",
     )
     events.register_last(
-        "before-send", _raise_if_reader_stopped, unique_id="kg-rag-stop-before-send"
+        "before-send", _raise_if_unread, unique_id="kg-rag-stop-before-send"
     )
 
 
