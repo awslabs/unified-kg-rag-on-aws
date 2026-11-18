@@ -5,20 +5,24 @@ does: Ollama (``/api/chat``, NDJSON), an OpenAI-compatible server
 (``/v1/chat/completions``, SSE) and Bedrock (``ConverseStream``, the AWS
 event stream). A streamed answer reasons first (``reasoning_seconds`` of
 reasoning chunks, no answer text), then writes ``chunks`` answer chunks,
-optionally stalling after one of them (``stall_after``, ``stall_seconds``).
-With ``throttled`` set, every chat call is refused as each provider
-throttles (HTTP 429: Bedrock's ``ThrottlingException``, an error body for
-the others) and counted (``throttled``).
+optionally stalling after one of them (``stall_after``, ``stall_seconds``)
+or before its first byte (``first_seconds``). With ``throttled`` set, every
+chat call is refused as each provider throttles (HTTP 429: Bedrock's
+``ThrottlingException``, an error body for the others) and counted
+(``throttled``).
 
-It counts the streamed responses it is writing and those whose client left
-before the end, so a test sees whether a model is still generating for a
-caller that stopped reading. Binds 127.0.0.1 only.
+It counts the streamed responses it is writing (a client that closes its
+connection is seen at once, while the answer waits too) and those whose
+client left before the end, so a test sees whether a model is still
+generating for a caller that stopped reading. Binds 127.0.0.1 only.
 """
 
 from __future__ import annotations
 
 import binascii
 import json
+import select
+import socket
 import struct
 import threading
 import time
@@ -42,6 +46,9 @@ class StreamKnobs:
     stall_after: int | None = None
     stall_seconds: float = 0.0
     unstall: threading.Event = field(default_factory=threading.Event)
+    # Seconds the stream waits before its first piece (a slow first byte),
+    # a stall as well.
+    first_seconds: float = 0.0
     # Refuse every chat call with HTTP 429 (a throttled model).
     throttled: bool = False
 
@@ -352,13 +359,12 @@ def _handler(models: StreamModels) -> type[BaseHTTPRequestHandler]:
             self.end_headers()
             models.count("writing")
             try:
+                self._wait(knobs.first_seconds, knobs.unstall)
                 for piece, wait, stall in _pieces(wire, knobs):
                     self.wfile.write(f"{len(piece):X}\r\n".encode() + piece + b"\r\n")
                     self.wfile.flush()
-                    if wait:
-                        time.sleep(wait)
-                    if stall:
-                        knobs.unstall.wait(stall)
+                    self._wait(wait)
+                    self._wait(stall, knobs.unstall)
                 self.wfile.write(b"0\r\n\r\n")
                 self.wfile.flush()
                 models.count("completed")
@@ -368,6 +374,25 @@ def _handler(models: StreamModels) -> type[BaseHTTPRequestHandler]:
                 self.close_connection = True
             finally:
                 models.count("writing", -1)
+
+        def _wait(self, seconds: float, unstall: threading.Event | None = None) -> None:
+            """Wait ``seconds`` (a stall: until ``unstall`` is set, too)
+            before the next piece; raise ``OSError`` as soon as the client
+            closes its connection, so ``writing`` counts the connections
+            still open, not the waits left."""
+            end = time.monotonic() + seconds
+            while (left := end - time.monotonic()) > 0:
+                if unstall is not None and unstall.is_set():
+                    return
+                if not select.select([self.connection], [], [], min(left, 0.05))[0]:
+                    continue
+                try:
+                    data = self.connection.recv(1, socket.MSG_PEEK)
+                except OSError:
+                    data = b""
+                if not data:
+                    raise ConnectionResetError("the client closed its connection")
+                time.sleep(min(left, 0.05))
 
     return Handler
 

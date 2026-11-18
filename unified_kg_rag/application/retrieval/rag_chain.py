@@ -233,6 +233,7 @@ from unified_kg_rag.shared.metrics import (
     QUERY_METRICS_NAMESPACE,
     QUERY_THROTTLED_METRIC,
 )
+from unified_kg_rag.shared.model_responses import closing_responses
 from unified_kg_rag.shared.reader_stop import ReaderStop, reader_stop_scope
 from unified_kg_rag.shared.usage import UsageLimits, UsageMeter, usage_scope
 from unified_kg_rag.shared.utils import (
@@ -4450,7 +4451,10 @@ def _streamed_to(
         token = STRICT_STREAM_TRUNCATION.set(True)
         try:
             stream = cast(AsyncGenerator[Any, None], answer.astream(state, config))
-            async with aclosing(stream):
+            # Closed first, then its model responses: a cancellation that
+            # lands while the stream's generators wait between chunks leaves
+            # them suspended, the response open.
+            async with closing_responses(), aclosing(stream):
                 waiting_first = True
                 while True:
                     with (
