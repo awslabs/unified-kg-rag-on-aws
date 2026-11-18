@@ -1,0 +1,8 @@
+# Advisories the console-web job (.github/workflows/quality.yml) accepts in
+# console/web/package-lock.json, read by .github/scripts/check_npm_audit.py:
+# one per line, the advisory id first, then the date it is accepted until
+# (YYYY-MM-DD: past it the advisory gates again), the package and its version,
+# and why it does not apply. Accept only an advisory with no fixed release
+# that does not reach the built client; remove the line when a fixed release
+# is locked, and re-read the reason on every bump of the package.
+GHSA-fc5q-39xc-vjpf 2027-02-18 picomatch 4.0.7 (CVE-2026-112366, ReDoS through single-branch repeated extglobs): a devDependency only (vite, vitest, tinyglobby, typescript-eslint), never bundled in the built client, matching only the globs of the repository's own build, test and lint config; no fixed release exists

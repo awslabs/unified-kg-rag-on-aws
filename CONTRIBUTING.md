@@ -141,7 +141,9 @@ When a pull request changes `pyproject.toml` or `uv.lock`, the
 source-available or unlabeled license among the runtime dependencies. Reviewed exceptions are listed, each with its
 reason, in `.github/scripts/check_licenses.py`; add one only after reviewing the license. The `console-web` job runs
 the same check over the runtime npm dependencies the console's web client bundles, from the license fields of
-`console/web/package-lock.json`.
+`console/web/package-lock.json`. It also runs `npm audit` over that lock and fails on an advisory at moderate or above
+that [`.github/npm-audit-accepted.txt`](./.github/npm-audit-accepted.txt) does not list in the same way as the
+`pip-audit` job's list below; accept only an advisory with no fixed release that does not reach the built client.
 
 The [`security`](./.github/workflows/security.yml) workflow runs the Automated Security Helper (ASH: bandit, semgrep,
 detect-secrets, checkov, cdk-nag, npm-audit) and fails on an unsuppressed finding at MEDIUM or above. Its `pip-audit`
