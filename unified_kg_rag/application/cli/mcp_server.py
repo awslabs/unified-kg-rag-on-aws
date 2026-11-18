@@ -165,7 +165,9 @@ def _cancelled_on_disconnect(app: Any) -> Any:
     the connection meanwhile, so a client that left would otherwise hold its
     call slot (``mcp.max_concurrent_calls``) until its query ended. Its
     request messages are read here and handed on; an ``http.disconnect``
-    cancels the request, whose tool call is cancelled with it."""
+    cancels the request, whose tool call is cancelled with it. A failure
+    of ``app`` is raised as it is, not in the task group's
+    ``ExceptionGroup``."""
     import anyio
 
     async def cancellable(scope: dict[str, Any], receive: Any, send: Any) -> None:
@@ -175,22 +177,31 @@ def _cancelled_on_disconnect(app: Any) -> Any:
         handed, messages = anyio.create_memory_object_stream[dict[str, Any]](
             max_buffer_size=float("inf")
         )
-        async with handed, messages, anyio.create_task_group() as group:
+        failure: BaseException | None = None
+        try:
+            async with handed, messages, anyio.create_task_group() as group:
 
-            async def watch() -> None:
-                while True:
-                    message = await receive()
-                    await handed.send(message)
-                    if message["type"] == "http.disconnect":
-                        group.cancel_scope.cancel()
-                        return
+                async def watch() -> None:
+                    while True:
+                        message = await receive()
+                        await handed.send(message)
+                        if message["type"] == "http.disconnect":
+                            group.cancel_scope.cancel()
+                            return
 
-            async def serve() -> None:
-                await app(scope, messages.receive, send)
-                group.cancel_scope.cancel()
+                async def serve() -> None:
+                    await app(scope, messages.receive, send)
+                    group.cancel_scope.cancel()
 
-            group.start_soon(watch)
-            group.start_soon(serve)
+                group.start_soon(watch)
+                group.start_soon(serve)
+        except BaseExceptionGroup as failed:
+            if len(failed.exceptions) != 1:
+                raise
+            failure = failed.exceptions[0]
+        if failure is not None:
+            # Raised outside the handler: its cause and context are its own.
+            raise failure
 
     return cancellable
 

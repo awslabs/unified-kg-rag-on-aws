@@ -22,7 +22,7 @@ a loopback address, or that screens with the Bedrock guardrail.
 | Script | What it does |
 |---|---|
 | `scripts/loadtest/workspace.py` | Writes a workspace: the demo corpus (or `--docs N` synthetic documents in English, Korean or both), the demo's eval dataset and a `backend: local` config on the embedded SQLite stores (`--stores containers`: the stores of `docker/compose.local.yaml`), with every methodology so every strategy runs |
-| `scripts/loadtest/chaos_models.py` | The fake model server (`console/demo/fake_models.py`) with fault injection: delay and jitter, hangs, dropped connections and error answers (429, 500, 503), and, for a streamed answer, reasoning chunks before it and a connection dropped after its reasoning or after its first answer chunk (`reasoning_drops_per_body` caps the drops of one request body, which a call's retries resend), changed at run time with `POST /chaos`; `GET /stats` counts requests, faults, requests in flight and the client connections open |
+| `scripts/loadtest/chaos_models.py` | The fake model server (`console/demo/fake_models.py`) with fault injection: delay and jitter, hangs, dropped connections and error answers (429, 500, 503), and, for a streamed answer, reasoning chunks before it and a connection dropped after its reasoning or after its first answer chunk (`reasoning_drops_per_body` caps the drops of one request body, which a call's retries resend, within `reasoning_drops_window` seconds), changed at run time with `POST /chaos`; `GET /stats` counts requests, faults, requests in flight and the client connections open |
 | `scripts/loadtest/load.py` | `sweep`, `soak` and `http` load modes, and `gate`, which checks a report against the nightly gates |
 | `scripts/loadtest/compare_exports.py` | The convergence check: two `run-describe --include-text` exports hold the same records with the same content |
 | `scripts/loadtest/nightly.py` | The nightly run below, end to end: a sweep, a streamed level under mid-stream faults, a soak and three chaos scenarios, then the gates |
@@ -119,8 +119,11 @@ it reports is this client's (`client_loop_lag_p99_ms`), not the console's.
 
 `--disconnect-share 0.5` makes that share of the questions disconnect after
 their first answer chunk, as a closed browser tab does (`disconnected`
-counts them, apart from the answers and errors), then asks one more
-question after the level, which must answer. Pass `--models
+counts them, apart from the answers and errors), then, after the level, 16
+more that disconnect at once whatever the level's concurrency (a leak shows
+reliably only under concurrent disconnects: at a low concurrency a console
+that held its stopped queries' connections could end a level holding none),
+and one more question, which must answer. Pass `--models
 http://127.0.0.1:11613` (the chaos model server the console asks) with it:
 after each level, once its connections had 10 s to close, the report's
 `held_model_connections` counts those still open (the query clients keep no
@@ -233,9 +236,10 @@ query's other model calls too), and a call whose three attempts all lost
 their reasoning would fail or degrade its query, failing the streamed
 level's gate about one night in 140 at the nightly's rates. The nightly
 caps the reasoning drops of one request body at the retry attempts less one
-(`reasoning_drops_per_body` 2), so single and double retries stay exercised
-and no call runs out of them, however the concurrent requests interleave on
-the server's shared draws.
+within 30 s (`reasoning_drops_per_body` 2, `reasoning_drops_window` 30), so
+single and double retries stay exercised and no call runs out of them,
+however the concurrent requests interleave on the server's shared draws,
+while a question asked again later has its reasoning dropped again.
 
 The RSS floor (8 MB) sits well above the noise of a clean 10-minute soak
 (8 to 13.5 MB/h measured, from about 1 MB over its second half), so the

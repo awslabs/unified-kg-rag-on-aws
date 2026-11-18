@@ -28,8 +28,10 @@ Modes:
   events), with the time to the first event; its loop lag is this
   client's (``client_loop_lag_*``), not the console's. With
   ``--disconnect-share``, that share of the questions disconnect after
-  their first answer chunk (``disconnected``, counted apart), and one more
-  question asked after the level must still answer. With ``--models`` (the
+  their first answer chunk (``disconnected``, counted apart), then a burst
+  of :data:`DISCONNECT_BURST` concurrent ones whatever the level's
+  concurrency, and one more question asked after them must still answer.
+  With ``--models`` (the
   chaos model server the console asks), the connections still open to it
   once the level settled (``held_model_connections``) must be none: the
   queries the console was left answering must not hold them.
@@ -448,7 +450,8 @@ async def http_level(
     tally = Tally(first_name="first_event")
     disconnected = 0
     headers = {"X-Console-Token": token, "X-Console-Request": "1"}
-    limits = httpx.Limits(max_connections=concurrency + 4)
+    burst = DISCONNECT_BURST if disconnect_share else 0
+    limits = httpx.Limits(max_connections=max(concurrency, burst) + 4)
     async with httpx.AsyncClient(
         base_url=base, headers=headers, timeout=query_seconds, limits=limits
     ) as client:
@@ -503,7 +506,13 @@ async def http_level(
         wall = await with_loop_lag(
             tally, asyncio.gather(*(worker() for _ in range(concurrency)))
         )
-        if disconnect_share:
+        if burst:
+            # Concurrent disconnects at any level: a low level's few land
+            # between chunks too often to catch a leak alone
+            # (held_model_connections).
+            await asyncio.gather(
+                *(asked(*mix[i % len(mix)], True) for i in range(burst))
+            )
             # After the disconnects, the console must still answer.
             await asked(*mix[0], False)
     report = {"concurrency": concurrency, **tally.report(wall)}
@@ -517,6 +526,11 @@ async def http_level(
     return report
 
 
+# Questions that disconnect at once after an http level with
+# --disconnect-share: a console that held its stopped queries' model
+# connections held some after every level at concurrency 16, but could end
+# a level at a low concurrency holding none.
+DISCONNECT_BURST = 16
 # Seconds a level's model connections get to close: a query its client
 # stopped ends at its answer's next chunk, and the fake models stream with
 # no stall.
@@ -587,7 +601,8 @@ def main(argv: list[str] | None = None) -> int:
         type=float,
         default=0.0,
         help="http: share of questions whose client disconnects after the "
-        "first answer chunk (then one more question must answer)",
+        "first answer chunk (then a burst of 16 concurrent ones, and one more "
+        "question must answer)",
     )
     parser.add_argument(
         "--models",

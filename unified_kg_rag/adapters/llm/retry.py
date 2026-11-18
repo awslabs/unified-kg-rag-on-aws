@@ -11,7 +11,6 @@ every caller draws its waits with :func:`backoff_delay`.
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import contextvars
 import dataclasses
@@ -35,6 +34,11 @@ from unified_kg_rag.shared.exceptions import (
     class_names,
 )
 from unified_kg_rag.shared.logging import log_failure
+from unified_kg_rag.shared.reader_stop import (
+    abackoff_wait,
+    backoff_wait,
+    raise_if_reader_stopped,
+)
 from unified_kg_rag.shared.utils.common import (
     error_code,
     error_name,
@@ -529,10 +533,15 @@ def call_with_transient_retry(
     Non-transient errors propagate immediately. When attempts or the wall-clock
     budget are exhausted, the last transient error is re-raised unchanged so
     callers' existing error handling keeps working.
+
+    The backoff is a stop point of a query whose reader stopped
+    (``shared.reader_stop``): no attempt starts after the stop, and a wait
+    under way ends at it, raising ``asyncio.CancelledError``.
     """
     started_at = time.monotonic()
     attempt = 1
     while True:
+        raise_if_reader_stopped()
         try:
             return func()
         except Exception as exc:
@@ -546,7 +555,7 @@ def call_with_transient_retry(
             )
             if delay is None:
                 raise
-            _sleep(delay)
+            backoff_wait(delay, _sleep)
             attempt += 1
 
 
@@ -561,6 +570,7 @@ async def acall_with_transient_retry(
     started_at = time.monotonic()
     attempt = 1
     while True:
+        raise_if_reader_stopped()
         try:
             return await func()
         except Exception as exc:
@@ -574,5 +584,5 @@ async def acall_with_transient_retry(
             )
             if delay is None:
                 raise
-            await asyncio.sleep(delay)
+            await abackoff_wait(delay)
             attempt += 1

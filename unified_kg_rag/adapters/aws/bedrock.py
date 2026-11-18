@@ -81,6 +81,7 @@ from unified_kg_rag.shared.genai import (
     embedding_span,
 )
 from unified_kg_rag.shared.logging import log_error
+from unified_kg_rag.shared.reader_stop import raise_if_reader_stopped
 
 logger = get_logger(__name__)
 
@@ -267,7 +268,9 @@ class BaseBedrockModelFactory(Generic[ModelIdT, ModelInfoT, WrapperT], ABC):
         """Count every request a new runtime client of ``purpose``'s calls
         sends, and those throttled (``sent_requests``,
         ``throttled_requests``), which botocore retries inside a call."""
-        count_requests(client, self._get_boto_service_name(), self._usage_role(purpose))
+        service = self._get_boto_service_name()
+        count_requests(client, service, self._usage_role(purpose))
+        stop_at_reader_stop(client, service)
 
     def _client_for(self, purpose: ModelPurpose) -> Any:
         """The runtime client for a call made for ``purpose``, one per
@@ -487,6 +490,52 @@ class BedrockCrossRegionModelHelper:
         return cross_region_id in cls._get_available_profiles(
             bedrock_client, region_name
         )
+
+
+def _raise_if_reader_stopped(**_: Any) -> None:
+    raise_if_reader_stopped()
+
+
+def _raise_if_failed_and_reader_stopped(
+    response: Any = None, caught_exception: Any = None, **_: Any
+) -> None:
+    """``needs-retry``: no resend of a failed attempt once the reader
+    stopped. It fires after a successful attempt too, whose response (an
+    open event stream) the caller reads and closes: that one is left alone,
+    as raising there would leave it open."""
+    http_response = response[0] if isinstance(response, tuple) else None
+    if caught_exception is not None or (
+        getattr(http_response, "status_code", 200) >= 300
+    ):
+        raise_if_reader_stopped()
+
+
+def stop_at_reader_stop(client: Any, service: str) -> None:
+    """Make the requests botocore sends and resends inside one call of
+    ``client`` stop points of a query whose reader stopped
+    (``shared.reader_stop``), as the application's retry backoffs are:
+    no request is sent after the stop, before or after the client-side rate
+    limiter's wait (``adaptive`` mode), and no resend follows a failed
+    attempt. The stop raises ``asyncio.CancelledError`` in the calling
+    thread, where no response is held (a successful attempt's open stream
+    is left to its caller); outside such a query the handlers do
+    nothing."""
+    events = client.meta.events
+    events.register_first(
+        f"needs-retry.{service}",
+        _raise_if_failed_and_reader_stopped,
+        unique_id=f"kg-rag-stop-needs-retry.{service}",
+    )
+    # A more specific event's handlers run before a less specific one's:
+    # the limiter's is on the bare "before-send", so the check after it is.
+    events.register_first(
+        f"before-send.{service}",
+        _raise_if_reader_stopped,
+        unique_id=f"kg-rag-stop-before-send.{service}",
+    )
+    events.register_last(
+        "before-send", _raise_if_reader_stopped, unique_id="kg-rag-stop-before-send"
+    )
 
 
 class BedrockEmbeddingsWrapper(BaseBedrockWrapper, BedrockEmbeddings):

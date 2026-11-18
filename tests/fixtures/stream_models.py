@@ -6,6 +6,9 @@ does: Ollama (``/api/chat``, NDJSON), an OpenAI-compatible server
 event stream). A streamed answer reasons first (``reasoning_seconds`` of
 reasoning chunks, no answer text), then writes ``chunks`` answer chunks,
 optionally stalling after one of them (``stall_after``, ``stall_seconds``).
+With ``throttled`` set, every chat call is refused as each provider
+throttles (HTTP 429: Bedrock's ``ThrottlingException``, an error body for
+the others) and counted (``throttled``).
 
 It counts the streamed responses it is writing and those whose client left
 before the end, so a test sees whether a model is still generating for a
@@ -34,9 +37,13 @@ class StreamKnobs:
     chunk_delay: float = 0.05
     chunks: int = 20
     reasoning_seconds: float = 0.0
-    # The answer chunk after which the stream stalls (None: it does not).
+    # The answer chunk after which the stream stalls (None: it does not),
+    # for stall_seconds or until ``unstall`` is set (a test's teardown).
     stall_after: int | None = None
     stall_seconds: float = 0.0
+    unstall: threading.Event = field(default_factory=threading.Event)
+    # Refuse every chat call with HTTP 429 (a throttled model).
+    throttled: bool = False
 
 
 @dataclass
@@ -47,13 +54,15 @@ class StreamModels:
     writing: int = 0
     completed: int = 0
     left: int = 0
+    # Chat calls refused as throttled (StreamKnobs.throttled).
+    throttled: int = 0
     lock: threading.Lock = field(default_factory=threading.Lock)
 
     def count(self, name: str, delta: int = 1) -> None:
         with self.lock:
             setattr(self, name, getattr(self, name) + delta)
 
-    def settled(self, timeout: float = 5.0) -> int:
+    def settled(self, timeout: float = 60.0) -> int:
         """The responses still being written after up to ``timeout`` s."""
         end = time.monotonic() + timeout
         while self.writing and time.monotonic() < end:
@@ -257,22 +266,23 @@ class _Bedrock(_Wire):
         }
 
 
-def _pieces(wire: _Wire, knobs: StreamKnobs) -> Iterator[tuple[bytes, float]]:
-    """The streamed answer's pieces, each with the seconds to wait after it."""
+def _pieces(wire: _Wire, knobs: StreamKnobs) -> Iterator[tuple[bytes, float, float]]:
+    """The streamed answer's pieces, each with the seconds to wait after it
+    and the seconds it stalls then."""
     for piece in wire.start():
-        yield piece, 0.0
+        yield piece, 0.0, 0.0
     reasoning = int(knobs.reasoning_seconds / knobs.chunk_delay)
     for _ in range(reasoning):
-        yield wire.reasoning(), knobs.chunk_delay
+        yield wire.reasoning(), knobs.chunk_delay, 0.0
     if reasoning:
         for piece in wire.after_reasoning():
-            yield piece, 0.0
+            yield piece, 0.0, 0.0
     words = _words(knobs.chunks)
     for i, word in enumerate(words):
         stall = knobs.stall_seconds if i == knobs.stall_after else 0.0
-        yield wire.answer(word), knobs.chunk_delay + stall
+        yield wire.answer(word), knobs.chunk_delay, stall
     for piece in wire.end(len(words)):
-        yield piece, 0.0
+        yield piece, 0.0, 0.0
 
 
 def _handler(models: StreamModels) -> type[BaseHTTPRequestHandler]:
@@ -311,10 +321,28 @@ def _handler(models: StreamModels) -> type[BaseHTTPRequestHandler]:
                 self.send_error(404)
                 return
             knobs = models.knobs
+            if knobs.throttled:
+                models.count("throttled")
+                self._throttled(isinstance(wire, _Bedrock))
+                return
             if not streamed:
                 self._json(wire.whole("".join(_words(knobs.chunks))))
                 return
             self._stream(wire, knobs)
+
+        def _throttled(self, bedrock: bool) -> None:
+            data = json.dumps(
+                {"message": "Too many requests"}
+                if bedrock
+                else {"error": {"message": "Too many requests", "type": "rate_limit"}}
+            ).encode()
+            self.send_response(429)
+            self.send_header("Content-Type", "application/json")
+            if bedrock:
+                self.send_header("x-amzn-ErrorType", "ThrottlingException")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
 
         def _stream(self, wire: _Wire, knobs: StreamKnobs) -> None:
             self.send_response(200)
@@ -324,11 +352,13 @@ def _handler(models: StreamModels) -> type[BaseHTTPRequestHandler]:
             self.end_headers()
             models.count("writing")
             try:
-                for piece, wait in _pieces(wire, knobs):
+                for piece, wait, stall in _pieces(wire, knobs):
                     self.wfile.write(f"{len(piece):X}\r\n".encode() + piece + b"\r\n")
                     self.wfile.flush()
                     if wait:
                         time.sleep(wait)
+                    if stall:
+                        knobs.unstall.wait(stall)
                 self.wfile.write(b"0\r\n\r\n")
                 self.wfile.flush()
                 models.count("completed")

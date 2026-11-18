@@ -13,8 +13,10 @@ answer text) and lose its connection mid-stream: after its reasoning,
 before any answer text (``reasoning_drop_rate``), or after its first
 answer chunk (``answer_drop_rate``). ``reasoning_drops_per_body`` (0: no
 cap) caps how many times the reasoning of one request body (a call and its
-retries send the same) is dropped, so a client that retries a call that
-many times plus one always gets an answer. The knobs change at run time:
+retries send the same) is dropped within ``reasoning_drops_window``
+seconds (0: ever), so a client that retries a call that many times plus
+one always gets an answer, and a later call that sends the same body (a
+repeated question) is dropped again. The knobs change at run time:
 ``POST /chaos {"error_rate": 0.3}`` answers the knobs now in force, and
 ``GET /stats`` the request counts, the faults injected, the requests in
 flight and the client connections open (``connections``, the stats
@@ -57,6 +59,7 @@ KNOBS: dict[str, float] = {
     "reasoning_drop_rate": 0.0,
     "answer_drop_rate": 0.0,
     "reasoning_drops_per_body": 0.0,
+    "reasoning_drops_window": 0.0,
 }
 # The mid-stream faults of a streamed chat answer, in draw order.
 STREAM_FAULTS = ("reasoning_drop", "answer_drop")
@@ -87,11 +90,12 @@ class Chaos:
         )
         self.lock = threading.Lock()
         self.rng = random.Random(seed)
-        # Reasoning drops per request body (its digest), for the cap. Never
-        # reset by a body served in full: concurrent queries can send the
-        # same body (a repeated question), and one served would reset the
-        # count of another still retrying.
-        self.body_drops: dict[str, int] = {}
+        # When each request body's (its digest's) reasoning was dropped, for
+        # the cap. Not reset by a body served in full: concurrent queries
+        # can send the same body (a repeated question), and one served would
+        # reset the count of another still retrying; the drops past the
+        # window (longer than a call's retries) no longer count instead.
+        self.body_drops: dict[str, list[float]] = {}
 
     def update(self, changes: dict[str, Any]) -> dict[str, float]:
         """Apply the known knobs of ``changes``; an unknown one is refused."""
@@ -147,14 +151,20 @@ class Chaos:
 
     def _capped(self, fault: str, body: bytes) -> str | None:
         """``fault``, or None for a reasoning drop past its body's cap
-        (caller holds the lock)."""
+        within the window (caller holds the lock)."""
         cap = int(self.knobs["reasoning_drops_per_body"])
         if fault != "reasoning_drop" or not cap:
             return fault
+        now = time.monotonic()
+        window = self.knobs["reasoning_drops_window"]
         key = hashlib.sha256(body).hexdigest()
-        if self.body_drops.get(key, 0) >= cap:
+        drops = [
+            t for t in self.body_drops.get(key, []) if not window or now - t < window
+        ]
+        if len(drops) >= cap:
+            self.body_drops[key] = drops
             return None
-        self.body_drops[key] = self.body_drops.get(key, 0) + 1
+        self.body_drops[key] = [*drops, now]
         return fault
 
     def count(self, fault: str) -> None:

@@ -662,8 +662,9 @@ def test_injected_errors_change_at_run_time(
     call(port, "/chaos", {"error_rate": 0.0})
     assert call(port, "/api/embed", {"input": ["x"]})[0] == 200
     assert chaos.stats["embed"] == 2 and chaos.stats["errors"] == 1
-    # the handler counts a request done after its response is sent
-    deadline = time.monotonic() + 5
+    # the handler counts a request done after its response is sent (a
+    # backstop, not a measure)
+    deadline = time.monotonic() + 60
     while chaos.stats["inflight"] and time.monotonic() < deadline:
         time.sleep(0.01)
     assert chaos.stats["inflight"] == 0
@@ -1077,12 +1078,36 @@ def test_a_body_s_reasoning_is_dropped_at_most_its_cap(
     assert capped.rng.getstate() == plain.rng.getstate()
 
 
+def test_a_body_s_drops_past_the_window_no_longer_count(
+    chaos_models: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A repeated question sends the same body later: past the window it is
+    # dropped again, so repeated bodies do not use up the cap for good.
+    now = [100.0]
+    monkeypatch.setattr(chaos_models.time, "monotonic", lambda: now[0])
+    chaos = chaos_models.Chaos(
+        reasoning_drop_rate=1.0, reasoning_drops_per_body=2, reasoning_drops_window=30
+    )
+    assert [chaos.stream_fault(b"call") for _ in range(3)] == [
+        "reasoning_drop",
+        "reasoning_drop",
+        None,
+    ]
+    now[0] += 29
+    assert chaos.stream_fault(b"call") is None
+    now[0] += 2
+    assert chaos.stream_fault(b"call") == "reasoning_drop"
+
+
 def test_the_nightly_never_drops_a_call_s_reasoning_on_every_attempt(
     nightly: ModuleType,
 ) -> None:
     from workspace import RETRY_ATTEMPTS  # type: ignore[import-not-found]
 
     assert nightly.STREAM_KNOBS["reasoning_drops_per_body"] == RETRY_ATTEMPTS - 1 > 0
+    # The window outlasts a call's retries (the workspace's waits are at most
+    # 2 s each).
+    assert nightly.STREAM_KNOBS["reasoning_drops_window"] > 2.0 * RETRY_ATTEMPTS
 
 
 class _SSEConsole:
@@ -1127,7 +1152,13 @@ class _SSEConsole:
                 except OSError:
                     console.left += 1
 
-        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        class Server(ThreadingHTTPServer):
+            # Room for the disconnect burst's 16 connections at once (the
+            # default backlog of 5 overflowed on a loaded runner and reset
+            # some: ReadError, counted as errors, not disconnects).
+            request_queue_size = 64
+
+        self.httpd = Server(("127.0.0.1", 0), Handler)
         self.httpd.daemon_threads = True
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
         self.url = f"http://127.0.0.1:{self.httpd.server_address[1]}"
@@ -1151,7 +1182,8 @@ async def test_an_http_level_disconnects_after_the_first_chunk_then_asks_again(
     finally:
         console.close()
     if share:
-        assert report["disconnected"] == 6
+        # The level's six, then the burst's, whatever the level's concurrency.
+        assert report["disconnected"] == 6 + load.DISCONNECT_BURST
         # the one question asked after them answered
         assert (report["ok"], report["errors"]) == (1, 0)
     else:
@@ -1179,7 +1211,8 @@ async def test_an_http_level_reports_the_model_connections_left_open(
     finally:
         held.close()
         console.close()
-    assert await load.held_model_connections(models, settle=5) == 0
+    # Once the held socket closed, none is left (60 s: a backstop).
+    assert await load.held_model_connections(models, settle=60) == 0
     with pytest.raises(SystemExit, match="non-loopback"):
         await load.http_level(
             console.url, "t", 1, 1, 1.0, [("Who?", "mix")], 0, 0.0, "http://10.0.0.1:1"
