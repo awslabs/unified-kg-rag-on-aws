@@ -529,16 +529,15 @@ def next_transient_retry_delay(
         return None
     delay = backoff_delay(attempt, policy)
     deadline = _deadline_in_force()
-    if (
-        deadline is not None
-        and deadline.at is not None
-        and (time.monotonic() + delay >= deadline.at)
-    ):
+    # Read once: a shared call's deadline (_WaitersDeadline) changes on the
+    # event loop while a worker thread's retry reads it.
+    at, name = (None, "") if deadline is None else (deadline.at, deadline.name)
+    if at is not None and time.monotonic() + delay >= at:
         logger.warning(
             "Giving up on '%s' after %s attempts (%s is reached): %s",
             operation,
             attempt,
-            deadline.name,
+            name,
             error_name(exc),
         )
         return None

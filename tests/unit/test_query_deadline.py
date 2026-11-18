@@ -617,6 +617,39 @@ def test_no_transient_retry_starts_past_the_query_deadline() -> None:
         assert delay() is not None
 
 
+def test_a_deadline_that_changes_while_a_retry_reads_it_is_read_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A shared call's deadline (several queries' waiters) changes on the
+    # event loop while a worker thread's retry reads it: cleared (a waiter
+    # with none joined) right after the retry read it, the retry goes on
+    # from what it read, not from half of each.
+    import types
+
+    from unified_kg_rag.adapters.llm import retry
+
+    policy = RetryPolicy(max_attempts=3, base_delay_seconds=0.1, jitter="none")
+    with retry_deadline(time.monotonic() + 60):
+        record = retry._deadline_in_force()
+        assert record is not None
+        real = time.monotonic
+
+        def cleared() -> float:
+            record.at = None
+            return real()
+
+        monkeypatch.setattr(retry, "time", types.SimpleNamespace(monotonic=cleared))
+        delay = next_transient_retry_delay(
+            ConnectionError("busy"),
+            is_transient=lambda _e: True,
+            operation="embed",
+            attempt=1,
+            started_at=real(),
+            policy=policy,
+        )
+    assert delay is not None
+
+
 def test_a_window_bounds_retries_only_while_it_runs_even_in_copied_contexts() -> None:
     # A context copied in a window (LangChain's stream task) is bound by the
     # window only while it runs; a query deadline still binds a context

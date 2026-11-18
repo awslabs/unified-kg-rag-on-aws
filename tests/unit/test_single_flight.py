@@ -462,3 +462,86 @@ async def test_a_shared_call_takes_its_deadline_and_meter_from_its_waiters() -> 
         assert await c == "value"
     assert seen == [2000.0, 1000.0, None, None]
     assert [m.total.sent_requests for m in meters] == [3, 0, 1]
+
+
+async def test_a_waiter_cancelled_otherwise_keeps_its_later_deadline() -> None:
+    """A waiter cancelled for another reason than its reader's stop still
+    holds the shared call's deadline (its query may ask again): A's later
+    deadline stays in force over B's shorter one."""
+    from unified_kg_rag.adapters.llm.retry import current_deadline, retry_deadline
+
+    memo: dict[str, Any] = {}
+    seen: list[float | None] = []
+    step, stepped = asyncio.Event(), asyncio.Event()
+
+    async def call() -> str:
+        for _ in range(2):
+            await step.wait()
+            step.clear()
+            seen.append(current_deadline())
+            stepped.set()
+        return "value"
+
+    async def waiter(at: float, stop: ReaderStop) -> Any:
+        with retry_deadline(at):
+            return await _read(stop, memo, call, share_failure=True)
+
+    async def advance() -> None:
+        stepped.clear()
+        step.set()
+        await stepped.wait()
+
+    a = asyncio.ensure_future(waiter(2000.0, ReaderStop()))
+    b = asyncio.ensure_future(waiter(1000.0, ReaderStop()))
+    await asyncio.sleep(0)
+    await advance()
+    a.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await a
+    await advance()
+    async with asyncio.timeout(_BACKSTOP):
+        assert await b == "value"
+    assert seen == [2000.0, 2000.0]
+
+
+async def test_a_shared_model_call_settles_in_the_meter_that_counted_it() -> None:
+    """A model call a shared call starts counts in its owner's meter then
+    (the earliest waiter's), and settles there although that waiter left
+    before it answered: no estimate is left there, and the next owner's
+    meter is not charged for it."""
+    from unified_kg_rag.shared import usage
+
+    memo: dict[str, Any] = {}
+    started, go = asyncio.Event(), asyncio.Event()
+
+    async def call() -> str:
+        model_call = usage.start_llm_call(
+            "embedding", "embedder", estimated_input_tokens=100
+        )
+        started.set()
+        await go.wait()
+        model_call.finish(input_tokens=7, output_tokens=0)
+        return "value"
+
+    meters: list[usage.UsageMeter] = []
+
+    async def waiter(stop: ReaderStop) -> Any:
+        with usage.usage_scope() as meter:
+            meters.append(meter)
+            return await _read(stop, memo, call, share_failure=True)
+
+    first, second = ReaderStop(), ReaderStop()
+    a = asyncio.ensure_future(waiter(first))
+    await started.wait()
+    b = asyncio.ensure_future(waiter(second))
+    await asyncio.sleep(0)
+    first.set()
+    with pytest.raises(asyncio.CancelledError):
+        async with asyncio.timeout(_BACKSTOP):
+            await a
+    go.set()
+    async with asyncio.timeout(_BACKSTOP):
+        assert await b == "value"
+    owner, other = (meter.total for meter in meters)
+    assert (owner.llm_calls, owner.input_tokens, owner.estimated_calls) == (1, 7, 0)
+    assert (other.llm_calls, other.input_tokens, other.estimated_calls) == (0, 0, 0)
