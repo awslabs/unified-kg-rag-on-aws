@@ -164,7 +164,9 @@ loopback address the server accepts only a `Host` and an `Origin` naming
 that address or a loopback name, so a web page cannot reach it through DNS
 rebinding (421 for a foreign `Host`, 403 for a foreign `Origin`). A client
 that disconnects before its answer cancels its call, which frees its call
-slot (`mcp.max_concurrent_calls`) and records no query metric. **The
+slot (`mcp.max_concurrent_calls`) and records no query metric; the call is
+logged as cancelled, not failed, and its `kg_rag.mcp.tool` span carries
+`kg_rag.cancelled` without the error status. **The
 server authenticates no caller.** Binding another address needs
 `--allow-remote`, and there it leaves the headers to the proxy in front:
 
