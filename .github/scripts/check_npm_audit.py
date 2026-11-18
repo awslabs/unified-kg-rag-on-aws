@@ -88,7 +88,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"::error::{exc}")
         return 1
     for advisory in sorted(accepted - found.keys()):
-        print(f"{advisory} is accepted but no longer reported: remove its line")
+        print(
+            f"::warning::{advisory} is accepted but no longer reported:"
+            " remove its line"
+        )
     failing = {k: v for k, v in found.items() if k not in accepted}
     for advisory, (name, severity) in sorted(found.items()):
         status = "FAIL" if advisory in failing else "accepted"
