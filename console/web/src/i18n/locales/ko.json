@@ -528,6 +528,8 @@
   "dashboard.limitedHint": "한도로 거절은 쿼리 한도(search.query_max_*) 때문에 답할 여지가 없었던 질문 수입니다. 코퍼스와는 관계가 없으므로 거절 비율에서 뺍니다.",
   "dashboard.errors": "오류",
   "dashboard.refused": "거부됨",
+  "dashboard.cancelled": "취소됨",
+  "dashboard.cancelledHint": "취소됨은 답변 전에 떠난 질문(페이지를 닫았거나 중지한 질문)을 셉니다. 그 질문의 모델 호출은 비용과 모델·역할별 행에 들어가지만 시간과 전략별 질문당 토큰·비용에는 들어가지 않습니다.",
   "dashboard.cost": "비용",
   "dashboard.noPricesTitle": "비용을 보려면 가격이 필요합니다",
   "dashboard.noPrices": "설정의 models.prices에 모델 가격을 추가하면 USD 비용이 표시됩니다. 그전까지는 토큰만 집계합니다.",

@@ -80,6 +80,7 @@ from unified_kg_rag.shared import (
     DocumentNotFoundError,
     get_logger,
 )
+from unified_kg_rag.shared.utils import first_names
 
 __all__ = [
     "DocStatusReader",
@@ -464,8 +465,7 @@ def _apply_changes(delta: DocumentDelta, changes: DocumentChanges) -> None:
     )
     if missing:
         raise DocumentNotFoundError(
-            f"No document {', '.join(map(repr, missing[:10]))}"
-            + (f" (and {len(missing) - 10} more)" if len(missing) > 10 else "")
+            f"No document {first_names(map(repr, missing))}"
             + " in the doc-status registry for this index namespace and source "
             "scope: nothing was deleted"
         )

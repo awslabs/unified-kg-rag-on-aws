@@ -75,6 +75,7 @@ from unified_kg_rag.shared.exceptions import (
     shows_error_text,
 )
 from unified_kg_rag.shared.logging import log_error, log_failure
+from unified_kg_rag.shared.usage import usage_scope
 
 logger = get_logger(__name__)
 
@@ -411,14 +412,22 @@ class AskService:
             "outcome": "failed",
         }
 
+        # The usage the question spends, whatever its outcome: the chain's
+        # query scope counts into it too, so a question cancelled (its page
+        # disconnected) or failed records the model calls it made.
+        spent: dict[str, Any] = {}
+
         async def run() -> None:
             try:
                 async with self._using() as (chain, config):
+                    spent["config"] = config
                     # The namespace asked, resolved as the chain resolves it.
                     record["suffix"] = resolve_namespace(config, request.suffix)
-                    output, trace_id = await self._invoke(
-                        chain, config, request, query_id, queue
-                    )
+                    with usage_scope() as meter:
+                        spent["meter"] = meter
+                        output, trace_id = await self._invoke(
+                            chain, config, request, query_id, queue
+                        )
                 record["trace_id"] = trace_id
                 result = self._result(
                     output, config, time.perf_counter() - started, request.suffix
@@ -493,6 +502,11 @@ class AskService:
                     }
                 )
             finally:
+                if "usage" not in record and "meter" in spent:
+                    usage, cost, _ = _priced_usage(
+                        spent["meter"].snapshot(), spent["config"]
+                    )
+                    record.update(usage=usage, cost_usd=cost)
                 with contextlib.suppress(Exception):
                     self.store.record_query(record)
                 queue.put_nowait(None)
@@ -607,17 +621,7 @@ class AskService:
             }
             for c in view.citations
         ]
-        usage_data = view.usage
-        cost: float | None = None
-        unpriced: list[str] = []
-        if isinstance(usage_data, dict):
-            try:
-                usd, missing = usage_cost_usd(
-                    LLMUsage.model_validate(usage_data), config.models.prices
-                )
-                cost, unpriced = usd, sorted(missing)
-            except ValidationError:
-                usage_data = None
+        usage_data, cost, unpriced = _priced_usage(view.usage, config)
         return {
             "answer": view.answer,
             "citations": citations,
@@ -662,6 +666,23 @@ class AskService:
             "sources": sources,
             "namespace": resolve_namespace(config, suffix),
         }
+
+
+def _priced_usage(
+    usage: Any, config: Config
+) -> tuple[dict[str, Any] | None, float | None, list[str]]:
+    """A question's usage (``None`` when it is none a meter wrote), its USD
+    cost by ``models.prices`` (``None`` with a model unpriced) and the
+    models without a price."""
+    if not isinstance(usage, dict):
+        return None, None, []
+    try:
+        usd, missing = usage_cost_usd(
+            LLMUsage.model_validate(usage), config.models.prices
+        )
+    except ValidationError:
+        return None, None, []
+    return usage, usd, sorted(missing)
 
 
 def _failed_outcome(error_class: ErrorClass, failed: str) -> str:

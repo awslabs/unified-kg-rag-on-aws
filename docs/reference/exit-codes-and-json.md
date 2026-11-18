@@ -104,7 +104,9 @@ are flushed first, and a process pool's workers are ended with it.
 - **Query CLIs.** A SIGTERM or Ctrl-C cancels a query CLI's work at its next
   await, so its cleanup (closing store connections, `run-eval`'s upload)
   runs. At the interactive prompt a SIGTERM ends the session at once and a
-  Ctrl-C the conversation. A query CLI stopped by a SIGTERM, or by a Ctrl-C
+  Ctrl-C the conversation; a Ctrl-C while `run-rag --interactive` answers
+  stops that question and returns to the prompt (a second one while it
+  stops ends the run with `130`). A query CLI stopped by a SIGTERM, or by a Ctrl-C
   while its event loop runs, that is still running 100 seconds later is
   ended then (inside the 120 s StopTimeout of the app container), with the
   status document if none was printed, and a second signal ends it at once.

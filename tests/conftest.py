@@ -114,6 +114,35 @@ def _thread_only_tqdm_lock() -> None:
 
 
 @pytest.fixture(autouse=True, scope="session")
+def _no_nest_asyncio() -> Iterator[None]:
+    """Refuse ``nest_asyncio.apply`` for the session.
+
+    It patches asyncio for the whole process, not one test: ``asyncio.run``
+    then runs every coroutine on one loop it never closes, so a later test
+    on the same worker that needs a fresh loop per run saw the first run's
+    (test_per_loop_client_is_reused_within_a_loop_and_rebuilt_across_loops,
+    once in a full suite). ragas applies it when its sync API runs inside a
+    running loop; the package never does (the CLIs' import check pins it).
+    A test that reaches it fails, naming itself, instead.
+    """
+    try:
+        import nest_asyncio
+    except ImportError:  # the core install: nothing can apply it
+        yield
+        return
+
+    def refuse(loop: object = None) -> None:
+        raise RuntimeError(
+            "nest_asyncio.apply() would patch asyncio for every later test of "
+            "this worker: run the sync code off the event loop's thread"
+        )
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(nest_asyncio, "apply", refuse)
+        yield
+
+
+@pytest.fixture(autouse=True, scope="session")
 def _scratch_working_directory(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> Iterator[None]:

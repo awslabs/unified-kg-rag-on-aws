@@ -27,12 +27,14 @@ from unified_kg_rag.application.cli.conventions import (
     EXIT_USAGE,
     RUN_FAILED,
     ArgumentParser,
+    TurnInterrupted,
     add_output_format_argument,
     add_removed_flag,
     exits_on_sigterm,
     failed,
     failure_fields,
     interruptible,
+    interruptible_turn,
     json_output,
     print_json,
     print_status,
@@ -93,7 +95,7 @@ from unified_kg_rag.shared.exceptions import (
 )
 from unified_kg_rag.shared.logging import log_error
 from unified_kg_rag.shared.metrics import QUERY_METRICS_NAMESPACE
-from unified_kg_rag.shared.utils import event_loop
+from unified_kg_rag.shared.utils import event_loop, first_names
 
 if TYPE_CHECKING:
     from unified_kg_rag.application.bootstrap import build_providers
@@ -367,10 +369,7 @@ def _sources_line(sources: list[SourceView]) -> str:
             counts[view.kind] = counts.get(view.kind, 0) + 1
     parts = []
     if files:
-        named = ", ".join(files[:_FILES_SHOWN])
-        if len(files) > _FILES_SHOWN:
-            named += f" and {len(files) - _FILES_SHOWN} more"
-        parts.append(f"files: {named}")
+        parts.append(f"files: {first_names(files, _FILES_SHOWN)}")
     if counts:
         parts.append(
             ", ".join(
@@ -762,7 +761,15 @@ class RAGChainRunner:
                         state["filters"] if isinstance(state["filters"], dict) else None
                     ),
                 )
-                result = await self._run_query(rag_input)
+                try:
+                    # A Ctrl-C while it answers ends this question only.
+                    result = await interruptible_turn(self._run_query(rag_input))
+                except TurnInterrupted:
+                    console.print(
+                        "\n[yellow]Question stopped. Ask another, or press "
+                        "Ctrl-C again to end the session.[/yellow]"
+                    )
+                    continue
                 self._print_result(result, verbose=self.args.verbose)
                 state["conversation_id"] = result.get(
                     "conversation_id", state["conversation_id"]

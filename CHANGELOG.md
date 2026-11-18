@@ -224,6 +224,8 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   were left out of the default on (`ppr`: within the noise of `local` at 2.4 times less cost, weaker on long chains;
   `tree`: +8 points of `answer_contains` over `naive`, below `mix` and `local`). It refused them, which made routing to
   them a code change rather than the operator's call.
+- `Ctrl-C` while `run-rag --interactive` answers stops that question and returns to the prompt; it ended the session
+  with exit code 130. `Ctrl-C` at the prompt, or a second one while the question stops, ends the session as before.
 - Dependencies: pypdf 7.0, langchain-core 1.8.1, langchain-aws 1.9.2, pydantic 2.14.3, boto3 1.43.126 (also in the
   CDK lock), the `ollama/ollama` 0.40.15 image in `docker/compose.local.yaml`. pypdf and langchain-core versions are
   part of the parser fingerprint, so the first ingestion after upgrading parses every file again once. pypdf 7 gives
@@ -283,13 +285,18 @@ Bugs present in 0.3.0.
   `KeyboardInterrupt`, and the query ends at its next event, answer chunk or retry wait, as a closed stream's does.
 - An MCP client that disconnected from the streamable-HTTP server mid-call left its call running to the end, holding
   one of the `mcp.max_concurrent_calls` slots (128 callers that left after 0.3 s kept the next call waiting 8 s);
-  the disconnect now cancels the call and frees its slot (a failure of the call still reaches a host application as
-  raised, not in an `ExceptionGroup`).
+  the disconnect now cancels the call and frees its slot, logged as cancelled, not failed, and its span marked
+  `kg_rag.cancelled` without the error status (a failure of the call still reaches a host application as raised,
+  not in an `ExceptionGroup`). uvicorn's start line keeps the address the server listens on, which the
+  logging setup digested (`Uvicorn running on len=4 sha=...`).
 - The console's Settings page read a field a `UKR__` variable of the console sets as its default, and passed an edit
   of it that had no effect (the variable wins over the file): the field names the variable (`AWS_PROFILE` and
   `AWS_REGION` as filling it while the file leaves it unset), and a review lists such changes (removing a key
   `AWS_PROFILE` or `AWS_REGION` then fills as taking effect, the variable's value in force).
-- The console's Dashboard gave its Declined and Refused tiles one word in Japanese, Spanish and French.
+- The console's Dashboard gave its Declined and Refused tiles one word in Japanese, Spanish and French. A question
+  cancelled (its page closed or stopped it) or failed was recorded with no usage or cost, though its model calls were
+  spent, and a strategy's tokens per question divided by the cancelled ones (58 for about 700 per answer): it records
+  what it spent, the per-question figures read the questions served, and a Cancelled tile counts them apart.
 - Saving from the console's Fields form rewrote the whole config file in alphabetical key order, so the review's diff
   changed every line; it keeps the file's order (comments are still dropped, as the review says).
 - A local reasoning model's streamed answer (`astream`, the console's Ask page) failed with `QueryTimeoutError` after

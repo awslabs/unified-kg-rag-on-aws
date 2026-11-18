@@ -243,7 +243,12 @@ def test_questions_are_recorded_for_history_and_the_dashboard(client: Any) -> No
     assert history[0]["strategy"] == "local"
     dashboard = client.get("/api/dashboard").json()
     assert dashboard["totals"]["queries"] >= 1
-    assert any(s["strategy"] == "local" for s in dashboard["strategies"])
+    # Cancelled questions are counted apart, in the totals and per strategy.
+    assert dashboard["totals"]["cancelled"] == 0
+    assert any(
+        s["strategy"] == "local" and s["cancelled"] == 0
+        for s in dashboard["strategies"]
+    )
     assert any(
         m["model"] == "demo-model" and m["cost_usd"] for m in dashboard["models"]
     )

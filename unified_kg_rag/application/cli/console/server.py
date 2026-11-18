@@ -95,7 +95,7 @@ from unified_kg_rag.shared.exceptions import (
     shows_error_text,
 )
 from unified_kg_rag.shared.logging import log_error
-from unified_kg_rag.shared.utils import event_loop
+from unified_kg_rag.shared.utils import event_loop, first_names
 from unified_kg_rag.shared.utils.files import open_temporary, replace_together
 
 logger = get_logger(__name__)
@@ -806,8 +806,7 @@ def create_app(
                 {p.name for _, p in planned if p.suffix.lower() not in supported}
             ):
                 raise UnsupportedUpload(
-                    f"ingestion does not read {', '.join(unsupported[:5])}"
-                    f"{' and others' if len(unsupported) > 5 else ''}; it reads "
+                    f"ingestion does not read {first_names(unsupported)}; it reads "
                     f"{' '.join(sorted(supported))}"
                 )
             # The loader's own rule: a hidden file or folder is never read.
@@ -818,14 +817,12 @@ def create_app(
             ):
                 raise UnsupportedUpload(
                     f"ingestion skips hidden files and folders (a name starting "
-                    f"with '.', __pycache__): {', '.join(hidden[:5])}"
-                    f"{' and others' if len(hidden) > 5 else ''}"
+                    f"with '.', __pycache__): {first_names(hidden)}"
                 )
             if conflicts := _upload_conflicts(target, [p for _, p in planned]):
                 raise UploadConflict(
                     "these paths name a file and a folder at once (in the "
-                    f"upload or in the folder): {', '.join(conflicts[:5])}"
-                    f"{' and others' if len(conflicts) > 5 else ''}"
+                    f"upload or in the folder): {first_names(conflicts)}"
                 )
             total = 0
             for upload_file, path in planned:

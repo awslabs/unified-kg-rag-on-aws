@@ -1461,3 +1461,48 @@ def test_every_abstention_and_skip_reason_is_named_in_the_page_s_language() -> N
     )
     listed = re.search(r"SKIPPED_REASONS = \[([^\]]*)\]", page)
     assert listed and set(re.findall(r'"([a-z_]+)"', listed.group(1))) == skipped
+
+
+def test_a_cancelled_question_counts_its_spend_but_not_per_question() -> None:
+    """rv53: 64 disconnects beside 5 answers showed 58 tokens per question
+    for about 700 per answer, and their spend in no total. A cancelled
+    question's tokens and cost count in the totals and the model rows; the
+    per-question figures read the questions served, and the cancelled ones
+    are counted apart."""
+    config = Config.model_validate(
+        {
+            "models": {
+                "prices": {
+                    "m": {"input_per_million_tokens": 1, "output_per_million_tokens": 1}
+                }
+            }
+        }
+    )
+
+    def query(outcome: str, tokens: int, cost: float) -> dict:
+        return {
+            "created": 1000.0,
+            "strategy": "local",
+            "outcome": outcome,
+            "abstained": False,
+            "latency_seconds": 1.0,
+            "usage": _usage("m", 1, tokens, 0),
+            "cost_usd": cost,
+        }
+
+    rows = [query("answered", 700, 0.7) for _ in range(2)]
+    rows += [query("cancelled", 100, 0.1) for _ in range(4)]
+    summary = dashboard.summarize(rows, [], config)
+    totals = summary["totals"]
+    assert (totals["queries"], totals["cancelled"], totals["errors"]) == (6, 4, 0)
+    assert totals["cost_usd"] == pytest.approx(1.8)
+    (model,) = summary["models"]
+    assert (model["llm_calls"], model["input_tokens"]) == (6, 1800)
+    (strategy,) = summary["strategies"]
+    assert strategy["queries"] == 6 and strategy["cancelled"] == 4
+    assert strategy["tokens_per_query"] == pytest.approx(700.0)
+    assert strategy["cost_per_query"] == pytest.approx(0.7)
+    assert strategy["cost_usd"] == pytest.approx(1.8)
+    # Only cancelled questions: nothing served to average.
+    (only,) = dashboard.summarize(rows[2:], [], config)["strategies"]
+    assert (only["tokens_per_query"], only["cost_per_query"]) == (0, None)

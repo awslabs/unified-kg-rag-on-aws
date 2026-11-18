@@ -520,6 +520,8 @@ run-rag --interactive --conversation-id my-session --config-path config.yaml
 `set-filter`는 `--filters`처럼 검색 전략의 어느 인덱스에도 없는 키를 거부합니다(`--interactive`와
 함께 준 `--filters`는 첫 질문 전에 검사하며, 거부하면 종료 코드 2). `auto`에서는 이미 설정한
 필터와 함께, 라우팅될 수 있는 어떤 전략도 모두 적용하지 못할 때만 키를 거부합니다.
+답변하는 동안 `Ctrl-C`를 누르면 그 질문만 멈추고(그 대화 턴은 남기지 않습니다) 프롬프트로
+돌아옵니다. 프롬프트에서 누르거나 질문이 멈추는 동안 한 번 더 누르면 세션이 끝납니다.
 
 대화 메모리는 프로세스 안에만 있습니다(`MemoryManager`, 한도는 `memory` 섹션).
 

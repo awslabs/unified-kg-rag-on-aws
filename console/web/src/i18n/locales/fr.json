@@ -572,6 +572,8 @@
   "dashboard.limitedHint": "Refusées à une limite compte les questions auxquelles une limite de la requête (search.query_max_*) n’a laissé aucune place pour répondre. Le taux de refus les exclut : elles ne disent rien du corpus.",
   "dashboard.errors": "Erreurs",
   "dashboard.refused": "Rejetées",
+  "dashboard.cancelled": "Annulées",
+  "dashboard.cancelledHint": "Annulées compte les questions quittées avant leur réponse (page fermée, ou Arrêter) : leurs appels au modèle comptent dans le coût et les lignes par modèle et par rôle, pas dans les temps ni dans les tokens et le coût par question d'une stratégie.",
   "dashboard.cost": "Coût",
   "dashboard.noPricesTitle": "Les coûts nécessitent des prix",
   "dashboard.noPrices": "Ajoutez les prix des modèles sous models.prices dans les paramètres pour voir les coûts en USD ; d’ici là, le tableau de bord ne compte que les jetons.",

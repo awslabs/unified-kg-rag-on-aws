@@ -148,7 +148,8 @@ error it caught) also says where that error happened. A
 library's own records at `INFO` and above (ragas's failed judge job,
 `langchain_aws`'s failed call) keep their logger, level and message
 template, their arguments and traceback replaced by digests (uvicorn's
-access lines keep their path, without its query string); a library's Python
+start line keeps its address, and its access lines their path without the
+query string); a library's Python
 warning is logged by its category and code location, its text digested; a
 library at `DEBUG` in `logging.library_levels` logs everything. A store
 error the package wraps is shown and logged with the package's own context

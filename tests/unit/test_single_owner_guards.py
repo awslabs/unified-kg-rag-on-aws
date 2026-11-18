@@ -649,6 +649,12 @@ _DECODING = any_of(
 )
 
 
+# A hand-written "the first N, and N more" of a list of names: the count of
+# the rest in an f-string, or a bare "and others".
+_NAME_TRUNCATION = lines_matching(
+    re.compile(r"\{len\([^}]*\) - [^}]*\} more|' and others'")
+)
+
 GUARDS = [
     SourceGuard(
         name="G1 degradation ledger keys",
@@ -978,6 +984,28 @@ GUARDS = [
             ),
         },
     ),
+    SourceGuard(
+        name="G12 name-list truncation",
+        use="shared.utils.first_names (the first N names, then 'and N more')",
+        owners=("shared/utils/common.py",),
+        find=_NAME_TRUNCATION,
+        allowed={
+            "adapters/ingestion/gleaner.py::format_relationships_with_limit_task": (
+                1,
+                "the gleaning prompt's relationship lines, ranked, one per line: "
+                "model-visible text the response cache is keyed on",
+            ),
+            "domain/ingestion/base_processor.py::format_entities_with_limit_task": (
+                1,
+                "the extraction prompts' entity lines, ranked, one per line: "
+                "model-visible text the response cache is keyed on",
+            ),
+            "application/cli/run_rag_chain.py::_print_hits": (
+                1,
+                "numbered hit rows, one per line, then how to list them all",
+            ),
+        },
+    ),
 ]
 
 
@@ -1087,6 +1115,13 @@ _G4 = next(g for g in GUARDS if g.name.startswith("G4 ")).find
         (module_nodes(_comparison_table), 'q = {"gte": start, "lt": end}\n', []),
         (nodes(_operator_branch), 'if op == "gt":\n    pass\n', 1),
         (nodes(_operator_branch), 'match op:\n    case "lte":\n        pass\n', 1),
+        (
+            _NAME_TRUNCATION,
+            'm = f" (and {len(missing) - 10} more)" if len(missing) > 10 else ""\n',
+            1,
+        ),
+        (_NAME_TRUNCATION, "m = f\"{' and others' if len(x) > 5 else ''}\"\n", 1),
+        (_NAME_TRUNCATION, 'm = f"{n} more"\nk = len(x) - 1\n', []),
         (nodes(_lineage_dedup), "u = dict.fromkeys(r.text_unit_ids)\n", 1),
         (nodes(_lineage_dedup), "u = dict.fromkeys(units)\n", 1),
         (nodes(_lineage_dedup), 'F = dict.fromkeys(("id", "text_unit_ids"))\n', []),

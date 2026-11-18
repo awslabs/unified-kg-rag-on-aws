@@ -572,6 +572,8 @@
   "dashboard.limitedHint": "Recusadas por um limite conta as perguntas a que um limite da consulta (search.query_max_*) não deixou margem para responder. A taxa de recusa não as inclui: não dizem nada do corpus.",
   "dashboard.errors": "Erros",
   "dashboard.refused": "Rejeitadas",
+  "dashboard.cancelled": "Canceladas",
+  "dashboard.cancelledHint": "Canceladas conta as perguntas abandonadas antes da resposta (a página foi fechada, ou Parar): as chamadas ao modelo contam no custo e nas linhas por modelo e papel, não nos tempos nem nos tokens e no custo por pergunta de uma estratégia.",
   "dashboard.cost": "Custo",
   "dashboard.noPricesTitle": "Os custos precisam de preços",
   "dashboard.noPrices": "Adicione os preços dos modelos em models.prices nas Configurações para ver os custos em USD; até lá, o painel conta apenas tokens.",

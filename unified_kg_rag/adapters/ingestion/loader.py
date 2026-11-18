@@ -19,7 +19,7 @@ from unified_kg_rag.domain.models import Document
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import ConfigurationError
 from unified_kg_rag.shared.logging import log_failure
-from unified_kg_rag.shared.utils import default_max_workers
+from unified_kg_rag.shared.utils import default_max_workers, first_names
 from unified_kg_rag.shared.utils.concurrency import (
     ContextThreadPoolExecutor,
     preload_in_forkserver,
@@ -305,15 +305,10 @@ class DirectoryLoader:
         ]
         logger.warning(
             "Deduplication dropped %d near-duplicate document(s) "
-            "(processing.deduplicate_similarity_threshold %.2f): %s%s",
+            "(processing.deduplicate_similarity_threshold %.2f): %s",
             len(named),
             threshold,
-            ", ".join(named[:_DROPPED_NAMED]),
-            (
-                f" and {len(named) - _DROPPED_NAMED} more"
-                if len(named) > _DROPPED_NAMED
-                else ""
-            ),
+            first_names(named, _DROPPED_NAMED),
         )
 
         unique_docs = [

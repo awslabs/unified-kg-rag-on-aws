@@ -698,3 +698,28 @@ def test_help_loads_neither_the_chain_nor_the_pipeline() -> None:
     assert run_ingestion_pipeline.DataIngestionPipeline is DataIngestionPipeline
     with pytest.raises(AttributeError, match="no attribute 'nope'"):
         run_ingestion_pipeline.nope  # noqa: B018
+
+
+async def test_interactive_a_stopped_question_returns_to_the_prompt(
+    mocker, printed
+) -> None:
+    # A Ctrl-C while it answers ends the question (conventions'
+    # interruptible_turn raises TurnInterrupted), not the session.
+    from unified_kg_rag.application.cli.conventions import TurnInterrupted
+
+    runner, queries = _interactive_runner(mocker, ["stopped", "after"])
+    calls = 0
+
+    async def run_query(rag_input):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise TurnInterrupted
+        queries.append(rag_input)
+        return {"success": True, "answer": "ok"}
+
+    runner._run_query = run_query  # type: ignore[method-assign]
+    await runner._interactive_mode()
+    text = printed.getvalue()
+    assert "Question stopped" in text and "Unexpected error" not in text
+    assert [q.query for q in queries] == ["after"]

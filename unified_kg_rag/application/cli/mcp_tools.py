@@ -721,12 +721,26 @@ class KnowledgeGraphTools:
         served = self.namespace if namespace is None else namespace
         if served in self.namespaces:
             attributes["kg_rag.namespace"] = served
+        cancelled: asyncio.CancelledError | None = None
         with (
             bound_contextvars(query_id=new_query_id()),
             observability.span("kg_rag.mcp.tool", attributes) as span,
         ):
             try:
                 result = await self._within_deadline(run, on_timeout, limits)
+            except asyncio.CancelledError as e:
+                # Its client left (a disconnect, a cancel notification) or
+                # the server is stopping: no failure, so the span ends
+                # without the error status and is re-raised past it.
+                span.set_attribute("kg_rag.cancelled", True)
+                logger.info(
+                    "MCP tool %s cancelled after %.2fs (its client left, or the "
+                    "server is stopping): %s",
+                    tool,
+                    time.perf_counter() - started,
+                    text_digest(str(query)),
+                )
+                cancelled = e
             except BaseException as e:
                 ids = observability.current_trace_ids()
                 tag_query_failure(
@@ -741,17 +755,20 @@ class KnowledgeGraphTools:
                         text_digest(str(query)),
                     )
                 raise
-            records = getattr(result, "records", None)
-            span.set_attributes(
-                {"kg_rag.records": len(records) if records is not None else 0}
-            )
-            logger.info(
-                "MCP tool %s answered in %.2fs: %s",
-                tool,
-                time.perf_counter() - started,
-                text_digest(str(query)),
-            )
-            return result
+            else:
+                records = getattr(result, "records", None)
+                span.set_attributes(
+                    {"kg_rag.records": len(records) if records is not None else 0}
+                )
+                logger.info(
+                    "MCP tool %s answered in %.2fs: %s",
+                    tool,
+                    time.perf_counter() - started,
+                    text_digest(str(query)),
+                )
+                return result
+        assert cancelled is not None
+        raise cancelled
 
     def _capped(
         self, records: list[SupportingContent]

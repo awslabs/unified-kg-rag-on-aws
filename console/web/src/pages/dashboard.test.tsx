@@ -5,8 +5,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../i18n/i18n";
 import { DashboardPage } from "./DashboardPage";
 
-function serve(refused: number, limited = 0) {
-  const totals = { queries: 4, answered: 3, abstained: 0, decline_rate: 0, limited, errors: 0, refused, latency_p50: 1, latency_p95: 2, cost_usd: null, priced_queries: 0 };
+function serve(refused: number, limited = 0, cancelled = 0) {
+  const totals = { queries: 4, answered: 3, abstained: 0, decline_rate: 0, limited, errors: 0, refused, cancelled, latency_p50: 1, latency_p95: 2, cost_usd: null, priced_queries: 0 };
   const strategy = { strategy: "local", queries: 4 - refused, abstained: 0, limited, errors: 0, latency_p50: 1, latency_p95: 2, tokens_per_query: 10, cost_usd: null, cost_per_query: null };
   const body = { totals, strategies: [strategy], models: [], roles: [], timeline: [], jobs: [], unpriced_models: [], prices_configured: false };
   vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(body), { status: 200 })));
@@ -71,5 +71,29 @@ describe("DashboardPage", () => {
     );
     await screen.findByText("Refused");
     expect(screen.queryByText("Declined at a limit")).not.toBeInTheDocument();
+  });
+
+  it("counts cancelled questions apart, their spend in the totals only (rv53)", async () => {
+    serve(0, 0, 2);
+    render(
+      <I18nProvider initial="en">
+        <DashboardPage />
+      </I18nProvider>,
+    );
+    expect(await screen.findByText("Cancelled")).toBeInTheDocument();
+    const tile = screen.getByText("Cancelled").closest(".stat") as HTMLElement;
+    expect(within(tile).getByText("2")).toBeInTheDocument();
+    expect(screen.getByText(/Cancelled counts the questions left before their answer/)).toBeInTheDocument();
+  });
+
+  it("shows no cancelled figure when none was cancelled", async () => {
+    serve(0);
+    render(
+      <I18nProvider initial="en">
+        <DashboardPage />
+      </I18nProvider>,
+    );
+    await screen.findByText("Refused");
+    expect(screen.queryByText("Cancelled")).not.toBeInTheDocument();
   });
 });

@@ -106,6 +106,21 @@ def test_an_accepted_advisory_passes_until_its_date(
     assert _run(monkeypatch, tmp_path, report, line.format("soon")) == 1
 
 
+def test_an_accepted_advisory_no_longer_reported_warns(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A withdrawn or fixed advisory leaves a stale line: the job annotates it.
+    future = (datetime.date.today() + datetime.timedelta(days=30)).isoformat()
+    line = f"GHSA-aaaa-bbbb-0009 {future} acme 1.0.0 (a reason)\n"
+    assert _run(monkeypatch, tmp_path, _report(), line) == 0
+    assert (
+        "::warning::GHSA-aaaa-bbbb-0009 is accepted but no longer reported"
+        in capsys.readouterr().out
+    )
+
+
 def test_output_without_an_audit_report_fails(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

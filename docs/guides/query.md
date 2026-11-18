@@ -617,7 +617,9 @@ argument): `help me find ...` is a question. `set-filter` refuses a key no
 index of the search strategy declares, as `--filters` does (with
 `--interactive`, before the first question: exit code 2). With `auto` it
 refuses a key only when, with the filters already set, no strategy `auto`
-may route to applies them all.
+may route to applies them all. `Ctrl-C` while a question is answered stops
+that question (its turn is not kept) and returns to the prompt; `Ctrl-C` at
+the prompt, or a second one while the question stops, ends the session.
 
 Conversation memory lives in the process (`MemoryManager`, limits in the
 `memory` section):

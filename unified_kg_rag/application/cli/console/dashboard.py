@@ -96,13 +96,19 @@ def summarize(
     by_strategy: dict[str, dict[str, Any]] = defaultdict(
         lambda: {
             "queries": 0,
+            "cancelled": 0,
             "abstained": 0,
             "limited": 0,
             "errors": 0,
             "latencies": [],
             "cost_usd": 0.0,
             "priced": 0,
-            "tokens": 0,
+            # The questions served: the per-question figures' tokens, cost
+            # and count (a cancelled question's spend counts in the totals).
+            "served": 0,
+            "served_tokens": 0,
+            "served_cost_usd": 0.0,
+            "served_priced": 0,
         }
     )
     by_model: dict[str, dict[str, float]] = defaultdict(dict)
@@ -128,14 +134,21 @@ def summarize(
                 bool(query.get("abstained")) and not _limited(query)
             )
             row["errors"] += int(query.get("outcome") in _FAILED)
+            row["cancelled"] += int(query.get("outcome") == "cancelled")
             if latency is not None:
                 row["latencies"].append(latency)
-            row["tokens"] += int(usage.get("input_tokens") or 0) + int(
-                usage.get("output_tokens") or 0
-            )
-            if query.get("cost_usd") is not None:
-                row["cost_usd"] += query["cost_usd"]
+            cost = query.get("cost_usd")
+            if cost is not None:
+                row["cost_usd"] += cost
                 row["priced"] += 1
+            if _served(query):
+                row["served"] += 1
+                row["served_tokens"] += int(usage.get("input_tokens") or 0) + int(
+                    usage.get("output_tokens") or 0
+                )
+                if cost is not None:
+                    row["served_cost_usd"] += cost
+                    row["served_priced"] += 1
         if query.get("cost_usd") is not None:
             total_cost += query["cost_usd"]
             priced_queries += 1
@@ -157,15 +170,20 @@ def summarize(
         {
             "strategy": name,
             "queries": row["queries"],
+            "cancelled": row["cancelled"],
             "abstained": row["abstained"],
             "limited": row["limited"],
             "errors": row["errors"],
             "latency_p50": quantile(row["latencies"], 0.5),
             "latency_p95": quantile(row["latencies"], 0.95),
-            "tokens_per_query": row["tokens"] / row["queries"] if row["queries"] else 0,
+            "tokens_per_query": (
+                row["served_tokens"] / row["served"] if row["served"] else 0
+            ),
             "cost_usd": row["cost_usd"] if row["priced"] else None,
             "cost_per_query": (
-                row["cost_usd"] / row["priced"] if row["priced"] else None
+                row["served_cost_usd"] / row["served_priced"]
+                if row["served_priced"]
+                else None
             ),
         }
         for name, row in sorted(by_strategy.items(), key=lambda kv: -kv[1]["queries"])
@@ -228,6 +246,10 @@ def summarize(
             # filter to change): the caller's to fix, not errors, and left
             # out of the latencies and the decline rate.
             "refused": sum(q["outcome"] == "refused" for q in queries),
+            # Questions whose reader left before the answer (the page
+            # closed or stopped it): their spend counts in the cost and the
+            # model rows, not in the latencies or the per-question figures.
+            "cancelled": sum(q["outcome"] == "cancelled" for q in queries),
             "latency_p50": quantile(latencies, 0.5),
             "latency_p95": quantile(latencies, 0.95),
             "latency_mean": statistics.fmean(latencies) if latencies else None,

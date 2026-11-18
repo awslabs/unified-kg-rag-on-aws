@@ -20,8 +20,12 @@ from unified_kg_rag.domain.models import (
     PipelineStageStatus,
     Relationship,
 )
+from unified_kg_rag.shared.utils import first_names
 
 console = Console()
+
+# The entity names a community's panel lists, the rest counted.
+_COMMUNITY_ENTITIES_SHOWN = 5
 
 # C0/C1 control characters except tab (\x09) and newline (\x0a).
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
@@ -339,14 +343,11 @@ def display_communities(
         console.print(f"[dim]Size:[/dim] {size} entities")
 
         if entity_ids:
-            entity_names = [
-                entity_lookup.get(eid, f"{eid[:12]}...") for eid in entity_ids[:5]
-            ]
-            if len(entity_ids) > 5:
-                entity_names.append(f"... and {len(entity_ids) - 5} more")
-            console.print(
-                f"[dim]Entities:[/dim] {markup_safe(', '.join(entity_names))}"
+            entity_names = first_names(
+                (entity_lookup.get(eid, f"{eid[:12]}...") for eid in entity_ids),
+                _COMMUNITY_ENTITIES_SHOWN,
             )
+            console.print(f"[dim]Entities:[/dim] {markup_safe(entity_names)}")
 
         if community_id in reports_lookup:
             report = reports_lookup[community_id]

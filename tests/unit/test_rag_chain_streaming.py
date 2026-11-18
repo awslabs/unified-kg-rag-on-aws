@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import itertools
+import logging
 from typing import Any
 
 import pytest
@@ -113,6 +114,8 @@ def _make_chain(
     ignore_errors: bool = False,
 ) -> tuple[GraphRAGChain, _StreamingModelFactory, _RecordingMemoryManager]:
     config.processing.ignore_errors = ignore_errors
+    # No reranker: the default one would reach the blocked-AWS stub.
+    config.providers.rerank.kind = "none"
     factory = factory or _StreamingModelFactory()
     retriever = _FakeRetriever(empty=empty)
 
@@ -346,3 +349,13 @@ async def test_streamed_answer_run_carries_the_session_and_user(config: Config) 
     assert answer["session_id"] == "conv-9"
     assert answer["user_id"] == "user-3"
     assert answer["caller"] == "x"
+
+
+async def test_the_fixture_chain_answers_without_a_degraded_step(
+    config: Config, caplog: pytest.LogCaptureFixture
+) -> None:
+    # rv53 low: the chain reranked through the blocked-AWS stub, so every
+    # query of the files that build it logged "Reranking failed" and degraded.
+    chain, _, _ = _make_chain(config)
+    await chain.ainvoke(_input())
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]

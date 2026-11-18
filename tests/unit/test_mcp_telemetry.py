@@ -74,3 +74,51 @@ async def test_the_tool_span_names_the_namespace_it_reads() -> None:
         assert names == [tools.namespace, "tenant-b", None]
     finally:
         observability.uninstall()
+
+
+async def test_a_cancelled_call_is_logged_and_spanned_as_cancelled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # rv53 low: a client that left was logged as "failed after ...
+    # (CancelledError)" and its span ended with the ERROR status.
+    import asyncio
+
+    from opentelemetry.trace import StatusCode
+
+    from tests.unit.test_mcp_tools import FakeChain
+    from unified_kg_rag.application.cli import mcp_tools
+    from unified_kg_rag.application.retrieval.rag_chain import RAGInput, SearchOutput
+
+    lines: list[str] = []
+    monkeypatch.setattr(
+        mcp_tools.logger, "info", lambda message, *args: lines.append(message % args)
+    )
+    started = asyncio.Event()
+
+    class SlowChain(FakeChain):
+        async def asearch(self, rag_input: RAGInput) -> SearchOutput:
+            started.set()
+            await asyncio.Event().wait()
+            raise AssertionError("not reached")
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    configure_observability(ObservabilityConfig(enabled=True), tracer_provider=provider)
+    try:
+        call = asyncio.create_task(_tools(SlowChain()).search("q"))
+        await started.wait()
+        call.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await call
+        (span,) = [
+            s for s in exporter.get_finished_spans() if s.name == "kg_rag.mcp.tool"
+        ]
+    finally:
+        observability.uninstall()
+    assert span.status.status_code is not StatusCode.ERROR
+    attributes = dict(span.attributes or {})
+    assert attributes["kg_rag.cancelled"] is True
+    assert "error.type" not in attributes
+    (line,) = [line for line in lines if "MCP tool kg_search" in line]
+    assert "cancelled after" in line and "failed" not in line

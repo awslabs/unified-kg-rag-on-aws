@@ -120,7 +120,7 @@ from unified_kg_rag.shared import (
 )
 from unified_kg_rag.shared.exceptions import with_own_text
 from unified_kg_rag.shared.logging import log_error
-from unified_kg_rag.shared.utils import error_name
+from unified_kg_rag.shared.utils import error_name, first_names
 from unified_kg_rag.shared.write_fence import check_write_fence
 
 if TYPE_CHECKING:
@@ -599,12 +599,7 @@ class IncrementalIndexer:
                 len(unit_ids),
                 len(names),
                 suffix,
-                ", ".join(names[:_AUDIT_NAMES])
-                + (
-                    f" and {len(names) - _AUDIT_NAMES} more"
-                    if len(names) > _AUDIT_NAMES
-                    else ""
-                ),
+                first_names(names, _AUDIT_NAMES),
             )
             results = self.indexing_manager.remove_text_units(suffix, sorted(unit_ids))
             for key, stats in sorted(results.items()):
@@ -1759,10 +1754,9 @@ def run_extraction_fingerprint(
         return fingerprint
     logger.warning(
         "The extraction settings changed since this corpus was last committed "
-        "(%s%s); the documents extracted with the earlier settings are "
+        "(%s); the documents extracted with the earlier settings are "
         "re-extracted",
-        ", ".join(changed[:10]),
-        f" and {len(changed) - 10} more" if len(changed) > 10 else "",
+        first_names(changed),
     )
     return settings.fingerprint
 
