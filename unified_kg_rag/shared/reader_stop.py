@@ -14,6 +14,13 @@ nothing is held (between attempts), which the query ends as a stopped
 reader's, not as a failure.
 
 Outside such a query no stop is bound and the waits are plain sleeps.
+
+A stop ends only the work its reader owns. A call several queries share (an
+in-flight cache, ``shared.utils.concurrency.single_flight``) is each
+waiter's: it runs under a :class:`SharedStop` of its own
+(:func:`detached_context`), set once every waiter's reader stopped, and a
+waiter whose reader stops leaves it (:func:`await_unless_stopped`), so one
+reader's stop never ends another's query.
 """
 
 from __future__ import annotations
@@ -24,6 +31,9 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from typing import Any, TypeVar
+
+_T = TypeVar("_T")
 
 
 class ReaderStop:
@@ -48,21 +58,53 @@ class ReaderStop:
     def _wait(self, timeout: float) -> None:
         self._event.wait(timeout)
 
-    async def _await(self, delay: float) -> None:
+    async def _until(self, future: asyncio.Future[Any]) -> None:
+        """Wait until ``future`` is done or this stop is set, leaving
+        ``future`` running."""
         waiter: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         with self._lock:
             self._waiters.add(waiter)
         if self.is_set():
             _wake(waiter)
-        slept = asyncio.ensure_future(asyncio.sleep(delay))
         try:
-            await asyncio.wait({slept, waiter}, return_when=asyncio.FIRST_COMPLETED)
+            await asyncio.wait({future, waiter}, return_when=asyncio.FIRST_COMPLETED)
         finally:
             with self._lock:
                 self._waiters.discard(waiter)
+
+    async def _await(self, delay: float) -> None:
+        slept = asyncio.ensure_future(asyncio.sleep(delay))
+        try:
+            await self._until(slept)
+        finally:
             if not slept.done():
                 slept.cancel()
                 await asyncio.gather(slept, return_exceptions=True)
+
+
+class SharedStop(ReaderStop):
+    """The stop of a call several queries share, set once the reader of
+    each query waiting for it stopped (:meth:`leave`). A waiter with no
+    stop bound (no streamed query's), or one cancelled otherwise, keeps it
+    running: its call is still wanted, or was before. Counted on the event
+    loop the call runs on."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._holders = 0
+
+    def join(self) -> None:
+        """A waiter came for the call."""
+        self._holders += 1
+
+    def leave(self) -> bool:
+        """A waiter's reader stopped: the call is no longer its. Whether
+        that was the last one's (the call stops)."""
+        self._holders -= 1
+        if self._holders > 0:
+            return False
+        self.set()
+        return True
 
 
 def _wake(waiter: asyncio.Future[None]) -> None:
@@ -84,6 +126,31 @@ def reader_stop_scope(stop: ReaderStop) -> Iterator[ReaderStop]:
         yield stop
     finally:
         _READER_STOP.reset(token)
+
+
+def detached_context(stop: ReaderStop | None = None) -> contextvars.Context:
+    """A copy of the current context with ``stop`` bound in place of the
+    reader's (``None``: no stop), for work that is not this reader's alone
+    (``loop.create_task(..., context=...)``). The rest of the context (log
+    and trace ids, the usage meter) is kept."""
+    context = contextvars.copy_context()
+    context.run(_READER_STOP.set, stop)
+    return context
+
+
+async def await_unless_stopped(future: asyncio.Future[_T]) -> None:
+    """Wait for ``future`` (work this reader shares with others) to finish,
+    ending with ``asyncio.CancelledError`` once this query's reader stops;
+    ``future`` runs on, never cancelled here (as under ``asyncio.shield``).
+    Without a stop bound, a plain wait."""
+    stop = _READER_STOP.get()
+    if stop is None:
+        await asyncio.wait({future})
+        return
+    raise_if_reader_stopped()
+    await stop._until(future)
+    if not future.done():
+        raise asyncio.CancelledError
 
 
 def reader_stopped() -> bool:

@@ -381,7 +381,12 @@ as do the retry backoffs: the sink's stop is also the query's
 (`TransientRetryRunnable`, `acall_with_transient_retry`) check before each
 attempt and race their wait against, and the model clients that resend a
 call themselves (Bedrock's botocore, the OpenAI client) check before each
-request, so a throttled model is not called again for a reader that left. Whatever the query raises once its reader stopped ends it
+request, so a throttled model is not called again for a reader that left.
+A stop ends only its own query's work: a call concurrent queries share (a
+query embedding, `single_flight`) runs in a context of its own, under a
+`SharedStop` set once every waiting query's reader stopped, and a waiter
+whose reader stops leaves it (`await_unless_stopped`) while it goes on for
+the others. Whatever the query raises once its reader stopped ends it
 as a stopped reader's. The reader waits for that up to `search.model_timeout_seconds` plus a
 grace (`_STOP_GRACE_SECONDS`), then cancels the task: past the model
 clients' read timeout, so a model that stalls ends in its client's own
@@ -392,13 +397,18 @@ model responses all the same: LangChain's and the model clients' stream
 generators read each other with `async for`, which closes nothing it
 leaves, so a cancellation landing while a chunk is on its way up leaves
 them suspended, the response open until garbage collection finalizes them
-(a reference cycle can keep them). `_streamed_to` runs the stream in
+(a reference cycle can keep them). `_streamed_to` runs the stream, and
+the answer step without a sink its call (`ChatOllama` streams under
+`ainvoke` too), in
 `shared.model_responses.closing_responses`, which closes every response its
 model clients opened (registered from their HTTP hooks: httpx's response
 hook, botocore's `after-call`) still open when the stream ends. A Bedrock
 stream is read on a worker thread: its socket is shut down for reading,
-ending a blocked read, then closed off the loop; one whose request the
-thread sent only after the stream ended is closed on that thread at once.
+ending a blocked read, then closed off the loop, under a lock with the
+response's own release of its connection, so a connection back in the pool
+is left alone. A request the thread would send after the stream ended is
+refused at botocore's `before-send` (no billed call), and a stream opened
+then anyway is closed on that thread at once.
 The query then ends as a closed stream
 (`_ReaderStopped`: its span without error, its metrics without a
 failure), not as a cancelled query. The answer step streams whenever there is a sink; under the output

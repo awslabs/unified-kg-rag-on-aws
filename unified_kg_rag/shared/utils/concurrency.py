@@ -11,6 +11,7 @@ import contextvars
 import functools
 import inspect
 import multiprocessing
+import weakref
 from collections.abc import (
     AsyncIterator,
     Awaitable,
@@ -32,6 +33,12 @@ from types import TracebackType
 from typing import Any, Literal, ParamSpec, TypeVar
 
 from unified_kg_rag.shared.exceptions import waiter_copy
+from unified_kg_rag.shared.reader_stop import (
+    SharedStop,
+    await_unless_stopped,
+    detached_context,
+    reader_stopped,
+)
 
 _P = ParamSpec("_P")
 _T = TypeVar("_T")
@@ -116,11 +123,13 @@ async def gather_bounded(limit: int, aws: Iterable[Awaitable[_T]]) -> list[_T]:
 async def await_shared(future: asyncio.Future[_T]) -> _T:
     """The result of ``future``, one call concurrent waiters share (an
     in-flight cache), shielded so one waiter's cancellation cancels no
-    other's. Its failure reaches each waiter as a copy of its own
+    other's, and one waiter's reader's stop (``shared.reader_stop``) ends
+    its own wait only. Its failure reaches each waiter as a copy of its own
     (``waiter_copy``, raised from the shared error): the waiters are
     different queries, each tagging and reporting the error with its ids."""
     try:
-        return await asyncio.shield(future)
+        await await_unless_stopped(future)
+        return future.result()
     except Exception as e:
         if not future.done() or future.cancelled() or future.exception() is not e:
             raise
@@ -153,18 +162,27 @@ async def single_flight(
     A failed call is never kept. ``share_failure=True``: the call runs as a
     task of its own, so a cancelled first caller does not end it, and its
     error reaches each waiter as a copy of its own (:func:`await_shared`:
-    the waiters are different queries). ``share_failure=False``: the call
-    runs in the first caller's task, and when it raises or is cancelled
-    each waiter runs ``compute`` itself."""
+    the waiters are different queries). The call is every waiter's, not
+    its first caller's: a waiter whose reader stops (``shared.reader_stop``)
+    leaves it, and it stops at its next stop point only once every waiter's
+    reader stopped (``SharedStop``, bound in its own context in place of the
+    first caller's stop), when ``memo`` drops it too.
+    ``share_failure=False``: the call runs in the first caller's task, its
+    reader's stop included, and when it raises or is cancelled each waiter
+    runs ``compute`` itself."""
     pending = memo.get(key)
     if share_failure:
         if pending is None:
-            pending = asyncio.ensure_future(compute())
+            stop = SharedStop()
+            pending = asyncio.get_running_loop().create_task(
+                _called(compute), context=detached_context(stop)
+            )
+            _SHARED_STOPS[pending] = stop
             memo[key] = pending
             pending.add_done_callback(
                 functools.partial(_settle_shared, memo, key, keep)
             )
-        return await await_shared(pending)
+        return await _await_shared_call(memo, key, pending)
     if pending is not None:
         shared = await asyncio.shield(pending)
         return await compute() if shared is _COMPUTE_AGAIN else shared
@@ -185,6 +203,37 @@ async def single_flight(
             _drop(memo, key, outcome)
         outcome.set_result(result)
     return result
+
+
+async def _called(compute: Callable[[], Awaitable[_T]]) -> _T:
+    return await compute()
+
+
+# The stop of each shared call in flight (``single_flight(share_failure=
+# True)``), set once each of its waiters' readers stopped.
+_SHARED_STOPS: weakref.WeakKeyDictionary[asyncio.Future[Any], SharedStop] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+async def _await_shared_call(
+    memo: MutableMapping[Any, asyncio.Future[Any]],
+    key: Hashable,
+    call: asyncio.Future[_T],
+) -> _T:
+    """:func:`await_shared` of a shared call, as one of its waiters: the
+    call stops once every waiter's reader stopped, and is dropped from
+    ``memo`` then, so a later caller starts its own."""
+    stop = _SHARED_STOPS.get(call)
+    if stop is not None:
+        stop.join()
+    try:
+        return await await_shared(call)
+    except asyncio.CancelledError:
+        if stop is not None and not call.done() and reader_stopped():
+            if stop.leave():
+                _drop(memo, key, call)
+        raise
 
 
 def _drop(memo: MutableMapping[Any, Any], key: Hashable, future: Any) -> None:

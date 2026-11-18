@@ -200,3 +200,54 @@ async def test_a_query_cut_off_closes_its_answer_stream(
         await chain.aclose()
     assert errors == []
     assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+
+
+async def test_an_unstreamed_answer_cut_off_between_chunks_closes_its_response(
+    wire: tuple[int, stream_models.StreamModels],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """``ainvoke`` (no events read): the Ollama chat client streams under
+    it too, so a deadline that lands between two chunks leaves its
+    generators suspended; the answer call closes its response all the
+    same."""
+    from langchain_ollama import chat_models
+
+    port, models = wire
+    chain = _wire_chain("ollama", port, monkeypatch, model_timeout=30)
+    chain.config.search.query_timeout_seconds = 30
+    await chain.ainvoke(_input())
+    chain.config.search.query_timeout_seconds = LIMIT
+    models.knobs = stream_models.StreamKnobs(
+        chunk_delay=0.01, chunks=40, stall_after=20, stall_seconds=STALL
+    )
+    errors = _loop_errors()
+
+    async def cut_off() -> None:
+        with pytest.raises(QueryTimeoutError):
+            await chain.ainvoke(_input())
+
+    try:
+        with pytest.MonkeyPatch.context() as carried:
+            # Each chunk takes a while past the client's read to reach
+            # LangChain's stream: the cut lands there.
+            read = chat_models.ChatOllama._acreate_chat_stream
+
+            async def slow(self: Any, *args: Any, **kwargs: Any) -> Any:
+                async for chunk in read(self, *args, **kwargs):
+                    await asyncio.sleep(SLOW["deadline"])
+                    yield chunk
+
+            carried.setattr(chat_models.ChatOllama, "_acreate_chat_stream", slow)
+            async with _generators_kept():
+                await asyncio.gather(*(cut_off() for _ in range(QUERIES)))
+                await _released(port, models)
+        models.knobs = stream_models.StreamKnobs()
+        chain.config.search.query_timeout_seconds = 30
+        assert (await chain.ainvoke(_input())).answer
+    finally:
+        models.knobs.unstall.set()
+        models.knobs = stream_models.StreamKnobs()
+        await chain.aclose()
+    assert errors == []
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]

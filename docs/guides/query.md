@@ -158,8 +158,9 @@ with `QueryTimeoutError` (exported from `unified_kg_rag`; also a builtin
   reasoning (dropped from the answer) ends that wait. Until answer text
   arrives, a transient error (a Bedrock stream's throttling event or a
   dropped connection included) is retried as for an unstreamed query, on
-  every provider. Cut off by either limit, the stream closes the answer
-  model's response, so a timed-out query holds no connection to the model.
+  every provider. Cut off by either limit, a query closes the answer
+  model's response, streamed or not, so a timed-out query holds no
+  connection to the model.
 - `null` turns both deadlines off.
 
 The query's model calls (answer generation and the other query-time LLM
@@ -346,7 +347,9 @@ async for event in chain.aquery_events(RAGInput(query="...")):
   retry wait (a throttled or failing model's backoff: no model call is
   sent after the stop; a wait the client runs itself, botocore's
   client-side rate limiter or the OpenAI client's own backoff, ends with
-  its request unsent). It stops
+  its request unsent). A stop ends that reader's query only: a call
+  concurrent queries share (one embedding of a text they both embed) goes
+  on for the others, and stops only once each of their readers stopped. It stops
   when it closes the iterator (`aclose()`, or `break` inside
   `async with aclosing(...)`) or is cancelled while it waits for an event:
   a console client that disconnects, an `asyncio.timeout` around

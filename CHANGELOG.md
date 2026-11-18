@@ -261,15 +261,17 @@ Bugs present in 0.3.0.
   Bedrock and OpenAI clients' own resends included), cancelling it only a few seconds past
   `search.model_timeout_seconds` (a model that stalls ends first in its client's read timeout, its response closed),
   and the query records its latency and usage as a stream closed early (no failure, whatever it raised past the
-  stop) instead of nothing.
+  stop) instead of nothing. A stop ends only its reader's query: a call concurrent queries share (a query
+  embedding) goes on for the others and stops once each of their readers stopped.
 - A query cut off by its deadline (`search.query_timeout_seconds`, `limits.deadline_seconds`) or by its answer
   stream's first-chunk window (`search.model_timeout_seconds`) could leave the answer model's response open. A cut
   that landed while a chunk was on its way up from the model's read left LangChain's and the model client's stream
   generators suspended, which close nothing until garbage collection: the response held a connection of the Ollama
   or OpenAI-compatible client's pool (1-2 of 96 queries that missed a 3 s window under load), and a Bedrock stream's
-  worker thread read on until its read timeout. The answer stream now closes every model response it opened when it
-  ends, however it ends (a Bedrock stream's socket is shut down first, ending a blocked read); the query still fails
-  with `QueryTimeoutError` at the limit.
+  worker thread read on until its read timeout. The answer call, streamed or not (Ollama streams under `ainvoke`
+  too), now closes every model response it opened when it ends, however it ends (a Bedrock stream's socket is shut
+  down first, ending a blocked read), and a Bedrock worker thread sends no request after it ended; the query still
+  fails with `QueryTimeoutError` at the limit.
 - `Ctrl-C` while a sync `stream()` or `query_events()` waited for the answer's next chunk raised `RuntimeError:
   aclose(): asynchronous generator is already running` and left the query running on the chain's loop; it raises
   `KeyboardInterrupt`, and the query ends at its next event, answer chunk or retry wait, as a closed stream's does.

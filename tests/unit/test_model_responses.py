@@ -22,6 +22,9 @@ from unified_kg_rag.shared.model_responses import closing_responses, track_respo
 
 pytestmark = [pytest.mark.unit]
 
+# A hang backstop (seconds), far past anything a passing run waits.
+_BACKSTOP = 60.0
+
 
 class _AsyncResponse:
     """An ``httpx.Response``'s surface: ``is_closed`` and ``aclose``."""
@@ -239,3 +242,62 @@ async def test_only_a_call_that_opens_an_event_stream_is_tracked() -> None:
         bedrock._track_event_streams(http_response=response, parsed={"stream": stream})
         assert len(scope._open) == 1
     assert raw.closed
+
+
+async def test_a_bedrock_request_after_its_scope_ended_is_not_sent() -> None:
+    """A worker thread the query left (its context copied inside the
+    answer stream's scope) sends no request once the scope ended: its
+    before-send refuses it, so no billed call opens a stream nobody reads."""
+    import boto3
+
+    client = boto3.client(
+        "bedrock-runtime",
+        region_name="us-west-2",
+        aws_access_key_id="AKIDEXAMPLE",
+        aws_secret_access_key="example",
+    )
+    bedrock.stop_at_reader_stop(client, "bedrock-runtime")
+
+    def send() -> None:
+        client.meta.events.emit(
+            "before-send.bedrock-runtime.ConverseStream", request=None
+        )
+
+    async with closing_responses():
+        worker = contextvars.copy_context()
+        await asyncio.to_thread(worker.run, send)  # in the scope: sent
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.to_thread(worker.run, send)
+    # Outside any scope nothing is refused.
+    send()
+
+
+def test_an_event_stream_closed_as_its_connection_is_released_spares_the_pool() -> None:
+    """The reading thread releases the connection as the stream ends: back
+    in the pool first, then no longer the response's. A close that comes
+    in between waits for the release, and then leaves the connection (by
+    now another request's) alone."""
+    pool: list[Any] = []
+    in_pool, go_on = threading.Event(), threading.Event()
+
+    class Raw(_Raw):
+        def release_conn(self) -> None:
+            pool.append(self.connection)
+            in_pool.set()
+            assert go_on.wait(_BACKSTOP)
+            self.connection = None
+
+    sock = _Sock()
+    raw = Raw(sock)
+    stream = bedrock._OpenEventStream(raw)
+    reader = threading.Thread(target=raw.release_conn)
+    reader.start()
+    assert in_pool.wait(_BACKSTOP)
+    closer = threading.Thread(target=stream.close)
+    closer.start()
+    closer.join(0.2)
+    assert closer.is_alive()  # waits for the release
+    go_on.set()
+    reader.join(_BACKSTOP)
+    closer.join(_BACKSTOP)
+    assert sock.shut == [] and raw.closed and pool[0].sock is sock

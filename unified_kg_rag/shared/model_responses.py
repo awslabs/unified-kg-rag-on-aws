@@ -15,8 +15,9 @@ So the model clients register every response they open
 (:func:`track_response`, from their HTTP clients' hooks) with the scope of
 the query that opened it (:func:`closing_responses`), which closes each one
 still open when it ends, however it ends. A response opened after its scope
-ended (on a worker thread the query left) is closed at once. Outside a scope
-nothing is tracked.
+ended (on a worker thread the query left) is closed at once, and a client
+whose request such a thread would send refuses it first
+(:func:`raise_if_scope_ended`). Outside a scope nothing is tracked.
 """
 
 from __future__ import annotations
@@ -53,6 +54,10 @@ class _OpenResponses:
             self._open = [r for r in self._open if not _is_closed(r)]
             self._open.append(response)
             return True
+
+    @property
+    def ended(self) -> bool:
+        return self._ended
 
     def end(self) -> list[Any]:
         """End the scope: the responses still open."""
@@ -117,6 +122,17 @@ def track_response(response: Any) -> None:
         response.close()
     except Exception as e:  # noqa: BLE001 - closing is best effort
         logger.debug("Closing a model response failed: %s", e)
+
+
+def raise_if_scope_ended() -> None:
+    """Raise ``asyncio.CancelledError`` when the scope of the query this
+    request is for ended (:func:`closing_responses`): a stop point before a
+    model client sends a request, so a worker thread the query left sends
+    none (no response anyone reads, and no billed call). A no-op outside a
+    scope."""
+    scope = _OPEN_RESPONSES.get()
+    if scope is not None and scope.ended:
+        raise asyncio.CancelledError
 
 
 @asynccontextmanager
