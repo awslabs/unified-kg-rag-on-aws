@@ -528,6 +528,8 @@
   "dashboard.limitedHint": "因限额拒答统计的是查询限额（search.query_max_*）没有留出作答余量的问题。这与语料库无关，因此不计入拒答率。",
   "dashboard.errors": "错误",
   "dashboard.refused": "已拒绝",
+  "dashboard.cancelled": "已取消",
+  "dashboard.cancelledHint": "已取消统计在回答之前离开的问题(关闭了页面或点了停止):其模型调用计入成本以及按模型、按角色的行,但不计入时间或各策略每个问题的令牌数和成本。",
   "dashboard.cost": "费用",
   "dashboard.noPricesTitle": "计算费用需要价格",
   "dashboard.noPrices": "在设置的 models.prices 下添加模型价格，即可查看以 USD 计的费用；在此之前，仪表板只统计 Token。",

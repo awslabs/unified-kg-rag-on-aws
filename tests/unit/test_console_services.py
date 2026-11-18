@@ -1212,3 +1212,59 @@ async def test_the_rebuild_reasons_are_those_of_the_methodologies_picked(
     picked = await service.held_methodologies("default", building=lightrag)
     assert picked["rebuild"] == []
     await service.close()
+
+
+class _SpendingChain(_Chain):
+    """Spends one model call (in the query's meter, as the chain's query
+    scope counts it), then streams a chunk and waits or fails."""
+
+    def __init__(self, *, fails: bool = False) -> None:
+        super().__init__(_output())
+        self.fails = fails
+
+    async def aquery_events(self, *_: Any, **__: Any) -> AsyncIterator[Any]:
+        from unified_kg_rag.shared.usage import record_llm_call, usage_scope
+
+        with usage_scope():  # the chain's own query scope
+            record_llm_call("answer", "m", input_tokens=900, output_tokens=100)
+            yield AnswerChunk(text="Vendor")
+            if self.fails:
+                raise StoreConnectionError("store down")
+            await asyncio.Event().wait()
+        yield QueryResult(output=self.output)
+
+
+_PRICED = {
+    "models": {
+        "prices": {
+            "m": {"input_per_million_tokens": 3, "output_per_million_tokens": 15}
+        }
+    }
+}
+
+
+@pytest.mark.parametrize("fails", [False, True], ids=["cancelled", "failed"])
+async def test_a_question_not_answered_records_the_usage_it_spent(
+    tmp_path: Path, fails: bool
+) -> None:
+    """rv53: a disconnected (cancelled) or failed question was recorded with
+    no usage or cost, though its model calls were spent."""
+    store = ConsoleStore(tmp_path / "s.sqlite3")
+    service = AskService(
+        lambda: Config.model_validate(_PRICED),
+        store,
+        chain_factory=lambda _c: _SpendingChain(fails=fails),
+    )
+    reader = service.ask(AskRequest(query="q"))
+    async for event in reader:
+        if event["kind"] == "chunk" and not fails:
+            await reader.aclose()  # the page disconnected mid-answer
+            break
+    (row,) = store.queries()
+    assert row["outcome"] == ("failed" if fails else "cancelled")
+    assert (row["usage"]["input_tokens"], row["usage"]["output_tokens"]) == (900, 100)
+    assert row["usage"]["by_model"]["m"]["llm_calls"] == 1
+    assert row["cost_usd"] == pytest.approx((900 * 3 + 100 * 15) / 1e6)
+    totals = dashboard.summarize([row], [], Config.model_validate(_PRICED))["totals"]
+    assert totals["cost_usd"] == pytest.approx(row["cost_usd"])
+    await service.close()

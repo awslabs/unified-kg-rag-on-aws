@@ -550,6 +550,8 @@
   "dashboard.limitedHint": "An einer Grenze abgelehnt zählt die Fragen, denen eine Abfragegrenze (search.query_max_*) keinen Raum für eine Antwort ließ. Die Ablehnungsquote lässt sie aus: Sie sagen nichts über den Korpus.",
   "dashboard.errors": "Fehler",
   "dashboard.refused": "Abgewiesen",
+  "dashboard.cancelled": "Abgebrochen",
+  "dashboard.cancelledHint": "Abgebrochen zählt die Fragen, die vor ihrer Antwort verlassen wurden (Seite geschlossen oder Stoppen): ihre Modellaufrufe zählen in den Kosten und den Zeilen je Modell und Rolle, nicht in den Zeiten oder den Tokens und Kosten je Frage einer Strategie.",
   "dashboard.cost": "Kosten",
   "dashboard.noPricesTitle": "Kosten brauchen Preise",
   "dashboard.noPrices": "Tragen Sie die Modellpreise in den Einstellungen unter models.prices ein, um Kosten in USD zu sehen; bis dahin zählt das Dashboard nur Token.",

@@ -29,6 +29,8 @@ interface Dashboard {
     limited?: number;
     errors: number;
     refused: number;
+    /** Left before their answer: their spend counts, not their times. */
+    cancelled?: number;
     latency_p50: number | null;
     latency_p95: number | null;
     cost_usd: number | null;
@@ -41,8 +43,10 @@ interface Dashboard {
     abstained: number;
     limited?: number;
     errors: number;
+    cancelled?: number;
     latency_p50: number | null;
     latency_p95: number | null;
+    /** Of the questions served (a cancelled one's spend is in the totals). */
     tokens_per_query: number;
     cost_usd: number | null;
     cost_per_query: number | null;
@@ -102,10 +106,12 @@ export function DashboardPage() {
             {d.totals.limited ? <Stat label={t("dashboard.limited")} value={number(d.totals.limited)} /> : null}
             <Stat label={t("dashboard.errors")} value={number(d.totals.errors)} />
             <Stat label={t("dashboard.refused")} value={number(d.totals.refused)} />
+            {d.totals.cancelled ? <Stat label={t("dashboard.cancelled")} value={number(d.totals.cancelled)} /> : null}
             <Stat label={t("dashboard.cost")} value={d.totals.cost_usd != null ? usd(d.totals.cost_usd) : "—"} />
           </div>
           {d.totals.refused ? <p className="field-help">{t("dashboard.questionsHint")}</p> : null}
           {d.totals.limited ? <p className="field-help">{t("dashboard.limitedHint")}</p> : null}
+          {d.totals.cancelled ? <p className="field-help">{t("dashboard.cancelledHint")}</p> : null}
           {!d.prices_configured ? (
             <Notice title={t("dashboard.noPricesTitle")}>{t("dashboard.noPrices")}</Notice>
           ) : d.unpriced_models.length ? (

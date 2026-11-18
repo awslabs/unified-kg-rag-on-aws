@@ -301,8 +301,11 @@ their duration, calls, tokens and cost (an ingestion's priced from its
 calls, a run stopped at its budget included; the Ingest page's job card
 shows it too). Costs need `models.prices`
 ([Cost and prices](./evaluate.md#comparing-strategies)); a model without a
-price is listed and left out instead of counted as free. Clear question
-history deletes the recorded questions.
+price is listed and left out instead of counted as free. A cancelled
+question (its page closed or stopped it before the answer) is counted apart:
+the model calls it made count in the cost and the model and role rows, not
+in a strategy's tokens or cost per question. Clear question history deletes
+the recorded questions.
 
 **Settings.** The config file, as fields or as YAML. Above them, from the
 moment the page opens, a notice lists each deprecated or removed key the

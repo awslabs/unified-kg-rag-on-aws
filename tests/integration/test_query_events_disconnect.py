@@ -244,8 +244,12 @@ async def test_console_disconnects_leave_the_console_answering(
             events = [e async for e in service.ask(request)]
         assert events[-1]["kind"] == "result"
         # Each disconnect is recorded as cancelled, not failed.
-        outcomes = {row["outcome"] for row in service.store.queries(limit=500)}
-        assert outcomes <= {"cancelled", "answered"}
+        rows = service.store.queries(limit=500)
+        assert {row["outcome"] for row in rows} <= {"cancelled", "answered"}
+        # A disconnected question records the answer call it spent (rv53).
+        cancelled = [row for row in rows if row["outcome"] == "cancelled"]
+        assert cancelled
+        assert all((row["usage"] or {}).get("llm_calls") for row in cancelled)
     finally:
         await service.close()
     gc.collect()

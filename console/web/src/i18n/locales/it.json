@@ -572,6 +572,8 @@
   "dashboard.limitedHint": "Rifiutate per un limite conta le domande a cui un limite della query (search.query_max_*) non ha lasciato spazio per rispondere. Il tasso di rifiuto le esclude: non dicono nulla del corpus.",
   "dashboard.errors": "Errori",
   "dashboard.refused": "Respinte",
+  "dashboard.cancelled": "Annullate",
+  "dashboard.cancelledHint": "Annullate conta le domande abbandonate prima della risposta (pagina chiusa, o Interrompi): le loro chiamate al modello contano nel costo e nelle righe per modello e ruolo, non nei tempi né nei token e nel costo per domanda di una strategia.",
   "dashboard.cost": "Costo",
   "dashboard.noPricesTitle": "I costi richiedono i prezzi",
   "dashboard.noPrices": "Aggiungi i prezzi dei modelli in models.prices nelle Impostazioni per vedere i costi in USD; fino ad allora la dashboard conta solo i token.",

@@ -550,6 +550,8 @@
   "dashboard.limitedHint": "Declined at a limit counts the questions a query limit (search.query_max_*) left no room to answer. The decline rate leaves them out: they say nothing of the corpus.",
   "dashboard.errors": "Errors",
   "dashboard.refused": "Refused",
+  "dashboard.cancelled": "Cancelled",
+  "dashboard.cancelledHint": "Cancelled counts the questions left before their answer (the page closed, or Stop): their model calls count in the cost and the model and role rows, not in the times or a strategy's tokens and cost per question.",
   "dashboard.cost": "Cost",
   "dashboard.noPricesTitle": "Costs need prices",
   "dashboard.noPrices": "Add the models' prices under models.prices in Settings to see costs in USD; until then the dashboard counts tokens only.",
