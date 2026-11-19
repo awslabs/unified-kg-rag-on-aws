@@ -58,6 +58,8 @@ class StreamModels:
     """The server's knobs and counters."""
 
     knobs: StreamKnobs = field(default_factory=StreamKnobs)
+    # Requests read, on any path.
+    received: int = 0
     writing: int = 0
     completed: int = 0
     left: int = 0
@@ -310,6 +312,7 @@ def _handler(models: StreamModels) -> type[BaseHTTPRequestHandler]:
         def do_POST(self) -> None:  # noqa: N802
             raw = self.rfile.read(int(self.headers.get("Content-Length") or 0))
             body = json.loads(raw or b"{}")
+            models.count("received")
             if self.path == "/api/embed":
                 inputs = body.get("input") or []
                 inputs = inputs if isinstance(inputs, list) else [inputs]

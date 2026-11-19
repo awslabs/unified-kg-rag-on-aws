@@ -34,6 +34,7 @@ from unified_kg_rag.adapters.local.models import (
 )
 from unified_kg_rag.application.retrieval import rag_chain
 from unified_kg_rag.domain.models import Config, SearchStrategy
+from unified_kg_rag.shared import query_stop
 
 pytestmark = [pytest.mark.integration]
 
@@ -451,8 +452,8 @@ async def _cancelled_once_throttled(
 
 
 class _StopOrder:
-    """The order, in the client, of each stop (``ReaderStop.set``) and each
-    stop check a request passed (``raise_if_reader_stopped``, in every
+    """The order, in the client, of each stop (``QueryStop.set``) and each
+    stop check a request passed (``raise_if_stopped``, in every
     module that gates a model request on it), under one lock, so no wall
     clock decides which came first: a request that passed its check before
     the stop and is sent after it is one in flight, not one sent after the
@@ -462,29 +463,30 @@ class _StopOrder:
         from unified_kg_rag.adapters.aws import bedrock
         from unified_kg_rag.adapters.llm import chain_factory, retry
         from unified_kg_rag.adapters.local import models
-        from unified_kg_rag.shared import reader_stop
 
-        self.lock = threading.Lock()
+        # Reentrant: a stop sets its followers (a deadline window's) under
+        # its own set.
+        self.lock = threading.RLock()
         self.recording = True
         self.events: list[tuple[str, object]] = []
-        check = reader_stop.raise_if_reader_stopped
-        set_stop = reader_stop.ReaderStop.set
+        check = query_stop.raise_if_stopped
+        set_stop = query_stop.QueryStop.set
 
         def checked() -> None:
             with self.lock:
                 check()
                 if self.recording:
-                    self.events.append(("passed", reader_stop._READER_STOP.get()))
+                    self.events.append(("passed", query_stop._QUERY_STOP.get()))
 
-        def stopped(stop: Any) -> None:
+        def stopped(stop: Any, *cause: Any) -> None:
             with self.lock:
                 if self.recording:
                     self.events.append(("stop", stop))
-                set_stop(stop)
+                set_stop(stop, *cause)
 
-        monkeypatch.setattr(reader_stop.ReaderStop, "set", stopped)
-        for module in (reader_stop, retry, chain_factory, bedrock, models):
-            monkeypatch.setattr(module, "raise_if_reader_stopped", checked)
+        monkeypatch.setattr(query_stop.QueryStop, "set", stopped)
+        for module in (query_stop, retry, chain_factory, bedrock, models):
+            monkeypatch.setattr(module, "raise_if_stopped", checked)
 
     def passed_after_a_stop(self) -> list[object]:
         """The checks passed with no stop bound, or after their query's
@@ -550,7 +552,13 @@ async def test_a_reader_cancelled_in_retry_backoff_stops_the_query(
         # after its query's stop (the botocore, OpenAI and Ollama clients'
         # requests, their own resends included): one that passed it before
         # is in flight ...
-        assert sum(kind == "stop" for kind, _ in order.events) == THROTTLED_READERS
+        assert (
+            sum(
+                kind == "stop" and not isinstance(stop, query_stop.FollowingStop)
+                for kind, stop in order.events
+            )
+            == THROTTLED_READERS
+        )
         assert any(kind == "passed" for kind, _ in order.events)
         assert order.passed_after_a_stop() == []
         # ... and none reached the model after those in flight: a reader is

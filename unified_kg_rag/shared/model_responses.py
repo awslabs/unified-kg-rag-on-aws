@@ -30,7 +30,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from unified_kg_rag.shared.logging import get_logger
-from unified_kg_rag.shared.reader_stop import blank_in_shared_calls
+from unified_kg_rag.shared.query_stop import blank_in_shared_calls
 
 logger = get_logger(__name__)
 

@@ -58,6 +58,10 @@ LIMIT = 1.0
 HANG = 10.0
 # Queries cut off at once.
 QUERIES = 6
+# The deadline of the queries before and after the cut-off ones: only a
+# backstop (as long as their own, _answers), as a loaded runner slows a
+# first call's imports and client setup.
+WARM = 60.0
 # Seconds a stalled answer waits: far past every bound here, so a response
 # still open is one the server is still writing.
 STALL = 60.0
@@ -103,9 +107,15 @@ def _carried_slowly(monkeypatch: pytest.MonkeyPatch, seconds: float) -> list[flo
     model's read returned it: a cut lands there, the read done.
 
     Returns the carries that ended after their query's limit fired (its
-    timer expired): a cut that waited out the chunk in flight instead of
-    cancelling it. The timer cancels the query's task, so a carry it lands
-    in raises, however late a loaded loop runs either."""
+    timer expired) during them: a cut that waited out the chunk in flight
+    instead of cancelling it. The timer cancels the query's task, so a carry
+    it lands in raises, however late a loaded loop runs either.
+
+    A chunk that reaches the carry after the timer fired is one whose cut a
+    layer under it lost (on 3.11 langchain-openai's chunk read through
+    ``asyncio.wait_for``): its carry runs to its end, and the chunk's stop
+    point ends the query. Such a carry is listed too if the stream asks for
+    another chunk after it."""
     carry = chain_factory.ReasoningStripper.atransform
     waited_out: list[float] = []
 
@@ -114,10 +124,13 @@ def _carried_slowly(monkeypatch: pytest.MonkeyPatch, seconds: float) -> list[flo
         assert scope is not None and scope._timeout is not None
         timer = scope._timeout
         async for chunk in carry(self, input, config, **kwargs):
+            lost = timer.expired()
             await asyncio.sleep(seconds)
-            if timer.expired():
+            if timer.expired() and not lost:
                 waited_out.append(seconds)
             yield chunk
+            if lost:
+                waited_out.append(seconds)
 
     monkeypatch.setattr(chain_factory.ReasoningStripper, "atransform", slow)
     return waited_out
@@ -195,7 +208,7 @@ async def test_a_query_cut_off_closes_its_answer_stream(
         provider, port, monkeypatch, model_timeout=LIMIT if window else 30
     )
     # Warm: a first call's imports and client setup are not the cut-off.
-    chain.config.search.query_timeout_seconds = 30
+    chain.config.search.query_timeout_seconds = WARM
     await _answers(chain)
     chain.config.search.query_timeout_seconds = 30 if window else LIMIT
     if where == "between chunks":
@@ -224,7 +237,7 @@ async def test_a_query_cut_off_closes_its_answer_stream(
                 assert waited_out == []
                 await _released(port, models)
         models.knobs = stream_models.StreamKnobs()
-        chain.config.search.query_timeout_seconds = 30
+        chain.config.search.query_timeout_seconds = WARM
         await _answers(chain)
     finally:
         models.knobs.unstall.set()
@@ -247,7 +260,7 @@ async def test_an_unstreamed_answer_cut_off_between_chunks_closes_its_response(
 
     port, models = wire
     chain = _wire_chain("ollama", port, monkeypatch, model_timeout=30)
-    chain.config.search.query_timeout_seconds = 30
+    chain.config.search.query_timeout_seconds = WARM
     await chain.ainvoke(_input())
     chain.config.search.query_timeout_seconds = LIMIT
     models.knobs = stream_models.StreamKnobs(
@@ -275,7 +288,7 @@ async def test_an_unstreamed_answer_cut_off_between_chunks_closes_its_response(
                 await asyncio.gather(*(cut_off() for _ in range(QUERIES)))
                 await _released(port, models)
         models.knobs = stream_models.StreamKnobs()
-        chain.config.search.query_timeout_seconds = 30
+        chain.config.search.query_timeout_seconds = WARM
         assert (await chain.ainvoke(_input())).answer
     finally:
         models.knobs.unstall.set()
@@ -301,7 +314,7 @@ async def test_a_query_cut_off_before_its_answer_closes_its_model_response(
     question = _input(
         query="Vendor는 Buyer에게 무엇을 공급하나요?", enable_query_processing=True
     )
-    chain.config.search.query_timeout_seconds = 30
+    chain.config.search.query_timeout_seconds = WARM
     await chain.ainvoke(question)
     chain.config.search.query_timeout_seconds = LIMIT
     models.knobs = stream_models.StreamKnobs(
@@ -338,7 +351,7 @@ async def test_a_query_cut_off_before_its_answer_closes_its_model_response(
                 assert answers == 0
                 await _released(port, models)
         models.knobs = stream_models.StreamKnobs()
-        chain.config.search.query_timeout_seconds = 30
+        chain.config.search.query_timeout_seconds = WARM
         assert (await chain.ainvoke(question)).answer
     finally:
         models.knobs.unstall.set()

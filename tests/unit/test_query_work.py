@@ -16,12 +16,12 @@ import asyncio
 import pytest
 
 from unified_kg_rag.shared.model_responses import closing_responses, track_response
-from unified_kg_rag.shared.query_work import detach, start_detachable
-from unified_kg_rag.shared.reader_stop import (
-    ReaderStop,
-    reader_stop_scope,
+from unified_kg_rag.shared.query_stop import (
+    QueryStop,
+    query_stop_scope,
     reader_stopped,
 )
+from unified_kg_rag.shared.query_work import detach, start_detachable
 
 pytestmark = pytest.mark.unit
 
@@ -74,8 +74,8 @@ async def _stopped_after(go: asyncio.Event) -> bool:
 async def test_the_readers_stop_reaches_it_until_it_is_detached(
     detached: bool,
 ) -> None:
-    stop, go = ReaderStop(), asyncio.Event()
-    with reader_stop_scope(stop):
+    stop, go = QueryStop(), asyncio.Event()
+    with query_stop_scope(stop):
         task = start_detachable(_stopped_after(go))
     if detached:
         detach(task)
@@ -86,9 +86,9 @@ async def test_the_readers_stop_reaches_it_until_it_is_detached(
 
 
 async def test_a_stop_set_before_it_starts_is_its_own() -> None:
-    stop, go = ReaderStop(), asyncio.Event()
+    stop, go = QueryStop(), asyncio.Event()
     stop.set()
-    with reader_stop_scope(stop):
+    with query_stop_scope(stop):
         task = start_detachable(_stopped_after(go))
     go.set()
     assert await task is True

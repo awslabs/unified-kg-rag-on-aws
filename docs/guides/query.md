@@ -160,7 +160,9 @@ with `QueryTimeoutError` (exported from `unified_kg_rag`; also a builtin
   dropped connection included) is retried as for an unstreamed query, on
   every provider. Cut off by either limit, a query closes the answer
   model's response, streamed or not, so a timed-out query holds no
-  connection to the model.
+  connection to the model, and sends no model request or resend after it.
+  It ends at the limit even when a library under it loses the cancellation:
+  at its next model request, answer chunk, event or retry wait.
 - `null` turns both deadlines off.
 
 The query's model calls (answer generation and the other query-time LLM

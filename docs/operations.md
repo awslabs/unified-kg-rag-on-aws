@@ -1605,10 +1605,10 @@ A query has two bounds ([Querying](./guides/query.md#query-deadline)):
   everything from the input guardrail to the saved answer. Past it the query
   raises `QueryTimeoutError` (or, under `processing.ignore_errors`, returns
   the error answer) and its asyncio tasks are cancelled. A Bedrock call
-  already sent from a worker thread cannot be interrupted: it runs on
-  through its botocore attempts (at most `model_max_attempts x
-  model_timeout_seconds`), the framework's transient retries start no new
-  call past the deadline, and `run-rag` exits without waiting for it.
+  already sent from a worker thread cannot be interrupted: its attempt in
+  flight runs on (at most `model_timeout_seconds`), but no resend follows
+  it past the deadline, neither botocore's nor the framework's transient
+  retries, and `run-rag` exits without waiting for it.
 - **The query's model clients**: `search.model_timeout_seconds` (default
   90 s) per request and `search.model_max_attempts` (default 2) botocore
   attempts, for query-time LLM calls, query embeddings and Bedrock rerank. A

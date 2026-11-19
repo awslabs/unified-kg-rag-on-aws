@@ -68,11 +68,11 @@ from unified_kg_rag.shared import (
 )
 from unified_kg_rag.shared.exceptions import OptionalCallSkipped
 from unified_kg_rag.shared.logging import log_error, log_failure, warn_once
-from unified_kg_rag.shared.reader_stop import (
+from unified_kg_rag.shared.query_stop import (
     abackoff_wait,
     backoff_wait,
     blank_in_shared_calls,
-    raise_if_reader_stopped,
+    raise_if_stopped,
 )
 from unified_kg_rag.shared.utils.model_output import (
     leading_reasoning_end,
@@ -543,8 +543,8 @@ class TransientRetryRunnable(Runnable[Any, Any]):
     query's limits count it once, so a retry reuses the room its failed
     attempt held; the usage counts each attempt.
 
-    Each backoff is a stop point of a query whose reader stopped
-    (``shared.reader_stop``): no attempt starts after the stop and a wait
+    Each backoff is a stop point of a stopped query (its reader's stop or
+    its deadline, ``shared.query_stop``): no attempt starts after the stop and a wait
     under way ends at it, raising ``asyncio.CancelledError`` between two
     attempts, where no response is held. A client that retries a call
     itself (the OpenAI one, ``retries_calls=False``) keeps its own waits.
@@ -636,7 +636,7 @@ class TransientRetryRunnable(Runnable[Any, Any]):
         attempt = 1
         retried = usage.RetriedCall()
         while True:
-            raise_if_reader_stopped()
+            raise_if_stopped()
             emitted = False
             try:
                 for chunk in _in_attempt(
@@ -658,9 +658,9 @@ class TransientRetryRunnable(Runnable[Any, Any]):
         started_at = time.monotonic()
         attempt = 1
         retried = usage.RetriedCall()
-        # No stop check here: on the event loop a stopped reader's query is
-        # cancelled (GraphRAGChain.aquery_events), and the backoff below
-        # ends at the stop.
+        # No stop check here: on the event loop a stopped query is cancelled
+        # (its reader's stop, its deadline), and the backoff below ends at
+        # the stop.
         while True:
             emitted = False
             try:

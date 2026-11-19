@@ -12,10 +12,10 @@ from typing import Any
 
 import pytest
 
-from unified_kg_rag.shared.reader_stop import (
-    ReaderStop,
+from unified_kg_rag.shared.query_stop import (
+    QueryStop,
     abackoff_wait,
-    reader_stop_scope,
+    query_stop_scope,
 )
 from unified_kg_rag.shared.utils.concurrency import single_flight
 
@@ -260,8 +260,8 @@ class _Throttled:
             await abackoff_wait(self.backoff)
 
 
-async def _read(stop: ReaderStop | None, memo: dict[str, Any], call: Any, **kw: Any):
-    with reader_stop_scope(stop) if stop is not None else contextlib.nullcontext():
+async def _read(stop: QueryStop | None, memo: dict[str, Any], call: Any, **kw: Any):
+    with query_stop_scope(stop) if stop is not None else contextlib.nullcontext():
         return await single_flight(memo, "k", call, **kw)
 
 
@@ -278,10 +278,10 @@ async def test_a_stopped_reader_does_not_stop_a_shared_call_others_await(
     streamed query's, or one with no stop bound), who gets its result."""
     memo: dict[str, Any] = {}
     call = _Throttled()
-    first = ReaderStop()
+    first = QueryStop()
     a = asyncio.ensure_future(_read(first, memo, call, share_failure=True))
     await asyncio.sleep(0)
-    other = ReaderStop() if second_stop else None
+    other = QueryStop() if second_stop else None
     b = asyncio.ensure_future(_read(other, memo, call, share_failure=True))
     await call.refused.wait()
     first.set()
@@ -299,7 +299,7 @@ async def test_a_shared_call_stops_once_every_waiters_reader_stopped() -> None:
     stop point (its hour-long backoff), and a later caller starts its own."""
     memo: dict[str, Any] = {}
     call = _Throttled(backoff=3600.0)
-    stops = [ReaderStop(), ReaderStop()]
+    stops = [QueryStop(), QueryStop()]
     readers = [
         asyncio.ensure_future(_read(stop, memo, call, share_failure=True))
         for stop in stops
@@ -343,7 +343,7 @@ async def test_a_caller_after_every_reader_stopped_starts_its_own_call() -> None
     ``CancelledError``): it starts its own and gets its result."""
     memo: dict[str, Any] = {}
     call = _GatedThenStopPoint()
-    stops = [ReaderStop(), ReaderStop()]
+    stops = [QueryStop(), QueryStop()]
     readers = [
         asyncio.ensure_future(_read(stop, memo, call, share_failure=True))
         for stop in stops
@@ -373,8 +373,8 @@ async def test_a_waiter_cancelled_otherwise_keeps_a_shared_call_running() -> Non
     its result."""
     memo: dict[str, Any] = {}
     call = _Throttled()
-    b_stop = ReaderStop()
-    a = asyncio.ensure_future(_read(ReaderStop(), memo, call, share_failure=True))
+    b_stop = QueryStop()
+    a = asyncio.ensure_future(_read(QueryStop(), memo, call, share_failure=True))
     b = asyncio.ensure_future(_read(b_stop, memo, call, share_failure=True))
     await call.refused.wait()
     shared = memo["k"]
@@ -385,7 +385,7 @@ async def test_a_waiter_cancelled_otherwise_keeps_a_shared_call_running() -> Non
     assert all(isinstance(o, asyncio.CancelledError) for o in outcomes)
     assert memo.get("k") is shared and not shared.done()
     async with asyncio.timeout(_BACKSTOP):
-        assert await _read(ReaderStop(), memo, call, share_failure=True) == "value"
+        assert await _read(QueryStop(), memo, call, share_failure=True) == "value"
     assert shared.result() == "value" and call.attempts == 2
 
 
@@ -396,7 +396,7 @@ async def test_a_stopped_first_callers_own_call_stops_and_a_waiter_calls_itself(
     reader's stop included; its waiter then calls for itself."""
     memo: dict[str, Any] = {}
     call = _Throttled(backoff=3600.0)
-    first = ReaderStop()
+    first = QueryStop()
     a = asyncio.ensure_future(_read(first, memo, call, share_failure=False))
     await asyncio.sleep(0)
     b = asyncio.ensure_future(_read(None, memo, call, share_failure=False))
@@ -431,7 +431,7 @@ async def test_a_shared_call_takes_its_deadline_and_meter_from_its_waiters() -> 
             if len(seen) == 4:
                 return "value"
 
-    async def waiter(at: float | None, stop: ReaderStop) -> Any:
+    async def waiter(at: float | None, stop: QueryStop) -> Any:
         with usage.usage_scope() as meter, retry_deadline(at):
             meters.append(meter)
             return await _read(stop, memo, call, share_failure=True)
@@ -442,7 +442,7 @@ async def test_a_shared_call_takes_its_deadline_and_meter_from_its_waiters() -> 
         await stepped.wait()
 
     meters: list[usage.UsageMeter] = []
-    stops = [ReaderStop(), ReaderStop(), ReaderStop()]
+    stops = [QueryStop(), QueryStop(), QueryStop()]
     a = asyncio.ensure_future(waiter(1000.0, stops[0]))
     b = asyncio.ensure_future(waiter(2000.0, stops[1]))
     await asyncio.sleep(0)
@@ -482,7 +482,7 @@ async def test_a_waiter_cancelled_otherwise_keeps_its_later_deadline() -> None:
             stepped.set()
         return "value"
 
-    async def waiter(at: float, stop: ReaderStop) -> Any:
+    async def waiter(at: float, stop: QueryStop) -> Any:
         with retry_deadline(at):
             return await _read(stop, memo, call, share_failure=True)
 
@@ -491,8 +491,8 @@ async def test_a_waiter_cancelled_otherwise_keeps_its_later_deadline() -> None:
         step.set()
         await stepped.wait()
 
-    a = asyncio.ensure_future(waiter(2000.0, ReaderStop()))
-    b = asyncio.ensure_future(waiter(1000.0, ReaderStop()))
+    a = asyncio.ensure_future(waiter(2000.0, QueryStop()))
+    b = asyncio.ensure_future(waiter(1000.0, QueryStop()))
     await asyncio.sleep(0)
     await advance()
     a.cancel()
@@ -525,12 +525,12 @@ async def test_a_shared_model_call_settles_in_the_meter_that_counted_it() -> Non
 
     meters: list[usage.UsageMeter] = []
 
-    async def waiter(stop: ReaderStop) -> Any:
+    async def waiter(stop: QueryStop) -> Any:
         with usage.usage_scope() as meter:
             meters.append(meter)
             return await _read(stop, memo, call, share_failure=True)
 
-    first, second = ReaderStop(), ReaderStop()
+    first, second = QueryStop(), QueryStop()
     a = asyncio.ensure_future(waiter(first))
     await started.wait()
     b = asyncio.ensure_future(waiter(second))
@@ -554,7 +554,7 @@ async def test_a_shared_call_inherits_no_per_query_state_of_its_first_caller() -
     from all its waiters."""
     from unified_kg_rag.application.retrieval import rag_chain
     from unified_kg_rag.shared import model_responses
-    from unified_kg_rag.shared.reader_stop import _BLANKED, reader_stopped
+    from unified_kg_rag.shared.query_stop import _BLANKED, reader_stopped
 
     memo: dict[str, Any] = {}
     release = asyncio.Event()
@@ -582,7 +582,7 @@ async def test_a_shared_call_inherits_no_per_query_state_of_its_first_caller() -
 
     a = asyncio.ensure_future(waiter_a())
     await asyncio.sleep(0)
-    b = asyncio.ensure_future(_read(ReaderStop(), memo, call, share_failure=True))
+    b = asyncio.ensure_future(_read(QueryStop(), memo, call, share_failure=True))
     await asyncio.sleep(0)
     channel.stop()
     with pytest.raises(asyncio.CancelledError):

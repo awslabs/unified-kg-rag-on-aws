@@ -665,6 +665,113 @@ def test_a_window_bounds_retries_only_while_it_runs_even_in_copied_contexts() ->
     assert in_query.run(current_deadline) == later
 
 
+# --- a deadline ends the query as its reader's stop does --------------------------
+
+
+async def test_a_deadline_ends_a_worker_threads_backoff_at_once() -> None:
+    # The deadline sets the query's stop: a retry backoff left on a worker
+    # thread (a call the query abandoned) ends at it, not after its delay.
+    from unified_kg_rag.application.retrieval.rag_chain import _QueryDeadline
+    from unified_kg_rag.shared.query_stop import backoff_wait
+
+    ended = threading.Event()
+
+    def wait() -> None:
+        try:
+            backoff_wait(60.0)
+        finally:
+            ended.set()
+
+    with pytest.raises(QueryTimeoutError):
+        async with _QueryDeadline(0.05):
+            await asyncio.to_thread(wait)
+    assert await asyncio.to_thread(ended.wait, 10.0)
+
+
+async def test_a_lost_cancellation_ends_the_query_at_its_next_stop_point() -> None:
+    # A layer that loses the deadline's cancellation (anyio's connect_tcp,
+    # 3.11's wait_for) returns as if nothing was cancelled: the next stop
+    # point raises, and the query still ends with its QueryTimeoutError.
+    from unified_kg_rag.application.retrieval.rag_chain import _QueryDeadline
+    from unified_kg_rag.shared.query_stop import raise_if_stopped
+
+    async def losing() -> None:
+        inner = asyncio.ensure_future(asyncio.sleep(0.3))
+        try:
+            await asyncio.shield(inner)
+        except asyncio.CancelledError:
+            await inner
+
+    went_on: list[bool] = []
+    with pytest.raises(QueryTimeoutError) as raised:
+        async with _QueryDeadline(0.05):
+            await losing()
+            raise_if_stopped()
+            went_on.append(True)
+    assert went_on == []
+    assert raised.value.timeout_seconds == 0.05
+
+
+@pytest.mark.parametrize("first", ["deadline", "reader"])
+async def test_the_query_stop_keeps_the_cause_that_set_it_first(first: str) -> None:
+    # A deadline ends the query as a timeout, a reader's stop as no failure
+    # (reader_stopped), whichever comes second; the deadline sets the
+    # window's stop only, never its reader's.
+    from unified_kg_rag.application.retrieval.rag_chain import _QueryDeadline
+    from unified_kg_rag.shared.query_stop import (
+        QueryStop,
+        StopCause,
+        query_stop_scope,
+        query_stopped,
+        reader_stopped,
+    )
+
+    reader = QueryStop()
+    seen: dict[str, bool] = {}
+    with query_stop_scope(reader):
+        with pytest.raises((QueryTimeoutError, asyncio.CancelledError)):
+            async with _QueryDeadline(0.05):
+                if first == "reader":
+                    reader.set()
+                try:
+                    await asyncio.sleep(5)
+                finally:
+                    seen = {"stopped": query_stopped(), "reader": reader_stopped()}
+    assert seen == {"stopped": True, "reader": first == "reader"}
+    assert reader.is_set() is (first == "reader")
+    if first == "reader":
+        assert reader.cause is StopCause.READER
+
+
+async def test_a_waiters_deadline_leaves_a_shared_call_running() -> None:
+    # A waiter whose deadline passes leaves a shared call, as at its
+    # reader's stop, but does not stop it: a later caller (or another
+    # waiter) still gets its answer, from the same call.
+    from unified_kg_rag.application.retrieval.rag_chain import _QueryDeadline
+    from unified_kg_rag.shared.query_stop import query_stopped
+    from unified_kg_rag.shared.utils.concurrency import single_flight
+
+    memo: dict[Any, asyncio.Future[Any]] = {}
+    release = asyncio.Event()
+    calls: list[bool] = []
+
+    async def compute() -> str:
+        await release.wait()
+        calls.append(query_stopped())
+        return _ANSWER
+
+    def keep(_: str) -> bool:
+        return True
+
+    with pytest.raises(QueryTimeoutError):
+        async with _QueryDeadline(0.05):
+            await single_flight(memo, "q", compute, share_failure=True, keep=keep)
+    release.set()
+    later = await single_flight(memo, "q", compute, share_failure=True, keep=keep)
+    assert later == _ANSWER
+    assert calls == [False]
+
+
 # --- query-time model clients ----------------------------------------------------
 
 

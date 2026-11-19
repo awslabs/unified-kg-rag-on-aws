@@ -85,7 +85,7 @@ from unified_kg_rag.shared.exceptions import (
     OptionalCallSkipped,
     UsageLimitExceededError,
 )
-from unified_kg_rag.shared.reader_stop import blank_in_shared_calls, share_with_waiters
+from unified_kg_rag.shared.query_stop import blank_in_shared_calls, share_with_waiters
 
 __all__ = [
     "CACHED_RESPONSE_KEY",
@@ -427,7 +427,7 @@ def _attributed(meter: UsageMeter | None) -> UsageMeter | None:
 
 class _WaitersMeter:
     """The usage meter of a call several queries share
-    (``shared.reader_stop.SharedContext``): it forwards to the meter of the
+    (``shared.query_stop.SharedContext``): it forwards to the meter of the
     earliest waiter still waiting that meters usage, and keeps the last one
     once none waits, so each request the call sends counts once, in a
     query that reports it."""

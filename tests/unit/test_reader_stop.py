@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """The retry backoffs are stop points of a query whose reader stopped.
 
-``shared.reader_stop``: once a query's reader stops, no retry attempt
+``shared.query_stop``: once a query's reader stops, no retry attempt
 starts and a backoff under way ends at once (``asyncio.CancelledError``),
 in the call-level helpers, the stream retries and a botocore client's own
 resends; without a stop bound the waits are plain sleeps.
@@ -25,13 +25,13 @@ from unified_kg_rag.adapters.llm.retry import (
     call_with_transient_retry,
 )
 from unified_kg_rag.domain.models.config import RetryPolicy
-from unified_kg_rag.shared.reader_stop import (
-    ReaderStop,
+from unified_kg_rag.shared.query_stop import (
+    QueryStop,
     abackoff_wait,
     await_unless_stopped,
     backoff_wait,
     detached_context,
-    reader_stop_scope,
+    query_stop_scope,
     reader_stopped,
 )
 
@@ -105,36 +105,36 @@ def _retrying(model: _Refusing) -> TransientRetryRunnable:
     )
 
 
-def _stop_soon(stop: ReaderStop) -> Any:
+def _stop_soon(stop: QueryStop) -> Any:
     """An ``on_call`` that sets ``stop`` on the loop's next turn: the call
     fails, its retry starts its backoff, then the reader stops."""
     loop = asyncio.get_running_loop()
     return lambda: loop.call_soon(stop.set)
 
 
-def _stop_from_a_thread(stop: ReaderStop) -> Any:
+def _stop_from_a_thread(stop: QueryStop) -> Any:
     """An ``on_call`` that sets ``stop`` from another thread (a sync call's
     reader stops on the chain's loop)."""
     return lambda: threading.Thread(target=stop.set).start()
 
 
-async def _stopped(stop: ReaderStop, call: Any) -> None:
+async def _stopped(stop: QueryStop, call: Any) -> None:
     """Run ``call()`` under ``stop``: it must end with ``CancelledError``
     (its backoff of an hour cut short), within the backstop."""
-    with reader_stop_scope(stop), pytest.raises(asyncio.CancelledError):
+    with query_stop_scope(stop), pytest.raises(asyncio.CancelledError):
         async with asyncio.timeout(_BACKSTOP):
             await call()
 
 
 async def test_ainvoke_backoff_ends_at_the_stop() -> None:
-    stop = ReaderStop()
+    stop = QueryStop()
     model = _Refusing(_stop_soon(stop))
     await _stopped(stop, lambda: _retrying(model).ainvoke("q"))
     assert model.calls == 1
 
 
 async def test_astream_backoff_ends_at_the_stop() -> None:
-    stop = ReaderStop()
+    stop = QueryStop()
     model = _Refusing(_stop_soon(stop))
 
     async def read() -> None:
@@ -146,7 +146,7 @@ async def test_astream_backoff_ends_at_the_stop() -> None:
 
 
 async def test_acall_with_transient_retry_backoff_ends_at_the_stop() -> None:
-    stop = ReaderStop()
+    stop = QueryStop()
     calls = 0
     stop_soon = _stop_soon(stop)
 
@@ -167,9 +167,9 @@ async def test_acall_with_transient_retry_backoff_ends_at_the_stop() -> None:
 
 async def test_no_attempt_starts_after_the_stop() -> None:
     model = _Refusing()
-    stop = ReaderStop()
+    stop = QueryStop()
     stop.set()
-    with reader_stop_scope(stop), pytest.raises(asyncio.CancelledError):
+    with query_stop_scope(stop), pytest.raises(asyncio.CancelledError):
         await _retrying(model).ainvoke("q")
     assert model.calls == 0
 
@@ -193,12 +193,12 @@ def _in_a_worker(run: Any) -> BaseException | None:
 
 @pytest.mark.parametrize("api", ["stream", "invoke"])
 def test_sync_backoff_ends_at_a_stop_from_another_thread(api: str) -> None:
-    stop = ReaderStop()
+    stop = QueryStop()
     model = _Refusing(_stop_from_a_thread(stop))
     retrying = _retrying(model)
 
     def run() -> None:
-        with reader_stop_scope(stop):
+        with query_stop_scope(stop):
             if api == "stream":
                 list(retrying.stream("q"))
             else:
@@ -209,7 +209,7 @@ def test_sync_backoff_ends_at_a_stop_from_another_thread(api: str) -> None:
 
 
 def test_call_with_transient_retry_honours_the_stop() -> None:
-    stop = ReaderStop()
+    stop = QueryStop()
     calls = 0
     stop_from_a_thread = _stop_from_a_thread(stop)
 
@@ -220,7 +220,7 @@ def test_call_with_transient_retry_honours_the_stop() -> None:
         raise _Throttled
 
     def run() -> None:
-        with reader_stop_scope(stop):
+        with query_stop_scope(stop):
             call_with_transient_retry(
                 call, is_transient=_transient, operation="embed", policy=_SLOW
             )
@@ -245,10 +245,10 @@ async def test_without_a_stop_the_waits_are_plain_sleeps(
 
 
 async def test_a_wait_not_stopped_lasts_its_delay() -> None:
-    stop = ReaderStop()
+    stop = QueryStop()
     loop = asyncio.get_running_loop()
     started = loop.time()
-    with reader_stop_scope(stop):
+    with query_stop_scope(stop):
         await abackoff_wait(0.1)
     assert loop.time() - started >= 0.09
     assert not stop._waiters
@@ -257,7 +257,7 @@ async def test_a_wait_not_stopped_lasts_its_delay() -> None:
 def _bedrock_client() -> Any:
     import boto3
 
-    from unified_kg_rag.adapters.aws.bedrock import stop_at_reader_stop
+    from unified_kg_rag.adapters.aws.bedrock import stop_at_query_stop
 
     client = boto3.client(
         "bedrock-runtime",
@@ -265,7 +265,7 @@ def _bedrock_client() -> Any:
         aws_access_key_id="AKIDEXAMPLE",
         aws_secret_access_key="example",
     )
-    stop_at_reader_stop(client, "bedrock-runtime")
+    stop_at_query_stop(client, "bedrock-runtime")
     return client
 
 
@@ -293,8 +293,8 @@ def test_a_botocore_client_sends_nothing_after_the_stop(event: str) -> None:
     client = _bedrock_client()
     name = f"{event}.bedrock-runtime.ConverseStream"
     kwargs = _attempt(client, 429) if event == "needs-retry" else {"request": None}
-    stop = ReaderStop()
-    with reader_stop_scope(stop):
+    stop = QueryStop()
+    with query_stop_scope(stop):
         client.meta.events.emit(name, **kwargs)
         stop.set()
         with pytest.raises(asyncio.CancelledError):
@@ -308,9 +308,9 @@ def test_a_botocore_attempt_that_answered_is_left_to_its_caller() -> None:
     # open event stream its caller reads and closes on the stop, so raising
     # there would leave the model's response open.
     client = _bedrock_client()
-    stop = ReaderStop()
+    stop = QueryStop()
     stop.set()
-    with reader_stop_scope(stop):
+    with query_stop_scope(stop):
         client.meta.events.emit(
             "needs-retry.bedrock-runtime.ConverseStream", **_attempt(client, 200)
         )
@@ -358,7 +358,7 @@ class _ThrottlingServer:
         from botocore.config import Config as BotoConfig
         from botocore.httpsession import URLLib3Session
 
-        from unified_kg_rag.adapters.aws.bedrock import stop_at_reader_stop
+        from unified_kg_rag.adapters.aws.bedrock import stop_at_query_stop
         from unified_kg_rag.adapters.aws.bedrock_throttles import count_requests
 
         url = f"http://127.0.0.1:{self.http.server_address[1]}"
@@ -377,7 +377,7 @@ class _ThrottlingServer:
             config=BotoConfig(retries={"mode": mode, "total_max_attempts": 5}),
         )
         count_requests(client, "bedrock-runtime", "answer_generation")
-        stop_at_reader_stop(client, "bedrock-runtime")
+        stop_at_query_stop(client, "bedrock-runtime")
         # No real backoff: the stops land on the requests, not on a timer.
         monkeypatch.setattr("botocore.endpoint.time.sleep", lambda _s: None)
         return client
@@ -413,7 +413,7 @@ def test_a_throttled_attempt_ended_by_the_stop_is_counted_and_seen(
 
     from unified_kg_rag.shared import usage
 
-    stop = ReaderStop()
+    stop = QueryStop()
 
     def stop_at_the_second(received: int) -> None:
         if received == 2:
@@ -429,7 +429,7 @@ def test_a_throttled_attempt_ended_by_the_stop_is_counted_and_seen(
     )
     try:
         client = server.client(monkeypatch)
-        with usage.usage_scope() as meter, reader_stop_scope(stop):
+        with usage.usage_scope() as meter, query_stop_scope(stop):
             with pytest.raises(asyncio.CancelledError):
                 _converse(client)
     finally:
@@ -454,7 +454,7 @@ def test_a_resend_the_stop_prevents_spends_no_retry_quota(
 
     from unified_kg_rag.adapters.aws.bedrock import _retry_quota
 
-    stops: list[ReaderStop] = []
+    stops: list[QueryStop] = []
 
     def stop_at_every_second(received: int) -> None:
         if received % 2 == 0:
@@ -467,8 +467,8 @@ def test_a_resend_the_stop_prevents_spends_no_retry_quota(
         assert isinstance(quota, RetryQuota)
         full = quota.available_capacity
         for _ in range(20):
-            stops.append(ReaderStop())
-            with reader_stop_scope(stops[-1]):
+            stops.append(QueryStop())
+            with query_stop_scope(stops[-1]):
                 with pytest.raises(asyncio.CancelledError):
                     _converse(client)
     finally:
@@ -490,7 +490,7 @@ def test_a_stop_on_the_last_attempt_gives_back_no_earlier_resend_cost(
 
     from unified_kg_rag.adapters.aws.bedrock import _retry_quota
 
-    stops: list[ReaderStop] = []
+    stops: list[QueryStop] = []
 
     def stop_at_every_fifth(received: int) -> None:
         if received % 5 == 0:
@@ -503,8 +503,8 @@ def test_a_stop_on_the_last_attempt_gives_back_no_earlier_resend_cost(
         assert isinstance(quota, RetryQuota)
         full = quota.available_capacity
         for calls in range(1, 6):
-            stops.append(ReaderStop())
-            with reader_stop_scope(stops[-1]):
+            stops.append(QueryStop())
+            with query_stop_scope(stops[-1]):
                 with pytest.raises(asyncio.CancelledError):
                     _converse(client)
             # Four resends per call were sent, at 5 units each.
@@ -535,12 +535,12 @@ def test_a_stop_during_the_rate_limiter_wait_sends_nothing(
     # limiter: the check after it refuses the request.
     from botocore.retries import bucket
 
-    stop = ReaderStop()
+    stop = QueryStop()
     server = _ThrottlingServer()
     _spy(monkeypatch, bucket.TokenBucket, "acquire", stop.set)
     try:
         client = server.client(monkeypatch)
-        with reader_stop_scope(stop):
+        with query_stop_scope(stop):
             with pytest.raises(asyncio.CancelledError):
                 _converse(client)
     finally:
@@ -557,14 +557,14 @@ def test_a_stop_before_a_resend_takes_no_rate_limiter_token(
     # before it takes a token.
     from botocore.retries import bucket
 
-    stop = ReaderStop()
+    stop = QueryStop()
     server = _ThrottlingServer()
     tokens: list[None] = []
     _spy(monkeypatch, bucket.TokenBucket, "acquire", lambda: tokens.append(None))
     try:
         client = server.client(monkeypatch)
         monkeypatch.setattr("botocore.endpoint.time.sleep", lambda _s: stop.set())
-        with reader_stop_scope(stop):
+        with query_stop_scope(stop):
             with pytest.raises(asyncio.CancelledError):
                 _converse(client)
     finally:
@@ -587,9 +587,9 @@ async def test_the_openai_client_sends_no_request_after_the_stop() -> None:
         return httpx.Response(429)
 
     client = openai_http_async_client(5.0, httpx.MockTransport(answer))
-    stop = ReaderStop()
+    stop = QueryStop()
     async with client:
-        with reader_stop_scope(stop):
+        with query_stop_scope(stop):
             await client.post("http://127.0.0.1:1/v1/chat/completions")
             stop.set()
             with pytest.raises(asyncio.CancelledError):
@@ -688,10 +688,10 @@ async def test_a_request_whose_connect_lost_the_cancel_is_not_sent(
 
     go = _connect_loses_its_cancel(monkeypatch)
     server = _CountingServer()
-    stop = ReaderStop()
+    stop = QueryStop()
     try:
         async with _model_client(kind) as client:
-            with reader_stop_scope(stop):
+            with query_stop_scope(stop):
                 async with closing_responses():
                     request = asyncio.ensure_future(client.post(server.url))
                     await asyncio.sleep(0.05)
@@ -767,10 +767,10 @@ async def test_a_response_whose_headers_arrive_after_the_stop_is_closed_unread(
         models._ASYNC_EVENT_HOOKS, "response", [capture, models._track_response]
     )
     server = _HoldingServer()
-    stop = ReaderStop()
+    stop = QueryStop()
     try:
         async with _model_client(kind) as client:
-            with reader_stop_scope(stop):
+            with query_stop_scope(stop):
                 request = asyncio.ensure_future(client.post(server.url))
                 assert await asyncio.to_thread(server.received.wait, _BACKSTOP)
                 stop.set()
@@ -789,10 +789,10 @@ async def test_a_detached_context_binds_its_own_stop_only() -> None:
     import contextvars
 
     other: contextvars.ContextVar[str] = contextvars.ContextVar("other")
-    mine, shared = ReaderStop(), ReaderStop()
+    mine, shared = QueryStop(), QueryStop()
     mine.set()
     other.set("kept")
-    with reader_stop_scope(mine):
+    with query_stop_scope(mine):
         assert reader_stopped()
         assert not detached_context().run(reader_stopped)
         assert detached_context().run(other.get) == "kept"
@@ -804,8 +804,8 @@ async def test_a_detached_context_binds_its_own_stop_only() -> None:
 
 async def test_a_stopped_reader_leaves_the_shared_work_it_awaits() -> None:
     work = asyncio.get_running_loop().create_future()
-    stop = ReaderStop()
-    with reader_stop_scope(stop):
+    stop = QueryStop()
+    with query_stop_scope(stop):
         waiting = asyncio.ensure_future(await_unless_stopped(work))
         await asyncio.sleep(0)
         stop.set()
@@ -817,7 +817,7 @@ async def test_a_stopped_reader_leaves_the_shared_work_it_awaits() -> None:
         assert not stop._waiters
     work.set_result("value")
     # Done, or without a stop bound, it is a plain wait.
-    with reader_stop_scope(ReaderStop()):
+    with query_stop_scope(QueryStop()):
         await await_unless_stopped(work)
     other = asyncio.get_running_loop().create_future()
     asyncio.get_running_loop().call_later(0.01, other.set_result, "value")
@@ -829,7 +829,7 @@ async def test_a_stopped_reader_leaves_the_shared_work_it_awaits() -> None:
 # its first caller, and why: none is a query's own state.
 _KEPT_IN_SHARED_CALLS = {
     # Rebound to the call's own stop (SharedContext).
-    "shared/reader_stop.py:_READER_STOP": "the call's SharedStop",
+    "shared/query_stop.py:_QUERY_STOP": "the call's SharedStop",
     # Taken from all its waiters (share_with_waiters).
     "adapters/llm/retry.py:_RETRY_DEADLINE": "the waiters' latest deadline",
     "shared/usage.py:_CURRENT": "the earliest waiter's meter",
@@ -896,7 +896,7 @@ def test_a_shared_call_starts_without_any_query_s_own_state() -> None:
     # Every context variable is either blanked in a call several queries
     # share (blank_in_shared_calls) or kept for a stated reason: a new one
     # is classified here, so none leaks a first caller's state by accident.
-    from unified_kg_rag.shared.reader_stop import _BLANKED
+    from unified_kg_rag.shared.query_stop import _BLANKED
 
     variables = _package_context_variables()
     assert len(variables) > len(_KEPT_IN_SHARED_CALLS)
