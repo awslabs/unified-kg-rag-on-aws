@@ -141,8 +141,8 @@ S3에 있는 코퍼스, 한 가지 검색 방법, 운영할 인프라가 없는 
 `fidelity` 워크플로가 고정한 커밋(`.github/workflows/fidelity.yml`: `6d02c23`, `4e1f952`)으로
 읽었으며, 이 워크플로의 동등성(parity) 테스트가 그 커밋과 HippoRAG `d5c8329`, RAPTOR
 `7da1d48`을 실행합니다. 방법론마다 다르게 한 부분과 이유는 설계 문서
-[§6.1](../design/retrieval-graphrag-lightrag.md#fidelity-to-ms-graphrag),
-[§6.2](../design/retrieval-graphrag-lightrag.md#fidelity-to-lightrag),
+[§6.1.2](../design/retrieval-graphrag-lightrag.md#612-fidelity-to-ms-graphrag),
+[§6.2.1](../design/retrieval-graphrag-lightrag.md#621-fidelity-to-lightrag),
 [§6.4](../design/retrieval-hipporag-raptor.md#64-hipporag-2-personalized-pagerank-ppr-local-ranking),
 [§6.5](../design/retrieval-hipporag-raptor.md#65-raptor-summary-tree-raptor-tree-opt-in)(영문)의 표에 있습니다.
 
@@ -206,7 +206,7 @@ upstream의 기본값이나 알고리즘과 일부러 다르게 한 부분입니
   없을 때만 질문 자체가 시드가 되며, `--disable-query-processing`도 이렇게 동작), 그래프 탐색은
   `search.graph_expansion.max_hops`(3) 깊이까지 가며, 유형 할당량이 `top_k` 10에서 엔티티와
   관계를 10개씩 남깁니다. 세 가지 모두 upstream 방식과 비교하지 않았습니다
-  ([설계 문서 §6.1](../design/retrieval-graphrag-lightrag.md#fidelity-to-ms-graphrag), 영문).
+  ([설계 문서 §6.1.2](../design/retrieval-graphrag-lightrag.md#612-fidelity-to-ms-graphrag), 영문).
 - **local 검색의 리포트.** `local`은 질의 엔티티와 가장 비슷한 리포트를 읽습니다. MS
   GraphRAG local은 엔티티가 속한 커뮤니티의 리포트를 읽으며(`mixed_context.py`), 여기서는
   `report_selection: membership`이 이를 따르되 업스트림의 `community_level` 단면 대신 최하위

@@ -201,10 +201,20 @@ GraphRAG's `simple`, `local`, `global`, `drift` and `auto` strategies.
 Which community reports global search maps, and how it reduces their answers.
 → [retrieval-graphrag-lightrag.md §6.1.1](./design/retrieval-graphrag-lightrag.md#611-global-search-global_searchpy)
 
+#### 6.1.2 Fidelity to MS GraphRAG
+
+The pinned MS GraphRAG target, its recorded answers, and every deliberate difference with its reason and evidence.
+→ [retrieval-graphrag-lightrag.md §6.1.2](./design/retrieval-graphrag-lightrag.md#612-fidelity-to-ms-graphrag)
+
 ### 6.2 LightRAG Methodology (`lightrag_search.py`)
 
 LightRAG's dual-level keyword retrieval: `naive`, `hybrid` and `mix`.
 → [retrieval-graphrag-lightrag.md §6.2](./design/retrieval-graphrag-lightrag.md#62-lightrag-methodology-lightrag_searchpy)
+
+#### 6.2.1 Fidelity to LightRAG
+
+The pinned LightRAG target, its recorded answers, and every deliberate difference with its reason and evidence.
+→ [retrieval-graphrag-lightrag.md §6.2.1](./design/retrieval-graphrag-lightrag.md#621-fidelity-to-lightrag)
 
 ### 6.3 Iterative bridge follow-up (`iterative_search.py`, opt-in)
 

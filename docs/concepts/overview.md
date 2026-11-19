@@ -164,8 +164,8 @@ read at the commits the weekly `fidelity` workflow pins
 (`.github/workflows/fidelity.yml`: `6d02c23` and `4e1f952`), where its
 parity tests run them, HippoRAG at `d5c8329` and RAPTOR at `7da1d48`; the
 deviations of each methodology are tabled with their reasons in Design
-[§6.1](../design/retrieval-graphrag-lightrag.md#fidelity-to-ms-graphrag),
-[§6.2](../design/retrieval-graphrag-lightrag.md#fidelity-to-lightrag),
+[§6.1.2](../design/retrieval-graphrag-lightrag.md#612-fidelity-to-ms-graphrag),
+[§6.2.1](../design/retrieval-graphrag-lightrag.md#621-fidelity-to-lightrag),
 [§6.4](../design/retrieval-hipporag-raptor.md#64-hipporag-2-personalized-pagerank-ppr-local-ranking)
 and [§6.5](../design/retrieval-hipporag-raptor.md#65-raptor-summary-tree-raptor-tree-opt-in).
 
@@ -243,7 +243,7 @@ purpose:
   `search.graph_expansion.max_hops` (3) deep, and the type quota keeps 10
   entities and 10 relationships at `top_k` 10. None of the three was
   compared with upstream's
-  ([Design §6.1](../design/retrieval-graphrag-lightrag.md#fidelity-to-ms-graphrag)).
+  ([Design §6.1.2](../design/retrieval-graphrag-lightrag.md#612-fidelity-to-ms-graphrag)).
 - **Local search reports.** `local` reads the reports most similar to the
   query entities; MS GraphRAG local reads those of the entities' communities
   (`mixed_context.py`), which `report_selection: membership` follows here
