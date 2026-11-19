@@ -973,7 +973,9 @@ def create_app(
         )
         found = await asyncio.to_thread(graph_api.find_graphs, state.roots, names)
         graph_api.mark_outdated(found, current)
-        return {"graphs": found, "current": current.view()}
+        current_ref = state.roots.ref(current.path) if current.path else None
+        default = graph_api.default_graph(found, current, current_ref)
+        return {"graphs": found, "current": {**current.view(), "ref": default}}
 
     async def graph_file(ref: str) -> Path:
         path = state.roots.resolve(ref)

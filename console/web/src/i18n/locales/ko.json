@@ -446,6 +446,8 @@
   "graph.outdated": "오래됨",
   "graph.noneTitle": "“{{namespace}}”에는 아직 수집된 내용이 없습니다",
   "graph.none": "이 네임스페이스에 코퍼스를 수집하세요. 그래프는 이 페이지를 열 때 저장소에서 만들어집니다.",
+  "graph.noExportTitle": "“{{namespace}}”의 그래프가 없습니다",
+  "graph.noExport": "이 네임스페이스 그래프의 내보내기가 목록에 없습니다. 위에서 다른 그래프를 고르거나, 네임스페이스를 다시 만들어 그래프를 내보내세요.",
   "graph.exportOffTitle": "그래프가 꺼져 있습니다",
   "graph.exportOff": "이 설정에서 graph.visualization.export_data가 꺼져 있어 그래프를 만들지 않습니다. 네임스페이스의 그래프를 보려면 설정에서 켜세요.",
   "graph.unrecordedTitle": "“{{namespace}}”에는 빌드 기록이 없습니다",

@@ -232,6 +232,22 @@ def mark_outdated(graphs: list[dict[str, Any]], current: CurrentGraph) -> None:
         g["outdated"] = build is not None and g["built_at"] != build
 
 
+def default_graph(
+    graphs: list[dict[str, Any]], current: CurrentGraph, current_ref: str | None
+) -> str | None:
+    """The export the Graph page opens unless one is chosen: the config
+    namespace's (``current``), never another namespace's. ``current_ref``
+    (the reference of ``current.path``) when it is listed, else the newest of
+    ``graphs`` (:func:`find_graphs`) that names the namespace; ``None`` when
+    none does (an export of an earlier release names no namespace)."""
+    if current.namespace is None:
+        return None
+    refs = [g["ref"] for g in graphs if g["namespace"] == current.namespace]
+    if current_ref is not None and current_ref in refs:
+        return current_ref
+    return refs[0] if refs else None
+
+
 def find_graphs(roots: Roots, names: tuple[str, ...]) -> list[dict[str, Any]]:
     """Every ``visualization_data.json`` under the roots named ``names``,
     newest first."""

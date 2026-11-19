@@ -446,6 +446,8 @@
   "graph.outdated": "古い",
   "graph.noneTitle": "「{{namespace}}」にはまだ何もインデックスされていません",
   "graph.none": "この名前空間にコーパスを取り込んでください。グラフはこのページを開いたときにストアから作られます。",
+  "graph.noExportTitle": "「{{namespace}}」のグラフはありません",
+  "graph.noExport": "この名前空間のグラフのエクスポートは一覧にありません。上で別のグラフを選ぶか、名前空間を再構築してエクスポートしてください。",
   "graph.exportOffTitle": "グラフはオフになっています",
   "graph.exportOff": "この設定では graph.visualization.export_data がオフのため、グラフは作られません。名前空間のグラフを見るには、設定でオンにしてください。",
   "graph.unrecordedTitle": "「{{namespace}}」にはビルド記録がありません",

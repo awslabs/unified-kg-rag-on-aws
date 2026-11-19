@@ -480,6 +480,8 @@
   "graph.outdated": "desatualizado",
   "graph.noneTitle": "Ainda não há nada indexado em “{{namespace}}”",
   "graph.none": "Ingira um corpus neste namespace; o grafo é construído a partir dos armazenamentos ao abrir esta página.",
+  "graph.noExportTitle": "Não há grafo de “{{namespace}}” para mostrar",
+  "graph.noExport": "Nenhuma exportação do grafo deste namespace está listada. Escolha outro grafo acima ou reconstrua o namespace para exportar um.",
   "graph.exportOffTitle": "O grafo está desativado",
   "graph.exportOff": "graph.visualization.export_data está desativado nesta configuração, por isso nenhum grafo é construído. Ative-o nas Configurações para ver o grafo do namespace.",
   "graph.unrecordedTitle": "“{{namespace}}” não tem registo de construção",

@@ -267,8 +267,10 @@ answer side by side. A question marked unanswerable shows how many of each
 strategy's repeats declined, the right answer to it, and its outcome compares
 those shares. A job's gates show as passed or failed.
 
-**Graph.** A `visualization_data.json` of the namespace (the newest by
-default): a full build writes the namespace's whole graph, and no console
+**Graph.** A `visualization_data.json` of the namespace (by default the
+config namespace's current one, never another namespace's newer export;
+**Show in the graph** opens the graph of the namespace the answer searched):
+a full build writes the namespace's whole graph, and no console
 job exports one, so when the page opens and no export shows what the stores
 hold (after an incremental job) the console builds it from them, as
 `run-visualization` does. The picker names each export's build time,
@@ -276,7 +278,8 @@ namespace and run, and marks one a later build of its namespace replaced as
 outdated. Without a graph the page says why: nothing ingested yet, a
 namespace indexed before build records (rebuild it once), or
 `graph.visualization.export_data` off (Settings); when building it failed,
-it says so over the newest export. It is drawn with a seeded layout per connected component: pan with a
+it says so over the namespace's newest export. The picker still lists every
+other namespace's exports. It is drawn with a seeded layout per connected component: pan with a
 drag or the arrow keys, zoom with the wheel or `+`/`-`. Colour by community
 or by type (the eight largest groups, the rest grey, named in the legend).
 Find an entity by name; selecting one shows its type, description,

@@ -1,13 +1,13 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { drawnGraph, linkAlpha, placeLabels, settle, type LabelCandidate } from "../components/GraphCanvas";
 import { I18nProvider } from "../i18n/i18n";
 import { TrailProvider } from "../lib/trail";
 import type { GraphData, GraphNode } from "../lib/types";
-import { EntityTable, GraphPage, rankMatches, TABLE_PAGE } from "./GraphPage";
+import { EntityTable, GraphPage, pickGraph, rankMatches, TABLE_PAGE } from "./GraphPage";
 
 const renderIn = (ui: ReactElement) => render(<I18nProvider initial="en">{ui}</I18nProvider>);
 
@@ -238,7 +238,7 @@ describe("GraphPage when building the graph failed", () => {
       vi.fn((url: string) =>
         String(url).includes("graphs/data")
           ? new Promise<Response>(() => undefined)
-          : Promise.resolve(new Response(JSON.stringify({ graphs: [older], current: { state: "failed", namespace: "default", built_at: "2026-11-15T00:00:00Z" } }), { status: 200 })),
+          : Promise.resolve(new Response(JSON.stringify({ graphs: [older], current: { state: "failed", namespace: "default", built_at: "2026-11-15T00:00:00Z", ref: older.ref } }), { status: 200 })),
       ),
     );
     renderIn(
@@ -264,7 +264,7 @@ describe("GraphPage when building the graph failed", () => {
       vi.fn((url: string) =>
         String(url).includes("graphs/data")
           ? new Promise<Response>(() => undefined)
-          : Promise.resolve(new Response(JSON.stringify({ graphs: [older], current: { state: "failed", namespace: "default", built_at: null, reason } }), { status: 200 })),
+          : Promise.resolve(new Response(JSON.stringify({ graphs: [older], current: { state: "failed", namespace: "default", built_at: null, reason, ref: older.ref } }), { status: 200 })),
       ),
     );
     renderIn(
@@ -282,5 +282,73 @@ describe("GraphPage when building the graph failed", () => {
     );
     renderIn(<GraphPage params={new URLSearchParams()} />);
     expect(await screen.findByText(/Writing the graph's export folder failed/)).toBeInTheDocument();
+  });
+});
+
+describe("the graph the page opens", () => {
+  const exp = (ref: string, namespace: string | null) => ({ ref, label: namespace ?? ref, namespace, run: ref, built_at: null, modified: 1, bytes: 10, outdated: false });
+  // Newest first, as the server lists them: another namespace's is newest.
+  const graphs = [exp("cache:v2", "v2"), exp("cache:default", "default")];
+  const current = { state: "current" as const, namespace: "default", built_at: null, ref: "cache:default" };
+
+  it("is the config namespace's, not the newest export", () => {
+    expect(pickGraph({ graphs, current }, null, null)).toBe("cache:default");
+    // The picker's choice wins.
+    expect(pickGraph({ graphs, current }, "cache:v2", null)).toBe("cache:v2");
+  });
+
+  it("is the namespace's an answer's link names", () => {
+    expect(pickGraph({ graphs, current }, null, "v2")).toBe("cache:v2");
+    expect(pickGraph({ graphs, current }, null, "default")).toBe("cache:default");
+    expect(pickGraph({ graphs, current }, null, "tenant-b")).toBeNull();
+  });
+
+  it("is none when the namespace has no export", () => {
+    expect(pickGraph({ graphs, current: { ...current, state: "unrecorded", ref: null } }, null, null)).toBeNull();
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  function serve(body: object) {
+    const fetched: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        fetched.push(String(url));
+        if (String(url).includes("graphs/data")) return new Promise<Response>(() => undefined);
+        const reply = String(url).includes("namespace/methodologies") ? { namespace: "default", recorded: false, indexed: false, held: [], dropped: [] } : body;
+        return Promise.resolve(new Response(JSON.stringify(reply), { status: 200 }));
+      }),
+    );
+    return fetched;
+  }
+
+  it("draws the config namespace's export with two namespaces exported", async () => {
+    const fetched = serve({ graphs, current });
+    renderIn(
+      <TrailProvider>
+        <GraphPage params={new URLSearchParams()} />
+      </TrailProvider>,
+    );
+    await waitFor(() => expect(fetched.some((u) => u.includes("graphs/data"))).toBe(true));
+    const data = fetched.filter((u) => u.includes("graphs/data"));
+    expect(data).toHaveLength(1);
+    expect(decodeURIComponent(data[0]!)).toContain("ref=cache:default");
+    expect(screen.getByRole("combobox")).toHaveValue("cache:default");
+  });
+
+  it("says the namespace holds nothing rather than drawing another's", async () => {
+    const fetched = serve({ graphs: [exp("cache:v2", "v2")], current: { state: "unrecorded", namespace: "default", built_at: null, ref: null } });
+    renderIn(<GraphPage params={new URLSearchParams()} />);
+    expect(await screen.findByText("Nothing is indexed in “default” yet")).toBeInTheDocument();
+    expect(fetched.some((u) => u.includes("graphs/data"))).toBe(false);
+    // The other namespace's export stays in the picker.
+    expect(screen.getByRole("option", { name: /v2/ })).toBeInTheDocument();
+  });
+
+  it("names a linked namespace without an export", async () => {
+    serve({ graphs, current });
+    renderIn(<GraphPage params={new URLSearchParams({ namespace: "tenant-b", focus: "e1" })} />);
+    expect(await screen.findByText("No graph of “tenant-b” to show")).toBeInTheDocument();
   });
 });

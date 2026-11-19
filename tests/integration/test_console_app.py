@@ -591,6 +591,8 @@ def test_the_graph_is_read_with_layout_communities_and_analysis(client: Any) -> 
         if g["namespace"] == listed["current"]["namespace"] and not g["outdated"]
     ]
     assert graphs and graphs[0]["ref"].startswith("cache:")
+    # The page opens it, whatever another namespace exported since (arch E1).
+    assert listed["current"]["ref"] == graphs[0]["ref"]
     data = client.get("/api/graphs/data", params={"ref": graphs[0]["ref"]}).json()
     names = {n["name"] for n in data["nodes"]}
     assert {"Acme Robotics", "Globex Sensors", "엄브라 프레이트"} <= names

@@ -6,7 +6,7 @@ import { I18nProvider, useI18n, type Locale } from "../i18n/i18n";
 import { ApiError, errorMessage } from "../lib/api";
 import { TrailProvider } from "../lib/trail";
 import type { Status } from "../lib/types";
-import { AskPage, turnErrorText } from "./AskPage";
+import { AskPage, graphParams, turnErrorText } from "./AskPage";
 
 const status = { config_path: "c.yaml", namespace: "default", jobs: [], sample_questions: ["Who ships parts?"], max_top_k: 40 } as unknown as Status;
 
@@ -161,5 +161,15 @@ describe("the filter box", () => {
     // The value stays the string "007" (as a number, 7, it matched nothing).
     expect(body.filter_text).toBe("attr_code: 007\nattr_year 2024");
     expect(body).not.toHaveProperty("filters");
+  });
+});
+
+describe("Show in the graph", () => {
+  it("opens the graph of the namespace the answer searched", () => {
+    const entity = { kind: "entity", id: "e1" } as unknown as Parameters<typeof graphParams>[0];
+    expect(graphParams(entity, "v2")).toEqual({ namespace: "v2", focus: "e1" });
+    const community = { kind: "community", community_id: "c7" } as unknown as Parameters<typeof graphParams>[0];
+    expect(graphParams(community, "default")).toEqual({ namespace: "default", community: "c7" });
+    expect(graphParams(entity, null)).toEqual({ focus: "e1" });
   });
 });
