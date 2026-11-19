@@ -630,7 +630,8 @@ class OllamaLanguageModelFactory(_LocalLanguageModelFactory):
         if self.transport is not None:
             kwargs["transport"] = self.transport
         try:
-            shown = module.Client(host=self.settings.base_url, **kwargs).show(model_id)
+            with module.Client(host=self.settings.base_url, **kwargs) as client:
+                shown = client.show(model_id)
             capabilities = getattr(shown, "capabilities", None) or []
         except Exception as e:  # noqa: BLE001 - the server's default is kept
             logger.debug("Ollama capabilities of '%s' unknown: %s", model_id, e)

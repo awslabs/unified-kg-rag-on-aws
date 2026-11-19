@@ -1018,6 +1018,26 @@ def test_one_chat_model_serves_successive_event_loops(
         assert asyncio.run(stream()) == "Vendor ships to Buyer."
 
 
+def test_the_ollama_capability_probe_closes_its_connection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The /api/show client of thinks() is closed once asked: left to the
+    # garbage collector, its kept-alive socket was unclosed (one per model).
+    import gc
+    import sys
+    import warnings
+
+    unraisable: list[Any] = []
+    monkeypatch.setattr(sys, "unraisablehook", unraisable.append)
+    with _HTTPFakeServer(FakeServer(capabilities=["thinking"])) as server:
+        factory = OllamaLanguageModelFactory(_http_config("ollama", server.url))
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", ResourceWarning)
+            assert factory.thinks("synthetic-chat")
+            gc.collect()
+    assert [hook.exc_value for hook in unraisable] == []
+
+
 @pytest.mark.parametrize(
     ("kind", "factory_cls"),
     [

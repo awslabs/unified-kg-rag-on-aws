@@ -441,6 +441,7 @@ Bugs present in 0.3.0.
   the backoff (`retry.ingestion_item`).
 - An `auto` query's speculative extraction left running past its query failed silently once its retries ran out; its
   failure is logged at WARNING (type and digest; the text at DEBUG).
+- An Ollama model's capability check (`/api/show`) left its connection's socket unclosed; the client is closed.
 
 ## [0.3.0] - 2026-11-14
 
