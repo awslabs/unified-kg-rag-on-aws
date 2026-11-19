@@ -25,6 +25,12 @@ maps to no file is *unattributable* and contributes no file:
 
 - ``hit_at_k``: 1.0 if any reference is among the top ``k`` files.
 - ``recall_at_k``: fraction of distinct references among the top ``k`` files.
+- ``ndcg_at_k``: binary-relevance nDCG over the top ``k`` files (Järvelin
+  and Kekäläinen 2002, the log2 discount of ``trec_eval``'s ``ndcg_cut``):
+  a file at rank ``i`` gains ``1 / log2(i + 1)`` when it names a reference no
+  higher-ranked file named, over the gain of the references ranked first
+  (``min(k, references)`` of them); so it is 1.0 exactly when the top files
+  are the references, and ranks the passages first as recall does.
 - ``mrr``: reciprocal rank of the first file matching any reference (0.0 if
   none matches).
 - ``attributable_fraction``: attributable / reported sources — how much of the
@@ -40,7 +46,9 @@ over each section type's sources alone (``text``, ``entity``,
 text units the answer model read verbatim (reported sources are exactly the
 context it was given).
 
-``k`` is ``evaluation.retrieval_k``. Matching rule: each identifier is
+``k`` is ``evaluation.retrieval_k``: its first cutoff scores ``hit_at_k``,
+``recall_at_k`` and ``ndcg_at_k``, each further one ``hit_at_<k>``,
+``recall_at_<k>`` and ``ndcg_at_<k>`` (``EvaluationMetric.k``). Matching rule: each identifier is
 reduced, case-insensitively, to its name (``reference_key``); a source also
 keeps its stem when it ends in a file extension (``.`` + 1-5 ASCII
 letters/digits, at least one a letter, not a version such as ``.v2``;
@@ -67,6 +75,7 @@ when the guardrail blocked the answer, since that drops its sources.
 
 from __future__ import annotations
 
+import math
 import re
 import unicodedata
 from datetime import datetime
@@ -89,6 +98,7 @@ from unified_kg_rag.domain.models import (
     EvaluatorType,
     SearchStrategy,
 )
+from unified_kg_rag.domain.models.evaluation import AT_K_METRICS, metric_name
 from unified_kg_rag.domain.retrieval.section_types import LINEAGE_ATTRIBUTED_TYPES
 from unified_kg_rag.evaluation.citation_scoring import (
     CITATION_METRICS,
@@ -177,22 +187,31 @@ def ranked_files(
 
 
 class RetrievalEvaluator(BaseGraphRAGEvaluator):
-    """Scores hit@k / recall@k / MRR of reported sources vs reference_sources."""
+    """Scores hit@k / recall@k / nDCG@k / MRR of reported sources vs
+    reference_sources."""
 
     def __init__(self, config: Config, **kwargs: Any):
         super().__init__(config, EvaluatorType.RETRIEVAL, **kwargs)
 
     def _initialize_evaluator(self, **kwargs: Any) -> None:
-        self.k = self.config.evaluation.retrieval_k
+        self.k, *self.further_k = self.config.evaluation.retrieval_k
 
     def metric_types(self) -> list[EvaluationMetricType]:
         return [
             EvaluationMetricType.HIT_AT_K,
             EvaluationMetricType.RECALL_AT_K,
+            EvaluationMetricType.NDCG_AT_K,
             EvaluationMetricType.MRR,
             EvaluationMetricType.ATTRIBUTABLE_FRACTION,
             *CITATION_METRICS,
         ]
+
+    def metric_names(self) -> list[str]:
+        return [*super().metric_names(), *self._further_names()]
+
+    def _further_names(self) -> list[str]:
+        """The names of the rank metrics at the further cutoffs."""
+        return [metric_name(m, k) for k in self.further_k for m in AT_K_METRICS]
 
     def evaluate_single(
         self,
@@ -209,10 +228,9 @@ class RetrievalEvaluator(BaseGraphRAGEvaluator):
                 evaluation_time=datetime.now(),
                 metadata={
                     **self._extract_search_metadata(result),
-                    SKIPPED_METRICS_KEY: {
-                        m.value: SKIP_REASON_GUARDRAIL_BLOCKED
-                        for m in self.metric_types()
-                    },
+                    SKIPPED_METRICS_KEY: dict.fromkeys(
+                        self.metric_names(), SKIP_REASON_GUARDRAIL_BLOCKED
+                    ),
                 },
             )
         sources = result.retrieved_source_ids
@@ -223,6 +241,8 @@ class RetrievalEvaluator(BaseGraphRAGEvaluator):
         ]
         attributable = sum(1 for idents in sources if any(map(source_keys, idents)))
         values: dict[EvaluationMetricType, float] = {}
+        # The rank metrics at the further cutoffs, by (type, k).
+        further: dict[tuple[EvaluationMetricType, int], float] = {}
         skipped: dict[str, str] = {}
         if sources:
             values[EvaluationMetricType.ATTRIBUTABLE_FRACTION] = attributable / len(
@@ -246,11 +266,7 @@ class RetrievalEvaluator(BaseGraphRAGEvaluator):
             "num_ranked_files": len(files),
             "num_references": len(references),
         }
-        rank_metrics = (
-            EvaluationMetricType.HIT_AT_K,
-            EvaluationMetricType.RECALL_AT_K,
-            EvaluationMetricType.MRR,
-        )
+        rank_metrics = (*AT_K_METRICS, EvaluationMetricType.MRR)
         # No sources at all is a retrieval miss (scored 0), unless the config
         # asks for none; sources that exist but none attributable cannot be
         # judged, so they are skipped.
@@ -277,9 +293,13 @@ class RetrievalEvaluator(BaseGraphRAGEvaluator):
         skipped.update(citation_skips)
         if skip_reason:
             skipped.update({m.value: skip_reason for m in rank_metrics})
+            skipped.update(dict.fromkeys(self._further_names(), skip_reason))
         else:
             scores, matched_at_k, first_rank = self._rank_scores(files, references)
             values.update(scores)
+            for k in self.further_k:
+                at_k, _, _ = self._rank_scores(files, references, k)
+                further.update({(m, k): at_k[m] for m in AT_K_METRICS})
             metadata["matched_references_at_k"] = matched_at_k
             metadata["first_relevant_rank"] = first_rank
             by_type: dict[str, dict[str, float]] = {}
@@ -301,7 +321,11 @@ class RetrievalEvaluator(BaseGraphRAGEvaluator):
             query_id=query.query_id,
             evaluator_type=self.evaluator_type,
             metrics=[
-                EvaluationMetric(metric_type=m, value=v) for m, v in values.items()
+                *(EvaluationMetric(metric_type=m, value=v) for m, v in values.items()),
+                *(
+                    EvaluationMetric(metric_type=m, k=k, value=v)
+                    for (m, k), v in further.items()
+                ),
             ],
             evaluation_time=datetime.now(),
             metadata=metadata,
@@ -319,9 +343,14 @@ class RetrievalEvaluator(BaseGraphRAGEvaluator):
         return not STRATEGY_TRAITS[strategy].reports_sources(self.config)
 
     def _rank_scores(
-        self, files: list[frozenset[str]], references: dict[str, str]
+        self,
+        files: list[frozenset[str]],
+        references: dict[str, str],
+        k: int | None = None,
     ) -> tuple[dict[EvaluationMetricType, float], list[str], int | None]:
-        """(hit@k / recall@k / MRR, matched references at k, first match rank)."""
+        """(hit@k / recall@k / nDCG@k / MRR, matched references at k, first
+        match rank), at ``k`` (the first cutoff by default)."""
+        k = self.k if k is None else k
 
         def _matched(keys: list[frozenset[str]]) -> set[str]:
             return {
@@ -330,13 +359,24 @@ class RetrievalEvaluator(BaseGraphRAGEvaluator):
                 if any(ref_key in file_keys for file_keys in keys)
             }
 
-        matched_at_k = _matched(files[: self.k])
+        matched_at_k = _matched(files[:k])
         first_rank = next(
             (rank for rank, keys in enumerate(files, 1) if _matched([keys])), None
+        )
+        # A file gains at its rank when it names a reference not named above
+        # it, so a reference counts once, as in recall.
+        gain, credited = 0.0, set[str]()
+        for rank, keys in enumerate(files[:k], 1):
+            if new := _matched([keys]) - credited:
+                credited |= new
+                gain += 1.0 / math.log2(rank + 1)
+        ideal = sum(
+            1.0 / math.log2(rank + 1) for rank in range(1, min(k, len(references)) + 1)
         )
         scores = {
             EvaluationMetricType.HIT_AT_K: 1.0 if matched_at_k else 0.0,
             EvaluationMetricType.RECALL_AT_K: len(matched_at_k) / len(references),
+            EvaluationMetricType.NDCG_AT_K: gain / ideal,
             EvaluationMetricType.MRR: 1.0 / first_rank if first_rank else 0.0,
         }
         return scores, sorted(matched_at_k), first_rank

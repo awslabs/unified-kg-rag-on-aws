@@ -136,7 +136,7 @@ def _scored_metrics(runs: Mapping[str, Sequence[Run]]) -> dict[str, set[str]]:
                 for metric in report.metrics:
                     if metric.metric_type.value not in _UNFILLED:
                         scored[report.query_id].add(
-                            f"{report.evaluator_type.value}/{metric.metric_type.value}"
+                            f"{report.evaluator_type.value}/{metric.name}"
                         )
     return scored
 
@@ -169,7 +169,7 @@ def per_query_means(
     for reports, results in runs:
         for report in reports:
             for metric in report.metrics:
-                key = f"{report.evaluator_type.value}/{metric.metric_type.value}"
+                key = f"{report.evaluator_type.value}/{metric.name}"
                 values[key][report.query_id].append(metric.value)
         for result in results:
             if result.error:

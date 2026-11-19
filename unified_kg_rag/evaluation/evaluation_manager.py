@@ -1870,13 +1870,13 @@ class EvaluationManager:
 
         unscored = sum(1 for r in results if r.error or self._is_unanswerable(r))
         for evaluator_type, evaluator in self.evaluators.items():
-            for metric_type in evaluator.metric_types():
-                _bump(evaluator_type.value, metric_type.value, "skipped", unscored)
+            for name in evaluator.metric_names():
+                _bump(evaluator_type.value, name, "skipped", unscored)
 
         for report in reports:
             evaluator_name = report.evaluator_type.value
             for metric in report.metrics:
-                _bump(evaluator_name, metric.metric_type.value, "scored")
+                _bump(evaluator_name, metric.name, "scored")
             for kind, key in (
                 ("failed", FAILED_METRICS_KEY),
                 ("skipped", SKIPPED_METRICS_KEY),
@@ -1993,7 +1993,7 @@ class EvaluationManager:
             if report.evaluator_type is not EvaluatorType.ANSWER_MATCH:
                 continue
             for metric in report.metrics:
-                scores[metric.metric_type.value][report.query_id] = metric.value
+                scores[metric.name][report.query_id] = metric.value
         if not scores:
             return {}
         abstained = {r.query_id for r in answerable if r.abstained and not r.error}
@@ -2034,18 +2034,16 @@ class EvaluationManager:
     def _calculate_metric_statistics(
         reports: list[EvaluationReport],
     ) -> dict[str, dict[str, float]]:
-        metric_values = defaultdict(list)
+        metric_values: dict[str, list[float]] = defaultdict(list)
         for report in reports:
             for metric in report.metrics:
-                metric_values[metric.metric_type].append(metric.value)
+                metric_values[metric.name].append(metric.value)
 
         statistics_dict: dict[str, dict[str, float]] = {}
-        for metric_type, values in metric_values.items():
+        for name, values in metric_values.items():
             if not values:
                 continue
-            statistics_dict[metric_type.value] = EvaluationManager._value_statistics(
-                values
-            )
+            statistics_dict[name] = EvaluationManager._value_statistics(values)
         return statistics_dict
 
     @staticmethod

@@ -67,6 +67,16 @@ def _without_removed_evaluators(value: Any) -> Any:
     return kept
 
 
+def _cutoffs(value: Any) -> Any:
+    """``evaluation.retrieval_k`` as a list (one k is a list of one), its
+    cutoffs distinct."""
+    if isinstance(value, int) and not isinstance(value, bool):
+        return [value]
+    if isinstance(value, list | tuple) and len(set(value)) < len(value):
+        raise ValueError("retrieval_k lists a cutoff twice")
+    return value
+
+
 class EvaluationConfig(ConfigSection):
     outputs_directory: str | Path = Field(
         default="outputs/evaluation",
@@ -290,13 +300,18 @@ class EvaluationConfig(ConfigSection):
         ),
         json_schema_extra=evidence("operational"),
     )
-    retrieval_k: int = Field(
-        default=5,
-        ge=1,
+    retrieval_k: Annotated[
+        list[Annotated[int, Field(ge=1)]], BeforeValidator(_cutoffs)
+    ] = Field(
+        default_factory=lambda: [5],
+        min_length=1,
         description=(
-            "Cutoff k for the retrieval evaluator's hit@k / recall@k: the number "
-            "of top-ranked distinct files (of the reported sources, in rank "
-            "order) compared with reference_sources."
+            "Cutoffs k for the retrieval evaluator's hit@k / recall@k / "
+            "nDCG@k: the number of top-ranked distinct files (of the "
+            "reported sources, in rank order) compared with "
+            "reference_sources. One k (a number) or a list of distinct ones: "
+            "the first scores hit_at_k, recall_at_k and ndcg_at_k, each "
+            "further k adds hit_at_<k>, recall_at_<k> and ndcg_at_<k>."
         ),
         json_schema_extra=evidence("operational"),
     )

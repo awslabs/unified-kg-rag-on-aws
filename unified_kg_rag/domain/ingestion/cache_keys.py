@@ -775,11 +775,22 @@ def _as_extracted(config: Config, path: str, value: Any) -> Any:
 _ROLES_PREFIX = "models.roles."
 
 
+# Fields whose type widened -> the value in the earlier type while one fits,
+# so a configuration that holds one records what it recorded before (the
+# evaluation manifest's hash stays): retrieval_k took one k before a list.
+_RECORDED_NARROW: dict[str, Callable[[Any], Any]] = {
+    "evaluation.retrieval_k": lambda ks: ks[0] if len(ks) == 1 else ks,
+}
+
+
 def _resolved(config: Config, path: str, value: Any) -> Any:
     """A setting's value as it takes effect: a role's model id resolved
-    through its tier (``Config.model_id``)."""
+    through its tier (``Config.model_id``); a widened field's in its earlier
+    type while it fits (``_RECORDED_NARROW``)."""
     if path.startswith(_ROLES_PREFIX):
         return config.model_id(ModelRole(path.removeprefix(_ROLES_PREFIX)))
+    if (narrow := _RECORDED_NARROW.get(path)) is not None:
+        return narrow(value)
     return value
 
 
