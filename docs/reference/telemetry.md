@@ -74,7 +74,13 @@ ingestion stage that made it. `RAGOutput.metadata["usage"]` (and
 `sent_requests`, `throttled_requests`, `failed_calls`, `rerank_calls` and `rerank_search_units` (the reranker's
 requests and their billed search units, one per 100 documents a request
 ranks, a document of more than 500 estimated tokens with the query counting
-as several, as Amazon Bedrock bills them; not model calls), and the same counts
+as several, as Amazon Bedrock bills them; not model calls), `embedding_calls`,
+`embedding_input_tokens` and `embedding_estimated_calls` (the embedding
+model's requests that returned, every provider's, one per request the adapter
+sends, and their input tokens: Titan's own `inputTextTokenCount`, else the
+script-aware estimate, those calls counted in `embedding_estimated_calls`; not
+model calls, not in `input_tokens`, priced by `embedding_per_million_tokens`
+in `models.prices`), and the same counts
 `by_role` (the model's purpose: `query`, `ingestion`, `evaluation`;
 `embedding` and `rerank` for the embedding model's and reranker's requests) and
 `by_model` (the model id the factory resolved). `run-ingestion

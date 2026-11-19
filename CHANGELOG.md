@@ -32,6 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `config.retry.max_attempts` and the other flat retry fields are gone from the Python surface, and
   `RetryConfig.transient_policy()` with them: read and set the profiles (`config.retry.model.max_attempts`,
   `config.retry.ingestion_item`, ...). Configs that set the flat keys still load (*Deprecated*).
+- `RAGInput.search_type` defaults to `None` (the config's `search.search_type`, hybrid unless set), and
+  `EvaluationConfig.retrieval_k` is a list of cutoffs (a number still loads, as a list of one).
 
 ### Upgrading
 From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-the-library) links here.
@@ -212,6 +214,19 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   model connection held.
 - `indexing.neptune.batch_max_steps` (default 1,500, the Gremlin steps Neptune's user guide advises a request at
   most): an entity or community write batch closes at it or at `batch_size` items, whichever comes first.
+- Held-out evaluation: `prepare-benchmark` labels every row `metadata.split` (`tune`/`test`, the SHA-256 of its
+  question id mod 2), `musique --split` draws one half, and `run-eval --split` answers one; `prepared.json` records
+  the draw (seed, sizes, split, sources' SHA-256) and the run manifest copies it (`dataset.prepared`).
+- The run manifest stores `answer_settings`, the map `retrieval_config_sha256` hashes; a refused pooling names the
+  settings that differ.
+- Retrieval `ndcg_at_k` (binary relevance, log2 discount), and several cutoffs: `evaluation.retrieval_k` takes a
+  list, the first keeping the `*_at_k` names, each further k adding `hit_at_<k>`, `recall_at_<k>`, `ndcg_at_<k>`.
+- `search.search_type`, the search type of a query that names none (hybrid), so a `run-eval --arm` compares hybrid
+  with lexical or vector in one paired run.
+- Embedding usage for every provider (`embedding_calls`, `embedding_input_tokens`, `embedding_estimated_calls`;
+  `usage_schema` 4) and `models.prices.<id>.embedding_per_million_tokens`, which every USD figure adds.
+- With tracing on, `run-eval` reports per-span latency (`stage_latency_seconds`: answers, mean, p50, p95) in the run
+  summary and per comparison strategy, from each answer's `stage_seconds`.
 
 ### Changed
 

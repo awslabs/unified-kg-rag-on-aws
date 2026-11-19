@@ -31,8 +31,13 @@ comparison of several strategies or repeats) and the run manifest
 (`dataset.benchmarks`). It writes `corpus/` (one text file per distinct paragraph; each
 question brings 2-4 supporting paragraphs and up to 18 distractors) and
 `eval_data.json` (`answer`, `answer_aliases`, the supporting paragraphs as
-`reference_sources`, the hop count as `category`). A `corpus/` that is not
-empty is a usage error (exit 2), reported before anything is downloaded.
+`reference_sources`, the hop count as `category`, and the question's half
+as `metadata.split`: [below](#tune-and-test-halves)), with `prepared.json`
+recording how it was drawn (`seed`, `limit`, `hops`, `unanswerable`,
+`split`, each source file's `sha256`, the package version and the counts),
+which `run-eval` copies into its run manifest (`dataset.prepared`). A
+`corpus/` that is not empty is a usage error (exit 2), reported before
+anything is downloaded.
 
 ## Run it
 
@@ -59,6 +64,43 @@ evaluation:
   answer_normalization: official_squad   # MuSiQue's evaluation script normalization
   enabled_evaluators: [answer_match, retrieval]   # judge-free; add ragas if wanted
 ```
+
+## Tune and test halves
+
+Settings chosen on a sample and then reported on the same sample look
+better than they are: picking the best of many runs also picks the noise
+that favoured it. Every prepared row carries `metadata.split`, `tune` or
+`test`: the parity of the SHA-256 of its question id (the MuSiQue id, which
+an unanswerable question shares with its twin), so a question is in the same
+half in every sample, seed and size, and the halves never share one. The
+`structural` and `assertions` benchmarks label their rows the same way, by
+their query ids.
+
+```bash
+# One sample and one index hold both halves.
+prepare-benchmark musique --output-directory bench/musique --limit 400
+
+# Choose a setting on the tune half...
+run-eval --data-path bench/musique/eval_data.json --suffix musique --split tune \
+  --search-strategy local --arm norerank=norerank.yaml --repeats 2 --config-path musique.yaml
+
+# ...and report the chosen one, once, on the test half.
+run-eval --data-path bench/musique/eval_data.json --suffix musique --split test \
+  --search-strategy local --arm norerank=norerank.yaml --repeats 2 --config-path musique.yaml
+```
+
+- Read the test half once, for the setting the tune half chose; choosing
+  again after reading it turns it into a second tune half.
+- The halves share the index, so a test question's paragraphs are in the
+  corpus while you tune (as distractors are in MuSiQue's own setting); its
+  gold answer and references are not read. For corpora that share nothing,
+  draw each half on its own (`--split tune`, then `--split test` into
+  another directory: each samples only its half) and ingest each.
+- The run manifest records `dataset.split` and `dataset.splits` (questions
+  per half), and a comparison of runs of different halves warns that they
+  answered different datasets. `run-eval --split` refuses a dataset with an
+  unlabelled row before any answer; label your own rows `metadata.split`
+  to use it on them.
 
 ## Unanswerable questions
 

@@ -29,7 +29,7 @@ without it.
 | Evaluator | LLM | Needs in the dataset | Main metrics |
 |---|---|---|---|
 | `answer_match` | no | `answer` (+ `answer_aliases`) | `answer_contains` (headline), `exact_match`, `token_f1` |
-| `retrieval` | no | `reference_sources` | `hit_at_k`, `recall_at_k`, `mrr` (k = `evaluation.retrieval_k`, default 5) |
+| `retrieval` | no | `reference_sources` | `hit_at_k`, `recall_at_k`, `ndcg_at_k`, `mrr` (k = `evaluation.retrieval_k`, default 5; a list adds `hit_at_<k>` and the like per further k) |
 | `graph_aware` | no | `expected_entities` / `expected_relationships` | entity and relationship coverage (recall), in the answer and in the retrieved sources |
 | `ragas` | judge | `answer` | `answer_correctness`, `answer_relevancy`, `context_precision`, `context_recall`, `faithfulness` |
 | `assertion` | judge | `assertions` | `assertion_recall`, `assertion_contradiction_rate`, `negative_assertion_violation_rate` (opt-in) |
@@ -282,7 +282,13 @@ How to read it:
   query's repeats before the queries.
 - **Cost and latency.** `cost.strategies.<s>` and `cost.deltas_vs_baseline`
   give the answers' calls, tokens and latency per query, paired like the
-  metrics; a failed answer counts with what it spent before failing.
+  metrics; a failed answer counts with what it spent before failing. Per
+  strategy also `embedding_calls_per_query` and
+  `embedding_input_tokens_per_query`, and with `observability.enabled`
+  `stage_latency_seconds`: per span name (`kg_rag.retrieve`, `chat <model>`,
+  ...) the answers that opened it and their seconds in it, mean, p50 and
+  p95 (the run summary has the same block). Overlapping spans each count,
+  so the stages can add up to more than the latency.
 - **Run order.** The runs are answered interleaved by default
   (`--run-order interleaved`, `evaluation.run_order`): each query by every
   strategy and repeat before the next query, their order reversed on every
@@ -336,7 +342,15 @@ models:
       cache_write_per_million_tokens: 0.0
     "global.<fast-model-id>": {input_per_million_tokens: 0.0, output_per_million_tokens: 0.0}
     "<rerank-model-id>": {per_thousand_rerank_search_units: 0.0}
+    "<embedding-model-id>": {embedding_per_million_tokens: 0.0}
 ```
+
+Embedding requests are counted apart from the model calls
+(`embedding_calls`, and `embedding_input_tokens`: Titan's own count, else
+the script-aware estimate, `embedding_estimated_calls`) and priced when the
+embedding model's entry sets `embedding_per_million_tokens`; without one
+they are left out of the USD and the comparison names the model, so a price
+list written before keeps pricing the rest.
 
 The estimate covers the calls the usage records: botocore's resent requests
 (`request_retries`), failed calls (`failed_calls`) and the warm-up queries
@@ -412,8 +426,34 @@ run-eval --data-path eval.json --search-strategy local,mix --repeats 2 \
   noise; an A/A overlay of `search: {query_extraction_cache_size: 0}`
   extracts on its own and includes it, at one extra extraction call per
   question and repeat.
+- Hybrid against one of its sides: an arm whose overlay sets
+  `search: {search_type: lexical}` (or `vector`) answers with that search
+  where the base runs fuse both, in one paired, interleaved run; a
+  `--search-type` given to `run-eval` sets every run's and every arm's.
 - Each arm costs what a strategy costs (its answers and warm-up), times
   the strategies listed.
+
+## Choosing settings on one half, reporting on the other
+
+Settings chosen on a dataset and reported on the same dataset look better
+than they are: picking the best of several runs also picks the noise that
+favoured it. `prepare-benchmark` labels every row with a half,
+`metadata.split` `tune` or `test` (the parity of the SHA-256 of its
+question id), and `--split` answers one half, so you choose on `tune` and
+report on `test`:
+
+```bash
+run-eval --data-path bench/musique/eval_data.json --split tune \
+  --search-strategy local --arm norerank=norerank.yaml --config-path config.yaml
+run-eval --data-path bench/musique/eval_data.json --split test \
+  --search-strategy local --arm norerank=norerank.yaml --config-path config.yaml
+```
+
+The manifest records the half (`dataset.split`) and how the dataset was
+drawn (`dataset.prepared`, from `prepared.json`), and runs of different
+halves are warned about as different datasets. Your own dataset needs
+`metadata.split` on every row; the recipe and its limits:
+[Benchmarks: Tune and test halves](./benchmarks.md#tune-and-test-halves).
 
 ## Assertions, length control and a closed-book bound
 

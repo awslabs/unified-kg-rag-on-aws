@@ -1179,6 +1179,16 @@ when an unadjusted 95% interval excludes zero.
   single corpus, MuSiQue (English, multi-hop Wikipedia text, or a slice
   of it); the answers came from Claude models on Bedrock. A
   default that was n.s. here may matter on your corpus: measure it there.
+- **In-sample selection.** The defaults chosen by a significant difference
+  (`text_unit_ranking: ppr`, `entity_frequency_threshold: 20`, `iterative`
+  in `auto`, reranking on, `similarity` over `membership`, among others)
+  were chosen on the 200 MuSiQue questions and their gains are reported on
+  the same questions; none was re-measured on questions held out from that
+  choice. Choosing the best of several arms also picks the noise that
+  favoured it, so these gains are likely smaller on new questions, and a
+  default that won narrowly may not win at all. To choose your own without
+  this bias, choose on one half of a prepared benchmark and report on the
+  other ([Benchmarks: Tune and test halves](../guides/benchmarks.md#tune-and-test-halves)).
 - **LLM judges.** Pairwise judges favour longer answers and, as measured
   above, their own model's answers and, judged in one slot order, the
   second answer. Read win rates with the position
