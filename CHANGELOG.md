@@ -439,6 +439,8 @@ Bugs present in 0.3.0.
 - An ingestion LLM item whose output did not parse waited the backoff of a throttled call (up to 30 s, then 60 s,
   then 120 s) before it was asked again; it is asked again at once. Throttling, timeouts and transient errors keep
   the backoff (`retry.ingestion_item`).
+- An `auto` query's speculative extraction left running past its query failed silently once its retries ran out; its
+  failure is logged at WARNING (type and digest; the text at DEBUG).
 
 ## [0.3.0] - 2026-11-14
 
