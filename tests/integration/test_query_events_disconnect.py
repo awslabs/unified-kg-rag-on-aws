@@ -547,14 +547,11 @@ async def test_a_reader_cancelled_in_retry_backoff_stops_the_query(
         async with asyncio.timeout(BACKSTOP):
             await _cancelled_once_throttled(chain, models)
         # Every reader's stop came, and no request passed its stop check
-        # after its query's stop (the botocore and OpenAI clients' own
-        # resends included): one that passed it before is in flight. The
-        # Ollama client sends from the event loop only, where the reader's
-        # cancel ends the query, so it has no check of its own ...
+        # after its query's stop (the botocore, OpenAI and Ollama clients'
+        # requests, their own resends included): one that passed it before
+        # is in flight ...
         assert sum(kind == "stop" for kind, _ in order.events) == THROTTLED_READERS
-        assert any(kind == "passed" for kind, _ in order.events) == (
-            provider != "ollama"
-        )
+        assert any(kind == "passed" for kind, _ in order.events)
         assert order.passed_after_a_stop() == []
         # ... and none reached the model after those in flight: a reader is
         # released at once, before a worker thread's request that passed

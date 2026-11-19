@@ -230,6 +230,9 @@ the methodology: GraphRAG's (§6.1) and LightRAG's (§6.2), the wrapper
   usage from its start (`estimated_calls` until it answers; cancelling it
   saved nothing, since a cancelled task does not stop a request already
   sent). It is cancelled at the query's deadline or when the chain closes.
+  It is work its query keeps past its end (`shared.query_work`): it
+  closes its own model responses, not the query's scope as the query
+  ends, and once kept the query's reader stop no longer ends it.
   We chose this over one router
   prompt that also returns entities and keywords because the router prompt
   and its decision stay unchanged by the extractions,

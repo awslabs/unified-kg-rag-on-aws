@@ -379,17 +379,24 @@ cancels the reader at every await, and a second cancellation passed on
 would cut the close of a model response short, its connection held). The
 stop is what the cancellation does not reach: the work the query left on
 worker threads, the clients' own resends, and a cancellation a layer under
-the query loses (on Python 3.11 `asyncio.wait_for`, which langchain-openai
-reads each stream chunk through, returns a chunk that arrived with the
-cancellation): the query's next event and its answer's next chunk, one
-without text too, raise at the stop. The application's retry
+the query loses, on any Python (anyio's `connect_tcp`, httpcore's connect,
+can return a connected stream to a task cancelled while it connected; on
+3.11 `asyncio.wait_for`, which langchain-openai reads each stream chunk
+through, returns a chunk that arrived with the cancellation): the query's
+next event and its answer's next chunk, one without text too, raise at the
+stop. The application's retry
 loops check it before each attempt and race their wait against it, and
-the model clients that resend a call themselves (Bedrock's botocore, the
-OpenAI client) check it before each request, so a throttled model is not
-called again for a reader that left. Bedrock's checks sit before and after
+the model clients check it before each request, resends included, so a
+throttled model is not called again for a reader that left: the httpx
+clients (Ollama, OpenAI-compatible) before the request connects, again
+before it is written (httpcore's `trace` extension, as a connect that lost
+the cancellation would send it otherwise) and as its response's headers
+arrive, each also refusing a request for a query that ended
+(`raise_if_scope_ended`). Bedrock's checks sit before and after
 botocore's client-side rate limiter (on `before-send`) and last on the bare
 `needs-retry`, so an attempt the stop ends unresent is still counted
-(`count_requests`) and seen by the adaptive limiter. A stop ends only its
+(`count_requests`) and seen by the adaptive limiter, and the retry-quota
+cost botocore's retry handler took for the resend is given back. A stop ends only its
 own query's work: a call concurrent queries share (a query embedding,
 `single_flight`) runs in a context of its own (`SharedContext`), under a
 `SharedStop` set once every waiting query's reader stopped, and a waiter
@@ -413,7 +420,15 @@ response its model clients opened (registered from their HTTP hooks:
 httpx's response hook, botocore's `after-call`), the answer's and its other
 calls' (a translation, an extraction), still open when the query ends; the
 answer step without a sink runs its call in one too (`ChatOllama` streams
-under `ainvoke`), for a caller that drives the composed chain itself. A
+under `ainvoke`), for a caller that drives the composed chain itself.
+Work the query keeps past its end (auto's speculative extractions its route
+did not read, which fill the extraction cache) starts detachable
+(`shared.query_work.start_detachable`): under a response scope of its own,
+which ends with it, not with the query, and a `FollowingStop` of the
+query's reader stop that `detach` cuts once the query keeps it, so neither
+the query's end nor its reader's later stop ends it; it is still bounded by
+its own retry budget and timeouts and cancelled at the query's deadline or
+when the chain closes. A
 Bedrock stream is read on a worker thread: its socket is shut down for
 reading, ending a blocked read, then closed off the loop, under a lock with
 the response's own release of its connection, so a connection back in the

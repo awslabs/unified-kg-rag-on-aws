@@ -259,10 +259,12 @@ Bugs present in 0.3.0.
   the pool of 100 filled and the console stopped answering, the loop logging `aclose(): asynchronous generator is
   already running`. A reader that stops or is cancelled cancels the query at once, as its deadline does, and the query
   now closes every model response it opened (see the deadline entry below); no model request is sent after the stop
-  (the Bedrock and OpenAI clients' own resends included, an attempt sent before it still counted in `sent_requests`
-  and seen by botocore's adaptive rate limiter), and the query records its latency and usage as a stream closed early
-  (no failure, whatever it raised past the stop) instead of nothing. A stop ends only its reader's query: a call
-  concurrent queries share (a query embedding) goes on for the others and stops once each of their readers stopped.
+  (the Bedrock, OpenAI and Ollama clients' own resends included, and one whose connect lost the cancellation, on any
+  Python; an attempt sent before it still counted in `sent_requests` and seen by botocore's adaptive rate limiter, and
+  the retry quota botocore took for a resend it prevents given back), and the query records its latency and usage as
+  a stream closed early (no failure, whatever it raised past the stop) instead of nothing. A stop ends only its
+  reader's query: a call concurrent queries share (a query embedding) goes on for the others and stops once each of
+  their readers stopped.
 - A query embedding concurrent queries shared ran under the first query's retry deadline and counted in its usage
   alone: a query with a shorter deadline (its `limits.deadline_seconds`, or the same timeout started earlier) gave up
   the embedding at its deadline while the model was throttled or unavailable, failing a query with a longer one that
@@ -278,7 +280,9 @@ Bugs present in 0.3.0.
   worker thread read on until its read timeout. The query now closes every model response it opened when it ends,
   however it ends: its answer's, streamed or not (Ollama streams under `ainvoke` too), and its other calls' (a
   translation, an extraction); a Bedrock stream's socket is shut down first, ending a blocked read, and its worker
-  thread sends no request after the query ended. The query still fails with `QueryTimeoutError` at the limit.
+  thread sends no request after the query ended. Work the query keeps running past its end (`auto`'s speculative
+  extraction its route did not read) closes its own responses and is no longer its reader's, so it still fills the
+  extraction cache. The query still fails with `QueryTimeoutError` at the limit.
 - `Ctrl-C` while a sync `stream()` or `query_events()` waited for the answer's next chunk raised `RuntimeError:
   aclose(): asynchronous generator is already running` and left the query running on the chain's loop; it raises
   `KeyboardInterrupt` at once and cancels the query, as closing the stream does.

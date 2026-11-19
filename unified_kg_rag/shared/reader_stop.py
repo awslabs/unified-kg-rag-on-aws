@@ -24,6 +24,11 @@ ends another's query. The other per-query state such a call reads is taken
 from all its waiters the same way (:func:`share_with_waiters`), or it starts
 without it (:func:`blank_in_shared_calls`), never from its first caller
 alone.
+
+Work a query starts that may outlive it (``shared.query_work``) is stopped
+by its reader through a :class:`FollowingStop` (:func:`detachable_context`)
+only until the query keeps it past its end: then the reader is no longer
+its.
 """
 
 from __future__ import annotations
@@ -47,16 +52,32 @@ class ReaderStop:
         self._event = threading.Event()
         self._lock = threading.Lock()
         self._waiters: set[asyncio.Future[None]] = set()
+        self._followers: set[FollowingStop] = set()
 
     def is_set(self) -> bool:
         return self._event.is_set()
 
     def set(self) -> None:
-        self._event.set()
         with self._lock:
+            self._event.set()
             waiters, self._waiters = self._waiters, set()
+            followers, self._followers = self._followers, set()
         for waiter in waiters:
             waiter.get_loop().call_soon_threadsafe(_wake, waiter)
+        for follower in followers:
+            follower.set()
+
+    def _follow(self, follower: FollowingStop) -> None:
+        """Set ``follower`` when this stop is set (at once if it is)."""
+        with self._lock:
+            if not self._event.is_set():
+                self._followers.add(follower)
+                return
+        follower.set()
+
+    def _unfollow(self, follower: FollowingStop) -> None:
+        with self._lock:
+            self._followers.discard(follower)
 
     def _wait(self, timeout: float) -> None:
         self._event.wait(timeout)
@@ -108,6 +129,22 @@ class SharedStop(ReaderStop):
             return False
         self.set()
         return True
+
+
+class FollowingStop(ReaderStop):
+    """The stop of work a query started that may outlive it
+    (:func:`detachable_context`): set when the query's stop (``leader``) is,
+    until :meth:`detach`."""
+
+    def __init__(self, leader: ReaderStop) -> None:
+        super().__init__()
+        self._leader = leader
+        leader._follow(self)
+
+    def detach(self) -> None:
+        """The work is no longer its query's: its reader's stop no longer
+        stops it (a stop already set stays set)."""
+        self._leader._unfollow(self)
 
 
 def _wake(waiter: asyncio.Future[None]) -> None:
@@ -162,6 +199,28 @@ def detached_context(stop: ReaderStop | None = None) -> contextvars.Context:
 
     context.run(detach)
     return context
+
+
+def detachable_context() -> tuple[contextvars.Context, Callable[[], None]]:
+    """A copy of the current context for work this query starts that may
+    outlive it, and the function that detaches the work from the query.
+
+    Until it is detached the work stops when the query's reader stops (a
+    :class:`FollowingStop` of the query's stop is bound in its place), as
+    the query's own work does; detached (the query kept it running past its
+    end), the reader's stop no longer reaches it. The rest of the context
+    is the query's. Without a stop bound there is nothing to detach."""
+    context = contextvars.copy_context()
+    leader = _READER_STOP.get()
+    if leader is None:
+        return context, _nothing
+    stop = FollowingStop(leader)
+    context.run(_READER_STOP.set, stop)
+    return context, stop.detach
+
+
+def _nothing() -> None:
+    return None
 
 
 class WaiterState(Protocol):

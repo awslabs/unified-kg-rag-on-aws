@@ -38,6 +38,7 @@ from unified_kg_rag.adapters.local.token_counter import local_token_counter_fact
 from unified_kg_rag.adapters.observability.usage_callback import UsageCallbackHandler
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
+from unified_kg_rag.application.retrieval import rag_chain
 from unified_kg_rag.application.retrieval.rag_chain import (
     DEFAULT_ERROR_MESSAGE,
     GraphRAGChain,
@@ -51,6 +52,8 @@ from unified_kg_rag.domain.models import (
     SearchStrategy,
     SectionType,
 )
+from unified_kg_rag.shared.model_responses import track_response
+from unified_kg_rag.shared.reader_stop import ReaderStop, reader_stopped
 from unified_kg_rag.shared.usage import usage_scope
 
 pytestmark = pytest.mark.unit
@@ -75,6 +78,13 @@ class _ThreadedChat(BaseChatModel):
     cancelled: list[str] = Field(default_factory=list)
     # False: answer on the event loop instead (a cancel stops the request).
     threaded: bool = True
+    # On the event loop: each call opens a response the model clients'
+    # hooks track (shared.model_responses), read after its gate; one closed
+    # before it is read fails the call, as a cut connection does (``cut``).
+    tracked: bool = False
+    cut: list[str] = Field(default_factory=list)
+    # Whether the call's reader had stopped once its gate opened, per kind.
+    stopped: dict[str, list[bool]] = Field(default_factory=lambda: defaultdict(list))
     lock: Any = Field(default_factory=threading.Lock)
 
     @property
@@ -106,11 +116,23 @@ class _ThreadedChat(BaseChatModel):
         if self.threaded:
             return await super()._agenerate(messages, *a, **k)
         kind = self.kind(messages)
+        response = _Response()
+        if self.tracked:
+            with self.lock:
+                self.started.append(kind)
+            track_response(response)
         try:
+            if (gate := self.gates.get(kind)) is not None:
+                await asyncio.to_thread(gate.wait, 30)
             await asyncio.sleep(self.delays.get(kind, 0.0))
         except asyncio.CancelledError:
             self.cancelled.append(kind)
             raise
+        self.stopped[kind].append(reader_stopped())
+        if response.is_closed:
+            self.cut.append(kind)
+            raise ConnectionResetError("the response was closed before its body")
+        response.is_closed = True
         return self._reply(kind)
 
     def _reply(self, kind: str) -> ChatResult:
@@ -125,6 +147,17 @@ class _ThreadedChat(BaseChatModel):
             usage_metadata={"input_tokens": 50, "output_tokens": 5, "total_tokens": 55},
         )
         return ChatResult(generations=[ChatGeneration(message=message)])
+
+
+class _Response:
+    """A model response as the model clients' HTTP hooks track it: open
+    until its body is read."""
+
+    def __init__(self) -> None:
+        self.is_closed = False
+
+    async def aclose(self) -> None:
+        self.is_closed = True
 
 
 class _Factory:
@@ -289,6 +322,55 @@ async def test_the_unread_extraction_fills_the_cache(
     out = await chain.ainvoke(_auto())
     assert model.served.count("keywords") == 1
     assert out.metadata["usage"]["cache_hits"] == 1
+
+
+@pytest.mark.parametrize("events", [False, True])
+async def test_the_unread_extraction_reads_its_response_past_the_query(
+    release: threading.Event, events: bool
+) -> None:
+    # Regression: the query's model-response scope (closing_responses)
+    # closed the response of the extraction it kept running, so the
+    # extraction failed, was retried and failed again (a ReadError over
+    # HTTP), and the next query that reads it extracted it once more.
+    model = _ThreadedChat(gates={"keywords": release}, threaded=False, tracked=True)
+    chain = _chain(model, query_extraction_cache_size=8)
+    if events:
+        _ = [event async for event in chain.aquery_events(_auto())]
+    else:
+        await chain.ainvoke(_auto())
+    assert "keywords" not in model.served
+    release.set()
+    await _until(lambda: not chain._background_extractions._snapshot())
+    model.route = "mix"
+    out = await chain.ainvoke(_auto())
+    assert model.cut == []
+    assert model.started.count("keywords") == model.served.count("keywords") == 1
+    assert out.metadata["usage"]["cache_hits"] == 1
+
+
+async def test_a_kept_extraction_is_no_longer_its_readers(
+    monkeypatch: pytest.MonkeyPatch, release: threading.Event
+) -> None:
+    # Kept past its query, the extraction is detached from the query's
+    # reader: a stop of that reader set afterwards does not end it.
+    stops: list[ReaderStop] = []
+    scope = rag_chain.reader_stop_scope
+
+    def recording(stop: ReaderStop) -> Any:
+        stops.append(stop)
+        return scope(stop)
+
+    monkeypatch.setattr(rag_chain, "reader_stop_scope", recording)
+    model = _ThreadedChat(gates={"keywords": release}, threaded=False)
+    chain = _chain(model, query_extraction_cache_size=8)
+    _ = [event async for event in chain.aquery_events(_auto())]
+    assert chain._background_extractions._snapshot()
+    (stop,) = stops
+    stop.set()
+    release.set()
+    await _until(lambda: not chain._background_extractions._snapshot())
+    assert model.stopped["keywords"] == [False]
+    assert model.served.count("keywords") == 1
 
 
 async def test_a_stream_leaves_the_unread_extraction_running(
