@@ -41,7 +41,10 @@ jobs:
       - name: Compare the pins with upstream
         id: pins
         # Exit 1 = a pin is behind (reported below), 2 = a lookup failed
-        # (fails the job, so a broken check does not pass silently).
+        # (fails the job, so a broken check does not pass silently). The
+        # script retries each docker lookup and asks Docker Hub for an ECR
+        # Public library image ECR Public refuses (a 429), and prints the
+        # last attempt's stderr when that fails too.
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |

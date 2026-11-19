@@ -32,11 +32,14 @@ Usage::
 Exit status 0 when every pin is current, 1 when one is behind (the report
 says which), 2 when a lookup failed. A release past a pin held on purpose
 (``HELD``) is listed in the report as held and does not count as behind; a
-newer release inside the held series (a patch of it) does. Image digests come from
-``docker buildx imagetools inspect``; release versions from the GitHub API
-(``GITHUB_TOKEN``, if set, raises its rate limit) and the npm registry; the
-apt versions from ``apt-cache policy`` in the pinned base image (``docker
-run``).
+newer release inside the held series (a patch of it) does. Image digests come
+from ``docker buildx imagetools inspect``; release versions from the GitHub
+API (``GITHUB_TOKEN``, if set, raises its rate limit) and the npm registry;
+the apt versions from ``apt-cache policy`` in the pinned base image
+(``docker run``). Each docker command is tried three times, and an ECR
+Public library image (anonymous pulls are rate limited) once more on Docker
+Hub, whose digests ECR Public mirrors; a lookup that still fails prints the
+last command's stderr.
 ``tests/unit/test_check_pins.py`` keeps the pin patterns matching the files.
 """
 
@@ -48,6 +51,7 @@ import os
 import re
 import subprocess  # nosec B404 - fixed argv, no shell
 import sys
+import time
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -323,23 +327,80 @@ def check(pins: Pins, lookups: Lookups) -> Report:
     return Report(behind=behind, held=held)
 
 
+class LookupFailed(RuntimeError):
+    """A docker lookup that failed on every attempt and every registry."""
+
+
+# ECR Public's docker/library mirrors Docker Hub's official images, digests
+# included, and limits anonymous pulls (429 toomanyrequests): a lookup there
+# that fails is made again on Docker Hub, as the quality workflow's docker job
+# pulls the base image.
+_ECR_LIBRARY = "public.ecr.aws/docker/library/"
+_HUB_LIBRARY = "docker.io/library/"
+# The waits (seconds) before each further attempt of a docker command.
+RETRY_DELAYS: tuple[float, ...] = (10.0, 30.0)
+_sleep = time.sleep
+
+
+def _registries(ref: str) -> list[str]:
+    """``ref``, then Docker Hub's same image for an ECR Public library one."""
+    if ref.startswith(_ECR_LIBRARY):
+        return [ref, _HUB_LIBRARY + ref.removeprefix(_ECR_LIBRARY)]
+    return [ref]
+
+
+def _docker(argv: list[str], timeout: int) -> str:
+    """The stdout of ``docker *argv``, tried once more after each of
+    :data:`RETRY_DELAYS`; a failure names the last attempt's stderr."""
+    last = ""
+    for delay in (*RETRY_DELAYS, None):
+        try:
+            return subprocess.run(  # nosec B603 B607 - fixed argv, no shell
+                ["docker", *argv],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            ).stdout
+        except subprocess.CalledProcessError as e:
+            last = f"exit {e.returncode}: {(e.stderr or '').strip()[-2000:]}"
+        except subprocess.TimeoutExpired:
+            last = f"no answer in {timeout} s"
+        if delay is not None:
+            _sleep(delay)
+    raise LookupFailed(
+        f"docker {' '.join(argv)}: failed {len(RETRY_DELAYS) + 1} times; {last}"
+    )
+
+
+def _on_registries(ref: str, lookup: Callable[[str], str]) -> str:
+    """``lookup`` of ``ref``, then of the same image on each fallback
+    registry (:func:`_registries`) while it fails."""
+    failures: list[str] = []
+    for candidate in _registries(ref):
+        try:
+            return lookup(candidate)
+        except LookupFailed as e:
+            failures.append(str(e))
+    raise LookupFailed("; ".join(failures))
+
+
 def _manifest(ref: str) -> dict[str, object]:
     """``ref``'s manifest (a multi-arch index for a tag) as buildx reads it."""
-    out = subprocess.run(  # nosec B603 B607 - fixed argv, no shell
-        [
-            "docker",
-            "buildx",
-            "imagetools",
-            "inspect",
-            ref,
-            "--format",
-            "{{json .Manifest}}",
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=120,
-    ).stdout
+    out = _on_registries(
+        ref,
+        lambda candidate: _docker(
+            [
+                "buildx",
+                "imagetools",
+                "inspect",
+                candidate,
+                "--format",
+                "{{json .Manifest}}",
+            ],
+            timeout=120,
+        ),
+    )
     manifest: dict[str, object] = json.loads(out)
     return manifest
 
@@ -378,24 +439,23 @@ def _platform_digests(ref: str) -> dict[str, str]:
 def _apt_policy(image: str, packages: tuple[str, ...]) -> dict[str, tuple[str, str]]:
     """``apt-cache policy`` of ``packages`` in ``image``, after an update:
     {package: (installed, candidate)}."""
-    out = subprocess.run(  # nosec B603 B607 - fixed argv, no shell on the host
-        [
-            "docker",
-            "run",
-            "--rm",
-            "--entrypoint",
-            "sh",
-            image,
-            "-c",
-            'apt-get update -qq > /dev/null && apt-cache policy "$@"',
-            "sh",
-            *packages,
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=600,
-    ).stdout
+    out = _on_registries(
+        image,
+        lambda candidate: _docker(
+            [
+                "run",
+                "--rm",
+                "--entrypoint",
+                "sh",
+                candidate,
+                "-c",
+                'apt-get update -qq > /dev/null && apt-cache policy "$@"',
+                "sh",
+                *packages,
+            ],
+            timeout=600,
+        ),
+    )
     return parse_apt_policy(out, packages)
 
 
