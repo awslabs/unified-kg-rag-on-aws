@@ -140,7 +140,7 @@ async def test_query_extractions_use_the_language_the_index_was_built_in(
         seen["keywords"] = language
         return None
 
-    async def translate(query, language, config=None):
+    async def translate(query, language, config=None, namespace=None):
         seen["translation"] = language
         return query
 
@@ -193,7 +193,7 @@ async def test_a_query_is_translated_exactly_when_its_language_differs(
     chain = _chain(config)
     seen: list[str] = []
 
-    async def translate(query, language, config=None):
+    async def translate(query, language, config=None, namespace=None):
         seen.append(language)
         return f"<{language}> {query}"
 
@@ -225,7 +225,7 @@ async def test_a_query_of_undecided_language_is_searched_as_written(
     chain = _chain(config)
     seen: list[str] = []
 
-    async def translate(query, language, config=None):
+    async def translate(query, language, config=None, namespace=None):
         seen.append(language)
         return f"<{language}> {query}"
 

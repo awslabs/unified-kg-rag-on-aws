@@ -245,9 +245,10 @@ the methodology: GraphRAG's (§6.1) and LightRAG's (§6.2), the wrapper
   and its decision stay unchanged by the extractions,
   `custom_prompts.strategy_selection_*` keeps working, and the router's
   output stays one short object, at the price of one or two short fast-model
-  calls a query. The extractions are cached per question, target language,
-  model and prompt text (`search.query_extraction_cache_size`), so the
-  repeats and arms of a comparison read the same ones. The
+  calls a query. The extractions, and the query translation, are cached per
+  question, target language, model and prompt text
+  (`search.query_extraction_cache_size`), so the repeats and arms of a
+  comparison read the same ones. The
   prompt sends questions that chain from a named entity to `local` (synthetic
   multi-hop harness: `local` 0.925, `mix` 0.40 exact match).
 

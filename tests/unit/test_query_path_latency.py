@@ -341,6 +341,105 @@ async def test_the_cache_is_keyed_by_the_namespace() -> None:
     assert factory.counts[EntityExtractionPrompt] == 3
 
 
+_JA_QUESTION = "供給者はどこにありますか？"
+
+
+def _ja_on_en() -> Config:
+    """A ja->en index: a Japanese question is translated into English."""
+    config = _config()
+    config.processing.translation.source_language = "ja"
+    config.processing.translation.target_language = "en"
+    return config
+
+
+async def test_a_repeated_question_reuses_its_translation() -> None:
+    # Regression (ARCH F2): the entities and keywords were cached, the
+    # translation was not, so every arm and repeat of a non-English question
+    # paid a translator call on its critical path, and paired arms could
+    # search different translations.
+    factory = _Factory()
+    chain = _chain(_ja_on_en(), factory)
+    first = await _route(chain, "mix", query=_JA_QUESTION)
+    factory.outputs[TranslationPrompt] = '{"translation": "another one"}'
+    for strategy in ("local", "naive", "mix"):
+        state = await _route(chain, strategy, query=_JA_QUESTION)
+        assert state["processed_query"].final_query == "translated"
+    assert first["processed_query"].final_query == "translated"
+    assert factory.counts[TranslationPrompt] == 1
+    # Keyed by the namespace as the extractions are, shared inside a scope.
+    from unified_kg_rag.application.retrieval.rag_chain import (
+        extraction_cache_scope,
+    )
+
+    await _route(chain, "naive", query=_JA_QUESTION, suffix="tenant-b")
+    assert factory.counts[TranslationPrompt] == 2
+    for repeat in ("r1", "r2"):
+        with extraction_cache_scope(repeat):
+            await _route(chain, "naive", query=_JA_QUESTION, suffix="tenant-a")
+            await _route(chain, "naive", query=_JA_QUESTION, suffix="tenant-b")
+    # One per repeat: a repeat samples the translation again.
+    assert factory.counts[TranslationPrompt] == 4
+
+
+async def test_concurrent_arms_share_one_translation_call() -> None:
+    from unified_kg_rag.application.retrieval.rag_chain import (
+        extraction_cache_scope,
+    )
+
+    factory = _Factory()
+    factory.latency[TranslationPrompt] = 0.05
+    chain = _chain(_ja_on_en(), factory)
+    with extraction_cache_scope("run"):
+        states = await asyncio.gather(
+            _route(chain, "naive", query=_JA_QUESTION, suffix="a"),
+            _route(chain, "naive", query=_JA_QUESTION, suffix="b"),
+        )
+    assert factory.counts[TranslationPrompt] == 1
+    assert {s["processed_query"].final_query for s in states} == {"translated"}
+
+
+@pytest.mark.parametrize(("fast_effort", "calls"), [(None, 1), ("high", 2)])
+async def test_an_arm_reads_the_run_s_translation_only_at_its_settings(
+    fast_effort: str | None, calls: int
+) -> None:
+    # A run-eval arm shares the run's cache when its extraction settings
+    # match (run_evaluation.extraction_settings: the entity extraction's
+    # tier); the translation runs on the fast tier, so the call's own
+    # settings key it.
+    from unified_kg_rag.application.retrieval.rag_chain import (
+        extraction_cache_scope,
+    )
+
+    factory = _Factory()
+    run = _chain(_ja_on_en(), factory)
+    arm_config = _ja_on_en()
+    if fast_effort:
+        arm_config.aws.bedrock.fast_effort = fast_effort  # type: ignore[assignment]
+    arm = _chain(arm_config, factory)
+    arm._extractions = run._extractions
+    with extraction_cache_scope("run"):
+        await _route(run, "naive", query=_JA_QUESTION)
+        await _route(arm, "naive", query=_JA_QUESTION)
+    assert factory.counts[TranslationPrompt] == calls
+
+
+async def test_a_refusal_is_kept_and_an_unreadable_translation_is_not() -> None:
+    factory = _Factory()
+    factory.outputs[TranslationPrompt] = "[CANNOT_TRANSLATE]"
+    chain = _chain(_ja_on_en(), factory)
+    for _ in range(2):
+        state = await _route(chain, "naive", query=_JA_QUESTION)
+        assert state["processed_query"].final_query == _JA_QUESTION
+    assert factory.counts[TranslationPrompt] == 1
+    factory = _Factory()
+    factory.outputs[TranslationPrompt] = "not a translation"
+    chain = _chain(_ja_on_en(), factory)
+    chain.ignore_errors = True
+    for _ in range(2):
+        await _route(chain, "naive", query=_JA_QUESTION)
+    assert factory.counts[TranslationPrompt] == 2
+
+
 def test_the_cache_is_keyed_by_the_prompt_text() -> None:
     plain = GraphRAGChain(config=_config())
     custom = GraphRAGChain(

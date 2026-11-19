@@ -320,7 +320,7 @@ run-eval --data-path eval.json --search-strategy local,mix --repeats 2 \
   전략의 답변이 인용하는지(`search.citations`를 전략별로 판정한 값, 매니페스트의
   `citations.strategies`)가 다르면 답변 프롬프트도 다르다고 경고합니다. `global`과 `drift`는
   기본값으로 인용하지 않으므로, 맵에서 같게 맞추지 않으면 다른 전략과 비교할 때 경고합니다.
-- 오버레이가 질의 추출(질문마다 한 번 호출하는 엔터티와 키워드)을 바꾸지 않으면 비교군은 기본
+- 오버레이가 질의 추출(질문마다 한 번씩 호출하는 번역, 엔터티, 키워드)을 바꾸지 않으면 비교군은 기본
   실행의 추출 결과로 검색합니다. 추출 모델, 기본 계층의 추론 강도(effort),
   `search.output_ceilings.query_extraction`, `models.default_max_output_tokens`, LLM
   제공자(kind, `base_url`, temperature, 출력 상한, 컨텍스트 창), Bedrock 리전을 바꾸거나 `search.query_extraction_cache_size: 0`을 지정한 비교군은 직접

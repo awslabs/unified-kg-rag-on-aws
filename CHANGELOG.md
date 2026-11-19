@@ -261,6 +261,10 @@ Bugs present in 0.3.0.
   entities 22.0 s to 7.5 s, communities 17.2 s to 2.9 s). A batch now also closes at a step budget (Added); a
   request refused for its size is permanent and split in two instead of retried; `docker/compose.local.yaml` gives
   the server a 16 MiB stack (`-Xss16m`).
+- The query translation was outside the extraction cache: every repeated question, run-eval arm and console retry of
+  a non-English question paid a translator call, and paired arms could search different translations. It is now
+  cached and shared in flight like the entities and keywords (`search.query_extraction_cache_size`), keyed also by
+  the model's effort and `model_overrides`.
 - A streamed answer whose caller was cancelled mid-answer (a console client that disconnects, a cancelled task, an
   `asyncio.timeout` around `astream`) was cancelled wherever it was. Cancelled while the model's stream waited for a
   chunk, LangChain left the response open, holding a model client connection: on an Ollama or OpenAI-compatible server
