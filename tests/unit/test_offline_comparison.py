@@ -43,7 +43,7 @@ from unified_kg_rag.evaluation.report import comparison_markdown
 from unified_kg_rag.evaluation.saved_results import (
     check_answer_scoring,
     load_saved_runs,
-    rerank_unmetered,
+    usage_unmetered,
 )
 from unified_kg_rag.shared import EvaluationException
 
@@ -233,36 +233,88 @@ class TestCostBlock:
         both = cost_comparison(runs, prices=prices, resamples=2000)
         assert "usage/cost_usd" in both["deltas_vs_baseline"]["mix"]
         cost = cost_comparison(
-            runs, prices=prices, unmetered_rerank={"baseline:local"}, resamples=2000
+            runs, prices=prices, unmetered_usage={"baseline:local"}, resamples=2000
         )
         assert "usage/cost_usd" not in cost["deltas_vs_baseline"]["mix"]
         # The other measures still pair, and each side keeps its own USD.
         assert "usage/llm_calls" in cost["deltas_vs_baseline"]["mix"]
         assert cost["strategies"]["mix"]["usd_total"] is not None
         (warning,) = cost["warnings"]
-        assert "baseline:local" in warning and "usage_schema 3" in warning
+        assert "baseline:local" in warning and "usage_schema 4" in warning
         # Every side unmetered: like with like, no warning.
         same = cost_comparison(
             runs,
             prices=prices,
-            unmetered_rerank={"baseline:local", "mix"},
+            unmetered_usage={"baseline:local", "mix"},
             resamples=2000,
         )
         assert "usage/cost_usd" in same["deltas_vs_baseline"]["mix"]
         assert same["warnings"] == []
 
     def test_runs_without_a_usage_schema_meter_no_rerank(self) -> None:
-        assert rerank_unmetered(
+        assert usage_unmetered(
             [
                 ("old", {"answer_scoring": None}),
                 ("v1", {"usage_schema": 1}),
                 # 2 counted one search unit per 100 documents, too few for
                 # long ones: its USD is not compared with a 3 run's.
                 ("v2", {"usage_schema": 2}),
-                ("now", {"usage_schema": 3}),
+                # 3 counted no embedding request.
+                ("v3", {"usage_schema": 3}),
+                ("now", {"usage_schema": 4}),
                 ("unknown", None),
             ]
-        ) == {"old", "v1", "v2"}
+        ) == {"old", "v1", "v2", "v3"}
+
+    def test_embedding_requests_are_described_and_priced_when_priced(self) -> None:
+        from unified_kg_rag.domain.models import LLMUsage
+
+        def with_embeddings(run: Any, calls: int, tokens: int) -> Any:
+            for result in run[1]:
+                llm = result.usage.by_model["m-a"].model_dump()
+                embed = {"embedding_calls": calls, "embedding_input_tokens": tokens}
+                result.usage = LLMUsage(
+                    **{**llm, **embed}, by_model={"m-a": llm, "embedder": embed}
+                )
+            return run
+
+        runs = {
+            "local": [with_embeddings(_run({"q1": 1.0}, "local"), 2, 300)],
+            "mix": [with_embeddings(_run({"q1": 1.0}, "mix"), 5, 900)],
+        }
+        llm_only = {
+            "m-a": ModelPrice(
+                input_per_million_tokens=1.0, output_per_million_tokens=2.0
+            )
+        }
+        cost = cost_comparison(runs, prices=llm_only, resamples=2000)
+        assert cost["strategies"]["mix"]["embedding_calls_per_query"]["mean"] == 5
+        assert cost["strategies"]["local"]["embedding_input_tokens_per_query"] == {
+            "mean": 300.0,
+            "p50": 300.0,
+            "p95": 300.0,
+        }
+        # Not a tested measure: the cost family keeps its tests.
+        assert not any("embedding" in key for key in cost["deltas_vs_baseline"]["mix"])
+        # Unpriced embeddings are left out of the USD, which stays known.
+        assert cost["strategies"]["mix"]["usd_total"] is not None
+        assert any(
+            "embedding_per_million_tokens for embedder" in w for w in cost["warnings"]
+        )
+        priced = cost_comparison(
+            runs,
+            prices={
+                **llm_only,
+                "embedder": ModelPrice(embedding_per_million_tokens=10.0),
+            },
+            resamples=2000,
+        )
+        added = (
+            priced["strategies"]["mix"]["usd_total"]
+            - cost["strategies"]["mix"]["usd_total"]
+        )
+        assert added == pytest.approx(900 * 10.0 / 1e6)
+        assert not any("embedding_per_million_tokens" in w for w in priced["warnings"])
 
     def test_a_price_entry_must_name_what_it_prices(self) -> None:
         from pydantic import ValidationError

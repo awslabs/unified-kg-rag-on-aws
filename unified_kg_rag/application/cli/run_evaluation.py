@@ -169,9 +169,9 @@ if TYPE_CHECKING:
         load_saved_runs,
         pooling_errors,
         pooling_warnings,
-        rerank_unmetered,
         strategy_order,
         summary_warnings,
+        usage_unmetered,
     )
 
 
@@ -284,7 +284,7 @@ __getattr__, _load_evaluation = lazy_names(
         "load_saved_runs": _saved_results_module,
         "pooling_errors": _saved_results_module,
         "pooling_warnings": _saved_results_module,
-        "rerank_unmetered": _saved_results_module,
+        "usage_unmetered": _saved_results_module,
         "summary_warnings": _saved_results_module,
     },
 )
@@ -2339,7 +2339,7 @@ class EvaluationRunner:
             )
         prices = self.config.models.prices
         # Runs saved before their usage counted rerank requests.
-        unmetered = rerank_unmetered(manifests)
+        unmetered = usage_unmetered(manifests)
         names = list(runs)
         primary_metric = (
             getattr(self.args, "primary_metric", None)
@@ -2363,7 +2363,7 @@ class EvaluationRunner:
                 pairs,
                 categories=measured.categories,
                 prices=prices,
-                unmetered_rerank=unmetered,
+                unmetered_usage=unmetered,
                 resamples=self.config.evaluation.resamples,
                 closed_book=strata,
             )
@@ -2386,7 +2386,7 @@ class EvaluationRunner:
                 pairs,
                 categories=measured.categories,
                 prices=prices,
-                unmetered_rerank=unmetered,
+                unmetered_usage=unmetered,
                 resamples=self.config.evaluation.resamples,
                 closed_book=strata,
             )
@@ -2404,7 +2404,7 @@ class EvaluationRunner:
                 runs,
                 categories=measured.categories,
                 prices=prices,
-                unmetered_rerank=unmetered,
+                unmetered_usage=unmetered,
                 resamples=self.config.evaluation.resamples,
                 closed_book=strata,
             )

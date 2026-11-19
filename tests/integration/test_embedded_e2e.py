@@ -303,9 +303,11 @@ def _ask_every_strategy(
             server.input_tokens - tokens_before[0],
             server.output_tokens - tokens_before[1],
         ), strategy
-        # Rerank requests count under their own role, and are no calls.
-        assert set(usage["by_role"]) - {"rerank"} == {"query"}, strategy
-        assert usage["by_role"].get("rerank", {}).get("llm_calls", 0) == 0
+        # Rerank and embedding requests count under their own roles, and
+        # are no calls.
+        assert set(usage["by_role"]) - {"rerank", "embedding"} == {"query"}, strategy
+        for role in ("rerank", "embedding"):
+            assert usage["by_role"].get(role, {}).get("llm_calls", 0) == 0
         assert server.answers > answers_before, strategy
         assert out.search_results.results, strategy
         # Cited: the sources are stored artifacts (and the structured
@@ -462,6 +464,23 @@ def test_local_mode_runs_end_to_end_on_the_embedded_stores(
         )
         assert named.search_results.query.search_type is SearchType.VECTOR
         config.search.search_type = SearchType.HYBRID
+
+        # A new question's embedding requests count in its usage, one per
+        # request the server served.
+        requests_before = len(server.embed_models)
+        fresh = chain.invoke(
+            RAGInput(
+                query="Which depot keeps the widgets?",
+                search_strategy=SearchStrategy.NAIVE,
+            )
+        )
+        embedding = fresh.metadata["usage"]["by_role"]["embedding"]
+        assert (
+            embedding["embedding_calls"] == len(server.embed_models) - requests_before
+        )
+        assert embedding["embedding_calls"] >= 1
+        assert embedding["embedding_input_tokens"] >= 1
+        assert embedding["embedding_estimated_calls"] == embedding["embedding_calls"]
 
         # The default evaluators, with sources resolved to file names
         # through the SQLite vector store.

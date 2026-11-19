@@ -176,3 +176,32 @@ def test_buffer_is_capped_only_for_small_windows(
     mocker.patch.object(BedrockTokenCounter, "truncate_to_token_limit", spy)
     embed(model_id, ["Vendor ships parts."])
     assert limits and set(limits) == {limit}
+
+
+@pytest.mark.parametrize(
+    ("model_id", "estimated"),
+    [
+        # Titan reports inputTextTokenCount (1 per text in this fake).
+        (EmbeddingModelId("amazon.titan-embed-text-v2:0"), False),
+        # Cohere reports none: estimated from the texts.
+        (EmbeddingModelId("cohere.embed-multilingual-v3"), True),
+    ],
+)
+def test_each_embedding_request_is_counted_with_its_tokens(
+    model_id: EmbeddingModelId, estimated: bool, embed
+) -> None:
+    from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
+    from unified_kg_rag.shared.usage import usage_scope
+
+    texts = ["Vendor partners with Buyer.", "Depot stores gadgets."]
+    with usage_scope() as meter:
+        sent = embed(model_id, texts)
+    counts = meter.snapshot()["by_role"]["embedding"]
+    requests = 1 if estimated else len(texts)  # Cohere batches, Titan does not
+    assert counts["embedding_calls"] == requests
+    assert counts["embedding_estimated_calls"] == (requests if estimated else 0)
+    assert counts["embedding_input_tokens"] == (
+        sum(estimate_token_count(t) for t in sent) if estimated else len(texts)
+    )
+    # Not model calls: no llm_calls, no input_tokens.
+    assert counts["llm_calls"] == counts["input_tokens"] == 0

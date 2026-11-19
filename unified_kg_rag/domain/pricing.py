@@ -7,7 +7,10 @@
 package computes reads it here: a ``run-eval`` comparison's cost estimate,
 the console's per-answer cost and dashboard, an ingestion run's ``processing.max_run_usd`` and
 ``run-ingestion --estimate``. No prices ship with the package: one would go
-stale.
+stale. An embedding model is priced by its input tokens when its entry sets
+``embedding_per_million_tokens``; without one its requests are left out
+(``unpriced_embedding_models`` names it) rather than making the cost
+unknown.
 
 A price is found by the model id the usage records name (the id the model
 factory resolved, an inference profile included), else by the entries of
@@ -32,6 +35,7 @@ __all__ = [
     "price_of",
     "token_rates",
     "tokens_cost_usd",
+    "unpriced_embedding_models",
     "unpriced_models",
     "usage_cost_usd",
 ]
@@ -69,17 +73,20 @@ def tokens_cost_usd(price: ModelPrice, input_tokens: int, output_tokens: int) ->
 def counts_cost_usd(counts: LLMUsageCounts, price: ModelPrice) -> float:
     """The USD of one model's counts: ``input_tokens`` includes the cache
     reads and writes, each priced at its own rate when ``price`` has one;
-    a rerank model's search units at their own price."""
+    a rerank model's search units and an embedding model's input tokens
+    at their own prices."""
     cached = counts.cache_read_input_tokens + counts.cache_write_input_tokens
     rate, output = token_rates(price) or (0.0, 0.0)
     read = price.cache_read_per_million_tokens
     write = price.cache_write_per_million_tokens
     units = price.per_thousand_rerank_search_units or 0.0
+    embedding = price.embedding_per_million_tokens or 0.0
     return (
         max(0, counts.input_tokens - cached) * rate
         + counts.cache_read_input_tokens * (rate if read is None else read)
         + counts.cache_write_input_tokens * (rate if write is None else write)
         + counts.output_tokens * output
+        + counts.embedding_input_tokens * embedding
     ) / 1e6 + counts.rerank_search_units * units / 1e3
 
 
@@ -96,6 +103,24 @@ def unpriced_models(usage: LLMUsage, prices: Mapping[str, ModelPrice]) -> set[st
         ):
             unpriced.add(model)
     return unpriced
+
+
+def unpriced_embedding_models(
+    usage: LLMUsage, prices: Mapping[str, ModelPrice]
+) -> set[str]:
+    """The embedding models ``usage`` sent requests to that have no
+    ``embedding_per_million_tokens``: their requests are left out of
+    :func:`usage_cost_usd` (which they do not make ``None``, so a price
+    list written before embeddings were counted still prices the rest)."""
+    return {
+        model
+        for model, counts in usage.by_model.items()
+        if counts.embedding_calls
+        and (
+            (price := price_of(prices, model)) is None
+            or price.embedding_per_million_tokens is None
+        )
+    }
 
 
 def usage_cost_usd(

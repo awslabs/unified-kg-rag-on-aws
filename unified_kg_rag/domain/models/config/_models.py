@@ -22,7 +22,8 @@ from ._common import ConfigSection
 
 class ModelPrice(ConfigSection):
     """A model's on-demand price (``models.prices``): a language model's
-    token prices, or a rerank model's search-unit price."""
+    token prices, a rerank model's search-unit price, or an embedding
+    model's input-token price."""
 
     input_per_million_tokens: float | None = Field(
         default=None,
@@ -52,6 +53,18 @@ class ModelPrice(ConfigSection):
             "sets this, the two token prices, or both."
         ),
     )
+    embedding_per_million_tokens: float | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "An embedding model's USD per million input tokens (usage "
+            "embedding_input_tokens: the provider's count, else an "
+            "estimate; Amazon Bedrock prices Titan Text Embeddings V2 per "
+            "1,000 input tokens). Unset, the embedding requests are left "
+            "out of the USD figures, with a warning in a run-eval "
+            "comparison."
+        ),
+    )
     cache_read_per_million_tokens: float | None = Field(
         default=None,
         ge=0,
@@ -79,11 +92,16 @@ class ModelPrice(ConfigSection):
                 "a model price sets both input_per_million_tokens and "
                 "output_per_million_tokens, or neither (a rerank model's)"
             )
-        if tokens[0] is None and self.per_thousand_rerank_search_units is None:
+        if (
+            tokens[0] is None
+            and self.per_thousand_rerank_search_units is None
+            and self.embedding_per_million_tokens is None
+        ):
             raise ValueError(
                 "a model price sets input_per_million_tokens and "
-                "output_per_million_tokens (a language model), or "
-                "per_thousand_rerank_search_units (a rerank model)"
+                "output_per_million_tokens (a language model), "
+                "per_thousand_rerank_search_units (a rerank model), or "
+                "embedding_per_million_tokens (an embedding model)"
             )
         return self
 
@@ -513,7 +531,9 @@ class ModelsConfig(ConfigSection):
             "priced at its own rate when the model's price sets one. The "
             "rerank model is priced too (per_thousand_rerank_search_units; "
             "a local cross-encoder at 0): an answer with an unpriced model "
-            "that was called, reranker included, has no USD estimate."
+            "that was called, reranker included, has no USD estimate. The "
+            "embedding model's requests are priced when its entry sets "
+            "embedding_per_million_tokens, and left out otherwise."
         ),
     )
     default_max_output_tokens: int | None = Field(

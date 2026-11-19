@@ -252,7 +252,11 @@ def test_questions_are_recorded_for_history_and_the_dashboard(client: Any) -> No
     assert any(
         m["model"] == "demo-model" and m["cost_usd"] for m in dashboard["models"]
     )
-    assert dashboard["roles"][0]["role"] == "query"
+    roles = {r["role"]: r for r in dashboard["roles"]}
+    assert roles["query"]["llm_calls"] >= 1
+    # The question's embedding requests count under their own role, as no
+    # model calls.
+    assert roles["embedding"]["llm_calls"] == 0
 
 
 def test_a_korean_question_is_answered_from_the_korean_note(client: Any) -> None:

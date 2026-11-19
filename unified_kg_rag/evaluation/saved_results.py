@@ -454,14 +454,14 @@ def judge_warnings(
     return warnings
 
 
-def rerank_unmetered(
+def usage_unmetered(
     manifests: Sequence[tuple[str, dict[str, Any] | None]],
 ) -> set[str]:
-    """The labels of the runs whose usage records do not count rerank search
-    units as billed: their manifest records a ``usage_schema`` below
-    ``USAGE_SCHEMA`` (none before 2, too few for long documents before 3), or
-    none (saved before it was recorded). A run without a manifest is not
-    known, and not named."""
+    """The labels of the runs whose usage records count less than
+    ``USAGE_SCHEMA`` does: their manifest records a ``usage_schema`` below it
+    (no rerank search units before 2, too few for long documents before 3,
+    no embedding requests before 4), or none (saved before it was recorded).
+    A run without a manifest is not known, and not named."""
     return {
         label
         for label, manifest in manifests

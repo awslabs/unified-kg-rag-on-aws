@@ -149,6 +149,9 @@ def test_a_cached_response_is_a_cache_hit_not_a_call(tmp_path: Path) -> None:
             "failed_calls": 0,
             "rerank_calls": 0,
             "rerank_search_units": 0,
+            "embedding_calls": 0,
+            "embedding_input_tokens": 0,
+            "embedding_estimated_calls": 0,
         }
     }
 
@@ -1224,3 +1227,32 @@ async def test_an_attempts_reader_closes_its_model_stream_when_closed() -> None:
     assert await anext(areader) == 1
     await areader.aclose()
     assert closed == ["sync", "async"]
+
+
+async def test_a_local_embedding_request_is_counted_with_estimated_tokens() -> None:
+    from langchain_core.embeddings import DeterministicFakeEmbedding
+
+    from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
+    from unified_kg_rag.adapters.local.embeddings import TracedEmbeddings
+
+    model = TracedEmbeddings(
+        DeterministicFakeEmbedding(size=4),
+        model_id="synthetic-embed",
+        provider_name="ollama",
+        max_input_tokens=512,
+    )
+    texts = ["Vendor ships widgets.", "Depot stores them."]
+    model.embed_documents(texts)  # outside a scope: not recorded
+    with usage.usage_scope() as meter:
+        model.embed_documents(texts)
+        model.embed_query("Who ships?")
+        await model.aembed_documents(texts)
+        await model.aembed_query("Who stores?")
+    counts = meter.snapshot()["by_model"]["synthetic-embed"]
+    expected = 2 * sum(map(estimate_token_count, texts)) + sum(
+        map(estimate_token_count, ["Who ships?", "Who stores?"])
+    )
+    assert counts["embedding_calls"] == counts["embedding_estimated_calls"] == 4
+    assert counts["embedding_input_tokens"] == expected
+    assert counts["llm_calls"] == 0
+    assert meter.snapshot()["by_role"]["embedding"]["embedding_calls"] == 4
