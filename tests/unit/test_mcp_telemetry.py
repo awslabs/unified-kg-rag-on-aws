@@ -122,3 +122,47 @@ async def test_a_cancelled_call_is_logged_and_spanned_as_cancelled(
     assert "error.type" not in attributes
     (line,) = [line for line in lines if "MCP tool kg_search" in line]
     assert "cancelled after" in line and "failed" not in line
+
+
+async def test_a_cancelled_error_its_task_was_not_cancelled_for_is_a_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # rv54 low: any CancelledError out of the call was taken for a client
+    # that left. One the call raised itself (it awaited a future cancelled
+    # elsewhere) while its own task is not being cancelled is a failure.
+    import asyncio
+
+    from opentelemetry.trace import StatusCode
+
+    from tests.unit.test_mcp_tools import FakeChain
+    from unified_kg_rag.application.cli import mcp_tools
+    from unified_kg_rag.application.retrieval.rag_chain import RAGInput, SearchOutput
+
+    lines: list[str] = []
+    monkeypatch.setattr(
+        mcp_tools.logger, "info", lambda message, *args: lines.append(message % args)
+    )
+
+    class CancelledInside(FakeChain):
+        async def asearch(self, rag_input: RAGInput) -> SearchOutput:
+            future = asyncio.get_running_loop().create_future()
+            future.cancel()
+            await future
+            raise AssertionError("not reached")
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    configure_observability(ObservabilityConfig(enabled=True), tracer_provider=provider)
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await _tools(CancelledInside()).search("q")
+        (span,) = [
+            s for s in exporter.get_finished_spans() if s.name == "kg_rag.mcp.tool"
+        ]
+    finally:
+        observability.uninstall()
+    assert span.status.status_code is StatusCode.ERROR
+    assert "kg_rag.cancelled" not in dict(span.attributes or {})
+    (line,) = [line for line in lines if "MCP tool kg_search" in line]
+    assert "failed after" in line and "(CancelledError)" in line

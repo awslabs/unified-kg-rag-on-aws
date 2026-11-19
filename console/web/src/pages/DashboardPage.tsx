@@ -46,8 +46,9 @@ interface Dashboard {
     cancelled?: number;
     latency_p50: number | null;
     latency_p95: number | null;
-    /** Of the questions served (a cancelled one's spend is in the totals). */
-    tokens_per_query: number;
+    /** Of the questions served (a cancelled one's spend is in the totals);
+     * null when none was. */
+    tokens_per_query: number | null;
     cost_usd: number | null;
     cost_per_query: number | null;
   }[];
@@ -141,6 +142,7 @@ export function DashboardPage() {
                     <th className="num">{t("dashboard.declined")}</th>
                     {d.totals.limited ? <th className="num">{t("dashboard.limited")}</th> : null}
                     <th className="num">{t("dashboard.errors")}</th>
+                    {d.totals.cancelled ? <th className="num">{t("dashboard.cancelled")}</th> : null}
                   </tr>
                 </thead>
                 <tbody>
@@ -155,6 +157,7 @@ export function DashboardPage() {
                       <td className="num">{number(s.abstained)}</td>
                       {d.totals.limited ? <td className="num">{number(s.limited ?? 0)}</td> : null}
                       <td className="num">{number(s.errors)}</td>
+                      {d.totals.cancelled ? <td className="num">{number(s.cancelled ?? 0)}</td> : null}
                     </tr>
                   ))}
                 </tbody>

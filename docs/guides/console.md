@@ -300,9 +300,11 @@ calls, a run stopped at its budget included; the Ingest page's job card
 shows it too). Costs need `models.prices`
 ([Cost and prices](./evaluate.md#comparing-strategies)); a model without a
 price is listed and left out instead of counted as free. A cancelled
-question (its page closed or stopped it before the answer) is counted apart:
+question (its page closed or stopped it before the answer) is counted apart,
+in a Cancelled column of its requested strategy's row too:
 the model calls it made count in the cost and the model and role rows, not
-in a strategy's tokens or cost per question. Clear question history deletes
+in a strategy's tokens or cost per question (a row of cancelled questions
+only shows neither). Clear question history deletes
 the recorded questions.
 
 **Settings.** The config file, as fields or as YAML. Above them, from the

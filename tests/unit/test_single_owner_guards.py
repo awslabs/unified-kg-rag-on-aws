@@ -21,6 +21,7 @@ from __future__ import annotations
 import ast
 import re
 import unicodedata
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -649,10 +650,75 @@ _DECODING = any_of(
 )
 
 
+_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+
+
+def _own_nodes(scope: ast.AST) -> Iterator[ast.AST]:
+    """The nodes of ``scope`` (a module or a function), not of the functions
+    nested in it."""
+    for child in ast.iter_child_nodes(scope):
+        yield child
+        if not isinstance(child, _SCOPES):
+            yield from _own_nodes(child)
+
+
+def _rest_count(node: ast.AST) -> bool:
+    """``len(x) - k``: the count of a list's items past the first ``k``."""
+    return (
+        isinstance(node, ast.BinOp)
+        and isinstance(node.op, ast.Sub)
+        and isinstance(node.left, ast.Call)
+        and isinstance(node.left.func, ast.Name)
+        and node.left.func.id == "len"
+    )
+
+
+def _says_more(text: ast.JoinedStr, counts: set[str]) -> bool:
+    """An f-string writing a rest count, then " more": ``{len(x) - k}`` in
+    place, or a name ``counts`` binds to one."""
+    for value, after in zip(text.values, text.values[1:], strict=False):
+        if not (
+            isinstance(value, ast.FormattedValue)
+            and isinstance(after, ast.Constant)
+            and isinstance(after.value, str)
+            and after.value.lstrip().startswith("more")
+        ):
+            continue
+        counted = value.value
+        if _rest_count(counted) or (
+            isinstance(counted, ast.Name) and counted.id in counts
+        ):
+            return True
+    return False
+
+
+def _rest_counted_by_hand(source: Source) -> Iterator[tuple[int, str]]:
+    """A hand-written "and N more" of a list: an f-string writing the
+    count of the rest, in place or through a name the same function binds
+    to ``len(x) - k`` (``more = len(x) - k``, then ``f"(+{more} more)"``)."""
+    tree = source.tree
+    for scope in (tree, *(n for n in ast.walk(tree) if isinstance(n, _SCOPES))):
+        own = list(_own_nodes(scope))
+        counts = {
+            target.id
+            for node in own
+            if isinstance(node, ast.Assign | ast.AnnAssign | ast.NamedExpr)
+            and node.value is not None
+            and _rest_count(node.value)
+            for target in (
+                node.targets if isinstance(node, ast.Assign) else [node.target]
+            )
+            if isinstance(target, ast.Name)
+        }
+        for node in own:
+            if isinstance(node, ast.JoinedStr) and _says_more(node, counts):
+                yield node.lineno, ast.unparse(node)[:80]
+
+
 # A hand-written "the first N, and N more" of a list of names: the count of
 # the rest in an f-string, or a bare "and others".
-_NAME_TRUNCATION = lines_matching(
-    re.compile(r"\{len\([^}]*\) - [^}]*\} more|' and others'")
+_NAME_TRUNCATION = any_of(
+    _rest_counted_by_hand, lines_matching(re.compile(r"' and others'"))
 )
 
 GUARDS = [
@@ -1004,6 +1070,16 @@ GUARDS = [
                 1,
                 "numbered hit rows, one per line, then how to list them all",
             ),
+            "application/cli/run_rag_chain.py::_citation_line": (
+                1,
+                "one citation's first document, its location and pages, then "
+                "how many more documents it cites: a count, no list of names",
+            ),
+            "domain/retrieval/graph_query.py::_listing": (
+                1,
+                "the known names a refused plan may use, in the error the "
+                "planner's repair prompt shows the model: model-visible text",
+            ),
         },
     ),
 ]
@@ -1122,6 +1198,24 @@ _G4 = next(g for g in GUARDS if g.name.startswith("G4 ")).find
         ),
         (_NAME_TRUNCATION, "m = f\"{' and others' if len(x) > 5 else ''}\"\n", 1),
         (_NAME_TRUNCATION, 'm = f"{n} more"\nk = len(x) - 1\n', []),
+        # The count bound first, then written (rv54).
+        (
+            _NAME_TRUNCATION,
+            'more = len(x) - 5\nm = f" (+{more} more)" if more > 0 else ""\n',
+            1,
+        ),
+        (
+            _NAME_TRUNCATION,
+            "def f(x):\n    more = len(x) - 5\n    return f'{more} more'\n",
+            1,
+        ),
+        # Bound in another function: not this one's count.
+        (
+            _NAME_TRUNCATION,
+            "def f(x):\n    more = len(x) - 5\ndef g(more):\n"
+            "    return f'{more} more'\n",
+            [],
+        ),
         (nodes(_lineage_dedup), "u = dict.fromkeys(r.text_unit_ids)\n", 1),
         (nodes(_lineage_dedup), "u = dict.fromkeys(units)\n", 1),
         (nodes(_lineage_dedup), 'F = dict.fromkeys(("id", "text_unit_ids"))\n', []),

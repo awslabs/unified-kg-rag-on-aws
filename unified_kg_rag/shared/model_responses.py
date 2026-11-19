@@ -145,7 +145,8 @@ async def closing_responses() -> AsyncIterator[None]:
     starts, on its tasks and worker threads) that is still open when the
     block ends, by an error or a cancellation too. The closing finishes on
     its own when the block's task is cancelled again while it closes (an
-    anyio scope cancels every await)."""
+    anyio scope cancels every await). Work the block starts that may
+    outlive it runs under a scope of its own (``shared.query_work``)."""
     scope = _OpenResponses()
     token = _OPEN_RESPONSES.set(scope)
     try:

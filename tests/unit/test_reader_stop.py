@@ -350,9 +350,10 @@ class _ThrottlingServer:
         self.http = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         threading.Thread(target=self.http.serve_forever, daemon=True).start()
 
-    def client(self, monkeypatch: pytest.MonkeyPatch) -> Any:
-        """An adaptive-mode client of this endpoint, its stops and attempt
-        counter registered as the model factories register them."""
+    def client(self, monkeypatch: pytest.MonkeyPatch, mode: str = "adaptive") -> Any:
+        """A client of this endpoint (``adaptive`` retry mode by default),
+        its stops and attempt counter registered as the model factories
+        register them."""
         import boto3
         from botocore.config import Config as BotoConfig
         from botocore.httpsession import URLLib3Session
@@ -373,7 +374,7 @@ class _ThrottlingServer:
             endpoint_url=url,
             aws_access_key_id="AKIDEXAMPLE",
             aws_secret_access_key="example",
-            config=BotoConfig(retries={"mode": "adaptive", "total_max_attempts": 5}),
+            config=BotoConfig(retries={"mode": mode, "total_max_attempts": 5}),
         )
         count_requests(client, "bedrock-runtime", "answer_generation")
         stop_at_reader_stop(client, "bedrock-runtime")
@@ -438,6 +439,56 @@ def test_a_throttled_attempt_ended_by_the_stop_is_counted_and_seen(
     assert snapshot["sent_requests"] == server.received
     assert snapshot["throttled_requests"] == server.received
     assert len(seen) == server.received
+
+
+def test_a_resend_the_stop_prevents_spends_no_retry_quota(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression: the stop, last on the bare needs-retry, ran after
+    # botocore's retry handler had taken the resend's cost (5 units of the
+    # client's 500 for a throttle): 20 calls stopped at their 2nd throttle
+    # spent 200 units for 20 resends never sent. Only the resends sent
+    # spend now. Standard mode keeps the same quota as adaptive, without
+    # the rate limiter's waits 40 throttles would add.
+    from botocore.retries.quota import RetryQuota
+
+    from unified_kg_rag.adapters.aws.bedrock import _retry_quota
+
+    stops: list[ReaderStop] = []
+
+    def stop_at_every_second(received: int) -> None:
+        if received % 2 == 0:
+            stops[-1].set()
+
+    server = _ThrottlingServer(stop_at_every_second)
+    try:
+        client = server.client(monkeypatch, mode="standard")
+        quota = _retry_quota(client, "bedrock-runtime")
+        assert isinstance(quota, RetryQuota)
+        full = quota.available_capacity
+        for _ in range(20):
+            stops.append(ReaderStop())
+            with reader_stop_scope(stops[-1]):
+                with pytest.raises(asyncio.CancelledError):
+                    _converse(client)
+    finally:
+        server.close()
+    assert server.received == 40
+    # One resend per call was sent (its 1st throttle's), at 5 units each.
+    assert quota.available_capacity == full - 20 * 5
+
+
+def test_an_attempt_the_retry_handler_takes_no_quota_for_keeps_the_earlier_cost() -> (
+    None
+):
+    # Between the two needs-retry handlers the cost of an earlier resend is
+    # set aside: an attempt botocore does not retry (an answer) gets it back
+    # in the request context, which botocore releases after the call.
+    client = _bedrock_client()
+    kwargs = _attempt(client, 200)
+    kwargs["request_dict"]["context"]["retry_quota_capacity"] = 5
+    client.meta.events.emit("needs-retry.bedrock-runtime.ConverseStream", **kwargs)
+    assert kwargs["request_dict"]["context"] == {"retry_quota_capacity": 5}
 
 
 def test_a_stop_during_the_rate_limiter_wait_sends_nothing(
@@ -511,6 +562,115 @@ async def test_the_openai_client_sends_no_request_after_the_stop() -> None:
         # Outside the stopped query's context nothing is stopped.
         await client.post("http://127.0.0.1:1/v1/chat/completions")
     assert len(sent) == 2
+
+
+class _CountingServer:
+    """A loopback model server that answers every request at once,
+    counting the requests it received."""
+
+    def __init__(self) -> None:
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        self.received = 0
+        server = self
+
+        class Handler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, *_: Any) -> None:
+                pass
+
+            def do_POST(self) -> None:  # noqa: N802
+                self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                server.received += 1
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", "2")
+                self.end_headers()
+                self.wfile.write(b"{}")
+
+        self.http = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.http.daemon_threads = True
+        threading.Thread(target=self.http.serve_forever, daemon=True).start()
+        self.url = f"http://127.0.0.1:{self.http.server_address[1]}"
+
+    def close(self) -> None:
+        self.http.shutdown()
+        self.http.server_close()
+
+
+def _connect_loses_its_cancel(monkeypatch: pytest.MonkeyPatch) -> asyncio.Event:
+    """Make httpcore's connect lose a cancellation, as anyio's
+    ``connect_tcp`` can (it returns a connected stream to a task cancelled
+    while it connected): each connect waits for the returned event, then
+    connects, whatever was cancelled in between."""
+    from httpcore._backends.anyio import AnyIOBackend
+
+    connect = AnyIOBackend.connect_tcp
+    go = asyncio.Event()
+
+    async def connected(backend: Any, *args: Any, **kwargs: Any) -> Any:
+        await go.wait()
+        return await connect(backend, *args, **kwargs)
+
+    async def losing(backend: Any, *args: Any, **kwargs: Any) -> Any:
+        inner = asyncio.ensure_future(connected(backend, *args, **kwargs))
+        try:
+            return await asyncio.shield(inner)
+        except asyncio.CancelledError:
+            return await inner
+
+    monkeypatch.setattr(AnyIOBackend, "connect_tcp", losing)
+    return go
+
+
+def _model_client(kind: str) -> Any:
+    """An httpx client as each local provider's model builds it."""
+    import httpx
+
+    from unified_kg_rag.adapters.local.models import (
+        ollama_async_client_kwargs,
+        openai_http_async_client,
+    )
+
+    if kind == "openai":
+        return openai_http_async_client(5.0)
+    return httpx.AsyncClient(**ollama_async_client_kwargs(5.0))
+
+
+@pytest.mark.parametrize("ended", ["reader stop", "query end"])
+@pytest.mark.parametrize("kind", ["ollama", "openai"])
+async def test_a_request_whose_connect_lost_the_cancel_is_not_sent(
+    monkeypatch: pytest.MonkeyPatch, kind: str, ended: str
+) -> None:
+    # Regression: a cancellation that lands while a model request connects
+    # can be lost (anyio's connect_tcp, on 3.11 and 3.12 alike), and with no
+    # keep-alive every request connects: the request went out after its
+    # reader's stop, or after the query it is for ended. The connection
+    # made, the request is stopped before it is written.
+    from unified_kg_rag.shared.model_responses import closing_responses
+
+    go = _connect_loses_its_cancel(monkeypatch)
+    server = _CountingServer()
+    stop = ReaderStop()
+    try:
+        async with _model_client(kind) as client:
+            with reader_stop_scope(stop):
+                async with closing_responses():
+                    request = asyncio.ensure_future(client.post(server.url))
+                    await asyncio.sleep(0.05)
+                    if ended == "reader stop":
+                        stop.set()
+                    request.cancel()
+                # The query that sent it ended (its scope with it).
+            go.set()
+            (outcome,) = await asyncio.gather(request, return_exceptions=True)
+            assert isinstance(outcome, asyncio.CancelledError)
+            # The next request, outside any stopped query, is sent.
+            assert (await client.post(server.url)).status_code == 200
+    finally:
+        server.close()
+    assert server.received == 1
 
 
 async def test_a_detached_context_binds_its_own_stop_only() -> None:

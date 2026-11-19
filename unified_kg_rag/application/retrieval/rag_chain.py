@@ -234,6 +234,7 @@ from unified_kg_rag.shared.metrics import (
     QUERY_THROTTLED_METRIC,
 )
 from unified_kg_rag.shared.model_responses import closing_responses
+from unified_kg_rag.shared.query_work import detach
 from unified_kg_rag.shared.reader_stop import (
     ReaderStop,
     blank_in_shared_calls,
@@ -2780,7 +2781,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 try:
                     # Every model response the query opens (its answer's,
                     # and its other calls': a translation, an extraction,
-                    # a map step) is closed when it ends, however it ends.
+                    # a map step) is closed when it ends, however it ends;
+                    # work it keeps running past its end closes its own
+                    # (shared.query_work).
                     async with closing_responses():
                         result = await self._ainvoke(
                             rag_input,
@@ -4160,7 +4163,10 @@ class _BackgroundExtractions:
     cache, and its call counts in the query's usage from its start. Each is
     cancelled at its query's deadline (``search.query_timeout_seconds``), or
     by :meth:`cancel` / :meth:`acancel` when the chain closes, so none
-    outlives either.
+    outlives either. Each was started detachable (``shared.query_work``):
+    its model responses are its own, not closed as its query ends, and once
+    kept it is detached from its query's reader, whose stop no longer ends
+    it.
     """
 
     def __init__(self) -> None:
@@ -4170,6 +4176,8 @@ class _BackgroundExtractions:
     def keep(self, tasks: list[asyncio.Future[Any]], within: float | None) -> None:
         """Keep ``tasks`` (on the running loop) until they end, cancelling
         them after ``within`` seconds (``None``: no limit)."""
+        for task in tasks:
+            detach(task)
         running = [task for task in tasks if not task.done()]
         for task in tasks:
             if task.done():
@@ -4378,12 +4386,15 @@ async def _ended(task: asyncio.Task[Any]) -> None:
     outcome is retrieved, so none is logged as never retrieved.
 
     The query still has stop points, for a cancellation a layer under it
-    loses: on Python 3.11 ``asyncio.wait_for`` returns the result its
-    awaitable got in the same turn as the cancellation (langchain-openai
-    reads each chunk of a stream through it, for ``stream_chunk_timeout``),
-    so the stream goes on as if nothing was cancelled (3.12 rebuilt
-    ``wait_for`` on ``asyncio.timeout``, which re-raises it). The query's
-    next event, answer chunk, model request or retry wait then raises
+    loses, on any Python: anyio's ``connect_tcp`` (httpcore's connect) can
+    return a connected stream to a task cancelled while it connected, and
+    on 3.11 ``asyncio.wait_for`` returns the result its awaitable got in
+    the same turn as the cancellation (langchain-openai reads each chunk of
+    a stream through it, for ``stream_chunk_timeout``; 3.12 rebuilt it on
+    ``asyncio.timeout``, which re-raises it), so the call goes on as if
+    nothing was cancelled. The query's next event, answer chunk, model
+    request (before its connection and again before it is written, its
+    response as its headers arrive) or retry wait then raises
     ``CancelledError`` at the reader's stop (``shared.reader_stop``)."""
     try:
         await asyncio.wait({task})

@@ -15,6 +15,7 @@ from unified_kg_rag.domain.models import Config, S3EncryptionType
 from unified_kg_rag.domain.models.pipeline import PIPELINE_METADATA_FILE
 from unified_kg_rag.shared import CacheSyncError, ConfigurationError, get_logger
 from unified_kg_rag.shared.logging import log_error
+from unified_kg_rag.shared.utils import first_names
 
 if TYPE_CHECKING:
     from types_boto3_s3 import S3Client
@@ -327,13 +328,10 @@ class S3CacheManager:
     ) -> None:
         if not failed_keys:
             return
-        shown = ", ".join(failed_keys[: self._MAX_REPORTED_FAILURES])
-        more = len(failed_keys) - self._MAX_REPORTED_FAILURES
-        suffix = f" (+{more} more)" if more > 0 else ""
         raise CacheSyncError(
             f"S3 cache {direction} for pipeline '{pipeline_id}' failed for "
             f"{len(failed_keys)}/{total} files in bucket '{self.bucket_name}': "
-            f"{shown}{suffix}"
+            f"{first_names(failed_keys, self._MAX_REPORTED_FAILURES)}"
         )
 
     def _get_base_prefix(self, pipeline_id: str) -> str:

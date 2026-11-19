@@ -1505,4 +1505,4 @@ def test_a_cancelled_question_counts_its_spend_but_not_per_question() -> None:
     assert strategy["cost_usd"] == pytest.approx(1.8)
     # Only cancelled questions: nothing served to average.
     (only,) = dashboard.summarize(rows[2:], [], config)["strategies"]
-    assert (only["tokens_per_query"], only["cost_per_query"]) == (0, None)
+    assert (only["tokens_per_query"], only["cost_per_query"]) == (None, None)

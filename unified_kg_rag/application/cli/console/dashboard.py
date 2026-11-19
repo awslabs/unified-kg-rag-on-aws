@@ -176,8 +176,10 @@ def summarize(
             "errors": row["errors"],
             "latency_p50": quantile(row["latencies"], 0.5),
             "latency_p95": quantile(row["latencies"], 0.95),
+            # None when none was served (each was cancelled): no per-question
+            # figure, as for the cost.
             "tokens_per_query": (
-                row["served_tokens"] / row["served"] if row["served"] else 0
+                row["served_tokens"] / row["served"] if row["served"] else None
             ),
             "cost_usd": row["cost_usd"] if row["priced"] else None,
             "cost_per_query": (

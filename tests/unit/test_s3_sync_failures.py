@@ -129,7 +129,7 @@ def test_failure_message_truncates_long_key_lists(s3_setup, tmp_path, mocker) ->
     mgr = _manager(config, session)
     _write_cache(tmp_path, [f"stage/{i}.json" for i in range(8)])
     mocker.patch.object(mgr, "_upload_file_to_s3", return_value=False)
-    with pytest.raises(CacheSyncError, match=r"8/8 files.*\(\+3 more\)"):
+    with pytest.raises(CacheSyncError, match=r"8/8 files.* and 3 more"):
         mgr.sync_pipeline_to_s3("pid", tmp_path)
 
 

@@ -349,7 +349,11 @@ async for event in chain.aquery_events(RAGInput(query="...")):
   `KeyboardInterrupt` at once). The query's model responses are closed and
   their connections released, and no model request is sent after the stop,
   a resend the client makes itself (botocore's, the OpenAI client's)
-  included. A stop ends that reader's query only: a call concurrent queries
+  included, nor one whose cancellation a layer below lost (a connect that
+  completed despite it, on any Python version): each request is checked
+  again once its connection is made. A speculative extraction `auto` keeps
+  running after the answer (`search.auto_speculative_extraction`) is no
+  longer the stopped reader's: it still fills the extraction cache. A stop ends that reader's query only: a call concurrent queries
   share (one embedding of a text they both embed) goes on for the others,
   and stops only once each of their readers stopped. Nothing is written to
   memory, and the query metrics record its latency and usage up to there as

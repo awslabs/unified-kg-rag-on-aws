@@ -61,6 +61,7 @@ from unified_kg_rag.domain.retrieval.query_entities import split_entity_list
 from unified_kg_rag.shared import LanguageModelError, get_logger, usage
 from unified_kg_rag.shared.exceptions import OptionalCallSkipped
 from unified_kg_rag.shared.logging import log_failure
+from unified_kg_rag.shared.query_work import start_detachable
 from unified_kg_rag.shared.usage import record_cache_hit
 from unified_kg_rag.shared.utils import text_digest
 from unified_kg_rag.shared.utils.concurrency import single_flight
@@ -186,7 +187,11 @@ def start_query_inputs(
     extractions asked for, and the translation (``translation``) unless
     the query needs none (``_query_language``).
 
-    Their errors surface when they are awaited (``process_query``).
+    Their errors surface when they are awaited (``process_query``). They
+    may outlive the query (auto keeps the speculative ones its route did not
+    read: ``GraphRAGChain._background_extractions``), so each starts
+    detachable (``shared.query_work``): its model responses its own, its
+    reader's stop its own once it is kept.
     """
     question = chain._question(inputs)
     target_language, skip_translation = _query_language(chain, inputs, question)
@@ -211,7 +216,7 @@ def start_query_inputs(
             question, target_language, config
         )
     return {
-        name: asyncio.ensure_future(_optional(coroutine))
+        name: start_detachable(_optional(coroutine))
         for name, coroutine in coroutines.items()
     }
 

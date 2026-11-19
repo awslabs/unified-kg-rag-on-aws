@@ -21,7 +21,7 @@ import asyncio
 import functools
 import importlib
 import threading
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any, ClassVar
 
 from langchain_core.callbacks import BaseCallbackHandler
@@ -42,7 +42,10 @@ from unified_kg_rag.ports.model_factory import (
 from unified_kg_rag.shared import ConfigurationError, get_logger, observability
 from unified_kg_rag.shared.exceptions import class_names
 from unified_kg_rag.shared.extras import extra_hint
-from unified_kg_rag.shared.model_responses import track_response
+from unified_kg_rag.shared.model_responses import (
+    raise_if_scope_ended,
+    track_response,
+)
 from unified_kg_rag.shared.reader_stop import raise_if_reader_stopped
 
 logger = get_logger(__name__)
@@ -96,15 +99,55 @@ def tls_context() -> Any:
     return httpx.create_ssl_context()
 
 
+def _raise_if_stopped() -> None:
+    """A stop point of a model request: its query's reader stopped
+    (``shared.reader_stop``), or the query it is for ended
+    (``shared.model_responses``: a cancellation lost on the way, nobody
+    reads its answer)."""
+    raise_if_reader_stopped()
+    raise_if_scope_ended()
+
+
+async def _stop_before_request(request: Any) -> None:
+    """``request`` hook: a stop point before the request's connection is
+    made, and one once it is, before the request is written (httpcore's
+    ``trace`` extension): a cancellation the connect loses (anyio's
+    ``connect_tcp`` may return a connected stream to a task cancelled while
+    it connected, and with no keep-alive every request connects) would send
+    the request after the stop otherwise."""
+    _raise_if_stopped()
+    request.extensions["trace"] = _stopping_trace(request.extensions.get("trace"))
+
+
+def _stopping_trace(
+    inner: Callable[[str, dict[str, Any]], Awaitable[None]] | None,
+) -> Callable[[str, dict[str, Any]], Awaitable[None]]:
+    """An httpcore ``trace`` callback that stops the request before its
+    headers are written, then passes the event on to ``inner``."""
+
+    async def trace(event: str, info: dict[str, Any]) -> None:
+        if event.endswith(".send_request_headers.started"):
+            _raise_if_stopped()
+        if inner is not None:
+            await inner(event, info)
+
+    return trace
+
+
 async def _track_response(response: Any) -> None:
+    """``response`` hook: a stop point as the headers arrive (httpx closes
+    the response the hook raises for), then the response is closed when the
+    query it is opened for ends (shared.model_responses), though a
+    cancellation left the generators reading it suspended."""
+    _raise_if_stopped()
     track_response(response)
 
 
-# The async clients' hooks: each response is closed when the query it is
-# opened for ends (shared.model_responses), though a cancellation left the
-# generators reading it suspended.
+# The async clients' hooks: every request (a resend the client makes
+# itself included) and its response are stop points of the query it is for.
 _ASYNC_EVENT_HOOKS: dict[str, list[Callable[[Any], Any]]] = {
-    "response": [_track_response]
+    "request": [_stop_before_request],
+    "response": [_track_response],
 }
 
 
@@ -116,9 +159,9 @@ def ollama_client_kwargs(timeout: float) -> dict[str, Any]:
 
 def ollama_async_client_kwargs(timeout: float | None = None) -> dict[str, Any]:
     """``async_client_kwargs`` for an Ollama model: no keep-alive connections,
-    the shared TLS context, each response closed at its query's end
-    (``_ASYNC_EVENT_HOOKS``), and the request ``timeout`` when one is given
-    (a query call's)."""
+    the shared TLS context, each request a stop point of its query and each
+    response closed at its query's end (``_ASYNC_EVENT_HOOKS``), and the
+    request ``timeout`` when one is given (a query call's)."""
     kwargs: dict[str, Any] = {
         "limits": _no_keepalive_limits(),
         "verify": tls_context(),
@@ -206,10 +249,6 @@ def _per_loop_httpx_client_class() -> type:
     return PerLoopHttpxAsyncClient
 
 
-async def _stop_before_request(_request: Any) -> None:
-    raise_if_reader_stopped()
-
-
 def openai_http_async_client(timeout: float, transport: Any = None) -> Any:
     """``http_async_client`` for ``ChatOpenAI`` / ``OpenAIEmbeddings``.
 
@@ -223,14 +262,14 @@ def openai_http_async_client(timeout: float, transport: Any = None) -> Any:
 
     The OpenAI client retries a call itself: each request it sends, a
     resend included, is a stop point of a query whose reader stopped
-    (``shared.reader_stop``), so none is sent after the stop (the client's
-    own backoff wait still runs to its end).
+    (``shared.reader_stop``, ``_stop_before_request``), so none is sent
+    after the stop (the client's own backoff wait still runs to its end).
 
     ``transport`` (tests: ``httpx.MockTransport``) opens no connection, so a
     plain client on it is returned.
     """
     httpx = importlib.import_module("httpx")
-    hooks = {"request": [_stop_before_request], **_ASYNC_EVENT_HOOKS}
+    hooks = _ASYNC_EVENT_HOOKS
     if transport is not None:
         return httpx.AsyncClient(
             transport=transport, timeout=timeout, event_hooks=hooks

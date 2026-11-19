@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import contextvars
+import functools
 import logging
 import socket
 import threading
@@ -88,7 +89,7 @@ from unified_kg_rag.shared.model_responses import (
     raise_if_scope_ended,
     track_response,
 )
-from unified_kg_rag.shared.reader_stop import raise_if_reader_stopped
+from unified_kg_rag.shared.reader_stop import raise_if_reader_stopped, reader_stopped
 
 logger = get_logger(__name__)
 
@@ -574,18 +575,89 @@ def _raise_if_unread(**_: Any) -> None:
     raise_if_scope_ended()
 
 
-def _raise_if_failed_and_reader_stopped(
-    response: Any = None, caught_exception: Any = None, **_: Any
+# Where a needs-retry keeps the retry-quota cost botocore's retry handler
+# took for an earlier attempt of the call, while the handler decides on
+# this one (_RetryQuotaRefund).
+_EARLIER_RETRY_COST = "kg_rag_earlier_retry_quota_capacity"
+
+
+class _RetryQuotaRefund:
+    """Gives back the retry quota botocore's retry handler took for a resend
+    the reader's stop prevents.
+
+    In ``standard`` and ``adaptive`` mode the handler (on
+    ``needs-retry.<service>``) takes a resend's cost from the client's retry
+    quota before it computes the delay (5 units for a throttle, 14
+    otherwise, of 500): a stop that then ends the call unresent would leave
+    the cost spent, so a client whose readers stop during throttling would
+    run out of retries for every other caller. The cost of the attempt the
+    handler retries is in the call's request context
+    (``retry_quota_capacity``, the amount botocore itself releases when a
+    retried call succeeds); :meth:`before` sets an earlier attempt's aside,
+    so what is there after the handler is this attempt's, and :meth:`after`
+    puts it back when the handler took none, as botocore's accounting
+    expects."""
+
+    def __init__(self, client: Any, service: str) -> None:
+        self._quota = _retry_quota(client, service)
+
+    def before(self, request_dict: Any = None, **_: Any) -> None:
+        context = _request_context(request_dict)
+        if context is not None and "retry_quota_capacity" in context:
+            context[_EARLIER_RETRY_COST] = context.pop("retry_quota_capacity")
+
+    def after(self, context: dict[str, Any] | None, *, refund: bool) -> None:
+        if context is None:
+            return
+        earlier = context.pop(_EARLIER_RETRY_COST, None)
+        taken = context.get("retry_quota_capacity")
+        if taken is None:
+            if earlier is not None:
+                context["retry_quota_capacity"] = earlier
+            return
+        if refund and self._quota is not None:
+            self._quota.release(taken)
+
+
+def _request_context(request_dict: Any) -> dict[str, Any] | None:
+    context = request_dict.get("context") if isinstance(request_dict, dict) else None
+    return context if isinstance(context, dict) else None
+
+
+def _retry_quota(client: Any, service: str) -> Any:
+    """The ``botocore.retries.quota.RetryQuota`` the retry handler of
+    ``client`` takes resend costs from; ``None`` in ``legacy`` mode, which
+    keeps none (or a botocore that registers its handler otherwise)."""
+    emitter = getattr(client.meta.events, "_emitter", None)
+    registered = getattr(emitter, "_unique_id_handlers", {}).get(
+        f"retry-config-{service}"
+    )
+    handler = registered.get("handler") if isinstance(registered, dict) else None
+    checker = getattr(getattr(handler, "__self__", None), "_retry_quota", None)
+    quota = getattr(checker, "_quota", None)
+    return quota if callable(getattr(quota, "release", None)) else None
+
+
+def _stop_failed_attempt(
+    refund: _RetryQuotaRefund,
+    response: Any = None,
+    caught_exception: Any = None,
+    request_dict: Any = None,
+    **_: Any,
 ) -> None:
     """``needs-retry``: no resend of a failed attempt once the reader
-    stopped. It fires after a successful attempt too, whose response (an
-    open event stream) the caller reads and closes: that one is left alone,
-    as raising there would leave it open."""
+    stopped, the retry quota botocore took for it given back. It fires
+    after a successful attempt too, whose response (an open event stream)
+    the caller reads and closes: that one is left alone, as raising there
+    would leave it open."""
     http_response = response[0] if isinstance(response, tuple) else None
-    if caught_exception is not None or (
+    failed = caught_exception is not None or (
         getattr(http_response, "status_code", 200) >= 300
-    ):
-        raise_if_reader_stopped()
+    )
+    stopped = failed and reader_stopped()
+    refund.after(_request_context(request_dict), refund=stopped)
+    if stopped:
+        raise asyncio.CancelledError
 
 
 def stop_at_reader_stop(client: Any, service: str) -> None:
@@ -594,21 +666,30 @@ def stop_at_reader_stop(client: Any, service: str) -> None:
     (``shared.reader_stop``), as the application's retry backoffs are:
     no request is sent after the stop, before or after the client-side rate
     limiter's wait (``adaptive`` mode), and no resend follows a failed
-    attempt. The stop raises ``asyncio.CancelledError`` in the calling
+    attempt (whose retry-quota cost is given back: ``_RetryQuotaRefund``).
+    The stop raises ``asyncio.CancelledError`` in the calling
     thread, where no response is held (a successful attempt's open stream
     is left to its caller); outside such a query the handlers do
     nothing. A request a worker thread would send after the answer stream
     it is for ended (``shared.model_responses``) is refused the same way:
     nobody reads it."""
     events = client.meta.events
-    # A more specific event's handlers run before a less specific one's.
-    # Last of all, on the bare "needs-retry": the failed attempt that ends
-    # at the stop was sent, so the attempt counter (count_requests) and the
-    # adaptive rate limiter (on the bare event too) see it first; botocore
-    # waits for a resend only after every handler returned.
+    refund = _RetryQuotaRefund(client, service)
+    # A more specific event's handlers run before a less specific one's:
+    # first of all, before botocore's retry handler, an earlier attempt's
+    # quota cost is set aside, so the one it takes for this attempt is
+    # known. Last of all, on the bare "needs-retry": the failed attempt that
+    # ends at the stop was sent, so the attempt counter (count_requests) and
+    # the adaptive rate limiter (on the bare event too) see it first;
+    # botocore waits for a resend only after every handler returned.
+    events.register_first(
+        f"needs-retry.{service}",
+        refund.before,
+        unique_id=f"kg-rag-retry-quota-before.{service}",
+    )
     events.register_last(
         "needs-retry",
-        _raise_if_failed_and_reader_stopped,
+        functools.partial(_stop_failed_attempt, refund),
         unique_id="kg-rag-stop-needs-retry",
     )
     # Before the limiter's wait and after it (the limiter's handler is on

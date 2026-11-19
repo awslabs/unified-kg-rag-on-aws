@@ -42,7 +42,7 @@ from unified_kg_rag.shared.exceptions import (
     StoreTimeoutError,
 )
 from unified_kg_rag.shared.logging import log_error
-from unified_kg_rag.shared.utils.common import error_name
+from unified_kg_rag.shared.utils.common import error_name, first_names
 from unified_kg_rag.shared.write_fence import (
     INDEXING_REQUEST_TIMEOUT_SECONDS,
     check_write_fence,
@@ -951,13 +951,10 @@ class OpenSearchClient:
                 not_deleted.extend(batch)
                 first_error = first_error or e
         if first_error is not None:
-            shown = ", ".join(not_deleted[:_DELETE_REPORT_NAMES])
-            more = len(not_deleted) - _DELETE_REPORT_NAMES
             raise AWSServiceError.caused_by(
                 f"Failed to delete {len(not_deleted)} of {len(index_names)} "
-                f"index name(s): {shown}"
-                + (f" (+{more} more)" if more > 0 else "")
-                + "; first error",
+                f"index name(s): {first_names(not_deleted, _DELETE_REPORT_NAMES)}"
+                "; first error",
                 first_error,
             ) from first_error
 
