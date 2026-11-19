@@ -163,6 +163,12 @@ Differences from Neptune:
   with `indexing.neptune.vertex_ids: custom` vertices by their vertex id,
   which the compose file's graph accepts as a string. Use it for
   development-sized corpora.
+- A traversal's chained steps run recursively: at the JVM's default 1 MiB
+  thread stack a Gremlin Server overflowed at 4,675 steps (answered as a
+  `StackOverflowError`). Entity and community writes close a request at
+  `indexing.neptune.batch_max_steps` (1,500, Neptune's guidance) and split
+  one refused for its size; the compose file also gives the server a
+  16 MiB stack (`-Xss16m`).
 - The stores have no authentication or TLS; the compose file binds them to
   `127.0.0.1` and drops all Linux capabilities.
 

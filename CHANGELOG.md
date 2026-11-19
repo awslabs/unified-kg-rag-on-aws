@@ -210,6 +210,8 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   `sweep --stream` level under them, capped below its retry attempts, whose errors must equal the answers dropped
   after their first chunk, and one `http --disconnect-share --models` level against the console, which must leave no
   model connection held.
+- `indexing.neptune.batch_max_steps` (default 1,500, the Gremlin steps Neptune's user guide advises a request at
+  most): an entity or community write batch closes at it or at `batch_size` items, whichever comes first.
 
 ### Changed
 
@@ -253,6 +255,12 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
 ### Fixed
 Bugs present in 0.3.0.
 
+- Entity and community writes to Neptune or a Gremlin Server closed a batch at `indexing.neptune.batch_size` items
+  only, so hubs cited by hundreds of text units made one request of tens of thousands of steps. A Gremlin Server at
+  its default thread stack answered `StackOverflowError`, retried 4 times, then wrote each item alone (300 documents:
+  entities 22.0 s to 7.5 s, communities 17.2 s to 2.9 s). A batch now also closes at a step budget (Added); a
+  request refused for its size is permanent and split in two instead of retried; `docker/compose.local.yaml` gives
+  the server a 16 MiB stack (`-Xss16m`).
 - A streamed answer whose caller was cancelled mid-answer (a console client that disconnects, a cancelled task, an
   `asyncio.timeout` around `astream`) was cancelled wherever it was. Cancelled while the model's stream waited for a
   chunk, LangChain left the response open, holding a model client connection: on an Ollama or OpenAI-compatible server

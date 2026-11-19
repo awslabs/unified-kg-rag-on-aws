@@ -31,6 +31,7 @@ from unified_kg_rag.adapters.storage.neptune_codec import (
     property_value,
     relationship_properties,
 )
+from unified_kg_rag.adapters.storage.neptune_indexer import _DETACHED_SOURCE
 from unified_kg_rag.domain.models import Community, Config, Entity, Relationship
 from unified_kg_rag.shared.exceptions import AWSServiceError, NamespaceLeaseError
 
@@ -438,8 +439,9 @@ def test_relationship_properties_never_truncate_serialized_list() -> None:
 
 def _no_op_builder(g, batch):
     """Builder whose product is irrelevant; success is decided by the patched
-    _execute_with_retries, so we just return a sentinel traversal."""
-    return ("traversal", tuple(batch))
+    _execute_with_retries. A traversal of one step per item, on whatever
+    source it is given (the batching counts its steps on a detached one)."""
+    return (g or _DETACHED_SOURCE).inject(*batch)
 
 
 def test_execute_batch_empty_short_circuits(indexer) -> None:
@@ -545,12 +547,15 @@ def test_execute_batch_reports_the_ids_of_failed_items(indexer, mocker) -> None:
     entities = [Entity(id="e1", name="Vendor"), Entity(id="e2", name="Buyer")]
 
     def fail_e2(build, op, **_):
-        traversal = build(None)
-        if traversal == ["e2"] or len(traversal) == 2:
+        ids = build(None).bytecode.step_instructions[0][1:]
+        if ids == ["e2"] or len(ids) == 2:
             raise RuntimeError("rejected")
 
     mocker.patch.object(indexer, "_execute_with_retries", side_effect=fail_e2)
-    builder = lambda g, batch: [entity.id for entity in batch]  # noqa: E731
+
+    def builder(g, batch):
+        return _no_op_builder(g, [entity.id for entity in batch])
+
     stats = indexer._execute_batch_traversal(entities, builder, "op")
 
     assert (stats.successful_items, stats.failed_items) == (1, 1)

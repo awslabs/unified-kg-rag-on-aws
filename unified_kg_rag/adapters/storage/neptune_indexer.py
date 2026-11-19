@@ -15,8 +15,16 @@ from gremlin_python.process.graph_traversal import (
     GraphTraversalSource,
     __,
 )
-from gremlin_python.process.traversal import Cardinality, P, T, TextP, Traversal
+from gremlin_python.process.traversal import (
+    Bytecode,
+    Cardinality,
+    P,
+    T,
+    TextP,
+    Traversal,
+)
 from gremlin_python.statics import long
+from gremlin_python.structure.graph import Graph
 
 from unified_kg_rag.adapters.aws.neptune import (
     CUSTOM_VERTEX_IDS,
@@ -24,6 +32,7 @@ from unified_kg_rag.adapters.aws.neptune import (
     VERTEX_ID_SWITCH_LABEL,
     NeptuneClient,
     is_permanent_neptune_error,
+    is_request_too_large,
     run_traversal,
     sample_vertex_query,
     stored_vertex_id_mode,
@@ -102,6 +111,25 @@ _EXTRA_DELETE_PASSES = 3
 # a db.t4g.medium, while 2,500 passed alone (v23); no smaller bound was
 # measured.
 _SET_VALUES_PER_REQUEST = 1000
+
+
+# A traversal source bound to no server: a write's steps are counted on the
+# traversal its builder makes on it (``_request_steps``).
+_DETACHED_SOURCE = Graph().traversal()
+
+
+def _request_steps(traversal: Traversal) -> int:
+    """The Gremlin steps of ``traversal``'s request: its step instructions
+    and those of the anonymous traversals they take (``coalesce``'s,
+    ``sideEffect``'s), each counted once."""
+    return _bytecode_steps(traversal.bytecode)
+
+
+def _bytecode_steps(bytecode: Bytecode) -> int:
+    return sum(
+        1 + sum(_bytecode_steps(arg) for arg in args if isinstance(arg, Bytecode))
+        for _, *args in bytecode.step_instructions
+    )
 
 
 def _set_values(value: list[Any]) -> list[Any]:
@@ -1783,7 +1811,7 @@ class NeptuneIndexer(GraphIndexer):
         if not items:
             return stats
 
-        batches = list(self._batch_iterator(items))
+        batches = list(self._write_batches(items, traversal_builder))
         concurrency = min(self.neptune_config.index_concurrency, len(batches))
 
         if concurrency <= 1:
@@ -1835,6 +1863,8 @@ class NeptuneIndexer(GraphIndexer):
         traversal_builder: Callable[[GraphTraversalSource, list[Any]], GraphTraversal],
         operation_name: str,
         stats: IndexingStats,
+        *,
+        started_at: float | None = None,
     ) -> IndexingStats:
         """Execute one batch, falling back to per-item indexing on batch failure.
 
@@ -1843,9 +1873,13 @@ class NeptuneIndexer(GraphIndexer):
         (concurrent) without any locking. A run that lost its write lease
         raises before the request (``check_write_fence``). The batch and its
         fallback share one retry budget (``retry.graph_store.max_total_seconds``):
-        once it is spent, each item left gets one attempt.
+        once it is spent, each item left gets one attempt. A batch refused
+        for its size (``is_request_too_large``: the same request fails on
+        every try) is split in two halves written the same way, and an item
+        refused alone fails.
         """
-        started_at = time.monotonic()
+        if started_at is None:
+            started_at = time.monotonic()
         try:
             # Not an error yet: the per-item fallback below may still index
             # every item; one that fails there logs it.
@@ -1859,6 +1893,24 @@ class NeptuneIndexer(GraphIndexer):
         except NamespaceLeaseError:
             raise
         except Exception as batch_error:  # noqa: BLE001 - retried per item below
+            if is_request_too_large(batch_error) and len(batch) > 1:
+                return self._split_batch(
+                    batch, traversal_builder, operation_name, stats, started_at
+                )
+            if is_request_too_large(batch_error):
+                # One item that large: another try fails the same way.
+                item_id = getattr(batch[0], "id", None)
+                stats.add_error(
+                    batch_error, ids=[str(item_id)] if item_id is not None else None
+                )
+                log_error(
+                    logger,
+                    logging.WARNING,
+                    "Individual %s failed: %s",
+                    operation_name,
+                    error=batch_error,
+                )
+                return stats
             log_error(
                 logger,
                 logging.WARNING,
@@ -1894,6 +1946,28 @@ class NeptuneIndexer(GraphIndexer):
                         operation_name,
                         error=item_error,
                     )
+        return stats
+
+    def _split_batch(
+        self,
+        batch: list[Any],
+        traversal_builder: Callable[[GraphTraversalSource, list[Any]], GraphTraversal],
+        operation_name: str,
+        stats: IndexingStats,
+        started_at: float,
+    ) -> IndexingStats:
+        """Write the halves of ``batch``, a request too large for the
+        store, each as a batch of its own."""
+        logger.info(
+            "%s request of %s items too large, writing it in two halves",
+            operation_name,
+            len(batch),
+        )
+        middle = len(batch) // 2
+        for half in (batch[:middle], batch[middle:]):
+            self._execute_single_batch(
+                half, traversal_builder, operation_name, stats, started_at=started_at
+            )
         return stats
 
     def _execute_with_retries(
@@ -1978,6 +2052,29 @@ class NeptuneIndexer(GraphIndexer):
                 )
             )
         return rows
+
+    def _write_batches(
+        self,
+        items: list[Any],
+        traversal_builder: Callable[[GraphTraversalSource, list[Any]], GraphTraversal],
+    ) -> Iterator[list[Any]]:
+        """``items`` in write batches of at most ``indexing.neptune.batch_size``
+        items and ``batch_max_steps`` steps (``_request_steps`` of the
+        item's own write; chained, the steps add up). An item of more steps
+        is a batch alone."""
+        size = self.neptune_config.batch_size
+        budget = self.neptune_config.batch_max_steps
+        batch: list[Any] = []
+        steps = 0
+        for item in items:
+            cost = _request_steps(traversal_builder(_DETACHED_SOURCE, [item]))
+            if batch and (len(batch) >= size or steps + cost > budget):
+                yield batch
+                batch, steps = [], 0
+            batch.append(item)
+            steps += cost
+        if batch:
+            yield batch
 
     def _batch_iterator(self, items: list[Any]) -> Iterator[list[Any]]:
         batch_size = self.neptune_config.batch_size

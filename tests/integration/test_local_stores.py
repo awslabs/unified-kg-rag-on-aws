@@ -322,6 +322,38 @@ def test_an_interrupted_hub_write_keeps_every_stored_value(
     assert sorted(stored.text_unit_ids or []) == new
 
 
+def test_hub_sized_entity_batches_are_written_whole(
+    graph_indexer, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Regression: 100 entities each cited by 300 text units made one request
+    # of ~32,000 steps, which a Gremlin Server at its default 1 MiB thread
+    # stack answers with a StackOverflowError; it was retried 4 times, then
+    # each entity written alone. Batches now close at batch_max_steps, so no
+    # request is refused and none falls back.
+    import logging
+
+    graph_indexer.clear([_SUFFIX])
+    hubs = [
+        Entity(
+            id=f"e-hub-{i:03d}",
+            name=f"Hub {i}",
+            type="ORG",
+            description="Hub entity",
+            text_unit_ids=[f"t{i:03d}-{j:04d}" for j in range(300)],
+        )
+        for i in range(100)
+    ]
+    with caplog.at_level(logging.INFO, logger="unified_kg_rag"):
+        stats = graph_indexer.upsert_entities(hubs)
+    assert (stats.successful_items, stats.failed_items) == (100, 0)
+    messages = [r.getMessage() for r in caplog.records]
+    assert not [m for m in messages if "falling back" in m or "too large" in m]
+    stored = graph_indexer.read_entities([e.id for e in hubs], _SUFFIX)
+    assert {e.id: sorted(e.text_unit_ids or []) for e in stored} == {
+        e.id: e.text_unit_ids for e in hubs
+    }
+
+
 def test_an_edge_rewrite_replaces_its_stored_copy_once(graph_indexer) -> None:
     # The drop of the stored copy and the add of the new one are one request:
     # re-pointed or resent, the edge is stored once; with an endpoint gone,
