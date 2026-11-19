@@ -361,7 +361,11 @@ The ports a custom backend implements and how to inject it.
 
 ### Deliberate Design Boundaries
 
-Two intentional boundaries and why they stay.
+Two intentional boundaries and why they stay. The maintainer decisions a
+review might otherwise reopen (the `simple` strategy, the visualization
+export, retries, limits and stops, dependency audits) are recorded, each
+with its context, the options rejected and its evidence, in
+[Decision records](./decisions/README.md).
 → [extend.md](./guides/extend.md#deliberate-design-boundaries)
 
 ---
