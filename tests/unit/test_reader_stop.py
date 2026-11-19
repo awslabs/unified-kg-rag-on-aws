@@ -478,6 +478,42 @@ def test_a_resend_the_stop_prevents_spends_no_retry_quota(
     assert quota.available_capacity == full - 20 * 5
 
 
+def test_a_stop_on_the_last_attempt_gives_back_no_earlier_resend_cost(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The stop lands on the 5th throttle of 5 allowed attempts: botocore's
+    # retry handler retries none and takes nothing for it, so the request
+    # context still holds the cost of the 4th attempt's resend, which was
+    # sent. That cost stays spent: the refund gives back only what the
+    # handler took for the attempt the stop ends.
+    from botocore.retries.quota import RetryQuota
+
+    from unified_kg_rag.adapters.aws.bedrock import _retry_quota
+
+    stops: list[ReaderStop] = []
+
+    def stop_at_every_fifth(received: int) -> None:
+        if received % 5 == 0:
+            stops[-1].set()
+
+    server = _ThrottlingServer(stop_at_every_fifth)
+    try:
+        client = server.client(monkeypatch, mode="standard")
+        quota = _retry_quota(client, "bedrock-runtime")
+        assert isinstance(quota, RetryQuota)
+        full = quota.available_capacity
+        for calls in range(1, 6):
+            stops.append(ReaderStop())
+            with reader_stop_scope(stops[-1]):
+                with pytest.raises(asyncio.CancelledError):
+                    _converse(client)
+            # Four resends per call were sent, at 5 units each.
+            assert quota.available_capacity == full - calls * 4 * 5
+    finally:
+        server.close()
+    assert server.received == 25
+
+
 def test_an_attempt_the_retry_handler_takes_no_quota_for_keeps_the_earlier_cost() -> (
     None
 ):
@@ -671,6 +707,82 @@ async def test_a_request_whose_connect_lost_the_cancel_is_not_sent(
     finally:
         server.close()
     assert server.received == 1
+
+
+class _HoldingServer:
+    """A loopback model server that holds its answer's headers until
+    released: ``received`` is set once a request is read."""
+
+    def __init__(self) -> None:
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        self.received = threading.Event()
+        self.release = threading.Event()
+        server = self
+
+        class Handler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, *_: Any) -> None:
+                pass
+
+            def do_POST(self) -> None:  # noqa: N802
+                self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                server.received.set()
+                server.release.wait(_BACKSTOP)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", "2")
+                self.end_headers()
+                self.wfile.write(b"{}")
+
+        self.http = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.http.daemon_threads = True
+        threading.Thread(target=self.http.serve_forever, daemon=True).start()
+        self.url = f"http://127.0.0.1:{self.http.server_address[1]}"
+
+    def close(self) -> None:
+        self.release.set()
+        self.http.shutdown()
+        self.http.server_close()
+
+
+@pytest.mark.parametrize("kind", ["ollama", "openai"])
+async def test_a_response_whose_headers_arrive_after_the_stop_is_closed_unread(
+    monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    # The stop comes after the request was written, while the server holds
+    # its headers: the response hook is the stop point as they arrive, and
+    # httpx closes the response it raises for, its body unread.
+    import httpx
+
+    from unified_kg_rag.adapters.local import models
+
+    opened: list[httpx.Response] = []
+
+    async def capture(response: httpx.Response) -> None:
+        opened.append(response)
+
+    monkeypatch.setitem(
+        models._ASYNC_EVENT_HOOKS, "response", [capture, models._track_response]
+    )
+    server = _HoldingServer()
+    stop = ReaderStop()
+    try:
+        async with _model_client(kind) as client:
+            with reader_stop_scope(stop):
+                request = asyncio.ensure_future(client.post(server.url))
+                assert await asyncio.to_thread(server.received.wait, _BACKSTOP)
+                stop.set()
+                server.release.set()
+                with pytest.raises(asyncio.CancelledError):
+                    await request
+    finally:
+        server.close()
+    (response,) = opened
+    assert response.status_code == 200
+    assert response.is_closed
+    assert not response.is_stream_consumed
 
 
 async def test_a_detached_context_binds_its_own_stop_only() -> None:
