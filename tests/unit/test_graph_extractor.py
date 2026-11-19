@@ -869,6 +869,37 @@ class TestExtractFromTextUnits:
         assert dropped == [1]
         assert stats.item_failed_text_unit_ids == ["t1"]
 
+    def test_a_record_is_built_as_its_call_completes(self, extractor, mocker) -> None:
+        # Perf (ARCH F4): the records were built after the last call, one
+        # unit after the other; each is now built as its own call completes,
+        # while the others are in flight. The second call answers only once
+        # the first unit's record is built, so it would wait out its timeout.
+        import threading
+
+        built = threading.Event()
+        waited: list[bool] = []
+        build = extractor._parse_extraction_result
+
+        def parse(result, unit):
+            record = build(result, unit)
+            if unit.id == "t0":
+                built.set()
+            return record
+
+        def extract(request):
+            if request["input_text"] == "slow":
+                waited.append(built.wait(10))
+            return {"entities": {}}
+
+        mocker.patch.object(extractor, "_parse_extraction_result", side_effect=parse)
+        mocker.patch.object(extractor, "_extract", side_effect=extract)
+        extractor.batch_processor.max_concurrency = 2
+        units = [TextUnit(id="t0", text="fast"), TextUnit(id="t1", text="slow")]
+        records, stats = extractor.extract_units(units)
+        assert waited == [True]
+        assert [r.text_unit_id for r in records] == ["t0", "t1"]
+        assert stats.num_successful_extractions == 2
+
     def test_batch_error_with_ignore_errors_returns_empty(
         self, extractor, mocker
     ) -> None:

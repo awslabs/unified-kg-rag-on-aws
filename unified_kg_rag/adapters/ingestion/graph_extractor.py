@@ -245,6 +245,16 @@ class GraphExtractor(BaseProcessor):
 
         errors: dict[int, BaseException] = {}
         discards: dict[int, Callable[[], None]] = {}
+        # Each unit's record, built as its call completes (on this thread,
+        # while the other calls are in flight), or the error building it.
+        parsed: dict[int, TextUnitExtraction | Exception] = {}
+
+        def parse(idx: int, result: Any) -> None:
+            try:
+                parsed[idx] = self._parse_extraction_result(result, text_units[idx])
+            except Exception as e:  # noqa: BLE001 - the unit's own failure
+                parsed[idx] = e
+
         try:
             extraction_results = self.batch_processor.execute_with_fallback(
                 items_to_process=text_units,
@@ -254,6 +264,7 @@ class GraphExtractor(BaseProcessor):
                 show_progress=self.show_progress,
                 errors=errors,
                 discards=discards,
+                on_result=parse,
             )
         except Exception as e:
             if not self.ignore_errors:
@@ -261,12 +272,15 @@ class GraphExtractor(BaseProcessor):
             log_failure(
                 logger, logging.ERROR, "Error during graph extraction: %s", error=e
             )
+            # Nor the counts of the records built before the batch failed.
+            self.stats = ExtractionStats(num_total_units=len(text_units))
+            self._off_schema_labels = Counter()
             self.stats.num_failed_extractions = len(text_units)
             self.stats.failed_text_unit_ids = [unit.id for unit in text_units]
             return [], self.stats
 
         records = self._process_extraction_results(
-            text_units, extraction_results, discards
+            text_units, extraction_results, discards, parsed
         )
         self.stats.item_failed_text_unit_ids.extend(
             text_units[idx].id
@@ -369,10 +383,13 @@ class GraphExtractor(BaseProcessor):
         text_units: list[TextUnit],
         extraction_results: list[Any],
         discards: dict[int, Callable[[], None]] | None = None,
+        parsed: dict[int, TextUnitExtraction | Exception] | None = None,
     ) -> list[TextUnitExtraction]:
-        """The units' records; a unit whose record fails to build fails as
-        its own error, and its response is discarded from the LLM response
-        cache (``discards``, from the batch) so a re-run asks again."""
+        """The units' records, in unit order; a unit whose record fails to
+        build fails as its own error, and its response is discarded from the
+        LLM response cache (``discards``, from the batch) so a re-run asks
+        again. A record (or its error) already built as its call completed
+        is in ``parsed``."""
         records: list[TextUnitExtraction] = []
         for idx, (text_unit, result) in enumerate(
             zip(text_units, extraction_results, strict=True)
@@ -383,7 +400,12 @@ class GraphExtractor(BaseProcessor):
                 logger.warning("No extraction result for text unit '%s'", text_unit.id)
                 continue
             try:
-                records.append(self._parse_extraction_result(result, text_unit))
+                record = (parsed or {}).get(idx)
+                if record is None:
+                    record = self._parse_extraction_result(result, text_unit)
+                if isinstance(record, Exception):
+                    raise record
+                records.append(record)
                 self.stats.num_successful_extractions += 1
             except Exception as e:  # noqa: BLE001 - isolate one unit's malformed answer
                 if discard := (discards or {}).get(idx):

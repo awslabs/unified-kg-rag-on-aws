@@ -307,6 +307,7 @@ class BatchProcessor(BaseModel):
         show_progress: bool = True,
         errors: dict[int, BaseException] | None = None,
         discards: dict[int, Callable[[], None]] | None = None,
+        on_result: Callable[[int, Any], None] | None = None,
     ) -> list[Any]:
         """Call ``sequential_func`` once per item and retry failures.
 
@@ -324,7 +325,10 @@ class BatchProcessor(BaseModel):
         item that succeeded gets, in ``discards`` (when given) under its
         index, the call that discards them: for a caller that rejects the
         result afterwards (a record it cannot build), so a re-run asks the
-        model again instead of replaying it.
+        model again instead of replaying it. ``on_result`` (when given) is
+        called on the calling thread with the index and result of each item
+        that succeeded, as it completes: the caller's own work on a result
+        overlaps the calls still in flight instead of following the last.
         """
         with observability.span(
             "kg_rag.batch", task=task_name, items=len(items_to_process)
@@ -337,6 +341,7 @@ class BatchProcessor(BaseModel):
                 show_progress,
                 errors,
                 discards,
+                on_result,
             )
             span.set_attributes(_batch_outcome(items_to_process, results))
             return results
@@ -376,6 +381,7 @@ class BatchProcessor(BaseModel):
         show_progress: bool,
         errors: dict[int, BaseException] | None = None,
         item_discards: dict[int, Callable[[], None]] | None = None,
+        on_result: Callable[[int, Any], None] | None = None,
     ) -> list[Any]:
         inputs = self._prepare(items_to_process, prepare_inputs_func, task_name)
         if not inputs:
@@ -449,7 +455,10 @@ class BatchProcessor(BaseModel):
                     desc=f"Processing: {task_name}",
                     disable=None if show_progress else True,
                 ):
-                    results[futures[future]] = future.result()
+                    idx = futures[future]
+                    results[idx] = future.result()
+                    if on_result is not None and results[idx] is not BATCH_ITEM_FAILED:
+                        on_result(idx, results[idx])
                     progress.update()
             except BaseException:
                 # Nor start another attempt of the running ones.
