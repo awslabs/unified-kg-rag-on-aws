@@ -4241,10 +4241,19 @@ class _BackgroundExtractions:
 
 
 def _retrieve(task: asyncio.Future[Any]) -> None:
-    """Read how ``task`` ended, so a failure is not logged as unretrieved
-    (its caller is gone; ``shared.usage`` counted its call)."""
-    if not task.cancelled():
-        task.exception()
+    """Read how ``task`` ended, so a failure is not logged as unretrieved,
+    and log the failure: nobody else reads it (its caller is gone;
+    ``shared.usage`` counted its call)."""
+    if task.cancelled():
+        return
+    error = task.exception()
+    if error is not None:
+        log_failure(
+            logger,
+            logging.WARNING,
+            "A speculative extraction left running past its query failed: %s",
+            error=error,
+        )
 
 
 # The speculative extractions (``auto_speculative_extraction``) an auto query

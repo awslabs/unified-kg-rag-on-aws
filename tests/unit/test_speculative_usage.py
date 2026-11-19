@@ -59,6 +59,8 @@ from unified_kg_rag.shared.usage import usage_scope
 pytestmark = pytest.mark.unit
 
 _KEYWORDS = '{"high_level_keywords": ["supply"], "low_level_keywords": ["Vendor"]}'
+# What a failing call's error says (model output, never logged above DEBUG).
+_FAILURE_TEXT = "the model replied: Vendor owes Buyer 1200"
 
 
 class _ThreadedChat(BaseChatModel):
@@ -85,6 +87,8 @@ class _ThreadedChat(BaseChatModel):
     cut: list[str] = Field(default_factory=list)
     # Whether the call's reader had stopped once its gate opened, per kind.
     stopped: dict[str, list[bool]] = Field(default_factory=lambda: defaultdict(list))
+    # Kinds whose call fails after its gate (a model error quoting text).
+    failing: set[str] = Field(default_factory=set)
     lock: Any = Field(default_factory=threading.Lock)
 
     @property
@@ -108,6 +112,8 @@ class _ThreadedChat(BaseChatModel):
             # Bounded, so a failed test never leaves the thread behind.
             gate.wait(30)
         time.sleep(self.delays.get(kind, 0.0))
+        if kind in self.failing:
+            raise ValueError(_FAILURE_TEXT)
         return self._reply(kind)
 
     async def _agenerate(
@@ -346,6 +352,32 @@ async def test_the_unread_extraction_reads_its_response_past_the_query(
     assert model.cut == []
     assert model.started.count("keywords") == model.served.count("keywords") == 1
     assert out.metadata["usage"]["cache_hits"] == 1
+
+
+async def test_a_kept_extraction_that_fails_logs_its_failure(
+    release: threading.Event, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Nobody reads a kept extraction's outcome: its final failure (the
+    # retries given up) is logged as it ends, by type and digest, its text
+    # (which may quote the model's reply) at DEBUG only.
+    import logging
+
+    model = _ThreadedChat(gates={"keywords": release}, failing={"keywords"})
+    chain = _chain(model, query_extraction_cache_size=8)
+    await chain.ainvoke(_auto())
+    assert chain._background_extractions._snapshot()
+    with caplog.at_level(logging.DEBUG, logger=rag_chain.__name__):
+        release.set()
+        await _until(lambda: not chain._background_extractions._snapshot())
+    ended = [
+        record
+        for record in caplog.records
+        if record.name == rag_chain.__name__ and "extraction" in record.getMessage()
+    ]
+    (warning,) = [record for record in ended if record.levelno == logging.WARNING]
+    assert "ValueError" in warning.getMessage()
+    assert _FAILURE_TEXT not in warning.getMessage()
+    assert any(_FAILURE_TEXT in record.getMessage() for record in ended)
 
 
 async def test_a_kept_extraction_is_no_longer_its_readers(
