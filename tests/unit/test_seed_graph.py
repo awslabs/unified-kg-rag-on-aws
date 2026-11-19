@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import json
 import random
-import time
 from typing import Any, NoReturn
 
 import pytest
@@ -787,29 +786,71 @@ def _random_seed(nodes: int, edges: int) -> tuple[SeedGraph, SeedConversionSetti
     return graph, _settings(shards=16, max_nodes=nodes, max_edges=edges)
 
 
-def _conversion_seconds(nodes: int, edges: int, runs: int, cap: float) -> float:
-    """The least CPU time of ``runs`` conversions of a random seed of this
-    size; stops after a run over ``cap`` seconds (it already fails)."""
+class _OverBudget(Exception):
+    """The conversion did more id work than the bound allows: it fails."""
+
+
+class _CountedId(str):
+    """A node id that counts each hash and equality test on it: every
+    dict or set operation on an id, and every comparison a scan of the ids
+    makes. A count, unlike a timing, a loaded runner does not change."""
+
+    operations = 0
+    budget = float("inf")
+
+    def _count(self) -> None:
+        cls = _CountedId
+        cls.operations += 1
+        if cls.operations > cls.budget:
+            raise _OverBudget
+
+    def __hash__(self) -> int:
+        self._count()
+        return str.__hash__(self)
+
+    def __eq__(self, other: object) -> bool:
+        self._count()
+        return str.__eq__(self, other)
+
+
+def _conversion_operations(nodes: int, edges: int, budget: float) -> int:
+    """The id operations of one conversion of a random seed of this size
+    (every node id and edge endpoint a :class:`_CountedId`); stops past
+    ``budget`` operations (it already fails)."""
     graph, settings = _random_seed(nodes, edges)
-    best = float("inf")
-    for _ in range(runs):
-        # CPU time: a busy runner delays the process, it does not add to it.
-        start = time.process_time()
-        conversion = convert_seed(graph, settings, _schema("off"))
-        best = min(best, time.process_time() - start)
-        assert conversion.stats.nodes == nodes
-        if best > cap:
-            break
-    return best
+    # model_copy does not validate, which would turn the ids back into str.
+    counted = graph.model_copy(
+        update={
+            "nodes": tuple(
+                n.model_copy(update={"id": _CountedId(n.id)}) for n in graph.nodes
+            ),
+            "edges": tuple(
+                e.model_copy(
+                    update={
+                        "source": _CountedId(e.source),
+                        "target": _CountedId(e.target),
+                    }
+                )
+                for e in graph.edges
+            ),
+        }
+    )
+    _CountedId.operations, _CountedId.budget = 0, budget
+    try:
+        conversion = convert_seed(counted, settings, _schema("off"))
+    except _OverBudget:
+        return _CountedId.operations
+    finally:
+        _CountedId.budget = float("inf")
+    assert conversion.stats.nodes == nodes
+    return _CountedId.operations
 
 
-# Four times the seed takes about four times as long (about 0.9 s, then
-# 3.5 s); the quadratic edge check (a set difference against every node id
-# per edge) takes more than ten times as long. Shared CI runners measured up
-# to 8.7 for the linear code, so this timing check is `perf`: it runs in the
-# weekly exploration job, and the lookup test above pins the known cause on
-# every PR.
-_SCALING_BOUND = 8.0
+# Four times the seed takes four times the id operations (a lookup per
+# endpoint); the quadratic edge check (a set difference against every node
+# id per edge) took about sixteen times as many. Counted, not timed: the
+# bound holds on any runner, so the test runs on every PR.
+_SCALING_BOUND = 6.0
 
 
 class _LookupOnlyNodes(dict[str, SeedNode]):
@@ -833,13 +874,10 @@ def test_edges_look_their_endpoints_up_without_walking_the_nodes() -> None:
     assert len(edges) > 900
 
 
-@pytest.mark.perf
-@pytest.mark.slow
-@pytest.mark.timeout(300)
 def test_a_large_seed_converts_in_linear_time() -> None:
-    small = _conversion_seconds(2_500, 12_500, runs=3, cap=float("inf"))
-    large = _conversion_seconds(10_000, 50_000, runs=3, cap=_SCALING_BOUND * small)
-    assert large / small < _SCALING_BOUND, f"{small:.2f} s -> {large:.2f} s"
+    small = _conversion_operations(1_000, 5_000, budget=float("inf"))
+    large = _conversion_operations(4_000, 20_000, budget=_SCALING_BOUND * small)
+    assert large / small < _SCALING_BOUND, f"{small} -> {large} id operations"
 
 
 @pytest.mark.slow
