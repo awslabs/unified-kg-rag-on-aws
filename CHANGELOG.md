@@ -476,6 +476,9 @@ Bugs present in 0.3.0.
   `run-rag --filters` uses (`filter_pairs`), and a malformed line or a repeated key refuses the question with the
   reason; the example is `attr_<key>: value`. `run-rag --filters` no longer keeps the space after a pair's `:` in its
   value (`attr_code: 007` matched nothing).
+- The Graph page's Analysis tab cut off the last column of its schema conformance and evidence tables in the side
+  panel (English and German, at 1440 and 1920 px): each table lists the parts as rows, entities and relationships as
+  columns.
 
 ## [0.3.0] - 2026-11-14
 

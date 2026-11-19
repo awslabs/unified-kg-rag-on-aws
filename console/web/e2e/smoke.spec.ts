@@ -212,6 +212,29 @@ for (const locale of ["en", "de"]) {
   });
 }
 
+// Regression (arch E14): the Graph page's Analysis tables (schema
+// conformance, evidence) cut off their last column in the side panel at
+// 1440 and 1920 px in English and German. Every table there fits its panel.
+for (const locale of ["en", "de", "fr", "ru", "es", "it", "pt", "ko", "ja", "zh"]) {
+  for (const width of [1440, 1920]) {
+    test(`the graph analysis tables fit at ${width} px in ${locale}`, async ({ page, baseURL }) => {
+      const origin = new URL(baseURL ?? "http://127.0.0.1:8501").origin;
+      await page.setViewportSize({ width, height: 1000 });
+      await page.addInitScript((code) => window.localStorage.setItem("ukr-console-locale", code), locale);
+      const token = new URL(process.env.CONSOLE_URL ?? origin).searchParams.get("token") ?? process.env.CONSOLE_TOKEN;
+      await page.goto(token ? `/graph?token=${encodeURIComponent(token)}` : "/graph");
+      await expect(page.locator(".graph-canvas canvas").first()).toBeVisible({ timeout: 60_000 });
+      await page.getByRole("tab").nth(2).click();
+      await page.evaluate(() => document.fonts.ready.then(() => undefined));
+      const wraps = page.locator('[role="tabpanel"] .table-wrap');
+      await expect(wraps.first()).toBeVisible();
+      const cut = await wraps.evaluateAll((elements) => elements.map((element) => element.scrollWidth - element.clientWidth));
+      expect(cut.length).toBeGreaterThanOrEqual(2);
+      expect(cut.every((overflow) => overflow <= 0), JSON.stringify(cut)).toBe(true);
+    });
+  }
+}
+
 // Regression (arch E1): with a second namespace ingested, the Graph page
 // opened that namespace's newer export and an answer's "Show in the graph"
 // drew another namespace's graph. Both open the config namespace's.

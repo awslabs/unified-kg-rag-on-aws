@@ -509,64 +509,18 @@ function GraphExplorer({ graphRef, data, params }: { graphRef: string; data: Gra
                 </div>
                 <CountTable title={t("graph.stats.types")} rows={data.stats.types} total={data.stats.nodes} percent={percent} number={number} />
                 <CountTable title={t("graph.stats.relations")} rows={data.stats.relation_types} total={data.stats.edges} percent={percent} number={number} />
-                <div>
-                  <h3 className="field-label" style={{ margin: "0 0 6px" }}>
-                    {t("graph.stats.schema")}
-                  </h3>
-                  <div className="table-wrap" tabIndex={0}>
-                    <table className="table table-compact">
-                      <thead>
-                        <tr>
-                          <th>
-                            <span className="visually-hidden">{t("graph.stats.what")}</span>
-                          </th>
-                          <th className="num">{t("graph.inSchema")}</th>
-                          <th className="num">{t("graph.offSchema")}</th>
-                          <th className="num">{t("graph.unannotated")}</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {(["entities", "relationships"] as const).map((k) => (
-                          <tr key={k}>
-                            <td>{t(`graph.stats.${k}`)}</td>
-                            <td className="num">{number(data.stats.schema[k].in_schema)}</td>
-                            <td className="num">{number(data.stats.schema[k].off_schema)}</td>
-                            <td className="num">{number(data.stats.schema[k].unannotated)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-                <div>
-                  <h3 className="field-label" style={{ margin: "0 0 6px" }}>
-                    {t("graph.stats.evidence")}
-                  </h3>
-                  <div className="table-wrap" tabIndex={0}>
-                    <table className="table table-compact">
-                      <thead>
-                        <tr>
-                          <th>
-                            <span className="visually-hidden">{t("graph.stats.what")}</span>
-                          </th>
-                          <th className="num">{t("graph.evidence.document")}</th>
-                          <th className="num">{t("graph.evidence.seed_graph")}</th>
-                          <th className="num">{t("graph.evidence.both")}</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {(["entities", "relationships"] as const).map((k) => (
-                          <tr key={k}>
-                            <td>{t(`graph.stats.${k}`)}</td>
-                            <td className="num">{number(data.stats.evidence[k].document ?? 0)}</td>
-                            <td className="num">{number(data.stats.evidence[k].seed_graph ?? 0)}</td>
-                            <td className="num">{number(data.stats.evidence[k].both ?? 0)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
+                <SplitTable
+                  title={t("graph.stats.schema")}
+                  rows={[
+                    [t("graph.inSchema"), data.stats.schema.entities.in_schema, data.stats.schema.relationships.in_schema],
+                    [t("graph.offSchema"), data.stats.schema.entities.off_schema, data.stats.schema.relationships.off_schema],
+                    [t("graph.unannotated"), data.stats.schema.entities.unannotated, data.stats.schema.relationships.unannotated],
+                  ]}
+                />
+                <SplitTable
+                  title={t("graph.stats.evidence")}
+                  rows={(["document", "seed_graph", "both"] as const).map((k) => [t(`graph.evidence.${k}`), data.stats.evidence.entities[k] ?? 0, data.stats.evidence.relationships[k] ?? 0])}
+                />
               </div>
             ) : null}
           </div>
@@ -643,6 +597,42 @@ export function EntityTable({ nodes, communityName, onPick }: { nodes: EntityRow
         </>
       ) : null}
     </details>
+  );
+}
+
+/** Entities and relationships counted by one split (schema conformance,
+ * evidence): one row per part, so the side panel's narrow width holds the
+ * two count columns whatever the language (a column per part was cut off). */
+function SplitTable({ title, rows }: { title: string; rows: [string, number, number][] }) {
+  const { t, number } = useI18n();
+  return (
+    <div>
+      <h3 className="field-label" style={{ margin: "0 0 6px" }}>
+        {title}
+      </h3>
+      <div className="table-wrap" tabIndex={0}>
+        <table className="table table-compact">
+          <thead>
+            <tr>
+              <th>
+                <span className="visually-hidden">{t("graph.stats.what")}</span>
+              </th>
+              <th className="num">{t("graph.stats.entities")}</th>
+              <th className="num">{t("graph.stats.relationships")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(([label, entities, relationships]) => (
+              <tr key={label}>
+                <td>{label}</td>
+                <td className="num">{number(entities)}</td>
+                <td className="num">{number(relationships)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 
