@@ -209,6 +209,7 @@ ALLOWED: dict[str, str] = {
         "adapters/source_files/rdf_files.py:MAX_XML_LITERAL_ELEMENTS",
         "adapters/source_files/rdf_files.py:MAX_LINE_BYTES",
         "adapters/source_files/rdf_terms.py:MAX_LABEL_CHARS",
+        "application/prompts/tuner.py:MAX_ENTITY_TYPE_CHARS",
         "adapters/retrievers/opensearch_retriever.py:_LEXICAL_TERM_BUDGET",
         "adapters/retrievers/opensearch_retriever.py:_LEXICAL_CLAUSE_BUDGET",
         "application/cli/console/ask.py:MAX_QUESTION_CHARACTERS",

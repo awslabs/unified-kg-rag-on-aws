@@ -47,7 +47,9 @@ run-prompt-tuning --source-directory ./source --output-path tuned_prompts.yaml -
 `custom_prompts:` 아래에, 언어 설정은 설정 파일에 복사하세요.
 
 - 튜닝한 `graph_extraction_system`과 `community_report_system`은 도메인 머리말 뒤에
-  내장 규칙과 출력 형식을 그대로 붙인 것이며, 생성한 퓨샷 예시는 마지막에 옵니다.
+  내장 규칙과 출력 형식을 그대로 붙인 것이며, 생성한 퓨샷 예시는 마지막에 프롬프트가
+  데이터라고 밝힌 `<domain_examples>` 블록 안에 옵니다. 프로필의 도메인, 언어와 페르소나는
+  각각 `<` 없는 짧은 한 줄로 줄이므로 표본 문서가 튜닝한 프롬프트에 지시를 더할 수 없습니다.
 - 엔티티 범주는 여전히 `processing.graph_extraction.entity_types`(`{entity_types}`)에서
   오므로 프로필의 `entity_types`를 그곳에 복사하세요.
 - 퓨샷 예시는 프로필의 엔티티 유형으로 추출하므로 프로필이 찾은 유형을 보여 줍니다.

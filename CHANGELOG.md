@@ -461,6 +461,11 @@ Bugs present in 0.3.0.
 - An `auto` query's speculative extraction left running past its query failed silently once its retries ran out; its
   failure is logged at WARNING (type and digest; the text at DEBUG).
 - An Ollama model's capability check (`/api/show`) left its connection's socket unclosed; the client is closed.
+- `run-prompt-tuning` wrote corpus-derived text into the tuned system prompts unfenced: the profile's sample sat in
+  plain quotes, the model's domain, language and persona answers could span lines, and the few-shot examples were
+  pasted bare, so a sampled document could add instructions to every later extraction and report. The sample and the
+  examples sit in tag blocks the prompts declare as data (their tags neutralised), and each answer is one short line
+  without `<`.
 
 ## [0.3.0] - 2026-11-14
 
