@@ -11,8 +11,13 @@ way up (a loaded event loop delays it), it leaves the stream's generators
 suspended between chunks, which close nothing until garbage collection
 finalizes them. The test keeps every async generator alive, as a reference
 cycle does, so only the query itself can close the response: the server
-must see every connection closed, the query fail with its timeout at the
-limit, the loop log no error, and the next query answer.
+must see every connection closed, the query fail with the timeout its
+limit's timer raised, the loop log no error, and the next query answer.
+
+What makes the timeout late is pinned by events, not by how long the query
+took (a loaded runner delays the timer and every step after it): no chunk
+in flight when the timer fired is waited out, and a wait on the stalled
+read, the read timeout or the stall trips a backstop far below them.
 """
 
 from __future__ import annotations
@@ -44,9 +49,13 @@ pytestmark = [pytest.mark.integration]
 PROVIDERS = ["ollama", "openai", "bedrock"]
 # The limit that cuts each query off (the deadline, or the window).
 LIMIT = 1.0
-# How far past the limit the timeout may be raised: the cut's unwinding and
-# the closing of the responses, on a loaded runner.
-LATE = 1.0
+# Seconds after its limit started within which every query's timeout is
+# raised: only a backstop for a cut that waits for the stalled read, far
+# below what else would end that wait (the model clients' read timeout,
+# 30 s under the deadline; the stall). A loaded runner delays the timer and
+# the unwinding by a second or two; the cut's promptness is pinned by
+# events instead (_carried_slowly).
+HANG = 10.0
 # Queries cut off at once.
 QUERIES = 6
 # Seconds a stalled answer waits: far past every bound here, so a response
@@ -89,26 +98,42 @@ async def _generators_kept() -> AsyncIterator[None]:
                 await agen.aclose()
 
 
-def _carried_slowly(monkeypatch: pytest.MonkeyPatch, seconds: float) -> None:
+def _carried_slowly(monkeypatch: pytest.MonkeyPatch, seconds: float) -> list[float]:
     """Each chunk takes ``seconds`` to reach the stream's reader after the
-    model's read returned it: a cut lands there, the read done."""
+    model's read returned it: a cut lands there, the read done.
+
+    Returns the carries that ended after their query's limit fired (its
+    timer expired): a cut that waited out the chunk in flight instead of
+    cancelling it. The timer cancels the query's task, so a carry it lands
+    in raises, however late a loaded loop runs either."""
     carry = chain_factory.ReasoningStripper.atransform
+    waited_out: list[float] = []
 
     async def slow(self: Any, input: Any, config: Any = None, **kwargs: Any) -> Any:
+        scope = rag_chain._DEADLINE_SCOPE.get()
+        assert scope is not None and scope._timeout is not None
+        timer = scope._timeout
         async for chunk in carry(self, input, config, **kwargs):
             await asyncio.sleep(seconds)
+            if timer.expired():
+                waited_out.append(seconds)
             yield chunk
 
     monkeypatch.setattr(chain_factory.ReasoningStripper, "atransform", slow)
+    return waited_out
 
 
-def _timed_limits(monkeypatch: pytest.MonkeyPatch, window: bool) -> list[float]:
+def _timed_limits(
+    monkeypatch: pytest.MonkeyPatch, window: bool
+) -> tuple[list[float], list[QueryTimeoutError]]:
     """The seconds each query's limit took to raise its ``QueryTimeoutError``
     (its calls unwound and their responses closed), counted from when the
     limit started: the deadline at the query's start, the window at the
     answer's call, after the query's other steps (which a loaded runner can
-    delay)."""
+    delay); and the errors the deadline scope made, once its timer expired
+    (``_DeadlineScope._expired``)."""
     took: list[float] = []
+    made: list[QueryTimeoutError] = []
     windows: dict[Any, float] = {}
     within = rag_chain._DeadlineScope.first_chunk_within
     expired = rag_chain._DeadlineScope._expired
@@ -122,18 +147,21 @@ def _timed_limits(monkeypatch: pytest.MonkeyPatch, window: bool) -> list[float]:
     def timed_expired(scope: Any) -> QueryTimeoutError:
         started = windows[scope] if window else scope._deadline.started
         took.append(time.monotonic() - started)
-        return expired(scope)
+        made.append(expired(scope))
+        return made[-1]
 
     monkeypatch.setattr(rag_chain._DeadlineScope, "first_chunk_within", timed_within)
     monkeypatch.setattr(rag_chain._DeadlineScope, "_expired", timed_expired)
-    return took
+    return took, made
 
 
-async def _cut_off(chain: Any) -> None:
-    """Read one query's events: it fails with the timeout of its limit."""
+async def _cut_off(chain: Any, made: list[QueryTimeoutError]) -> None:
+    """Read one query's events: it fails with the timeout its limit's timer
+    raised (one the deadline scope made, of that limit's seconds)."""
     with pytest.raises(QueryTimeoutError) as raised:
         async for _ in chain.aquery_events(_input()):
             pass
+    assert any(raised.value is error for error in made)
     assert raised.value.timeout_seconds == LIMIT
 
 
@@ -183,13 +211,17 @@ async def test_a_query_cut_off_closes_its_answer_stream(
     errors = _loop_errors()
     try:
         with pytest.MonkeyPatch.context() as carried:
-            if where == "between chunks":
+            waited_out = (
                 _carried_slowly(carried, SLOW[limit])
-            took = _timed_limits(carried, window)
+                if where == "between chunks"
+                else []
+            )
+            took, made = _timed_limits(carried, window)
             async with _generators_kept():
-                await asyncio.gather(*(_cut_off(chain) for _ in range(QUERIES)))
+                await asyncio.gather(*(_cut_off(chain, made) for _ in range(QUERIES)))
                 assert len(took) == QUERIES
-                assert LIMIT <= min(took) and max(took) < LIMIT + LATE
+                assert LIMIT <= min(took) and max(took) < HANG
+                assert waited_out == []
                 await _released(port, models)
         models.knobs = stream_models.StreamKnobs()
         chain.config.search.query_timeout_seconds = 30
