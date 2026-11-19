@@ -33,15 +33,24 @@ class GlobalSearchConfig(ConfigSection):
         ge=0,
         description=(
             "The cut of the community hierarchy whose reports global search "
-            "maps over, counted from the root as MS GraphRAG's community_level "
-            "(default 2 there too): the communities at this depth plus the "
-            "leaves above it, so every entity is covered once. 0 = the root "
-            "communities (fewest, broadest reports); a large value = the "
-            "leaves. With use_dynamic_selection it bounds only the depths a "
-            "selection that found nothing relevant rates whole (MS GraphRAG's "
-            "max_level); relevant reports are followed to the leaves."
+            "maps over, counted from the root: the communities at this depth "
+            "plus the leaves above it, so every entity is covered once. 0 = "
+            "the root communities (fewest, broadest reports); a large value = "
+            "the leaves. MS GraphRAG's community_level (default 2 there too) "
+            "counts from the first Leiden pass over the whole graph, while the "
+            "root here sits above the coarser levels built over that pass "
+            "(graph.community_detection.max_levels), so depth D here is "
+            "upstream's level D - k, where k is the number of coarser levels "
+            "the corpus produced. With use_dynamic_selection it bounds only "
+            "the depths a selection that found nothing relevant rates whole "
+            "(MS GraphRAG's max_level); relevant reports are followed to the "
+            "leaves."
         ),
-        json_schema_extra=evidence("upstream", "MS GraphRAG's community_level, 2"),
+        json_schema_extra=evidence(
+            "deviation",
+            "MS GraphRAG's community_level, 2, counted from the first Leiden "
+            "pass, not from the coarser levels above it",
+        ),
     )
     max_reports_per_level: int = Field(
         default=100,
@@ -210,9 +219,11 @@ class TypeQuotaConfig(ConfigSection):
     entity_floor: int = Field(
         default=10,
         ge=1,
-        description="Minimum entity slots (MS GraphRAG local's top_k_entities).",
+        description="Minimum entity slots. MS GraphRAG local's top_k_entities "
+        "is 10 too, but it maps the query to twice that many entities "
+        "(oversample_scaler 2) and keeps all 20.",
         json_schema_extra=evidence(
-            "upstream", "MS GraphRAG local's top_k_entities, 10"
+            "deviation", "MS GraphRAG local's top_k_entities 10, mapping 20 entities"
         ),
     )
     relationship_multiplier: float = Field(
@@ -225,10 +236,14 @@ class TypeQuotaConfig(ConfigSection):
     relationship_floor: int = Field(
         default=10,
         ge=1,
-        description="Minimum relationship slots (MS GraphRAG local's "
-        "top_k_relationships).",
+        description="Minimum relationship slots. MS GraphRAG local's "
+        "top_k_relationships is 10 too, but per selected entity: it keeps "
+        "every relationship between the selected entities plus up to 10 "
+        "times their count of the others, then cuts by tokens.",
         json_schema_extra=evidence(
-            "upstream", "MS GraphRAG local's top_k_relationships, 10"
+            "deviation",
+            "MS GraphRAG local's top_k_relationships 10 per selected entity, "
+            "after every in-network relationship",
         ),
     )
     community_multiplier: float = Field(

@@ -661,8 +661,11 @@ class SummaryTreeConfig(ConfigSection):
         default=300,
         ge=32,
         le=4000,
-        description="Length a summary aims at; a longer answer is cut to it.",
-        json_schema_extra=evidence("unmeasured"),
+        description="Length a summary aims at; a longer answer is cut to it. "
+        "RAPTOR's summarization_length is 100 for clusters of 100-token "
+        "chunks of at most 3500 tokens; the clusters here hold longer chunks "
+        "and up to max_cluster_tokens.",
+        json_schema_extra=evidence("deviation", "RAPTOR's summarization_length, 100"),
     )
     max_lineage_text_units: int = Field(
         default=10000,

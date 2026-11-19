@@ -137,7 +137,14 @@ S3에 있는 코퍼스, 한 가지 검색 방법, 운영할 인프라가 없는 
 [parthsarthi03/raptor](https://github.com/parthsarthi03/raptor)(main 브랜치, 2026-11-08 기준)의
 소스 코드를 읽고 정리한 내용입니다. 칸에 적은 파일이 확인할 위치이며, 저장소 루트에서
 시작하는 경로(`docs/`, `reproduce/`)가 아니면 라이브러리의 Python 패키지(`graphrag/`,
-`lightrag/`, `src/hipporag/`, `raptor/`) 기준입니다.
+`lightrag/`, `src/hipporag/`, `raptor/`) 기준입니다. GraphRAG와 LightRAG는 주간
+`fidelity` 워크플로가 고정한 커밋(`.github/workflows/fidelity.yml`: `6d02c23`, `4e1f952`)으로
+읽었으며, 이 워크플로의 동등성(parity) 테스트가 그 커밋과 HippoRAG `d5c8329`, RAPTOR
+`7da1d48`을 실행합니다. 방법론마다 다르게 한 부분과 이유는 설계 문서
+[§6.1](../design/retrieval-graphrag-lightrag.md#fidelity-to-ms-graphrag),
+[§6.2](../design/retrieval-graphrag-lightrag.md#fidelity-to-lightrag),
+[§6.4](../design/retrieval-hipporag-raptor.md#64-hipporag-2-personalized-pagerank-ppr-local-ranking),
+[§6.5](../design/retrieval-hipporag-raptor.md#65-raptor-summary-tree-raptor-tree-opt-in)(영문)의 표에 있습니다.
 
 | 영역 | GraphRAG | LightRAG | HippoRAG 2 | RAPTOR | 이 프레임워크 | 문서 |
 |---|---|---|---|---|---|---|
@@ -164,8 +171,23 @@ upstream의 기본값이나 알고리즘과 일부러 다르게 한 부분입니
   Leiden과 같음). 그 위의 상위 레벨은 커뮤니티 그래프를 다시 분할합니다.
   `min_community_size`보다 작은 연결 요소만 커뮤니티를 받지 않습니다. MS GraphRAG는 첫
   분할에서 멈추고, `max_cluster_size` 10을 쓰며, 기본값(`use_lcc`)으로는 가장 큰 연결
-  요소만 군집화합니다(`config/defaults.py`)
+  요소만 군집화합니다(`config/defaults.py`). 그래서 깊이를 세는 루트가 다릅니다. 여기의
+  `community_depth` D는 MS GraphRAG의 `community_level` D - k이고, k는 코퍼스에서 생긴 상위
+  레벨의 수입니다(엔티티 500~2,000개의 합성 그래프에서 여기의 깊이 1은 upstream의 레벨 0과
+  정확히 같았습니다). 한 쌍 사이의 관계는 그 쌍의 에지에 가중치를 더하며, MS GraphRAG는
+  방향만 반대인 쌍 중 마지막 행 하나만 남깁니다(`index/operations/cluster_graph.py`)
   ([설계 문서 §4.3](../design/ingestion.md#43-communities-stages-10-11), 영문).
+- **리포트 입력.** 리포트는 커뮤니티 엔티티 사이의 관계를 모두 MS GraphRAG의 `sort_context`
+  순서로 담고, 그다음 어떤 관계로도 이어지지 않은 엔티티를 담습니다. MS GraphRAG는
+  `sort_context`에 엔티티마다 관계 하나만 넘기므로(`graph_context/context_builder.py`), 기록한
+  커뮤니티 30개에서 리포트가 본 관계는 380개 중 217개였고, 이어지지 않은 엔티티는
+  빠졌습니다(`tests/fixtures/graphrag_lightrag/`)
+  ([설계 문서 §4.3](../design/ingestion.md#43-communities-stages-10-11), 영문).
+- **청킹(측정 안 함).** 기본 `intelligent` 청커는 모델이 250~2,000 토큰 사이에서 경계를
+  정합니다. MS GraphRAG와 LightRAG는 1,200 토큰 고정 청크를 100 토큰씩 겹쳐 자르며
+  (`config/defaults.py`, `lightrag.py`), 여기서는 `chunker_type: simple`이 그렇게 자릅니다(겹침
+  125). 청크 크기는 추출 결과를 바꾸지만(GraphRAG 논문에서 600 토큰 청크는 2,400 토큰 청크의
+  약 두 배에 이르는 엔티티 참조를 찾았습니다), 두 청커를 비교한 실행은 없습니다.
 - **글리닝.** 기본 라운드는 MS GraphRAG의 1회(`max_gleanings`)가 아니라 3회이고, 텍스트
   단위는 직전 답변이 새로운 것을 더했을 때만 다시 묻습니다. 그래프 재현율을 측정해 정했습니다
   ([근거](./defaults-and-evidence.md#gleaning-rounds), 영문).
@@ -176,6 +198,15 @@ upstream의 기본값이나 알고리즘과 일부러 다르게 한 부분입니
 - **LightRAG 청크 선택.** `kg_chunk_pick_method` 기본값은 `weight`이고, upstream LightRAG의
   기본값은 `VECTOR`입니다(`constants.py`). 두 방식은 측정에서 차이가 없었습니다
   ([근거](./defaults-and-evidence.md#lightrag-chunk-picking-and-mmr-diversity), 영문).
+- **local 검색의 엔티티와 섹션(측정 안 함).** MS GraphRAG local은 질문을 임베딩
+  유사도로 엔티티에 대응시키며 모델 호출이 없고(`query/context_builder/entity_extraction.py`:
+  10개를 20개로 오버샘플링), 그 엔티티의 관계보다 더 멀리 가지 않으며, 엔티티 사이의 관계는
+  모두, 나머지 관계는 엔티티마다 10개까지 담습니다(`query/context_builder/local_context.py`).
+  여기서는 빠른 모델 호출이 먼저 질문에 나온 엔티티 이름을 추출해 이름마다 따로 찾고(이름이
+  없을 때만 질문 자체가 시드가 되며, `--disable-query-processing`도 이렇게 동작), 그래프 탐색은
+  `search.graph_expansion.max_hops`(3) 깊이까지 가며, 유형 할당량이 `top_k` 10에서 엔티티와
+  관계를 10개씩 남깁니다. 세 가지 모두 upstream 방식과 비교하지 않았습니다
+  ([설계 문서 §6.1](../design/retrieval-graphrag-lightrag.md#fidelity-to-ms-graphrag), 영문).
 - **local 검색의 리포트.** `local`은 질의 엔티티와 가장 비슷한 리포트를 읽습니다. MS
   GraphRAG local은 엔티티가 속한 커뮤니티의 리포트를 읽으며(`mixed_context.py`), 여기서는
   `report_selection: membership`이 이를 따르되 업스트림의 `community_level` 단면 대신 최하위
@@ -185,6 +216,11 @@ upstream의 기본값이나 알고리즘과 일부러 다르게 한 부분입니
   4,000 토큰까지 읽습니다. MS GraphRAG의 reduce 단계는 핵심 내용만 읽으며
   (`global_search/search.py`), 여기서는 `evidence_tokens: 0`에 해당합니다
   ([근거](./defaults-and-evidence.md#global-evidence-cap), 영문).
+- **DRIFT 순서.** primer의 가상 답변은 가장 중요한 리포트를 본떠 쓰고, 남은 후속 질의는
+  점수가 높은 것부터 실행합니다. MS GraphRAG의 primer는 무작위 리포트를 틀로 쓰고
+  (`query/structured_search/drift_search/primer.py`), 점수 함수가 없으면 남은 후속 질의를
+  섞습니다(`drift_search/state.py` `rank_incomplete_actions`). 실행을 반복할 수 있게 한
+  것이며, 둘 다 측정하지 않았습니다.
 - **전략 이름.** `local`과 `global`은 GraphRAG의 전략입니다. LightRAG 자체의 `local`과
   `global` 모드(`base.py`)는 따로 제공하지 않으며, `hybrid`는 upstream과 마찬가지로 두 키워드
   수준을 함께 씁니다.

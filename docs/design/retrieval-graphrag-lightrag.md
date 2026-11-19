@@ -113,7 +113,9 @@ the methodology: GraphRAG's (§6.1) and LightRAG's (§6.2), the wrapper
   (left out under a filter key it does not store, as `tree` does).
 - **local** — candidate entities → graph expansion → frequency filter → their
   text units, plus a community-report section and a relationship section
-  (MS GraphRAG local search). Each query entity is looked up in the entities
+  (MS GraphRAG local search's sections; how the entities are found, the
+  walk and the section sizes depart from it, see [Fidelity to MS
+  GraphRAG](#fidelity-to-ms-graphrag)). Each query entity is looked up in the entities
   index on its own, concurrently: the entities of its name (those with its
   `entity_key`, else with its `compact_name_key`, else with its `link_key`:
   the `compact_name_key` with Arabic alef variants and Russian `ё` folded at
@@ -189,7 +191,12 @@ the methodology: GraphRAG's (§6.1) and LightRAG's (§6.2), the wrapper
   reported source; §7.1) and the evidence (each
   primer fold's reports, each action's local search results), reranked
   once, go to the answer model. Without reports or primer follow-ups,
-  the question itself is the one follow-up.
+  the question itself is the one follow-up. Two orders differ from MS
+  GraphRAG's, both so a run can be repeated (unmeasured): its primer takes
+  a random report as the template (`drift_search/primer.py`,
+  `secrets.choice`), and with no scorer it shuffles the open follow-ups
+  (`drift_search/state.py` `rank_incomplete_actions`), where here they run
+  best-scored first.
   - Defaults `k_followups` 10, `n_depth` 2: at most 27 LLM calls a query (MS
     GraphRAG's 20 and 3: 67). Primer calls and actions run
     `search.max_concurrency` at a time.
@@ -244,14 +251,52 @@ the methodology: GraphRAG's (§6.1) and LightRAG's (§6.2), the wrapper
   prompt sends questions that chain from a named entity to `local` (synthetic
   multi-hop harness: `local` 0.925, `mix` 0.40 exact match).
 
+#### Fidelity to MS GraphRAG
+
+The target is microsoft/graphrag at the commit the weekly `fidelity`
+workflow pins (`6d02c23`, package 3.1.0; `.github/workflows/fidelity.yml`).
+Recorded answers of its own code (`tests/fixtures/graphrag_lightrag/`,
+`tests/unit/test_graphrag_lightrag_fidelity.py`) pin the report context
+order: given the same relationships, a report input lists them, and their
+entities, in `sort_context`'s order. `tests/unit/test_community_hierarchy_quality.py`
+checks the first Leiden pass against `graspologic_native.hierarchical_leiden`.
+The deliberate differences (a file is relative to the `graphrag/` package):
+
+| MS GraphRAG | Here | Why | Evidence |
+|---|---|---|---|
+| Relationships grouped by source and target (`index/operations/extract_graph`) | typed, directed relationship ids | two relationship types between a pair stay two facts | design |
+| Leiden: one pass, `max_cluster_size` 10, one trial of one iteration, only the largest component (`use_lcc`) | the same first pass, communities over 20 split again, coarser levels above it, 3 trials with 2 extra iterations, small components skipped | report size against corpus size; the best partition of 3 seeded runs | first pass: `test_community_hierarchy_quality.py`; the rest unmeasured (§4.3) |
+| `community_level` counted from the first pass | `community_depth` counted from the coarser root: depth `D` is upstream's level `D - k` | follows from the coarser levels | probe (§6.1.1); answers unmeasured |
+| A reversed pair keeps the last row's weight (`index/operations/cluster_graph.py`) | every relationship between a pair adds its weight | the pair's total strength | unmeasured |
+| Each entity hands the report context one relationship, its first (`graph_context/context_builder.py`); entities without one are left out (`sort_context.py`) | every relationship among the community's entities, in `sort_context`'s order; the unlinked entities last | a report describes the community's relationships | recorded answers: upstream's reports saw 217 of the 380 relationships of 30 communities |
+| Report context 8,000 tokens with communities of at most 10 | 4,000 tokens, communities of at most 20 | cost | unmeasured |
+| Report rank = the model's rating | the members' document-backed degrees; the rating kept as `rating` | no model call | design |
+| Sub-community reports replace raw context that does not fit | added beside it, under a second budget | keeps the best-connected records verbatim | unmeasured |
+| One gleaning round | three, a unit re-asked only while it adds | graph recall | [measured](../concepts/defaults-and-evidence.md#gleaning-rounds) |
+| Fixed 1,200-token chunks with 100 tokens of overlap | the `intelligent` chunker (250-2,000 tokens) by default | semantic boundaries | unmeasured |
+| Local: the question embedded against entity descriptions, 10 oversampled to 20 entities, no model call (`query/context_builder/entity_extraction.py`) | a fast-model call extracts the entity names, each looked up on its own; the raw question only when none | multi-entity questions seed each entity | unmeasured |
+| Local: no walk past the entities' relationships | graph expansion to `search.graph_expansion.max_hops` (3) | multi-hop chains | unmeasured |
+| Local: 20 entities, every in-network relationship plus 10 per entity of the others (`query/context_builder/local_context.py`), shares of 12,000 tokens (`text_unit_prop` 0.5, `community_prop` 0.15) | type quotas (10 entities, 10 relationships at `top_k` 10) and type shares of 30,000 tokens (§7) | one budget model for every strategy | unmeasured |
+| Local reports: the entities' communities at `community_level` | the reports most similar to the query entities | answers | [measured](../concepts/defaults-and-evidence.md#local-report-selection) |
+| Global: the whole cut, shuffled | at most 99 reports, by rank | bounded map calls; repeatable | unmeasured |
+| Global: a reduce call over the key points | the key points and up to 4,000 tokens of the reports they cite, no reduce call | answers | [measured](../concepts/defaults-and-evidence.md#global-evidence-cap) |
+| Dynamic selection stops at `community_level` | follows relevant reports to the leaves | — | unmeasured |
+| DRIFT: 20 follow-ups, 3 rounds; a random primer template; open follow-ups shuffled | 10 and 2; the most important report; best-scored first | cost (27 calls at most, not 67); repeatable | unmeasured |
+
 #### 6.1.1 Global search (`global_search.py`)
 
 **Which reports.** Each report carries its place in the hierarchy (`level`
 bottom-up, `depth` from the root, parent and children, `max_cut_depth`). The
 cut at depth `D` is every community at depth `D` plus the leaves that stop
 above it (`depth <= D <= max_cut_depth`), MS GraphRAG's roll-up that covers
-every entity once; MS GraphRAG counts `community_level` from the root, so the
-depth selects the cut.
+every entity once. MS GraphRAG counts `community_level` from its root too,
+but its root is the first Leiden pass over the whole graph, while the
+coarser levels above that pass (§4.3) put the root here higher: depth `D`
+here is upstream's level `D - k`, k being the number of coarser levels the
+corpus produced (a probe on LFR graphs of 500, 1,000 and 2,000 entities:
+depth 1 here held exactly upstream's level-0 communities, and the default
+depth 2 reports of the size of upstream's level 1). Dynamic selection
+likewise starts its ratings at those coarser roots.
 
 - **Fixed cut (default)** — every report of the cut is mapped, up to a cap:
   the cut is browsed by rank, one report more than the cap
@@ -399,6 +444,32 @@ then meet the description's words rather than a keyword list; asking
 extraction for keywords would add output tokens to every unit of every
 methodology and re-extract every stored corpus, so it waits for a measured
 benefit.
+
+#### Fidelity to LightRAG
+
+The target is HKUDS/LightRAG at the commit the weekly `fidelity` workflow
+pins (`4e1f952`, version string 1.5.4, before that release's tag;
+`.github/workflows/fidelity.yml`). Recorded answers of its own
+`utils.pick_by_weighted_polling` (`tests/fixtures/graphrag_lightrag/`)
+pin `_pick_by_weighted_polling` exactly on 60 lineage sets; the widths
+(`kg_stream_top_k` 40, `chunk_stream_top_k` 20, `related_chunk_number` 5),
+the keyword join and the raw-query fallback under 50 characters are
+upstream's (`constants.py`, `operate.py`). The deliberate differences (a
+file is relative to the `lightrag/` package):
+
+| LightRAG | Here | Why | Evidence |
+|---|---|---|---|
+| `kg_chunk_pick_method` `VECTOR` (`constants.py`) | `weight` | — | [measured](../concepts/defaults-and-evidence.md#lightrag-chunk-picking-and-mmr-diversity): no difference |
+| Chunks follow the merged, token-truncated entity and relationship lists | the entity and relationship hits only | the chunks the keywords matched | [measured](../concepts/defaults-and-evidence.md#retrieval-switches): no difference |
+| An item whose chunks an earlier one took keeps its polling position; mix's naive duplicates drop at the merge | such an item takes no position; the naive stream's chunks leave before the polling | the slots go to chunks the context lacks | unmeasured |
+| Chunk-sort ties keep the stored order | chunk id | a full and an incremental build pick alike | determinism |
+| The vector, entity and relation chunk lists merged round-robin under one `seen_chunk_ids` (`operate.py`) | separate fusion streams, RRF, the rerank, then the text quota | the hybrid scorer every strategy shares | design |
+| Vector search only | BM25 and vector search fused, reranked | hybrid-retrieval requirement | design |
+| Entities 6,000, relationships 8,000 of 30,000 tokens (`constants.py`) | type shares of 30,000 (§7) | one budget model for every strategy | not measurable on MuSiQue ([evidence](../concepts/defaults-and-evidence.md#retrieval-switches)) |
+| A relationship embedded with its keywords, endpoints and description | its description; BM25 over the description and endpoint names | extraction shared with GraphRAG holds no keywords | [measured](../concepts/defaults-and-evidence.md#retrieval-switches): no difference |
+| An edge keyed by its sorted endpoint pair | typed, directed relationships | as GraphRAG's row above | design |
+| Fixed 1,200-token chunks with 100 tokens of overlap (`lightrag.py`) | the `intelligent` chunker by default | semantic boundaries | unmeasured |
+| No multi-hop traversal | opt-in graph expansion | upstream has none, so it is off by default | — |
 
 ### 6.3 Iterative bridge follow-up (`iterative_search.py`, opt-in)
 
