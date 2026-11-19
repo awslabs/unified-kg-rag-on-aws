@@ -215,6 +215,7 @@ ALLOWED: dict[str, str] = {
         "application/cli/console/ask.py:MAX_QUESTION_CHARACTERS",
         "application/cli/console/ask.py:MAX_HISTORY_TURNS",
         "application/cli/console/ask.py:MAX_TURN_CHARACTERS",
+        "application/cli/console/ask.py:MAX_FILTER_TEXT_CHARACTERS",
         "application/cli/console/evaluations.py:MAX_DATASET_BYTES",
         "application/cli/console/evaluations.py:MAX_RESULT_BYTES",
         "application/cli/console/graph_api.py:MAX_FILE_BYTES",

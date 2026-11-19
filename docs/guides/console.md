@@ -156,7 +156,11 @@ shown as written, without markers. Follow-ups continue the conversation unless
 unticked: the page sends the earlier questions and answers with the
 question (`RAGInput.history`), so the conversation survives a settings
 save or an ingestion. Search options set the results per search, the
-search type and `key: value` filters.
+search type and the filters, one `key: value` per line (`attr_<key>: value`
+for a document's filter key), read as `run-rag --filters` reads its pairs:
+a value stays a string the query types by its field (`attr_code: 007`
+matches `"007"`), and a line without a key, a `:` or a value, or a key given
+twice, refuses the question with the reason.
 
 The right column is the **provenance trace**, the console's signature: a
 rail with every source the answer model read, in rank order, filterable by

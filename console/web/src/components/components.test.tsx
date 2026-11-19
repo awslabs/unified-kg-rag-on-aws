@@ -8,7 +8,7 @@ import { ApiError, errorMessage } from "../lib/api";
 import { fieldsOf, parseValue, type JsonSchema } from "../lib/schema";
 import { answerSegments, markerNumbers } from "../lib/citations";
 import type { AskResult, Citation, Comparison, Delta, JobRecord, Multiplicity, Source, StrategyInfo } from "../lib/types";
-import { conversationHistory, parseFilters, stepNames } from "../pages/AskPage";
+import { conversationHistory, filterText, stepNames } from "../pages/AskPage";
 import { intervalResamples } from "../pages/EvaluatePage";
 import { AnswerText, CitationList } from "./AnswerText";
 import { DeltaPlot, deltaInterval, deltaVerdict, higherIsBetter } from "./charts";
@@ -263,9 +263,12 @@ describe("helpers", () => {
     renderIn(<DeltaPlot deltas={[["answer_match/token_f1", delta]]} />);
     expect(screen.getByText("worse")).toBeInTheDocument();
   });
-  it("types filter values", () => {
-    expect(parseFilters("file_name: a.pdf\nin_schema: false\nyear: 2026\n\nbad")).toEqual({ file_name: "a.pdf", in_schema: false, year: 2026 });
-    expect(parseFilters("")).toBeNull();
+  it("sends the filter box as typed, for the server to read as run-rag does", () => {
+    // Typed in the page, "007" became 7 (no hit), a malformed line was
+    // dropped and a repeated key kept its last value, all without a word.
+    const typed = "attr_code: 007\nattr_year 2024\nattr_code: 1";
+    expect(filterText(typed)).toBe(typed);
+    expect(filterText(" \n ")).toBeNull();
   });
   it("reads the config schema's fields and values", () => {
     const schema: JsonSchema = {

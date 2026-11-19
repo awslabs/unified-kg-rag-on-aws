@@ -76,6 +76,7 @@ from unified_kg_rag.domain.retrieval.abstention import (
     REASON_QUERY_LIMIT,
     skipped_at_limit,
 )
+from unified_kg_rag.domain.retrieval.filters import filter_pairs, split_filter_pair
 from unified_kg_rag.domain.retrieval.store_names import namespace_suffix
 from unified_kg_rag.shared import (
     ConfigurationError,
@@ -255,11 +256,10 @@ def _filter_pair(item: str) -> str:
     """A ``--filters`` pair: ``key:value`` with a key and a value. Anything
     else is a usage error rather than a filter left out or matching nothing
     (which widened or emptied the search)."""
-    key, colon, value = item.partition(":")
-    if not colon or not key.strip() or not value.strip():
-        raise argparse.ArgumentTypeError(
-            f"invalid filter '{item}': expected 'key:value'"
-        )
+    try:
+        split_filter_pair(item)
+    except InvalidFilterError as e:
+        raise argparse.ArgumentTypeError(str(e)) from None
     return item
 
 
@@ -420,7 +420,7 @@ class CommandLineInterface:
             InvalidFilterError: A value its field's type cannot take, or one
                 a query refuses (a null, a nested list, an empty range).
         """
-        filters: dict[str, Any] = dict(item.split(":", 1) for item in filter_args or [])
+        filters: dict[str, Any] = filter_pairs(filter_args or [])
         filters.update(filters_json or {})
         _load_chain()
         GraphRAGChain.check_filter_values(filters)
@@ -542,7 +542,7 @@ class CommandLineInterface:
                 f"--mode {args.mode} is not supported with --interactive, which "
                 "always generates answers; use --query for retrieval-only output"
             )
-        keys = [pair.split(":", 1)[0] for pair in args.filters or []]
+        keys = [split_filter_pair(pair)[0] for pair in args.filters or []]
         keys += list(args.filters_json or {})
         if repeated := sorted({key for key in keys if keys.count(key) > 1}):
             self.parser.error(

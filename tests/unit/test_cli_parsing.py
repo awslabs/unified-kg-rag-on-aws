@@ -106,6 +106,26 @@ def test_rag_parser_filters_nargs() -> None:
     assert args.filters == ["a:1", "b:2"]
 
 
+def test_rag_filter_pairs_are_read_as_the_console_reads_them() -> None:
+    # One pair parser (domain filter_pairs): the space after the colon is no
+    # part of the value (" 007" matched nothing), and the value stays a string.
+    assert run_rag_chain.RAGChainRunner._parse_filters(
+        ["attr_code: 007", "in_schema: false"]
+    ) == {"attr_code": "007", "in_schema": False}
+
+
+def test_rag_a_filter_key_repeated_with_spaces_is_a_usage_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        sys, "argv", ["run-rag", "--query", "q", "--filters", "k:a", "k :b"]
+    )
+    with pytest.raises(SystemExit) as exit_info:
+        run_rag_chain.CommandLineInterface().parse_args()
+    assert exit_info.value.code == 2
+    assert "--filters gives k more than once" in capsys.readouterr().err
+
+
 def test_rag_parser_a_repeated_filters_adds_its_pairs() -> None:
     # The later --filters silently replaced the earlier one.
     args = _rag_parser().parse_args(

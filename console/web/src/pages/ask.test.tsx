@@ -141,3 +141,25 @@ describe("a failure inside the server", () => {
     expect(errorMessage(t, new ApiError(500, masked, { code: "failure", trace_id: "ab12" }))).toBe('error.failure error.traceId{"trace_id":"ab12"}');
   });
 });
+
+describe("the filter box", () => {
+  it("sends its lines as typed and shows the server's refusal", async () => {
+    const refusal = "invalid filter 'attr_year 2024': expected 'key:value'";
+    serveStream([
+      { kind: "start", query_id: "q1", trace_id: null, trace_url: null },
+      { kind: "error", error_kind: "invalid_filter", message: refusal, query_id: "q1" },
+    ]);
+    renderAsk();
+    await screen.findByText("Who ships parts?");
+    const box = screen.getByPlaceholderText("attr_<key>: value");
+    fireEvent.change(box, { target: { value: "attr_code: 007\nattr_year 2024" } });
+    fireEvent.click(screen.getByText("Who ships parts?"));
+    expect(await screen.findByText(refusal)).toBeInTheDocument();
+    const calls = (fetch as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls;
+    const [, init] = calls.find(([url]) => String(url).endsWith("/api/ask"))!;
+    const body = JSON.parse(String(init.body));
+    // The value stays the string "007" (as a number, 7, it matched nothing).
+    expect(body.filter_text).toBe("attr_code: 007\nattr_year 2024");
+    expect(body).not.toHaveProperty("filters");
+  });
+});

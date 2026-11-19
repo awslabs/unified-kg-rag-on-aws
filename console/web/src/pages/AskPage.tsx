@@ -64,16 +64,12 @@ export function conversationHistory(turns: { question: string; result?: AskResul
     ]);
 }
 
-/** Filters typed as `key: value` lines (a number or true/false is typed). */
-export function parseFilters(text: string): Record<string, string | number | boolean> | null {
-  const filters: Record<string, string | number | boolean> = {};
-  for (const line of text.split("\n")) {
-    const [key, ...rest] = line.split(":");
-    const value = rest.join(":").trim();
-    if (!key?.trim() || !value) continue;
-    filters[key.trim()] = value === "true" ? true : value === "false" ? false : /^-?\d+(\.\d+)?$/.test(value) ? Number(value) : value;
-  }
-  return Object.keys(filters).length ? filters : null;
+/** The filter box as the question sends it: the text as typed, which the
+ * server reads as `run-rag --filters` reads its pairs (each line one
+ * `key: value`, a value kept a string the query types by its field; a
+ * malformed or repeated line refuses the question); null when blank. */
+export function filterText(text: string): string | null {
+  return text.trim() ? text : null;
 }
 
 export function AskPage({ status }: { status: Status | null }) {
@@ -92,7 +88,7 @@ export function AskPage({ status }: { status: Status | null }) {
   const [followUp, setFollowUp] = useState(true);
   const [topK, setTopK] = useState(10);
   const [searchType, setSearchType] = useState("hybrid");
-  const [filterText, setFilterText] = useState("");
+  const [filters, setFilters] = useState("");
   const [turns, setTurns] = useState<Turn[]>([]);
   const [selected, setSelected] = useState<number | null>(null);
   // The source open in the trace (its rank), set by an answer's [n].
@@ -125,7 +121,7 @@ export function AskPage({ status }: { status: Status | null }) {
           search_type: searchType,
           top_k: topK,
           history: history.length ? history : null,
-          filters: parseFilters(filterText),
+          filter_text: filterText(filters),
         },
         controller.signal,
       )) {
@@ -295,7 +291,7 @@ export function AskPage({ status }: { status: Status | null }) {
                       </label>
                       <label className="field">
                         <span className="field-label">{t("ask.filters")}</span>
-                        <textarea className="textarea mono" rows={2} value={filterText} placeholder="file_name: report.pdf" onChange={(e) => setFilterText(e.target.value)} />
+                        <textarea className="textarea mono" rows={2} value={filters} placeholder="attr_<key>: value" onChange={(e) => setFilters(e.target.value)} />
                         <span className="field-help">{t("ask.filtersHelp")}</span>
                       </label>
                     </div>

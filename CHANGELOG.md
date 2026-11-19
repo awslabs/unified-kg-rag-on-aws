@@ -466,6 +466,12 @@ Bugs present in 0.3.0.
   pasted bare, so a sampled document could add instructions to every later extraction and report. The sample and the
   examples sit in tag blocks the prompts declare as data (their tags neutralised), and each answer is one short line
   without `<`.
+- The console's filter box read its lines unlike `run-rag --filters`: a malformed line was dropped (the question ran
+  unfiltered), a repeated key kept its last value and a number-like value was sent as a number (`attr_code: 007`
+  matched no `"007"`). The page sends the text as typed (`filter_text`), the server reads it with the pair parser
+  `run-rag --filters` uses (`filter_pairs`), and a malformed line or a repeated key refuses the question with the
+  reason; the example is `attr_<key>: value`. `run-rag --filters` no longer keeps the space after a pair's `:` in its
+  value (`attr_code: 007` matched nothing).
 
 ## [0.3.0] - 2026-11-14
 
