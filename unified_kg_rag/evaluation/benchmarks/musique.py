@@ -27,7 +27,8 @@ answerable questions still come from the answerable file
 (``unanswerable_source`` is the full one), so they are the MuSiQue-Ans
 sample the seed draws without ``unanswerable``; a full file given alone
 supplies both, its answerable half labelled ``musique-full-answerable``.
-``hops`` filters by hop count or draws an answerable quota per hop.
+``hops`` filters by hop count or draws an answerable quota per hop, and
+``split`` draws from one half of the questions (``benchmarks.split_of``).
 """
 
 from __future__ import annotations
@@ -41,6 +42,14 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+from unified_kg_rag import __version__
+from unified_kg_rag.evaluation.benchmarks import (
+    SPLITS,
+    Split,
+    file_sha256,
+    split_of,
+    write_prepared,
+)
 from unified_kg_rag.evaluation.retrieval_evaluator import reference_key
 from unified_kg_rag.shared import EvaluationException, get_logger
 from unified_kg_rag.shared.utils.files import atomic_open, atomic_write_text
@@ -372,8 +381,10 @@ def prepare(
     unanswerable: int | None = None,
     hops: dict[int, int | None] | None = None,
     unanswerable_source: Path | None = None,
+    split: Split | None = None,
 ) -> dict[str, Any]:
-    """Write ``corpus/`` and ``eval_data.json`` for (a sample of) ``source``.
+    """Write ``corpus/``, ``eval_data.json`` and ``prepared.json`` for (a
+    sample of) ``source``.
 
     ``limit`` answerable questions are drawn with ``seed`` (all when
     ``None``), from the hop counts ``hops`` names (with quotas: exactly that
@@ -387,7 +398,10 @@ def prepare(
     answer aliases differ), so answerable rows drawn from one are labelled
     ``musique-full-answerable`` instead of ``musique``, with a WARNING. The
     answerable sample is the one ``source`` and ``seed`` draw without
-    ``unanswerable``.
+    ``unanswerable``. Every row's ``metadata.split`` is its item's half
+    (``split_of`` of the MuSiQue id, which an unanswerable item shares with
+    its twin); with ``split``, both samples are drawn from that half only.
+    ``prepared.json`` records the parameters and the sources' SHA-256.
 
     Raises:
         InvalidBenchmarkDataError: ``unanswerable`` with no file that has
@@ -403,6 +417,11 @@ def prepare(
         else every_item
     )
     unanswerable_items = [i for i in full_items if not i.get("answerable", True)]
+    if split is not None:
+        items = [i for i in items if split_of(str(i["id"])) == split]
+        unanswerable_items = [
+            i for i in unanswerable_items if split_of(str(i.get("id", ""))) == split
+        ]
     if unanswerable and not unanswerable_items:
         named = unanswerable_source or source
         raise InvalidBenchmarkDataError(
@@ -473,7 +492,7 @@ def prepare(
                 "answer_aliases": list(item.get("answer_aliases") or []),
                 "reference_sources": supporting,
                 "category": _category(item_id),
-                "metadata": {"benchmark": benchmark},
+                "metadata": {"benchmark": benchmark, "split": split_of(item_id)},
             }
         )
     for item, twin in declined:
@@ -491,6 +510,7 @@ def prepare(
                 "category": _category(item_id),
                 "metadata": {
                     "benchmark": FULL_UNANSWERABLE,
+                    "split": split_of(item_id),
                     "answerable": False,
                     # For auditing an answer that names it anyway (a
                     # near-duplicate paragraph or the model's own knowledge).
@@ -516,6 +536,33 @@ def prepare(
         counts["answerable"] = len(items)
         counts["unanswerable"] = len(declined)
         counts["unanswerable_filter"] = selection
+    counts["splits"] = {
+        name: sum(1 for row in dataset if row["metadata"]["split"] == name)
+        for name in SPLITS
+    }
+    sources = [source]
+    if unanswerable and unanswerable_source is not None:
+        sources.append(unanswerable_source)
+    write_prepared(
+        output_dir,
+        {
+            "benchmark": "musique",
+            "package_version": __version__,
+            "seed": seed,
+            "limit": limit,
+            "hops": (
+                {str(hop): quota for hop, quota in sorted(hops.items())}
+                if hops
+                else None
+            ),
+            "unanswerable": unanswerable,
+            "split": split,
+            "sources": [
+                {"file": path.name, "sha256": file_sha256(path)} for path in sources
+            ],
+            "counts": counts,
+        },
+    )
     return counts
 
 

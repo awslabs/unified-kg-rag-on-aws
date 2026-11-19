@@ -31,6 +31,7 @@ from unified_kg_rag.domain.models import (
     EvaluationSummary,
 )
 from unified_kg_rag.shared import EvaluationException, get_logger
+from unified_kg_rag.shared.utils import first_names
 
 from .answer_match_evaluator import SPAN_EFFORT_KEY, SPAN_MODEL_KEY, TOKENS_KEY
 from .arms import label_strategy
@@ -475,17 +476,21 @@ def dataset_warnings(
     manifests: Sequence[tuple[str, dict[str, Any] | None]],
 ) -> list[str]:
     """A warning when the runs answered different datasets (manifest
-    ``dataset.content_sha256``): only their shared query ids pair."""
+    ``dataset.content_sha256``), or different halves of one
+    (``dataset.split``, ``run-eval --split``): only their shared query ids
+    pair."""
     hashes: dict[str, list[str]] = {}
     for label, manifest in manifests:
-        digest = ((manifest or {}).get("dataset") or {}).get("content_sha256")
-        if digest:
-            hashes.setdefault(str(digest), []).append(label)
+        dataset = (manifest or {}).get("dataset") or {}
+        if digest := dataset.get("content_sha256"):
+            split = dataset.get("split")
+            shown = str(digest)[:12] + (f" split {split}" if split else "")
+            hashes.setdefault(shown, []).append(label)
     if len(hashes) < 2:
         return []
     listed = "; ".join(
-        f"{digest[:12]} ({', '.join(dict.fromkeys(labels))})"
-        for digest, labels in hashes.items()
+        f"{shown} ({', '.join(dict.fromkeys(labels))})"
+        for shown, labels in hashes.items()
     )
     return [
         f"The runs answered different datasets ({listed}); only the query ids "
@@ -551,6 +556,28 @@ def _pooled_settings(manifest: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _differs(values: Sequence[Any]) -> bool:
+    return len({json.dumps(v, sort_keys=True, default=str) for v in values}) > 1
+
+
+def differing_answer_settings(manifests: Sequence[dict[str, Any]]) -> str | None:
+    """The answer settings (manifest ``answer_settings``, the map
+    ``retrieval_config_sha256`` hashes) that differ between ``manifests``,
+    each with its values, for a message; ``None`` when one of them has no
+    map (saved before it was recorded) or none differs."""
+    maps = [m.get("answer_settings") for m in manifests]
+    if len(maps) < 2 or not all(isinstance(m, dict) for m in maps):
+        return None
+    settings = [m for m in maps if isinstance(m, dict)]
+    keys = sorted({key for m in settings for key in m})
+    named = [
+        f"{key} ({', '.join(dict.fromkeys(_shown(m.get(key)) for m in settings))})"
+        for key in keys
+        if _differs([m.get(key) for m in settings])
+    ]
+    return first_names(named, separator="; ") if named else None
+
+
 def _shown(value: Any) -> str:
     text = json.dumps(value, sort_keys=True, default=str)
     return text if len(text) <= 24 else f"{text[:21]}..."
@@ -607,12 +634,15 @@ def pooling_warnings(grouped: Mapping[str, Sequence[SavedRun]]) -> list[str]:
         settings = [_pooled_settings(r.manifest) for r in runs if r.manifest]
         if len(settings) < 2:
             continue
+        names = [name for name in settings[0] if _differs([s[name] for s in settings])]
         differing = [
             f"{name} ({', '.join(dict.fromkeys(_shown(s[name]) for s in settings))})"
-            for name in settings[0]
-            if len({json.dumps(s[name], sort_keys=True, default=str) for s in settings})
-            > 1
+            for name in names
         ]
+        if "retrieval_config_sha256" in names and (
+            named := differing_answer_settings([r.manifest for r in runs if r.manifest])
+        ):
+            differing.append(f"the answer settings {named}")
         if differing:
             warnings.append(
                 f"The {len(runs)} saved runs of {strategy} are pooled as its "

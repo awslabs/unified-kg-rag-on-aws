@@ -97,6 +97,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.models.config import REMOVED_EVALUATORS
 from unified_kg_rag.domain.models.evaluation import JUDGE_EVALUATORS
+from unified_kg_rag.evaluation.benchmarks import SPLITS
 from unified_kg_rag.shared import (
     AWSServiceError,
     ConfigurationError,
@@ -653,6 +654,17 @@ class CommandLineInterface:
             ),
         )
         parser.add_argument(
+            "--split",
+            choices=SPLITS,
+            help=(
+                "Answer only the dataset items whose metadata.split is this "
+                "half (prepare-benchmark labels every row tune or test from "
+                "the SHA-256 of its question id): choose settings on tune, "
+                "report them on test. An item without metadata.split is a "
+                "dataset error. With --data-path only (default: every item)"
+            ),
+        )
+        parser.add_argument(
             "--repeats",
             type=positive_int,
             default=1,
@@ -1025,7 +1037,7 @@ class EvaluationRunner:
                     "--repeats does not apply to --from-results (the saved runs "
                     "are the repeats)"
                 )
-            for flag in ("run_order", "repeat_extractions"):
+            for flag in ("run_order", "repeat_extractions", "split"):
                 if getattr(self.args, flag, None) is not None:
                     usage_error(
                         f"--{flag.replace('_', '-')} does not apply to "
@@ -1881,6 +1893,7 @@ class EvaluationRunner:
                 # The keys the chain would refuse per query, refused now.
                 check_filter_keys=getattr(self.rag_chain, "check_filter_keys", None),
                 run_strategies=strategies if comparing else None,
+                split=self.args.split,
             )
         except FileNotFoundError as e:
             raise InvalidDatasetError(

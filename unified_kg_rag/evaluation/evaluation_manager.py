@@ -109,6 +109,7 @@ from .answer_match_evaluator import (
     answer_scoring,
 )
 from .assertion_evaluator import ASSERTIONS_KEY, AssertionEvaluator, assertions_of
+from .benchmarks import read_prepared
 from .citation_scoring import (
     CITATION_SCORING,
     cited_section_types,
@@ -415,6 +416,7 @@ class EvaluationManager:
         *,
         check_filter_keys: FilterKeyCheck | None = None,
         run_strategies: Sequence[SearchStrategy | str] | None = None,
+        split: str | None = None,
     ) -> tuple[list[EvaluationQuery], list[EvaluationGroundTruth]]:
         """Load and validate an evaluation dataset (a JSON array of objects).
 
@@ -429,6 +431,12 @@ class EvaluationManager:
         :meth:`GraphRAGChain.check_filter_keys`), an item's filter keys are
         checked too, under each of ``run_strategies`` (the strategies a
         comparison runs every item with) or else the item's own strategy.
+
+        With ``split`` (``tune`` or ``test``), only the items whose
+        ``metadata.split`` names it are kept (``prepare-benchmark`` labels
+        every row, ``benchmarks.split_of``); every item is still validated,
+        and a dataset with an unlabelled item, or none in the split, is an
+        error.
         """
         if not eval_data_path:
             raise ConfigurationError("Evaluation data path is required.")
@@ -479,6 +487,10 @@ class EvaluationManager:
             queries.append(query)
             if gt is not None:
                 ground_truths.append(gt)
+        if split is not None:
+            queries, ground_truths = EvaluationManager._in_split(
+                eval_data_path, queries, ground_truths, split
+            )
 
         logger.info(
             "Loaded %s queries and %s ground truths from '%s'.",
@@ -487,6 +499,34 @@ class EvaluationManager:
             eval_data_path,
         )
         return queries, ground_truths
+
+    @staticmethod
+    def _in_split(
+        eval_data_path: str | Path,
+        queries: list[EvaluationQuery],
+        ground_truths: list[EvaluationGroundTruth],
+        split: str,
+    ) -> tuple[list[EvaluationQuery], list[EvaluationGroundTruth]]:
+        """The queries (and their ground truths) of ``split``."""
+        unlabelled = [q.query_id for q in queries if "split" not in q.metadata]
+        if unlabelled:
+            raise EvaluationException(
+                f"Evaluation data '{eval_data_path}' has {len(unlabelled)} "
+                f"item(s) without metadata.split (first: '{unlabelled[0]}'): "
+                "split filtering needs every item labelled tune or test, as "
+                "prepare-benchmark writes them."
+            )
+        kept = [q for q in queries if q.metadata.get("split") == split]
+        if not kept:
+            raise EvaluationException(
+                f"Evaluation data '{eval_data_path}' has no item with "
+                f"metadata.split '{split}'."
+            )
+        ids = {q.query_id for q in kept}
+        logger.info(
+            "Kept the %s of %s queries in split '%s'.", len(kept), len(queries), split
+        )
+        return kept, [gt for gt in ground_truths if gt.query_id in ids]
 
     @staticmethod
     def _parse_item(
@@ -1467,7 +1507,7 @@ class EvaluationManager:
             grouped_statistics=self._calculate_grouped_statistics(
                 queries, results, reports
             ),
-            benchmarks=self.benchmarks_of(queries),
+            benchmarks=self.labels_of(queries, "benchmark"),
             evaluation_start_time=start_time,
             evaluation_end_time=end_time,
             configuration=self.config.evaluation.model_dump(),
@@ -1488,14 +1528,14 @@ class EvaluationManager:
         return any(isinstance(t, str) and tokenized_by_script(t) for t in texts)
 
     @staticmethod
-    def benchmarks_of(queries: list[EvaluationQuery]) -> dict[str, int]:
-        """Queries per ``metadata.benchmark`` label (rows without one: none)."""
+    def labels_of(queries: list[EvaluationQuery], key: str) -> dict[str, int]:
+        """Queries per ``metadata.<key>`` label (``benchmark``: the benchmark
+        a row was prepared from; ``split``: its half). Rows without one:
+        none."""
         return dict(
             sorted(
                 Counter(
-                    str(q.metadata["benchmark"])
-                    for q in queries
-                    if q.metadata.get("benchmark")
+                    str(q.metadata[key]) for q in queries if q.metadata.get(key)
                 ).items()
             )
         )
@@ -1603,13 +1643,19 @@ class EvaluationManager:
             dataset["num_queries"] = len(queries)
             # The benchmark the rows were prepared from (prepare-benchmark's
             # metadata.benchmark), so a summary says which one it scored.
-            dataset["benchmarks"] = self.benchmarks_of(queries)
+            dataset["benchmarks"] = self.labels_of(queries, "benchmark")
+            # The halves the queries come from (metadata.split, run-eval
+            # --split): runs of other halves share no question.
+            dataset["splits"] = self.labels_of(queries, "split")
             # Token F1's tokenizations differ only on the text of some
             # scripts (Han, Hangul, Kana, Thai, Hebrew, Arabic, ...): without
             # any, runs scored with either compare.
             dataset["dense_script"] = self.holds_dense_script(
                 queries, ground_truths or []
             )
+        if split := args.get("split"):
+            # The half run-eval --split kept.
+            dataset["split"] = split
         if eval_data_path is not None:
             path = Path(eval_data_path)
             content = path.read_bytes()
@@ -1619,6 +1665,9 @@ class EvaluationManager:
             # compare equal, and the metadata the CLI adds to every query
             # (strategy, suffix, top_k) does not count as the dataset's.
             dataset["content_sha256"] = self._sha256_json(json.loads(content))
+            # How prepare-benchmark drew it (seed, sizes, split, sources).
+            if (prepared := read_prepared(path)) is not None:
+                dataset["prepared"] = prepared
         elif queries is not None:
             # A library caller that read no file: its queries as given.
             dataset["content_sha256"] = self._sha256_json(
@@ -1630,6 +1679,7 @@ class EvaluationManager:
                 }
             )
         git_sha, git_dirty = self._git_state()
+        settings = answer_settings(self.config)
         return {
             "created_at": datetime.now(UTC).isoformat(),
             "package_version": __version__,
@@ -1637,7 +1687,10 @@ class EvaluationManager:
             "git_dirty": git_dirty,
             # Every setting that can change an answer or a score, without
             # the environment (cache_keys.answer_settings).
-            "retrieval_config_sha256": self._sha256_json(answer_settings(self.config)),
+            "retrieval_config_sha256": self._sha256_json(settings),
+            # The settings the hash is of, so a refused pooling or a
+            # comparison names the ones that differ.
+            "answer_settings": settings,
             "index": dict(index_builds or {}),
             "library_versions": {
                 name: self._package_version(name) for name in self._LIBRARIES

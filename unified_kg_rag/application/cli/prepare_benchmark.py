@@ -42,7 +42,7 @@ from unified_kg_rag.application.cli.display import console, markup_safe
 from unified_kg_rag.application.cli.help_text import doc_epilog
 from unified_kg_rag.application.cli.query_args import positive_int
 from unified_kg_rag.domain.models import Config
-from unified_kg_rag.evaluation.benchmarks import musique, structural
+from unified_kg_rag.evaluation.benchmarks import SPLITS, musique, structural
 from unified_kg_rag.shared import EvaluationException, ModelUnreachableError
 
 
@@ -195,6 +195,18 @@ def _musique_parser(benchmarks: Any) -> None:
             "--limit (default: every hop count, sampled as one pool)"
         ),
     )
+    parser.add_argument(
+        "--split",
+        choices=SPLITS,
+        help=(
+            "Draw every question from one half of MuSiQue: tune or test, by "
+            "the parity of the SHA-256 of the question id (an unanswerable "
+            "question shares its twin's), so the two halves never share a "
+            "question. Without it the sample spans both, and each row's "
+            "metadata.split still names its half for run-eval --split "
+            "(default: both halves)"
+        ),
+    )
 
 
 # The subcommands, in the order _parser adds them.
@@ -267,6 +279,7 @@ def main(argv: list[str] | None = None) -> None:
             unanswerable=args.unanswerable,
             hops=args.hops,
             unanswerable_source=unanswerable_source,
+            split=args.split,
         )
     except KeyboardInterrupt:
         console.print("\n[yellow]Benchmark preparation interrupted by user.[/yellow]")
@@ -281,6 +294,8 @@ def main(argv: list[str] | None = None) -> None:
         f"{counts['questions']} questions, "
         f"{counts['paragraphs']} paragraphs written to "
         f"'{markup_safe(args.output_directory)}'.[/green]\n"
+        f"Halves (metadata.split): {_splits(counts)}; tune on "
+        "run-eval --split tune, report run-eval --split test.\n"
         f"Cite: {musique.CITATION}"
     )
     if (selection := counts.get("unanswerable_filter")) is not None:
@@ -294,6 +309,10 @@ def main(argv: list[str] | None = None) -> None:
         )
     if as_json:
         print_json({"output_directory": str(args.output_directory), **counts})
+
+
+def _splits(counts: dict[str, Any]) -> str:
+    return ", ".join(f"{name} {count}" for name, count in counts["splits"].items())
 
 
 def _structural(args: argparse.Namespace, as_json: bool) -> None:

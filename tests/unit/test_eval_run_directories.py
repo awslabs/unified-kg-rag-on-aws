@@ -244,3 +244,29 @@ def test_a_directory_with_run_subdirectories_reads_them_all(tmp_path) -> None:
         "run_a",
         "run_b",
     }
+
+
+def test_a_refused_pooling_names_the_answer_settings_that_differ() -> None:
+    # Before, a differing configuration was named only by its hash.
+    runs = [
+        _saved(
+            "local",
+            f"20260101_00000{i}_0000000{i}",
+            retrieval_config_sha256=f"hash{i}",
+            answer_settings={"search.top_k_floor": 3, "search.local_search.hops": i},
+        )
+        for i in (1, 2)
+    ]
+    errors = pooling_errors(group_runs(runs))
+    assert any(
+        "the answer settings search.local_search.hops (1, 2)" in e for e in errors
+    )
+    assert not any("search.top_k_floor" in e for e in errors)
+    # Saved before the map was recorded: the hash alone, as before.
+    old = [
+        _saved(
+            "local", f"20260101_00000{i}_0000000{i}", retrieval_config_sha256=f"h{i}"
+        )
+        for i in (1, 2)
+    ]
+    assert not any("answer settings" in e for e in pooling_errors(group_runs(old)))

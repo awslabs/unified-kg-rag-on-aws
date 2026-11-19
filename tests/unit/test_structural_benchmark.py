@@ -149,8 +149,11 @@ def test_the_cli_writes_it(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -
         "corpus",
         "seed",
         "eval_data.json",
+        "prepared.json",
         "structural-config.yaml",
     }
+    prepared = json.loads((out / "prepared.json").read_text())
+    assert prepared["seed"] == 5 and prepared["size"] == "small"
     with pytest.raises(SystemExit) as exit_info:
         prepare_benchmark.main(argv)
     assert exit_info.value.code == 2
