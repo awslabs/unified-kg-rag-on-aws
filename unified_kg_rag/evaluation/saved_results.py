@@ -30,6 +30,7 @@ from unified_kg_rag.domain.models import (
     EvaluationResult,
     EvaluationSummary,
 )
+from unified_kg_rag.domain.models.config import SearchConfig
 from unified_kg_rag.shared import EvaluationException, get_logger
 from unified_kg_rag.shared.utils import first_names
 
@@ -539,16 +540,25 @@ def interleaving_warnings(
 _POOLED_CLI_ARGS = (
     "suffix",
     "top_k",
-    "search_type",
     "retrieval_multiplier",
     "effort",
 )
 
 
+# The search type of a run that gave no --search-type and holds the config
+# default (answer settings leave a field at its default out).
+_DEFAULT_SEARCH_TYPE = SearchConfig.model_fields["search_type"].default.value
+
+
 def _pooled_settings(manifest: dict[str, Any]) -> dict[str, Any]:
     args = manifest.get("cli_args") or {}
+    settings = manifest.get("answer_settings") or {}
     return {
         **{name: args.get(name) for name in _POOLED_CLI_ARGS},
+        # The type the run searched with: the flag's, else the config's.
+        "search_type": args.get("search_type")
+        or settings.get("search.search_type")
+        or _DEFAULT_SEARCH_TYPE,
         "retrieval_config_sha256": manifest.get("retrieval_config_sha256"),
         "git_sha": manifest.get("git_sha"),
         "index": manifest.get("index"),

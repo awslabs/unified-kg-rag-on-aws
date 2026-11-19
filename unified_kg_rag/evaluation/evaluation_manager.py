@@ -965,7 +965,10 @@ class EvaluationManager:
                         response_time=_response_time(
                             rag_metadata.get("processing_time"), record
                         ),
-                        search_type=query.metadata.get("search_type"),
+                        # The query's, else the one the chain's config
+                        # searched with.
+                        search_type=query.metadata.get("search_type")
+                        or self.config.search.search_type.value,
                         top_k=query.metadata.get("top_k"),
                         retrieval_multiplier=query.metadata.get("retrieval_multiplier"),
                         metadata=query.metadata,

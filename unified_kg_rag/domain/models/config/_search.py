@@ -19,6 +19,7 @@ from unified_kg_rag.domain.models.evidence import evidence
 from ..retrieval import (
     QueryLimits,
     SearchStrategy,
+    SearchType,
 )
 from ._common import ConfigSection
 from ._fusion import (
@@ -86,6 +87,18 @@ class SearchConfig(ConfigSection):
             "router was not measured choosing them. Every strategy stays selectable "
             "explicitly, and one reading what the namespace does not hold is "
             "refused."
+        ),
+    )
+    search_type: SearchType = Field(
+        default=SearchType.HYBRID,
+        description=(
+            "How each index is searched when the query does not say "
+            "(RAGInput.search_type None; run-rag and run-eval without "
+            "--search-type): hybrid fuses a lexical (BM25) and a vector "
+            "(embedding kNN) search, lexical and vector run one of them "
+            "alone. Set it in a run-eval --arm overlay to compare hybrid "
+            "with one side in one paired run. The console and the MCP "
+            "server send their own (hybrid unless the caller picks one)."
         ),
     )
     hybrid: HybridConfig = Field(

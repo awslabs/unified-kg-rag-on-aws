@@ -125,6 +125,9 @@ _KEYED_ONCE_SET = frozenset(
         "custom_prompts.text_chunking_human",
         "custom_prompts.text_translation_system",
         "custom_prompts.text_translation_human",
+        # The query's search type when it names none: hybrid, as RAGInput's
+        # fixed default was.
+        "search.search_type",
     }
 )
 

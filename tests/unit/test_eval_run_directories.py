@@ -270,3 +270,24 @@ def test_a_refused_pooling_names_the_answer_settings_that_differ() -> None:
         for i in (1, 2)
     ]
     assert not any("answer settings" in e for e in pooling_errors(group_runs(old)))
+
+
+@pytest.mark.parametrize(
+    ("second", "refused"),
+    [
+        # No --search-type searches with the config's: hybrid by default.
+        ({"cli_args": {"search_type": "hybrid"}}, False),
+        ({"cli_args": {"search_type": "lexical"}}, True),
+        # The config's, named in its answer settings.
+        ({"cli_args": {}, "answer_settings": {"search.search_type": "lexical"}}, True),
+    ],
+)
+def test_pooled_runs_compare_the_search_type_they_searched_with(
+    second: dict[str, Any], refused: bool
+) -> None:
+    runs = [
+        _saved("local", "20260101_000001_00000001", cli_args={"search_type": None}),
+        _saved("local", "20260101_000002_00000002", **second),
+    ]
+    errors = pooling_errors(group_runs(runs))
+    assert any("search_type" in e for e in errors) is refused

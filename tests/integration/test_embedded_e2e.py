@@ -72,6 +72,7 @@ from unified_kg_rag.domain.models import (
     PipelineStageStatus,
     PipelineStageType,
     SearchStrategy,
+    SearchType,
 )
 from unified_kg_rag.domain.models.config import (
     ChunkingStrategy,
@@ -442,6 +443,25 @@ def test_local_mode_runs_end_to_end_on_the_embedded_stores(
         _ask_every_strategy(chain, server, stored_ids)
         assert encoder.calls >= 1
         assert set(server.embed_models) == {"synthetic-embed"}
+
+        # A query that names no search type searches with the config's; one
+        # that names it, with its own.
+        assert _ask(chain, SearchStrategy.NAIVE).search_results.query.search_type is (
+            SearchType.HYBRID
+        )
+        config.search.search_type = SearchType.LEXICAL
+        assert _ask(chain, SearchStrategy.NAIVE).search_results.query.search_type is (
+            SearchType.LEXICAL
+        )
+        named = chain.invoke(
+            RAGInput(
+                query="Who stores the gadgets for Vendor?",
+                search_strategy=SearchStrategy.NAIVE,
+                search_type=SearchType.VECTOR,
+            )
+        )
+        assert named.search_results.query.search_type is SearchType.VECTOR
+        config.search.search_type = SearchType.HYBRID
 
         # The default evaluators, with sources resolved to file names
         # through the SQLite vector store.

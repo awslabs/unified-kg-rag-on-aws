@@ -935,7 +935,8 @@ class RAGChainRunner:
         """The search settings, as the run banner and show-config print them."""
         return [
             f"[dim]Search Strategy:[/dim] {self.args.search_strategy}",
-            f"[dim]Search Type:[/dim] {self.args.search_type}",
+            "[dim]Search Type:[/dim] "
+            f"{self.args.search_type or self.config.search.search_type.value}",
             f"[dim]Top K Results:[/dim] {self.args.top_k}",
             f"[dim]Retrieval Multiplier:[/dim] {self.args.retrieval_multiplier}",
             f"[dim]Answer Effort:[/dim] {self.args.effort or 'the model tier default'}",
