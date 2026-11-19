@@ -532,8 +532,7 @@ async def http_level(
 # a level at a low concurrency holding none.
 DISCONNECT_BURST = 16
 # Seconds a level's model connections get to close: a query its client
-# stopped ends at its answer's next chunk, and the fake models stream with
-# no stall.
+# stopped is cancelled at once, and the fake models stream with no stall.
 HELD_SETTLE_SECONDS = 10.0
 
 

@@ -346,15 +346,12 @@ async def test_a_reader_cancelled_while_the_model_reasons_stops_the_model(
     monkeypatch: pytest.MonkeyPatch,
     provider: str,
 ) -> None:
-    # Reasoning streams chunks without answer text: each is a stop point,
-    # so a reader cancelled after its sources does not hold the model for
-    # the wait's bound (search.model_timeout_seconds) while it reasons.
+    # Reasoning streams chunks without answer text: a reader cancelled
+    # after its sources cancels its query at once, so it does not hold the
+    # model while it reasons (40 s, past the backstop).
     port, models = wire
     models.knobs = stream_models.StreamKnobs(reasoning_seconds=40)
     chain = _wire_chain(provider, port, monkeypatch, model_timeout=60)
-    # No forced cancel rescues a query that misses its stop points: it would
-    # run into the backstop (the model reasons for 40 s).
-    monkeypatch.setattr(rag_chain, "_STOP_GRACE_SECONDS", 3600.0)
     errors = _loop_errors()
     try:
         async with asyncio.timeout(BACKSTOP / 2):
@@ -375,25 +372,22 @@ async def test_a_reader_cancelled_while_the_model_reasons_stops_the_model(
 
 
 @pytest.mark.parametrize("provider", ["ollama", "openai"])
-async def test_a_model_that_stalls_after_a_disconnect_ends_in_its_read_timeout(
+async def test_a_model_that_stalls_after_a_disconnect_is_cut_off_at_once(
     wire: tuple[int, stream_models.StreamModels],
     monkeypatch: pytest.MonkeyPatch,
     provider: str,
 ) -> None:
     # The answer stalls right after the chunk the reader was cancelled
-    # past: the wait for the query's next event outlasts the model client's
-    # read timeout (search.model_timeout_seconds), so the stalled read ends
-    # in its own timeout, its response closed, never in a cancel that lands
-    # mid-read and leaves the connection held.
+    # past: the cancel lands in the stalled read (or while the query waits
+    # for its reader) and closes the response at once, long before the
+    # model client's read timeout (past the backstop), and leaves no
+    # connection held.
     port, models = wire
     stalled = stream_models.StreamKnobs(stall_after=1, stall_seconds=3600)
     models.knobs = stalled
-    chain = _wire_chain(provider, port, monkeypatch, model_timeout=3.0)
-    # Only the read timeout can end the stalled reads: no forced cancel
-    # comes (a query it missed would run into the backstop), and no
-    # first-chunk window, which a loaded runner can miss before the stall:
-    # it cancels the query wherever it is, not this test's subject.
-    monkeypatch.setattr(rag_chain, "_STOP_GRACE_SECONDS", 3600.0)
+    chain = _wire_chain(provider, port, monkeypatch, model_timeout=600)
+    # No first-chunk window, which a loaded runner can miss before the
+    # stall: it cancels the query wherever it is, not this test's subject.
     monkeypatch.setattr(rag_chain, "_first_chunk_window", lambda _s: nullcontext())
     errors = _loop_errors()
     try:
@@ -515,10 +509,11 @@ async def test_a_reader_cancelled_in_retry_backoff_stops_the_query(
 ) -> None:
     # The model refuses every call (HTTP 429), so the answer call is in its
     # transient retries, before any chunk, when the reader is cancelled:
-    # the backoffs are stop points (the application's and botocore's own),
-    # so the reader is released at once, no model call follows the stop and
-    # the query is recorded as a stopped reader's, not as a failure once its
-    # retry budget is spent.
+    # the query is cancelled at once, and the backoffs left running in a
+    # worker thread (botocore's own) are stop points, so the reader is
+    # released at once, no model call follows the stop and the query is
+    # recorded as a stopped reader's, not as a failure once its retry
+    # budget is spent.
     from unified_kg_rag.adapters.aws.bedrock import BaseBedrockModelFactory
 
     port, models = wire
@@ -527,13 +522,12 @@ async def test_a_reader_cancelled_in_retry_backoff_stops_the_query(
         # client-side rate limiter, which no stop interrupts.
         monkeypatch.setattr(BaseBedrockModelFactory, "BOTO_RETRY_MODE", "standard")
     # Backoffs past the backstop that still fit the query's deadline (180 s)
-    # and its first chunk's window (the model timeout): neither one nor a
-    # forced cancel ends a stopped query here, so one whose backoff is not a
-    # stop point runs into the backstop.
+    # and its first chunk's window (the model timeout): neither ends a
+    # stopped query here, so one the reader's cancel did not end runs into
+    # the backstop.
     chain = _wire_chain(
         provider.split("-")[0], port, monkeypatch, model_timeout=170, backoff=100
     )
-    monkeypatch.setattr(rag_chain, "_STOP_GRACE_SECONDS", 3600.0)
     errors = _loop_errors()
     try:
         # Warm: a first call's imports and connections are not the backoff.
@@ -554,12 +548,22 @@ async def test_a_reader_cancelled_in_retry_backoff_stops_the_query(
             await _cancelled_once_throttled(chain, models)
         # Every reader's stop came, and no request passed its stop check
         # after its query's stop (the botocore and OpenAI clients' own
-        # resends included): one that passed it before is in flight ...
+        # resends included): one that passed it before is in flight. The
+        # Ollama client sends from the event loop only, where the reader's
+        # cancel ends the query, so it has no check of its own ...
         assert sum(kind == "stop" for kind, _ in order.events) == THROTTLED_READERS
-        assert any(kind == "passed" for kind, _ in order.events)
+        assert any(kind == "passed" for kind, _ in order.events) == (
+            provider != "ollama"
+        )
         assert order.passed_after_a_stop() == []
-        # ... and none reached the model once the readers were released.
-        calls = models.throttled
+        # ... and none reached the model after those in flight: a reader is
+        # released at once, before a worker thread's request that passed
+        # its check before the stop reaches the model.
+        async with asyncio.timeout(BACKSTOP):
+            calls = -1
+            while models.throttled != calls:
+                calls = models.throttled
+                await asyncio.sleep(0.5)
         await asyncio.sleep(2.5)
         assert models.throttled == calls
         assert recorded == [None] * THROTTLED_READERS

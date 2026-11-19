@@ -362,35 +362,65 @@ async def test_a_failure_after_the_reader_stopped_is_a_stopped_reader_s_end(
     assert memory.messages == []
 
 
-async def test_a_reader_cancelled_while_no_event_comes_cancels_at_the_bound(
-    config: Config, monkeypatch: pytest.MonkeyPatch
+async def test_a_reader_cancelled_while_no_event_comes_cancels_the_query_at_once(
+    config: Config,
 ) -> None:
-    # The answer model holds its next chunk: the cancelled reader waits for
-    # the query's next event a grace past search.model_timeout_seconds (the
-    # model clients' read timeout, which ends a stalled stream cleanly
-    # first), then cancels it.
-    monkeypatch.setattr(rag_chain, "_STOP_GRACE_SECONDS", 0.3)
-    config.search.model_timeout_seconds = 0.3
+    # The answer model holds its next chunk: the cancelled reader cancels
+    # the query at once, as its deadline would, never waiting for the model
+    # client's read timeout (past the backstop); the query is recorded once,
+    # as a stopped reader's (no failure).
+    from unified_kg_rag.shared import metrics
+
+    config.search.model_timeout_seconds = 10 * _BACKSTOP
     chain, _, memory = _make_chain(config, factory=_HeldFactory())
-    loop = asyncio.get_running_loop()
-    started = loop.time()
+    sink = _MetricsSink()
+    chain.providers.metrics_sink = sink
     await _cancelled_after_first_chunk(chain, held=True)
-    # Not cancelled before the bound (a lower bound: a loaded runner only
-    # makes it later); the held chunk never came, so the bound ended it.
-    assert loop.time() - started >= 0.6
     assert not [t for t in asyncio.all_tasks() if t.get_name() == "kg-rag-query-events"]
     assert memory.messages == []
+    (values,) = sink.emitted
+    assert values[metrics.QUERY_FAILED_METRIC] == 0.0
 
 
-async def test_a_reader_cancelled_again_while_it_waits_leaves_the_bound_to_end_it(
-    config: Config, monkeypatch: pytest.MonkeyPatch
+# Set once a _ClosingModel's stream, cancelled, is closing its response
+# (an await, as an HTTP response's close is), then once it closed it.
+_CLOSING = threading.Event()
+_CLOSED: list[str] = []
+
+
+class _ClosingModel(GenericFakeChatModel):
+    """Streams one chunk, holds the next; cancelled, closes its response
+    with an await, which a second cancellation would cut short."""
+
+    async def _astream(self, *args: Any, **kwargs: Any) -> Any:  # type: ignore[override]
+        yield ChatGenerationChunk(message=AIMessageChunk(content="Vendor "))
+        try:
+            _HOLDING.set()
+            await asyncio.sleep(600)
+        finally:
+            _CLOSING.set()
+            await asyncio.sleep(0.05)
+            _CLOSED.append("closed")
+        yield ChatGenerationChunk(message=AIMessageChunk(content="ships."))
+
+
+class _ClosingFactory(_HeldFactory):
+    def __init__(self) -> None:
+        super().__init__()
+        self.model = _ClosingModel(messages=iter([]))
+        _CLOSING.clear()
+        _CLOSED.clear()
+
+
+async def test_a_reader_cancelled_again_while_it_waits_cancels_the_query_once(
+    config: Config,
 ) -> None:
-    # An anyio cancel scope cancels the reader at every await: its wait for
-    # the query's next event is cut short, and the query is not cancelled
-    # there (mid-chunk) but still ends at its next event or at the bound.
-    monkeypatch.setattr(rag_chain, "_STOP_GRACE_SECONDS", 0.0)
-    config.search.model_timeout_seconds = 0.3
-    chain, _, _ = _make_chain(config, factory=_HeldFactory())
+    # An anyio cancel scope cancels the reader at every await: cancelled
+    # again while it waits for its cancelled query to end, it passes no
+    # second cancellation on, which would cut the close of the model's
+    # response short (its connection held).
+    config.search.model_timeout_seconds = 10 * _BACKSTOP
+    chain, _, memory = _make_chain(config, factory=_ClosingFactory())
     chunked = asyncio.Event()
 
     async def read() -> None:
@@ -402,21 +432,71 @@ async def test_a_reader_cancelled_again_while_it_waits_leaves_the_bound_to_end_i
     await chunked.wait()
     await _until(_HOLDING.is_set)
     reader.cancel()
-    # The reader stopped its query (its stop is set right before it waits
-    # for the query), and now waits for it: cancel it again there.
-    (stop,) = _HELD_FOR
-    await _until(stop.is_set)
+    # The query, cancelled, closes its response: cancel the reader again.
+    await _until(_CLOSING.is_set)
     reader.cancel()
-    again = asyncio.get_running_loop().time()
     with pytest.raises(asyncio.CancelledError):
         await reader
-    (query,) = [t for t in asyncio.all_tasks() if t.get_name() == "kg-rag-query-events"]
-    # Not cancelled at the second cancellation: still running past it ...
-    assert not query.done()
-    await asyncio.wait({query}, timeout=_BACKSTOP)
-    # ... and cancelled at the bound (0.3 s) after it, a lower bound.
-    assert asyncio.get_running_loop().time() - again >= 0.25
-    assert query.done()
+    await _until(
+        lambda: not [
+            t for t in asyncio.all_tasks() if t.get_name() == "kg-rag-query-events"
+        ]
+    )
+    # The query ended with its response closed.
+    assert _CLOSED == ["closed"]
+    assert memory.messages == []
+
+
+class _LosingModel(GenericFakeChatModel):
+    """Streams one chunk, then loses the cancellation that lands while it
+    waits for the next, as ``asyncio.wait_for`` on Python 3.11 does for a
+    chunk that arrives in the same turn (langchain-openai's chunk timeout):
+    it goes on with a chunk without text, then holds."""
+
+    async def _astream(self, *args: Any, **kwargs: Any) -> Any:  # type: ignore[override]
+        yield ChatGenerationChunk(message=AIMessageChunk(content="Vendor "))
+        _HOLDING.set()
+        try:
+            await asyncio.sleep(600)
+        except asyncio.CancelledError:
+            _CLOSED.append("lost")
+        yield ChatGenerationChunk(message=AIMessageChunk(content=""))
+        await asyncio.sleep(600)
+
+
+class _LosingFactory(_HeldFactory):
+    def __init__(self) -> None:
+        super().__init__()
+        self.model = _LosingModel(messages=iter([]))
+        _CLOSED.clear()
+
+
+async def test_a_cancellation_lost_under_the_query_ends_it_at_its_next_chunk(
+    config: Config,
+) -> None:
+    # The reader's cancel is lost in the model's stream: the query ends at
+    # its next chunk (one without text too), the reader's stop a stop point
+    # there, not at the model client's read timeout (past the backstop).
+    from unified_kg_rag.shared import metrics
+
+    config.search.model_timeout_seconds = 10 * _BACKSTOP
+    chain, _, memory = _make_chain(config, factory=_LosingFactory())
+    sink = _MetricsSink()
+    chain.providers.metrics_sink = sink
+    await _cancelled_after_first_chunk(chain, held=True)
+    assert _CLOSED == ["lost"]
+    assert not [t for t in asyncio.all_tasks() if t.get_name() == "kg-rag-query-events"]
+    assert memory.messages == []
+    (values,) = sink.emitted
+    assert values[metrics.QUERY_FAILED_METRIC] == 0.0
+
+
+async def test_a_stopped_channel_sends_nothing() -> None:
+    # Its next event is a stop point too, for a cancellation lost before it.
+    channel = rag_chain._EventChannel()
+    channel.stop()
+    with pytest.raises(asyncio.CancelledError):
+        await channel.send(AnswerChunk(text="late"))
 
 
 async def test_a_reader_that_stops_after_the_answer_saves_nothing(
@@ -714,12 +794,13 @@ class _ReasoningFactory(_StreamingModelFactory):
 
 
 @pytest.mark.parametrize("screened", [False, True], ids=["shown", "screened"])
-async def test_a_reader_cancelled_while_the_model_reasons_ends_it_at_its_next_chunk(
+async def test_a_reader_cancelled_while_the_model_reasons_ends_it_at_once(
     config: Config, screened: bool
 ) -> None:
-    # A chunk without text (reasoning, a held-back marker, a screened
-    # answer's) is a stop point too: the query does not run on for the
-    # wait's bound, its model writing for a reader that left.
+    # While the model streams chunks without text (reasoning, a held-back
+    # marker, a screened answer's), nothing is sent to the reader: its
+    # cancel still ends the query at once, its model writing nothing more
+    # for a reader that left.
     config.search.model_timeout_seconds = 60
     chain, _, memory = _make_chain(config, factory=_ReasoningFactory())
     if screened:
@@ -741,10 +822,9 @@ async def test_a_reader_cancelled_while_the_model_reasons_ends_it_at_its_next_ch
     with pytest.raises(asyncio.CancelledError):
         async with asyncio.timeout(_BACKSTOP):
             await reader
-    # Ended at its next chunk, not at the wait's bound (60 s + a grace):
-    # at most the one chunk written as the reader stopped came after the
-    # stop, and the model's stream had ended before the reader returned.
-    assert _REASONING.count("after-stop") <= 1
+    # Ended at once: no chunk was written after the stop, and the model's
+    # stream had ended before the reader returned.
+    assert _REASONING.count("after-stop") == 0
     assert _REASONING[-1] == "ended"
     assert not [t for t in asyncio.all_tasks() if t.get_name() == "kg-rag-query-events"]
     assert memory.messages == []
@@ -770,21 +850,17 @@ def _interrupt_once_waiting() -> None:
     raise AssertionError("the main thread never waited for the step")
 
 
-@pytest.mark.parametrize("wait", [None, 0.0], ids=["ended", "still-ending"])
 @pytest.mark.parametrize("api", ["stream", "query_events"])
 def test_an_interrupt_while_a_sync_stream_waits_cancels_the_query(
-    config: Config, monkeypatch: pytest.MonkeyPatch, api: str, wait: float | None
+    config: Config, api: str
 ) -> None:
     # Ctrl-C while the sync iterator waits for the answer's next chunk:
-    # the interrupt is raised (not a RuntimeError from closing a step still
-    # running, when the query has not ended by the time it is raised) and
-    # the query is cancelled, not left running on the loop.
+    # the interrupt is raised at once (not a RuntimeError from closing a
+    # step still running) and the query is cancelled, not left running on
+    # the loop.
     if threading.current_thread() is not threading.main_thread():
         pytest.skip("signals reach the main thread only")
-    monkeypatch.setattr(rag_chain, "_STOP_GRACE_SECONDS", 0.0)
-    if wait is not None:
-        monkeypatch.setattr(rag_chain, "_INTERRUPT_WAIT_SECONDS", wait)
-    config.search.model_timeout_seconds = 0.3
+    config.search.model_timeout_seconds = 10 * _BACKSTOP
     chain, _, memory = _make_chain(config, factory=_HeldFactory())
     previous = signal.signal(signal.SIGINT, signal.default_int_handler)
     try:

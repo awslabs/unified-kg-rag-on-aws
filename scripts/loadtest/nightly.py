@@ -9,7 +9,10 @@ on the embedded SQLite stores and the fake models; nothing leaves the host.
    mid-stream faults (:data:`STREAM_KNOBS`): reasoning before every answer,
    a share of the answers dropped after it (retried: no text was shown)
    and after their first chunk (not retried: the reader saw text), whose
-   failures must be exactly the latter (:func:`stream_problem`).
+   failures must be exactly the latter (:func:`stream_problem`); and one
+   ``load.py http`` level through the console (:data:`HTTP_LEVEL`), a share
+   of its questions disconnecting mid-answer, which must leave no model
+   connection held (``held_model_connections``).
 2. Build a synthetic corpus once in full, as the reference.
 3. Chaos, on that corpus in the same workspace, reset between scenarios
    (record ids name the source path):
@@ -31,7 +34,7 @@ on the embedded SQLite stores and the fake models; nothing leaves the host.
 
 Usage::
 
-    uv run --extra local python scripts/loadtest/nightly.py OUT \
+    uv run --extra local --extra console python scripts/loadtest/nightly.py OUT \
         [--soak-seconds 600] [--chaos-docs 60]
 """
 
@@ -41,8 +44,10 @@ import argparse
 import json
 import os
 import platform
+import re
 import shutil
 import signal
+import socket
 import subprocess  # nosec B404 - runs this repository's scripts and console scripts
 import sys
 import time
@@ -91,6 +96,14 @@ STREAM_KNOBS = {
     "reasoning_drops_per_body": float(RETRY_ATTEMPTS - 1),
     "reasoning_drops_window": REASONING_DROPS_WINDOW,
 }
+
+
+# The http level: the console's /api/ask at one concurrency, that share of
+# the questions disconnecting after their first answer chunk (then a burst
+# of them, then one that must answer: load.py http).
+HTTP_LEVEL = {"concurrency": 16, "queries": 70, "disconnect_share": 0.3}
+# The console's token for the http level (loopback only, this run's).
+CONSOLE_TOKEN = "nightly-load-test"  # nosec B105 - a loopback console's run token
 
 
 def _script(name: str) -> str:
@@ -159,6 +172,56 @@ class Models:
         self.process.terminate()
         self.process.wait(timeout=10)
         self.log.close()
+
+
+class Console:
+    """``run-console`` over a workspace, in a process of its own, on a free
+    loopback port."""
+
+    def __init__(self, workspace: Path, out: Path) -> None:
+        self.log_path = out / "console.log"
+        self.log = self.log_path.open("w", encoding="utf-8")
+        self.process = subprocess.Popen(  # nosec B603 - fixed argv
+            [
+                _script("run-console"),
+                "--config-path",
+                "config.yaml",
+                "--port",
+                "0",
+            ],
+            cwd=workspace,
+            env=_env(UKR_CONSOLE_TOKEN=CONSOLE_TOKEN),
+            stdout=self.log,
+            stderr=subprocess.STDOUT,
+        )
+        deadline = time.monotonic() + 60
+        # Its address is printed once bound, before it accepts connections.
+        while not (found := self._url()) or not _accepts(found):
+            if time.monotonic() > deadline or self.process.poll() is not None:
+                self.close()
+                raise SystemExit("the console did not start (console.log)")
+            time.sleep(0.2)
+        self.url = found
+
+    def _url(self) -> str | None:
+        self.log.flush()
+        text = self.log_path.read_text(encoding="utf-8")
+        match = re.search(r"Console on (http://127\.0\.0\.1:\d+)", text)
+        return match.group(1) if match else None
+
+    def close(self) -> None:
+        self.process.terminate()
+        self.process.wait(timeout=30)
+        self.log.close()
+
+
+def _accepts(url: str) -> bool:
+    """Whether the loopback server at ``url`` accepts a connection."""
+    try:
+        with socket.create_connection(("127.0.0.1", int(url.rsplit(":", 1)[1])), 5):
+            return True
+    except OSError:
+        return False
 
 
 def ingest(workspace: Path, tag: str, *extra: str) -> dict[str, Any]:
@@ -294,15 +357,15 @@ def reset(workspace: Path) -> None:
 
 def load(
     mode: str,
-    config: Path,
+    config: Path | None,
     out: Path,
     *args: str,
     env: dict[str, str] | None = None,
     name: str | None = None,
 ) -> dict[str, Any]:
     """``load.py <mode>`` in a process of its own (``env``: added to its
-    environment), its report read back (``name``: of its report and log
-    files, the mode's by default)."""
+    environment; ``config``: none for ``http``), its report read back
+    (``name``: of its report and log files, the mode's by default)."""
     report = out / f"{name or mode}.json"
     with (out / f"{name or mode}.log").open("w", encoding="utf-8") as log:
         subprocess.run(  # nosec B603 - fixed argv
@@ -310,8 +373,7 @@ def load(
                 sys.executable,
                 str(HERE / "load.py"),
                 mode,
-                "--config",
-                str(config),
+                *(["--config", str(config)] if config is not None else []),
                 "--output",
                 str(report),
                 *args,
@@ -355,6 +417,35 @@ def stream_level(models: Models, config: Path, out: Path) -> dict[str, Any]:
         "problem": stream_problem([report["warm_up"], level], drops),
         "untested": stream_untested(drops),
     }
+
+
+def http_level(models: Models, workspace: Path, out: Path) -> dict[str, Any]:
+    """The http level (:data:`HTTP_LEVEL`) through a console over
+    ``workspace``: its report, ``held_model_connections`` included (the
+    gates fail on any)."""
+    models.chaos()
+    console = Console(workspace, out)
+    try:
+        report = load(
+            "http",
+            None,
+            out,
+            "--console",
+            console.url,
+            "--levels",
+            str(HTTP_LEVEL["concurrency"]),
+            "--queries",
+            str(HTTP_LEVEL["queries"]),
+            "--disconnect-share",
+            str(HTTP_LEVEL["disconnect_share"]),
+            "--models",
+            f"http://127.0.0.1:{models.port}",
+            env={"UKR_CONSOLE_TOKEN": CONSOLE_TOKEN},
+        )
+    finally:
+        console.close()
+    (level,) = report["http"]
+    return dict(level)
 
 
 def stream_problem(levels: list[dict[str, Any]], drops: dict[str, int]) -> str:
@@ -533,6 +624,11 @@ def markdown(report: dict[str, Any]) -> str:
     runs = [("sweep", level) for level in report["sweep"]]
     if report.get("stream"):
         runs.append(("stream", report["stream"]))
+    for level in report.get("http") or []:
+        # The client's loop lag: the console's own is not measured.
+        runs.append(
+            ("http", {**level, "loop_lag_p99_ms": level.get("client_loop_lag_p99_ms")})
+        )
     runs.append(("soak", report["soak"]))
     for kind, level in runs:
         name = f"{kind} c={level['concurrency']}"
@@ -597,6 +693,7 @@ def main(argv: list[str] | None = None) -> int:
             str(args.sweep_queries),
         )
         stream = stream_level(models, config, out)
+        http = http_level(models, demo, out)
         soak = load(
             "soak",
             config,
@@ -626,6 +723,7 @@ def main(argv: list[str] | None = None) -> int:
         "ingest": build,
         "sweep": sweep["sweep"],
         "stream": stream,
+        "http": [http],
         "soak": soak["soak"],
         "chaos": chaos,
     }

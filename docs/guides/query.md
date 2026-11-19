@@ -340,29 +340,21 @@ async for event in chain.aquery_events(RAGInput(query="...")):
   `[NO_ANSWER]` token (`search.abstention`) is held back and stripped.
 - A failure raises after the events sent before it; with
   `processing.ignore_errors` the result carries the error answer.
-- The query waits for the reader to take each event: a reader that stops
-  ends it at its next event, at the answer model's next chunk, one
-  that shows nothing included (reasoning, the held-back start of an
-  answer, an answer the output guardrail screens first), or at its next
-  retry wait (a throttled or failing model's backoff: no model call is
-  sent after the stop; a wait the client runs itself, botocore's
-  client-side rate limiter or the OpenAI client's own backoff, ends with
-  its request unsent). A stop ends that reader's query only: a call
-  concurrent queries share (one embedding of a text they both embed) goes
-  on for the others, and stops only once each of their readers stopped. It stops
-  when it closes the iterator (`aclose()`, or `break` inside
-  `async with aclosing(...)`) or is cancelled while it waits for an event:
-  a console client that disconnects, an `asyncio.timeout` around
-  `astream`, a cancelled caller task, a `Ctrl-C` while the sync `stream()`
-  or `query_events()` waits (the `KeyboardInterrupt` is raised at once; the
-  query ends at its next event, chunk or retry wait like a close). The close
-  or cancellation waits for that up to a few seconds past
-  `search.model_timeout_seconds`, then cancels the query: a model that
-  stalls ends first in its client's read timeout (recorded as that
-  failure). Ended between two answer chunks, the model's response is
-  closed and its connection released. Nothing is written to memory, and the query metrics record its
-  latency and usage up to there as no failure. A cancelled `ainvoke` records
-  nothing.
+- The query waits for the reader to take each event. A reader that stops
+  cancels the query at once, as its deadline would: one that closes the
+  iterator (`aclose()`, or `break` inside `async with aclosing(...)`) or is
+  cancelled while it waits for an event (a console client that disconnects,
+  an `asyncio.timeout` around `astream`, a cancelled caller task, a `Ctrl-C`
+  while the sync `stream()` or `query_events()` waits, which raises
+  `KeyboardInterrupt` at once). The query's model responses are closed and
+  their connections released, and no model request is sent after the stop,
+  a resend the client makes itself (botocore's, the OpenAI client's)
+  included. A stop ends that reader's query only: a call concurrent queries
+  share (one embedding of a text they both embed) goes on for the others,
+  and stops only once each of their readers stopped. Nothing is written to
+  memory, and the query metrics record its latency and usage up to there as
+  no failure, whatever the query raised past the stop. A cancelled `ainvoke`
+  records nothing.
 - Its query metrics, the `query_id` and namespace of its log lines and
   errors, and its trace are `ainvoke`'s.
 - `astream` / `stream` yield the answer text alone: each chunk, or, when

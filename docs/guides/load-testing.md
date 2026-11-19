@@ -25,7 +25,7 @@ a loopback address, or that screens with the Bedrock guardrail.
 | `scripts/loadtest/chaos_models.py` | The fake model server (`console/demo/fake_models.py`) with fault injection: delay and jitter, hangs, dropped connections and error answers (429, 500, 503), and, for a streamed answer, reasoning chunks before it and a connection dropped after its reasoning or after its first answer chunk (`reasoning_drops_per_body` caps the drops of one request body, which a call's retries resend, within `reasoning_drops_window` seconds), changed at run time with `POST /chaos`; `GET /stats` counts requests, faults, requests in flight and the client connections open |
 | `scripts/loadtest/load.py` | `sweep`, `soak` and `http` load modes, and `gate`, which checks a report against the nightly gates |
 | `scripts/loadtest/compare_exports.py` | The convergence check: two `run-describe --include-text` exports hold the same records with the same content |
-| `scripts/loadtest/nightly.py` | The nightly run below, end to end: a sweep, a streamed level under mid-stream faults, a soak and three chaos scenarios, then the gates |
+| `scripts/loadtest/nightly.py` | The nightly run below, end to end: a sweep, a streamed level under mid-stream faults, an http level with disconnects, a soak and three chaos scenarios, then the gates |
 | `scripts/loadtest/harness.py` | The statistics and the gates, which `tests/unit/test_loadtest_harness.py` checks in every pull request |
 
 ## Set up
@@ -198,7 +198,10 @@ everything else.
 demand): ingest the demo corpus, a sweep at
 concurrency 1, 4 and 16, one streamed level (`sweep --stream`, 140 queries
 at concurrency 8) whose answers reason first and lose their connection 3%
-of the time after the reasoning and 3% after the first chunk, a 10-minute soak at 8 with 30% memory turns, and three
+of the time after the reasoning and 3% after the first chunk, one `load.py http`
+level through `run-console` (70 questions at concurrency 16, 30% of them
+disconnecting after their first answer chunk, then the burst of 16, with
+`--models`), a 10-minute soak at 8 with 30% memory turns, and three
 chaos scenarios on a 60-document synthetic corpus (30% 429s, then 15% 503s
 with 5% dropped connections, each followed by a clean run; a SIGKILL halfway
 through a run, then its resume at once). It uploads `report.md`, `report.json`, the
@@ -211,6 +214,7 @@ writes `report.md` to the job summary. It fails when a gate fails:
 | Flagged answers (every sweep level and the soak): no sources, abstained, empty, degraded, unresolved citations | 0 (every query of the mix is answerable from the demo corpus, and the fake models are deterministic) |
 | Event-loop lag p99 (every sweep level and the soak) | under 100 ms (holds up to concurrency 16, the nightly's highest level) |
 | RSS over the soak's second half | fails only when it grows both at 10 MB/h or more and by 8 MB or more |
+| Http level | 0 errors and 0 flagged answers among the questions that read their answer, and `held_model_connections` 0 |
 | Streamed level (warm-up included) | its errors equal the answers the server dropped after their first chunk, and 0 flagged answers; a level during which either drop never happened is reported under "Not tested this run" |
 | Chaos scenarios | each converges (the kill exactly, the others `--incremental`), graph-store census included; the kill's resume, started at once, finds no lease held |
 
@@ -264,7 +268,7 @@ load).
 
 It only reports: no branch protection requires it, and pull requests do not
 run it. Run it locally with
-`uv run --extra local python scripts/loadtest/nightly.py out/` (about 20
+`uv run --extra local --extra console python scripts/loadtest/nightly.py out/` (about 20
 minutes; `--soak-seconds` and `--chaos-docs` scale it), and check another
 report with `load.py gate report.json` (`--max-errors`, `--max-flags`,
 `--max-loop-lag-ms`, `--max-rss-mb-per-hour`, `--rss-rise-floor-mb`). The

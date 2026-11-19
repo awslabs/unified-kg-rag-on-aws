@@ -16,6 +16,7 @@ from collections.abc import AsyncIterator, Iterator
 from typing import Any
 
 import pytest
+from botocore.httpsession import URLLib3Session
 from langchain_core.runnables import Runnable, RunnableConfig
 
 from unified_kg_rag.adapters.llm.chain_factory import TransientRetryRunnable
@@ -48,6 +49,9 @@ _SLOW = RetryPolicy(
 )
 # A hang backstop (seconds), far past anything a passing run waits.
 _BACKSTOP = 60.0
+# botocore's own send, before the suite blocks it (the Bedrock loopback
+# below lets only requests to 127.0.0.1 through).
+_REAL_SEND = URLLib3Session.send
 
 
 class _Throttled(Exception):
@@ -312,6 +316,176 @@ def test_a_botocore_attempt_that_answered_is_left_to_its_caller() -> None:
         )
 
 
+class _ThrottlingServer:
+    """A loopback Bedrock endpoint that answers every request 429
+    (ThrottlingException), counting what it received; ``on_request(n)``
+    runs as it answers the n-th."""
+
+    def __init__(self, on_request: Any = None) -> None:
+        import json
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        self.received = 0
+        server = self
+
+        class Handler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, *_: Any) -> None:
+                pass
+
+            def do_POST(self) -> None:  # noqa: N802
+                self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                server.received += 1
+                if on_request is not None:
+                    on_request(server.received)
+                body = json.dumps({"message": "Too many requests"}).encode()
+                self.send_response(429)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("x-amzn-ErrorType", "ThrottlingException")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        self.http = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=self.http.serve_forever, daemon=True).start()
+
+    def client(self, monkeypatch: pytest.MonkeyPatch) -> Any:
+        """An adaptive-mode client of this endpoint, its stops and attempt
+        counter registered as the model factories register them."""
+        import boto3
+        from botocore.config import Config as BotoConfig
+        from botocore.httpsession import URLLib3Session
+
+        from unified_kg_rag.adapters.aws.bedrock import stop_at_reader_stop
+        from unified_kg_rag.adapters.aws.bedrock_throttles import count_requests
+
+        url = f"http://127.0.0.1:{self.http.server_address[1]}"
+
+        def local_only_send(session: URLLib3Session, request: Any) -> Any:
+            assert request.url.startswith(f"{url}/")
+            return _REAL_SEND(session, request)
+
+        monkeypatch.setattr(URLLib3Session, "send", local_only_send)
+        client = boto3.client(
+            "bedrock-runtime",
+            region_name="us-west-2",
+            endpoint_url=url,
+            aws_access_key_id="AKIDEXAMPLE",
+            aws_secret_access_key="example",
+            config=BotoConfig(retries={"mode": "adaptive", "total_max_attempts": 5}),
+        )
+        count_requests(client, "bedrock-runtime", "answer_generation")
+        stop_at_reader_stop(client, "bedrock-runtime")
+        # No real backoff: the stops land on the requests, not on a timer.
+        monkeypatch.setattr("botocore.endpoint.time.sleep", lambda _s: None)
+        return client
+
+    def close(self) -> None:
+        self.http.shutdown()
+        self.http.server_close()
+
+
+def _converse(client: Any) -> None:
+    client.converse(
+        modelId="m", messages=[{"role": "user", "content": [{"text": "hi"}]}]
+    )
+
+
+def _spy(monkeypatch: pytest.MonkeyPatch, cls: Any, name: str, before: Any) -> None:
+    original = getattr(cls, name)
+
+    def spied(self: Any, *args: Any, **kwargs: Any) -> Any:
+        before()
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(cls, name, spied)
+
+
+def test_a_throttled_attempt_ended_by_the_stop_is_counted_and_seen(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The stop comes while the 2nd attempt is answered (429): that attempt
+    # was sent, so it counts (sent and throttled) and the adaptive rate
+    # limiter sees its throttle before the stop ends the call unresent.
+    from botocore.retries import adaptive
+
+    from unified_kg_rag.shared import usage
+
+    stop = ReaderStop()
+
+    def stop_at_the_second(received: int) -> None:
+        if received == 2:
+            stop.set()
+
+    server = _ThrottlingServer(stop_at_the_second)
+    seen: list[None] = []
+    _spy(
+        monkeypatch,
+        adaptive.ClientRateLimiter,
+        "on_receiving_response",
+        lambda: seen.append(None),
+    )
+    try:
+        client = server.client(monkeypatch)
+        with usage.usage_scope() as meter, reader_stop_scope(stop):
+            with pytest.raises(asyncio.CancelledError):
+                _converse(client)
+    finally:
+        server.close()
+    assert server.received == 2
+    snapshot = meter.snapshot()
+    assert snapshot["sent_requests"] == server.received
+    assert snapshot["throttled_requests"] == server.received
+    assert len(seen) == server.received
+
+
+def test_a_stop_during_the_rate_limiter_wait_sends_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The 1st throttle turns the adaptive limiter on; the stop comes while
+    # the 2nd attempt waits for its token, after the check before the
+    # limiter: the check after it refuses the request.
+    from botocore.retries import bucket
+
+    stop = ReaderStop()
+    server = _ThrottlingServer()
+    _spy(monkeypatch, bucket.TokenBucket, "acquire", stop.set)
+    try:
+        client = server.client(monkeypatch)
+        with reader_stop_scope(stop):
+            with pytest.raises(asyncio.CancelledError):
+                _converse(client)
+    finally:
+        server.close()
+    assert stop.is_set()
+    assert server.received == 1
+
+
+def test_a_stop_before_a_resend_takes_no_rate_limiter_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The stop comes during botocore's backoff after the 1st throttle (the
+    # limiter now on): the check before the limiter refuses the resend
+    # before it takes a token.
+    from botocore.retries import bucket
+
+    stop = ReaderStop()
+    server = _ThrottlingServer()
+    tokens: list[None] = []
+    _spy(monkeypatch, bucket.TokenBucket, "acquire", lambda: tokens.append(None))
+    try:
+        client = server.client(monkeypatch)
+        monkeypatch.setattr("botocore.endpoint.time.sleep", lambda _s: stop.set())
+        with reader_stop_scope(stop):
+            with pytest.raises(asyncio.CancelledError):
+                _converse(client)
+    finally:
+        server.close()
+    assert server.received == 1
+    assert tokens == []
+
+
 async def test_the_openai_client_sends_no_request_after_the_stop() -> None:
     # The OpenAI client retries a call itself: its every request, a resend
     # included, passes the stop.
@@ -377,3 +551,88 @@ async def test_a_stopped_reader_leaves_the_shared_work_it_awaits() -> None:
     asyncio.get_running_loop().call_later(0.01, other.set_result, "value")
     await await_unless_stopped(other)
     assert other.result() == "value"
+
+
+# The package's context variables a call several queries share keeps from
+# its first caller, and why: none is a query's own state.
+_KEPT_IN_SHARED_CALLS = {
+    # Rebound to the call's own stop (SharedContext).
+    "shared/reader_stop.py:_READER_STOP": "the call's SharedStop",
+    # Taken from all its waiters (share_with_waiters).
+    "adapters/llm/retry.py:_RETRY_DEADLINE": "the waiters' latest deadline",
+    "shared/usage.py:_CURRENT": "the earliest waiter's meter",
+    # Where the call was sent from: logged and traced there.
+    "shared/observability.py:_BOUND_ATTRIBUTES": "span attributes",
+    "adapters/aws/bedrock.py:_IN_EMBEDDING_SPAN": "span nesting",
+    # A run's, not a query's.
+    "shared/write_fence.py:_FENCES": "an ingestion run's write fences",
+    "shared/store_lookups.py:_CACHE": "a run's store-lookup cache",
+    "adapters/llm/retry.py:_LEDGER": "a stage's failure ledger",
+    "adapters/llm/response_cache.py:_UNCACHED": "a run's cache bypass",
+    "application/retrieval/query_processing.py:_EXTRACTION_SCOPE": (
+        "a run's extraction cache scope"
+    ),
+}
+
+
+def _creates_variable(value: Any) -> bool:
+    """Whether ``value`` (an assignment's AST) calls ``ContextVar``."""
+    import ast
+
+    if not isinstance(value, ast.Call):
+        return False
+    func = value.func
+    name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
+    return name == "ContextVar"
+
+
+def _package_context_variables() -> dict[str, Any]:
+    """Every module-level ``ContextVar`` of the package, by
+    ``path:name``."""
+    import ast
+    import importlib
+    from pathlib import Path
+
+    import unified_kg_rag
+
+    root = Path(unified_kg_rag.__file__).parent
+    found: dict[str, Any] = {}
+    for path in sorted(root.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in tree.body:
+            target = (
+                node.target
+                if isinstance(node, ast.AnnAssign)
+                else (
+                    node.targets[0]
+                    if isinstance(node, ast.Assign) and len(node.targets) == 1
+                    else None
+                )
+            )
+            value = getattr(node, "value", None)
+            if not isinstance(target, ast.Name) or not _creates_variable(value):
+                continue
+            relative = path.relative_to(root)
+            module = importlib.import_module(
+                ".".join(["unified_kg_rag", *relative.with_suffix("").parts])
+            )
+            found[f"{relative.as_posix()}:{target.id}"] = getattr(module, target.id)
+    return found
+
+
+def test_a_shared_call_starts_without_any_query_s_own_state() -> None:
+    # Every context variable is either blanked in a call several queries
+    # share (blank_in_shared_calls) or kept for a stated reason: a new one
+    # is classified here, so none leaks a first caller's state by accident.
+    from unified_kg_rag.shared.reader_stop import _BLANKED
+
+    variables = _package_context_variables()
+    assert len(variables) > len(_KEPT_IN_SHARED_CALLS)
+    unclassified = [
+        key
+        for key, variable in variables.items()
+        if variable not in _BLANKED and key not in _KEPT_IN_SHARED_CALLS
+    ]
+    assert unclassified == []
+    assert [k for k in _KEPT_IN_SHARED_CALLS if k not in variables] == []
+    assert [k for k in _KEPT_IN_SHARED_CALLS if variables[k] in _BLANKED] == []
