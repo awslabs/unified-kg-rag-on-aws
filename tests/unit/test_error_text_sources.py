@@ -590,6 +590,33 @@ def test_the_servers_start_line_keeps_its_address(
     _assert_no_marker(stream.getvalue())
 
 
+def test_a_metadata_template_keeps_no_traceback_nor_other_arguments(
+    tmp_path: Path,
+) -> None:
+    # rv54 low: a record matching a metadata template skipped the other
+    # redaction steps: it kept its traceback, and any argument verbatim.
+    stream, _ = _setup(tmp_path)
+    template = "Uvicorn running on %s://%s:%d (Press CTRL+C to quit)"
+    try:
+        error = logging.getLogger("uvicorn.error")
+        try:
+            raise RuntimeError(MARKER)
+        except RuntimeError:
+            error.exception(template, "http", "127.0.0.1", 18895)
+        error.info(template, "http", {"key": MARKER}, 18895)
+        _flush()
+    finally:
+        setup_logging(Config())
+    started, crafted = [json.loads(line) for line in stream.getvalue().splitlines()]
+    assert started["event"].startswith(
+        "Uvicorn running on http://127.0.0.1:18895 (Press CTRL+C to quit) "
+        "[RuntimeError (len="
+    )
+    assert "exception" not in started
+    assert crafted["event"].startswith("Uvicorn running on len=")
+    _assert_no_marker(stream.getvalue())
+
+
 def test_a_metadata_template_on_another_logger_is_digested(tmp_path: Path) -> None:
     # The access line's template keeps its arguments on the access logger
     # only: another library logging the same template is digested.

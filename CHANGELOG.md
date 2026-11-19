@@ -290,8 +290,9 @@ Bugs present in 0.3.0.
   one of the `mcp.max_concurrent_calls` slots (128 callers that left after 0.3 s kept the next call waiting 8 s);
   the disconnect now cancels the call and frees its slot, logged as cancelled, not failed, and its span marked
   `kg_rag.cancelled` without the error status (a failure of the call still reaches a host application as raised,
-  not in an `ExceptionGroup`). uvicorn's start line keeps the address the server listens on, which the
-  logging setup digested (`Uvicorn running on len=4 sha=...`).
+  not in an `ExceptionGroup`; a `CancelledError` the call raised while its task was not cancelled is a failure).
+  uvicorn's start line keeps the address the server listens on, which the logging setup digested (`Uvicorn running
+  on len=4 sha=...`); a record that matches it keeps no traceback, and only the text and numbers it formats.
 - The console's Settings page read a field a `UKR__` variable of the console sets as its default, and passed an edit
   of it that had no effect (the variable wins over the file): the field names the variable (`AWS_PROFILE` and
   `AWS_REGION` as filling it while the file leaves it unset), and a review lists such changes (removing a key
@@ -299,7 +300,8 @@ Bugs present in 0.3.0.
 - The console's Dashboard gave its Declined and Refused tiles one word in Japanese, Spanish and French. A question
   cancelled (its page closed or stopped it) or failed was recorded with no usage or cost, though its model calls were
   spent, and a strategy's tokens per question divided by the cancelled ones (58 for about 700 per answer): it records
-  what it spent, the per-question figures read the questions served, and a Cancelled tile counts them apart.
+  what it spent, the per-question figures read the questions served (none for a row of cancelled questions only),
+  and a Cancelled tile and column count them apart.
 - Saving from the console's Fields form rewrote the whole config file in alphabetical key order, so the review's diff
   changed every line; it keeps the file's order (comments are still dropped, as the review says).
 - A local reasoning model's streamed answer (`astream`, the console's Ask page) failed with `QueryTimeoutError` after

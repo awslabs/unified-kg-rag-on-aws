@@ -147,7 +147,7 @@ _FILTERED = "_kg_rag_filtered"
 def _without_query(path: object) -> object:
     """An access line's path without its query string (it may hold a key:
     ``/mcp?api_key=...``)."""
-    return path.partition("?")[0] if isinstance(path, str) else path
+    return str(path).partition("?")[0]
 
 
 def _kept(value: object) -> object:
@@ -179,7 +179,11 @@ def _metadata_args(record: logging.LogRecord) -> tuple[object, ...] | None:
     sanitizers = _METADATA_RECORDS.get(record.name, {}).get(template or "")
     if sanitizers is None or not isinstance(record.args, tuple):
         return None
-    if len(record.args) != len(sanitizers):
+    # Only the text and numbers its template formats (``%s``, ``%d``): a
+    # record with any other argument is a library's, whatever its template.
+    if len(record.args) != len(sanitizers) or not all(
+        isinstance(arg, str | int) for arg in record.args
+    ):
         return None
     return tuple(keep(arg) for keep, arg in zip(sanitizers, record.args, strict=True))
 
@@ -214,7 +218,8 @@ class LibraryRecordFilter(logging.Filter):
     set its level in ``logging.library_levels``. DEBUG records keep
     everything, as the package's own do. A metadata record of the package's
     own servers (``_METADATA_RECORDS``: uvicorn's access and start lines)
-    keeps its arguments, an access line's path without its query string."""
+    keeps its text and number arguments, an access line's path without its
+    query string; it loses its traceback as any other does."""
 
     def filter(self, record: logging.LogRecord) -> bool:
         if getattr(record, _FILTERED, False) or record.levelno < logging.INFO:
@@ -222,12 +227,29 @@ class LibraryRecordFilter(logging.Filter):
         metadata = _metadata_args(record)
         if metadata is not None:
             record.args = metadata
-            setattr(record, _FILTERED, True)
-            return True
         # A structlog event (``get_logger``: the package's own, also a
         # module of it run as ``__main__``) is the package's record.
-        if _is_package_record(record) or isinstance(record.msg, _FormatterEvent):
+        elif _is_package_record(record) or isinstance(record.msg, _FormatterEvent):
             return True
+        else:
+            self._sanitize_message(record)
+        # A metadata record loses its traceback too: its template says what
+        # happened, its arguments are no error's text.
+        error = record.exc_info[1] if record.exc_info else None
+        if error is not None:
+            where = error_locator(error)
+            record.msg = (
+                f"{record.msg} [{error_digest(error)}{'; ' + where if where else ''}]"
+            )
+        record.exc_info = None
+        record.exc_text = None
+        record.stack_info = None
+        setattr(record, _FILTERED, True)
+        return True
+
+    @staticmethod
+    def _sanitize_message(record: logging.LogRecord) -> None:
+        """A library record's message and arguments to the policy."""
         if not isinstance(record.msg, str):
             # ``logger.error(exc)``: the message is the object itself.
             record.msg = (
@@ -244,17 +266,6 @@ class LibraryRecordFilter(logging.Filter):
             record.args = {key: _safe_arg(v) for key, v in record.args.items()}
         elif record.args:
             record.args = tuple(_safe_arg(value) for value in record.args)
-        error = record.exc_info[1] if record.exc_info else None
-        if error is not None:
-            where = error_locator(error)
-            record.msg = (
-                f"{record.msg} [{error_digest(error)}{'; ' + where if where else ''}]"
-            )
-        record.exc_info = None
-        record.exc_text = None
-        record.stack_info = None
-        setattr(record, _FILTERED, True)
-        return True
 
 
 # LangChain's callback manager: it logs a WARNING for every error a callback

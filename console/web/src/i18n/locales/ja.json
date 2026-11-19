@@ -529,7 +529,7 @@
   "dashboard.errors": "エラー",
   "dashboard.refused": "却下",
   "dashboard.cancelled": "キャンセル",
-  "dashboard.cancelledHint": "キャンセルは回答の前に離れた質問(ページを閉じた、または停止した質問)を数えます。そのモデル呼び出しはコストとモデル別・ロール別の行に含まれますが、時間や戦略別の質問あたりのトークンとコストには含まれません。",
+  "dashboard.cancelledHint": "キャンセルは回答の前に離れた質問（ページを閉じた、または停止した質問）を数えます。そのモデル呼び出しはコストとモデル別・ロール別の行に含まれますが、時間や戦略別の質問あたりのトークンとコストには含まれません。",
   "dashboard.cost": "コスト",
   "dashboard.noPricesTitle": "コストの表示には料金が必要です",
   "dashboard.noPrices": "設定の models.prices にモデルの料金を追加すると、USD でコストが表示されます。それまではトークンのみを集計します。",

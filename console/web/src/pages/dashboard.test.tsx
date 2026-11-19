@@ -5,9 +5,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../i18n/i18n";
 import { DashboardPage } from "./DashboardPage";
 
-function serve(refused: number, limited = 0, cancelled = 0) {
+function serve(refused: number, limited = 0, cancelled = 0, tokensPerQuery: number | null = 10) {
   const totals = { queries: 4, answered: 3, abstained: 0, decline_rate: 0, limited, errors: 0, refused, cancelled, latency_p50: 1, latency_p95: 2, cost_usd: null, priced_queries: 0 };
-  const strategy = { strategy: "local", queries: 4 - refused, abstained: 0, limited, errors: 0, latency_p50: 1, latency_p95: 2, tokens_per_query: 10, cost_usd: null, cost_per_query: null };
+  const strategy = { strategy: "local", queries: 4 - refused, abstained: 0, limited, errors: 0, cancelled, latency_p50: 1, latency_p95: 2, tokens_per_query: tokensPerQuery, cost_usd: null, cost_per_query: null };
   const body = { totals, strategies: [strategy], models: [], roles: [], timeline: [], jobs: [], unpriced_models: [], prices_configured: false };
   vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(body), { status: 200 })));
 }
@@ -80,10 +80,25 @@ describe("DashboardPage", () => {
         <DashboardPage />
       </I18nProvider>,
     );
-    expect(await screen.findByText("Cancelled")).toBeInTheDocument();
-    const tile = screen.getByText("Cancelled").closest(".stat") as HTMLElement;
+    const labels = await screen.findAllByText("Cancelled");
+    const tile = labels.map((l) => l.closest(".stat")).find(Boolean) as HTMLElement;
     expect(within(tile).getByText("2")).toBeInTheDocument();
     expect(screen.getByText(/Cancelled counts the questions left before their answer/)).toBeInTheDocument();
+  });
+
+  it("explains a strategy row of cancelled questions: its count, no per-question tokens (rv54)", async () => {
+    serve(0, 0, 4, null);
+    render(
+      <I18nProvider initial="en">
+        <DashboardPage />
+      </I18nProvider>,
+    );
+    const header = await screen.findByRole("columnheader", { name: "Cancelled" });
+    const table = header.closest("table") as HTMLTableElement;
+    const cells = within(table).getAllByRole("cell").map((c) => c.textContent);
+    const columns = within(table).getAllByRole("columnheader").map((c) => c.textContent);
+    const at = (name: string) => cells[columns.indexOf(name)];
+    expect([at("Cancelled"), at("Tokens per question")]).toEqual(["4", "—"]);
   });
 
   it("shows no cancelled figure when none was cancelled", async () => {

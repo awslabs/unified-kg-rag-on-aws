@@ -121,6 +121,14 @@ UNTRUSTED_NOTE = (
 )
 
 
+def _being_cancelled() -> bool:
+    """Whether the running task is being cancelled (its client left, or the
+    server is stopping), not merely raising a ``CancelledError`` of its
+    own."""
+    task = asyncio.current_task()
+    return task is not None and task.cancelling() > 0
+
+
 class SupportingContent(BaseModel):
     """One piece of supporting content: a chunk of a document, or a graph
     item (entity, relationship, community report, claim, summary) with the
@@ -729,6 +737,11 @@ class KnowledgeGraphTools:
             try:
                 result = await self._within_deadline(run, on_timeout, limits)
             except asyncio.CancelledError as e:
+                if not _being_cancelled():
+                    # Raised by the call itself, its task not cancelled: a
+                    # failure (the branch below), not a client that left.
+                    self._log_failure(tool, started, query, e)
+                    raise
                 # Its client left (a disconnect, a cancel notification) or
                 # the server is stopping: no failure, so the span ends
                 # without the error status and is re-raised past it.
@@ -742,18 +755,7 @@ class KnowledgeGraphTools:
                 )
                 cancelled = e
             except BaseException as e:
-                ids = observability.current_trace_ids()
-                tag_query_failure(
-                    e, get_contextvars().get("query_id"), ids[0] if ids else None
-                )
-                with bound_contextvars(**query_failure_ids(e)):
-                    logger.info(
-                        "MCP tool %s failed after %.2fs (%s): %s",
-                        tool,
-                        time.perf_counter() - started,
-                        type(e).__name__,
-                        text_digest(str(query)),
-                    )
+                self._log_failure(tool, started, query, e)
                 raise
             else:
                 records = getattr(result, "records", None)
@@ -769,6 +771,20 @@ class KnowledgeGraphTools:
                 return result
         assert cancelled is not None
         raise cancelled
+
+    @staticmethod
+    def _log_failure(tool: str, started: float, query: Any, e: BaseException) -> None:
+        """Tag ``e`` with the call's ids and log the call's failure."""
+        ids = observability.current_trace_ids()
+        tag_query_failure(e, get_contextvars().get("query_id"), ids[0] if ids else None)
+        with bound_contextvars(**query_failure_ids(e)):
+            logger.info(
+                "MCP tool %s failed after %.2fs (%s): %s",
+                tool,
+                time.perf_counter() - started,
+                type(e).__name__,
+                text_digest(str(query)),
+            )
 
     def _capped(
         self, records: list[SupportingContent]

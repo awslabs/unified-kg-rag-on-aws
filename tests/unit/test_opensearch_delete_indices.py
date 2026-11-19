@@ -95,7 +95,7 @@ def test_a_failed_batch_does_not_stop_the_rest_and_is_reported() -> None:
     assert len(_deleted_batches(backing)) == 3
     message = str(excinfo.value)
     assert "Failed to delete 20 of 45" in message
-    assert names[20] in message and "(+10 more)" in message
+    assert names[20] in message and " and 10 more;" in message
     assert names[0] not in message and names[40] not in message
     assert "cluster unavailable" in message
 
