@@ -41,6 +41,7 @@ from unified_kg_rag import (
     QuerySources,
     QueryStart,
 )
+from unified_kg_rag.application.retrieval import rag_chain
 from unified_kg_rag.application.retrieval.rag_chain import (
     DEFAULT_ERROR_MESSAGE,
     ROUTING_KEY,
@@ -444,6 +445,58 @@ async def test_a_reader_cancelled_again_while_it_waits_cancels_the_query_once(
     # The query ended with its response closed.
     assert _CLOSED == ["closed"]
     assert memory.messages == []
+
+
+class _LosingModel(GenericFakeChatModel):
+    """Streams one chunk, then loses the cancellation that lands while it
+    waits for the next, as ``asyncio.wait_for`` on Python 3.11 does for a
+    chunk that arrives in the same turn (langchain-openai's chunk timeout):
+    it goes on with a chunk without text, then holds."""
+
+    async def _astream(self, *args: Any, **kwargs: Any) -> Any:  # type: ignore[override]
+        yield ChatGenerationChunk(message=AIMessageChunk(content="Vendor "))
+        _HOLDING.set()
+        try:
+            await asyncio.sleep(600)
+        except asyncio.CancelledError:
+            _CLOSED.append("lost")
+        yield ChatGenerationChunk(message=AIMessageChunk(content=""))
+        await asyncio.sleep(600)
+
+
+class _LosingFactory(_HeldFactory):
+    def __init__(self) -> None:
+        super().__init__()
+        self.model = _LosingModel(messages=iter([]))
+        _CLOSED.clear()
+
+
+async def test_a_cancellation_lost_under_the_query_ends_it_at_its_next_chunk(
+    config: Config,
+) -> None:
+    # The reader's cancel is lost in the model's stream: the query ends at
+    # its next chunk (one without text too), the reader's stop a stop point
+    # there, not at the model client's read timeout (past the backstop).
+    from unified_kg_rag.shared import metrics
+
+    config.search.model_timeout_seconds = 10 * _BACKSTOP
+    chain, _, memory = _make_chain(config, factory=_LosingFactory())
+    sink = _MetricsSink()
+    chain.providers.metrics_sink = sink
+    await _cancelled_after_first_chunk(chain, held=True)
+    assert _CLOSED == ["lost"]
+    assert not [t for t in asyncio.all_tasks() if t.get_name() == "kg-rag-query-events"]
+    assert memory.messages == []
+    (values,) = sink.emitted
+    assert values[metrics.QUERY_FAILED_METRIC] == 0.0
+
+
+async def test_a_stopped_channel_sends_nothing() -> None:
+    # Its next event is a stop point too, for a cancellation lost before it.
+    channel = rag_chain._EventChannel()
+    channel.stop()
+    with pytest.raises(asyncio.CancelledError):
+        await channel.send(AnswerChunk(text="late"))
 
 
 async def test_a_reader_that_stops_after_the_answer_saves_nothing(

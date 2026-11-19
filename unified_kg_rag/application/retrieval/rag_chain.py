@@ -4304,6 +4304,9 @@ class _EventChannel(_EventSink):
         self.reader_stop = ReaderStop()
 
     async def send(self, event: QueryEvent) -> None:
+        # A stop point, for a cancellation lost under the query (_ended).
+        if self.reader_stop.is_set():
+            raise asyncio.CancelledError
         if isinstance(event, QuerySources):
             self.sources_sent = True
         taken: asyncio.Future[None] = asyncio.get_running_loop().create_future()
@@ -4372,7 +4375,16 @@ async def _ended(task: asyncio.Task[Any]) -> None:
     cancel scope cancels at every await) would pass that on to it through
     ``asyncio.gather``, in the middle of its unwinding, where it cuts the
     close of a model response short and leaves its connection held. Its
-    outcome is retrieved, so none is logged as never retrieved."""
+    outcome is retrieved, so none is logged as never retrieved.
+
+    The query still has stop points, for a cancellation a layer under it
+    loses: on Python 3.11 ``asyncio.wait_for`` returns the result its
+    awaitable got in the same turn as the cancellation (langchain-openai
+    reads each chunk of a stream through it, for ``stream_chunk_timeout``),
+    so the stream goes on as if nothing was cancelled (3.12 rebuilt
+    ``wait_for`` on ``asyncio.timeout``, which re-raises it). The query's
+    next event, answer chunk, model request or retry wait then raises
+    ``CancelledError`` at the reader's stop (``shared.reader_stop``)."""
     try:
         await asyncio.wait({task})
     finally:
@@ -4484,6 +4496,13 @@ def _streamed_to(
                         except StopAsyncIteration:
                             break
                     waiting_first = False
+                    # A stop point at every chunk, one that sends nothing
+                    # too (reasoning, a held-back marker, an answer the
+                    # output guardrail screens first): a chunk read after
+                    # the reader stopped is one whose cancellation was lost
+                    # (_ended).
+                    if reader_stopped():
+                        raise asyncio.CancelledError
                     text = str(chunk)
                     if not text:
                         continue

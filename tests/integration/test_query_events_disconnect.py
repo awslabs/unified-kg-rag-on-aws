@@ -556,8 +556,14 @@ async def test_a_reader_cancelled_in_retry_backoff_stops_the_query(
             provider != "ollama"
         )
         assert order.passed_after_a_stop() == []
-        # ... and none reached the model once the readers were released.
-        calls = models.throttled
+        # ... and none reached the model after those in flight: a reader is
+        # released at once, before a worker thread's request that passed
+        # its check before the stop reaches the model.
+        async with asyncio.timeout(BACKSTOP):
+            calls = -1
+            while models.throttled != calls:
+                calls = models.throttled
+                await asyncio.sleep(0.5)
         await asyncio.sleep(2.5)
         assert models.throttled == calls
         assert recorded == [None] * THROTTLED_READERS

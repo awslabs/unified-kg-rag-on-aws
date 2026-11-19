@@ -378,7 +378,11 @@ query to end without cancelling it again (`_ended`: an anyio cancel scope
 cancels the reader at every await, and a second cancellation passed on
 would cut the close of a model response short, its connection held). The
 stop is what the cancellation does not reach: the work the query left on
-worker threads and the clients' own resends. The application's retry
+worker threads, the clients' own resends, and a cancellation a layer under
+the query loses (on Python 3.11 `asyncio.wait_for`, which langchain-openai
+reads each stream chunk through, returns a chunk that arrived with the
+cancellation): the query's next event and its answer's next chunk, one
+without text too, raise at the stop. The application's retry
 loops check it before each attempt and race their wait against it, and
 the model clients that resend a call themselves (Bedrock's botocore, the
 OpenAI client) check it before each request, so a throttled model is not
