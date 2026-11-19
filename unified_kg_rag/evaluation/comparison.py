@@ -1044,6 +1044,21 @@ def _distribution(values: Sequence[float]) -> dict[str, float] | None:
     }
 
 
+def stage_latency(results: Sequence[EvaluationResult]) -> dict[str, dict[str, float]]:
+    """Per span name, the distribution of the seconds an answer spent in
+    it (``EvaluationResult.stage_seconds``), over the answers that opened
+    one: ``answers``, ``mean``, ``p50``, ``p95``. Failed answers count, with
+    what they spent; empty when no answer was traced."""
+    seconds: dict[str, list[float]] = defaultdict(list)
+    for result in results:
+        for name, value in (result.stage_seconds or {}).items():
+            seconds[name].append(value)
+    return {
+        name: {"answers": float(len(values)), **(_distribution(values) or {})}
+        for name, values in sorted(seconds.items())
+    }
+
+
 def _answer_measures(
     result: EvaluationResult, prices: Mapping[str, ModelPrice] | None
 ) -> tuple[dict[str, float], set[str]]:
@@ -1171,6 +1186,10 @@ def cost_comparison(
                 observed.get("usage/total_tokens", [])
             ),
             "latency_seconds": _distribution(observed.get(LATENCY_MEASURE, [])),
+            # Per span (with observability on): where the latency goes.
+            "stage_latency_seconds": stage_latency(
+                [result for _, results in strategy_runs for result in results]
+            ),
             "embedding_calls_per_query": _distribution([c for c, _ in embedding]),
             "embedding_input_tokens_per_query": _distribution(
                 [t for _, t in embedding]

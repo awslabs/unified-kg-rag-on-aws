@@ -115,7 +115,7 @@ from .citation_scoring import (
     cited_section_types,
     cited_source_ids,
 )
-from .comparison import USAGE_SCHEMA
+from .comparison import USAGE_SCHEMA, stage_latency
 from .graph_aware_evaluator import GraphAwareEvaluator
 from .iterative_statistics import iterative_statistics
 from .retrieval_evaluator import BY_SOURCE_TYPE_KEY, RetrievalEvaluator
@@ -195,12 +195,25 @@ class _AnswerSpend:
     """What answering one query spent over its attempts: the usage of those
     that raised, and its first attempt's start and last attempt's end."""
 
-    __slots__ = ("end", "failed_usage", "start")
+    __slots__ = ("end", "failed_usage", "stage_seconds", "start")
 
     def __init__(self) -> None:
         self.start = time.monotonic()
         self.end: float | None = None
         self.failed_usage: list[dict[str, Any]] = []
+        # Per span name, the seconds its attempts' spans took (tracing on).
+        self.stage_seconds: dict[str, float] = {}
+
+    def add_stages(self, seconds: dict[str, float]) -> None:
+        for name, value in seconds.items():
+            self.stage_seconds[name] = self.stage_seconds.get(name, 0.0) + value
+
+
+def _stage_seconds(record: _AnswerSpend | None) -> dict[str, float] | None:
+    """The answer's seconds per span name; ``None`` while tracing is off."""
+    if record is None or not observability.is_enabled():
+        return None
+    return dict(sorted(record.stage_seconds.items()))
 
 
 def _elapsed(record: _AnswerSpend | None) -> float | None:
@@ -889,6 +902,7 @@ class EvaluationManager:
                     else contextlib.nullcontext()
                 ),
                 usage_scope() as meter,
+                observability.span_timings() as stages,
             ):
                 try:
                     return await arm.manager.rag_chain.ainvoke(single_input)
@@ -897,6 +911,7 @@ class EvaluationManager:
                     raise
                 finally:
                     record.end = time.monotonic()
+                    record.add_stages(stages)
 
         # The error an answer failed every attempt with, by its input's
         # index; each answer's log lines carry its dataset query_id.
@@ -983,6 +998,7 @@ class EvaluationManager:
                         guardrail_blocked=self._guardrail_block(rag_metadata),
                         category=query.category,
                         usage=_answer_usage(rag_metadata.get("usage"), record),
+                        stage_seconds=_stage_seconds(record),
                     )
                 )
             except Exception as e:  # noqa: BLE001 - isolate one query's failure
@@ -1008,6 +1024,7 @@ class EvaluationManager:
                         error_message=failure,
                         response_time=_elapsed(record),
                         usage=_answer_usage(None, record),
+                        stage_seconds=_stage_seconds(record),
                     )
                 )
         await self._attribute_sources(queries, results, provenance)
@@ -1468,6 +1485,7 @@ class EvaluationManager:
             successful_evaluations=successful_evaluations,
             failed_evaluations=len(queries) - successful_evaluations,
             average_response_time=avg_response_time,
+            stage_latency_seconds=stage_latency(results),
             metric_statistics=self._calculate_metric_statistics(reports),
             metric_outcomes=self._calculate_metric_outcomes(results, reports),
             abstention_statistics=self._calculate_abstention_statistics(

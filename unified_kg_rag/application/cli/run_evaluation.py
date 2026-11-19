@@ -1190,6 +1190,29 @@ class EvaluationRunner:
                 )
             console.print(table)
 
+        if summary.stage_latency_seconds:
+            stages = Table(
+                title="[bold]Stage Latency (seconds per answer, from spans)[/bold]",
+                show_header=True,
+                header_style="bold magenta",
+            )
+            stages.add_column(
+                "Span",
+                min_width=_widest(summary.stage_latency_seconds),
+                overflow="fold",
+            )
+            for column in ("Answers", "Mean", "p50", "p95"):
+                stages.add_column(column, style="cyan")
+            for name, stats in summary.stage_latency_seconds.items():
+                stages.add_row(
+                    markup_safe(name),
+                    str(int(stats["answers"])),
+                    f"{stats['mean']:.3f}",
+                    f"{stats['p50']:.3f}",
+                    f"{stats['p95']:.3f}",
+                )
+            console.print(stages)
+
         # Failed/skipped metric values are excluded from the means above; say so
         # explicitly so a mean over a subset is not read as a mean over all.
         for evaluator_name, metrics in summary.metric_outcomes.items():
@@ -2606,6 +2629,7 @@ _SUMMARY_FIELDS = {
     "failed_evaluations",
     "benchmarks",
     "average_response_time",
+    "stage_latency_seconds",
     "metric_statistics",
     "metric_outcomes",
     "abstention_statistics",

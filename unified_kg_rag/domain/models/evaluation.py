@@ -254,6 +254,16 @@ class EvaluationResult(BaseModel):
             "time from its first attempt's start to its last one's end."
         ),
     )
+    stage_seconds: dict[str, float] | None = Field(
+        default=None,
+        description=(
+            "Per span name (kg_rag.retrieve, kg_rag.fusion, chat <model>, "
+            "...), the seconds the answer's spans took, over its attempts; "
+            "overlapping spans (concurrent calls) each count. None when "
+            "tracing was off (observability.enabled false) or for a result "
+            "saved before it was recorded."
+        ),
+    )
     search_strategy: str | None = Field(
         default=None,
         description="Search strategy used for this evaluation, one of "
@@ -474,6 +484,14 @@ class EvaluationSummary(BaseModel):
     average_response_time: float | None = Field(
         default=None,
         description="Average response time across all successful evaluations in seconds.",
+    )
+    stage_latency_seconds: dict[str, dict[str, float]] = Field(
+        default_factory=dict,
+        description=(
+            "Per span name, the seconds per answer of the answers that "
+            "opened that span (EvaluationResult.stage_seconds): answers, "
+            "mean, p50, p95. Empty when tracing was off."
+        ),
     )
     metric_statistics: dict[str, dict[str, float]] = Field(
         default_factory=dict,

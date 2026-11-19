@@ -835,6 +835,7 @@ _KEPT_IN_SHARED_CALLS = {
     "shared/usage.py:_CURRENT": "the earliest waiter's meter",
     # Where the call was sent from: logged and traced there.
     "shared/observability.py:_BOUND_ATTRIBUTES": "span attributes",
+    "shared/observability.py:_TIMINGS": "span timings",
     "adapters/aws/bedrock.py:_IN_EMBEDDING_SPAN": "span nesting",
     # A run's, not a query's.
     "shared/write_fence.py:_FENCES": "an ingestion run's write fences",
