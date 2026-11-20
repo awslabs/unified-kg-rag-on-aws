@@ -41,7 +41,10 @@ from unified_kg_rag.application.retrieval.rag_chain import (
     RAGOutput,
     extraction_cache_scope,
 )
-from unified_kg_rag.domain.ingestion.cache_keys import answer_settings, index_language
+from unified_kg_rag.domain.ingestion.cache_keys import (
+    answer_settings_fingerprint,
+    index_language,
+)
 from unified_kg_rag.domain.models import (
     Config,
     EvaluationGroundTruth,
@@ -1708,7 +1711,7 @@ class EvaluationManager:
             "git_dirty": git_dirty,
             # Every setting that can change an answer or a score, without
             # the environment (cache_keys.answer_settings).
-            "retrieval_config_sha256": self._sha256_json(settings),
+            "retrieval_config_sha256": answer_settings_fingerprint(self.config),
             # The settings the hash is of, so a refused pooling or a
             # comparison names the ones that differ.
             "answer_settings": settings,

@@ -156,7 +156,9 @@ opens a `kg_rag.mcp.tool` span (tool name, outcome, record count) under
 which the chain's `kg_rag.query` span nests. Its arguments are recorded as
 `input.value` only with `observability.capture_content`, after
 `observability.redact_patterns`, the policy every other span follows;
-INFO logs carry a digest of the query (`text_digest`), never its text. A
+INFO logs carry a digest of the query (`text_digest`), never its text, and
+the chain writes each query's audit record (`query_audit`, from
+`GraphRAGChain._record_query`, the one place every surface's query ends). A
 caller-correctable error (an invalid argument or filter, a strategy the
 namespace does not hold, the deadline) is returned as a tool error with its
 message, also under `processing.ignore_errors`, whose error answer names

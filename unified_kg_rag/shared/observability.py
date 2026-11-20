@@ -47,6 +47,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
 __all__ = [
+    "MAX_RECORDED_IDS",
     "NOOP_SPAN",
     "REDACTED",
     "ContentPolicy",
@@ -74,6 +75,10 @@ _NAMESPACE = "kg_rag."
 # what Langfuse and OpenInference read).
 SESSION_ID = "session.id"
 USER_ID = "user.id"
+# The ids one span attribute (a retrieval's source ids, a query's cited
+# ids) or one list of a query's audit record keeps: a bound on the record's
+# size, as trace backends cap an attribute's (its count stays complete).
+MAX_RECORDED_IDS = 50
 
 SpanKind = Literal["internal", "client"]
 

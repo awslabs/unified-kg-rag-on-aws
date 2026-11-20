@@ -573,6 +573,17 @@ def answer_settings(config: Config) -> dict[str, Any]:
     return settings
 
 
+def answer_settings_fingerprint(config: Config) -> str:
+    """The hex SHA-256 of :func:`answer_settings`: the ``run-eval``
+    manifest's ``retrieval_config_sha256`` and a query audit record's
+    ``config_fingerprint``, so a query and an evaluation run under the same
+    settings carry the same value."""
+    encoded = json.dumps(
+        answer_settings(config), sort_keys=True, ensure_ascii=False, default=str
+    )
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
 def _block_on(config: Config, path: str) -> bool:
     """Whether the block at ``path`` and every block above it are on."""
     node: Any = config

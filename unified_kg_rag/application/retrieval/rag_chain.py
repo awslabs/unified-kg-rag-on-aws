@@ -24,6 +24,7 @@ from collections.abc import (
     MutableMapping,
 )
 from contextlib import AbstractContextManager, aclosing, contextmanager, nullcontext
+from dataclasses import dataclass
 from typing import Annotated, Any, Literal, Self, TypeVar, cast, get_args
 
 from langchain_core.exceptions import OutputParserException
@@ -120,6 +121,7 @@ from unified_kg_rag.application.retrieval import (
     citations,
     filter_validation,
     methodology_check,
+    query_audit,
     query_processing,
 )
 
@@ -265,6 +267,9 @@ logger = get_logger(__name__)
 
 # The input key of the error a query's admission met checking its namespace.
 _MISSING_NAMESPACE = "_missing_namespace"
+# The build record a query's admission read (_check_holdings), for its
+# audit record (_query takes it out of the query's state).
+_BUILD_RECORD = "_build_record"
 
 
 def _names(strategies: Collection[SearchStrategy]) -> str:
@@ -578,9 +583,9 @@ class RAGInput(BaseModel):
     )
     user_id: str | None = Field(
         default=None,
-        description="Optional end-user id, recorded only on trace spans "
-        "(user.id) when observability is enabled; pass an opaque id, not an "
-        "e-mail address or name",
+        description="Optional end-user id, recorded on trace spans (user.id) "
+        "when observability is enabled and in the query's audit record "
+        "(user_id); pass an opaque id, not an e-mail address or name",
     )
     use_memory: bool = Field(
         default=False, description="Whether to use conversation memory"
@@ -2760,11 +2765,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             self._apply_limits(deadline, rag_input)
         except Exception as e:
             tag_query_failure(e, query_id)
-            if not search:
-                self._record_query_metrics(started, input, error=e)
+            self._record_query(
+                started, input, search=search, query_id=query_id, error=e
+            )
             raise
         finally:
             reset_contextvars(**admission_tokens)
+        # The build its audit record names (not a step's input).
+        build = input_dict.pop(_BUILD_RECORD, None)
         log_context = self._log_context(rag_input, query_id)
         log_tokens = bind_contextvars(**log_context)
         ids: tuple[str, str] | None = None
@@ -2843,31 +2851,45 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 )
         except Exception as e:
             tag_query_failure(e, query_id, ids[0] if ids else None)
-            if not search:
-                self._record_query_metrics(
-                    started,
-                    rag_input,
-                    error=e,
-                    usage=meter.snapshot() if meter is not None else None,
-                )
+            self._record_query(
+                started,
+                rag_input,
+                search=search,
+                query_id=query_id,
+                trace_ids=ids,
+                error=e,
+                usage=meter.snapshot() if meter is not None else None,
+                build=build,
+            )
             raise
         except _ReaderStopped:
             # Its events' reader stopped (a stream closed early, or its
             # reader cancelled): no failure, its latency and usage up to
             # there. A cancelled ainvoke records nothing.
-            self._record_query_metrics(
+            self._record_query(
                 started,
                 rag_input,
+                search=search,
+                query_id=query_id,
+                trace_ids=ids,
                 usage=meter.snapshot() if meter is not None else None,
                 ran=_routed_strategy(),
+                stopped=True,
+                build=build,
             )
             raise
         finally:
             reset_contextvars(**log_tokens)
-        if not search:
-            self._record_query_metrics(
-                started, rag_input, result=result, usage=result.metadata.get("usage")
-            )
+        self._record_query(
+            started,
+            rag_input,
+            search=search,
+            query_id=query_id,
+            trace_ids=ids,
+            result=result,
+            usage=result.metadata.get("usage"),
+            build=build,
+        )
         return result
 
     @staticmethod
@@ -2886,7 +2908,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         :meth:`ainvoke` records its own. ``query``: the fields known
         (``search_strategy``, ``suffix``); ``started``: the
         ``time.monotonic()`` the call began."""
-        self._record_query_metrics(started, dict(query), error=error)
+        self._record_query(
+            started,
+            dict(query),
+            search=False,
+            query_id=self._query_id(),
+            error=error,
+        )
 
     @staticmethod
     def _log_context(rag_input: RAGInput, query_id: str) -> dict[str, Any]:
@@ -2898,17 +2926,116 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             "namespace": rag_input.suffix,
         }
 
-    def _record_query_metrics(
+    def _record_query(
         self,
         started: float,
         query: RAGInput | dict[str, Any],
         *,
+        search: bool,
+        query_id: str,
+        trace_ids: tuple[str, str] | None = None,
         result: RAGOutput | SearchOutput | None = None,
         error: BaseException | None = None,
-        error_class: ErrorClass | None = None,
         usage: Mapping[str, Any] | None = None,
         ran: Any = None,
-        metadata: Mapping[str, Any] | None = None,
+        stopped: bool = False,
+        build: Mapping[str, Any] | None = None,
+    ) -> None:
+        """The one record of a query's end, however it ended: its metrics
+        (``_record_query_metrics``; an answer's only) and its audit record
+        (``query_audit``; an answer's and a search's). ``query``: the
+        admitted input, or the one the admission refused; ``ran``: the
+        strategy that ran when no ``result`` names it (a stream stopped
+        early: ``stopped``); ``trace_ids``: the query span's, else the
+        active span's; ``build``: the build record its admission read."""
+        facts = self._query_facts(query, result=result, error=error, ran=ran)
+        if not search:
+            self._record_query_metrics(started, query, facts, usage=usage)
+        if not query_audit.audit_enabled():
+            return
+        try:
+            ids = trace_ids or observability.current_trace_ids()
+            query_audit.emit(
+                query_audit.query_record(
+                    self.config,
+                    query_id=query_id,
+                    trace_id=ids[0] if ids else None,
+                    started=started,
+                    mode="search" if search else "rag",
+                    fields=facts.fields,
+                    namespace=facts.namespace,
+                    strategy=facts.ran,
+                    outcome=query_audit.outcome_of(
+                        facts.error_class,
+                        raised=error is not None,
+                        stopped=stopped,
+                        blocked=bool(facts.metadata.get("blocked")),
+                        abstained=bool(facts.metadata.get("abstained")),
+                    ),
+                    error_class=facts.error_class,
+                    degraded=bool(DegradationReport.of(facts.metadata).degraded),
+                    query_limited=self._query_limited(
+                        facts.metadata, facts.error_class
+                    ),
+                    build=build,
+                    output=result,
+                    usage=usage,
+                )
+            )
+        except Exception as e:  # noqa: BLE001 - the record never fails a query
+            log_failure(
+                logger, logging.WARNING, "Query audit record failed: %s", error=e
+            )
+
+    def _query_facts(
+        self,
+        query: RAGInput | dict[str, Any],
+        *,
+        result: RAGOutput | SearchOutput | None,
+        error: BaseException | None,
+        ran: Any,
+    ) -> "_QueryFacts":
+        """What a query's metrics and audit record say of it: its input's
+        fields, its output's metadata, its failure's class, the strategy
+        that ran (none for a blocked query or a failure) and its namespace,
+        resolved as the admission resolves it (a refused input's too)."""
+        metadata: Mapping[str, Any] = {}
+        if result is not None:
+            metadata = result.metadata
+            # A blocked query ran no strategy (its output's is "blocked").
+            ran = (
+                None
+                if metadata.get("blocked")
+                else result.search_results.search_strategy
+            )
+        error_class: ErrorClass | None = None
+        if error is not None:
+            error_class = classify(error)
+        elif metadata.get("error"):
+            error_class = error_class_of(metadata.get(ERROR_CLASS_KEY))
+        # Any input, a refused one too: never an error here in its place.
+        fields = query if isinstance(query, dict) else getattr(query, "__dict__", {})
+        namespace = fields.get("suffix")
+        with contextlib.suppress(Exception):
+            namespace = resolve_namespace(self.config, namespace)
+        strategy = None
+        if ran is not None and error_class is None:
+            strategy = _strategy_dimension(ran, "") or None
+        return _QueryFacts(
+            fields=fields,
+            metadata=metadata,
+            error_class=error_class,
+            ran=strategy,
+            namespace=None if namespace is None else str(namespace),
+        )
+
+    def _record_query_metrics(
+        self,
+        started: float,
+        query: RAGInput | dict[str, Any],
+        facts: "_QueryFacts",
+        *,
+        usage: Mapping[str, Any] | None = None,
     ) -> None:
         """Publish an answered query's latency and outcome through the
         providers' metrics sink (``Providers.metrics_sink``: ``--metrics-sink
@@ -2920,35 +3047,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         (answered without a step) and ``query_abstained``, 0 or 1 each, and
         ``query_throttled_requests`` (the requests Bedrock throttled, when
         the usage is known). Answers only, so a retrieval-only search does
-        not lower the answer latency. ``query``: the admitted input, or the
-        one the admission refused; ``ran`` and ``metadata``: the strategy
-        that ran and the answer's metadata, when no ``result`` carries them
-        (a streamed answer's). The ``Strategy`` dimension is a
+        not lower the answer latency. The ``Strategy`` dimension is a
         ``SearchStrategy`` value, or ``invalid`` for a refused input that
         names none (one series, not one per string)."""
-        if result is not None:
-            metadata = result.metadata
-            # A blocked query ran no strategy (its output's is "blocked"):
-            # the requested one names it.
-            ran = (
-                None
-                if metadata.get("blocked")
-                else result.search_results.search_strategy
-            )
-        metadata = metadata or {}
-        if error is not None:
-            error_class = classify(error)
-        elif metadata.get("error"):
-            error_class = error_class_of(metadata.get(ERROR_CLASS_KEY))
-        # Any input, a refused one too: never an error here in its place.
-        fields = query if isinstance(query, dict) else getattr(query, "__dict__", {})
-        strategy = _strategy_dimension(fields.get("search_strategy"))
-        if ran is not None and error_class is None:
-            strategy = _strategy_dimension(ran, strategy)
-        namespace = fields.get("suffix")
-        with contextlib.suppress(Exception):
-            # Resolved as the admission resolves it (a refused input's too).
-            namespace = resolve_namespace(self.config, namespace)
+        metadata, error_class = facts.metadata, facts.error_class
+        strategy = facts.ran or _strategy_dimension(facts.fields.get("search_strategy"))
+        namespace = facts.namespace
         metrics = {
             QUERY_LATENCY_METRIC: (time.monotonic() - started) * 1000,
             QUERY_FAILED_METRIC: float(
@@ -3863,6 +3967,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             self, rag_input.search_strategy, rag_input.suffix
         )
         input_dict["held_artifacts"] = holdings.artifacts
+        input_dict[_BUILD_RECORD] = holdings.record
         # Filter keys after the methodology check, against the indexes the
         # namespace holds: a key only an index it lacks declares would be
         # dropped everywhere.
@@ -4899,6 +5004,19 @@ def deadline_text(seconds: float) -> str:
     """``seconds`` as a timeout message states it: to the hundredth, one
     under 5 ms to its first digit (``0.001``, not ``0``)."""
     return f"{round(seconds, 2) or float(f'{seconds:.1g}'):g}"
+
+
+@dataclass(frozen=True)
+class _QueryFacts:
+    """What a query's end says of it (``GraphRAGChain._query_facts``)."""
+
+    fields: Mapping[str, Any]
+    metadata: Mapping[str, Any]
+    error_class: ErrorClass | None
+    # The strategy that ran (a SearchStrategy value); None for a blocked
+    # query, a failure, or one that stopped before its route.
+    ran: str | None
+    namespace: str | None
 
 
 class _QueryDeadline:

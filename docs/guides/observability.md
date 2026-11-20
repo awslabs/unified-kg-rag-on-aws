@@ -201,7 +201,10 @@ Bedrock model invocation logging records every `InvokeModel` / `Converse`
 request and response in a region to CloudWatch Logs or S3, whatever this
 package's tracing does (the text with `textDataDeliveryEnabled`; embedding
 vectors only with `embeddingDataDeliveryEnabled`, off in the example below):
-use it as the audit record and traces for the per-query breakdown. It does not
+use it as the record of the text the models were sent and returned, the
+package's own per-query [audit record](../reference/telemetry.md#audit-record)
+(ids, digests, build, usage and cost; tracing on or off) as the record of each
+query, and traces for the per-query breakdown. It does not
 cover the Rerank call (`bedrock-agent-runtime`), and it holds full prompt and
 response text, so protect its destination like captured content (restricted
 readers, a customer managed KMS key, a retention period). It is one setting per account and

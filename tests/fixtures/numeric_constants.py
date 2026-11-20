@@ -93,6 +93,8 @@ ALLOWED: dict[str, str] = {
     ),
     **_reason(
         FORMAT,
+        "domain/models/audit.py:AUDIT_RECORD_VERSION",
+        "application/retrieval/query_audit.py:_DIGEST_LENGTH",
         "adapters/llm/response_cache.py:_SEGMENT_VERSION",
         "domain/ingestion/cache_keys.py:_STAGE_FORMAT_VERSION",
         "adapters/llm/token_estimate.py:UNITS_PER_TOKEN",
@@ -132,7 +134,7 @@ ALLOWED: dict[str, str] = {
         "adapters/local/search_engine/query.py:_SCORE_IN_PLACE_FRACTION",
         "adapters/observability/usage_callback.py:ESTIMATE_DRIFT_MIN_CALLS",
         "adapters/observability/usage_callback.py:ESTIMATE_DRIFT_RATIO",
-        "adapters/retrieval/base.py:_MAX_SPAN_SOURCE_IDS",
+        "shared/observability.py:MAX_RECORDED_IDS",
         "adapters/search_strategies/structured_search.py:_MAX_PROFILES",
         "adapters/search_strategies/tree_search.py:_MAX_LINEAGE_DEPTH",
         "adapters/storage/neptune_indexer.py:_DELETE_BATCH_SIZE",
