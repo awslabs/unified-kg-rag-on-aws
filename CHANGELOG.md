@@ -288,7 +288,7 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   A key a document's own filters give keeps its value. The values are NFC, and a query's values match their NFC form
   too, so a name the file system gave decomposed (NFD Hangul) matches as typed; a `:` in a name is kept, a drive or
   URL scheme gets none. The build record names them (`document_filter_keys`) when every document carries them, and a
-  namespace built without them refuses the keys
+  namespace built without them refuses the keys, in `kg_get_chunks` too
   ([Path filters](docs/reference/filters.md#path-filters)).
 - MCP `kg_get_chunks(ids)`: an agent reads the chunks a record cites (`chunk_id`, `text_unit_ids`) by id, with their
   text, document, relative path, pages, communities and document filters, and no model call; at most

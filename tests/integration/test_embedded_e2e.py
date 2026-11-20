@@ -53,6 +53,7 @@ from unified_kg_rag.application.bootstrap import build_providers
 from unified_kg_rag.application.cli import run_visualization
 from unified_kg_rag.application.ingestion import pipeline_stages as ps
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+from unified_kg_rag.application.retrieval import graph_lookup
 from unified_kg_rag.application.retrieval.rag_chain import (
     GraphRAGChain,
     RAGInput,
@@ -1316,6 +1317,23 @@ def test_a_path_filter_on_a_namespace_built_without_them_is_refused(
                 )
         # Refused before any model call; another document key still runs.
         assert len(server.chat_models) == calls
+        # kg_get_chunks' lookup refuses it alike (it answered from the
+        # stamped chunks alone, listing the others as missing).
+        vectors = providers.build_vector_indexer()
+        try:
+            units = stored_text_units(vectors, None, fields=["id"])
+        finally:
+            vectors.close()
+        assert units
+        with pytest.raises(InvalidFilterError, match="indexing.reset: true"):
+            asyncio.run(
+                graph_lookup.text_units(
+                    chain,
+                    None,
+                    [row["id"] for row in units],
+                    filters={"attr_folder": "logistics"},
+                )
+            )
         out = chain.invoke(
             RAGInput(
                 query="Who stores the gadgets?",

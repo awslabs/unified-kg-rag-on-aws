@@ -69,7 +69,7 @@ A namespace built before ingestion stamped them (its build record names no
 holding a document whose path is not under the corpus root (a pre-parsed
 document that names where it lived) holds documents without them: a query
 with `attr_file` or `attr_folder` (or their `attributes.filters.<key>`
-form) is refused there
+form), and `kg_get_chunks` with one, is refused there
 (`InvalidFilterError`, exit 2) until a run with `indexing.reset: true`
 rebuilds it.
 
