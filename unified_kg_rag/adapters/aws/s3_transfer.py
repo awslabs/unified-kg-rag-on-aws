@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Single-object download and directory upload for ``s3://`` CLI paths.
+"""The package's S3 client (:func:`s3_client`), and single-object download
+and directory upload for ``s3://`` CLI paths.
 
 Used by CLIs whose inputs/outputs may live in S3 (``run-eval`` on the bundled
 ECS stack, where the image holds no dataset and the task disk is discarded on
@@ -13,8 +14,9 @@ call S3, so parsing a path (``is_s3_uri``, from
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Protocol
 
 from unified_kg_rag.shared import AWSServiceError, ConfigurationError, get_logger
 from unified_kg_rag.shared.exceptions import with_own_text
@@ -27,6 +29,44 @@ if TYPE_CHECKING:
     from unified_kg_rag.domain.models import Config
 
 logger = get_logger(__name__)
+
+# The bounds of one S3 request (botocore's defaults are 60 s to connect and
+# to read, with legacy retries). Connect: the package's other AWS clients'
+# (Bedrock, the registry), so a stalled endpoint (a private subnet without
+# its S3 endpoint) fails in seconds, not minutes. Read: botocore's default;
+# a managed transfer reads in chunks, each bounded by it. Requests: as many
+# as the legacy mode made (the first and four retries), now under the
+# standard mode, which retries S3 throttling (SlowDown) and transient 5xx
+# and connection errors with jittered backoff and a retry quota.
+S3_CONNECT_TIMEOUT_SECONDS = 10.0
+S3_READ_TIMEOUT_SECONDS = 60.0
+S3_TOTAL_MAX_ATTEMPTS = 5
+
+
+class ClientMaker(Protocol):
+    """What builds AWS clients: a ``boto3.Session``, or a source's context
+    (:class:`..source_files.locations.SourceClientProvider`)."""
+
+    # An attribute, not a method: a session's ``client`` is overloaded per
+    # service name.
+    @property
+    def client(self) -> Callable[..., Any]: ...
+
+
+def s3_client(maker: ClientMaker) -> S3Client:
+    """The S3 client ``maker`` builds, with the package's S3 bounds: every
+    S3 client of the package is built here."""
+    from botocore.config import Config as BotoConfig
+
+    client: S3Client = maker.client(
+        "s3",
+        config=BotoConfig(
+            connect_timeout=S3_CONNECT_TIMEOUT_SECONDS,
+            read_timeout=S3_READ_TIMEOUT_SECONDS,
+            retries={"mode": "standard", "total_max_attempts": S3_TOTAL_MAX_ATTEMPTS},
+        ),
+    )
+    return client
 
 
 def parse_s3_uri(uri: str, *, require_key: bool) -> tuple[str, str]:
@@ -56,11 +96,11 @@ def s3_client_for(config: Config) -> S3Client:
     """An S3 client on the configured profile and region."""
     import boto3
 
-    session = boto3.Session(
-        profile_name=config.aws.profile_name, region_name=config.aws.region_name
+    return s3_client(
+        boto3.Session(
+            profile_name=config.aws.profile_name, region_name=config.aws.region_name
+        )
     )
-    client: S3Client = session.client("s3")
-    return client
 
 
 def download_s3_object(s3_client: S3Client, uri: str, local_path: Path) -> Path:
