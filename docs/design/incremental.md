@@ -599,7 +599,7 @@ failed, a read failed, a report below it is missing, or, with
 `enable_sub_community_rollup`, one below it got no report this run: written
 without that child's roll-up, the parent would never be asked again once
 the child is) stays flagged and in
-the build record (`IndexBuildRecord.outdated_reports`, a `communities`
+the build record (`IndexBuildRecord.outdated_reports`, an `outdated_reports`
 rebuild reason with remedy `next_run`), and the next run, a run with
 nothing to index included, tries again. A property test checks that the
 model is asked with what a full build's detector packs for the same
