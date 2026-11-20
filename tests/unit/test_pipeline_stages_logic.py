@@ -540,7 +540,14 @@ def test_gleaning_stage_improvement_rate_is_graph_growth(mocker) -> None:
 # --- CommunityDetectionStage: failed community reports ----------------------
 
 
-def _community_stage(mocker, failed: list[str], max_failure_rate: float):
+def _community_stage(
+    mocker,
+    failed: list[str],
+    max_failure_rate: float,
+    *,
+    count: int = 4,
+    requested: int | None = None,
+):
     import networkx as nx
 
     from unified_kg_rag.application.ingestion import pipeline_stages as ps
@@ -556,11 +563,13 @@ def _community_stage(mocker, failed: list[str], max_failure_rate: float):
             entity_ids=[f"e{i}"],
             text_unit_ids=[f"t{i}", "t-shared"],
         )
-        for i in range(4)
+        for i in range(count)
     ]
     detector = mocker.MagicMock()
     detector.generate_community_objects.return_value = communities
     detector.generate_reports.return_value = ([], failed)
+    # The reports asked of the model this run: every one by default.
+    detector.requested_report_count = count if requested is None else requested
     detector.get_community_metrics.return_value = None
     mocker.patch.object(ps, "CommunityDetector", return_value=detector)
     config = Config()
@@ -592,8 +601,60 @@ def test_community_stage_fails_above_the_tolerated_failure_rate(mocker) -> None:
 
     failed = ["c0", "c1", "c2", "c3"]
     stage, ctx = _community_stage(mocker, failed=failed, max_failure_rate=0.25)
-    with pytest.raises(PipelineStageError, match="4 of 4 communities"):
+    with pytest.raises(PipelineStageError, match="4 of the 4 reports asked"):
         stage._execute_core(ctx)
+
+
+@pytest.mark.parametrize(
+    ("failed", "requested", "fails"),
+    [
+        # Nothing asked (every answer stored): nothing to fail.
+        (0, 0, False),
+        # One asked: one failure alone does not tell (20% likely).
+        (0, 1, False),
+        (1, 1, False),
+        # Two asked: both failing is 4% likely at 20% and fails.
+        (1, 2, False),
+        (2, 2, True),
+    ],
+)
+def test_the_report_gate_counts_the_reports_asked_this_run(
+    mocker, failed: int, requested: int, fails: bool
+) -> None:
+    # RV1-B1: of 59 communities, only those whose input changed are asked;
+    # the reused answers are no trials.
+    stage, ctx = _community_stage(
+        mocker,
+        failed=[f"c{i}" for i in range(failed)],
+        max_failure_rate=0.2,
+        count=59,
+        requested=requested,
+    )
+    if fails:
+        with pytest.raises(PipelineStageError, match=f"{failed} of the {requested} "):
+            stage._execute_core(ctx)
+    else:
+        stage._execute_core(ctx)
+
+
+def test_new_reports_failing_behind_reused_ones_fail_the_stage(mocker) -> None:
+    # RV1-B1: a rerun after about 10% more documents, whose model cuts off
+    # every new report: 6 of 59 communities (53 answers reused) passed as 6
+    # trials in 59 (98.6% likely at 20%); 6 of the 6 asked is 0.006% likely.
+    stage, ctx = _community_stage(
+        mocker,
+        failed=[f"c{i}" for i in range(6)],
+        max_failure_rate=0.2,
+        count=59,
+        requested=6,
+    )
+    with pytest.raises(PipelineStageError, match="6 of the 6 reports asked"):
+        stage._execute_core(ctx)
+    # The same failures among 59 asked are within the chance.
+    stage, ctx = _community_stage(
+        mocker, failed=[f"c{i}" for i in range(6)], max_failure_rate=0.2, count=59
+    )
+    stage._execute_core(ctx)
 
 
 def test_a_small_run_passes_the_failures_a_large_one_would_explain(mocker) -> None:

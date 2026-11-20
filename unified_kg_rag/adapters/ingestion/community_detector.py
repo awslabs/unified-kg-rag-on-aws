@@ -166,6 +166,10 @@ class CommunityDetector:
         # and the documents of each text unit, which tell them.
         self.item_failed_community_ids: list[str] = []
         self._unit_documents: dict[str, list[str]] = {}
+        # The reports the last generate_reports asked of the model (a
+        # report that took its stored answer asked nothing): the trials
+        # the stage's failure gate counts.
+        self.requested_report_count = 0
 
         if self.community_detection_config.report_generation.enabled:
             parser = create_robust_xml_output_parser(
@@ -481,6 +485,7 @@ class CommunityDetector:
         self._report_types = dict(types or {})
         self._report_records = records
         self.item_failed_community_ids = []
+        self.requested_report_count = 0
         self._unit_documents = {
             unit.id: list(unit.document_ids or []) for unit in text_units or []
         }
@@ -523,6 +528,8 @@ class CommunityDetector:
                 "Error during community report generation: %s",
                 error=e,
             )
+            # Every report failed, each one a trial.
+            self.requested_report_count = len(communities)
             return [], [community.id for community in communities]
 
         return reports, failed
@@ -671,6 +678,7 @@ class CommunityDetector:
             index: record["response"] for index, record in stored.items()
         }
         if pending:
+            self.requested_report_count += len(pending)
             errors: dict[int, BaseException] = {}
             answers = self.batch_processor.execute_with_fallback(
                 items_to_process=[report_inputs[index] for index in pending],
