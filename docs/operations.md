@@ -1114,8 +1114,9 @@ A document is recorded `FAILED` in five cases:
   below);
 - a base-level community covering one of its text units got no report (a
   failed parent-level report only logs a WARNING and counts in
-  `reports_failed`; above `indexing.max_failure_rate` of communities without
-  a report, community detection fails);
+  `reports_failed`; with more reports failed than a chance of
+  `indexing.max_failure_rate` per report explains, a one-sided binomial test
+  at 5%, community detection fails);
 - an artifact stage (translation through community detection) crashed in a
   `--continue-on-error` run, which records every document of the run `FAILED`;
 - writing one of its text units to the stores failed (another artifact's

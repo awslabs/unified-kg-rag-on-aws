@@ -284,6 +284,11 @@ Bugs present in 0.3.0.
   which the indexer defines in each index from built-in components (no plugin;
   `adapters/storage/opensearch_analysis.py`) and tokenizes as the embedded engine and `nori` do (every term found).
   Japanese and Chinese were not affected.
+- Community detection failed a small delta on noise: its gate compared the share of reports without one to
+  `indexing.max_failure_rate`, so a 5-document delta failed with 4 of 11 reports cut off where its full build passed
+  with 6 of 59 at the same chance per report. The gate now reads the rate as that chance and fails when more reports
+  failed than it explains (a one-sided binomial test at 5%): 4 of 11 passes at 0.2, 6 of 11 fails, and many reports
+  fail close to the rate itself. Write failures keep the share gate.
 - A community report written partly from a deleted or edited document was kept for the other documents' text units
   and served as it was: local, global and DRIFT answers could state the removed text, cited to the remaining
   documents, and once the run ended nothing said so (`rebuild_due_reasons` 0: the WARNING and the drift metric were

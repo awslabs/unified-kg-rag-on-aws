@@ -108,6 +108,7 @@ from unified_kg_rag.domain.ingestion.document_identity import (
     store_namespace_tag,
 )
 from unified_kg_rag.domain.ingestion.estimate import writes_reports
+from unified_kg_rag.domain.ingestion.failure_rate import failure_rate_exceeded
 from unified_kg_rag.domain.ingestion.graph_analyzer import GraphAnalyzer
 from unified_kg_rag.domain.ingestion.graph_builder import GraphBuilder
 from unified_kg_rag.domain.ingestion.graph_resolver import GraphResolver
@@ -2398,8 +2399,9 @@ class CommunityDetectionStage(_RegistryStage):
         logged (and counted in the stage metrics): a parent spans many
         base-level communities, so recording its text units would re-extract
         most of the corpus on the next run for one report. More failures
-        than ``indexing.max_failure_rate`` of the communities fail the stage
-        (the reports are the community-report index's items). Seed units are
+        than a chance of ``indexing.max_failure_rate`` per report
+        explains (``failure_rate_exceeded``) fail the stage (the reports are
+        the community-report index's items). Seed units are
         left out: a failed report never imports a seed graph's shard again
         (its statements need no model call).
         """
@@ -2407,12 +2409,15 @@ class CommunityDetectionStage(_RegistryStage):
             return []
         max_failure_rate = self.config.indexing.max_failure_rate
         failure_rate = len(failed_community_ids) / max(len(communities), 1)
-        if failure_rate > max_failure_rate:
+        if failure_rate_exceeded(
+            len(failed_community_ids), len(communities), max_failure_rate
+        ):
             raise PipelineStageError(
                 f"Community report generation failed for "
                 f"{len(failed_community_ids)} of {len(communities)} communities "
-                f"({failure_rate:.0%} > {max_failure_rate:.0%} tolerated by "
-                f"indexing.max_failure_rate). Check the report model errors above.",
+                f"({failure_rate:.0%}, more than a {max_failure_rate:.0%} chance "
+                f"per report explains: indexing.max_failure_rate). Check the "
+                "report model errors above.",
                 own_text=True,
             )
         failed_ids = set(failed_community_ids)
