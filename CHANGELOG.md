@@ -397,6 +397,9 @@ Bugs present in 0.3.0.
   `iterative`, 17 for `ppr` and 12 for `naive` (a strategy's own pools: LightRAG's per-type floors, iterative's
   rounds), so `mcp.max_top_k` bounded nothing. `GraphRAGChain.asearch` (`kg_search`, `run-rag --mode search`) cuts its
   results to `top_k` (times `retrieval_multiplier`) by rank; an answer's context keeps the strategy's pools.
+- `cjk_script_split` on OpenSearch put a space between halfwidth Katakana and the Hangul after it (`ｶﾀｶﾅ한글` lost the
+  `ナ한` bigram) where the embedded engine, which folds width first, did not: its split reads U+FF65-FF9F as Kana. An
+  index's analysis is set when it is created, so an index built before keeps the old split until a reset.
 - `retrieval`'s nDCG@k counted two references a single file matches (`report-a` beside `Report-A.pdf`) as two
   relevant documents, so perfect retrieval scored 0.61. References are deduplicated by the matcher's keys: one spelled
   as another's stem is one reference, the specific spelling kept; two files of one stem stay two.

@@ -137,3 +137,30 @@ def test_the_cdk_maps_korean_to_an_analyzer_every_engine_has() -> None:
         assert name in _ANALYZERS
         assert not analyzes_alike(name, STANDARD)
         assert get_analyzer(name)("ＡＷＳ를 the") == ["aws", "를", "the"]
+
+
+def _char_filter(text: str) -> str:
+    """``text`` through cjk_script_split's char filter, its Java pattern
+    read by Python's re (the classes are \\x{...} code points)."""
+    (spec,) = CUSTOM_ANALYZERS[CJK_SCRIPT_SPLIT]["char_filter"].values()
+    pattern = re.sub(
+        r"\\x\{([0-9A-F]+)\}", lambda m: chr(int(m.group(1), 16)), spec["pattern"]
+    )
+    return re.sub(pattern, spec["replacement"], text)
+
+
+@pytest.mark.parametrize(
+    ("text", "split"),
+    [
+        # Halfwidth Katakana is Kana: no space before the Hangul, as the
+        # embedded engine (which folds width first) keeps ナ한.
+        ("ｶﾀｶﾅ한글", "ｶﾀｶﾅ한글"),
+        ("カタカナ한글", "カタカナ한글"),
+        ("AWS를", "AWS 를"),
+        ("한글ﾃｽﾄ", "한글ﾃｽﾄ"),
+    ],
+)
+def test_the_split_reads_halfwidth_kana_as_a_dense_script(
+    text: str, split: str
+) -> None:
+    assert _char_filter(text) == split

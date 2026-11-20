@@ -408,6 +408,9 @@ _KOREAN_LATIN = [
     "ＡＷＳ를 the S3에 an 저장",
     # Punctuation the standard tokenizer joins letters across ("a.b").
     "가.나 가'나 가:나 가_나 「AWS」를 AWS’를 AWS를,S3에;Lambda로.",
+    # Halfwidth Katakana, which cjk_width folds after the char filter ran:
+    # the split left it out of the dense scripts and parted ナ한.
+    "ｶﾀｶﾅ한글 ﾃｽﾄ를 AWSのｻｰﾋﾞｽ와",
 ]
 _KOREAN_LATIN_UNITS = {
     "k0": "Kestrel을 도입한 뒤 처리 시간이 줄었습니다",
