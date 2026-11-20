@@ -272,10 +272,12 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   included) writes one INFO record on the `unified_kg_rag.audit` logger from the chain, so every surface writes the
   same one: who asked (`user_id`), the index build its admission read, the answer settings' fingerprint (the
   `run-eval` manifest's `retrieval_config_sha256`), the strategy, the ids it rests on and cites, its models, usage,
-  `cost_usd` and outcome, with the question and the answer as SHA-256 digests, never their text
-  (`QueryAuditRecord`, `record_version` 1; [fields](docs/reference/telemetry.md#audit-record)).
+  `cost_usd` and outcome, the search type, `top_k` and filter keys (never the values) in force, with the question and
+  the answer as SHA-256 digests, never their text (for verification, not anonymization: a guessed question can be
+  confirmed) (`QueryAuditRecord`, `record_version` 2; [fields](docs/reference/telemetry.md#audit-record)).
   `logging.library_levels: {unified_kg_rag.audit: WARNING}` turns it off.
-- A query's spend and evidence in its trace and metrics: `metadata["cost_usd"]` (with `metadata["unpriced_models"]`)
+- A query's spend and evidence in its trace and metrics: `metadata["cost_usd"]` (with `metadata["unpriced_models"]`,
+  which names an unpriced embedding model too, left out of the USD)
   prices its usage by `models.prices`, also on the query span (`kg_rag.cost_usd`) and as the `query_cost_usd`,
   `query_input_tokens` and `query_output_tokens` query metrics; the query span names its `kg_rag.query_id` and the
   ids the answer cites (`kg_rag.cited_source_ids`); the retrieval and fusion spans the first 50 results' ids with

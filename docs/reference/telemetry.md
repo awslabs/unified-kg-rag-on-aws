@@ -90,28 +90,31 @@ it, gets its record from the server.
 It holds ids, counts and digests, never the text of the question, the answer
 or a source: the question and the answer are their length and hex SHA-256
 (`question`, `answer`), so a stored answer can be checked against its
-record. A digest is no anonymization: a short or common question can be
-found by hashing guesses, so protect the logs as you would the questions.
+record. The digests are for verification, not anonymization: they are
+unsalted, so anyone who reads the records can confirm a guessed short or
+common question ("was X's salary asked?") by hashing it. Protect the logs
+as you would the questions.
 `user_id` is recorded as given (`RAGInput.user_id`, or the
 [trusted identity header](../guides/mcp.md#http-and-remote-deployment)): pass
 an opaque id.
 
 | Field | Meaning |
 |---|---|
-| `record_version` | `1`; raised when a field is renamed, removed or changes meaning (an added optional field keeps it) |
+| `record_version` | `2`; raised when a field is renamed, removed or changes meaning (an added optional field keeps it) |
 | `query_id`, `trace_id` | The ids of the query's log lines and trace (`metadata.query_id`, `metadata.trace_id`) |
 | `finished_at`, `latency_ms` | When it ended (UTC) and how long it took, its admission included |
 | `mode` | `rag` (an answer) or `search` |
 | `namespace`, `user_id`, `conversation_id` | Its index namespace and `RAGInput.user_id` / `conversation_id` |
 | `requested_strategy`, `strategy` | The strategy asked for and the one that ran (`null` when none did: a blocked or failed query, a stream stopped before its route) |
-| `outcome` | `answered`, `abstained`, `blocked`, `error` (the error answer of `processing.ignore_errors`), `failed` (raised), `refused` (a caller's error, `ErrorClass.is_caller_error`) or `stopped` (its reader stopped) |
+| `search_type`, `top_k`, `filter_keys` | Its own search settings: the search type in force (`RAGInput.search_type`, else `search.search_type`; `null` for a refused input that names none), `RAGInput.top_k`, and the keys of `RAGInput.filters`, sorted, never their values |
+| `outcome` | `answered`, `abstained`, `blocked`, `error` (the error answer of `processing.ignore_errors`), `failed` (raised), `refused` (a caller's error, `ErrorClass.is_caller_error`) or `stopped` (its reader stopped, or its caller cancelled it) |
 | `error_class`, `degraded`, `query_limited` | A failure's class, whether it answered without a step, whether its limits cut it short (as the query metrics) |
 | `package_version`, `config_fingerprint` | The package that answered, and the hex SHA-256 of every setting that can change an answer (`run-eval`'s manifest `retrieval_config_sha256`: one value for one configuration) |
 | `build` | The index build it read, from its namespace's build record as its admission read it (cached for up to 300 s): `pipeline_id`, `mode`, `built_at`, `package_version`, `extraction_fingerprint`, and an incremental build's `full_build_pipeline_id`; `null` without a record or for a refused input |
 | `question`, `answer` | `{length, sha256}` of the question asked and the answer returned (`null`: none) |
 | `evidence` | `sources` (how many the answer model was given, or a search returned) and their `source_ids`, then the context sections the answer cites (`[n]`) as `cited_source_ids`, `cited_text_unit_ids` and `cited_document_ids`; at most 50 ids each, `truncated` when one was cut; empty cited lists for a strategy whose citations are off (`search.citations.strategies`) |
 | `models`, `usage` | The model ids it sent requests to, and its usage (the `metadata["usage"]` counts below) |
-| `cost_usd`, `unpriced_models` | Its USD cost by `models.prices`, `null` with a model that has no price there, named in `unpriced_models` |
+| `cost_usd`, `unpriced_models` | Its USD cost by `models.prices` and the models it could not price: `null` with a language model or reranker that has no price there; an embedding model without `embedding_per_million_tokens` is left out of the cost, which stays a number. Both are named in `unpriced_models` |
 
 Nothing is built while the logger is off for INFO: a CLI writes the records
 at the default `logging.level` (`INFO`), `logging.library_levels:
@@ -198,8 +201,10 @@ carries the usage as `ainvoke`'s output does.
 
 A query's USD is `metadata["cost_usd"]` (`RAGOutput` and `SearchOutput`),
 its usage priced by `models.prices` as every USD figure is
-(`domain/pricing.py`): `null` when a model it called has no price there,
-named in `metadata["unpriced_models"]`. The query span carries it as
+(`domain/pricing.py`): `null` when a language model or reranker it called
+has no price there, named in `metadata["unpriced_models"]`, which also names
+an embedding model without `embedding_per_million_tokens` (its requests are
+left out of the USD, which stays a number). The query span carries it as
 `kg_rag.cost_usd`, the audit record as `cost_usd`, and `--metrics-sink
 cloudwatch` as `query_cost_usd`, beside `query_input_tokens` and
 `query_output_tokens` ([runbook](../operations.md#alarms)).

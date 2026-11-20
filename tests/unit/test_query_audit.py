@@ -125,7 +125,11 @@ async def test_an_answer_writes_one_record_naming_its_build_settings_and_evidenc
     finally:
         await chain.aclose()
     record = _one(audit)
-    assert record.record_version == 1
+    assert record.record_version == 2
+    # RV4-12: the query's own search settings (the config's search type when
+    # it names none), its filters by key only.
+    assert (record.search_type, record.top_k) == ("hybrid", query.top_k)
+    assert record.filter_keys == []
     assert record.query_id == output.metadata["query_id"]
     assert (record.mode, record.namespace) == ("rag", "default")
     assert (record.user_id, record.conversation_id) == ("user-42", "c-1")
@@ -148,6 +152,49 @@ async def test_an_answer_writes_one_record_naming_its_build_settings_and_evidenc
     assert record.models == [_MODEL]
     assert record.cost_usd is not None and record.cost_usd > 0
     assert record.unpriced_models == []
+
+
+async def test_the_record_names_the_query_s_search_settings_not_its_filter_values(
+    audit: _Captured,
+) -> None:
+    chain = _simple_chain()
+    query = _SIMPLE_QUERY.model_copy(update={"search_type": "lexical", "top_k": 3})
+    try:
+        await chain.asearch(query)
+        with pytest.raises(InvalidArgumentError):
+            await chain.ainvoke(
+                {"query": "q", "search_strategy": "no-such", "search_type": "x y"}
+            )
+    finally:
+        await chain.aclose()
+    searched, refused = (QueryAuditRecord.model_validate(f) for f in audit.fields())
+    assert (searched.search_type, searched.top_k) == ("lexical", 3)
+    # A refused input's search type that names none is not recorded.
+    assert refused.search_type is None
+    # A filter by its keys, never its values.
+    filtered = query_audit.query_record(
+        Config(),
+        query_id="q-1",
+        trace_id=None,
+        started=0.0,
+        mode="rag",
+        fields={
+            "query": "q",
+            "filters": {"attr_folder": "secret-folder", "attr_file": "plan.txt"},
+        },
+        namespace="default",
+        strategy=None,
+        outcome=AuditOutcome.ANSWERED,
+        error_class=None,
+        degraded=False,
+        query_limited=False,
+        build=None,
+        output=None,
+        usage=None,
+    )
+    assert filtered.filter_keys == ["attr_file", "attr_folder"]
+    rendered = filtered.model_dump_json()
+    assert "secret-folder" not in rendered and "plan.txt" not in rendered
 
 
 async def test_the_record_holds_no_text_of_the_question_answer_or_sources(
