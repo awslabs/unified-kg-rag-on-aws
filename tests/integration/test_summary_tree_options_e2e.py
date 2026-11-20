@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from tests.fixtures.text_units import stored_text_units
 from tests.integration import test_embedded_e2e as e2e
 from tests.integration import test_raptor_e2e as raptor
 from tests.integration.test_embedded_e2e import no_aws  # noqa: F401 - fixture
@@ -74,7 +75,7 @@ def _unit_files(providers: Providers) -> dict[str, str]:
     """Each stored text unit's file name."""
     indexer = providers.build_vector_indexer()
     try:
-        rows = indexer.scan_text_units(None, fields=["attributes"]) or []
+        rows = stored_text_units(indexer, None, fields=["attributes"])
     finally:
         indexer.close()
     return {str(r["id"]): (r.get("attributes") or {})["file_name"] for r in rows}
@@ -311,7 +312,7 @@ def _two_sections(tmp_path: Path, paths: dict[str, str]) -> list[tuple[int, list
     assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
     indexer = providers.build_vector_indexer()
     try:
-        rows = indexer.scan_text_units(None, fields=["attributes"]) or []
+        rows = stored_text_units(indexer, None, fields=["attributes"])
     finally:
         indexer.close()
     document_of = {str(r["id"]): r["attributes"]["relative_path"] for r in rows}

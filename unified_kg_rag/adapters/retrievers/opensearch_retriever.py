@@ -979,7 +979,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
 
     async def aread_build_record(self, suffix: str | None) -> dict[str, Any] | None:
         """The build record of ``suffix``'s text-unit index (see
-        ``VectorIndexer.record_build``), or ``None`` when it records none or
+        ``BuildRecordStore.record_build``), or ``None`` when it records none or
         cannot be read."""
         alias = self._get_name(self._opensearch_config.text_units_index_prefix, suffix)
         mappings = await self._index_mappings(alias)

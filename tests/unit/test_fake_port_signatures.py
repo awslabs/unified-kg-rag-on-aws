@@ -58,11 +58,16 @@ from unified_kg_rag.adapters.storage.search_engine import SearchEngineClient
 from unified_kg_rag.adapters.storage.sqlite_graph_indexer import SQLiteGraphIndexer
 from unified_kg_rag.domain.ingestion.delta_detector import DocStatusReader
 from unified_kg_rag.ports import (
+    BuildRecordStore,
     ContentGuardPort,
     DocStatusPort,
+    ExtractionRecordStore,
     GraphIndexer,
     GraphQueryPort,
     ModelFactoryPort,
+    SchemaAnnotationStore,
+    StoreInspection,
+    SummaryTreeStore,
     TokenCounterPort,
     VectorIndexer,
 )
@@ -95,12 +100,23 @@ def _shape(func: object) -> list[tuple[str, inspect._ParameterKind, bool]]:
     ]
 
 
+# The vector store's concern ports (VectorIndexer inherits each); the
+# schema annotations are both indexers'.
+VECTOR_CONCERNS = (
+    SchemaAnnotationStore,
+    ExtractionRecordStore,
+    SummaryTreeStore,
+    BuildRecordStore,
+    StoreInspection,
+)
+GRAPH_STORES = (FakeGraphStore, SQLiteGraphIndexer, NeptuneIndexer)
+VECTOR_STORES = (FakeVectorStore, OpenSearchIndexer)
+
 PAIRS = [
-    (FakeGraphStore, GraphIndexer),
-    (SQLiteGraphIndexer, GraphIndexer),
-    (NeptuneIndexer, GraphIndexer),
-    (FakeVectorStore, VectorIndexer),
-    (OpenSearchIndexer, VectorIndexer),
+    *((store, GraphIndexer) for store in GRAPH_STORES),
+    *((store, SchemaAnnotationStore) for store in GRAPH_STORES),
+    *((store, VectorIndexer) for store in VECTOR_STORES),
+    *((store, port) for store in VECTOR_STORES for port in VECTOR_CONCERNS),
     (FakeDocStatusStore, DocStatusPort),
     (SQLiteDocStatusStore, DocStatusPort),
     (DynamoDBDocStatusStore, DocStatusPort),

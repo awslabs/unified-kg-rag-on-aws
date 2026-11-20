@@ -1828,7 +1828,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
 
     async def aread_build_record(self, suffix: str | None) -> dict[str, Any] | None:
         """The build record ingestion wrote on the index namespace of
-        ``suffix`` (``resolve_namespace``; ``VectorIndexer.record_build``:
+        ``suffix`` (``resolve_namespace``; ``BuildRecordStore.record_build``:
         what it built, under which settings), read through the document
         retriever the answers come from. ``None`` when it records none (built before build records, or a
         backend without index metadata); a store error raises."""

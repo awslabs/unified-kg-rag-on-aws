@@ -4,10 +4,10 @@
 
 Each record is stored under ``<fingerprint>:<text hash>``
 (``contributions.record_key``) in the vector store's extraction-records index
-of the unit's suffix (``VectorIndexer.read_extraction_records``). A unit whose
-text and extraction settings are unchanged takes the stored record instead of
-being extracted again, so an edited document re-extracts only the chunks that
-changed. Reading is a cache: a read that fails is logged and every unit it
+of the unit's suffix (``ExtractionRecordStore.read_extraction_records``). A
+unit whose text and extraction settings are unchanged takes the stored record
+instead of being extracted again, so an edited document re-extracts only the
+chunks that changed. Reading is a cache: a read that fails is logged and every unit it
 read nothing for is extracted. Writing is not: an incremental run derives the
 stored items' content from the records of the text units they cite
 (``domain.ingestion.derivation``), so :meth:`ExtractionStore.save` returns the
@@ -23,7 +23,7 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from collections.abc import Callable, Collection, Iterable, Mapping
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import Any, Protocol, TypeVar
 
 from unified_kg_rag.domain.ingestion.cache_keys import (
     index_language,
@@ -41,7 +41,7 @@ from unified_kg_rag.domain.ingestion.seed_graph import (
     is_seed_unit,
 )
 from unified_kg_rag.domain.models import Config, TextUnit, TextUnitExtraction
-from unified_kg_rag.ports.indexer import BaseIndexer
+from unified_kg_rag.ports.indexer import BaseIndexer, ExtractionRecordStore
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import (
     NamespaceLeaseError,
@@ -51,11 +51,14 @@ from unified_kg_rag.shared.exceptions import (
 from unified_kg_rag.shared.logging import log_error
 from unified_kg_rag.shared.utils import ERRORS_SHOWN, first_names
 
-if TYPE_CHECKING:
-    from unified_kg_rag.ports.indexer import VectorIndexer
-
 logger = get_logger(__name__)
 T = TypeVar("T")
+
+
+class _OwnedRecordStore(ExtractionRecordStore, Protocol):
+    """The extraction store this one builds and closes."""
+
+    def close(self) -> None: ...
 
 
 def processed_text(config: Config, unit: TextUnit) -> str:
@@ -131,7 +134,7 @@ class ExtractionStore:
     def __init__(
         self,
         config: Config,
-        build_indexer: Callable[[], VectorIndexer],
+        build_indexer: Callable[[], _OwnedRecordStore],
         *,
         reuse: bool = True,
     ) -> None:
@@ -140,10 +143,10 @@ class ExtractionStore:
         self.config = config
         self._build_indexer = build_indexer
         self._reuse = reuse
-        self._indexer: VectorIndexer | None = None
+        self._indexer: _OwnedRecordStore | None = None
         self._unavailable = False
 
-    def _store(self) -> VectorIndexer | None:
+    def _store(self) -> _OwnedRecordStore | None:
         if self._indexer is None and not self._unavailable:
             try:
                 self._indexer = self._build_indexer()

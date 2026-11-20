@@ -17,7 +17,7 @@ import logging
 from collections import defaultdict
 from collections.abc import Collection, Iterable, Iterator, Sequence
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 import numpy as np
 
@@ -55,7 +55,11 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.retrieval.filters import translated_text_field
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
-from unified_kg_rag.ports.indexer import BaseIndexer, VectorIndexer
+from unified_kg_rag.ports.indexer import (
+    BaseIndexer,
+    BuildRecordStore,
+    SummaryTreeStore,
+)
 from unified_kg_rag.shared import (
     NamespaceLeaseError,
     PipelineStageError,
@@ -75,6 +79,10 @@ _VECTOR_PAGE = 250
 # Text units read at a time for the leaf digest (their text, without
 # vectors).
 _DIGEST_PAGE = 1_000
+
+
+class _TreeStore(SummaryTreeStore, BuildRecordStore, Protocol):
+    """A store the stage builds a tree in and names it in the build record of."""
 
 
 class SummaryTreeStage(_RegistryStage):
@@ -159,7 +167,7 @@ class SummaryTreeStage(_RegistryStage):
     # --- one suffix -------------------------------------------------------------
 
     def _build_suffix(
-        self, indexer: VectorIndexer, suffix: str, context: PipelineContext
+        self, indexer: _TreeStore, suffix: str, context: PipelineContext
     ) -> dict[str, Any]:
         tree = self.config.indexing.summary_tree
         pages = indexer.scan_text_unit_pages(
@@ -284,7 +292,7 @@ class SummaryTreeStage(_RegistryStage):
 
     def _rebuild(
         self,
-        indexer: VectorIndexer,
+        indexer: _TreeStore,
         suffix: str,
         context: PipelineContext,
         digest: str,
@@ -391,7 +399,7 @@ class SummaryTreeStage(_RegistryStage):
 
     def _build(
         self,
-        indexer: VectorIndexer,
+        indexer: SummaryTreeStore,
         leaves: Sequence[Leaf],
         suffix: str,
         partition: str | None,
@@ -456,7 +464,7 @@ class SummaryTreeStage(_RegistryStage):
 
     def _leaves(
         self,
-        indexer: VectorIndexer,
+        indexer: SummaryTreeStore,
         suffix: str,
         trees: Collection[str | None],
         rows: Sequence[dict[str, Any]],
@@ -519,7 +527,7 @@ class SummaryTreeStage(_RegistryStage):
 
     @staticmethod
     def _pages_by_id(
-        indexer: VectorIndexer, suffix: str, ids: list[str], fields: list[str]
+        indexer: SummaryTreeStore, suffix: str, ids: list[str], fields: list[str]
     ) -> Iterable[list[dict[str, Any]]]:
         """The text units ``ids`` (in that order) a page at a time, read by
         id; every unit of the suffix, scanned, when the store cannot."""
@@ -548,7 +556,7 @@ class SummaryTreeStage(_RegistryStage):
         return pages()
 
     def _uncovered(
-        self, indexer: VectorIndexer, suffix: str, rows: list[dict[str, Any]]
+        self, indexer: SummaryTreeStore, suffix: str, rows: list[dict[str, Any]]
     ) -> int:
         """The text units no level-1 node of the live tree covers."""
         covered = {
@@ -562,7 +570,7 @@ class SummaryTreeStage(_RegistryStage):
         }
         return sum(str(row["id"]) not in covered for row in rows)
 
-    def _record_artifact(self, indexer: VectorIndexer, suffix: str) -> None:
+    def _record_artifact(self, indexer: BuildRecordStore, suffix: str) -> None:
         """Name the summary tree in the suffix's build record, which the
         indexing stage wrote before the tree existed (only for a run that
         builds it: ``raptor`` selected)."""
@@ -571,7 +579,7 @@ class SummaryTreeStage(_RegistryStage):
         if indexer.add_build_artifacts([IndexArtifact.SUMMARY_TREE], suffix):
             logger.info("The build record of '%s' now names its summary tree", suffix)
 
-    def _drop_artifact(self, indexer: VectorIndexer, suffix: str) -> None:
+    def _drop_artifact(self, indexer: BuildRecordStore, suffix: str) -> None:
         """Stop naming the summary tree in the suffix's build record, which
         the indexing stage kept naming it (``IndexingStage._record_build``):
         its build failed, so the tree may not cover the stored text units

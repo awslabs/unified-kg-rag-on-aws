@@ -159,6 +159,11 @@ _EXPORTS: dict[str, str] = {
     "GraphIndexer": "unified_kg_rag.ports",
     "GraphQueryPort": "unified_kg_rag.ports",
     "VectorIndexer": "unified_kg_rag.ports",
+    "SchemaAnnotationStore": "unified_kg_rag.ports",
+    "ExtractionRecordStore": "unified_kg_rag.ports",
+    "SummaryTreeStore": "unified_kg_rag.ports",
+    "BuildRecordStore": "unified_kg_rag.ports",
+    "StoreInspection": "unified_kg_rag.ports",
     "DocStatusPort": "unified_kg_rag.ports",
     "ContentGuardPort": "unified_kg_rag.ports",
     "GuardVerdict": "unified_kg_rag.ports",
@@ -349,9 +354,11 @@ if TYPE_CHECKING:
     from unified_kg_rag.domain.retrieval.filters import FilterFields
     from unified_kg_rag.evaluation.evaluation_manager import EvaluationManager
     from unified_kg_rag.ports import (
+        BuildRecordStore,
         ContentGuardPort,
         DocStatusPort,
         EmbeddingFactoryPort,
+        ExtractionRecordStore,
         GraphIndexer,
         GraphQueryPort,
         GuardAction,
@@ -361,6 +368,9 @@ if TYPE_CHECKING:
         LLMFactoryPort,
         ModelFactoryPort,
         RerankFactoryPort,
+        SchemaAnnotationStore,
+        StoreInspection,
+        SummaryTreeStore,
         TokenCounterPort,
         VectorIndexer,
     )

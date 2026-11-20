@@ -106,7 +106,9 @@ unified_kg_rag/
 │  │                    #   ppr (HippoRAG 2 Personalized PageRank, §6.4), abstention
 │  └─ prompts/          #   version-controlled prompt templates
 ├─ ports/               # interfaces the application wires, adapters implement (DocStatusPort,
-│                       #   BaseIndexer/GraphIndexer/VectorIndexer, ModelFactoryPort,
+│                       #   BaseIndexer/GraphIndexer/VectorIndexer and the store concerns
+│                       #   SchemaAnnotationStore/ExtractionRecordStore/SummaryTreeStore/
+│                       #   BuildRecordStore/StoreInspection, ModelFactoryPort,
 │                       #   ContentGuardPort — ports/__init__ is the port catalog)
 ├─ adapters/            # concrete technology bindings
 │  ├─ aws/              #   Bedrock model factories, Neptune/OpenSearch clients, S3 transfer and caches
@@ -186,7 +188,9 @@ unified_kg_rag/
 | `DocStatusPort` | `ports/doc_status.py` | `adapters/doc_status/dynamodb.py`, `sqlite.py`; `FakeDocStatusStore` for tests | Document status and each document's text units, partitioned by index namespace; the domain's delta reads its `DocStatusReader` subset |
 | `ContentGuardPort` | `ports/guardrail.py` (with `GuardVerdict`) | `adapters/guardrail/bedrock.py` (Bedrock `ApplyGuardrail`) | Screens the raw query and the final answer (§14) |
 | `GraphIndexer` (write) | `ports/indexer.py` | `adapters/storage/neptune_indexer.py`; local `sqlite_graph_indexer.py` | One contract for full builds and deltas (`upsert_*` / `delete_by_id`) |
-| `VectorIndexer` (write) | `ports/indexer.py` | `adapters/storage/opensearch_indexer.py` (on OpenSearch, or on the embedded engine through `SearchEngineClient`) | Same |
+| `VectorIndexer` (write) | `ports/indexer.py` | `adapters/storage/opensearch_indexer.py` (on OpenSearch, or on the embedded engine through `SearchEngineClient`) | Same, plus the in-place lineage rewrites, the run's index checks and the read-backs an incremental run merges with; inherits the five concern ports below |
+| `SchemaAnnotationStore` | `ports/indexer.py` (`Protocol`) | both indexers (`GraphIndexer` and `VectorIndexer` inherit it) | A schema edit's re-annotation in place (`read_` / `write_schema_annotations`, `holds_any_item`) |
+| `ExtractionRecordStore` / `SummaryTreeStore` / `BuildRecordStore` / `StoreInspection` | `ports/indexer.py` (`Protocol`s) | the vector indexer (`VectorIndexer` inherits them) | The extraction store (§4.1), the RAPTOR tree (§6.5), the build record, and `run-describe` / export (§5.8); each method has a "cannot" default, and a caller takes only the concern it uses |
 | `BaseGraphRAGRetriever` (read) | `adapters/retrieval/base.py` | `adapters/retrievers/{neptune,opensearch,sqlite_graph}_retriever.py` | Retrieval adapters |
 | `GraphQueryPort` (read) | `ports/graph_query.py` (`Protocol`) | `adapters/retrievers/{neptune,sqlite_graph}_retriever.py`; `FakeGraphQueryRetriever` for tests | Structured queries over one suffix's graph (§6.6) |
 | Model factories, token counter | `ports/model_factory.py` (`ModelFactoryPort`, `TokenCounterPort`, the `*ModelInfo` records) | `adapters/aws/bedrock.py`, `bedrock_models.py`, `token_counter.py`; local `adapters/local/{models,embeddings,rerank,token_counter}.py` | Carried by one `Providers` bundle (§15) |

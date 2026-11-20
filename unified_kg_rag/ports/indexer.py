@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from collections.abc import Collection, Iterator, Mapping
-from typing import Any, Literal, get_args
+from typing import Any, Literal, Protocol, get_args
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -31,7 +31,7 @@ from unified_kg_rag.shared.logging import error_log_text
 
 logger = get_logger(__name__)
 
-# The kinds of item ``VectorIndexer.scan_items`` pages through, one index each.
+# The kinds of item ``StoreInspection.scan_items`` pages through, one index each.
 StoredItemKind = Literal[
     "text_units",
     "entities",
@@ -186,6 +186,64 @@ class GraphCensusRow(BaseModel):
     weight: float | None = Field(default=None, description="An edge's weight")
 
 
+class SchemaAnnotationStore(Protocol):
+    """The schema annotations a store holds for its entities and
+    relationships, read back and rewritten in place by a schema edit
+    (``IndexingManager.reannotate``), without extraction.
+
+    Both indexer ports implement it: the graph store's vertices and edges,
+    the vector store's copies. Every method has a "cannot" default, so a
+    store without it keeps working: only a reset then applies a schema
+    edit's annotations (:func:`rewrites_schema_annotations`)."""
+
+    def read_schema_annotations(
+        self, kind: AnnotatedKind, suffix: str | None = None
+    ) -> dict[str, StoredAnnotation] | None:
+        """``{id: annotations}`` of every stored item of ``kind`` in
+        ``suffix`` (``None``: the default suffix), with its type: an
+        entity's ``type`` and a graph edge's label (a vector copy of a
+        relationship has ``None``: the edge's is used). A vector store
+        lists its live index (``{}`` without one).
+
+        A schema edit that changes only the annotations is applied by
+        reading them back and rewriting the ones that differ, with no
+        extraction. Default returns ``None``: the backend cannot enumerate
+        its items, and only a reset rewrites them. Adapters that override
+        it (and :meth:`write_schema_annotations`, see
+        ``rewrites_schema_annotations``) read in bounded requests, and raise
+        when a read fails.
+        """
+        return None
+
+    def write_schema_annotations(
+        self,
+        kind: AnnotatedKind,
+        annotations: Mapping[str, SchemaAnnotation],
+        suffix: str | None = None,
+    ) -> IndexingStats:
+        """Set ``in_schema`` and the IRI (``type_iri`` of an entity,
+        ``predicate_iri`` of a relationship) of the stored items of ``kind``
+        in ``suffix`` by id, in place (no re-embedding), nothing else; a
+        ``None`` value removes it (a vector store writes null, which no
+        filter matches, as an absent one). An id not stored is skipped.
+        Default writes nothing (a backend that cannot
+        :meth:`read_schema_annotations`)."""
+        return IndexingStats()
+
+    def holds_any_item(self, suffix: str | None = None) -> bool | None:
+        """Whether ``suffix``'s store holds any entity or relationship (an
+        item :meth:`read_schema_annotations` lists).
+
+        An incremental run whose registry holds none of its namespace's
+        documents asks it before it records, without reading them, that the
+        stores hold only what it writes: a lost or replaced registry is no
+        proof the stores are empty. Default: from
+        :meth:`read_schema_annotations` (``None`` when it cannot list);
+        adapters that override it read one item and raise when a read fails.
+        """
+        return _holds_any_item(self, suffix)
+
+
 class BaseIndexer(ABC):
     def __init__(self, config: Config) -> None:
         self.config = config
@@ -260,7 +318,7 @@ class BaseIndexer(ABC):
         return dict(grouped)
 
 
-class GraphIndexer(BaseIndexer):
+class GraphIndexer(BaseIndexer, SchemaAnnotationStore):
     """Write-side port for the knowledge-graph backend (full + delta).
 
     This ABC is the single write-side contract for graph stores: the full-run
@@ -271,7 +329,9 @@ class GraphIndexer(BaseIndexer):
 
     A full-run ``index_*`` replaces the stored items of every suffix its items
     carry and of every one in ``suffixes``: a suffix the rebuild has none of
-    is emptied rather than left serving the previous run's items.
+    is emptied rather than left serving the previous run's items. The schema
+    annotations are :class:`SchemaAnnotationStore`'s, shared with
+    :class:`VectorIndexer`.
     """
 
     @abstractmethod
@@ -474,23 +534,6 @@ class GraphIndexer(BaseIndexer):
             for i, n in self.read_neighbor_ids(entity_ids, suffix).items()
         }
 
-    def read_schema_annotations(
-        self, kind: AnnotatedKind, suffix: str | None = None
-    ) -> dict[str, StoredAnnotation] | None:
-        """``{id: annotations}`` of every stored item of ``kind`` in
-        ``suffix``'s graph (``None``: the default suffix), with its type
-        (an entity's ``type``, a relationship's edge label).
-
-        A schema edit that changes only the annotations is applied by
-        reading them back and rewriting the ones that differ
-        (``IndexingManager.reannotate``), with no extraction. Default
-        returns ``None``: the backend cannot enumerate its items, and only a
-        reset rewrites them. Adapters that override it (and
-        :meth:`write_schema_annotations`, see ``rewrites_schema_annotations``)
-        read in bounded requests, and raise when a read fails.
-        """
-        return None
-
     def scan_census_rows(
         self,
         kind: AnnotatedKind,
@@ -512,19 +555,6 @@ class GraphIndexer(BaseIndexer):
         """
         return None
 
-    def holds_any_item(self, suffix: str | None = None) -> bool | None:
-        """Whether ``suffix``'s graph holds any entity or relationship (an
-        item :meth:`read_schema_annotations` lists).
-
-        An incremental run whose registry holds none of its namespace's
-        documents asks it before it records, without reading them, that the
-        stores hold only what it writes: a lost or replaced registry is no
-        proof the stores are empty. Default: from
-        :meth:`read_schema_annotations` (``None`` when it cannot list);
-        adapters that override it read one item and raise when a read fails.
-        """
-        return _holds_any_item(self, suffix)
-
     def holds_any_relationship(self, suffix: str | None = None) -> bool | None:
         """Whether ``suffix``'s graph holds a relationship (an edge between
         two of its entities).
@@ -537,19 +567,6 @@ class GraphIndexer(BaseIndexer):
         """
         listed = self.read_schema_annotations("relationships", suffix)
         return None if listed is None else bool(listed)
-
-    def write_schema_annotations(
-        self,
-        kind: AnnotatedKind,
-        annotations: Mapping[str, SchemaAnnotation],
-        suffix: str | None = None,
-    ) -> IndexingStats:
-        """Set ``in_schema`` and the IRI (``type_iri`` of an entity,
-        ``predicate_iri`` of a relationship) of the stored items of ``kind``
-        in ``suffix`` by id, nothing else; a ``None`` value removes it. An
-        id not stored is skipped. Default writes nothing (a backend that
-        cannot :meth:`read_schema_annotations`)."""
-        return IndexingStats()
 
     @abstractmethod
     def delete_by_id(self, ids: list[str], suffix: str | None = None) -> IndexingStats:
@@ -573,13 +590,312 @@ class GraphIndexer(BaseIndexer):
         return []
 
 
-class VectorIndexer(BaseIndexer):
+class ExtractionRecordStore(Protocol):
+    """The extraction store: each text unit's extraction records by key
+    (``domain.ingestion.contributions.record_key``), so a text extracted
+    before under the same settings is not extracted again
+    (docs/design/ingestion.md, extraction records).
+
+    The vector backend keeps them beside its indices. Every method has a
+    "cannot" default: without it nothing is stored and every text unit is
+    extracted."""
+
+    def read_extraction_records(
+        self, keys: list[str], suffix: str | None = None
+    ) -> dict[str, dict[str, Any]]:
+        """Stored text-unit extraction records by key (the extraction store).
+
+        A key names a text's record under one extraction fingerprint
+        (``domain.ingestion.contributions.record_key``); the value is the
+        record's payload as written. Scoped to ``suffix``. A missing key is
+        absent from the result. Default returns ``{}``: the backend keeps no
+        records, and every text unit is extracted. Adapters that override it
+        raise when the read fails.
+        """
+        return {}
+
+    def stored_extraction_record_keys(
+        self, keys: list[str], suffix: str | None = None
+    ) -> set[str]:
+        """The keys among ``keys`` that ``suffix``'s extraction store holds,
+        without reading their records (a check that they are still there).
+        Default: the keys :meth:`read_extraction_records` returns. Adapters
+        that override it raise when the read fails.
+        """
+        return set(self.read_extraction_records(keys, suffix=suffix))
+
+    def write_extraction_records(
+        self, records: dict[str, dict[str, Any]], suffix: str | None = None
+    ) -> IndexingStats:
+        """Store text-unit extraction records by key (an upsert; see
+        :meth:`read_extraction_records`). The keys are content-derived:
+        a record goes when no stored text unit names it any more (an
+        incremental removal, :meth:`delete_extraction_records`) or a full
+        build or reset keeps only its own units' records
+        (:meth:`retain_extraction_records`). Default stores nothing."""
+        return IndexingStats()
+
+    def delete_extraction_records(
+        self, keys: list[str], suffix: str | None = None
+    ) -> IndexingStats:
+        """Delete extraction records by key (no text unit names them any
+        more). Default deletes nothing."""
+        return IndexingStats()
+
+    def retain_extraction_records(
+        self, keys: list[str], suffix: str | None = None
+    ) -> IndexingStats:
+        """Keep only the extraction records of ``suffix`` named by ``keys``
+        and drop every other (a full build, once its text units are stored:
+        records of other extraction settings, or of texts no stored unit
+        holds any more). Raises when it fails; the records are then left as
+        they were. Default keeps everything."""
+        return IndexingStats()
+
+    def extraction_record_keys(
+        self, prefixes: list[str], suffix: str | None = None
+    ) -> set[str] | None:
+        """The keys of ``suffix``'s stored extraction records that start with
+        any of ``prefixes`` (a record fingerprint and its ``:``: the records
+        of one kind under one set of settings), which a full build that does
+        not produce that kind keeps (``retain_extraction_records``). Default
+        returns ``None``: the backend cannot tell, and such a build keeps
+        every record. Adapters that override it raise when the read
+        fails."""
+        return None
+
+    def prepare_extraction_records(self, suffix: str | None = None) -> None:
+        """Create ``suffix``'s extraction-record store unless it exists,
+        before extraction, rather than failing every record write after it.
+        Raises
+        :class:`~unified_kg_rag.shared.exceptions.StoreRequestRejectedError`
+        (a ``ConfigurationError``) when refused. Default does nothing."""
+        return None
+
+
+class SummaryTreeStore(Protocol):
+    """The RAPTOR summary tree of a namespace and the text-unit reads that
+    build it (docs/design/retrieval-hipporag-raptor.md, summary tree).
+
+    Every method has a "cannot" default, so a backend without the tree
+    keeps working: the summary_tree stage then skips with a warning."""
+
+    def scan_text_unit_pages(
+        self,
+        suffix: str | None,
+        *,
+        fields: list[str],
+        page_size: int | None = None,
+    ) -> Iterator[list[dict[str, Any]]] | None:
+        """Every stored text unit of ``suffix`` (a dict of ``id`` and the
+        stored ``fields``, a vector field included when named, as a list or
+        a float32 array), in id order, one page of ``page_size`` documents
+        at most at a time: a page is read only once the one before it is
+        consumed, so a caller that keeps a little of each unit holds one
+        page of their text. The seed graphs' units are left out, as every
+        text search leaves them out. Yields nothing without a live index;
+        ``None`` (the default) when the backend cannot page its text units.
+        Raises when a read fails."""
+        return None
+
+    def read_text_unit_fields(
+        self, ids: list[str], suffix: str | None, *, fields: list[str]
+    ) -> list[dict[str, Any]] | None:
+        """The stored text units of ``ids`` in ``suffix`` (a dict of ``id``
+        and the stored ``fields``, a vector field as a float32 array), as
+        :meth:`scan_text_unit_pages` gives them, in no set order; an id not
+        stored is absent. ``None`` (the default) when the backend cannot
+        read them by id: a caller scans instead. Raises when a read fails."""
+        return None
+
+    def read_summary_nodes(
+        self, suffix: str | None, *, fields: list[str]
+    ) -> list[dict[str, Any]] | None:
+        """Every node of ``suffix``'s live summary tree (``id`` and the
+        stored ``fields``), in id order; ``[]`` without one, ``None`` (the
+        default) when the backend keeps no summary tree. Raises when a read
+        fails."""
+        return None
+
+    def read_summary_tree_record(self, suffix: str | None) -> dict[str, Any] | None:
+        """The ``SummaryTreeRecord`` dump written with ``suffix``'s live
+        summary tree, ``None`` without one (the default)."""
+        return None
+
+    def embed_summary_texts(
+        self, texts: list[str], suffix: str | None
+    ) -> list[list[float] | None] | None:
+        """Vectors of ``texts`` with this store's embedding model (``None``
+        for a text that failed), taking the stored vector of a text the live
+        summary tree of ``suffix`` holds unchanged. ``None`` (the default):
+        the backend cannot embed for the tree."""
+        return None
+
+    def write_summary_tree(
+        self,
+        nodes: list[SummaryNode],
+        vectors: Mapping[str, Collection[float]],
+        suffix: str | None,
+        record: dict[str, Any],
+    ) -> IndexingStats:
+        """Replace ``suffix``'s summary tree with ``nodes`` (each with its
+        vector in ``vectors``, by id) and ``record``, at once: queries read
+        the old tree until the new one is complete. A failed write keeps the
+        old tree. The default writes nothing and reports every node failed."""
+        stats = IndexingStats(total_items=len(nodes))
+        stats.add_error(
+            f"{type(self).__name__} keeps no summary tree", max(1, len(nodes))
+        )
+        return stats
+
+    def delete_summary_nodes_citing(
+        self, text_unit_ids: list[str], suffix: str
+    ) -> IndexingStats:
+        """Delete every summary node of ``suffix`` citing one of
+        ``text_unit_ids`` and every node above it: a summary paraphrases
+        its children, so it goes with any of them (a removal). A deletion
+        marks the tree's record ``pruned`` (``SummaryTreeRecord.pruned``)
+        first, so the next build rebuilds it over the same text units too.
+        Default deletes nothing; adapters that override it report a failed
+        read as failed items."""
+        return IndexingStats()
+
+    def delete_summary_nodes_outside(
+        self, text_unit_ids: Collection[str], suffix: str
+    ) -> IndexingStats:
+        """Delete every summary node of ``suffix`` citing a text unit not in
+        ``text_unit_ids`` (all a full build wrote), and every node above it,
+        marking the record ``pruned`` as :meth:`delete_summary_nodes_citing`
+        does. Default deletes nothing; adapters that override it report a
+        failed read as failed items."""
+        return IndexingStats()
+
+    def delete_summary_tree(self, suffix: str) -> IndexingStats:
+        """Delete ``suffix``'s summary tree whole, the indices of builds that
+        never swapped in included (a full build of a run without
+        ``raptor``). Default deletes nothing; adapters that override it
+        report a failure as a failed item."""
+        return IndexingStats()
+
+
+class BuildRecordStore(Protocol):
+    """The build record of a namespace's indices: which ingestion run last
+    wrote them, under which settings, and the artifacts (``IndexArtifact``)
+    it built. Read before a run to tell what the namespace holds, and by
+    ``run-eval`` for its run manifest. Every method has a "keeps none"
+    default (:func:`keeps_build_records`)."""
+
+    def record_build(
+        self, record: IndexBuildRecord, suffix: str | None
+    ) -> IndexBuildRecord | None:
+        """Record on ``suffix``'s indices which ingestion run last wrote them.
+
+        Read back by ``run-eval`` (``VectorRetriever`` side) so a run
+        manifest names the index it was scored against. Returns the record
+        as written (``IndexBuildRecord.over`` the stored one, which carries
+        its community counters forward), None when an index did not take it
+        (the caller writes it again). Best-effort: a failure is logged, not
+        raised. Default does nothing (a backend that
+        keeps no index metadata).
+        """
+        return None
+
+    def read_build_record(self, suffix: str | None) -> dict[str, Any] | None:
+        """The build record ``record_build`` last wrote on ``suffix``'s
+        indices (an ``IndexBuildRecord`` dump), read before a run to tell
+        what the namespace holds. ``None`` when there is none or it cannot
+        be read (logged). Default: ``None`` (no index metadata)."""
+        return None
+
+    def add_build_artifacts(
+        self, artifacts: Collection[IndexArtifact], suffix: str | None
+    ) -> bool:
+        """Name ``artifacts`` in the build record of ``suffix``'s indices
+        besides those it names (the summary tree, built after the record);
+        a record naming none is left as it is. Returns whether a record
+        changed. Default changes nothing."""
+        return False
+
+    def drop_build_artifacts(
+        self, artifacts: Collection[IndexArtifact], suffix: str | None
+    ) -> bool:
+        """Stop naming ``artifacts`` in the build record of ``suffix``'s
+        indices (the summary tree, when its build failed). Returns whether a
+        record changed. Default changes nothing."""
+        return False
+
+
+class StoreInspection(Protocol):
+    """Read-only views of a namespace's indices: ``run-describe``, the
+    export (docs/design/incremental.md, inspection and export), the
+    namespaces the store holds and whether it holds any text unit. Every
+    method has a "cannot tell" default."""
+
+    def describe_indices(self, suffix: str | None) -> list[dict[str, Any]] | None:
+        """One entry per index of ``suffix``, in ``STORED_ITEM_KINDS`` order:
+        ``kind``, ``alias``, ``index`` (the live index, ``None`` without
+        one), ``documents`` (how many it holds) and ``meta`` (its ``_meta``:
+        the embedding model and dimension, the build record). ``None`` (the
+        default) when the backend keeps no index metadata. Raises when a
+        read fails."""
+        return None
+
+    def ingested_suffixes(self) -> list[str] | None:
+        """The suffixes the store holds a text units index for (each
+        ingested namespace has one), sorted, for the error naming a suffix
+        none exists for; ``None`` (the default) when the backend cannot
+        tell. Best-effort: a failed read is ``None``."""
+        return None
+
+    def scan_items(
+        self,
+        kind: StoredItemKind,
+        suffix: str | None,
+        *,
+        page_size: int | None = None,
+    ) -> Iterator[list[dict[str, Any]]] | None:
+        """The stored items of ``kind`` of ``suffix`` (their stored fields
+        and ``id``, no vector), in id order, one page at a time
+        (``page_size`` at most, the index's window otherwise): a page is
+        read only once the one before it is consumed, so a caller streams
+        the namespace. Yields nothing without a live index; ``None`` (the
+        default) when the backend cannot page its items. Raises when a read
+        fails."""
+        return None
+
+    def holds_any_text_unit(self, suffix: str | None = None) -> bool | None:
+        """Whether ``suffix``'s live text-unit index holds a text unit: a
+        corpus none of whose units stated an item holds text units alone,
+        which :meth:`holds_any_item` does not see. Default ``None``: the
+        backend cannot tell. Adapters that override it read one document
+        and raise when the read fails."""
+        return None
+
+
+class VectorIndexer(
+    BaseIndexer,
+    SchemaAnnotationStore,
+    ExtractionRecordStore,
+    SummaryTreeStore,
+    BuildRecordStore,
+    StoreInspection,
+):
     """Write-side port for the vector/lexical backend (full + delta).
 
     Single write-side contract for vector stores: full-run ``index_*`` plus the
-    incremental ``upsert_*``/``delete_by_id`` surface. Adapters (e.g.
-    OpenSearchIndexer) implement it. A full-run ``index_*`` replaces its
-    suffixes' items, those in ``suffixes`` included (see :class:`GraphIndexer`).
+    incremental ``upsert_*``/``delete_by_id`` surface, the in-place lineage
+    rewrites, the run's index checks and settings, and the read-backs an
+    incremental run merges with. Adapters (e.g. OpenSearchIndexer) implement
+    it. A full-run ``index_*`` replaces its suffixes' items, those in
+    ``suffixes`` included (see :class:`GraphIndexer`).
+
+    The backend's other concerns are their own ports, each with "cannot"
+    defaults, which this one inherits so the composition root builds one
+    store that implements all of them: :class:`SchemaAnnotationStore`
+    (shared with :class:`GraphIndexer`), :class:`ExtractionRecordStore`,
+    :class:`SummaryTreeStore`, :class:`BuildRecordStore` and
+    :class:`StoreInspection`. A caller that needs only one of them takes
+    that one.
     """
 
     @abstractmethod
@@ -671,200 +987,6 @@ class VectorIndexer(BaseIndexer):
         run's last write: none follows to take them). Default does
         nothing."""
         return None
-
-    def record_build(
-        self, record: IndexBuildRecord, suffix: str | None
-    ) -> IndexBuildRecord | None:
-        """Record on ``suffix``'s indices which ingestion run last wrote them.
-
-        Read back by ``run-eval`` (``VectorRetriever`` side) so a run
-        manifest names the index it was scored against. Returns the record
-        as written (``IndexBuildRecord.over`` the stored one, which carries
-        its community counters forward), None when an index did not take it
-        (the caller writes it again). Best-effort: a failure is logged, not
-        raised. Default does nothing (a backend that
-        keeps no index metadata).
-        """
-        return None
-
-    def read_build_record(self, suffix: str | None) -> dict[str, Any] | None:
-        """The build record ``record_build`` last wrote on ``suffix``'s
-        indices (an ``IndexBuildRecord`` dump), read before a run to tell
-        what the namespace holds. ``None`` when there is none or it cannot
-        be read (logged). Default: ``None`` (no index metadata)."""
-        return None
-
-    def describe_indices(self, suffix: str | None) -> list[dict[str, Any]] | None:
-        """One entry per index of ``suffix``, in ``STORED_ITEM_KINDS`` order:
-        ``kind``, ``alias``, ``index`` (the live index, ``None`` without
-        one), ``documents`` (how many it holds) and ``meta`` (its ``_meta``:
-        the embedding model and dimension, the build record). ``None`` (the
-        default) when the backend keeps no index metadata. Raises when a
-        read fails."""
-        return None
-
-    def ingested_suffixes(self) -> list[str] | None:
-        """The suffixes the store holds a text units index for (each
-        ingested namespace has one), sorted, for the error naming a suffix
-        none exists for; ``None`` (the default) when the backend cannot
-        tell. Best-effort: a failed read is ``None``."""
-        return None
-
-    def scan_items(
-        self,
-        kind: StoredItemKind,
-        suffix: str | None,
-        *,
-        page_size: int | None = None,
-    ) -> Iterator[list[dict[str, Any]]] | None:
-        """The stored items of ``kind`` of ``suffix`` (their stored fields
-        and ``id``, no vector), in id order, one page at a time
-        (``page_size`` at most, the index's window otherwise): a page is
-        read only once the one before it is consumed, so a caller streams
-        the namespace. Yields nothing without a live index; ``None`` (the
-        default) when the backend cannot page its items. Raises when a read
-        fails."""
-        return None
-
-    # --- the summary tree (docs/design.md#65-raptor-summary-tree-raptor-tree-opt-in) -----------------------------
-    # Every method has a "cannot" default, so a backend without the tree
-    # keeps working: the summary_tree stage then skips with a warning.
-
-    def scan_text_units(
-        self,
-        suffix: str | None,
-        *,
-        fields: list[str],
-        page_size: int | None = None,
-    ) -> list[dict[str, Any]] | None:
-        """Every stored text unit of ``suffix`` (a dict of ``id`` and the
-        stored ``fields``, a vector field included when named, as a list or
-        a float32 array), in id order, read a page at a time (``page_size`` documents at most);
-        the seed graphs' units are left out, as every text search leaves
-        them out. ``[]`` without a live index; ``None`` (the default) when
-        the backend cannot page its text units. Raises when a read fails."""
-        return None
-
-    def scan_text_unit_pages(
-        self,
-        suffix: str | None,
-        *,
-        fields: list[str],
-        page_size: int | None = None,
-    ) -> Iterator[list[dict[str, Any]]] | None:
-        """:meth:`scan_text_units`, one page at a time: a page is read only
-        once the one before it is consumed, so a caller that keeps a little
-        of each unit holds one page of their text. Yields nothing without a
-        live index; ``None`` when the backend cannot page its text units.
-        Raises when a read fails.
-
-        The default serves :meth:`scan_text_units` (``None`` when it
-        returns ``None``) in pages of ``page_size``: a store that implements
-        only that one still builds the summary tree, holding every unit's
-        fields at once."""
-        units = self.scan_text_units(suffix, fields=fields, page_size=page_size)
-        if units is None:
-            return None
-        size = max(page_size or len(units), 1)
-        return iter(
-            [units[start : start + size] for start in range(0, len(units), size)]
-        )
-
-    def read_text_unit_fields(
-        self, ids: list[str], suffix: str | None, *, fields: list[str]
-    ) -> list[dict[str, Any]] | None:
-        """The stored text units of ``ids`` in ``suffix`` (a dict of ``id``
-        and the stored ``fields``, a vector field as a float32 array), as
-        :meth:`scan_text_units` gives them, in no set order; an id not
-        stored is absent. ``None`` (the default) when the backend cannot
-        read them by id: a caller scans instead. Raises when a read fails."""
-        return None
-
-    def read_summary_nodes(
-        self, suffix: str | None, *, fields: list[str]
-    ) -> list[dict[str, Any]] | None:
-        """Every node of ``suffix``'s live summary tree (``id`` and the
-        stored ``fields``), in id order; ``[]`` without one, ``None`` (the
-        default) when the backend keeps no summary tree. Raises when a read
-        fails."""
-        return None
-
-    def read_summary_tree_record(self, suffix: str | None) -> dict[str, Any] | None:
-        """The ``SummaryTreeRecord`` dump written with ``suffix``'s live
-        summary tree, ``None`` without one (the default)."""
-        return None
-
-    def embed_summary_texts(
-        self, texts: list[str], suffix: str | None
-    ) -> list[list[float] | None] | None:
-        """Vectors of ``texts`` with this store's embedding model (``None``
-        for a text that failed), taking the stored vector of a text the live
-        summary tree of ``suffix`` holds unchanged. ``None`` (the default):
-        the backend cannot embed for the tree."""
-        return None
-
-    def write_summary_tree(
-        self,
-        nodes: list[SummaryNode],
-        vectors: Mapping[str, Collection[float]],
-        suffix: str | None,
-        record: dict[str, Any],
-    ) -> IndexingStats:
-        """Replace ``suffix``'s summary tree with ``nodes`` (each with its
-        vector in ``vectors``, by id) and ``record``, at once: queries read
-        the old tree until the new one is complete. A failed write keeps the
-        old tree. The default writes nothing and reports every node failed."""
-        stats = IndexingStats(total_items=len(nodes))
-        stats.add_error(
-            f"{type(self).__name__} keeps no summary tree", max(1, len(nodes))
-        )
-        return stats
-
-    def delete_summary_nodes_citing(
-        self, text_unit_ids: list[str], suffix: str
-    ) -> IndexingStats:
-        """Delete every summary node of ``suffix`` citing one of
-        ``text_unit_ids`` and every node above it: a summary paraphrases
-        its children, so it goes with any of them (a removal). A deletion
-        marks the tree's record ``pruned`` (``SummaryTreeRecord.pruned``)
-        first, so the next build rebuilds it over the same text units too.
-        Default deletes nothing; adapters that override it report a failed
-        read as failed items."""
-        return IndexingStats()
-
-    def delete_summary_nodes_outside(
-        self, text_unit_ids: Collection[str], suffix: str
-    ) -> IndexingStats:
-        """Delete every summary node of ``suffix`` citing a text unit not in
-        ``text_unit_ids`` (all a full build wrote), and every node above it,
-        marking the record ``pruned`` as :meth:`delete_summary_nodes_citing`
-        does. Default deletes nothing; adapters that override it report a
-        failed read as failed items."""
-        return IndexingStats()
-
-    def delete_summary_tree(self, suffix: str) -> IndexingStats:
-        """Delete ``suffix``'s summary tree whole, the indices of builds that
-        never swapped in included (a full build of a run without
-        ``raptor``). Default deletes nothing; adapters that override it
-        report a failure as a failed item."""
-        return IndexingStats()
-
-    def add_build_artifacts(
-        self, artifacts: Collection[IndexArtifact], suffix: str | None
-    ) -> bool:
-        """Name ``artifacts`` in the build record of ``suffix``'s indices
-        besides those it names (the summary tree, built after the record);
-        a record naming none is left as it is. Returns whether a record
-        changed. Default changes nothing."""
-        return False
-
-    def drop_build_artifacts(
-        self, artifacts: Collection[IndexArtifact], suffix: str | None
-    ) -> bool:
-        """Stop naming ``artifacts`` in the build record of ``suffix``'s
-        indices (the summary tree, when its build failed). Returns whether a
-        record changed. Default changes nothing."""
-        return False
 
     def prune_text_unit_communities(
         self, community_ids: list[str], suffix: str | None = None
@@ -964,44 +1086,6 @@ class VectorIndexer(BaseIndexer):
         """
         return {}
 
-    def read_schema_annotations(
-        self, kind: AnnotatedKind, suffix: str | None = None
-    ) -> dict[str, StoredAnnotation] | None:
-        """``{id: annotations}`` of every stored vector copy of ``kind`` in
-        ``suffix``'s live index (see :meth:`GraphIndexer.read_schema_annotations`):
-        an entity's with its ``type``, a relationship's without (a copy
-        written before the index stored it has none, so the edge's is
-        used). ``{}`` without a live index. Default ``None``:
-        the backend cannot enumerate its documents."""
-        return None
-
-    def holds_any_item(self, suffix: str | None = None) -> bool | None:
-        """Whether ``suffix``'s live indices hold any entity or relationship
-        (see :meth:`GraphIndexer.holds_any_item`). Default: from
-        :meth:`read_schema_annotations`."""
-        return _holds_any_item(self, suffix)
-
-    def holds_any_text_unit(self, suffix: str | None = None) -> bool | None:
-        """Whether ``suffix``'s live text-unit index holds a text unit: a
-        corpus none of whose units stated an item holds text units alone,
-        which :meth:`holds_any_item` does not see. Default ``None``: the
-        backend cannot tell. Adapters that override it read one document
-        and raise when the read fails."""
-        return None
-
-    def write_schema_annotations(
-        self,
-        kind: AnnotatedKind,
-        annotations: Mapping[str, SchemaAnnotation],
-        suffix: str | None = None,
-    ) -> IndexingStats:
-        """Set the schema annotations of stored vector copies by id, in
-        place (no re-embedding); see
-        :meth:`GraphIndexer.write_schema_annotations`. A ``None`` value is
-        written as null, which no filter matches, as an absent one. Default
-        writes nothing."""
-        return IndexingStats()
-
     def read_text_unit_attributes(
         self, ids: list[str], suffix: str | None = None
     ) -> dict[str, dict[str, Any]]:
@@ -1010,30 +1094,6 @@ class VectorIndexer(BaseIndexer):
         extraction records (``contributions.record_keys``). Default returns
         ``{}``; adapters that override it raise when the read fails."""
         return {}
-
-    def read_extraction_records(
-        self, keys: list[str], suffix: str | None = None
-    ) -> dict[str, dict[str, Any]]:
-        """Stored text-unit extraction records by key (the extraction store).
-
-        A key names a text's record under one extraction fingerprint
-        (``domain.ingestion.contributions.record_key``); the value is the
-        record's payload as written. Scoped to ``suffix``. A missing key is
-        absent from the result. Default returns ``{}``: the backend keeps no
-        records, and every text unit is extracted. Adapters that override it
-        raise when the read fails.
-        """
-        return {}
-
-    def stored_extraction_record_keys(
-        self, keys: list[str], suffix: str | None = None
-    ) -> set[str]:
-        """The keys among ``keys`` that ``suffix``'s extraction store holds,
-        without reading their records (a check that they are still there).
-        Default: the keys :meth:`read_extraction_records` returns. Adapters
-        that override it raise when the read fails.
-        """
-        return set(self.read_extraction_records(keys, suffix=suffix))
 
     def find_documents(
         self,
@@ -1053,43 +1113,6 @@ class VectorIndexer(BaseIndexer):
         """
         return None
 
-    def delete_extraction_records(
-        self, keys: list[str], suffix: str | None = None
-    ) -> IndexingStats:
-        """Delete extraction records by key (no text unit names them any
-        more). Default deletes nothing."""
-        return IndexingStats()
-
-    def retain_extraction_records(
-        self, keys: list[str], suffix: str | None = None
-    ) -> IndexingStats:
-        """Keep only the extraction records of ``suffix`` named by ``keys``
-        and drop every other (a full build, once its text units are stored:
-        records of other extraction settings, or of texts no stored unit
-        holds any more). Raises when it fails; the records are then left as
-        they were. Default keeps everything."""
-        return IndexingStats()
-
-    def extraction_record_keys(
-        self, prefixes: list[str], suffix: str | None = None
-    ) -> set[str] | None:
-        """The keys of ``suffix``'s stored extraction records that start with
-        any of ``prefixes`` (a record fingerprint and its ``:``: the records
-        of one kind under one set of settings), which a full build that does
-        not produce that kind keeps (``retain_extraction_records``). Default
-        returns ``None``: the backend cannot tell, and such a build keeps
-        every record. Adapters that override it raise when the read
-        fails."""
-        return None
-
-    def prepare_extraction_records(self, suffix: str | None = None) -> None:
-        """Create ``suffix``'s extraction-record store unless it exists,
-        before extraction, rather than failing every record write after it.
-        Raises
-        :class:`~unified_kg_rag.shared.exceptions.StoreRequestRejectedError`
-        (a ``ConfigurationError``) when refused. Default does nothing."""
-        return None
-
     def check_index_creation(
         self, suffix: str | None = None, *, rebuild: bool = True
     ) -> None:
@@ -1107,17 +1130,6 @@ class VectorIndexer(BaseIndexer):
         :class:`~unified_kg_rag.shared.exceptions.StoreRequestRejectedError`
         (a ``ConfigurationError``) when refused. Default does nothing."""
         return None
-
-    def write_extraction_records(
-        self, records: dict[str, dict[str, Any]], suffix: str | None = None
-    ) -> IndexingStats:
-        """Store text-unit extraction records by key (an upsert; see
-        :meth:`read_extraction_records`). The keys are content-derived:
-        a record goes when no stored text unit names it any more (an
-        incremental removal, :meth:`delete_extraction_records`) or a full
-        build or reset keeps only its own units' records
-        (:meth:`retain_extraction_records`). Default stores nothing."""
-        return IndexingStats()
 
     def repoint_report_findings(
         self, id_remap: Mapping[str, str], suffix: str | None = None
@@ -1177,9 +1189,7 @@ class VectorIndexer(BaseIndexer):
 _ANNOTATION_METHODS = ("read_schema_annotations", "write_schema_annotations")
 
 
-def _holds_any_item(
-    store: GraphIndexer | VectorIndexer, suffix: str | None
-) -> bool | None:
+def _holds_any_item(store: SchemaAnnotationStore, suffix: str | None) -> bool | None:
     """The ports' default ``holds_any_item``: a full listing of each kind."""
     kinds: tuple[AnnotatedKind, ...] = ("entities", "relationships")
     for kind in kinds:
@@ -1191,34 +1201,39 @@ def _holds_any_item(
     return False
 
 
+def _implements(store: object, port: type, name: str) -> bool:
+    """Whether ``store``'s ``name`` is its own rather than ``port``'s
+    "cannot" default. Compares the functions the store's attributes are
+    bound to, so a wrapper that forwards its attributes (the pipeline's
+    borrowed indexers) answers for the store it wraps."""
+    method = getattr(store, name, None)
+    return method is not None and (
+        getattr(method, "__func__", method) is not getattr(port, name)
+    )
+
+
 def rewrites_schema_annotations(store: object) -> bool:
     """Whether ``store`` can enumerate and rewrite its schema annotations:
     it implements both ``read_schema_annotations`` and
-    ``write_schema_annotations`` instead of inheriting the defaults, which
-    read nothing. Checked before a re-annotation pass reads anything, so a
-    store that cannot does not make the pass read the other in vain.
-
-    Compares the functions the store's attributes are bound to, so a
-    wrapper that forwards its attributes (the pipeline's borrowed
-    indexers) answers for the store it wraps."""
-    defaults = {
-        getattr(port, name)
-        for port in (GraphIndexer, VectorIndexer)
-        for name in _ANNOTATION_METHODS
-    }
-    for name in _ANNOTATION_METHODS:
-        method = getattr(store, name, None)
-        if method is None or getattr(method, "__func__", method) in defaults:
-            return False
-    return True
+    ``write_schema_annotations`` instead of inheriting the defaults
+    (:class:`SchemaAnnotationStore`), which read nothing. Checked before a
+    re-annotation pass reads anything, so a store that cannot does not make
+    the pass read the other in vain."""
+    return all(
+        _implements(store, SchemaAnnotationStore, name) for name in _ANNOTATION_METHODS
+    )
 
 
 def keeps_build_records(store: object) -> bool:
     """Whether ``store`` keeps build records: it implements
-    ``VectorIndexer.record_build`` instead of inheriting the default, which
-    writes nothing (so a ``None`` from it means a write that failed). Bound
-    functions are compared, as :func:`rewrites_schema_annotations` does."""
-    method = getattr(store, "record_build", None)
-    return method is not None and (
-        getattr(method, "__func__", method) is not VectorIndexer.record_build
-    )
+    ``BuildRecordStore.record_build`` instead of inheriting the default,
+    which writes nothing (so a ``None`` from it means a write that
+    failed)."""
+    return _implements(store, BuildRecordStore, "record_build")
+
+
+def keeps_extraction_records(store: object) -> bool:
+    """Whether ``store`` keeps extraction records: it implements
+    ``ExtractionRecordStore.read_extraction_records`` instead of inheriting
+    the default, which reads none."""
+    return _implements(store, ExtractionRecordStore, "read_extraction_records")

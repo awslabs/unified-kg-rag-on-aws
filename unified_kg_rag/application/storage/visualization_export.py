@@ -9,7 +9,7 @@ after an incremental run, which exports nothing), so the file shows the
 namespace as queries see it: the whole graph, and every corpus of a
 namespace several share, where a run's own graph held only its delta or
 its corpus. The entities, claims and community reports come
-from the vector store's pages (``VectorIndexer.scan_items``), each entity's
+from the vector store's pages (``StoreInspection.scan_items``), each entity's
 communities from the graph store (``GraphIndexer.read_entities``, which
 holds ``community_ids``), and the relationships from the vector store, or
 the graph store when the namespace has no relationships index.
@@ -29,7 +29,12 @@ from unified_kg_rag.domain.ingestion.visualization_data import (
     stored_visualization_data,
 )
 from unified_kg_rag.domain.models import Claim, Entity, Relationship
-from unified_kg_rag.ports.indexer import GraphIndexer, StoredItemKind, VectorIndexer
+from unified_kg_rag.ports.indexer import (
+    BuildRecordStore,
+    GraphIndexer,
+    StoredItemKind,
+    StoreInspection,
+)
 from unified_kg_rag.shared import ConfigurationError, DataProcessingError, get_logger
 from unified_kg_rag.shared.utils import error_name
 from unified_kg_rag.shared.utils.files import atomic_write_text
@@ -54,7 +59,7 @@ _READ_BATCH = 500
 
 
 def _scan(
-    vector: VectorIndexer, kind: StoredItemKind, suffix: str
+    vector: StoreInspection, kind: StoredItemKind, suffix: str
 ) -> list[dict[str, Any]]:
     pages = vector.scan_items(kind, suffix)
     if pages is None:
@@ -70,7 +75,9 @@ def _batches(ids: list[str]) -> Iterator[list[str]]:
         yield ids[start : start + _READ_BATCH]
 
 
-def _entities(vector: VectorIndexer, graph: GraphIndexer, suffix: str) -> list[Entity]:
+def _entities(
+    vector: StoreInspection, graph: GraphIndexer, suffix: str
+) -> list[Entity]:
     """The namespace's entities, with the communities the graph store
     records for each (the vector store does not keep them)."""
     stored = [Entity.model_validate(e) for e in _scan(vector, "entities", suffix)]
@@ -90,7 +97,7 @@ def _entities(vector: VectorIndexer, graph: GraphIndexer, suffix: str) -> list[E
 
 
 def _relationships(
-    vector: VectorIndexer,
+    vector: StoreInspection,
     graph: GraphIndexer,
     suffix: str,
     entity_ids: list[str],
@@ -154,7 +161,7 @@ def write_visualization_data(
     }
 
 
-def _built_at(vector: VectorIndexer, suffix: str) -> str | None:
+def _built_at(vector: BuildRecordStore, suffix: str) -> str | None:
     """When the build ``suffix``'s record names finished (``None`` without
     one)."""
     built_at = (vector.read_build_record(suffix) or {}).get("built_at")

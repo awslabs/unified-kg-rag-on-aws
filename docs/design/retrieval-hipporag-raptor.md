@@ -334,10 +334,9 @@ methodology (`naive` and `simple` serve it too when selected).
 earlier stage keeps its cache key), run when `raptor` is selected, `application/ingestion/summary_tree_stage.py`:
 
 1. *Leaves.* The stage reads the namespace's stored text units through
-   `VectorIndexer.scan_text_unit_pages` (an id-ordered page walk, the seed
-   graphs' units left out as every text search leaves them out; the port's
-   default serves a store's `scan_text_units` in pages, so a store that
-   implements only that one keeps the tree, holding every unit at once): their
+   `SummaryTreeStore.scan_text_unit_pages` (an id-ordered page walk, the seed
+   graphs' units left out as every text search leaves them out; a store
+   that does not implement it builds no tree): their
    id, indexed text (the `target_language` translation when one is
    stored, the source text otherwise, as the indexer embeds them), stored
    vector, `n_tokens` (counted again for a translation: the stored count

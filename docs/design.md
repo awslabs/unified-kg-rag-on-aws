@@ -73,7 +73,7 @@ Imports point inward: the layers outermost first, what each package holds and wh
 
 ### 2.2 Ports (Abstract Interfaces)
 
-The ports the application wires, with their locations, adapters and test fakes.
+The ports the application wires, with their locations, adapters and test fakes; the vector store's concerns (extraction records, summary tree, build record, inspection, schema annotations) are ports of their own.
 → [architecture.md §2.2](./design/architecture.md#22-ports-abstract-interfaces)
 
 ### 2.3 Role-Based Retriever Injection
@@ -366,7 +366,7 @@ How the CLIs, the MCP server and the console load a plugin (an entry point, or `
 
 ### Custom backends (run without AWS)
 
-The ports a custom backend implements and how to inject it.
+The ports a custom backend implements, the concern ports a new vector backend opts into one at a time, and how to inject it.
 → [extend.md](./guides/extend.md#custom-backends-run-without-aws)
 
 ### Deliberate Design Boundaries

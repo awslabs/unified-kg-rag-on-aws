@@ -545,7 +545,7 @@ class BaseGraphRAGRetriever(BaseRetriever, ABC):
 
     async def aread_build_record(self, suffix: str | None) -> dict[str, Any] | None:
         """The build record ingestion wrote on ``suffix``'s index
-        (``VectorIndexer.record_build``), read by ``run-eval`` into its run
+        (``BuildRecordStore.record_build``), read by ``run-eval`` into its run
         manifest. ``None`` (the default, for a backend without index
         metadata) when there is none or it cannot be read."""
         return None

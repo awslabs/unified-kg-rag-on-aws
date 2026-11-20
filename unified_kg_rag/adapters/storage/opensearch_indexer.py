@@ -3170,23 +3170,6 @@ class OpenSearchIndexer(VectorIndexer):
             page_size=page_size,
         )
 
-    def scan_text_units(
-        self,
-        suffix: str | None,
-        *,
-        fields: list[str],
-        page_size: int | None = None,
-    ) -> list[dict[str, Any]]:
-        """Every stored text unit of ``suffix`` but the seed graphs' (see
-        the port), in id order; ``text_embedding`` as a float32 array."""
-        return [
-            unit
-            for page in self.scan_text_unit_pages(
-                suffix, fields=fields, page_size=page_size
-            )
-            for unit in page
-        ]
-
     def scan_text_unit_pages(
         self,
         suffix: str | None,
@@ -3194,7 +3177,9 @@ class OpenSearchIndexer(VectorIndexer):
         fields: list[str],
         page_size: int | None = None,
     ) -> Iterator[list[dict[str, Any]]]:
-        """:meth:`scan_text_units` a page at a time (see the port)."""
+        """Every stored text unit of ``suffix`` but the seed graphs' (see
+        the port), in id order, a page at a time; ``text_embedding`` as a
+        float32 array."""
         return self._scan_pages(
             self.opensearch_config.text_units_index_prefix,
             suffix,

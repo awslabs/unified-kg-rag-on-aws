@@ -22,6 +22,7 @@ import pytest
 
 from tests.fixtures.fakes.chat_models import SUMMARY_TREE_PROMPT, CountingResponder
 from tests.fixtures.fakes.model_servers import FakeOllama
+from tests.fixtures.text_units import stored_text_units
 from tests.integration import test_embedded_e2e as e2e
 from tests.integration.test_embedded_e2e import no_aws  # noqa: F401 - fixture
 from unified_kg_rag.adapters.providers import Providers
@@ -617,9 +618,7 @@ def test_the_leaf_digest_holds_one_page_of_text_at_a_time(
         pass
 
     pages = OpenSearchIndexer.scan_text_unit_pages
-    scan = OpenSearchIndexer.scan_text_units
     held: list[int] = []
-    listed: list[list[str]] = []
 
     def paged(self: Any, suffix: Any, *, fields: list[str], **kwargs: Any) -> Any:
         refs: list[Any] = []
@@ -631,17 +630,10 @@ def test_the_leaf_digest_holds_one_page_of_text_at_a_time(
             refs.extend(weakref.ref(row) for row in rows)
             yield rows
 
-    def scanned(self: Any, suffix: Any, *, fields: list[str], **kwargs: Any) -> Any:
-        if "text_embedding" not in fields:
-            listed.append(fields)
-        return scan(self, suffix, fields=fields, **kwargs)
-
     monkeypatch.setattr(sts, "_DIGEST_PAGE", 1)
     monkeypatch.setattr(OpenSearchIndexer, "scan_text_unit_pages", paged)
-    monkeypatch.setattr(OpenSearchIndexer, "scan_text_units", scanned)
     context = ingest(config, providers, source, tmp_path / "run-2")
     assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
-    assert listed == []
     # Read a unit at a time, at most the one before it is still held.
     assert len(held) > 2 and max(held) <= 1, held
 
@@ -790,7 +782,7 @@ def test_a_text_unit_without_a_vector_is_left_out_of_the_tree(
     cited = {unit for node in nodes for unit in node["text_unit_ids"]}
     indexer = providers.build_vector_indexer()
     try:
-        units = indexer.scan_text_units(None, fields=["attributes"]) or []
+        units = stored_text_units(indexer, None, fields=["attributes"])
     finally:
         indexer.close()
     skipped = {r["id"] for r in units if blank in r["attributes"].get("file_name", "")}
@@ -1234,7 +1226,7 @@ def test_the_tree_is_built_over_the_translations_and_follows_them(
     indexer = providers.build_vector_indexer()
     try:
         stage = SummaryTreeStage(config, providers=providers)
-        rows = indexer.scan_text_units(None, fields=["attributes"]) or []
+        rows = stored_text_units(indexer, None, fields=["attributes"])
         leaves = [
             leaf
             for group in stage._leaves(indexer, None, {None}, rows).values()
@@ -1242,7 +1234,7 @@ def test_the_tree_is_built_over_the_translations_and_follows_them(
         ]
         stored = {
             str(row["id"]): row
-            for row in indexer.scan_text_units(None, fields=["text", "n_tokens"]) or []
+            for row in stored_text_units(indexer, None, fields=["text", "n_tokens"])
         }
     finally:
         indexer.close()

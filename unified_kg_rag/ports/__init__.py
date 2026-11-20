@@ -15,7 +15,12 @@ Catalog:
   in-memory fake in tests).
 - ``BaseIndexer`` / ``GraphIndexer`` / ``VectorIndexer`` — write-side store
   contracts (adapters: ``adapters.storage``). ``IndexingStats`` is the shared
-  result record.
+  result record. A store's other concerns are ``Protocol``s with "cannot"
+  defaults, each its own port so a caller takes only the one it uses:
+  ``SchemaAnnotationStore`` (both indexers), and, for the vector store,
+  ``ExtractionRecordStore``, ``SummaryTreeStore``, ``BuildRecordStore`` and
+  ``StoreInspection``. ``VectorIndexer`` inherits all five, so the composition
+  root builds one vector store that implements every one of them.
 - ``ModelFactoryPort`` (+ ``LLMFactoryPort`` / ``EmbeddingFactoryPort`` /
   ``RerankFactoryPort`` aliases) — the LLM/Embedding/Rerank provider boundary
   (``Protocol``; the Bedrock factories in ``adapters.aws.bedrock`` and the
@@ -50,8 +55,13 @@ from unified_kg_rag.ports.guardrail import (
 )
 from unified_kg_rag.ports.indexer import (
     BaseIndexer,
+    BuildRecordStore,
+    ExtractionRecordStore,
     GraphIndexer,
     IndexingStats,
+    SchemaAnnotationStore,
+    StoreInspection,
+    SummaryTreeStore,
     VectorIndexer,
 )
 from unified_kg_rag.ports.model_factory import (
@@ -64,9 +74,11 @@ from unified_kg_rag.ports.model_factory import (
 
 __all__ = [
     "BaseIndexer",
+    "BuildRecordStore",
     "ContentGuardPort",
     "DocStatusPort",
     "EmbeddingFactoryPort",
+    "ExtractionRecordStore",
     "GraphIndexer",
     "GraphQueryPort",
     "GuardAction",
@@ -76,6 +88,9 @@ __all__ = [
     "LLMFactoryPort",
     "ModelFactoryPort",
     "RerankFactoryPort",
+    "SchemaAnnotationStore",
+    "StoreInspection",
+    "SummaryTreeStore",
     "TokenCounterPort",
     "VectorIndexer",
 ]
