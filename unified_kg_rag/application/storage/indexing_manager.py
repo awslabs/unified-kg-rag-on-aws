@@ -1365,8 +1365,10 @@ class IndexingManager:
         citing only removed text units is deleted with them; one citing others
         too is stripped of them and its content derived again
         (:meth:`remove_text_units_from_shared`). A community or report is
-        deleted once none of the text units it cites is stored any more (its
-        content is not derived again: see the docs on delta communities).
+        deleted once none of the text units it cites is stored any more; a
+        report citing others too is flagged outdated (``outdated_reports``)
+        and written again from its community's remaining members by the
+        same run's commit (``ReportRefresh``), once its writes succeeded.
         The extraction-store keys the removed text units named are kept for
         :meth:`collect_extraction_records`.
 

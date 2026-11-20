@@ -299,12 +299,13 @@ as upstream starts at level 0
   `min_cut_depth` was stored step down to depth 0 only, until
   `indexing.reset: true` writes them again.
 - **Dynamic selection** (`use_dynamic_selection`) — MS GraphRAG's
-  `DynamicCommunitySelection`: rate the root reports for relevance, follow
-  the children of the relevant ones to the leaves, and rate the whole next
-  depth when a depth yields none, down to `community_depth` (MS GraphRAG's
-  `max_level`, which bounds only this fallback). The walk starts at the roots
-  as upstream's does but follows relevant reports to the leaves, where
-  upstream's stops at `community_level`. Ratings run
+  `DynamicCommunitySelection`: rate the depth-0 reports (the first Leiden
+  pass) for relevance, follow the children of the relevant ones to the
+  leaves, and rate the whole next depth when a depth yields none, down to
+  `community_depth` (MS GraphRAG's `max_level`, which bounds only this
+  fallback). The walk starts at depth 0 as upstream's starts at level 0, not
+  at the coarser levels above it, but follows relevant reports to the
+  leaves, where upstream's stops at `community_level`. Ratings run
   `search.max_concurrency` at a time. A rating is upstream's JSON
   (`{"reason": ..., "rating": 0-5}`, `RATE_QUERY`), divided by 5 and
   compared with `relevance_threshold` (0.2: upstream's rating of 1 or more);
@@ -382,7 +383,7 @@ The deliberate differences (a file is relative to the `graphrag/` package):
 | Local: no walk past the entities' relationships | graph expansion to `search.graph_expansion.max_hops` (3) | multi-hop chains | unmeasured |
 | Local: 20 entities, every in-network relationship plus 10 per entity of the others (`query/context_builder/local_context.py`), shares of 12,000 tokens (`text_unit_prop` 0.5, `community_prop` 0.15) | type quotas (10 entities, 10 relationships at `top_k` 10) and type shares of 30,000 tokens (§7) | one budget model for every strategy | unmeasured |
 | Local reports: the entities' communities at `community_level` | the reports most similar to the query entities | answers | [measured](../concepts/defaults-and-evidence.md#local-report-selection) |
-| Global: the whole cut, shuffled | at most 99 reports, by rank | bounded map calls; repeatable | unmeasured |
+| Global: the whole cut, shuffled | at most 99 reports in rank order: a larger cut gives way to the deepest shallower cut that fits (into the coarser levels above the first pass), and only when none fits, or under a report-key filter, to the 99 of the configured cut most similar to the query | bounded map calls; repeatable | unmeasured |
 | Global: a reduce call over the key points | the key points and up to 4,000 tokens of the reports they cite, no reduce call | answers | [measured](../concepts/defaults-and-evidence.md#global-evidence-cap) |
 | Dynamic selection stops at `community_level` | follows relevant reports to the leaves | — | unmeasured |
 | DRIFT: 20 follow-ups, 3 rounds; a random primer template; open follow-ups shuffled | 10 and 2; the most important report; best-scored first | cost (27 calls at most, not 67); repeatable | unmeasured |

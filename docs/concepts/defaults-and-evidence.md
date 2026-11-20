@@ -1290,8 +1290,12 @@ when an unadjusted 95% interval excludes zero.
     step), the most similar to the query when the cut and every shallower
     one hold more, where MS GraphRAG maps every report of the
     `community_level` cut, batched by tokens. On the MuSiQue-200 evidence
-    store the root cut holds 145 reports and the depth-2 cut 201, so no
-    shallower cut fits and every logged `global` query (202 of 202) mapped
-    the 99 of the 201 most similar to it; every `global` result on this page
-    ran with the default cap, not the whole cut. A run of the cap against
+    store, measured while the depth counted from the coarser root (before
+    it counted from the first Leiden pass, as upstream's level), the root cut held 145
+    reports and the depth-2 cut 201, so no shallower cut fit and every logged
+    `global` query (202 of 202) mapped the 99 of the 201 most similar to it;
+    every `global` result on this page ran with the default cap, not the
+    whole cut. The root cut is the coarsest cut the step-down now reaches
+    too, so it still would not fit; the depth-2 cut now holds other reports
+    and is not re-measured (the store is a real-model build). A run of the cap against
     the whole cut is queued.
