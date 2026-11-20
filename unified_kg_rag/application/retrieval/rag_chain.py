@@ -574,7 +574,13 @@ class RAGInput(BaseModel):
         "None: the config's search.search_type (hybrid by default)",
     )
     top_k: int = Field(
-        default=10, ge=1, description="Maximum number of results to retrieve"
+        default=10,
+        ge=1,
+        description="The most results a search returns (asearch), times "
+        "retrieval_multiplier, cut by rank after fusion and rerank; each "
+        "strategy's base width. An answer's context may hold more: a "
+        "strategy's own pools are wider (LightRAG's per-type floors, graph "
+        "expansion)",
     )
     retrieval_multiplier: int = Field(
         default=1,
@@ -2672,8 +2678,19 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
 
     @staticmethod
     def _format_search_output_step(state: dict[str, Any]) -> SearchOutput:
+        """A search's output: its results cut to ``top_k`` (times
+        ``retrieval_multiplier``) by rank, after fusion and rerank, the
+        bound a search names (``kg_search``'s ``mcp.max_top_k``, ``run-rag
+        --mode search --top-k``). A strategy reads wider pools than that
+        (LightRAG's ``kg_stream_top_k``/``chunk_stream_top_k`` floors, graph
+        expansion, iterative's rounds, ppr's passages and entities), which
+        an answer's context keeps: only the search's output is cut."""
         sr: SearchResult = state["search_results"]
         sr.search_strategy = state["resolved_strategy"].value
+        bound = state.get("top_k", 10) * state.get("retrieval_multiplier", 1)
+        if len(sr.results) > bound:
+            sr.results = sr.results[:bound]
+            sr.total_results = len(sr.results)
 
         metadata = {
             "search_strategy": sr.search_strategy,

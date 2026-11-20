@@ -392,6 +392,10 @@ Bugs present in 0.3.0.
   containers, 1 on the embedded stores) and other results than the embedded engine, which ranks a tie by id. A search
   scored by relevance now sorts by score, then id, on OpenSearch, and the hybrid fusion (`combine_min_max`) ranks equal
   scores by id instead of by the order the hits came in.
+- `top_k` did not bound what a search returns: `kg_search` with `top_k` 1 returned 49 records for `mix`, `hybrid` and
+  `iterative`, 17 for `ppr` and 12 for `naive` (a strategy's own pools: LightRAG's per-type floors, iterative's
+  rounds), so `mcp.max_top_k` bounded nothing. `GraphRAGChain.asearch` (`kg_search`, `run-rag --mode search`) cuts its
+  results to `top_k` (times `retrieval_multiplier`) by rank; an answer's context keeps the strategy's pools.
 - The Graph page's layout, and `run-visualization`'s, moved from one process to the next: a component's nodes were laid
   out in a set's order, which follows the process's hash seed. They are laid out in the graph's own order.
 - Entity and community writes to Neptune or a Gremlin Server closed a batch at `indexing.neptune.batch_size` items

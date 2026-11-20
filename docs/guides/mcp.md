@@ -50,7 +50,7 @@ Ctrl-C.
 
 | Tool | What it does | Model calls |
 |---|---|---|
-| `kg_search` | Retrieval only: the ranked supporting content for a query (any language), with `strategy`, `search_type`, `top_k` and `filters` as in `run-rag --mode search` | The strategy's query processing, the query embedding, the rerank |
+| `kg_search` | Retrieval only: the ranked supporting content for a query (any language), at most `top_k` records by rank, with `strategy`, `search_type`, `top_k` and `filters` as in `run-rag --mode search` | The strategy's query processing, the query embedding, the rerank |
 | `kg_answer` | The full RAG answer first, with the abstention fields (`abstained`, `abstention_reason`), then the records it rests on and `usage`. `records`: `cited` (the default: the sources and model-written sections the answer cites; when it cites none, as a `global` or `drift` answer, the first `mcp.uncited_records`, `records_kept: top`), `all` (every source the answer model saw, after the model-written sections it may cite: global search's key points, DRIFT's intermediate answers) or `none`; `records_kept` says which applied. `degraded` lists the steps the answer was given without (a partial answer: each `step`, `reason` and `error_type`), `citations_unresolved` the lineage reads that failed For a follow-up question, pass the conversation so far as `history` (below) | The above, the follow-up rewrite with a `history`, and the answer |
 | `kg_get_entity` | Entities by `id`, `iri` or `name` (exact first, as the strategies link a name: case, Arabic alef forms or `ё`/`е` aside; without one, the closest names, `match: search`) | None |
 | `kg_neighbors` | The entities within `max_hops` of one entity and the relationships among them | None |
@@ -152,7 +152,7 @@ read from its own server and namespace, with the store roles of the
 | `mcp.tools` | all six | The tools listed; leave `kg_answer` out to make no answer-model call |
 | `mcp.allowed_namespaces` | `[]` | Further namespaces a call may name |
 | `mcp.strategies` | every strategy | The strategies `kg_search` and `kg_answer` may run; with `auto` in the list, `auto` routes only among the listed ones, and is refused before any model call when the namespace serves none of them |
-| `mcp.max_top_k` | `20` | `top_k` of a search, `limit` of `kg_get_entity`, the `ids` of `kg_get_chunks` |
+| `mcp.max_top_k` | `20` | `top_k` of a search (the most records `kg_search` returns; the context `kg_answer`'s answer reads is each strategy's own, wider, which `records: all` lists), `limit` of `kg_get_entity`, the `ids` of `kg_get_chunks` |
 | `mcp.max_hops`, `mcp.max_neighbors` | `2`, `50` | A `kg_neighbors` walk |
 | `mcp.max_query_chars` | `2000` | A query or entity name |
 | `mcp.max_text_chars`, `mcp.max_response_chars` | `2000`, `60000` | A record's text, a response's records |
