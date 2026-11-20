@@ -365,6 +365,16 @@ class ModelFactoryPort(Protocol[ModelIdT, ModelT, InfoT]):
     ``is_stream_transient_error(exc) -> bool`` too (the OpenAI-compatible
     one), the errors its client did not retry, and only streams are retried,
     on those.
+
+    Two more optional hooks are read the same way. ``resolved_model_id(
+    model_id) -> str`` is the id ``get_model`` invokes ``model_id`` by (the
+    Bedrock factory's cross-region inference profile); usage and cached
+    responses are recorded under it (``adapters.llm.chain_factory.
+    usage_model_id``), and without it under ``model_id``.
+    ``query_prompt_cache_ttl`` (a str, e.g. ``"1h"``) is the prompt-cache
+    TTL ``setup_chain`` asks for on query chains, for models whose record
+    sets ``supports_1h_cache_ttl``; without it the provider's default TTL
+    (5 minutes) applies.
     """
 
     def get_model(self, model_id: ModelIdT, **kwargs: Any) -> ModelT: ...
