@@ -3184,10 +3184,15 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             metrics[QUERY_THROTTLED_METRIC] = float(
                 usage.get("throttled_requests") or 0
             )
-            # What it spent, a failed or stopped query's up to its end too.
+            # What it spent, a failed or stopped query's up to its end too:
+            # an answer's USD as its metadata states it, else priced here.
             metrics[QUERY_INPUT_TOKENS_METRIC] = float(usage.get("input_tokens") or 0)
             metrics[QUERY_OUTPUT_TOKENS_METRIC] = float(usage.get("output_tokens") or 0)
-            cost, _ = snapshot_cost_usd(usage, self.config.models.prices)
+            cost = (
+                metadata["cost_usd"]
+                if "cost_usd" in metadata
+                else snapshot_cost_usd(usage, self.config.models.prices)[0]
+            )
             if cost is not None:
                 metrics[QUERY_COST_METRIC] = cost
         # Log properties, not dimensions (QUERY_METRICS_DIMENSION_KEYS): the
