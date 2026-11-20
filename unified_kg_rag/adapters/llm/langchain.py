@@ -26,16 +26,27 @@ from tqdm import tqdm
 from tqdm.asyncio import tqdm as async_tqdm
 
 from unified_kg_rag.adapters.llm.retry import (
+    DEFAULT_CALL_TIMEOUT_SECONDS,
     backoff_delay,
+    call_timeout_for,
     never_retried,
     record_failure,
+    transient_error_predicate,
 )
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.domain.models.config import RETRY_PROFILES, RetryPolicy
 from unified_kg_rag.shared import get_logger, observability
-from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
+from unified_kg_rag.shared.exceptions import (
+    LLMOutputTruncatedError,
+    ModelCallStillRunningError,
+)
 from unified_kg_rag.shared.logging import log_failure
-from unified_kg_rag.shared.query_stop import blank_in_shared_calls
+from unified_kg_rag.shared.query_stop import (
+    QueryStop,
+    StopCause,
+    blank_in_shared_calls,
+    window_stop_scope,
+)
 from unified_kg_rag.shared.utils.common import text_digest
 from unified_kg_rag.shared.utils.concurrency import (
     ContextThreadPoolExecutor,
@@ -109,12 +120,72 @@ def discard_if_item_fails(discard: Callable[[], None]) -> None:
 
 
 class _Attempt:
-    """One timed call of a batch item; ``abandoned`` once it timed out."""
+    """One timed call of a batch item; ``abandoned`` once it timed out, when
+    its stop (the deadline window its thread binds) is set too."""
 
-    __slots__ = ("abandoned",)
+    __slots__ = ("_lock", "_stop", "abandoned")
 
     def __init__(self) -> None:
         self.abandoned = False
+        self._stop: QueryStop | None = None
+        self._lock = threading.Lock()
+
+    def bind(self, stop: QueryStop) -> None:
+        """The call's thread bound ``stop``: set at once if the call was
+        abandoned before it ran."""
+        with self._lock:
+            self._stop = stop
+            abandoned = self.abandoned
+        if abandoned:
+            stop.set(StopCause.DEADLINE)
+
+    def abandon(self) -> None:
+        """The call timed out: nobody reads what it sends from now on."""
+        with self._lock:
+            self.abandoned = True
+            stop = self._stop
+        if stop is not None:
+            stop.set(StopCause.DEADLINE)
+
+
+class _ItemCalls:
+    """The call of a batch item abandoned at its call timeout, if any: the
+    item's next attempt waits for it to end first (an item is never in
+    flight twice). ``batch_stopped`` is done once the batch is abandoned."""
+
+    __slots__ = ("abandoned", "batch_stopped")
+
+    def __init__(
+        self, batch_stopped: concurrent.futures.Future[None] | None = None
+    ) -> None:
+        self.abandoned: concurrent.futures.Future[Any] | None = None
+        self.batch_stopped = batch_stopped
+
+    def wait_for_abandoned(self, timeout_seconds: float, label: str) -> None:
+        """Wait until the abandoned call ended, up to ``timeout_seconds``
+        (none: until it ends) or the batch's stop; raise
+        ``ModelCallStillRunningError`` if it still runs."""
+        running = self.abandoned
+        if running is None or running.done():
+            self.abandoned = None
+            return
+        waits: list[concurrent.futures.Future[Any]] = [running]
+        if self.batch_stopped is not None:
+            waits.append(self.batch_stopped)
+        concurrent.futures.wait(
+            waits,
+            timeout=timeout_seconds if timeout_seconds > 0 else None,
+            return_when=concurrent.futures.FIRST_COMPLETED,
+        )
+        if self.batch_stopped is not None and self.batch_stopped.done():
+            raise _BatchAbandoned
+        if not running.done():
+            raise ModelCallStillRunningError(
+                f"'{label}' was not called again: its call abandoned at the "
+                f"{timeout_seconds:g}s call timeout was still running "
+                f"{timeout_seconds:g}s later"
+            )
+        self.abandoned = None
 
 
 # The timed call (``BatchProcessor._run_with_timeout``) running in this thread.
@@ -212,15 +283,16 @@ class BatchProcessor(BaseModel):
         "retryable errors are retried: an item whose error is not retryable is "
         "not called again",
     )
-    call_timeout_seconds: int = Field(
-        default=300,
+    call_timeout_seconds: float = Field(
+        default=DEFAULT_CALL_TIMEOUT_SECONDS,
         ge=0,
-        description="Wall-clock timeout for one item's LLM call. botocore's "
-        "read_timeout only measures the gap between bytes, so a server that "
+        description="Wall-clock timeout for one item's LLM call. A client's "
+        "read timeout only measures the gap between bytes, so a server that "
         "dribbles keep-alive data can hang a call indefinitely; this hard "
-        "ceiling aborts such a call and retries that item alone. Keep it below "
-        "the Bedrock client's read timeout so it is the limit that fires. "
-        "0 disables.",
+        "ceiling abandons such a call and retries that item alone, once the "
+        "abandoned call ended (an item is never in flight twice). "
+        "from_config takes it from the language-model factory's request "
+        "timeout of ingestion calls (call_timeout_for). 0 disables.",
     )
     is_transient_error: Callable[[BaseException], bool] | None = Field(
         default=None,
@@ -232,9 +304,19 @@ class BatchProcessor(BaseModel):
     )
 
     @classmethod
-    def from_config(cls, config: "Config", **settings: Any) -> "BatchProcessor":
+    def from_config(
+        cls, config: "Config", factory: object | None = None, **settings: Any
+    ) -> "BatchProcessor":
         """A processor sized by ``processing.max_concurrency`` and retried
-        under ``retry.ingestion_item`` (the ingestion stages)."""
+        under ``retry.ingestion_item`` (the ingestion stages), for the calls
+        of the language-model ``factory`` when given: its transient errors
+        are retried (``transient_error_predicate``) and its request timeout
+        of ingestion calls is the call timeout (:func:`call_timeout_for`)."""
+        if factory is not None:
+            settings.setdefault(
+                "is_transient_error", transient_error_predicate(factory)
+            )
+            settings.setdefault("call_timeout_seconds", call_timeout_for(factory))
         return cls(
             max_concurrency=config.processing.max_concurrency,
             retry=config.retry.ingestion_item,
@@ -243,33 +325,50 @@ class BatchProcessor(BaseModel):
 
     @staticmethod
     def _run_with_timeout(
-        func: Callable[[], Any], timeout_seconds: int, label: str
+        func: Callable[[], Any],
+        timeout_seconds: float,
+        label: str,
+        calls: _ItemCalls | None = None,
     ) -> Any:
         """Run ``func`` under a wall-clock timeout.
 
-        A hung Bedrock call (no completion despite an open socket) would otherwise
-        block its worker indefinitely; this bounds it so the item can be retried.
-        ``timeout_seconds <= 0`` runs ``func`` directly with no timeout.
+        A hung model call (no completion despite an open socket) would
+        otherwise block its worker indefinitely; this bounds it so the item
+        can be retried. ``timeout_seconds <= 0`` runs ``func`` directly with
+        no timeout.
 
         Python cannot kill a thread, so a timed-out call is abandoned, not
-        cancelled: its in-flight Bedrock request keeps running (and billing)
-        until botocore's own read timeout or completion, while the retry
-        re-issues that one item. Keep ``call_timeout_seconds`` well above normal
-        call latency so this path stays reserved for genuinely hung calls.
+        cancelled. From then on nobody reads it: its stop (the deadline
+        window it runs in, ``shared.query_stop.window_stop_scope``) is set,
+        so the model
+        clients send no further request for it (a resend of their own
+        included), and the request in flight ends at the client's own
+        timeout, which ``call_timeout_for`` makes the call timeout. An item
+        is never in flight twice: with ``calls``, the item's next attempt
+        first waits for its abandoned call to end (up to one more
+        ``timeout_seconds``) and fails with ``ModelCallStillRunningError``
+        if it has not, instead of resending the item beside it.
         """
+        if calls is not None:
+            calls.wait_for_abandoned(timeout_seconds, label)
         if timeout_seconds <= 0:
             return func()
         # NOT a `with` block: ThreadPoolExecutor.__exit__ calls
         # shutdown(wait=True), which JOINS the worker thread — so on timeout it
-        # would block until the hung call actually returns (up to the full
-        # BOTO_READ_TIMEOUT), defeating the whole point of the timeout. Instead
-        # abandon the doomed thread with shutdown(wait=False, cancel_futures=True)
-        # so control returns to the caller immediately for the item's retry.
+        # would block until the hung call actually returns, defeating the
+        # whole point of the timeout. Instead abandon the doomed thread with
+        # shutdown(wait=False, cancel_futures=True) so control returns to the
+        # caller immediately for the item's retry.
         attempt = _Attempt()
 
         def run() -> Any:
             _ATTEMPT.set(attempt)  # in the worker's copy of the context
-            return func()
+            # The call's timeout is a deadline window of it: once it passed,
+            # every stop point under it (the model clients' before each
+            # request, a resend included) ends the call.
+            with window_stop_scope() as stop:
+                attempt.bind(stop)
+                return func()
 
         pool = ContextThreadPoolExecutor(max_workers=1)
         future = pool.submit(run)
@@ -281,15 +380,17 @@ class BatchProcessor(BaseModel):
                 # ``func`` raised a TimeoutError of its own (the builtin is
                 # concurrent.futures.TimeoutError): not ours.
                 raise
-            attempt.abandoned = True
+            attempt.abandon()
+            if calls is not None:
+                calls.abandoned = future
             logger.warning(
-                "'%s' exceeded the %ss call timeout; the abandoned call may still "
-                "complete in the background while the item is retried",
+                "'%s' exceeded the %ss call timeout; the abandoned call sends "
+                "no further request and is retried once it ended",
                 label,
-                timeout_seconds,
+                f"{timeout_seconds:g}",
             )
             raise TimeoutError(
-                f"'{label}' exceeded the {timeout_seconds}s call timeout"
+                f"'{label}' exceeded the {timeout_seconds:g}s call timeout"
             ) from exc
         except BaseException:
             pool.shutdown(wait=False, cancel_futures=True)
@@ -391,10 +492,14 @@ class BatchProcessor(BaseModel):
         # the items still running make no further attempt, and a backoff
         # wait ends at once, so the pool shuts down after the calls in flight.
         abandoned = threading.Event()
+        # Done at the same moment: ends an item's wait for its abandoned call.
+        batch_stopped: concurrent.futures.Future[None] = concurrent.futures.Future()
 
         # Bound every item call by the wall-clock ceiling so a hung item
         # aborts and is retried instead of blocking.
-        def timed_sequential_func(single_input: dict[str, Any]) -> Any:
+        def timed_sequential_func(
+            single_input: dict[str, Any], calls: _ItemCalls
+        ) -> Any:
             responses = _ITEM_DISCARDS.get()
             if responses is not None:
                 responses.attempt_starts()
@@ -404,6 +509,7 @@ class BatchProcessor(BaseModel):
                 lambda: sequential_func(single_input),
                 self.call_timeout_seconds,
                 f"{task_name} item",
+                calls,
             )
 
         retrying_sequential_func = self._create_retry_decorator(task_name, abandoned)(
@@ -414,7 +520,9 @@ class BatchProcessor(BaseModel):
             responses = _ItemResponses()
             token = _ITEM_DISCARDS.set(responses)
             try:
-                result = retrying_sequential_func(single_input)
+                result = retrying_sequential_func(
+                    single_input, _ItemCalls(batch_stopped)
+                )
                 if item_discards is not None:
                     item_discards[idx] = responses.discard
                 return result
@@ -463,6 +571,7 @@ class BatchProcessor(BaseModel):
             except BaseException:
                 # Nor start another attempt of the running ones.
                 abandoned.set()
+                batch_stopped.set_result(None)
                 raise
         return self._completed(task_name, results)
 
@@ -519,7 +628,9 @@ class BatchProcessor(BaseModel):
             return False
         # The same input hits the same output-token limit again, and a call
         # the usage limits refused is refused again.
-        if isinstance(exc, LLMOutputTruncatedError) or never_retried(exc):
+        if isinstance(
+            exc, LLMOutputTruncatedError | ModelCallStillRunningError
+        ) or never_retried(exc):
             return False
         # A malformed LLM response or a hung call can succeed on a new attempt.
         if isinstance(exc, OutputParserException | TimeoutError):

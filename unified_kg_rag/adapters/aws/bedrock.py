@@ -176,11 +176,12 @@ class BaseBedrockModelFactory(Generic[ModelIdT, ModelInfoT, WrapperT], ABC):
     # reports, extended thinking) but short enough that a hung socket doesn't
     # freeze a whole ProcessPool-parallel stage (e.g. claim extraction).
     # A non-streaming call sends no bytes until the whole answer is ready, so
-    # this also caps generation time. It sits above BatchProcessor's default
-    # 300 s call timeout so that wall-clock limit, not a race with this one,
-    # ends a long ingestion call: botocore retries a read timeout itself, and
-    # at equal values that silent re-send started inside the call timeout's
-    # window, only to be abandoned when it fired.
+    # this also caps generation time. It is an ingestion item's call timeout
+    # too (request_timeout_seconds, BatchProcessor): that wall-clock limit
+    # starts before the request is sent, so it fires first, and the call it
+    # abandons sends no resend (stop_at_query_stop) while its request ends
+    # here moments later. 330 s: the 300 s call timeout of earlier versions
+    # plus the margin it had kept below this one.
     BOTO_READ_TIMEOUT: ClassVar[int] = 330
     # TCP connect timeout. Without this, a client whose endpoint is unreachable
     # (e.g. a private/no-NAT VPC missing the relevant Bedrock interface endpoint,
@@ -301,19 +302,27 @@ class BaseBedrockModelFactory(Generic[ModelIdT, ModelInfoT, WrapperT], ABC):
         with self._purpose_clients_lock:
             client = self._purpose_clients.get(purpose)
             if client is None:
-                search = self.config.search
-                boto_config = (
-                    self._boto_config(
-                        read_timeout=search.model_timeout_seconds,
-                        total_max_attempts=search.model_max_attempts,
-                    )
-                    if purpose is ModelPurpose.QUERY
-                    else self._boto_config(read_timeout=self.BOTO_READ_TIMEOUT)
+                boto_config = self._boto_config(
+                    read_timeout=self.request_timeout_seconds(purpose),
+                    total_max_attempts=(
+                        self.config.search.model_max_attempts
+                        if purpose is ModelPurpose.QUERY
+                        else None
+                    ),
                 )
                 client = self._purpose_clients[purpose] = self._new_client(
                     boto_config, purpose
                 )
             return client
+
+    def request_timeout_seconds(self, purpose: ModelPurpose) -> float:
+        """The read timeout of the runtime client of ``purpose``'s calls:
+        ``search.model_timeout_seconds`` for query calls, else
+        :attr:`BOTO_READ_TIMEOUT`. An ingestion item's call timeout too
+        (``adapters.llm.retry.call_timeout_for``)."""
+        if purpose is ModelPurpose.QUERY:
+            return self.config.search.model_timeout_seconds
+        return self.BOTO_READ_TIMEOUT
 
     @abstractmethod
     def _get_boto_service_name(self) -> str:
@@ -1429,6 +1438,30 @@ class BedrockRerankModelFactory(
         return model
 
 
+def _is_session_of_role(session_arn: str, role_arn: str) -> bool:
+    """Whether ``session_arn`` (an STS ``assumed-role`` ARN,
+    ``arn:<partition>:sts::<account>:assumed-role/<name>/<session>``) is a
+    session of the IAM role ``role_arn``
+    (``arn:<partition>:iam::<account>:role/<path/><name>``): the same
+    partition, account and role name. A session ARN does not carry the
+    role's path, so the name is the role ARN's last segment. The name alone
+    matched a same-named role of another account, whose session then made
+    the calls the configured role should have."""
+    session = session_arn.split(":", 5)
+    role = role_arn.split(":", 5)
+    if len(session) != 6 or len(role) != 6:
+        return False
+    session_kind, _, session_rest = session[5].partition("/")
+    role_kind, _, role_path = role[5].partition("/")
+    if session_kind != "assumed-role" or role_kind != "role":
+        return False
+    return (
+        session[1] == role[1]
+        and session[4] == role[4]
+        and session_rest.split("/", 1)[0] == role_path.rsplit("/", 1)[-1]
+    )
+
+
 def get_assumed_role_boto_session(
     boto_session: boto3.Session,
     assumed_role_arn: str | None = None,
@@ -1446,22 +1479,12 @@ def get_assumed_role_boto_session(
                 try:
                     caller_identity = sts_client.get_caller_identity()
                     current_arn = caller_identity.get("Arn", "")
-                    if "assumed-role" in current_arn:
-                        current_role_name = (
-                            current_arn.split("/")[-2] if "/" in current_arn else ""
+                    if _is_session_of_role(current_arn, assumed_role_arn):
+                        logger.debug(
+                            "Already using assumed role '%s', skipping duplicate assume",
+                            assumed_role_arn,
                         )
-                        target_role_name = (
-                            assumed_role_arn.split("/")[-1]
-                            if "/" in assumed_role_arn
-                            else ""
-                        )
-
-                        if current_role_name == target_role_name:
-                            logger.debug(
-                                "Already using assumed role '%s', skipping duplicate assume",
-                                assumed_role_arn,
-                            )
-                            return boto_session
+                        return boto_session
                 except (BotoCoreError, ClientError) as e:
                     logger.debug("Could not verify current role identity: %s", e)
     except (BotoCoreError, ClientError) as e:

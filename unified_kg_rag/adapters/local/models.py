@@ -151,6 +151,37 @@ _ASYNC_EVENT_HOOKS: dict[str, list[Callable[[Any], Any]]] = {
 }
 
 
+def _stop_before_sync_request(_request: Any) -> None:
+    """``request`` hook of the sync clients (ingestion calls): a stop point
+    before each request, a resend the client makes itself included, so a
+    batch item's call abandoned at its call timeout sends none
+    (``BatchProcessor._run_with_timeout``)."""
+    _raise_if_stopped()
+
+
+_SYNC_EVENT_HOOKS: dict[str, list[Callable[[Any], Any]]] = {
+    "request": [_stop_before_sync_request],
+}
+
+
+def openai_http_client(timeout: float, transport: Any = None) -> Any:
+    """``http_client`` (sync) for ``ChatOpenAI``: the OpenAI client's own
+    settings, but each request it sends, a resend included, a stop point
+    (:func:`_stop_before_sync_request`). ``transport`` as in
+    :func:`openai_http_async_client`."""
+    httpx = importlib.import_module("httpx")
+    if transport is not None:
+        return httpx.Client(
+            transport=transport, timeout=timeout, event_hooks=_SYNC_EVENT_HOOKS
+        )
+    return httpx.Client(
+        timeout=timeout,
+        follow_redirects=True,
+        verify=tls_context(),
+        event_hooks=_SYNC_EVENT_HOOKS,
+    )
+
+
 def ollama_client_kwargs(timeout: float) -> dict[str, Any]:
     """``client_kwargs`` for an Ollama model: the request ``timeout`` and
     the shared TLS context (:func:`tls_context`)."""
@@ -394,6 +425,13 @@ class _LocalLanguageModelFactory:
             supports_count_tokens=False,
         )
 
+    def request_timeout_seconds(self, purpose: ModelPurpose) -> float:
+        """The client's timeout of one request of a model built for
+        ``purpose`` (``providers.llm.timeout_seconds``, capped for query
+        calls): an ingestion item's call timeout too
+        (``adapters.llm.retry.call_timeout_for``)."""
+        return request_timeout(self.config, self.settings.timeout_seconds, purpose)
+
     def get_model(self, model_id: str, **kwargs: Any) -> BaseChatModel:
         model_id = str(model_id)
         info = self.get_model_info(model_id)
@@ -547,15 +585,11 @@ class OpenAICompatibleLanguageModelFactory(_LocalLanguageModelFactory):
         purpose: ModelPurpose,
     ) -> BaseChatModel:
         module = import_optional("langchain_openai", self.kind)
-        timeout = request_timeout(self.config, self.settings.timeout_seconds, purpose)
+        timeout = self.request_timeout_seconds(purpose)
         extra: dict[str, Any] = {
-            "http_async_client": openai_http_async_client(timeout, self.transport)
+            "http_async_client": openai_http_async_client(timeout, self.transport),
+            "http_client": openai_http_client(timeout, self.transport),
         }
-        if self.transport is not None:
-            httpx = importlib.import_module("httpx")
-            extra["http_client"] = httpx.Client(
-                transport=self.transport, timeout=timeout
-            )
         model: BaseChatModel = _reasoning_chat_openai_class(module)(
             model=model_id,
             base_url=self.settings.base_url,
@@ -650,7 +684,7 @@ class OllamaLanguageModelFactory(_LocalLanguageModelFactory):
         purpose: ModelPurpose,
     ) -> BaseChatModel:
         module = import_optional("langchain_ollama", self.kind)
-        timeout = request_timeout(self.config, self.settings.timeout_seconds, purpose)
+        timeout = self.request_timeout_seconds(purpose)
         client_kwargs = ollama_client_kwargs(timeout)
         # A query call's async client gets the timeout too (the async one
         # otherwise has none); the other purposes keep theirs as they were.
@@ -667,6 +701,7 @@ class OllamaLanguageModelFactory(_LocalLanguageModelFactory):
                 num_predict=max_tokens,
                 num_ctx=self.settings.context_window_size,
                 client_kwargs=client_kwargs,
+                sync_client_kwargs={"event_hooks": _SYNC_EVENT_HOOKS},
                 async_client_kwargs=ollama_async_client_kwargs(async_timeout),
                 callbacks=callbacks,
                 **reasoning,

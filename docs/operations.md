@@ -61,6 +61,16 @@ units (`fallback_chunk_size` 1,200 tokens, about 4,800 English characters), scal
 | 16384 | about 100,000-160,000 |
 | 30720 | about 200,000-300,000 |
 
+The memory per unit grows with what extraction returns for it, so the
+table holds for the entities and relationships a real model finds in a
+unit, not for a corpus that extracts densely. A dense build peaked at about
+470 KiB per unit, four to five times the plan: about 6 KiB per raw
+extracted entity or relationship
+([Defaults and evidence](./concepts/defaults-and-evidence.md#ingestion-memory-and-run-time)).
+For a corpus of many named entities per unit (catalogues, tables, logs),
+ingest a sample of it first and size `fargate_memory` from the sample's
+peak (`IngestionTaskMemory`, Container Insights).
+
 The `raptor` summary tree is built over every stored text unit, not only
 the run's: about 50 KiB per text unit of one tree at its peak for units of
 4,800 characters (1,024 dimensions; `indexing.summary_tree.max_leaves_in_memory`,
@@ -1633,7 +1643,9 @@ A query has two bounds ([Querying](./guides/query.md#query-deadline)):
 
 Ingestion calls use their own client: a 330 s read timeout and
 `retry.model.client_max_attempts` (default 6) botocore attempts, bounded by
-`BatchProcessor`'s 300 s call timeout; an item that still fails is retried
+`BatchProcessor`'s call timeout, which is that read timeout (an abandoned
+call sends no resend, and its item is retried once it ended); an item that
+still fails is retried
 under `retry.ingestion_item`.
 
 **Tuning.**

@@ -13,7 +13,7 @@ Arabic, Hebrew, Devanagari, Thai). Costs are counted in twelfths of a token
 
 import math
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from functools import cache
 
 from unified_kg_rag.domain.languages import LanguageCode, profile
@@ -173,16 +173,26 @@ def budget_token_count(
     return max(estimate, math.ceil(tokens * BUDGET_MARGIN))
 
 
-def truncate_to_estimate(text: str, max_tokens: int) -> str:
-    """``text`` cut so its estimated token count is at most ``max_tokens``."""
-    if estimate_token_count(text) <= max_tokens:
+def truncate_to_count(text: str, max_tokens: int, count: Callable[[str], int]) -> str:
+    """The longest prefix of ``text`` that ``count`` puts at ``max_tokens``
+    tokens or fewer, by binary search over the prefix length (``text``
+    itself when it fits). The result always fits: only a prefix that was
+    counted within the limit is kept, so a count that is not monotone in the
+    prefix length (an estimate whose rate depends on the prefix's script)
+    can give a shorter prefix, never one over the limit. About
+    ``log2(len(text))`` counts."""
+    if count(text) <= max_tokens:
         return text
-    low, high = 0, len(text)
-    # Largest prefix that fits; the estimate is monotone in the prefix length.
+    low, high = 0, len(text) - 1
     while low < high:
         middle = (low + high + 1) // 2
-        if estimate_token_count(text[:middle]) <= max_tokens:
+        if count(text[:middle]) <= max_tokens:
             low = middle
         else:
             high = middle - 1
     return text[:low]
+
+
+def truncate_to_estimate(text: str, max_tokens: int) -> str:
+    """``text`` cut so its estimated token count is at most ``max_tokens``."""
+    return truncate_to_count(text, max_tokens, estimate_token_count)

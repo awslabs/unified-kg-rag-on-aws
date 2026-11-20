@@ -24,7 +24,6 @@ from unified_kg_rag.adapters.llm.langchain import (
 from unified_kg_rag.adapters.llm.retry import (
     item_error_predicate,
     item_failed_indices,
-    transient_error_predicate,
 )
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.ingestion.base_processor import (
@@ -127,10 +126,7 @@ class ClaimExtractor(BaseProcessor):
         self.ignore_errors = self.config.processing.ignore_errors
         self.show_progress = show_progress
         self.factory = self.providers.llm_factory
-        self.batch_processor = BatchProcessor.from_config(
-            self.config,
-            is_transient_error=transient_error_predicate(self.factory),
-        )
+        self.batch_processor = BatchProcessor.from_config(self.config, self.factory)
         self.is_item_error = item_error_predicate(self.factory)
 
         robust_xml_output_parser = create_robust_xml_output_parser(

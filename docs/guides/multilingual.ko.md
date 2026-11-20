@@ -60,7 +60,9 @@ processing:
   `vi: standard`는 OpenSearch에 히브리어·베트남어 기본 분석기가 없어서입니다(플러그인
   분석기를 대신 지정할 수 있음). 항목이 없는 언어는 `default_analyzer`를 씁니다.
   `backend: local`의 내장 엔진은 어간 추출 언어를 Snowball(`[local]` extra)로 처리하고
-  태국어 연속 문자열을 두 글자 단위로 나누며, 불용어는 두지 않습니다. 청크 `text`는 `source_language`로, 그래프 인덱스는 색인 언어로
+  태국어 연속 문자열을 두 글자 단위로 나누며, 불용어는 OpenSearch와 같은 체인을 따르는
+  `english`와 `cjk`에서만 뺍니다(`cjk`와 `cjk_script_split`은 전각 라틴 문자와 반각 가나도 OpenSearch처럼
+  바꿔서 "ＡＢＣ"가 "abc"와 맞음). 청크 `text`는 `source_language`로, 그래프 인덱스는 색인 언어로
   분석하므로 번역하지 않더라도 코퍼스 언어로 지정하세요. `source_language: en`이면 한국어
   코퍼스가 조사가 붙은 단어("홍길동으로부터")를 토큰 하나로 둡니다. 바꾸면 매핑이
   바뀌므로 `indexing.reset: true`로 한 번 실행할 때까지 증분 실행이

@@ -1,15 +1,18 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Architecture guard: the domain/ layer stays technology-agnostic.
+"""Architecture guard: the inner layers stay technology-agnostic.
 
-CLAUDE.md/design.md advertise "No boto3/LangChain/backend imports" in domain/.
-Two checks enforce it:
+CLAUDE.md/design.md advertise "No boto3/LangChain/backend imports" in domain/,
+and the ports and the shared kernel beneath it import no infrastructure
+either (the domain imports ``shared``; the ports are written in terms of the
+domain models). Two checks enforce it, for each of ``domain/``, ``ports/``
+and ``shared/``:
 
-* a static scan of every domain file's own imports (catches function-local
+* a static scan of every file's own imports (catches function-local
   imports too), and
-* a runtime check that imports every domain module in a clean interpreter and
-  asserts no forbidden package was loaded *transitively* (e.g. through an eager
-  re-export in ``shared``).
+* a runtime check that imports every module of the layer in a clean
+  interpreter and asserts no forbidden package was loaded *transitively*
+  (e.g. through an eager re-export).
 
 There are no carve-outs: LangChain documents are converted to the domain
 ``Document`` in ``adapters.ingestion.document_converter``. Which package
@@ -28,7 +31,10 @@ import pytest
 
 pytestmark = pytest.mark.unit
 
-_DOMAIN_ROOT = Path(__file__).resolve().parents[2] / "unified_kg_rag" / "domain"
+_PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "unified_kg_rag"
+# The layers kept free of infrastructure. A function-local import in shared
+# (``warn_if_langsmith_tracing``) loads its package only when called.
+_PURE_LAYERS = ("domain", "ports", "shared")
 
 # Infra/backend packages the pure domain core must not import.
 _FORBIDDEN_PREFIXES = (
@@ -64,23 +70,25 @@ def _imported_modules(py_file: Path) -> set[str]:
     return mods
 
 
-def test_domain_has_no_infra_imports() -> None:
+@pytest.mark.parametrize("layer", _PURE_LAYERS)
+def test_layer_has_no_infra_imports(layer: str) -> None:
+    root = _PACKAGE_ROOT / layer
     violations: list[str] = []
-    for py_file in sorted(_DOMAIN_ROOT.rglob("*.py")):
-        rel = py_file.relative_to(_DOMAIN_ROOT).as_posix()
+    for py_file in sorted(root.rglob("*.py")):
+        rel = py_file.relative_to(root).as_posix()
         for mod in _imported_modules(py_file):
             match = next((p for p in _FORBIDDEN_PREFIXES if mod.startswith(p)), None)
             if match:
                 violations.append(f"{rel} imports '{mod}' (forbidden: {match})")
-    assert not violations, "domain purity violated:\n" + "\n".join(violations)
+    assert not violations, f"{layer} purity violated:\n" + "\n".join(violations)
 
 
-def _domain_module_names() -> list[str]:
+def _module_names(root: Path) -> list[str]:
     # Walk files, not packages: domain/ingestion and domain/retrieval are
     # namespace packages (no __init__.py), which pkgutil.walk_packages skips.
-    pkg_root = _DOMAIN_ROOT.parent.parent
+    pkg_root = _PACKAGE_ROOT.parent
     names = []
-    for py_file in sorted(_DOMAIN_ROOT.rglob("*.py")):
+    for py_file in sorted(root.rglob("*.py")):
         parts = py_file.relative_to(pkg_root).with_suffix("").parts
         if parts[-1] == "__init__":
             parts = parts[:-1]
@@ -88,9 +96,12 @@ def _domain_module_names() -> list[str]:
     return names
 
 
-def test_domain_import_loads_no_infra_packages() -> None:
-    modules = _domain_module_names()
-    assert any(".ingestion." in m for m in modules)  # the walk reached them
+@pytest.mark.parametrize("layer", _PURE_LAYERS)
+def test_layer_import_loads_no_infra_packages(layer: str) -> None:
+    modules = _module_names(_PACKAGE_ROOT / layer)
+    assert len(modules) > 1  # the walk reached the layer's modules
+    if layer == "domain":
+        assert any(".ingestion." in m for m in modules)  # and the namespaces
     script = (
         "import importlib, json, sys\n"
         f"for name in {modules!r}:\n"
@@ -108,6 +119,6 @@ def test_domain_import_loads_no_infra_packages() -> None:
     )
     leaked = json.loads(result.stdout.strip().splitlines()[-1])
     assert not leaked, (
-        f"importing unified_kg_rag.domain.* loaded {leaked}; find the chain with "
+        f"importing unified_kg_rag.{layer}.* loaded {leaked}; find the chain with "
         "`python -X importtime -c 'import <module>'`"
     )

@@ -481,7 +481,20 @@ gets its models and stores from the run's `Providers` bundle.
   answer the stage rejects afterwards (a graph or claims record that fails
   to build), through the `discards` the batch hands back. A call abandoned on
   its call timeout (`call_timeout_seconds`) is neither served nor stored: its late answer
-  is not its item's, which was retried or failed meanwhile.
+  is not its item's.
+- **Call timeout.** Each item's call runs under a wall-clock timeout, the
+  language-model factory's own request timeout of ingestion calls
+  (`call_timeout_for`: Bedrock's 330 s read timeout, a local server's
+  `providers.llm.timeout_seconds`). It starts before the request is sent,
+  so it fires first, and the request in flight ends at the client's
+  timeout moments later. An abandoned call sends no further request (its
+  stop is set, so the Bedrock hooks and the local clients' request hooks
+  refuse a resend), and the item's next attempt waits for it to end: an
+  item is never in flight twice. One still running a call timeout later
+  (a server that dribbles bytes past every read timeout) fails its item
+  with `ModelCallStillRunningError`, unresent. A fixed 300 s timeout used
+  to abandon long local calls the server kept generating and send them
+  again beside them.
 - **Output fixing.** Structured outputs are parsed with an output-fixing
   parser (the model of `models.roles.fixing`, always on). Every chain first
   drops a leading `<think>`/`<thinking>`/`<reasoning>` block

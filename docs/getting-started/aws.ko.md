@@ -97,8 +97,8 @@ uv sync --no-dev --extra eval --extra viz  # or: pip install -e '.[eval,viz]'
 
 **Markdown과 HTML**은 추가 패키지 없이 파싱합니다. Markdown은 쓰인 그대로, HTML은 표준
 라이브러리 파서로 읽습니다. `unstructured` extra는 둘을 더 정교하게 파싱하며, 설치되어 있으면 기본
-리더 대신 사용됩니다(`uv sync --inexact --extra unstructured`. URL 분할의 SSRF와 마크업 미이스케이프 문제를
-고친 `unstructured>=0.24.1`을 요구함). **Word**(`.docx`) 파일에는 `docx` extra가 필요하며
+리더 대신 사용됩니다(`uv sync --inexact --extra unstructured`. `unstructured>=0.27.37`을
+요구함. 0.24.1에서 URL 분할의 SSRF와 마크업 미이스케이프 문제를 고쳤고, 0.27.37부터 패치된 filelock을 허용함). **Word**(`.docx`) 파일에는 `docx` extra가 필요하며
 (`uv sync --inexact --extra docx`), 없으면 수집은 이 파일을 건너뛰고 extra 이름을 담은 경고를 한 번 남깁니다.
 [원본 형식](../troubleshooting.md#which-source-formats-are-read)(영문)을 참고하세요.
 

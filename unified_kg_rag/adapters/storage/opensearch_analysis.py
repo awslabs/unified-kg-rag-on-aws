@@ -20,11 +20,11 @@ OpenSearch cluster without a plugin.
   ``를`` there, as ``nori`` and the embedded engine's ``cjk`` do. Han and
   Kana need no split (the tokenizer already breaks them from Latin letters
   and digits), and a Hangul run next to them stays one run for
-  ``cjk_bigram``, as in ``cjk``. Unlike ``cjk`` it keeps English stop words,
-  as the embedded engine does. It still differs from the embedded engine
-  where ``cjk`` does: it folds full-width letters (``ＡＢＣ`` is ``abc``),
-  and it splits a combining mark written after a Hangul letter off the run
-  (Korean text writes none). The CDK deployment maps Korean to it
+  ``cjk_bigram``, as in ``cjk``. Unlike ``cjk`` it keeps English stop words;
+  it folds full-width letters as ``cjk`` does (``ＡＢＣ`` is ``abc``), and the
+  embedded engine's ``cjk_script_split`` does both the same. It still splits
+  a combining mark written after a Hangul letter off the run, where the
+  embedded engine does not (Korean text writes none). The CDK deployment maps Korean to it
   (``-c opensearch_korean_analyzer``).
 """
 

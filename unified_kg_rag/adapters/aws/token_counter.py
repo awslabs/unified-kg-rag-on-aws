@@ -6,7 +6,10 @@ import threading
 from functools import lru_cache
 from typing import Any
 
-from unified_kg_rag.adapters.llm.token_estimate import budget_token_count
+from unified_kg_rag.adapters.llm.token_estimate import (
+    budget_token_count,
+    truncate_to_count,
+)
 from unified_kg_rag.shared import get_logger
 
 logger = get_logger(__name__)
@@ -104,8 +107,6 @@ class BedrockTokenCounter:
     exact and never scaled.
     """
 
-    MAX_TRUNCATION_ITERATIONS: int = 8
-
     def __init__(
         self,
         model_id: str,
@@ -180,44 +181,19 @@ class BedrockTokenCounter:
         return int(self._cached_estimate(text))
 
     def truncate_to_token_limit(self, text: str, max_tokens: int) -> tuple[str, int]:
-        """Truncate text to fit within max_tokens using ratio-based estimation and verification.
+        """The longest prefix of ``text`` that :meth:`count_tokens` puts
+        within ``max_tokens`` (``token_estimate.truncate_to_count``), and
+        its count. The ratio search before this returned text over the
+        limit for mixed-script text (the estimate's rate changes with the
+        prefix's script).
 
         Returns:
             A tuple of (truncated_text, final_token_count).
         """
         if not text:
             return text, 0
-
-        token_count = self.count_tokens(text)
-        if token_count <= max_tokens:
-            return text, token_count
-
-        ratio = max_tokens / token_count
-        char_limit = int(len(text) * ratio * 0.95)
-        truncated = text[:char_limit]
-
-        for _ in range(self.MAX_TRUNCATION_ITERATIONS):
-            current_count = self.count_tokens(truncated)
-            if current_count <= max_tokens:
-                slack = max_tokens - current_count
-                if slack > max_tokens * 0.05 and len(truncated) < len(text):
-                    chars_per_token = len(truncated) / max(current_count, 1)
-                    extra_chars = int(slack * chars_per_token * 0.8)
-                    candidate = text[: len(truncated) + extra_chars]
-                    candidate_count = self.count_tokens(candidate)
-                    if candidate_count <= max_tokens:
-                        truncated = candidate
-                        current_count = candidate_count
-                        continue
-                return truncated, current_count
-
-            overshoot = current_count - max_tokens
-            chars_per_token = len(truncated) / max(current_count, 1)
-            reduce_chars = max(int(overshoot * chars_per_token * 1.1), 1)
-            truncated = truncated[: len(truncated) - reduce_chars]
-
-        final_count = self.count_tokens(truncated)
-        return truncated, final_count
+        truncated = truncate_to_count(text, max_tokens, self.count_tokens)
+        return truncated, self.count_tokens(truncated)
 
     def _call_bedrock_count_tokens(self, text: str) -> int:
         # The request nests the payload under `input` and the response returns

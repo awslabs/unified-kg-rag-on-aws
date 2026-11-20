@@ -280,8 +280,9 @@ a backend on): importing any module of the application (the CLIs and the
 composition root aside), evaluation, the search strategies, the retrieval
 kernel or the ingestion adapters loads no vendor binding, port
 implementation, gremlin-python or opensearch-py.
-`tests/unit/test_domain_purity.py` checks the third-party side: no domain
-module loads an infrastructure package, even transitively.
+`tests/unit/test_domain_purity.py` checks the third-party side: no module
+of the domain, the ports or the shared kernel loads an infrastructure
+package, even transitively.
 
 **Public API.** Callers outside the package import from `unified_kg_rag`,
 whose `__all__` is the supported surface: the names for using the framework

@@ -19,7 +19,9 @@ Exit codes:
 
 ``--output-format json`` prints one JSON document with the run's result to
 stdout and sends everything else (banner, progress, logs) to stderr, so the
-output pipes into ``jq``. A run stopped by a signal before it printed one
+output pipes into ``jq``. Every result document has the run's ``status``
+and ``exit_code`` (``completed`` and ``0`` for a success, see
+:func:`print_json`). A run stopped by a signal before it printed one
 prints ``{"status": "interrupted", "exit_code": 143, "error_type":
 "Interrupted"}`` (or 130) instead, and one that fails before it printed one
 ``{"status": "failed", "exit_code": 1, "error_type": ...}`` (or 2) with the
@@ -700,11 +702,25 @@ def json_output(args: argparse.Namespace) -> bool:
     return as_json
 
 
-def print_json(result: Any) -> None:
+# The ``status`` of a JSON document whose run succeeded and that names
+# none of its own (a run-ingestion result keeps its run's).
+COMPLETED = "completed"
+
+
+def print_json(result: Any, *, final: bool = True) -> None:
     """Print ``result`` as the run's one JSON document on stdout, with the
-    package ``version`` that wrote it (a key every document has)."""
+    package ``version`` that wrote it (a key every document has).
+
+    Every ``final`` document also has the run's ``status`` and
+    ``exit_code``: a document without them is a success's, ``completed``
+    and ``0`` (a failure's has them from :func:`failure_fields`). A
+    document printed while the process runs on (``final=False``:
+    run-console's ``serving``) has no exit code."""
     if isinstance(result, dict):
         result = {"version": __version__, **result}
+        if final:
+            result.setdefault("status", COMPLETED)
+            result.setdefault("exit_code", 0)
     with _print_lock:
         _json["printed"] = True
         print(json.dumps(result, indent=2, ensure_ascii=False, default=str))

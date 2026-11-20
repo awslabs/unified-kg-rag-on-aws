@@ -18,7 +18,6 @@ from unified_kg_rag.adapters.llm.chain_factory import (
     usage_model_id,
 )
 from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED, BatchProcessor
-from unified_kg_rag.adapters.llm.retry import transient_error_predicate
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.ingestion.base_processor import (
@@ -153,10 +152,7 @@ class CommunityDetector:
         self.show_progress = show_progress
 
         self.factory = self.providers.llm_factory
-        self.batch_processor = BatchProcessor.from_config(
-            self.config,
-            is_transient_error=transient_error_predicate(self.factory),
-        )
+        self.batch_processor = BatchProcessor.from_config(self.config, self.factory)
 
         if self.community_detection_config.report_generation.enabled:
             parser = create_robust_xml_output_parser(

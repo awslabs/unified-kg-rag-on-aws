@@ -748,6 +748,20 @@ entities and relationships, so the runbook plans for 2-3 times the memory
 per unit. That factor is an estimate, not a measurement. The time excludes
 model latency and network writes to Neptune and OpenSearch.
 
+Memory follows the extracted items more than the units. A dense full build
+(2026-11-19, package at `834db5996`; 2,000 English, Korean and Japanese
+documents in 3,149 units; fake models whose extraction returned about 77
+raw entities and relationships per unit, 64-dimension embeddings; the
+embedded stores; an Intel Xeon Platinum 8259CL host, the process's resident
+memory sampled every 5 s) grew from 0.19 GiB to a peak of 1.59 GiB: about
+470 KiB per unit, or about 6 KiB per raw item, the extraction stage alone
+about 1 GiB of it. For comparison, `qwen2.5:3b-instruct` on Ollama (CPU,
+the same host and package) built 449 entities and 449 relationships from
+103 MuSiQue paragraphs, one gleaning round included: about 9 per unit
+after resolution. A
+real model on 4,800-character units lies between the two: the 2-3 times
+factor stays an estimate until a real-model build measures it.
+
 A `raptor`-only run on AWS (2026-11-07, package at `1c80d7da`, 2 vCPU and
 8 GiB) over 50,000 MuSiQue paragraphs (about 500 characters each; 33,165
 distinct) took 1,474 s: indexing 562 s (Titan embeddings), the summary tree
@@ -1130,8 +1144,6 @@ user tunes, or because they act only in a narrow path:
   budget derived from a model whose output reservation fills its window.
   Without it the budget would be zero or less, and every section would be
   excluded.
-- `BedrockTokenCounter.MAX_TRUNCATION_ITERATIONS` (8): the most recounts
-  a text cut to a token limit makes before keeping the last cut that fits.
 - `LanguageModelInfo.BETA_1M_CONTEXT_WINDOW_SIZE` (1,000,000): the
   context window that `aws.bedrock.enable_1m_context` opts a model into.
 

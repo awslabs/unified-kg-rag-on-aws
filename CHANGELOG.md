@@ -71,59 +71,26 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   "Use the default" on it, or the notice's Remove, moves the key's value into each replacement the file does not set
   and drops it, so a reset field takes its default (removing `models.prices` removes `evaluation.prices` too).
   An ingestion run it prices publishes its USD as the `llm_cost_usd` metric (the CDK dashboard's "LLM cost" widget).
-- Query limits beside the deadline:
-  - Limits: `search.query_max_model_calls` and `search.query_max_input_tokens` (off by default) bound one query's
-    model calls and their input tokens, and `RAGInput.limits` (`QueryLimits`, exported; the MCP tools' `limits`,
-    whose deadline covers the wait for a call slot, the server's own reported by `kg_describe_schema`) lowers them
-    and the deadline for one query, never raising them. They count the calls a query plans: a retry of a call that
-    failed transiently (a stream cut before its answer text) reuses the room its failed attempt held, so it is not
-    refused, while the usage counts every attempt sent, as an ingestion run's `processing.max_run_*` budget does
-    (`UsageLimits.counts_retries`, `shared.usage.RetriedCall`), so one query can send up to its backend's query
-    retry attempts (`retry.model.max_attempts` on Bedrock, `retry.model_server.max_attempts` on Ollama and
-    OpenAI-compatible servers) times what its limits allow, each attempt resendable by its client
-    (`search.model_max_attempts` Bedrock requests; an OpenAI-compatible stream before its response starts). A call
-    past a limit is refused before it is sent: the usage callback now raises its refusal (LangChain swallowed a
-    handler's error) and logs any other error of its own
-    (`setup_logging` drops LangChain's own "Error in UsageCallbackHandler... callback" WARNING of a refusal).
-  - Fan-out: `global`, `drift` and `iterative` start only the calls that fit beside what the answer will read
-    (DRIFT's actions sharing what is left, each built context kept to its share and an action the meter still
-    refuses, or whose share seats no section, left out as one that did not fit; each planned call counted with the
-    question it carries, by the one estimate of the answer's call, `answer_call_tokens`, whose instructions are the
-    chain's own rule, `answer_instructions`) and list the rest in `metadata.degraded` (reason `query_limit`; under
-    `use_dynamic_selection` global keeps the reports left unrated, as a failed rating, and keeps a map call only when
-    a map can follow).
-  - Auto routing: `auto` routes only to strategies whose fewest calls fit (when none fits with its query translation
-    and extractions, to those that fit without them, which it then skips), makes no router call an input-token
-    limit cannot take, routing to the fallback among those that fit the call limit (`metadata.routing.over_limits`),
-    and under either limit starts no speculative extraction.
-  - Context cut: the answer's context is cut to the tokens left after the answer prompt and the question, the built
-    context packed down to them at the meter's estimate whatever its counter counts (a pack a smaller budget no
-    longer shrinks, its cut sections ending at the same break, is cut down to the most of it that fits, its
-    synthesized sections kept first as packing seats them, empty only when no section fits whole or cut down; the
-    fan-out keeps that prompt's tokens too; a cut, its sections left out or cut short, listed as
-    `query_limit: N of M sections cut`). A search (`asearch`, `kg_search`, `--mode search`) keeps nothing for an
-    answer it does not make; a query naming `drift` keeps its one action's call too (and that call's least input
-    under an input-token limit: `answering_calls`).
-  - Optional calls: a query translation or extraction, the follow-up rewrite (which then searches the follow-up as
-    written), the structured planner and an output repair (`usage.optional_calls`) never take the call kept for the
-    answer, nor under an input-token limit the answer's prompt, question and least context (nor, with nothing kept,
-    a call past the limit): the step is degraded instead, logged as skipped at the query's limit.
-  - Errors: an answer the limits left no context abstains with `abstention_reason: query_limit` (a query naming its
-    strategy included), and an `auto` query none of whose strategies fits the call limit fails before any call with
-    `UsageLimitExceededError` (exported; error class `limit_exceeded`, a caller's error: not counted in
-    `query_failed`, `refused` on the console's dashboard, its message shown to an MCP caller; exit code 1, console
-    HTTP 422). A query an MCP call's deadline ends names the setting it came from
-    (`limits.deadline_seconds` or `search.query_timeout_seconds`) and the seconds it configures, and the `limits`
-    schema agents read is plain text.
-  - Console and CLI: the Ask page names that decline, the steps the limits skipped (apart from those that failed)
-    and the strategies they left `auto` without, and `run-rag`'s text output says the same (naming the settings to
-    raise). The console records each decline's reason (an older store gains the column, consoles opening it at once
-    too, and a current one opens beside a reader), and its Dashboard counts declines at a limit apart (`limited`),
-    out of the decline rate and the declines of the totals and of each strategy alike.
-  - Metrics: the `query_limited` metric (0 or 1, on the CDK dashboard's "Query outcomes" widget, and named in the
-    `--metrics-sink` help of `run-rag`, `run-mcp-server` and `run-console`) and the query span's
-    `kg_rag.query_limited` count a query its limits cut short (a step left out or cut, an abstention, a refusal, or
-    the strategies `auto` was routed past), which `query_degraded` could not tell from a failing step.
+- Query limits beside the deadline
+  ([Query: Model-call and input-token limits](docs/guides/query.md#model-call-and-input-token-limits)):
+  - `search.query_max_model_calls` and `search.query_max_input_tokens` (off by default) bound one query's model calls
+    and input tokens; `RAGInput.limits` (`QueryLimits`, exported; the MCP tools' `limits`) lowers them and the deadline
+    for one query, never raising them. They count the calls a query plans (a transient retry reuses its attempt's
+    room), while the usage counts every attempt sent. A call past a limit is refused before it is sent (the usage
+    callback raises its refusal, which LangChain swallowed, and LangChain's own WARNING of it is dropped).
+  - `global`, `drift` and `iterative` start only the calls that fit beside the answer and list the rest in
+    `metadata.degraded` (reason `query_limit`); `auto` routes only to strategies whose fewest calls fit
+    (`metadata.routing.over_limits`) and starts no speculative extraction; the answer's context is cut to the room
+    left (`query_limit: N of M sections cut`); the optional calls (translation, extractions, follow-up rewrite,
+    planner, output repair) never take the answer's call or least input.
+  - An answer the limits left no context abstains (`abstention_reason: query_limit`); an `auto` query no strategy of
+    which fits fails before any call with `UsageLimitExceededError` (exported; `limit_exceeded`, exit code 1, console
+    HTTP 422, not counted in `query_failed`). An MCP deadline names the setting it came from
+    ([MCP](docs/guides/mcp.md)).
+  - The console's Ask page, `run-rag`'s text output and the Dashboard (`limited`; an older console store gains the
+    column when opened) show the declines and skipped steps; the `query_limited` metric and the
+    `kg_rag.query_limited` span attribute count a query its limits cut short
+    ([Telemetry](docs/reference/telemetry.md)).
 - One streaming path: `GraphRAGChain.aquery_events()` (sync `query_events()`) yields typed events (`QueryEvent`,
   exported with `QueryStart`, `QueryRouted`, `QuerySources`, `AnswerChunk` and `QueryResult`): the query `ainvoke`
   runs, its deadline, query limits, guardrail, metrics and memory included, ending with its `RAGOutput`. LangChain's
@@ -271,6 +238,12 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
 - Graph extraction builds each unit's record as its call completes, while the other calls are in flight, not all
   after the last call (500 units: 9 s after the last call to 0.01 s), and `entity_key` is cached (bounded LRU; record
   building takes 25-33% less CPU). Outputs are unchanged.
+- Every final `--output-format json` document has the run's `status` and `exit_code` (`completed` and `0` for a
+  success): `run-rag` said `success`, `run-ingestion` `status`, and a successful `run-eval` neither. Additive: no key
+  was removed.
+- The `unstructured` extra requires `unstructured>=0.27.37` (locked at 0.27.37, from 0.24.1), the first release that
+  allows filelock 4, so the lockfile no longer overrides its filelock cap and a `pip install` gets the patched
+  filelock too.
 
 ### Deprecated
 
@@ -522,6 +495,25 @@ Bugs present in 0.3.0.
 - The Graph page's Analysis tab cut off the last column of its schema conformance and evidence tables in the side
   panel (English and German, at 1440 and 1920 px): each table lists the parts as rows, entities and relationships as
   columns.
+- The MCP server's instructions said the index holds the GraphRAG and LightRAG methodologies only; they name every
+  methodology (HippoRAG 2 and RAPTOR too).
+- With `aws.bedrock.assumed_role_arn` set and the caller already in an assumed role of the same name in another
+  account (or partition), the role was not assumed and the Bedrock calls ran in the caller's account; the role is kept
+  only when partition, account and name match.
+- Bedrock's token-limit cut (`BedrockTokenCounter.truncate_to_token_limit`: embedding inputs, ragas contexts,
+  summary-tree texts) could return text over the limit (15 of 300 mixed-script samples, by up to 202 tokens); it keeps
+  the longest prefix that fits, by binary search as the local counter does.
+- The query entity prompt did not say what to answer for a query that names no entity, and a model's "none" was
+  searched for as a focus entity; it asks for an empty answer, so the strategies search by the query.
+- The embedded engine's `cjk` analyzer (the `ja` and `zh` default) did not fold width or drop stop words as
+  OpenSearch's does: fullwidth "ＡＢＣ" and halfwidth "ｶﾀｶﾅ" did not match "abc" and "カタカナ". It follows OpenSearch 2.19's
+  chain (checked with `_analyze`); queries see it at once (the engine analyzes stored text when it loads). A live
+  field mapped `standard` no longer passes for `cjk`.
+- An ingestion LLM call had a fixed 300 s wall-clock timeout whatever the client's: on a slow local server
+  (`providers.llm.timeout_seconds` raised) long calls were abandoned and sent again while the server kept generating
+  them. The call timeout is the factory's request timeout of ingestion calls (`providers.llm.timeout_seconds`;
+  Bedrock's 330 s read timeout, from 300 s), an abandoned call sends no further request, and its item is retried only
+  once it ended (`ModelCallStillRunningError` when it still runs a call timeout later).
 
 ## [0.3.0] - 2026-11-14
 

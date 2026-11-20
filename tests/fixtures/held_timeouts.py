@@ -84,7 +84,8 @@ class HeldCallTimeouts:
     """Batch call timeouts (``BatchProcessor._run_with_timeout``) that expire
     on cue: a timed call that calls :meth:`hang` times out at once, and any
     other runs to its end however loaded the runner (the call timeout the
-    test configures, long, is only a backstop)."""
+    test configures, long, is only a backstop). The item's retry waits for
+    the abandoned call to end, as the batch makes it."""
 
     def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from unified_kg_rag.adapters.llm import langchain as langchain_mod
@@ -132,10 +133,18 @@ class HeldCallTimeouts:
         monkeypatch.setattr(Future, "result", timed_result)
 
     def hang(self) -> None:
-        """In a timed call: time it out now, then hang until :attr:`release`
-        is set (bounded)."""
+        """In a timed call: time it out now, then hang until the batch
+        abandoned it (its stop set: a model client's stop points would end
+        its request) or :attr:`release` is set (bounded), and return: an
+        answer that arrives after the abandonment."""
+        from unified_kg_rag.shared.query_stop import query_stopped
+
         self._current.expiry.set_result(None)
-        self.release.wait(30)
+        deadline = time.monotonic() + 30
+        while not (self.release.is_set() or query_stopped()):
+            if time.monotonic() > deadline:
+                return
+            self.release.wait(0.01)
 
     def settle(self) -> None:
         """Wait (bounded) until every call that timed out has returned."""

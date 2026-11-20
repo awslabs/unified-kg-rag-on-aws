@@ -381,9 +381,10 @@ def _late_first_attempt(second: str, held: HeldCallTimeouts) -> Any:
 def test_a_timed_out_attempt_s_late_answer_is_not_stored(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, second: str
 ) -> None:
-    # The abandoned call answered after its item's retry: stored last, a
-    # re-run was served it (over the retry's good answer), or kept it after
-    # the item's failure had already dropped its responses.
+    # The abandoned call answered after the batch gave up on it (once its
+    # item's retry raced it, now before the retry, which waits for it):
+    # stored, a re-run was served it (over the retry's good answer), or kept
+    # it after the item's failure had already dropped its responses.
     held = HeldCallTimeouts(monkeypatch)
     respond = _late_first_attempt(second, held)
     cache = LLMResponseCache(flush_every=100)

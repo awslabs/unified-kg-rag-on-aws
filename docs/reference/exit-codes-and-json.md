@@ -121,8 +121,12 @@ are flushed first, and a process pool's workers are ended with it.
 `--output-format json` prints one JSON document to stdout and moves the
 banner, progress and logs to stderr, so the output pipes into `jq`; the EMF
 records of `--metrics-sink cloudwatch` go to stderr too. Every document
-starts with `version`, the package version that wrote it. The document
-holds:
+starts with `version`, the package version that wrote it, and has the run's
+`status` and `exit_code`: `"completed"` and `0` for a success (a
+`run-ingestion` result keeps its run's status), the failure keys of
+[Failures and interruptions](#failures-and-interruptions) otherwise. A
+script can branch on them alike for every CLI; `run-console`'s `serving`
+document, printed while it serves, has no `exit_code`. The document holds:
 
 - **`run-rag`**: `success` and the answer or the search results; a failed
   query has `"success": false` and its `error` (exit `1`). An answer's

@@ -37,6 +37,7 @@ from unified_kg_rag.application.cli import (
 from unified_kg_rag.application.cli.conventions import (
     EXIT_FAILURE,
     exits_on_sigterm,
+    failure_fields,
     interruptible,
     json_output,
     print_json,
@@ -68,6 +69,29 @@ def _document(text: str) -> Any:
         __version__
     )
     return document
+
+
+# The status keys print_json adds to a success's document.
+_COMPLETED = {"status": "completed", "exit_code": 0}
+
+
+def test_every_final_json_document_has_its_status_and_exit_code(capsys) -> None:
+    """run-rag said ``success``, run-ingestion ``status`` and a successful
+    run-eval neither; only failure documents had ``exit_code`` (ARCH E13)."""
+    json_output(argparse.Namespace(output_format="json"))
+    try:
+        print_json({"runs": []})
+        assert _document(capsys.readouterr().out) == {"runs": [], **_COMPLETED}
+        # A failure's keep theirs; a run-ingestion result its run's status.
+        print_json({**failure_fields(1, "boom")})
+        assert _document(capsys.readouterr().out)["exit_code"] == 1
+        print_json({"status": "running", "exit_code": 0})
+        assert _document(capsys.readouterr().out)["status"] == "running"
+        # A server's document while it serves has no exit code.
+        print_json({"status": "serving"}, final=False)
+        assert _document(capsys.readouterr().out) == {"status": "serving"}
+    finally:
+        json_output(argparse.Namespace(output_format="text"))
 
 
 @pytest.fixture(autouse=True)
@@ -781,7 +805,7 @@ def test_a_sigterm_after_the_result_is_printed_ends_the_process_at_once(
         signal.signal(signal.SIGTERM, previous)
     # Ended from the handler, not after unwinding through the loop.
     assert events[:2] == [143, "unwound"]
-    assert _document(capsys.readouterr().out) == {"ok": True}
+    assert _document(capsys.readouterr().out) == {"ok": True, **_COMPLETED}
 
 
 def test_a_sigterm_after_main_returned_ends_the_process_with_143(
@@ -814,7 +838,7 @@ def test_a_sigterm_after_main_returned_ends_the_process_with_143(
         signal.signal(signal.SIGTERM, previous)
     assert ended == [143]
     # One document: the result, not a status after it.
-    assert _document(capsys.readouterr().out) == {"ok": True}
+    assert _document(capsys.readouterr().out) == {"ok": True, **_COMPLETED}
 
 
 @pytest.mark.slow
@@ -1100,7 +1124,7 @@ def test_a_printed_json_result_is_not_followed_by_a_status(capsys, monkeypatch) 
 
     with pytest.raises(SystemExit):
         main()
-    assert _document(capsys.readouterr().out) == {"done": True}
+    assert _document(capsys.readouterr().out) == {"done": True, **_COMPLETED}
 
 
 @pytest.mark.parametrize(
@@ -2579,7 +2603,7 @@ def test_a_finished_cli_writes_its_json_document_to_a_pipe() -> None:
         sys.exit(main())
         """)
     assert result.returncode == 0, result.stderr
-    assert _document(result.stdout) == {"status": "completed"}
+    assert _document(result.stdout) == _COMPLETED
 
 
 def test_a_finished_cli_shuts_its_tracing_backend_down() -> None:

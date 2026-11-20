@@ -16,7 +16,9 @@ import pytest
 
 from unified_kg_rag.adapters.local.search_engine.analyzers import (
     _ANALYZERS,
+    STANDARD,
     analyzes_alike,
+    get_analyzer,
 )
 from unified_kg_rag.adapters.storage.opensearch_analysis import (
     CJK_SCRIPT_SPLIT,
@@ -124,12 +126,14 @@ def test_a_multi_field_s_analyzer_is_defined() -> None:
 
 def test_the_cdk_maps_korean_to_an_analyzer_every_engine_has() -> None:
     # The IaC is a separate project: its default is read as text. Its Korean
-    # analyzer is one the indexer defines, and the embedded engine knows it
-    # as the cjk analyzer it splits like.
+    # analyzer is one the indexer defines, and the embedded engine knows it:
+    # cjk's width fold with the English stop words kept, as OpenSearch's
+    # (test_store_parity pins the tokens against a container).
     source = _IAC_CONFIG.read_text()
     (default,) = re.findall(r'opensearch_korean_analyzer: str = "([^"]+)"', source)
     assert default == CJK_SCRIPT_SPLIT
     assert f'"nori" if opensearch_nori_package else "{CJK_SCRIPT_SPLIT}"' in source
     for name in CUSTOM_ANALYZERS:
         assert name in _ANALYZERS
-        assert analyzes_alike(name, "cjk")
+        assert not analyzes_alike(name, STANDARD)
+        assert get_analyzer(name)("ＡＷＳ를 the") == ["aws", "를", "the"]
