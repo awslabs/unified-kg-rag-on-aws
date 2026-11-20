@@ -14,7 +14,7 @@ interface FileWithPath extends File {
   webkitRelativePath: string;
 }
 
-export function IngestPage({ status, onJobsChanged }: { status: Status | null; onJobsChanged: () => void }) {
+export function IngestPage({ status, namespace, onJobsChanged }: { status: Status | null; namespace?: string | null; onJobsChanged: () => void }) {
   const { t, number, date } = useI18n();
   const corpora = useApi(() => get<{ corpora: Corpus[]; extensions: string[] }>("corpora"), []);
   const jobs = useApi(() => get<{ jobs: JobRecord[] }>("jobs"), []);
@@ -40,7 +40,8 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
   const [uploading, setUploading] = useState(false);
   const [over, setOver] = useState(false);
 
-  const suffix = indexValue.trim();
+  // The namespace the run writes: the one typed, else the header's pick.
+  const target = indexValue.trim() || namespace || "";
   // The target namespace's methodologies: the picker starts from them, so
   // ingesting another corpus keeps what the namespace serves. Unknown (a
   // store error, a bad name) reads as no record.
@@ -48,7 +49,7 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
   const chosen = methodologies ?? holds ?? status?.methodologies ?? ["graphrag", "lightrag"];
   const held = useApi(
     () =>
-      get<NamespaceHeld>("namespace/methodologies", { suffix: suffix || undefined, methodologies: chosen.join(",") || undefined })
+      get<NamespaceHeld>("namespace/methodologies", { namespace: target || undefined, methodologies: chosen.join(",") || undefined })
         .then((found) => {
           setHolds(found.recorded && found.held.length ? found.held : null);
           return found;
@@ -57,7 +58,7 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
           setHolds(null);
           return null;
         }),
-    [suffix, chosen.join(","), status?.config_path],
+    [target, chosen.join(","), status?.config_path],
   );
   // What this run would remove from the namespace (the server decides, by
   // the artifacts the picked methodologies build).
@@ -79,7 +80,7 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
       : {
           corpus,
           methodologies: chosen,
-          index_value: indexValue.trim() || null,
+          namespace: target || null,
           force_rebuild: forceRebuild,
           reset,
           confirm_reset: confirmReset,
@@ -238,7 +239,7 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
                 <div className="stack" style={{ marginTop: 10, gap: 10 }}>
                   <label className="field">
                     <span className="field-label">{t("ingest.indexValue")}</span>
-                    <input className="input mono" value={indexValue} placeholder={status?.namespace ?? "default"} onChange={(e) => setIndexValue(e.target.value)} />
+                    <input className="input mono" value={indexValue} placeholder={namespace ?? status?.namespace ?? "default"} onChange={(e) => setIndexValue(e.target.value)} />
                     <span className="field-help">{t("ingest.indexValueHelp")}</span>
                   </label>
                   <label className="check">

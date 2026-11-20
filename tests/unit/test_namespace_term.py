@@ -41,6 +41,7 @@ NAMESPACE_CLIS = {
     "run-visualization",
     "run-describe",
     "run-mcp-server",
+    "run-console",
 }
 # Each CLI's other required flags.
 _REQUIRED = {"run-rag": ["--query", "q"], "run-eval": ["--data-path", "eval.json"]}

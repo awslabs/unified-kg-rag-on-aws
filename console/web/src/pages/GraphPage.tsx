@@ -65,10 +65,20 @@ type Panel = "entity" | "communities" | "analysis";
 const LEGEND_SLOTS = 8;
 const OTHER_GROUPS = "\u0000other";
 
-export function GraphPage({ params }: { params: URLSearchParams }) {
+export function GraphPage({ params, namespace }: { params: URLSearchParams; namespace?: string | null }) {
   const { t, date } = useI18n();
-  const files = useApi(() => get<{ graphs: GraphFile[]; current: CurrentGraph }>("graphs"), []);
+  // The namespace the header picked (undefined: the config's): its graph is
+  // brought up to date and opened.
+  const picked = namespace ?? undefined;
+  const files = useApi(() => get<{ graphs: GraphFile[]; current: CurrentGraph }>("graphs", { namespace: picked }), [picked]);
   const [chosen, setChosen] = useState<string | null>(params.get("graph"));
+  // Another namespace picked: the export chosen of the last one is not its.
+  const [chosenOf, setChosenOf] = useState(picked);
+  if (chosenOf !== picked) {
+    setChosenOf(picked);
+    // Not when the header's namespace first arrives: a link's choice stays.
+    if (chosenOf !== undefined) setChosen(null);
+  }
   // A link's namespace (an answer's "Show in the graph"): the graph it searched.
   const wanted = params.get("namespace");
   const ref = files.data ? pickGraph(files.data, chosen, wanted) : null;
@@ -80,7 +90,7 @@ export function GraphPage({ params }: { params: URLSearchParams }) {
   // No build record: an empty namespace, or one indexed before build
   // records were written (the stores answer, yet no graph is current).
   const unrecorded = none && files.data?.current.state === "unrecorded";
-  const held = useApi(() => (unrecorded ? get<NamespaceHeld>("namespace/methodologies").catch(() => null) : Promise.resolve(null)), [unrecorded]);
+  const held = useApi(() => (unrecorded ? get<NamespaceHeld>("namespace/methodologies", { namespace: picked }).catch(() => null) : Promise.resolve(null)), [unrecorded, picked]);
   // The build time (and whether it is outdated) first: a narrow select
   // cuts the end, and a console run's id is long.
   const fileLabel = (g: GraphFile) => {

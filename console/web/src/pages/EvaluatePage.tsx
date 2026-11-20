@@ -31,10 +31,12 @@ interface RunListing {
   strategies: string[];
 }
 
-export function EvaluatePage({ status, onJobsChanged }: { status: Status | null; onJobsChanged: () => void }) {
+export function EvaluatePage({ status, namespace, onJobsChanged }: { status: Status | null; namespace?: string | null; onJobsChanged: () => void }) {
   const { t, date, number } = useI18n();
   const datasets = useApi(() => get<{ datasets: DatasetInfo[] }>("datasets"), []);
-  const strategies = useApi(() => get<{ strategies: StrategyInfo[] }>("strategies"), [status?.config_path]);
+  // The namespace the header picked (undefined: the config's): what the run queries.
+  const asked = namespace ?? undefined;
+  const strategies = useApi(() => get<{ strategies: StrategyInfo[] }>("strategies", { namespace: asked }), [status?.config_path, asked]);
   const runs = useApi(() => get<{ runs: RunListing[] }>("evaluations"), []);
   const jobs = useApi(() => get<{ jobs: JobRecord[] }>("jobs"), []);
   const [dataset, setDataset] = useState<string>("");
@@ -61,6 +63,7 @@ export function EvaluatePage({ status, onJobsChanged }: { status: Status | null;
     try {
       const job = await send<JobRecord>("jobs/evaluate", {
         dataset: datasetRef,
+        namespace: asked ?? null,
         strategies: chosen,
         repeats,
         closed_book: closedBook,

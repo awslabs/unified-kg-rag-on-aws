@@ -7,6 +7,8 @@ export interface Status {
   config_path: string | null;
   config_error: string | null;
   namespace: string | null;
+  /** What a question without a search type searches with (search.search_type). */
+  search_type?: string | null;
   backend: Record<string, string | null> | null;
   models: Record<string, string | null> | null;
   methodologies: string[];
@@ -17,6 +19,15 @@ export interface Status {
   jobs: JobRecord[];
   loopback: boolean;
   sample_questions: string[];
+}
+
+/** `/api/namespaces`: the namespaces the header's picker offers, the
+ * config's (`default`) first; `listed` false when the stores could not
+ * list theirs (only the config's is offered). */
+export interface NamespaceList {
+  default: string;
+  namespaces: string[];
+  listed: boolean;
 }
 
 /** `/api/namespace/methodologies`: what an index namespace holds, as its
@@ -173,11 +184,24 @@ export interface AskResult {
   total_results: number | null;
   context_sections_included: number | null;
   context_sections_excluded: number | null;
-  processed_query: { original_query: string; final_query: string; translated_query: string | null; standalone_query?: string | null; entities: string[] };
+  processed_query: ProcessedQuery;
   sources: Source[];
   namespace: string;
   trace_id: string | null;
   trace_url: string | null;
+}
+
+/** What query processing made of a question (`ProcessedQuery`): the
+ * follow-up rewrite, the translation, what was searched and the entities and
+ * keywords extracted (the keywords absent from an older server). */
+export interface ProcessedQuery {
+  original_query: string;
+  final_query: string;
+  translated_query: string | null;
+  standalone_query?: string | null;
+  entities: string[];
+  hl_keywords?: string[];
+  ll_keywords?: string[];
 }
 
 export type AskEvent =

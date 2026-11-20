@@ -1429,6 +1429,57 @@ button.cite-link:hover {
   font-weight: var(--weight-regular);
   font-size: var(--text-sm);
 }
+/* Why the answer searched what it did (collapsed): the follow-up rewrite,
+   the translation and the extracted entities and keywords. */
+.query-processing {
+  margin-top: var(--space-3);
+  font-size: var(--text-sm);
+}
+.query-processing > summary {
+  cursor: pointer;
+  color: var(--graphite);
+}
+.query-processing .kv {
+  margin-top: var(--space-2);
+}
+.term-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.term-list > li {
+  padding: 0 6px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-pill);
+  overflow-wrap: anywhere;
+}
+
+/* The header's namespace picker: the chip, its dot, and a select inside. */
+.namespace-select {
+  /* As wide as the namespace shown, not the longest one offered: the chip
+     keeps the width it had before it was a picker. */
+  field-sizing: content;
+  appearance: none;
+  max-width: 16ch;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.namespace-picker .namespace-chip::after {
+  content: "";
+  width: 0;
+  height: 0;
+  border-inline: 3.5px solid transparent;
+  border-top: 4px solid var(--graphite);
+}
+
 .route-note {
   margin: 0 0 var(--space-3);
   font-size: var(--text-sm);

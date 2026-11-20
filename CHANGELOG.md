@@ -89,6 +89,11 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
 
 ### Added
 
+- The console's header picks the namespace Ask, Evaluate and Graph read, of those the stores hold (`/api/namespaces`;
+  the Ask, evaluate and graph requests take `namespace`); Ingest writes into it unless told another. `run-console`
+  takes the provider flags of the other CLIs (`--backend local` opens the local flow without a config file) and
+  `--namespace`, and passes them on to its jobs. Ask's collapsed "Query processing" section shows the follow-up
+  rewrite, the translation and the extracted entities and keywords.
 - One name for the namespace on every surface: `--namespace` on every CLI that reads or writes one,
   `RAGInput.namespace`, `processing.document_parsing.namespace`, `run-eval --arm ...,namespace=`,
   `describe_namespace(config, namespace)`, `export_graph(namespace=)` and the console's requests (`namespace`).
@@ -228,9 +233,11 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
 - Retrieval `ndcg_at_k` (binary relevance, log2 discount), and several cutoffs: `evaluation.retrieval_k` takes a
   list, the first keeping the `*_at_k` names, each further k adding `hit_at_<k>`, `recall_at_<k>`, `ndcg_at_<k>`.
 - `search.search_type`, the search type of a query that names none (hybrid), so a `run-eval --arm` compares hybrid
-  with lexical or vector in one paired run.
+  with lexical or vector in one paired run. The console's questions and the MCP tools read it too when they name
+  none (they sent hybrid).
 - Embedding usage for every provider (`embedding_calls`, `embedding_input_tokens`, `embedding_estimated_calls`;
-  `usage_schema` 4) and `models.prices.<id>.embedding_per_million_tokens`, which every USD figure adds.
+  `usage_schema` 4) and `models.prices.<id>.embedding_per_million_tokens`, which every USD figure adds. The console's
+  dashboard sums and prices the embedding role's and model's rows too, and names an embedding model without a price.
 - With tracing on, `run-eval` reports per-span latency (`stage_latency_seconds`: answers, mean, p50, p95) in the run
   summary and per comparison strategy, from each answer's `stage_seconds`.
 - `search.hybrid.lexical_fuzziness` (default `AUTO`, the fixed value before; `AUTO:<low>,<high>`, `1`, `2`, or `0` to

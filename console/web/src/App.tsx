@@ -2,11 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import { useEffect, useRef, useState, type ReactElement } from "react";
 import { LocalePicker } from "./components/LocalePicker";
+import { NamespacePicker } from "./components/NamespacePicker";
 import { ThemePicker } from "./components/ThemePicker";
 import { useI18n } from "./i18n/i18n";
 import { get } from "./lib/api";
 import { navigate, PAGES, useRoute, type Page } from "./lib/router";
-import type { NamespaceHeld, Status } from "./lib/types";
+import { effectiveNamespace, storedNamespace, storeNamespace } from "./lib/namespace";
+import type { NamespaceHeld, NamespaceList, Status } from "./lib/types";
 import { useApi } from "./lib/useApi";
 import { NAV_FOLDED, useCompactNav } from "./lib/useCompactNav";
 import { AskPage } from "./pages/AskPage";
@@ -26,14 +28,28 @@ export function App() {
   const navRow = useRef<HTMLDivElement>(null);
   // The row compacts in steps (tagline, field labels) and folds the links
   // into the menu only when it still does not fit, whatever the width.
-  const fold = useCompactNav(navRow, [locale, running > 0, status.data?.namespace]);
+  // The namespaces the picker offers (again as jobs start and end: an
+  // ingestion may add one), and the one picked, which Ask, Evaluate and
+  // Graph read.
+  const offered = useApi(
+    () => (status.data?.namespace ? get<NamespaceList>("namespaces").catch(() => null) : Promise.resolve(null)),
+    [status.data?.namespace, status.data?.config_path, running],
+  );
+  const [picked, setPicked] = useState<string | null>(storedNamespace);
+  const namespace = effectiveNamespace(picked, offered.data?.namespaces, status.data?.namespace ?? null);
+  const pick = (chosen: string) => {
+    const kept = chosen === status.data?.namespace ? null : chosen;
+    setPicked(kept);
+    storeNamespace(kept);
+  };
+  const fold = useCompactNav(navRow, [locale, running > 0, namespace, offered.data?.namespaces.length]);
   // Unfolded, the menu closes: folded again, it starts closed (its hidden
   // button kept aria-expanded true).
   if (menuOpen && fold !== NAV_FOLDED) setMenuOpen(false);
   // Whether the namespace holds an index (read again as jobs start and end).
   const held = useApi(
-    () => (status.data?.namespace ? get<NamespaceHeld>("namespace/methodologies").catch(() => null) : Promise.resolve(null)),
-    [status.data?.namespace, status.data?.config_path, running],
+    () => (namespace ? get<NamespaceHeld>("namespace/methodologies", { namespace }).catch(() => null) : Promise.resolve(null)),
+    [namespace, status.data?.config_path, running],
   );
   const indexed = held.data ? held.data.indexed : null;
 
@@ -44,10 +60,10 @@ export function App() {
 
 
   const page: Record<Page, ReactElement> = {
-    ask: <AskPage status={status.data} />,
-    ingest: <IngestPage status={status.data} onJobsChanged={status.reload} />,
-    evaluate: <EvaluatePage status={status.data} onJobsChanged={status.reload} />,
-    graph: <GraphPage params={route.params} />,
+    ask: <AskPage status={status.data} namespace={namespace} />,
+    ingest: <IngestPage status={status.data} namespace={namespace} onJobsChanged={status.reload} />,
+    evaluate: <EvaluatePage status={status.data} namespace={namespace} onJobsChanged={status.reload} />,
+    graph: <GraphPage params={route.params} namespace={namespace} />,
     dashboard: <DashboardPage />,
     settings: <SettingsPage onSaved={status.reload} />,
   };
@@ -108,11 +124,8 @@ export function App() {
             </ul>
           </nav>
           <div className="nav-tools">
-            {status.data?.namespace ? (
-              <span className="namespace-chip" data-indexed={indexed === null ? undefined : String(indexed)} title={indexed === false ? t("shell.namespaceEmpty") : t("shell.namespace")}>
-                <span className="visually-hidden">{indexed === false ? t("shell.namespaceEmpty") : t("shell.namespace")}</span>
-                {status.data.namespace}
-              </span>
+            {namespace ? (
+              <NamespacePicker value={namespace} namespaces={offered.data?.namespaces ?? [namespace]} indexed={indexed} onChange={pick} />
             ) : null}
             <ThemePicker />
             <LocalePicker />
@@ -138,7 +151,7 @@ export function App() {
           <dl className="kv backend">
             <div>
               <dt>{t("shell.namespace")}</dt>
-              <dd className="mono">{status.data.namespace ?? "—"}</dd>
+              <dd className="mono">{namespace ?? "—"}</dd>
             </div>
             <div>
               <dt>{t("shell.models")}</dt>

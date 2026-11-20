@@ -40,6 +40,7 @@ from unified_kg_rag.domain.models import (
     SearchQuery,
     SearchResult,
     SearchStrategy,
+    SearchType,
 )
 from unified_kg_rag.domain.models.config import McpServerConfig
 from unified_kg_rag.shared.exceptions import (
@@ -1414,3 +1415,14 @@ async def test_get_chunks_cuts_the_text_and_caps_the_response(
     assert all(len(r.text) == 100 and r.text_truncated for r in result.records)
     assert result.truncated and result.omitted == 20 - len(result.records)
     assert result.missing == []
+
+
+async def test_a_call_without_a_search_type_searches_the_config_s() -> None:
+    # The tools sent hybrid whatever search.search_type set; RAGInput's None
+    # reads the config's, as run-rag and the console's questions do.
+    chain = FakeChain()
+    tools = _tools(chain)
+    await tools.search("Who supplies the lidar units?")
+    await tools.answer("Who supplies the lidar units?")
+    await tools.search("Who supplies the lidar units?", search_type="lexical")
+    assert [i.search_type for i in chain.inputs] == [None, None, SearchType.LEXICAL]

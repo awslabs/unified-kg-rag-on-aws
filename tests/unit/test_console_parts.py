@@ -1506,3 +1506,27 @@ def test_a_cancelled_question_counts_its_spend_but_not_per_question() -> None:
     # Only cancelled questions: nothing served to average.
     (only,) = dashboard.summarize(rows[2:], [], config)["strategies"]
     assert (only["tokens_per_query"], only["cost_per_query"]) == (None, None)
+
+
+def test_the_dashboard_sums_and_prices_the_embedding_requests() -> None:
+    # The embedding role's row and its model's cost read the embedding
+    # counters, which the summing left out: the row showed zero calls and
+    # the model's cost left its requests out.
+    usage = {
+        "by_role": {"embedding": {"embedding_calls": 2, "embedding_input_tokens": 300}},
+        "by_model": {"emb": {"embedding_calls": 2, "embedding_input_tokens": 300}},
+    }
+    rows = [
+        {"id": str(n), "created": 1.0, "outcome": "answered", "usage": usage}
+        for n in range(2)
+    ]
+    priced = Config.model_validate(
+        {"models": {"prices": {"emb": {"embedding_per_million_tokens": 0.1}}}}
+    )
+    summary = dashboard.summarize(rows, [], priced)
+    (role,) = summary["roles"]
+    assert role["embedding_calls"] == 4 and role["embedding_input_tokens"] == 600
+    (model,) = summary["models"]
+    assert model["cost_usd"] == pytest.approx(600 * 0.1 / 1e6)
+    # An embedding model without a price is named, as a language model is.
+    assert dashboard.summarize(rows, [], Config())["unpriced_models"] == ["emb"]

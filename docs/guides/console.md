@@ -47,6 +47,15 @@ keeps it in an HttpOnly cookie, and every request without it is refused.
   ([runbook](../operations.md#alarms)).
 - A `sample-questions.json` (a JSON list of strings) in the workspace
   becomes the Ask page's suggested questions.
+- The provider flags of the other CLIs (`--backend`, `--llm-provider`,
+  `--llm-model`, `--embedding-provider`, `--embedding-model`,
+  `--embedding-dimension`, `--rerank-provider`, `--model-base-url`) apply to
+  the config the pages read, as `run-rag` applies them, and are passed on to
+  every ingestion and evaluation job: `run-console --backend local` opens
+  the local flow of [Getting started](../getting-started/local.md) without a
+  config file. The Settings page shows and saves the file as written.
+- `--namespace` is the namespace the pages start with (default: the
+  config's); the header's picker switches to another.
 
 Without a build, the page at the address says how to build the client;
 the API still answers at `/api/status`. The client is found in
@@ -125,6 +134,14 @@ port can query the index, start jobs and edit the configuration.
 
 ## Pages
 
+**The namespace picker.** The header names the namespace Ask, Evaluate
+and Graph read (its dot filled once it holds an index) and offers every
+namespace the stores hold an index for, the config's first. The choice is
+kept in the browser across reloads, and falls back to the config's when the
+stores no longer hold it. Ask then answers from it (its conversation starts
+over), Evaluate runs `run-eval --namespace` on it, Graph draws its graph,
+and Ingest writes into it unless More options names another.
+
 **Ask.** A question box with the strategy picker: `auto` and the strategies
 grouped by methodology, those the index namespace does not hold disabled
 with the reason. A namespace nothing was ingested into yet says so
@@ -138,7 +155,11 @@ connection released, and the history records it as cancelled. Under it: for `aut
 only one the query's limits left room for, or the router failed and it fell
 back), and a line with the strategy, the time,
 the tokens in and out, the model calls, the cost (when `models.prices`
-prices the models), the rerank status and the trace link. A question obeys
+prices the models), the rerank status and the trace link. A collapsed
+**Query processing** section under it shows what the query searched: the
+follow-up rewrite, the translation, the extracted entities and the
+high- and low-level keywords. Search options leave the search type to the
+config (`search.search_type`) until one is picked. A question obeys
 the configured query limits
 ([`search.query_max_*`](./query.md#model-call-and-input-token-limits)): an
 answer given without steps the limits left out is a partial answer that

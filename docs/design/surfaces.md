@@ -329,6 +329,7 @@ when it is built and otherwise says how to build it.
 
 | Page | Server path | What runs |
 |---|---|---|
+| Header | `GET /api/namespaces` | The namespaces the vector store holds an index for (`ingested_namespaces`), the config's first: the picker whose choice Ask, Evaluate and Graph send as `namespace` (Evaluate's job runs `run-eval --namespace`) |
 | Ask | `POST /api/ask` (server-sent events) | One `GraphRAGChain` per loaded config, in the server's event loop. `aquery_events` hands the answer model's text over as it streams (its `AnswerChunk` events); the final `RAGOutput` follows (its `QueryResult`), with its sources, `metadata.routing` (how `auto` chose), rerank status, usage and the query's trace id |
 | Ingest | `POST /api/jobs/ingest` | `run-ingestion` in a child process, with the console's cache directory and a pipeline id per corpus |
 | Evaluate | `POST /api/jobs/evaluate`, `GET /api/evaluations/*` | `run-eval --output-format json` in a child process, writing into its own directory under the evaluation outputs; a saved run is read back as written, its per-question scores (`evaluations/questions`) through the evaluation's own saved-results reader and `per_query_means` |

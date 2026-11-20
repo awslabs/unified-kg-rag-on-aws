@@ -296,3 +296,78 @@ def test_the_console_questions_publish_query_metrics_when_asked(
     stderr_factory(Config())
     emf_logger = built[1]["providers"].metrics_sink._emf_logger
     assert emf_logger.name.endswith(".stderr")
+
+
+@requires_console
+def test_the_provider_flags_and_namespace_reach_the_pages_and_the_jobs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # run-console took none of the provider flags, so the local flow
+    # without a config (--backend local) could not open the console.
+    import uvicorn
+    from fastapi.testclient import TestClient
+
+    served: dict[str, Any] = {}
+
+    def run(self: Any, sockets: list[socket.socket]) -> None:
+        served["app"] = self.config.app
+        sockets[0].close()
+
+    monkeypatch.setattr(uvicorn.Server, "run", run)
+    monkeypatch.chdir(tmp_path)
+    flags = ["--backend", "local", "--llm-model", "qwen3:4b", "--namespace", "tenant-b"]
+    code = run_console.main(
+        [
+            "--source-directory",
+            str(tmp_path),
+            "--port",
+            "0",
+            "--output-format",
+            "json",
+            *flags,
+        ]
+    )
+    assert code == 0
+    console = served["app"].state.console
+    assert console.options.namespace == "tenant-b"
+    # The pages read the config the flags make, as run-rag reads its own.
+    config = console.load_config()
+    assert config.backend.value == "local" and config.models.default == "qwen3:4b"
+    token = console.options.token
+    with TestClient(served["app"], base_url="http://127.0.0.1") as client:
+        status = client.get("/api/status", headers={"X-Console-Token": token}).json()
+    assert status["backend"]["graph"] == "sqlite" and status["namespace"] == "tenant-b"
+    # Every job's CLI takes the same flags.
+    assert console.jobs._config_args() == [
+        "--backend",
+        "local",
+        "--llm-model",
+        "qwen3:4b",
+    ]
+
+
+def test_run_console_takes_the_flags_the_other_clis_take() -> None:
+    from unified_kg_rag.application.cli import run_rag_chain
+
+    def flags(parser: Any) -> set[str]:
+        return {o for action in parser._actions for o in action.option_strings}
+
+    rag = flags(run_rag_chain.CommandLineInterface._setup_arguments())
+    console = flags(run_console._build_parser())
+    provider = {
+        f
+        for f in rag
+        if f
+        in {
+            "--backend",
+            "--llm-provider",
+            "--llm-model",
+            "--embedding-provider",
+            "--embedding-model",
+            "--embedding-dimension",
+            "--rerank-provider",
+            "--model-base-url",
+        }
+    }
+    assert len(provider) == 8 and provider <= console
+    assert {"--namespace", "--suffix"} <= console

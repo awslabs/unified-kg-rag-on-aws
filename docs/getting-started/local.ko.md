@@ -137,6 +137,20 @@ uv run --no-dev run-eval --backend local --data-path sample-eval.json --search-s
 [평가기](../guides/evaluate.ko.md#평가기)와 [전략 비교](../guides/evaluate.ko.md#전략-비교)에 있습니다.
 질문 두 개로는 동작만 확인할 수 있으므로, 차이를 믿으려면 질문 수백 개로 측정하세요.
 
+## 콘솔 열기
+
+웹 콘솔은 같은 로컬 저장소에서 질문, 수집, 평가, 그래프 보기를 합니다. `console` extra와
+웹 클라이언트 빌드(Node.js 20.19 이상)가 필요하며, 위 명령처럼 `--backend local`이면 설정
+파일 없이 동작합니다.
+
+```bash
+uv sync --no-dev --inexact --extra console
+(cd console/web && npm ci && npm run build)
+uv run --no-dev run-console --backend local --source-directory .
+```
+
+출력된 주소를 여세요. 각 페이지는 [콘솔](../guides/console.ko.md)에 있습니다.
+
 ## 다음 단계
 
 - [Local mode](../guides/local-mode.md)(영문): 다른 모델 서버, 컨테이너로 띄운 저장소,
