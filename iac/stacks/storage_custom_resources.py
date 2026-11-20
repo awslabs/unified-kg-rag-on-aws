@@ -28,6 +28,11 @@ from iac.stacks.log_retention import set_retention
 
 _HANDLERS = Path(__file__).resolve().parent.parent / "custom_resources"
 NORI_PACKAGE_NAME = "analysis-nori"
+# The newest Python runtime the locked aws-cdk-lib knows: cdk-nag's
+# AwsSolutions-L1 fails a function on any older one, so a CDK release that
+# adds a runtime fails tests/test_app_nag.py until this moves with it. The
+# handlers use only the standard library and the runtime's boto3.
+_HANDLER_RUNTIME = lambda_.Runtime.PYTHON_3_15
 
 
 class _PollingProvider(Construct):
@@ -59,7 +64,7 @@ class _PollingProvider(Construct):
         self.on_event = lambda_.Function(
             self,
             "OnEvent",
-            runtime=lambda_.Runtime.PYTHON_3_14,
+            runtime=_HANDLER_RUNTIME,
             handler=f"{module}.on_event",
             code=code,
             timeout=Duration.minutes(1),
@@ -68,7 +73,7 @@ class _PollingProvider(Construct):
         self.is_complete = lambda_.Function(
             self,
             "IsComplete",
-            runtime=lambda_.Runtime.PYTHON_3_14,
+            runtime=_HANDLER_RUNTIME,
             handler=f"{module}.is_complete",
             code=code,
             timeout=Duration.minutes(1),
