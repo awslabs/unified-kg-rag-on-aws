@@ -20,13 +20,16 @@ import re
 FAKE_USER = "user"
 FAKE_PASSWORD = "secret"
 
-# ``scheme://user:<password>@`` with a literal password, i.e. one that does not
-# start as a placeholder (``{x}``, ``${X}``, ``<password>``, ``%VAR``, ``(``),
-# and no character a URL's userinfo cannot hold unescaped. Wider than
-# GitLab's rule (which skips passwords under 5 characters), as wide as
-# detect-secrets' basic-auth detector.
+# ``scheme://user:<password>@`` with a literal password: one that does not
+# start as a placeholder (``{x}``, ``${X}``, ``<password>``, ``%VAR``, ``(``)
+# and holds no whitespace, ``/``, ``@``, quote, backtick or bracket, which a
+# URL's userinfo cannot hold unescaped. The password may hold ``:``, ``#``
+# and ``?``, as in GitLab's "Password in URL" rule. Every userinfo that rule
+# reports matches, unless it holds one of those unescapable characters (or
+# ``?`` or ``#`` in the user part), and so do the ones it skips: passwords
+# under 5 characters, any host, a one-letter scheme.
 LITERAL_USERINFO = re.compile(
-    r"[A-Za-z][A-Za-z0-9+.-]*://[^\s:/?#\[\]@'\"`]*:(?![{$<%(])[^\s:/?#\[\]@'\"`]+@"
+    r"[A-Za-z][A-Za-z0-9+.-]*://[^\s:/?#\[\]@'\"`]*:(?![{$<%(])[^\s/@'\"`\[\]]+@"
 )
 
 
