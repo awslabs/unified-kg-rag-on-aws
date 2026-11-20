@@ -8,7 +8,9 @@ discoverable without a request, so it comes from
 OpenSearch ``knn_vector`` mappings. Inputs are truncated to
 ``providers.embedding.max_input_tokens`` by the script-aware estimate (a
 server rejects or silently cuts an over-long input), and each embed call is a
-GenAI ``embeddings`` span when tracing is enabled, as on Bedrock.
+GenAI ``embeddings`` span when tracing is enabled, as on Bedrock, and is
+counted in the usage scopes with its estimated input tokens
+(``record_embedding_request``; the servers' counts do not reach the clients).
 """
 
 from __future__ import annotations
@@ -35,6 +37,9 @@ from unified_kg_rag.adapters.local.models import (
     per_loop_async_client,
     request_timeout,
     tls_context,
+)
+from unified_kg_rag.adapters.observability.usage_callback import (
+    record_embedding_request,
 )
 from unified_kg_rag.domain.models import Config, ModelPurpose, model_id_value
 from unified_kg_rag.domain.models.config import RetryPolicy
@@ -102,29 +107,44 @@ class TracedEmbeddings(Embeddings):
             characters=sum(len(t) for t in texts),
         )
 
+    def _counted(self, prepared: list[str], vectors: T) -> T:
+        # The servers' token counts do not reach the LangChain clients.
+        record_embedding_request(self.model_id, prepared)
+        return vectors
+
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
         prepared = self._prepare(texts)
         with self._span(prepared):
-            return self._call(lambda: self.inner.embed_documents(prepared))
+            return self._counted(
+                prepared, self._call(lambda: self.inner.embed_documents(prepared))
+            )
 
     def embed_query(self, text: str) -> list[float]:
         prepared = self._prepare([text])
         with self._span(prepared):
-            return self._call(lambda: self.inner.embed_query(prepared[0]))
+            return self._counted(
+                prepared, self._call(lambda: self.inner.embed_query(prepared[0]))
+            )
 
     async def aembed_documents(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
         prepared = self._prepare(texts)
         with self._span(prepared):
-            return await self._acall(lambda: self.inner.aembed_documents(prepared))
+            return self._counted(
+                prepared,
+                await self._acall(lambda: self.inner.aembed_documents(prepared)),
+            )
 
     async def aembed_query(self, text: str) -> list[float]:
         prepared = self._prepare([text])
         with self._span(prepared):
-            return await self._acall(lambda: self.inner.aembed_query(prepared[0]))
+            return self._counted(
+                prepared,
+                await self._acall(lambda: self.inner.aembed_query(prepared[0])),
+            )
 
 
 class _LocalEmbeddingFactory:

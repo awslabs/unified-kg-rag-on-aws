@@ -25,6 +25,7 @@ from unified_kg_rag.domain.pricing import (
     ModelPrice,
     price_of,
     tokens_cost_usd,
+    unpriced_embedding_models,
     unpriced_models,
     usage_cost_usd,
 )
@@ -195,3 +196,33 @@ def test_the_loader_loads_a_deprecated_variable(
         "set UKR__SEARCH__QUERY_TIMEOUT_SECONDS" in r.getMessage()
         for r in caplog.records
     )
+
+
+def test_an_embedding_price_adds_the_embedding_tokens() -> None:
+    usage = LLMUsage.model_validate(
+        {
+            "by_model": {
+                "m": {"llm_calls": 1, "input_tokens": 1000, "output_tokens": 100},
+                "embedder": {"embedding_calls": 3, "embedding_input_tokens": 5000},
+            }
+        }
+    )
+    llm = (1000 * 2.0 + 100 * 10.0) / 1e6
+    # No embedding price: the rest is still priced, the embedder named.
+    assert usage_cost_usd(usage, {"m": SONNET}) == (pytest.approx(llm), set())
+    assert unpriced_embedding_models(usage, {"m": SONNET}) == {"embedder"}
+    embedding = ModelPrice(embedding_per_million_tokens=0.02)
+    usd, unpriced = usage_cost_usd(usage, {"m": SONNET, "embedder": embedding})
+    assert unpriced == set()
+    assert usd == pytest.approx(llm + 5000 * 0.02 / 1e6)
+    assert (
+        unpriced_embedding_models(usage, {"m": SONNET, "embedder": embedding}) == set()
+    )
+
+
+def test_a_price_names_at_least_one_rate() -> None:
+    assert (
+        ModelPrice(embedding_per_million_tokens=0.02).input_per_million_tokens is None
+    )
+    with pytest.raises(ValueError, match="embedding_per_million_tokens"):
+        ModelPrice()

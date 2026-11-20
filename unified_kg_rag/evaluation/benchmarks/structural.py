@@ -15,7 +15,8 @@ buyers, products, countries) and writes it as
 - ``structural-config.yaml``: the extraction schema and the seed graph
   entry to ingest them with, and ``evaluation.answer_span: extracted`` to
   score them with;
-- ``eval_data.json``: questions in the ``run-eval`` format.
+- ``eval_data.json``: questions in the ``run-eval`` format, each with its
+  ``metadata.split`` (``benchmarks.split_of``), and ``prepared.json``.
 
 The questions come from templates: counts by relationship and by a seed
 property, the top supplier and the top three, a two-hop listing, the buyer
@@ -39,6 +40,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from unified_kg_rag import __version__
 from unified_kg_rag.domain.models.graph_query import (
     GraphEdgeRecord,
     GraphQueryPlan,
@@ -51,6 +53,7 @@ from unified_kg_rag.domain.retrieval.graph_query import (
     reference_execute,
     validate_plan,
 )
+from unified_kg_rag.evaluation.benchmarks import SPLITS, split_of, write_prepared
 from unified_kg_rag.shared import EvaluationException, get_logger
 from unified_kg_rag.shared.utils.files import atomic_write_text
 
@@ -851,6 +854,10 @@ def check_output_directory(output_dir: Path) -> None:
             )
 
 
+def _query_id(seed: int, index: int) -> str:
+    return f"structural-{seed}-{index:04d}"
+
+
 def prepare(output_dir: Path, *, seed: int = 0, size: Size = "small") -> dict[str, Any]:
     """Generate the world of ``seed`` at ``size`` and write the corpus, the
     seed graph, the config snippet and ``eval_data.json`` under
@@ -873,7 +880,7 @@ def prepare(output_dir: Path, *, seed: int = 0, size: Size = "small") -> dict[st
     found = questions(world, seed, size)
     dataset = [
         {
-            "query_id": f"structural-{seed}-{index:04d}",
+            "query_id": _query_id(seed, index),
             "question": q.question,
             "answer": q.answer,
             "answer_aliases": [a for a in q.aliases if a != q.answer],
@@ -881,6 +888,7 @@ def prepare(output_dir: Path, *, seed: int = 0, size: Size = "small") -> dict[st
             "category": q.template,
             "metadata": {
                 "benchmark": BENCHMARK_NAME,
+                "split": split_of(_query_id(seed, index)),
                 "template": q.template,
                 "language": (
                     q.template.rsplit("_", 1)[1]
@@ -908,7 +916,7 @@ def prepare(output_dir: Path, *, seed: int = 0, size: Size = "small") -> dict[st
         t: sum(1 for q in found if family(q.template) == t) for t in TEMPLATES
     }
     logger.info("Structural benchmark: %s questions %s", len(found), per_template)
-    return {
+    counts = {
         "benchmark": BENCHMARK_NAME,
         "seed": seed,
         "size": size,
@@ -917,4 +925,21 @@ def prepare(output_dir: Path, *, seed: int = 0, size: Size = "small") -> dict[st
         "nodes": len(world.nodes),
         "edges": len(world.edges),
         "templates": per_template,
+        "splits": {
+            name: sum(
+                1 for i in range(len(found)) if split_of(_query_id(seed, i)) == name
+            )
+            for name in SPLITS
+        },
     }
+    write_prepared(
+        output_dir,
+        {
+            "benchmark": BENCHMARK_NAME,
+            "package_version": __version__,
+            "seed": seed,
+            "size": size,
+            "counts": counts,
+        },
+    )
+    return counts

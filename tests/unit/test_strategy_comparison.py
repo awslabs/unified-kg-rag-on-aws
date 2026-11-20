@@ -502,6 +502,7 @@ class TestMusique:
             "benchmark": "musique-full-answerable",
             "questions": 2,
             "paragraphs": 6,
+            "splits": {"tune": 0, "test": 2},
         }
         files = sorted(p.name for p in (out / "corpus").iterdir())
         assert files == [

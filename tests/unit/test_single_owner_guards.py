@@ -798,6 +798,10 @@ GUARDS = [
                 "a chunked stage cache file the pipeline wrote",
             ),
             "evaluation/benchmarks/musique.py::_items": (1, "the downloaded dataset"),
+            "evaluation/benchmarks/__init__.py::read_prepared": (
+                1,
+                "the prepared.json prepare-benchmark wrote",
+            ),
             "evaluation/evaluation_manager.py::EvaluationManager.build_run_manifest": (
                 1,
                 "the dataset file, hashed by content",

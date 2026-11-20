@@ -57,7 +57,7 @@ script would run its ingestion again in every worker. A notebook needs no
 guard.
 
 - `RAGInput` takes the `run-rag` options as fields (`search_strategy`,
-  `search_type`, `top_k`, `suffix`
+  `search_type` (unset: `search.search_type`), `top_k`, `suffix`
   ([index suffix](../concepts/scopes-and-namespaces.md#index-suffix)),
   `filters`, `conversation_id`, `use_memory`, `history`, `target_language`);
   a plain dict works too. An unknown key is refused (a dict's with

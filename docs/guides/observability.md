@@ -30,6 +30,10 @@ counters are in the [Telemetry reference](../reference/telemetry.md).
   unsampled one is never exported, so it gives none.
 - Spans carry no query text, passages or model output unless
   `capture_content: true`.
+- `run-eval` reads the spans too: each answer records the seconds its spans
+  took per span name, and the run summary and the comparison report their
+  p50 and p95 per span (`stage_latency_seconds`,
+  [Evaluation output](../reference/evaluation-output.md#run-summary)).
 
 ## Jaeger
 

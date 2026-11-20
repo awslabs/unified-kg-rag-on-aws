@@ -97,6 +97,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.models.config import REMOVED_EVALUATORS
 from unified_kg_rag.domain.models.evaluation import JUDGE_EVALUATORS
+from unified_kg_rag.evaluation.benchmarks import SPLITS
 from unified_kg_rag.shared import (
     AWSServiceError,
     ConfigurationError,
@@ -168,9 +169,9 @@ if TYPE_CHECKING:
         load_saved_runs,
         pooling_errors,
         pooling_warnings,
-        rerank_unmetered,
         strategy_order,
         summary_warnings,
+        usage_unmetered,
     )
 
 
@@ -283,7 +284,7 @@ __getattr__, _load_evaluation = lazy_names(
         "load_saved_runs": _saved_results_module,
         "pooling_errors": _saved_results_module,
         "pooling_warnings": _saved_results_module,
-        "rerank_unmetered": _saved_results_module,
+        "usage_unmetered": _saved_results_module,
         "summary_warnings": _saved_results_module,
     },
 )
@@ -650,6 +651,17 @@ class CommandLineInterface:
                 "extra; several judge calls per answer, one per context for "
                 "context_precision) and assertion (evaluation.assertion_trials "
                 "calls per answer)"
+            ),
+        )
+        parser.add_argument(
+            "--split",
+            choices=SPLITS,
+            help=(
+                "Answer only the dataset items whose metadata.split is this "
+                "half (prepare-benchmark labels every row tune or test from "
+                "the SHA-256 of its question id): choose settings on tune, "
+                "report them on test. An item without metadata.split is a "
+                "dataset error. With --data-path only (default: every item)"
             ),
         )
         parser.add_argument(
@@ -1025,7 +1037,7 @@ class EvaluationRunner:
                     "--repeats does not apply to --from-results (the saved runs "
                     "are the repeats)"
                 )
-            for flag in ("run_order", "repeat_extractions"):
+            for flag in ("run_order", "repeat_extractions", "split"):
                 if getattr(self.args, flag, None) is not None:
                     usage_error(
                         f"--{flag.replace('_', '-')} does not apply to "
@@ -1177,6 +1189,29 @@ class EvaluationRunner:
                     str(int(stats["count"])),
                 )
             console.print(table)
+
+        if summary.stage_latency_seconds:
+            stages = Table(
+                title="[bold]Stage Latency (seconds per answer, from spans)[/bold]",
+                show_header=True,
+                header_style="bold magenta",
+            )
+            stages.add_column(
+                "Span",
+                min_width=_widest(summary.stage_latency_seconds),
+                overflow="fold",
+            )
+            for column in ("Answers", "Mean", "p50", "p95"):
+                stages.add_column(column, style="cyan")
+            for name, stats in summary.stage_latency_seconds.items():
+                stages.add_row(
+                    markup_safe(name),
+                    str(int(stats["answers"])),
+                    f"{stats['mean']:.3f}",
+                    f"{stats['p50']:.3f}",
+                    f"{stats['p95']:.3f}",
+                )
+            console.print(stages)
 
         # Failed/skipped metric values are excluded from the means above; say so
         # explicitly so a mean over a subset is not read as a mean over all.
@@ -1881,6 +1916,7 @@ class EvaluationRunner:
                 # The keys the chain would refuse per query, refused now.
                 check_filter_keys=getattr(self.rag_chain, "check_filter_keys", None),
                 run_strategies=strategies if comparing else None,
+                split=self.args.split,
             )
         except FileNotFoundError as e:
             raise InvalidDatasetError(
@@ -2326,7 +2362,7 @@ class EvaluationRunner:
             )
         prices = self.config.models.prices
         # Runs saved before their usage counted rerank requests.
-        unmetered = rerank_unmetered(manifests)
+        unmetered = usage_unmetered(manifests)
         names = list(runs)
         primary_metric = (
             getattr(self.args, "primary_metric", None)
@@ -2350,7 +2386,7 @@ class EvaluationRunner:
                 pairs,
                 categories=measured.categories,
                 prices=prices,
-                unmetered_rerank=unmetered,
+                unmetered_usage=unmetered,
                 resamples=self.config.evaluation.resamples,
                 closed_book=strata,
             )
@@ -2373,7 +2409,7 @@ class EvaluationRunner:
                 pairs,
                 categories=measured.categories,
                 prices=prices,
-                unmetered_rerank=unmetered,
+                unmetered_usage=unmetered,
                 resamples=self.config.evaluation.resamples,
                 closed_book=strata,
             )
@@ -2391,7 +2427,7 @@ class EvaluationRunner:
                 runs,
                 categories=measured.categories,
                 prices=prices,
-                unmetered_rerank=unmetered,
+                unmetered_usage=unmetered,
                 resamples=self.config.evaluation.resamples,
                 closed_book=strata,
             )
@@ -2593,6 +2629,7 @@ _SUMMARY_FIELDS = {
     "failed_evaluations",
     "benchmarks",
     "average_response_time",
+    "stage_latency_seconds",
     "metric_statistics",
     "metric_outcomes",
     "abstention_statistics",

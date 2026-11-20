@@ -2353,3 +2353,88 @@ def test_a_refused_call_or_a_limit_abstention_reads_as_limited() -> None:
         {"routing": {"decided_by": "only_candidate", "over_limits": ["mix"]}}, None
     )
     assert not _query_limited({"routing": {"decided_by": "router"}}, None)
+
+
+# --- span timings (run-eval's per-stage latency) ---------------------------
+
+
+def test_span_timings_collect_seconds_per_span_name(tracing, monkeypatch) -> None:
+    clock = iter(float(i) for i in itertools.count())
+    monkeypatch.setattr(observability.time, "perf_counter", lambda: next(clock))
+    with observability.span_timings() as seconds:
+        assert seconds == {}  # tracing off: nothing collected
+        with observability.span("kg_rag.retrieve"):
+            pass
+    assert seconds == {}
+    tracing()
+    with observability.span_timings() as seconds:
+        with observability.span("kg_rag.retrieve"):  # 1 tick
+            pass
+        with observability.span("kg_rag.retrieve"):  # and another
+            pass
+        handle = observability.start_span("chat m")
+        handle.end()
+        handle.end()  # ended once
+    assert seconds == {"kg_rag.retrieve": 2.0, "chat m": 1.0}
+    # Outside a block: no timing, the span itself unchanged.
+    assert observability.start_span("chat m").__class__.__name__ != "_TimedSpan"
+
+
+async def test_span_timings_follow_tasks_and_threads(tracing) -> None:
+    tracing()
+
+    def threaded() -> None:
+        with observability.span("in.thread"):
+            pass
+
+    async def task() -> None:
+        with observability.span("in.task"):
+            await asyncio.sleep(0)
+
+    with observability.span_timings() as seconds:
+        await asyncio.gather(task(), task())
+        with ContextThreadPoolExecutor(max_workers=1) as pool:
+            pool.submit(threaded).result()
+    assert set(seconds) == {"in.task", "in.thread"}
+    assert all(value >= 0 for value in seconds.values())
+
+
+async def test_run_eval_reports_stage_latency_from_spans(tracing) -> None:
+    from unified_kg_rag.evaluation.comparison import cost_comparison
+
+    class _Chain:
+        async def ainvoke(self, inputs: dict, config: Any = None) -> dict:
+            with observability.span("kg_rag.retrieve"):
+                await asyncio.sleep(0.01)
+            with observability.span("kg_rag.context_build"):
+                pass
+            meta = {"search_strategy": "local", "processing_time": 0.1}
+            return {"answer": "Vendor", "sources": [], "metadata": meta}
+
+    config = Config()
+    config.evaluation.enabled_evaluators = [EvaluatorType.ANSWER_MATCH]
+    queries = [
+        EvaluationQuery(query_id=f"q{i}", question=f"Who {i}?") for i in range(3)
+    ]
+    truths = [
+        EvaluationGroundTruth(query_id=q.query_id, ground_truth="Vendor")
+        for q in queries
+    ]
+    untraced, _, summary = await EvaluationManager(
+        config, rag_chain=_Chain()
+    ).evaluate_dataset(queries, truths, show_progress=False)
+    assert all(r.stage_seconds is None for r in untraced)
+    assert summary.stage_latency_seconds == {}
+    tracing()
+    results, reports, summary = await EvaluationManager(
+        config, rag_chain=_Chain()
+    ).evaluate_dataset(queries, truths, show_progress=False)
+    assert all(set(r.stage_seconds or {}) >= {"kg_rag.retrieve"} for r in results)
+    retrieve = summary.stage_latency_seconds["kg_rag.retrieve"]
+    assert retrieve["answers"] == 3.0
+    assert 0.01 <= retrieve["p50"] <= retrieve["p95"]
+    assert retrieve["p95"] < 5
+    cost = cost_comparison({"local": [(reports, results)]}, resamples=200)
+    assert cost["strategies"]["local"]["stage_latency_seconds"] == (
+        summary.stage_latency_seconds
+    )

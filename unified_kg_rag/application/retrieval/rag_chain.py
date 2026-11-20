@@ -553,9 +553,10 @@ class RAGInput(BaseModel):
             "checked read-only graph query (structured)"
         ),
     )
-    search_type: SearchType = Field(
-        default=SearchType.HYBRID,
-        description="The type of search to perform (hybrid, lexical, vector)",
+    search_type: SearchType | None = Field(
+        default=None,
+        description="The type of search to perform (hybrid, lexical, vector). "
+        "None: the config's search.search_type (hybrid by default)",
     )
     top_k: int = Field(
         default=10, ge=1, description="Maximum number of results to retrieve"
@@ -1703,7 +1704,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             )
         search_query = SearchQuery(
             query=processed.final_query,
-            search_type=state.get("search_type", SearchType.HYBRID),
+            search_type=state.get("search_type") or self.config.search.search_type,
             top_k=state.get("top_k", 10),
             retrieval_multiplier=state.get("retrieval_multiplier", 1),
             suffix=state.get("suffix"),

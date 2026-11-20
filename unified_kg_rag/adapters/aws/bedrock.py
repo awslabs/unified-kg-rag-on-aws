@@ -47,7 +47,10 @@ from unified_kg_rag.adapters.aws.token_counter import BedrockTokenCounter
 from unified_kg_rag.adapters.llm.langchain import with_callback
 from unified_kg_rag.adapters.llm.reachability import is_unreachable_error
 from unified_kg_rag.adapters.llm.retry import call_with_transient_retry
-from unified_kg_rag.adapters.observability.usage_callback import UsageCallbackHandler
+from unified_kg_rag.adapters.observability.usage_callback import (
+    UsageCallbackHandler,
+    record_embedding_request,
+)
 from unified_kg_rag.domain.models import (
     Config,
     EmbeddingModelId,
@@ -721,7 +724,7 @@ class BedrockEmbeddingsWrapper(BaseBedrockWrapper, BedrockEmbeddings):
         # (embed_documents, embed_query, Cohere batch, and the async variants,
         # which run embed_query in an executor).
         body = input_body or {}
-        return call_with_transient_retry(
+        response = call_with_transient_retry(
             lambda: super(BedrockEmbeddingsWrapper, self)._invoke_model(
                 input_body=body
             ),
@@ -729,6 +732,14 @@ class BedrockEmbeddingsWrapper(BaseBedrockWrapper, BedrockEmbeddings):
             operation=f"embed:{self.model_id}",
             policy=self.transient_retry,
         )
+        # Titan reports its input tokens; Cohere's are estimated.
+        texts = body["texts"] if "texts" in body else [body.get("inputText") or ""]
+        record_embedding_request(
+            self.model_id,
+            [str(t) for t in texts],
+            response.get("inputTextTokenCount") if isinstance(response, dict) else None,
+        )
+        return response
 
     def _embedding_span(
         self, texts: int, characters: int

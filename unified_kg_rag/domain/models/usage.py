@@ -111,6 +111,32 @@ class LLMUsageCounts(BaseModel):
         ),
     )
 
+    embedding_calls: int = Field(
+        default=0,
+        description=(
+            "Embedding requests that returned (the query's, the index's, the "
+            "evaluation's); not in llm_calls, under the embedding role and "
+            "the embedding model id. One per request the adapter sends: a "
+            "batch the provider client splits counts once."
+        ),
+    )
+    embedding_input_tokens: int = Field(
+        default=0,
+        description=(
+            "The embedding requests' input tokens: as the provider reported "
+            "them (Bedrock Titan's inputTextTokenCount), else estimated from "
+            "the texts (embedding_estimated_calls); not in input_tokens."
+        ),
+    )
+    embedding_estimated_calls: int = Field(
+        default=0,
+        description=(
+            "Of embedding_calls, those whose tokens were estimated (the "
+            "provider reported none: Bedrock Cohere, Ollama, an "
+            "OpenAI-compatible server)."
+        ),
+    )
+
     @property
     def total_tokens(self) -> int:
         return self.input_tokens + self.output_tokens
@@ -123,7 +149,8 @@ class LLMUsage(LLMUsageCounts):
         default_factory=dict,
         description=(
             "Per model role (the purpose the model was built for: query, "
-            "ingestion, evaluation; rerank for the reranker)."
+            "ingestion, evaluation; rerank for the reranker, embedding for "
+            "the embedding model)."
         ),
     )
     by_model: dict[str, LLMUsageCounts] = Field(

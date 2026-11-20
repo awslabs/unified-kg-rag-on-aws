@@ -61,7 +61,8 @@ def test_rag_parser_defaults() -> None:
     assert args.interactive is False
     assert args.mode == "rag"
     assert args.search_strategy == "auto"
-    assert args.search_type == "hybrid"
+    # Unset: the config's search.search_type (hybrid by default).
+    assert args.search_type is None
     assert args.top_k == 10
     assert args.retrieval_multiplier == 1
     assert args.output_format == "text"
@@ -968,7 +969,8 @@ def test_eval_parser_defaults() -> None:
     assert args.data_path == Path("data.json")
     assert args.search_strategy == ["auto"]
     assert args.repeats == 1 and args.pairwise_judge is False
-    assert args.search_type == "hybrid"
+    # Unset: the config's search.search_type (hybrid by default).
+    assert args.search_type is None
     assert args.top_k == 10
     assert args.output_directory is None
 

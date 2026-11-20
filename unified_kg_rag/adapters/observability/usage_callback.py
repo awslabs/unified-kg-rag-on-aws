@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""A LangChain callback handler that counts each chat model call's usage.
+"""A LangChain callback handler that counts each chat model call's usage,
+and the embedding adapters' request counter (:func:`record_embedding_request`).
 
 Attached by the model factories to every chat model, tracing on or off: each
 call is counted in the open ``shared.usage`` scopes (see that module) when it
@@ -36,7 +37,7 @@ import functools
 import logging
 import threading
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from functools import partial
 from typing import Any, ClassVar, ParamSpec
@@ -56,6 +57,30 @@ from unified_kg_rag.shared import get_logger, usage
 from unified_kg_rag.shared.logging import log_failure, warn_once
 
 logger = get_logger(__name__)
+
+
+def record_embedding_request(
+    model_id: str, texts: Sequence[str], reported_tokens: Any = None
+) -> None:
+    """Count one embedding request that returned in the open usage scopes
+    (``shared.usage.record_embedding_call``): its input tokens as the
+    provider reported them (an int), else estimated from ``texts``. The
+    embedding adapters of every provider call it once per request."""
+    if usage.current_meter() is None:
+        return
+    reported = isinstance(reported_tokens, int) and not isinstance(
+        reported_tokens, bool
+    )
+    usage.record_embedding_call(
+        model_id,
+        input_tokens=(
+            int(reported_tokens)
+            if reported
+            else sum(estimate_token_count(t) for t in texts)
+        ),
+        estimated=not reported,
+    )
+
 
 # The local token estimate's drift from what a model reports: past this
 # many calls, a reported-to-estimated input ratio this far from 1 (either

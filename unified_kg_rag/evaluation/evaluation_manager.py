@@ -109,12 +109,13 @@ from .answer_match_evaluator import (
     answer_scoring,
 )
 from .assertion_evaluator import ASSERTIONS_KEY, AssertionEvaluator, assertions_of
+from .benchmarks import read_prepared
 from .citation_scoring import (
     CITATION_SCORING,
     cited_section_types,
     cited_source_ids,
 )
-from .comparison import USAGE_SCHEMA
+from .comparison import USAGE_SCHEMA, stage_latency
 from .graph_aware_evaluator import GraphAwareEvaluator
 from .iterative_statistics import iterative_statistics
 from .retrieval_evaluator import BY_SOURCE_TYPE_KEY, RetrievalEvaluator
@@ -194,12 +195,25 @@ class _AnswerSpend:
     """What answering one query spent over its attempts: the usage of those
     that raised, and its first attempt's start and last attempt's end."""
 
-    __slots__ = ("end", "failed_usage", "start")
+    __slots__ = ("end", "failed_usage", "stage_seconds", "start")
 
     def __init__(self) -> None:
         self.start = time.monotonic()
         self.end: float | None = None
         self.failed_usage: list[dict[str, Any]] = []
+        # Per span name, the seconds its attempts' spans took (tracing on).
+        self.stage_seconds: dict[str, float] = {}
+
+    def add_stages(self, seconds: dict[str, float]) -> None:
+        for name, value in seconds.items():
+            self.stage_seconds[name] = self.stage_seconds.get(name, 0.0) + value
+
+
+def _stage_seconds(record: _AnswerSpend | None) -> dict[str, float] | None:
+    """The answer's seconds per span name; ``None`` while tracing is off."""
+    if record is None or not observability.is_enabled():
+        return None
+    return dict(sorted(record.stage_seconds.items()))
 
 
 def _elapsed(record: _AnswerSpend | None) -> float | None:
@@ -415,6 +429,7 @@ class EvaluationManager:
         *,
         check_filter_keys: FilterKeyCheck | None = None,
         run_strategies: Sequence[SearchStrategy | str] | None = None,
+        split: str | None = None,
     ) -> tuple[list[EvaluationQuery], list[EvaluationGroundTruth]]:
         """Load and validate an evaluation dataset (a JSON array of objects).
 
@@ -429,6 +444,12 @@ class EvaluationManager:
         :meth:`GraphRAGChain.check_filter_keys`), an item's filter keys are
         checked too, under each of ``run_strategies`` (the strategies a
         comparison runs every item with) or else the item's own strategy.
+
+        With ``split`` (``tune`` or ``test``), only the items whose
+        ``metadata.split`` names it are kept (``prepare-benchmark`` labels
+        every row, ``benchmarks.split_of``); every item is still validated,
+        and a dataset with an unlabelled item, or none in the split, is an
+        error.
         """
         if not eval_data_path:
             raise ConfigurationError("Evaluation data path is required.")
@@ -479,6 +500,10 @@ class EvaluationManager:
             queries.append(query)
             if gt is not None:
                 ground_truths.append(gt)
+        if split is not None:
+            queries, ground_truths = EvaluationManager._in_split(
+                eval_data_path, queries, ground_truths, split
+            )
 
         logger.info(
             "Loaded %s queries and %s ground truths from '%s'.",
@@ -487,6 +512,34 @@ class EvaluationManager:
             eval_data_path,
         )
         return queries, ground_truths
+
+    @staticmethod
+    def _in_split(
+        eval_data_path: str | Path,
+        queries: list[EvaluationQuery],
+        ground_truths: list[EvaluationGroundTruth],
+        split: str,
+    ) -> tuple[list[EvaluationQuery], list[EvaluationGroundTruth]]:
+        """The queries (and their ground truths) of ``split``."""
+        unlabelled = [q.query_id for q in queries if "split" not in q.metadata]
+        if unlabelled:
+            raise EvaluationException(
+                f"Evaluation data '{eval_data_path}' has {len(unlabelled)} "
+                f"item(s) without metadata.split (first: '{unlabelled[0]}'): "
+                "split filtering needs every item labelled tune or test, as "
+                "prepare-benchmark writes them."
+            )
+        kept = [q for q in queries if q.metadata.get("split") == split]
+        if not kept:
+            raise EvaluationException(
+                f"Evaluation data '{eval_data_path}' has no item with "
+                f"metadata.split '{split}'."
+            )
+        ids = {q.query_id for q in kept}
+        logger.info(
+            "Kept the %s of %s queries in split '%s'.", len(kept), len(queries), split
+        )
+        return kept, [gt for gt in ground_truths if gt.query_id in ids]
 
     @staticmethod
     def _parse_item(
@@ -849,6 +902,7 @@ class EvaluationManager:
                     else contextlib.nullcontext()
                 ),
                 usage_scope() as meter,
+                observability.span_timings() as stages,
             ):
                 try:
                     return await arm.manager.rag_chain.ainvoke(single_input)
@@ -857,6 +911,7 @@ class EvaluationManager:
                     raise
                 finally:
                     record.end = time.monotonic()
+                    record.add_stages(stages)
 
         # The error an answer failed every attempt with, by its input's
         # index; each answer's log lines carry its dataset query_id.
@@ -925,7 +980,10 @@ class EvaluationManager:
                         response_time=_response_time(
                             rag_metadata.get("processing_time"), record
                         ),
-                        search_type=query.metadata.get("search_type"),
+                        # The query's, else the one the chain's config
+                        # searched with.
+                        search_type=query.metadata.get("search_type")
+                        or self.config.search.search_type.value,
                         top_k=query.metadata.get("top_k"),
                         retrieval_multiplier=query.metadata.get("retrieval_multiplier"),
                         metadata=query.metadata,
@@ -940,6 +998,7 @@ class EvaluationManager:
                         guardrail_blocked=self._guardrail_block(rag_metadata),
                         category=query.category,
                         usage=_answer_usage(rag_metadata.get("usage"), record),
+                        stage_seconds=_stage_seconds(record),
                     )
                 )
             except Exception as e:  # noqa: BLE001 - isolate one query's failure
@@ -965,6 +1024,7 @@ class EvaluationManager:
                         error_message=failure,
                         response_time=_elapsed(record),
                         usage=_answer_usage(None, record),
+                        stage_seconds=_stage_seconds(record),
                     )
                 )
         await self._attribute_sources(queries, results, provenance)
@@ -1425,6 +1485,7 @@ class EvaluationManager:
             successful_evaluations=successful_evaluations,
             failed_evaluations=len(queries) - successful_evaluations,
             average_response_time=avg_response_time,
+            stage_latency_seconds=stage_latency(results),
             metric_statistics=self._calculate_metric_statistics(reports),
             metric_outcomes=self._calculate_metric_outcomes(results, reports),
             abstention_statistics=self._calculate_abstention_statistics(
@@ -1467,7 +1528,7 @@ class EvaluationManager:
             grouped_statistics=self._calculate_grouped_statistics(
                 queries, results, reports
             ),
-            benchmarks=self.benchmarks_of(queries),
+            benchmarks=self.labels_of(queries, "benchmark"),
             evaluation_start_time=start_time,
             evaluation_end_time=end_time,
             configuration=self.config.evaluation.model_dump(),
@@ -1488,14 +1549,14 @@ class EvaluationManager:
         return any(isinstance(t, str) and tokenized_by_script(t) for t in texts)
 
     @staticmethod
-    def benchmarks_of(queries: list[EvaluationQuery]) -> dict[str, int]:
-        """Queries per ``metadata.benchmark`` label (rows without one: none)."""
+    def labels_of(queries: list[EvaluationQuery], key: str) -> dict[str, int]:
+        """Queries per ``metadata.<key>`` label (``benchmark``: the benchmark
+        a row was prepared from; ``split``: its half). Rows without one:
+        none."""
         return dict(
             sorted(
                 Counter(
-                    str(q.metadata["benchmark"])
-                    for q in queries
-                    if q.metadata.get("benchmark")
+                    str(q.metadata[key]) for q in queries if q.metadata.get(key)
                 ).items()
             )
         )
@@ -1603,13 +1664,19 @@ class EvaluationManager:
             dataset["num_queries"] = len(queries)
             # The benchmark the rows were prepared from (prepare-benchmark's
             # metadata.benchmark), so a summary says which one it scored.
-            dataset["benchmarks"] = self.benchmarks_of(queries)
+            dataset["benchmarks"] = self.labels_of(queries, "benchmark")
+            # The halves the queries come from (metadata.split, run-eval
+            # --split): runs of other halves share no question.
+            dataset["splits"] = self.labels_of(queries, "split")
             # Token F1's tokenizations differ only on the text of some
             # scripts (Han, Hangul, Kana, Thai, Hebrew, Arabic, ...): without
             # any, runs scored with either compare.
             dataset["dense_script"] = self.holds_dense_script(
                 queries, ground_truths or []
             )
+        if split := args.get("split"):
+            # The half run-eval --split kept.
+            dataset["split"] = split
         if eval_data_path is not None:
             path = Path(eval_data_path)
             content = path.read_bytes()
@@ -1619,6 +1686,9 @@ class EvaluationManager:
             # compare equal, and the metadata the CLI adds to every query
             # (strategy, suffix, top_k) does not count as the dataset's.
             dataset["content_sha256"] = self._sha256_json(json.loads(content))
+            # How prepare-benchmark drew it (seed, sizes, split, sources).
+            if (prepared := read_prepared(path)) is not None:
+                dataset["prepared"] = prepared
         elif queries is not None:
             # A library caller that read no file: its queries as given.
             dataset["content_sha256"] = self._sha256_json(
@@ -1630,6 +1700,7 @@ class EvaluationManager:
                 }
             )
         git_sha, git_dirty = self._git_state()
+        settings = answer_settings(self.config)
         return {
             "created_at": datetime.now(UTC).isoformat(),
             "package_version": __version__,
@@ -1637,7 +1708,10 @@ class EvaluationManager:
             "git_dirty": git_dirty,
             # Every setting that can change an answer or a score, without
             # the environment (cache_keys.answer_settings).
-            "retrieval_config_sha256": self._sha256_json(answer_settings(self.config)),
+            "retrieval_config_sha256": self._sha256_json(settings),
+            # The settings the hash is of, so a refused pooling or a
+            # comparison names the ones that differ.
+            "answer_settings": settings,
             "index": dict(index_builds or {}),
             "library_versions": {
                 name: self._package_version(name) for name in self._LIBRARIES
@@ -1817,13 +1891,13 @@ class EvaluationManager:
 
         unscored = sum(1 for r in results if r.error or self._is_unanswerable(r))
         for evaluator_type, evaluator in self.evaluators.items():
-            for metric_type in evaluator.metric_types():
-                _bump(evaluator_type.value, metric_type.value, "skipped", unscored)
+            for name in evaluator.metric_names():
+                _bump(evaluator_type.value, name, "skipped", unscored)
 
         for report in reports:
             evaluator_name = report.evaluator_type.value
             for metric in report.metrics:
-                _bump(evaluator_name, metric.metric_type.value, "scored")
+                _bump(evaluator_name, metric.name, "scored")
             for kind, key in (
                 ("failed", FAILED_METRICS_KEY),
                 ("skipped", SKIPPED_METRICS_KEY),
@@ -1940,7 +2014,7 @@ class EvaluationManager:
             if report.evaluator_type is not EvaluatorType.ANSWER_MATCH:
                 continue
             for metric in report.metrics:
-                scores[metric.metric_type.value][report.query_id] = metric.value
+                scores[metric.name][report.query_id] = metric.value
         if not scores:
             return {}
         abstained = {r.query_id for r in answerable if r.abstained and not r.error}
@@ -1981,18 +2055,16 @@ class EvaluationManager:
     def _calculate_metric_statistics(
         reports: list[EvaluationReport],
     ) -> dict[str, dict[str, float]]:
-        metric_values = defaultdict(list)
+        metric_values: dict[str, list[float]] = defaultdict(list)
         for report in reports:
             for metric in report.metrics:
-                metric_values[metric.metric_type].append(metric.value)
+                metric_values[metric.name].append(metric.value)
 
         statistics_dict: dict[str, dict[str, float]] = {}
-        for metric_type, values in metric_values.items():
+        for name, values in metric_values.items():
             if not values:
                 continue
-            statistics_dict[metric_type.value] = EvaluationManager._value_statistics(
-                values
-            )
+            statistics_dict[name] = EvaluationManager._value_statistics(values)
         return statistics_dict
 
     @staticmethod

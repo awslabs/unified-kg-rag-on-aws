@@ -25,6 +25,12 @@ other attributes (a ``run-eval`` run's strategy and repeat).
 Spans carry counts, ids and timings only. Text content (prompts, completions,
 retrieved passages) is recorded only through :func:`content_policy`, which is
 off unless ``observability.capture_content`` is set.
+
+Span timings: inside :func:`span_timings` every span opened here and ended
+in that context adds its wall-clock seconds to the block's ``{name:
+seconds}`` (``run-eval``'s per-stage latency, ``kg_rag.retrieve`` and the
+like); spans that overlap (concurrent model calls) each add theirs. Only
+while a backend is installed: the disabled path stays allocation-free.
 """
 
 from __future__ import annotations
@@ -33,6 +39,7 @@ import contextlib
 import os
 import re
 import threading
+import time
 from collections.abc import Iterator, Mapping
 from contextlib import AbstractContextManager
 from contextvars import ContextVar
@@ -56,6 +63,7 @@ __all__ = [
     "installed_settings",
     "is_enabled",
     "span",
+    "span_timings",
     "start_span",
     "uninstall",
 ]
@@ -75,6 +83,24 @@ _BOUND_ATTRIBUTES: ContextVar[Mapping[str, Any] | None] = ContextVar(
     "kg_rag_bound_span_attributes", default=None
 )
 _NULL_SCOPE: AbstractContextManager[None] = contextlib.nullcontext()
+
+
+class _Timings:
+    """The seconds per span name of one :func:`span_timings` block; spans
+    of the tasks and threads that copied its context add to it."""
+
+    __slots__ = ("lock", "seconds")
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.seconds: dict[str, float] = {}
+
+    def add(self, name: str, seconds: float) -> None:
+        with self.lock:
+            self.seconds[name] = self.seconds.get(name, 0.0) + seconds
+
+
+_TIMINGS: ContextVar[_Timings | None] = ContextVar("kg_rag_span_timings", default=None)
 
 
 class SpanHandle(Protocol):
@@ -297,7 +323,65 @@ def span(
     backend = _active_backend()
     if backend is None:
         return _NOOP_CONTEXT
-    return backend.use_span(name, _with_bound(_merge(attributes, kwargs)), kind)
+    opened = backend.use_span(name, _with_bound(_merge(attributes, kwargs)), kind)
+    if (timings := _TIMINGS.get()) is None:
+        return opened
+    return _timed(opened, name, timings)
+
+
+@contextlib.contextmanager
+def _timed(
+    opened: AbstractContextManager[SpanHandle], name: str, timings: _Timings
+) -> Iterator[SpanHandle]:
+    start = time.perf_counter()
+    try:
+        with opened as handle:
+            yield handle
+    finally:
+        timings.add(name, time.perf_counter() - start)
+
+
+class _TimedSpan:
+    """A started span that adds its seconds to a :func:`span_timings`
+    block when it ends (once)."""
+
+    __slots__ = ("_handle", "_name", "_start", "_timings")
+
+    def __init__(self, handle: SpanHandle, name: str, timings: _Timings) -> None:
+        self._handle, self._name, self._timings = handle, name, timings
+        self._start: float | None = time.perf_counter()
+
+    def set_attribute(self, key: str, value: Any) -> None:
+        self._handle.set_attribute(key, value)
+
+    def set_attributes(self, attributes: Mapping[str, Any]) -> None:
+        self._handle.set_attributes(attributes)
+
+    def record_exception(self, exception: BaseException) -> None:
+        self._handle.record_exception(exception)
+
+    def set_error(self, description: str) -> None:
+        self._handle.set_error(description)
+
+    def end(self) -> None:
+        if self._start is not None:
+            self._timings.add(self._name, time.perf_counter() - self._start)
+            self._start = None
+        self._handle.end()
+
+
+@contextlib.contextmanager
+def span_timings() -> Iterator[dict[str, float]]:
+    """Collect the seconds of the spans opened in this block (and the tasks
+    and threads it hands its context to), per span name; the dict fills
+    as they end. Empty while tracing is off. A nested block collects its
+    own spans only."""
+    timings = _Timings()
+    token = _TIMINGS.set(timings)
+    try:
+        yield timings.seconds
+    finally:
+        _TIMINGS.reset(token)
 
 
 def start_span(
@@ -315,7 +399,10 @@ def start_span(
     backend = _active_backend()
     if backend is None:
         return NOOP_SPAN
-    return backend.start_span(name, _with_bound(_merge(attributes, kwargs)), kind)
+    handle = backend.start_span(name, _with_bound(_merge(attributes, kwargs)), kind)
+    if (timings := _TIMINGS.get()) is None:
+        return handle
+    return _TimedSpan(handle, name, timings)
 
 
 def current_trace_ids() -> tuple[str, str] | None:

@@ -26,7 +26,7 @@ a,b`), LLM이 필요 없는 세 개가 기본으로 켜져 있고 데이터셋 �
 | 평가기 | LLM | 데이터셋에 필요한 필드 | 주요 지표 |
 |---|---|---|---|
 | `answer_match` | 없음 | `answer`(+ `answer_aliases`) | `answer_contains`(대표 지표), `exact_match`, `token_f1` |
-| `retrieval` | 없음 | `reference_sources` | `hit_at_k`, `recall_at_k`, `mrr`(k = `evaluation.retrieval_k`, 기본값 5) |
+| `retrieval` | 없음 | `reference_sources` | `hit_at_k`, `recall_at_k`, `ndcg_at_k`, `mrr`(k = `evaluation.retrieval_k`, 기본값 5. 목록이면 이후 k마다 `hit_at_<k>` 등을 추가) |
 | `graph_aware` | 없음 | `expected_entities` / `expected_relationships` | 답변과 검색된 출처에서의 엔티티·관계 커버리지(재현율) |
 | `ragas` | 심사 | `answer` | `answer_correctness`, `answer_relevancy`, `context_precision`, `context_recall`, `faithfulness` |
 | `assertion` | 심사 | `assertions` | `assertion_recall`, `assertion_contradiction_rate`, `negative_assertion_violation_rate`(선택 사항) |
@@ -233,7 +233,11 @@ p값과 함께 안내만 남깁니다. 재순위화가 꺼져 있거나 만들 �
   `--repeats`배). 이때 질의마다 반복의 점수를 먼저 평균한 뒤 질의끼리 평균합니다.
 - **비용과 지연 시간.** `cost.strategies.<s>`와 `cost.deltas_vs_baseline`은 답변의 질의당
   호출, 토큰, 지연 시간을 지표처럼 짝지어 보여 줍니다. 실패한 답변은 실패하기 전까지 쓴
-  만큼 셉니다.
+  만큼 셉니다. 전략마다 `embedding_calls_per_query`와 `embedding_input_tokens_per_query`도
+  보여 주며, `observability.enabled`이면 `stage_latency_seconds`에 스팬 이름(`kg_rag.retrieve`,
+  `chat <model>` 등)마다 그 스팬을 연 답변 수와 답변당 걸린 시간의 평균, p50, p95를 담습니다(실행
+  요약에도 같은 항목이 있습니다). 겹치는 스팬은 각각 세므로 단계 합계가 지연 시간보다 클 수
+  있습니다.
 - **실행 순서.** 기본값은 번갈아 답하기입니다(`--run-order interleaved`,
   `evaluation.run_order`). 질의 하나를 모든 전략과 반복이 답한 뒤 다음 질의로 넘어가며,
   질의마다 실행 순서를 뒤집고, 반복마다 한 번 더 뒤집습니다(`--repeats`가 짝수이면 질의
@@ -276,7 +280,13 @@ models:
       cache_write_per_million_tokens: 0.0
     "global.<fast-model-id>": {input_per_million_tokens: 0.0, output_per_million_tokens: 0.0}
     "<rerank-model-id>": {per_thousand_rerank_search_units: 0.0}
+    "<embedding-model-id>": {embedding_per_million_tokens: 0.0}
 ```
+
+임베딩 요청은 모델 호출과 따로 셉니다(`embedding_calls`, 그리고 `embedding_input_tokens`:
+Titan이 보고한 값, 없으면 문자 체계를 고려한 추정치, `embedding_estimated_calls`). 임베딩 모델
+항목에 `embedding_per_million_tokens`가 있으면 가격에 넣고, 없으면 USD에서 빼며 비교가 그
+모델을 알려 줍니다. 그래서 전에 쓴 가격 목록도 나머지는 그대로 계산합니다.
 
 추정치는 사용량에 기록된 호출만 다룹니다. botocore가 다시 보낸 요청(`request_retries`), 실패한
 호출(`failed_calls`), 예열 질의는 가격에 들어가지 않으므로 CloudWatch 호출 수와 청구액이 조금
@@ -335,7 +345,30 @@ run-eval --data-path eval.json --search-strategy local,mix --repeats 2 \
   빠지므로 다른 검정의 보정을 넓히거나 실행을 실패시키지 않습니다. 기본 실행과 추출 결과를 공유하므로 이 잡음 수준에는 추출의 잡음이 빠집니다.
   `search: {query_extraction_cache_size: 0}` 오버레이로 만든 A/A 비교군은 직접 추출해 그 잡음을
   포함하며, 질문과 반복마다 추출 호출이 한 번 더 듭니다.
+- 하이브리드와 한쪽 검색 비교: 오버레이에 `search: {search_type: lexical}`(또는 `vector`)을
+  지정한 비교군은 기본 실행이 두 검색을 융합하는 자리에서 그 검색만으로 답하므로, 한 번의
+  짝지은 번갈아 답하기 실행으로 비교합니다. `run-eval`에 `--search-type`을 주면 모든 실행과
+  비교군에 그 값이 적용됩니다.
 - 비교군 하나는 전략 하나만큼(답변과 워밍업) 들며, 나열한 전략 수만큼 곱해집니다.
+
+## 한쪽 절반으로 고르고 다른 절반으로 보고하기
+
+어떤 데이터셋으로 고른 설정을 같은 데이터셋으로 보고하면 실제보다 좋아 보입니다. 여러 실행
+중 가장 좋은 것을 고르면 그 실행에 유리했던 잡음까지 함께 고르기 때문입니다.
+`prepare-benchmark`는 모든 행에 절반을 표시하고(`metadata.split`: `tune` 또는 `test`, 질문
+ID의 SHA-256 홀짝), `--split`은 한쪽 절반에만 답하므로 `tune`으로 고르고 `test`로 보고합니다.
+
+```bash
+run-eval --data-path bench/musique/eval_data.json --split tune \
+  --search-strategy local --arm norerank=norerank.yaml --config-path config.yaml
+run-eval --data-path bench/musique/eval_data.json --split test \
+  --search-strategy local --arm norerank=norerank.yaml --config-path config.yaml
+```
+
+매니페스트는 절반(`dataset.split`)과 데이터셋을 뽑은 방법(`prepared.json`에서 읽은
+`dataset.prepared`)을 기록하며, 다른 절반의 실행을 비교하면 다른 데이터셋이라고 경고합니다.
+직접 만든 데이터셋은 모든 행에 `metadata.split`이 있어야 합니다. 절차와 한계는
+[Benchmarks: Tune and test halves](./benchmarks.md#tune-and-test-halves)(영문)에 있습니다.
 
 ## 단언문, 길이 통제, 클로즈드북 기준선
 

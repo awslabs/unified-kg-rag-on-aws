@@ -208,7 +208,7 @@ class BaseGraphRAGEvaluator:
         query_id: str,
         reason: str = "evaluation failed",
     ) -> EvaluationReport:
-        """A report whose metrics (all of ``metric_types()``) failed."""
+        """A report whose metrics (all of ``metric_names()``) failed."""
         return EvaluationReport(
             query_id=query_id,
             evaluator_type=self.evaluator_type,
@@ -216,7 +216,7 @@ class BaseGraphRAGEvaluator:
             evaluation_time=datetime.now(),
             metadata={
                 "evaluation_failed": True,
-                FAILED_METRICS_KEY: {m.value: reason for m in self.metric_types()},
+                FAILED_METRICS_KEY: dict.fromkeys(self.metric_names(), reason),
             },
         )
 
@@ -228,6 +228,12 @@ class BaseGraphRAGEvaluator:
         override; the default (no metrics) only loses that attribution.
         """
         return []
+
+    def metric_names(self) -> list[str]:
+        """The names of the metrics this evaluator attempts per query
+        (those of ``metric_types()``, and of an evaluator that scores one
+        type under several names, every name)."""
+        return [m.value for m in self.metric_types()]
 
     def validate_config(self) -> bool:
         return True

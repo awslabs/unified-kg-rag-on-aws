@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from tests.fixtures.extras import requires_eval
@@ -21,6 +23,9 @@ from unified_kg_rag.evaluation import EvaluationManager, RetrievalEvaluator
 from unified_kg_rag.evaluation.retrieval_evaluator import source_keys
 
 pytestmark = pytest.mark.unit
+
+# Every rank metric of a query whose files name no reference.
+_MISS = {"hit_at_k": 0.0, "recall_at_k": 0.0, "ndcg_at_k": 0.0, "mrr": 0.0}
 
 
 @pytest.fixture
@@ -144,8 +149,14 @@ class TestMetrics:
     def test_hit_recall_mrr(self, evaluator: RetrievalEvaluator) -> None:
         ranked = [["other.pdf"], ["vendor.pdf"], ["buyer.txt"]]
         out = _score(evaluator, ranked, ["Vendor.pdf", "buyer.pdf"])
-        # k=2: vendor found at rank 2, buyer only at rank 3.
-        assert out["metrics"] == {"hit_at_k": 1.0, "recall_at_k": 0.5, "mrr": 0.5}
+        # k=2: vendor found at rank 2, buyer only at rank 3; nDCG's ideal
+        # ranks both references first.
+        assert out["metrics"] == {
+            "hit_at_k": 1.0,
+            "recall_at_k": 0.5,
+            "ndcg_at_k": pytest.approx((1 / math.log2(3)) / (1 + 1 / math.log2(3))),
+            "mrr": 0.5,
+        }
         assert out["metadata"]["first_relevant_rank"] == 2
         assert out["metadata"]["k"] == 2
 
@@ -154,7 +165,12 @@ class TestMetrics:
         # with all of them: k=2 counts the first two distinct files.
         ranked = [["a.pdf", "b.pdf", "c.pdf"], ["vendor.pdf"]]
         out = _score(evaluator, ranked, ["vendor.pdf"])
-        assert out["metrics"] == {"hit_at_k": 0.0, "recall_at_k": 0.0, "mrr": 0.25}
+        assert out["metrics"] == {
+            "hit_at_k": 0.0,
+            "recall_at_k": 0.0,
+            "ndcg_at_k": 0.0,
+            "mrr": 0.25,
+        }
         assert out["metadata"]["first_relevant_rank"] == 4
         assert out["metadata"]["num_ranked_files"] == 4
         assert out["fraction"] == 1.0
@@ -168,7 +184,12 @@ class TestMetrics:
         # the gold passage at rank 3.
         ranked = [["a.txt", "b.txt", "c.txt"], ["a.txt"], ["vendor.txt"]]
         out = _score(evaluator, ranked, ["vendor.txt"], types=[derived, "text", "text"])
-        assert out["metrics"] == {"hit_at_k": 1.0, "recall_at_k": 1.0, "mrr": 0.5}
+        assert out["metrics"] == {
+            "hit_at_k": 1.0,
+            "recall_at_k": 1.0,
+            "ndcg_at_k": pytest.approx(1 / math.log2(3)),
+            "mrr": 0.5,
+        }
         assert out["metadata"]["num_ranked_files"] == 4
 
     def test_derived_sources_alone_rank_as_reported(
@@ -179,7 +200,12 @@ class TestMetrics:
         out = _score(
             evaluator, ranked, ["vendor.pdf"], types=["community", "community"]
         )
-        assert out["metrics"] == {"hit_at_k": 0.0, "recall_at_k": 0.0, "mrr": 0.25}
+        assert out["metrics"] == {
+            "hit_at_k": 0.0,
+            "recall_at_k": 0.0,
+            "ndcg_at_k": 0.0,
+            "mrr": 0.25,
+        }
 
     def test_repeated_file_counts_once(self, evaluator: RetrievalEvaluator) -> None:
         ranked = [["a.pdf"], ["A.pdf"], ["vendor.pdf"]]
@@ -203,8 +229,13 @@ class TestMetrics:
         )
         # The unattributable entity source has no files: no entity row.
         assert report.metadata["by_source_type"] == {
-            "community": {"hit_at_k": 0.0, "recall_at_k": 0.0, "mrr": 0.5},
-            "text": {"hit_at_k": 1.0, "recall_at_k": 1.0, "mrr": 1.0},
+            "community": {
+                "hit_at_k": 0.0,
+                "recall_at_k": 0.0,
+                "ndcg_at_k": 0.0,
+                "mrr": 0.5,
+            },
+            "text": {"hit_at_k": 1.0, "recall_at_k": 1.0, "ndcg_at_k": 1.0, "mrr": 1.0},
         }
 
     def test_random_community_reports_score_like_random_text_units(
@@ -245,7 +276,7 @@ class TestMetrics:
 
     def test_miss_scores_zero(self, evaluator: RetrievalEvaluator) -> None:
         out = _score(evaluator, [["a.pdf"], ["b.pdf"]], ["c.pdf"])
-        assert out["metrics"] == {"hit_at_k": 0.0, "recall_at_k": 0.0, "mrr": 0.0}
+        assert out["metrics"] == _MISS
 
     def test_match_by_document_id(self, evaluator: RetrievalEvaluator) -> None:
         out = _score(evaluator, [["DOC-7"]], ["doc-7"])
@@ -289,7 +320,7 @@ class TestMetrics:
 
     def test_mrr_counts_beyond_k(self, evaluator: RetrievalEvaluator) -> None:
         out = _score(evaluator, [["a"], ["b"], ["c"], ["gold"]], ["gold"])
-        assert out["metrics"] == {"hit_at_k": 0.0, "recall_at_k": 0.0, "mrr": 0.25}
+        assert out["metrics"] == {**_MISS, "mrr": 0.25}
 
     def test_no_references_skipped(self, evaluator: RetrievalEvaluator) -> None:
         out = _score(evaluator, [["a.pdf"]], [])
@@ -298,12 +329,13 @@ class TestMetrics:
         assert out["metadata"]["skipped_metrics"] == {
             "hit_at_k": "no_reference_sources",
             "recall_at_k": "no_reference_sources",
+            "ndcg_at_k": "no_reference_sources",
             "mrr": "no_reference_sources",
         }
 
     def test_no_sources_is_a_miss(self, evaluator: RetrievalEvaluator) -> None:
         out = _score(evaluator, [], ["a.pdf"])
-        assert out["metrics"] == {"hit_at_k": 0.0, "recall_at_k": 0.0, "mrr": 0.0}
+        assert out["metrics"] == _MISS
         assert out["fraction"] is None
         assert out["metadata"]["num_sources"] == 0
         assert out["metadata"]["skipped_metrics"] == {
@@ -322,20 +354,13 @@ class TestMetrics:
             "attributable_fraction": "no_sources",
             "hit_at_k": "no_sources_by_config",
             "recall_at_k": "no_sources_by_config",
+            "ndcg_at_k": "no_sources_by_config",
             "mrr": "no_sources_by_config",
         }
         # Another strategy without sources, or global with evidence, misses.
-        assert _score(evaluator, [], ["a.pdf"], strategy="local")["metrics"] == {
-            "hit_at_k": 0.0,
-            "recall_at_k": 0.0,
-            "mrr": 0.0,
-        }
+        assert _score(evaluator, [], ["a.pdf"], strategy="local")["metrics"] == _MISS
         evaluator.config.search.global_search.evidence_tokens = None
-        assert _score(evaluator, [], ["a.pdf"], strategy="global")["metrics"] == {
-            "hit_at_k": 0.0,
-            "recall_at_k": 0.0,
-            "mrr": 0.0,
-        }
+        assert _score(evaluator, [], ["a.pdf"], strategy="global")["metrics"] == _MISS
 
     def test_no_provenance_skipped(self, evaluator: RetrievalEvaluator) -> None:
         out = _score(evaluator, [[], []], ["a.pdf"])
@@ -350,7 +375,12 @@ class TestMetrics:
     ) -> None:
         # Two unattributable sources ahead of the gold one: k=2 still sees it.
         out = _score(evaluator, [[], [], ["other.pdf"], ["gold.pdf"]], ["gold.pdf"])
-        assert out["metrics"] == {"hit_at_k": 1.0, "recall_at_k": 1.0, "mrr": 0.5}
+        assert out["metrics"] == {
+            "hit_at_k": 1.0,
+            "recall_at_k": 1.0,
+            "ndcg_at_k": pytest.approx(1 / math.log2(3)),
+            "mrr": 0.5,
+        }
         assert out["fraction"] == 0.5
         assert out["metadata"]["num_attributable_sources"] == 2
 
@@ -578,3 +608,116 @@ class TestSourceDetails:
                 {"source": "VENDOR", "target": "BUYER", "description": "ships parts to"}
             ],
         }
+
+
+class TestNDCG:
+    """Binary-relevance nDCG@k (log2 discount) over the distinct ranked files."""
+
+    def _ndcg(self, config: Config, ranked: list[list[str]], refs: list[str]) -> float:
+        config.evaluation.retrieval_k = 3
+        return _score(RetrievalEvaluator(config), ranked, refs)["metrics"]["ndcg_at_k"]
+
+    def test_the_references_ranked_first_score_one(self, config: Config) -> None:
+        assert self._ndcg(config, [["a"], ["b"], ["x"]], ["a", "b"]) == 1.0
+        # Their order among themselves does not matter (binary relevance).
+        assert self._ndcg(config, [["b"], ["a"], ["x"]], ["a", "b"]) == 1.0
+
+    def test_a_lower_rank_gains_less(self, config: Config) -> None:
+        # One of two references, at rank 3: (1/log2 4) / (1 + 1/log2 3).
+        expected = (1 / math.log2(4)) / (1 + 1 / math.log2(3))
+        assert self._ndcg(config, [["x"], ["y"], ["a"]], ["a", "b"]) == pytest.approx(
+            expected
+        )
+        assert self._ndcg(config, [["x"], ["a"], ["y"]], ["a", "b"]) > expected
+
+    def test_a_reference_two_files_name_gains_once(self, config: Config) -> None:
+        # "report" (no extension) matches report.pdf and report.txt; counted
+        # once, as in recall, so the score stays at most 1.
+        assert self._ndcg(config, [["report.pdf"], ["report.txt"]], ["report"]) == 1.0
+        assert self._ndcg(
+            config, [["report.pdf"], ["report.txt"], ["b"]], ["report", "b"]
+        ) == pytest.approx((1 + 1 / math.log2(4)) / (1 + 1 / math.log2(3)))
+
+    def test_more_references_than_k_cap_the_ideal_at_k(self, config: Config) -> None:
+        refs = ["a", "b", "c", "d"]
+        assert self._ndcg(config, [["a"], ["b"], ["c"]], refs) == 1.0
+
+
+class TestFurtherCutoffs:
+    def test_each_further_k_adds_its_own_names(self, config: Config) -> None:
+        config.evaluation.retrieval_k = [2, 4]
+        ranked = [["x"], ["y"], ["z"], ["gold"]]
+        result = EvaluationResult(
+            query_id="q",
+            question="?",
+            generated_answer="a",
+            ground_truth="",
+            retrieved_source_ids=ranked,
+            metadata={"reference_sources": ["gold"]},
+        )
+        report = RetrievalEvaluator(config).evaluate_single(
+            EvaluationQuery(query_id="q", question="?"), result, ""
+        )
+        values = {m.name: m.value for m in report.metrics}
+        # The first k keeps the names it always had.
+        assert values["hit_at_k"] == 0.0 and values["recall_at_k"] == 0.0
+        assert values["hit_at_4"] == 1.0 and values["recall_at_4"] == 1.0
+        assert values["ndcg_at_4"] == pytest.approx(1 / math.log2(5))
+        assert report.metadata["k"] == 2
+        assert {m.k for m in report.metrics if m.name.endswith("_at_4")} == {4}
+
+    def test_a_skipped_query_skips_the_further_names(self, config: Config) -> None:
+        config.evaluation.retrieval_k = [2, 4]
+        evaluator = RetrievalEvaluator(config)
+        out = _score(evaluator, [["a.pdf"]], [])
+        skipped = out["metadata"]["skipped_metrics"]
+        assert skipped["hit_at_4"] == skipped["ndcg_at_4"] == "no_reference_sources"
+        assert set(evaluator.metric_names()) >= {"hit_at_4", "recall_at_4", "ndcg_at_4"}
+
+    def test_one_k_is_a_list_of_one(self, config: Config) -> None:
+        config.evaluation.retrieval_k = 7
+        assert config.evaluation.retrieval_k == [7]
+        assert RetrievalEvaluator(config).metric_names() == [
+            m.value for m in RetrievalEvaluator(config).metric_types()
+        ]
+
+    def test_a_cutoff_belongs_to_a_rank_metric(self) -> None:
+        from unified_kg_rag.domain.models import EvaluationMetric, EvaluationMetricType
+
+        with pytest.raises(ValueError, match="no cutoff"):
+            EvaluationMetric(metric_type=EvaluationMetricType.MRR, k=3, value=1.0)
+
+
+async def test_further_cutoffs_reach_the_summary_and_the_comparison(
+    config: Config,
+) -> None:
+    from unified_kg_rag.evaluation.comparison import per_query_means
+
+    config.evaluation.enabled_evaluators = [EvaluatorType.RETRIEVAL]
+    config.evaluation.retrieval_k = [1, 2]
+    chain = _Chain(
+        _output(
+            [
+                {"content": "c1", "metadata": {"file_name": "terms.pdf"}},
+                {"content": "c2", "metadata": {"file_name": "vendor.pdf"}},
+            ]
+        )
+    )
+    manager = EvaluationManager(config, rag_chain=chain)
+    queries = [EvaluationQuery(query_id="q1", question="Who ships?")]
+    gts = [
+        EvaluationGroundTruth(
+            query_id="q1", ground_truth="", reference_sources=["vendor.pdf"]
+        )
+    ]
+    results, reports, summary = await manager.evaluate_dataset(
+        queries, gts, show_progress=False
+    )
+    assert summary.metric_statistics["hit_at_k"]["mean"] == 0.0
+    assert summary.metric_statistics["hit_at_2"]["mean"] == 1.0
+    assert summary.metric_statistics["ndcg_at_2"]["mean"] == pytest.approx(
+        1 / math.log2(3)
+    )
+    assert summary.metric_outcomes["retrieval"]["recall_at_2"]["scored"] == 1
+    means = per_query_means([(reports, results)])
+    assert means["retrieval/hit_at_2"] == {"q1": 1.0}

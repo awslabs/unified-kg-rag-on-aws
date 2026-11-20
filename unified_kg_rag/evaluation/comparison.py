@@ -78,7 +78,11 @@ from unified_kg_rag.domain.models import (
     EvaluatorType,
     RerankStatus,
 )
-from unified_kg_rag.domain.pricing import ModelPrice, usage_cost_usd
+from unified_kg_rag.domain.pricing import (
+    ModelPrice,
+    unpriced_embedding_models,
+    usage_cost_usd,
+)
 from unified_kg_rag.shared import get_logger
 
 from .answer_match_evaluator import ANSWER_SPAN_KEY, SPAN_FALLBACK_KEY
@@ -136,7 +140,7 @@ def _scored_metrics(runs: Mapping[str, Sequence[Run]]) -> dict[str, set[str]]:
                 for metric in report.metrics:
                     if metric.metric_type.value not in _UNFILLED:
                         scored[report.query_id].add(
-                            f"{report.evaluator_type.value}/{metric.metric_type.value}"
+                            f"{report.evaluator_type.value}/{metric.name}"
                         )
     return scored
 
@@ -169,7 +173,7 @@ def per_query_means(
     for reports, results in runs:
         for report in reports:
             for metric in report.metrics:
-                key = f"{report.evaluator_type.value}/{metric.metric_type.value}"
+                key = f"{report.evaluator_type.value}/{metric.name}"
                 values[key][report.query_id].append(metric.value)
         for result in results:
             if result.error:
@@ -455,7 +459,7 @@ def paired_comparison(
     seed: int = 0,
     categories: Mapping[str, str] | None = None,
     prices: Mapping[str, ModelPrice] | None = None,
-    unmetered_rerank: Collection[str] = (),
+    unmetered_usage: Collection[str] = (),
     closed_book: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Compare strategies run over the same queries (the first is the baseline).
@@ -465,8 +469,9 @@ def paired_comparison(
     ``closed_book`` (query id to ``known``/``unknown``,
     ``closed_book_strata``) ``deltas_by_closed_book``;
     ``prices`` (model id to price) adds a USD estimate to ``cost``, with no
-    USD delta between a strategy of ``unmetered_rerank`` (whose usage
-    records count no rerank request) and one whose records count them.
+    USD delta between a strategy of ``unmetered_usage`` (whose usage
+    records count less than ``USAGE_SCHEMA`` does: no rerank request as
+    billed, no embedding request) and one whose records count them.
     """
     comparison = _paired_comparison(
         runs,
@@ -475,7 +480,7 @@ def paired_comparison(
         seed=seed,
         categories=categories,
         prices=prices,
-        unmetered_rerank=unmetered_rerank,
+        unmetered_usage=unmetered_usage,
         closed_book=closed_book,
     )
     for warning in comparison["warnings"]:
@@ -493,7 +498,7 @@ def baseline_comparison(
     seed: int = 0,
     categories: Mapping[str, str] | None = None,
     prices: Mapping[str, ModelPrice] | None = None,
-    unmetered_rerank: Collection[str] = (),
+    unmetered_usage: Collection[str] = (),
     closed_book: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Compare each strategy of ``runs`` with its own baseline.
@@ -512,7 +517,7 @@ def baseline_comparison(
             seed=seed,
             categories=categories,
             prices=prices,
-            unmetered_rerank=unmetered_rerank,
+            unmetered_usage=unmetered_usage,
             closed_book=closed_book,
         )
         for strategy, strategy_runs in runs.items()
@@ -562,7 +567,7 @@ def _paired_comparison(
     seed: int,
     categories: Mapping[str, str] | None,
     prices: Mapping[str, ModelPrice] | None,
-    unmetered_rerank: Collection[str] = (),
+    unmetered_usage: Collection[str] = (),
     closed_book: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """``paired_comparison`` without logging its warnings."""
@@ -700,7 +705,7 @@ def _paired_comparison(
                 by_metric[ABSTENTION_PRECISION] = precision_delta
         deltas[strategy] = by_metric
     cost = cost_comparison(
-        runs, prices=prices, unmetered_rerank=unmetered_rerank, **stats
+        runs, prices=prices, unmetered_usage=unmetered_usage, **stats
     )
     warnings = [
         *_failure_warnings(summary),
@@ -1022,8 +1027,10 @@ USD_MEASURE = "usage/cost_usd"
 # rerank requests too (``rerank_calls``, ``rerank_search_units``), which a
 # USD estimate prices; 3, the search units counted as Bedrock bills them
 # (a document over a chunk's token limit counts as several), where 2 counted
-# one per 100 documents and undercounted long ones.
-USAGE_SCHEMA = 3
+# one per 100 documents and undercounted long ones; 4, the embedding
+# requests and their input tokens (embedding_calls, embedding_input_tokens),
+# which a USD estimate prices when the embedding model has a price.
+USAGE_SCHEMA = 4
 
 
 def _distribution(values: Sequence[float]) -> dict[str, float] | None:
@@ -1034,6 +1041,21 @@ def _distribution(values: Sequence[float]) -> dict[str, float] | None:
         "mean": float(data.mean()),
         "p50": float(np.percentile(data, 50)),
         "p95": float(np.percentile(data, 95)),
+    }
+
+
+def stage_latency(results: Sequence[EvaluationResult]) -> dict[str, dict[str, float]]:
+    """Per span name, the distribution of the seconds an answer spent in
+    it (``EvaluationResult.stage_seconds``), over the answers that opened
+    one: ``answers``, ``mean``, ``p50``, ``p95``. Failed answers count, with
+    what they spent; empty when no answer was traced."""
+    seconds: dict[str, list[float]] = defaultdict(list)
+    for result in results:
+        for name, value in (result.stage_seconds or {}).items():
+            seconds[name].append(value)
+    return {
+        name: {"answers": float(len(values)), **(_distribution(values) or {})}
+        for name, values in sorted(seconds.items())
     }
 
 
@@ -1063,7 +1085,7 @@ def cost_comparison(
     runs: Mapping[str, Sequence[Run]],
     *,
     prices: Mapping[str, ModelPrice] | None = None,
-    unmetered_rerank: Collection[str] = (),
+    unmetered_usage: Collection[str] = (),
     resamples: int,
     confidence: float = 0.95,
     seed: int = 0,
@@ -1077,9 +1099,12 @@ def cost_comparison(
     with them or with some answers unmeasured, failed answers in the
     measures, repeat counts or cache hits per answer that differ from the
     baseline's, unpriced models, and strategies whose usage records do not
-    meter the rerank requests as billed (``unmetered_rerank``: saved before
-    ``USAGE_SCHEMA`` 3) next to some that do: the USD delta between two
-    such is left out, since one side's estimate prices no rerank.
+    meter what ``USAGE_SCHEMA`` does (``unmetered_usage``: rerank requests
+    as billed, embedding requests) next to some that do: the USD delta
+    between two such is left out, since one side's estimate prices less.
+    Per strategy also the embedding requests and tokens per query
+    (described, not tested), and a warning naming the embedding models
+    without an embedding price (their requests are left out of the USD).
 
     A failed answer counts with the usage and time it spent before it failed
     (``failed_answers``; ``EvaluationManager`` records both per answer). An
@@ -1096,9 +1121,12 @@ def cost_comparison(
     strategies: dict[str, Any] = {}
     per_query: dict[str, dict[str, dict[str, float]]] = {}
     unpriced: set[str] = set()
+    unpriced_embedding: set[str] = set()
     without_usage: list[str] = []
     for strategy, strategy_runs in runs.items():
         observed: dict[str, list[float]] = defaultdict(list)
+        # Described per strategy, not tested: (calls, input tokens) per answer.
+        embedding: list[tuple[int, int]] = []
         by_query: dict[str, dict[str, list[float]]] = defaultdict(
             lambda: defaultdict(list)
         )
@@ -1112,6 +1140,16 @@ def cost_comparison(
                 strategy_unpriced |= missing
                 if result.usage is not None:
                     cache_hits += result.usage.cache_hits
+                    embedding.append(
+                        (
+                            result.usage.embedding_calls,
+                            result.usage.embedding_input_tokens,
+                        )
+                    )
+                    if prices:
+                        unpriced_embedding |= unpriced_embedding_models(
+                            result.usage, prices
+                        )
                 for key, value in measures.items():
                     observed[key].append(value)
                     by_query[key][result.query_id].append(value)
@@ -1148,6 +1186,14 @@ def cost_comparison(
                 observed.get("usage/total_tokens", [])
             ),
             "latency_seconds": _distribution(observed.get(LATENCY_MEASURE, [])),
+            # Per span (with observability on): where the latency goes.
+            "stage_latency_seconds": stage_latency(
+                [result for _, results in strategy_runs for result in results]
+            ),
+            "embedding_calls_per_query": _distribution([c for c, _ in embedding]),
+            "embedding_input_tokens_per_query": _distribution(
+                [t for _, t in embedding]
+            ),
             # Over the answers every model of which has a price; the total
             # only when every answer's models have one.
             "usd_per_query": _distribution(observed.get(USD_MEASURE, [])),
@@ -1159,7 +1205,7 @@ def cost_comparison(
             "totals": totals,
         }
     names = list(runs)
-    unmetered = [s for s in names if s in unmetered_rerank]
+    unmetered = [s for s in names if s in unmetered_usage]
     deltas: dict[str, Any] = {}
     for strategy in names[1:]:
         by_measure: dict[str, Any] = {}
@@ -1176,8 +1222,9 @@ def cost_comparison(
     if prices and unmetered and len(unmetered) < len(names):
         warnings.append(
             f"The usage records of {', '.join(unmetered)} do not count rerank "
-            f"search units as billed (saved before usage_schema {USAGE_SCHEMA}): "
-            "their USD estimate leaves the rerank out or undercounts it, and "
+            "search units as billed or embedding requests (saved before "
+            f"usage_schema {USAGE_SCHEMA}): their USD estimate leaves them out "
+            "or undercounts them, and "
             "no USD delta is given against a strategy whose records count "
             "them. Run them again to compare USD."
         )
@@ -1191,6 +1238,12 @@ def cost_comparison(
         )
     warnings.extend(_measure_warnings(strategies))
     warnings.extend(_cache_warnings(strategies, names))
+    if unpriced_embedding:
+        warnings.append(
+            "models.prices sets no embedding_per_million_tokens for "
+            f"{', '.join(sorted(unpriced_embedding))}: the USD estimates leave "
+            "its embedding requests out."
+        )
     if unpriced:
         warnings.append(
             "models.prices has no price for "

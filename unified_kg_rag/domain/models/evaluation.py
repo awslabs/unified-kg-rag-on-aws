@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .retrieval import RerankStatus, SearchStrategy, SearchType
 from .usage import LLMUsage
@@ -39,6 +39,9 @@ class EvaluationMetricType(str, Enum):
     # (k = EvaluationConfig.retrieval_k files).
     HIT_AT_K = "hit_at_k"
     RECALL_AT_K = "recall_at_k"
+    # Binary-relevance nDCG@k over the same ranked files (a file is relevant
+    # when it names a reference no higher-ranked file named; log2 discount).
+    NDCG_AT_K = "ndcg_at_k"
     MRR = "mrr"
     # Share of reported sources attributable to a file (the rank metrics above
     # see only those).
@@ -251,6 +254,16 @@ class EvaluationResult(BaseModel):
             "time from its first attempt's start to its last one's end."
         ),
     )
+    stage_seconds: dict[str, float] | None = Field(
+        default=None,
+        description=(
+            "Per span name (kg_rag.retrieve, kg_rag.fusion, chat <model>, "
+            "...), the seconds the answer's spans took, over its attempts; "
+            "overlapping spans (concurrent calls) each count. None when "
+            "tracing was off (observability.enabled false) or for a result "
+            "saved before it was recorded."
+        ),
+    )
     search_strategy: str | None = Field(
         default=None,
         description="Search strategy used for this evaluation, one of "
@@ -385,9 +398,38 @@ class EvaluationResult(BaseModel):
     )
 
 
+# The rank metrics scored at a cutoff (EvaluationConfig.retrieval_k): their
+# names end in "_at_k", which a further cutoff replaces with "_at_<k>".
+AT_K_METRICS = (
+    EvaluationMetricType.HIT_AT_K,
+    EvaluationMetricType.RECALL_AT_K,
+    EvaluationMetricType.NDCG_AT_K,
+)
+
+
+def metric_name(metric_type: EvaluationMetricType, k: int | None = None) -> str:
+    """The name a metric is reported under: its type's value, or for a rank
+    metric scored at a further cutoff ``k``, ``hit_at_10`` and the like."""
+    if k is None:
+        return metric_type.value
+    if metric_type not in AT_K_METRICS:
+        raise ValueError(f"{metric_type.value} has no cutoff")
+    return metric_type.value.removesuffix("_at_k") + f"_at_{k}"
+
+
 class EvaluationMetric(BaseModel):
     metric_type: EvaluationMetricType = Field(
         description="The type of evaluation metric."
+    )
+    k: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "The cutoff of a rank metric scored at a further "
+            "evaluation.retrieval_k (named hit_at_<k>, recall_at_<k>, "
+            "ndcg_at_<k>); None for every other metric and for the first "
+            "cutoff, whose names end in _at_k."
+        ),
     )
     value: float = Field(description="The numerical value of the metric score.")
     explanation: str | None = Field(
@@ -398,6 +440,17 @@ class EvaluationMetric(BaseModel):
         default_factory=dict,
         description="Additional metadata specific to this metric calculation.",
     )
+
+    @model_validator(mode="after")
+    def _cutoff_of_a_rank_metric(self) -> "EvaluationMetric":
+        if self.k is not None and self.metric_type not in AT_K_METRICS:
+            raise ValueError(f"{self.metric_type.value} has no cutoff k")
+        return self
+
+    @property
+    def name(self) -> str:
+        """The name the metric is reported under (:func:`metric_name`)."""
+        return metric_name(self.metric_type, self.k)
 
 
 class EvaluationReport(BaseModel):
@@ -431,6 +484,14 @@ class EvaluationSummary(BaseModel):
     average_response_time: float | None = Field(
         default=None,
         description="Average response time across all successful evaluations in seconds.",
+    )
+    stage_latency_seconds: dict[str, dict[str, float]] = Field(
+        default_factory=dict,
+        description=(
+            "Per span name, the seconds per answer of the answers that "
+            "opened that span (EvaluationResult.stage_seconds): answers, "
+            "mean, p50, p95. Empty when tracing was off."
+        ),
     )
     metric_statistics: dict[str, dict[str, float]] = Field(
         default_factory=dict,

@@ -16,7 +16,11 @@ Counts are kept per model role (the purpose the model was built for:
 ``query``, ``ingestion``, ``evaluation``; ``embedding`` and ``rerank`` for
 the embedding model's and reranker's requests) and
 per model id. A rerank request is no model call: it counts in
-``rerank_calls`` and its billed ``rerank_search_units``. A response the
+``rerank_calls`` and its billed ``rerank_search_units``. Nor is an embedding
+request (:func:`record_embedding_call`, by every embedding adapter): it
+counts in ``embedding_calls`` and its ``embedding_input_tokens``, as the
+provider reported them (Bedrock Titan's ``inputTextTokenCount``) or else
+estimated from the texts (``embedding_estimated_calls``). A response the
 ingestion response cache served, a chunk-boundary answer the extraction
 store served, or a query extraction the RAG chain's extraction cache
 served, is a cache hit, not a call: it spends no tokens.
@@ -103,6 +107,7 @@ __all__ = [
     "merge_usage",
     "metering",
     "record_cache_hit",
+    "record_embedding_call",
     "record_llm_call",
     "record_rerank_call",
     "record_request",
@@ -127,6 +132,9 @@ COUNT_FIELDS: tuple[str, ...] = (
     "failed_calls",
     "rerank_calls",
     "rerank_search_units",
+    "embedding_calls",
+    "embedding_input_tokens",
+    "embedding_estimated_calls",
 )
 
 # Documents one rerank search unit covers (Amazon Bedrock bills a rerank
@@ -158,6 +166,9 @@ class _Counts:
     failed_calls: int = 0
     rerank_calls: int = 0
     rerank_search_units: int = 0
+    embedding_calls: int = 0
+    embedding_input_tokens: int = 0
+    embedding_estimated_calls: int = 0
 
     def add(self, other: _Counts, sign: int = 1) -> None:
         for name in COUNT_FIELDS:
@@ -897,6 +908,22 @@ def record_rerank_call(
         else rerank_search_units(0, documents=documents)
     )
     _record("rerank", model, _Counts(rerank_calls=1, rerank_search_units=units))
+
+
+def record_embedding_call(model: str, *, input_tokens: int, estimated: bool) -> None:
+    """Record one embedding request that returned, under the ``embedding``
+    role: not a model call (``llm_calls``) but an embedding call and its
+    ``input_tokens``, as the provider reported them or (``estimated``)
+    estimated from the texts sent."""
+    _record(
+        "embedding",
+        model,
+        _Counts(
+            embedding_calls=1,
+            embedding_input_tokens=max(0, input_tokens),
+            embedding_estimated_calls=int(estimated),
+        ),
+    )
 
 
 def record_request(role: str, model: str, *, throttled: bool = False) -> None:

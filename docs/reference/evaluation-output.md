@@ -26,7 +26,11 @@ A comparison adds `evaluation_comparison_<timestamp>.json`, `.csv` and `.md`
 
 Each row of `evaluation_results_*` is one answer: the question, answer,
 ground truth, retrieved contexts and source provenance, `response_time`,
-`usage`, `error` / `error_message`, `rerank_status`, `degraded_error`,
+`usage` (model calls and tokens, and apart from them the rerank requests
+and the embedding requests: `embedding_calls`, `embedding_input_tokens`,
+as Titan reports them or else estimated, `embedding_estimated_calls`),
+`stage_seconds` (with tracing on, the seconds per span name),
+`error` / `error_message`, `rerank_status`, `degraded_error`,
 `degraded_steps`, `guardrail_blocked`,
 `category`, the query's `metadata`, and the chain's decline and
 sufficiency fields:
@@ -128,6 +132,12 @@ from the text, and under
 - `benchmarks`: the questions per benchmark label of a
   [prepared benchmark](../guides/benchmarks.md) dataset (also
   `dataset.benchmarks` in the run manifest).
+- `stage_latency_seconds`: with `observability.enabled`, per span name
+  (`kg_rag.retrieve`, `kg_rag.fusion`, `chat <model>`, ...) the `answers`
+  that opened it and the seconds per answer they spent in it, `mean`,
+  `p50` and `p95` (each result's `stage_seconds`; spans that overlap, such
+  as concurrent model calls, each count, so the stages can add up to more
+  than `response_time`); `{}` with tracing off.
 - `run_manifest` ([below](#run-manifest)).
 
 The console prints the same summary.
@@ -137,12 +147,16 @@ The console prints the same summary.
 `run_manifest` records what was measured, so two runs can be compared:
 
 - the CLI arguments (URLs without credentials), versions, `git_sha` /
-  `git_dirty`, the dataset (path, hashes, query count, and `dense_script`:
+  `git_dirty`, the dataset (path, hashes, query count, `dense_script`:
   whether a question, gold answer or alias holds Han, Hangul or Kana
-  text), a UTC timestamp, `dropped_evaluators` and `usage_schema` (`3`:
-  the usage records count the rerank requests and their search units as
-  Bedrock bills them; `2` counted one unit per 100 documents, too few for
-  long ones; a run saved without it counted none);
+  text; `splits`, the questions per `metadata.split` half; `split`, the
+  half `run-eval --split` kept; and `prepared`, the `prepared.json` next
+  to the dataset file: how [prepare-benchmark](../guides/benchmarks.md)
+  drew it), a UTC timestamp, `dropped_evaluators` and `usage_schema` (`4`:
+  the usage records count the embedding requests and their input tokens,
+  and the rerank requests and their search units as Bedrock bills them;
+  `3` counted no embedding request, `2` one rerank unit per 100 documents,
+  too few for long ones; a run saved without it counted none);
 - from `run-eval`: `run_id`, the invocation that answered the run (one per
   `run-eval`, shared by its strategies and repeats), with several runs
   `run_order` (`interleaved` or `sequential`, `evaluation.run_order`),
@@ -179,9 +193,12 @@ The console prints the same summary.
   can change an answer or a score (model ids and ingestion settings
   included; regions, endpoints, credentials, paths, timeouts and other
   operational knobs left out), so the same evaluation hashes the same in
-  every environment. The `run-eval` query flags (`--suffix`, `--top-k`,
-  `--search-type`, `--retrieval-multiplier`) are not
-  configuration: they are in the CLI arguments, not in the hash;
+  every environment, and `answer_settings`, the `{setting: value}` map it
+  hashes, so a refused pooling names the settings that differ. The
+  `run-eval` query flags (`--suffix`, `--top-k`, `--search-type`,
+  `--retrieval-multiplier`) are not configuration: they are in the CLI
+  arguments, not in the hash (`search.search_type`, the search type of a
+  run without `--search-type`, is);
 - `index`: per queried suffix, the ingestion run that last wrote its vector
   indices (`pipeline_id`, `mode`, `built_at`, `documents`, the extraction
   settings, for an incremental run the `full_build` it was applied on,
@@ -382,15 +399,20 @@ strategies, or `--repeats`) saves every run's files and adds
   `input_tokens_per_query`, `output_tokens_per_query`,
   `total_tokens_per_query`, `latency_seconds`, the `totals` and
   `cache_hits`, and with `models.prices` set `usd_per_query` and
-  `usd_total`. `cost.deltas_vs_baseline.<s>` pairs them against the
+  `usd_total`; also, described but not paired or tested,
+  `embedding_calls_per_query`, `embedding_input_tokens_per_query` and
+  `stage_latency_seconds` (as in the summary, over every answer of every
+  repeat; `{}` with tracing off). The USD includes the embedding requests
+  of a model whose price sets `embedding_per_million_tokens`; those of one
+  without are left out, with a warning naming it. `cost.deltas_vs_baseline.<s>` pairs them against the
   baseline like the metrics (`usage/llm_calls`, `usage/input_tokens`,
   `usage/output_tokens`, `usage/total_tokens`, `usage/cost_usd`,
   `latency/response_time_seconds`, each query's mean over its repeats, with
   the bootstrap interval). No `usage/cost_usd` delta pairs a strategy whose
-  usage records count the rerank search units as billed with one saved before
-  they did (a `usage_schema` below 3 in its manifest, or none; a warning
-  says so): the older side's estimate prices the rerank too low or not at
-  all. A failed or timed-out answer counts with what it
+  usage records count what `usage_schema` 4 counts (the rerank search units
+  as billed, the embedding requests) with one saved before they did (a
+  lower `usage_schema` in its manifest, or none; a warning says so): the
+  older side's estimate prices them too low or not at all. A failed or timed-out answer counts with what it
   spent before failing: each answer runs in its own usage scope and timer,
   so its result keeps the calls and tokens of its attempts and the time from
   its first attempt's start to its last one's end (`failed_answers` counts
@@ -456,11 +478,14 @@ The full rules of `--from-results`, `--baseline-results` and `--fail-if`
   invocation's: runs of several `run_id`s (or one with and one without; or,
   saved before `run_id` was recorded, more runs than their
   `cli_args.repeats`), or runs that differ in a query flag (`suffix`,
-  `top_k`, `search_type`, `retrieval_multiplier`),
-  `retrieval_config_sha256`, `git_sha`, the `index` build or the answer
-  model are refused (exit 2) by `--from-results` and `--baseline-results`
-  unless `--pool-runs` is given, which pools them with a warning naming what
-  differs. The rebuild also warns when the strategies ran different numbers
+  `top_k`, `retrieval_multiplier`, and the search type each searched with:
+  `--search-type`, else `search.search_type`),
+  `retrieval_config_sha256` (the message names the `answer_settings` that
+  differ, when both manifests record them), `git_sha`, the `index` build
+  or the answer model are refused (exit 2) by `--from-results` and
+  `--baseline-results` unless `--pool-runs` is given, which pools them
+  with a warning naming what differs. Runs of different `run-eval --split`
+  halves are warned about as different datasets. The rebuild also warns when the strategies ran different numbers
   of repeats, and when a run has no `evaluation_summary_*` file (its
   manifest, so none of these checks, nor the answer-scoring and
   self-preference ones, can read it).
@@ -596,6 +621,18 @@ Did the sources the answer model saw include the gold documents?
   its `text` row was 0.68; with passages first both are 0.68, and `local`
   moves by -0.003 to -0.008). A strategy that reports only attributed
   sources (`global`) ranks them as before.
+- **Metrics and cutoffs.** `hit_at_k` (a reference among the top `k`
+  files), `recall_at_k` (the share of references there), `ndcg_at_k` and
+  `mrr` (the reciprocal rank of the first file naming a reference, at any
+  rank). `ndcg_at_k` is binary-relevance nDCG with the log2 discount
+  (Järvelin and Kekäläinen 2002; `trec_eval`'s `ndcg_cut`): a file at rank
+  `i` gains `1 / log2(i + 1)` when it names a reference no higher-ranked
+  file named, over the gain of the references ranked first, so it is 1.0
+  exactly when the top files are the references and, unlike recall, rises
+  as they move up. `k` is the first of `evaluation.retrieval_k` (default
+  `[5]`); each further cutoff adds `hit_at_<k>`, `recall_at_<k>` and
+  `ndcg_at_<k>` (`hit_at_10`, say), so one run reports several without
+  `--rescore`.
 - **Per source type.** `by_source_type` (aggregated in
   `grouped_statistics.source_type`) has the same metrics per section type; its
   `text` row, the text units the answer model read verbatim, is the fairest

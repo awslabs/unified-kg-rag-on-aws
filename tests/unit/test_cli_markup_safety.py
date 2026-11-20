@@ -255,7 +255,12 @@ def test_prepare_benchmark_prints_the_output_directory_literally(
     monkeypatch.setattr(
         musique,
         "prepare",
-        lambda *args, **kwargs: {"benchmark": "m", "questions": 1, "paragraphs": 2},
+        lambda *args, **kwargs: {
+            "benchmark": "m",
+            "questions": 1,
+            "paragraphs": 2,
+            "splits": {"tune": 1, "test": 0},
+        },
     )
     prepare_benchmark.main(
         ["musique", "--data-path", str(data), "--output-directory", str(target)]

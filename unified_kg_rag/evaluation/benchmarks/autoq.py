@@ -35,9 +35,11 @@ lists where and why this differs.
    score is at least ``min_validation_score``), then ranked (BenchmarkQED's
    weighted reciprocal rank fusion of importance and source count). A data
    question left without an assertion is dropped.
-5. ``eval_data.json`` (the run-eval format), ``text_units.jsonl`` (every
-   unit's id, file, offsets and text, for review) and
-   ``generation_report.json`` (seed, models, counts, drops, usage).
+5. ``eval_data.json`` (the run-eval format; each row's ``metadata.split``
+   is ``benchmarks.split_of`` of its id), ``text_units.jsonl`` (every
+   unit's id, file, offsets and text, for review),
+   ``generation_report.json`` (seed, models, counts, drops, usage) and
+   ``prepared.json`` (the report without the drops and usage).
 
 Every prompt names the output language. Sampling, clustering, the call
 order and the selection depend only on the seed and the corpus: with the
@@ -62,6 +64,7 @@ import numpy as np
 from langchain_core.runnables import Runnable
 from pydantic import BaseModel, ConfigDict, Field
 
+from unified_kg_rag import __version__
 from unified_kg_rag.adapters.evaluators.base import judge_answers
 from unified_kg_rag.adapters.llm.chain_factory import setup_chain
 from unified_kg_rag.adapters.llm.reachability import (
@@ -86,7 +89,12 @@ from unified_kg_rag.domain.prompts import (
     BenchmarkValidationPrompt,
 )
 from unified_kg_rag.domain.retrieval.lineage import merge as merge_lineages
-from unified_kg_rag.evaluation.benchmarks import QUESTION_CLASSES
+from unified_kg_rag.evaluation.benchmarks import (
+    PREPARED_FILE,
+    QUESTION_CLASSES,
+    split_of,
+    write_prepared,
+)
 from unified_kg_rag.shared import EvaluationException, get_logger
 from unified_kg_rag.shared.logging import log_failure
 from unified_kg_rag.shared.usage import merge_usage, usage_scope
@@ -101,7 +109,12 @@ LICENSE_NOTE = (
 BENCHMARK_NAME = "autoq"
 DATA_CLASSES = frozenset({"data_local", "data_global", "data_linked"})
 CORPUS_SUFFIXES = frozenset({".txt", ".md"})
-OUTPUT_FILES = ("eval_data.json", "text_units.jsonl", "generation_report.json")
+OUTPUT_FILES = (
+    "eval_data.json",
+    "text_units.jsonl",
+    "generation_report.json",
+    PREPARED_FILE,
+)
 # BenchmarkQED's assertion ranking: reciprocal rank fusion of importance and
 # source count, k 60, weights 0.3 / 0.7.
 RRF_K = 60
@@ -678,12 +691,14 @@ class AssertionBenchmarkGenerator:
             sources = list(
                 dict.fromkeys(u for a in candidate.assertions for u in a.sources)
             )
+        query_id = f"{BENCHMARK_NAME}-{question_class.replace('_', '-')}-{n:03d}"
         row: dict[str, Any] = {
-            "query_id": f"{BENCHMARK_NAME}-{question_class.replace('_', '-')}-{n:03d}",
+            "query_id": query_id,
             "question": candidate.question,
             "category": question_class,
             "metadata": {
                 "benchmark": BENCHMARK_NAME,
+                "split": split_of(query_id),
                 "question_class": question_class,
                 "topic": candidate.topic,
                 "entities": candidate.entities,
@@ -1172,8 +1187,8 @@ def check_output_directory(output_dir: Path) -> None:
 
 
 def write_outputs(output_dir: Path, generated: dict[str, Any]) -> None:
-    """Write ``eval_data.json``, ``text_units.jsonl`` and
-    ``generation_report.json``."""
+    """Write ``eval_data.json``, ``text_units.jsonl``,
+    ``generation_report.json`` and ``prepared.json``."""
     output_dir.mkdir(parents=True, exist_ok=True)
     atomic_write_text(
         output_dir / "eval_data.json",
@@ -1189,4 +1204,12 @@ def write_outputs(output_dir: Path, generated: dict[str, Any]) -> None:
     atomic_write_text(
         output_dir / "generation_report.json",
         json.dumps(generated["report"], ensure_ascii=False, indent=2),
+    )
+    report = generated["report"]
+    write_prepared(
+        output_dir,
+        {
+            "package_version": __version__,
+            **{k: v for k, v in report.items() if k not in ("dropped", "usage")},
+        },
     )

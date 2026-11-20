@@ -155,9 +155,10 @@ def add_query_arguments(
         )
     parser.add_argument(
         "--search-type",
-        default="hybrid",
+        default=None,
         choices=[st.value for st in SearchType],
-        help="Search method: hybrid (default) fuses a lexical (BM25) and a "
+        help="Search method (default: the config's search.search_type, "
+        "hybrid unless set): hybrid fuses a lexical (BM25) and a "
         "vector (embedding kNN) search of each index, lexical and vector run "
         "one of them alone. The lexical side searches the first 150 words of "
         "the question (a Hangul, Han or Kana character counts as a word) and, "
