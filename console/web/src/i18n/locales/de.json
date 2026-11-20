@@ -256,6 +256,7 @@
   "ingest.rebuild.methodologies": "Diese Konfiguration baut auf, was der Namespace nicht enthält.",
   "ingest.rebuildRemedy.reset": "Nur ein Lauf mit „{{option}}“ ({{section}}) wendet es an.",
   "ingest.rebuildRemedy.next_run": "Der nächste Lauf wendet es an und extrahiert oder baut dafür neu auf.",
+  "ingest.rebuildRemedy.outdated_reports": "Der nächste Lauf versucht, sie aus dem Verbliebenen neu zu schreiben, mit je einem Modellaufruf.",
   "ingest.start": "Import starten",
   "ingest.pickFirst": "Wählen Sie zuerst einen Korpus.",
   "ingest.oneAtATime": "Nur ein Lauf gleichzeitig: Warten Sie auf den aktuellen oder stoppen Sie ihn.",

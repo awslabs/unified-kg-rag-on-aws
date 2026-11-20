@@ -248,6 +248,7 @@
   "ingest.rebuild.methodologies": "この構成は、名前空間にないものを作成します。",
   "ingest.rebuildRemedy.reset": "「{{option}}」（{{section}}）での実行でのみ反映されます。",
   "ingest.rebuildRemedy.next_run": "次の実行が抽出または再構築をやり直して反映します。",
+  "ingest.rebuildRemedy.outdated_reports": "次回の実行で、残った内容からレポートごとに 1 回モデルを呼び出して書き直しを試みます。",
   "ingest.start": "取り込みを開始",
   "ingest.pickFirst": "先にコーパスを選んでください。",
   "ingest.oneAtATime": "同時に実行できるのは 1 つだけです。現在の実行が終わるのを待つか、停止してください。",

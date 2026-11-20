@@ -239,6 +239,12 @@ def test_reports_kept_after_a_deletion_are_a_reason_whatever_the_drift_setting()
     assert reason.remedy is RebuildRemedy.NEXT_RUN
     assert reason.settings == [IndexArtifact.COMMUNITY_REPORTS.value]
     assert reason.detail.startswith("2 community reports were kept")
+    # RV4-10: one read "1 community reports were kept".
+    (single,) = rebuild_reasons(_record(config, outdated_reports=["report-1"]), config)
+    assert single.detail.startswith(
+        "1 community report was kept after documents it was written from"
+    )
+    assert "write it again" in single.detail
     # None left, or a record from before the field: no reason.
     assert rebuild_reasons(_record(config, outdated_reports=[]), config) == []
     assert rebuild_reasons(_record(config, outdated_reports=None), config) == []

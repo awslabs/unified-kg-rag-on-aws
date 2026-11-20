@@ -264,6 +264,7 @@
   "ingest.rebuild.methodologies": "Questa configurazione costruisce ciò che il namespace non contiene.",
   "ingest.rebuildRemedy.reset": "Solo un’esecuzione con «{{option}}» ({{section}}) lo applica.",
   "ingest.rebuildRemedy.next_run": "La prossima esecuzione lo applica, estraendo o ricostruendo di nuovo.",
+  "ingest.rebuildRemedy.outdated_reports": "La prossima esecuzione prova a riscriverli da ciò che resta, con una chiamata al modello per report.",
   "ingest.start": "Avvia l’ingestione",
   "ingest.pickFirst": "Scegli prima un corpus.",
   "ingest.oneAtATime": "Un’esecuzione alla volta: attendi quella in corso o interrompila.",

@@ -264,6 +264,7 @@
   "ingest.rebuild.methodologies": "Esta configuración construye lo que el espacio de nombres no contiene.",
   "ingest.rebuildRemedy.reset": "Solo una ejecución con «{{option}}» ({{section}}) lo aplica.",
   "ingest.rebuildRemedy.next_run": "La próxima ejecución lo aplica, volviendo a extraer o reconstruir.",
+  "ingest.rebuildRemedy.outdated_reports": "La próxima ejecución intenta volver a escribirlos a partir de lo que queda, con una llamada al modelo por informe.",
   "ingest.start": "Iniciar la ingesta",
   "ingest.pickFirst": "Elige primero un corpus.",
   "ingest.oneAtATime": "Una ejecución a la vez: espera a que termine la actual o detenla.",

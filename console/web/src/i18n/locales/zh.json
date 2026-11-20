@@ -248,6 +248,7 @@
   "ingest.rebuild.methodologies": "此配置会构建命名空间中没有的内容。",
   "ingest.rebuildRemedy.reset": "只有勾选“{{option}}”（{{section}}）的运行才会应用。",
   "ingest.rebuildRemedy.next_run": "下次运行会重新抽取或重建来应用。",
+  "ingest.rebuildRemedy.outdated_reports": "下次运行会尝试根据剩余内容重新撰写这些报告，每份报告调用一次模型。",
   "ingest.start": "开始摄取",
   "ingest.pickFirst": "请先选择语料库。",
   "ingest.oneAtATime": "一次只能运行一个：请等待当前运行结束或将其停止。",

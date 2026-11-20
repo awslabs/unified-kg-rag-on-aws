@@ -256,6 +256,7 @@
   "ingest.rebuild.methodologies": "This configuration builds what the namespace does not hold.",
   "ingest.rebuildRemedy.reset": "Only a run with “{{option}}” ({{section}}) applies it.",
   "ingest.rebuildRemedy.next_run": "The next run applies it, extracting or rebuilding again.",
+  "ingest.rebuildRemedy.outdated_reports": "The next run tries to write them again from what remains, a model call each.",
   "ingest.start": "Start ingestion",
   "ingest.pickFirst": "Choose a corpus first.",
   "ingest.oneAtATime": "One run at a time: wait for the current one or stop it.",

@@ -291,8 +291,8 @@ export function IngestPage({ status, namespace, onJobsChanged }: { status: Statu
                   <ul style={{ margin: 0, paddingLeft: 18 }}>
                     {held.data.rebuild.map((reason) => (
                       <li key={`${reason.kind}-${reason.settings.join(",")}`} title={reason.detail}>
-                        {joinSentences([t(`ingest.rebuild.${reason.kind}`), t(`ingest.rebuildRemedy.${reason.remedy}`, { option: t("ingest.reset"), section: t("ingest.advanced") })], t)}
-                        {reason.settings.length ? <span className="field-help"> {reason.settings.join(", ")}</span> : null}
+                        {joinSentences([t(`ingest.rebuild.${reason.kind}`), t(remedyKey(reason), { option: t("ingest.reset"), section: t("ingest.advanced") })], t)}
+                        {reason.settings.length && !OWN_REMEDY.has(reason.kind) ? <span className="field-help"> {reason.settings.join(", ")}</span> : null}
                       </li>
                     ))}
                   </ul>
@@ -397,6 +397,17 @@ export function resetReasons(job: Pick<JobRecord, "result">): RebuildReason[] {
     }
   }
   return [...kinds.values()];
+}
+
+/** The reasons whose remedy has a sentence of its own: outdated reports are
+ * written again by the next run (report_refresh), not by "extracting or
+ * rebuilding", and the reports they name are their sentence's, not a
+ * setting to show. */
+const OWN_REMEDY = new Set<RebuildReason["kind"]>(["outdated_reports"]);
+
+/** The catalog key of what applies `reason`. */
+function remedyKey(reason: RebuildReason): string {
+  return OWN_REMEDY.has(reason.kind) ? `ingest.rebuildRemedy.${reason.kind}` : `ingest.rebuildRemedy.${reason.remedy}`;
 }
 
 /** A finished run that left its namespace due for a rebuild only a reset

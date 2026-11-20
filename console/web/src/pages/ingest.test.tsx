@@ -66,7 +66,11 @@ describe("rebuild due", () => {
     await screen.findByText("default is due for a rebuild");
     const [item] = screen.getAllByRole("listitem").map((li) => li.textContent ?? "");
     expect(item).toContain("could not be written again: they may still state the removed text.");
-    expect(item).toContain("The next run applies it");
+    // RV4-10: its own remedy, not "extracting or rebuilding", and no raw
+    // artifact id after it.
+    expect(item).toContain("The next run tries to write them again from what remains, a model call each.");
+    expect(item).not.toContain("extracting or rebuilding");
+    expect(item).not.toContain("community_reports");
     expect(item).not.toContain("far from the last full clustering");
   });
 
