@@ -184,6 +184,9 @@ class BedrockGuardrail:
     # A screening call is small and must not hold a user query for long.
     BOTO_CONNECT_TIMEOUT: ClassVar[int] = 10
     BOTO_READ_TIMEOUT: ClassVar[int] = 30
+    # Requests per screening call, the first included (botocore's
+    # total_max_attempts, as every other client of the package counts them).
+    BOTO_TOTAL_MAX_ATTEMPTS: ClassVar[int] = 3
 
     _count: ClassVar[int] = 0
     # Answers whose grounding check did not pass, per outcome.
@@ -217,7 +220,10 @@ class BedrockGuardrail:
                 config=BotoConfig(
                     connect_timeout=self.BOTO_CONNECT_TIMEOUT,
                     read_timeout=self.BOTO_READ_TIMEOUT,
-                    retries={"max_attempts": 3, "mode": "standard"},
+                    retries={
+                        "mode": "standard",
+                        "total_max_attempts": self.BOTO_TOTAL_MAX_ATTEMPTS,
+                    },
                 ),
             )
         self._client = client

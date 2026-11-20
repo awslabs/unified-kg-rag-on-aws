@@ -367,6 +367,9 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
 ### Fixed
 Bugs present in 0.3.0.
 
+- The guardrail's client made 4 requests per screening call, not 3: it set botocore's `max_attempts`, which counts
+  retries only, where every other client of the package sets `total_max_attempts`. A stalled guardrail held a query for
+  up to about 160 s (10 s connect + 30 s read per request); it is now about 120 s.
 - The Graph page's layout, and `run-visualization`'s, moved from one process to the next: a component's nodes were laid
   out in a set's order, which follows the process's hash seed. They are laid out in the graph's own order.
 - Entity and community writes to Neptune or a Gremlin Server closed a batch at `indexing.neptune.batch_size` items
