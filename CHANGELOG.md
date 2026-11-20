@@ -527,6 +527,9 @@ Bugs present in 0.3.0.
 - With `aws.bedrock.assumed_role_arn` set and the caller already in an assumed role of the same name in another
   account (or partition), the role was not assumed and the Bedrock calls ran in the caller's account; the role is kept
   only when partition, account and name match.
+- Bedrock's token-limit cut (`BedrockTokenCounter.truncate_to_token_limit`: embedding inputs, ragas contexts,
+  summary-tree texts) could return text over the limit (15 of 300 mixed-script samples, by up to 202 tokens); it keeps
+  the longest prefix that fits, by binary search as the local counter does.
 
 ## [0.3.0] - 2026-11-14
 

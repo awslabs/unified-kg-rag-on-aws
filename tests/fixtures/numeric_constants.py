@@ -302,7 +302,6 @@ ALLOWED: dict[str, str] = {
         "evaluation/pairwise.py:_MIN_CORRELATION_PAIRS",
         "evaluation/gates.py:MIN_GATE_PAIRS",
         "evaluation/comparison.py:RATE_DIFFERENCE_ALPHA",
-        "adapters/aws/token_counter.py:BedrockTokenCounter.MAX_TRUNCATION_ITERATIONS",
         "adapters/retrieval/token_manager.py:TokenManager.MIN_DERIVED_CONTEXT_TOKENS",
     ),
     **_reason(

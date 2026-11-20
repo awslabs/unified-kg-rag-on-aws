@@ -391,6 +391,31 @@ def test_token_counter_skips_api_when_unsupported() -> None:
     assert count <= 50 and len(truncated) < len("word " * 200)
 
 
+def test_token_counter_truncation_never_exceeds_the_limit() -> None:
+    """The ratio search returned text over the limit for 16 of 300
+    mixed-script texts, by up to 202 tokens (ARCH CD-4); the cut is the
+    longest prefix that fits."""
+    import random
+
+    counter = BedrockTokenCounter(
+        model_id=LanguageModelId.GPT_V6_SOL.value,
+        client=_ExplodingClient(),
+        api_supported=False,
+    )
+    rng = random.Random(1)
+    pieces = ["a b c d ", "中文字", "한국어 ", "x" * 50 + " ", "กข"]
+    for _ in range(300):
+        text = "".join(
+            rng.choice(pieces) * rng.randint(1, 1000) for _ in range(rng.randint(1, 6))
+        )
+        limit = rng.randint(5, max(6, counter.count_tokens(text) - 1))
+        truncated, count = counter.truncate_to_token_limit(text, limit)
+        assert count == counter.count_tokens(truncated) <= limit
+        assert text.startswith(truncated)
+        if len(truncated) < len(text):
+            assert counter.count_tokens(text[: len(truncated) + 1]) > limit
+
+
 def test_token_manager_disables_count_tokens_for_gpt(mocker) -> None:
     from unified_kg_rag.adapters.aws import bedrock as bedrock_module
     from unified_kg_rag.adapters.retrieval import token_manager as tm_module

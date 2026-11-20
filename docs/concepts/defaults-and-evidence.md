@@ -1130,8 +1130,6 @@ user tunes, or because they act only in a narrow path:
   budget derived from a model whose output reservation fills its window.
   Without it the budget would be zero or less, and every section would be
   excluded.
-- `BedrockTokenCounter.MAX_TRUNCATION_ITERATIONS` (8): the most recounts
-  a text cut to a token limit makes before keeping the last cut that fits.
 - `LanguageModelInfo.BETA_1M_CONTEXT_WINDOW_SIZE` (1,000,000): the
   context window that `aws.bedrock.enable_1m_context` opts a model into.
 
