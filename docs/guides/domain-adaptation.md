@@ -120,6 +120,12 @@ custom_prompts:
     with no other text.
 ```
 
+Put corpus text, and anything derived from it, in a tag block as the built-in
+prompts do (`<input_text>{input_text}</input_text>` above) and say that the
+block is data. The chain escapes the opening and closing tags of every block
+that holds a variable inside each value it fills in, an override's own tags
+included, so a passage that contains `</input_text>` cannot end its block.
+
 ### Override keys
 
 Each key has a `_system` and a `_human` field: `graph_extraction`,

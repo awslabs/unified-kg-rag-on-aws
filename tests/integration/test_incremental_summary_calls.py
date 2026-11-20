@@ -40,7 +40,7 @@ def _recording(calls: list[tuple[str, int]]):
         if "knowledge-graph editor" not in system:
             return _respond(system, human)
         match = re.search(r"<descriptions>\n(.*?)\n</descriptions>", human, re.S)
-        name = re.search(r"descriptions of '([^']*)'", human)
+        name = re.search(r"<entity_name>\n(.*?)\n</entity_name>", human, re.S)
         assert match and name
         calls.append((name.group(1), match.group(1).count("\n") + 1))
         return f"Summary of {name.group(1)}."

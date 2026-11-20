@@ -570,7 +570,7 @@ def test_a_hub_grown_under_another_spelling_extends_its_summary(
         if "knowledge-graph editor" not in system:
             return _respond(system, human)
         match = re.search(r"<descriptions>\n(.*?)\n</descriptions>", human, re.S)
-        name = re.search(r"descriptions of '([^']*)'", human)
+        name = re.search(r"<entity_name>\n(.*?)\n</entity_name>", human, re.S)
         assert match and name
         calls.append((name.group(1), match.group(1).count("\n") + 1))
         return f"Summary of {name.group(1)}."
@@ -817,7 +817,7 @@ def test_a_hub_that_changes_its_name_extends_its_summary(tmp_path: Path) -> None
         if "knowledge-graph editor" not in system:
             return _respond(system, human)
         match = re.search(r"<descriptions>\n(.*?)\n</descriptions>", human, re.S)
-        name = re.search(r"descriptions of '([^']*)'", human)
+        name = re.search(r"<entity_name>\n(.*?)\n</entity_name>", human, re.S)
         assert match and name
         calls.append((name.group(1), match.group(1).count("\n") + 1))
         return f"Summary of {name.group(1)}."

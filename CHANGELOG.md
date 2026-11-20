@@ -68,6 +68,14 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
    `processing.deduplicate_similarity_threshold` to 0.97, which reads about as 0.3.0's 0.9 did, to keep them.
 3. A build record written by 0.3.0 has no `answer_fingerprints`: a report or description summary setting changed since
    that build is named as a rebuild reason (`answer_settings`) only after the next full build records them.
+4. The `text_chunking` and `description_summarization` prompts changed (*Fixed*): what they made re-keys, and no reset
+   is needed (a `custom_prompts` human override of either keeps its keys). With `chunker_type: intelligent`, the
+   default, the stored chunk-boundary answers no longer match: the next run asks the chunking model again once per
+   pre-chunk worth a call (the boundary calls `run-ingestion --estimate` counts) for every document it chunks (each
+   one on a full build, the delta on an incremental run), and a text unit whose boundaries move is extracted and
+   embedded again. The last full build's description summaries read as made under other settings (`answer_settings`):
+   incremental runs keep them, and the next full build summarizes every entity and relationship over the threshold
+   again (one call each).
 
 ### Added
 
@@ -520,6 +528,12 @@ Bugs present in 0.3.0.
   pasted bare, so a sampled document could add instructions to every later extraction and report. The sample and the
   examples sit in tag blocks the prompts declare as data (their tags neutralised), and each answer is one short line
   without `<`.
+- More prompts pasted corpus-derived text outside a data tag: the `intelligent` chunker's boundary prompt
+  (`text_chunking`) the document's numbered lines, the description summary prompt (`description_summarization`) the
+  name of the entity or relationship, and the pairwise judge (`pairwise_comparison`) and the answer-span extractor
+  (`answer_span_extraction`) the answers they read. Each value sits in a tag block the prompt declares as data, whose
+  tags the chain neutralises in it, and the `structured` planner's refusal, quoted back for a repair, can no longer
+  close its `<refusal>` block. Judge scores from before read the answers through the earlier prompts.
 - The console's Graph page drew the newest export of any namespace, so once a second namespace was ingested it, and an
   answer's "Show in the graph", opened another namespace's graph under the config's name. It opens the config
   namespace's current export (`/api/graphs` names it as `current.ref`), and "Show in the graph" the graph of the
