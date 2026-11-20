@@ -31,13 +31,14 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 # The bounds of one S3 request (botocore's defaults are 60 s to connect and
-# to read, with legacy retries). Connect: the package's other AWS clients'
-# (Bedrock, the registry), so a stalled endpoint (a private subnet without
-# its S3 endpoint) fails in seconds, not minutes. Read: botocore's default;
-# a managed transfer reads in chunks, each bounded by it. Requests: as many
-# as the legacy mode made (the first and four retries), now under the
-# standard mode, which retries S3 throttling (SlowDown) and transient 5xx
-# and connection errors with jittered backoff and a retry quota.
+# to read, with standard retries of 3 requests in all). Connect: the
+# package's other AWS clients' (Bedrock, the registry), so a stalled endpoint
+# (a private subnet without its S3 endpoint) fails in seconds, not minutes.
+# Read: botocore's default; a managed transfer reads in chunks, each bounded
+# by it. Requests: as many as botocore's former default, the legacy mode,
+# made (the first and four retries), under the standard mode, which retries
+# S3 throttling (SlowDown) and transient 5xx and connection errors with
+# jittered backoff and a retry quota.
 S3_CONNECT_TIMEOUT_SECONDS = 10.0
 S3_READ_TIMEOUT_SECONDS = 60.0
 S3_TOTAL_MAX_ATTEMPTS = 5

@@ -1,8 +1,8 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Every S3 client of the package is built by one factory, with explicit
-timeouts and botocore's standard retries (not the SDK defaults: 60 s to
-connect, legacy retries)."""
+timeouts and botocore's standard retries with 5 requests (not the SDK
+defaults: 60 s to connect, standard retries with 3 requests)."""
 
 from __future__ import annotations
 
