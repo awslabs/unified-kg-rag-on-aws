@@ -41,9 +41,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   k the coarser levels a corpus produced. A cut at depth D now holds upstream's level-D communities (on LFR graphs of
   500 to 2,000 entities: 13/17/39 at depth 0, as upstream's level 0; 72/116/230 at depth 1, upstream's level 1 holding
   75/126/235 at its `max_cluster_size` 10), so the default depth 2 maps the reports it mapped before on those graphs
-  (the 99-report cap steps it to the same cut, which `global_cut_depth` may name one lower); with
+  (the 99-report cap steps it to the same cut, which `global_cut_depth` may name one lower). A cut over the cap steps
+  down past depth 0 into the coarser levels (a negative `global_cut_depth`), as it stepped down to the root before:
+  each report stores `min_cut_depth`, the shallowest cut it belongs to (`CommunityReport.min_cut_depth`), so a
+  coarser cut holds the first-pass communities no coarser one groups too. On larger graphs the depth-0 cut outgrows
+  the cap (on planted graphs at the defaults: 132 reports at 6,000 entities, 120 at 9,000), so the default query maps a
+  coarser cut there, not the 99 depth-2 reports most similar to the query. With
   `use_dynamic_selection` the ratings start at the first pass's communities, as upstream's, instead of the 3 or 4
-  coarser roots. Stored reports keep their depth until a reset (*Upgrading*).
+  coarser roots. Stored reports keep their depth, and step down to depth 0 only, until a reset (*Upgrading*).
 - The CLIs log to stderr in text mode too, so stdout holds only a run's output (`run-rag ... > answer.txt` keeps the
   answer alone); `setup_logging` without a `stream` logs to stderr. A script that read the logs from stdout reads
   stderr (`2>&1` keeps both on one stream).

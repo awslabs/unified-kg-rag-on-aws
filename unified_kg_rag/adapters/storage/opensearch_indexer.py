@@ -1244,6 +1244,7 @@ class OpenSearchIndexer(VectorIndexer):
             # The hierarchy cut global search maps over (community_hierarchy).
             "level": report.level,
             "depth": report.depth,
+            "min_cut_depth": report.min_cut_depth,
             "max_cut_depth": max_cut_depth(report),
             "parent_community_id": report.parent_community_id,
             "child_community_ids": list(report.child_community_ids),
@@ -3783,6 +3784,7 @@ class OpenSearchIndexer(VectorIndexer):
                 "document_ids": {"type": "keyword"},
                 "level": {"type": "integer"},
                 "depth": {"type": "integer"},
+                "min_cut_depth": {"type": "integer"},
                 "max_cut_depth": {"type": "integer"},
                 "parent_community_id": {"type": "keyword"},
                 "child_community_ids": {"type": "keyword"},

@@ -19,6 +19,7 @@ from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 from unified_kg_rag.domain.ingestion.community_hierarchy import (
     LEAF_CUT_DEPTH,
+    ROOT_CUT_DEPTH,
     attach_report_hierarchy,
     community_depths,
     cut_filter,
@@ -118,9 +119,15 @@ class _Recorder:
         return lambda *args, **kwargs: None
 
 
-def _indexed_cut(tmp_path: Path, depth: int) -> set[str]:
-    reports = _reports()
-    attach_report_hierarchy(reports, _communities())
+def _indexed_cut(
+    tmp_path: Path, depth: int, communities: list[Community] | None = None
+) -> set[str]:
+    communities = communities or _communities()
+    reports = [
+        CommunityReport(id=f"r-{c.id}", name=c.id, community_id=c.id, full_content=c.id)
+        for c in communities
+    ]
+    attach_report_hierarchy(reports, communities)
     config = Config()
     indexer = OpenSearchIndexer.__new__(OpenSearchIndexer)
     indexer.config = config
@@ -154,3 +161,74 @@ def _indexed_cut(tmp_path: Path, depth: int) -> set[str]:
 )
 def test_a_cut_covers_every_entity_once(tmp_path: Path, depth: int, cut) -> None:
     assert _indexed_cut(tmp_path, depth) == cut
+
+
+# As the hierarchy builds them (Community.depth): two coarser levels above
+# the first pass. K groups J and the first-pass root I, carried up past J's
+# level; Z, an isolated component, has no coarser parent.
+#                K (-2)
+#              /       \
+#         J (-1)        \
+#        /     \         \
+#   G (0)     H (0)     I (0)        Z (0)
+#                      /    \
+#                  I1 (1)  I2 (1)
+COARSER: dict[str, tuple[int, int, str, list[str]]] = {
+    "K": (4, -2, "", ["J", "I"]),
+    "J": (3, -1, "K", ["G", "H"]),
+    "G": (0, 0, "J", []),
+    "H": (0, 0, "J", []),
+    "I": (1, 0, "K", ["I1", "I2"]),
+    "I1": (0, 1, "I", []),
+    "I2": (0, 1, "I", []),
+    "Z": (0, 0, "", []),
+}
+
+
+def _coarser() -> list[Community]:
+    return [
+        Community(
+            id=cid,
+            name=cid,
+            level=str(level),
+            parent=parent,
+            children=children,
+            depth=depth,
+        )
+        for cid, (level, depth, parent, children) in COARSER.items()
+    ]
+
+
+@pytest.mark.parametrize(
+    ("depth", "cut"),
+    [
+        # RV1-A1: a coarser cut holds the communities no coarser level
+        # groups beside it (Z), and those carried up past it (I at -1).
+        (-3, {"K", "Z"}),
+        (-2, {"K", "Z"}),
+        (-1, {"J", "I", "Z"}),
+        (0, {"G", "H", "I", "Z"}),
+        (1, {"G", "H", "I1", "I2", "Z"}),
+    ],
+)
+def test_a_coarser_cut_covers_every_entity_once(
+    tmp_path: Path, depth: int, cut: set[str]
+) -> None:
+    assert _indexed_cut(tmp_path, depth, _coarser()) == cut
+
+
+def test_a_report_records_the_shallowest_cut_it_belongs_to() -> None:
+    reports = {
+        c.id: CommunityReport(id=c.id, name=c.id, community_id=c.id) for c in _coarser()
+    }
+    attach_report_hierarchy(list(reports.values()), _coarser())
+    assert {cid: r.min_cut_depth for cid, r in reports.items()} == {
+        "K": ROOT_CUT_DEPTH,
+        "J": -1,
+        "G": 0,
+        "H": 0,
+        "I": -1,
+        "I1": 1,
+        "I2": 1,
+        "Z": ROOT_CUT_DEPTH,
+    }

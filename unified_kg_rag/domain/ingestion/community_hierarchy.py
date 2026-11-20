@@ -12,10 +12,18 @@ hierarchy is built (``Community.depth``, negative for the coarser levels
 above that pass) and stored on its report; a community without one (not
 built by the hierarchy) is at its distance from its root.
 
-A report belongs to cut ``D`` when ``depth <= D <= max_cut_depth``, where
+A report belongs to cut ``D`` when ``min_cut_depth <= D <= max_cut_depth``:
 ``max_cut_depth`` is the report's own depth for a community with children and
-:data:`LEAF_CUT_DEPTH` for a leaf: one range filter per field, which every
-store applies.
+:data:`LEAF_CUT_DEPTH` for a leaf (a leaf stands for every deeper cut), and
+``min_cut_depth`` one below its parent's depth, or :data:`ROOT_CUT_DEPTH`
+for a community without a parent (a root stands for every shallower cut): one
+range filter per field, which every store applies. So every cut covers each
+entity once, the coarser cuts at negative depths too, where a first-pass
+community no coarser one groups (an isolated component), or a community a
+coarser level carried up past one, stands for itself. In the first pass a
+parent is one depth above its children, so ``min_cut_depth <= D`` reads as
+``depth <= D`` for ``D >= 0``: :func:`cut_filter` filters on ``depth`` there,
+which a report written without ``min_cut_depth`` holds too.
 """
 
 from __future__ import annotations
@@ -23,8 +31,11 @@ from __future__ import annotations
 from unified_kg_rag.domain.models import Community, CommunityReport
 from unified_kg_rag.shared.utils import generate_stable_id
 
-# A leaf stands for every deeper cut.
+# A leaf stands for every deeper cut, a root for every shallower one.
 LEAF_CUT_DEPTH = 1_000_000
+ROOT_CUT_DEPTH = -LEAF_CUT_DEPTH
+# The report fields the cuts select by.
+CUT_FIELDS = frozenset({"depth", "min_cut_depth", "max_cut_depth"})
 
 
 def community_report_id(community_id: str) -> str:
@@ -64,7 +75,8 @@ def community_depths(communities: list[Community]) -> dict[str, int]:
 def attach_report_hierarchy(
     reports: list[CommunityReport] | None, communities: list[Community] | None
 ) -> None:
-    """Record each report's level, depth, parent and children (in place).
+    """Record each report's level, depth, shallowest cut, parent and
+    children (in place).
 
     A report whose community is not in ``communities`` is left as it is.
     """
@@ -83,6 +95,7 @@ def attach_report_hierarchy(
         report.depth = depths[community.id]
         parent = community.parent
         report.parent_community_id = parent if parent in by_id else None
+        report.min_cut_depth = depths[parent] + 1 if parent in by_id else ROOT_CUT_DEPTH
         report.child_community_ids = [c for c in community.children if c in by_id]
 
 
@@ -94,5 +107,14 @@ def max_cut_depth(report: CommunityReport) -> int | None:
 
 
 def cut_filter(depth: int) -> dict[str, dict[str, int]]:
-    """The store filter selecting the reports of the depth-``depth`` cut."""
-    return {"depth": {"lte": depth}, "max_cut_depth": {"gte": depth}}
+    """The store filter selecting the reports of the depth-``depth`` cut
+    (see the module docstring)."""
+    shallowest = "depth" if depth >= 0 else "min_cut_depth"
+    return {shallowest: {"lte": depth}, "max_cut_depth": {"gte": depth}}
+
+
+def coarser_cut_filter(depth: int) -> dict[str, dict[str, int]]:
+    """The store filter matching the reports at ``depth`` or above that a
+    cut there can select: none on a store without a coarser level, or whose
+    reports were written without ``min_cut_depth``."""
+    return {"depth": {"lte": depth}, "min_cut_depth": {"lte": depth}}

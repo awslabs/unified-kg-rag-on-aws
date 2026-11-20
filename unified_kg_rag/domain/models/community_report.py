@@ -93,8 +93,15 @@ class CommunityReport(Named):
     )
     depth: int | None = Field(
         default=None,
-        description="Distance from the root of the community's hierarchy (a "
-        "root is 0), the level MS GraphRAG's community_level counts",
+        description="Depth below the first Leiden pass over the whole graph "
+        "(0; one more per split, negative for the coarser levels above it), "
+        "the level MS GraphRAG's community_level counts",
+    )
+    min_cut_depth: int | None = Field(
+        default=None,
+        description="The shallowest hierarchy cut the report belongs to: one "
+        "below its parent's depth, or every shallower cut for a community "
+        "without a parent (community_hierarchy.ROOT_CUT_DEPTH)",
     )
     parent_community_id: str | None = Field(
         default=None, description="The parent community's id; None for a root"

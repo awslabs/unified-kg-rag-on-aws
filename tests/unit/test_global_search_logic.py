@@ -18,6 +18,7 @@ from collections.abc import Collection
 from types import SimpleNamespace
 from typing import Any
 
+import networkx as nx
 import pytest
 from botocore.exceptions import ClientError
 
@@ -27,6 +28,10 @@ from unified_kg_rag.adapters.retrieval.hybrid_scorer import HybridScorer
 from unified_kg_rag.adapters.search_strategies.global_search import GlobalSearchStrategy
 from unified_kg_rag.adapters.storage.filter_schema import (
     IndexLimits,
+)
+from unified_kg_rag.domain.ingestion.community_clustering import (
+    build_hierarchy,
+    hierarchical_communities,
 )
 from unified_kg_rag.domain.ingestion.community_hierarchy import (
     attach_report_hierarchy,
@@ -39,6 +44,7 @@ from unified_kg_rag.domain.models import (
     RetrievalResult,
     SearchQuery,
 )
+from unified_kg_rag.domain.models.config import CommunityDetectionConfig
 from unified_kg_rag.domain.retrieval.filters import (
     FilterFields,
 )
@@ -77,17 +83,20 @@ def _documents(*, with_hierarchy: bool = True) -> list[dict[str, Any]]:
     ]
     if with_hierarchy:
         attach_report_hierarchy(reports, communities)
-    return [
-        {
-            "community_id": r.community_id,
-            "rank": r.rank,
-            "depth": r.depth,
-            "max_cut_depth": max_cut_depth(r),
-            "parent_community_id": r.parent_community_id,
-            "child_community_ids": r.child_community_ids,
-        }
-        for r in reports
-    ]
+    return [_report_document(r) for r in reports]
+
+
+def _report_document(r: CommunityReport) -> dict[str, Any]:
+    """The fields of an indexed report the cut and the selection read."""
+    return {
+        "community_id": r.community_id,
+        "rank": r.rank,
+        "depth": r.depth,
+        "min_cut_depth": r.min_cut_depth,
+        "max_cut_depth": max_cut_depth(r),
+        "parent_community_id": r.parent_community_id,
+        "child_community_ids": r.child_community_ids,
+    }
 
 
 def _matches(value: Any, condition: Any) -> bool:
@@ -291,6 +300,170 @@ async def test_a_cut_over_the_cap_gives_way_to_the_deepest_cut_that_fits() -> No
     assert result.metadata["global_cut_depth"] == 1
     assert [c.filters["depth"] for c in store.calls] == [{"lte": 2}, {"lte": 1}]
     assert all(not c.query for c in store.calls)
+
+
+@pytest.mark.timeout(300)
+async def test_a_large_corpus_cut_over_the_cap_steps_to_a_coarser_level() -> None:
+    # Regression (#828): on a 6,000-entity graph the depth-0 cut (the first
+    # Leiden pass) holds 132 reports, over the cap of 99; the step-down
+    # stopped at depth 0 and mapped the 99 depth-2 reports most similar to
+    # the query. The coarser levels above the first pass (negative depths)
+    # cover every entity in fewer reports, the entities whose first-pass
+    # community has no coarser parent included.
+    graph = nx.relabel_nodes(
+        nx.planted_partition_graph(150, 40, 0.3, 0.6 / 6000 * 2, seed=1),
+        lambda n: f"e{n:05d}",
+    )
+    for u, v in graph.edges():
+        graph[u][v]["weight"] = 1.0
+    detection = CommunityDetectionConfig()  # the defaults
+    hierarchy = build_hierarchy(graph, detection)
+    built, _ = hierarchical_communities(
+        hierarchy.partitions, (), hierarchy.first_pass_levels
+    )
+    communities = [
+        Community(
+            id=c.community_id,
+            name=c.label,
+            level=str(c.level),
+            parent=c.parent_id or "",
+            children=c.children_ids,
+            depth=c.depth,
+        )
+        for c in built.values()
+    ]
+    reports = [
+        CommunityReport(
+            id=f"r-{c.id}", name=c.id, community_id=c.id, rank=float(len(c.id))
+        )
+        for c in communities
+    ]
+    attach_report_hierarchy(reports, communities)
+    store = _ReportStore([_report_document(r) for r in reports])
+    strat = _strategy(store)
+    cap = await strat._report_cap(None)
+    first_pass = [r for r in reports if r.depth == 0]
+    assert len(first_pass) > cap  # the depth-0 cut no longer fits
+
+    result = await strat.asearch(SearchQuery(query="supply chain themes"))
+
+    assert result.metadata["global_level_capped"] is False
+    assert result.metadata["global_cut_depth"] < 0
+    mapped = [
+        r.metadata["community_id"]
+        for r in result.results
+        if not r.metadata.get("synthesized")
+    ]
+    assert 0 < len(mapped) <= cap
+    # The cut covers every entity once.
+    members = [built[c].nodes for c in mapped]
+    assert sum(map(len, members)) == graph.number_of_nodes()
+    assert set().union(*members) == set(graph.nodes)
+
+
+# Two coarser levels above the first pass (Community.depth), as in
+# test_community_hierarchy: K groups J and the first-pass root I; Z has no
+# coarser parent.
+COARSER: dict[str, tuple[int, str, list[str]]] = {
+    "K": (-2, "", ["J", "I"]),
+    "J": (-1, "K", ["G", "H"]),
+    "G": (0, "J", []),
+    "H": (0, "J", []),
+    "I": (0, "K", ["I1", "I2"]),
+    "I1": (1, "I", []),
+    "I2": (1, "I", []),
+    "Z": (0, "", []),
+}
+
+
+def _coarser_documents(*, with_min_cut_depth: bool = True) -> list[dict[str, Any]]:
+    communities = [
+        Community(
+            id=cid, name=cid, level="0", parent=parent, children=children, depth=depth
+        )
+        for cid, (depth, parent, children) in COARSER.items()
+    ]
+    reports = [
+        CommunityReport(id=f"r-{cid}", name=cid, community_id=cid, rank=i)
+        for i, cid in enumerate(COARSER)
+    ]
+    attach_report_hierarchy(reports, communities)
+    # Every report passes the tests' document filter.
+    documents = [{**_report_document(r), "attr_x": "y"} for r in reports]
+    if not with_min_cut_depth:
+        # Written before the field: the cuts at 0 or deeper still select.
+        for document in documents:
+            del document["min_cut_depth"]
+    return documents
+
+
+def _coarser_probes(store: _ReportStore) -> list[dict[str, Any]]:
+    """The filters of the probes for a coarser level."""
+    return [
+        c.filters
+        for c in store.calls
+        if c.filters and "max_cut_depth" not in c.filters and "depth" in c.filters
+    ]
+
+
+def _coarser_mapped(strat: GlobalSearchStrategy) -> set[str]:
+    text = "\n".join(strat.map_rater.reports) + "\n"  # type: ignore[attr-defined]
+    return {cid for cid in COARSER if f"report {cid}\n" in text}
+
+
+@pytest.mark.parametrize(
+    ("cap", "mapped", "used"),
+    [(4, {"G", "H", "I", "Z"}, 0), (3, {"J", "I", "Z"}, -1), (2, {"K", "Z"}, -2)],
+)
+async def test_the_step_down_continues_into_the_coarser_levels(
+    cap: int, mapped: set[str], used: int
+) -> None:
+    # RV1-A1: the step-down stopped at depth 0 (the first Leiden pass).
+    store = _ReportStore(_coarser_documents())
+    strat = _strategy(store, max_reports_per_level=cap)
+    result = await strat.asearch(SearchQuery(query="themes", filters={"attr_x": "y"}))
+
+    assert _coarser_mapped(strat) == mapped
+    assert result.metadata["global_level_capped"] is False
+    assert result.metadata["global_cut_depth"] == used
+    # The probe for a coarser level reads the hierarchy, not the caller's
+    # filters, which narrow each cut it browses.
+    assert _coarser_probes(store) == [
+        {"depth": {"lte": d}, "min_cut_depth": {"lte": d}}
+        for d in range(-1, used - 1, -1)
+    ]
+    browses = [c for c in store.calls if "max_cut_depth" in (c.filters or {})]
+    assert browses and all(c.filters["attr_x"] == "y" for c in browses)
+
+
+async def test_the_step_down_stops_at_the_coarsest_level() -> None:
+    store = _ReportStore(_coarser_documents())
+    strat = _strategy(store, max_reports_per_level=1)
+    result = await strat.asearch(SearchQuery(query="I1 themes"))
+
+    assert result.metadata["global_level_capped"] is True
+    assert result.metadata["global_cut_depth"] == 2
+    assert _coarser_mapped(strat) == {"I1"}
+    # Down to -2, the coarsest level, and one probe past it.
+    assert _coarser_probes(store)[-1] == {
+        "depth": {"lte": -3},
+        "min_cut_depth": {"lte": -3},
+    }
+
+
+async def test_reports_written_without_the_shallowest_cut_stop_at_depth_0() -> None:
+    # Their negative cuts would select only the reports at that depth, not
+    # the communities beside them (Z): the most similar are mapped instead.
+    store = _ReportStore(_coarser_documents(with_min_cut_depth=False))
+    strat = _strategy(store, max_reports_per_level=3)
+    result = await strat.asearch(SearchQuery(query="I1 G themes"))
+
+    assert result.metadata["global_level_capped"] is True
+    assert result.metadata["global_cut_depth"] == 2
+    # One probe finds no coarser level it can cut.
+    assert _coarser_probes(store) == [
+        {"depth": {"lte": -1}, "min_cut_depth": {"lte": -1}}
+    ]
 
 
 async def test_a_cut_no_depth_fits_maps_the_most_similar_reports() -> None:

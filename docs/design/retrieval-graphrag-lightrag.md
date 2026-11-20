@@ -255,15 +255,20 @@ the methodology: GraphRAG's (§6.1) and LightRAG's (§6.2), the wrapper
 #### 6.1.1 Global search (`global_search.py`)
 
 **Which reports.** Each report carries its place in the hierarchy (`level`
-bottom-up, `depth` from the root, parent and children, `max_cut_depth`). The
-cut at depth `D` is every community at depth `D` plus the leaves that stop
-above it (`depth <= D <= max_cut_depth`), MS GraphRAG's roll-up that covers
-every entity once. The depth counts as MS GraphRAG's `community_level`:
-from the first Leiden pass over the whole graph (upstream's level 0,
+bottom-up, `depth` from the first Leiden pass, parent and children,
+`min_cut_depth`, `max_cut_depth`). The cut at depth `D` is every community at
+depth `D` plus the leaves that stop above it and the roots that start below
+it (`min_cut_depth <= D <= max_cut_depth`: a leaf's `max_cut_depth` is
+unbounded, a root's `min_cut_depth` too, and any other community's is one
+below its parent's depth), MS GraphRAG's roll-up that covers every entity
+once. The depth counts as MS GraphRAG's `community_level`: from the first
+Leiden pass over the whole graph (upstream's level 0,
 `graphrag/graphs/hierarchical_leiden.py:29-40`; `read_indexer_reports`
 keeps `level <= community_level`, `query/indexer_adapters.py:87-89,219-225`),
 and the coarser levels built above that pass (§4.3) have negative depths, in
-no cut. On LFR graphs of 500, 1,000 and 2,000 entities the depth-0 cut held
+no cut at a depth of 0 or more. A cut at a negative depth, which only the
+cap's step-down below reaches, holds a coarser level's communities and the
+first-pass communities no coarser one groups (an isolated component). On LFR graphs of 500, 1,000 and 2,000 entities the depth-0 cut held
 13/17/39 reports (upstream's level 0: 13/17/37) and the depth-1 cut
 72/116/230 (upstream's level 1: 75/126/235, at its `max_cluster_size` 10);
 the default depth 2, capped at 99 reports, maps 72/17/39, as it did when the
@@ -279,10 +284,20 @@ as upstream starts at level 0
   `max_result_window` - 1, so the probe fits one request; 99 by default) so a
   cut of exactly the cap is complete. A larger cut gives way to the deepest
   shallower cut that fits (`global_cut_depth`), covering the same entities in
-  broader reports; MS GraphRAG has no cap and maps the whole cut. Only when even the root cut does not fit, or at once under a filter on a report key (`community_id`, `level`, `rating`: a shallower report passes it on its own, not through its members), does a hybrid search,
+  broader reports: past depth 0 into the coarser levels (a negative
+  `global_cut_depth`), as long as the stores hold one (a one-report probe
+  per coarser step). MS GraphRAG has no cap and maps the whole cut; the
+  coarser levels are this hierarchy's own. The depth-0 cut outgrows the cap
+  with the corpus: on planted graphs at the default settings it held 60,
+  132 and 120 reports at 2,400, 6,000 and 9,000 entities, where the coarsest
+  cut held 5, 7 and 6
+  (`tests/unit/test_global_search_logic.py::test_a_large_corpus_cut_over_the_cap_steps_to_a_coarser_level`).
+  Only when even the coarsest cut does not fit, or at once under a filter on a report key (`community_id`, `level`, `rating`: a shallower report passes it on its own, not through its members), does a hybrid search,
   restricted to the configured cut, pick that many most similar reports
   (`global_level_capped`): the only place similarity enters global search.
-  The cap counts reports, which bounds the map calls.
+  The cap counts reports, which bounds the map calls. Reports written before
+  `min_cut_depth` was stored step down to depth 0 only, until
+  `indexing.reset: true` writes them again.
 - **Dynamic selection** (`use_dynamic_selection`) — MS GraphRAG's
   `DynamicCommunitySelection`: rate the root reports for relevance, follow
   the children of the relevant ones to the leaves, and rate the whole next

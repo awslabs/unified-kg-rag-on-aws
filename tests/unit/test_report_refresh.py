@@ -28,7 +28,10 @@ from unified_kg_rag.domain.ingestion.community_clustering import (
     community_label,
     community_name,
 )
-from unified_kg_rag.domain.ingestion.community_hierarchy import community_report_id
+from unified_kg_rag.domain.ingestion.community_hierarchy import (
+    ROOT_CUT_DEPTH,
+    community_report_id,
+)
 from unified_kg_rag.domain.ingestion.graph_builder import GraphBuilder
 from unified_kg_rag.domain.models import (
     Claim,
@@ -111,6 +114,7 @@ def _report(
         text_unit_ids=units,
         level=level,
         depth=1 - level,
+        min_cut_depth=1 - level if parent else ROOT_CUT_DEPTH,
         parent_community_id=parent,
         child_community_ids=children or [],
     )
@@ -189,6 +193,8 @@ def test_outdated_reports_are_written_again_from_what_remains() -> None:
     assert reports["p"].text_unit_ids == ["t2", "t3"]
     assert reports["p"].document_ids == ["doc-t2", "doc-t3"]
     assert (reports["p"].level, reports["p"].depth) == (1, 0)
+    assert reports["p"].min_cut_depth == ROOT_CUT_DEPTH
+    assert reports["c1"].min_cut_depth == 1
     assert reports["p"].child_community_ids == ["c1", "c2"]
     assert reports["c1"].parent_community_id == "p"
     # c2 was not outdated: not asked again.

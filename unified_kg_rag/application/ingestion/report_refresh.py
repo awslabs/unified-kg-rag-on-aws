@@ -418,6 +418,7 @@ class ReportRefresh:
             kept = outdated[report.community_id]
             report.level = kept.level
             report.depth = kept.depth
+            report.min_cut_depth = kept.min_cut_depth
             report.parent_community_id = kept.parent_community_id
             report.child_community_ids = list(kept.child_community_ids)
         if not reports:
