@@ -297,7 +297,7 @@ def main(argv: list[str] | None = None) -> int:
         "version": __version__,
     }
     if as_json:
-        print_json(status)
+        print_json(status, final=False)
         sys.stdout.flush()
     else:
         console.print(

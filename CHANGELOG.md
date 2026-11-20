@@ -271,6 +271,9 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
 - Graph extraction builds each unit's record as its call completes, while the other calls are in flight, not all
   after the last call (500 units: 9 s after the last call to 0.01 s), and `entity_key` is cached (bounded LRU; record
   building takes 25-33% less CPU). Outputs are unchanged.
+- Every final `--output-format json` document has the run's `status` and `exit_code` (`completed` and `0` for a
+  success): `run-rag` said `success`, `run-ingestion` `status`, and a successful `run-eval` neither. Additive: no key
+  was removed.
 
 ### Deprecated
 
