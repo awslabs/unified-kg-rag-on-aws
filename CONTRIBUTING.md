@@ -165,10 +165,11 @@ detect-secrets, which scans ASH's file list, finds nothing; it also skips every 
 checkout anywhere below one (`~/.claude/...`, `~/.cache/...`) is not scanned for secrets either. Run it from a clone
 or a worktree outside such directories (`git worktree add --detach /tmp/ash-scan HEAD`).
 
-GitLab's pipeline secret detection reads [`.gitlab/secret-detection-ruleset.toml`](./.gitlab/secret-detection-ruleset.toml):
-the default rules, with the made-up `user:password@` credentials of the URL redaction tests (each line also marked
-`# gitleaks:allow`) allowed for the "Password in URL" rule in `tests/unit/` alone. Keep a new fake credential to one
-of those pairs, or widen the exception there with its reason, never with a global disable.
+No tracked file holds a URL with a literal password (`scheme://user:<password>@host`): secret scanners (GitLab's
+"Password in URL" rule, detect-secrets) report one, and GitLab's pipeline secret detection reads each commit's history,
+so an inline `# gitleaks:allow` added later does not clear it. A test that needs a URL with credentials builds it with
+`userinfo_url` (`tests/fixtures/url_credentials.py`); a document writes the password as a placeholder (`<password>`).
+`tests/unit/test_no_literal_url_credentials.py` fails on a literal in any tracked file.
 
 ### Pins Dependabot does not move
 

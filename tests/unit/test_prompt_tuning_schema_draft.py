@@ -22,6 +22,7 @@ import yaml
 
 from tests.fixtures.extras import requires_ontology
 from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
+from tests.fixtures.url_credentials import userinfo_url
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.schema_sources import (
     SchemaSourceContext,
@@ -552,8 +553,11 @@ def test_the_tuner_names_the_source_without_a_credential(
                 "graph_extraction": {
                     "schema_source": {
                         "kind": "synthetic_service",
-                        "path": "https://reader:SECRET@schemas.example/trade"  # gitleaks:allow
-                        "?token=SECRET#SECRET",
+                        "path": userinfo_url(
+                            "https://schemas.example/trade?token=SECRET#SECRET",
+                            user="reader",
+                            password="SECRET",
+                        ),
                     }
                 }
             }

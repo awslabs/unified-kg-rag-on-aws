@@ -33,6 +33,14 @@ repos:
         language: system
         types: [python]
         pass_filenames: false
+      # A URL with a literal password (scheme://user:<password>@host) in
+      # any file: tests build theirs with userinfo_url. The pattern is
+      # tests/fixtures/url_credentials.py's LITERAL_USERINFO
+      # (tests/unit/test_no_literal_url_credentials.py keeps them equal).
+      - id: no-literal-url-credentials
+        name: no literal URL credentials
+        language: pygrep
+        entry: '[A-Za-z][A-Za-z0-9+.-]*://[^\s:/?#\[\]@''\"`]*:(?![{$<%(])[^\s:/?#\[\]@''\"`]+@'
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: cef0300fd0fc4d2a87a85fa2093c6b283ea36f4b  # v5.0.0

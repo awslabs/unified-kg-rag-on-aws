@@ -28,6 +28,7 @@ import pytest
 from tests.fixtures.extras import requires_ontology
 from tests.fixtures.ontology_models import EX, PROCURE_GOLDEN, procure_model
 from tests.fixtures.schema_annotation import schema_annotation_digest
+from tests.fixtures.url_credentials import userinfo_url
 from unified_kg_rag.adapters.schema_sources import (
     SchemaSourceContext,
     get_schema_source,
@@ -681,7 +682,8 @@ def test_bad_settings_are_refused(source: dict[str, Any], message: str) -> None:
 
 def test_a_url_with_a_credential_is_refused_without_showing_it() -> None:
     config = SchemaSourceConfig(
-        kind="owl", path="https://user:token@example.org/o.ttl?sig=s"  # gitleaks:allow
+        kind="owl",
+        path=userinfo_url("https://example.org/o.ttl?sig=s", password="token"),
     )
     with pytest.raises(SchemaSourceError) as error:
         get_schema_source("owl")(SchemaSourceContext(config, Config()))

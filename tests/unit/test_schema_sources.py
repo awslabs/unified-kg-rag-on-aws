@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from tests.fixtures.url_credentials import userinfo_url
 from unified_kg_rag.adapters.schema_sources import (
     SchemaSourceContext,
     get_schema_source,
@@ -559,7 +560,10 @@ def test_the_run_session_reaches_the_loader(custom_kind: str) -> None:
     ("path", "shown"),
     [
         (
-            "https://user:token@schemas.example.com:8443/v1/onto.ttl?sig=abc#frag",  # gitleaks:allow
+            userinfo_url(
+                "https://schemas.example.com:8443/v1/onto.ttl?sig=abc#frag",
+                password="token",
+            ),
             "https://schemas.example.com:8443/v1/onto.ttl",
         ),
         ("s3://bucket/schemas/onto.yaml", "s3://bucket/schemas/onto.yaml"),
@@ -575,8 +579,8 @@ def test_errors_never_show_a_url_credential(custom_kind: str) -> None:
     register_schema_source(custom_kind)(
         lambda context: SchemaDocument(relationship_patterns=["GENE -R-> PERSON"])
     )
-    path = (
-        "https://user:token@schemas.example.com/onto?sig=secret-sig"  # gitleaks:allow
+    path = userinfo_url(
+        "https://schemas.example.com/onto?sig=secret-sig", password="token"
     )
     with pytest.raises(SchemaSourceError) as caught:
         resolve_extraction_schema(

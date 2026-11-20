@@ -33,6 +33,7 @@ from tests.fixtures.seed_graphs import (
     PROCURE,
     lines,
 )
+from tests.fixtures.url_credentials import userinfo_url
 from unified_kg_rag.adapters.seed_sources import (
     SeedSourceContext,
     SeedSourceOptions,
@@ -396,7 +397,7 @@ def test_an_unknown_kind_fails_naming_the_registered_ones() -> None:
 
 def test_the_context_reads_options_and_redacts_the_location() -> None:
     seed = _seed(
-        "s3://user:secret@seed-bucket/procure.jsonl?X-Amz-Signature=abc",  # gitleaks:allow
+        userinfo_url("s3://seed-bucket/procure.jsonl?X-Amz-Signature=abc"),
         options={"dangling": "skip"},
     )
     context = SeedSourceContext(seed, Config())
@@ -632,7 +633,7 @@ def test_jsonl_refuses_a_missing_path_an_empty_directory_and_other_urls(
     with pytest.raises(SeedGraphError, match="holds no .jsonl file"):
         _load(tmp_path / "empty")
     # The refusal names the URL without its credentials.
-    url = "https://reader:secret@example.org/seed.jsonl"  # gitleaks:allow
+    url = userinfo_url("https://example.org/seed.jsonl", user="reader")
     with pytest.raises(SeedGraphError, match="is a URL; kind 'jsonl' reads") as refused:
         _load(url)
     assert "example.org/seed.jsonl" in str(refused.value)
