@@ -451,7 +451,9 @@ Bugs present in 0.3.0.
   flagged `outdated` in the stores (a query reads it in the report's source metadata, and on a global key point drawn
   from it), listed in the build record (`outdated_reports`) and named by every reader of the record as an
   `outdated_reports` rebuild reason (remedy `next_run`; the console words it apart from re-clustering) whatever
-  `on_drift_recommendation` says, until a later run writes it.
+  `on_drift_recommendation` says, until a later run writes it. A note in the extraction store lists the flagged
+  reports until the build record does: a run killed after the removal deleted the documents' registry records, before
+  its refresh, left them flagged and listed nowhere, and the next run now writes them again.
 - A streamed answer whose caller was cancelled mid-answer (a console client that disconnects, a cancelled task, an
   `asyncio.timeout` around `astream`) was cancelled wherever it was. Cancelled while the model's stream waited for a
   chunk, LangChain left the response open, holding a model client connection: on an Ollama or OpenAI-compatible server

@@ -8,7 +8,11 @@ runs one ingestion of ``source`` over the SQLite stores in ``stores``
 models a fake Ollama in-process. Once the indexing stage has written
 (its second embedding request), it creates ``marker`` and blocks, so the
 test kills a process that holds the namespace lease with the indexing
-half done. No AWS, no network.
+half done. With a fifth argument ``report``, the models are the outdated-
+report suite's (``test_outdated_reports._Model``) and it blocks at the
+indexing stage's first community report request instead: the refresh of
+the reports a removal left outdated, after the commit's writes. No AWS, no
+network.
 """
 
 from __future__ import annotations
@@ -43,14 +47,28 @@ class _BlockingServer:
     """``FakeOllama``, blocking for good at the indexing stage's second
     embedding request once ``marker`` is created."""
 
-    def __init__(self, marker: Path) -> None:
-        self.server = FakeOllama(e2e._respond, e2e.ANSWER, e2e.DIM)
+    def __init__(self, marker: Path, at_report: bool = False) -> None:
+        if at_report:
+            from tests.integration.test_outdated_reports import _Model
+
+            self.server = FakeOllama(_Model(), e2e.ANSWER, e2e.DIM)
+        else:
+            self.server = FakeOllama(e2e._respond, e2e.ANSWER, e2e.DIM)
         self.marker = marker
+        self.at_report = at_report
         self.indexing = False
         self.embeds = 0
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
-        if self.indexing and request.url.path == "/api/embed":
+        if (
+            self.at_report
+            and self.indexing
+            and request.url.path == "/api/chat"
+            and b"community analysis" in request.content
+        ):
+            self.marker.write_text("report refresh")
+            time.sleep(3600)
+        if not self.at_report and self.indexing and request.url.path == "/api/embed":
             self.embeds += 1
             if self.embeds == 2:
                 self.marker.write_text("indexing")
@@ -59,9 +77,9 @@ class _BlockingServer:
 
 
 def main(argv: list[str]) -> int:
-    stores, source, cache, marker = (Path(arg) for arg in argv)
+    stores, source, cache, marker = (Path(arg) for arg in argv[:4])
     config = crash_config(stores)
-    blocking = _BlockingServer(marker)
+    blocking = _BlockingServer(marker, at_report=argv[4:] == ["report"])
     execute = ps.IndexingStage.execute
 
     def indexing(stage: Any, context: Any) -> Any:

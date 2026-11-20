@@ -42,6 +42,7 @@ from unified_kg_rag.domain.models import (
     Relationship,
     TextUnit,
 )
+from unified_kg_rag.ports.indexer import IndexingStats
 
 pytestmark = pytest.mark.unit
 
@@ -537,3 +538,75 @@ def test_an_emptied_report_whose_delete_failed_stays_kept() -> None:
     )
     done = _refresh(config, graph, vector, _Reports())("default", {report})
     assert done.kept == {report} and not done.deleted
+
+
+# --- The outdated-report note (RV3-I1) --------------------------------------
+
+
+def _removal_stores() -> tuple[Config, IndexingManager, Any]:
+    config = _config()
+    graph, vector = _stores(config)
+    vector.upsert_text_units([TextUnit(id="t1", text="t1")])
+    manager = IndexingManager(config=config, vector_indexer=vector, graph_indexer=graph)
+    return config, manager, vector
+
+
+def test_a_removal_notes_the_reports_it_flags_before_flagging_them(mocker) -> None:
+    from unified_kg_rag.application.storage.stored_items import OUTDATED_REPORTS
+
+    _, manager, vector = _removal_stores()
+    vector.write_extraction_records(
+        {OUTDATED_REPORTS: {"report_ids": ["r-earlier"], "candidates": ["e-earlier"]}}
+    )
+    flag = mocker.spy(vector, "mark_reports_outdated")
+    order: list[str] = []
+    write = vector.write_extraction_records
+    mocker.patch.object(
+        vector,
+        "write_extraction_records",
+        side_effect=lambda records, **kw: order.append("note") or write(records, **kw),
+    )
+    flag.side_effect = lambda *a, **k: order.append("flag") or IndexingStats()
+
+    manager.remove_text_units("default", ["t1"])
+
+    assert order[:2] == ["note", "flag"]
+    note = vector.read_extraction_records([OUTDATED_REPORTS])[OUTDATED_REPORTS]
+    # The earlier note's ids are kept beside this removal's.
+    assert note["report_ids"] == sorted({"r-earlier", *_OUTDATED})
+    assert "e-earlier" in note["candidates"]
+    assert manager.read_outdated_note("default")[0] == {"r-earlier", *_OUTDATED}
+
+
+def test_a_note_that_cannot_be_written_fails_the_removal(mocker) -> None:
+    _, manager, vector = _removal_stores()
+    failed = IndexingStats(total_items=1)
+    failed.add_error("store down")
+    mocker.patch.object(vector, "write_extraction_records", return_value=failed)
+    flag = mocker.spy(vector, "mark_reports_outdated")
+
+    results = manager.remove_text_units("default", ["t1"])
+
+    # Reported failed (the caller keeps the documents' records and retries),
+    # nothing flagged or stripped.
+    assert results["vector_outdated_reports_default"].failed_items == len(_OUTDATED)
+    flag.assert_not_called()
+    assert not manager.outdated_reports
+
+
+def test_only_a_note_the_run_read_or_wrote_is_cleared(mocker) -> None:
+    from unified_kg_rag.application.storage.stored_items import OUTDATED_REPORTS
+
+    _, manager, vector = _removal_stores()
+    delete = mocker.spy(vector, "delete_extraction_records")
+    manager.clear_outdated_note("default")
+    delete.assert_not_called()
+
+    vector.write_extraction_records({OUTDATED_REPORTS: {"report_ids": ["r1"]}})
+    assert manager.read_outdated_note("default") == ({"r1"}, set())
+    manager.clear_outdated_note("default")
+    assert OUTDATED_REPORTS not in vector.read_extraction_records([OUTDATED_REPORTS])
+    # A run starts knowing of none.
+    manager._outdated_notes.add("default")
+    manager.reset_run_state()
+    assert not manager._outdated_notes

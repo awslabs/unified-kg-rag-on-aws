@@ -569,8 +569,13 @@ rebuild, the only path that re-partitions the whole graph
 report: the summary tree's rule (§6.5) applies, a summary citing a removed
 text unit is made again from what remains. The removal finds the reports
 citing a removed unit and keeping others (a report cites its members' units,
-so a parent's are its children's: the chain up to the root is found), flags
-them outdated in the vector store and lists them in the run state; the
+so a parent's are its children's: the chain up to the root is found), notes
+them with the entities it strips in the extraction store (the
+`outdated-reports` note), flags them outdated in the vector store and lists
+them in the run state. The removal deletes the removed documents' registry
+records before the commit: a run killed in between leaves the note, which
+its successor's refresh reads, and the note goes once a build record lists
+what stays flagged. The
 commit, once its writes succeeded, writes each again (`report_refresh`,
 `IncrementalIndexer._refresh_reports`) from what the stores then hold, as a
 full build's detector reads it: the stored entities whose level-0

@@ -163,12 +163,30 @@ class TextUnitRemoval:
         if summaries.total_items or summaries.failed_items:
             results[f"vector_summary_nodes_{suffix}"] = summaries
         if outdated:
-            # Flagged before the text they were written from is stripped
-            # from the rest: a run that dies after this leaves them flagged.
-            results[f"vector_outdated_reports_{suffix}"] = (
-                m.vector_indexer.mark_reports_outdated(outdated, suffix)
-            )
-            m.outdated_reports.setdefault(suffix, set()).update(outdated)
+            # Noted, then flagged, before the text they were written from is
+            # stripped from the rest: a run that dies after this leaves them
+            # flagged, and listed for its successor's refresh. A note that
+            # cannot be written fails the removal (its records are kept and
+            # it is retried).
+            key = f"vector_outdated_reports_{suffix}"
+            try:
+                m.note_outdated_reports(suffix, outdated, shared_entities)
+            except NamespaceLeaseError:
+                raise
+            except Exception as e:  # noqa: BLE001 - reported as failed items
+                log_error(
+                    logger,
+                    logging.ERROR,
+                    "Noting %d outdated community reports of '%s' failed: %s",
+                    len(outdated),
+                    suffix,
+                    error=e,
+                )
+                results[key] = IndexingStats(total_items=len(outdated))
+                results[key].add_error(e, count=len(outdated))
+            else:
+                results[key] = m.vector_indexer.mark_reports_outdated(outdated, suffix)
+                m.outdated_reports.setdefault(suffix, set()).update(outdated)
         m.deleted_reports.setdefault(suffix, set()).update(
             i for i, units in citing.reports.items() if gone(units)
         )

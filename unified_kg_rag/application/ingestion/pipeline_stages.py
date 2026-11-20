@@ -3473,6 +3473,10 @@ class IndexingStage(_RegistryStage):
             written = vector_indexer.record_build(
                 record.model_copy(update=update), suffix
             )
+            if written is not None and "outdated_reports" in update:
+                # The record lists what stays flagged: the removal's note of
+                # its reports has served (note_outdated_reports).
+                manager.clear_outdated_note(suffix)
             if written is None:
                 if keeps_build_records(vector_indexer):
                     records = None

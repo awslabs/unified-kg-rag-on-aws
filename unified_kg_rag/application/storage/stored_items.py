@@ -61,6 +61,16 @@ PENDING_COMMIT = "pending-commit"
 PENDING_WRITES = "pending-writes"
 
 
+# Extraction-store key of a suffix's outdated-report note: the stored
+# community reports a removal flagged outdated, and the entities it stripped
+# (the refresh's member candidates), written before the flags and deleted
+# once a build record lists what stays flagged (see
+# IndexingManager.note_outdated_reports). The removal deletes the removed
+# documents' registry records before the commit refreshes the reports: a
+# run killed between them leaves only this note to name them.
+OUTDATED_REPORTS = "outdated-reports"
+
+
 # Extraction-store key of a suffix's summary note: the items a removal's
 # strip summarized or wrote unsummarized, whose stored summary the run's
 # commit must not extend; written before the strip's writes and deleted

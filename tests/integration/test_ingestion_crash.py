@@ -149,3 +149,124 @@ def test_a_killed_run_is_taken_over_once_its_lease_expires_and_converges(
     assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
     assert _state(config, _providers(config)) == _state(fresh, fresh_providers)
     assert e2e._entity_names(fresh_providers) == {"Vendor", "Depot", "Carrier"}
+
+
+def _reports_state(providers: Any) -> dict[str, tuple[Any, ...]]:
+    """Each stored community report's summary, outdated flag and units."""
+    from unified_kg_rag.domain.ingestion.report_references import (
+        REPORT_OUTDATED_FIELD,
+    )
+
+    vectors = providers.build_vector_indexer()
+    try:
+        pages = vectors.scan_items("community_reports", "default")
+        assert pages is not None
+        return {
+            item["id"]: (
+                item["summary"],
+                bool(item.get(REPORT_OUTDATED_FIELD)),
+                tuple(sorted(item["text_unit_ids"])),
+            )
+            for page in pages
+            for item in page
+        }
+    finally:
+        vectors.close()
+
+
+@pytest.mark.timeout(300)
+def test_a_run_killed_in_the_report_refresh_resumes_to_the_unkilled_run(
+    tmp_path: Path, no_aws  # noqa: F811 - the fixture
+) -> None:
+    # RV3-I1: a document is deleted and a report it fed is kept for the other
+    # document's units, flagged outdated. Its id lived in memory only, and
+    # the deleted document's registry record went before the commit, so a
+    # run killed in the refresh's report call resumed with nothing to
+    # refresh: the report kept the deleted text, flagged, listed nowhere.
+    from tests.integration.test_outdated_reports import _DELETED, _KEPT, _Model
+
+    def build(stores: Path) -> tuple[Any, Any]:
+        config = crash_config(stores)
+        server = FakeOllama(_Model(), e2e.ANSWER, e2e.DIM)
+        return config, e2e._providers(config, server, FakeCrossEncoder("r"))
+
+    # One corpus folder: a text unit's id derives from its document's path.
+    source = tmp_path / "corpus"
+
+    def first_run(name: str) -> tuple[Any, Any, Path]:
+        config, providers = build(tmp_path / name / "stores")
+        _write(source, {"a.txt": _KEPT, "b.txt": _DELETED})
+        context = e2e._ingest(config, providers, source, tmp_path / name / "run-1")
+        assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+        _write(source, {"b.txt": None})
+        return config, providers, source
+
+    # The unkilled run.
+    config, providers, source = first_run("unkilled")
+    context = e2e._ingest(config, providers, source, tmp_path / "unkilled" / "run-2")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    unkilled = _reports_state(providers)
+    assert not any(outdated for _, outdated, _ in unkilled.values())
+
+    # The same run, killed in the refresh's report call.
+    config, providers, source = first_run("killed")
+    cache, marker = tmp_path / "killed" / "run-2", tmp_path / "report.marker"
+    env = {**os.environ, "PYTHONPATH": str(ROOT), "AWS_EC2_METADATA_DISABLED": "true"}
+    child = subprocess.Popen(  # nosec B603 - the test's own module
+        [
+            sys.executable,
+            "-m",
+            "tests.fixtures.killable_ingest",
+            str(tmp_path / "killed" / "stores"),
+            str(source),
+            str(cache),
+            str(marker),
+            "report",
+        ],
+        cwd=ROOT,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    try:
+        deadline = time.monotonic() + 120
+        while not marker.exists():
+            assert child.poll() is None, child.communicate()[0].decode()[-3000:]
+            assert time.monotonic() < deadline, "the run never reached the refresh"
+            time.sleep(0.1)
+    finally:
+        child.send_signal(signal.SIGKILL)
+        child.communicate()
+    assert child.returncode == -signal.SIGKILL
+    # Killed after the removal flagged the report and the deleted
+    # document's record went.
+    assert any(outdated for _, outdated, _ in _reports_state(providers).values())
+    assert "b.txt" not in e2e._registry(providers)
+
+    # The resume (the same pipeline id; the SQLite registry hands this
+    # host's killed run's lease on at once) writes the report again.
+    context = e2e._ingest(config, _providers_of(config), source, cache)
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert _reports_state(providers) == unkilled
+    vectors = providers.build_vector_indexer()
+    try:
+        record = vectors.read_build_record("default")
+        assert record is not None and record["outdated_reports"] == []
+        # The note that carried the reports across the kill is gone.
+        from unified_kg_rag.application.storage.stored_items import (
+            OUTDATED_REPORTS,
+        )
+
+        assert OUTDATED_REPORTS not in vectors.read_extraction_records(
+            [OUTDATED_REPORTS], suffix="default"
+        )
+    finally:
+        vectors.close()
+
+
+def _providers_of(config: Any) -> Any:
+    from tests.integration.test_outdated_reports import _Model
+
+    return e2e._providers(
+        config, FakeOllama(_Model(), e2e.ANSWER, e2e.DIM), FakeCrossEncoder("r")
+    )

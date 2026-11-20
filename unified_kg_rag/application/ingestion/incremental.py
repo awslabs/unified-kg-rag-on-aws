@@ -836,6 +836,9 @@ class IncrementalIndexer:
         for suffix in sorted({*m.outdated_reports, self.suffix}):
             try:
                 stored = m.vector_indexer.read_build_record(suffix) or {}
+                # The reports a removal flagged and its run, killed before
+                # its build record, never listed (note_outdated_reports).
+                noted, candidates = m.read_outdated_note(suffix)
             except NamespaceLeaseError:
                 raise
             except Exception as e:  # noqa: BLE001 - the run's own still refresh
@@ -847,7 +850,13 @@ class IncrementalIndexer:
                     suffix,
                     error=e,
                 )
-                stored = {}
+                stored, noted, candidates = {}, set(), set()
+            if noted:
+                # One the run does not settle stays listed in its build
+                # record, which takes the note over.
+                m.outdated_reports[suffix] = (
+                    m.outdated_reports.get(suffix, set()) | noted
+                )
             listed = stored.get("outdated_reports")
             ids = (
                 m.outdated_reports.get(suffix, set())
@@ -855,7 +864,9 @@ class IncrementalIndexer:
             ) - (m.deleted_reports.get(suffix, set()) | delta_reports[suffix])
             if not ids:
                 continue
-            done = refresh(suffix, ids, m.stripped_entities.get(suffix, set()))
+            done = refresh(
+                suffix, ids, m.stripped_entities.get(suffix, set()) | candidates
+            )
             settled = done.written | done.deleted
             m.outdated_reports[suffix] = m.outdated_reports.get(suffix, set()) - settled
             m.refreshed_reports.setdefault(suffix, set()).update(settled)
