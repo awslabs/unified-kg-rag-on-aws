@@ -38,6 +38,7 @@ from tests.fixtures.store_backends import StoreHarness, open_harness
 from unified_kg_rag.adapters.local.search_engine.analyzers import get_analyzer
 from unified_kg_rag.domain.models import (
     Config,
+    Constants,
     RetrievalResult,
     RetrieverRole,
     SearchQuery,
@@ -394,3 +395,79 @@ def test_every_default_language_analyzer_is_built_into_opensearch(
             assert name in analyzers._ANALYZERS, name
     finally:
         opened.close()
+
+
+# Korean written with Latin terms, a particle right after each, beside Han,
+# Kana and other scripts; synthetic names only.
+_KOREAN_LATIN = [
+    "AWS를 사용하여 Lambda의 기능을 S3로 옮기고 GPT-4를 호출합니다",
+    "Привет를 Ωμέγα는 café를 naïve의 v2.0을 Amazon_S3에 e-mail로",
+    "韓國어 漢字와 カナ는 2024년 3월에 (주)Acme와 Kestrel社 x²를",
+    "한국어만 있는 문장입니다",
+    # Punctuation the standard tokenizer joins letters across ("a.b").
+    "가.나 가'나 가:나 가_나 「AWS」를 AWS’를 AWS를,S3에;Lambda로.",
+]
+_KOREAN_LATIN_UNITS = {
+    "k0": "Kestrel을 도입한 뒤 처리 시간이 줄었습니다",
+    "k1": "운영팀은 S3에 데이터를 저장했습니다",
+    "k2": "Kestrel의 보고서는 S3로 옮겼습니다",
+    "k3": "Umbra와 함께 비용을 검토했습니다",
+    "k4": "회의에서는 일정과 예산을 다시 검토했습니다",
+}
+# The documents each query finds. Under cjk "S3에" is one token, s3에: "S3"
+# finds nothing; a query with Hangul in it is matched exactly, so "Kestrel
+# 보고서" finds only the 보고서 document. Only a Latin-only query of three
+# letters or more gets past it, by fuzziness (one edit: umbra와).
+_LATIN_QUERIES = {
+    "cjk_script_split": {
+        "S3": {"k1", "k2"},
+        "Kestrel 보고서": {"k0", "k2"},
+        "Umbra": {"k3"},
+    },
+    "cjk": {"S3": set(), "Kestrel 보고서": {"k2"}, "Umbra": {"k3"}},
+}
+
+
+def _korean_latin_units() -> list[TextUnit]:
+    return [TextUnit(id=key, text=text) for key, text in _KOREAN_LATIN_UNITS.items()]
+
+
+def test_korean_latin_text_tokenizes_like_the_embedded_engine(tmp_path: Path) -> None:
+    # cjk_script_split, defined by the indexer in the index (OpenSearch has
+    # no analyzer of that name), splits "AWS를" into aws, 를 as the embedded
+    # engine does; OpenSearch's cjk keeps aws를 whole, so the samples do
+    # exercise the split.
+    with _indexed_pair(tmp_path, _korean_latin_units(), "cjk_script_split") as (
+        _,
+        container,
+    ):
+        client = container.vector_indexer.opensearch_client.client
+        index = container.vector_indexer._get_name(
+            container.config.indexing.opensearch.text_units_index_prefix,
+            Constants.DEFAULT_SUFFIX.value,
+        )
+        local = get_analyzer("cjk_script_split")
+        for text in _KOREAN_LATIN:
+            response = client.indices.analyze(
+                index=index, body={"analyzer": "cjk_script_split", "text": text}
+            )
+            assert [token["token"] for token in response["tokens"]] == local(text)
+        fused = client.indices.analyze(body={"analyzer": "cjk", "text": "AWS를"})
+        assert [token["token"] for token in fused["tokens"]] == ["aws를"]
+
+
+@pytest.mark.parametrize("analyzer", sorted(_LATIN_QUERIES))
+def test_a_latin_term_in_korean_text_is_found(tmp_path: Path, analyzer: str) -> None:
+    # Under cjk_script_split OpenSearch finds each document naming the term,
+    # ranked and scored as the embedded engine does.
+    expected = _LATIN_QUERIES[analyzer]
+    queries = list(expected)
+    with _indexed_pair(tmp_path, _korean_latin_units(), analyzer) as (
+        sqlite,
+        container,
+    ):
+        theirs = _search(container, SearchType.LEXICAL, queries)
+        if analyzer == "cjk_script_split":
+            _assert_same_lexical_ranking(sqlite, container, queries)
+    for query, hits in zip(queries, theirs, strict=True):
+        assert {str(r.source) for r in hits} == expected[query], query

@@ -125,10 +125,17 @@ unit holds any more are deleted by the next full build
   [local OpenSearch container](./local-mode.md#local-stores-in-containers) has it, an Amazon
   OpenSearch Service domain only once its Nori package is associated (a
   blue/green deployment). The
-  [CDK deployment](../../iac/README.md) therefore maps `ko` to the built-in `cjk`
-  analyzer (character bigrams); `-c opensearch_nori_package=true`
-  associates the package and maps `ko` to `nori`
-  ([Korean with Nori](../operations.md#korean-with-nori)).
+  [CDK deployment](../../iac/README.md) therefore maps `ko` to
+  `cjk_script_split`, which needs no plugin: the indexer defines it in each
+  index from OpenSearch's built-in components, as the `cjk` analyzer
+  (character bigrams) with a Hangul run split from the Latin letters or
+  digits written next to it. `cjk` itself keeps "AWS를" as one token
+  (`aws를`), so a lexical query for "S3", or for "AWS" beside a Korean word,
+  missed Korean text that writes a particle after the term; `cjk_script_split` yields `aws`, `를`, as `nori`
+  and the embedded engine do. Japanese and Chinese need no split (`cjk`
+  already separates Latin letters and digits from Han and Kana).
+  `-c opensearch_nori_package=true` associates the package and maps `ko`
+  to `nori` ([Korean with Nori](../operations.md#korean-with-nori)).
 
 ## Chunk sizes
 

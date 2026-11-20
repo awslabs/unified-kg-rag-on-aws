@@ -20,11 +20,16 @@ with it. Approximations of the OpenSearch analyzers of the same names:
   characters in the run are left out of them.
   (OpenSearch's ``standard`` keeps a Hangul run as one token; the bigrams are
   deliberate.)
-- ``cjk``, ``nori``, ``kuromoji`` and ``smartcn``: the same analyzer as ``standard``,
-  as are ``bengali``, ``bulgarian``, ``galician``, ``latvian`` and ``sorani``
-  (no Snowball stemmer: OpenSearch's stem, these do not).
+- ``cjk``, ``cjk_script_split`` (the indexer's custom one,
+  ``adapters/storage/opensearch_analysis``), ``nori``, ``kuromoji`` and
+  ``smartcn``: the same analyzer as ``standard``, as are ``bengali``,
+  ``bulgarian``, ``galician``, ``latvian`` and ``sorani`` (no Snowball
+  stemmer: OpenSearch's stem, these do not).
   The bigrams stand in for their morphological analysis: recall on a
   word-in-compound query is comparable, ranking is not identical.
+  OpenSearch's ``cjk`` keeps Latin letters or digits joined to the Hangul
+  written after them ("AWS를" is one token, ``aws를``); ``cjk_script_split``
+  and ``nori`` split them, as this analyzer does.
 - ``german``, ``french``, ``spanish``, ``italian``, ``portuguese``,
   ``russian``, ``arabic`` and ``hindi`` (the default ``language_analyzers``
   of those languages), and the other OpenSearch built-in language analyzers
@@ -298,6 +303,7 @@ def _tokens(
 @register_analyzer(
     STANDARD,
     "cjk",
+    "cjk_script_split",
     "nori",
     "kuromoji",
     "smartcn",

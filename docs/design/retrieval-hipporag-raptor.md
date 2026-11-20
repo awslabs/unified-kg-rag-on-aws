@@ -464,7 +464,7 @@ a query resolves the lineage through the children), `n_leaves`,
 (`index`, and the uniform `filters` below). The index is
 `indexing.opensearch.summary_nodes_index_prefix`
 (`graphrag-summary-nodes`): a kNN field, a `text` field analyzed with the
-index language's analyzer (`language_analyzers`: `nori` or `cjk` for
+index language's analyzer (`language_analyzers`: `nori` or `cjk_script_split` for
 Korean, `cjk` for Japanese and Chinese), keyword arrays for the lineage
 and the filters. Neptune and the SQLite graph get nothing, so graph-store
 parity is free; OpenSearch and the embedded engine share the indexer code.

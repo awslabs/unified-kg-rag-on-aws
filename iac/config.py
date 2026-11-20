@@ -56,12 +56,15 @@ cannot leave its setting at the default:
                                        plugin package of the domain's engine
                                        version (a custom resource; each change
                                        is a blue/green deployment)
-  opensearch_korean_analyzer "cjk" (or "nori" with opensearch_nori_package)
+  opensearch_korean_analyzer "cjk_script_split" (or "nori" with
+                                       opensearch_nori_package)
                                        OpenSearch analyzer of Korean text
                                        (UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO, overrides
                                        language_analyzers.ko): the domain has no
                                        nori unless its optional analysis-nori
-                                       package is associated
+                                       package is associated; cjk_script_split
+                                       is cjk with "AWS를" split into aws, 를,
+                                       which the indexer defines in each index
   doc_status_table    dev:"graphrag-doc-status-v2"/else:"<env>-graphrag-doc-status-v2"
   legacy_doc_status_table None         the 0.2.3 registry table name, for the
                                        one deploy that upgrades a 0.2.3 stack
@@ -569,8 +572,12 @@ class DeploymentConfig:
     enable_cloudwatch_tracing: bool = False
     # Analyzer the app maps Korean text to (UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO). The
     # domain has no nori unless the optional analysis-nori package is
-    # associated with it; cjk (character bigrams) is built into OpenSearch.
-    opensearch_korean_analyzer: str = "cjk"
+    # associated with it. cjk_script_split is the built-in cjk (character
+    # bigrams) with a Hangul run split from the Latin letters or digits
+    # written next to it ("AWS를": aws, 를), which the indexer defines in each
+    # index from built-in components (cjk keeps aws를 whole, so a query for
+    # "AWS" missed it).
+    opensearch_korean_analyzer: str = "cjk_script_split"
     # Associate the AWS-provided analysis-nori package with the domain (a
     # custom resource). Off: the templates are exactly as without the feature.
     opensearch_nori_package: bool = False
@@ -781,18 +788,18 @@ class DeploymentConfig:
                 )
         opensearch_nori_package = as_bool("opensearch_nori_package", default=False)
         # With the package associated the domain has nori, so Korean maps to
-        # it unless the analyzer is set (cjk, say, until the ko indices are
-        # rebuilt).
+        # it unless the analyzer is set (cjk_script_split, say, until the ko
+        # indices are rebuilt).
         opensearch_korean_analyzer = str(
             ctx(
                 "opensearch_korean_analyzer",
-                "nori" if opensearch_nori_package else "cjk",
+                "nori" if opensearch_nori_package else "cjk_script_split",
             )
         )
         if not _ANALYZER_NAME.fullmatch(opensearch_korean_analyzer):
             raise ValueError(
                 "opensearch_korean_analyzer must be an OpenSearch analyzer name "
-                f"(e.g. cjk or nori), got {opensearch_korean_analyzer!r}"
+                f"(e.g. cjk_script_split or nori), got {opensearch_korean_analyzer!r}"
             )
         neptune_serverless_ncu = _as_ncu_range(
             "neptune_serverless_ncu", ctx("neptune_serverless_ncu")

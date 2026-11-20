@@ -7,7 +7,8 @@
 # - OpenSearch: single node, security plugin disabled (plain http, no auth),
 #   with the analysis-nori plugin that the Korean text mappings use (an Amazon
 #   OpenSearch Service domain has it only once its optional Nori package is
-#   associated; the IaC maps Korean to the built-in cjk analyzer instead).
+#   associated; the IaC maps Korean to cjk_script_split instead, which the
+#   indexer defines from built-in components).
 #   Version matches the IaC domain.
 # - Gremlin Server: in-memory TinkerGraph over plain ws:// with no auth. Its
 #   TinkerPop line (3.7) matches the gremlinpython client. Its init script

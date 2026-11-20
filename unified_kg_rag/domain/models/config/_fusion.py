@@ -79,6 +79,30 @@ class HybridConfig(ConfigSection):
         ),
         json_schema_extra=evidence("unmeasured"),
     )
+    lexical_fuzziness: str = Field(
+        default="AUTO",
+        pattern=r"^(AUTO(:[0-9]+,[0-9]+)?|[0-2])$",
+        description=(
+            "OpenSearch fuzziness of a lexical query of up to 10 terms with "
+            "no Hangul, Han or Kana in it (a longer one, or one with such "
+            "text, is matched exactly): AUTO (OpenSearch's recommended "
+            "value: no edit for a term of 1-2 characters, one for 3-5, two "
+            "above), AUTO:<low>,<high> (no edit below low characters, two "
+            "from high), 1 or 2 edits, or 0 to match exactly. A fuzzy term "
+            "matches up to 10 indexed terms. Fuzziness absorbs a typo or a "
+            "variant spelling of a name, at the cost of near-miss names "
+            "('gadgets' also matches 'widgets', 'Acme' 'Acne'). OpenSearch "
+            "only: the embedded engine of backend: local matches exactly "
+            "whatever this says. On synthetic name lookups AUTO found 98% "
+            "of one-typo queries and returned 0.4-0.5 other names per exact "
+            "query; 0 found no typo and no other name (dev and held-out "
+            "splits; "
+            "docs/concepts/defaults-and-evidence.md#lexical-fuzziness). "
+            "Which wins depends on how often queries misspell a "
+            "name, so the default stays AUTO; set 0 where names are typed "
+            "exactly (codes, identifiers)."
+        ),
+    )
 
     @model_validator(mode="after")
     def _check_weights(self) -> "HybridConfig":

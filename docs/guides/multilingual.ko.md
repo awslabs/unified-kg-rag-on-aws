@@ -98,9 +98,14 @@ processing:
   `the cluster has no analyzer '<name>'`로 실패합니다. `nori`는 `analysis-nori`
   플러그인에서 오는데, [로컬 OpenSearch 컨테이너](./local-mode.md#local-stores-in-containers)(영문)에는 있고
   Amazon OpenSearch Service 도메인은 Nori 패키지를 연결해야 갖습니다(블루/그린 배포). 그래서
-  [CDK 배포](../../iac/README.md)는 `ko`를 기본 제공 `cjk` 분석기(문자 바이그램)에
-  매핑합니다. `-c opensearch_nori_package=true`로 배포하면 패키지를 연결하고 `ko`를
-  `nori`에 매핑합니다([Nori로 한국어 분석하기](../operations.md#korean-with-nori), 영문).
+  [CDK 배포](../../iac/README.md)는 `ko`를 플러그인이 필요 없는 `cjk_script_split`에
+  매핑합니다. 인덱서가 각 인덱스에 OpenSearch 기본 구성 요소로 정의하는 분석기로,
+  `cjk` 분석기(문자 바이그램)에 한글과 붙어 쓴 라틴 문자·숫자를 나누는 단계를 더한
+  것입니다. `cjk`는 "AWS를"을 토큰 하나(`aws를`)로 남겨서 "S3"나 한국어 단어와 함께 쓴
+  "AWS"로 검색하면 조사가 붙은 한국어 문서를 어휘 검색으로 찾지 못했고,
+  `cjk_script_split`은 `nori`와 내장 엔진처럼 `aws`, `를`로 나눕니다. 일본어와 중국어는 나눌 필요가 없습니다(`cjk`가 이미 라틴 문자·숫자를
+  한자·가나와 나눔). `-c opensearch_nori_package=true`로 배포하면 패키지를 연결하고
+  `ko`를 `nori`에 매핑합니다([Nori로 한국어 분석하기](../operations.md#korean-with-nori), 영문).
 
 ## 청크 크기
 

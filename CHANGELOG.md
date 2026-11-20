@@ -42,7 +42,11 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
    `evaluation.prices` to `models.prices`. Python code that reads or sets them, or reads
    `EvaluationResult.enable_thinking`, needs the change now (*Breaking changes*); replace the deprecated Python names
    (`on_answer_chunk`, `RAGInput.enable_thinking`, `TransientRetryConfig`) before they are removed.
-2. A namespace indexed incrementally keeps the name matches 0.3.0's MinHash index made among the names it holds: a run
+2. A CDK deployment's Korean indices were built with `cjk`, and the stacks now map `ko` to `cjk_script_split` (*Fixed*):
+   an incremental run stops before any write (`'<field>' uses 'cjk' (needs 'cjk_script_split')`) until one run with
+   `indexing.reset: true` rebuilds them ([Re-ingest](docs/operations.md#re-ingest)); deploy with
+   `-c opensearch_korean_analyzer=cjk` to keep them until then. A namespace indexed incrementally keeps the name
+   matches 0.3.0's MinHash index made among the names it holds: a run
    matches its delta's names with the new index. Run with `indexing.reset: true` to match the whole corpus again. With
    `processing.deduplicate` on, deduplication decides otherwise both ways (*Fixed*): the numbers rule keeps template
    documents 0.3.0 dropped as copies, which the next run indexes as new documents, and the exact index finds
@@ -227,6 +231,10 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   `usage_schema` 4) and `models.prices.<id>.embedding_per_million_tokens`, which every USD figure adds.
 - With tracing on, `run-eval` reports per-span latency (`stage_latency_seconds`: answers, mean, p50, p95) in the run
   summary and per comparison strategy, from each answer's `stage_seconds`.
+- `search.hybrid.lexical_fuzziness` (default `AUTO`, the fixed value before; `AUTO:<low>,<high>`, `1`, `2`, or `0` to
+  match exactly): the OpenSearch fuzziness of a short lexical query. A synthetic name-lookup A/B (dev and held-out
+  splits) found no value better on both exact and misspelled names, so the default is unchanged
+  ([Defaults and evidence](docs/concepts/defaults-and-evidence.md#lexical-fuzziness)).
 
 ### Changed
 
@@ -283,6 +291,14 @@ Bugs present in 0.3.0.
   a non-English question paid a translator call, and paired arms could search different translations. It is now
   cached and shared in flight like the entities and keywords (`search.query_extraction_cache_size`), keyed also by
   the model's effort and `model_overrides`.
+- Korean text on a CDK deployment was analyzed with OpenSearch's `cjk`, which keeps Latin letters or digits joined to
+  the Hangul after them ("AWS를" is the token `aws를`): a lexical query for "S3", or for "AWS" beside a Korean word,
+  found no Korean document writing a particle after the term (matched exactly, 9 of 10 Latin terms of a synthetic
+  Korean corpus found none; fuzziness reached a Latin-only query of 3 letters or more). The stacks map `ko` to
+  `cjk_script_split`, `cjk` with a Hangul run split from the Latin letters, digits and other characters next to it,
+  which the indexer defines in each index from built-in components (no plugin;
+  `adapters/storage/opensearch_analysis.py`) and tokenizes as the embedded engine and `nori` do (every term found).
+  Japanese and Chinese were not affected.
 - A streamed answer whose caller was cancelled mid-answer (a console client that disconnects, a cancelled task, an
   `asyncio.timeout` around `astream`) was cancelled wherever it was. Cancelled while the model's stream waited for a
   chunk, LangChain left the response open, holding a model client connection: on an Ollama or OpenAI-compatible server

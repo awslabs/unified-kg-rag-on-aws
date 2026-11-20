@@ -303,8 +303,8 @@ def test_an_analyzer_the_user_set_stops_an_index_built_otherwise(mocker) -> None
     "language_analyzers",
     [
         # What the CDK stack's one variable makes of the map
-        # (UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO=cjk).
-        {**DEFAULT_LANGUAGE_ANALYZERS, "ko": "cjk"},
+        # (UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO=cjk_script_split).
+        {**DEFAULT_LANGUAGE_ANALYZERS, "ko": "cjk_script_split"},
         # A map the user set that names the language with the default's
         # value.
         {"en": "english", "ja": "cjk"},
@@ -327,6 +327,27 @@ def test_a_map_set_with_the_languages_default_keeps_its_stored_fields(
         )
 
     assert "'text' keeps 'standard' ('cjk')" in caplog.text
+
+
+def test_a_korean_index_built_with_cjk_stops_for_cjk_script_split(mocker) -> None:
+    # The CDK stacks mapped ko to cjk before cjk_script_split: their Korean
+    # indices need one reset (CHANGELOG Upgrading), and the run says so
+    # before any write rather than mixing two tokenizations in one field.
+    client = _FakeOpenSearchClient()
+    korean = {"enabled": False, "source_language": "ko", "target_language": "ko"}
+    built = _indexer(mocker, client, translation=korean)
+    built.opensearch_config.language_analyzers = {"ko": "cjk"}
+    built.analyzer = "cjk"
+    built.upsert_text_units([_unit()])
+    upgraded = _indexer(mocker, client, translation=korean)
+    upgraded.opensearch_config.language_analyzers = {"ko": "cjk_script_split"}
+    upgraded.analyzer = "cjk_script_split"
+
+    with pytest.raises(
+        ConfigurationError, match="'text' uses 'cjk' \\(needs 'cjk_script_split'\\)"
+    ) as raised:
+        upgraded.check_index_settings("default")
+    assert "indexing.reset: true" in str(raised.value)
 
 
 def test_a_default_analyzer_keeps_no_field_of_another_language(mocker) -> None:
