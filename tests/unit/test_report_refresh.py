@@ -201,6 +201,17 @@ def test_outdated_reports_are_written_again_from_what_remains() -> None:
     # c2 was not outdated: not asked again.
     (c2,) = vector.read_community_reports([community_report_id("c2")])
     assert c2.summary == "Carrier, Depot"
+    # RV3-I4: the graph store's community vertices are written again with
+    # the members they now have, as a full build's detector makes them.
+    vertices = graph.data["communities"]
+    c1, p = vertices[("default", "c1")], vertices[("default", "p")]
+    assert (c1.entity_ids, c1.text_unit_ids, c1.size) == (["acme"], ["t2"], 1)
+    assert c1.attributes["entity_names"] == ["Acme"]
+    assert c1.attributes["num_relationships"] == 0
+    assert p.text_unit_ids == ["t2", "t3"]
+    assert p.attributes["entity_names"] == ["Acme", "Carrier", "Depot"]
+    assert p.attributes["num_relationships"] == 2
+    assert ("default", "c2") not in vertices
 
 
 def test_a_written_report_reads_what_a_full_build_would() -> None:

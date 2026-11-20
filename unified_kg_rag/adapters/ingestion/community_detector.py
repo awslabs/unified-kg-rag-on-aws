@@ -374,17 +374,32 @@ class CommunityDetector:
             return {key: attributes[key]}
         return {}
 
+    def community_attributes(
+        self, member_ids: list[str], relationship_ids: list[str]
+    ) -> dict[str, Any]:
+        """The attributes a community over ``member_ids`` (sorted) and its
+        ``relationship_ids`` carries, from the graph the detector reads: its
+        size, density, first member names and relationship count, as the
+        graph store's community vertex holds them."""
+        max_entities = (
+            self.community_detection_config.report_generation.max_entities_per_report
+        )
+        return {
+            "size": len(member_ids),
+            "density": nx.density(self.graph.subgraph(member_ids)),
+            "entity_names": [
+                self.graph.nodes[nid].get("name", nid) if nid in self.graph else nid
+                for nid in member_ids[:max_entities]
+            ],
+            "resolution": self.community_detection_config.resolution,
+            "num_relationships": len(relationship_ids),
+        }
+
     def _create_community_object(
         self, hier_comm: HierarchicalCommunity, attributes: dict[str, Any]
     ) -> Community:
         subgraph = self.graph.subgraph(hier_comm.nodes)
-        max_entities = (
-            self.community_detection_config.report_generation.max_entities_per_report
-        )
         member_ids = sorted(hier_comm.nodes, key=str)
-        entity_names = [
-            self.graph.nodes[nid].get("name", nid) for nid in member_ids[:max_entities]
-        ]
 
         # An edge carries every relationship between its two entities.
         relationship_ids = sorted(
@@ -395,11 +410,7 @@ class CommunityDetector:
         )
         community_attributes = {
             **attributes,
-            "size": len(hier_comm.nodes),
-            "density": nx.density(subgraph),
-            "entity_names": entity_names,
-            "resolution": self.community_detection_config.resolution,
-            "num_relationships": len(relationship_ids),
+            **self.community_attributes(member_ids, relationship_ids),
         }
 
         label = hier_comm.label or hier_comm.community_id

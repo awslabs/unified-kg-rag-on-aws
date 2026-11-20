@@ -392,6 +392,15 @@ class ReportRefresh:
             for unit_id, stored in sorted(attributes.items())
         ]
         detector = self._report_detector().report_on(graph)
+        for community in communities:
+            # As a full build's detector makes it: the graph store's vertex
+            # is written again with the members it now has.
+            community.attributes = {
+                **(community.attributes or {}),
+                **detector.community_attributes(
+                    community.entity_ids or [], community.relationship_ids or []
+                ),
+            }
         # A parent rolls up its children's current reports: those written
         # again beside it, and the stored ones that are not outdated (an
         # outdated one may state the removed text, an emptied one is gone).
@@ -453,6 +462,7 @@ class ReportRefresh:
             report.min_cut_depth = kept.min_cut_depth
             report.parent_community_id = kept.parent_community_id
             report.child_community_ids = list(kept.child_community_ids)
+        self._write_vertices(suffix, communities, results)
         if not reports:
             return set()
         stats = vector.upsert_community_reports(reports)
@@ -468,6 +478,35 @@ class ReportRefresh:
             suffix,
         )
         return written
+
+    def _write_vertices(
+        self,
+        suffix: str,
+        communities: list[Community],
+        results: dict[str, IndexingStats],
+    ) -> None:
+        """Write the graph store's vertices of ``communities`` again from
+        their current members (text units, size, member names), whatever
+        their reports: membership does not wait for a model answer.
+        Best-effort: a failed write leaves the vertex as the last full
+        build wrote it, which only a removal's search reads, by live text
+        units."""
+        try:
+            stats = self._manager.graph_indexer.upsert_communities(communities)
+        except NamespaceLeaseError:
+            raise
+        except Exception as e:  # noqa: BLE001 - the reports still count
+            log_error(
+                logger,
+                logging.WARNING,
+                "Writing %d refreshed communities of '%s' to the graph store "
+                "failed (%s): their vertices keep the removed text units",
+                len(communities),
+                suffix,
+                error=e,
+            )
+            return
+        results[f"graph_refreshed_communities_{suffix}"] = stats
 
 
 def _level(community: Community) -> int:

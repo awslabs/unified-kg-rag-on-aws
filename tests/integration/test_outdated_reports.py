@@ -169,6 +169,7 @@ def test_a_report_written_from_a_deleted_document_is_written_again(
 ) -> None:
     config, providers, model, source, both = _two_documents(tmp_path, store_harness)
     calls = len(model.report_inputs)
+    units_before = _unit_ids(config, providers)
 
     (source / "b.txt").unlink()
     caplog.clear()
@@ -195,6 +196,15 @@ def test_a_report_written_from_a_deleted_document_is_written_again(
         assert "Vendor" in report["summary"]
         assert REPORT_OUTDATED_FIELD not in report
         assert all(u in _unit_ids(config, providers) for u in report["text_unit_ids"])
+    # RV3-I4: the graph store's community vertices no longer cite the
+    # deleted document's text units either.
+    dead = sorted(units_before - _unit_ids(config, providers))
+    assert dead
+    graph = providers.build_graph_indexer()
+    try:
+        assert not graph.find_ids_citing(dead, suffix="default", communities=True)
+    finally:
+        graph.close()
     record = _record(providers)
     assert record["outdated_reports"] == []
     assert rebuild_reasons(record, config) == []

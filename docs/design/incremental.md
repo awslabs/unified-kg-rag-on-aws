@@ -589,7 +589,9 @@ extraction store by its input, as a full build's, so an unchanged input
 costs no call; otherwise one call per report, in the indexing stage's usage
 (and so the run's `processing.max_run_*` budget, which prices the report
 role for the indexing stage). A community left without a document-backed
-member loses its report. A report the run cannot write again (the model
+member loses its report. The graph store's community vertex is written
+again with the members the refresh read (their text units, size and names),
+whatever its report's outcome. A report the run cannot write again (the model
 failed, a read failed, a report below it is missing, or, with
 `enable_sub_community_rollup`, one below it got no report this run: written
 without that child's roll-up, the parent would never be asked again once
