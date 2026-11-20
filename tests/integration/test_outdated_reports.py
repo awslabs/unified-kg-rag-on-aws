@@ -1,7 +1,8 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 """A community report written partly from a deleted document, end to end on
-the embedded stores (``backend: local``, no container, no AWS).
+the store backends with retrievers (``backend: local``: the embedded
+stores, and with ``LOCAL_STORES=1`` Gremlin Server and OpenSearch; no AWS).
 
 The report of a community over two documents cites both. Deleting one keeps
 the community for the other's text units, and the incremental run writes
@@ -15,6 +16,7 @@ writes it.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +24,12 @@ import pytest
 
 from tests.fixtures.fakes.model_servers import FakeOllama
 from tests.fixtures.fakes.rerank import FakeCrossEncoder
+from tests.fixtures.store_backends import (
+    RETRIEVERS,
+    StoreHarness,
+    backends,
+    open_harness,
+)
 from tests.integration import test_embedded_e2e as e2e
 from tests.integration import test_ingestion_stages as stages
 from tests.integration.test_embedded_e2e import no_aws  # noqa: F401
@@ -42,6 +50,13 @@ _KEPT = "Vendor supplies widgets to Buyer. Depot stores widgets for Vendor."
 # Carrier is named only here: what the deletion removes.
 _DELETED = "Carrier moves widgets for Vendor and Buyer every week."
 _NAMES = ("Vendor", "Buyer", "Depot", "Carrier")
+
+
+@pytest.fixture(params=backends(RETRIEVERS))
+def store_harness(
+    request: pytest.FixtureRequest, tmp_path: Path
+) -> Iterator[StoreHarness]:
+    yield from open_harness(request.param, tmp_path / "harness")
 
 
 class _Model:
@@ -71,9 +86,18 @@ class _Model:
         return e2e._respond(system, human)
 
 
+def _scan(providers: Any, kind: str) -> dict[str, dict]:
+    vectors = providers.build_vector_indexer()
+    try:
+        pages = vectors.scan_items(kind, "default")
+        assert pages is not None
+        return {item["id"]: item for page in pages for item in page}
+    finally:
+        vectors.close()
+
+
 def _reports(config: Config, providers: Any) -> dict[str, dict]:
-    prefix = config.indexing.opensearch.community_reports_index_prefix
-    return {h["_id"]: h["_source"] for h in e2e._stored(config, providers, prefix)}
+    return _scan(providers, "community_reports")
 
 
 def _record(providers: Any) -> dict:
@@ -113,9 +137,13 @@ def _community_sources(config: Config, providers: Any) -> list[dict]:
     return community
 
 
-def _two_documents(tmp_path: Path) -> tuple[Config, Any, _Model, Path, list[str]]:
-    """Both documents ingested; the reports written from both."""
+def _two_documents(
+    tmp_path: Path, harness: StoreHarness
+) -> tuple[Config, Any, _Model, Path, list[str]]:
+    """Both documents ingested into ``harness``'s stores; the reports
+    written from both."""
     config = e2e._config(tmp_path / "stores", tmp_path / "viz")
+    e2e._on_harness_stores(config, harness)
     model = _Model()
     server = FakeOllama(model, e2e.ANSWER, e2e.DIM)
     providers = e2e._providers(config, server, FakeCrossEncoder("reranker"))
@@ -136,9 +164,9 @@ def _two_documents(tmp_path: Path) -> tuple[Config, Any, _Model, Path, list[str]
 
 @pytest.mark.timeout(600)
 def test_a_report_written_from_a_deleted_document_is_written_again(
-    tmp_path: Path,
+    tmp_path: Path, store_harness: StoreHarness
 ) -> None:
-    config, providers, model, source, both = _two_documents(tmp_path)
+    config, providers, model, source, both = _two_documents(tmp_path, store_harness)
     calls = len(model.report_inputs)
 
     (source / "b.txt").unlink()
@@ -176,15 +204,14 @@ def test_a_report_written_from_a_deleted_document_is_written_again(
 
 
 def _unit_ids(config: Config, providers: Any) -> set[str]:
-    prefix = config.indexing.opensearch.text_units_index_prefix
-    return {h["_id"] for h in e2e._stored(config, providers, prefix)}
+    return set(_scan(providers, "text_units"))
 
 
 @pytest.mark.timeout(600)
 def test_a_report_that_cannot_be_written_again_stays_recorded_and_flagged(
-    tmp_path: Path,
+    tmp_path: Path, store_harness: StoreHarness
 ) -> None:
-    config, providers, model, source, both = _two_documents(tmp_path)
+    config, providers, model, source, both = _two_documents(tmp_path, store_harness)
     # The rebuild reason does not wait for a drift recommendation.
     assert not config.indexing.community_compaction.on_drift_recommendation
 
